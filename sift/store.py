@@ -7,6 +7,7 @@ import re
 import sqlite3
 import sys
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -50,8 +51,8 @@ def set_meta(db, key, value):
 
 
 def touch(db):
-    """Mark the vectors as changed, so a running server reloads them."""
-    set_meta(db, "version", time.time_ns())
+    """Mark the vectors as changed, so a running server reloads them. Random, as clocks can tick too slowly."""
+    set_meta(db, "version", uuid.uuid4().hex)
 
 
 # --- collections -------------------------------------------------------------
