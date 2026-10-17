@@ -24,7 +24,8 @@ def fake_vector(text):
 
 
 class FakeSentenceTransformer:
-    max_batch = 10**6  # batches above this raise CUDA out-of-memory
+    max_batch = 10**6  # batches above this run out of GPU memory
+    gpu = "cuda"  # whose out-of-memory error to raise: "cuda" or "mps"
 
     def __init__(self, name, device=None):
         self.name, self.device, self.max_seq_length, self.halved = name, device, None, False
@@ -36,8 +37,10 @@ class FakeSentenceTransformer:
     def encode_document(self, texts, batch_size, normalize_embeddings, convert_to_numpy):
         import torch
 
+        if batch_size > self.max_batch and self.gpu == "mps":  # MPS raises a plain RuntimeError
+            raise RuntimeError("MPS backend out of memory (MPS allocated: 17.00 GB, other allocations: 0 bytes)")
         if batch_size > self.max_batch:
-            raise torch.cuda.OutOfMemoryError("fake out of memory")
+            raise torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
         return np.stack([fake_vector(t) for t in texts])
 
     encode_query = encode_document
