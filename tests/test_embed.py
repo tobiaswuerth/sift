@@ -24,24 +24,10 @@ def test_models_load_with_limits(fake_models):
     assert fake_models.embedder() is model  # loaded once
 
 
-@pytest.mark.parametrize(
-    "env, cuda, mps, device",
-    [
-        (None, True, True, "cuda"),
-        (None, False, True, "mps"),
-        (None, False, False, "cpu"),
-        ("", False, True, "mps"),
-        ("cpu", True, True, "cpu"),
-        ("cuda:1", False, False, "cuda:1"),
-    ],
-)
-def test_device_prefers_cuda_then_mps_then_cpu(fake_models, monkeypatch, env, cuda, mps, device):
+@pytest.mark.parametrize("cuda, mps, device", [(True, True, "cuda"), (False, True, "mps"), (False, False, "cpu")])
+def test_device_prefers_cuda_then_mps_then_cpu(fake_models, monkeypatch, cuda, mps, device):
     import torch
 
-    if env is None:
-        monkeypatch.delenv("SIFT_DEVICE", raising=False)
-    else:
-        monkeypatch.setenv("SIFT_DEVICE", env)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda)
     monkeypatch.setattr(torch.backends.mps, "is_available", lambda: mps)
     assert fake_models._device() == device
@@ -167,24 +153,13 @@ def test_gpu_memory_headroom_is_at_least_one_gb(fake_models, gpu_memory, monkeyp
     assert gpu_memory.budgets == [(pytest.approx(5 / 8), "cuda:1")]
 
 
-def test_gpu_memory_budget_can_be_set(fake_models, gpu_memory, monkeypatch):
+def test_too_little_free_gpu_memory_falls_back_to_cpu(fake_models, gpu_memory, monkeypatch, capsys):
     monkeypatch.setattr(fake_models, "DEVICE", "cuda")
-    monkeypatch.setenv("SIFT_VRAM", "4")
-    fake_models.embedder()
-    assert gpu_memory.budgets == [(pytest.approx(4 / 24), "cuda")]
-
-
-@pytest.mark.parametrize(
-    "free, vram, error", [(2, None, "only 2.0 GB of GPU memory is free"), (20, "lots", "SIFT_VRAM")]
-)
-def test_too_little_gpu_memory_is_a_clear_error(fake_models, gpu_memory, monkeypatch, free, vram, error):
-    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
-    gpu_memory.free = free * GiB
-    if vram:
-        monkeypatch.setenv("SIFT_VRAM", vram)
-    with pytest.raises(SystemExit, match=error):
-        fake_models.embedder()
+    gpu_memory.free = 2 * GiB  # less than the 2 GiB budget the models need, after headroom
+    model = fake_models.embedder()
+    assert (model.device, fake_models.DEVICE, model.halved) == ("cpu", "cpu", False)
     assert gpu_memory.budgets == []
+    assert "only 2.0 GB of GPU memory is free; using the CPU" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("device", ["cpu", "mps"])
@@ -195,11 +170,44 @@ def test_no_gpu_memory_budget_off_cuda(fake_models, gpu_memory, monkeypatch, dev
     assert gpu_memory.budgets == []
 
 
-def test_batches_start_large(fake_models, monkeypatch):
-    monkeypatch.delenv("SIFT_BATCH_SIZE", raising=False)
-    assert fake_models._initial_batch_size() == 512  # halved until it fits the memory budget
-    monkeypatch.setenv("SIFT_BATCH_SIZE", "64")
-    assert fake_models._initial_batch_size() == 64
+def test_batch_size_is_calibrated_to_fill_the_budget(fake_models, gpu_memory, monkeypatch, capsys):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    size = fake_models.calibrate_batch_size()
+    # budget 17.6 GiB; 90% of it minus 1 GiB of weights leaves 14.84 GiB for 0.1 + 0.05 per text
+    assert size == 1 + int((0.9 * 17.6 - 1 - 0.15) / 0.05) == 294
+    assert fake_models._batch_size == size
+    assert gpu_memory.batches == [1, 2, 4, 8, 16, 32, 64, 128, 256]  # doubled until half the budget was in use
+    assert "batch size 294" in capsys.readouterr().err
+    fake_models.encode(["x"] * 600)  # the calibrated size fits: no out-of-memory, no halving
+    assert fake_models._batch_size == 294
+
+
+def test_calibration_stops_at_the_first_out_of_memory(fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    monkeypatch.setattr(gpu_memory, "per_text", 1 * GiB)  # 16 texts are already too many
+    size = fake_models.calibrate_batch_size()
+    assert gpu_memory.batches[-1] == 16
+    assert 1 <= size <= 15
+
+
+def test_calibration_is_capped(fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    monkeypatch.setattr(gpu_memory, "per_text", 0.001 * GiB)
+    assert fake_models.calibrate_batch_size() == fake_models.MAX_BATCH
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps"])
+def test_no_calibration_off_cuda(fake_models, gpu_memory, monkeypatch, device):
+    monkeypatch.setattr(fake_models, "DEVICE", device)
+    assert fake_models.calibrate_batch_size() == 128
+    assert gpu_memory.batches == []
+
+
+def test_embed_pending_calibrates_first(corpus, fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    fake_models.embed_pending(corpus[0])
+    assert gpu_memory.batches[:3] == [1, 2, 4]  # calibration, then the 3 chunks in one batch
+    assert gpu_memory.batches[-1] == 3
 
 
 def test_harmless_torch_windows_note_is_silenced(fake_models):

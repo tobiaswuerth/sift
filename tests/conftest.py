@@ -26,6 +26,7 @@ def fake_vector(text):
 class FakeSentenceTransformer:
     max_batch = 10**6  # batches above this run out of GPU memory
     gpu = "cuda"  # whose out-of-memory error to raise: "cuda" or "mps"
+    gpu_memory = None  # a FakeGpuMemory, consulted when the model runs on CUDA
 
     def __init__(self, name, device=None):
         self.name, self.device, self.max_seq_length, self.halved = name, device, None, False
@@ -34,9 +35,12 @@ class FakeSentenceTransformer:
         self.halved = True
         return self
 
-    def encode_document(self, texts, batch_size, normalize_embeddings, convert_to_numpy):
+    def encode_document(self, texts, batch_size, normalize_embeddings=True, convert_to_numpy=True):
         import torch
 
+        if str(self.device).startswith("cuda") and self.gpu_memory:
+            for i in range(0, len(texts), batch_size):
+                self.gpu_memory.run(len(texts[i : i + batch_size]))
         if batch_size > self.max_batch and self.gpu == "mps":  # MPS raises a plain RuntimeError
             raise RuntimeError("MPS backend out of memory (MPS allocated: 17.00 GB, other allocations: 0 bytes)")
         if batch_size > self.max_batch:
@@ -58,10 +62,16 @@ GiB = 2**30
 
 
 class FakeGpuMemory:
-    """Stands in for torch.cuda's memory queries: 20 of 24 GiB free, another program holds the rest."""
+    """Stands in for torch.cuda's memory API: 20 of 24 GiB free, another program holds the rest.
+
+    The loaded model takes 1 GiB, and a batch of n texts at full length needs 0.1 + 0.05 * n GiB on top.
+    """
+
+    weights, fixed, per_text = 1 * GiB, 0.1 * GiB, 0.05 * GiB
 
     def __init__(self):
-        self.free, self.total, self.budgets = 20 * GiB, 24 * GiB, []
+        self.free, self.total, self.budgets, self.batches = 20 * GiB, 24 * GiB, [], []
+        self.peak = self.weights
 
     def mem_get_info(self, device=None):
         return self.free, self.total
@@ -69,14 +79,42 @@ class FakeGpuMemory:
     def set_per_process_memory_fraction(self, fraction, device=None):
         self.budgets.append((fraction, str(device)))
 
+    def memory_allocated(self, device=None):
+        return self.weights
+
+    def max_memory_allocated(self, device=None):
+        return self.peak
+
+    def reset_peak_memory_stats(self, device=None):
+        self.peak = self.weights
+
+    def run(self, n):
+        """A batch of n texts on the GPU; out of memory past the budget, like PyTorch."""
+        import torch
+
+        need = self.weights + self.fixed + n * self.per_text
+        limit = self.budgets[-1][0] * self.total if self.budgets else self.free
+        self.batches.append(n)
+        if need > limit:
+            raise torch.cuda.OutOfMemoryError(f"CUDA out of memory. Tried to allocate {need / GiB:.2f} GiB")
+        self.peak = max(self.peak, need)
+
 
 @pytest.fixture
 def gpu_memory(monkeypatch):
     import torch
 
     fake = FakeGpuMemory()
-    monkeypatch.setattr(torch.cuda, "mem_get_info", fake.mem_get_info)
-    monkeypatch.setattr(torch.cuda, "set_per_process_memory_fraction", fake.set_per_process_memory_fraction)
+    for name in (
+        "mem_get_info",
+        "set_per_process_memory_fraction",
+        "memory_allocated",
+        "max_memory_allocated",
+        "reset_peak_memory_stats",
+    ):
+        monkeypatch.setattr(torch.cuda, name, getattr(fake, name))
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(FakeSentenceTransformer, "gpu_memory", fake)
     return fake
 
 
@@ -90,7 +128,6 @@ def fake_models(monkeypatch, gpu_memory):
     monkeypatch.setitem(sys.modules, "sentence_transformers", module)
     monkeypatch.setattr(embed, "DEVICE", "cpu")
     monkeypatch.setattr(embed, "_batch_size", 128)
-    monkeypatch.delenv("SIFT_VRAM", raising=False)
     caches = (embed.embedder, embed.reranker, embed.limit_gpu_memory)
     for cached in caches:
         cached.cache_clear()
