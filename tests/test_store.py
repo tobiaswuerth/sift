@@ -40,8 +40,9 @@ def test_add_collection_errors(corpus, tmp_path):
 
 
 def test_remove_collection(corpus):
-    db, _ = corpus
-    store.remove_collection(db, "notes")
+    db, root = corpus
+    assert store.remove_collection(db, "notes") == 3  # documents removed
+    assert (root / "rl.md").exists()  # only the index changes, never the files
     for table in ("collections", "docs", "chunks", "fts", "vectors"):
         assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
     with pytest.raises(SystemExit, match="no collection"):
