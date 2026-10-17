@@ -231,6 +231,31 @@ def test_embed_pending_calibrates_first(corpus, fake_models, gpu_memory, monkeyp
     assert gpu_memory.batches[-1] == 3
 
 
+def test_embed_pending_calibrates_on_the_longest_chunk(corpus, fake_models, monkeypatch):
+    db, root = corpus
+    write(root / "long.md", "# Long\n" + "word " * 1000 + "\n\n" + "more " * 1000 + "\n")
+    store.index(db)
+    samples, embedded = [], []
+    real_encode = fake_models.encode
+    monkeypatch.setattr(fake_models, "calibrate_batch_size", lambda sample=None: samples.append(sample) or 128)
+    monkeypatch.setattr(fake_models, "encode", lambda texts, query=False: embedded.extend(texts) or real_encode(texts))
+    fake_models.embed_pending(db)
+    assert samples == [max(embedded, key=len)]  # no batch in this run can be longer
+
+
+def test_calibration_uses_the_sample(fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    seen, real = [], FakeSentenceTransformer.encode_document
+
+    def recording(self, texts, **kwargs):
+        seen.extend(texts)
+        return real(self, texts, **kwargs)
+
+    monkeypatch.setattr(FakeSentenceTransformer, "encode_document", recording)
+    fake_models.calibrate_batch_size("a sample text")
+    assert set(seen) == {"a sample text"}
+
+
 def test_harmless_torch_windows_note_is_silenced(fake_models):
     redirects = logging.getLogger("torch.distributed.elastic.multiprocessing.redirects")
     assert redirects.getEffectiveLevel() >= logging.ERROR
