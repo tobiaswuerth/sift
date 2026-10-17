@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sift-rag"
+dynamic = ["version"]
+description = "Fast local search over text and Markdown files, built for AI agents."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Tobias Würth" }]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "torch>=2.4",
+    "sentence-transformers>=5.0",
+    "mcp>=2.0",
+]
+keywords = ["search", "rag", "embeddings", "mcp", "markdown", "bm25", "semantic-search"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Text Processing :: Indexing",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "pre-commit>=4"]
+
+[project.scripts]
+sift = "sift.cli:main"
+
+[tool.setuptools]
+packages = ["sift"]
+
+[tool.setuptools.dynamic]
+version = { attr = "sift.__version__" }
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["B905"]  # zip() without strict=
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["sift"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true

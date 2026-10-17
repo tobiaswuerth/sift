@@ -1,0 +1,6 @@
+# CUDA build of PyTorch. For CPU only, remove this line; for other CUDA versions see https://pytorch.org
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch>=2.4
+numpy>=1.26
+sentence-transformers>=5.0
+mcp>=2.0
