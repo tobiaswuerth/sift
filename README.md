@@ -135,7 +135,7 @@ pytest --cov            # 100% line and branch coverage is required
 The tests replace the embedding and reranking models with small deterministic fakes, so they need no GPU and no
 model downloads; everything else, including the MCP server, runs for real. Every bug fix comes with a regression test.
 
-GitHub Actions runs the pre-commit checks and the tests on Linux and Windows for Python 3.11 to 3.13 on every push and
+GitHub Actions runs the pre-commit checks and the tests on Linux and Windows for Python 3.11 to 3.15 on every push and
 pull request. Dependabot keeps dependencies and actions up to date.
 
 ## License
