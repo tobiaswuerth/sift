@@ -77,7 +77,7 @@ class Index:
         """Load all vectors into one (GPU) matrix; reload when the index has changed since the last load."""
         import torch
 
-        from .embed import DEVICE
+        from .embed import DEVICE, fp16
 
         version = store.get_meta(self.db, "version")
         if version is None or version != self.version:
@@ -87,8 +87,7 @@ class Index:
             ids, mat = np.empty(n, np.int64), np.empty((n, int(store.get_meta(self.db, "dim"))), np.float16)
             for row, (chunk, vec) in enumerate(self.db.execute("SELECT chunk, vec FROM vectors ORDER BY chunk")):
                 ids[row], mat[row] = chunk, np.frombuffer(vec, np.float16)
-            dtype = torch.float16 if DEVICE == "cuda" else torch.float32  # CPUs are slow at fp16 matmul
-            self.ids, self.mat = ids, torch.from_numpy(mat).to(DEVICE, dtype)
+            self.ids, self.mat = ids, torch.from_numpy(mat).to(DEVICE, torch.float16 if fp16() else torch.float32)
             self.version = version
         return self.ids, self.mat
 
