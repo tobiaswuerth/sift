@@ -1,9 +1,11 @@
+import logging
+
 import numpy as np
 import pytest
 
 from sift import store
 
-from .conftest import FakeSentenceTransformer, write
+from .conftest import FakeSentenceTransformer, GiB, write
 
 
 def vector_count(db):
@@ -148,3 +150,58 @@ def test_embed_refuses_mixing_models(embedded, fake_models):
     fake_models.embed_pending(db, reset=True)
     assert store.get_meta(db, "model") == fake_models.EMBED_MODEL
     assert vector_count(db) == 3
+
+
+def test_gpu_memory_budget_leaves_room_for_other_programs(fake_models, gpu_memory, monkeypatch, capsys):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    fake_models.embedder()
+    fake_models.reranker()  # loading a second model sets no second budget
+    assert gpu_memory.budgets == [(pytest.approx((20 - 2.4) / 24), "cuda")]  # free minus 10% of the GPU
+    assert "using at most 17.6 of 24.0 GB of GPU memory" in capsys.readouterr().err
+
+
+def test_gpu_memory_headroom_is_at_least_one_gb(fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda:1")
+    gpu_memory.free, gpu_memory.total = 6 * GiB, 8 * GiB
+    fake_models.embedder()
+    assert gpu_memory.budgets == [(pytest.approx(5 / 8), "cuda:1")]
+
+
+def test_gpu_memory_budget_can_be_set(fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    monkeypatch.setenv("SIFT_VRAM", "4")
+    fake_models.embedder()
+    assert gpu_memory.budgets == [(pytest.approx(4 / 24), "cuda")]
+
+
+@pytest.mark.parametrize(
+    "free, vram, error", [(2, None, "only 2.0 GB of GPU memory is free"), (20, "lots", "SIFT_VRAM")]
+)
+def test_too_little_gpu_memory_is_a_clear_error(fake_models, gpu_memory, monkeypatch, free, vram, error):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    gpu_memory.free = free * GiB
+    if vram:
+        monkeypatch.setenv("SIFT_VRAM", vram)
+    with pytest.raises(SystemExit, match=error):
+        fake_models.embedder()
+    assert gpu_memory.budgets == []
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps"])
+def test_no_gpu_memory_budget_off_cuda(fake_models, gpu_memory, monkeypatch, device):
+    monkeypatch.setattr(fake_models, "DEVICE", device)
+    fake_models.embedder()
+    fake_models.reranker()
+    assert gpu_memory.budgets == []
+
+
+def test_batches_start_large(fake_models, monkeypatch):
+    monkeypatch.delenv("SIFT_BATCH_SIZE", raising=False)
+    assert fake_models._initial_batch_size() == 512  # halved until it fits the memory budget
+    monkeypatch.setenv("SIFT_BATCH_SIZE", "64")
+    assert fake_models._initial_batch_size() == 64
+
+
+def test_harmless_torch_windows_note_is_silenced(fake_models):
+    redirects = logging.getLogger("torch.distributed.elastic.multiprocessing.redirects")
+    assert redirects.getEffectiveLevel() >= logging.ERROR

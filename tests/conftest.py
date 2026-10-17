@@ -54,9 +54,35 @@ class FakeCrossEncoder:
         return np.array([len(set(words(q)) & set(words(d))) / (1 + len(set(words(q)))) for q, d in pairs])
 
 
+GiB = 2**30
+
+
+class FakeGpuMemory:
+    """Stands in for torch.cuda's memory queries: 20 of 24 GiB free, another program holds the rest."""
+
+    def __init__(self):
+        self.free, self.total, self.budgets = 20 * GiB, 24 * GiB, []
+
+    def mem_get_info(self, device=None):
+        return self.free, self.total
+
+    def set_per_process_memory_fraction(self, fraction, device=None):
+        self.budgets.append((fraction, str(device)))
+
+
 @pytest.fixture
-def fake_models(monkeypatch):
-    """Replace Sentence Transformers with the fakes above; everything else in sift runs for real."""
+def gpu_memory(monkeypatch):
+    import torch
+
+    fake = FakeGpuMemory()
+    monkeypatch.setattr(torch.cuda, "mem_get_info", fake.mem_get_info)
+    monkeypatch.setattr(torch.cuda, "set_per_process_memory_fraction", fake.set_per_process_memory_fraction)
+    return fake
+
+
+@pytest.fixture
+def fake_models(monkeypatch, gpu_memory):
+    """Replace Sentence Transformers and GPU memory queries with fakes; everything else in sift runs for real."""
     from sift import embed
 
     module = types.ModuleType("sentence_transformers")
@@ -64,11 +90,13 @@ def fake_models(monkeypatch):
     monkeypatch.setitem(sys.modules, "sentence_transformers", module)
     monkeypatch.setattr(embed, "DEVICE", "cpu")
     monkeypatch.setattr(embed, "_batch_size", 128)
-    embed.embedder.cache_clear()
-    embed.reranker.cache_clear()
+    monkeypatch.delenv("SIFT_VRAM", raising=False)
+    caches = (embed.embedder, embed.reranker, embed.limit_gpu_memory)
+    for cached in caches:
+        cached.cache_clear()
     yield embed
-    embed.embedder.cache_clear()
-    embed.reranker.cache_clear()
+    for cached in caches:
+        cached.cache_clear()
 
 
 def write(path, text):
