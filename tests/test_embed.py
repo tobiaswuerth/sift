@@ -5,7 +5,7 @@ import pytest
 
 from sift import store
 
-from .conftest import FakeSentenceTransformer, GiB, write
+from .conftest import FakeSentenceTransformer, GiB, fake_vector, write
 
 
 def vector_count(db):
@@ -98,6 +98,25 @@ def test_embed_pending(corpus, fake_models, capsys):
     assert "embedded 3 chunks" in capsys.readouterr().err
     fake_models.embed_pending(db)
     assert "nothing to embed" in capsys.readouterr().err
+
+
+def test_embed_pending_reports_progress_within_a_slab(corpus, fake_models, monkeypatch, capsys):
+    db, root = corpus
+    for i in range(5):
+        write(root / f"extra{i}.md", f"# Extra {i}\n\n" + "word " * (10 + 50 * i) + "\n")
+    store.index(db)
+    monkeypatch.setattr(fake_models, "_batch_size", 1)
+    monkeypatch.setattr(fake_models, "PROGRESS_BATCHES", 2)  # report after every 2 batches, long before the slab ends
+    fake_models.embed_pending(db)
+    err = capsys.readouterr().err
+    assert all(f"embedded {n}/8 chunks" in err for n in (2, 4, 6, 8))
+    # sorting by length for the progress steps must not mix up which vector belongs to which chunk
+    rows = db.execute("""SELECT c.seq, fts.title, fts.text, v.vec FROM chunks c JOIN fts ON fts.rowid = c.id
+                         JOIN vectors v ON v.chunk = c.id""").fetchall()
+    assert len(rows) == 8
+    for seq, title, text, vec in rows:
+        expected = fake_vector(fake_models._text(seq, title, text)).astype(np.float16)
+        assert np.frombuffer(vec, np.float16).tolist() == expected.tolist()
 
 
 def test_embed_pending_in_slabs_with_title_on_later_chunks(corpus, fake_models, monkeypatch):
