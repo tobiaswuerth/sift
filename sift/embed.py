@@ -33,6 +33,7 @@ HEADROOM = 0.1  # share of the GPU left free for other programs, at least 1 GiB
 MIN_BUDGET = 2 * GiB  # with less GPU memory than this, the models run on the CPU
 FILL = 0.9  # share of the memory budget a calibrated batch may use
 MAX_BATCH = 1024
+PROGRESS_BATCHES = 8  # report progress after this many batches
 
 _batch_size = 128  # until calibrated on CUDA; a good size for CPUs and Apple GPUs
 
@@ -196,8 +197,24 @@ def embed_pending(db, reset=False):
     ).fetchall()
     calibrate_batch_size(max((_text(*row) for row in candidates), key=len))
     done, last, t0 = 0, 0, time.perf_counter()
+
+    def progress(n):
+        rate = n / (time.perf_counter() - t0)
+        left = max(total - n, 0) / rate / 60
+        print(f"\rembedded {n}/{total} chunks, {rate:.0f}/s, {left:.1f} min left ", end="", file=sys.stderr, flush=True)
+
     while rows := db.execute(pending, (last, SLAB)).fetchall():
-        vecs = encode([_text(seq, title, text) for _, seq, title, text in rows])
+        texts = [_text(seq, title, text) for _, seq, title, text in rows]
+        # longest first, in steps of a few batches: similar lengths per batch, and progress every few seconds
+        order = sorted(range(len(texts)), key=lambda i: -len(texts[i]))
+        vecs, step = None, _batch_size * PROGRESS_BATCHES
+        for start in range(0, len(order), step):
+            part = order[start : start + step]
+            out = encode([texts[i] for i in part])
+            if vecs is None:
+                vecs = np.empty((len(texts), out.shape[1]), np.float16)
+            vecs[part] = out
+            progress(done + start + len(part))
         db.executemany(
             "INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)", [(r[0], v.tobytes()) for r, v in zip(rows, vecs)]
         )
@@ -206,11 +223,4 @@ def embed_pending(db, reset=False):
         store.touch(db)  # tells a running server to reload vectors
         db.commit()
         done, last = done + len(rows), rows[-1][0]
-        rate = done / (time.perf_counter() - t0)
-        print(
-            f"\rembedded {done}/{total} chunks, {rate:.0f}/s, {max(total - done, 0) / rate / 60:.1f} min left ",
-            end="",
-            file=sys.stderr,
-            flush=True,
-        )
     print(f"\rembedded {done} chunks in {(time.perf_counter() - t0) / 60:.1f} min" + " " * 20, file=sys.stderr)
