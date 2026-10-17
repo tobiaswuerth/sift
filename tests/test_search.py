@@ -108,21 +108,16 @@ def test_vsearch_reloads_after_index_changes(embedded):
     assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
 
 
-class Interrupted(Exception):
-    """Stands in for Ctrl+C. A real KeyboardInterrupt sometimes escapes pytest.raises on Windows CI runners and
-    aborts the whole session; for embed_pending any exception is the same, since it catches none."""
-
-
 def test_vsearch_after_interrupted_reset_asks_for_embedding(embedded, fake_models, monkeypatch):
     db, _ = embedded
     index = Index(db)
     index.vsearch("reward")  # vectors cached
 
     def interrupted(texts, query=False):
-        raise Interrupted
+        raise KeyboardInterrupt
 
     monkeypatch.setattr(fake_models, "encode", interrupted)
-    with pytest.raises(Interrupted):
+    with pytest.raises(KeyboardInterrupt):
         fake_models.embed_pending(db, reset=True)
     with pytest.raises(LookupError, match="sift embed"):
         index.vsearch("reward")
