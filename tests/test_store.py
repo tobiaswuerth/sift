@@ -247,7 +247,7 @@ def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):
     store.index(serial)
     assert pools == []
 
-    monkeypatch.setenv("SIFT_WORKERS", "2")
+    monkeypatch.setattr(store, "_cpus", lambda: 3)  # two workers, one CPU for writing
     monkeypatch.setattr(store, "FILES_PER_WORKER", 1)
     monkeypatch.setattr(store, "WRITE_BATCH", 2)  # several batches in flight
     parallel = store.connect(tmp_path / "parallel")
@@ -277,18 +277,8 @@ def test_small_updates_skip_worker_processes(corpus, monkeypatch, pools):
     ],
 )
 def test_worker_count_adapts_to_machine_and_workload(monkeypatch, cpus, files, expected):
-    monkeypatch.delenv("SIFT_WORKERS", raising=False)
     monkeypatch.setattr(store, "_cpus", lambda: cpus)
     assert store.workers(files) == expected
-
-
-def test_worker_count_can_be_capped(monkeypatch):
-    monkeypatch.setattr(store, "_cpus", lambda: 64)
-    monkeypatch.setenv("SIFT_WORKERS", "2")
-    assert store.workers(1_000_000) == 2
-    monkeypatch.setenv("SIFT_WORKERS", "many")
-    with pytest.raises(SystemExit, match="SIFT_WORKERS"):
-        store.workers(1_000_000)
 
 
 def test_cpus_respects_what_the_platform_allows(monkeypatch):

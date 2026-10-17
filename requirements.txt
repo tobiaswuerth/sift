@@ -4,3 +4,4 @@ torch>=2.4
 numpy>=1.26
 sentence-transformers>=5.0
 mcp>=2.0
+nvidia-ml-py>=12

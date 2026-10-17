@@ -91,14 +91,14 @@ claude mcp add sift -- sift serve --stdio
 
 ## Configuration
 
+None needed: sift picks the device, the GPU memory budget, the batch size and the number of worker processes itself.
+Three optional settings exist for special cases:
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `SIFT_HOME` | `~/.sift` | Where the index lives |
 | `SIFT_EMBED_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | Any Sentence Transformers embedding model |
 | `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
-| `SIFT_BATCH_SIZE` | `128` | Embedding batch size; halved automatically on out-of-memory |
-| `SIFT_DEVICE` | `cuda` if available, else `mps`, else `cpu` | Force a device, e.g. `cpu` while the GPU is busy |
-| `SIFT_WORKERS` | CPUs available minus one | Maximum number of processes parsing files during `sift index` |
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
 
@@ -110,8 +110,13 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   boundaries, preferring headings, with a small overlap.
 - **Storage:** one SQLite database in WAL mode holds documents, chunks, metadata, an FTS5 keyword index and the
   vectors (fp16).
-- **Embedding:** PyTorch in fp16 on the GPU, in large batches sorted by length to keep padding low. Each slab of
-  20,000 chunks is committed, so progress is never lost.
+- **Embedding:** PyTorch in fp16 on the GPU (NVIDIA, else Apple), in batches sorted by length to keep padding low.
+  Each slab of 20,000 chunks is committed, so progress is never lost.
+- **GPU memory:** sift shares the GPU with other programs. On NVIDIA GPUs it caps itself at the memory that is free
+  when it starts, minus headroom (10% of the GPU, at least 1 GB), asking NVML as well as CUDA, since on Windows CUDA
+  counts memory held by other programs as free. It then measures how much memory its longest text needs at growing
+  batch sizes and uses the largest batch that fills 90% of that budget; if a batch still doesn't fit, it is halved.
+  With less than 2 GB to spare, sift uses the CPU instead.
 - **`search`:** SQLite FTS5 with BM25, titles weighted double. Input that isn't valid FTS5 syntax is treated as exact
   phrases.
 - **`vsearch`:** exact nearest-neighbour search as one matrix multiply over all vectors on the GPU. No approximate

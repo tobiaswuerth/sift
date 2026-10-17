@@ -192,15 +192,9 @@ def _cpus():
 def workers(files):
     """Worker processes for parsing `files` files; 0 or 1 means parse in-process.
 
-    One per CPU except the one the main process uses for writing, at most one per FILES_PER_WORKER files.
-    The SIFT_WORKERS environment variable sets a maximum.
+    One per CPU except the one the main process uses for writing, and at most one per FILES_PER_WORKER files.
     """
-    limit = os.environ.get("SIFT_WORKERS") or _cpus() - 1
-    try:
-        limit = int(limit)
-    except ValueError:
-        raise SystemExit(f"SIFT_WORKERS must be a whole number, got {limit!r}") from None
-    return max(0, min(limit, files // FILES_PER_WORKER))
+    return max(0, min(_cpus() - 1, files // FILES_PER_WORKER))
 
 
 def walk(root):

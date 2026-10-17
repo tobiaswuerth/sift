@@ -16,6 +16,7 @@ dependencies = [
     "torch>=2.4",
     "sentence-transformers>=5.0",
     "mcp>=2.0",
+    "nvidia-ml-py>=12",  # NVML: free GPU memory as nvidia-smi sees it
 ]
 keywords = ["search", "rag", "embeddings", "mcp", "markdown", "bm25", "semantic-search"]
 classifiers = [

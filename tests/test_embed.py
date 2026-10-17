@@ -1,9 +1,11 @@
+import logging
+
 import numpy as np
 import pytest
 
 from sift import store
 
-from .conftest import FakeSentenceTransformer, write
+from .conftest import FakeSentenceTransformer, GiB, write
 
 
 def vector_count(db):
@@ -22,24 +24,10 @@ def test_models_load_with_limits(fake_models):
     assert fake_models.embedder() is model  # loaded once
 
 
-@pytest.mark.parametrize(
-    "env, cuda, mps, device",
-    [
-        (None, True, True, "cuda"),
-        (None, False, True, "mps"),
-        (None, False, False, "cpu"),
-        ("", False, True, "mps"),
-        ("cpu", True, True, "cpu"),
-        ("cuda:1", False, False, "cuda:1"),
-    ],
-)
-def test_device_prefers_cuda_then_mps_then_cpu(fake_models, monkeypatch, env, cuda, mps, device):
+@pytest.mark.parametrize("cuda, mps, device", [(True, True, "cuda"), (False, True, "mps"), (False, False, "cpu")])
+def test_device_prefers_cuda_then_mps_then_cpu(fake_models, monkeypatch, cuda, mps, device):
     import torch
 
-    if env is None:
-        monkeypatch.delenv("SIFT_DEVICE", raising=False)
-    else:
-        monkeypatch.setenv("SIFT_DEVICE", env)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda)
     monkeypatch.setattr(torch.backends.mps, "is_available", lambda: mps)
     assert fake_models._device() == device
@@ -148,3 +136,126 @@ def test_embed_refuses_mixing_models(embedded, fake_models):
     fake_models.embed_pending(db, reset=True)
     assert store.get_meta(db, "model") == fake_models.EMBED_MODEL
     assert vector_count(db) == 3
+
+
+def test_gpu_memory_budget_leaves_room_for_other_programs(fake_models, gpu_memory, monkeypatch, capsys):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    fake_models.embedder()
+    fake_models.reranker()  # loading a second model sets no second budget
+    assert gpu_memory.budgets == [(pytest.approx((20 - 2.4) / 24), 0)]  # free minus 10% of the GPU
+    assert "using at most 17.6 of 24.0 GB of GPU memory" in capsys.readouterr().err
+
+
+def test_gpu_memory_budget_counts_memory_other_programs_hold(fake_models, gpu_memory, monkeypatch):
+    # On Windows (WDDM), CUDA reports memory held by other programs as free, since the driver could page it out.
+    # NVML, which nvidia-smi uses, does not; the smaller of the two decides.
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    gpu_memory.free, gpu_memory.used = 22.5 * GiB, 13.5 * GiB  # as measured on an RTX 4090 under Windows
+    fake_models.embedder()
+    assert gpu_memory.budgets == [(pytest.approx((24 - 13.5 - 2.4) / 24), 0)]
+
+
+def test_gpu_memory_budget_without_nvml_uses_cuda(fake_models, gpu_memory, monkeypatch):
+    import torch
+
+    def no_nvml(device=None):
+        raise ModuleNotFoundError("nvidia-ml-py does not seem to be installed")
+
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    monkeypatch.setattr(torch.cuda, "device_memory_used", no_nvml)
+    fake_models.embedder()
+    assert gpu_memory.budgets == [(pytest.approx((20 - 2.4) / 24), 0)]
+
+
+def test_gpu_memory_headroom_is_at_least_one_gb(fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda:1")
+    gpu_memory.free, gpu_memory.total = 6 * GiB, 8 * GiB
+    fake_models.embedder()
+    assert gpu_memory.budgets == [(pytest.approx(5 / 8), 1)]
+
+
+def test_too_little_free_gpu_memory_falls_back_to_cpu(fake_models, gpu_memory, monkeypatch, capsys):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    gpu_memory.free = 2 * GiB  # less than the 2 GiB budget the models need, after headroom
+    model = fake_models.embedder()
+    assert (model.device, fake_models.DEVICE, model.halved) == ("cpu", "cpu", False)
+    assert gpu_memory.budgets == []
+    assert "only 2.0 GB of GPU memory is free; using the CPU" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps"])
+def test_no_gpu_memory_budget_off_cuda(fake_models, gpu_memory, monkeypatch, device):
+    monkeypatch.setattr(fake_models, "DEVICE", device)
+    fake_models.embedder()
+    fake_models.reranker()
+    assert gpu_memory.budgets == []
+
+
+def test_batch_size_is_calibrated_to_fill_the_budget(fake_models, gpu_memory, monkeypatch, capsys):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    size = fake_models.calibrate_batch_size()
+    # budget 17.6 GiB; 90% of it minus 1 GiB of weights leaves 14.84 GiB for 0.1 + 0.05 per text
+    assert size == 1 + int((0.9 * 17.6 - 1 - 0.15) / 0.05) == 294
+    assert fake_models._batch_size == size
+    assert gpu_memory.batches == [1, 2, 4, 8, 16, 32, 64, 128, 256]  # doubled until half the budget was in use
+    assert "batch size 294" in capsys.readouterr().err
+    fake_models.encode(["x"] * 600)  # the calibrated size fits: no out-of-memory, no halving
+    assert fake_models._batch_size == 294
+
+
+def test_calibration_stops_at_the_first_out_of_memory(fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    monkeypatch.setattr(gpu_memory, "oom_from", 16)  # fails earlier than the linear model predicts
+    size = fake_models.calibrate_batch_size()
+    assert gpu_memory.batches == [1, 2, 4, 8, 16]
+    assert size == 15  # never a size that already failed
+
+
+def test_calibration_is_capped(fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    monkeypatch.setattr(gpu_memory, "per_text", 0.001 * GiB)
+    assert fake_models.calibrate_batch_size() == fake_models.MAX_BATCH
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps"])
+def test_no_calibration_off_cuda(fake_models, gpu_memory, monkeypatch, device):
+    monkeypatch.setattr(fake_models, "DEVICE", device)
+    assert fake_models.calibrate_batch_size() == 128
+    assert gpu_memory.batches == []
+
+
+def test_embed_pending_calibrates_first(corpus, fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    fake_models.embed_pending(corpus[0])
+    assert gpu_memory.batches[:3] == [1, 2, 4]  # calibration, then the 3 chunks in one batch
+    assert gpu_memory.batches[-1] == 3
+
+
+def test_embed_pending_calibrates_on_the_longest_chunk(corpus, fake_models, monkeypatch):
+    db, root = corpus
+    write(root / "long.md", "# Long\n" + "word " * 1000 + "\n\n" + "more " * 1000 + "\n")
+    store.index(db)
+    samples, embedded = [], []
+    real_encode = fake_models.encode
+    monkeypatch.setattr(fake_models, "calibrate_batch_size", lambda sample=None: samples.append(sample) or 128)
+    monkeypatch.setattr(fake_models, "encode", lambda texts, query=False: embedded.extend(texts) or real_encode(texts))
+    fake_models.embed_pending(db)
+    assert samples == [max(embedded, key=len)]  # no batch in this run can be longer
+
+
+def test_calibration_uses_the_sample(fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    seen, real = [], FakeSentenceTransformer.encode_document
+
+    def recording(self, texts, **kwargs):
+        seen.extend(texts)
+        return real(self, texts, **kwargs)
+
+    monkeypatch.setattr(FakeSentenceTransformer, "encode_document", recording)
+    fake_models.calibrate_batch_size("a sample text")
+    assert set(seen) == {"a sample text"}
+
+
+def test_harmless_torch_windows_note_is_silenced(fake_models):
+    redirects = logging.getLogger("torch.distributed.elastic.multiprocessing.redirects")
+    assert redirects.getEffectiveLevel() >= logging.ERROR
