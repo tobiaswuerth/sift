@@ -99,6 +99,16 @@ def test_vsearch(embedded):
     assert len(index.vsearch("anything", k=100)) == 3
 
 
+@pytest.mark.parametrize("fp16, dtype", [(True, "float16"), (False, "float32")])
+def test_vectors_stay_fp16_on_gpus(embedded, fake_models, monkeypatch, fp16, dtype):
+    import torch
+
+    monkeypatch.setattr(fake_models, "fp16", lambda: fp16)
+    index = Index(embedded[0])
+    assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
+    assert index.mat.dtype == getattr(torch, dtype)
+
+
 def test_vsearch_reloads_after_index_changes(embedded):
     db, root = embedded
     index = Index(db)

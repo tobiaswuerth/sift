@@ -11,7 +11,8 @@ Everything runs locally. No cloud services, no API keys.
 
 ## Install
 
-Requires Python 3.11 or newer. An NVIDIA GPU is strongly recommended for embedding; everything also runs on CPU.
+Requires Python 3.11 or newer. An NVIDIA GPU or an Apple silicon Mac is strongly recommended for embedding; everything
+also runs on CPU.
 
 ```bash
 git clone https://github.com/tobiaswuerth/sift
@@ -95,7 +96,7 @@ claude mcp add sift -- sift serve --stdio
 | `SIFT_EMBED_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | Any Sentence Transformers embedding model |
 | `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
 | `SIFT_BATCH_SIZE` | `128` | Embedding batch size; halved automatically on out-of-memory |
-| `SIFT_DEVICE` | `cuda` if available, else `cpu` | Force a device, e.g. `cpu` while the GPU is busy |
+| `SIFT_DEVICE` | `cuda` if available, else `mps`, else `cpu` | Force a device, e.g. `cpu` while the GPU is busy |
 | `SIFT_WORKERS` | CPUs available minus one | Maximum number of processes parsing files during `sift index` |
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
@@ -120,8 +121,8 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
 
 ## Scope
 
-In scope: plain text and Markdown files; Linux, macOS and Windows; NVIDIA GPUs (CUDA), otherwise CPU; one user, any
-number of local agents.
+In scope: plain text and Markdown files; Linux, macOS and Windows; NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise
+CPU; one user, any number of local agents.
 
 Out of scope for now: PDF, Word and HTML parsing (convert to Markdown first); answer generation (sift retrieves, the
 agent writes); approximate nearest-neighbour indexes; live file watching; remote access and authentication.

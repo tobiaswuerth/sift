@@ -22,10 +22,35 @@ def test_models_load_with_limits(fake_models):
     assert fake_models.embedder() is model  # loaded once
 
 
-def test_models_use_fp16_on_gpu(fake_models, monkeypatch):
-    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
-    assert fake_models.embedder().halved
-    assert fake_models.reranker().model.halved
+@pytest.mark.parametrize(
+    "env, cuda, mps, device",
+    [
+        (None, True, True, "cuda"),
+        (None, False, True, "mps"),
+        (None, False, False, "cpu"),
+        ("", False, True, "mps"),
+        ("cpu", True, True, "cpu"),
+        ("cuda:1", False, False, "cuda:1"),
+    ],
+)
+def test_device_prefers_cuda_then_mps_then_cpu(fake_models, monkeypatch, env, cuda, mps, device):
+    import torch
+
+    if env is None:
+        monkeypatch.delenv("SIFT_DEVICE", raising=False)
+    else:
+        monkeypatch.setenv("SIFT_DEVICE", env)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: mps)
+    assert fake_models._device() == device
+
+
+@pytest.mark.parametrize("device, fp16", [("cuda", True), ("cuda:1", True), ("mps", True), ("cpu", False)])
+def test_models_use_fp16_on_gpus(fake_models, monkeypatch, device, fp16):
+    monkeypatch.setattr(fake_models, "DEVICE", device)
+    assert fake_models.fp16() == fp16
+    assert fake_models.embedder().halved == fp16
+    assert fake_models.reranker().model.halved == fp16
 
 
 def test_encode_returns_normalised_fp16(fake_models):
@@ -40,20 +65,40 @@ def test_rerank_scores_pairs(fake_models):
     assert scores[0] > scores[1]
 
 
-def test_out_of_memory_halves_batch_size(fake_models, monkeypatch, capsys):
+@pytest.mark.parametrize("gpu", ["cuda", "mps"])
+def test_out_of_memory_halves_batch_size(fake_models, monkeypatch, capsys, gpu):
+    import torch
+
+    emptied = []
+    monkeypatch.setattr(getattr(torch, gpu), "empty_cache", lambda: emptied.append(gpu))
+    monkeypatch.setattr(FakeSentenceTransformer, "gpu", gpu)
     monkeypatch.setattr(FakeSentenceTransformer, "max_batch", 20)
     fake_models.encode(["a", "b"])
     assert fake_models._batch_size == 16
+    assert emptied == [gpu] * 3  # 128, 64 and 32 failed
     assert "batch size now 16" in capsys.readouterr().err
 
 
-def test_out_of_memory_at_batch_size_one_raises(fake_models, monkeypatch):
+@pytest.mark.parametrize("gpu", ["cuda", "mps"])
+def test_out_of_memory_at_batch_size_one_raises(fake_models, monkeypatch, gpu):
     import torch
 
+    monkeypatch.setattr(getattr(torch, gpu), "empty_cache", lambda: None)
+    monkeypatch.setattr(FakeSentenceTransformer, "gpu", gpu)
     monkeypatch.setattr(FakeSentenceTransformer, "max_batch", 0)
-    with pytest.raises(torch.cuda.OutOfMemoryError):
+    with pytest.raises(RuntimeError, match="out of memory"):
         fake_models.encode(["a"])
     assert fake_models._batch_size == 1
+
+
+def test_other_runtime_errors_are_not_retried(fake_models, monkeypatch):
+    def broken(self, texts, **kwargs):
+        raise RuntimeError("Expected all tensors to be on the same device")
+
+    monkeypatch.setattr(FakeSentenceTransformer, "encode_document", broken)
+    with pytest.raises(RuntimeError, match="same device"):
+        fake_models.encode(["a"])
+    assert fake_models._batch_size == 128
 
 
 def test_embed_pending(corpus, fake_models, capsys):

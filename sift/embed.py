@@ -10,13 +10,28 @@ import torch
 
 from . import store
 
+
+def _device():
+    """SIFT_DEVICE if set, else an NVIDIA GPU (CUDA), else an Apple GPU (MPS), else the CPU."""
+    if os.environ.get("SIFT_DEVICE"):
+        return os.environ["SIFT_DEVICE"]
+    if torch.cuda.is_available():
+        return "cuda"
+    return "mps" if torch.backends.mps.is_available() else "cpu"
+
+
 EMBED_MODEL = os.environ.get("SIFT_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
 RERANK_MODEL = os.environ.get("SIFT_RERANK_MODEL", "Alibaba-NLP/gte-reranker-modernbert-base")
-DEVICE = os.environ.get("SIFT_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = _device()
 MAX_TOKENS = 1024
 SLAB = 20000  # chunks per commit; length sorting happens within a slab
 
 _batch_size = int(os.environ.get("SIFT_BATCH_SIZE", "128"))
+
+
+def fp16():
+    """Whether models and vectors use fp16: yes on GPUs, no on CPUs, which are slow at fp16 matmul."""
+    return torch.device(DEVICE).type in ("cuda", "mps")
 
 
 @cache
@@ -24,7 +39,7 @@ def embedder():
     from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(EMBED_MODEL, device=DEVICE)
-    if DEVICE == "cuda":
+    if fp16():
         model.half()
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)
     return model
@@ -35,21 +50,22 @@ def reranker():
     from sentence_transformers import CrossEncoder
 
     model = CrossEncoder(RERANK_MODEL, device=DEVICE, max_length=MAX_TOKENS)
-    if DEVICE == "cuda":
+    if fp16():
         model.model.half()
     return model
 
 
 def _oom_safe(fn, items):
-    """Run fn(items, batch_size), halving the batch size on CUDA out-of-memory errors."""
+    """Run fn(items, batch_size), halving the batch size when the GPU runs out of memory."""
     global _batch_size
     while True:
         try:
             return fn(items, _batch_size)
-        except torch.cuda.OutOfMemoryError:
-            if _batch_size == 1:
+        except RuntimeError as e:  # CUDA raises OutOfMemoryError, a RuntimeError; MPS a plain RuntimeError
+            cuda = isinstance(e, torch.cuda.OutOfMemoryError)
+            if _batch_size == 1 or not (cuda or "MPS backend out of memory" in str(e)):
                 raise
-            torch.cuda.empty_cache()
+            (torch.cuda if cuda else torch.mps).empty_cache()
             _batch_size //= 2
             print(f"\nout of GPU memory, batch size now {_batch_size}", file=sys.stderr)
 
