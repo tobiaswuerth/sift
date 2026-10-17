@@ -57,6 +57,15 @@ def test_delete_marks_vectors_changed(corpus):
     assert store.get_meta(db, "version") != before
 
 
+def test_touch_changes_version_within_one_clock_tick(corpus, monkeypatch):
+    db, _ = corpus
+    monkeypatch.setattr(store.time, "time_ns", lambda: 1)  # before Python 3.13 the Windows clock ticks every 15.6 ms
+    store.touch(db)
+    before = store.get_meta(db, "version")
+    store.touch(db)
+    assert store.get_meta(db, "version") != before
+
+
 # --- parsing -----------------------------------------------------------------
 
 

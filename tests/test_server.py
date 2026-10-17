@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 
 import pytest
 from mcp import Client
@@ -46,6 +47,17 @@ def test_search_tools(mcp, tool):
     assert set(hits[0]) == {"id", "title", "lines", "score", "text"}
     hits = data(call(mcp, tool, {"query": "reward", "collection": "notes", "path": "*.md", "k": 3}))
     assert "notes/rl.md" in [h["id"] for h in hits]
+
+
+@pytest.mark.parametrize("tool", ["search", "vsearch", "query", "get", "status"])
+def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
+    # PyTorch crashes in worker threads on Python 3.15 (Windows, macOS), so no tool may run in one.
+    index, threads = Index(embedded[0]), []
+    real = getattr(index, tool)
+    monkeypatch.setattr(index, tool, lambda *a, **kw: threads.append(threading.current_thread()) or real(*a, **kw))
+    args = {"get": {"id": "notes/rl.md"}, "status": {}}.get(tool, {"query": "brush"})
+    assert not call(server.build(index)[0], tool, args).is_error
+    assert threads == [threading.main_thread()]
 
 
 def test_get_and_status(mcp):
