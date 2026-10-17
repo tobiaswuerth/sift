@@ -39,7 +39,7 @@ def main(argv=None):
     s = sub.add_parser("add", help="register a folder as a collection")
     s.add_argument("path")
     s.add_argument("--name", help="collection name (default: folder name)")
-    s = sub.add_parser("rm", help="remove a collection from the index")
+    s = sub.add_parser("rm", help="remove a collection from the index (its files stay on disk)")
     s.add_argument("name")
     s = sub.add_parser("index", help="scan collections and update the keyword index")
     s.add_argument("names", nargs="*", help="collections to scan (default: all)")
@@ -76,7 +76,10 @@ def main(argv=None):
             name = store.add_collection(db, a.path, a.name)
             print(f"added collection {name!r}; run `sift index` next", file=sys.stderr)
         elif a.cmd == "rm":
-            store.remove_collection(db, a.name)
+            n = store.remove_collection(db, a.name)
+            documents = "document" if n == 1 else "documents"
+            print(f"removed collection {a.name!r} and its {n} {documents} from the index;", end=" ", file=sys.stderr)
+            print("the files on disk are untouched", file=sys.stderr)
         elif a.cmd == "index":
             store.index(db, a.names)
         elif a.cmd == "embed":

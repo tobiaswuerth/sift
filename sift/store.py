@@ -76,12 +76,15 @@ def add_collection(db, path, name=None):
 
 
 def remove_collection(db, name):
+    """Remove a collection from the index; its files stay on disk. Returns the number of documents removed."""
     row = db.execute("SELECT id FROM collections WHERE name=?", (name,)).fetchone()
     if not row:
         raise SystemExit(f"no collection named {name!r}")
-    delete_docs(db, [d for (d,) in db.execute("SELECT id FROM docs WHERE collection=?", row)])
+    docs = [d for (d,) in db.execute("SELECT id FROM docs WHERE collection=?", row)]
+    delete_docs(db, docs)
     db.execute("DELETE FROM collections WHERE id=?", row)
     db.commit()
+    return len(docs)
 
 
 def delete_docs(db, doc_ids):

@@ -43,8 +43,19 @@ def test_get_status_rm(cli_corpus, capsys):
     assert run(capsys, "get", "notes/rl.md").out.startswith("# Reward shaping")
     status = json.loads(run(capsys, "status").out)
     assert status["collections"][0]["embedded"] == 3
-    run(capsys, "rm", "notes")
+    err = run(capsys, "rm", "notes").err
+    assert "removed collection 'notes' and its 3 documents from the index" in err
+    assert "files on disk are untouched" in err
     assert json.loads(run(capsys, "status").out)["collections"] == []
+
+
+def test_rm_reports_a_single_document(tmp_path, home, capsys):
+    folder = tmp_path / "one"
+    folder.mkdir()
+    (folder / "only.md").write_text("# Only\n", encoding="utf-8")
+    run(capsys, "add", str(folder))
+    run(capsys, "index")
+    assert "and its 1 document from" in run(capsys, "rm", "one").err
 
 
 @pytest.mark.parametrize(
