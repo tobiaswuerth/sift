@@ -34,6 +34,7 @@ sift vsearch "how do robots plan brush strokes"
 sift query "mixing pigments to match a target colour"
 sift get papers/2401.02225.md          # full document
 sift status                            # collections and counts
+sift rm papers                         # remove a collection from the index; its files stay on disk
 sift serve                             # MCP server on http://127.0.0.1:8765/mcp
 ```
 
