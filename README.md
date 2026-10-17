@@ -96,14 +96,16 @@ claude mcp add sift -- sift serve --stdio
 | `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
 | `SIFT_BATCH_SIZE` | `128` | Embedding batch size; halved automatically on out-of-memory |
 | `SIFT_DEVICE` | `cuda` if available, else `cpu` | Force a device, e.g. `cpu` while the GPU is busy |
+| `SIFT_WORKERS` | CPUs available minus one | Maximum number of processes parsing files during `sift index` |
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
 
 ## How it works
 
-- **Indexing:** a thread pool reads files in parallel while the previous batch is written. Files are compared by
-  modification time and size, then by content hash, so unchanged files cost nothing. Markdown is split into chunks of
-  about 3,000 characters (about 750 tokens) on line boundaries, preferring headings, with a small overlap.
+- **Indexing:** worker processes read and parse files in parallel while the previous batch is written; small
+  updates skip the process start-up. Files are compared by modification time and size, then by content hash, so
+  unchanged files cost nothing. Markdown is split into chunks of about 3,000 characters (about 750 tokens) on line
+  boundaries, preferring headings, with a small overlap.
 - **Storage:** one SQLite database in WAL mode holds documents, chunks, metadata, an FTS5 keyword index and the
   vectors (fp16).
 - **Embedding:** PyTorch in fp16 on the GPU, in large batches sorted by length to keep padding low. Each slab of
