@@ -1,3 +1,4 @@
+import functools
 import re
 import sys
 import types
@@ -15,6 +16,7 @@ def words(text):
     return re.findall(r"\w+", text.lower())
 
 
+@functools.cache
 def fake_vector(text):
     """Deterministic bag-of-words embedding: texts sharing words point in similar directions."""
     v = np.zeros(DIM, np.float32)
@@ -68,16 +70,27 @@ class FakeGpuMemory:
     """
 
     weights, fixed, per_text = 1 * GiB, 0.1 * GiB, 0.05 * GiB
+    oom_from = None  # batch size from which to fail anyway, like fragmented memory
 
     def __init__(self):
         self.free, self.total, self.budgets, self.batches = 20 * GiB, 24 * GiB, [], []
+        self.used = None  # set it to make NVML disagree with CUDA, as it does on Windows
         self.peak = self.weights
 
     def mem_get_info(self, device=None):
         return self.free, self.total
 
+    def device_memory_used(self, device=None):
+        """What NVML (and nvidia-smi) report, other programs included."""
+        return self.total - self.free if self.used is None else self.used
+
     def set_per_process_memory_fraction(self, fraction, device=None):
-        self.budgets.append((fraction, str(device)))
+        if not isinstance(device, int):  # like PyTorch, which rejects torch.device("cuda") without an index
+            raise ValueError(f"Expected a torch.device with a specified index or an integer, but got:{device}")
+        self.budgets.append((fraction, device))
+
+    def current_device(self):
+        return 0
 
     def memory_allocated(self, device=None):
         return self.weights
@@ -95,7 +108,7 @@ class FakeGpuMemory:
         need = self.weights + self.fixed + n * self.per_text
         limit = self.budgets[-1][0] * self.total if self.budgets else self.free
         self.batches.append(n)
-        if need > limit:
+        if need > limit or (self.oom_from and n >= self.oom_from):
             raise torch.cuda.OutOfMemoryError(f"CUDA out of memory. Tried to allocate {need / GiB:.2f} GiB")
         self.peak = max(self.peak, need)
 
@@ -111,6 +124,8 @@ def gpu_memory(monkeypatch):
         "memory_allocated",
         "max_memory_allocated",
         "reset_peak_memory_stats",
+        "current_device",
+        "device_memory_used",
     ):
         monkeypatch.setattr(torch.cuda, name, getattr(fake, name))
     monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)

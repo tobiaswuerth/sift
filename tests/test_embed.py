@@ -142,15 +142,36 @@ def test_gpu_memory_budget_leaves_room_for_other_programs(fake_models, gpu_memor
     monkeypatch.setattr(fake_models, "DEVICE", "cuda")
     fake_models.embedder()
     fake_models.reranker()  # loading a second model sets no second budget
-    assert gpu_memory.budgets == [(pytest.approx((20 - 2.4) / 24), "cuda")]  # free minus 10% of the GPU
+    assert gpu_memory.budgets == [(pytest.approx((20 - 2.4) / 24), 0)]  # free minus 10% of the GPU
     assert "using at most 17.6 of 24.0 GB of GPU memory" in capsys.readouterr().err
+
+
+def test_gpu_memory_budget_counts_memory_other_programs_hold(fake_models, gpu_memory, monkeypatch):
+    # On Windows (WDDM), CUDA reports memory held by other programs as free, since the driver could page it out.
+    # NVML, which nvidia-smi uses, does not; the smaller of the two decides.
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    gpu_memory.free, gpu_memory.used = 22.5 * GiB, 13.5 * GiB  # as measured on an RTX 4090 under Windows
+    fake_models.embedder()
+    assert gpu_memory.budgets == [(pytest.approx((24 - 13.5 - 2.4) / 24), 0)]
+
+
+def test_gpu_memory_budget_without_nvml_uses_cuda(fake_models, gpu_memory, monkeypatch):
+    import torch
+
+    def no_nvml(device=None):
+        raise ModuleNotFoundError("nvidia-ml-py does not seem to be installed")
+
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    monkeypatch.setattr(torch.cuda, "device_memory_used", no_nvml)
+    fake_models.embedder()
+    assert gpu_memory.budgets == [(pytest.approx((20 - 2.4) / 24), 0)]
 
 
 def test_gpu_memory_headroom_is_at_least_one_gb(fake_models, gpu_memory, monkeypatch):
     monkeypatch.setattr(fake_models, "DEVICE", "cuda:1")
     gpu_memory.free, gpu_memory.total = 6 * GiB, 8 * GiB
     fake_models.embedder()
-    assert gpu_memory.budgets == [(pytest.approx(5 / 8), "cuda:1")]
+    assert gpu_memory.budgets == [(pytest.approx(5 / 8), 1)]
 
 
 def test_too_little_free_gpu_memory_falls_back_to_cpu(fake_models, gpu_memory, monkeypatch, capsys):
@@ -184,10 +205,10 @@ def test_batch_size_is_calibrated_to_fill_the_budget(fake_models, gpu_memory, mo
 
 def test_calibration_stops_at_the_first_out_of_memory(fake_models, gpu_memory, monkeypatch):
     monkeypatch.setattr(fake_models, "DEVICE", "cuda")
-    monkeypatch.setattr(gpu_memory, "per_text", 1 * GiB)  # 16 texts are already too many
+    monkeypatch.setattr(gpu_memory, "oom_from", 16)  # fails earlier than the linear model predicts
     size = fake_models.calibrate_batch_size()
-    assert gpu_memory.batches[-1] == 16
-    assert 1 <= size <= 15
+    assert gpu_memory.batches == [1, 2, 4, 8, 16]
+    assert size == 15  # never a size that already failed
 
 
 def test_calibration_is_capped(fake_models, gpu_memory, monkeypatch):
