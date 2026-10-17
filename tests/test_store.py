@@ -209,6 +209,53 @@ def test_index_in_several_batches(notes, home, monkeypatch):
     assert len(doc_ids(db)) == 3
 
 
+def index_contents(db):
+    """Everything indexing produces, independent of row ids."""
+    return sorted(
+        db.execute("""SELECT d.path, d.hash, d.title, d.meta, c.seq, c.line_start, c.line_end, fts.text
+                      FROM docs d JOIN chunks c ON c.doc = d.id JOIN fts ON fts.rowid = c.id""")
+    )
+
+
+@pytest.fixture
+def pools(monkeypatch):
+    """Records every worker process pool that indexing starts."""
+    created = []
+
+    class RecordingPool(store.ProcessPoolExecutor):
+        def __init__(self, max_workers):
+            created.append(max_workers)
+            super().__init__(max_workers)
+
+    monkeypatch.setattr(store, "ProcessPoolExecutor", RecordingPool)
+    return created
+
+
+def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):
+    serial = store.connect(tmp_path / "serial")
+    store.add_collection(serial, notes, "notes")
+    store.index(serial)
+    assert pools == []
+
+    monkeypatch.setattr(store, "WORKERS", 2)
+    monkeypatch.setattr(store, "PARALLEL_MIN_FILES", 1)
+    monkeypatch.setattr(store, "WRITE_BATCH", 2)  # several batches in flight
+    parallel = store.connect(tmp_path / "parallel")
+    store.add_collection(parallel, notes, "notes")
+    store.index(parallel)
+    assert pools == [2]
+    assert index_contents(parallel) == index_contents(serial)
+
+
+def test_small_updates_skip_worker_processes(corpus, monkeypatch, pools):
+    db, root = corpus
+    monkeypatch.setattr(store, "WORKERS", 2)
+    write(root / "new.md", "# New\n")
+    store.index(db)
+    assert pools == []
+    assert "new.md" in doc_ids(db)
+
+
 def test_index_selected_collections(corpus, tmp_path):
     db, _ = corpus
     other = tmp_path / "other"
