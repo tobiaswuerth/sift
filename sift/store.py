@@ -7,14 +7,16 @@ import re
 import sqlite3
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
 
 HOME = Path(os.environ.get("SIFT_HOME", Path.home() / ".sift"))
 EXTS = (".md", ".markdown", ".txt")
 SKIP_DIRS = {"node_modules", "__pycache__"}
 CHUNK_CHARS, OVERLAP_CHARS = 3000, 300  # ~750 tokens, well inside the models' 1024-token window
-READ_WORKERS, WRITE_BATCH = 32, 5000
+WRITE_BATCH = 5000
+FILES_PER_WORKER = 1000  # a worker process only pays off for at least this many files
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
@@ -161,7 +163,7 @@ def chunk(text, first_line=1):
 
 
 def load(path):
-    """Read and parse one file (runs in worker threads). Returns None if unreadable."""
+    """Read and parse one file (runs in worker processes). Returns None if unreadable."""
     try:
         raw = Path(path).read_bytes()
     except OSError:
@@ -172,6 +174,29 @@ def load(path):
 
 
 # --- indexing ----------------------------------------------------------------
+
+
+def _cpus():
+    """CPUs this process may use, honouring affinity and container limits where the platform reports them."""
+    if hasattr(os, "process_cpu_count"):  # Python 3.13+
+        return os.process_cpu_count() or 1
+    if hasattr(os, "sched_getaffinity"):  # Linux
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
+
+
+def workers(files):
+    """Worker processes for parsing `files` files; 0 or 1 means parse in-process.
+
+    One per CPU except the one the main process uses for writing, at most one per FILES_PER_WORKER files.
+    The SIFT_WORKERS environment variable sets a maximum.
+    """
+    limit = os.environ.get("SIFT_WORKERS") or _cpus() - 1
+    try:
+        limit = int(limit)
+    except ValueError:
+        raise SystemExit(f"SIFT_WORKERS must be a whole number, got {limit!r}") from None
+    return max(0, min(limit, files // FILES_PER_WORKER))
 
 
 def walk(root):
@@ -224,13 +249,19 @@ def index(db, names=None):
 
         added = changed = failed = 0
         batches = [todo[i : i + WRITE_BATCH] for i in range(0, len(todo), WRITE_BATCH)]
-        with ThreadPoolExecutor(READ_WORKERS) as pool:
-            # double buffering: the next batch is read while the current one is written
-            pending = pool.map(load, [t[0] for t in batches[0]]) if batches else None
+        n = workers(len(todo))  # parsing is CPU-bound, so it runs in processes rather than threads
+        with ProcessPoolExecutor(n) if n > 1 else nullcontext() as pool:
+
+            def read(batch):  # pool.map starts all work at once; builtin map reads lazily
+                paths = [t[0] for t in batch]
+                return pool.map(load, paths, chunksize=64) if pool else map(load, paths)
+
+            # double buffering: the next batch is parsed while the current one is written
+            pending = read(batches[0]) if batches else None
             for b, batch in enumerate(batches):
                 results = pending
                 if b + 1 < len(batches):
-                    pending = pool.map(load, [t[0] for t in batches[b + 1]])
+                    pending = read(batches[b + 1])
                 for (path, rel, mtime, size), res in zip(batch, results):
                     if res is None:  # unreadable now; retried on the next run
                         print(f"\nunreadable, skipped: {path}", file=sys.stderr)

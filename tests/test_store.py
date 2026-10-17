@@ -237,8 +237,8 @@ def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):
     store.index(serial)
     assert pools == []
 
-    monkeypatch.setattr(store, "WORKERS", 2)
-    monkeypatch.setattr(store, "PARALLEL_MIN_FILES", 1)
+    monkeypatch.setenv("SIFT_WORKERS", "2")
+    monkeypatch.setattr(store, "FILES_PER_WORKER", 1)
     monkeypatch.setattr(store, "WRITE_BATCH", 2)  # several batches in flight
     parallel = store.connect(tmp_path / "parallel")
     store.add_collection(parallel, notes, "notes")
@@ -249,11 +249,47 @@ def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):
 
 def test_small_updates_skip_worker_processes(corpus, monkeypatch, pools):
     db, root = corpus
-    monkeypatch.setattr(store, "WORKERS", 2)
+    monkeypatch.setattr(store, "_cpus", lambda: 64)
     write(root / "new.md", "# New\n")
     store.index(db)
     assert pools == []
     assert "new.md" in doc_ids(db)
+
+
+@pytest.mark.parametrize(
+    "cpus, files, expected",
+    [
+        (64, 0, 0),
+        (64, 999, 0),  # too few files to be worth a process
+        (64, 5_000, 5),  # one worker per FILES_PER_WORKER files
+        (4, 1_000_000, 3),  # one CPU stays free for the process writing to SQLite
+        (1, 1_000_000, 0),
+    ],
+)
+def test_worker_count_adapts_to_machine_and_workload(monkeypatch, cpus, files, expected):
+    monkeypatch.delenv("SIFT_WORKERS", raising=False)
+    monkeypatch.setattr(store, "_cpus", lambda: cpus)
+    assert store.workers(files) == expected
+
+
+def test_worker_count_can_be_capped(monkeypatch):
+    monkeypatch.setattr(store, "_cpus", lambda: 64)
+    monkeypatch.setenv("SIFT_WORKERS", "2")
+    assert store.workers(1_000_000) == 2
+    monkeypatch.setenv("SIFT_WORKERS", "many")
+    with pytest.raises(SystemExit, match="SIFT_WORKERS"):
+        store.workers(1_000_000)
+
+
+def test_cpus_respects_what_the_platform_allows(monkeypatch):
+    monkeypatch.setattr(os, "process_cpu_count", lambda: 6, raising=False)  # Python 3.13+
+    assert store._cpus() == 6
+    monkeypatch.delattr(os, "process_cpu_count")
+    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {0, 1, 2}, raising=False)  # Linux
+    assert store._cpus() == 3
+    monkeypatch.delattr(os, "sched_getaffinity")
+    monkeypatch.setattr(os, "cpu_count", lambda: None)  # unknown
+    assert store._cpus() == 1
 
 
 def test_index_selected_collections(corpus, tmp_path):
