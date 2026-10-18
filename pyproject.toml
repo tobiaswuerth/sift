@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]  # SPDX license expressions (PEP 639)
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -20,21 +20,36 @@ dependencies = [
 ]
 keywords = ["search", "rag", "embeddings", "mcp", "markdown", "bm25", "semantic-search"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
-    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Text Processing :: Indexing",
 ]
 
+[project.urls]
+Homepage = "https://github.com/tobiaswuerth/sift"
+Documentation = "https://github.com/tobiaswuerth/sift#readme"
+Issues = "https://github.com/tobiaswuerth/sift/issues"
+Changelog = "https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "pre-commit>=4"]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "pre-commit>=4", "build>=1.2", "twine>=6"]
 
 [project.scripts]
 sift = "sift.cli:main"
+sift-rag = "sift.cli:main"  # so that `uvx sift-rag ...` works: uvx runs the command named like the package
 
 [tool.setuptools]
 packages = ["sift"]
@@ -47,8 +62,14 @@ line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP"]
-ignore = ["B905"]  # zip() without strict=
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PIE", "PT", "RUF", "PERF"]
+ignore = [
+    "B905",  # zip() without strict=
+    "SIM905",  # a word list as one split string reads better than a long list literal
+]
+
+[tool.ruff.lint.flake8-pytest-style]
+parametrize-names-type = "csv"  # @pytest.mark.parametrize("a, b", ...)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
