@@ -77,7 +77,8 @@ def _unused_nvidia_gpu():
     if torch.version.cuda is None:
         return (
             "found an NVIDIA GPU, but this PyTorch build has no CUDA support, so sift runs on the CPU (much slower). "
-            f"Install the CUDA build: {cuda_pytorch_command()}"
+            "To use the GPU, reinstall with uv: `uv tool install --reinstall --torch-backend auto sift-rag` "
+            f"(or run `uvx --torch-backend auto sift-rag ...`), or with pip: `{cuda_pytorch_command()}`"
         )
     return f"found an NVIDIA GPU, but PyTorch (CUDA {torch.version.cuda}) can't use it; update the NVIDIA driver"
 
