@@ -9,13 +9,28 @@ from mcp.server.mcpserver.exceptions import ToolError
 from . import embed
 from .search import Index
 
-INSTRUCTIONS = """Search the user's local text and Markdown files.
+INSTRUCTIONS = """Search the user's local text and Markdown files, indexed by sift.
+When a question touches what these collections cover, search here before answering from memory or searching the web,
+and cite what you find; say so when nothing relevant turns up.
+
+{collections}
+
+- `query`: hybrid search with reranking. Best default for questions; slower than the others.
 - `search`: exact keyword search (BM25). Best for names, identifiers, exact terms and "quoted phrases".
 - `vsearch`: semantic search. Best when the wording of the answer is unknown.
-- `query`: hybrid search with reranking. Best default for questions; slower than the others.
 Results carry `id` (collection/path), `lines`, `title`, `score` and chunk `text`. Use `get` for a full document.
 All search tools accept `collection`, a `path` glob such as "2024/*", and `filters` on front-matter fields,
-e.g. {"categories": "cs.RO"}; a list field matches when it contains the value."""
+e.g. {{"categories": "cs.RO"}}; a list field matches when it contains the value."""
+
+
+def _collections(index):
+    """The indexed collections with their sizes, read when the server starts."""
+    rows = index.db.execute("""SELECT co.name, count(d.id) FROM collections co LEFT JOIN docs d ON d.collection = co.id
+                               GROUP BY co.id ORDER BY co.name""").fetchall()
+    if not rows:
+        return "No collections are indexed yet."
+    lines = [f"- {name}: {n:,} document{'' if n == 1 else 's'}" for name, n in rows]
+    return "Indexed collections:\n" + "\n".join(lines)
 
 
 def _run(fn, *args):
@@ -31,7 +46,7 @@ def build(index=None):
     # Tools are async, so they run one at a time on the event-loop thread. That serialises GPU and SQLite work, and
     # keeps PyTorch out of worker threads, where it crashes on Python 3.15 (Windows, macOS).
     index = index or Index()
-    mcp = MCPServer("sift", instructions=INSTRUCTIONS)
+    mcp = MCPServer("sift", instructions=INSTRUCTIONS.format(collections=_collections(index)))
 
     @mcp.tool()
     async def search(
