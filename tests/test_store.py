@@ -118,7 +118,8 @@ def test_chunk_splits_with_line_numbers_and_overlap():
     text = "".join(f"line {i} " + "x" * 90 + "\n" for i in range(100))
     chunks = list(store.chunk(text))
     assert len(chunks) > 1
-    assert chunks[0][0] == 1 and chunks[-1][1] == 100
+    assert chunks[0][0] == 1
+    assert chunks[-1][1] == 100
     assert all(len(c[2]) <= store.CHUNK_CHARS for c in chunks)
     assert chunks[1][0] <= chunks[0][1]  # consecutive chunks overlap
 

@@ -1,5 +1,6 @@
 """Embedding and reranking models, and the batched GPU embedding pipeline."""
 
+import contextlib
 import logging
 import os
 import sys
@@ -50,10 +51,8 @@ def _free_gpu_memory():
     """Free and total memory of the GPU. On Windows (WDDM), CUDA counts memory other programs hold as free,
     since the driver could page it out; NVML, which nvidia-smi reads, does not. The smaller value wins."""
     free, total = torch.cuda.mem_get_info(DEVICE)
-    try:
+    with contextlib.suppress(Exception):  # NVML missing or unusable: CUDA's figure is all there is
         free = min(free, total - torch.cuda.device_memory_used(DEVICE))
-    except Exception:  # NVML missing or unusable: CUDA's figure is all there is
-        pass
     return free, total
 
 

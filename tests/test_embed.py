@@ -45,7 +45,8 @@ def test_models_use_fp16_on_gpus(fake_models, monkeypatch, device, fp16):
 
 def test_encode_returns_normalised_fp16(fake_models):
     vecs = fake_models.encode(["brush strokes", "reward shaping"])
-    assert vecs.dtype == np.float16 and vecs.shape == (2, 64)
+    assert vecs.dtype == np.float16
+    assert vecs.shape == (2, 64)
     assert np.allclose(np.linalg.norm(vecs.astype(np.float32), axis=1), 1, atol=1e-2)
     assert fake_models.encode(["brush"], query=True).shape == (1, 64)
 
@@ -132,7 +133,8 @@ def test_embed_pending_in_slabs_with_title_on_later_chunks(corpus, fake_models, 
     fake_models.embed_pending(db)
     assert vector_count(db) == db.execute("SELECT count(*) FROM chunks").fetchone()[0]
     later = [t for t in seen if t.startswith("Long\n\n")]
-    assert later and all("more" in t or "word" in t for t in later)
+    assert later
+    assert all("more" in t or "word" in t for t in later)
 
 
 def test_embed_pending_survives_concurrent_writer(corpus, fake_models, monkeypatch):
