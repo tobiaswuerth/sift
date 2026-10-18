@@ -296,6 +296,7 @@ def nvml(monkeypatch):
 @pytest.mark.parametrize(
     "cuda_build, hint",
     [
+        (None, "uv tool install --reinstall --torch-backend auto sift-rag"),  # uv environments have no pip
         (None, "--index-url https://download.pytorch.org/whl/cu128"),
         ("12.8", "update the NVIDIA driver"),
     ],
