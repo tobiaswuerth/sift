@@ -57,6 +57,31 @@ def _free_gpu_memory():
     return free, total
 
 
+def cuda_pytorch_command(platform=sys.platform):
+    """How to replace a CPU-only PyTorch with the CUDA build. Windows wheels bundle their CUDA libraries, so
+    torch's other dependencies can stay; Linux wheels depend on nvidia-* packages, which must come along."""
+    no_deps = "--no-deps " if platform == "win32" else ""
+    return f"pip install --force-reinstall {no_deps}torch --index-url https://download.pytorch.org/whl/cu128"
+
+
+def _unused_nvidia_gpu():
+    """Why an NVIDIA GPU sits unused, if there is one; None otherwise."""
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        if not pynvml.nvmlDeviceGetCount():
+            return None
+    except Exception:  # no NVML, no driver, no GPU
+        return None
+    if torch.version.cuda is None:
+        return (
+            "found an NVIDIA GPU, but this PyTorch build has no CUDA support, so sift runs on the CPU (much slower). "
+            f"Install the CUDA build: {cuda_pytorch_command()}"
+        )
+    return f"found an NVIDIA GPU, but PyTorch (CUDA {torch.version.cuda}) can't use it; update the NVIDIA driver"
+
+
 @cache
 def limit_gpu_memory():
     """Cap PyTorch's GPU memory at what is free now, minus headroom for other programs, and return that budget.
@@ -66,6 +91,8 @@ def limit_gpu_memory():
     """
     global DEVICE
     if torch.device(DEVICE).type != "cuda":
+        if DEVICE == "cpu" and (reason := _unused_nvidia_gpu()):
+            print(reason, file=sys.stderr)
         return None
     free, total = _free_gpu_memory()
     budget = free - max(HEADROOM * total, GiB)
