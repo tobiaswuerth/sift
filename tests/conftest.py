@@ -37,9 +37,12 @@ class FakeSentenceTransformer:
         self.halved = True
         return self
 
-    def encode_document(self, texts, batch_size, normalize_embeddings=True, convert_to_numpy=True):
+    def encode_document(
+        self, texts, batch_size, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=None
+    ):
         import torch
 
+        assert show_progress_bar is False, "sift must not draw progress bars (the server's log is no terminal)"
         if str(self.device).startswith("cuda") and self.gpu_memory:
             for i in range(0, len(texts), batch_size):
                 self.gpu_memory.run(len(texts[i : i + batch_size]))
@@ -56,7 +59,8 @@ class FakeCrossEncoder:
     def __init__(self, name, device=None, max_length=None):
         self.name, self.model = name, FakeSentenceTransformer(name)
 
-    def predict(self, pairs, batch_size):
+    def predict(self, pairs, batch_size, show_progress_bar=None):
+        assert show_progress_bar is False, "sift must not draw progress bars (the server's log is no terminal)"
         return np.array([len(set(words(q)) & set(words(d))) / (1 + len(set(words(q)))) for q, d in pairs])
 
 

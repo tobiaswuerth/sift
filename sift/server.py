@@ -4,6 +4,7 @@ import sys
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from . import embed
 from .search import Index
@@ -15,6 +16,15 @@ INSTRUCTIONS = """Search the user's local text and Markdown files.
 Results carry `id` (collection/path), `lines`, `title`, `score` and chunk `text`. Use `get` for a full document.
 All search tools accept `collection`, a `path` glob such as "2024/*", and `filters` on front-matter fields,
 e.g. {"categories": "cs.RO"}; a list field matches when it contains the value."""
+
+
+def _run(fn, *args):
+    """Call an Index method, turning expected failures into ToolError, the only kind whose message reaches the
+    agent; anything else counts as a crash, and the MCP library tells the agent just "Error executing tool"."""
+    try:
+        return fn(*args)
+    except (LookupError, ValueError) as e:
+        raise ToolError(str(e)) from None
 
 
 def build(index=None):
@@ -32,7 +42,7 @@ def build(index=None):
         filters: dict[str, Any] | None = None,
     ) -> list[dict]:
         """Exact keyword search ranked by BM25. Supports "phrases", prefix*, AND, OR, NOT."""
-        return index.search(query, k, collection, path, filters)
+        return _run(index.search, query, k, collection, path, filters)
 
     @mcp.tool()
     async def vsearch(
@@ -43,7 +53,7 @@ def build(index=None):
         filters: dict[str, Any] | None = None,
     ) -> list[dict]:
         """Semantic search: chunks closest in meaning to the query."""
-        return index.vsearch(query, k, collection, path, filters)
+        return _run(index.vsearch, query, k, collection, path, filters)
 
     @mcp.tool()
     async def query(
@@ -54,17 +64,17 @@ def build(index=None):
         filters: dict[str, Any] | None = None,
     ) -> list[dict]:
         """Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder."""
-        return index.query(query, k, collection, path, filters)
+        return _run(index.query, query, k, collection, path, filters)
 
     @mcp.tool()
     async def get(id: str) -> str:
         """Full text of a document, by the `id` shown in search results."""
-        return index.get(id)
+        return _run(index.get, id)
 
     @mcp.tool()
     async def status() -> dict:
         """Collections, document and chunk counts, and the embedding model."""
-        return index.status()
+        return _run(index.status)
 
     return mcp, index
 
