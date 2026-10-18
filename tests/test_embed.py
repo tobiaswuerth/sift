@@ -1,4 +1,6 @@
 import logging
+import sys
+import types
 
 import numpy as np
 import pytest
@@ -278,3 +280,53 @@ def test_calibration_uses_the_sample(fake_models, gpu_memory, monkeypatch):
 def test_harmless_torch_windows_note_is_silenced(fake_models):
     redirects = logging.getLogger("torch.distributed.elastic.multiprocessing.redirects")
     assert redirects.getEffectiveLevel() >= logging.ERROR
+
+
+@pytest.fixture
+def nvml(monkeypatch):
+    """A fake NVML (nvidia-ml-py) that reports one NVIDIA GPU."""
+    module = types.ModuleType("pynvml")
+    module.gpus = 1
+    module.nvmlInit = lambda: None
+    module.nvmlDeviceGetCount = lambda: module.gpus
+    monkeypatch.setitem(sys.modules, "pynvml", module)
+    return module
+
+
+@pytest.mark.parametrize(
+    "cuda_build, hint",
+    [
+        (None, "pip install --force-reinstall --no-deps torch --index-url https://download.pytorch.org/whl/cu128"),
+        ("12.8", "update the NVIDIA driver"),
+    ],
+)
+def test_explains_an_unused_nvidia_gpu(fake_models, nvml, monkeypatch, capsys, cuda_build, hint):
+    import torch
+
+    monkeypatch.setattr(torch.version, "cuda", cuda_build)
+    fake_models.embedder()
+    fake_models.reranker()
+    err = capsys.readouterr().err
+    assert err.count("found an NVIDIA GPU") == 1  # once, not per model
+    assert hint in err
+
+
+def test_no_gpu_hint_without_an_nvidia_gpu(fake_models, nvml, monkeypatch, capsys):
+    nvml.gpus = 0
+    fake_models.embedder()
+    assert "NVIDIA" not in capsys.readouterr().err
+
+
+def test_no_gpu_hint_without_nvml(fake_models, nvml, monkeypatch, capsys):
+    def broken():
+        raise OSError("NVML Shared Library Not Found")
+
+    monkeypatch.setattr(nvml, "nvmlInit", broken)
+    fake_models.embedder()
+    assert "NVIDIA" not in capsys.readouterr().err
+
+
+def test_no_gpu_hint_on_apple_gpus(fake_models, nvml, monkeypatch, capsys):
+    monkeypatch.setattr(fake_models, "DEVICE", "mps")
+    fake_models.embedder()
+    assert "NVIDIA" not in capsys.readouterr().err
