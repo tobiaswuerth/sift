@@ -67,17 +67,20 @@ def test_get_and_status(mcp):
 
 
 @pytest.mark.parametrize(
-    "tool, args",
+    "tool, args, reason",
     [
-        ("search", {"query": "x", "collection": "missing"}),
-        ("vsearch", {"query": "x", "k": 0}),
-        ("query", {"query": "x", "filters": {"bad key": "v"}}),
-        ("get", {"id": "missing/x.md"}),
+        ("search", {"query": "x", "collection": "missing"}, "no collection named 'missing'"),
+        ("vsearch", {"query": "x", "k": 0}, "k must be a positive integer"),
+        ("query", {"query": "x", "filters": {"bad key": "v"}}, "invalid filter field 'bad key'"),
+        ("get", {"id": "missing/x.md"}, "unknown document 'missing/x.md'"),
     ],
 )
-def test_errors_reach_the_agent(mcp, tool, args):
+def test_errors_tell_the_agent_what_went_wrong(mcp, tool, args, reason):
+    # The MCP library hides the message of any exception that isn't a ToolError ("Error executing tool search"),
+    # which leaves an agent no way to correct its call.
     result = call(mcp, tool, args)
     assert result.is_error
+    assert reason in result.content[0].text
 
 
 @pytest.mark.parametrize("stdio, expected", [(True, ("stdio", {})), (False, ("streamable-http", {"port": 9000}))])
