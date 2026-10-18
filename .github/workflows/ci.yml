@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:  # the release workflow runs the same checks first
 
 permissions:
   contents: read
@@ -40,3 +41,28 @@ jobs:
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -e ".[dev]"
       - run: pytest -q --cov
+
+  package:
+    # Builds the package and checks it as PyPI and users will see it. The release publishes exactly these files.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check --strict dist/*
+      - name: Install the wheel in a clean environment and run both commands
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install --no-deps dist/*.whl
+          /tmp/clean/bin/sift --version
+          /tmp/clean/bin/sift-rag --version
+      - name: Check that the dependencies resolve
+        run: /tmp/clean/bin/pip install --dry-run --ignore-installed dist/*.whl
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error

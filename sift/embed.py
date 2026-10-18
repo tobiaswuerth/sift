@@ -1,5 +1,6 @@
 """Embedding and reranking models, and the batched GPU embedding pipeline."""
 
+import contextlib
 import logging
 import os
 import sys
@@ -50,11 +51,35 @@ def _free_gpu_memory():
     """Free and total memory of the GPU. On Windows (WDDM), CUDA counts memory other programs hold as free,
     since the driver could page it out; NVML, which nvidia-smi reads, does not. The smaller value wins."""
     free, total = torch.cuda.mem_get_info(DEVICE)
-    try:
+    with contextlib.suppress(Exception):  # NVML missing or unusable: CUDA's figure is all there is
         free = min(free, total - torch.cuda.device_memory_used(DEVICE))
-    except Exception:  # NVML missing or unusable: CUDA's figure is all there is
-        pass
     return free, total
+
+
+def cuda_pytorch_command(platform=sys.platform):
+    """How to replace a CPU-only PyTorch with the CUDA build. Windows wheels bundle their CUDA libraries, so
+    torch's other dependencies can stay; Linux wheels depend on nvidia-* packages, which must come along."""
+    no_deps = "--no-deps " if platform == "win32" else ""
+    return f"pip install --force-reinstall {no_deps}torch --index-url https://download.pytorch.org/whl/cu128"
+
+
+def _unused_nvidia_gpu():
+    """Why an NVIDIA GPU sits unused, if there is one; None otherwise."""
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        if not pynvml.nvmlDeviceGetCount():
+            return None
+    except Exception:  # no NVML, no driver, no GPU
+        return None
+    if torch.version.cuda is None:
+        return (
+            "found an NVIDIA GPU, but this PyTorch build has no CUDA support, so sift runs on the CPU (much slower). "
+            "To use the GPU, reinstall with uv: `uv tool install --reinstall --torch-backend auto sift-rag` "
+            f"(or run `uvx --torch-backend auto sift-rag ...`), or with pip: `{cuda_pytorch_command()}`"
+        )
+    return f"found an NVIDIA GPU, but PyTorch (CUDA {torch.version.cuda}) can't use it; update the NVIDIA driver"
 
 
 @cache
@@ -66,6 +91,8 @@ def limit_gpu_memory():
     """
     global DEVICE
     if torch.device(DEVICE).type != "cuda":
+        if DEVICE == "cpu" and (reason := _unused_nvidia_gpu()):
+            print(reason, file=sys.stderr)
         return None
     free, total = _free_gpu_memory()
     budget = free - max(HEADROOM * total, GiB)

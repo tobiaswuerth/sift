@@ -1,4 +1,6 @@
 import logging
+import sys
+import types
 
 import numpy as np
 import pytest
@@ -43,7 +45,8 @@ def test_models_use_fp16_on_gpus(fake_models, monkeypatch, device, fp16):
 
 def test_encode_returns_normalised_fp16(fake_models):
     vecs = fake_models.encode(["brush strokes", "reward shaping"])
-    assert vecs.dtype == np.float16 and vecs.shape == (2, 64)
+    assert vecs.dtype == np.float16
+    assert vecs.shape == (2, 64)
     assert np.allclose(np.linalg.norm(vecs.astype(np.float32), axis=1), 1, atol=1e-2)
     assert fake_models.encode(["brush"], query=True).shape == (1, 64)
 
@@ -130,7 +133,8 @@ def test_embed_pending_in_slabs_with_title_on_later_chunks(corpus, fake_models, 
     fake_models.embed_pending(db)
     assert vector_count(db) == db.execute("SELECT count(*) FROM chunks").fetchone()[0]
     later = [t for t in seen if t.startswith("Long\n\n")]
-    assert later and all("more" in t or "word" in t for t in later)
+    assert later
+    assert all("more" in t or "word" in t for t in later)
 
 
 def test_embed_pending_survives_concurrent_writer(corpus, fake_models, monkeypatch):
@@ -278,3 +282,66 @@ def test_calibration_uses_the_sample(fake_models, gpu_memory, monkeypatch):
 def test_harmless_torch_windows_note_is_silenced(fake_models):
     redirects = logging.getLogger("torch.distributed.elastic.multiprocessing.redirects")
     assert redirects.getEffectiveLevel() >= logging.ERROR
+
+
+@pytest.fixture
+def nvml(monkeypatch):
+    """A fake NVML (nvidia-ml-py) that reports one NVIDIA GPU."""
+    module = types.ModuleType("pynvml")
+    module.gpus = 1
+    module.nvmlInit = lambda: None
+    module.nvmlDeviceGetCount = lambda: module.gpus
+    monkeypatch.setitem(sys.modules, "pynvml", module)
+    return module
+
+
+@pytest.mark.parametrize(
+    "cuda_build, hint",
+    [
+        (None, "uv tool install --reinstall --torch-backend auto sift-rag"),  # uv environments have no pip
+        (None, "--index-url https://download.pytorch.org/whl/cu128"),
+        ("12.8", "update the NVIDIA driver"),
+    ],
+)
+def test_explains_an_unused_nvidia_gpu(fake_models, nvml, monkeypatch, capsys, cuda_build, hint):
+    import torch
+
+    monkeypatch.setattr(torch.version, "cuda", cuda_build)
+    fake_models.embedder()
+    fake_models.reranker()
+    err = capsys.readouterr().err
+    assert err.count("found an NVIDIA GPU") == 1  # once, not per model
+    assert hint in err
+
+
+def test_no_gpu_hint_without_an_nvidia_gpu(fake_models, nvml, monkeypatch, capsys):
+    nvml.gpus = 0
+    fake_models.embedder()
+    assert "NVIDIA" not in capsys.readouterr().err
+
+
+def test_no_gpu_hint_without_nvml(fake_models, nvml, monkeypatch, capsys):
+    def broken():
+        raise OSError("NVML Shared Library Not Found")
+
+    monkeypatch.setattr(nvml, "nvmlInit", broken)
+    fake_models.embedder()
+    assert "NVIDIA" not in capsys.readouterr().err
+
+
+def test_no_gpu_hint_on_apple_gpus(fake_models, nvml, monkeypatch, capsys):
+    monkeypatch.setattr(fake_models, "DEVICE", "mps")
+    fake_models.embedder()
+    assert "NVIDIA" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "platform, command",
+    [
+        # Windows CUDA wheels bundle their CUDA libraries; Linux ones depend on nvidia-* packages
+        ("win32", "pip install --force-reinstall --no-deps torch --index-url https://download.pytorch.org/whl/cu128"),
+        ("linux", "pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu128"),
+    ],
+)
+def test_cuda_pytorch_command_fits_the_platform(fake_models, platform, command):
+    assert fake_models.cuda_pytorch_command(platform) == command

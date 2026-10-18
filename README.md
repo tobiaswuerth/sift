@@ -1,6 +1,10 @@
 # sift
 
+[![PyPI](https://img.shields.io/pypi/v/sift-rag)](https://pypi.org/project/sift-rag/)
+[![Python](https://img.shields.io/pypi/pyversions/sift-rag)](https://pypi.org/project/sift-rag/)
 [![CI](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml/badge.svg)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Fast local search over your text and Markdown files, built for AI agents.
@@ -11,17 +15,27 @@ Everything runs locally. No cloud services, no API keys.
 
 ## Install
 
-Requires Python 3.11 or newer. An NVIDIA GPU or an Apple silicon Mac is strongly recommended for embedding; everything
-also runs on CPU.
+Requires Python 3.11 or newer. With [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git clone https://github.com/tobiaswuerth/sift
-cd sift
-python -m venv .venv
-.venv/Scripts/activate            # Linux/macOS: source .venv/bin/activate
-pip install -r requirements.txt   # CUDA build of PyTorch; edit the first line for CPU or another CUDA version
-pip install -e .
+uv tool install --torch-backend auto sift-rag   # installs the `sift` command
 ```
+
+Or run it without installing: `uvx --torch-backend auto sift-rag serve`. With pip, in a virtual environment:
+`pip install sift-rag`.
+
+On first use, sift downloads its two models from Hugging Face (about 1.5 GB).
+
+### GPU support
+
+sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, which works but embeds slowly.
+
+- **Linux, macOS:** nothing to do. PyTorch from PyPI includes CUDA on Linux and uses the Apple GPU on macOS.
+- **Windows:** PyTorch from PyPI has no CUDA support. uv's `--torch-backend auto`, used above, picks the CUDA build
+  that matches your driver. With pip, install it afterwards:
+  `pip install --force-reinstall --no-deps torch --index-url https://download.pytorch.org/whl/cu128`.
+
+If an NVIDIA GPU sits unused, sift says so on start-up and prints the command that fixes it.
 
 ## Usage
 
@@ -136,16 +150,16 @@ agent writes); approximate nearest-neighbour indexes; live file watching; remote
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pre-commit install      # ruff lint and format, whitespace and YAML/TOML checks on every commit
+git clone https://github.com/tobiaswuerth/sift
+cd sift
+uv venv && uv pip install --torch-backend auto -e ".[dev]"   # or with pip: pip install -r requirements.txt -e ".[dev]"
+pre-commit install      # lint, format and config checks on every commit
 pytest --cov            # 100% line and branch coverage is required
 ```
 
 The tests replace the embedding and reranking models with small deterministic fakes, so they need no GPU and no
-model downloads; everything else, including the MCP server, runs for real. Every bug fix comes with a regression test.
-
-GitHub Actions runs the pre-commit checks and the tests on Linux (x86 and ARM), macOS and Windows for Python 3.11 to
-3.15 on every push and pull request. Dependabot keeps dependencies and actions up to date.
+model downloads; everything else, including the MCP server, runs for real. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for how changes and releases work.
 
 ## License
 

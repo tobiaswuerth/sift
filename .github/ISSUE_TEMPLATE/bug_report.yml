@@ -1,0 +1,42 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        sift add ~/notes
+        sift index
+        ...
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The full output of the failing command.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: sift version
+      description: Output of `sift --version`.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version, GPU, and how you installed sift (uv, pip).
+      placeholder: Windows 11, Python 3.12, RTX 4090, uv tool install
+    validations:
+      required: true
