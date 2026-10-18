@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import threading
 
 import pytest
@@ -58,6 +59,12 @@ def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
     args = {"get": {"id": "notes/rl.md"}, "status": {}}.get(tool, {"query": "brush"})
     assert not call(server.build(index)[0], tool, args).is_error
     assert threads == [threading.main_thread()]
+
+
+def test_server_log_stays_quiet(mcp):
+    # The MCP library logs everything at INFO; model loading would then print dozens of HTTP requests.
+    for name in ("httpx", "huggingface_hub", "sentence_transformers"):
+        assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING, name
 
 
 def test_get_and_status(mcp):
