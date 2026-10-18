@@ -13,6 +13,9 @@ from . import store
 
 # Loading Sentence Transformers makes PyTorch log a harmless note about distributed training on Windows and macOS.
 logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
+# The MCP server logs at INFO, where loading a model logs every HTTP request to Hugging Face.
+for _name in ("httpx", "huggingface_hub", "sentence_transformers"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 
 GiB = 2**30
 
@@ -133,7 +136,7 @@ def calibrate_batch_size(sample=None):
 
     def cost(n):
         torch.cuda.reset_peak_memory_stats(DEVICE)
-        model.encode_document([longest] * n, batch_size=n)
+        model.encode_document([longest] * n, batch_size=n, show_progress_bar=False)
         return torch.cuda.max_memory_allocated(DEVICE) - base
 
     one = used = cost(1)
@@ -157,13 +160,16 @@ def encode(texts, query=False):
     model = embedder()
     fn = model.encode_query if query else model.encode_document
     return _oom_safe(
-        lambda t, bs: fn(t, batch_size=bs, normalize_embeddings=True, convert_to_numpy=True), texts
+        lambda t, bs: fn(t, batch_size=bs, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False),
+        texts,
     ).astype(np.float16)
 
 
 def rerank(query, texts):
     model = reranker()
-    return _oom_safe(lambda t, bs: model.predict([(query, x) for x in t], batch_size=bs), texts)
+    return _oom_safe(
+        lambda t, bs: model.predict([(query, x) for x in t], batch_size=bs, show_progress_bar=False), texts
+    )
 
 
 def _text(seq, title, text):
