@@ -61,6 +61,19 @@ def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
     assert threads == [threading.main_thread()]
 
 
+def test_instructions_tell_agents_what_is_indexed(mcp):
+    # Agents read these when they connect: without the collections they can't tell when sift is worth asking.
+    assert "notes: 3 documents" in mcp.instructions
+    assert "before answering from memory" in mcp.instructions
+
+
+def test_instructions_for_an_empty_index(tmp_path):
+    from sift import store
+
+    mcp = server.build(Index(store.connect(tmp_path / "empty")))[0]
+    assert "No collections are indexed yet" in mcp.instructions
+
+
 def test_server_log_stays_quiet(mcp):
     # The MCP library logs everything at INFO; model loading would then print dozens of HTTP requests.
     for name in ("httpx", "huggingface_hub", "sentence_transformers"):
