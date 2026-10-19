@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import multiprocessing
 import os
 import re
 import sqlite3
@@ -61,12 +62,12 @@ def touch(db):
 
 
 def add_collection(db, path, name=None):
-    path = Path(path).resolve()
+    path = Path(path).expanduser().resolve()
     if not path.is_dir():
         raise SystemExit(f"not a directory: {path}")
     name = name or path.name
     if not re.fullmatch(r"[\w.-]+", name):
-        raise SystemExit(f"invalid collection name {name!r}: use letters, digits, '_', '-' and '.'")
+        raise SystemExit(f"invalid collection name {name!r}: choose one with --name, of letters, digits, '_', '-', '.'")
     try:
         db.execute("INSERT INTO collections(name, path) VALUES(?, ?)", (name, str(path)))
     except sqlite3.IntegrityError:
@@ -102,8 +103,11 @@ def delete_docs(db, doc_ids):
 
 # --- parsing and chunking ----------------------------------------------------
 
-FRONT_MATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
-HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+FRONT_MATTER = re.compile(r"\A---[ \t]*\r?\n(?:(.*?)\r?\n)??---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+LIST_ITEM = re.compile(r"[ \t]*-[ \t]+(.*)")
+HEADING = re.compile(r" {0,3}#{1,6}[ \t]")  # how a Markdown (ATX) heading starts
+FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")  # how a fenced code block starts and ends
+LINE = re.compile(r"[^\n]*\n|[^\n]+")  # only \n ends a line, as in editors; str.splitlines knows eight more
 
 
 def _value(text):
@@ -114,22 +118,50 @@ def _value(text):
         return text.strip("'\"")
 
 
+def _front_matter(block):
+    """Flat `key: value` lines, and lists as `- item` lines below a key without a value, as Obsidian writes them."""
+    meta, listing = {}, None
+    for line in block.splitlines():
+        if listing and (item := LIST_ITEM.match(line)):
+            meta[listing] = [*(meta[listing] or []), _value(item.group(1).strip())]
+            continue
+        key, sep, value = line.partition(":")
+        if sep and key.strip() and not key[0].isspace() and key[0] != "#":  # not nested, not a comment
+            key, value = key.strip(), value.strip()
+            meta[key] = _value(value) if value else None
+            listing = None if value else key
+    return meta
+
+
+def _heading(text):
+    """The first Markdown heading outside fenced code blocks, or None."""
+    fence = None
+    for line in text.split("\n"):
+        if m := FENCE.match(line):
+            mark = m.group(1)
+            if not fence:
+                fence = mark
+            elif mark[0] == fence[0] and len(mark) >= len(fence) and not line[m.end() :].strip():
+                fence = None
+        elif not fence and HEADING.match(line):
+            title = line.strip().lstrip("#").strip()
+            if (bare := title.rstrip("#")) != title and (not bare or bare[-1] in " \t"):
+                title = bare.strip()  # a closing sequence: "## Title ##", but not "# C#"
+            if title:
+                return title
+    return None
+
+
 def parse(text, fallback_title):
-    """Split off YAML front matter (flat `key: value` lines). Returns title, meta, body, body's first line."""
+    """Split off YAML front matter. Returns title, meta, body and the body's first line number."""
     meta, first_line = {}, 1
     m = FRONT_MATTER.match(text)
     if m:
-        for line in m.group(1).splitlines():
-            key, sep, value = line.partition(":")
-            if sep and key.strip() and not key[0].isspace():
-                meta[key.strip()] = _value(value.strip())
+        meta = _front_matter(m.group(1) or "")
         first_line += text.count("\n", 0, m.end())
         text = text[m.end() :]
     title = meta.get("title") if isinstance(meta.get("title"), str) and meta["title"].strip() else None
-    if not title:
-        h = HEADING.search(text)
-        title = h.group(1) if h else fallback_title
-    return title, meta, text, first_line
+    return title or _heading(text) or fallback_title, meta, text, first_line
 
 
 def chunk(text, first_line=1):
@@ -138,7 +170,7 @@ def chunk(text, first_line=1):
     Yields (first line, last line, text).
     """
     lines = []
-    for n, line in enumerate(text.splitlines(keepends=True), first_line):
+    for n, line in enumerate(LINE.findall(text), first_line):
         while len(line) > CHUNK_CHARS:  # break overlong lines at whitespace
             cut = line.rfind(" ", 0, CHUNK_CHARS) + 1 or CHUNK_CHARS
             lines.append((n, line[:cut]))
@@ -166,13 +198,19 @@ def chunk(text, first_line=1):
             yield piece[0][0], piece[-1][0], body
 
 
+def decode(raw):
+    """A text file's content: UTF-16 after a UTF-16 byte order mark (Windows PowerShell 5.1 writes those),
+    otherwise UTF-8 with invalid bytes replaced."""
+    return raw.decode("utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig", "replace")
+
+
 def load(path):
     """Read and parse one file (runs in worker processes). Returns None if unreadable."""
     try:
         raw = Path(path).read_bytes()
     except OSError:
         return None
-    text = raw.decode("utf-8-sig", "replace").replace("\r\n", "\n")  # same chunks on every OS
+    text = decode(raw).replace("\r\n", "\n")  # same chunks on every OS
     title, meta, body, first_line = parse(text, Path(path).stem)
     return hashlib.blake2b(raw, digest_size=16).hexdigest(), title, meta, list(chunk(body, first_line))
 
@@ -238,6 +276,11 @@ def index(db, names=None):
         todo, seen = [], set()
         for path, mtime, size in walk(root):
             rel = os.path.relpath(path, root).replace(os.sep, "/")
+            try:
+                rel.encode()
+            except UnicodeEncodeError:  # bytes that aren't UTF-8 (Linux); SQLite stores only valid text
+                print(f"\nunsupported file name, skipped: {path!r}", file=sys.stderr)
+                continue
             seen.add(rel)
             k = known.get(rel)
             if not k or k[1] != mtime or k[2] != size:
@@ -248,7 +291,9 @@ def index(db, names=None):
         added = changed = failed = 0
         batches = [todo[i : i + WRITE_BATCH] for i in range(0, len(todo), WRITE_BATCH)]
         n = workers(len(todo))  # parsing is CPU-bound, so it runs in processes rather than threads
-        with ProcessPoolExecutor(n) if n > 1 else nullcontext() as pool:
+        # spawned everywhere, as on Windows and macOS: forking a process that has threads can deadlock
+        spawn = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(n, mp_context=spawn) if n > 1 else nullcontext() as pool:
 
             def read(batch):  # pool.map starts all work at once; builtin map reads lazily
                 paths = [t[0] for t in batch]

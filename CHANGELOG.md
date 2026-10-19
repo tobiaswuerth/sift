@@ -9,7 +9,32 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - `sift serve` gives its GPU memory back when idle. Models and vectors load into RAM, move to the GPU when a
   search needs them, and return to RAM after 5 minutes without GPU use. Once released, the memory is free
-  for other programs; the first search afterwards takes about a second longer.
+  for other programs; the first search afterwards takes about a second longer. If other programs have taken the
+  memory meanwhile, sift stays on the CPU instead.
+- `get` serves indexed documents only, never other files below a collection's folder.
+- Front matter lists can be written one `- item` per line, as Obsidian, Jekyll and Hugo do; comment lines are
+  skipped, and a key without a value means null.
+- Blank queries return nothing in every search mode, and `query` gathers at least `k` candidates per mode.
+- Index worker processes are spawned on every platform; forking a process that runs threads can deadlock.
+
+### Fixed
+
+- `sift index` stalled for minutes on a heading followed by a long run of spaces.
+- Titles: "# Learning C#" lost its "#", a bare "#" line took the next paragraph as title, and comments in fenced
+  code blocks counted as headings.
+- Line numbers in search hits were off after form feeds and other characters that `str.splitlines` treats as line
+  ends.
+- UTF-16 files (Windows PowerShell 5.1 writes them with `>`) were indexed as text full of NUL characters.
+- Empty front matter (`---` twice) was indexed as text.
+- A file name with bytes that aren't UTF-8 (Linux) aborted `sift index`; such files are now skipped with a message.
+- A huge `k` or filter number crashed the search tools; `k` is capped, a filter number is a clear error.
+- Calibrating the batch size divided by zero when memory didn't grow with the batch.
+- `sift embed` crashed on chunks that had no text in the keyword index.
+- The embedding progress divided by zero when the clock hadn't advanced.
+- Ctrl+C on `sift serve` printed a traceback instead of stopping quietly; errors such as a port in use now print
+  one line.
+- Database errors reach MCP clients as messages, and the CLI reports an unusable `SIFT_HOME` instead of crashing.
+- `sift add ~/notes` works where the shell doesn't expand `~`.
 
 ## [0.1.0] - 2026-10-18
 

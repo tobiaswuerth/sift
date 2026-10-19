@@ -4,8 +4,8 @@ import contextlib
 import logging
 import os
 import sys
-import time
 from functools import cache
+from time import monotonic, perf_counter
 
 import numpy as np
 import torch
@@ -127,15 +127,26 @@ def acquire(key, to_gpu, off_gpu):
 
     Models and vectors wait in RAM and come to the GPU when used; every call counts as use. On the CPU, nothing moves.
     """
-    global _last_use, _released
-    _last_use = time.monotonic()
+    global _last_use
+    _last_use = monotonic()
+    _return_to_gpu()
     if not gpu() or key in _resident:
         return
-    if _released and not _resident and torch.device(DEVICE).type == "cuda":
-        _set_gpu_budget()  # other programs may hold more or less memory than when sift last used the GPU
-        _released = False
     to_gpu()
     _resident[key] = off_gpu
+
+
+def _return_to_gpu():
+    """After an idle release, look at the GPU memory again: other programs may hold more or less of it by now.
+    With too little left, sift uses the CPU from then on, as it does when there is too little at start-up."""
+    global DEVICE, _released
+    if not (_released and torch.device(DEVICE).type == "cuda"):
+        return
+    _released = False
+    if _set_gpu_budget() is None:
+        DEVICE = "cpu"
+        embedder.cache_clear()  # the models load again, in float32 for the CPU
+        reranker.cache_clear()
 
 
 def discard(key):
@@ -143,11 +154,10 @@ def discard(key):
     _resident.pop(key, None)
 
 
-def release_idle(now=None):
+def release_idle():
     """Move models and vectors back to RAM once the GPU has been unused for IDLE_SECONDS. Returns whether it did."""
     global _released
-    now = time.monotonic() if now is None else now
-    if not _resident or now - _last_use < IDLE_SECONDS:
+    if not _resident or monotonic() < _last_use + IDLE_SECONDS:  # not now - _last_use, which can round below it
         return False
     for off_gpu in _resident.values():
         off_gpu()
@@ -160,7 +170,11 @@ def release_idle(now=None):
     return True
 
 
-def _on_gpu(model):
+def _on_gpu(load):
+    """The model load() returns, on the GPU while in use. The check comes first: it may switch sift to the CPU,
+    and then load() returns a model for the CPU."""
+    _return_to_gpu()
+    model = load()
     acquire(id(model), lambda: model.to(DEVICE), lambda: model.to("cpu"))
     return model
 
@@ -212,9 +226,9 @@ def calibrate_batch_size(sample=None):
     is never chosen.
     """
     global _batch_size
-    model = _on_gpu(embedder())
+    model = _on_gpu(embedder)
     budget = limit_gpu_memory()
-    if budget is None:
+    if budget is None or torch.device(DEVICE).type != "cuda":  # no GPU, or given up
         return _batch_size
     longest = sample or "x " * (4 * model.max_seq_length)  # the default is truncated to the longest input
     base = torch.cuda.memory_allocated(DEVICE)
@@ -235,7 +249,7 @@ def calibrate_batch_size(sample=None):
             break
         n *= 2
     torch.cuda.empty_cache()
-    per_text = (used - one) / (n - 1) if n > 1 else one
+    per_text = max((used - one) / (n - 1) if n > 1 else one, 1)  # tiny texts may not change the peak at all
     _batch_size = max(1, min(failed - 1, MAX_BATCH, 1 + int((target - one) / per_text)))
     print(f"batch size {_batch_size}, calibrated to the GPU memory budget", file=sys.stderr)
     return _batch_size
@@ -243,7 +257,7 @@ def calibrate_batch_size(sample=None):
 
 def encode(texts, query=False):
     """Normalised fp16 embeddings, one row per text. Sentence Transformers sorts by length to minimise padding."""
-    model = _on_gpu(embedder())
+    model = _on_gpu(embedder)
     fn = model.encode_query if query else model.encode_document
     return _oom_safe(
         lambda t, bs: fn(t, batch_size=bs, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False),
@@ -252,7 +266,7 @@ def encode(texts, query=False):
 
 
 def rerank(query, texts):
-    model = _on_gpu(reranker())
+    model = _on_gpu(reranker)
     return _oom_safe(
         lambda t, bs: model.predict([(query, x) for x in t], batch_size=bs, show_progress_bar=False), texts
     )
@@ -276,7 +290,8 @@ def embed_pending(db, reset=False):
     pending = """SELECT c.id, c.seq, fts.title, fts.text FROM chunks c JOIN fts ON fts.rowid = c.id
                  WHERE c.id > ? AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id) ORDER BY c.id LIMIT ?"""
     total = db.execute(
-        "SELECT count(*) FROM chunks c WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)"
+        """SELECT count(*) FROM chunks c JOIN fts ON fts.rowid = c.id
+           WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)"""
     ).fetchone()[0]
     if not total:
         print("nothing to embed", file=sys.stderr)
@@ -287,11 +302,11 @@ def embed_pending(db, reset=False):
            WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)
            ORDER BY length(fts.text) + length(fts.title) DESC LIMIT 100"""
     ).fetchall()
-    calibrate_batch_size(max((_text(*row) for row in candidates), key=len))
-    done, last, t0 = 0, 0, time.perf_counter()
+    calibrate_batch_size(max((_text(*row) for row in candidates), key=len, default=None))  # None: embedded meanwhile
+    done, last, t0 = 0, 0, perf_counter()
 
     def progress(n):
-        rate = n / (time.perf_counter() - t0)
+        rate = n / max(perf_counter() - t0, 1e-6)  # coarse clocks can return the same reading twice
         left = max(total - n, 0) / rate / 60
         print(f"\rembedded {n}/{total} chunks, {rate:.0f}/s, {left:.1f} min left ", end="", file=sys.stderr, flush=True)
 
@@ -315,4 +330,4 @@ def embed_pending(db, reset=False):
         store.touch(db)  # tells a running server to reload vectors
         db.commit()
         done, last = done + len(rows), rows[-1][0]
-    print(f"\rembedded {done} chunks in {(time.perf_counter() - t0) / 60:.1f} min" + " " * 20, file=sys.stderr)
+    print(f"\rembedded {done} chunks in {(perf_counter() - t0) / 60:.1f} min" + " " * 20, file=sys.stderr)

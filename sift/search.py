@@ -13,6 +13,7 @@ STOPWORDS = set(
     "was what when where which who why with".split()
 )
 RRF_K = 60
+SQLITE_INT = 2**63  # SQLite integers are 64-bit
 
 
 def _where(db, collection=None, path=None, filters=None):
@@ -32,6 +33,8 @@ def _where(db, collection=None, path=None, filters=None):
             raise ValueError(f"invalid filter field {key!r}")
         if not isinstance(value, str | int | float):
             raise ValueError(f"filter {key!r} needs a single string or number, got {value!r}")
+        if isinstance(value, int) and not -SQLITE_INT <= value < SQLITE_INT:
+            raise ValueError(f"filter {key!r}: {value} is too large")
         sql.append(f"EXISTS (SELECT 1 FROM json_each(d.meta, '$.{key}') WHERE value = ?)")
         args.append(value)
     return " AND ".join(sql), args
@@ -40,7 +43,7 @@ def _where(db, collection=None, path=None, filters=None):
 def _check_k(k):
     if not isinstance(k, int) or k < 1:
         raise ValueError(f"k must be a positive integer, got {k!r}")
-    return k
+    return min(k, SQLITE_INT - 1)
 
 
 def _phrases(query):
@@ -101,6 +104,8 @@ class Index:
 
         self._load()
         embed.acquire(self._key, lambda: setattr(self, "mat", self.host.to(embed.DEVICE)), self._release)
+        if self.mat is None:  # sift gave up the GPU while the vectors were away: search them in RAM, in float32
+            self.host = self.mat = self.host.float()
         return self.ids, self.mat
 
     def _release(self):
@@ -111,6 +116,8 @@ class Index:
 
         from .embed import encode
 
+        if not query.strip():  # the embedding of nothing is close to arbitrary chunks
+            return []
         ids, mat = self._vectors()
         q = torch.from_numpy(encode([query], query=True)[0]).to(mat.device, mat.dtype)
         scores = mat @ q
@@ -154,6 +161,7 @@ class Index:
         from .embed import rerank
 
         k, where = _check_k(k), _where(self.db, collection, path, filters)
+        candidates = max(candidates, k)
         fused = {}
         for ranked in (self._keyword(_any_word(query), candidates, *where), self._semantic(query, candidates, *where)):
             for rank, (chunk, _) in enumerate(ranked):
@@ -167,15 +175,16 @@ class Index:
         return sorted(hits, key=lambda h: -h["score"])[:k]
 
     def get(self, id):
-        """Full text of a document, by its `collection/path` id."""
+        """Full text of an indexed document, by its `collection/path` id. Other files are never read."""
         name, _, rel = id.partition("/")
-        row = self.db.execute("SELECT path FROM collections WHERE name = ?", (name,)).fetchone()
-        root = Path(row[0]).resolve() if row else None
-        path = (root / rel).resolve() if root and rel else None
-        if path is None or not path.is_relative_to(root):
+        row = self.db.execute(
+            "SELECT co.path FROM docs d JOIN collections co ON co.id = d.collection WHERE co.name = ? AND d.path = ?",
+            (name, rel),
+        ).fetchone()
+        if not row:
             raise LookupError(f"unknown document {id!r}")
         try:
-            return path.read_text("utf-8-sig", "replace")
+            return store.decode((Path(row[0]) / rel).read_bytes())
         except OSError as e:
             raise LookupError(f"cannot read {id!r}: {e.strerror or e}") from None
 

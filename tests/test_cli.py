@@ -5,6 +5,7 @@ import sqlite3
 import sys
 
 import pytest
+from mcp.server.mcpserver import MCPServer
 
 from sift import cli, store
 
@@ -121,3 +122,24 @@ def test_version_and_module_entry_point(monkeypatch, capsys):
         runpy.run_module("sift", run_name="__main__")
     assert exc.value.code == 0
     assert capsys.readouterr().out.startswith("sift ")
+
+
+@pytest.mark.parametrize(
+    "error, code", [(KeyboardInterrupt(), 130), (OSError("address in use"), "error: address in use")]
+)
+def test_serve_stops_without_a_traceback(cli_corpus, monkeypatch, error, code):
+    async def failing(self, **kwargs):
+        raise error
+
+    monkeypatch.setattr(MCPServer, "run_stdio_async", failing)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["serve", "--stdio"])
+    assert exc.value.code == code
+
+
+def test_unusable_home_is_a_message(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.write_text("a file, not a folder", encoding="utf-8")
+    monkeypatch.setattr(store, "HOME", home)
+    with pytest.raises(SystemExit, match=r"^error: "):
+        cli.main(["status"])
