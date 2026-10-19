@@ -433,3 +433,37 @@ def test_get_the_lines_of_a_hit(corpus):
 def test_bad_line_ranges_are_clear_errors(corpus, lines):
     with pytest.raises(ValueError, match="lines"):
         Index(corpus[0]).get("notes/rl.md", lines)
+
+
+@pytest.mark.parametrize("short", ["notes/brush.md", "notes/robots/brush.md"])
+def test_get_finds_a_document_by_its_file_name(corpus, short):
+    # Agents shorten ids, e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md; that failed.
+    index = Index(corpus[0])
+    assert index.get(short) == index.get("notes/robots/brush.md")
+    assert index.get(short, "1") == "---\n"
+
+
+def test_get_by_a_file_name_several_documents_have(corpus):
+    db, root = corpus
+    for folder in ("a", "b"):
+        write(root / folder / "same.md", f"# {folder}\n")
+    store.index(db)
+    with pytest.raises(LookupError, match=r"'notes/same\.md' matches notes/a/same\.md, notes/b/same\.md;"):
+        Index(db).get("notes/same.md")
+
+
+@pytest.mark.parametrize(
+    "bad", ["notes/rush.md", "notes/s/brush.md", "missing/brush.md", "notes/%.md", "notes/_rush.md"]
+)
+def test_get_by_file_name_needs_the_whole_name(corpus, bad):
+    with pytest.raises(LookupError, match="unknown document"):
+        Index(corpus[0]).get(bad)
+
+
+def test_get_by_a_file_name_many_documents_have(corpus):
+    db, root = corpus
+    for folder in "abcdef":
+        write(root / folder / "same.md", f"# {folder}\n")
+    store.index(db)
+    with pytest.raises(LookupError, match=r"notes/e/same\.md, \.\.\.; give the whole id"):
+        Index(db).get("notes/same.md")
