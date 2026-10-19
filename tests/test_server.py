@@ -115,24 +115,33 @@ def test_errors_tell_the_agent_what_went_wrong(mcp, tool, args, reason):
 
 @pytest.fixture
 def transports(monkeypatch):
-    """Replaces the MCP transports with ones that serve while `serving()` is true, recording how they started."""
+    """Replaces the stdio transport and the HTTP server (uvicorn) with fakes that serve while `serving()` is true,
+    recording how they were started."""
+    import uvicorn
+
     fakes = types.SimpleNamespace(started=[], serving=lambda: False)
 
-    def fake(name):
-        async def run(self, **kwargs):
-            fakes.started.append((name, kwargs))
-            with anyio.fail_after(10):  # a safety net against hanging, not a timing assumption
-                while fakes.serving():
-                    await anyio.sleep(0)  # let the server's other tasks run
+    async def serving():
+        with anyio.fail_after(10):  # a safety net against hanging, not a timing assumption
+            while fakes.serving():
+                await anyio.sleep(0)  # let the server's other tasks run
 
-        return run
+    async def stdio(self):
+        fakes.started.append(("stdio", {}))
+        await serving()
 
-    monkeypatch.setattr(MCPServer, "run_stdio_async", fake("stdio"))
-    monkeypatch.setattr(MCPServer, "run_streamable_http_async", fake("http"))
+    async def http(self, sockets=None):
+        fakes.started.append(("http", {"host": self.config.host, "port": self.config.port}))
+        await serving()
+
+    monkeypatch.setattr(MCPServer, "run_stdio_async", stdio)
+    monkeypatch.setattr(uvicorn.Server, "serve", http)
     return fakes
 
 
-@pytest.mark.parametrize("stdio, expected", [(True, ("stdio", {})), (False, ("http", {"port": 9000}))])
+@pytest.mark.parametrize(
+    "stdio, expected", [(True, ("stdio", {})), (False, ("http", {"host": "127.0.0.1", "port": 9000}))]
+)
 def test_serve_loads_everything_then_runs(embedded, transports, stdio, expected):
     server.serve(port=9000, stdio=stdio)
     transport, kwargs = transports.started[0]
@@ -235,3 +244,38 @@ def test_instructions_for_a_collection_without_front_matter(tmp_path):
     store.add_collection(db, folder)
     store.index(db)
     assert "- plain: 1 document\n" in server.build(Index(db))[0].instructions + "\n"
+
+
+def test_http_shutdown_gives_up_on_unfinished_requests(embedded, monkeypatch, capsys):
+    # On shutdown, uvicorn waits for every connection to close (Python 3.12+), and a second Ctrl+C doesn't change
+    # that: a client that left a request unfinished kept `sift serve` from ever stopping.
+    import uvicorn
+
+    monkeypatch.setattr(server, "SHUTDOWN_SECONDS", 0.5)
+    servers, serve = [], uvicorn.Server.serve
+
+    async def recording(self, sockets=None):
+        servers.append(self)
+        await serve(self, sockets)
+
+    monkeypatch.setattr(uvicorn.Server, "serve", recording)
+    mcp = server.build(Index(embedded[0]))[0]
+
+    async def main():
+        with anyio.fail_after(10):  # a hang detector: the server stops within half a second
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(server._serve, mcp, "127.0.0.1", 0, False)
+                while not (servers and servers[0].started):
+                    await anyio.sleep(0.01)
+                port = servers[0].servers[0].sockets[0].getsockname()[1]
+                client = await anyio.connect_tcp("127.0.0.1", port)
+                await client.send(b"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 100\r\n\r\n{")
+                while not servers[0].server_state.tasks:  # the request is in, its body never will be
+                    await anyio.sleep(0.01)
+                servers[0].should_exit = True  # what Ctrl+C does
+            await client.aclose()
+
+    anyio.run(main)
+    err = capsys.readouterr().err
+    assert "Cancel 1 running task(s)" in err
+    assert "Traceback" not in err  # sift cancelled the request on purpose; the line above says so

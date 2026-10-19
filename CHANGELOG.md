@@ -18,7 +18,6 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - `search` returns chunks with any of the query's terms when none has them all, unless the query uses operators.
 - `get` returns `\n` line endings, like search results.
-
 - `sift serve` gives its GPU memory back when idle. Models and vectors load into RAM, move to the GPU when a
   search needs them, and return to RAM after 5 minutes without GPU use. Once released, the memory is free
   for other programs; the first search afterwards takes about a second longer. If other programs have taken the
@@ -31,6 +30,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `sift serve` could hang on Ctrl+C, however often it was pressed: on shutdown, uvicorn waits for every
+  connection to close (Python 3.12+), and a client that left a request unfinished never closed its connection.
+  The server now waits at most 3 seconds for open requests, then stops.
 - `sift index` stalled for minutes on a heading followed by a long run of spaces.
 - Titles: "# Learning C#" lost its "#", a bare "#" line took the next paragraph as title, and comments in fenced
   code blocks counted as headings.
