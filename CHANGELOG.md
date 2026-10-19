@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
 ### Added
 
 - Search results can carry front-matter fields (`fields`, e.g. `["url", "created"]`, or `["*"]` for all) and leave
@@ -12,19 +14,19 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Range filters on front-matter fields, e.g. `{"created": {">=": "2024-06", "<": "2025"}}` or
   `-f "created>=2024-06"`. Dates compare at the precision given.
 - `get` returns only some lines if asked, e.g. a hit's `"17-26"` (`--lines` on the CLI).
-- The server tells agents which front-matter fields each collection has; `status` lists them too.
 - `get` finds a document by its file name if no other document in the collection has that name, e.g.
   `arxiv/2603.29315.md` for `arxiv/2026/03/2603.29315.md`; otherwise it lists the matches.
+- The server tells agents which front-matter fields each collection has; `status` lists them too.
 
 ### Changed
 
-- `search` returns chunks with any of the query's terms when none has them all, unless the query uses operators.
-- `get` returns `\n` line endings, like search results.
 - `sift serve` gives its GPU memory back when idle. Models and vectors load into RAM, move to the GPU when a
   search needs them, and return to RAM after 5 minutes without GPU use. Once released, the memory is free
   for other programs; the first search afterwards takes about a second longer. If other programs have taken the
   memory meanwhile, sift stays on the CPU instead.
-- `get` serves indexed documents only, never other files below a collection's folder.
+- `search` returns chunks with any of the query's terms when none has them all, unless the query uses operators.
+- `get` serves indexed documents only, never other files below a collection's folder, and returns `\n` line
+  endings, like search results.
 - Front matter lists can be written one `- item` per line, as Obsidian, Jekyll and Hugo do; comment lines are
   skipped, and a key without a value means null.
 - Blank queries return nothing in every search mode, and `query` gathers at least `k` candidates per mode.
@@ -69,5 +71,6 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tobiaswuerth/sift/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tobiaswuerth/sift/releases/tag/v0.1.0
