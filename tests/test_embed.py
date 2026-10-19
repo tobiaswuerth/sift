@@ -372,7 +372,7 @@ def test_idle_models_leave_the_gpu(fake_models, gpu_memory, monkeypatch, capsys)
     used = fake_models._last_use
     assert not fake_models.release_idle(now=used + fake_models.IDLE_SECONDS - 1)
     assert fake_models.embedder().device == "cuda"
-    assert fake_models.release_idle(now=used + fake_models.IDLE_SECONDS)
+    assert fake_models.release_idle(now=used + fake_models.IDLE_SECONDS + 1)
     assert (fake_models.embedder().device, fake_models.reranker().device) == ("cpu", "cpu")
     assert emptied  # the memory goes back to the GPU, not just to PyTorch's cache
     assert "moved off the GPU" in capsys.readouterr().err
@@ -383,7 +383,7 @@ def test_gpu_budget_is_refreshed_when_coming_back(fake_models, gpu_memory, monke
     monkeypatch.setattr(fake_models, "DEVICE", "cuda")
     fake_models.encode(["brush"])
     assert len(gpu_memory.budgets) == 1  # set once while loading
-    fake_models.release_idle(now=fake_models._last_use + fake_models.IDLE_SECONDS)
+    fake_models.release_idle(now=fake_models._last_use + fake_models.IDLE_SECONDS + 1)
     gpu_memory.free = 10 * GiB  # another program took more memory meanwhile
     fake_models.encode(["brush"])
     assert gpu_memory.budgets[-1] == (pytest.approx((10 - 2.4) / 24), 0)
@@ -393,3 +393,15 @@ def test_nothing_moves_on_the_cpu(fake_models):
     fake_models.encode(["brush"])
     assert fake_models.embedder().device == "cpu"
     assert not fake_models.release_idle(now=fake_models._last_use + 10 * fake_models.IDLE_SECONDS)
+
+
+def test_idle_release_with_a_clock_value_that_rounds(fake_models, monkeypatch):
+    # (a + 300) - a is 299.9999999999982 for this monotonic reading, so tests must not sit exactly on the limit;
+    # two CI jobs failed when they did.
+    monkeypatch.setattr(fake_models, "gpu", lambda: True)
+    released = []
+    fake_models.acquire("thing", lambda: None, lambda: released.append(True))
+    monkeypatch.setattr(fake_models, "_last_use", 16165.871537361332)
+    assert not fake_models.release_idle(now=16165.871537361332 + fake_models.IDLE_SECONDS - 1)
+    assert fake_models.release_idle(now=16165.871537361332 + fake_models.IDLE_SECONDS + 1)
+    assert released == [True]

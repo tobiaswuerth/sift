@@ -192,7 +192,7 @@ def test_vectors_leave_the_gpu_when_idle(embedded, fake_models, monkeypatch):
     index = Index(embedded[0])
     first = ids(index.vsearch("brush strokes"))
     assert index.mat is not None
-    assert fake_models.release_idle(now=fake_models._last_use + fake_models.IDLE_SECONDS)
+    assert fake_models.release_idle(now=fake_models._last_use + fake_models.IDLE_SECONDS + 1)
     assert index.mat is None  # only the copy in RAM is left
     assert ids(index.vsearch("brush strokes")) == first
     assert index.mat is not None
