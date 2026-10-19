@@ -1,5 +1,7 @@
 """MCP server exposing search, vsearch, query, get and status."""
 
+import asyncio
+import logging
 import sqlite3
 import sys
 from typing import Any
@@ -113,12 +115,31 @@ def build(index=None):
 
 
 IDLE_CHECK_SECONDS = 30  # how often the server checks whether models and vectors can leave the GPU
+SHUTDOWN_SECONDS = 3  # how long Ctrl+C waits for open requests before the server stops anyway
 
 
 async def _release_gpu_when_idle():
     while True:
         await anyio.sleep(IDLE_CHECK_SECONDS)
         embed.release_idle()
+
+
+async def _serve_http(mcp, host, port):
+    """The MCP library's HTTP server, but with a time limit on shutdown. Without one, uvicorn waits for every
+    connection to close (Python 3.12+), even after a second Ctrl+C, and a client that leaves a request unfinished
+    keeps the server from ever stopping."""
+    import uvicorn
+
+    app = mcp.streamable_http_app(host=host)  # the host decides on DNS-rebinding protection
+    log_level = mcp.settings.log_level.lower()
+    config = uvicorn.Config(app, host=host, port=port, log_level=log_level, timeout_graceful_shutdown=SHUTDOWN_SECONDS)
+    logging.getLogger("uvicorn.error").addFilter(_no_cancelled_requests)  # after Config, which sets up logging
+    await uvicorn.Server(config).serve()
+
+
+def _no_cancelled_requests(record):
+    """Drop the traceback uvicorn logs for each request it cancels at shutdown; it says beforehand that it does."""
+    return not (record.exc_info and isinstance(record.exc_info[1], asyncio.CancelledError))
 
 
 async def _serve(mcp, host, port, stdio):
@@ -129,7 +150,7 @@ async def _serve(mcp, host, port, stdio):
             await mcp.run_stdio_async()
         else:
             print(f"sift MCP server on http://{host}:{port}/mcp", file=sys.stderr)
-            await mcp.run_streamable_http_async(host=host, port=port)
+            await _serve_http(mcp, host, port)
         tasks.cancel_scope.cancel()
 
 
