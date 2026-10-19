@@ -37,6 +37,10 @@ class FakeSentenceTransformer:
         self.halved = True
         return self
 
+    def to(self, device):
+        self.device = str(device)
+        return self
+
     def encode_document(
         self, texts, batch_size, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=None
     ):
@@ -57,7 +61,12 @@ class FakeSentenceTransformer:
 
 class FakeCrossEncoder:
     def __init__(self, name, device=None, max_length=None):
-        self.name, self.model = name, FakeSentenceTransformer(name)
+        self.name, self.device, self.model = name, device, FakeSentenceTransformer(name, device)
+
+    def to(self, device):
+        self.device = str(device)
+        self.model.to(device)
+        return self
 
     def predict(self, pairs, batch_size, show_progress_bar=None):
         assert show_progress_bar is False, "sift must not draw progress bars (the server's log is no terminal)"
@@ -147,6 +156,8 @@ def fake_models(monkeypatch, gpu_memory):
     monkeypatch.setitem(sys.modules, "sentence_transformers", module)
     monkeypatch.setattr(embed, "DEVICE", "cpu")
     monkeypatch.setattr(embed, "_batch_size", 128)
+    monkeypatch.setattr(embed, "_resident", {})  # nothing on the GPU yet
+    monkeypatch.setattr(embed, "_released", False)
     caches = (embed.embedder, embed.reranker, embed.limit_gpu_memory)
     for cached in caches:
         cached.cache_clear()

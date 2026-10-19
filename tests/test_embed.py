@@ -345,3 +345,51 @@ def test_no_gpu_hint_on_apple_gpus(fake_models, nvml, monkeypatch, capsys):
 )
 def test_cuda_pytorch_command_fits_the_platform(fake_models, platform, command):
     assert fake_models.cuda_pytorch_command(platform) == command
+
+
+# --- models wait in RAM and use the GPU only while busy ------------------------
+
+
+def test_models_wait_in_ram_until_used(fake_models, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    embedder, reranker = fake_models.embedder(), fake_models.reranker()
+    assert (embedder.device, reranker.device) == ("cpu", "cpu")
+    assert embedder.halved  # fp16 already, so moving to the GPU is quick
+    fake_models.encode(["brush strokes"])
+    assert (embedder.device, reranker.device) == ("cuda", "cpu")
+    fake_models.rerank("brush", ["brush strokes"])
+    assert reranker.device == "cuda"
+
+
+def test_idle_models_leave_the_gpu(fake_models, gpu_memory, monkeypatch, capsys):
+    import torch
+
+    emptied = []
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: emptied.append(True))
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    fake_models.encode(["brush strokes"])
+    fake_models.rerank("brush", ["brush strokes"])
+    used = fake_models._last_use
+    assert not fake_models.release_idle(now=used + fake_models.IDLE_SECONDS - 1)
+    assert fake_models.embedder().device == "cuda"
+    assert fake_models.release_idle(now=used + fake_models.IDLE_SECONDS)
+    assert (fake_models.embedder().device, fake_models.reranker().device) == ("cpu", "cpu")
+    assert emptied  # the memory goes back to the GPU, not just to PyTorch's cache
+    assert "moved off the GPU" in capsys.readouterr().err
+    assert not fake_models.release_idle(now=used + 10 * fake_models.IDLE_SECONDS)  # nothing left to release
+
+
+def test_gpu_budget_is_refreshed_when_coming_back(fake_models, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    fake_models.encode(["brush"])
+    assert len(gpu_memory.budgets) == 1  # set once while loading
+    fake_models.release_idle(now=fake_models._last_use + fake_models.IDLE_SECONDS)
+    gpu_memory.free = 10 * GiB  # another program took more memory meanwhile
+    fake_models.encode(["brush"])
+    assert gpu_memory.budgets[-1] == (pytest.approx((10 - 2.4) / 24), 0)
+
+
+def test_nothing_moves_on_the_cpu(fake_models):
+    fake_models.encode(["brush"])
+    assert fake_models.embedder().device == "cpu"
+    assert not fake_models.release_idle(now=fake_models._last_use + 10 * fake_models.IDLE_SECONDS)

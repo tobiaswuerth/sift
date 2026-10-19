@@ -3,6 +3,7 @@ import json
 import logging
 import threading
 
+import anyio
 import pytest
 from mcp import Client
 from mcp.server.mcpserver import MCPServer
@@ -103,17 +104,40 @@ def test_errors_tell_the_agent_what_went_wrong(mcp, tool, args, reason):
     assert reason in result.content[0].text
 
 
-@pytest.mark.parametrize("stdio, expected", [(True, ("stdio", {})), (False, ("streamable-http", {"port": 9000}))])
-def test_serve_loads_everything_then_runs(embedded, monkeypatch, stdio, expected):
-    runs = []
-    monkeypatch.setattr(MCPServer, "run", lambda self, transport, **kw: runs.append((transport, kw)))
+@pytest.fixture
+def transports(monkeypatch):
+    """Replaces the MCP transports with ones that return after a moment, recording how they were started."""
+    started = []
+
+    def fake(name):
+        async def run(self, **kwargs):
+            started.append((name, kwargs))
+            await anyio.sleep(0.05)
+
+        return run
+
+    monkeypatch.setattr(MCPServer, "run_stdio_async", fake("stdio"))
+    monkeypatch.setattr(MCPServer, "run_streamable_http_async", fake("http"))
+    return started
+
+
+@pytest.mark.parametrize("stdio, expected", [(True, ("stdio", {})), (False, ("http", {"port": 9000}))])
+def test_serve_loads_everything_then_runs(embedded, transports, stdio, expected):
     server.serve(port=9000, stdio=stdio)
-    transport, kwargs = runs[0]
+    transport, kwargs = transports[0]
     assert transport == expected[0]
     assert expected[1].items() <= kwargs.items()
 
 
-def test_serve_warns_without_embeddings(corpus, fake_models, monkeypatch, capsys):
-    monkeypatch.setattr(MCPServer, "run", lambda self, transport, **kw: None)
+def test_serve_releases_the_gpu_when_idle(embedded, transports, monkeypatch):
+    checks = []
+    monkeypatch.setattr(server, "IDLE_CHECK_SECONDS", 0.01)
+    monkeypatch.setattr(server.embed, "release_idle", lambda: checks.append(threading.current_thread()))
+    server.serve(port=9000)
+    assert checks  # checked while serving
+    assert set(checks) == {threading.main_thread()}  # PyTorch must stay out of worker threads
+
+
+def test_serve_warns_without_embeddings(corpus, fake_models, transports, capsys):
     server.serve(stdio=True)
     assert "warning: no embeddings yet" in capsys.readouterr().err
