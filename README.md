@@ -97,17 +97,30 @@ The `title` field, or else the first heading outside code blocks, or else the fi
 The search tools take `query`, `k`, `collection`, `path` and `filters`. Every result carries `id`
 (`collection/path`), `title`, `lines`, `score` and the chunk `text`, so agents can cite their sources.
 
-Claude Code, with the server running (`sift serve`), shared by any number of agents:
+### Claude Code
+
+With the server running (`sift serve`), register it once for all your projects:
 
 ```bash
-claude mcp add --transport http sift http://127.0.0.1:8765/mcp
+claude mcp add --scope user --transport http sift http://127.0.0.1:8765/mcp
 ```
 
-Or let Claude Code start its own server over stdio:
+Keep `--scope user`. Without it, `claude mcp add` registers sift for the current folder only, and sessions started
+anywhere else don't see it, including those in the Claude desktop app's Code tab. Start a new session afterwards:
+running sessions don't pick up new servers. One server serves any number of agents, with the models loaded once.
+
+Or let every Claude Code session start a server of its own over stdio. Then each session loads the models into
+memory itself:
 
 ```bash
-claude mcp add sift -- sift serve --stdio
+claude mcp add --scope user sift -- sift serve --stdio
 ```
+
+A registration made without `--scope user` can be removed in the folder where it was made, with
+`claude mcp remove sift --scope local`.
+
+Connectors in claude.ai and in the Chat tab of the Claude apps can't use sift: claude.ai reaches connectors from
+Anthropic's servers, which can't reach a server on your computer.
 
 ## Configuration
 
