@@ -103,7 +103,8 @@ def build(index=None):
 
     @mcp.tool()
     async def get(id: str, lines: str | None = None) -> str:
-        """Text of a document, by the `id` shown in search results: all of it, or `lines` such as "17-26"."""
+        """Text of a document, by the `id` shown in search results: all of it, or `lines` such as "17-26".
+        The id may leave out folders if the file name is unique, e.g. papers/2401.02225.md."""
         return _run(index.get, id, lines)
 
     @mcp.tool()
