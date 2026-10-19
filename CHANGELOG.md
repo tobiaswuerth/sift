@@ -13,6 +13,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   `-f "created>=2024-06"`. Dates compare at the precision given.
 - `get` returns only some lines if asked, e.g. a hit's `"17-26"` (`--lines` on the CLI).
 - The server tells agents which front-matter fields each collection has; `status` lists them too.
+- `get` finds a document by its file name if no other document in the collection has that name, e.g.
+  `arxiv/2603.29315.md` for `arxiv/2026/03/2603.29315.md`; otherwise it lists the matches.
 
 ### Changed
 

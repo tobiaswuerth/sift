@@ -103,7 +103,7 @@ The `title` field, or else the first heading outside code blocks, or else the fi
 | `search` | Exact keyword search, ranked by BM25. Supports `"phrases"`, `prefix*`, `AND`, `OR`, `NOT`. |
 | `vsearch` | Semantic search. |
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. |
-| `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. |
+| `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. An id may leave out folders if the file name is unique. |
 | `status` | Collections, counts and front-matter fields. |
 
 The search tools take `query`, `k`, `collection`, `path`, `filters`, `fields` and `compact`. Every result carries `id`
@@ -124,6 +124,9 @@ claude mcp add --scope user --transport http sift http://127.0.0.1:8765/mcp
 Keep `--scope user`. Without it, `claude mcp add` registers sift for the current folder only, and sessions started
 anywhere else don't see it, including those in the Claude desktop app's Code tab. Start a new session afterwards:
 running sessions don't pick up new servers. One server serves any number of agents, with the models loaded once.
+
+After upgrading sift, restart `sift serve` and start a new Claude Code session: a running session can keep an
+outdated list of sift's tools and their parameters, even after reconnecting.
 
 Or let every Claude Code session start a server of its own over stdio. Then each session loads the models into
 memory itself:

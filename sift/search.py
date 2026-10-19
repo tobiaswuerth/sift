@@ -243,17 +243,22 @@ class Index:
 
     def get(self, id, lines=None):
         """Text of an indexed document, by its `collection/path` id: all of it, or `lines` such as "17-26", as
-        search hits give them. Other files are never read."""
+        search hits give them. The path may leave out folders if the file name is unique in the collection.
+        Other files are never read."""
         span = None if lines is None else _line_span(lines)
         name, _, rel = id.partition("/")
-        row = self.db.execute(
-            "SELECT co.path FROM docs d JOIN collections co ON co.id = d.collection WHERE co.name = ? AND d.path = ?",
-            (name, rel),
-        ).fetchone()
-        if not row:
+        sql = "SELECT co.path, d.path FROM docs d JOIN collections co ON co.id = d.collection WHERE co.name = ? AND "
+        rows = self.db.execute(sql + "d.path = ?", (name, rel)).fetchall()
+        if not rows and rel:  # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
+            rows = self.db.execute(sql + "substr(d.path, -?) = ? LIMIT 6", (name, len(rel) + 1, "/" + rel)).fetchall()
+        if len(rows) > 1:
+            matches = ", ".join(f"{name}/{path}" for _, path in rows[:5]) + (", ..." if len(rows) > 5 else "")
+            raise LookupError(f"{id!r} matches {matches}; give the whole id")
+        if not rows:
             raise LookupError(f"unknown document {id!r}")
+        root, rel = rows[0]
         try:
-            text = store.decode((Path(row[0]) / rel).read_bytes()).replace("\r\n", "\n")  # as indexed
+            text = store.decode((Path(root) / rel).read_bytes()).replace("\r\n", "\n")  # as indexed
         except OSError as e:
             raise LookupError(f"cannot read {id!r}: {e.strerror or e}") from None
         return text if span is None else "".join(store.LINE.findall(text)[span[0] - 1 : span[1]])
