@@ -361,7 +361,7 @@ def test_models_wait_in_ram_until_used(fake_models, monkeypatch):
     assert reranker.device == "cuda"
 
 
-def test_idle_models_leave_the_gpu(fake_models, gpu_memory, monkeypatch, capsys):
+def test_idle_models_leave_the_gpu(fake_models, clock, gpu_memory, monkeypatch, capsys):
     import torch
 
     emptied = []
@@ -369,39 +369,104 @@ def test_idle_models_leave_the_gpu(fake_models, gpu_memory, monkeypatch, capsys)
     monkeypatch.setattr(fake_models, "DEVICE", "cuda")
     fake_models.encode(["brush strokes"])
     fake_models.rerank("brush", ["brush strokes"])
-    used = fake_models._last_use
-    assert not fake_models.release_idle(now=used + fake_models.IDLE_SECONDS - 1)
+    clock.advance(fake_models.IDLE_SECONDS - 0.5)
+    assert not fake_models.release_idle()
     assert fake_models.embedder().device == "cuda"
-    assert fake_models.release_idle(now=used + fake_models.IDLE_SECONDS + 1)
+    clock.advance(0.5)  # exactly IDLE_SECONDS since the last use
+    assert fake_models.release_idle()
     assert (fake_models.embedder().device, fake_models.reranker().device) == ("cpu", "cpu")
     assert emptied  # the memory goes back to the GPU, not just to PyTorch's cache
     assert "moved off the GPU" in capsys.readouterr().err
-    assert not fake_models.release_idle(now=used + 10 * fake_models.IDLE_SECONDS)  # nothing left to release
+    clock.advance(10 * fake_models.IDLE_SECONDS)
+    assert not fake_models.release_idle()  # nothing left to release
 
 
-def test_gpu_budget_is_refreshed_when_coming_back(fake_models, gpu_memory, monkeypatch):
+def test_every_use_restarts_the_idle_time(fake_models, clock, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    fake_models.encode(["brush"])
+    clock.advance(fake_models.IDLE_SECONDS - 1)
+    fake_models.encode(["brush"])  # already on the GPU, still counts as use
+    clock.advance(fake_models.IDLE_SECONDS - 1)
+    assert not fake_models.release_idle()
+    clock.advance(1)
+    assert fake_models.release_idle()
+
+
+def test_gpu_budget_is_refreshed_when_coming_back(fake_models, clock, gpu_memory, monkeypatch):
     monkeypatch.setattr(fake_models, "DEVICE", "cuda")
     fake_models.encode(["brush"])
     assert len(gpu_memory.budgets) == 1  # set once while loading
-    fake_models.release_idle(now=fake_models._last_use + fake_models.IDLE_SECONDS + 1)
+    clock.advance(fake_models.IDLE_SECONDS)
+    assert fake_models.release_idle()
     gpu_memory.free = 10 * GiB  # another program took more memory meanwhile
     fake_models.encode(["brush"])
     assert gpu_memory.budgets[-1] == (pytest.approx((10 - 2.4) / 24), 0)
 
 
-def test_nothing_moves_on_the_cpu(fake_models):
+def test_nothing_moves_on_the_cpu(fake_models, clock):
     fake_models.encode(["brush"])
     assert fake_models.embedder().device == "cpu"
-    assert not fake_models.release_idle(now=fake_models._last_use + 10 * fake_models.IDLE_SECONDS)
+    clock.advance(10 * fake_models.IDLE_SECONDS)
+    assert not fake_models.release_idle()
 
 
-def test_idle_release_with_a_clock_value_that_rounds(fake_models, monkeypatch):
-    # (a + 300) - a is 299.9999999999982 for this monotonic reading, so tests must not sit exactly on the limit;
-    # two CI jobs failed when they did.
+def test_idle_release_on_the_limit_despite_rounding(fake_models, clock, monkeypatch):
+    # (a + 300) - a is 299.9999999999982 for this clock reading: comparing the idle time with the limit missed
+    # the release by a rounding error, and failed two CI jobs.
+    clock.now = 16165.871537361332
     monkeypatch.setattr(fake_models, "gpu", lambda: True)
     released = []
     fake_models.acquire("thing", lambda: None, lambda: released.append(True))
-    monkeypatch.setattr(fake_models, "_last_use", 16165.871537361332)
-    assert not fake_models.release_idle(now=16165.871537361332 + fake_models.IDLE_SECONDS - 1)
-    assert fake_models.release_idle(now=16165.871537361332 + fake_models.IDLE_SECONDS + 1)
+    clock.advance(fake_models.IDLE_SECONDS)
+    assert fake_models.release_idle()
     assert released == [True]
+
+
+def test_embed_progress_survives_a_clock_that_stands_still(corpus, fake_models, capsys):
+    # Coarse timers can return the same reading twice; the progress rate must not divide by zero.
+    fake_models.embed_pending(corpus[0])
+    assert "embedded 3/3 chunks" in capsys.readouterr().err
+
+
+def test_calibration_when_memory_does_not_grow_with_the_batch(fake_models, gpu_memory, monkeypatch):
+    # Tiny texts can leave the measured peak unchanged, and the estimate divided by zero.
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    monkeypatch.setattr(gpu_memory, "per_text", 0)
+    assert fake_models.calibrate_batch_size() == fake_models.MAX_BATCH
+
+
+def test_coming_back_to_a_busy_gpu_uses_the_cpu(fake_models, clock, gpu_memory, monkeypatch, capsys):
+    # Another program took the GPU memory while sift was idle. Moving back anyway could crash that program.
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    fake_models.encode(["brush"])
+    clock.advance(fake_models.IDLE_SECONDS)
+    assert fake_models.release_idle()
+    gpu_memory.free = 2 * GiB
+    assert fake_models.encode(["brush"]).shape == (1, 64)
+    assert fake_models.rerank("brush", ["brush strokes"]).shape == (1,)
+    embedder, reranker = fake_models.embedder(), fake_models.reranker()
+    assert (fake_models.DEVICE, embedder.device, reranker.device) == ("cpu", "cpu", "cpu")
+    assert not embedder.halved  # float32 again: CPUs are slow at fp16
+    assert not reranker.model.halved
+    assert len(gpu_memory.budgets) == 1  # no budget for memory that isn't there
+    assert "using the CPU" in capsys.readouterr().err
+
+
+def test_embed_pending_skips_chunks_without_text(embedded, fake_models, capsys):
+    # A chunk without keyword-index text can only come from an index changed meanwhile; there's nothing to embed.
+    db, _ = embedded
+    capsys.readouterr()
+    db.execute("INSERT INTO chunks(doc, seq, line_start, line_end) VALUES(1, 9, 1, 1)")
+    fake_models.embed_pending(db)  # raised "max() arg is an empty sequence"
+    assert "nothing to embed" in capsys.readouterr().err
+
+
+def test_no_calibration_after_giving_up_the_gpu(fake_models, clock, gpu_memory, monkeypatch):
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    fake_models.encode(["brush"])
+    clock.advance(fake_models.IDLE_SECONDS)
+    fake_models.release_idle()
+    gpu_memory.free = 2 * GiB
+    measured = len(gpu_memory.batches)
+    assert fake_models.calibrate_batch_size() == 128
+    assert len(gpu_memory.batches) == measured  # nothing ran on the GPU

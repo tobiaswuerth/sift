@@ -234,9 +234,9 @@ def pools(monkeypatch):
     created = []
 
     class RecordingPool(store.ProcessPoolExecutor):
-        def __init__(self, max_workers):
-            created.append(max_workers)
-            super().__init__(max_workers)
+        def __init__(self, max_workers, mp_context=None):
+            created.append((max_workers, mp_context and mp_context.get_start_method()))
+            super().__init__(max_workers, mp_context=mp_context)
 
     monkeypatch.setattr(store, "ProcessPoolExecutor", RecordingPool)
     return created
@@ -254,7 +254,8 @@ def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):
     parallel = store.connect(tmp_path / "parallel")
     store.add_collection(parallel, notes, "notes")
     store.index(parallel)
-    assert pools == [2]
+    # spawned, not forked, on every platform: forking a process with threads (PyTorch starts some) can deadlock
+    assert pools == [(2, "spawn")]
     assert index_contents(parallel) == index_contents(serial)
 
 
@@ -323,3 +324,94 @@ def test_index_skips_unreadable_files_and_retries_later(notes, home, monkeypatch
     monkeypatch.setattr(store, "load", real_load)
     store.index(db)
     assert "rl.md" in doc_ids(db)
+
+
+# --- edge cases: titles, front matter, lines, encodings, names -----------------
+
+
+@pytest.mark.parametrize(
+    "text, title",
+    [
+        ("# Learning C#\n", "Learning C#"),  # a closing sequence of #s needs a space before it
+        ("## Second level ##\n", "Second level"),
+        ("#\nA paragraph, not a heading\n# Real\n", "Real"),  # an empty heading names nothing
+        ("# ##\n# Real\n", "Real"),
+        ("   # Indented up to three spaces\n", "Indented up to three spaces"),
+        ("    # Four spaces make it code\n", "file"),
+        ("#hashtag\n", "file"),
+        ("Intro\n\n```bash\n# install it\n```\n# After the code\n", "After the code"),  # no headings in code
+        ("~~~\n# not a heading\n~~~\n", "file"),
+        ("````\n```\n# still code\n````\n", "file"),  # a fence closes only with its own kind and length
+        ("```\n# unclosed code block\n", "file"),
+    ],
+)
+def test_title_from_the_first_markdown_heading(text, title):
+    assert store.parse(text, "file")[0] == title
+
+
+def test_heading_search_stays_fast_on_long_lines():
+    # A heading followed by a long run of spaces made the heading regex backtrack for minutes, stalling `sift index`.
+    text = "# a" + " " * 100_000 + "b\n" + "#" + " " * 100_000 + "\n"
+    assert store.parse(text, "file")[0] == "a" + " " * 100_000 + "b"
+
+
+def test_parse_empty_front_matter():
+    assert store.parse("---\n---\n# Title\nbody\n", "file") == ("Title", {}, "# Title\nbody\n", 3)
+
+
+def test_parse_front_matter_lists_and_comments():
+    # Obsidian, Jekyll and Hugo write lists as one `- item` per line.
+    text = '---\n# a comment\ntags:\n  - painting\n  - "robots"\n- 2024\nauthors: ["A"]\nempty:\n---\nbody\n'
+    assert store.parse(text, "file")[1] == {"tags": ["painting", "robots", 2024], "authors": ["A"], "empty": None}
+
+
+@pytest.mark.parametrize("separator", ["\x0b", "\x0c", "\x1c", "\x85", "\u2028", "\u2029"])
+def test_chunk_counts_lines_like_editors(separator):
+    # Only \n ends a line; str.splitlines also splits at these, which shifted the line numbers search hits report.
+    assert list(store.chunk(f"one\n{separator}two\nthree\n")) == [(1, 3, f"one\n{separator}two\nthree")]
+
+
+@pytest.mark.parametrize("bom, codec", [(b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be")])
+def test_load_reads_utf16_files(tmp_path, bom, codec):
+    # Windows PowerShell 5.1 writes UTF-16 with `>` and Out-File; read as UTF-8, every other character was a NUL.
+    path = tmp_path / "note.txt"
+    path.write_bytes(bom + "# Héllo\r\nworld\r\n".encode(codec))
+    assert store.load(path)[1:] == ("Héllo", {}, [(1, 2, "# Héllo\nworld")])
+
+
+def test_load_replaces_invalid_utf8(tmp_path):
+    path = tmp_path / "latin1.txt"
+    path.write_bytes(b"r\xe9sum\xe9 du jour\n")
+    assert store.load(path)[3] == [(1, 1, "r\ufffdsum\ufffd du jour")]
+
+
+def test_index_skips_file_names_sqlite_cannot_store(corpus, monkeypatch, capsys):
+    # Linux file names may hold bytes that aren't UTF-8, which Python keeps as surrogates and SQLite refuses:
+    # one such file aborted the whole run.
+    db, root = corpus
+    real_walk = store.walk
+
+    def walk(path):
+        yield os.path.join(path, "r\udce9sum\udce9.md"), 1, 1
+        yield from real_walk(path)
+
+    monkeypatch.setattr(store, "walk", walk)
+    write(root / "new.md", "# New\n")
+    store.index(db)
+    assert "new.md" in doc_ids(db)
+    assert "unsupported file name, skipped: " in capsys.readouterr().err
+
+
+def test_add_collection_expands_the_home_folder(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))  # POSIX
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows
+    (tmp_path / "notes").mkdir()
+    db = store.connect(tmp_path / "h")
+    store.add_collection(db, "~/notes")
+    assert db.execute("SELECT path FROM collections").fetchone() == (str((tmp_path / "notes").resolve()),)
+
+
+def test_add_collection_without_a_folder_name_asks_for_one(tmp_path):
+    db = store.connect(tmp_path / "h")
+    with pytest.raises(SystemExit, match="--name"):
+        store.add_collection(db, tmp_path.anchor)  # a drive or file system root has no name

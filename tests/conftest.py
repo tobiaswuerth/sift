@@ -146,9 +146,47 @@ def gpu_memory(monkeypatch):
     return fake
 
 
+@pytest.fixture(autouse=True)
+def close_databases(monkeypatch):
+    """Close every database a test opens; one left to the garbage collector is a ResourceWarning (Python 3.13+)."""
+    opened, connect = [], store.connect
+
+    def tracked(*args, **kwargs):
+        opened.append(db := connect(*args, **kwargs))
+        return db
+
+    monkeypatch.setattr(store, "connect", tracked)
+    yield
+    for db in opened:
+        db.close()
+
+
+class FakeClock:
+    """Stands in for sift's clocks: it stands still until a test moves it, so no test depends on real time."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
 @pytest.fixture
-def fake_models(monkeypatch, gpu_memory):
-    """Replace Sentence Transformers and GPU memory queries with fakes; everything else in sift runs for real."""
+def clock(monkeypatch):
+    from sift import embed
+
+    fake = FakeClock()
+    monkeypatch.setattr(embed, "monotonic", fake)
+    monkeypatch.setattr(embed, "perf_counter", fake)
+    return fake
+
+
+@pytest.fixture
+def fake_models(monkeypatch, gpu_memory, clock):
+    """Replace Sentence Transformers, GPU memory queries and clocks with fakes; everything else runs for real."""
     from sift import embed
 
     module = types.ModuleType("sentence_transformers")

@@ -1,7 +1,9 @@
 import asyncio
 import json
 import logging
+import sqlite3
 import threading
+import types
 
 import anyio
 import pytest
@@ -106,38 +108,100 @@ def test_errors_tell_the_agent_what_went_wrong(mcp, tool, args, reason):
 
 @pytest.fixture
 def transports(monkeypatch):
-    """Replaces the MCP transports with ones that return after a moment, recording how they were started."""
-    started = []
+    """Replaces the MCP transports with ones that serve while `serving()` is true, recording how they started."""
+    fakes = types.SimpleNamespace(started=[], serving=lambda: False)
 
     def fake(name):
         async def run(self, **kwargs):
-            started.append((name, kwargs))
-            await anyio.sleep(0.05)
+            fakes.started.append((name, kwargs))
+            with anyio.fail_after(10):  # a safety net against hanging, not a timing assumption
+                while fakes.serving():
+                    await anyio.sleep(0)  # let the server's other tasks run
 
         return run
 
     monkeypatch.setattr(MCPServer, "run_stdio_async", fake("stdio"))
     monkeypatch.setattr(MCPServer, "run_streamable_http_async", fake("http"))
-    return started
+    return fakes
 
 
 @pytest.mark.parametrize("stdio, expected", [(True, ("stdio", {})), (False, ("http", {"port": 9000}))])
 def test_serve_loads_everything_then_runs(embedded, transports, stdio, expected):
     server.serve(port=9000, stdio=stdio)
-    transport, kwargs = transports[0]
+    transport, kwargs = transports.started[0]
     assert transport == expected[0]
     assert expected[1].items() <= kwargs.items()
 
 
 def test_serve_releases_the_gpu_when_idle(embedded, transports, monkeypatch):
     checks = []
-    monkeypatch.setattr(server, "IDLE_CHECK_SECONDS", 0.01)
+    monkeypatch.setattr(server, "IDLE_CHECK_SECONDS", 0)
     monkeypatch.setattr(server.embed, "release_idle", lambda: checks.append(threading.current_thread()))
+    transports.serving = lambda: len(checks) < 3  # serve until the idle check ran a few times
     server.serve(port=9000)
-    assert checks  # checked while serving
+    assert len(checks) >= 3
     assert set(checks) == {threading.main_thread()}  # PyTorch must stay out of worker threads
 
 
 def test_serve_warns_without_embeddings(corpus, fake_models, transports, capsys):
     server.serve(stdio=True)
     assert "warning: no embeddings yet" in capsys.readouterr().err
+
+
+def test_database_errors_reach_the_agent(embedded, monkeypatch):
+    index = Index(embedded[0])
+
+    def locked(*args):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(index, "search", locked)
+    result = call(server.build(index)[0], "search", {"query": "x"})
+    assert result.is_error
+    assert "database is locked" in result.content[0].text
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt, OSError])
+def test_serve_raises_transport_errors_as_they_are(embedded, monkeypatch, error):
+    # The idle check shares a task group with the transport, which wraps errors in an exception group:
+    # Ctrl+C then printed a traceback instead of stopping quietly.
+    async def failing(self, **kwargs):
+        raise error("stop")
+
+    monkeypatch.setattr(MCPServer, "run_stdio_async", failing)
+    with pytest.raises(error, match="stop"):
+        server.serve(stdio=True)
+
+
+@pytest.fixture
+def http_app(embedded, monkeypatch):
+    """The HTTP app `sift serve` runs, captured instead of served."""
+    import uvicorn
+
+    apps = []
+
+    async def capture(self, *args, **kwargs):
+        apps.append(self.config.app)
+
+    monkeypatch.setattr(uvicorn.Server, "serve", capture)
+    server.serve(port=8765)
+    return apps[0]
+
+
+def test_http_server_accepts_only_local_hosts(http_app):
+    # A web page can reach a local server under its own domain (DNS rebinding), so requests must name a local host
+    # and come from a local page, if from any.
+    from starlette.testclient import TestClient
+
+    headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}},
+    }
+    with TestClient(http_app, base_url="http://127.0.0.1:8765") as client:
+        assert client.post("/mcp", json=initialize, headers=headers).status_code == 200
+        rebound = client.post("/mcp", json=initialize, headers=headers | {"Host": "attacker.example:8765"})
+        assert rebound.status_code == 421
+        foreign = client.post("/mcp", json=initialize, headers=headers | {"Origin": "http://attacker.example"})
+        assert foreign.status_code == 403

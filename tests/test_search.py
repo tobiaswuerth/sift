@@ -22,9 +22,11 @@ def test_keyword_search(corpus):
     assert index.search("nonexistentword") == []
 
 
-@pytest.mark.parametrize("query", ["", "   "])
-def test_empty_query_returns_nothing(corpus, query):
-    assert Index(corpus[0]).search(query) == []
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+@pytest.mark.parametrize("query", ["", "  \n "])
+def test_blank_queries_find_nothing(embedded, mode, query):
+    # The embedding of nothing is close to arbitrary chunks; returning those would look like an answer.
+    assert getattr(Index(embedded[0]), mode)(query) == []
 
 
 def test_unusable_query_is_a_clear_error(corpus, monkeypatch):
@@ -173,7 +175,7 @@ def test_get_unreadable_documents(corpus):
     (root / "rl.md").unlink()
     with pytest.raises(LookupError, match="cannot read"):
         Index(db).get("notes/rl.md")
-    with pytest.raises(LookupError, match="cannot read"):
+    with pytest.raises(LookupError, match="unknown document"):
         Index(db).get("notes/robots")  # a folder
 
 
@@ -186,13 +188,14 @@ def test_status(embedded):
     ]
 
 
-def test_vectors_leave_the_gpu_when_idle(embedded, fake_models, monkeypatch):
+def test_vectors_leave_the_gpu_when_idle(embedded, fake_models, clock, monkeypatch):
     # The fakes run on the CPU, so a "GPU" copy is a second CPU tensor here; what matters is when it exists.
     monkeypatch.setattr(fake_models, "gpu", lambda: True)
     index = Index(embedded[0])
     first = ids(index.vsearch("brush strokes"))
     assert index.mat is not None
-    assert fake_models.release_idle(now=fake_models._last_use + fake_models.IDLE_SECONDS + 1)
+    clock.advance(fake_models.IDLE_SECONDS)
+    assert fake_models.release_idle()
     assert index.mat is None  # only the copy in RAM is left
     assert ids(index.vsearch("brush strokes")) == first
     assert index.mat is not None
@@ -206,3 +209,51 @@ def test_vectors_reload_while_on_the_gpu(embedded, fake_models, monkeypatch):
     (root / "rl.md").unlink()
     store.index(db)
     assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
+
+
+# --- edge cases ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_huge_k_is_fine(embedded, mode):
+    # SQLite takes 64-bit integers only: a larger k raised OverflowError, which reached agents as a crash.
+    assert ids(getattr(Index(embedded[0]), mode)("reward", k=10**30))[0] == "notes/rl.md"
+
+
+def test_huge_numbers_in_filters_are_clear_errors(corpus):
+    with pytest.raises(ValueError, match="too large"):
+        Index(corpus[0]).search("brush", filters={"year": 10**30})
+
+
+def test_query_returns_k_hits_beyond_its_candidate_count(embedded):
+    # Candidates came from a fixed pool of 40 per mode, so k=100 could return fewer hits than there are.
+    assert len(Index(embedded[0]).query("brush", k=3, candidates=1)) == 3
+
+
+def test_get_serves_indexed_documents_only(corpus):
+    # Ids come from search results; `get` must not read other files under a collection's folder.
+    index = Index(corpus[0])
+    for other in ("notes/ignored.py", "notes/.hidden/secret.md", "notes/node_modules/dep.md"):
+        with pytest.raises(LookupError, match="unknown document"):
+            index.get(other)
+
+
+def test_get_reads_utf16_documents(corpus):
+    db, root = corpus
+    (root / "utf16.txt").write_bytes("\ufeff# Héllo\r\nworld\r\n".encode("utf-16-le"))
+    store.index(db)
+    assert Index(db).get("notes/utf16.txt") == "# Héllo\r\nworld\r\n"
+
+
+def test_vectors_stay_in_ram_when_the_gpu_is_busy_on_return(embedded, fake_models, clock, gpu_memory, monkeypatch):
+    import torch
+
+    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
+    fake_models.encode(["brush"])  # the models went to the GPU ...
+    clock.advance(fake_models.IDLE_SECONDS)
+    assert fake_models.release_idle()  # ... and back to RAM
+    gpu_memory.free = 2 * 2**30  # meanwhile another program took the GPU
+    index = Index(embedded[0])
+    assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
+    assert index.mat.dtype == torch.float32  # searched in RAM, where fp16 is slow
+    assert fake_models.DEVICE == "cpu"

@@ -1,5 +1,6 @@
 """MCP server exposing search, vsearch, query, get and status."""
 
+import sqlite3
 import sys
 from typing import Any
 
@@ -39,7 +40,7 @@ def _run(fn, *args):
     agent; anything else counts as a crash, and the MCP library tells the agent just "Error executing tool"."""
     try:
         return fn(*args)
-    except (LookupError, ValueError) as e:
+    except (LookupError, ValueError, sqlite3.Error) as e:
         raise ToolError(str(e)) from None
 
 
@@ -125,4 +126,7 @@ def serve(host="127.0.0.1", port=8765, stdio=False):
         index._load()
     except LookupError as e:
         print(f"warning: {e}", file=sys.stderr)
-    anyio.run(_serve, mcp, host, port, stdio)
+    try:
+        anyio.run(_serve, mcp, host, port, stdio)
+    except BaseExceptionGroup as group:  # from the task group; the error inside is the transport's (or Ctrl+C)
+        raise group.exceptions[0] from None

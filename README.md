@@ -61,14 +61,17 @@ Search commands accept `-k` (number of results), `-c` (collection), `--path` (gl
 
 ### Front matter
 
-YAML front matter with flat `key: value` lines becomes filterable metadata. A list field matches when it contains the
-value:
+YAML front matter with flat `key: value` lines becomes filterable metadata; lists can be inline or one `- item` per
+line. A list field matches when it contains the value:
 
 ```markdown
 ---
 title: "Brush stroke planning"
 categories: ["cs.RO", "cs.GR"]
 year: 2024
+tags:
+  - painting
+  - robots
 ---
 ```
 
@@ -76,7 +79,7 @@ year: 2024
 sift query "stroke order" -f categories=cs.RO -f year=2024
 ```
 
-The `title` field, or else the first heading, or else the file name, becomes the document title.
+The `title` field, or else the first heading outside code blocks, or else the file name, becomes the document title.
 
 ## MCP
 
@@ -85,7 +88,7 @@ The `title` field, or else the first heading, or else the file name, becomes the
 | `search` | Exact keyword search, ranked by BM25. Supports `"phrases"`, `prefix*`, `AND`, `OR`, `NOT`. |
 | `vsearch` | Semantic search. |
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. |
-| `get` | Full text of a document by its id. |
+| `get` | Full text of an indexed document by its id. |
 | `status` | Collections and counts. |
 
 The search tools take `query`, `k`, `collection`, `path` and `filters`. Every result carries `id`
@@ -120,7 +123,8 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
 
 - **Indexing:** worker processes read and parse files in parallel while the previous batch is written; small
   updates skip the process start-up. Files are compared by modification time and size, then by content hash, so
-  unchanged files cost nothing. Markdown is split into chunks of about 3,000 characters (about 750 tokens) on line
+  unchanged files cost nothing. Files are read as UTF-8, or as UTF-16 when they start with its byte order mark
+  (Windows PowerShell 5.1 writes those). Markdown is split into chunks of about 3,000 characters (about 750 tokens) on line
   boundaries, preferring headings, with a small overlap.
 - **Storage:** one SQLite database in WAL mode holds documents, chunks, metadata, an FTS5 keyword index and the
   vectors (fp16).
@@ -133,13 +137,13 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   With less than 2 GB to spare, sift uses the CPU instead.
 - **Idle GPU:** models and vectors wait in RAM and move to the GPU when a search needs them. After 5 minutes
   without GPU use, `sift serve` moves them back to RAM and hands the memory back; only CUDA's own context
-  (about 0.3 GB) stays. The first search afterwards takes about a second longer. Keyword search never uses
-  the GPU.
+  (about 0.3 GB) stays. The first search afterwards takes about a second longer; if other programs have taken the
+  memory meanwhile, sift stays on the CPU rather than squeeze them. Keyword search never uses the GPU.
 - **`search`:** SQLite FTS5 with BM25, titles weighted double. Input that isn't valid FTS5 syntax is treated as exact
   phrases.
 - **`vsearch`:** exact nearest-neighbour search as one matrix multiply over all vectors on the GPU. No approximate
   index, so nothing to tune and no recall loss; a million 1024-dimensional vectors take about 2 GB of VRAM.
-- **`query`:** the top 40 keyword and top 40 semantic candidates are merged by reciprocal rank fusion and reranked in
+- **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are merged by reciprocal rank fusion and reranked in
   one GPU batch.
 - **Server:** `sift serve` loads models and vectors once and keeps them in memory.
 

@@ -73,6 +73,7 @@ parametrize-names-type = "csv"  # @pytest.mark.parametrize("a, b", ...)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = ["error"]  # a warning today is a failure tomorrow
 
 [tool.coverage.run]
 source = ["sift"]

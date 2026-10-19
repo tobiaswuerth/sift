@@ -1,6 +1,7 @@
 """Command-line interface."""
 
 import argparse
+import contextlib
 import json
 import sqlite3
 import sys
@@ -70,40 +71,44 @@ def main(argv=None):
     a = p.parse_args(argv)
     if (sys.stdout.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
         sys.stdout.reconfigure(encoding="utf-8")
-    db = store.connect()
     try:
-        if a.cmd == "add":
-            name = store.add_collection(db, a.path, a.name)
-            print(f"added collection {name!r}; run `sift index` next", file=sys.stderr)
-        elif a.cmd == "rm":
-            n = store.remove_collection(db, a.name)
-            documents = "document" if n == 1 else "documents"
-            print(f"removed collection {a.name!r} and its {n} {documents} from the index;", end=" ", file=sys.stderr)
-            print("the files on disk are untouched", file=sys.stderr)
-        elif a.cmd == "index":
-            store.index(db, a.names)
-        elif a.cmd == "embed":
-            from .embed import embed_pending
-
-            embed_pending(db, a.reset)
-        elif a.cmd in ("search", "vsearch", "query"):
-            from .search import Index
-
-            fn = getattr(Index(db), a.cmd)
-            _print_hits(fn(a.query, a.k, a.collection, a.path, _filters(a.filter)), a.json)
-        elif a.cmd == "get":
-            from .search import Index
-
-            sys.stdout.write(Index(db).get(a.id))
-        elif a.cmd == "status":
-            from .search import Index
-
-            print(json.dumps(Index(db).status(), indent=2))
-        else:  # serve
-            from .server import serve
-
-            serve(a.host, a.port, a.stdio)
-    except (LookupError, ValueError, sqlite3.Error) as e:
+        with contextlib.closing(store.connect()) as db:
+            _run(a, db)
+    except (LookupError, ValueError, OSError, sqlite3.Error) as e:
         raise SystemExit(f"error: {e}") from None
     except KeyboardInterrupt:
         raise SystemExit(130) from None
+
+
+def _run(a, db):
+    if a.cmd == "add":
+        name = store.add_collection(db, a.path, a.name)
+        print(f"added collection {name!r}; run `sift index` next", file=sys.stderr)
+    elif a.cmd == "rm":
+        n = store.remove_collection(db, a.name)
+        documents = "document" if n == 1 else "documents"
+        print(f"removed collection {a.name!r} and its {n} {documents} from the index;", end=" ", file=sys.stderr)
+        print("the files on disk are untouched", file=sys.stderr)
+    elif a.cmd == "index":
+        store.index(db, a.names)
+    elif a.cmd == "embed":
+        from .embed import embed_pending
+
+        embed_pending(db, a.reset)
+    elif a.cmd in ("search", "vsearch", "query"):
+        from .search import Index
+
+        fn = getattr(Index(db), a.cmd)
+        _print_hits(fn(a.query, a.k, a.collection, a.path, _filters(a.filter)), a.json)
+    elif a.cmd == "get":
+        from .search import Index
+
+        sys.stdout.write(Index(db).get(a.id))
+    elif a.cmd == "status":
+        from .search import Index
+
+        print(json.dumps(Index(db).status(), indent=2))
+    else:  # serve
+        from .server import serve
+
+        serve(a.host, a.port, a.stdio)
