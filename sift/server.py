@@ -3,6 +3,7 @@
 import sys
 from typing import Any
 
+import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -94,17 +95,34 @@ def build(index=None):
     return mcp, index
 
 
+IDLE_CHECK_SECONDS = 30  # how often the server checks whether models and vectors can leave the GPU
+
+
+async def _release_gpu_when_idle():
+    while True:
+        await anyio.sleep(IDLE_CHECK_SECONDS)
+        embed.release_idle()
+
+
+async def _serve(mcp, host, port, stdio):
+    # One event loop for the transport and the idle check: both stay on the main thread, where PyTorch must run.
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(_release_gpu_when_idle)
+        if stdio:
+            await mcp.run_stdio_async()
+        else:
+            print(f"sift MCP server on http://{host}:{port}/mcp", file=sys.stderr)
+            await mcp.run_streamable_http_async(host=host, port=port)
+        tasks.cancel_scope.cancel()
+
+
 def serve(host="127.0.0.1", port=8765, stdio=False):
     mcp, index = build()
-    print("loading models and vectors ...", file=sys.stderr)
+    print("loading models and vectors into RAM ...", file=sys.stderr)  # they move to the GPU when used
     embed.embedder()
     embed.reranker()
     try:
-        index._vectors()
+        index._load()
     except LookupError as e:
         print(f"warning: {e}", file=sys.stderr)
-    if stdio:
-        mcp.run("stdio")
-    else:
-        print(f"sift MCP server on http://{host}:{port}/mcp", file=sys.stderr)
-        mcp.run("streamable-http", host=host, port=port)
+    anyio.run(_serve, mcp, host, port, stdio)

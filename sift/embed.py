@@ -38,13 +38,22 @@ MIN_BUDGET = 2 * GiB  # with less GPU memory than this, the models run on the CP
 FILL = 0.9  # share of the memory budget a calibrated batch may use
 MAX_BATCH = 1024
 PROGRESS_BATCHES = 8  # report progress after this many batches
+IDLE_SECONDS = 300  # unused this long, models and vectors give their GPU memory back
 
 _batch_size = 128  # until calibrated on CUDA; a good size for CPUs and Apple GPUs
+_resident = {}  # what is on the GPU now: key -> function that moves it back to RAM
+_released = False  # whether everything left the GPU at some point, so the budget needs a fresh look
+_last_use = 0.0
+
+
+def gpu():
+    """Whether sift computes on a GPU (NVIDIA or Apple)."""
+    return torch.device(DEVICE).type in ("cuda", "mps")
 
 
 def fp16():
     """Whether models and vectors use fp16: yes on GPUs, no on CPUs, which are slow at fp16 matmul."""
-    return torch.device(DEVICE).type in ("cuda", "mps")
+    return gpu()
 
 
 def _free_gpu_memory():
@@ -94,11 +103,18 @@ def limit_gpu_memory():
         if DEVICE == "cpu" and (reason := _unused_nvidia_gpu()):
             print(reason, file=sys.stderr)
         return None
+    budget = _set_gpu_budget()
+    if budget is None:
+        DEVICE = "cpu"
+    return budget
+
+
+def _set_gpu_budget():
+    """Cap PyTorch's GPU memory at what other programs leave free, minus headroom. None if too little is free."""
     free, total = _free_gpu_memory()
     budget = free - max(HEADROOM * total, GiB)
     if budget < MIN_BUDGET:
         print(f"only {free / GiB:.1f} GB of GPU memory is free; using the CPU (slower)", file=sys.stderr)
-        DEVICE = "cpu"
         return None
     index = torch.device(DEVICE).index  # PyTorch wants an index here; plain "cuda" means the current device
     torch.cuda.set_per_process_memory_fraction(budget / total, torch.cuda.current_device() if index is None else index)
@@ -106,12 +122,55 @@ def limit_gpu_memory():
     return budget
 
 
+def acquire(key, to_gpu, off_gpu):
+    """Make sure something is on the GPU: to_gpu() moves it there unless it is already, off_gpu() moves it back.
+
+    Models and vectors wait in RAM and come to the GPU when used; every call counts as use. On the CPU, nothing moves.
+    """
+    global _last_use, _released
+    _last_use = time.monotonic()
+    if not gpu() or key in _resident:
+        return
+    if _released and not _resident and torch.device(DEVICE).type == "cuda":
+        _set_gpu_budget()  # other programs may hold more or less memory than when sift last used the GPU
+        _released = False
+    to_gpu()
+    _resident[key] = off_gpu
+
+
+def discard(key):
+    """Forget something that left the GPU on its own, such as vectors replaced by a reload."""
+    _resident.pop(key, None)
+
+
+def release_idle(now=None):
+    """Move models and vectors back to RAM once the GPU has been unused for IDLE_SECONDS. Returns whether it did."""
+    global _released
+    now = time.monotonic() if now is None else now
+    if not _resident or now - _last_use < IDLE_SECONDS:
+        return False
+    for off_gpu in _resident.values():
+        off_gpu()
+    _resident.clear()
+    _released = True
+    backend = {"cuda": torch.cuda, "mps": torch.mps}.get(torch.device(DEVICE).type)
+    if backend:
+        backend.empty_cache()  # hand the memory back to the GPU, not just to PyTorch's cache
+    print(f"idle for {IDLE_SECONDS // 60} min: models and vectors moved off the GPU", file=sys.stderr)
+    return True
+
+
+def _on_gpu(model):
+    acquire(id(model), lambda: model.to(DEVICE), lambda: model.to("cpu"))
+    return model
+
+
 @cache
 def embedder():
     from sentence_transformers import SentenceTransformer
 
     limit_gpu_memory()
-    model = SentenceTransformer(EMBED_MODEL, device=DEVICE)
+    model = SentenceTransformer(EMBED_MODEL, device="cpu")  # into RAM; it moves to the GPU when used
     if fp16():
         model.half()
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)
@@ -123,7 +182,7 @@ def reranker():
     from sentence_transformers import CrossEncoder
 
     limit_gpu_memory()
-    model = CrossEncoder(RERANK_MODEL, device=DEVICE, max_length=MAX_TOKENS)
+    model = CrossEncoder(RERANK_MODEL, device="cpu", max_length=MAX_TOKENS)  # into RAM, like the embedder
     if fp16():
         model.model.half()
     return model
@@ -153,7 +212,7 @@ def calibrate_batch_size(sample=None):
     is never chosen.
     """
     global _batch_size
-    model = embedder()
+    model = _on_gpu(embedder())
     budget = limit_gpu_memory()
     if budget is None:
         return _batch_size
@@ -184,7 +243,7 @@ def calibrate_batch_size(sample=None):
 
 def encode(texts, query=False):
     """Normalised fp16 embeddings, one row per text. Sentence Transformers sorts by length to minimise padding."""
-    model = embedder()
+    model = _on_gpu(embedder())
     fn = model.encode_query if query else model.encode_document
     return _oom_safe(
         lambda t, bs: fn(t, batch_size=bs, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False),
@@ -193,7 +252,7 @@ def encode(texts, query=False):
 
 
 def rerank(query, texts):
-    model = reranker()
+    model = _on_gpu(reranker())
     return _oom_safe(
         lambda t, bs: model.predict([(query, x) for x in t], batch_size=bs, show_progress_bar=False), texts
     )

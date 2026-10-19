@@ -131,6 +131,10 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   counts memory held by other programs as free. It then measures how much memory its longest text needs at growing
   batch sizes and uses the largest batch that fills 90% of that budget; if a batch still doesn't fit, it is halved.
   With less than 2 GB to spare, sift uses the CPU instead.
+- **Idle GPU:** models and vectors wait in RAM and move to the GPU when a search needs them. After 5 minutes
+  without GPU use, `sift serve` moves them back to RAM and hands the memory back; only CUDA's own context
+  (about 0.3 GB) stays. The first search afterwards takes about a second longer. Keyword search never uses
+  the GPU.
 - **`search`:** SQLite FTS5 with BM25, titles weighted double. Input that isn't valid FTS5 syntax is treated as exact
   phrases.
 - **`vsearch`:** exact nearest-neighbour search as one matrix multiply over all vectors on the GPU. No approximate

@@ -57,7 +57,8 @@ def _any_word(query):
 class Index:
     def __init__(self, db=None):
         self.db = db or store.connect()
-        self.version = None
+        self.version, self.mat = None, None
+        self._key = ("vectors", id(self))
 
     # --- candidates as [(chunk_id, score)] -----------------------------------
 
@@ -73,23 +74,37 @@ class Index:
                 error = e
         raise ValueError(f"invalid search query {match!r}: {error}")
 
-    def _vectors(self):
-        """Load all vectors into one (GPU) matrix; reload when the index has changed since the last load."""
+    def _load(self):
+        """Load all vectors into RAM; reload when the index has changed since the last load."""
         import torch
 
-        from .embed import DEVICE, fp16
+        from . import embed
 
         version = store.get_meta(self.db, "version")
-        if version is None or version != self.version:
-            n = self.db.execute("SELECT count(*) FROM vectors").fetchone()[0]
-            if not n:
-                raise LookupError("no embeddings yet, run `sift embed`")
-            ids, mat = np.empty(n, np.int64), np.empty((n, int(store.get_meta(self.db, "dim"))), np.float16)
-            for row, (chunk, vec) in enumerate(self.db.execute("SELECT chunk, vec FROM vectors ORDER BY chunk")):
-                ids[row], mat[row] = chunk, np.frombuffer(vec, np.float16)
-            self.ids, self.mat = ids, torch.from_numpy(mat).to(DEVICE, torch.float16 if fp16() else torch.float32)
-            self.version = version
+        if version is not None and version == self.version:
+            return
+        n = self.db.execute("SELECT count(*) FROM vectors").fetchone()[0]
+        if not n:
+            raise LookupError("no embeddings yet, run `sift embed`")
+        ids, mat = np.empty(n, np.int64), np.empty((n, int(store.get_meta(self.db, "dim"))), np.float16)
+        for row, (chunk, vec) in enumerate(self.db.execute("SELECT chunk, vec FROM vectors ORDER BY chunk")):
+            ids[row], mat[row] = chunk, np.frombuffer(vec, np.float16)
+        host = torch.from_numpy(mat)
+        self.ids, self.host = ids, host if embed.fp16() else host.float()  # CPUs are slow at fp16 matmul
+        embed.discard(self._key)  # a GPU copy of the old vectors goes with them
+        self.mat = None if embed.gpu() else self.host
+        self.version = version
+
+    def _vectors(self):
+        """All vectors as one matrix where they are searched: on the GPU while in use, otherwise in RAM."""
+        from . import embed
+
+        self._load()
+        embed.acquire(self._key, lambda: setattr(self, "mat", self.host.to(embed.DEVICE)), self._release)
         return self.ids, self.mat
+
+    def _release(self):
+        self.mat = None  # the copy in RAM stays
 
     def _semantic(self, query, k, where, args):
         import torch
