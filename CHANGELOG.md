@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `sift serve` gives its GPU memory back when idle. Models and vectors load into RAM, move to the GPU when a
+  search needs them, and return to RAM after 5 minutes without GPU use. Once released, the memory is free
+  for other programs; the first search afterwards takes about a second longer.
+
 ## [0.1.0] - 2026-10-18
 
 First release.

@@ -184,3 +184,25 @@ def test_status(embedded):
     assert status["collections"] == [
         {"name": "notes", "path": status["collections"][0]["path"], "docs": 3, "chunks": 3, "embedded": 3}
     ]
+
+
+def test_vectors_leave_the_gpu_when_idle(embedded, fake_models, monkeypatch):
+    # The fakes run on the CPU, so a "GPU" copy is a second CPU tensor here; what matters is when it exists.
+    monkeypatch.setattr(fake_models, "gpu", lambda: True)
+    index = Index(embedded[0])
+    first = ids(index.vsearch("brush strokes"))
+    assert index.mat is not None
+    assert fake_models.release_idle(now=fake_models._last_use + fake_models.IDLE_SECONDS + 1)
+    assert index.mat is None  # only the copy in RAM is left
+    assert ids(index.vsearch("brush strokes")) == first
+    assert index.mat is not None
+
+
+def test_vectors_reload_while_on_the_gpu(embedded, fake_models, monkeypatch):
+    monkeypatch.setattr(fake_models, "gpu", lambda: True)
+    db, root = embedded
+    index = Index(db)
+    assert "notes/rl.md" in ids(index.vsearch("reward shaping"))
+    (root / "rl.md").unlink()
+    store.index(db)
+    assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
