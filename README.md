@@ -50,6 +50,7 @@ sift search '"reward shaping"'         # exact keyword search
 sift vsearch "how do robots plan brush strokes"
 sift query "mixing pigments to match a target colour"
 sift get papers/2401.02225.md          # full document
+sift get papers/2401.02225.md --lines 14-23   # only some lines, e.g. those of a search hit
 sift status                            # collections and counts
 sift rm papers                         # remove a collection from the index; its files stay on disk
 sift serve                             # MCP server on http://127.0.0.1:8765/mcp
@@ -60,7 +61,11 @@ processed. Deleted files are removed. An interrupted `sift embed` continues wher
 new vectors on its own.
 
 Search commands accept `-k` (number of results), `-c` (collection), `--path` (glob within the collection, e.g.
-`"2024/*"`), `-f KEY=VALUE` (front-matter filter, repeatable) and `--json`.
+`"2024/*"`), `-f KEY=VALUE` (front-matter filter, repeatable), `--fields` (front-matter fields to show with each hit,
+e.g. `url,created`, or `*` for all), `--compact` (no text) and `--json`.
+
+`search` requires every term. If no chunk has them all and the query has no operators (`AND`, `OR`, `NOT`, `NEAR`),
+it returns the chunks that have any of them, those with more terms first.
 
 ### Front matter
 
@@ -82,6 +87,13 @@ tags:
 sift query "stroke order" -f categories=cs.RO -f year=2024
 ```
 
+Filters can also be ranges, with `>`, `>=`, `<` and `<=`. Dates compare at the precision given, so `created<=2024`
+includes all of 2024 and `created>2024` starts in 2025; a number compares with the number a date starts with:
+
+```bash
+sift search pigment -f "created>=2024-06" -f "created<2025"
+```
+
 The `title` field, or else the first heading outside code blocks, or else the file name, becomes the document title.
 
 ## MCP
@@ -91,11 +103,15 @@ The `title` field, or else the first heading outside code blocks, or else the fi
 | `search` | Exact keyword search, ranked by BM25. Supports `"phrases"`, `prefix*`, `AND`, `OR`, `NOT`. |
 | `vsearch` | Semantic search. |
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. |
-| `get` | Full text of an indexed document by its id. |
-| `status` | Collections and counts. |
+| `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. |
+| `status` | Collections, counts and front-matter fields. |
 
-The search tools take `query`, `k`, `collection`, `path` and `filters`. Every result carries `id`
-(`collection/path`), `title`, `lines`, `score` and the chunk `text`, so agents can cite their sources.
+The search tools take `query`, `k`, `collection`, `path`, `filters`, `fields` and `compact`. Every result carries `id`
+(`collection/path`), `title`, `lines`, `score` and the chunk `text`, so agents can cite their sources. `fields` adds
+front-matter fields to each result, e.g. `["url", "created"]`, and `compact: true` leaves out the text, so an agent
+can survey many results without filling its context and then read the ones that matter. Filters take values or
+ranges, e.g. `{"created": {">=": "2024-06", "<": "2025"}}`. The server tells agents when they connect which
+collections there are and which front-matter fields each has.
 
 ### Claude Code
 

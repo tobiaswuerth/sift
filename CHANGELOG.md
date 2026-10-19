@@ -5,7 +5,19 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Search results can carry front-matter fields (`fields`, e.g. `["url", "created"]`, or `["*"]` for all) and leave
+  out the text (`compact`), so agents can survey many results cheaply. `--fields` and `--compact` on the CLI.
+- Range filters on front-matter fields, e.g. `{"created": {">=": "2024-06", "<": "2025"}}` or
+  `-f "created>=2024-06"`. Dates compare at the precision given.
+- `get` returns only some lines if asked, e.g. a hit's `"17-26"` (`--lines` on the CLI).
+- The server tells agents which front-matter fields each collection has; `status` lists them too.
+
 ### Changed
+
+- `search` returns chunks with any of the query's terms when none has them all, unless the query uses operators.
+- `get` returns `\n` line endings, like search results.
 
 - `sift serve` gives its GPU memory back when idle. Models and vectors load into RAM, move to the GPU when a
   search needs them, and return to RAM after 5 minutes without GPU use. Once released, the memory is free

@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import json
+import re
 import sqlite3
 import sys
 import textwrap
@@ -10,26 +11,45 @@ import textwrap
 from . import __version__, store
 
 
+def _value(text):
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
 def _filters(pairs):
+    """-f KEY=VALUE and ranges such as -f created>=2024-06 -f created<2025, as search filters."""
     out = {}
     for pair in pairs:
-        key, sep, value = pair.partition("=")
-        if not sep:
-            raise SystemExit(f"filter must be KEY=VALUE, got {pair!r}")
-        try:
-            out[key] = json.loads(value)
-        except ValueError:
+        m = re.fullmatch(r"([^=<>]+)(>=|<=|=|<|>)(.*)", pair)
+        if not m:
+            raise SystemExit(f"filter must be KEY=VALUE, or KEY>=VALUE and the like for ranges, got {pair!r}")
+        key, op, value = m[1], m[2], _value(m[3])
+        if op == "=" and key not in out:
             out[key] = value
+        else:
+            conditions = out.get(key, {})
+            out[key] = (conditions if isinstance(conditions, dict) else {"=": conditions}) | {op: value}
     return out
+
+
+def _shown(value):
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
 def _print_hits(hits, as_json):
     if as_json:
         print(json.dumps(hits, ensure_ascii=False, indent=2))
         return
+    if not hits:
+        print("no matches", file=sys.stderr)
     for h in hits:
         print(f"{h['score']:>8.4f}  {h['id']}:{h['lines']}  {h['title']}")
-        print(textwrap.indent(textwrap.shorten(h["text"], 300), " " * 10))
+        if "fields" in h:
+            print(" " * 10 + "  ".join(f"{k}: {_shown(v)}" for k, v in h["fields"].items()))
+        if "text" in h:
+            print(textwrap.indent(textwrap.shorten(h["text"], 300), " " * 10))
 
 
 def main(argv=None):
@@ -59,9 +79,12 @@ def main(argv=None):
         s.add_argument(
             "-f", "--filter", action="append", default=[], metavar="KEY=VALUE", help="front-matter filter, repeatable"
         )
+        s.add_argument("--fields", help='front-matter fields to show, comma-separated (e.g. "url,created"; "*": all)')
+        s.add_argument("--compact", action="store_true", help="leave out the text")
         s.add_argument("--json", action="store_true", help="print results as JSON")
     s = sub.add_parser("get", help="print a document by its id (collection/path)")
     s.add_argument("id")
+    s.add_argument("--lines", help='only these lines, e.g. "17-26"')
     sub.add_parser("status", help="show collections and index statistics")
     s = sub.add_parser("serve", help="run the MCP server")
     s.add_argument("--host", default="127.0.0.1")
@@ -98,12 +121,13 @@ def _run(a, db):
     elif a.cmd in ("search", "vsearch", "query"):
         from .search import Index
 
+        fields = a.fields and [f.strip() for f in a.fields.split(",")]
         fn = getattr(Index(db), a.cmd)
-        _print_hits(fn(a.query, a.k, a.collection, a.path, _filters(a.filter)), a.json)
+        _print_hits(fn(a.query, a.k, a.collection, a.path, _filters(a.filter), fields, a.compact), a.json)
     elif a.cmd == "get":
         from .search import Index
 
-        sys.stdout.write(Index(db).get(a.id))
+        sys.stdout.write(Index(db).get(a.id, a.lines))
     elif a.cmd == "status":
         from .search import Index
 
