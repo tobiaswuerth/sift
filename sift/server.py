@@ -20,18 +20,27 @@ and cite what you find; say so when nothing relevant turns up.
 - `query`: hybrid search with reranking. Best default for questions; slower than the others.
 - `search`: exact keyword search (BM25). Best for names, identifiers, exact terms and "quoted phrases".
 - `vsearch`: semantic search. Best when the wording of the answer is unknown.
-Results carry `id` (collection/path), `lines`, `title`, `score` and chunk `text`. Use `get` for a full document.
-All search tools accept `collection`, a `path` glob such as "2024/*", and `filters` on front-matter fields,
-e.g. {{"categories": "cs.RO"}}; a list field matches when it contains the value."""
+Results carry `id` (collection/path), `lines`, `title`, `score` and chunk `text`. `get` returns a document, or
+just some of its `lines`, such as a result's.
+All search tools accept `collection`, a `path` glob such as "2024/*", and `filters` on front-matter fields: a value,
+e.g. {{"categories": "cs.RO"}}, which a list field matches when it contains it, or a range, e.g.
+{{"created": {{">=": "2024-06", "<": "2025"}}}}; dates compare at the precision given, so "<=": "2024" includes all
+of 2024. `fields` adds front-matter fields to each result, e.g. ["url", "created"] (["*"] for all), and
+`compact: true` leaves out the text: survey many results compactly, then read the ones that matter."""
 
 
 def _collections(index):
-    """The indexed collections with their sizes, read when the server starts."""
-    rows = index.db.execute("""SELECT co.name, count(d.id) FROM collections co LEFT JOIN docs d ON d.collection = co.id
-                               GROUP BY co.id ORDER BY co.name""").fetchall()
+    """The indexed collections with their sizes and front-matter fields, read when the server starts."""
+    rows = index.db.execute("""SELECT co.id, co.name, count(d.id) FROM collections co
+                               LEFT JOIN docs d ON d.collection = co.id GROUP BY co.id ORDER BY co.name""").fetchall()
     if not rows:
         return "No collections are indexed yet."
-    lines = [f"- {name}: {n:,} document{'' if n == 1 else 's'}" for name, n in rows]
+    lines = []
+    for cid, name, n in rows:
+        line = f"- {name}: {n:,} document{'' if n == 1 else 's'}"
+        if fields := index.fields(cid, n):
+            line += "; front matter: " + ", ".join(fields)
+        lines.append(line)
     return "Indexed collections:\n" + "\n".join(lines)
 
 
@@ -57,9 +66,12 @@ def build(index=None):
         collection: str | None = None,
         path: str | None = None,
         filters: dict[str, Any] | None = None,
+        fields: list[str] | None = None,
+        compact: bool = False,
     ) -> list[dict]:
-        """Exact keyword search ranked by BM25. Supports "phrases", prefix*, AND, OR, NOT."""
-        return _run(index.search, query, k, collection, path, filters)
+        """Exact keyword search ranked by BM25. Supports "phrases", prefix*, AND, OR, NOT. When no chunk holds
+        all terms of a query without operators, chunks holding any of them are returned."""
+        return _run(index.search, query, k, collection, path, filters, fields, compact)
 
     @mcp.tool()
     async def vsearch(
@@ -68,9 +80,11 @@ def build(index=None):
         collection: str | None = None,
         path: str | None = None,
         filters: dict[str, Any] | None = None,
+        fields: list[str] | None = None,
+        compact: bool = False,
     ) -> list[dict]:
         """Semantic search: chunks closest in meaning to the query."""
-        return _run(index.vsearch, query, k, collection, path, filters)
+        return _run(index.vsearch, query, k, collection, path, filters, fields, compact)
 
     @mcp.tool()
     async def query(
@@ -79,14 +93,16 @@ def build(index=None):
         collection: str | None = None,
         path: str | None = None,
         filters: dict[str, Any] | None = None,
+        fields: list[str] | None = None,
+        compact: bool = False,
     ) -> list[dict]:
         """Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder."""
-        return _run(index.query, query, k, collection, path, filters)
+        return _run(index.query, query, k, collection, path, filters, fields, compact)
 
     @mcp.tool()
-    async def get(id: str) -> str:
-        """Full text of a document, by the `id` shown in search results."""
-        return _run(index.get, id)
+    async def get(id: str, lines: str | None = None) -> str:
+        """Text of a document, by the `id` shown in search results: all of it, or `lines` such as "17-26"."""
+        return _run(index.get, id, lines)
 
     @mcp.tool()
     async def status() -> dict:

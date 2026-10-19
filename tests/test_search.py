@@ -183,8 +183,10 @@ def test_status(embedded):
     status = Index(embedded[0]).status()
     assert status["index"].endswith("sift.db")
     assert status["model"]
+    fields = ["categories", "title", "year"]
+    path = status["collections"][0]["path"]
     assert status["collections"] == [
-        {"name": "notes", "path": status["collections"][0]["path"], "docs": 3, "chunks": 3, "embedded": 3}
+        {"name": "notes", "path": path, "docs": 3, "chunks": 3, "embedded": 3, "fields": fields}
     ]
 
 
@@ -242,7 +244,17 @@ def test_get_reads_utf16_documents(corpus):
     db, root = corpus
     (root / "utf16.txt").write_bytes("\ufeff# Héllo\r\nworld\r\n".encode("utf-16-le"))
     store.index(db)
-    assert Index(db).get("notes/utf16.txt") == "# Héllo\r\nworld\r\n"
+    assert Index(db).get("notes/utf16.txt") == "# Héllo\nworld\n"
+
+
+def test_get_returns_lines_as_indexed(corpus):
+    # \n line endings, as in hits, so that `get(id, hit["lines"])` gives the hit's text
+    db, root = corpus
+    (root / "crlf.md").write_bytes(b"# One\r\n\r\ntwo\r\n")
+    store.index(db)
+    index = Index(db)
+    assert index.get("notes/crlf.md") == "# One\n\ntwo\n"
+    assert index.get("notes/crlf.md", "3") == "two\n"
 
 
 def test_vectors_stay_in_ram_when_the_gpu_is_busy_on_return(embedded, fake_models, clock, gpu_memory, monkeypatch):
@@ -257,3 +269,167 @@ def test_vectors_stay_in_ram_when_the_gpu_is_busy_on_return(embedded, fake_model
     assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
     assert index.mat.dtype == torch.float32  # searched in RAM, where fp16 is slow
     assert fake_models.DEVICE == "cpu"
+
+
+# --- what hits carry: front-matter fields, compact hits ----------------------
+
+
+def test_hits_carry_requested_front_matter_fields(corpus):
+    # Agents read dates, links and ids from these instead of guessing them from file paths.
+    hit = Index(corpus[0]).search("brush", fields=["year", "categories", "missing"])[0]
+    assert hit["fields"] == {"year": 2024, "categories": ["cs.RO", "cs.GR"]}  # absent fields are left out
+
+
+def test_all_front_matter_fields(corpus):
+    hit = Index(corpus[0]).search("brush", fields=["*"])[0]
+    assert hit["fields"] == {"categories": ["cs.RO", "cs.GR"], "year": 2024}  # the title is a hit field already
+
+
+def test_fields_of_documents_without_front_matter(corpus):
+    assert Index(corpus[0]).search("reward", fields=["year"])[0]["fields"] == {}
+
+
+def test_no_fields_unless_asked(corpus):
+    assert "fields" not in Index(corpus[0]).search("brush")[0]
+
+
+@pytest.mark.parametrize("fields", ["year", [1], [""], [None]])
+def test_bad_fields_are_clear_errors(corpus, fields):
+    with pytest.raises(ValueError, match="fields"):
+        Index(corpus[0]).search("brush", fields=fields)
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_compact_hits_leave_out_the_text(embedded, mode):
+    # Ten chunks of text per call fill an agent's context; to survey, ids, titles and scores are enough,
+    # and `get` reads the documents that matter.
+    hits = getattr(Index(embedded[0]), mode)("brush strokes", compact=True, fields=["year"])
+    assert hits
+    assert all(set(h) == {"id", "title", "lines", "score", "fields"} for h in hits)
+
+
+def test_compact_query_ranks_like_the_full_one(embedded):
+    index = Index(embedded[0])
+    full, compact = index.query("painting robot", k=3), index.query("painting robot", k=3, compact=True)
+    assert [(h["id"], h["score"]) for h in compact] == [(h["id"], h["score"]) for h in full]  # reranked on the text
+
+
+# --- range filters -------------------------------------------------------------
+
+DAYS = ["2023-12-31", "2024-01-01", "2024-06-15", "2024-12-31", "2025-01-01"]
+
+
+@pytest.fixture
+def dated(embedded, fake_models):
+    db, root = embedded
+    for day in DAYS:
+        write(root / "dated" / f"{day}.md", f'---\ncreated: "{day}"\n---\n# Paper of {day}\npigment\n')
+    store.index(db)
+    fake_models.embed_pending(db)
+    return Index(db)
+
+
+def days(hits):
+    return sorted(h["id"].rsplit("/", 1)[1].removesuffix(".md") for h in hits)
+
+
+@pytest.mark.parametrize(
+    "condition, expected",
+    [
+        ({">=": "2024"}, DAYS[1:]),
+        ({"<": "2024"}, DAYS[:1]),
+        ({"<=": "2024"}, DAYS[:4]),  # dates compare at the precision given: all of 2024
+        ({">": "2024"}, DAYS[4:]),  # after 2024, not after its first day
+        ({">=": "2024-06", "<": "2025"}, DAYS[2:4]),
+        ({">": "2024-06-15"}, DAYS[3:]),
+        ({"=": "2024-06-15"}, DAYS[2:3]),
+        ({">=": 2024, "<": 2025}, DAYS[1:4]),  # a number compares with the number a date starts with
+    ],
+)
+def test_range_filters(dated, condition, expected):
+    assert days(dated.search("pigment", k=20, filters={"created": condition})) == expected
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_range_filters_in_every_mode(dated, mode):
+    hits = getattr(dated, mode)("pigment", k=20, filters={"created": {">=": "2024-06", "<": "2025"}})
+    assert days(hits) == DAYS[2:4]
+
+
+def test_range_filters_on_numbers(corpus):
+    index = Index(corpus[0])
+    assert ids(index.search("brush", filters={"year": {">": 2023, "<=": 2024}})) == ["notes/robots/brush.md"]
+    assert index.search("brush", filters={"year": {">": 2024}}) == []
+    assert ids(index.search("brush", filters={"year": {"<": "2025"}})) == ["notes/robots/brush.md"]  # given as text
+
+
+def test_range_on_a_list_needs_one_element_in_range(corpus):
+    db, root = corpus
+    write(root / "multi.md", "---\nyears: [2019, 2030]\n---\n# Multi\nbrush\n")
+    store.index(db)
+    assert Index(db).search("brush", filters={"years": {">": 2020, "<": 2025}}) == []
+
+
+@pytest.mark.parametrize("condition", [{}, {"=>": "2024"}, {">": ["2024"]}, {">": None}, {">": 10**30}])
+def test_bad_range_filters_are_clear_errors(corpus, condition):
+    with pytest.raises(ValueError, match="'created'"):
+        Index(corpus[0]).search("x", filters={"created": condition})
+
+
+# --- keyword search falls back to any term ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ('"brush strokes" quantum', ["notes/robots/brush.md"]),  # a phrase and one more word
+        ("reward pigment", ["notes/rl.md", "notes/robots/brush.md"]),
+        ("brus* quantum", ["notes/robots/brush.md"]),  # prefixes stay prefixes
+        ("Kubelka-Munk quantum", ["notes/robots/brush.md"]),  # not FTS5 syntax
+        ('"brush quantum', ["notes/robots/brush.md"]),  # an unbalanced quote
+    ],
+)
+def test_search_falls_back_to_any_term(corpus, query, expected):
+    # Every term is required, so one word too many returned nothing at all. With no document holding all
+    # terms, those holding any of them are better than nothing; BM25 ranks those with more of them first.
+    assert sorted(ids(Index(corpus[0]).search(query))) == expected
+
+
+@pytest.mark.parametrize("query", ["brush AND quantum", '"brush strokes" NOT robot', "quantum", '"no such phrase"'])
+def test_no_fallback_for_explicit_operators_or_one_term(corpus, query):
+    assert Index(corpus[0]).search(query) == []
+
+
+def test_fallback_keeps_the_filters(corpus):
+    assert Index(corpus[0]).search("reward pigment", filters={"year": 2024}) == Index(corpus[0]).search(
+        "pigment", filters={"year": 2024}
+    )
+
+
+# --- reading part of a document ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "lines, text",
+    [
+        ("1", "# Reward shaping\n"),
+        ("2-3", "\nReward shaping speeds up reinforcement learning.\n"),
+        ("3-99", "Reward shaping speeds up reinforcement learning.\n"),
+        ("9", ""),
+    ],
+)
+def test_get_lines(corpus, lines, text):
+    assert Index(corpus[0]).get("notes/rl.md", lines) == text
+
+
+def test_get_the_lines_of_a_hit(corpus):
+    # A hit's `lines` count from the top of the file, front matter included, so `get` returns the chunk.
+    index = Index(corpus[0])
+    hit = index.search("Kubelka")[0]
+    assert index.get(hit["id"], hit["lines"]).strip() == hit["text"]
+
+
+@pytest.mark.parametrize("lines", ["0", "3-2", "a", "1-", "-3", " 1"])
+def test_bad_line_ranges_are_clear_errors(corpus, lines):
+    with pytest.raises(ValueError, match="lines"):
+        Index(corpus[0]).get("notes/rl.md", lines)

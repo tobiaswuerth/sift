@@ -13,6 +13,8 @@ from mcp.server.mcpserver import MCPServer
 from sift import server
 from sift.search import Index
 
+from .conftest import write
+
 
 def call(mcp, name, args=None):
     async def go():
@@ -68,6 +70,11 @@ def test_instructions_tell_agents_what_is_indexed(mcp):
     # Agents read these when they connect: without the collections they can't tell when sift is worth asking.
     assert "notes: 3 documents" in mcp.instructions
     assert "before answering from memory" in mcp.instructions
+
+
+def test_instructions_name_the_front_matter_fields(mcp):
+    # Agents can filter on these and ask for them in hits, if they know they exist.
+    assert "- notes: 3 documents; front matter: categories, title, year" in mcp.instructions
 
 
 def test_instructions_for_an_empty_index(tmp_path):
@@ -205,3 +212,26 @@ def test_http_server_accepts_only_local_hosts(http_app):
         assert rebound.status_code == 421
         foreign = client.post("/mcp", json=initialize, headers=headers | {"Origin": "http://attacker.example"})
         assert foreign.status_code == 403
+
+
+@pytest.mark.parametrize("tool", ["search", "vsearch", "query"])
+def test_search_tools_take_fields_compact_and_ranges(mcp, tool):
+    args = {"query": "brush", "k": 1, "fields": ["year"], "compact": True, "filters": {"year": {">=": 2024}}}
+    hits = data(call(mcp, tool, args))
+    assert [(h["id"], h["fields"], "text" in h) for h in hits] == [("notes/robots/brush.md", {"year": 2024}, False)]
+
+
+def test_get_takes_lines(mcp):
+    result = call(mcp, "get", {"id": "notes/rl.md", "lines": "1"})
+    assert result.content[0].text == "# Reward shaping\n"
+
+
+def test_instructions_for_a_collection_without_front_matter(tmp_path):
+    from sift import store
+
+    folder = tmp_path / "plain"
+    write(folder / "note.md", "# Note\n")
+    db = store.connect(tmp_path / "home")
+    store.add_collection(db, folder)
+    store.index(db)
+    assert "- plain: 1 document\n" in server.build(Index(db))[0].instructions + "\n"

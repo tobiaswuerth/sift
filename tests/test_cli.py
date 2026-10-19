@@ -40,6 +40,37 @@ def test_search_commands(cli_corpus, capsys, command):
     assert [h["id"] for h in hits] == ["notes/robots/brush.md"]
 
 
+def test_search_command_fields_and_compact(cli_corpus, capsys):
+    out = run(capsys, "search", "brush", "--fields", "year,categories").out
+    assert 'year: 2024  categories: ["cs.RO", "cs.GR"]' in out
+    hits = json.loads(run(capsys, "query", "brush", "-k", "1", "--json", "--compact", "--fields", "year").out)
+    assert [(h["id"], h["fields"], "text" in h) for h in hits] == [("notes/robots/brush.md", {"year": 2024}, False)]
+    assert "Kubelka" not in run(capsys, "search", "brush", "--compact").out
+
+
+def test_search_command_says_when_nothing_matches(cli_corpus, capsys):
+    result = run(capsys, "search", "quantum")
+    assert (result.out, result.err.strip()) == ("", "no matches")
+
+
+@pytest.mark.parametrize(
+    "pairs, filters",
+    [
+        (["year=2024", "tag=a=b"], {"year": 2024, "tag": "a=b"}),
+        (["created>=2024-06", "created<2025"], {"created": {">=": "2024-06", "<": 2025}}),
+        (["created<=2024", "created>2023-06"], {"created": {"<=": 2024, ">": "2023-06"}}),
+        (["year>=2020", "year=2024"], {"year": {">=": 2020, "=": 2024}}),
+        (["title=a>b"], {"title": "a>b"}),
+    ],
+)
+def test_filters_on_the_command_line(pairs, filters):
+    assert cli._filters(pairs) == filters
+
+
+def test_get_lines_command(cli_corpus, capsys):
+    assert run(capsys, "get", "notes/rl.md", "--lines", "1").out == "# Reward shaping\n"
+
+
 def test_get_status_rm(cli_corpus, capsys):
     assert run(capsys, "get", "notes/rl.md").out.startswith("# Reward shaping")
     status = json.loads(run(capsys, "status").out)
