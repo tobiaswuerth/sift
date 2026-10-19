@@ -1,11 +1,14 @@
 # sift
 
+[![CI](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/sift-rag)](https://pypi.org/project/sift-rag/)
-[![Python](https://img.shields.io/pypi/pyversions/sift-rag)](https://pypi.org/project/sift-rag/)
-[![CI](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml/badge.svg)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/pypi/pyversions/sift-rag?logo=python&logoColor=white)](https://pypi.org/project/sift-rag/)
+[![Downloads](https://img.shields.io/pypi/dm/sift-rag)](https://pypistats.org/packages/sift-rag)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/tobiaswuerth/sift)](https://github.com/tobiaswuerth/sift/blob/main/LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
+[![CodeQL](https://github.com/tobiaswuerth/sift/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/tobiaswuerth/sift/actions/workflows/github-code-scanning/codeql)
 
 Fast local search over your text and Markdown files, built for AI agents.
 
