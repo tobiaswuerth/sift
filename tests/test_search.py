@@ -170,13 +170,9 @@ def test_get(corpus):
             index.get(bad)
 
 
-def test_get_unreadable_documents(corpus):
-    db, root = corpus
-    (root / "rl.md").unlink()
-    with pytest.raises(LookupError, match="cannot read"):
-        Index(db).get("notes/rl.md")
+def test_get_a_folder_is_no_document(corpus):
     with pytest.raises(LookupError, match="unknown document"):
-        Index(db).get("notes/robots")  # a folder
+        Index(corpus[0]).get("notes/robots")
 
 
 def test_status(embedded):

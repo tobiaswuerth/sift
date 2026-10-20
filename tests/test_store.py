@@ -11,6 +11,18 @@ def doc_ids(db):
     return dict(db.execute("SELECT path, id FROM docs"))
 
 
+def pieces(text, first_line=1):
+    """Chunks as (first line, last line, text): chunk() gives spans of the text."""
+    return [(first, last, text[pos : pos + length]) for first, last, pos, length in store.chunk(text, first_line)]
+
+
+def loaded(path):
+    """The one document load() reads from a Markdown or text file, with its chunks as text."""
+    (doc,), problems = store.load(path)
+    assert problems == []
+    return doc._replace(chunks=[(a, b, doc.text[p : p + n]) for a, b, p, n in doc.chunks])
+
+
 # --- connect and collections -------------------------------------------------
 
 
@@ -43,7 +55,7 @@ def test_remove_collection(corpus):
     db, root = corpus
     assert store.remove_collection(db, "notes") == 3  # documents removed
     assert (root / "rl.md").exists()  # only the index changes, never the files
-    for table in ("collections", "docs", "chunks", "fts", "vectors"):
+    for table in ("collections", "sources", "docs", "chunks", "fts", "vectors"):
         assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
     with pytest.raises(SystemExit, match="no collection"):
         store.remove_collection(db, "notes")
@@ -106,17 +118,17 @@ def test_parse_without_closing_front_matter_is_plain_text():
 
 
 def test_chunk_short_text_is_one_chunk():
-    assert list(store.chunk("# T\n\nshort body\n", 5)) == [(5, 7, "# T\n\nshort body")]
+    assert list(pieces("# T\n\nshort body\n", 5)) == [(5, 7, "# T\n\nshort body")]
 
 
 @pytest.mark.parametrize("text", ["", "\n\n  \n"])
 def test_chunk_empty_text(text):
-    assert list(store.chunk(text)) == []
+    assert list(pieces(text)) == []
 
 
 def test_chunk_splits_with_line_numbers_and_overlap():
     text = "".join(f"line {i} " + "x" * 90 + "\n" for i in range(100))
-    chunks = list(store.chunk(text))
+    chunks = list(pieces(text))
     assert len(chunks) > 1
     assert chunks[0][0] == 1
     assert chunks[-1][1] == 100
@@ -126,18 +138,18 @@ def test_chunk_splits_with_line_numbers_and_overlap():
 
 def test_chunk_prefers_headings_without_overlap():
     text = "# One\n" + "a " * 900 + "\n# Two\nsecond section\n"
-    chunks = list(store.chunk(text))
+    chunks = list(pieces(text))
     assert [c[2].splitlines()[0] for c in chunks] == ["# One", "# Two"]
     assert chunks[1][0] == chunks[0][1] + 1
 
 
 def test_chunk_never_exceeds_limit_with_long_lines():
     text = "short line\n" * 20 + "y" * (store.CHUNK_CHARS - 50) + "\n" + "z " * 3000
-    assert all(len(c[2]) <= store.CHUNK_CHARS for c in store.chunk(text))
+    assert all(len(c[2]) <= store.CHUNK_CHARS for c in pieces(text))
 
 
 def test_chunk_breaks_unbroken_text():
-    chunks = list(store.chunk("x" * (store.CHUNK_CHARS * 2 + 10)))
+    chunks = list(pieces("x" * (store.CHUNK_CHARS * 2 + 10)))
     assert [len(c[2]) for c in chunks] == [store.CHUNK_CHARS, store.CHUNK_CHARS, 10]
 
 
@@ -147,16 +159,17 @@ def test_chunk_breaks_unbroken_text():
 def test_load(tmp_path):
     path = tmp_path / "note.md"
     path.write_bytes("﻿---\ntitle: BOM\n---\nbody \xe9\n".encode())
-    digest, title, meta, chunks = store.load(path)
-    assert (title, meta, chunks) == ("BOM", {"title": "BOM"}, [(4, 4, "body \xe9")])
-    assert len(digest) == 32
+    doc = loaded(path)
+    assert (doc.key, doc.title, doc.meta, doc.chunks) == ("", "BOM", {"title": "BOM"}, [(4, 4, "body \xe9")])
+    assert doc.text == "---\ntitle: BOM\n---\nbody \xe9\n"  # the whole file, as get returns it
+    assert len(doc.digest) == 32
     assert store.load(tmp_path / "missing.md") is None
 
 
 def test_load_normalises_windows_line_endings(tmp_path):
     path = tmp_path / "crlf.md"
     path.write_bytes(b"---\r\ntitle: T\r\n---\r\n# T\r\n\r\nbody\r\n")
-    assert store.load(path)[3] == [(4, 6, "# T\n\nbody")]
+    assert loaded(path).chunks == [(4, 6, "# T\n\nbody")]
 
 
 def test_walk_skips_hidden_and_vendor_dirs(notes):
@@ -206,7 +219,7 @@ def test_index_is_incremental(corpus, capsys):
     assert set(after) == {"rl.md", "robots/brush.md", "new.md"}
     assert after["robots/brush.md"] == ids["robots/brush.md"]
     assert after["rl.md"] != ids["rl.md"]
-    assert db.execute("SELECT mtime FROM docs WHERE path = 'robots/brush.md'").fetchone() == (10**18,)
+    assert db.execute("SELECT mtime FROM sources WHERE path = 'robots/brush.md'").fetchone() == (10**18,)
     assert "1 added, 1 changed, 1 removed" in capsys.readouterr().err
     orphans = db.execute("SELECT count(*) FROM chunks WHERE doc NOT IN (SELECT id FROM docs)").fetchone()[0]
     assert orphans == 0
@@ -223,8 +236,8 @@ def test_index_in_several_batches(notes, home, monkeypatch):
 def index_contents(db):
     """Everything indexing produces, independent of row ids."""
     return sorted(
-        db.execute("""SELECT d.path, d.hash, d.title, d.meta, c.seq, c.line_start, c.line_end, fts.text
-                      FROM docs d JOIN chunks c ON c.doc = d.id JOIN fts ON fts.rowid = c.id""")
+        db.execute("""SELECT d.path, d.hash, d.title, d.meta, c.seq, c.line_start, c.line_end, t.text
+                      FROM docs d JOIN chunks c ON c.doc = d.id JOIN chunk_text t ON t.id = c.id""")
     )
 
 
@@ -315,7 +328,7 @@ def test_index_skips_missing_folder_without_deleting(corpus, capsys):
 
 def test_index_skips_unreadable_files_and_retries_later(notes, home, monkeypatch, capsys):
     real_load = store.load
-    monkeypatch.setattr(store, "load", lambda path: None if path.endswith("rl.md") else real_load(path))
+    monkeypatch.setattr(store, "load", lambda path, fields=None: None if path.endswith("rl.md") else real_load(path))
     db = store.connect(home)
     store.add_collection(db, notes, "notes")
     store.index(db)
@@ -368,7 +381,7 @@ def test_parse_front_matter_lists_and_comments():
 @pytest.mark.parametrize("separator", ["\x0b", "\x0c", "\x1c", "\x85", "\u2028", "\u2029"])
 def test_chunk_counts_lines_like_editors(separator):
     # Only \n ends a line; str.splitlines also splits at these, which shifted the line numbers search hits report.
-    assert list(store.chunk(f"one\n{separator}two\nthree\n")) == [(1, 3, f"one\n{separator}two\nthree")]
+    assert list(pieces(f"one\n{separator}two\nthree\n")) == [(1, 3, f"one\n{separator}two\nthree")]
 
 
 @pytest.mark.parametrize("bom, codec", [(b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be")])
@@ -376,13 +389,14 @@ def test_load_reads_utf16_files(tmp_path, bom, codec):
     # Windows PowerShell 5.1 writes UTF-16 with `>` and Out-File; read as UTF-8, every other character was a NUL.
     path = tmp_path / "note.txt"
     path.write_bytes(bom + "# Héllo\r\nworld\r\n".encode(codec))
-    assert store.load(path)[1:] == ("Héllo", {}, [(1, 2, "# Héllo\nworld")])
+    doc = loaded(path)
+    assert (doc.title, doc.meta, doc.chunks) == ("Héllo", {}, [(1, 2, "# Héllo\nworld")])
 
 
 def test_load_replaces_invalid_utf8(tmp_path):
     path = tmp_path / "latin1.txt"
     path.write_bytes(b"r\xe9sum\xe9 du jour\n")
-    assert store.load(path)[3] == [(1, 1, "r\ufffdsum\ufffd du jour")]
+    assert loaded(path).chunks == [(1, 1, "r\ufffdsum\ufffd du jour")]
 
 
 def test_index_skips_file_names_sqlite_cannot_store(corpus, monkeypatch, capsys):
@@ -415,3 +429,19 @@ def test_add_collection_without_a_folder_name_asks_for_one(tmp_path):
     db = store.connect(tmp_path / "h")
     with pytest.raises(SystemExit, match="--name"):
         store.add_collection(db, tmp_path.anchor)  # a drive or file system root has no name
+
+
+def test_a_few_big_files_still_get_workers(monkeypatch):
+    # 424 JSON Lines files of arXiv are few files but gigabytes of records to parse
+    monkeypatch.setattr(store, "_cpus", lambda: 16)
+    assert store.workers(424, 0) == 0
+    assert store.workers(424, 5 << 30) == 15
+    assert store.workers(2, 3 * store.BYTES_PER_WORKER) == 3
+
+
+def test_batches_hold_at_most_so_many_files_and_bytes(monkeypatch):
+    monkeypatch.setattr(store, "WRITE_BATCH", 3)
+    monkeypatch.setattr(store, "BATCH_BYTES", 100)
+    todo = [(f"f{i}", f"f{i}", 0, size) for i, size in enumerate([10, 10, 10, 10, 95, 200, 1])]
+    assert [[t[0] for t in b] for b in store._batches(todo)] == [["f0", "f1", "f2"], ["f3"], ["f4"], ["f5"], ["f6"]]
+    assert store._batches([]) == []

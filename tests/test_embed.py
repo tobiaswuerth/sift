@@ -114,7 +114,7 @@ def test_embed_pending_reports_progress_within_a_slab(corpus, fake_models, monke
     err = capsys.readouterr().err
     assert all(f"embedded {n}/8 chunks" in err for n in (2, 4, 6, 8))
     # sorting by length for the progress steps must not mix up which vector belongs to which chunk
-    rows = db.execute("""SELECT c.seq, fts.title, fts.text, v.vec FROM chunks c JOIN fts ON fts.rowid = c.id
+    rows = db.execute("""SELECT c.seq, t.title, t.text, v.vec FROM chunks c JOIN chunk_text t ON t.id = c.id
                          JOIN vectors v ON v.chunk = c.id""").fetchall()
     assert len(rows) == 8
     for seq, title, text, vec in rows:
@@ -453,10 +453,10 @@ def test_coming_back_to_a_busy_gpu_uses_the_cpu(fake_models, clock, gpu_memory, 
 
 
 def test_embed_pending_skips_chunks_without_text(embedded, fake_models, capsys):
-    # A chunk without keyword-index text can only come from an index changed meanwhile; there's nothing to embed.
+    # A chunk without a document can only come from an index changed meanwhile; there's nothing to embed.
     db, _ = embedded
     capsys.readouterr()
-    db.execute("INSERT INTO chunks(doc, seq, line_start, line_end) VALUES(1, 9, 1, 1)")
+    db.execute("INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(999, 9, 1, 1, 0, 0)")
     fake_models.embed_pending(db)  # raised "max() arg is an empty sequence"
     assert "nothing to embed" in capsys.readouterr().err
 
