@@ -19,6 +19,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The first command after upgrading rebuilds the keyword index of an existing index, once: 3½ minutes and 0.7 GB
   more for 3.2 million arXiv abstracts. Documents and vectors stay. Older versions of sift can't open it afterwards.
 
+### Fixed
+
+- No "Loading weights" progress bars from transformers in the logs of `sift serve`, `sift worker` and `sift embed`;
+  on Windows consoles they came out garbled.
+
 ## [0.7.0] - 2026-10-20
 
 ### Added

@@ -15,9 +15,17 @@ for _name in ("httpx", "huggingface_hub", "sentence_transformers"):
     logging.getLogger(_name).setLevel(logging.WARNING)
 
 
+def _quietly():
+    """No "Loading weights" bar per model: they filled the log of `sift serve`, garbled on Windows consoles."""
+    from transformers.utils import logging
+
+    logging.disable_progress_bar()
+
+
 def _embedder(name, dtype):
     from sentence_transformers import SentenceTransformer
 
+    _quietly()
     model = SentenceTransformer(name, device="cpu")  # into RAM; it moves to the GPU when used
     if dtype:
         model.to(dtype)
@@ -28,6 +36,7 @@ def _embedder(name, dtype):
 def _reranker(name, dtype):
     from sentence_transformers import CrossEncoder
 
+    _quietly()
     model = CrossEncoder(name, device="cpu", max_length=MAX_TOKENS)  # into RAM, like the embedder
     if dtype:
         model.to(dtype)  # the whole model: its scoring head too, or PyTorch refuses to mix the two

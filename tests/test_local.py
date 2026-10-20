@@ -51,6 +51,16 @@ def test_rerank_gives_raw_scores_whatever_the_model_applies(fake_models, monkeyp
     assert fake_models.rerank("brush strokes", ["brush strokes"]).tolist() == pytest.approx([2 / 3])
 
 
+def test_loading_the_models_draws_no_progress_bars(fake_models):
+    # Transformers drew a "Loading weights" bar for each model, into the log of `sift serve`, garbled on Windows.
+    from transformers.utils import logging
+
+    logging.enable_progress_bar()
+    fake_models.embedder()
+    fake_models.reranker()
+    assert not logging.is_progress_bar_enabled()
+
+
 def test_where_and_how_much(make_local):
     models = make_local("cuda")
     assert (models.address, models.batch) == ("cuda", 128)
