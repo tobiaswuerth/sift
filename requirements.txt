@@ -2,6 +2,7 @@
 --extra-index-url https://download.pytorch.org/whl/cu128
 torch>=2.4
 numpy>=1.26
-sentence-transformers>=5.0
+sentence-transformers>=6.1
+transformers>=5.18
 mcp>=2.0
 nvidia-ml-py>=12

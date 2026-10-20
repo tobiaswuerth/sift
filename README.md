@@ -12,7 +12,8 @@
 
 Fast local search over your text and Markdown files, built for AI agents.
 
-sift indexes folders of `.md` and `.txt` files, embeds them on your GPU, and runs a server that agents query over MCP.
+sift indexes folders of Markdown, text and JSON Lines files, embeds them on your GPU, and runs a server that agents
+query over MCP.
 It offers three kinds of search: exact keyword matching, semantic search, and hybrid retrieval with reranking for RAG.
 Everything runs locally. No cloud services, no API keys.
 
@@ -96,6 +97,27 @@ sift search pigment -f "created>=2024-06" -f "created<2025"
 
 The `title` field, or else the first heading outside code blocks, or else the file name, becomes the document title.
 
+### JSON Lines
+
+A `.jsonl` (or `.ndjson`) file holds one document per line, as a JSON object. sift finds the fields by name:
+
+| Part | Field |
+|---|---|
+| id | `id` or `_id`, else the line number |
+| title | `title`, `name`, `headline` or `subject` |
+| text | the first of `text`, `content`, `body`, `abstract`, `description` and `summary`, else the longest string; a list of strings becomes paragraphs |
+| metadata | every other field, for filters and `fields`, as front matter is for Markdown |
+
+A record's id is its file's path plus its id: line `{"id": "2101.00001", ...}` of `2021/2021-01.jsonl` becomes
+`papers/2021/2021-01/2101.00001`, which `get` also finds as `papers/2101.00001`. Other field names can be chosen
+when adding the collection:
+
+```bash
+sift add ~/qa --id key --title question --text question,answer
+```
+
+Lines that aren't JSON objects, have no text or repeat an id are skipped and reported.
+
 ## MCP
 
 | Tool | Purpose |
@@ -149,7 +171,7 @@ Three optional settings exist for special cases:
 | Variable | Default | Purpose |
 |---|---|---|
 | `SIFT_HOME` | `~/.sift` | Where the index lives |
-| `SIFT_EMBED_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | Any Sentence Transformers embedding model |
+| `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model |
 | `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
@@ -157,12 +179,13 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
 ## How it works
 
 - **Indexing:** worker processes read and parse files in parallel while the previous batch is written; small
-  updates skip the process start-up. Files are compared by modification time and size, then by content hash, so
-  unchanged files cost nothing. Files are read as UTF-8, or as UTF-16 when they start with its byte order mark
+  updates skip the process start-up. Files are compared by modification time and size, so unchanged files cost
+  nothing, and documents by content hash, so a changed JSON Lines file re-indexes only its changed records. Files are read as UTF-8, or as UTF-16 when they start with its byte order mark
   (Windows PowerShell 5.1 writes those). Markdown is split into chunks of about 3,000 characters (about 750 tokens) on line
   boundaries, preferring headings, with a small overlap.
-- **Storage:** one SQLite database in WAL mode holds documents, chunks, metadata, an FTS5 keyword index and the
-  vectors (fp16).
+- **Storage:** one SQLite database in WAL mode holds every document's text, metadata, the FTS5 keyword index and
+  the vectors (fp16). The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
+  Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.
 - **Embedding:** PyTorch in fp16 on the GPU (NVIDIA, else Apple), in batches sorted by length to keep padding low.
   Each slab of 20,000 chunks is committed, so progress is never lost.
 - **GPU memory:** sift shares the GPU with other programs. On NVIDIA GPUs it caps itself at the memory that is free
@@ -177,7 +200,7 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
 - **`search`:** SQLite FTS5 with BM25, titles weighted double. Input that isn't valid FTS5 syntax is treated as exact
   phrases.
 - **`vsearch`:** exact nearest-neighbour search as one matrix multiply over all vectors on the GPU. No approximate
-  index, so nothing to tune and no recall loss; a million 1024-dimensional vectors take about 2 GB of VRAM.
+  index, so nothing to tune and no recall loss; a million 768-dimensional vectors take about 1.5 GB of VRAM.
 - **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are merged by reciprocal rank fusion and reranked in
   one GPU batch.
 - **Server:** `sift serve` loads models and vectors once and keeps them in memory.

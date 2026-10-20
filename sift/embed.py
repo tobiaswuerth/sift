@@ -28,7 +28,7 @@ def _device():
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
-EMBED_MODEL = os.environ.get("SIFT_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+EMBED_MODEL = os.environ.get("SIFT_EMBED_MODEL", "google/embeddinggemma-2")
 RERANK_MODEL = os.environ.get("SIFT_RERANK_MODEL", "Alibaba-NLP/gte-reranker-modernbert-base")
 DEVICE = _device()
 MAX_TOKENS = 1024
@@ -287,10 +287,10 @@ def embed_pending(db, reset=False):
     model = store.get_meta(db, "model")
     if model and model != EMBED_MODEL:
         raise SystemExit(f"index was embedded with {model}; run `sift embed --reset` to switch to {EMBED_MODEL}")
-    pending = """SELECT c.id, c.seq, fts.title, fts.text FROM chunks c JOIN fts ON fts.rowid = c.id
+    pending = """SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
                  WHERE c.id > ? AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id) ORDER BY c.id LIMIT ?"""
     total = db.execute(
-        """SELECT count(*) FROM chunks c JOIN fts ON fts.rowid = c.id
+        """SELECT count(*) FROM chunks c JOIN docs d ON d.id = c.doc
            WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)"""
     ).fetchone()[0]
     if not total:
@@ -298,9 +298,9 @@ def embed_pending(db, reset=False):
         return
     # calibrate on the longest text of this run: no batch can need more memory per text
     candidates = db.execute(
-        """SELECT c.seq, fts.title, fts.text FROM chunks c JOIN fts ON fts.rowid = c.id
+        """SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
            WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)
-           ORDER BY length(fts.text) + length(fts.title) DESC LIMIT 100"""
+           ORDER BY c.len + length(d.title) DESC LIMIT 100"""
     ).fetchall()
     calibrate_batch_size(max((_text(*row) for row in candidates), key=len, default=None))  # None: embedded meanwhile
     done, last, t0 = 0, 0, perf_counter()

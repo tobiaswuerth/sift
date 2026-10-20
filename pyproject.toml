@@ -14,7 +14,8 @@ requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
     "torch>=2.4",
-    "sentence-transformers>=5.0",
+    "sentence-transformers>=6.1",  # the module layout embeddinggemma-2 is saved in
+    "transformers>=5.18",  # the first release with embeddinggemma-2
     "mcp>=2.0",
     "nvidia-ml-py>=12",  # NVML: free GPU memory as nvidia-smi sees it
 ]
