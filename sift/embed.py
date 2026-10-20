@@ -4,6 +4,7 @@ import contextlib
 import logging
 import os
 import sys
+import threading
 from functools import cache
 from time import monotonic, perf_counter
 
@@ -37,7 +38,7 @@ HEADROOM = 0.1  # share of the GPU left free for other programs, at least 1 GiB
 MIN_BUDGET = 2 * GiB  # with less GPU memory than this, the models run on the CPU
 FILL = 0.9  # share of the memory budget a calibrated batch may use
 MAX_BATCH = 1024
-PROGRESS_BATCHES = 8  # report progress after this many batches
+PROGRESS_SECONDS = 1  # the progress line redraws itself this often, so a slow batch still shows sift at work
 IDLE_SECONDS = 300  # unused this long, models and vectors give their GPU memory back
 
 _batch_size = 128  # until calibrated on CUDA; a good size for CPUs and Apple GPUs
@@ -279,6 +280,52 @@ def _text(seq, title, text):
     return text if seq == 0 or text.lstrip("# ").startswith(title) else f"{title}\n\n{text}"
 
 
+def _duration(seconds):
+    seconds = int(seconds)
+    return f"{seconds // 3600}:{seconds // 60 % 60:02}:{seconds % 60:02}"
+
+
+class _Progress:
+    """The progress line of `sift embed`: a bar, the chunks done, the speed, and the time taken and left. It redraws
+    itself every PROGRESS_SECONDS, so the time keeps moving while a slow batch runs (minutes, on a CPU)."""
+
+    def __init__(self, total):
+        self.total, self.done, self.start, self._width = total, 0, perf_counter(), 0
+        self._stop, self._lock = threading.Event(), threading.Lock()
+        self._thread = threading.Thread(target=self._redraw, name="sift-progress", daemon=True)
+
+    def __enter__(self):
+        self.draw()
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join()
+        print(file=sys.stderr)  # ends the line
+
+    def _redraw(self):
+        while not self._stop.wait(PROGRESS_SECONDS):
+            self.draw()
+
+    def update(self, done):
+        self.done = done
+        self.draw()
+
+    def draw(self):
+        seconds, share = perf_counter() - self.start, self.done / self.total
+        line = f"[{'#' * round(20 * share):<20}] {share:4.0%} {self.done:,}/{self.total:,} chunks, "
+        rate = self.done / seconds if seconds > 0 else 0  # coarse clocks can return the same reading twice
+        if rate:
+            line += f"{rate:.1f}/s, " if rate < 10 else f"{rate:,.0f}/s, "
+        line += f"{_duration(seconds)} elapsed"
+        if rate:
+            line += f", {_duration((self.total - self.done) / rate)} left"
+        with self._lock:
+            self._width = max(self._width, len(line))  # blanks out what a longer line left behind
+            print(f"\r{line:<{self._width}}", end="", file=sys.stderr, flush=True)
+
+
 def embed_pending(db, reset=False):
     """Embed every chunk without a vector, slab by slab. Safe to interrupt and resume."""
     if reset:
@@ -298,6 +345,7 @@ def embed_pending(db, reset=False):
     if not total:
         print("nothing to embed", file=sys.stderr)
         return
+    print(f"embedding {total:,} chunks with {EMBED_MODEL} on {DEVICE}", file=sys.stderr)
     # calibrate on the longest text of this run: no batch can need more memory per text
     candidates = db.execute(
         """SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
@@ -305,31 +353,27 @@ def embed_pending(db, reset=False):
            ORDER BY c.len + length(d.title) DESC LIMIT 100"""
     ).fetchall()
     calibrate_batch_size(max((_text(*row) for row in candidates), key=len, default=None))  # None: embedded meanwhile
-    done, last, t0 = 0, 0, perf_counter()
-
-    def progress(n):
-        rate = n / max(perf_counter() - t0, 1e-6)  # coarse clocks can return the same reading twice
-        left = max(total - n, 0) / rate / 60
-        print(f"\rembedded {n}/{total} chunks, {rate:.0f}/s, {left:.1f} min left ", end="", file=sys.stderr, flush=True)
-
-    while rows := db.execute(pending, (last, SLAB)).fetchall():
-        texts = [_text(seq, title, text) for _, seq, title, text in rows]
-        # longest first, in steps of a few batches: similar lengths per batch, and progress every few seconds
-        order = sorted(range(len(texts)), key=lambda i: -len(texts[i]))
-        vecs, step = None, _batch_size * PROGRESS_BATCHES
-        for start in range(0, len(order), step):
-            part = order[start : start + step]
-            out = encode([texts[i] for i in part])
-            if vecs is None:
-                vecs = np.empty((len(texts), out.shape[1]), np.float16)
-            vecs[part] = out
-            progress(done + start + len(part))
-        db.executemany(
-            "INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)", [(r[0], v.tobytes()) for r, v in zip(rows, vecs)]
-        )
-        store.set_meta(db, "model", EMBED_MODEL)
-        store.set_meta(db, "dim", vecs.shape[1])
-        store.touch(db)  # tells a running server to reload vectors
-        db.commit()
-        done, last = done + len(rows), rows[-1][0]
-    print(f"\rembedded {done} chunks in {(perf_counter() - t0) / 60:.1f} min" + " " * 20, file=sys.stderr)
+    done, last = 0, 0
+    with _Progress(total) as progress:
+        while rows := db.execute(pending, (last, SLAB)).fetchall():
+            texts = [_text(seq, title, text) for _, seq, title, text in rows]
+            # longest first, batch by batch: similar lengths per batch, and progress after each
+            order = sorted(range(len(texts)), key=lambda i: -len(texts[i]))
+            vecs, step = None, _batch_size
+            for start in range(0, len(order), step):
+                part = order[start : start + step]
+                out = encode([texts[i] for i in part])
+                if vecs is None:
+                    vecs = np.empty((len(texts), out.shape[1]), np.float16)
+                vecs[part] = out
+                progress.update(done + start + len(part))
+            db.executemany(
+                "INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)",
+                [(r[0], v.tobytes()) for r, v in zip(rows, vecs)],
+            )
+            store.set_meta(db, "model", EMBED_MODEL)
+            store.set_meta(db, "dim", vecs.shape[1])
+            store.touch(db)  # tells a running server to reload vectors
+            db.commit()
+            done, last = done + len(rows), rows[-1][0]
+    print(f"embedded {done:,} chunks in {_duration(perf_counter() - progress.start)}", file=sys.stderr)

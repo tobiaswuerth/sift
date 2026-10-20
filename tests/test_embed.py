@@ -1,7 +1,9 @@
+import io
 import logging
 import os
 import subprocess
 import sys
+import threading
 import types
 
 import numpy as np
@@ -122,16 +124,15 @@ def test_embed_pending(corpus, fake_models, capsys):
     assert "nothing to embed" in capsys.readouterr().err
 
 
-def test_embed_pending_reports_progress_within_a_slab(corpus, fake_models, monkeypatch, capsys):
+def test_embed_pending_reports_progress_after_every_batch(corpus, fake_models, monkeypatch, capsys):
     db, root = corpus
     for i in range(5):
         write(root / f"extra{i}.md", f"# Extra {i}\n\n" + "word " * (10 + 50 * i) + "\n")
     store.index(db)
-    monkeypatch.setattr(fake_models, "_batch_size", 1)
-    monkeypatch.setattr(fake_models, "PROGRESS_BATCHES", 2)  # report after every 2 batches, long before the slab ends
+    monkeypatch.setattr(fake_models, "_batch_size", 1)  # long before the slab ends
     fake_models.embed_pending(db)
     err = capsys.readouterr().err
-    assert all(f"embedded {n}/8 chunks" in err for n in (2, 4, 6, 8))
+    assert all(f" {n}/8 chunks" in err for n in range(1, 9))
     # sorting by length for the progress steps must not mix up which vector belongs to which chunk
     rows = db.execute("""SELECT c.seq, t.title, t.text, v.vec FROM chunks c JOIN chunk_text t ON t.id = c.id
                          JOIN vectors v ON v.chunk = c.id""").fetchall()
@@ -447,7 +448,74 @@ def test_idle_release_on_the_limit_despite_rounding(fake_models, clock, monkeypa
 def test_embed_progress_survives_a_clock_that_stands_still(corpus, fake_models, capsys):
     # Coarse timers can return the same reading twice; the progress rate must not divide by zero.
     fake_models.embed_pending(corpus[0])
-    assert "embedded 3/3 chunks" in capsys.readouterr().err
+    assert "] 100% 3/3 chunks" in capsys.readouterr().err
+
+
+def slow_batches(monkeypatch, clock, seconds, then=None):
+    """Make every batch take `seconds` on the fake clock, and run then() while it runs."""
+    real = FakeSentenceTransformer.encode_document
+
+    def encode_document(self, texts, *args, **kwargs):
+        clock.advance(seconds)
+        if then:
+            then()
+        return real(self, texts, *args, **kwargs)
+
+    monkeypatch.setattr(FakeSentenceTransformer, "encode_document", encode_document)
+
+
+def test_embed_says_what_it_embeds_before_loading_the_model(corpus, fake_models, monkeypatch, capsys):
+    # Loading a model can take a minute: say what's coming first.
+    loaded, said = fake_models.embedder, []
+    monkeypatch.setattr(fake_models, "embedder", lambda: said.append(capsys.readouterr().err) or loaded())
+    fake_models.embed_pending(corpus[0])
+    assert f"embedding 3 chunks with {fake_models.EMBED_MODEL} on cpu" in said[0]
+
+
+def test_embed_shows_a_progress_bar_with_time_taken_and_left(corpus, fake_models, clock, monkeypatch, capsys):
+    monkeypatch.setattr(fake_models, "_batch_size", 1)
+    slow_batches(monkeypatch, clock, 10)  # as on a CPU
+    fake_models.embed_pending(corpus[0])
+    err = capsys.readouterr().err
+    assert "[                    ]   0% 0/3 chunks, 0:00:00 elapsed" in err  # before the first batch is done
+    assert "[#######             ]  33% 1/3 chunks, 0.1/s, 0:00:10 elapsed, 0:00:20 left" in err
+    assert "[####################] 100% 3/3 chunks, 0.1/s, 0:00:30 elapsed" in err
+    assert "embedded 3 chunks in 0:00:30" in err
+
+
+def progress_threads():
+    return [t for t in threading.enumerate() if t.name == "sift-progress"]
+
+
+def test_the_progress_line_keeps_counting_while_a_slow_batch_runs(corpus, fake_models, clock, monkeypatch):
+    # On a CPU one batch can take minutes; meanwhile the elapsed time must keep moving, so sift visibly works.
+    monkeypatch.setattr(fake_models, "PROGRESS_SECONDS", 0.01)
+    redrawn = threading.Event()
+
+    class Terminal(io.StringIO):
+        def write(self, text):
+            if "0:01:00 elapsed" in text:
+                redrawn.set()
+            return super().write(text)
+
+    monkeypatch.setattr(sys, "stderr", Terminal())
+
+    def wait_for_redraw():
+        assert redrawn.wait(timeout=10), "the progress line stood still while a batch ran"
+
+    slow_batches(monkeypatch, clock, 60, then=wait_for_redraw)
+    fake_models.embed_pending(corpus[0])
+    assert progress_threads() == []
+
+
+def test_the_progress_line_stops_when_embedding_fails(corpus, fake_models, clock, monkeypatch):
+    def fail():
+        raise KeyboardInterrupt  # Ctrl+C
+
+    slow_batches(monkeypatch, clock, 0, then=fail)
+    with pytest.raises(KeyboardInterrupt):
+        fake_models.embed_pending(corpus[0])
+    assert progress_threads() == []
 
 
 def test_calibration_when_memory_does_not_grow_with_the_batch(fake_models, gpu_memory, monkeypatch):

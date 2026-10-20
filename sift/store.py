@@ -372,13 +372,16 @@ def _document(raw, name, fields):
     """A PDF, office file, e-book or web page, converted to Markdown by Xberg: one document, with its properties
     as metadata. Without OCR a scan has no text."""
     import xberg  # only indexing documents needs it
-    from xberg.options import ConversionOptions
+    from xberg.options import ConversionOptions, SecurityLimits
 
     config = xberg.ExtractionConfig(
         output_format="markdown",
         use_cache=False,  # sift keeps what it needs in the index
         disable_ocr=True,  # slow, and needs Tesseract or a model
         html_options=ConversionOptions(extract_metadata=False),  # it puts the <head> as broken YAML before the text
+        # Office XML compresses at up to about 1000:1, the most deflate can do, which Xberg's default of 100:1 took
+        # for zip bombs. Its caps on unpacked size, 100 MB a file and 500 MB in all, still stop those.
+        security_limits=SecurityLimits(max_compression_ratio=10_000),
     )
     try:
         result = asyncio.run(xberg.extract(xberg.ExtractInput(kind="bytes", bytes=raw, filename=name), config))
