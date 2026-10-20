@@ -37,6 +37,7 @@ def test_add_index_embed(notes, home, fake_models, capsys):
         (["embed"], "sift.embed.embed_pending"),
         (["vsearch", "x"], "sift.search.Index.vsearch"),
         (["query", "x"], "sift.search.Index.query"),
+        (["similar", "notes/x.md"], "sift.search.Index.similar"),
         (["serve"], "sift.server.serve"),
         (["worker"], "sift.worker.serve"),
     ],
@@ -58,7 +59,7 @@ def test_the_cli_starts_with_the_standard_library_alone():
     assert run.stdout.startswith("sift ")
 
 
-@pytest.mark.parametrize("command", ["vsearch", "query"])
+@pytest.mark.parametrize("command", ["vsearch", "query", "similar"])
 def test_searching_through_a_worker_says_nothing_of_pytorch(home, monkeypatch, capsys, command, configure):
     configure(remote="https://t.p@workstation:8766")
     monkeypatch.setattr(f"sift.search.Index.{command}", lambda *args, **kwargs: [])
@@ -84,6 +85,48 @@ def test_search_command_fields_and_compact(cli_corpus, capsys):
     assert "Kubelka" not in run(capsys, "search", "brush", "--compact").out
 
 
+@pytest.mark.parametrize("command", ["search", "vsearch", "query", "similar"])
+def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, command):
+    from sift.search import Index
+
+    calls = []
+    monkeypatch.setattr(Index, command, lambda self, *args, **kwargs: calls.append((args, kwargs)) or [])
+    run(capsys, command, "brush", "-k", "3", "-c", "notes", "--path", "*.md", "-f", "year=2024", "--fields", "year")
+    run(capsys, command, "brush", "--compact", "--all-passages", "--sort=-year")
+    assert calls == [
+        (
+            ("brush", 3),
+            {
+                "collection": "notes",
+                "path": "*.md",
+                "filters": {"year": 2024},
+                "fields": ["year"],
+                "compact": False,
+                "all_passages": False,
+                "sort": None,
+            },
+        ),
+        (
+            ("brush", 10),
+            {
+                "collection": None,
+                "path": None,
+                "filters": {},
+                "fields": None,
+                "compact": True,
+                "all_passages": True,
+                "sort": "-year",
+            },
+        ),
+    ]
+
+
+def test_similar_command(cli_corpus, capsys):
+    out = run(capsys, "similar", "notes/brush.md", "-k", "1").out
+    assert out.count("notes/") == 1
+    assert "notes/robots/brush.md" not in out
+
+
 def test_search_command_says_when_nothing_matches(cli_corpus, capsys):
     result = run(capsys, "search", "quantum")
     assert (result.out, result.err.strip()) == ("", "no matches")
@@ -97,14 +140,30 @@ def test_search_command_says_when_nothing_matches(cli_corpus, capsys):
         (["created<=2024", "created>2023-06"], {"created": {"<=": 2024, ">": "2023-06"}}),
         (["year>=2020", "year=2024"], {"year": {">=": 2020, "=": 2024}}),
         (["title=a>b"], {"title": "a>b"}),
+        (["categories=cs.RO", "categories=cs.CV"], {"categories": ["cs.RO", "cs.CV"]}),  # any of them
+        (["categories!=cs.CV"], {"categories": {"not": "cs.CV"}}),
+        (["categories!=cs.CV", "categories!=cs.GR"], {"categories": {"not": ["cs.CV", "cs.GR"]}}),  # none of them
+        (["year>=2020", "year=2024", "year=2025"], {"year": {">=": 2020, "=": [2024, 2025]}}),
+        (['tags=["a","b"]', "tags=c"], {"tags": ["a", "b", "c"]}),
     ],
 )
 def test_filters_on_the_command_line(pairs, filters):
     assert cli._filters(pairs) == filters
 
 
+@pytest.mark.parametrize("pair", ["year", "my-key=1", "-->", "=1"])
+def test_filters_need_a_field_name_and_an_operator(pair):
+    with pytest.raises(SystemExit, match="filter must be"):
+        cli._filters([pair])
+
+
 def test_get_lines_command(cli_corpus, capsys):
     assert run(capsys, "get", "notes/rl.md", "--lines", "1").out == "# Reward shaping\n"
+
+
+def test_get_with_fields_command(cli_corpus, capsys):
+    out = run(capsys, "get", "notes/brush.md", "--lines", "7", "--fields", "year,categories").out
+    assert out == 'year: 2024\ncategories: ["cs.RO", "cs.GR"]\n\n# Brush stroke planning\n'
 
 
 def test_get_status_rm(cli_corpus, capsys):

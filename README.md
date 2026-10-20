@@ -14,7 +14,8 @@ Fast local search over your documents and notes, built for AI agents.
 
 sift indexes folders of Markdown, text, PDF, office and JSON Lines files, embeds them on your GPU, and runs a server
 that agents query over MCP.
-It offers three kinds of search: exact keyword matching, semantic search, and hybrid retrieval with reranking for RAG.
+It offers four kinds of search: exact keyword matching, semantic search, hybrid retrieval with reranking for RAG,
+and documents like a given one.
 Everything runs locally. No cloud services, no API keys.
 
 ## Install
@@ -28,8 +29,7 @@ uv tool install --torch-backend auto sift-rag   # installs the `sift` command
 Or run it without installing: `uvx --torch-backend auto sift-rag serve`. With pip, in a virtual environment:
 `pip install sift-rag`.
 
-To upgrade: `uv tool upgrade sift-rag`, or with pip `pip install -U sift-rag`. Then restart `sift serve` and
-`sift worker` if they run; if a new version needs the index rebuilt, sift says so.
+To upgrade later, see [Updating](#updating).
 
 On first use, sift downloads its two models from Hugging Face (about 1.5 GB).
 
@@ -53,8 +53,10 @@ sift embed                             # embed every chunk that has no vector ye
 sift search '"reward shaping"'         # exact keyword search
 sift vsearch "how do robots plan brush strokes"
 sift query "mixing pigments to match a target colour"
+sift similar papers/2401.02225.md      # documents like this one
 sift get papers/2401.02225.md          # full document
 sift get papers/2401.02225.md --lines 14-23   # only some lines, e.g. those of a search hit
+sift get papers/2401.02225.md --fields url,created   # front-matter fields first, then the text
 sift status                            # collections and counts
 sift rm papers                         # remove a collection from the index; its files stay on disk
 sift serve                             # MCP server on http://127.0.0.1:8765/mcp
@@ -65,12 +67,19 @@ sift worker                            # embed for other machines on this one's 
 processed. Deleted files are removed. An interrupted `sift embed` continues where it stopped. A running server picks up
 new vectors on its own.
 
-Search commands accept `-k` (number of results), `-c` (collection), `--path` (glob within the collection, e.g.
-`"2024/*"`), `-f KEY=VALUE` (front-matter filter, repeatable), `--fields` (front-matter fields to show with each hit,
-e.g. `url,created`, or `*` for all), `--compact` (no text) and `--json`.
+Search commands, `similar` included, return one result per document, with its best passage. They accept `-k` (number
+of results), `-c` (collection), `--path` (glob within the collection, e.g. `"2024/*"`), `-f` (front-matter filter,
+repeatable, see below), `--fields` (front-matter fields to show with each hit, e.g. `url,created`, or `*` for all),
+`--compact` (no text), `--all-passages` (every matching passage, several per document), `--sort=-created` (order the
+results by a front-matter field instead of score; `-` for descending) and `--json`.
 
 `search` requires every term. If no chunk has them all and the query has no operators (`AND`, `OR`, `NOT`, `NEAR`),
-it returns the chunks that have any of them, those with more terms first.
+it returns the chunks that have any of them, those with more terms first. Operators are written in capitals, and
+parentheses group: `'"stroke" AND (painting OR rendering)'`. A query with operators is taken as it is; when it finds
+nothing, drop terms.
+
+Scores rank the results of one search, on a scale of its own: BM25 for `search` (0 and up), cosine similarity for
+`vsearch` and `similar` (-1 to 1), and for `query` the reranker's judgement of relevance, from 0 to 1.
 
 ### Front matter
 
@@ -90,7 +99,12 @@ tags:
 
 ```bash
 sift query "stroke order" -f categories=cs.RO -f year=2024
+sift search robot -f categories=cs.RO -f categories=cs.CV   # in either category
+sift search robot -f categories!=cs.CV                      # not in cs.CV
 ```
+
+Filters on different fields must all hold. Repeated for one field, `=` matches any of the values, and `!=` leaves out
+documents with any of them; documents without the field stay in.
 
 Filters can also be ranges, with `>`, `>=`, `<` and `<=`. Dates compare at the precision given, so `created<=2024`
 includes all of 2024 and `created>2024` starts in 2025; a number compares with the number a date starts with:
@@ -135,38 +149,50 @@ damaged ones, until they change. Older binary Office files (`.doc`, `.ppt`, `.xl
 
 ## MCP
 
+`sift serve` runs an MCP server that agents search through:
+
 | Tool | Purpose |
 |---|---|
-| `search` | Exact keyword search, ranked by BM25. Supports `"phrases"`, `prefix*`, `AND`, `OR`, `NOT`. |
+| `search` | Exact keyword search, ranked by BM25. Supports `"phrases"`, `prefix*`, `AND`, `OR`, `NOT` and parentheses. |
 | `vsearch` | Semantic search. |
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. |
-| `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. An id may leave out folders if the file name is unique. |
+| `similar` | Documents like a given one, by its id: more papers like one found. |
+| `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. With `fields`, it returns the document with those front-matter fields. An id may leave out folders if the file name is unique. |
 | `status` | Collections, counts and front-matter fields. |
 
-The search tools take `query`, `k`, `collection`, `path`, `filters`, `fields` and `compact`. Every result carries `id`
-(`collection/path`), `title`, `lines`, `score` and the chunk `text`, so agents can cite their sources. `fields` adds
-front-matter fields to each result, e.g. `["url", "created"]`, and `compact: true` leaves out the text, so an agent
-can survey many results without filling its context and then read the ones that matter. Filters take values or
-ranges, e.g. `{"created": {">=": "2024-06", "<": "2025"}}`. The server tells agents when they connect which
-collections there are and which front-matter fields each has.
+The search tools take `query` (`similar`: `id`), `k`, `collection`, `path`, `filters`, `fields`, `compact`,
+`all_passages` and `sort`, as the commands above do. Every result carries `id` (`collection/path`), `title`, `lines`,
+`score` and the passage's `text`, so agents can cite their sources. `fields` adds front-matter fields to each result,
+e.g. `["url", "created"]`, and `compact: true` leaves out the text, so an agent can survey many results without
+filling its context and then read the ones that matter. Filters take a value, a list for any of its values,
+`{"not": ...}`, or ranges, e.g. `{"created": {">=": "2024-06", "<": "2025"}}`. Every parameter is described in the
+tools' schemas, and the server tells agents when they connect which collections there are and which front-matter
+fields each has.
 
-### Claude Code
+### Setting up
 
-With the server running (`sift serve`), register it once for all your projects:
+1. Start the server, and leave it running:
 
-```bash
-claude mcp add --scope user --transport http sift http://127.0.0.1:8765/mcp
-```
+   ```bash
+   sift serve        # prints: sift MCP server on http://127.0.0.1:8765/mcp
+   ```
 
-Keep `--scope user`. Without it, `claude mcp add` registers sift for the current folder only, and sessions started
-anywhere else don't see it, including those in the Claude desktop app's Code tab. Start a new session afterwards:
-running sessions don't pick up new servers. One server serves any number of agents, with the models loaded once.
+2. Register it with Claude Code, once, for all your projects:
 
-After upgrading sift, restart `sift serve` and start a new Claude Code session: a running session can keep an
-outdated list of sift's tools and their parameters, even after reconnecting.
+   ```bash
+   claude mcp add --scope user --transport http sift http://127.0.0.1:8765/mcp
+   ```
 
-Or let every Claude Code session start a server of its own over stdio. Then each session loads the models into
-memory itself:
+   Keep `--scope user`. Without it, `claude mcp add` registers sift for the current folder only, and sessions started
+   anywhere else don't see it, including those in the Claude desktop app's Code tab.
+
+3. Start a new Claude Code session: running sessions don't pick up new servers. `claude mcp list` should now show
+   sift as connected, and an agent asked for sift's status gets your collections.
+
+One server serves any number of agents, with the models loaded once. Other MCP clients connect the same way, to the
+streamable HTTP endpoint `http://127.0.0.1:8765/mcp`.
+
+Or let every session start a server of its own over stdio; then each session loads the models into memory itself:
 
 ```bash
 claude mcp add --scope user sift -- sift serve --stdio
@@ -178,6 +204,27 @@ A registration made without `--scope user` can be removed in the folder where it
 Connectors in claude.ai and in the Chat tab of the Claude apps can't use sift: claude.ai reaches connectors from
 Anthropic's servers, which can't reach a server on your computer.
 
+## Updating
+
+A running sift keeps the version it started with, so an update takes an upgrade and a restart of each part:
+
+1. **Upgrade** on every machine that runs sift; a machine that embeds through a `sift worker` needs the same version
+   as the worker:
+
+   ```bash
+   uv tool upgrade sift-rag     # with pip: pip install -U sift-rag
+   sift --version
+   ```
+
+2. **Restart** what runs: stop `sift serve` and `sift worker` with Ctrl+C and start them again. A server registered
+   with `--stdio` starts anew with each session.
+
+3. **Start new agent sessions.** An MCP client reads sift's tools and their parameters when a session starts, and
+   may keep that list even after reconnecting: a running session then misses new tools and parameters, and its calls
+   with them fail or lose arguments. In Claude Code, start a new session; the registration stays as it is.
+
+The index and the vectors carry over. If a new version needs the index rebuilt, sift says so; the
+[changelog](CHANGELOG.md) lists what changed.
 ## Embedding on another machine
 
 A machine without a GPU, such as a notebook, can borrow another machine's. Run `sift worker` on the one with the GPU:
@@ -244,8 +291,8 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
 - **Remote embedding:** HTTPS with the worker's self-made certificate (EC P-256), pinned by its SHA-256 in the key,
   and a bearer token of 32 random bytes. `GET /` names the worker's models and vector length; `POST /embed` takes
   `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per text; `POST /rerank`
-  takes `{"query": "...", "texts": [...]}` and returns `{"scores": [...]}`. The worker runs one request at a time on
-  the GPU. Through a worker, the vectors are searched with NumPy, in RAM.
+  takes `{"query": "...", "texts": [...]}` and returns the raw scores, `{"scores": [...]}`. The worker runs one
+  request at a time on the GPU. Through a worker, the vectors are searched with NumPy, in RAM.
 - **Storage:** one SQLite database in WAL mode holds every document's text, metadata, the FTS5 keyword index and
   the vectors (fp16). The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
   Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.
@@ -262,12 +309,16 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   without GPU use, `sift serve` moves them back to RAM and hands the memory back; only CUDA's own context
   (about 0.3 GB) stays. The first search afterwards takes about a second longer; if other programs have taken the
   memory meanwhile, sift stays on the CPU rather than squeeze them. Keyword search never uses the GPU.
-- **`search`:** SQLite FTS5 with BM25, titles weighted double. Input that isn't valid FTS5 syntax is treated as exact
-  phrases.
+- **`search`:** SQLite FTS5 with BM25, title and text weighted alike: every passage is indexed with its document's
+  title, and the first holds it as its heading too. Matches are grouped by document in SQL, each represented by its
+  best passage. Input that isn't valid FTS5 syntax is treated as exact phrases.
 - **`vsearch`:** exact nearest-neighbour search as one matrix multiply over all vectors on the GPU. No approximate
-  index, so nothing to tune and no recall loss; a million 768-dimensional vectors take about 1.5 GB of VRAM.
-- **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are merged by reciprocal rank fusion and reranked in
-  one GPU batch.
+  index, so nothing to tune and no recall loss; a million 768-dimensional vectors take about 1.5 GB of VRAM. When the
+  best passages come from a few documents, it looks further down until it has `k` documents.
+- **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are merged by reciprocal rank fusion
+  and reranked in one GPU batch. The reranker's raw scores become 0 to 1 through a sigmoid.
+- **`similar`:** the mean of a document's passage vectors, scored against every passage as `vsearch` scores a query.
+  No model runs, so it takes half a second over 3 million passages, with or without a GPU.
 - **Server:** `sift serve` loads models and vectors once and keeps them in memory.
 
 ## Scope

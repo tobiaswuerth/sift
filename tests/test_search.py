@@ -23,6 +23,23 @@ def test_keyword_search(corpus):
     assert index.search("nonexistentword") == []
 
 
+def test_a_document_about_a_term_outranks_one_that_names_it_in_its_title(corpus):
+    # The title is indexed twice already, as the text's heading and as its own column; weighted double on top, a
+    # title word outranked a whole abstract about it.
+    db, root = corpus
+    write(
+        root / "named.md",
+        "# A transformer for music\n\nWe compose melodies with a sequence model of notes and chords.\n",
+    )
+    write(
+        root / "about.md",
+        "# Attention models\n\nA transformer replaces recurrence with attention. Each transformer layer attends to "
+        "every token, and stacked transformer blocks train in parallel.\n",
+    )
+    indexing.index(db)
+    assert ids(Index(db).search("transformer", k=2)) == ["notes/about.md", "notes/named.md"]
+
+
 @pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
 @pytest.mark.parametrize("query", ["", "  \n "])
 def test_blank_queries_find_nothing(embedded, mode, query):
@@ -63,12 +80,44 @@ def test_filters(corpus):
     assert ids(index.search("reward", collection="notes")) == ["notes/rl.md"]
 
 
+BRUSH, RL = "notes/robots/brush.md", "notes/rl.md"
+
+
+def test_a_list_of_values_means_any_of_them(corpus):
+    index = Index(corpus[0])
+    assert ids(index.search("brush OR reward", filters={"categories": ["cs.LG", "cs.GR"]})) == [BRUSH]
+    assert index.search("brush", filters={"categories": ["cs.LG", "cs.CV"]}) == []
+    assert ids(index.search("brush", filters={"year": {"=": [2023, 2024]}})) == [BRUSH]
+
+
+@pytest.mark.parametrize(
+    "condition, expected",
+    [
+        ({"not": "cs.GR"}, [RL]),  # a document without the field has none of its values
+        ({"not": ["cs.LG", "cs.CV"]}, [RL, BRUSH]),
+        ({"not": ["cs.LG", "cs.RO"]}, [RL]),
+    ],
+)
+def test_not_filters(corpus, condition, expected):
+    hits = Index(corpus[0]).search("brush OR reward", filters={"categories": condition})
+    assert sorted(ids(hits)) == expected
+
+
+def test_not_with_a_range(corpus):
+    index = Index(corpus[0])
+    assert ids(index.search("brush OR reward", filters={"year": {">=": 2020, "not": 2023}})) == [BRUSH]
+    assert index.search("brush OR reward", filters={"year": {">=": 2020, "not": 2024}}) == []
+
+
 @pytest.mark.parametrize(
     "kwargs, error",
     [
         ({"filters": {"bad key": 1}}, ValueError),
-        ({"filters": {"categories": ["cs.RO"]}}, ValueError),
+        ({"filters": {"categories": []}}, ValueError),
+        ({"filters": {"categories": [None]}}, ValueError),
         ({"filters": {"categories": None}}, ValueError),
+        ({"filters": {"categories": {"not": []}}}, ValueError),
+        ({"filters": {"categories": {"not": None}}}, ValueError),
         ({"collection": "missing"}, LookupError),
     ],
 )
@@ -158,6 +207,25 @@ def test_search_uses_the_models_it_is_given(embedded):
     assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
 
 
+def test_query_scores_run_from_0_to_1(embedded):
+    # Rerankers score with any number; from 0 to 1, a score says how relevant a result is, whatever the query.
+    hits = Index(embedded[0], models=Constant()).query("anything")
+    assert [h["score"] for h in hits] == [0.8808, 0.7311, 0.5]  # the sigmoid of 2, 1 and 0
+
+
+class Extreme(Constant):
+    def rerank(self, query, texts):
+        return np.linspace(-1000, 1000, len(texts), dtype=np.float32)
+
+
+def test_query_scores_from_extreme_reranker_scores(embedded):
+    assert [h["score"] for h in Index(embedded[0], models=Extreme()).query("anything")] == [
+        1.0,
+        0.5,
+        0.0,
+    ]  # no overflow
+
+
 def test_hits_skip_chunks_removed_meanwhile(corpus):
     assert Index(corpus[0])._hits([(10**9, 1.0)]) == []
 
@@ -191,6 +259,30 @@ def test_get(corpus):
     for bad in ("notes/../outside.md", "missing/rl.md", "notes", "notes/"):
         with pytest.raises(LookupError, match="unknown document"):
             index.get(bad)
+
+
+def test_document_with_front_matter_fields(corpus):
+    # An agent reading a paper wants its link and date with it, without a search to find them.
+    index = Index(corpus[0])
+    document = index.document("notes/brush.md", fields=["year", "missing"])
+    assert document == {
+        "id": "notes/robots/brush.md",  # the whole id, also when asked by file name
+        "title": "Brush stroke planning",
+        "fields": {"year": 2024},
+        "text": index.get("notes/robots/brush.md"),
+    }
+
+
+def test_document_lines_without_fields(corpus):
+    document = Index(corpus[0]).document("notes/rl.md", 1)
+    assert document == {"id": "notes/rl.md", "title": "Reward shaping", "text": "# Reward shaping\n"}
+
+
+def test_document_with_all_fields(corpus):
+    assert Index(corpus[0]).document("notes/brush.md", fields=["*"])["fields"] == {
+        "categories": ["cs.RO", "cs.GR"],
+        "year": 2024,
+    }
 
 
 def test_get_a_folder_is_no_document(corpus):
@@ -367,6 +459,132 @@ def test_bad_range_filters_are_clear_errors(corpus, condition):
         Index(corpus[0]).search("x", filters={"created": condition})
 
 
+# --- one result per document -----------------------------------------------------
+
+LONG = "notes/long.md"
+
+
+@pytest.fixture
+def long(embedded, fake_models):
+    """The notes, and a document of several passages, all about pigment mixing, each with a word of its own."""
+    db, root = embedded
+    parts = [f"## Part {i}\n\n" + f"pigment mixing part{i} " * 150 for i in range(3)]
+    write(root / "long.md", "# Long\n\n" + "\n\n".join(parts) + "\n")
+    indexing.index(db)
+    embed.embed_pending(db)
+    assert (
+        db.execute("SELECT count(*) FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.path = 'long.md'").fetchone()[0]
+        > 2
+    )
+    return Index(db)
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_one_result_per_document(long, mode):
+    # The passages of one long document filled the results, and the other documents were never seen.
+    hits = getattr(long, mode)("pigment mixing part0 part1 part2", k=2)
+    assert len(hits) == 2
+    assert ids(hits)[0] == LONG
+    assert len(set(ids(hits))) == 2
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_all_passages(long, mode):
+    hits = getattr(long, mode)("pigment mixing part0 part1 part2", k=10, all_passages=True)
+    assert ids(hits).count(LONG) > 2
+
+
+@pytest.mark.parametrize("mode", ["search", "query"])
+def test_a_document_shows_its_best_passage(long, mode):
+    hit = getattr(long, mode)("part2", k=1)[0]
+    assert (hit["id"], "part2" in hit["text"]) == (LONG, True)
+
+
+def test_vsearch_looks_further_for_other_documents(long):
+    # When the best passages all come from one document, vsearch looks further down for more documents.
+    hits = long.vsearch("pigment mixing part0 part1 part2", k=4, filters={"categories": {"not": "cs.LG"}})
+    assert len(set(ids(hits))) == 4
+
+
+# --- ordering by a front-matter field --------------------------------------------
+
+
+def day(hit):
+    return hit["id"].rsplit("/", 1)[1].removesuffix(".md")
+
+
+@pytest.mark.parametrize("sort, expected", [("created", DAYS), ("-created", DAYS[::-1])])
+def test_sort_by_a_front_matter_field(dated, sort, expected):
+    # "The newest papers on X": the best results, newest first.
+    hits = dated.search("pigment", k=20, sort=sort)
+    assert [day(h) for h in hits] == [*expected, "brush"]  # those without the field come last
+
+
+@pytest.mark.parametrize("mode", ["vsearch", "query"])
+def test_sort_in_every_mode(dated, mode):
+    hits = getattr(dated, mode)("pigment", k=20, sort="-created", filters={"created": {">=": "2024"}})
+    assert [day(h) for h in hits] == DAYS[1:][::-1]
+
+
+def test_sort_puts_numbers_before_text(corpus):
+    db, root = corpus
+    for name, rank in (("a", "2"), ("b", '"x"'), ("c", "10"), ("d", "null")):
+        write(root / "ranked" / f"{name}.md", f"---\nrank: {rank}\n---\n# {name}\nranked\n")
+    indexing.index(db)
+    assert [day(h) for h in Index(db).search("ranked", sort="rank")] == ["a", "c", "b", "d"]
+
+
+@pytest.mark.parametrize("sort", ["", "-", "bad key", 1, ["created"]])
+def test_bad_sort_is_a_clear_error(corpus, sort):
+    with pytest.raises(ValueError, match="sort"):
+        Index(corpus[0]).search("brush", sort=sort)
+
+
+# --- documents like a document ----------------------------------------------------
+
+
+def test_similar_finds_documents_like_one(dated):
+    # "More papers like this one", without putting the paper into words first.
+    hits = dated.similar("notes/dated/2024-01-01.md", k=4)
+    assert len(hits) == 4
+    assert all(h["id"].startswith("notes/dated/") for h in hits)  # the papers with the same words
+    assert "notes/dated/2024-01-01.md" not in ids(hits)  # not the document itself
+    assert hits[0]["score"] >= hits[-1]["score"]
+
+
+def test_similar_takes_what_searches_take(dated):
+    hits = dated.similar(
+        "notes/2024-01-01.md", filters={"created": {">=": "2024-06"}}, fields=["created"], compact=True, sort="created"
+    )
+    assert [(day(h), h["fields"]["created"], "text" in h) for h in hits] == [
+        (d, d, False) for d in ("2024-06-15", "2024-12-31", "2025-01-01")
+    ]
+
+
+def test_similar_is_one_result_per_document(long):
+    assert len(set(ids(long.similar("notes/robots/brush.md", k=10)))) == len(
+        long.similar("notes/robots/brush.md", k=10)
+    )
+
+
+def test_similar_needs_embeddings(corpus, fake_models):
+    with pytest.raises(LookupError, match="sift embed"):
+        Index(corpus[0]).similar("notes/rl.md")
+
+
+def test_similar_to_a_document_not_embedded_yet(embedded):
+    db, root = embedded
+    write(root / "new.md", "# New\nfresh\n")
+    indexing.index(db)
+    with pytest.raises(LookupError, match=r"'notes/new\.md' has no embeddings yet, run `sift embed`"):
+        Index(db).similar("notes/new.md")
+
+
+def test_similar_to_an_unknown_document(embedded):
+    with pytest.raises(LookupError, match="unknown document"):
+        Index(embedded[0]).similar("notes/missing.md")
+
+
 # --- keyword search falls back to any term ---------------------------------------
 
 
@@ -407,6 +625,7 @@ def test_fallback_keeps_the_filters(corpus):
         ("2-3", "\nReward shaping speeds up reinforcement learning.\n"),
         ("3-99", "Reward shaping speeds up reinforcement learning.\n"),
         ("9", ""),
+        (1, "# Reward shaping\n"),  # a line number, as agents also send it
     ],
 )
 def test_get_lines(corpus, lines, text):
@@ -420,7 +639,7 @@ def test_get_the_lines_of_a_hit(corpus):
     assert index.get(hit["id"], hit["lines"]).strip() == hit["text"]
 
 
-@pytest.mark.parametrize("lines", ["0", "3-2", "a", "1-", "-3", " 1"])
+@pytest.mark.parametrize("lines", ["0", "3-2", "a", "1-", "-3", " 1", 0, -1, True, 1.5])
 def test_bad_line_ranges_are_clear_errors(corpus, lines):
     with pytest.raises(ValueError, match="lines"):
         Index(corpus[0]).get("notes/rl.md", lines)

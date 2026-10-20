@@ -26,6 +26,12 @@ def fake_vector(text):
     return v / (np.linalg.norm(v) or 1)
 
 
+def fake_score(query, text):
+    """The fake reranker's raw score: the share of the query's words the text holds."""
+    asked = set(words(query))
+    return len(asked & set(words(text))) / (1 + len(asked))
+
+
 class FakeSentenceTransformer:
     max_batch = 10**6  # batches above this run out of GPU memory
     gpu = "cuda"  # whose out-of-memory error to raise: "cuda" or "mps"
@@ -83,11 +89,37 @@ class FakeCrossEncoder:
             self.device = str(target)
         return self
 
-    def predict(self, pairs, batch_size, show_progress_bar=None):
+    activation = None  # what the model's configuration applies to its scores; None: nothing (Identity), like Ettin
+
+    def predict(self, pairs, batch_size, show_progress_bar=None, activation_fn=None):
+        import torch
+
         assert show_progress_bar is False, "sift must not draw progress bars (the server's log is no terminal)"
         if self.model.dtype != self.head:
             raise RuntimeError(f"expected mat1 and mat2 to have the same dtype, but got: {self.model.dtype} != float")
-        return np.array([len(set(words(q)) & set(words(d))) / (1 + len(set(words(q)))) for q, d in pairs])
+        raw = torch.tensor([fake_score(q, d) for q, d in pairs])
+        return (activation_fn or self.activation or torch.nn.Identity())(raw).numpy()
+
+
+class NumpyModels:
+    """What `Local` computes with the fakes inside, in plain NumPy, for a worker served from a thread: PyTorch crashes
+    outside the main thread on Python 3.15 (macOS), even on the fakes' tensors."""
+
+    address, batch = "cpu", 128
+
+    def __init__(self):
+        from sift import settings
+
+        self.name, self.reranker_name = settings.current().embed_model, settings.current().rerank_model
+
+    def load(self):
+        """Nothing to load."""
+
+    def encode(self, texts, query=False):
+        return np.stack([fake_vector(t) for t in texts]).astype(np.float16)
+
+    def rerank(self, query, texts):
+        return np.array([fake_score(query, t) for t in texts], np.float32)
 
 
 GiB = 2**30

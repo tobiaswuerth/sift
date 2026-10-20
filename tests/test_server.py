@@ -38,12 +38,28 @@ def mcp(embedded):
     return server.build(Index(embedded[0]))[0]
 
 
-def test_lists_tools(mcp):
+def tools(mcp):
     async def go():
         async with Client(mcp) as client:
-            return [t.name for t in (await client.list_tools()).tools]
+            return {t.name: t for t in (await client.list_tools()).tools}
 
-    assert asyncio.run(go()) == ["search", "vsearch", "query", "get", "status"]
+    return asyncio.run(go())
+
+
+def test_lists_tools(mcp):
+    assert list(tools(mcp)) == ["search", "vsearch", "query", "similar", "get", "status"]
+
+
+def test_every_parameter_is_described(mcp):
+    # Agents see a tool's schema, not its code: a parameter without a description is one they guess at, or miss.
+    for tool in tools(mcp).values():
+        for name, schema in tool.input_schema["properties"].items():
+            assert schema.get("description"), f"{tool.name}({name}) has no description"
+
+
+def test_tools_are_marked_read_only(mcp):
+    # Clients may then run them without asking the user each time.
+    assert all(tool.annotations.read_only_hint for tool in tools(mcp).values())
 
 
 @pytest.mark.parametrize("tool", ["search", "vsearch", "query"])
@@ -55,15 +71,21 @@ def test_search_tools(mcp, tool):
     assert "notes/rl.md" in [h["id"] for h in hits]
 
 
-@pytest.mark.parametrize("tool", ["search", "vsearch", "query", "get", "status"])
+@pytest.mark.parametrize("tool", ["search", "vsearch", "query", "similar", "get", "status"])
 def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
     # PyTorch crashes in worker threads on Python 3.15 (Windows, macOS), so no tool may run in one.
     index, threads = Index(embedded[0]), []
     real = getattr(index, tool)
     monkeypatch.setattr(index, tool, lambda *a, **kw: threads.append(threading.current_thread()) or real(*a, **kw))
-    args = {"get": {"id": "notes/rl.md"}, "status": {}}.get(tool, {"query": "brush"})
+    args = {"get": {"id": "notes/rl.md"}, "similar": {"id": "notes/rl.md"}, "status": {}}.get(tool, {"query": "brush"})
     assert not call(server.build(index)[0], tool, args).is_error
     assert threads == [threading.main_thread()]
+
+
+def test_similar_tool(mcp):
+    hits = data(call(mcp, "similar", {"id": "notes/brush.md", "k": 2, "fields": ["year"]}))
+    assert len(hits) == 2
+    assert "notes/robots/brush.md" not in [h["id"] for h in hits]
 
 
 def test_instructions_tell_agents_what_is_indexed(mcp):
@@ -190,7 +212,7 @@ def test_an_unreachable_remote_reaches_the_agent(mcp, fake_models, monkeypatch, 
 def test_database_errors_reach_the_agent(embedded, monkeypatch):
     index = Index(embedded[0])
 
-    def locked(*args):
+    def locked(*args, **kwargs):
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(index, "search", locked)
@@ -253,9 +275,49 @@ def test_search_tools_take_fields_compact_and_ranges(mcp, tool):
     assert [(h["id"], h["fields"], "text" in h) for h in hits] == [("notes/robots/brush.md", {"year": 2024}, False)]
 
 
-def test_get_takes_lines(mcp):
-    result = call(mcp, "get", {"id": "notes/rl.md", "lines": "1"})
+@pytest.mark.parametrize(
+    "tool, first", [("search", "query"), ("vsearch", "query"), ("query", "query"), ("similar", "id")]
+)
+def test_search_tools_pass_every_option_on(embedded, monkeypatch, tool, first):
+    index, calls = Index(embedded[0]), []
+    monkeypatch.setattr(index, tool, lambda *args, **kwargs: calls.append((args, kwargs)) or [])
+    options = {
+        "collection": "notes",
+        "path": "*.md",
+        "filters": {"year": 2024},
+        "fields": ["year"],
+        "compact": True,
+        "all_passages": True,
+        "sort": "-year",
+    }
+    call(server.build(index)[0], tool, {first: "brush", "k": 3} | options)
+    assert calls == [(("brush", 3), options)]
+
+
+@pytest.mark.parametrize("lines", ["1", "1-1", 1])
+def test_get_takes_lines(mcp, lines):
+    result = call(mcp, "get", {"id": "notes/rl.md", "lines": lines})
     assert result.content[0].text == "# Reward shaping\n"
+
+
+def test_get_with_fields_returns_the_document_with_them(mcp):
+    document = data(call(mcp, "get", {"id": "notes/brush.md", "lines": "1-3", "fields": ["year"]}))
+    assert document == {
+        "id": "notes/robots/brush.md",
+        "title": "Brush stroke planning",
+        "fields": {"year": 2024},
+        "text": '---\ntitle: "Brush stroke planning"\ncategories: ["cs.RO", "cs.GR"]\n',
+    }
+
+
+def test_unexpected_errors_reach_the_agent_too(embedded, monkeypatch, caplog):
+    # A bug is still an error the agent should see: "Error executing tool search" alone says nothing.
+    index = Index(embedded[0])
+    monkeypatch.setattr(index, "search", lambda *args, **kwargs: 1 / 0)
+    result = call(server.build(index)[0], "search", {"query": "x"})
+    assert result.is_error
+    assert "ZeroDivisionError: division by zero" in result.content[0].text
+    assert "Traceback" in caplog.text  # for whoever fixes it
 
 
 def test_instructions_for_a_collection_without_front_matter(tmp_path):

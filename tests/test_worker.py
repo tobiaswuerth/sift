@@ -18,7 +18,7 @@ import pytest
 from sift import __version__, cli, embed, models, remote, store, worker
 from sift.search import Index
 
-from .conftest import FakeSentenceTransformer, fake_vector, nobody_listens
+from .conftest import FakeSentenceTransformer, NumpyModels, fake_vector, nobody_listens
 
 TOKEN = "s3cret-token"
 
@@ -160,13 +160,13 @@ def test_the_key_files_are_private(home, fake_models):
 
 
 @pytest.fixture
-def live(fake_models, make_local, home):
-    """A real worker serving HTTPS on a free local port, from a thread (fine for fake models; PyTorch needs the main
-    one), with models of its own. Records the paths of the requests that reach it."""
+def live(fake_models, home):
+    """A real worker serving HTTPS on a free local port, from a thread, with models of its own that compute as the
+    fakes do, without PyTorch, which needs the main thread. Records the paths of the requests that reach it."""
     import uvicorn
 
-    found, seen = worker.credentials(), []
-    app = worker.app(found.token, make_local())
+    found, seen, worker_models = worker.credentials(), [], NumpyModels()
+    app = worker.app(found.token, worker_models)
 
     async def recording(scope, receive, send):
         if scope["type"] == "http":
@@ -187,6 +187,7 @@ def live(fake_models, make_local, home):
         address=f"https://127.0.0.1:{port}",
         port=port,
         seen=seen,
+        models=worker_models,
         **found._asdict(),
     )
     server.should_exit = True
@@ -274,10 +275,10 @@ def test_a_failing_worker_is_a_clear_error(corpus, fake_models, live, monkeypatc
     configure(remote=live.url)
     models.default().load()  # the worker is asked about its models before they fail
 
-    def broken(self, texts, *args, **kwargs):
+    def broken(texts, *args, **kwargs):
         raise RuntimeError("CUDA error: an illegal memory access was encountered")
 
-    monkeypatch.setattr(FakeSentenceTransformer, "encode_document", broken)
+    monkeypatch.setattr(live.models, "encode", broken)
     with pytest.raises(ConnectionError, match=f"embedding remote {live.address} answered 500"):
         embed.embed_pending(corpus[0])
 

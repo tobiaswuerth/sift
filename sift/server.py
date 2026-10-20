@@ -3,15 +3,19 @@
 import asyncio
 import logging
 import sqlite3
-from typing import Any
+from typing import Annotated, Any
 
 import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from . import console
 from . import models as _models
 from .search import Index
+
+log = logging.getLogger(__name__)
 
 INSTRUCTIONS = """Search the user's local documents and notes, indexed by sift.
 When a question touches what these collections cover, search here before answering from memory or searching the web,
@@ -22,13 +26,12 @@ and cite what you find; say so when nothing relevant turns up.
 - `query`: hybrid search with reranking. Best default for questions; slower than the others.
 - `search`: exact keyword search (BM25). Best for names, identifiers, exact terms and "quoted phrases".
 - `vsearch`: semantic search. Best when the wording of the answer is unknown.
-Results carry `id` (collection/path), `lines`, `title`, `score` and chunk `text`. `get` returns a document, or
-just some of its `lines`, such as a result's.
-All search tools accept `collection`, a `path` glob such as "2024/*", and `filters` on front-matter fields: a value,
-e.g. {{"categories": "cs.RO"}}, which a list field matches when it contains it, or a range, e.g.
-{{"created": {{">=": "2024-06", "<": "2025"}}}}; dates compare at the precision given, so "<=": "2024" includes all
-of 2024. `fields` adds front-matter fields to each result, e.g. ["url", "created"] (["*"] for all), and
-`compact: true` leaves out the text: survey many results compactly, then read the ones that matter."""
+- `similar`: documents like a given one, e.g. more papers like one found.
+- `get`: a document, or some of its lines, such as a result's.
+Results carry `id` (collection/path), `lines`, `title`, `score` and the passage's `text`. Scores rank the results of
+one call; each tool has its own scale, so don't compare them across tools. All search tools take `collection`, a
+`path` glob, `filters` on front-matter fields and `fields` to show; with `compact: true` results leave out the text:
+survey many results compactly, then read the ones that matter."""
 
 
 def _collections(index):
@@ -46,13 +49,90 @@ def _collections(index):
     return "Indexed collections:\n" + "\n".join(lines)
 
 
-def _run(fn, *args):
-    """Call an Index method, turning expected failures into ToolError, the only kind whose message reaches the
-    agent; anything else counts as a crash, and the MCP library tells the agent just "Error executing tool"."""
+def _run(fn, *args, **kwargs):
+    """Call an Index method. Any failure becomes a ToolError, the only kind whose message the MCP library passes on
+    (it tells the agent just "Error executing tool" otherwise): expected ones as their message, others, which are
+    bugs, with their type, and with a traceback in the server's log."""
     try:
-        return fn(*args)
+        return fn(*args, **kwargs)
     except (LookupError, ValueError, ConnectionError, sqlite3.Error) as e:  # ConnectionError: the embedding remote
         raise ToolError(str(e)) from None
+    except Exception as e:
+        log.exception("tool failed")
+        raise ToolError(f"{type(e).__name__}: {e}") from None
+
+
+# What agents see of each parameter: they read the tools' schemas, not sift's code.
+Id = Annotated[
+    str,
+    Field(
+        description='A document\'s id from a search result, e.g. "papers/2024/attention.md"; folders may be left '
+        'out if the file name is unique: "papers/attention.md".'
+    ),
+]
+K = Annotated[int, Field(description="Number of results.")]
+Collection = Annotated[str | None, Field(description="Search only this collection.")]
+PathGlob = Annotated[
+    str | None, Field(description='Only documents whose path in the collection matches this glob, e.g. "2024/*".')
+]
+Filters = Annotated[
+    dict[str, Any] | None,
+    Field(
+        description='Conditions on front-matter fields, all of which must hold: a value, e.g. {"categories": '
+        '"cs.RO"}, which a list field matches if it holds it; a list for any of its values, e.g. {"categories": '
+        '["cs.RO", "cs.CV"]}; {"not": a value or list} for none of them (documents without the field pass); or a '
+        'range, e.g. {"created": {">=": "2024-06", "<": "2025"}}. Dates compare at the precision given, so '
+        '{"<=": "2024"} includes all of 2024.'
+    ),
+]
+Fields = Annotated[
+    list[str] | None,
+    Field(description='Front-matter fields to add to each result, e.g. ["url", "created"]; ["*"] for all of them.'),
+]
+Compact = Annotated[bool, Field(description="Leave out the text: survey many results, then `get` those that matter.")]
+AllPassages = Annotated[
+    bool,
+    Field(description="Every matching passage, several per document; by default only each document's best one."),
+]
+Sort = Annotated[
+    str | None,
+    Field(
+        description='Order the results by a front-matter field instead of by score, with "-" first for descending, '
+        'e.g. "-created" for the newest first; results without the field come last.'
+    ),
+]
+READ_ONLY = ToolAnnotations(read_only_hint=True)
+
+
+def _add_search(mcp, index, name, description, query_description):
+    """Add the tool for the Index search called `name`."""
+    method = getattr(index, name)
+
+    async def tool(
+        query: Annotated[str, Field(description=query_description)],
+        k: K = 10,
+        collection: Collection = None,
+        path: PathGlob = None,
+        filters: Filters = None,
+        fields: Fields = None,
+        compact: Compact = False,
+        all_passages: AllPassages = False,
+        sort: Sort = None,
+    ) -> list[dict]:
+        return _run(
+            method,
+            query,
+            k,
+            collection=collection,
+            path=path,
+            filters=filters,
+            fields=fields,
+            compact=compact,
+            all_passages=all_passages,
+            sort=sort,
+        )
+
+    mcp.tool(name, description=description, annotations=READ_ONLY)(tool)
 
 
 def build(index=None):
@@ -60,54 +140,75 @@ def build(index=None):
     # keeps PyTorch out of worker threads, where it crashes on Python 3.15 (Windows, macOS).
     index = index or Index()
     mcp = MCPServer("sift", instructions=INSTRUCTIONS.format(collections=_collections(index)))
+    _add_search(
+        mcp,
+        index,
+        "search",
+        "Exact keyword search, ranked by BM25 (scores from 0 up, higher is better). When no passage holds all "
+        "terms of a query without operators, passages holding any of them are returned; a query with operators is "
+        "taken as it is, so drop terms when it finds nothing.",
+        'Keywords. "Exact phrases", prefix*, AND, OR, NOT (in capitals) and parentheses work, e.g. '
+        '"stroke" AND (painting OR rendering).',
+    )
+    _add_search(
+        mcp,
+        index,
+        "vsearch",
+        "Semantic search: passages closest in meaning to the query (cosine similarity, -1 to 1).",
+        "What to find, in any wording.",
+    )
+    _add_search(
+        mcp,
+        index,
+        "query",
+        "Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder, which scores how "
+        "relevant each result is, from 0 to 1. Best for questions.",
+        "A question, or a description of what to find.",
+    )
 
-    @mcp.tool()
-    async def search(
-        query: str,
-        k: int = 10,
-        collection: str | None = None,
-        path: str | None = None,
-        filters: dict[str, Any] | None = None,
-        fields: list[str] | None = None,
-        compact: bool = False,
+    @mcp.tool(annotations=READ_ONLY)
+    async def similar(
+        id: Id,
+        k: K = 10,
+        collection: Collection = None,
+        path: PathGlob = None,
+        filters: Filters = None,
+        fields: Fields = None,
+        compact: Compact = False,
+        all_passages: AllPassages = False,
+        sort: Sort = None,
     ) -> list[dict]:
-        """Exact keyword search ranked by BM25. Supports "phrases", prefix*, AND, OR, NOT. When no chunk holds
-        all terms of a query without operators, chunks holding any of them are returned."""
-        return _run(index.search, query, k, collection, path, filters, fields, compact)
+        """Documents closest in meaning to a document, e.g. more papers like one found; the document itself is left
+        out (cosine similarity, -1 to 1)."""
+        return _run(
+            index.similar,
+            id,
+            k,
+            collection=collection,
+            path=path,
+            filters=filters,
+            fields=fields,
+            compact=compact,
+            all_passages=all_passages,
+            sort=sort,
+        )
 
-    @mcp.tool()
-    async def vsearch(
-        query: str,
-        k: int = 10,
-        collection: str | None = None,
-        path: str | None = None,
-        filters: dict[str, Any] | None = None,
-        fields: list[str] | None = None,
-        compact: bool = False,
-    ) -> list[dict]:
-        """Semantic search: chunks closest in meaning to the query."""
-        return _run(index.vsearch, query, k, collection, path, filters, fields, compact)
-
-    @mcp.tool()
-    async def query(
-        query: str,
-        k: int = 10,
-        collection: str | None = None,
-        path: str | None = None,
-        filters: dict[str, Any] | None = None,
-        fields: list[str] | None = None,
-        compact: bool = False,
-    ) -> list[dict]:
-        """Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder."""
-        return _run(index.query, query, k, collection, path, filters, fields, compact)
-
-    @mcp.tool()
-    async def get(id: str, lines: str | None = None) -> str:
-        """Text of a document, by the `id` shown in search results: all of it, or `lines` such as "17-26".
-        The id may leave out folders if the file name is unique, e.g. papers/2401.02225.md."""
+    @mcp.tool(annotations=READ_ONLY)
+    async def get(
+        id: Id,
+        lines: Annotated[
+            str | int | None,
+            Field(description='Only these lines, e.g. a result\'s "17-26", or one line number; all if left out.'),
+        ] = None,
+        fields: Fields = None,
+    ) -> str | dict:
+        """Text of a document, as indexed: all of it, or some of its lines. With `fields`, the document as
+        {id, title, fields, text}."""
+        if fields:
+            return _run(index.document, id, lines, fields)
         return _run(index.get, id, lines)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     async def status() -> dict:
         """Collections, document and chunk counts, and the embedding model."""
         return _run(index.status)

@@ -10,8 +10,16 @@ import textwrap
 
 from . import __version__, console, settings, store
 
-SLOW = ("embed", "vsearch", "query", "serve", "worker")  # the commands that load PyTorch, unless a worker does it
-THROUGH_WORKER = ("vsearch", "query")  # with SIFT_EMBED_REMOTE, these leave PyTorch to the worker
+SLOW = (
+    "embed",
+    "vsearch",
+    "query",
+    "similar",
+    "serve",
+    "worker",
+)  # these load PyTorch, unless a worker does it for them
+THROUGH_WORKER = ("vsearch", "query", "similar")  # with SIFT_EMBED_REMOTE, these leave PyTorch to the worker
+SEARCHES = ("search", "vsearch", "query", "similar")
 
 
 def _value(text):
@@ -22,19 +30,30 @@ def _value(text):
 
 
 def _filters(pairs):
-    """-f KEY=VALUE and ranges such as -f created>=2024-06 -f created<2025, as search filters."""
+    """-f KEY=VALUE, KEY!=VALUE and ranges such as -f created>=2024-06 -f created<2025, as search filters. Repeated,
+    KEY=VALUE stands for any of the values, and KEY!=VALUE for none of them."""
     out = {}
     for pair in pairs:
-        m = re.fullmatch(r"([^=<>]+)(>=|<=|=|<|>)(.*)", pair)
+        m = re.fullmatch(r"(\w+)(>=|<=|!=|=|<|>)(.*)", pair)  # a field name, as search takes them
         if not m:
-            raise SystemExit(f"filter must be KEY=VALUE, or KEY>=VALUE and the like for ranges, got {pair!r}")
-        key, op, value = m[1], m[2], _value(m[3])
-        if op == "=" and key not in out:
-            out[key] = value
-        else:
-            conditions = out.get(key, {})
-            out[key] = (conditions if isinstance(conditions, dict) else {"=": conditions}) | {op: value}
-    return out
+            raise SystemExit(
+                f"filter must be KEY=VALUE, KEY!=VALUE, or KEY>=VALUE and the like for ranges, got {pair!r}"
+            )
+        key, op, value = m[1], "not" if m[2] == "!=" else m[2], _value(m[3])
+        conditions = out.setdefault(key, {})
+        if op in ("=", "not") and op in conditions:
+            value = _listed(conditions[op]) + _listed(value)
+        conditions[op] = value
+    return {key: c["="] if list(c) == ["="] else c for key, c in out.items()}
+
+
+def _fields(text):
+    """--fields url,created as a list of field names."""
+    return text and [field.strip() for field in text.split(",")]
+
+
+def _listed(value):
+    return value if isinstance(value, list) else [value]
 
 
 def _shown(value):
@@ -76,25 +95,40 @@ def main(argv=None):
     s.add_argument("names", nargs="*", help="collections to scan (default: all)")
     s = sub.add_parser("embed", help="embed all chunks that have no vector yet")
     s.add_argument("--reset", action="store_true", help="drop all vectors first (after changing the model)")
-    for name, desc in (
-        ("search", "exact keyword search (BM25)"),
-        ("vsearch", "semantic search"),
-        ("query", "hybrid search with reranking"),
+    for name, desc, subject in (
+        ("search", "exact keyword search (BM25)", "query"),
+        ("vsearch", "semantic search", "query"),
+        ("query", "hybrid search with reranking", "query"),
+        ("similar", "documents like a given one", "id"),
     ):
         s = sub.add_parser(name, help=desc)
-        s.add_argument("query")
+        s.add_argument("subject", metavar=subject)
         s.add_argument("-k", type=int, default=10, help="number of results (default: 10)")
         s.add_argument("-c", "--collection")
         s.add_argument("--path", help='path glob within the collection, e.g. "2024/*"')
         s.add_argument(
-            "-f", "--filter", action="append", default=[], metavar="KEY=VALUE", help="front-matter filter, repeatable"
+            "-f",
+            "--filter",
+            action="append",
+            default=[],
+            metavar="KEY=VALUE",
+            help="front-matter filter, repeatable: KEY=VALUE (repeated: any of them), KEY!=VALUE, KEY>=VALUE, ...",
         )
         s.add_argument("--fields", help='front-matter fields to show, comma-separated (e.g. "url,created"; "*": all)')
         s.add_argument("--compact", action="store_true", help="leave out the text")
+        s.add_argument(
+            "--all-passages", action="store_true", help="every matching passage, not just each document's best"
+        )
+        s.add_argument(
+            "--sort",
+            metavar="FIELD",
+            help="order by a front-matter field instead of score; --sort=-created: newest first",
+        )
         s.add_argument("--json", action="store_true", help="print results as JSON")
     s = sub.add_parser("get", help="print a document by its id (collection/path)")
     s.add_argument("id")
     s.add_argument("--lines", help='only these lines, e.g. "17-26"')
+    s.add_argument("--fields", help='front-matter fields to show first, comma-separated (e.g. "url,created"; "*": all)')
     sub.add_parser("status", help="show collections and index statistics")
     s = sub.add_parser("serve", help="run the MCP server")
     s.add_argument("--host", default="127.0.0.1")
@@ -143,16 +177,30 @@ def _run(a, db):
         from .embed import embed_pending
 
         embed_pending(db, a.reset)
-    elif a.cmd in ("search", "vsearch", "query"):
+    elif a.cmd in SEARCHES:
         from .search import Index
 
-        fields = a.fields and [f.strip() for f in a.fields.split(",")]
-        fn = getattr(Index(db), a.cmd)
-        _print_hits(fn(a.query, a.k, a.collection, a.path, _filters(a.filter), fields, a.compact), a.json)
+        hits = getattr(Index(db), a.cmd)(
+            a.subject,
+            a.k,
+            collection=a.collection,
+            path=a.path,
+            filters=_filters(a.filter),
+            fields=_fields(a.fields),
+            compact=a.compact,
+            all_passages=a.all_passages,
+            sort=a.sort,
+        )
+        _print_hits(hits, a.json)
     elif a.cmd == "get":
         from .search import Index
 
-        text = Index(db).get(a.id, a.lines)
+        document = Index(db).document(a.id, a.lines, _fields(a.fields))
+        for key, value in document.get("fields", {}).items():
+            print(f"{key}: {_shown(value)}")
+        if "fields" in document:
+            print()
+        text = document["text"]
         sys.stdout.write(text if text.endswith("\n") or not text else text + "\n")  # JSON records end without one
     elif a.cmd == "status":
         from .search import Index

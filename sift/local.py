@@ -102,10 +102,16 @@ class Local:
         ).astype(np.float16)
 
     def rerank(self, query, texts):
-        """Scores of (query, text) pairs, higher for better matches."""
-        model = self._ready(self.reranker)
+        """Raw scores (logits) of (query, text) pairs, higher for better matches, whatever activation the model's
+        configuration names: search turns them into 0 to 1."""
+        import torch
+
+        model, raw = self._ready(self.reranker), torch.nn.Identity()
         return self.accelerator.run(
-            lambda t, size: model.predict([(query, x) for x in t], batch_size=size, show_progress_bar=False), texts
+            lambda t, size: model.predict(
+                [(query, x) for x in t], batch_size=size, show_progress_bar=False, activation_fn=raw
+            ),
+            texts,
         )
 
     def vectors(self, ids, matrix):
