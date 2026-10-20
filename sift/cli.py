@@ -147,8 +147,8 @@ def _run(a, db):
         from .search import Index
 
         fields = a.fields and [f.strip() for f in a.fields.split(",")]
-        fn = getattr(Index(db), a.cmd)
-        _print_hits(fn(a.query, a.k, a.collection, a.path, _filters(a.filter), fields, a.compact), a.json)
+        options = {"collection": a.collection, "path": a.path, "filters": _filters(a.filter), "fields": fields}
+        _print_hits(getattr(Index(db), a.cmd)(a.query, a.k, compact=a.compact, **options), a.json)
     elif a.cmd == "get":
         from .search import Index
 

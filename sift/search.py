@@ -85,7 +85,9 @@ def _present(hits, fields, compact):
 
 
 def _line_span(lines):
-    """First and last line of a range such as "17-26", or of a single line such as "17"."""
+    """First and last line of a range such as "17-26", or of a single line: "17" or 17."""
+    if isinstance(lines, int) and not isinstance(lines, bool):
+        lines = str(lines)
     m = isinstance(lines, str) and re.fullmatch(r"([1-9]\d*)(?:-([1-9]\d*))?", lines)
     if not m or int(m[2] or m[1]) < int(m[1]):
         raise ValueError(f"lines must be a line number or a range such as '17-26', got {lines!r}")
@@ -204,7 +206,7 @@ class Index:
     # Every search takes `fields`, front-matter fields to add to each hit (["*"] for all), and `compact`, which
     # leaves out the text.
 
-    def search(self, query, k=10, collection=None, path=None, filters=None, fields=None, compact=False):
+    def search(self, query, k=10, *, collection=None, path=None, filters=None, fields=None, compact=False):
         """Exact keyword search, ranked by BM25. Accepts FTS5 syntax: "phrases", prefix*, AND, OR, NOT.
         If no chunk holds all terms of a query without operators, chunks with any of them are returned."""
         k, where, fields = _check_k(k), _where(self.db, collection, path, filters), _check_fields(fields)
@@ -213,12 +215,14 @@ class Index:
             ranked = self._keyword(relaxed, k, *where)
         return _present(self._hits(ranked), fields, compact)
 
-    def vsearch(self, query, k=10, collection=None, path=None, filters=None, fields=None, compact=False):
+    def vsearch(self, query, k=10, *, collection=None, path=None, filters=None, fields=None, compact=False):
         """Semantic search: cosine similarity between the query and every chunk."""
         k, where, fields = _check_k(k), _where(self.db, collection, path, filters), _check_fields(fields)
         return _present(self._hits(self._semantic(query, k, *where)), fields, compact)
 
-    def query(self, query, k=10, collection=None, path=None, filters=None, fields=None, compact=False, candidates=40):
+    def query(
+        self, query, k=10, *, collection=None, path=None, filters=None, fields=None, compact=False, candidates=40
+    ):
         """Hybrid search for RAG: keyword and semantic candidates, fused by reciprocal rank, then reranked."""
         k, where, fields = _check_k(k), _where(self.db, collection, path, filters), _check_fields(fields)
         candidates = max(candidates, k)
@@ -236,8 +240,8 @@ class Index:
 
     def get(self, id, lines=None):
         """Text of an indexed document, by its `collection/path` id: all of it, or `lines` such as "17-26", as
-        search hits give them. The path may leave out folders if the file name is unique in the collection.
-        The text comes from the index as it was indexed, so it always matches the hits."""
+        search hits give them, or one line number. The path may leave out folders if the file name is unique in the
+        collection. The text comes from the index as it was indexed, so it always matches the hits."""
         span = None if lines is None else _line_span(lines)
         name, _, rel = id.partition("/")
         sql = "SELECT d.text, d.path FROM docs d JOIN collections co ON co.id = d.collection WHERE co.name = ? AND "

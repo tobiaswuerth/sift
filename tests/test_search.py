@@ -407,6 +407,7 @@ def test_fallback_keeps_the_filters(corpus):
         ("2-3", "\nReward shaping speeds up reinforcement learning.\n"),
         ("3-99", "Reward shaping speeds up reinforcement learning.\n"),
         ("9", ""),
+        (1, "# Reward shaping\n"),  # a line number, as agents also send it
     ],
 )
 def test_get_lines(corpus, lines, text):
@@ -420,7 +421,7 @@ def test_get_the_lines_of_a_hit(corpus):
     assert index.get(hit["id"], hit["lines"]).strip() == hit["text"]
 
 
-@pytest.mark.parametrize("lines", ["0", "3-2", "a", "1-", "-3", " 1"])
+@pytest.mark.parametrize("lines", ["0", "3-2", "a", "1-", "-3", " 1", 0, -1, True, 1.5])
 def test_bad_line_ranges_are_clear_errors(corpus, lines):
     with pytest.raises(ValueError, match="lines"):
         Index(corpus[0]).get("notes/rl.md", lines)
