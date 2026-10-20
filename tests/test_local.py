@@ -44,7 +44,7 @@ def test_rerank_scores_pairs(fake_models):
 
 
 def test_rerank_gives_raw_scores_whatever_the_model_applies(fake_models, monkeypatch):
-    # Search turns them into 0 to 1 itself: a reranker that applies a sigmoid of its own would be squashed twice.
+    # A sigmoid saturates: a reranker that applies one would score every good match 0.9999.
     import torch
 
     monkeypatch.setattr(FakeCrossEncoder, "activation", torch.nn.Sigmoid())

@@ -347,8 +347,8 @@ class Index:
         hits = self._hits(sorted(fused.items(), key=lambda x: -x[1]))
         if not hits:
             return []
-        logits = np.asarray(self.models.rerank(query, [f"{h['title']}\n\n{h['text']}" for h in hits]), np.float64)
-        for h, s in zip(hits, (1 + np.tanh(logits / 2)) / 2):  # the sigmoid, without overflow: relevance, 0 to 1
+        scores = self.models.rerank(query, [f"{h['title']}\n\n{h['text']}" for h in hits])
+        for h, s in zip(hits, scores):  # raw: Ettin's sigmoid saturates, 0.9999 for every good match
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])
         hits = hits if all_passages else _first_of_each(hits, itemgetter("id"))

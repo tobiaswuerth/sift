@@ -207,23 +207,11 @@ def test_search_uses_the_models_it_is_given(embedded):
     assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
 
 
-def test_query_scores_run_from_0_to_1(embedded):
-    # Rerankers score with any number; from 0 to 1, a score says how relevant a result is, whatever the query.
+def test_query_scores_are_the_rerankers_raw_scores(embedded):
+    # Through a sigmoid they ran from 0 to 1, but saturated: Ettin scores close matches 8 to 12, so every hit showed
+    # 0.9999, and an off-topic query's best still 0.98. The raw scores tell strong hits from weak ones.
     hits = Index(embedded[0], models=Constant()).query("anything")
-    assert [h["score"] for h in hits] == [0.8808, 0.7311, 0.5]  # the sigmoid of 2, 1 and 0
-
-
-class Extreme(Constant):
-    def rerank(self, query, texts):
-        return np.linspace(-1000, 1000, len(texts), dtype=np.float32)
-
-
-def test_query_scores_from_extreme_reranker_scores(embedded):
-    assert [h["score"] for h in Index(embedded[0], models=Extreme()).query("anything")] == [
-        1.0,
-        0.5,
-        0.0,
-    ]  # no overflow
+    assert [h["score"] for h in hits] == [2.0, 1.0, 0.0]
 
 
 def test_hits_skip_chunks_removed_meanwhile(corpus):

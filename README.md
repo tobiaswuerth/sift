@@ -79,7 +79,8 @@ parentheses group: `'"stroke" AND (painting OR rendering)'`. A query with operat
 nothing, drop terms.
 
 Scores rank the results of one search, on a scale of its own: BM25 for `search` (0 and up), cosine similarity for
-`vsearch` and `similar` (-1 to 1), and for `query` the reranker's judgement of relevance, from 0 to 1.
+`vsearch` and `similar` (-1 to 1), and for `query` the reranker's raw score, which compares across queries: with
+the default reranker, close matches score about 8 to 12, and unrelated results below 5.
 
 ### Front matter
 
@@ -316,7 +317,8 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   index, so nothing to tune and no recall loss; a million 768-dimensional vectors take about 1.5 GB of VRAM. When the
   best passages come from a few documents, it looks further down until it has `k` documents.
 - **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are merged by reciprocal rank fusion
-  and reranked in one GPU batch. The reranker's raw scores become 0 to 1 through a sigmoid.
+  and reranked in one GPU batch. Scores are the reranker's raw ones: a sigmoid saturates, at 0.9999 for every good
+  match.
 - **`similar`:** the mean of a document's passage vectors, scored against every passage as `vsearch` scores a query.
   No model runs, so it takes half a second over 3 million passages, with or without a GPU.
 - **Server:** `sift serve` loads models and vectors once and keeps them in memory.
