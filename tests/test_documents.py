@@ -6,6 +6,7 @@ contract covers every reader."""
 import json
 import re
 import shutil
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from .conftest import index_contents, write
 SAMPLES = Path(__file__).parent / "samples"
 PARAGRAPH = "Kubelka-Munk theory predicts the colour of mixed paints from how each pigment absorbs and scatters light."
 PAGES = (".html", ".htm")
+WORD = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
 def sample(ext):
@@ -128,6 +130,43 @@ def test_a_damaged_document_is_skipped_with_the_reason(tmp_path, name, raw):
     docs, (problem,) = store.load(tmp_path / name)
     assert docs == []
     assert re.fullmatch(r"skipped \(.+\)", problem)
+
+
+def test_an_office_file_that_compresses_very_well_is_no_zip_bomb(tmp_path):
+    # Office files are zipped XML, and slides or sheets full of repeated markup compress at up to about 1000:1, the
+    # most deflate can do. Xberg's default limit of 100:1 took such files for zip bombs and skipped them.
+    body = "".join(f"<w:p><w:r><w:t>{'x' * 100_000}</w:t></w:r></w:p>" for _ in range(20))
+    document = f'<?xml version="1.0"?><w:document xmlns:w="{WORD}"><w:body>{body}</w:body></w:document>'
+    path = tmp_path / "repetitive.docx"
+    with zipfile.ZipFile(sample(".docx")) as src, zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as dst:
+        for item in src.infolist():
+            dst.writestr(item.filename, document if item.filename == "word/document.xml" else src.read(item))
+    with zipfile.ZipFile(path) as z:
+        entry = z.getinfo("word/document.xml")
+        assert entry.file_size / entry.compress_size > 800  # as compressed as the slides that were skipped
+    docs, problems = store.load(path)
+    assert problems == []
+    assert docs[0].text.count("x") == 2_000_000
+
+
+def test_a_real_zip_bomb_is_still_skipped(tmp_path):
+    path = tmp_path / "bomb.docx"  # a 0.5 MB Word file whose text unpacks to 110 MB
+    with (
+        zipfile.ZipFile(sample(".docx")) as src,
+        zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as dst,
+    ):
+        for item in src.infolist():
+            if item.filename != "word/document.xml":
+                dst.writestr(item.filename, src.read(item))
+                continue
+            with dst.open(item.filename, "w", force_zip64=True) as f:
+                f.write(f'<?xml version="1.0"?><w:document xmlns:w="{WORD}"><w:body><w:p><w:r><w:t>'.encode())
+                for _ in range(110):
+                    f.write(b"x" * (1 << 20))
+                f.write(b"</w:t></w:r></w:p></w:body></w:document>")
+    docs, (problem,) = store.load(path)
+    assert docs == []
+    assert "exceeds limit" in problem
 
 
 def test_a_document_without_text_is_skipped():
