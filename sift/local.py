@@ -103,7 +103,7 @@ class Local:
 
     def rerank(self, query, texts):
         """Raw scores (logits) of (query, text) pairs, higher for better matches, whatever activation the model's
-        configuration names: search turns them into 0 to 1."""
+        configuration names, so that scores mean the same with any reranker."""
         import torch
 
         model, raw = self._ready(self.reranker), torch.nn.Identity()

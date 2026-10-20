@@ -24,8 +24,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - Searches return one result per document, with its best passage: the passages of one long document no longer fill
   the results.
-- `query` scores run from 0 to 1: the reranker's raw scores through a sigmoid. A worker returns raw scores, whatever
-  activation the reranker's configuration names.
+- `query` scores are the reranker's raw scores whatever activation its configuration names, also from a worker.
+  With the default reranker, close matches score about 8 to 12, and unrelated results below 5.
 - Keyword search weighs a title like the text. Titles were weighted double on top of being indexed twice, so a paper
   that only named a term in its title outranked an abstract about it.
 - An empty environment variable counts as unset; `SIFT_HOME=` meant the current folder.
