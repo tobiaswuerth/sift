@@ -161,7 +161,8 @@ def build(index=None):
         mcp,
         index,
         "query",
-        "Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. Best for questions.",
+        "Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder, which scores how "
+        "relevant each result is, from 0 to 1. Best for questions.",
         "A question, or a description of what to find.",
     )
 

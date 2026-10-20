@@ -23,6 +23,23 @@ def test_keyword_search(corpus):
     assert index.search("nonexistentword") == []
 
 
+def test_a_document_about_a_term_outranks_one_that_names_it_in_its_title(corpus):
+    # The title is indexed twice already, as the text's heading and as its own column; weighted double on top, a
+    # title word outranked a whole abstract about it.
+    db, root = corpus
+    write(
+        root / "named.md",
+        "# A transformer for music\n\nWe compose melodies with a sequence model of notes and chords.\n",
+    )
+    write(
+        root / "about.md",
+        "# Attention models\n\nA transformer replaces recurrence with attention. Each transformer layer attends to "
+        "every token, and stacked transformer blocks train in parallel.\n",
+    )
+    indexing.index(db)
+    assert ids(Index(db).search("transformer", k=2)) == ["notes/about.md", "notes/named.md"]
+
+
 @pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
 @pytest.mark.parametrize("query", ["", "  \n "])
 def test_blank_queries_find_nothing(embedded, mode, query):
@@ -188,6 +205,25 @@ def test_search_uses_the_models_it_is_given(embedded):
     assert len(index.vsearch("anything")) == 3
     hits = index.query("anything")
     assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
+
+
+def test_query_scores_run_from_0_to_1(embedded):
+    # Rerankers score with any number; from 0 to 1, a score says how relevant a result is, whatever the query.
+    hits = Index(embedded[0], models=Constant()).query("anything")
+    assert [h["score"] for h in hits] == [0.8808, 0.7311, 0.5]  # the sigmoid of 2, 1 and 0
+
+
+class Extreme(Constant):
+    def rerank(self, query, texts):
+        return np.linspace(-1000, 1000, len(texts), dtype=np.float32)
+
+
+def test_query_scores_from_extreme_reranker_scores(embedded):
+    assert [h["score"] for h in Index(embedded[0], models=Extreme()).query("anything")] == [
+        1.0,
+        0.5,
+        0.0,
+    ]  # no overflow
 
 
 def test_hits_skip_chunks_removed_meanwhile(corpus):

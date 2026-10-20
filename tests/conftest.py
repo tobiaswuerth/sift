@@ -83,11 +83,16 @@ class FakeCrossEncoder:
             self.device = str(target)
         return self
 
-    def predict(self, pairs, batch_size, show_progress_bar=None):
+    activation = None  # what the model's configuration applies to its scores; None: nothing (Identity), like Ettin
+
+    def predict(self, pairs, batch_size, show_progress_bar=None, activation_fn=None):
+        import torch
+
         assert show_progress_bar is False, "sift must not draw progress bars (the server's log is no terminal)"
         if self.model.dtype != self.head:
             raise RuntimeError(f"expected mat1 and mat2 to have the same dtype, but got: {self.model.dtype} != float")
-        return np.array([len(set(words(q)) & set(words(d))) / (1 + len(set(words(q)))) for q, d in pairs])
+        raw = torch.tensor([len(set(words(q)) & set(words(d))) / (1 + len(set(words(q)))) for q, d in pairs])
+        return (activation_fn or self.activation or torch.nn.Identity())(raw).numpy()
 
 
 GiB = 2**30

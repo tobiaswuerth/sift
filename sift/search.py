@@ -1,4 +1,4 @@
-"""The three search modes: exact keyword (BM25), semantic (exact vector search) and hybrid with reranking.
+"""Search: exact keyword (BM25), semantic (exact vector search), hybrid with reranking, and documents like one.
 
 The models embed queries and rerank, wherever they run (see `models`). Through a worker, the vectors are searched
 as a NumPy matrix and PyTorch never loads: a search starts in a fraction of a second, even on a light notebook."""
@@ -196,7 +196,7 @@ class Index:
         passages."""
         if not match.strip():
             return []
-        passages = f"""SELECT fts.rowid passage, c.doc doc, -bm25(fts, 2.0, 1.0) score FROM fts
+        passages = f"""SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
                        JOIN chunks c ON c.id = fts.rowid JOIN docs d ON d.id = c.doc WHERE fts MATCH ? AND {where}"""
         if all_passages:
             sql = f"SELECT passage, score FROM ({passages}) ORDER BY score DESC LIMIT ?"
@@ -347,8 +347,8 @@ class Index:
         hits = self._hits(sorted(fused.items(), key=lambda x: -x[1]))
         if not hits:
             return []
-        scores = self.models.rerank(query, [f"{h['title']}\n\n{h['text']}" for h in hits])
-        for h, s in zip(hits, scores):
+        logits = np.asarray(self.models.rerank(query, [f"{h['title']}\n\n{h['text']}" for h in hits]), np.float64)
+        for h, s in zip(hits, (1 + np.tanh(logits / 2)) / 2):  # the sigmoid, without overflow: relevance, 0 to 1
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])
         hits = hits if all_passages else _first_of_each(hits, itemgetter("id"))

@@ -7,7 +7,7 @@ import pytest
 from sift import accelerator, local
 from sift.vectors import InRam, OnGpu
 
-from .conftest import FakeSentenceTransformer, GiB
+from .conftest import FakeCrossEncoder, FakeSentenceTransformer, GiB
 
 
 def test_models_load_once_with_limits(fake_models):
@@ -41,6 +41,14 @@ def test_encode_returns_normalised_fp16(fake_models):
 def test_rerank_scores_pairs(fake_models):
     scores = fake_models.rerank("brush strokes", ["brush strokes here", "nothing related"])
     assert scores[0] > scores[1]
+
+
+def test_rerank_gives_raw_scores_whatever_the_model_applies(fake_models, monkeypatch):
+    # Search turns them into 0 to 1 itself: a reranker that applies a sigmoid of its own would be squashed twice.
+    import torch
+
+    monkeypatch.setattr(FakeCrossEncoder, "activation", torch.nn.Sigmoid())
+    assert fake_models.rerank("brush strokes", ["brush strokes"]).tolist() == pytest.approx([2 / 3])
 
 
 def test_where_and_how_much(make_local):
