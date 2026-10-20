@@ -18,20 +18,25 @@ STOPWORDS = set(
 )
 RRF_K = 60
 SQLITE_INT = 2**63  # SQLite integers are 64-bit
-OPERATORS = ("=", "<", "<=", ">", ">=")
+OPERATORS = ("=", "<", "<=", ">", ">=", "not")
 FIELD_SAMPLE = 1000  # documents per collection whose front matter tells which fields exist
 
 
 def _condition(key, op, value):
-    """SQL comparing a front-matter value (`value` of json_each) with a filter value, and its arguments."""
+    """SQL comparing a front-matter value (`value` of json_each) with a filter value, and its arguments. For "=" and
+    "not", a list stands for any of its values."""
     if op not in OPERATORS:
         raise ValueError(f"filter {key!r}: unknown operator {op!r}, use one of {', '.join(OPERATORS)}")
-    if not isinstance(value, str | int | float):
-        raise ValueError(f"filter {key!r} needs a single string or number, got {value!r}")
-    if isinstance(value, int) and not -SQLITE_INT <= value < SQLITE_INT:
-        raise ValueError(f"filter {key!r}: {value} is too large")
-    if op == "=":
-        return "value = ?", [value]
+    values = value if isinstance(value, list) and op in ("=", "not") else [value]
+    if not values:
+        raise ValueError(f"filter {key!r} needs at least one value")
+    for one in values:
+        if not isinstance(one, str | int | float):
+            raise ValueError(f"filter {key!r} needs a string or number, or for = and not a list of them, got {one!r}")
+        if isinstance(one, int) and not -SQLITE_INT <= one < SQLITE_INT:
+            raise ValueError(f"filter {key!r}: {one} is too large")
+    if op in ("=", "not"):
+        return f"value IN ({', '.join('?' * len(values))})", values
     if isinstance(value, str):  # at the precision given: "2024-12-31" is <= "2024", and not > "2024"
         return f"substr(value, 1, ?) {op} ?", [len(value), value]
     return f"CAST(value AS REAL) {op} ?", [value]  # SQLite reads "2024-06-15" as 2024
@@ -39,7 +44,8 @@ def _condition(key, op, value):
 
 def _where(db, collection=None, path=None, filters=None):
     """SQL condition on docs `d`. Filters match front-matter fields: a value, which a list field matches if it
-    contains it, or a range such as {">=": "2024-06", "<": "2025"}, which one value or list element must satisfy."""
+    contains it, a list of values for any of them, or conditions such as {">=": "2024-06", "<": "2025"}, which one
+    value or list element must satisfy, and {"not": value or list}, which none may match."""
     sql, args = ["1"], []
     if collection:
         row = db.execute("SELECT id FROM collections WHERE name = ?", (collection,)).fetchone()
@@ -55,11 +61,16 @@ def _where(db, collection=None, path=None, filters=None):
             raise ValueError(f"invalid filter field {key!r}")
         if value == {}:
             raise ValueError(f"filter {key!r} has no condition")
-        conditions = [_condition(key, *c) for c in (value.items() if isinstance(value, dict) else [("=", value)])]
-        sql.append(
-            f"EXISTS (SELECT 1 FROM json_each(d.meta, '$.{key}') WHERE {' AND '.join(c for c, _ in conditions)})"
-        )
-        args += [arg for _, condition_args in conditions for arg in condition_args]
+        conditions = value if isinstance(value, dict) else {"=": value}
+        some = [_condition(key, op, v) for op, v in conditions.items() if op != "not"]
+        values = f"SELECT 1 FROM json_each(d.meta, '$.{key}') WHERE"
+        if some:
+            sql.append(f"EXISTS ({values} {' AND '.join(c for c, _ in some)})")
+            args += [arg for _, condition_args in some for arg in condition_args]
+        if "not" in conditions:
+            condition, condition_args = _condition(key, "not", conditions["not"])
+            sql.append(f"NOT EXISTS ({values} {condition})")
+            args += condition_args
     return " AND ".join(sql), args
 
 

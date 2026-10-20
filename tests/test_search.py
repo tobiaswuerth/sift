@@ -63,12 +63,44 @@ def test_filters(corpus):
     assert ids(index.search("reward", collection="notes")) == ["notes/rl.md"]
 
 
+BRUSH, RL = "notes/robots/brush.md", "notes/rl.md"
+
+
+def test_a_list_of_values_means_any_of_them(corpus):
+    index = Index(corpus[0])
+    assert ids(index.search("brush OR reward", filters={"categories": ["cs.LG", "cs.GR"]})) == [BRUSH]
+    assert index.search("brush", filters={"categories": ["cs.LG", "cs.CV"]}) == []
+    assert ids(index.search("brush", filters={"year": {"=": [2023, 2024]}})) == [BRUSH]
+
+
+@pytest.mark.parametrize(
+    "condition, expected",
+    [
+        ({"not": "cs.GR"}, [RL]),  # a document without the field has none of its values
+        ({"not": ["cs.LG", "cs.CV"]}, [RL, BRUSH]),
+        ({"not": ["cs.LG", "cs.RO"]}, [RL]),
+    ],
+)
+def test_not_filters(corpus, condition, expected):
+    hits = Index(corpus[0]).search("brush OR reward", filters={"categories": condition})
+    assert sorted(ids(hits)) == expected
+
+
+def test_not_with_a_range(corpus):
+    index = Index(corpus[0])
+    assert ids(index.search("brush OR reward", filters={"year": {">=": 2020, "not": 2023}})) == [BRUSH]
+    assert index.search("brush OR reward", filters={"year": {">=": 2020, "not": 2024}}) == []
+
+
 @pytest.mark.parametrize(
     "kwargs, error",
     [
         ({"filters": {"bad key": 1}}, ValueError),
-        ({"filters": {"categories": ["cs.RO"]}}, ValueError),
+        ({"filters": {"categories": []}}, ValueError),
+        ({"filters": {"categories": [None]}}, ValueError),
         ({"filters": {"categories": None}}, ValueError),
+        ({"filters": {"categories": {"not": []}}}, ValueError),
+        ({"filters": {"categories": {"not": None}}}, ValueError),
         ({"collection": "missing"}, LookupError),
     ],
 )

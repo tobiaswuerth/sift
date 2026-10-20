@@ -97,6 +97,11 @@ def test_search_command_says_when_nothing_matches(cli_corpus, capsys):
         (["created<=2024", "created>2023-06"], {"created": {"<=": 2024, ">": "2023-06"}}),
         (["year>=2020", "year=2024"], {"year": {">=": 2020, "=": 2024}}),
         (["title=a>b"], {"title": "a>b"}),
+        (["categories=cs.RO", "categories=cs.CV"], {"categories": ["cs.RO", "cs.CV"]}),  # any of them
+        (["categories!=cs.CV"], {"categories": {"not": "cs.CV"}}),
+        (["categories!=cs.CV", "categories!=cs.GR"], {"categories": {"not": ["cs.CV", "cs.GR"]}}),  # none of them
+        (["year>=2020", "year=2024", "year=2025"], {"year": {">=": 2020, "=": [2024, 2025]}}),
+        (['tags=["a","b"]', "tags=c"], {"tags": ["a", "b", "c"]}),
     ],
 )
 def test_filters_on_the_command_line(pairs, filters):

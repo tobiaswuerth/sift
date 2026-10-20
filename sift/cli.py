@@ -22,19 +22,25 @@ def _value(text):
 
 
 def _filters(pairs):
-    """-f KEY=VALUE and ranges such as -f created>=2024-06 -f created<2025, as search filters."""
+    """-f KEY=VALUE, KEY!=VALUE and ranges such as -f created>=2024-06 -f created<2025, as search filters. Repeated,
+    KEY=VALUE stands for any of the values, and KEY!=VALUE for none of them."""
     out = {}
     for pair in pairs:
-        m = re.fullmatch(r"([^=<>]+)(>=|<=|=|<|>)(.*)", pair)
+        m = re.fullmatch(r"([^=<>!]+)(>=|<=|!=|=|<|>)(.*)", pair)
         if not m:
-            raise SystemExit(f"filter must be KEY=VALUE, or KEY>=VALUE and the like for ranges, got {pair!r}")
-        key, op, value = m[1], m[2], _value(m[3])
-        if op == "=" and key not in out:
-            out[key] = value
-        else:
-            conditions = out.get(key, {})
-            out[key] = (conditions if isinstance(conditions, dict) else {"=": conditions}) | {op: value}
-    return out
+            raise SystemExit(
+                f"filter must be KEY=VALUE, KEY!=VALUE, or KEY>=VALUE and the like for ranges, got {pair!r}"
+            )
+        key, op, value = m[1], "not" if m[2] == "!=" else m[2], _value(m[3])
+        conditions = out.setdefault(key, {})
+        if op in ("=", "not") and op in conditions:
+            value = _listed(conditions[op]) + _listed(value)
+        conditions[op] = value
+    return {key: c["="] if list(c) == ["="] else c for key, c in out.items()}
+
+
+def _listed(value):
+    return value if isinstance(value, list) else [value]
 
 
 def _shown(value):
@@ -87,7 +93,12 @@ def main(argv=None):
         s.add_argument("-c", "--collection")
         s.add_argument("--path", help='path glob within the collection, e.g. "2024/*"')
         s.add_argument(
-            "-f", "--filter", action="append", default=[], metavar="KEY=VALUE", help="front-matter filter, repeatable"
+            "-f",
+            "--filter",
+            action="append",
+            default=[],
+            metavar="KEY=VALUE",
+            help="front-matter filter, repeatable: KEY=VALUE (repeated: any of them), KEY!=VALUE, KEY>=VALUE, ...",
         )
         s.add_argument("--fields", help='front-matter fields to show, comma-separated (e.g. "url,created"; "*": all)')
         s.add_argument("--compact", action="store_true", help="leave out the text")

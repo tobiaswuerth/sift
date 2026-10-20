@@ -71,8 +71,10 @@ Filters = Annotated[
     dict[str, Any] | None,
     Field(
         description='Conditions on front-matter fields, all of which must hold: a value, e.g. {"categories": '
-        '"cs.RO"}, which a list field matches if it holds it, or a range, e.g. {"created": {">=": "2024-06", "<": '
-        '"2025"}}; dates compare at the precision given, so {"<=": "2024"} includes all of 2024.'
+        '"cs.RO"}, which a list field matches if it holds it; a list for any of its values, e.g. {"categories": '
+        '["cs.RO", "cs.CV"]}; {"not": a value or list} for none of them (documents without the field pass); or a '
+        'range, e.g. {"created": {">=": "2024-06", "<": "2025"}}. Dates compare at the precision given, so '
+        '{"<=": "2024"} includes all of 2024.'
     ),
 ]
 Fields = Annotated[
