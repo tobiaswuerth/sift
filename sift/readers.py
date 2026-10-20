@@ -12,6 +12,8 @@ import re
 from collections import namedtuple
 from pathlib import Path
 
+from . import console
+
 TEXT = (".md", ".markdown", ".txt")
 JSONL = (".jsonl", ".ndjson")
 DOCUMENTS = (".pdf", ".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods", ".rtf", ".epub", ".html", ".htm")  # by Xberg
@@ -200,7 +202,7 @@ def _records(raw, name, fields):
             docs.append(doc._replace(digest=_digest(line.encode())))
     if problems:
         shown = "; ".join(problems[:5]) + ("; ..." if len(problems) > 5 else "")
-        problems = [f"{len(problems)} {'line' if len(problems) == 1 else 'lines'} skipped ({shown})"]
+        problems = [f"{console.count(len(problems), 'line')} skipped ({shown})"]
     return docs, problems
 
 

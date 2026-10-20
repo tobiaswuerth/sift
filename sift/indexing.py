@@ -7,14 +7,13 @@ import json
 import multiprocessing
 import os
 import sqlite3
-import sys
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
 from itertools import repeat
 
-from . import readers, store
+from . import console, readers, store
 
 SKIP_DIRS = {"node_modules", "__pycache__"}
 WRITE_BATCH = 5000  # files per commit
@@ -76,8 +75,9 @@ def _insert(db, cid, sid, path, doc):
         db.execute("INSERT INTO fts(rowid, title, text) VALUES(?,?,?)", (c, doc.title, doc.text[pos : pos + length]))
 
 
-def _store(db, cid, sid, rel, docs, counts):
-    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included."""
+def _store(db, cid, sid, rel, docs, counts, note):
+    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included.
+    note(text) tells the user of a document that had to be skipped."""
     existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
     base, kept = rel.rsplit(".", 1)[0], set()
     for doc in docs:
@@ -91,7 +91,7 @@ def _store(db, cid, sid, rel, docs, counts):
         try:
             _insert(db, cid, sid, path, doc)
         except sqlite3.IntegrityError:  # another file of the collection has a document of that name
-            print(f"\n{path}: a document of this name exists already, skipped", file=sys.stderr)
+            note(f"{path}: a document of this name exists already, skipped")
             continue
         counts["changed" if old else "added"] += 1
     gone = [i for p, (i, _) in existing.items() if p not in kept]
@@ -138,67 +138,81 @@ def index(db, names=None):
         if names and name not in names:
             continue
         if not os.path.isdir(root):  # never treat an unplugged drive as "all files deleted"
-            print(f"{name}: folder not found, skipped: {root}", file=sys.stderr)
+            console.say(f"{name}: folder not found, skipped: {root}")
             continue
-        t0 = time.perf_counter()
-        fields = json.loads(fields) if fields else {}
-        known = {
-            p: (i, m, s)
-            for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources WHERE collection=?", (cid,))
-        }
-        todo, seen = [], set()
-        print(f"{name}: scanning {root}", file=sys.stderr, flush=True)  # a large or cloud folder takes a while
-        for path, mtime, size in walk(root):
-            rel = os.path.relpath(path, root).replace(os.sep, "/")
-            try:
-                rel.encode()
-            except UnicodeEncodeError:  # bytes that aren't UTF-8 (Linux); SQLite stores only valid text
-                print(f"\nunsupported file name, skipped: {path!r}", file=sys.stderr)
-                continue
-            seen.add(rel)
-            k = known.get(rel)
-            if not k or k[1] != mtime or k[2] != size:
-                todo.append((path, rel, mtime, size))
-        counts = Counter()
-        for rel in known.keys() - seen:
-            counts["removed"] += _drop_source(db, known[rel][0])
+        _index_collection(db, cid, name, root, json.loads(fields) if fields else {})
 
-        batches = _batches(todo)
-        n = workers(len(todo), sum(item[3] for item in todo))  # parsing is CPU-bound: processes, not threads
-        # spawned everywhere, as on Windows and macOS: forking a process that has threads can deadlock
-        spawn = multiprocessing.get_context("spawn")
-        with ProcessPoolExecutor(n, mp_context=spawn) if n > 1 else nullcontext() as pool:
-            # double buffering: the next batch is parsed while the current one is written
-            pending = _read(pool, n, fields, batches[0]) if batches else None
-            done, step = 0, max(1, len(todo) // PROGRESS_LINES)  # a line per file, or fewer for many small ones
-            for b, batch in enumerate(batches):
-                results = pending
-                if b + 1 < len(batches):
-                    pending = _read(pool, n, fields, batches[b + 1])
-                for (path, rel, mtime, size), res in zip(batch, results):
-                    done += 1
-                    if done % step == 0 or done == len(todo):
-                        print(f"\r{name}: {done}/{len(todo)} files read", end="", file=sys.stderr, flush=True)
-                    if res is None:  # unreadable now; retried on the next run
-                        print(f"\nunreadable, skipped: {path}", file=sys.stderr)
-                        counts["unreadable"] += 1
-                        continue
-                    docs, problems = res
-                    for problem in problems:
-                        print(f"\n{name}: {rel}: {problem}", file=sys.stderr)
-                    sid = (
-                        known[rel][0]
-                        if rel in known
-                        else db.execute("INSERT INTO sources(collection, path) VALUES(?, ?)", (cid, rel)).lastrowid
-                    )
-                    _store(db, cid, sid, rel, docs, counts)
-                    db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (mtime, size, sid))
-                db.commit()
-        db.commit()
-        print(
-            f"\r{name}: {len(seen)} files, {counts['added']} added, {counts['changed']} changed, "
-            f"{counts['removed']} removed"
-            + (f", {counts['unreadable']} unreadable" if counts["unreadable"] else "")
-            + f" ({time.perf_counter() - t0:.1f}s)",
-            file=sys.stderr,
-        )
+
+def _index_collection(db, cid, name, root, fields):
+    """Bring one collection in sync: drop what is gone, read what is new or changed."""
+    t0 = time.perf_counter()
+    known = {
+        p: (i, m, s)
+        for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources WHERE collection=?", (cid,))
+    }
+    console.say(f"{name}: scanning {root}")  # a large or cloud folder takes a while
+    todo, seen = _scan(root, known)
+    counts = Counter()
+    for rel in known.keys() - seen:
+        counts["removed"] += _drop_source(db, known[rel][0])
+    if todo:
+        with console.Progress(len(todo), "files", prefix=f"{name}: ") as progress:
+            _read_and_store(db, cid, name, fields, known, todo, counts, progress)
+    db.commit()
+    unreadable = f", {counts['unreadable']} unreadable" if counts["unreadable"] else ""
+    console.say(
+        f"{name}: {len(seen)} files, {counts['added']} added, {counts['changed']} changed, {counts['removed']} removed"
+        f"{unreadable} ({time.perf_counter() - t0:.1f}s)"
+    )
+
+
+def _scan(root, known):
+    """The files to read, new or changed since `known` (path -> id, mtime, size), and every file seen."""
+    todo, seen = [], set()
+    for path, mtime, size in walk(root):
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        try:
+            rel.encode()
+        except UnicodeEncodeError:  # bytes that aren't UTF-8 (Linux); SQLite stores only valid text
+            console.say(f"unsupported file name, skipped: {path!r}")
+            continue
+        seen.add(rel)
+        k = known.get(rel)
+        if not k or k[1] != mtime or k[2] != size:
+            todo.append((path, rel, mtime, size))
+    return todo, seen
+
+
+def _read_and_store(db, cid, name, fields, known, todo, counts, progress):
+    """Read the files to do, in worker processes when it pays off, and store their documents batch by batch."""
+    batches = _batches(todo)
+    n = workers(len(todo), sum(item[3] for item in todo))  # parsing is CPU-bound: processes, not threads
+    # spawned everywhere, as on Windows and macOS: forking a process that has threads can deadlock
+    spawn = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(n, mp_context=spawn) if n > 1 else nullcontext() as pool:
+        # double buffering: the next batch is parsed while the current one is written
+        pending = _read(pool, n, fields, batches[0])
+        done, step = 0, max(1, len(todo) // PROGRESS_LINES)  # an update per file, or fewer for many small ones
+        for b, batch in enumerate(batches):
+            results = pending
+            if b + 1 < len(batches):
+                pending = _read(pool, n, fields, batches[b + 1])
+            for (path, rel, mtime, size), res in zip(batch, results):
+                done += 1
+                if done % step == 0 or done == len(todo):
+                    progress.update(done)
+                if res is None:  # unreadable now; retried on the next run
+                    progress.note(f"unreadable, skipped: {path}")
+                    counts["unreadable"] += 1
+                    continue
+                docs, problems = res
+                for problem in problems:
+                    progress.note(f"{name}: {rel}: {problem}")
+                sid = (
+                    known[rel][0]
+                    if rel in known
+                    else db.execute("INSERT INTO sources(collection, path) VALUES(?, ?)", (cid, rel)).lastrowid
+                )
+                _store(db, cid, sid, rel, docs, counts, lambda text: progress.note(f"{name}: {text}"))
+                db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (mtime, size, sid))
+            db.commit()

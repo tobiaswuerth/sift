@@ -1,15 +1,11 @@
 """`sift embed`: embedding every chunk without a vector, slab by slab, with progress. The models are fakes."""
 
-import io
-import os
-import subprocess
-import sys
 import threading
 
 import numpy as np
 import pytest
 
-from sift import embed, indexing, local, store
+from sift import embed, indexing, store
 
 from .conftest import FakeSentenceTransformer, fake_vector, write
 
@@ -18,26 +14,11 @@ def vector_count(db):
     return db.execute("SELECT count(*) FROM vectors").fetchone()[0]
 
 
-def models_in_a_fresh_process(**env):
-    """The models and remote sift picks when imported with these environment variables, without sift's own."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("SIFT_")} | env
-    code = "from sift import local, remote; print(local.EMBED_MODEL, local.RERANK_MODEL, remote.REMOTE)"
-    run = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=120)
-    assert run.returncode == 0, run.stderr
-    return tuple(run.stdout.split())
-
-
-def test_default_models():
-    assert models_in_a_fresh_process() == ("google/embeddinggemma-2", "cross-encoder/ettin-reranker-150m-v1", "None")
-    chosen = {"SIFT_EMBED_MODEL": "a/embedder", "SIFT_RERANK_MODEL": "b/reranker", "SIFT_EMBED_REMOTE": "http://w:8766"}
-    assert models_in_a_fresh_process(**chosen) == ("a/embedder", "b/reranker", "http://w:8766")
-
-
 def test_embed_pending(corpus, fake_models, capsys):
     db, _ = corpus
     embed.embed_pending(db)
     assert vector_count(db) == 3
-    assert store.get_meta(db, "model") == local.EMBED_MODEL
+    assert store.get_meta(db, "model") == fake_models.name
     assert store.get_meta(db, "dim") == "64"
     assert "embedded 3 chunks" in capsys.readouterr().err
     embed.embed_pending(db)
@@ -158,13 +139,13 @@ def test_embed_pending_survives_concurrent_writer(corpus, fake_models, monkeypat
     assert vector_count(db) == 3
 
 
-def test_embed_refuses_mixing_models(embedded):
+def test_embed_refuses_mixing_models(embedded, fake_models):
     db, _ = embedded
     store.set_meta(db, "model", "another/model")
     with pytest.raises(SystemExit, match="--reset"):
         embed.embed_pending(db)
     embed.embed_pending(db, reset=True)
-    assert store.get_meta(db, "model") == local.EMBED_MODEL
+    assert store.get_meta(db, "model") == fake_models.name
     assert vector_count(db) == 3
 
 
@@ -216,13 +197,7 @@ def test_embed_says_what_it_embeds_before_loading_the_model(corpus, fake_models,
     loaded, said = fake_models.embedder, []
     monkeypatch.setattr(fake_models, "embedder", lambda: said.append(capsys.readouterr().err) or loaded())
     embed.embed_pending(corpus[0])
-    assert f"embedding 3 chunks with {local.EMBED_MODEL} on cpu" in said[0]
-
-
-def test_embed_progress_survives_a_clock_that_stands_still(corpus, fake_models, capsys):
-    # Coarse timers can return the same reading twice; the progress rate must not divide by zero.
-    embed.embed_pending(corpus[0])
-    assert "] 100% 3/3 chunks" in capsys.readouterr().err
+    assert f"embedding 3 chunks with {fake_models.name} on cpu" in said[0]
 
 
 def test_embed_shows_a_progress_bar_with_time_taken_and_left(corpus, fake_models, clock, monkeypatch, capsys):
@@ -238,27 +213,6 @@ def test_embed_shows_a_progress_bar_with_time_taken_and_left(corpus, fake_models
 
 def progress_threads():
     return [t for t in threading.enumerate() if t.name == "sift-progress"]
-
-
-def test_the_progress_line_keeps_counting_while_a_slow_batch_runs(corpus, fake_models, clock, monkeypatch):
-    # On a CPU one batch can take minutes; meanwhile the elapsed time must keep moving, so sift visibly works.
-    monkeypatch.setattr(embed, "PROGRESS_SECONDS", 0.01)
-    redrawn = threading.Event()
-
-    class Terminal(io.StringIO):
-        def write(self, text):
-            if "0:01:00 elapsed" in text:
-                redrawn.set()
-            return super().write(text)
-
-    monkeypatch.setattr(sys, "stderr", Terminal())
-
-    def wait_for_redraw():
-        assert redrawn.wait(timeout=10), "the progress line stood still while a batch ran"
-
-    slow_batches(monkeypatch, clock, 60, then=wait_for_redraw)
-    embed.embed_pending(corpus[0])
-    assert progress_threads() == []
 
 
 def test_the_progress_line_stops_when_embedding_fails(corpus, fake_models, clock, monkeypatch):

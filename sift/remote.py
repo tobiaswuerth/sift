@@ -10,12 +10,10 @@ import base64
 import hashlib
 import http.client
 import json
-import os
 import ssl
 import urllib.parse
 from functools import cached_property
 
-REMOTE = os.environ.get("SIFT_EMBED_REMOTE")  # a `sift worker` to embed and rerank on, as it prints its address
 PORT = 8766  # the worker's default
 BATCH = 256  # texts per request to embed
 TIMEOUT = 600  # seconds to wait for an answer; a busy worker can take long, a dead one fails at once

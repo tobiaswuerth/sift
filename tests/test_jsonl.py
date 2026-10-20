@@ -284,4 +284,5 @@ def test_a_record_named_like_a_file_is_skipped(tmp_path, home, capsys):
     store.add_collection(db, tmp_path / "c", "c")
     indexing.index(db)
     assert db.execute("SELECT count(*) FROM docs WHERE path = 'a/b.md'").fetchone() == (1,)
-    assert "a/b.md: a document of this name exists already, skipped" in capsys.readouterr().err
+    shown = [line.rsplit("\r", 1)[-1].rstrip() for line in capsys.readouterr().err.split("\n")]
+    assert "c: a/b.md: a document of this name exists already, skipped" in shown  # a line of its own

@@ -299,7 +299,7 @@ def test_compact_hits_leave_out_the_text(embedded, mode):
     assert all(set(h) == {"id", "title", "lines", "score", "fields"} for h in hits)
 
 
-def test_compact_query_ranks_like_the_full_one(embedded):
+def test_compact_query_ranks_like_the_full_one(embedded, fake_models):
     index = Index(embedded[0])
     full, compact = index.query("painting robot", k=3), index.query("painting robot", k=3, compact=True)
     assert [(h["id"], h["score"]) for h in compact] == [(h["id"], h["score"]) for h in full]  # reranked on the text

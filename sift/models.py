@@ -8,7 +8,7 @@ This module loads neither PyTorch nor a model: a machine searching through a wor
 from functools import cache
 from typing import Protocol
 
-from . import remote
+from . import remote, settings
 
 
 class Models(Protocol):
@@ -39,7 +39,8 @@ class Models(Protocol):
 
 def default():
     """The models this process uses: the worker set in SIFT_EMBED_REMOTE, else those of this machine."""
-    return _remote(remote.REMOTE) if remote.REMOTE else _local()
+    url = settings.current().remote
+    return _remote(url) if url else _local()
 
 
 @cache

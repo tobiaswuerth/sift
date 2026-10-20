@@ -76,7 +76,7 @@ def test_index_says_what_it_scans_and_counts_file_by_file(notes, home, monkeypat
     indexing.index(db)
     assert said[0].startswith(f"notes: scanning {notes}")  # before walking the folder
     err = capsys.readouterr().err
-    assert all(f"notes: {n}/3 files read" in err for n in (1, 2, 3))  # one batch, counted file by file
+    assert all("\rnotes: [" in err and f" {n}/3 files" in err for n in (1, 2, 3))  # one batch, file by file
 
 
 def test_index_counts_many_files_in_steps(notes, home, monkeypatch, capsys):
@@ -85,8 +85,8 @@ def test_index_counts_many_files_in_steps(notes, home, monkeypatch, capsys):
     store.add_collection(db, notes, "notes")
     indexing.index(db)
     err = capsys.readouterr().err
-    assert "notes: 3/3 files read" in err
-    assert "notes: 1/3 files read" not in err
+    assert " 3/3 files" in err
+    assert " 1/3 files" not in err
 
 
 def test_index_in_several_batches(notes, home, monkeypatch):

@@ -183,10 +183,10 @@ class FakeClock:
 
 @pytest.fixture
 def clock(monkeypatch):
-    from sift import embed
+    from sift import console
 
     fake = FakeClock()
-    monkeypatch.setattr(embed, "perf_counter", fake)  # the progress line's
+    monkeypatch.setattr(console, "perf_counter", fake)  # the progress line's
     return fake
 
 
@@ -217,13 +217,27 @@ def make_local(monkeypatch, gpu_memory, clock):
 
 
 @pytest.fixture
-def fake_models(make_local, monkeypatch):
+def configure(monkeypatch):
+    """Change sift's settings for one test, as if the environment said so: configure(remote=..., home=...)."""
+    from dataclasses import replace
+
+    from sift import settings
+
+    def change(**changes):
+        changed = replace(settings.current(), **changes)
+        monkeypatch.setattr(settings, "current", lambda: changed)
+
+    return change
+
+
+@pytest.fixture
+def fake_models(make_local, configure, monkeypatch):
     """The models sift uses by default: those of this machine, on the CPU, with fakes inside."""
-    from sift import models, remote
+    from sift import models
 
     local = make_local()
     monkeypatch.setattr(models, "_local", lambda: local)
-    monkeypatch.setattr(remote, "REMOTE", None)  # this machine embeds, whatever SIFT_EMBED_REMOTE says
+    configure(remote=None)  # this machine embeds, whatever SIFT_EMBED_REMOTE says
     models._remote.cache_clear()
     yield local
     models._remote.cache_clear()
@@ -279,10 +293,10 @@ def notes(tmp_path):
 
 
 @pytest.fixture
-def home(tmp_path, monkeypatch):
+def home(tmp_path, configure):
     """SIFT_HOME for code that connects on its own (CLI, server)."""
     path = tmp_path / "home"
-    monkeypatch.setattr(store, "HOME", path)
+    configure(home=path)
     return path
 
 

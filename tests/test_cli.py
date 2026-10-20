@@ -8,7 +8,7 @@ import sys
 import pytest
 from mcp.server.mcpserver import MCPServer
 
-from sift import cli, indexing, remote, store
+from sift import cli, indexing
 
 
 def run(capsys, *argv):
@@ -59,8 +59,8 @@ def test_the_cli_starts_with_the_standard_library_alone():
 
 
 @pytest.mark.parametrize("command", ["vsearch", "query"])
-def test_searching_through_a_worker_says_nothing_of_pytorch(home, monkeypatch, capsys, command):
-    monkeypatch.setattr(remote, "REMOTE", "https://t.p@workstation:8766")
+def test_searching_through_a_worker_says_nothing_of_pytorch(home, monkeypatch, capsys, command, configure):
+    configure(remote="https://t.p@workstation:8766")
     monkeypatch.setattr(f"sift.search.Index.{command}", lambda *args, **kwargs: [])
     cli.main([command, "x"])
     assert "PyTorch" not in capsys.readouterr().err  # it doesn't load it
@@ -204,10 +204,10 @@ def test_serve_stops_without_a_traceback(cli_corpus, monkeypatch, error, code):
     assert exc.value.code == code
 
 
-def test_unusable_home_is_a_message(tmp_path, monkeypatch):
+def test_unusable_home_is_a_message(tmp_path, monkeypatch, configure):
     home = tmp_path / "home"
     home.write_text("a file, not a folder", encoding="utf-8")
-    monkeypatch.setattr(store, "HOME", home)
+    configure(home=home)
     with pytest.raises(SystemExit, match=r"^error: "):
         cli.main(["status"])
 

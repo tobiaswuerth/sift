@@ -8,7 +8,7 @@ import sqlite3
 import sys
 import textwrap
 
-from . import __version__, remote, store
+from . import __version__, console, settings, store
 
 SLOW = ("embed", "vsearch", "query", "serve", "worker")  # the commands that load PyTorch, unless a worker does it
 THROUGH_WORKER = ("vsearch", "query")  # with SIFT_EMBED_REMOTE, these leave PyTorch to the worker
@@ -46,7 +46,7 @@ def _print_hits(hits, as_json):
         print(json.dumps(hits, ensure_ascii=False, indent=2))
         return
     if not hits:
-        print("no matches", file=sys.stderr)
+        console.say("no matches")
     for h in hits:
         print(f"{h['score']:>8.4f}  {h['id']}:{h['lines']}  {h['title']}")
         if "fields" in h:
@@ -108,8 +108,8 @@ def main(argv=None):
     if (sys.stdout.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
         sys.stdout.reconfigure(encoding="utf-8")
     if a.cmd in SLOW:  # loading PyTorch alone can take long: say first that sift runs
-        loading = "" if remote.REMOTE and a.cmd in THROUGH_WORKER else ", loading PyTorch"
-        print(f"sift {a.cmd}: starting{loading} ...", file=sys.stderr, flush=True)
+        loading = "" if settings.current().remote and a.cmd in THROUGH_WORKER else ", loading PyTorch"
+        console.say(f"sift {a.cmd}: starting{loading} ...")
     try:
         if a.cmd == "worker":  # needs no index
             from .worker import serve
@@ -128,12 +128,13 @@ def _run(a, db):
     if a.cmd == "add":
         chosen = {"id": a.id, "title": a.title, "text": a.text and [f.strip() for f in a.text.split(",")]}
         name = store.add_collection(db, a.path, a.name, {k: v for k, v in chosen.items() if v})
-        print(f"added collection {name!r}; run `sift index` next", file=sys.stderr)
+        console.say(f"added collection {name!r}; run `sift index` next")
     elif a.cmd == "rm":
         n = store.remove_collection(db, a.name)
-        documents = "document" if n == 1 else "documents"
-        print(f"removed collection {a.name!r} and its {n} {documents} from the index;", end=" ", file=sys.stderr)
-        print("the files on disk are untouched", file=sys.stderr)
+        console.say(
+            f"removed collection {a.name!r} and its {console.count(n, 'document')} from the index; "
+            "the files on disk are untouched"
+        )
     elif a.cmd == "index":
         from .indexing import index
 

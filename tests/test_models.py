@@ -5,7 +5,7 @@ import inspect
 
 import pytest
 
-from sift import models, remote
+from sift import models
 from sift.local import Local
 from sift.models import Models
 from sift.remote import Remote
@@ -16,8 +16,8 @@ def test_without_a_remote_the_models_are_this_machines(fake_models):
     assert models.default() is models.default()  # chosen once
 
 
-def test_with_a_remote_the_models_are_the_workers(fake_models, monkeypatch):
-    monkeypatch.setattr(remote, "REMOTE", "https://t.p@workstation:8766")
+def test_with_a_remote_the_models_are_the_workers(fake_models, monkeypatch, configure):
+    configure(remote="https://t.p@workstation:8766")
     worker = models.default()
     assert isinstance(worker, Remote)
     assert worker.address == "https://workstation:8766"
@@ -41,9 +41,9 @@ def test_a_worker_manages_its_own_gpu():
     worker.prepare(lambda: pytest.fail("a worker sizes its batches itself"))
 
 
-def test_choosing_the_models_loads_none_yet(monkeypatch):
+def test_choosing_the_models_loads_none_yet(monkeypatch, configure):
     # Loading a model takes seconds; that waits until something is embedded or reranked.
-    monkeypatch.setattr(remote, "REMOTE", None)
+    configure(remote=None)
     monkeypatch.setattr(models, "_local", models._local.__wrapped__)  # not cached: build a fresh one
     chosen = models.default()
     assert isinstance(chosen, Local)

@@ -12,12 +12,11 @@ import os
 import secrets
 import socket
 import ssl
-import sys
 from collections import namedtuple
 
 import anyio
 
-from . import __version__, remote, store
+from . import __version__, console, remote, settings
 from .server import release_when_idle, serve_app
 
 Credentials = namedtuple("Credentials", "token pin cert private_key")
@@ -27,7 +26,7 @@ Credentials.key = property(lambda self: f"{self.token}.{self.pin}")  # what othe
 def credentials():
     """The worker's token, certificate and private key, made on its first start and kept, so the key other machines
     were given stays valid. Deleting SIFT_HOME/worker makes a new one."""
-    folder = store.HOME / "worker"
+    folder = settings.current().home / "worker"
     token, cert, private_key = folder / "token", folder / "cert.pem", folder / "key.pem"
     if not (token.exists() and cert.exists() and private_key.exists()):
         folder.mkdir(parents=True, exist_ok=True)
@@ -97,7 +96,7 @@ def app(token, models):
 
     dim = models.encode(["the length of a vector"]).shape[1]  # loads the model
     expected, done = f"Bearer {token}".encode(), {"texts": 0, "queries": 0}
-    status = "\r{texts:,} texts embedded, {queries:,} queries reranked (last for {host})"
+    status, line = "{texts:,} texts embedded, {queries:,} queries reranked (last for {host})", console.Line()
 
     def authorized(handler):
         """The handler, for requests with the token only; afterwards the status line shows what was done."""
@@ -107,7 +106,7 @@ def app(token, models):
             if not hmac.compare_digest(request.headers.get("authorization", "").encode(), expected):
                 return PlainTextResponse("wrong key", status_code=401)
             response = await handler(request)
-            print(status.format(**done, host=request.client.host), end="", file=sys.stderr, flush=True)
+            line.show(status.format(**done, host=request.client.host))
             return response
 
         return endpoint
@@ -159,14 +158,13 @@ def serve(host="0.0.0.0", port=8766, models=None):
 
         models = Local()
     found = credentials()
-    print(f"loading {models.name} and {models.reranker_name} ...", file=sys.stderr)
+    console.say(f"loading {models.name} and {models.reranker_name} ...")
     models.load()  # now, so the first request is quick
     application = app(found.token, models)
     models.prepare(lambda: None)  # batches sized for the longest input the model takes
-    say = functools.partial(print, file=sys.stderr)
-    say(f"sift worker on https://{host}:{port}, embedding and reranking on {models.address}")
-    say(f"on other machines, set SIFT_EMBED_REMOTE=https://{found.key}@{socket.gethostname()}:{port}")
-    say("keep that key private: it lets a machine use this worker")
+    console.say(f"sift worker on https://{host}:{port}, embedding and reranking on {models.address}")
+    console.say(f"on other machines, set SIFT_EMBED_REMOTE=https://{found.key}@{socket.gethostname()}:{port}")
+    console.say("keep that key private: it lets a machine use this worker")
     try:
         anyio.run(_serve, application, host, port, found, models)
     except BaseExceptionGroup as group:  # from the task group; the error inside is uvicorn's (or Ctrl+C)
