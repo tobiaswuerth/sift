@@ -197,14 +197,15 @@ and gives the GPU back after 5 idle minutes, like `sift serve`. The worker's `SI
 and sift refuses a worker whose model differs from the one the index was embedded with.
 
 The worker listens to the whole network and has no password, and texts travel unencrypted: use it on networks you
-trust. To let it through the Windows firewall from your local network only, in PowerShell as administrator:
+trust. To let it through the Windows firewall from your own subnet only, in PowerShell as administrator:
 
 ```powershell
-New-NetFirewallRule -DisplayName "sift worker" -Direction Inbound -Protocol TCP -LocalPort 8766 -Action Allow -Profile Private -RemoteAddress LocalSubnet
+New-NetFirewallRule -DisplayName "sift worker" -Direction Inbound -Protocol TCP -LocalPort 8766 -Action Allow -RemoteAddress LocalSubnet
 ```
 
-The rule covers networks Windows treats as private (Settings > Network & internet). On Linux with ufw:
-`sudo ufw allow from 192.168.0.0/16 to any port 8766 proto tcp`, with your network's range.
+If Windows asks whether to let Python through the firewall, allow it: cancelling adds a rule that blocks Python, and
+blocking rules win over allowing ones. On Linux with ufw: `sudo ufw allow from 192.168.1.0/24 to any port 8766
+proto tcp`, with your network's range.
 
 ## Configuration
 
