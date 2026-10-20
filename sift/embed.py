@@ -69,7 +69,9 @@ def cuda_pytorch_command(platform=sys.platform):
     """How to replace a CPU-only PyTorch with the CUDA build. Windows wheels bundle their CUDA libraries, so
     torch's other dependencies can stay; Linux wheels depend on nvidia-* packages, which must come along."""
     no_deps = "--no-deps " if platform == "win32" else ""
-    return f"pip install --force-reinstall {no_deps}torch --index-url https://download.pytorch.org/whl/cu128"
+    return (
+        f"pip install --force-reinstall {no_deps}torch torchvision --index-url https://download.pytorch.org/whl/cu128"
+    )
 
 
 def _unused_nvidia_gpu():

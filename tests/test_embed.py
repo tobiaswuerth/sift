@@ -339,8 +339,11 @@ def test_no_gpu_hint_on_apple_gpus(fake_models, nvml, monkeypatch, capsys):
     "platform, command",
     [
         # Windows CUDA wheels bundle their CUDA libraries; Linux ones depend on nvidia-* packages
-        ("win32", "pip install --force-reinstall --no-deps torch --index-url https://download.pytorch.org/whl/cu128"),
-        ("linux", "pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu128"),
+        (
+            "win32",
+            "pip install --force-reinstall --no-deps torch torchvision --index-url https://download.pytorch.org/whl/cu128",
+        ),
+        ("linux", "pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128"),
     ],
 )
 def test_cuda_pytorch_command_fits_the_platform(fake_models, platform, command):

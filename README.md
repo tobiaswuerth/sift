@@ -37,7 +37,7 @@ sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU,
 - **Linux, macOS:** nothing to do. PyTorch from PyPI includes CUDA on Linux and uses the Apple GPU on macOS.
 - **Windows:** PyTorch from PyPI has no CUDA support. uv's `--torch-backend auto`, used above, picks the CUDA build
   that matches your driver. With pip, install it afterwards:
-  `pip install --force-reinstall --no-deps torch --index-url https://download.pytorch.org/whl/cu128`.
+  `pip install --force-reinstall --no-deps torch torchvision --index-url https://download.pytorch.org/whl/cu128`.
 
 If an NVIDIA GPU sits unused, sift says so on start-up and prints the command that fixes it.
 

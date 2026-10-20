@@ -188,8 +188,11 @@ def test_only_changed_records_are_indexed_again(papers, capsys):
     capsys.readouterr()
     store.index(db)
     after = doc_ids(db)
-    assert after["2021/2021-01/2101.00001"] == before["2021/2021-01/2101.00001"]  # untouched
-    assert after["2021/2021-01/2101.00002"] != before["2021/2021-01/2101.00002"]
+    assert after["2021/2021-01/2101.00001"] == before["2021/2021-01/2101.00001"]  # untouched, the same row
+    # Not "a new row id" for the changed one: SQLite may reuse the highest id after a delete, and which paper has
+    # it depends on the order the OS lists files in (a macOS CI job failed on that).
+    text = db.execute("SELECT text FROM docs WHERE path = '2021/2021-01/2101.00002'").fetchone()[0]
+    assert text == "# Reward shaping\n\nShaping is now different."
     assert "1 added, 1 changed, 0 removed" in capsys.readouterr().err
     assert [h["id"] for h in Index(db).search("shaping")] == ["arxiv/2021/2021-01/2101.00002"]
     assert Index(db).search("speeds") == []  # the old text is gone from the keyword index

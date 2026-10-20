@@ -18,7 +18,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   `sift.db` and run `sift add`, `sift index` and `sift embed` again. The layout now has a version, so later changes
   can migrate.
 - The default embedding model is `google/embeddinggemma-2` (768 dimensions, Apache-2.0), replacing
-  `Qwen/Qwen3-Embedding-0.6B`. Run `sift embed --reset` to switch an existing index.
+  `Qwen/Qwen3-Embedding-0.6B`. Run `sift embed --reset` to switch an existing index. It needs Pillow and
+  torchvision, now dependencies; with pip, install torchvision from the same index as torch.
 
 ## [0.2.0] - 2026-10-19
 
