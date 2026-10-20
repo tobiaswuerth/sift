@@ -2,6 +2,7 @@ import io
 import json
 import runpy
 import sqlite3
+import subprocess
 import sys
 
 import pytest
@@ -46,6 +47,15 @@ def test_slow_commands_say_they_started_before_loading_anything(home, monkeypatc
     monkeypatch.setattr(target, lambda *args, **kwargs: said.append(capsys.readouterr().err) or [])
     cli.main(argv)
     assert said[0].startswith(f"sift {argv[0]}: starting")
+
+
+def test_the_cli_starts_with_the_standard_library_alone():
+    # CI installs the wheel without dependencies and runs `sift --version`; importing NumPy at the top of the CLI
+    # broke that. It also keeps the first line quick.
+    code = "import sys; sys.modules.update(numpy=None, torch=None); from sift import cli; cli.main(['--version'])"
+    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.startswith("sift ")
 
 
 @pytest.mark.parametrize("command", ["vsearch", "query"])

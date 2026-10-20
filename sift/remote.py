@@ -1,6 +1,7 @@
 """The client side of `sift worker`: embedding and reranking on another machine's GPU.
 
-It needs no PyTorch, so a machine that searches through a worker starts in a fraction of a second. The traffic is
+It needs no PyTorch, so a machine that searches through a worker starts in a fraction of a second, and it imports
+NumPy only when it embeds or reranks, so the CLI starts with the standard library alone. The traffic is
 HTTPS, and SIFT_EMBED_REMOTE is the address the worker prints, https://<token>.<fingerprint>@<machine>:<port>: the
 fingerprint of the worker's own certificate is checked before anything is sent, and the token admits this machine.
 """
@@ -13,8 +14,6 @@ import os
 import ssl
 import urllib.parse
 from functools import cache
-
-import numpy as np
 
 REMOTE = os.environ.get("SIFT_EMBED_REMOTE")  # a `sift worker` to embed and rerank on, as it prints its address
 PORT = 8766  # the worker's default
@@ -89,6 +88,8 @@ def model():
 
 def encode(texts, query=False):
     """Normalised fp16 embeddings from the worker, one row per text."""
+    import numpy as np  # here, not at the top: the CLI imports this module and starts with the standard library alone
+
     dim = model()[1]
     raw = _request("/embed", {"texts": texts, "query": query})
     return np.frombuffer(bytearray(raw), np.float16).reshape(len(texts), dim)  # writable: PyTorch wants that
@@ -96,4 +97,6 @@ def encode(texts, query=False):
 
 def rerank(query, texts):
     """The worker's reranking scores of (query, text) pairs."""
+    import numpy as np
+
     return np.array(json.loads(_request("/rerank", {"query": query, "texts": texts}))["scores"], np.float32)
