@@ -53,7 +53,7 @@ def _print_hits(hits, as_json):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="sift", description="Fast local search over text and Markdown files.")
+    p = argparse.ArgumentParser(prog="sift", description="Fast local search over your documents and notes.")
     p.add_argument("--version", action="version", version=f"sift {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -97,11 +97,19 @@ def main(argv=None):
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--stdio", action="store_true", help="serve over stdio instead of HTTP")
+    s = sub.add_parser("worker", help="embed for sift on other machines, which set SIFT_EMBED_REMOTE to this one")
+    s.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all of this machine's)")
+    s.add_argument("--port", type=int, default=8766)
 
     a = p.parse_args(argv)
     if (sys.stdout.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
         sys.stdout.reconfigure(encoding="utf-8")
     try:
+        if a.cmd == "worker":  # needs no index
+            from .worker import serve
+
+            serve(a.host, a.port)
+            return
         with contextlib.closing(store.connect()) as db:
             _run(a, db)
     except (LookupError, ValueError, OSError, sqlite3.Error) as e:

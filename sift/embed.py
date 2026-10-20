@@ -1,10 +1,12 @@
 """Embedding and reranking models, and the batched GPU embedding pipeline."""
 
 import contextlib
+import json
 import logging
 import os
 import sys
 import threading
+import urllib.request
 from functools import cache
 from time import monotonic, perf_counter
 
@@ -31,6 +33,9 @@ def _device():
 
 EMBED_MODEL = os.environ.get("SIFT_EMBED_MODEL", "google/embeddinggemma-2")
 RERANK_MODEL = os.environ.get("SIFT_RERANK_MODEL", "cross-encoder/ettin-reranker-150m-v1")
+REMOTE = os.environ.get("SIFT_EMBED_REMOTE")  # a `sift worker` that embeds for this machine, e.g. http://pc:8766
+REMOTE_BATCH = 256  # texts per request to the remote
+REMOTE_TIMEOUT = 600  # seconds to wait for a request; a busy remote can take long, a dead one fails at once
 DEVICE = _device()
 MAX_TOKENS = 1024
 SLAB = 20000  # chunks per commit; length sorting happens within a slab
@@ -258,8 +263,46 @@ def calibrate_batch_size(sample=None):
     return _batch_size
 
 
+def _remote(path, payload=None):
+    """The response body of a request to the remote: GET without a payload, else POST it as JSON."""
+    data = None if payload is None else json.dumps(payload).encode()
+    request = urllib.request.Request(REMOTE.rstrip("/") + path, data, {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=REMOTE_TIMEOUT) as response:
+            return response.read()
+    except OSError as e:  # URLError and HTTPError are OSErrors, as are timeouts
+        raise ConnectionError(
+            f"embedding remote {REMOTE} is unreachable or failed: {getattr(e, 'reason', e)}"
+        ) from None
+
+
+def remote_model():
+    """The remote's embedding model and the length of its vectors, asked once per remote."""
+    return _remote_info(REMOTE)
+
+
+@cache
+def _remote_info(url):
+    info = json.loads(_remote("/"))
+    return info["model"], info["dim"]
+
+
+def model_name():
+    """The embedding model in use: the remote's, if there is one."""
+    return remote_model()[0] if REMOTE else EMBED_MODEL
+
+
 def encode(texts, query=False):
-    """Normalised fp16 embeddings, one row per text. Sentence Transformers sorts by length to minimise padding."""
+    """Normalised fp16 embeddings, one row per text: from the remote, if there is one, else made here."""
+    if not REMOTE:
+        return encode_here(texts, query)
+    dim = remote_model()[1]
+    vectors = np.frombuffer(bytearray(_remote("/embed", {"texts": texts, "query": query})), np.float16)
+    return vectors.reshape(len(texts), dim)  # writable, from the bytearray: PyTorch warns about read-only arrays
+
+
+def encode_here(texts, query=False):
+    """Embeddings made on this machine. Sentence Transformers sorts by length to minimise padding."""
     model = _on_gpu(embedder)
     fn = model.encode_query if query else model.encode_document
     return _oom_safe(
@@ -333,9 +376,9 @@ def embed_pending(db, reset=False):
         db.execute("DELETE FROM meta WHERE key IN ('model', 'dim')")
         store.touch(db)
         db.commit()
-    model = store.get_meta(db, "model")
-    if model and model != EMBED_MODEL:
-        raise SystemExit(f"index was embedded with {model}; run `sift embed --reset` to switch to {EMBED_MODEL}")
+    model, using = store.get_meta(db, "model"), model_name()
+    if model and model != using:
+        raise SystemExit(f"index was embedded with {model}; run `sift embed --reset` to switch to {using}")
     pending = """SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
                  WHERE c.id > ? AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id) ORDER BY c.id LIMIT ?"""
     total = db.execute(
@@ -345,21 +388,22 @@ def embed_pending(db, reset=False):
     if not total:
         print("nothing to embed", file=sys.stderr)
         return
-    print(f"embedding {total:,} chunks with {EMBED_MODEL} on {DEVICE}", file=sys.stderr)
-    # calibrate on the longest text of this run: no batch can need more memory per text
-    candidates = db.execute(
-        """SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
-           WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)
-           ORDER BY c.len + length(d.title) DESC LIMIT 100"""
-    ).fetchall()
-    calibrate_batch_size(max((_text(*row) for row in candidates), key=len, default=None))  # None: embedded meanwhile
+    print(f"embedding {total:,} chunks with {using} on {REMOTE or DEVICE}", file=sys.stderr)
+    if not REMOTE:  # a remote sizes its batches itself
+        # calibrate on the longest text of this run: no batch can need more memory per text
+        candidates = db.execute(
+            """SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
+               WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)
+               ORDER BY c.len + length(d.title) DESC LIMIT 100"""
+        ).fetchall()
+        calibrate_batch_size(max((_text(*row) for row in candidates), key=len, default=None))  # None: done meanwhile
     done, last = 0, 0
     with _Progress(total) as progress:
         while rows := db.execute(pending, (last, SLAB)).fetchall():
             texts = [_text(seq, title, text) for _, seq, title, text in rows]
             # longest first, batch by batch: similar lengths per batch, and progress after each
             order = sorted(range(len(texts)), key=lambda i: -len(texts[i]))
-            vecs, step = None, _batch_size
+            vecs, step = None, REMOTE_BATCH if REMOTE else _batch_size
             for start in range(0, len(order), step):
                 part = order[start : start + step]
                 out = encode([texts[i] for i in part])
@@ -371,7 +415,7 @@ def embed_pending(db, reset=False):
                 "INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)",
                 [(r[0], v.tobytes()) for r, v in zip(rows, vecs)],
             )
-            store.set_meta(db, "model", EMBED_MODEL)
+            store.set_meta(db, "model", using)
             store.set_meta(db, "dim", vecs.shape[1])
             store.touch(db)  # tells a running server to reload vectors
             db.commit()

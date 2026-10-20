@@ -19,20 +19,18 @@ def vector_count(db):
 
 
 def models_in_a_fresh_process(**env):
-    """The models sift.embed picks when imported with these environment variables, and without sift's own."""
-    env = {k: v for k, v in os.environ.items() if k not in ("SIFT_EMBED_MODEL", "SIFT_RERANK_MODEL")} | env
-    code = "from sift import embed; print(embed.EMBED_MODEL, embed.RERANK_MODEL)"
+    """The models and remote sift.embed picks when imported with these environment variables, without sift's own."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("SIFT_")} | env
+    code = "from sift import embed; print(embed.EMBED_MODEL, embed.RERANK_MODEL, embed.REMOTE)"
     run = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=120)
     assert run.returncode == 0, run.stderr
     return tuple(run.stdout.split())
 
 
 def test_default_models():
-    assert models_in_a_fresh_process() == ("google/embeddinggemma-2", "cross-encoder/ettin-reranker-150m-v1")
-    assert models_in_a_fresh_process(SIFT_EMBED_MODEL="a/embedder", SIFT_RERANK_MODEL="b/reranker") == (
-        "a/embedder",
-        "b/reranker",
-    )
+    assert models_in_a_fresh_process() == ("google/embeddinggemma-2", "cross-encoder/ettin-reranker-150m-v1", "None")
+    chosen = {"SIFT_EMBED_MODEL": "a/embedder", "SIFT_RERANK_MODEL": "b/reranker", "SIFT_EMBED_REMOTE": "http://w:8766"}
+    assert models_in_a_fresh_process(**chosen) == ("a/embedder", "b/reranker", "http://w:8766")
 
 
 def test_models_load_with_limits(fake_models):

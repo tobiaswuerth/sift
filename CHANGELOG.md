@@ -5,6 +5,20 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-20
+
+### Added
+
+- `sift worker` lends a machine's GPU to sift on other machines, and `SIFT_EMBED_REMOTE=http://<machine>:8766`
+  points sift there: `sift embed` sends its chunks to the worker without loading the model itself, and searches
+  embed their queries there too. The worker only computes, sees no index or files, and gives the GPU back when
+  idle. The README shows how to let it through the firewall.
+
+### Changed
+
+- The instructions agents get from `sift serve`, and `sift --help`, speak of documents and notes instead of text
+  and Markdown files.
+
 ## [0.4.1] - 2026-10-20
 
 ### Fixed
@@ -122,7 +136,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/tobiaswuerth/sift/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/tobiaswuerth/sift/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/tobiaswuerth/sift/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/tobiaswuerth/sift/compare/v0.2.0...v0.3.0
