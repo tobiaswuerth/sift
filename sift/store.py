@@ -7,12 +7,22 @@ indexing (see `indexing`, and `readers` for the kinds of file).
 import json
 import re
 import sqlite3
+import time
 import uuid
 from pathlib import Path
 
-from . import settings
+from . import console, settings
 
-SCHEMA_VERSION = 2  # in SQLite's user_version; sift 0.2 and older had none
+SCHEMA_VERSION = 3  # in SQLite's user_version; sift 0.2 and older had none, 0.3 to 0.7 had 2
+# The keyword index reads chunks through a view: each with its document's title, and its front-matter values but the
+# title, e.g. authors and ids, as `meta`. Inserting and deleting read it alike, so the two always agree.
+KEYWORD_INDEX = """
+CREATE VIEW IF NOT EXISTS chunk_text AS SELECT c.id AS id, d.title AS title, substr(d.text, c.pos + 1, c.len) AS text,
+    (SELECT group_concat(j.atom, ' ') FROM json_tree(d.meta) j WHERE j.atom IS NOT NULL AND j.fullkey != '$.title')
+    AS meta FROM chunks c JOIN docs d ON d.id = c.doc;
+CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, text, meta, content='chunk_text', content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2');
+"""
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS collections(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, path TEXT NOT NULL,
@@ -26,11 +36,6 @@ CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY, doc INTEGER NOT NULL, 
     line_start INTEGER, line_end INTEGER, pos INTEGER NOT NULL, len INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS chunks_doc ON chunks(doc);
 CREATE TABLE IF NOT EXISTS vectors(chunk INTEGER PRIMARY KEY, vec BLOB NOT NULL);
--- a chunk is a span of its document's text, which is stored once; the keyword index reads it through this view
-CREATE VIEW IF NOT EXISTS chunk_text AS SELECT c.id AS id, d.title AS title, substr(d.text, c.pos + 1, c.len) AS text
-    FROM chunks c JOIN docs d ON d.id = c.doc;
-CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, text, content='chunk_text', content_rowid='id',
-    tokenize='unicode61 remove_diacritics 2');
 """
 
 
@@ -55,13 +60,28 @@ def _layout(db, path):
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version > SCHEMA_VERSION:
         raise SystemExit(f"{path} was made by a newer sift; upgrade sift to use it")
-    if version < SCHEMA_VERSION and db.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]:
+    if version == 2:  # sift 0.3 to 0.7: everything stays but the keyword index, which gains the front matter
+        _rebuild_keyword_index(db)
+    elif version < SCHEMA_VERSION and db.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]:
         raise SystemExit(
             f"this index was made by an older sift, which stored documents differently: delete {path}, "
             "then run `sift add`, `sift index` and `sift embed` again"
         )
-    if version < SCHEMA_VERSION:
-        db.executescript(SCHEMA + f"PRAGMA user_version = {SCHEMA_VERSION};")
+    elif version < SCHEMA_VERSION:
+        db.executescript(SCHEMA + KEYWORD_INDEX + f"PRAGMA user_version = {SCHEMA_VERSION};")
+
+
+def _rebuild_keyword_index(db):
+    """Make the keyword index anew from the documents, in one transaction: a few minutes for millions of chunks."""
+    console.say("updating the keyword index to this version of sift, a few minutes for a large index ...")
+    start = time.perf_counter()
+    db.executescript(  # FTS5's own 'rebuild' fails on the view: "no such table: main.json_tree"
+        "BEGIN; DROP TABLE fts; DROP VIEW chunk_text;"
+        + KEYWORD_INDEX
+        + "INSERT INTO fts(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text;"
+        + f"PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+    )
+    console.say(f"keyword index updated in {console.duration(time.perf_counter() - start)}")
 
 
 def get_meta(db, key, default=None):
@@ -138,7 +158,7 @@ def delete_docs(db, doc_ids):
         chunk_ids = f"SELECT id FROM chunks WHERE doc IN ({marks})"
         # the keyword index reads text from chunk_text, so its entries go first, while their text is still there
         db.execute(
-            f"INSERT INTO fts(fts, rowid, title, text) SELECT 'delete', id, title, text FROM chunk_text "
+            f"INSERT INTO fts(fts, rowid, title, text, meta) SELECT 'delete', id, title, text, meta FROM chunk_text "
             f"WHERE id IN ({chunk_ids})",
             batch,
         )

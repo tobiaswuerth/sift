@@ -62,24 +62,24 @@ def _read(pool, workers, fields, batch):
 
 
 def _insert(db, cid, sid, path, doc):
+    """Add a document and its chunks, and return its id. Their keyword entries come with their file's (see _store)."""
     meta = json.dumps(doc.meta, ensure_ascii=False)
     doc_id = db.execute(
         "INSERT INTO docs(collection, source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?,?)",
         (cid, sid, path, doc.digest, doc.title, meta, doc.text),
     ).lastrowid
-    for seq, (first, last, pos, length) in enumerate(doc.chunks):
-        c = db.execute(
-            "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?,?,?,?,?,?)",
-            (doc_id, seq, first, last, pos, length),
-        ).lastrowid
-        db.execute("INSERT INTO fts(rowid, title, text) VALUES(?,?,?)", (c, doc.title, doc.text[pos : pos + length]))
+    db.executemany(
+        "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?,?,?,?,?,?)",
+        [(doc_id, seq, first, last, pos, length) for seq, (first, last, pos, length) in enumerate(doc.chunks)],
+    )
+    return doc_id
 
 
 def _store(db, cid, sid, rel, docs, counts, note):
     """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included.
     note(text) tells the user of a document that had to be skipped."""
     existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
-    base, kept = rel.rsplit(".", 1)[0], set()
+    base, kept, added = rel.rsplit(".", 1)[0], set(), []
     for doc in docs:
         path = f"{base}/{doc.key}" if doc.key else rel
         kept.add(path)
@@ -89,11 +89,18 @@ def _store(db, cid, sid, rel, docs, counts, note):
         if old:
             store.delete_docs(db, [old[0]])
         try:
-            _insert(db, cid, sid, path, doc)
+            added.append(_insert(db, cid, sid, path, doc))
         except sqlite3.IntegrityError:  # another file of the collection has a document of that name
             note(f"{path}: a document of this name exists already, skipped")
             continue
         counts["changed" if old else "added"] += 1
+    # The keyword entries of the file's new documents, read through the view as deleting reads them: in one statement,
+    # as one per document took twice as long.
+    db.execute(
+        "INSERT INTO fts(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text WHERE id IN "
+        "(SELECT c.id FROM chunks c JOIN json_each(?) j ON c.doc = j.value)",
+        (json.dumps(added),),
+    )
     gone = [i for p, (i, _) in existing.items() if p not in kept]
     store.delete_docs(db, gone)
     counts["removed"] += len(gone)

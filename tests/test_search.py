@@ -134,6 +134,38 @@ def test_nan_in_front_matter_does_not_break_filters(corpus):
     assert ids(Index(db).search("brush", filters={"score": "NaN"})) == ["notes/odd.md"]
 
 
+# --- front matter in keyword search ------------------------------------------
+
+PAPER = (
+    '---\ntitle: "Attention"\nauthors: ["Ashish Vaswani", "Noam Shazeer"]\nid: "1706.03762"\n---\n'
+    "# Attention\n\nSequence transduction with attention only.\n"
+)
+
+
+@pytest.fixture
+def paper(corpus):
+    db, root = corpus
+    write(root / "paper.md", PAPER)
+    indexing.index(db)
+    return Index(db)
+
+
+@pytest.mark.parametrize("query", ["Vaswani", "1706.03762", "Shazeer attention"])
+def test_keyword_search_finds_front_matter_values(paper, query):
+    # Authors and ids live in front matter, which the keyword index left out: on 3.2 million arXiv abstracts,
+    # "Vaswani transformer paper" missed "Attention Is All You Need", and searching an arXiv id found nothing.
+    assert ids(paper.search(query)) == ["notes/paper.md"]
+
+
+def test_a_changed_front_matter_value_is_no_longer_found(paper, corpus):
+    db, root = corpus
+    write(root / "paper.md", PAPER.replace("Ashish Vaswani", "Someone Else"))
+    indexing.index(db)
+    assert paper.search("Vaswani") == []
+    assert ids(paper.search("Someone")) == ["notes/paper.md"]
+    db.execute("INSERT INTO fts(fts) VALUES('integrity-check')")  # raises if deleting missed what inserting added
+
+
 # --- semantic and hybrid search ----------------------------------------------
 
 
@@ -212,6 +244,45 @@ def test_query_scores_are_the_rerankers_raw_scores(embedded):
     # 0.9999, and an off-topic query's best still 0.98. The raw scores tell strong hits from weak ones.
     hits = Index(embedded[0], models=Constant()).query("anything")
     assert [h["score"] for h in hits] == [2.0, 1.0, 0.0]
+
+
+@pytest.fixture
+def embedded_paper(embedded, fake_models):
+    """The notes, a paper with authors, and an abstract that cites one of them."""
+    db, root = embedded
+    write(root / "paper.md", PAPER)
+    write(root / "survey.md", "# Survey\n\nSince Vaswani et al., attention is everywhere.\n")
+    indexing.index(db)
+    embed.embed_pending(db)
+    return Index(db)
+
+
+def test_query_finds_a_paper_by_its_author(embedded_paper):
+    # The reranker saw nothing of "Vaswani" in "Attention Is All You Need", only in abstracts that cite it: with the
+    # author in the keyword index alone, the paper still ranked 34th among 3.2 million arXiv abstracts.
+    assert ids(embedded_paper.query("Ashish Vaswani attention", k=1)) == ["notes/paper.md"]
+
+
+class Recording(Constant):
+    """Constant models that keep what the reranker is given."""
+
+    def __init__(self):
+        self.texts = []
+
+    def rerank(self, query, texts):
+        self.texts += texts
+        return super().rerank(query, texts)
+
+
+def test_the_reranker_reads_only_the_front_matter_values_a_query_names(embedded_paper):
+    # All of them (links, licences, 30 authors) diluted the passage: topical queries ranked worse (known-item
+    # evaluation, MRR 0.92 to 0.75), while values the query names lifted author and id queries (0.69 to 0.92 overall).
+    models = Recording()
+    Index(embedded_paper.db, models=models).query("Shazeer attention")
+    assert "Attention\nNoam Shazeer\n\n# Attention\n\nSequence transduction with attention only." in models.texts
+    models.texts.clear()
+    Index(embedded_paper.db, models=models).query("sequence transduction")
+    assert "Attention\n\n# Attention\n\nSequence transduction with attention only." in models.texts
 
 
 def test_hits_skip_chunks_removed_meanwhile(corpus):

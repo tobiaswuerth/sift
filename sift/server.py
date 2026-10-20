@@ -144,11 +144,12 @@ def build(index=None):
         mcp,
         index,
         "search",
-        "Exact keyword search, ranked by BM25 (scores from 0 up, higher is better). When no passage holds all "
-        "terms of a query without operators, passages holding any of them are returned; a query with operators is "
-        "taken as it is, so drop terms when it finds nothing.",
+        "Exact keyword search, ranked by BM25 (scores from 0 up, higher is better), over each passage's text, its "
+        "document's title and front-matter values, such as authors and ids. When no passage holds all terms of a "
+        "query without operators, passages holding any of them are returned; a query with operators is taken as it "
+        "is, so drop terms when it finds nothing.",
         'Keywords. "Exact phrases", prefix*, AND, OR, NOT (in capitals) and parentheses work, e.g. '
-        '"stroke" AND (painting OR rendering).',
+        '"stroke" AND (painting OR rendering); title: and meta: limit a term to the title or the front matter.',
     )
     _add_search(
         mcp,

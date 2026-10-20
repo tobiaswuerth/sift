@@ -5,6 +5,7 @@ import time
 import pytest
 
 from sift import store
+from sift.search import Index
 
 
 def doc_ids(db):
@@ -17,6 +18,29 @@ def doc_ids(db):
 def test_connect_uses_home(home):
     store.connect()
     assert (home / "sift.db").exists()
+
+
+# The keyword index of sift 0.7 and older: title and text, no front matter.
+KEYWORD_INDEX_0_7 = """DROP TABLE fts; DROP VIEW chunk_text;
+CREATE VIEW chunk_text AS SELECT c.id AS id, d.title AS title, substr(d.text, c.pos + 1, c.len) AS text
+    FROM chunks c JOIN docs d ON d.id = c.doc;
+CREATE VIRTUAL TABLE fts USING fts5(title, text, content='chunk_text', content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2');
+INSERT INTO fts(fts) VALUES('rebuild');
+PRAGMA user_version = 2;"""
+
+
+def test_an_index_of_sift_0_7_gets_front_matter_into_its_keyword_index(embedded, home, capsys):
+    # Only the keyword index is rebuilt, in minutes: embedding 3 million abstracts again would take hours.
+    db, _ = embedded
+    vectors = db.execute("SELECT count(*) FROM vectors").fetchone()
+    db.executescript(KEYWORD_INDEX_0_7)
+    db.close()
+    db = store.connect(home)
+    assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
+    assert db.execute("SELECT count(*) FROM vectors").fetchone() == vectors
+    assert [h["id"] for h in Index(db).search("cs.GR")] == ["notes/robots/brush.md"]
+    assert "updating the keyword index" in capsys.readouterr().err
 
 
 def test_add_collection_defaults_name_to_folder(tmp_path, notes):
