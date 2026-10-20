@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 
-from sift import search, store
+from sift import embed, search, store
 from sift.search import Index, _any_word
 
-from .conftest import write
+from .conftest import PretendGpu, write
 
 
 def ids(hits):
@@ -112,16 +112,6 @@ def test_broken_vectors_do_not_hide_the_others(embedded):
     assert len(Index(db).vsearch("anything", k=2)) == 1  # the one intact vector of three
 
 
-@pytest.mark.parametrize("fp16, dtype", [(True, "float16"), (False, "float32")])
-def test_vectors_stay_fp16_on_gpus(embedded, fake_models, monkeypatch, fp16, dtype):
-    import torch
-
-    monkeypatch.setattr(fake_models, "fp16", lambda: fp16)
-    index = Index(embedded[0])
-    assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
-    assert index.mat.dtype == getattr(torch, dtype)
-
-
 def test_vsearch_reloads_after_index_changes(embedded):
     db, root = embedded
     index = Index(db)
@@ -141,9 +131,31 @@ def test_vsearch_after_interrupted_reset_asks_for_embedding(embedded, fake_model
 
     monkeypatch.setattr(fake_models, "encode", interrupted)
     with pytest.raises(KeyboardInterrupt):
-        fake_models.embed_pending(db, reset=True)
+        embed.embed_pending(db, reset=True)
     with pytest.raises(LookupError, match="sift embed"):
         index.vsearch("reward")
+
+
+class Constant:
+    """Models that embed every text alike and score every pair alike: what search does with any models."""
+
+    def encode(self, texts, query=False):
+        return np.ones((len(texts), 64), np.float16)
+
+    def rerank(self, query, texts):
+        return np.arange(len(texts), dtype=np.float32)  # the later a candidate, the better
+
+    def vectors(self, ids, matrix):
+        from sift.vectors import InRam
+
+        return InRam(ids, matrix)
+
+
+def test_search_uses_the_models_it_is_given(embedded):
+    index = Index(embedded[0], models=Constant())
+    assert len(index.vsearch("anything")) == 3
+    hits = index.query("anything")
+    assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
 
 
 def test_hits_skip_chunks_removed_meanwhile(corpus):
@@ -197,23 +209,9 @@ def test_status(embedded):
     ]
 
 
-def test_vectors_leave_the_gpu_when_idle(embedded, fake_models, clock, monkeypatch):
-    # The fakes run on the CPU, so a "GPU" copy is a second CPU tensor here; what matters is when it exists.
-    monkeypatch.setattr(fake_models, "gpu", lambda: True)
-    index = Index(embedded[0])
-    first = ids(index.vsearch("brush strokes"))
-    assert index.mat is not None
-    clock.advance(fake_models.IDLE_SECONDS)
-    assert fake_models.release_idle()
-    assert index.mat is None  # only the copy in RAM is left
-    assert ids(index.vsearch("brush strokes")) == first
-    assert index.mat is not None
-
-
-def test_vectors_reload_while_on_the_gpu(embedded, fake_models, monkeypatch):
-    monkeypatch.setattr(fake_models, "gpu", lambda: True)
+def test_vectors_reload_while_on_the_gpu(embedded, make_local):
     db, root = embedded
-    index = Index(db)
+    index = Index(db, models=make_local(accelerator=PretendGpu))
     assert "notes/rl.md" in ids(index.vsearch("reward shaping"))
     (root / "rl.md").unlink()
     store.index(db)
@@ -262,20 +260,6 @@ def test_get_returns_lines_as_indexed(corpus):
     index = Index(db)
     assert index.get("notes/crlf.md") == "# One\n\ntwo\n"
     assert index.get("notes/crlf.md", "3") == "two\n"
-
-
-def test_vectors_stay_in_ram_when_the_gpu_is_busy_on_return(embedded, fake_models, clock, gpu_memory, monkeypatch):
-    import torch
-
-    monkeypatch.setattr(fake_models, "DEVICE", "cuda")
-    fake_models.encode(["brush"])  # the models went to the GPU ...
-    clock.advance(fake_models.IDLE_SECONDS)
-    assert fake_models.release_idle()  # ... and back to RAM
-    gpu_memory.free = 2 * 2**30  # meanwhile another program took the GPU
-    index = Index(embedded[0])
-    assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
-    assert index.mat.dtype == torch.float32  # searched in RAM, where fp16 is slow
-    assert fake_models.DEVICE == "cpu"
 
 
 # --- what hits carry: front-matter fields, compact hits ----------------------
@@ -332,7 +316,7 @@ def dated(embedded, fake_models):
     for day in DAYS:
         write(root / "dated" / f"{day}.md", f'---\ncreated: "{day}"\n---\n# Paper of {day}\npigment\n')
     store.index(db)
-    fake_models.embed_pending(db)
+    embed.embed_pending(db)
     return Index(db)
 
 

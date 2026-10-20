@@ -12,6 +12,26 @@ uv venv && uv pip install --torch-backend auto -e ".[dev]"   # or with pip: pip 
 pre-commit install
 ```
 
+## Code layout
+
+| Module | What it does |
+|---|---|
+| `cli.py` | The `sift` command |
+| `store.py` | The SQLite index: collections, readers for each kind of file, chunking, incremental indexing |
+| `search.py` | Keyword, semantic and hybrid search over the index |
+| `embed.py` | `sift embed`: embedding every chunk without a vector, with progress |
+| `models.py` | The `Models` interface, and `default()`: the models this process uses |
+| `local.py` | `Local`: the embedding model and reranker of this machine |
+| `remote.py` | `Remote`: a `sift worker` on another machine, used like `Local` |
+| `accelerator.py` | `Accelerator`: the device, its memory budget, batch sizes, and what is on the GPU when |
+| `vectors.py` | The index's vectors as one matrix to score queries against: `InRam` (NumPy) or `OnGpu` (PyTorch) |
+| `server.py` | `sift serve`: the MCP server |
+| `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |
+
+Search and embedding never ask where the models run: they take a `Models` object, `Local` or `Remote`. Only
+`accelerator.py` imports PyTorch at the top, so a machine that searches through a worker never loads it. Tests build
+these objects around fakes (Sentence Transformers, GPU memory, the clock) instead of patching module state.
+
 ## How changes are made
 
 - **Tests first.** Write a test that fails, then make it pass. Every bug fix comes with a regression test that

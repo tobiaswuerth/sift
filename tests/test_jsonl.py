@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from sift import store
+from sift import embed, store
 from sift.search import Index
 
 from .conftest import write
@@ -212,7 +212,7 @@ def test_removed_records_and_files_leave_the_index(papers, capsys):
 
 def test_vectors_of_unchanged_records_are_kept(papers, fake_models):
     db, root = papers
-    fake_models.embed_pending(db)
+    embed.embed_pending(db)
     write(root / "2021" / "2021-01.jsonl", jsonl([PAPERS[0], dict(PAPERS[1], abstract="New text.")]))
     store.index(db)
     pending = db.execute("SELECT count(*) FROM chunks WHERE id NOT IN (SELECT chunk FROM vectors)").fetchone()
