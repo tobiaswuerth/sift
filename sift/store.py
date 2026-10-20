@@ -1,9 +1,11 @@
 """SQLite store: collections, documents, chunks, keyword index and vectors.
 
 The index holds the text of every document, so searching and reading never touch the files; they are read only
-when indexing. Folders hold Markdown and text files, one document each, and JSON Lines files, one document per line.
+when indexing. A reader per kind of file (READERS) turns it into documents: Markdown and text files are one each,
+JSON Lines files one per line, and PDF, office and other documents one each, converted to Markdown.
 """
 
+import asyncio
 import hashlib
 import json
 import multiprocessing
@@ -20,8 +22,9 @@ from itertools import repeat
 from pathlib import Path
 
 HOME = Path(os.environ.get("SIFT_HOME", Path.home() / ".sift"))
+TEXT = (".md", ".markdown", ".txt")
 JSONL = (".jsonl", ".ndjson")
-EXTS = (".md", ".markdown", ".txt", *JSONL)
+DOCUMENTS = (".pdf", ".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods", ".rtf", ".epub", ".html", ".htm")  # by Xberg
 SKIP_DIRS = {"node_modules", "__pycache__"}
 CHUNK_CHARS, OVERLAP_CHARS = 3000, 300  # ~750 tokens, well inside the models' 1024-token window
 WRITE_BATCH = 5000  # files per commit
@@ -261,9 +264,10 @@ def chunk(text, first_line=1):
     for piece in filter(None, pieces):  # empty text has an empty piece
         start, end = piece[0][1], piece[-1][1] + len(piece[-1][2])
         body = text[start:end]
-        if body.strip():
-            start += len(body) - len(body.lstrip())
-            yield piece[0][0], piece[-1][0], start, len(body.strip())
+        if stripped := body.strip():
+            lead = len(body) - len(body.lstrip())
+            first = piece[0][0] + body.count("\n", 0, lead)  # the lines of the text, not of blank lines around it
+            yield first, first + stripped.count("\n"), start + lead, len(stripped)
 
 
 def decode(raw):
@@ -315,8 +319,17 @@ def _record(obj, line, fields):
     return Doc(key, "", title or _heading(body) or key, meta, text, list(chunk(text)))
 
 
-def _records(raw, fields):
-    """The documents of a JSON Lines file, one per line, and the lines skipped with their reason."""
+def _text(raw, name, fields):
+    """A Markdown or text file: one document, with its YAML front matter as metadata."""
+    text = decode(raw).replace("\r\n", "\n")  # same chunks on every OS
+    title, meta, body, first_line = parse(text, Path(name).stem)
+    offset = len(text) - len(body)  # the chunks are spans of the whole file, front matter included
+    chunks = [(first, last, offset + pos, length) for first, last, pos, length in chunk(body, first_line)]
+    return [Doc("", _digest(raw), title, meta, text, chunks)], []
+
+
+def _records(raw, name, fields):
+    """A JSON Lines file: one document per line, and the lines skipped with their reason."""
     docs, problems, seen = [], [], set()
     for n, line in enumerate(decode(raw).split("\n"), 1):
         line = line.strip()
@@ -338,23 +351,61 @@ def _records(raw, fields):
         else:
             seen.add(doc.key)
             docs.append(doc._replace(digest=_digest(line.encode())))
+    if problems:
+        shown = "; ".join(problems[:5]) + ("; ..." if len(problems) > 5 else "")
+        problems = [f"{len(problems)} {'line' if len(problems) == 1 else 'lines'} skipped ({shown})"]
     return docs, problems
 
 
-def load(path, fields=None):
-    """Read one file into documents (runs in worker processes): a Markdown or text file is one document, a JSON
-    Lines file one per line. Returns (documents, problems), or None if the file can't be read."""
+PROPERTIES = {  # the document properties sift keeps as metadata: Xberg's name, sift's name
+    "title": "title",
+    "authors": "authors",
+    "subject": "subject",
+    "keywords": "keywords",
+    "language": "language",
+    "created_at": "created",
+    "modified_at": "modified",
+}
+
+
+def _document(raw, name, fields):
+    """A PDF, office file, e-book or web page, converted to Markdown by Xberg: one document, with its properties
+    as metadata. Without OCR a scan has no text."""
+    import xberg  # only indexing documents needs it
+    from xberg.options import ConversionOptions
+
+    config = xberg.ExtractionConfig(
+        output_format="markdown",
+        use_cache=False,  # sift keeps what it needs in the index
+        disable_ocr=True,  # slow, and needs Tesseract or a model
+        html_options=ConversionOptions(extract_metadata=False),  # it puts the <head> as broken YAML before the text
+    )
     try:
-        raw = Path(path).read_bytes()
+        result = asyncio.run(xberg.extract(xberg.ExtractInput(kind="bytes", bytes=raw, filename=name), config))
+        (doc,) = result.results  # one per input
+    except Exception as error:  # a damaged file can fail in many ways; it must not stop indexing the others
+        return [], [f"skipped ({error})"]
+    if not doc.content.strip():
+        return [], ["skipped (no text in it: a scan? sift runs no OCR)"]
+    meta = {ours: value for theirs, ours in PROPERTIES.items() if (value := getattr(doc.metadata, theirs))}
+    title = meta.get("title", "").strip() or _heading(doc.content) or Path(name).stem
+    return [Doc("", _digest(raw), title, meta, doc.content, list(chunk(doc.content)))], []
+
+
+READERS = {**dict.fromkeys(TEXT, _text), **dict.fromkeys(JSONL, _records), **dict.fromkeys(DOCUMENTS, _document)}
+"""How sift reads each kind of file, by extension: reader(content, file name, fields) -> (documents, problems),
+where fields are the collection's field choices and problems say what was skipped and why."""
+
+
+def load(path, fields=None):
+    """Read one file into documents with the reader for its extension (runs in worker processes). Returns
+    (documents, problems), or None if the file can't be read."""
+    path = Path(path)
+    try:
+        raw = path.read_bytes()
     except OSError:
         return None
-    if str(path).lower().endswith(JSONL):
-        return _records(raw, fields or {})
-    text = decode(raw).replace("\r\n", "\n")  # same chunks on every OS
-    title, meta, body, first_line = parse(text, Path(path).stem)
-    offset = len(text) - len(body)  # the chunks are spans of the whole file, front matter included
-    chunks = [(first, last, offset + pos, length) for first, last, pos, length in chunk(body, first_line)]
-    return [Doc("", _digest(raw), title, meta, text, chunks)], []
+    return READERS[path.suffix.lower()](raw, path.name, fields or {})
 
 
 # --- indexing ----------------------------------------------------------------
@@ -443,8 +494,8 @@ def _drop_source(db, sid):
 
 
 def walk(root):
-    """Yield (path, mtime_ns, size) for matching files. DirEntry.stat() is free on Windows."""
-    stack = [root]
+    """Yield (path, mtime_ns, size) for the files sift has a reader for. DirEntry.stat() is free on Windows."""
+    exts, stack = tuple(READERS), [root]
     while stack:
         try:
             entries = os.scandir(stack.pop())
@@ -455,7 +506,7 @@ def walk(root):
                 if e.is_dir(follow_symlinks=False):
                     if not e.name.startswith(".") and e.name not in SKIP_DIRS:
                         stack.append(e.path)
-                elif e.name.lower().endswith(EXTS):
+                elif e.name.lower().endswith(exts):
                     try:
                         st = e.stat()
                     except OSError:  # e.g. a broken symlink
@@ -516,10 +567,8 @@ def index(db, names=None):
                         counts["unreadable"] += 1
                         continue
                     docs, problems = res
-                    if problems:
-                        shown = "; ".join(problems[:5]) + ("; ..." if len(problems) > 5 else "")
-                        lines = "line" if len(problems) == 1 else "lines"
-                        print(f"\n{name}: {rel}: {len(problems)} {lines} skipped ({shown})", file=sys.stderr)
+                    for problem in problems:
+                        print(f"\n{name}: {rel}: {problem}", file=sys.stderr)
                     sid = (
                         known[rel][0]
                         if rel in known

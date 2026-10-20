@@ -10,10 +10,10 @@
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
 [![CodeQL](https://github.com/tobiaswuerth/sift/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/tobiaswuerth/sift/actions/workflows/github-code-scanning/codeql)
 
-Fast local search over your text and Markdown files, built for AI agents.
+Fast local search over your documents and notes, built for AI agents.
 
-sift indexes folders of Markdown, text and JSON Lines files, embeds them on your GPU, and runs a server that agents
-query over MCP.
+sift indexes folders of Markdown, text, PDF, office and JSON Lines files, embeds them on your GPU, and runs a server
+that agents query over MCP.
 It offers three kinds of search: exact keyword matching, semantic search, and hybrid retrieval with reranking for RAG.
 Everything runs locally. No cloud services, no API keys.
 
@@ -118,6 +118,17 @@ sift add ~/qa --id key --title question --text question,answer
 
 Lines that aren't JSON objects, have no text or repeat an id are skipped and reported.
 
+### Documents
+
+PDF, Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`), OpenDocument (`.odt`, `.odp`, `.ods`), RTF, EPUB and HTML
+files are converted to Markdown by [Xberg](https://github.com/xberg-io/xberg). Headings stay headings, slides
+become sections and sheets become tables, and `get` returns that Markdown. The document's properties become metadata
+as far as the file has them: `title`, `authors`, `subject`, `keywords`, `language`, `created` and `modified`. The
+title is the document's own, else the first heading, else the file name.
+
+sift runs no OCR, so a scanned PDF without a text layer has no text. Such files are skipped and reported, as are
+damaged ones, until they change. Older binary Office files (`.doc`, `.ppt`, `.xls`) aren't read.
+
 ## MCP
 
 | Tool | Purpose |
@@ -180,9 +191,11 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
 
 - **Indexing:** worker processes read and parse files in parallel while the previous batch is written; small
   updates skip the process start-up. Files are compared by modification time and size, so unchanged files cost
-  nothing, and documents by content hash, so a changed JSON Lines file re-indexes only its changed records. Files are read as UTF-8, or as UTF-16 when they start with its byte order mark
-  (Windows PowerShell 5.1 writes those). Markdown is split into chunks of about 3,000 characters (about 750 tokens) on line
-  boundaries, preferring headings, with a small overlap.
+  nothing, and documents by content hash, so a changed JSON Lines file re-indexes only its changed records. Text
+  files are read as UTF-8, or as UTF-16 when they start with its byte order mark (Windows PowerShell 5.1 writes
+  those). Each kind of file has a reader, chosen by extension, that turns it into documents; adding a format means
+  adding a reader. Markdown, including documents converted to it, is split into chunks of about 3,000 characters
+  (about 750 tokens) on line boundaries, preferring headings, with a small overlap.
 - **Storage:** one SQLite database in WAL mode holds every document's text, metadata, the FTS5 keyword index and
   the vectors (fp16). The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
   Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.
@@ -207,11 +220,11 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
 
 ## Scope
 
-In scope: plain text and Markdown files; Linux, macOS and Windows; NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise
-CPU; one user, any number of local agents.
+In scope: text, Markdown and JSON Lines files, PDF, office documents, e-books and web pages; Linux, macOS and Windows;
+NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise CPU; one user, any number of local agents.
 
-Out of scope for now: PDF, Word and HTML parsing (convert to Markdown first); answer generation (sift retrieves, the
-agent writes); approximate nearest-neighbour indexes; live file watching; remote access and authentication.
+Out of scope for now: OCR of scans and images; answer generation (sift retrieves, the agent writes); approximate
+nearest-neighbour indexes; live file watching; remote access and authentication.
 
 ## Development
 

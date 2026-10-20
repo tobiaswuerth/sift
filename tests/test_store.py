@@ -4,7 +4,7 @@ import pytest
 
 from sift import store
 
-from .conftest import write
+from .conftest import index_contents, write
 
 
 def doc_ids(db):
@@ -121,6 +121,11 @@ def test_chunk_short_text_is_one_chunk():
     assert list(pieces("# T\n\nshort body\n", 5)) == [(5, 7, "# T\n\nshort body")]
 
 
+def test_chunk_lines_are_those_of_the_text_not_of_blank_lines_around_it():
+    # the blank line after front matter was reported as a chunk's first line, the blank lines at the end as its last
+    assert list(pieces("\n\n# T\n\nbody\n\n\n", 5)) == [(7, 9, "# T\n\nbody")]
+
+
 @pytest.mark.parametrize("text", ["", "\n\n  \n"])
 def test_chunk_empty_text(text):
     assert list(pieces(text)) == []
@@ -231,28 +236,6 @@ def test_index_in_several_batches(notes, home, monkeypatch):
     store.add_collection(db, notes, "notes")
     store.index(db)
     assert len(doc_ids(db)) == 3
-
-
-def index_contents(db):
-    """Everything indexing produces, independent of row ids."""
-    return sorted(
-        db.execute("""SELECT d.path, d.hash, d.title, d.meta, c.seq, c.line_start, c.line_end, t.text
-                      FROM docs d JOIN chunks c ON c.doc = d.id JOIN chunk_text t ON t.id = c.id""")
-    )
-
-
-@pytest.fixture
-def pools(monkeypatch):
-    """Records every worker process pool that indexing starts."""
-    created = []
-
-    class RecordingPool(store.ProcessPoolExecutor):
-        def __init__(self, max_workers, mp_context=None):
-            created.append((max_workers, mp_context and mp_context.get_start_method()))
-            super().__init__(max_workers, mp_context=mp_context)
-
-    monkeypatch.setattr(store, "ProcessPoolExecutor", RecordingPool)
-    return created
 
 
 def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):

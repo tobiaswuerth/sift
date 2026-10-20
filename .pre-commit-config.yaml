@@ -1,3 +1,5 @@
+exclude: ^tests/samples/(sample|blank)\.  # test fixtures: the tests read them as they are
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
