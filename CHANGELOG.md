@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-20
+
 ### Added
 
 - JSON Lines files (`.jsonl`, `.ndjson`): one document per line, with the id, title and text found by name (`id`,
@@ -87,6 +89,7 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tobiaswuerth/sift/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tobiaswuerth/sift/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tobiaswuerth/sift/releases/tag/v0.1.0
