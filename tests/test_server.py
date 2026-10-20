@@ -275,6 +275,16 @@ def test_get_takes_lines(mcp, lines):
     assert result.content[0].text == "# Reward shaping\n"
 
 
+def test_get_with_fields_returns_the_document_with_them(mcp):
+    document = data(call(mcp, "get", {"id": "notes/brush.md", "lines": "1-3", "fields": ["year"]}))
+    assert document == {
+        "id": "notes/robots/brush.md",
+        "title": "Brush stroke planning",
+        "fields": {"year": 2024},
+        "text": '---\ntitle: "Brush stroke planning"\ncategories: ["cs.RO", "cs.GR"]\n',
+    }
+
+
 def test_unexpected_errors_reach_the_agent_too(embedded, monkeypatch, caplog):
     # A bug is still an error the agent should see: "Error executing tool search" alone says nothing.
     index = Index(embedded[0])

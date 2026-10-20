@@ -145,8 +145,12 @@ def build(index=None):
             str | int | None,
             Field(description='Only these lines, e.g. a result\'s "17-26", or one line number; all if left out.'),
         ] = None,
-    ) -> str:
-        """Text of a document, as indexed: all of it, or some of its lines."""
+        fields: Fields = None,
+    ) -> str | dict:
+        """Text of a document, as indexed: all of it, or some of its lines. With `fields`, the document as
+        {id, title, fields, text}."""
+        if fields:
+            return _run(index.document, id, lines, fields)
         return _run(index.get, id, lines)
 
     @mcp.tool(annotations=READ_ONLY)

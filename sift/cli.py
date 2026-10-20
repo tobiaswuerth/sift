@@ -95,6 +95,7 @@ def main(argv=None):
     s = sub.add_parser("get", help="print a document by its id (collection/path)")
     s.add_argument("id")
     s.add_argument("--lines", help='only these lines, e.g. "17-26"')
+    s.add_argument("--fields", help='front-matter fields to show first, comma-separated (e.g. "url,created"; "*": all)')
     sub.add_parser("status", help="show collections and index statistics")
     s = sub.add_parser("serve", help="run the MCP server")
     s.add_argument("--host", default="127.0.0.1")
@@ -152,7 +153,12 @@ def _run(a, db):
     elif a.cmd == "get":
         from .search import Index
 
-        text = Index(db).get(a.id, a.lines)
+        document = Index(db).document(a.id, a.lines, a.fields and [f.strip() for f in a.fields.split(",")])
+        for key, value in document.get("fields", {}).items():
+            print(f"{key}: {_shown(value)}")
+        if "fields" in document:
+            print()
+        text = document["text"]
         sys.stdout.write(text if text.endswith("\n") or not text else text + "\n")  # JSON records end without one
     elif a.cmd == "status":
         from .search import Index

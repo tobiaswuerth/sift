@@ -193,6 +193,30 @@ def test_get(corpus):
             index.get(bad)
 
 
+def test_document_with_front_matter_fields(corpus):
+    # An agent reading a paper wants its link and date with it, without a search to find them.
+    index = Index(corpus[0])
+    document = index.document("notes/brush.md", fields=["year", "missing"])
+    assert document == {
+        "id": "notes/robots/brush.md",  # the whole id, also when asked by file name
+        "title": "Brush stroke planning",
+        "fields": {"year": 2024},
+        "text": index.get("notes/robots/brush.md"),
+    }
+
+
+def test_document_lines_without_fields(corpus):
+    document = Index(corpus[0]).document("notes/rl.md", 1)
+    assert document == {"id": "notes/rl.md", "title": "Reward shaping", "text": "# Reward shaping\n"}
+
+
+def test_document_with_all_fields(corpus):
+    assert Index(corpus[0]).document("notes/brush.md", fields=["*"])["fields"] == {
+        "categories": ["cs.RO", "cs.GR"],
+        "year": 2024,
+    }
+
+
 def test_get_a_folder_is_no_document(corpus):
     with pytest.raises(LookupError, match="unknown document"):
         Index(corpus[0]).get("notes/robots")

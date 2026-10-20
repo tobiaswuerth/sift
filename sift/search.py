@@ -69,15 +69,21 @@ def _check_fields(fields):
     return fields
 
 
+def _pick(meta, fields):
+    """The front-matter `fields` asked for that a document has, from its meta (JSON); ["*"]: all but the title."""
+    meta = json.loads(meta)
+    return {
+        key: meta[key] for key in ([key for key in meta if key != "title"] if "*" in fields else fields) if key in meta
+    }
+
+
 def _present(hits, fields, compact):
     """Hits as returned: with the front-matter `fields` asked for, and without text if compact."""
     out = []
     for hit in hits:
         shown = {key: hit[key] for key in ("id", "title", "lines", "score")}
         if fields:
-            meta = json.loads(hit["meta"])
-            pick = [key for key in meta if key != "title"] if "*" in fields else fields
-            shown["fields"] = {key: meta[key] for key in pick if key in meta}
+            shown["fields"] = _pick(hit["meta"], fields)
         if not compact:
             shown["text"] = hit["text"]
         out.append(shown)
@@ -242,19 +248,26 @@ class Index:
         """Text of an indexed document, by its `collection/path` id: all of it, or `lines` such as "17-26", as
         search hits give them, or one line number. The path may leave out folders if the file name is unique in the
         collection. The text comes from the index as it was indexed, so it always matches the hits."""
-        span = None if lines is None else _line_span(lines)
+        return self.document(id, lines)["text"]
+
+    def document(self, id, lines=None, fields=None):
+        """A document as {"id", "title", "text"}, the whole id even if asked by file name, and with "fields" if asked
+        for, as in hits; `id` and `lines` as for `get`."""
+        span, fields = None if lines is None else _line_span(lines), _check_fields(fields)
         name, _, rel = id.partition("/")
-        sql = "SELECT d.text, d.path FROM docs d JOIN collections co ON co.id = d.collection WHERE co.name = ? AND "
+        sql = """SELECT d.path, d.title, d.meta, d.text FROM docs d JOIN collections co ON co.id = d.collection
+                 WHERE co.name = ? AND """
         rows = self.db.execute(sql + "d.path = ?", (name, rel)).fetchall()
         if not rows and rel:  # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
             rows = self.db.execute(sql + "substr(d.path, -?) = ? LIMIT 6", (name, len(rel) + 1, "/" + rel)).fetchall()
         if len(rows) > 1:
-            matches = ", ".join(f"{name}/{path}" for _, path in rows[:5]) + (", ..." if len(rows) > 5 else "")
+            matches = ", ".join(f"{name}/{row[0]}" for row in rows[:5]) + (", ..." if len(rows) > 5 else "")
             raise LookupError(f"{id!r} matches {matches}; give the whole id")
         if not rows:
             raise LookupError(f"unknown document {id!r}")
-        text = rows[0][0]
-        return text if span is None else "".join(readers.LINE.findall(text)[span[0] - 1 : span[1]])
+        path, title, meta, text = rows[0]
+        document = {"id": f"{name}/{path}", "title": title} | ({"fields": _pick(meta, fields)} if fields else {})
+        return document | {"text": text if span is None else "".join(readers.LINE.findall(text)[span[0] - 1 : span[1]])}
 
     def fields(self, collection, docs):
         """The front-matter fields of a collection (by id with `docs` documents), from a sample spread over it."""

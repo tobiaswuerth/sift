@@ -107,6 +107,11 @@ def test_get_lines_command(cli_corpus, capsys):
     assert run(capsys, "get", "notes/rl.md", "--lines", "1").out == "# Reward shaping\n"
 
 
+def test_get_with_fields_command(cli_corpus, capsys):
+    out = run(capsys, "get", "notes/brush.md", "--lines", "7", "--fields", "year,categories").out
+    assert out == 'year: 2024\ncategories: ["cs.RO", "cs.GR"]\n\n# Brush stroke planning\n'
+
+
 def test_get_status_rm(cli_corpus, capsys):
     assert run(capsys, "get", "notes/rl.md").out.startswith("# Reward shaping")
     status = json.loads(run(capsys, "status").out)
