@@ -130,10 +130,10 @@ async def _serve_http(mcp, host, port):
     await serve_app(app, host, port, mcp.settings.log_level.lower())
 
 
-async def serve_app(app, host, port, log_level="info", access_log=True):
+async def serve_app(app, host, port, log_level="info", access_log=True, **options):
     """Serve an HTTP app with uvicorn, but with a time limit on shutdown. Without one, uvicorn waits for every
     connection to close (Python 3.12+), even after a second Ctrl+C, and a client that leaves a request unfinished
-    keeps the server from ever stopping."""
+    keeps the server from ever stopping. Options go to uvicorn, e.g. its TLS files."""
     import uvicorn
 
     config = uvicorn.Config(
@@ -143,6 +143,7 @@ async def serve_app(app, host, port, log_level="info", access_log=True):
         log_level=log_level,
         access_log=access_log,
         timeout_graceful_shutdown=SHUTDOWN_SECONDS,
+        **options,
     )
     logging.getLogger("uvicorn.error").addFilter(_no_cancelled_requests)  # after Config, which sets up logging
     await uvicorn.Server(config).serve()

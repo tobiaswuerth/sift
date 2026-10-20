@@ -5,19 +5,26 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-10-20
+## [0.5.1] - 2026-10-20
 
 ### Added
 
-- `sift worker` lends a machine's GPU to sift on other machines, and `SIFT_EMBED_REMOTE=http://<machine>:8766`
-  points sift there: `sift embed` sends its chunks to the worker without loading the model itself, and searches
-  embed their queries there too. The worker only computes, sees no index or files, and gives the GPU back when
-  idle. The README shows how to let it through the firewall.
+- `sift worker` lends a machine's GPU to sift on other machines, and `SIFT_EMBED_REMOTE` points sift there:
+  `sift embed` sends its chunks to the worker without loading the model itself, and searches embed their queries
+  there too. The worker only computes, sees no index or files, and gives the GPU back when idle.
+- The worker speaks HTTPS with a certificate of its own and answers only requests with its token. It prints the
+  address to set, `https://<key>@<machine>:8766`, whose key holds the token and the certificate's fingerprint:
+  sift checks the certificate before it sends anything, and never shows the key. The README shows how to let the
+  worker through the firewall. `cryptography` is a new dependency.
 
 ### Changed
 
 - The instructions agents get from `sift serve`, and `sift --help`, speak of documents and notes instead of text
   and Markdown files.
+
+## [0.5.0] - 2026-10-20
+
+Tagged but never published: its worker spoke plain HTTP, without a key. 0.5.1 replaces it.
 
 ## [0.4.1] - 2026-10-20
 
@@ -136,7 +143,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/tobiaswuerth/sift/compare/v0.4.1...v0.5.1
 [0.5.0]: https://github.com/tobiaswuerth/sift/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/tobiaswuerth/sift/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/tobiaswuerth/sift/compare/v0.3.0...v0.4.0
