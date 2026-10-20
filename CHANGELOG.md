@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `sift bench FILE`: how well each search mode finds the documents a set of questions should find, on your own
+  index (nDCG@10, MRR@10, Recall@10 and time per query), from a JSON list of questions and the ids of their answers.
+
 ## [0.8.0] - 2026-10-20
 
 ### Added

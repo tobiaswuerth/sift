@@ -10,15 +10,9 @@ import textwrap
 
 from . import __version__, console, settings, store
 
-SLOW = (
-    "embed",
-    "vsearch",
-    "query",
-    "similar",
-    "serve",
-    "worker",
-)  # these load PyTorch, unless a worker does it for them
-THROUGH_WORKER = ("vsearch", "query", "similar")  # with SIFT_EMBED_REMOTE, these leave PyTorch to the worker
+# The commands that load PyTorch, unless a worker does it for them; with SIFT_EMBED_REMOTE, THROUGH_WORKER do.
+SLOW = ("embed", "vsearch", "query", "similar", "bench", "serve", "worker")
+THROUGH_WORKER = ("vsearch", "query", "similar", "bench")
 SEARCHES = ("search", "vsearch", "query", "similar")
 
 
@@ -130,6 +124,9 @@ def main(argv=None):
     s.add_argument("--lines", help='only these lines, e.g. "17-26"')
     s.add_argument("--fields", help='front-matter fields to show first, comma-separated (e.g. "url,created"; "*": all)')
     sub.add_parser("status", help="show collections and index statistics")
+    s = sub.add_parser("bench", help="measure each search mode on questions whose answers you know")
+    s.add_argument("file", help='JSON: [{"query": "...", "relevant": ["collection/path", ...]}, ...]')
+    s.add_argument("-c", "--collection", help="search only this collection")
     s = sub.add_parser("serve", help="run the MCP server")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
@@ -202,6 +199,15 @@ def _run(a, db):
             print()
         text = document["text"]
         sys.stdout.write(text if text.endswith("\n") or not text else text + "\n")  # JSON records end without one
+    elif a.cmd == "bench":
+        from . import bench
+        from .search import Index
+
+        index = Index(db)
+        results = bench.run(index, bench.load(a.file, index), collection=a.collection)
+        print(f"{'mode':10}{'nDCG@10':>10}{'MRR@10':>10}{'Recall@10':>11}{'ms/query':>10}")
+        for mode, r in results.items():
+            print(f"{mode:10}{r['nDCG@10']:>10.3f}{r['MRR@10']:>10.3f}{r['Recall@10']:>11.3f}{r['ms']:>10.0f}")
     elif a.cmd == "status":
         from .search import Index
 

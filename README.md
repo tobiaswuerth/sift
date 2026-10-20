@@ -58,6 +58,7 @@ sift get papers/2401.02225.md          # full document
 sift get papers/2401.02225.md --lines 14-23   # only some lines, e.g. those of a search hit
 sift get papers/2401.02225.md --fields url,created   # front-matter fields first, then the text
 sift status                            # collections and counts
+sift bench questions.json              # how well each mode finds what you expect (see below)
 sift rm papers                         # remove a collection from the index; its files stay on disk
 sift serve                             # MCP server on http://127.0.0.1:8765/mcp
 sift worker                            # embed for other machines on this one's GPU (see below)
@@ -81,6 +82,22 @@ nothing, drop terms.
 Scores rank the results of one search, on a scale of its own: BM25 for `search` (0 and up), cosine similarity for
 `vsearch` and `similar` (-1 to 1), and for `query` the reranker's raw score, which compares across queries: with
 the default reranker, close matches score about 8 to 12, and unrelated results below 5.
+
+### Measuring search on your own documents
+
+`sift bench` runs each search mode over questions whose answers you know and reports nDCG@10, MRR@10 and Recall@10,
+the measures of the BEIR and TREC benchmarks, and the time per query. Write the questions as an agent would ask
+them, with the ids of the documents that answer them, as search results show them:
+
+```json
+[
+  {"query": "Which supplier terms changed in 2025?", "relevant": ["work/contracts/supplier-2025.docx"]},
+  {"query": "onboarding checklist for new hires", "relevant": {"work/hr/onboarding.pdf": 2, "work/hr/it-setup.md": 1}}
+]
+```
+
+A few dozen questions are enough to compare modes and to see whether a change helps your documents. Grades (2 for
+the answer, 1 for a useful one) are optional.
 
 ### Front matter
 

@@ -21,6 +21,7 @@ pre-commit install
 | `readers.py` | Files into documents: one reader per kind of file (Markdown, JSON Lines, documents via Xberg), chunking |
 | `indexing.py` | `sift index`: scanning folders, reading changed files in worker processes, incremental updates |
 | `search.py` | Keyword, semantic and hybrid search over the index, documents like a document, and `get` |
+| `bench.py` | `sift bench`: nDCG@10, MRR@10 and Recall@10 of each search mode on questions with known answers |
 | `embed.py` | `sift embed`: embedding every chunk without a vector, with progress |
 | `models.py` | The `Models` interface, and `default()`: the models this process uses |
 | `local.py` | `Local`: the embedding model and reranker of this machine |

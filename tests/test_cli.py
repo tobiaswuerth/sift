@@ -157,6 +157,18 @@ def test_filters_need_a_field_name_and_an_operator(pair):
         cli._filters([pair])
 
 
+def test_bench_command(cli_corpus, capsys, tmp_path):
+    path = tmp_path / "cases.json"
+    path.write_text(json.dumps([{"query": "reward shaping reinforcement", "relevant": ["notes/rl.md"]}]))
+    result = run(capsys, "bench", str(path))
+    assert "sift bench: starting" in result.err  # it runs vsearch and query: PyTorch may load
+    lines = result.out.splitlines()
+    assert lines[0].split() == ["mode", "nDCG@10", "MRR@10", "Recall@10", "ms/query"]
+    assert [line.split()[:4] for line in lines[1:]] == [
+        [mode, "1.000", "1.000", "1.000"] for mode in ("search", "vsearch", "query")
+    ]
+
+
 def test_get_lines_command(cli_corpus, capsys):
     assert run(capsys, "get", "notes/rl.md", "--lines", "1").out == "# Reward shaping\n"
 
