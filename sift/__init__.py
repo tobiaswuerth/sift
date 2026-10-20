@@ -1,3 +1,3 @@
-"""sift: fast local search over text and Markdown files, built for AI agents."""
+"""sift: fast local search over your documents and notes, built for AI agents."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
