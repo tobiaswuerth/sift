@@ -1,9 +1,12 @@
 """`sift worker` lends a machine's GPU to other machines' sift: they send texts over HTTPS, with the worker's key, and
-get vectors back."""
+get vectors and reranking scores back."""
 
 import json
 import os
 import re
+import subprocess
+import sys
+import textwrap
 import threading
 import time
 import types
@@ -11,7 +14,7 @@ import types
 import numpy as np
 import pytest
 
-from sift import __version__, cli, store, worker
+from sift import __version__, cli, remote, store, worker
 from sift.search import Index
 
 from .conftest import FakeSentenceTransformer, fake_vector, nobody_listens
@@ -27,20 +30,25 @@ def client(fake_models):
         yield c
 
 
-def post(client, payload):
-    return client.post("/embed", content=json.dumps(payload), headers={"Content-Type": "application/json"})
+def post(client, path, payload):
+    return client.post(path, content=json.dumps(payload), headers={"Content-Type": "application/json"})
 
 
-def test_the_worker_says_which_model_it_embeds_with(client, fake_models):
-    assert client.get("/").json() == {"model": fake_models.EMBED_MODEL, "dim": 64, "version": __version__}
+def test_the_worker_says_which_models_it_runs(client, fake_models):
+    assert client.get("/").json() == {
+        "model": fake_models.EMBED_MODEL,
+        "dim": 64,
+        "reranker": fake_models.RERANK_MODEL,
+        "version": __version__,
+    }
 
 
 def test_the_worker_embeds_texts_as_this_machine_would(client, fake_models, capsys):
-    response = post(client, {"texts": ["brush strokes", "pigments"]})
+    response = post(client, "/embed", {"texts": ["brush strokes", "pigments"]})
     assert response.status_code == 200
     vectors = np.frombuffer(response.content, np.float16).reshape(2, 64)
     assert vectors.tolist() == fake_models.encode_here(["brush strokes", "pigments"]).tolist()
-    assert "embedded 2 texts for testclient" in capsys.readouterr().err  # it shows that it works
+    assert "2 texts embedded, 0 queries reranked (last for testclient)" in capsys.readouterr().err  # it shows it works
 
 
 def test_the_worker_embeds_queries_as_queries(client, monkeypatch):
@@ -49,13 +57,30 @@ def test_the_worker_embeds_queries_as_queries(client, monkeypatch):
     monkeypatch.setattr(
         FakeSentenceTransformer, "encode_query", lambda self, t, **kw: seen.extend(t) or real(self, t, **kw)
     )
-    post(client, {"texts": ["how do robots paint"], "query": True})
+    post(client, "/embed", {"texts": ["how do robots paint"], "query": True})
     assert seen == ["how do robots paint"]
 
 
-@pytest.mark.parametrize("content", ['{"texts": "not a list"}', '{"texts": [1, 2]}', "[]", "not json"])
-def test_the_worker_refuses_anything_but_lists_of_texts(client, content):
-    response = client.post("/embed", content=content, headers={"Content-Type": "application/json"})
+def test_the_worker_reranks_as_this_machine_would(client, fake_models):
+    texts = ["brush strokes on canvas", "reward shaping"]
+    response = post(client, "/rerank", {"query": "brush strokes", "texts": texts})
+    assert response.json() == {"scores": fake_models.rerank_here("brush strokes", texts).tolist()}
+
+
+@pytest.mark.parametrize(
+    "path, content",
+    [
+        ("/embed", '{"texts": "not a list"}'),
+        ("/embed", '{"texts": [1, 2]}'),
+        ("/embed", "[]"),
+        ("/embed", "not json"),
+        ("/rerank", '{"texts": ["a"]}'),
+        ("/rerank", '{"query": 1, "texts": ["a"]}'),
+        ("/rerank", '{"query": "q", "texts": "a"}'),
+    ],
+)
+def test_the_worker_refuses_malformed_requests(client, path, content):
+    response = client.post(path, content=content, headers={"Content-Type": "application/json"})
     assert response.status_code == 400
 
 
@@ -67,6 +92,7 @@ def test_the_worker_answers_only_with_its_token(fake_models, authorization):
     with TestClient(worker.app(TOKEN)) as c:
         assert c.get("/", headers=headers).status_code == 401
         assert c.post("/embed", json={"texts": ["x"]}, headers=headers).status_code == 401
+        assert c.post("/rerank", json={"query": "x", "texts": ["x"]}, headers=headers).status_code == 401
 
 
 # --- the worker's key --------------------------------------------------------
@@ -97,31 +123,25 @@ def test_the_key_files_are_private(home):
         assert path.stat().st_mode & 0o077 == 0
 
 
-# --- a machine that embeds through a worker ---------------------------------
+# --- a machine that embeds and reranks through a worker ----------------------
 
 
 @pytest.fixture
-def remote(fake_models, home):
+def live(fake_models, home):
     """A real worker serving HTTPS on a free local port, from a thread (fine for fake models; PyTorch needs the main
     one). Records the paths of the requests that reach it."""
     import uvicorn
 
-    found, seen, app = worker.credentials(), [], worker.app(worker.credentials().token)
+    found, seen = worker.credentials(), []
+    app = worker.app(found.token)
 
     async def recording(scope, receive, send):
         if scope["type"] == "http":
             seen.append(scope["path"])
         await app(scope, receive, send)
 
-    config = uvicorn.Config(
-        recording,
-        host="127.0.0.1",
-        port=0,
-        log_level="warning",
-        ssl_certfile=str(found.cert),
-        ssl_keyfile=str(found.private_key),
-    )
-    server = uvicorn.Server(config)
+    tls = {"ssl_certfile": str(found.cert), "ssl_keyfile": str(found.private_key)}
+    server = uvicorn.Server(uvicorn.Config(recording, host="127.0.0.1", port=0, log_level="warning", **tls))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     deadline = time.monotonic() + 10  # a hang detector, not a timing assumption
@@ -140,9 +160,9 @@ def remote(fake_models, home):
     thread.join(timeout=10)
 
 
-def test_embed_through_a_remote_worker(corpus, fake_models, remote, monkeypatch, capsys):
+def test_embed_through_a_worker(corpus, fake_models, live, monkeypatch, capsys):
     db, _ = corpus
-    monkeypatch.setattr(fake_models, "REMOTE", remote.url)
+    monkeypatch.setattr(remote, "REMOTE", live.url)
     monkeypatch.setattr(fake_models, "calibrate_batch_size", lambda *a: pytest.fail("the model loaded here"))
     fake_models.embed_pending(db)
     rows = db.execute("""SELECT c.seq, t.title, t.text, v.vec FROM chunks c JOIN chunk_text t ON t.id = c.id
@@ -153,41 +173,78 @@ def test_embed_through_a_remote_worker(corpus, fake_models, remote, monkeypatch,
         assert np.frombuffer(vec, np.float16).tolist() == expected.tolist()
     assert store.get_meta(db, "model") == fake_models.EMBED_MODEL
     err = capsys.readouterr().err
-    assert f"embedding 3 chunks with {fake_models.EMBED_MODEL} on {remote.address}" in err
-    assert remote.token not in err  # the key stays off the screen
+    assert f"embedding 3 chunks with {fake_models.EMBED_MODEL} on {live.address}" in err
+    assert live.token not in err  # the key stays off the screen
 
 
-def test_searches_embed_their_query_on_the_remote(embedded, fake_models, remote, monkeypatch):
+@pytest.mark.parametrize("mode, paths", [("vsearch", ["/embed"]), ("query", ["/embed", "/rerank"])])
+def test_searches_embed_and_rerank_on_the_worker(embedded, live, monkeypatch, mode, paths):
     db, _ = embedded
-    here = [h["id"] for h in Index(db).vsearch("brush strokes")]
-    monkeypatch.setattr(fake_models, "REMOTE", remote.url)
-    assert [h["id"] for h in Index(db).vsearch("brush strokes")] == here
-    assert "/embed" in remote.seen  # it really asked the remote
+    here = getattr(Index(db), mode)("brush strokes")
+    monkeypatch.setattr(remote, "REMOTE", live.url)
+    there = getattr(Index(db), mode)("brush strokes")
+    assert [h["id"] for h in there] == [h["id"] for h in here]
+    assert [h["score"] for h in there] == pytest.approx([h["score"] for h in here], abs=1e-3)
+    assert set(paths) <= set(live.seen)  # it really asked the worker
 
 
-def test_the_workers_certificate_is_checked_before_anything_is_sent(corpus, fake_models, remote, monkeypatch):
+def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
+    # PyTorch takes seconds to load, more on a notebook; a machine whose worker embeds and reranks doesn't need it.
+    script = tmp_path / "search.py"
+    script.write_text(
+        textwrap.dedent(f"""
+            import sys
+            import numpy as np
+            from sift import remote, store
+            from sift.search import Index
+
+            remote.REMOTE = "https://t.p@worker:8766"
+            remote.encode = lambda texts, query=False: np.full((len(texts), 4), 0.5, np.float16)
+            remote.rerank = lambda query, texts: np.ones(len(texts), np.float32)
+            notes = {str(tmp_path / "notes")!r}
+            __import__("os").makedirs(notes)
+            open(notes + "/brush.md", "w").write("# Brush strokes\\n\\nA robot paints.\\n")
+            db = store.connect({str(tmp_path / "home")!r})
+            store.add_collection(db, notes, "notes")
+            store.index(db)
+            for (chunk,) in db.execute("SELECT id FROM chunks").fetchall():
+                db.execute("INSERT INTO vectors VALUES(?, ?)", (chunk, np.full(4, 0.5, np.float16).tobytes()))
+            store.set_meta(db, "dim", 4)
+            db.commit()
+            index = Index(db)
+            assert index.vsearch("robot") and index.query("robot")
+            print("torch" in sys.modules)
+        """),
+        encoding="utf-8",
+    )
+    run = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.strip() == "False"
+
+
+def test_the_workers_certificate_is_checked_before_anything_is_sent(corpus, fake_models, live, monkeypatch):
     # A machine posing as the worker must get neither the token nor any text.
-    monkeypatch.setattr(fake_models, "REMOTE", f"https://{remote.token}.{'A' * 43}@127.0.0.1:{remote.port}")
+    monkeypatch.setattr(remote, "REMOTE", f"https://{live.token}.{'A' * 43}@127.0.0.1:{live.port}")
     with pytest.raises(ConnectionError, match="certificate"):
         fake_models.embed_pending(corpus[0])
-    assert remote.seen == []
+    assert live.seen == []
 
 
-def test_a_wrong_token_is_refused(corpus, fake_models, remote, monkeypatch):
-    monkeypatch.setattr(fake_models, "REMOTE", f"https://wrong.{remote.pin}@127.0.0.1:{remote.port}")
+def test_a_wrong_token_is_refused(corpus, fake_models, live, monkeypatch):
+    monkeypatch.setattr(remote, "REMOTE", f"https://wrong.{live.pin}@127.0.0.1:{live.port}")
     with pytest.raises(ConnectionError, match="refused the key"):
         fake_models.embed_pending(corpus[0])
 
 
-def test_a_failing_worker_is_a_clear_error(corpus, fake_models, remote, monkeypatch):
-    monkeypatch.setattr(fake_models, "REMOTE", remote.url)
-    fake_models.remote_model()  # asked before the model fails
+def test_a_failing_worker_is_a_clear_error(corpus, fake_models, live, monkeypatch):
+    monkeypatch.setattr(remote, "REMOTE", live.url)
+    remote.model()  # asked before the model fails
 
     def broken(self, texts, *args, **kwargs):
         raise RuntimeError("CUDA error: an illegal memory access was encountered")
 
     monkeypatch.setattr(FakeSentenceTransformer, "encode_document", broken)
-    with pytest.raises(ConnectionError, match=f"embedding remote {remote.address} answered 500"):
+    with pytest.raises(ConnectionError, match=f"embedding remote {live.address} answered 500"):
         fake_models.embed_pending(corpus[0])
 
 
@@ -195,29 +252,28 @@ def test_a_failing_worker_is_a_clear_error(corpus, fake_models, remote, monkeypa
     "url", ["http://t.p@workstation:8766", "https://workstation:8766", "https://token@workstation:8766", "pc:8766"]
 )
 def test_the_remote_must_be_the_https_address_with_the_key(corpus, fake_models, monkeypatch, url):
-    monkeypatch.setattr(fake_models, "REMOTE", url)
+    monkeypatch.setattr(remote, "REMOTE", url)
     with pytest.raises(ConnectionError, match=r"SIFT_EMBED_REMOTE must be the https://<key>@"):
         fake_models.embed_pending(corpus[0])
 
 
 def test_an_unreachable_remote_is_a_clear_error(corpus, fake_models, monkeypatch):
-    monkeypatch.setattr(fake_models, "REMOTE", nobody_listens())
-    with pytest.raises(
-        ConnectionError, match=re.escape("embedding remote https://127.0.0.1:0 is unreachable")
-    ) as error:
+    monkeypatch.setattr(remote, "REMOTE", nobody_listens())
+    unreachable = re.escape("embedding remote https://127.0.0.1:0 is unreachable")
+    with pytest.raises(ConnectionError, match=unreachable) as error:
         fake_models.embed_pending(corpus[0])
     assert "s3cret" not in str(error.value)
 
 
 def test_a_remote_with_another_model_is_refused(embedded, fake_models, monkeypatch):
-    monkeypatch.setattr(fake_models, "REMOTE", "https://t.p@workstation:8766")
-    monkeypatch.setattr(fake_models, "remote_model", lambda: ("other/model", 64))
+    monkeypatch.setattr(remote, "REMOTE", "https://t.p@workstation:8766")
+    monkeypatch.setattr(remote, "model", lambda: ("other/model", 64))
     with pytest.raises(SystemExit, match=f"index was embedded with {fake_models.EMBED_MODEL}"):
         fake_models.embed_pending(embedded[0])
 
 
 def test_the_cli_reports_an_unreachable_remote(corpus, fake_models, monkeypatch):
-    monkeypatch.setattr(fake_models, "REMOTE", nobody_listens())
+    monkeypatch.setattr(remote, "REMOTE", nobody_listens())
     with pytest.raises(SystemExit, match="^" + re.escape("error: embedding remote https://127.0.0.1:0 is unreachable")):
         cli.main(["embed"])
 
@@ -248,6 +304,7 @@ def test_worker_serves_https_with_its_key_on_all_interfaces(home, fake_models, s
     assert (config.host, config.port) == ("0.0.0.0", 8766)
     assert (config.ssl_certfile, config.ssl_keyfile) == (str(found.cert), str(found.private_key))
     assert calibrated == [True]  # batches sized to this GPU, before the first request
+    assert fake_models.reranker.cache_info().currsize == 1  # loaded at start, so the first query is quick
     assert f"SIFT_EMBED_REMOTE=https://{found.key}@" in capsys.readouterr().err  # what to set on the other machine
 
 

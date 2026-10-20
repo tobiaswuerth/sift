@@ -10,7 +10,7 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import embed
+from . import embed, remote
 from .search import Index
 
 INSTRUCTIONS = """Search the user's local documents and notes, indexed by sift.
@@ -169,14 +169,14 @@ async def _serve(mcp, host, port, stdio):
 def serve(host="127.0.0.1", port=8765, stdio=False):
     mcp, index = build()
     print("loading models and vectors into RAM ...", file=sys.stderr)  # they move to the GPU when used
-    if not embed.REMOTE:
-        embed.embedder()
-    else:  # the remote embeds queries; keyword search works without it
+    if remote.REMOTE:  # the worker embeds and reranks; keyword search works without it
         try:
-            embed.remote_model()
+            remote.model()
         except ConnectionError as e:
             print(f"warning: {e}", file=sys.stderr)
-    embed.reranker()
+    else:
+        embed.embedder()
+        embed.reranker()
     try:
         index._load()
     except LookupError as e:

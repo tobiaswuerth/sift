@@ -194,8 +194,10 @@ setx SIFT_EMBED_REMOTE https://<key>@workstation:8766
 ```
 
 `sift embed` then sends the chunks to the worker, 256 at a time, and stores the vectors it gets back, without loading
-the model itself. Searches embed their queries there too, in the CLI and in `sift serve`; the reranker stays local.
-The worker only computes: it sees the texts it embeds, but no index and no files. It sizes its batches to its GPU
+the model itself. Searches embed their queries and rerank there too, in the CLI and in `sift serve`, so the machine
+searching never loads PyTorch: `vsearch` and `query` answer in a fraction of a second, even on a light notebook.
+Both machines need the same sift version. The worker only computes: it sees the texts it embeds and reranks, but no
+index and no files. It sizes its batches to its GPU
 and gives the GPU back after 5 idle minutes, like `sift serve`. The worker's `SIFT_EMBED_MODEL` decides the model,
 and sift refuses a worker whose model differs from the one the index was embedded with.
 
@@ -240,13 +242,16 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   adding a reader. Markdown, including documents converted to it, is split into chunks of about 3,000 characters
   (about 750 tokens) on line boundaries, preferring headings, with a small overlap.
 - **Remote embedding:** HTTPS with the worker's self-made certificate (EC P-256), pinned by its SHA-256 in the key,
-  and a bearer token of 32 random bytes. `GET /` names the worker's model and vector length; `POST /embed` takes
-  `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per text. The worker runs
-  one request at a time on the GPU.
+  and a bearer token of 32 random bytes. `GET /` names the worker's models and vector length; `POST /embed` takes
+  `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per text; `POST /rerank`
+  takes `{"query": "...", "texts": [...]}` and returns `{"scores": [...]}`. The worker runs one request at a time on
+  the GPU. Through a worker, the vectors are searched with NumPy, in RAM.
 - **Storage:** one SQLite database in WAL mode holds every document's text, metadata, the FTS5 keyword index and
   the vectors (fp16). The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
   Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.
-- **Embedding:** PyTorch in fp16 on the GPU (NVIDIA, else Apple), in batches sorted by length to keep padding low.
+- **Embedding:** PyTorch on the GPU (NVIDIA, else Apple), in batches sorted by length to keep padding low. The
+  models compute in bfloat16 on NVIDIA GPUs that have it and in float32 elsewhere, never in fp16, where EmbeddingGemma
+  overflows now and then into broken (NaN) vectors. Vectors are stored in fp16, and broken ones are never stored.
   Each slab of 20,000 chunks is committed, so progress is never lost.
 - **GPU memory:** sift shares the GPU with other programs. On NVIDIA GPUs it caps itself at the memory that is free
   when it starts, minus headroom (10% of the GPU, at least 1 GB), asking NVML as well as CUDA, since on Windows CUDA

@@ -31,14 +31,20 @@ class FakeSentenceTransformer:
     gpu_memory = None  # a FakeGpuMemory, consulted when the model runs on CUDA
 
     def __init__(self, name, device=None):
-        self.name, self.device, self.max_seq_length, self.halved = name, device, None, False
+        self.name, self.device, self.max_seq_length, self.dtype = name, device, None, "float32"
 
     def half(self):
-        self.halved = True
+        self.dtype = "float16"
         return self
 
-    def to(self, device):
-        self.device = str(device)
+    def to(self, target):
+        """A device or a dtype, as nn.Module.to takes them."""
+        import torch
+
+        if isinstance(target, torch.dtype):
+            self.dtype = str(target).removeprefix("torch.")
+        else:
+            self.device = str(target)
         return self
 
     def encode_document(
@@ -60,16 +66,26 @@ class FakeSentenceTransformer:
 
 
 class FakeCrossEncoder:
-    def __init__(self, name, device=None, max_length=None):
-        self.name, self.device, self.model = name, device, FakeSentenceTransformer(name, device)
+    """A transformer (.model) with a scoring head on top, like a real cross-encoder: converting only the transformer
+    to another dtype leaves the head behind, and PyTorch refuses to mix the two."""
 
-    def to(self, device):
-        self.device = str(device)
-        self.model.to(device)
+    def __init__(self, name, device=None, max_length=None):
+        self.name, self.device, self.model, self.head = name, device, FakeSentenceTransformer(name, device), "float32"
+
+    def to(self, target):
+        import torch
+
+        self.model.to(target)
+        if isinstance(target, torch.dtype):
+            self.head = self.model.dtype
+        else:
+            self.device = str(target)
         return self
 
     def predict(self, pairs, batch_size, show_progress_bar=None):
         assert show_progress_bar is False, "sift must not draw progress bars (the server's log is no terminal)"
+        if self.model.dtype != self.head:
+            raise RuntimeError(f"expected mat1 and mat2 to have the same dtype, but got: {self.model.dtype} != float")
         return np.array([len(set(words(q)) & set(words(d))) / (1 + len(set(words(q)))) for q, d in pairs])
 
 
@@ -187,7 +203,9 @@ def clock(monkeypatch):
 @pytest.fixture
 def fake_models(monkeypatch, gpu_memory, clock):
     """Replace Sentence Transformers, GPU memory queries and clocks with fakes; everything else runs for real."""
-    from sift import embed
+    import torch
+
+    from sift import embed, remote
 
     module = types.ModuleType("sentence_transformers")
     module.SentenceTransformer, module.CrossEncoder = FakeSentenceTransformer, FakeCrossEncoder
@@ -196,7 +214,9 @@ def fake_models(monkeypatch, gpu_memory, clock):
     monkeypatch.setattr(embed, "_batch_size", 128)
     monkeypatch.setattr(embed, "_resident", {})  # nothing on the GPU yet
     monkeypatch.setattr(embed, "_released", False)
-    caches = (embed.embedder, embed.reranker, embed.limit_gpu_memory, embed._remote_info)
+    monkeypatch.setattr(remote, "REMOTE", None)  # this machine embeds, whatever SIFT_EMBED_REMOTE says
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda *a, **k: True)  # a GPU of this decade
+    caches = (embed.embedder, embed.reranker, embed.limit_gpu_memory, remote._info)
     for cached in caches:
         cached.cache_clear()
     yield embed

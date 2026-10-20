@@ -8,9 +8,10 @@ import sqlite3
 import sys
 import textwrap
 
-from . import __version__, store
+from . import __version__, remote, store
 
-SLOW = ("embed", "vsearch", "query", "serve", "worker")  # the commands that load PyTorch
+SLOW = ("embed", "vsearch", "query", "serve", "worker")  # the commands that load PyTorch, unless a worker does it
+THROUGH_WORKER = ("vsearch", "query")  # with SIFT_EMBED_REMOTE, these leave PyTorch to the worker
 
 
 def _value(text):
@@ -107,7 +108,8 @@ def main(argv=None):
     if (sys.stdout.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
         sys.stdout.reconfigure(encoding="utf-8")
     if a.cmd in SLOW:  # loading PyTorch alone can take long: say first that sift runs
-        print(f"sift {a.cmd}: starting, loading PyTorch ...", file=sys.stderr, flush=True)
+        loading = "" if remote.REMOTE and a.cmd in THROUGH_WORKER else ", loading PyTorch"
+        print(f"sift {a.cmd}: starting{loading} ...", file=sys.stderr, flush=True)
     try:
         if a.cmd == "worker":  # needs no index
             from .worker import serve

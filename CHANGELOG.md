@@ -5,6 +5,27 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-20
+
+### Added
+
+- Through a worker, searches rerank there too, and the machine searching never loads PyTorch: on a notebook,
+  `vsearch` and `query` take about 0.3 s instead of 10 to 25 s. Both machines need 0.6.
+- `sift embed`, `vsearch`, `query`, `serve` and `worker` say at once that they started; `sift index` names the folder
+  it scans and counts files one by one. The README shows how to upgrade.
+
+### Changed
+
+- The models compute in bfloat16 on NVIDIA GPUs that have it, and in float32 elsewhere, Apple GPUs included, instead
+  of fp16.
+
+### Fixed
+
+- `vsearch` and `query` found fewer results, or none, when some vectors were broken. In fp16, EmbeddingGemma
+  overflows now and then into NaN vectors, and the search ranked NaN first, so a few broken vectors pushed every real
+  result out. NaN now ranks last, broken vectors are never stored, and the next `sift embed` drops those of older
+  indexes once and embeds their chunks again.
+
 ## [0.5.1] - 2026-10-20
 
 ### Added
@@ -143,7 +164,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/tobiaswuerth/sift/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/tobiaswuerth/sift/compare/v0.4.1...v0.5.1
 [0.5.0]: https://github.com/tobiaswuerth/sift/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/tobiaswuerth/sift/compare/v0.4.0...v0.4.1

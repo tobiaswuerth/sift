@@ -1,23 +1,17 @@
 """Embedding and reranking models, and the batched GPU embedding pipeline."""
 
-import base64
 import contextlib
-import hashlib
-import http.client
-import json
 import logging
 import os
-import ssl
 import sys
 import threading
-import urllib.parse
 from functools import cache
 from time import monotonic, perf_counter
 
 import numpy as np
 import torch
 
-from . import store
+from . import remote, store
 
 # Loading Sentence Transformers makes PyTorch log a harmless note about distributed training on Windows and macOS.
 logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
@@ -37,9 +31,6 @@ def _device():
 
 EMBED_MODEL = os.environ.get("SIFT_EMBED_MODEL", "google/embeddinggemma-2")
 RERANK_MODEL = os.environ.get("SIFT_RERANK_MODEL", "cross-encoder/ettin-reranker-150m-v1")
-REMOTE = os.environ.get("SIFT_EMBED_REMOTE")  # a `sift worker` to embed on: the https://<key>@pc:8766 it prints
-REMOTE_BATCH = 256  # texts per request to the remote
-REMOTE_TIMEOUT = 600  # seconds to wait for a request; a busy remote can take long, a dead one fails at once
 DEVICE = _device()
 MAX_TOKENS = 1024
 SLAB = 20000  # chunks per commit; length sorting happens within a slab
@@ -62,8 +53,15 @@ def gpu():
 
 
 def fp16():
-    """Whether models and vectors use fp16: yes on GPUs, no on CPUs, which are slow at fp16 matmul."""
+    """Whether vectors are searched in fp16: yes on GPUs, no on CPUs, which are slow at fp16 matmul."""
     return gpu()
+
+
+def half_precision():
+    """The 16-bit type the models compute in: bfloat16 on GPUs that have it, None (float32) elsewhere. Never fp16:
+    its range is too small for EmbeddingGemma, which overflows in it now and then into NaN vectors, nor for Qwen
+    models; bfloat16 has the range of float32."""
+    return torch.bfloat16 if torch.device(DEVICE).type == "cuda" and torch.cuda.is_bf16_supported() else None
 
 
 def _free_gpu_memory():
@@ -197,8 +195,8 @@ def embedder():
 
     limit_gpu_memory()
     model = SentenceTransformer(EMBED_MODEL, device="cpu")  # into RAM; it moves to the GPU when used
-    if fp16():
-        model.half()
+    if dtype := half_precision():
+        model.to(dtype)
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)
     return model
 
@@ -209,8 +207,8 @@ def reranker():
 
     limit_gpu_memory()
     model = CrossEncoder(RERANK_MODEL, device="cpu", max_length=MAX_TOKENS)  # into RAM, like the embedder
-    if fp16():
-        model.model.half()
+    if dtype := half_precision():
+        model.to(dtype)  # the whole model: its scoring head too, or PyTorch refuses to mix the two
     return model
 
 
@@ -267,85 +265,14 @@ def calibrate_batch_size(sample=None):
     return _batch_size
 
 
-class RemoteError(ConnectionError):
-    """The embedding remote failed; the message says how, and never shows the key."""
-
-
-def _remote_parts():
-    """The remote's host, port, access token and certificate fingerprint, from https://<token>.<pin>@host:port."""
-    url = urllib.parse.urlsplit(REMOTE)
-    token, _, pin = (url.username or "").partition(".")
-    if url.scheme != "https" or not (url.hostname and token and pin):
-        raise RemoteError("SIFT_EMBED_REMOTE must be the https://<key>@<machine>:<port> address `sift worker` prints")
-    return url.hostname, 8766 if url.port is None else url.port, token, pin
-
-
-def remote_address():
-    """The remote's address without its key, to show."""
-    host, port, _, _ = _remote_parts()
-    return f"https://{host}:{port}"
-
-
-def fingerprint(der):
-    """A certificate's SHA-256, as the key carries it."""
-    return base64.urlsafe_b64encode(hashlib.sha256(der).digest()).rstrip(b"=").decode()
-
-
-def _remote(path, payload=None):
-    """The response body of a request to the remote: GET without a payload, else POST it as JSON."""
-    host, port, token, pin = _remote_parts()
-    # The worker's certificate is its own, signed by no authority: the fingerprint in the key vouches for it instead,
-    # checked before anything is sent, so a machine posing as the worker gets neither the token nor any text.
-    context = ssl.create_default_context()
-    context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
-    connection = http.client.HTTPSConnection(host, port, timeout=REMOTE_TIMEOUT, context=context)
-    try:
-        connection.connect()
-        if fingerprint(connection.sock.getpeercert(binary_form=True)) != pin:
-            raise RemoteError(
-                f"embedding remote {remote_address()} has another certificate than its key: not that worker"
-            )
-        body = None if payload is None else json.dumps(payload).encode()
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        connection.request("GET" if body is None else "POST", path, body, headers)
-        response = connection.getresponse()
-        data = response.read()
-    except RemoteError:
-        raise
-    except (OSError, http.client.HTTPException) as e:  # refused, timed out, TLS failed, connection dropped
-        raise RemoteError(f"embedding remote {remote_address()} is unreachable or failed: {e}") from None
-    finally:
-        connection.close()
-    if response.status == 401:
-        raise RemoteError(f"embedding remote {remote_address()} refused the key; copy it again from `sift worker`")
-    if response.status != 200:
-        raise RemoteError(f"embedding remote {remote_address()} answered {response.status}: {data[:200].decode()}")
-    return data
-
-
-def remote_model():
-    """The remote's embedding model and the length of its vectors, asked once per remote."""
-    return _remote_info(REMOTE)
-
-
-@cache
-def _remote_info(url):
-    info = json.loads(_remote("/"))
-    return info["model"], info["dim"]
-
-
 def model_name():
-    """The embedding model in use: the remote's, if there is one."""
-    return remote_model()[0] if REMOTE else EMBED_MODEL
+    """The embedding model in use: the worker's, if there is one."""
+    return remote.model()[0] if remote.REMOTE else EMBED_MODEL
 
 
 def encode(texts, query=False):
-    """Normalised fp16 embeddings, one row per text: from the remote, if there is one, else made here."""
-    if not REMOTE:
-        return encode_here(texts, query)
-    dim = remote_model()[1]
-    vectors = np.frombuffer(bytearray(_remote("/embed", {"texts": texts, "query": query})), np.float16)
-    return vectors.reshape(len(texts), dim)  # writable, from the bytearray: PyTorch warns about read-only arrays
+    """Normalised fp16 embeddings, one row per text: from the worker, if there is one, else made here."""
+    return remote.encode(texts, query) if remote.REMOTE else encode_here(texts, query)
 
 
 def encode_here(texts, query=False):
@@ -359,6 +286,12 @@ def encode_here(texts, query=False):
 
 
 def rerank(query, texts):
+    """Scores of (query, text) pairs, higher for better matches: from the worker, if there is one, else made here."""
+    return remote.rerank(query, texts) if remote.REMOTE else rerank_here(query, texts)
+
+
+def rerank_here(query, texts):
+    """Reranking scores computed on this machine."""
     model = _on_gpu(reranker)
     return _oom_safe(
         lambda t, bs: model.predict([(query, x) for x in t], batch_size=bs, show_progress_bar=False), texts
@@ -416,55 +349,107 @@ class _Progress:
             print(f"\r{line:<{self._width}}", end="", file=sys.stderr, flush=True)
 
 
+PENDING = "chunks c JOIN docs d ON d.id = c.doc WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)"
+"""The chunks still without a vector, as a FROM clause."""
+
+
 def embed_pending(db, reset=False):
     """Embed every chunk without a vector, slab by slab. Safe to interrupt and resume."""
     if reset:
-        db.execute("DELETE FROM vectors")
-        db.execute("DELETE FROM meta WHERE key IN ('model', 'dim')")
-        store.touch(db)
-        db.commit()
-    model, using = store.get_meta(db, "model"), model_name()
-    if model and model != using:
-        raise SystemExit(f"index was embedded with {model}; run `sift embed --reset` to switch to {using}")
-    pending = """SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
-                 WHERE c.id > ? AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id) ORDER BY c.id LIMIT ?"""
-    total = db.execute(
-        """SELECT count(*) FROM chunks c JOIN docs d ON d.id = c.doc
-           WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)"""
-    ).fetchone()[0]
+        _forget_vectors(db)
+    using = _model_for(db)
+    _drop_broken_vectors(db)
+    total = db.execute(f"SELECT count(*) FROM {PENDING}").fetchone()[0]
     if not total:
         print("nothing to embed", file=sys.stderr)
         return
-    print(f"embedding {total:,} chunks with {using} on {remote_address() if REMOTE else DEVICE}", file=sys.stderr)
-    if not REMOTE:  # a remote sizes its batches itself
-        # calibrate on the longest text of this run: no batch can need more memory per text
-        candidates = db.execute(
-            """SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
-               WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)
-               ORDER BY c.len + length(d.title) DESC LIMIT 100"""
-        ).fetchall()
-        calibrate_batch_size(max((_text(*row) for row in candidates), key=len, default=None))  # None: done meanwhile
-    done, last = 0, 0
+    where = remote.address() if remote.REMOTE else DEVICE
+    print(f"embedding {total:,} chunks with {using} on {where}", file=sys.stderr)
+    if not remote.REMOTE:  # a worker sizes its batches itself
+        calibrate_batch_size(_longest_pending(db))
+    done = broken = last = 0
+    slab = f"SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} AND c.id > ? "
     with _Progress(total) as progress:
-        while rows := db.execute(pending, (last, SLAB)).fetchall():
-            texts = [_text(seq, title, text) for _, seq, title, text in rows]
-            # longest first, batch by batch: similar lengths per batch, and progress after each
-            order = sorted(range(len(texts)), key=lambda i: -len(texts[i]))
-            vecs, step = None, REMOTE_BATCH if REMOTE else _batch_size
-            for start in range(0, len(order), step):
-                part = order[start : start + step]
-                out = encode([texts[i] for i in part])
-                if vecs is None:
-                    vecs = np.empty((len(texts), out.shape[1]), np.float16)
-                vecs[part] = out
-                progress.update(done + start + len(part))
-            db.executemany(
-                "INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)",
-                [(r[0], v.tobytes()) for r, v in zip(rows, vecs)],
-            )
-            store.set_meta(db, "model", using)
-            store.set_meta(db, "dim", vecs.shape[1])
-            store.touch(db)  # tells a running server to reload vectors
-            db.commit()
+        while rows := db.execute(slab + "ORDER BY c.id LIMIT ?", (last, SLAB)).fetchall():
+            vectors = _embed([_text(*row[1:]) for row in rows], lambda n, before=done: progress.update(before + n))
+            broken += _store_vectors(db, [row[0] for row in rows], vectors, using)
             done, last = done + len(rows), rows[-1][0]
-    print(f"embedded {done:,} chunks in {_duration(perf_counter() - progress.start)}", file=sys.stderr)
+    print(f"embedded {done - broken:,} chunks in {_duration(perf_counter() - progress.start)}", file=sys.stderr)
+    if broken:
+        print(f"{_count(broken, 'chunk')} could not be embedded (the model returned NaN); try again", file=sys.stderr)
+
+
+def _count(n, noun):
+    """'1 chunk', '2 chunks'."""
+    return f"{n:,} {noun}{'' if n == 1 else 's'}"
+
+
+def _forget_vectors(db):
+    db.execute("DELETE FROM vectors")
+    db.execute("DELETE FROM meta WHERE key IN ('model', 'dim')")
+    store.touch(db)
+    db.commit()
+
+
+def _model_for(db):
+    """The embedding model in use, which must be the one the index was embedded with."""
+    model, using = store.get_meta(db, "model"), model_name()
+    if model and model != using:
+        raise SystemExit(f"index was embedded with {model}; run `sift embed --reset` to switch to {using}")
+    return using
+
+
+def _drop_broken_vectors(db):
+    """sift 0.5 and older embedded in fp16, where EmbeddingGemma overflows now and then into NaN vectors. Drop those,
+    once per index, so they are embedded again."""
+    if store.get_meta(db, "vectors_checked"):
+        return
+    if n := db.execute("SELECT count(*) FROM vectors").fetchone()[0]:
+        print(f"checking {n:,} vectors for broken ones (once) ...", file=sys.stderr, flush=True)
+        broken, cursor = [], db.execute("SELECT chunk, vec FROM vectors")
+        while rows := cursor.fetchmany(100_000):
+            vectors = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), -1)
+            broken += [rows[i][0] for i in np.flatnonzero(~np.isfinite(vectors).all(axis=1))]
+        if broken:
+            db.executemany("DELETE FROM vectors WHERE chunk = ?", [(chunk,) for chunk in broken])
+            store.touch(db)
+            print(f"{_count(len(broken), 'broken vector')} dropped, to be embedded again", file=sys.stderr)
+    store.set_meta(db, "vectors_checked", 1)
+    db.commit()
+
+
+def _longest_pending(db):
+    """The longest text still to embed, to calibrate on: no batch can need more memory per text. None if none."""
+    sql = (
+        f"SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} ORDER BY c.len + length(d.title) DESC"
+    )
+    return max((_text(*row) for row in db.execute(sql + " LIMIT 100")), key=len, default=None)
+
+
+def _embed(texts, report):
+    """Vectors for texts, longest first in batches of similar length; report(n) after each batch, n texts done."""
+    order = sorted(range(len(texts)), key=lambda i: -len(texts[i]))
+    step, vectors = remote.BATCH if remote.REMOTE else _batch_size, None
+    for start in range(0, len(order), step):
+        part = order[start : start + step]
+        out = encode([texts[i] for i in part])
+        if vectors is None:
+            vectors = np.empty((len(texts), out.shape[1]), np.float16)
+        vectors[part] = out
+        report(start + len(part))
+    return vectors
+
+
+def _store_vectors(db, chunks, vectors, model):
+    """Store the intact vectors and commit. A NaN vector, an overflow inside the model, stays out, so its chunk
+    stays pending. Returns how many stayed out."""
+    intact = np.isfinite(vectors).all(axis=1)
+    db.executemany(
+        "INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)",
+        [(chunk, vec.tobytes()) for chunk, vec, ok in zip(chunks, vectors, intact) if ok],
+    )
+    store.set_meta(db, "model", model)
+    store.set_meta(db, "dim", vectors.shape[1])
+    store.touch(db)  # tells a running server to reload vectors
+    db.commit()
+    return int((~intact).sum())

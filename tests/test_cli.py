@@ -7,7 +7,7 @@ import sys
 import pytest
 from mcp.server.mcpserver import MCPServer
 
-from sift import cli, store
+from sift import cli, remote, store
 
 
 def run(capsys, *argv):
@@ -46,6 +46,14 @@ def test_slow_commands_say_they_started_before_loading_anything(home, monkeypatc
     monkeypatch.setattr(target, lambda *args, **kwargs: said.append(capsys.readouterr().err) or [])
     cli.main(argv)
     assert said[0].startswith(f"sift {argv[0]}: starting")
+
+
+@pytest.mark.parametrize("command", ["vsearch", "query"])
+def test_searching_through_a_worker_says_nothing_of_pytorch(home, monkeypatch, capsys, command):
+    monkeypatch.setattr(remote, "REMOTE", "https://t.p@workstation:8766")
+    monkeypatch.setattr(f"sift.search.Index.{command}", lambda *args, **kwargs: [])
+    cli.main([command, "x"])
+    assert "PyTorch" not in capsys.readouterr().err  # it doesn't load it
 
 
 @pytest.mark.parametrize("command", ["search", "vsearch", "query"])
