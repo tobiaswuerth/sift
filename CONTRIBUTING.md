@@ -17,7 +17,9 @@ pre-commit install
 | Module | What it does |
 |---|---|
 | `cli.py` | The `sift` command |
-| `store.py` | The SQLite index: collections, readers for each kind of file, chunking, incremental indexing |
+| `store.py` | The SQLite index: layout and its version, connection, collections, deleting documents |
+| `readers.py` | Files into documents: one reader per kind of file (Markdown, JSON Lines, documents via Xberg), chunking |
+| `indexing.py` | `sift index`: scanning folders, reading changed files in worker processes, incremental updates |
 | `search.py` | Keyword, semantic and hybrid search over the index |
 | `embed.py` | `sift embed`: embedding every chunk without a vector, with progress |
 | `models.py` | The `Models` interface, and `default()`: the models this process uses |

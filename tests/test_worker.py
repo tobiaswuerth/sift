@@ -11,6 +11,7 @@ import threading
 import time
 import types
 
+import anyio
 import numpy as np
 import pytest
 
@@ -22,12 +23,33 @@ from .conftest import FakeSentenceTransformer, fake_vector, nobody_listens
 TOKEN = "s3cret-token"
 
 
+class Client:
+    """Requests to an app that runs on this, the main, thread, as under uvicorn. Starlette's TestClient runs it in a
+    thread of its own, where PyTorch crashes on Python 3.15 (macOS)."""
+
+    def __init__(self, app, headers=None):
+        self.app, self.headers = app, headers or {}
+
+    def request(self, method, path, **kwargs):
+        import httpx2  # what MCP and Starlette use
+
+        async def send():
+            transport = httpx2.ASGITransport(self.app, client=("testclient", 50000))
+            async with httpx2.AsyncClient(transport=transport, base_url="http://testserver", headers=self.headers) as c:
+                return await c.request(method, path, **kwargs)
+
+        return anyio.run(send)
+
+    def get(self, path, **kwargs):
+        return self.request("GET", path, **kwargs)
+
+    def post(self, path, **kwargs):
+        return self.request("POST", path, **kwargs)
+
+
 @pytest.fixture
 def client(fake_models):
-    from starlette.testclient import TestClient
-
-    with TestClient(worker.app(TOKEN, fake_models), headers={"Authorization": f"Bearer {TOKEN}"}) as c:
-        yield c
+    return Client(worker.app(TOKEN, fake_models), headers={"Authorization": f"Bearer {TOKEN}"})
 
 
 def post(client, path, payload):
@@ -67,6 +89,20 @@ def test_the_worker_reranks_as_this_machine_would(client, fake_models):
     assert response.json() == {"scores": fake_models.rerank("brush strokes", texts).tolist()}
 
 
+@pytest.mark.parametrize("path, payload", [("/embed", {"texts": ["a"]}), ("/rerank", {"query": "q", "texts": ["a"]})])
+def test_the_models_run_on_the_main_thread(client, fake_models, monkeypatch, path, payload):
+    # As under uvicorn: PyTorch crashes in other threads on Python 3.15 (macOS). Starlette's TestClient runs the app
+    # in a thread of its own, and so crashed the tests.
+    threads = []
+    for name in ("encode", "rerank"):
+        real = getattr(fake_models, name)
+        monkeypatch.setattr(
+            fake_models, name, lambda *a, real=real, **kw: threads.append(threading.current_thread()) or real(*a, **kw)
+        )
+    assert post(client, path, payload).status_code == 200
+    assert threads == [threading.main_thread()]
+
+
 @pytest.mark.parametrize(
     "path, content",
     [
@@ -86,13 +122,10 @@ def test_the_worker_refuses_malformed_requests(client, path, content):
 
 @pytest.mark.parametrize("authorization", [None, "Bearer wrong", f"Basic {TOKEN}", TOKEN])
 def test_the_worker_answers_only_with_its_token(fake_models, authorization):
-    from starlette.testclient import TestClient
-
-    headers = {"Authorization": authorization} if authorization else {}
-    with TestClient(worker.app(TOKEN, fake_models)) as c:
-        assert c.get("/", headers=headers).status_code == 401
-        assert c.post("/embed", json={"texts": ["x"]}, headers=headers).status_code == 401
-        assert c.post("/rerank", json={"query": "x", "texts": ["x"]}, headers=headers).status_code == 401
+    c = Client(worker.app(TOKEN, fake_models), headers={"Authorization": authorization} if authorization else {})
+    assert c.get("/").status_code == 401
+    assert c.post("/embed", json={"texts": ["x"]}).status_code == 401
+    assert c.post("/rerank", json={"query": "x", "texts": ["x"]}).status_code == 401
 
 
 # --- the worker's key --------------------------------------------------------
@@ -195,7 +228,7 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
         textwrap.dedent(f"""
             import sys
             import numpy as np
-            from sift import remote, store
+            from sift import indexing, remote, store
             from sift.search import Index
 
             remote.REMOTE = "https://t.p@worker:8766"
@@ -206,7 +239,7 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
             open(notes + "/brush.md", "w").write("# Brush strokes\\n\\nA robot paints.\\n")
             db = store.connect({str(tmp_path / "home")!r})
             store.add_collection(db, notes, "notes")
-            store.index(db)
+            indexing.index(db)
             for (chunk,) in db.execute("SELECT id FROM chunks").fetchall():
                 db.execute("INSERT INTO vectors VALUES(?, ?)", (chunk, np.full(4, 0.5, np.float16).tobytes()))
             store.set_meta(db, "dim", 4)

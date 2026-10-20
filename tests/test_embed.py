@@ -9,7 +9,7 @@ import threading
 import numpy as np
 import pytest
 
-from sift import embed, local, store
+from sift import embed, indexing, local, store
 
 from .conftest import FakeSentenceTransformer, fake_vector, write
 
@@ -115,7 +115,7 @@ def test_embed_pending_reports_progress_after_every_batch(corpus, fake_models, m
     db, root = corpus
     for i in range(5):
         write(root / f"extra{i}.md", f"# Extra {i}\n\n" + "word " * (10 + 50 * i) + "\n")
-    store.index(db)
+    indexing.index(db)
     monkeypatch.setattr(fake_models.accelerator, "batch_size", 1)  # long before the slab ends
     embed.embed_pending(db)
     err = capsys.readouterr().err
@@ -132,7 +132,7 @@ def test_embed_pending_reports_progress_after_every_batch(corpus, fake_models, m
 def test_embed_pending_in_slabs_with_title_on_later_chunks(corpus, fake_models, monkeypatch):
     db, root = corpus
     write(root / "long.md", "# Long\n" + "word " * 1000 + "\n" * 2 + "more " * 1000 + "\n")
-    store.index(db)
+    indexing.index(db)
     seen = []
     real = fake_models.encode
     monkeypatch.setattr(fake_models, "encode", lambda texts, query=False: seen.extend(texts) or real(texts))
@@ -177,7 +177,7 @@ def test_embed_pending_calibrates_first(corpus, make_local, gpu_memory):
 def test_embed_pending_calibrates_on_the_longest_chunk(corpus, fake_models, monkeypatch):
     db, root = corpus
     write(root / "long.md", "# Long\n" + "word " * 1000 + "\n\n" + "more " * 1000 + "\n")
-    store.index(db)
+    indexing.index(db)
     samples, embedded = [], []
     real = fake_models.encode
     monkeypatch.setattr(fake_models, "prepare", lambda longest: samples.append(longest()))

@@ -135,7 +135,9 @@ def _run(a, db):
         print(f"removed collection {a.name!r} and its {n} {documents} from the index;", end=" ", file=sys.stderr)
         print("the files on disk are untouched", file=sys.stderr)
     elif a.cmd == "index":
-        store.index(db, a.names)
+        from .indexing import index
+
+        index(db, a.names)
     elif a.cmd == "embed":
         from .embed import embed_pending
 

@@ -10,7 +10,7 @@ import sqlite3
 import numpy as np
 
 from . import models as _models
-from . import store
+from . import readers, store
 
 STOPWORDS = set(
     "a an and are as at be by can do does for from has have how i in is it of on or that the this to "
@@ -250,7 +250,7 @@ class Index:
         if not rows:
             raise LookupError(f"unknown document {id!r}")
         text = rows[0][0]
-        return text if span is None else "".join(store.LINE.findall(text)[span[0] - 1 : span[1]])
+        return text if span is None else "".join(readers.LINE.findall(text)[span[0] - 1 : span[1]])
 
     def fields(self, collection, docs):
         """The front-matter fields of a collection (by id with `docs` documents), from a sample spread over it."""
