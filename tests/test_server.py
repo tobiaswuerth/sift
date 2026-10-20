@@ -149,10 +149,10 @@ def test_serve_loads_everything_then_runs(embedded, transports, stdio, expected)
     assert expected[1].items() <= kwargs.items()
 
 
-def test_serve_releases_the_gpu_when_idle(embedded, transports, monkeypatch):
+def test_serve_releases_the_gpu_when_idle(embedded, fake_models, transports, monkeypatch):
     checks = []
     monkeypatch.setattr(server, "IDLE_CHECK_SECONDS", 0)
-    monkeypatch.setattr(server.embed, "release_idle", lambda: checks.append(threading.current_thread()))
+    monkeypatch.setattr(fake_models, "release_idle", lambda: checks.append(threading.current_thread()))
     transports.serving = lambda: len(checks) < 3  # serve until the idle check ran a few times
     server.serve(port=9000)
     assert len(checks) >= 3
@@ -167,7 +167,7 @@ def test_serve_warns_without_embeddings(corpus, fake_models, transports, capsys)
 def test_serve_with_a_remote_loads_no_models(embedded, transports, fake_models, monkeypatch):
     # The point of a remote: this machine may be too weak to run the models at all.
     monkeypatch.setattr(remote, "REMOTE", "https://t.p@workstation:8766")
-    monkeypatch.setattr(remote, "model", lambda: (fake_models.EMBED_MODEL, 64))
+    monkeypatch.setattr(remote.Remote, "load", lambda self: None)
     monkeypatch.setattr(fake_models, "embedder", lambda: pytest.fail("loaded the embedding model here"))
     monkeypatch.setattr(fake_models, "reranker", lambda: pytest.fail("loaded the reranker here"))
     server.serve(stdio=True)
@@ -269,7 +269,7 @@ def test_instructions_for_a_collection_without_front_matter(tmp_path):
     assert "- plain: 1 document\n" in server.build(Index(db))[0].instructions + "\n"
 
 
-def test_http_shutdown_gives_up_on_unfinished_requests(embedded, monkeypatch, capsys):
+def test_http_shutdown_gives_up_on_unfinished_requests(embedded, fake_models, monkeypatch, capsys):
     # On shutdown, uvicorn waits for every connection to close (Python 3.12+), and a second Ctrl+C doesn't change
     # that: a client that left a request unfinished kept `sift serve` from ever stopping.
     import uvicorn
@@ -287,7 +287,7 @@ def test_http_shutdown_gives_up_on_unfinished_requests(embedded, monkeypatch, ca
     async def main():
         with anyio.fail_after(10):  # a hang detector: the server stops within half a second
             async with anyio.create_task_group() as tasks:
-                tasks.start_soon(server._serve, mcp, "127.0.0.1", 0, False)
+                tasks.start_soon(server._serve, mcp, "127.0.0.1", 0, False, fake_models)
                 while not (servers and servers[0].started):
                     await anyio.sleep(0.01)
                 port = servers[0].servers[0].sockets[0].getsockname()[1]

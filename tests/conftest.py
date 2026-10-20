@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from sift import store
+from sift.accelerator import Accelerator
 
 DIM = 64
 
@@ -104,7 +105,7 @@ class FakeGpuMemory:
     def __init__(self):
         self.free, self.total, self.budgets, self.batches = 20 * GiB, 24 * GiB, [], []
         self.used = None  # set it to make NVML disagree with CUDA, as it does on Windows
-        self.peak = self.weights
+        self.peak, self.emptied = self.weights, 0
 
     def mem_get_info(self, device=None):
         return self.free, self.total
@@ -130,6 +131,9 @@ class FakeGpuMemory:
     def reset_peak_memory_stats(self, device=None):
         self.peak = self.weights
 
+    def empty_cache(self):
+        self.emptied += 1
+
     def run(self, n):
         """A batch of n texts on the GPU; out of memory past the budget, like PyTorch."""
         import torch
@@ -144,20 +148,7 @@ class FakeGpuMemory:
 
 @pytest.fixture
 def gpu_memory(monkeypatch):
-    import torch
-
     fake = FakeGpuMemory()
-    for name in (
-        "mem_get_info",
-        "set_per_process_memory_fraction",
-        "memory_allocated",
-        "max_memory_allocated",
-        "reset_peak_memory_stats",
-        "current_device",
-        "device_memory_used",
-    ):
-        monkeypatch.setattr(torch.cuda, name, getattr(fake, name))
-    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
     monkeypatch.setattr(FakeSentenceTransformer, "gpu_memory", fake)
     return fake
 
@@ -195,33 +186,47 @@ def clock(monkeypatch):
     from sift import embed
 
     fake = FakeClock()
-    monkeypatch.setattr(embed, "monotonic", fake)
-    monkeypatch.setattr(embed, "perf_counter", fake)
+    monkeypatch.setattr(embed, "perf_counter", fake)  # the progress line's
     return fake
 
 
+class PretendGpu(Accelerator):
+    """The CPU, managed as if it were a GPU: tensors stay on the CPU, but move "to the GPU" and back as on one, so the
+    bookkeeping is tested without a GPU."""
+
+    gpu = True
+
+
 @pytest.fixture
-def fake_models(monkeypatch, gpu_memory, clock):
-    """Replace Sentence Transformers, GPU memory queries and clocks with fakes; everything else runs for real."""
+def make_local(monkeypatch, gpu_memory, clock):
+    """Builds the models of this machine around fakes: Sentence Transformers, GPU memory and clock. Everything else,
+    the accelerator's decisions included, runs for real."""
     import torch
 
-    from sift import embed, remote
+    from sift.local import Local
 
     module = types.ModuleType("sentence_transformers")
     module.SentenceTransformer, module.CrossEncoder = FakeSentenceTransformer, FakeCrossEncoder
     monkeypatch.setitem(sys.modules, "sentence_transformers", module)
-    monkeypatch.setattr(embed, "DEVICE", "cpu")
-    monkeypatch.setattr(embed, "_batch_size", 128)
-    monkeypatch.setattr(embed, "_resident", {})  # nothing on the GPU yet
-    monkeypatch.setattr(embed, "_released", False)
-    monkeypatch.setattr(remote, "REMOTE", None)  # this machine embeds, whatever SIFT_EMBED_REMOTE says
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda *a, **k: True)  # a GPU of this decade
-    caches = (embed.embedder, embed.reranker, embed.limit_gpu_memory, remote._info)
-    for cached in caches:
-        cached.cache_clear()
-    yield embed
-    for cached in caches:
-        cached.cache_clear()
+
+    def make(device="cpu", accelerator=Accelerator):
+        return Local(accelerator(device, memory=gpu_memory, clock=clock))
+
+    return make
+
+
+@pytest.fixture
+def fake_models(make_local, monkeypatch):
+    """The models sift uses by default: those of this machine, on the CPU, with fakes inside."""
+    from sift import models, remote
+
+    local = make_local()
+    monkeypatch.setattr(models, "_local", lambda: local)
+    monkeypatch.setattr(remote, "REMOTE", None)  # this machine embeds, whatever SIFT_EMBED_REMOTE says
+    models._remote.cache_clear()
+    yield local
+    models._remote.cache_clear()
 
 
 def write(path, text):
@@ -292,5 +297,7 @@ def corpus(notes, home):
 
 @pytest.fixture
 def embedded(corpus, fake_models):
-    fake_models.embed_pending(corpus[0])
+    from sift import embed
+
+    embed.embed_pending(corpus[0])
     return corpus

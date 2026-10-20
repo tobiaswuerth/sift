@@ -17,8 +17,8 @@ from collections import namedtuple
 
 import anyio
 
-from . import __version__, embed, remote, store
-from .server import _release_gpu_when_idle, serve_app
+from . import __version__, remote, store
+from .server import release_when_idle, serve_app
 
 Credentials = namedtuple("Credentials", "token pin cert private_key")
 Credentials.key = property(lambda self: f"{self.token}.{self.pin}")  # what other machines put before @
@@ -83,8 +83,8 @@ def _texts(value):
     return isinstance(value, list) and all(isinstance(v, str) for v in value)
 
 
-def app(token):
-    """The worker's HTTP API, for requests that carry `Authorization: Bearer <token>`.
+def app(token, models):
+    """The worker's HTTP API over `models`, for requests that carry `Authorization: Bearer <token>`.
 
     GET / names the models and the length of the vectors. POST /embed takes {"texts": [...], "query": false} and
     returns the vectors as raw fp16 bytes, one row per text. POST /rerank takes {"query": "...", "texts": [...]} and
@@ -95,7 +95,7 @@ def app(token):
     from starlette.responses import JSONResponse, PlainTextResponse, Response
     from starlette.routing import Route
 
-    dim = embed.encode_here(["the length of a vector"]).shape[1]  # loads the model
+    dim = models.encode(["the length of a vector"]).shape[1]  # loads the model
     expected, done = f"Bearer {token}".encode(), {"texts": 0, "queries": 0}
     status = "\r{texts:,} texts embedded, {queries:,} queries reranked (last for {host})"
 
@@ -115,7 +115,7 @@ def app(token):
     @authorized
     async def info(request):
         return JSONResponse(
-            {"model": embed.EMBED_MODEL, "dim": dim, "reranker": embed.RERANK_MODEL, "version": __version__}
+            {"model": models.name, "dim": dim, "reranker": models.reranker_name, "version": __version__}
         )
 
     @authorized
@@ -123,7 +123,7 @@ def app(token):
         body = await _json(request)
         if not _texts(texts := body.get("texts")):
             return PlainTextResponse('send {"texts": [...], "query": false}', status_code=400)
-        vectors = embed.encode_here(texts, bool(body.get("query")))
+        vectors = models.encode(texts, bool(body.get("query")))
         done["texts"] += len(texts)
         return Response(vectors.tobytes(), media_type="application/octet-stream")
 
@@ -132,7 +132,7 @@ def app(token):
         body = await _json(request)
         if not (isinstance(query := body.get("query"), str) and _texts(texts := body.get("texts"))):
             return PlainTextResponse('send {"query": "...", "texts": [...]}', status_code=400)
-        scores = embed.rerank_here(query, texts)
+        scores = models.rerank(query, texts)
         done["queries"] += 1
         return JSONResponse({"scores": [float(s) for s in scores]})
 
@@ -144,25 +144,30 @@ def app(token):
     return Starlette(routes=routes)
 
 
-async def _serve(application, host, port, found):
+async def _serve(application, host, port, found, models):
     async with anyio.create_task_group() as tasks:
-        tasks.start_soon(_release_gpu_when_idle)  # the GPU stays free for others while nobody sends work
+        tasks.start_soon(release_when_idle, models)  # the GPU stays free for others while nobody sends work
         tls = {"ssl_certfile": str(found.cert), "ssl_keyfile": str(found.private_key)}
         await serve_app(application, host, port, access_log=False, **tls)  # the count line shows progress instead
         tasks.cancel_scope.cancel()
 
 
-def serve(host="0.0.0.0", port=8766):
+def serve(host="0.0.0.0", port=8766, models=None):
+    """Serve `models` to other machines; by default the models of this machine (never another worker's)."""
+    if models is None:
+        from .local import Local
+
+        models = Local()
     found = credentials()
-    print(f"loading {embed.EMBED_MODEL} and {embed.RERANK_MODEL} ...", file=sys.stderr)
-    application = app(found.token)
-    embed.reranker()  # now, so the first query is quick
-    embed.calibrate_batch_size()
+    print(f"loading {models.name} and {models.reranker_name} ...", file=sys.stderr)
+    models.load()  # now, so the first request is quick
+    application = app(found.token, models)
+    models.prepare(lambda: None)  # batches sized for the longest input the model takes
     say = functools.partial(print, file=sys.stderr)
-    say(f"sift worker on https://{host}:{port}, embedding and reranking on {embed.DEVICE}")
+    say(f"sift worker on https://{host}:{port}, embedding and reranking on {models.address}")
     say(f"on other machines, set SIFT_EMBED_REMOTE=https://{found.key}@{socket.gethostname()}:{port}")
     say("keep that key private: it lets a machine use this worker")
     try:
-        anyio.run(_serve, application, host, port, found)
+        anyio.run(_serve, application, host, port, found, models)
     except BaseExceptionGroup as group:  # from the task group; the error inside is uvicorn's (or Ctrl+C)
         raise group.exceptions[0] from None

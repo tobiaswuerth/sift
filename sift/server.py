@@ -10,7 +10,7 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import embed, remote
+from . import models as _models
 from .search import Index
 
 INSTRUCTIONS = """Search the user's local documents and notes, indexed by sift.
@@ -119,10 +119,11 @@ IDLE_CHECK_SECONDS = 30  # how often the server checks whether models and vector
 SHUTDOWN_SECONDS = 3  # how long Ctrl+C waits for open requests before the server stops anyway
 
 
-async def _release_gpu_when_idle():
+async def release_when_idle(models):
+    """Every IDLE_CHECK_SECONDS, let the models hand the GPU back if it has been idle long enough."""
     while True:
         await anyio.sleep(IDLE_CHECK_SECONDS)
-        embed.release_idle()
+        models.release_idle()
 
 
 async def _serve_http(mcp, host, port):
@@ -154,10 +155,10 @@ def _no_cancelled_requests(record):
     return not (record.exc_info and isinstance(record.exc_info[1], asyncio.CancelledError))
 
 
-async def _serve(mcp, host, port, stdio):
+async def _serve(mcp, host, port, stdio, models):
     # One event loop for the transport and the idle check: both stay on the main thread, where PyTorch must run.
     async with anyio.create_task_group() as tasks:
-        tasks.start_soon(_release_gpu_when_idle)
+        tasks.start_soon(release_when_idle, models)
         if stdio:
             await mcp.run_stdio_async()
         else:
@@ -166,22 +167,20 @@ async def _serve(mcp, host, port, stdio):
         tasks.cancel_scope.cancel()
 
 
-def serve(host="127.0.0.1", port=8765, stdio=False):
-    mcp, index = build()
+def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
+    """Run the MCP server, with `models` (default: `models.default()`) loaded up front, so the first search is quick."""
+    models = models or _models.default()
+    mcp, index = build(Index(models=models))
     print("loading models and vectors into RAM ...", file=sys.stderr)  # they move to the GPU when used
-    if remote.REMOTE:  # the worker embeds and reranks; keyword search works without it
+    for step in (models.load, index.load):
         try:
-            remote.model()
-        except ConnectionError as e:
+            step()
+        except (
+            ConnectionError,
+            LookupError,
+        ) as e:  # a worker that doesn't answer, no vectors yet: keyword search works
             print(f"warning: {e}", file=sys.stderr)
-    else:
-        embed.embedder()
-        embed.reranker()
     try:
-        index._load()
-    except LookupError as e:
-        print(f"warning: {e}", file=sys.stderr)
-    try:
-        anyio.run(_serve, mcp, host, port, stdio)
+        anyio.run(_serve, mcp, host, port, stdio, models)
     except BaseExceptionGroup as group:  # from the task group; the error inside is the transport's (or Ctrl+C)
         raise group.exceptions[0] from None
