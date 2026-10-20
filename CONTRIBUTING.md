@@ -29,10 +29,14 @@ pre-commit install
 | `vectors.py` | The index's vectors as one matrix to score queries against: `InRam` (NumPy) or `OnGpu` (PyTorch) |
 | `server.py` | `sift serve`: the MCP server |
 | `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |
+| `settings.py` | The four optional environment variables, read once (`settings.current()`) |
+| `console.py` | What sift tells the user, on stderr: messages, plurals, and one progress bar for every long step |
 
 Search and embedding never ask where the models run: they take a `Models` object, `Local` or `Remote`. Only
-`accelerator.py` imports PyTorch at the top, so a machine that searches through a worker never loads it. Tests build
-these objects around fakes (Sentence Transformers, GPU memory, the clock) instead of patching module state.
+`accelerator.py` imports PyTorch at the top, so a machine that searches through a worker never loads it. No module
+reads the environment except `settings.py`, and none prints except `console.py`. Tests build these objects around
+fakes (Sentence Transformers, GPU memory, the clock) instead of patching module state, and change settings with the
+`configure` fixture.
 
 ## How changes are made
 

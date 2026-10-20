@@ -3,13 +3,13 @@
 import asyncio
 import logging
 import sqlite3
-import sys
 from typing import Any
 
 import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from . import console
 from . import models as _models
 from .search import Index
 
@@ -162,7 +162,7 @@ async def _serve(mcp, host, port, stdio, models):
         if stdio:
             await mcp.run_stdio_async()
         else:
-            print(f"sift MCP server on http://{host}:{port}/mcp", file=sys.stderr)
+            console.say(f"sift MCP server on http://{host}:{port}/mcp")
             await _serve_http(mcp, host, port)
         tasks.cancel_scope.cancel()
 
@@ -171,7 +171,7 @@ def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
     """Run the MCP server, with `models` (default: `models.default()`) loaded up front, so the first search is quick."""
     models = models or _models.default()
     mcp, index = build(Index(models=models))
-    print("loading models and vectors into RAM ...", file=sys.stderr)  # they move to the GPU when used
+    console.say("loading models and vectors into RAM ...")  # they move to the GPU when used
     for step in (models.load, index.load):
         try:
             step()
@@ -179,7 +179,7 @@ def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
             ConnectionError,
             LookupError,
         ) as e:  # a worker that doesn't answer, no vectors yet: keyword search works
-            print(f"warning: {e}", file=sys.stderr)
+            console.say(f"warning: {e}")
     try:
         anyio.run(_serve, mcp, host, port, stdio, models)
     except BaseExceptionGroup as group:  # from the task group; the error inside is the transport's (or Ctrl+C)

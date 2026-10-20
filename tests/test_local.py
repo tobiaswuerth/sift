@@ -13,14 +13,14 @@ from .conftest import FakeSentenceTransformer, GiB
 def test_models_load_once_with_limits(fake_models):
     model = fake_models.embedder()
     assert (model.name, model.device, model.max_seq_length, model.dtype) == (
-        local.EMBED_MODEL,
+        "google/embeddinggemma-2",
         "cpu",
         local.MAX_TOKENS,
         "float32",
     )
-    assert fake_models.reranker().name == local.RERANK_MODEL
+    assert fake_models.reranker().name == "cross-encoder/ettin-reranker-150m-v1"
     assert fake_models.embedder() is model
-    assert (fake_models.name, fake_models.reranker_name) == (local.EMBED_MODEL, local.RERANK_MODEL)
+    assert (fake_models.name, fake_models.reranker_name) == ("google/embeddinggemma-2", fake_models.reranker().name)
 
 
 @pytest.mark.parametrize("device, dtype", [("cuda", "bfloat16"), ("mps", "float32"), ("cpu", "float32")])

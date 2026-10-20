@@ -12,6 +12,8 @@ from time import monotonic
 
 import torch
 
+from . import console
+
 # Loading Sentence Transformers makes PyTorch log a harmless note about distributed training on Windows and macOS.
 logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
 
@@ -106,7 +108,7 @@ class Accelerator:
         if self._budget is _UNSET:
             if self.kind != "cuda":
                 if self.device == "cpu" and (reason := _unused_nvidia_gpu()):
-                    print(reason, file=sys.stderr)
+                    console.say(reason)
                 self._budget = None
             else:
                 self._budget = self._set_budget()
@@ -126,14 +128,14 @@ class Accelerator:
         free, total = self._free()
         budget = free - max(HEADROOM * total, GiB)
         if budget < MIN_BUDGET:
-            print(f"only {free / GiB:.1f} GB of GPU memory is free; using the CPU (slower)", file=sys.stderr)
+            console.say(f"only {free / GiB:.1f} GB of GPU memory is free; using the CPU (slower)")
             self.device = "cpu"
             return None
         index = torch.device(self.device).index  # PyTorch wants an index here; plain "cuda" is the current device
         self.memory.set_per_process_memory_fraction(
             budget / total, self.memory.current_device() if index is None else index
         )
-        print(f"using at most {budget / GiB:.1f} of {total / GiB:.1f} GB of GPU memory", file=sys.stderr)
+        console.say(f"using at most {budget / GiB:.1f} of {total / GiB:.1f} GB of GPU memory")
         return budget
 
     def _empty_cache(self):
@@ -156,7 +158,7 @@ class Accelerator:
                     raise
                 self._empty_cache()
                 self.batch_size //= 2
-                print(f"\nout of GPU memory, batch size now {self.batch_size}", file=sys.stderr)
+                console.say(f"\nout of GPU memory, batch size now {self.batch_size}")
 
     def calibrate(self, run):
         """Measure the largest batch that fits the memory budget, and use it from now on. run(n) runs a batch of n
@@ -189,7 +191,7 @@ class Accelerator:
         self._empty_cache()
         per_text = max((used - one) / (n - 1) if n > 1 else one, 1)  # tiny texts may not change the peak at all
         self.batch_size = max(1, min(failed - 1, MAX_BATCH, 1 + int((target - one) / per_text)))
-        print(f"batch size {self.batch_size}, calibrated to the GPU memory budget", file=sys.stderr)
+        console.say(f"batch size {self.batch_size}, calibrated to the GPU memory budget")
         return self.batch_size
 
     # --- what is on the GPU ------------------------------------------------------------
@@ -217,7 +219,7 @@ class Accelerator:
         self._resident.clear()
         self._released = True
         self._empty_cache()
-        print(f"idle for {IDLE_SECONDS // 60} min: models and vectors moved off the GPU", file=sys.stderr)
+        console.say(f"idle for {IDLE_SECONDS // 60} min: models and vectors moved off the GPU")
         return True
 
     def resume(self):

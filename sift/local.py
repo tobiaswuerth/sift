@@ -1,15 +1,13 @@
 """The models of this machine: an embedding model and a reranker, run with PyTorch on the accelerator's device."""
 
 import logging
-import os
 
 import numpy as np
 
+from . import settings
 from .accelerator import Accelerator
 from .vectors import InRam, OnGpu
 
-EMBED_MODEL = os.environ.get("SIFT_EMBED_MODEL", "google/embeddinggemma-2")
-RERANK_MODEL = os.environ.get("SIFT_RERANK_MODEL", "cross-encoder/ettin-reranker-150m-v1")
 MAX_TOKENS = 1024
 
 # The MCP server logs at INFO, where loading a model logs every HTTP request to Hugging Face.
@@ -17,20 +15,20 @@ for _name in ("httpx", "huggingface_hub", "sentence_transformers"):
     logging.getLogger(_name).setLevel(logging.WARNING)
 
 
-def _embedder(dtype):
+def _embedder(name, dtype):
     from sentence_transformers import SentenceTransformer
 
-    model = SentenceTransformer(EMBED_MODEL, device="cpu")  # into RAM; it moves to the GPU when used
+    model = SentenceTransformer(name, device="cpu")  # into RAM; it moves to the GPU when used
     if dtype:
         model.to(dtype)
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)
     return model
 
 
-def _reranker(dtype):
+def _reranker(name, dtype):
     from sentence_transformers import CrossEncoder
 
-    model = CrossEncoder(RERANK_MODEL, device="cpu", max_length=MAX_TOKENS)  # into RAM, like the embedder
+    model = CrossEncoder(name, device="cpu", max_length=MAX_TOKENS)  # into RAM, like the embedder
     if dtype:
         model.to(dtype)  # the whole model: its scoring head too, or PyTorch refuses to mix the two
     return model
@@ -42,7 +40,7 @@ class Local:
 
     def __init__(self, accelerator=None):
         self.accelerator = accelerator or Accelerator()
-        self.name, self.reranker_name = EMBED_MODEL, RERANK_MODEL
+        self.name, self.reranker_name = settings.current().embed_model, settings.current().rerank_model
         self._loaded, self._dtype = {}, None  # model by kind, all in this precision
 
     @property
@@ -56,19 +54,19 @@ class Local:
         return self.accelerator.batch_size
 
     def embedder(self):
-        return self._model("embedder", _embedder)
+        return self._model(_embedder, self.name)
 
     def reranker(self):
-        return self._model("reranker", _reranker)
+        return self._model(_reranker, self.reranker_name)
 
-    def _model(self, kind, load):
+    def _model(self, load, name):
         self.accelerator.budget()  # caps the GPU memory, or falls back to the CPU, before anything loads
         dtype = self.accelerator.half_precision
         if dtype != self._dtype:  # a device of another precision: load again
             self._loaded, self._dtype = {}, dtype
-        if kind not in self._loaded:
-            self._loaded[kind] = load(dtype)
-        return self._loaded[kind]
+        if name not in self._loaded:
+            self._loaded[name] = load(name, dtype)
+        return self._loaded[name]
 
     def _ready(self, get):
         """The model get() returns, on the GPU while in use. The accelerator looks at the GPU first: it may have

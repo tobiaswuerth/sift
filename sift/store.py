@@ -5,13 +5,12 @@ indexing (see `indexing`, and `readers` for the kinds of file).
 """
 
 import json
-import os
 import re
 import sqlite3
 import uuid
 from pathlib import Path
 
-HOME = Path(os.environ.get("SIFT_HOME", Path.home() / ".sift"))
+from . import settings
 
 SCHEMA_VERSION = 2  # in SQLite's user_version; sift 0.2 and older had none
 SCHEMA = """
@@ -36,7 +35,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, text, content='chunk_te
 
 
 def connect(home=None) -> sqlite3.Connection:
-    home = Path(home or HOME)
+    home = Path(home or settings.current().home)
     home.mkdir(parents=True, exist_ok=True)
     path = home / "sift.db"
     db = sqlite3.connect(path, timeout=30, check_same_thread=False)

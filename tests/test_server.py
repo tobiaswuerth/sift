@@ -164,9 +164,9 @@ def test_serve_warns_without_embeddings(corpus, fake_models, transports, capsys)
     assert "warning: no embeddings yet" in capsys.readouterr().err
 
 
-def test_serve_with_a_remote_loads_no_models(embedded, transports, fake_models, monkeypatch):
+def test_serve_with_a_remote_loads_no_models(embedded, transports, fake_models, monkeypatch, configure):
     # The point of a remote: this machine may be too weak to run the models at all.
-    monkeypatch.setattr(remote, "REMOTE", "https://t.p@workstation:8766")
+    configure(remote="https://t.p@workstation:8766")
     monkeypatch.setattr(remote.Remote, "load", lambda self: None)
     monkeypatch.setattr(fake_models, "embedder", lambda: pytest.fail("loaded the embedding model here"))
     monkeypatch.setattr(fake_models, "reranker", lambda: pytest.fail("loaded the reranker here"))
@@ -174,14 +174,14 @@ def test_serve_with_a_remote_loads_no_models(embedded, transports, fake_models, 
     assert transports.started
 
 
-def test_serve_warns_when_the_remote_is_unreachable(embedded, transports, fake_models, monkeypatch, capsys):
-    monkeypatch.setattr(remote, "REMOTE", nobody_listens())
+def test_serve_warns_when_the_remote_is_unreachable(embedded, transports, fake_models, monkeypatch, capsys, configure):
+    configure(remote=nobody_listens())
     server.serve(stdio=True)  # keyword search works without it
     assert "warning: embedding remote" in capsys.readouterr().err
 
 
-def test_an_unreachable_remote_reaches_the_agent(mcp, fake_models, monkeypatch):
-    monkeypatch.setattr(remote, "REMOTE", nobody_listens())
+def test_an_unreachable_remote_reaches_the_agent(mcp, fake_models, monkeypatch, configure):
+    configure(remote=nobody_listens())
     result = call(mcp, "vsearch", {"query": "brush"})
     assert result.is_error
     assert "embedding remote" in result.content[0].text
