@@ -10,6 +10,8 @@ import textwrap
 
 from . import __version__, store
 
+SLOW = ("embed", "vsearch", "query", "serve", "worker")  # the commands that load PyTorch
+
 
 def _value(text):
     try:
@@ -104,6 +106,8 @@ def main(argv=None):
     a = p.parse_args(argv)
     if (sys.stdout.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
         sys.stdout.reconfigure(encoding="utf-8")
+    if a.cmd in SLOW:  # loading PyTorch alone can take long: say first that sift runs
+        print(f"sift {a.cmd}: starting, loading PyTorch ...", file=sys.stderr, flush=True)
     try:
         if a.cmd == "worker":  # needs no index
             from .worker import serve

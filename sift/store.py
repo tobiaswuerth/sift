@@ -31,6 +31,7 @@ WRITE_BATCH = 5000  # files per commit
 BATCH_BYTES = 256 << 20  # and at most this much file content, for big JSON Lines files
 FILES_PER_WORKER = 1000  # a worker process only pays off for at least this many files
 BYTES_PER_WORKER = 32 << 20  # or this much content
+PROGRESS_LINES = 200  # at most this many progress updates per collection: printing is slow on Windows consoles
 
 SCHEMA_VERSION = 2  # in SQLite's user_version; sift 0.2 and older had none
 SCHEMA = """
@@ -537,6 +538,7 @@ def index(db, names=None):
             for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources WHERE collection=?", (cid,))
         }
         todo, seen = [], set()
+        print(f"{name}: scanning {root}", file=sys.stderr, flush=True)  # a large or cloud folder takes a while
         for path, mtime, size in walk(root):
             rel = os.path.relpath(path, root).replace(os.sep, "/")
             try:
@@ -559,12 +561,15 @@ def index(db, names=None):
         with ProcessPoolExecutor(n, mp_context=spawn) if n > 1 else nullcontext() as pool:
             # double buffering: the next batch is parsed while the current one is written
             pending = _read(pool, n, fields, batches[0]) if batches else None
-            done = 0
+            done, step = 0, max(1, len(todo) // PROGRESS_LINES)  # a line per file, or fewer for many small ones
             for b, batch in enumerate(batches):
                 results = pending
                 if b + 1 < len(batches):
                     pending = _read(pool, n, fields, batches[b + 1])
                 for (path, rel, mtime, size), res in zip(batch, results):
+                    done += 1
+                    if done % step == 0 or done == len(todo):
+                        print(f"\r{name}: {done}/{len(todo)} files read", end="", file=sys.stderr, flush=True)
                     if res is None:  # unreadable now; retried on the next run
                         print(f"\nunreadable, skipped: {path}", file=sys.stderr)
                         counts["unreadable"] += 1
@@ -580,8 +585,6 @@ def index(db, names=None):
                     _store(db, cid, sid, rel, docs, counts)
                     db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (mtime, size, sid))
                 db.commit()
-                done += len(batch)
-                print(f"\r{name}: {done}/{len(todo)} files read", end="", file=sys.stderr, flush=True)
         db.commit()
         print(
             f"\r{name}: {len(seen)} files, {counts['added']} added, {counts['changed']} changed, "

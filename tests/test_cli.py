@@ -30,6 +30,24 @@ def test_add_index_embed(notes, home, fake_models, capsys):
     assert "embedded 3 chunks" in run(capsys, "embed", "--reset").err
 
 
+@pytest.mark.parametrize(
+    "argv, target",
+    [
+        (["embed"], "sift.embed.embed_pending"),
+        (["vsearch", "x"], "sift.search.Index.vsearch"),
+        (["query", "x"], "sift.search.Index.query"),
+        (["serve"], "sift.server.serve"),
+        (["worker"], "sift.worker.serve"),
+    ],
+)
+def test_slow_commands_say_they_started_before_loading_anything(home, monkeypatch, capsys, argv, target):
+    # Loading PyTorch can take long, longer still with Intel's GPU build: without a word first, sift looked hung.
+    said = []
+    monkeypatch.setattr(target, lambda *args, **kwargs: said.append(capsys.readouterr().err) or [])
+    cli.main(argv)
+    assert said[0].startswith(f"sift {argv[0]}: starting")
+
+
 @pytest.mark.parametrize("command", ["search", "vsearch", "query"])
 def test_search_commands(cli_corpus, capsys, command):
     out = run(capsys, command, "reward shaping", "-k", "1").out

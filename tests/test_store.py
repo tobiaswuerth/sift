@@ -230,6 +230,28 @@ def test_index_is_incremental(corpus, capsys):
     assert orphans == 0
 
 
+def test_index_says_what_it_scans_and_counts_file_by_file(notes, home, monkeypatch, capsys):
+    # A batch of large PDFs or a slow cloud folder took minutes before the first line; sift looked hung.
+    db = store.connect(home)
+    store.add_collection(db, notes, "notes")
+    walk, said = store.walk, []
+    monkeypatch.setattr(store, "walk", lambda root: said.append(capsys.readouterr().err) or walk(root))
+    store.index(db)
+    assert said[0].startswith(f"notes: scanning {notes}")  # before walking the folder
+    err = capsys.readouterr().err
+    assert all(f"notes: {n}/3 files read" in err for n in (1, 2, 3))  # one batch, counted file by file
+
+
+def test_index_counts_many_files_in_steps(notes, home, monkeypatch, capsys):
+    monkeypatch.setattr(store, "PROGRESS_LINES", 1)  # as with 200 lines for many thousand files
+    db = store.connect(home)
+    store.add_collection(db, notes, "notes")
+    store.index(db)
+    err = capsys.readouterr().err
+    assert "notes: 3/3 files read" in err
+    assert "notes: 1/3 files read" not in err
+
+
 def test_index_in_several_batches(notes, home, monkeypatch):
     monkeypatch.setattr(store, "WRITE_BATCH", 2)
     db = store.connect(home)
