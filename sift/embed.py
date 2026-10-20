@@ -29,7 +29,7 @@ def _device():
 
 
 EMBED_MODEL = os.environ.get("SIFT_EMBED_MODEL", "google/embeddinggemma-2")
-RERANK_MODEL = os.environ.get("SIFT_RERANK_MODEL", "Alibaba-NLP/gte-reranker-modernbert-base")
+RERANK_MODEL = os.environ.get("SIFT_RERANK_MODEL", "cross-encoder/ettin-reranker-150m-v1")
 DEVICE = _device()
 MAX_TOKENS = 1024
 SLAB = 20000  # chunks per commit; length sorting happens within a slab

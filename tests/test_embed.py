@@ -1,4 +1,6 @@
 import logging
+import os
+import subprocess
 import sys
 import types
 
@@ -12,6 +14,23 @@ from .conftest import FakeSentenceTransformer, GiB, fake_vector, write
 
 def vector_count(db):
     return db.execute("SELECT count(*) FROM vectors").fetchone()[0]
+
+
+def models_in_a_fresh_process(**env):
+    """The models sift.embed picks when imported with these environment variables, and without sift's own."""
+    env = {k: v for k, v in os.environ.items() if k not in ("SIFT_EMBED_MODEL", "SIFT_RERANK_MODEL")} | env
+    code = "from sift import embed; print(embed.EMBED_MODEL, embed.RERANK_MODEL)"
+    run = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=120)
+    assert run.returncode == 0, run.stderr
+    return tuple(run.stdout.split())
+
+
+def test_default_models():
+    assert models_in_a_fresh_process() == ("google/embeddinggemma-2", "cross-encoder/ettin-reranker-150m-v1")
+    assert models_in_a_fresh_process(SIFT_EMBED_MODEL="a/embedder", SIFT_RERANK_MODEL="b/reranker") == (
+        "a/embedder",
+        "b/reranker",
+    )
 
 
 def test_models_load_with_limits(fake_models):
