@@ -321,10 +321,11 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
 - **`vsearch`:** exact nearest-neighbour search as one matrix multiply over all vectors on the GPU. No approximate
   index, so nothing to tune and no recall loss; a million 768-dimensional vectors take about 1.5 GB of VRAM. When the
   best passages come from a few documents, it looks further down until it has `k` documents.
-- **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are merged by reciprocal rank fusion
-  and reranked in one GPU batch. The reranker reads each candidate's title, the front-matter values that share a
-  word with the query (an author's name, an id; all of them would dilute the passage), and the passage. Scores are
-  the reranker's raw ones: a sigmoid saturates, at 0.9999 for every good match.
+- **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are reranked together, in one GPU
+  batch; the reranker alone decides the order, as fusing the candidates' first ranks into it made results worse.
+  The reranker reads each candidate's title, the front-matter values that share a word with the query (an author's
+  name, an id; all of them would dilute the passage), and the passage. Scores are the reranker's raw ones: a sigmoid
+  saturates, at 0.9999 for every good match.
 - **`similar`:** the mean of a document's passage vectors, scored against every passage as `vsearch` scores a query.
   No model runs, so it takes half a second over 3 million passages, with or without a GPU.
 - **Server:** `sift serve` loads models and vectors once and keeps them in memory.
