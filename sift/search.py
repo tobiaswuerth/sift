@@ -151,10 +151,28 @@ def _any_term(query):
     return " OR ".join(t if t[0] == '"' else f'"{t[:-1]}" *' if t[-1] == "*" else f'"{t}"' for t in terms)
 
 
+def _words(text):
+    """The meaningful words of a text: lowercase, without stopwords and single letters, in order."""
+    return [w for w in re.findall(r"\w+", str(text).lower()) if w not in STOPWORDS and len(w) > 1]
+
+
 def _any_word(query):
     """OR query over the meaningful words, used to collect keyword candidates for hybrid search."""
-    words = [w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS and len(w) > 1]
-    return " OR ".join(f'"{w}"' for w in dict.fromkeys(words))
+    return " OR ".join(f'"{w}"' for w in dict.fromkeys(_words(query)))
+
+
+def _passage(hit, asked):
+    """What the reranker reads of a hit: its title, the front-matter values that share a word with the query `asked`
+    (a set of words), e.g. an author's name or an id, and its text. Only those: all of them (links, licences, long
+    author lists) diluted the passage, and topical queries ranked worse."""
+    named = [
+        str(value)
+        for key, field in json.loads(hit["meta"]).items()
+        if key != "title"
+        for value in (field if isinstance(field, list) else [field])
+        if asked & set(_words(value))
+    ]
+    return f"{hit['title']}\n{' '.join(named)}\n\n{hit['text']}" if named else f"{hit['title']}\n\n{hit['text']}"
 
 
 def _first_of_each(items, key):
@@ -347,7 +365,8 @@ class Index:
         hits = self._hits(sorted(fused.items(), key=lambda x: -x[1]))
         if not hits:
             return []
-        scores = self.models.rerank(query, [f"{h['title']}\n\n{h['text']}" for h in hits])
+        asked = set(_words(query))
+        scores = self.models.rerank(query, [_passage(h, asked) for h in hits])
         for h, s in zip(hits, scores):  # raw: Ettin's sigmoid saturates, 0.9999 for every good match
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])

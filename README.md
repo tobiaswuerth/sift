@@ -116,6 +116,9 @@ sift search pigment -f "created>=2024-06" -f "created<2025"
 
 The `title` field, or else the first heading outside code blocks, or else the file name, becomes the document title.
 
+Keyword search covers the front matter too, so an author's name or an id finds its documents, in `search` and in
+`query`. `meta:` limits a term to the front matter, e.g. `sift search "meta: Vaswani"`.
+
 ### JSON Lines
 
 A `.jsonl` (or `.ndjson`) file holds one document per line, as a JSON object. sift finds the fields by name:
@@ -224,7 +227,8 @@ A running sift keeps the version it started with, so an update takes an upgrade 
    may keep that list even after reconnecting: a running session then misses new tools and parameters, and its calls
    with them fail or lose arguments. In Claude Code, start a new session; the registration stays as it is.
 
-The index and the vectors carry over. If a new version needs the index rebuilt, sift says so; the
+The index and the vectors carry over. When a new version changes how the keyword index is laid out, the first
+command rebuilds it, once, and says so: a few minutes for millions of documents; nothing gets embedded again. The
 [changelog](CHANGELOG.md) lists what changed.
 ## Embedding on another machine
 
@@ -310,9 +314,10 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   without GPU use, `sift serve` moves them back to RAM and hands the memory back; only CUDA's own context
   (about 0.3 GB) stays. The first search afterwards takes about a second longer; if other programs have taken the
   memory meanwhile, sift stays on the CPU rather than squeeze them. Keyword search never uses the GPU.
-- **`search`:** SQLite FTS5 with BM25, title and text weighted alike: every passage is indexed with its document's
-  title, and the first holds it as its heading too. Matches are grouped by document in SQL, each represented by its
-  best passage. Input that isn't valid FTS5 syntax is treated as exact phrases.
+- **`search`:** SQLite FTS5 with BM25, over three columns weighted alike: every passage is indexed with its
+  document's title (the first passage holds it as its heading too) and its front-matter values. Matches are grouped
+  by document in SQL, each represented by its best passage. Input that isn't valid FTS5 syntax is treated as exact
+  phrases.
 - **`vsearch`:** exact nearest-neighbour search as one matrix multiply over all vectors on the GPU. No approximate
   index, so nothing to tune and no recall loss; a million 768-dimensional vectors take about 1.5 GB of VRAM. When the
   best passages come from a few documents, it looks further down until it has `k` documents.

@@ -67,12 +67,16 @@ def _insert(db, cid, sid, path, doc):
         "INSERT INTO docs(collection, source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?,?)",
         (cid, sid, path, doc.digest, doc.title, meta, doc.text),
     ).lastrowid
-    for seq, (first, last, pos, length) in enumerate(doc.chunks):
-        c = db.execute(
-            "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?,?,?,?,?,?)",
-            (doc_id, seq, first, last, pos, length),
-        ).lastrowid
-        db.execute("INSERT INTO fts(rowid, title, text) VALUES(?,?,?)", (c, doc.title, doc.text[pos : pos + length]))
+    db.executemany(
+        "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?,?,?,?,?,?)",
+        [(doc_id, seq, first, last, pos, length) for seq, (first, last, pos, length) in enumerate(doc.chunks)],
+    )
+    # through the view, as deleting reads it
+    db.execute(
+        "INSERT INTO fts(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text WHERE id IN "
+        "(SELECT id FROM chunks WHERE doc = ?)",
+        (doc_id,),
+    )
 
 
 def _store(db, cid, sid, rel, docs, counts, note):

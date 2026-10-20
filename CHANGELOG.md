@@ -5,6 +5,17 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Keyword search covers front-matter values, such as authors and ids, in `search` and in `query`: "Vaswani
+  transformer paper" finds "Attention Is All You Need", and an arXiv id finds its paper. `meta:` limits a term to
+  them. On a known-item test of 29 queries over 3.2 million arXiv abstracts, `query` found TODO.
+
+### Changed
+
+- The first command after upgrading rebuilds the keyword index of an existing index, once (TODO for 3.2 million
+  documents). Documents and vectors stay as they are.
+
 ## [0.7.0] - 2026-10-20
 
 ### Added
