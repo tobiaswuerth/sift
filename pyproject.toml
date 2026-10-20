@@ -21,6 +21,7 @@ dependencies = [
     "mcp>=2.0",
     "nvidia-ml-py>=12",  # NVML: free GPU memory as nvidia-smi sees it
     "xberg>=1.3",  # reads PDF, office files, e-books and web pages
+    "cryptography>=42",  # the certificate `sift worker` makes for HTTPS
 ]
 keywords = ["search", "rag", "embeddings", "mcp", "markdown", "pdf", "bm25", "semantic-search"]
 classifiers = [

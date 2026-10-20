@@ -180,14 +180,14 @@ Anthropic's servers, which can't reach a server on your computer.
 A machine without a GPU, such as a notebook, can borrow another machine's. Run `sift worker` on the one with the GPU:
 
 ```bash
-sift worker            # listens on port 8766 and prints the address to use
+sift worker            # listens on port 8766 and prints the address to use, with its key
 ```
 
-and point sift at it on the other, e.g. in PowerShell (`setx` keeps it for new terminals; bash:
-`export SIFT_EMBED_REMOTE=...`):
+It prints a line such as `SIFT_EMBED_REMOTE=https://<key>@workstation:8766`. Set that on the other machine, e.g. in
+PowerShell (`setx` keeps it for new terminals; bash: `export SIFT_EMBED_REMOTE=...`):
 
 ```powershell
-setx SIFT_EMBED_REMOTE http://workstation:8766
+setx SIFT_EMBED_REMOTE https://<key>@workstation:8766
 ```
 
 `sift embed` then sends the chunks to the worker, 256 at a time, and stores the vectors it gets back, without loading
@@ -196,8 +196,14 @@ The worker only computes: it sees the texts it embeds, but no index and no files
 and gives the GPU back after 5 idle minutes, like `sift serve`. The worker's `SIFT_EMBED_MODEL` decides the model,
 and sift refuses a worker whose model differs from the one the index was embedded with.
 
-The worker listens to the whole network and has no password, and texts travel unencrypted: use it on networks you
-trust. To let it through the Windows firewall from your own subnet only, in PowerShell as administrator:
+The texts travel encrypted, over HTTPS. On its first start the worker makes a certificate of its own and an access
+token, kept in `~/.sift/worker` (readable by you only), and the key it prints holds both: the token, and the
+certificate's fingerprint. sift checks the worker's certificate against that fingerprint before it sends anything,
+so no other machine can pose as the worker, and the worker answers only requests that carry the token. Keep the key
+private, like a password; sift never shows it in its output. To make a new key, delete `~/.sift/worker` and restart
+the worker; machines with the old key are then refused.
+
+To let the worker through the Windows firewall from your own subnet only, in PowerShell as administrator:
 
 ```powershell
 New-NetFirewallRule -DisplayName "sift worker" -Direction Inbound -Protocol TCP -LocalPort 8766 -Action Allow -RemoteAddress LocalSubnet
@@ -217,7 +223,7 @@ Four optional settings exist for special cases:
 | `SIFT_HOME` | `~/.sift` | Where the index lives |
 | `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model |
 | `SIFT_RERANK_MODEL` | `cross-encoder/ettin-reranker-150m-v1` | Any Sentence Transformers cross-encoder |
-| `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed on, e.g. `http://workstation:8766` |
+| `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed on: the `https://<key>@workstation:8766` it prints |
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
 
@@ -230,9 +236,10 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   those). Each kind of file has a reader, chosen by extension, that turns it into documents; adding a format means
   adding a reader. Markdown, including documents converted to it, is split into chunks of about 3,000 characters
   (about 750 tokens) on line boundaries, preferring headings, with a small overlap.
-- **Remote embedding:** plain HTTP. `GET /` names the worker's model and vector length; `POST /embed` takes
-  `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per text. The worker takes
-  JSON only, so a web page can't put it to work, and runs one request at a time on the GPU.
+- **Remote embedding:** HTTPS with the worker's self-made certificate (EC P-256), pinned by its SHA-256 in the key,
+  and a bearer token of 32 random bytes. `GET /` names the worker's model and vector length; `POST /embed` takes
+  `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per text. The worker runs
+  one request at a time on the GPU.
 - **Storage:** one SQLite database in WAL mode holds every document's text, metadata, the FTS5 keyword index and
   the vectors (fp16). The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
   Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.

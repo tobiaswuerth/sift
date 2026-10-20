@@ -210,8 +210,8 @@ def write(path, text):
 
 
 def nobody_listens():
-    """An address no connection can reach. Port 0 fails at once; a closed port takes 2 s to refuse on Windows."""
-    return "http://127.0.0.1:0"
+    """A remote no connection can reach. Port 0 fails at once; a closed port takes 2 s to refuse on Windows."""
+    return "https://s3cret.pin@127.0.0.1:0"
 
 
 def index_contents(db):

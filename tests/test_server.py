@@ -166,7 +166,7 @@ def test_serve_warns_without_embeddings(corpus, fake_models, transports, capsys)
 
 def test_serve_with_a_remote_loads_no_embedding_model(embedded, transports, fake_models, monkeypatch):
     # The point of a remote: this machine may be too weak to run the embedding model at all.
-    monkeypatch.setattr(fake_models, "REMOTE", "http://workstation:8766")
+    monkeypatch.setattr(fake_models, "REMOTE", "https://t.p@workstation:8766")
     monkeypatch.setattr(fake_models, "remote_model", lambda: (fake_models.EMBED_MODEL, 64))
     monkeypatch.setattr(fake_models, "embedder", lambda: pytest.fail("loaded the embedding model here"))
     server.serve(stdio=True)

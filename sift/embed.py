@@ -1,12 +1,16 @@
 """Embedding and reranking models, and the batched GPU embedding pipeline."""
 
+import base64
 import contextlib
+import hashlib
+import http.client
 import json
 import logging
 import os
+import ssl
 import sys
 import threading
-import urllib.request
+import urllib.parse
 from functools import cache
 from time import monotonic, perf_counter
 
@@ -33,7 +37,7 @@ def _device():
 
 EMBED_MODEL = os.environ.get("SIFT_EMBED_MODEL", "google/embeddinggemma-2")
 RERANK_MODEL = os.environ.get("SIFT_RERANK_MODEL", "cross-encoder/ettin-reranker-150m-v1")
-REMOTE = os.environ.get("SIFT_EMBED_REMOTE")  # a `sift worker` that embeds for this machine, e.g. http://pc:8766
+REMOTE = os.environ.get("SIFT_EMBED_REMOTE")  # a `sift worker` to embed on: the https://<key>@pc:8766 it prints
 REMOTE_BATCH = 256  # texts per request to the remote
 REMOTE_TIMEOUT = 600  # seconds to wait for a request; a busy remote can take long, a dead one fails at once
 DEVICE = _device()
@@ -263,17 +267,60 @@ def calibrate_batch_size(sample=None):
     return _batch_size
 
 
+class RemoteError(ConnectionError):
+    """The embedding remote failed; the message says how, and never shows the key."""
+
+
+def _remote_parts():
+    """The remote's host, port, access token and certificate fingerprint, from https://<token>.<pin>@host:port."""
+    url = urllib.parse.urlsplit(REMOTE)
+    token, _, pin = (url.username or "").partition(".")
+    if url.scheme != "https" or not (url.hostname and token and pin):
+        raise RemoteError("SIFT_EMBED_REMOTE must be the https://<key>@<machine>:<port> address `sift worker` prints")
+    return url.hostname, 8766 if url.port is None else url.port, token, pin
+
+
+def remote_address():
+    """The remote's address without its key, to show."""
+    host, port, _, _ = _remote_parts()
+    return f"https://{host}:{port}"
+
+
+def fingerprint(der):
+    """A certificate's SHA-256, as the key carries it."""
+    return base64.urlsafe_b64encode(hashlib.sha256(der).digest()).rstrip(b"=").decode()
+
+
 def _remote(path, payload=None):
     """The response body of a request to the remote: GET without a payload, else POST it as JSON."""
-    data = None if payload is None else json.dumps(payload).encode()
-    request = urllib.request.Request(REMOTE.rstrip("/") + path, data, {"Content-Type": "application/json"})
+    host, port, token, pin = _remote_parts()
+    # The worker's certificate is its own, signed by no authority: the fingerprint in the key vouches for it instead,
+    # checked before anything is sent, so a machine posing as the worker gets neither the token nor any text.
+    context = ssl.create_default_context()
+    context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
+    connection = http.client.HTTPSConnection(host, port, timeout=REMOTE_TIMEOUT, context=context)
     try:
-        with urllib.request.urlopen(request, timeout=REMOTE_TIMEOUT) as response:
-            return response.read()
-    except OSError as e:  # URLError and HTTPError are OSErrors, as are timeouts
-        raise ConnectionError(
-            f"embedding remote {REMOTE} is unreachable or failed: {getattr(e, 'reason', e)}"
-        ) from None
+        connection.connect()
+        if fingerprint(connection.sock.getpeercert(binary_form=True)) != pin:
+            raise RemoteError(
+                f"embedding remote {remote_address()} has another certificate than its key: not that worker"
+            )
+        body = None if payload is None else json.dumps(payload).encode()
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        connection.request("GET" if body is None else "POST", path, body, headers)
+        response = connection.getresponse()
+        data = response.read()
+    except RemoteError:
+        raise
+    except (OSError, http.client.HTTPException) as e:  # refused, timed out, TLS failed, connection dropped
+        raise RemoteError(f"embedding remote {remote_address()} is unreachable or failed: {e}") from None
+    finally:
+        connection.close()
+    if response.status == 401:
+        raise RemoteError(f"embedding remote {remote_address()} refused the key; copy it again from `sift worker`")
+    if response.status != 200:
+        raise RemoteError(f"embedding remote {remote_address()} answered {response.status}: {data[:200].decode()}")
+    return data
 
 
 def remote_model():
@@ -388,7 +435,7 @@ def embed_pending(db, reset=False):
     if not total:
         print("nothing to embed", file=sys.stderr)
         return
-    print(f"embedding {total:,} chunks with {using} on {REMOTE or DEVICE}", file=sys.stderr)
+    print(f"embedding {total:,} chunks with {using} on {remote_address() if REMOTE else DEVICE}", file=sys.stderr)
     if not REMOTE:  # a remote sizes its batches itself
         # calibrate on the longest text of this run: no batch can need more memory per text
         candidates = db.execute(
