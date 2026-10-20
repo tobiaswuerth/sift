@@ -209,6 +209,28 @@ def write(path, text):
     path.write_text(text, encoding="utf-8", newline="")  # the same bytes on every OS
 
 
+def index_contents(db):
+    """Everything indexing produces, independent of row ids."""
+    return sorted(
+        db.execute("""SELECT d.path, d.hash, d.title, d.meta, c.seq, c.line_start, c.line_end, t.text
+                      FROM docs d JOIN chunks c ON c.doc = d.id JOIN chunk_text t ON t.id = c.id""")
+    )
+
+
+@pytest.fixture
+def pools(monkeypatch):
+    """Records every worker process pool that indexing starts."""
+    created = []
+
+    class RecordingPool(store.ProcessPoolExecutor):
+        def __init__(self, max_workers, mp_context=None):
+            created.append((max_workers, mp_context and mp_context.get_start_method()))
+            super().__init__(max_workers, mp_context=mp_context)
+
+    monkeypatch.setattr(store, "ProcessPoolExecutor", RecordingPool)
+    return created
+
+
 @pytest.fixture
 def notes(tmp_path):
     """A small folder of notes."""

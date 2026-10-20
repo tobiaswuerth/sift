@@ -5,6 +5,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- PDF, Word, PowerPoint and Excel files, OpenDocument text, presentations and spreadsheets, RTF, EPUB and HTML,
+  converted to Markdown by [Xberg](https://github.com/xberg-io/xberg), a new dependency. Their properties (title,
+  authors, dates, ...) become metadata. Damaged files and scans without text are skipped and reported.
+- Each kind of file has a reader, chosen by extension, so a new format needs only a new reader.
+
+### Fixed
+
+- A chunk's line range no longer includes the blank lines around its text, such as the one after front matter.
+  Chunks already indexed keep their line numbers until their file changes.
+
 ## [0.3.0] - 2026-10-20
 
 ### Added

@@ -8,3 +8,4 @@ transformers>=5.18
 pillow>=10
 mcp>=2.0
 nvidia-ml-py>=12
+xberg>=1.3
