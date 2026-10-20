@@ -10,8 +10,16 @@ import textwrap
 
 from . import __version__, console, settings, store
 
-SLOW = ("embed", "vsearch", "query", "serve", "worker")  # the commands that load PyTorch, unless a worker does it
-THROUGH_WORKER = ("vsearch", "query")  # with SIFT_EMBED_REMOTE, these leave PyTorch to the worker
+SLOW = (
+    "embed",
+    "vsearch",
+    "query",
+    "similar",
+    "serve",
+    "worker",
+)  # these load PyTorch, unless a worker does it for them
+THROUGH_WORKER = ("vsearch", "query", "similar")  # with SIFT_EMBED_REMOTE, these leave PyTorch to the worker
+SEARCHES = ("search", "vsearch", "query", "similar")
 
 
 def _value(text):
@@ -87,13 +95,14 @@ def main(argv=None):
     s.add_argument("names", nargs="*", help="collections to scan (default: all)")
     s = sub.add_parser("embed", help="embed all chunks that have no vector yet")
     s.add_argument("--reset", action="store_true", help="drop all vectors first (after changing the model)")
-    for name, desc in (
-        ("search", "exact keyword search (BM25)"),
-        ("vsearch", "semantic search"),
-        ("query", "hybrid search with reranking"),
+    for name, desc, subject in (
+        ("search", "exact keyword search (BM25)", "query"),
+        ("vsearch", "semantic search", "query"),
+        ("query", "hybrid search with reranking", "query"),
+        ("similar", "documents like a given one", "id"),
     ):
         s = sub.add_parser(name, help=desc)
-        s.add_argument("query")
+        s.add_argument("subject", metavar=subject)
         s.add_argument("-k", type=int, default=10, help="number of results (default: 10)")
         s.add_argument("-c", "--collection")
         s.add_argument("--path", help='path glob within the collection, e.g. "2024/*"')
@@ -168,11 +177,11 @@ def _run(a, db):
         from .embed import embed_pending
 
         embed_pending(db, a.reset)
-    elif a.cmd in ("search", "vsearch", "query"):
+    elif a.cmd in SEARCHES:
         from .search import Index
 
         hits = getattr(Index(db), a.cmd)(
-            a.query,
+            a.subject,
             a.k,
             collection=a.collection,
             path=a.path,

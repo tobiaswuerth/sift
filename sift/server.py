@@ -26,6 +26,7 @@ and cite what you find; say so when nothing relevant turns up.
 - `query`: hybrid search with reranking. Best default for questions; slower than the others.
 - `search`: exact keyword search (BM25). Best for names, identifiers, exact terms and "quoted phrases".
 - `vsearch`: semantic search. Best when the wording of the answer is unknown.
+- `similar`: documents like a given one, e.g. more papers like one found.
 - `get`: a document, or some of its lines, such as a result's.
 Results carry `id` (collection/path), `lines`, `title`, `score` and the passage's `text`. Scores rank the results of
 one call; each tool has its own scale, so don't compare them across tools. All search tools take `collection`, a
@@ -62,6 +63,13 @@ def _run(fn, *args, **kwargs):
 
 
 # What agents see of each parameter: they read the tools' schemas, not sift's code.
+Id = Annotated[
+    str,
+    Field(
+        description='A document\'s id from a search result, e.g. "papers/2024/attention.md"; folders may be left '
+        'out if the file name is unique: "papers/attention.md".'
+    ),
+]
 K = Annotated[int, Field(description="Number of results.")]
 Collection = Annotated[str | None, Field(description="Search only this collection.")]
 PathGlob = Annotated[
@@ -158,14 +166,35 @@ def build(index=None):
     )
 
     @mcp.tool(annotations=READ_ONLY)
+    async def similar(
+        id: Id,
+        k: K = 10,
+        collection: Collection = None,
+        path: PathGlob = None,
+        filters: Filters = None,
+        fields: Fields = None,
+        compact: Compact = False,
+        all_passages: AllPassages = False,
+        sort: Sort = None,
+    ) -> list[dict]:
+        """Documents closest in meaning to a document, e.g. more papers like one found; the document itself is left
+        out (cosine similarity, -1 to 1)."""
+        return _run(
+            index.similar,
+            id,
+            k,
+            collection=collection,
+            path=path,
+            filters=filters,
+            fields=fields,
+            compact=compact,
+            all_passages=all_passages,
+            sort=sort,
+        )
+
+    @mcp.tool(annotations=READ_ONLY)
     async def get(
-        id: Annotated[
-            str,
-            Field(
-                description='A document\'s id from a search result, e.g. "papers/2024/attention.md"; folders may be '
-                'left out if the file name is unique: "papers/attention.md".'
-            ),
-        ],
+        id: Id,
         lines: Annotated[
             str | int | None,
             Field(description='Only these lines, e.g. a result\'s "17-26", or one line number; all if left out.'),

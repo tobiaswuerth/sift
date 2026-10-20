@@ -47,7 +47,7 @@ def tools(mcp):
 
 
 def test_lists_tools(mcp):
-    assert list(tools(mcp)) == ["search", "vsearch", "query", "get", "status"]
+    assert list(tools(mcp)) == ["search", "vsearch", "query", "similar", "get", "status"]
 
 
 def test_every_parameter_is_described(mcp):
@@ -71,15 +71,21 @@ def test_search_tools(mcp, tool):
     assert "notes/rl.md" in [h["id"] for h in hits]
 
 
-@pytest.mark.parametrize("tool", ["search", "vsearch", "query", "get", "status"])
+@pytest.mark.parametrize("tool", ["search", "vsearch", "query", "similar", "get", "status"])
 def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
     # PyTorch crashes in worker threads on Python 3.15 (Windows, macOS), so no tool may run in one.
     index, threads = Index(embedded[0]), []
     real = getattr(index, tool)
     monkeypatch.setattr(index, tool, lambda *a, **kw: threads.append(threading.current_thread()) or real(*a, **kw))
-    args = {"get": {"id": "notes/rl.md"}, "status": {}}.get(tool, {"query": "brush"})
+    args = {"get": {"id": "notes/rl.md"}, "similar": {"id": "notes/rl.md"}, "status": {}}.get(tool, {"query": "brush"})
     assert not call(server.build(index)[0], tool, args).is_error
     assert threads == [threading.main_thread()]
+
+
+def test_similar_tool(mcp):
+    hits = data(call(mcp, "similar", {"id": "notes/brush.md", "k": 2, "fields": ["year"]}))
+    assert len(hits) == 2
+    assert "notes/robots/brush.md" not in [h["id"] for h in hits]
 
 
 def test_instructions_tell_agents_what_is_indexed(mcp):
@@ -269,8 +275,10 @@ def test_search_tools_take_fields_compact_and_ranges(mcp, tool):
     assert [(h["id"], h["fields"], "text" in h) for h in hits] == [("notes/robots/brush.md", {"year": 2024}, False)]
 
 
-@pytest.mark.parametrize("tool", ["search", "vsearch", "query"])
-def test_search_tools_pass_every_option_on(embedded, monkeypatch, tool):
+@pytest.mark.parametrize(
+    "tool, first", [("search", "query"), ("vsearch", "query"), ("query", "query"), ("similar", "id")]
+)
+def test_search_tools_pass_every_option_on(embedded, monkeypatch, tool, first):
     index, calls = Index(embedded[0]), []
     monkeypatch.setattr(index, tool, lambda *args, **kwargs: calls.append((args, kwargs)) or [])
     options = {
@@ -282,7 +290,7 @@ def test_search_tools_pass_every_option_on(embedded, monkeypatch, tool):
         "all_passages": True,
         "sort": "-year",
     }
-    call(server.build(index)[0], tool, {"query": "brush", "k": 3} | options)
+    call(server.build(index)[0], tool, {first: "brush", "k": 3} | options)
     assert calls == [(("brush", 3), options)]
 
 

@@ -504,6 +504,51 @@ def test_bad_sort_is_a_clear_error(corpus, sort):
         Index(corpus[0]).search("brush", sort=sort)
 
 
+# --- documents like a document ----------------------------------------------------
+
+
+def test_similar_finds_documents_like_one(dated):
+    # "More papers like this one", without putting the paper into words first.
+    hits = dated.similar("notes/dated/2024-01-01.md", k=4)
+    assert len(hits) == 4
+    assert all(h["id"].startswith("notes/dated/") for h in hits)  # the papers with the same words
+    assert "notes/dated/2024-01-01.md" not in ids(hits)  # not the document itself
+    assert hits[0]["score"] >= hits[-1]["score"]
+
+
+def test_similar_takes_what_searches_take(dated):
+    hits = dated.similar(
+        "notes/2024-01-01.md", filters={"created": {">=": "2024-06"}}, fields=["created"], compact=True, sort="created"
+    )
+    assert [(day(h), h["fields"]["created"], "text" in h) for h in hits] == [
+        (d, d, False) for d in ("2024-06-15", "2024-12-31", "2025-01-01")
+    ]
+
+
+def test_similar_is_one_result_per_document(long):
+    assert len(set(ids(long.similar("notes/robots/brush.md", k=10)))) == len(
+        long.similar("notes/robots/brush.md", k=10)
+    )
+
+
+def test_similar_needs_embeddings(corpus, fake_models):
+    with pytest.raises(LookupError, match="sift embed"):
+        Index(corpus[0]).similar("notes/rl.md")
+
+
+def test_similar_to_a_document_not_embedded_yet(embedded):
+    db, root = embedded
+    write(root / "new.md", "# New\nfresh\n")
+    indexing.index(db)
+    with pytest.raises(LookupError, match=r"'notes/new\.md' has no embeddings yet, run `sift embed`"):
+        Index(db).similar("notes/new.md")
+
+
+def test_similar_to_an_unknown_document(embedded):
+    with pytest.raises(LookupError, match="unknown document"):
+        Index(embedded[0]).similar("notes/missing.md")
+
+
 # --- keyword search falls back to any term ---------------------------------------
 
 

@@ -37,6 +37,7 @@ def test_add_index_embed(notes, home, fake_models, capsys):
         (["embed"], "sift.embed.embed_pending"),
         (["vsearch", "x"], "sift.search.Index.vsearch"),
         (["query", "x"], "sift.search.Index.query"),
+        (["similar", "notes/x.md"], "sift.search.Index.similar"),
         (["serve"], "sift.server.serve"),
         (["worker"], "sift.worker.serve"),
     ],
@@ -58,7 +59,7 @@ def test_the_cli_starts_with_the_standard_library_alone():
     assert run.stdout.startswith("sift ")
 
 
-@pytest.mark.parametrize("command", ["vsearch", "query"])
+@pytest.mark.parametrize("command", ["vsearch", "query", "similar"])
 def test_searching_through_a_worker_says_nothing_of_pytorch(home, monkeypatch, capsys, command, configure):
     configure(remote="https://t.p@workstation:8766")
     monkeypatch.setattr(f"sift.search.Index.{command}", lambda *args, **kwargs: [])
@@ -84,7 +85,7 @@ def test_search_command_fields_and_compact(cli_corpus, capsys):
     assert "Kubelka" not in run(capsys, "search", "brush", "--compact").out
 
 
-@pytest.mark.parametrize("command", ["search", "vsearch", "query"])
+@pytest.mark.parametrize("command", ["search", "vsearch", "query", "similar"])
 def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, command):
     from sift.search import Index
 
@@ -118,6 +119,12 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
             },
         ),
     ]
+
+
+def test_similar_command(cli_corpus, capsys):
+    out = run(capsys, "similar", "notes/brush.md", "-k", "1").out
+    assert out.count("notes/") == 1
+    assert "notes/robots/brush.md" not in out
 
 
 def test_search_command_says_when_nothing_matches(cli_corpus, capsys):

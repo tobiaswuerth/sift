@@ -364,20 +364,53 @@ class Index:
         """A document as {"id", "title", "text"}, the whole id even if asked by file name, and with "fields" if asked
         for, as in hits; `id` and `lines` as for `get`."""
         span, fields = None if lines is None else _line_span(lines), _check_fields(fields)
+        _, whole, title, meta, text = self._find(id)
+        document = {"id": whole, "title": title} | ({"fields": _pick(meta, fields)} if fields else {})
+        return document | {"text": text if span is None else "".join(readers.LINE.findall(text)[span[0] - 1 : span[1]])}
+
+    def similar(
+        self,
+        id,
+        k=10,
+        *,
+        collection=None,
+        path=None,
+        filters=None,
+        fields=None,
+        compact=False,
+        all_passages=False,
+        sort=None,
+    ):
+        """Documents closest in meaning to the document `id` (as for `get`), by cosine similarity with the mean of its
+        passages' vectors; the document itself is left out."""
+        k, where = _check_k(k), _where(self.db, collection, path, filters)
+        fields, sort = _check_fields(fields), _check_sort(sort)
+        doc = self._find(id)[0]
+        self.load()
+        sql = "SELECT v.chunk, v.vec FROM vectors v JOIN chunks c ON c.id = v.chunk WHERE c.doc = ?"
+        own = self.db.execute(sql, (doc,)).fetchall()
+        if not own:
+            raise LookupError(f"{id!r} has no embeddings yet, run `sift embed`")
+        mean = np.mean([np.frombuffer(vec, np.float16) for _, vec in own], axis=0, dtype=np.float32)
+        scores = self.vectors.scores(mean / np.linalg.norm(mean))
+        scores = np.where(np.isin(self.vectors.ids, [chunk for chunk, _ in own]), -np.inf, scores)
+        return _present(self._hits(self._nearest(scores, k, *where, all_passages)), fields, compact, sort)
+
+    def _find(self, id):
+        """The document `id` names (see `get`), as (row id, whole id, title, meta, text)."""
         name, _, rel = id.partition("/")
-        sql = """SELECT d.path, d.title, d.meta, d.text FROM docs d JOIN collections co ON co.id = d.collection
+        sql = """SELECT d.id, d.path, d.title, d.meta, d.text FROM docs d JOIN collections co ON co.id = d.collection
                  WHERE co.name = ? AND """
         rows = self.db.execute(sql + "d.path = ?", (name, rel)).fetchall()
         if not rows and rel:  # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
             rows = self.db.execute(sql + "substr(d.path, -?) = ? LIMIT 6", (name, len(rel) + 1, "/" + rel)).fetchall()
         if len(rows) > 1:
-            matches = ", ".join(f"{name}/{row[0]}" for row in rows[:5]) + (", ..." if len(rows) > 5 else "")
+            matches = ", ".join(f"{name}/{row[1]}" for row in rows[:5]) + (", ..." if len(rows) > 5 else "")
             raise LookupError(f"{id!r} matches {matches}; give the whole id")
         if not rows:
             raise LookupError(f"unknown document {id!r}")
-        path, title, meta, text = rows[0]
-        document = {"id": f"{name}/{path}", "title": title} | ({"fields": _pick(meta, fields)} if fields else {})
-        return document | {"text": text if span is None else "".join(readers.LINE.findall(text)[span[0] - 1 : span[1]])}
+        doc, path, title, meta, text = rows[0]
+        return doc, f"{name}/{path}", title, meta, text
 
     def fields(self, collection, docs):
         """The front-matter fields of a collection (by id with `docs` documents), from a sample spread over it."""
