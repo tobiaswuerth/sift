@@ -12,6 +12,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
   authors, dates, ...) become metadata. Damaged files and scans without text are skipped and reported.
 - Each kind of file has a reader, chosen by extension, so a new format needs only a new reader.
 
+### Changed
+
+- The default reranker is `cross-encoder/ettin-reranker-150m-v1` (Apache-2.0), replacing
+  `Alibaba-NLP/gte-reranker-modernbert-base`: the same size and speed, better in Hugging Face's published comparison
+  (MTEB English retrieval and NanoBEIR, reranking six embedders' results, EmbeddingGemma's among them), and it
+  improves on the first-stage ranking of the scientific sets SciFact, NFCorpus and SCIDOCS. It downloads on first
+  use; nothing needs re-indexing or re-embedding. `SIFT_RERANK_MODEL=Alibaba-NLP/gte-reranker-modernbert-base` keeps the old one.
+
 ### Fixed
 
 - A chunk's line range no longer includes the blank lines around its text, such as the one after front matter.

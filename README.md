@@ -183,7 +183,7 @@ Three optional settings exist for special cases:
 |---|---|---|
 | `SIFT_HOME` | `~/.sift` | Where the index lives |
 | `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model |
-| `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
+| `SIFT_RERANK_MODEL` | `cross-encoder/ettin-reranker-150m-v1` | Any Sentence Transformers cross-encoder |
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
 
