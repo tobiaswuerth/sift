@@ -28,6 +28,9 @@ uv tool install --torch-backend auto sift-rag   # installs the `sift` command
 Or run it without installing: `uvx --torch-backend auto sift-rag serve`. With pip, in a virtual environment:
 `pip install sift-rag`.
 
+To upgrade: `uv tool upgrade sift-rag`, or with pip `pip install -U sift-rag`. Then restart `sift serve` and
+`sift worker` if they run; if a new version needs the index rebuilt, sift says so.
+
 On first use, sift downloads its two models from Hugging Face (about 1.5 GB).
 
 ### GPU support
