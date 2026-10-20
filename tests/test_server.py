@@ -280,6 +280,7 @@ def test_search_tools_pass_every_option_on(embedded, monkeypatch, tool):
         "fields": ["year"],
         "compact": True,
         "all_passages": True,
+        "sort": "-year",
     }
     call(server.build(index)[0], tool, {"query": "brush", "k": 3} | options)
     assert calls == [(("brush", 3), options)]

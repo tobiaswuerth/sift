@@ -91,7 +91,7 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
     calls = []
     monkeypatch.setattr(Index, command, lambda self, *args, **kwargs: calls.append((args, kwargs)) or [])
     run(capsys, command, "brush", "-k", "3", "-c", "notes", "--path", "*.md", "-f", "year=2024", "--fields", "year")
-    run(capsys, command, "brush", "--compact", "--all-passages")
+    run(capsys, command, "brush", "--compact", "--all-passages", "--sort=-year")
     assert calls == [
         (
             ("brush", 3),
@@ -102,11 +102,20 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
                 "fields": ["year"],
                 "compact": False,
                 "all_passages": False,
+                "sort": None,
             },
         ),
         (
             ("brush", 10),
-            {"collection": None, "path": None, "filters": {}, "fields": None, "compact": True, "all_passages": True},
+            {
+                "collection": None,
+                "path": None,
+                "filters": {},
+                "fields": None,
+                "compact": True,
+                "all_passages": True,
+                "sort": "-year",
+            },
         ),
     ]
 

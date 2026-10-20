@@ -86,6 +86,13 @@ AllPassages = Annotated[
     bool,
     Field(description="Every matching passage, several per document; by default only each document's best one."),
 ]
+Sort = Annotated[
+    str | None,
+    Field(
+        description='Order the results by a front-matter field instead of by score, with "-" first for descending, '
+        'e.g. "-created" for the newest first; results without the field come last.'
+    ),
+]
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 
 
@@ -102,9 +109,20 @@ def _add_search(mcp, index, name, description, query_description):
         fields: Fields = None,
         compact: Compact = False,
         all_passages: AllPassages = False,
+        sort: Sort = None,
     ) -> list[dict]:
-        options = {"collection": collection, "path": path, "filters": filters, "fields": fields, "compact": compact}
-        return _run(method, query, k, all_passages=all_passages, **options)
+        return _run(
+            method,
+            query,
+            k,
+            collection=collection,
+            path=path,
+            filters=filters,
+            fields=fields,
+            compact=compact,
+            all_passages=all_passages,
+            sort=sort,
+        )
 
     mcp.tool(name, description=description, annotations=READ_ONLY)(tool)
 

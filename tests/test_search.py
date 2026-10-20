@@ -470,6 +470,40 @@ def test_vsearch_looks_further_for_other_documents(long):
     assert len(set(ids(hits))) == 4
 
 
+# --- ordering by a front-matter field --------------------------------------------
+
+
+def day(hit):
+    return hit["id"].rsplit("/", 1)[1].removesuffix(".md")
+
+
+@pytest.mark.parametrize("sort, expected", [("created", DAYS), ("-created", DAYS[::-1])])
+def test_sort_by_a_front_matter_field(dated, sort, expected):
+    # "The newest papers on X": the best results, newest first.
+    hits = dated.search("pigment", k=20, sort=sort)
+    assert [day(h) for h in hits] == [*expected, "brush"]  # those without the field come last
+
+
+@pytest.mark.parametrize("mode", ["vsearch", "query"])
+def test_sort_in_every_mode(dated, mode):
+    hits = getattr(dated, mode)("pigment", k=20, sort="-created", filters={"created": {">=": "2024"}})
+    assert [day(h) for h in hits] == DAYS[1:][::-1]
+
+
+def test_sort_puts_numbers_before_text(corpus):
+    db, root = corpus
+    for name, rank in (("a", "2"), ("b", '"x"'), ("c", "10"), ("d", "null")):
+        write(root / "ranked" / f"{name}.md", f"---\nrank: {rank}\n---\n# {name}\nranked\n")
+    indexing.index(db)
+    assert [day(h) for h in Index(db).search("ranked", sort="rank")] == ["a", "c", "b", "d"]
+
+
+@pytest.mark.parametrize("sort", ["", "-", "bad key", 1, ["created"]])
+def test_bad_sort_is_a_clear_error(corpus, sort):
+    with pytest.raises(ValueError, match="sort"):
+        Index(corpus[0]).search("brush", sort=sort)
+
+
 # --- keyword search falls back to any term ---------------------------------------
 
 

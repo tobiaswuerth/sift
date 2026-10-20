@@ -110,6 +110,11 @@ def main(argv=None):
         s.add_argument(
             "--all-passages", action="store_true", help="every matching passage, not just each document's best"
         )
+        s.add_argument(
+            "--sort",
+            metavar="FIELD",
+            help="order by a front-matter field instead of score; --sort=-created: newest first",
+        )
         s.add_argument("--json", action="store_true", help="print results as JSON")
     s = sub.add_parser("get", help="print a document by its id (collection/path)")
     s.add_argument("id")
@@ -175,6 +180,7 @@ def _run(a, db):
             fields=_fields(a.fields),
             compact=a.compact,
             all_passages=a.all_passages,
+            sort=a.sort,
         )
         _print_hits(hits, a.json)
     elif a.cmd == "get":

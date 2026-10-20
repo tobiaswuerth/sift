@@ -89,10 +89,29 @@ def _pick(meta, fields):
     }
 
 
-def _present(hits, fields, compact):
-    """Hits as returned: with the front-matter `fields` asked for, and without text if compact."""
+def _check_sort(sort):
+    if sort is not None and not (isinstance(sort, str) and re.fullmatch(r"-?\w+", sort)):
+        raise ValueError(
+            f"sort must be a front-matter field, with - first to sort descending, e.g. '-created'; got {sort!r}"
+        )
+    return sort
+
+
+def _by_field(hits, sort):
+    """Hits ordered by the front-matter field `sort` names, descending with "-" first: numbers before text, and hits
+    without the field last, in their order."""
+    field = sort.removeprefix("-")
+    valued = [(json.loads(hit["meta"]).get(field), hit) for hit in hits]
+    have = [(value, hit) for value, hit in valued if value is not None]
+    have.sort(key=lambda vh: (0, vh[0]) if isinstance(vh[0], int | float) else (1, str(vh[0])), reverse=sort[0] == "-")
+    return [hit for _, hit in have] + [hit for value, hit in valued if value is None]
+
+
+def _present(hits, fields, compact, sort):
+    """Hits as returned: ordered by `sort` if given, with the front-matter `fields` asked for, without text if
+    compact."""
     out = []
-    for hit in hits:
+    for hit in _by_field(hits, sort) if sort else hits:
         shown = {key: hit[key] for key in ("id", "title", "lines", "score")}
         if fields:
             shown["fields"] = _pick(hit["meta"], fields)
@@ -257,25 +276,48 @@ class Index:
     # --- public API ----------------------------------------------------------
 
     # Every search returns the best passage of each document it finds, or with `all_passages` every passage, and
-    # takes `fields`, front-matter fields to add to each hit (["*"] for all), and `compact`, which leaves out the text.
+    # takes `fields`, front-matter fields to add to each hit (["*"] for all), `compact`, which leaves out the text,
+    # and `sort`, a front-matter field to order the hits by instead of score ("-created": newest first).
 
     def search(
-        self, query, k=10, *, collection=None, path=None, filters=None, fields=None, compact=False, all_passages=False
+        self,
+        query,
+        k=10,
+        *,
+        collection=None,
+        path=None,
+        filters=None,
+        fields=None,
+        compact=False,
+        all_passages=False,
+        sort=None,
     ):
         """Exact keyword search, ranked by BM25. Accepts FTS5 syntax: "phrases", prefix*, AND, OR, NOT.
         If no chunk holds all terms of a query without operators, chunks with any of them are returned."""
-        k, where, fields = _check_k(k), _where(self.db, collection, path, filters), _check_fields(fields)
+        k, where = _check_k(k), _where(self.db, collection, path, filters)
+        fields, sort = _check_fields(fields), _check_sort(sort)
         ranked = self._keyword(query, k, *where, all_passages)
         if not ranked and (relaxed := _any_term(query)):
             ranked = self._keyword(relaxed, k, *where, all_passages)
-        return _present(self._hits(ranked), fields, compact)
+        return _present(self._hits(ranked), fields, compact, sort)
 
     def vsearch(
-        self, query, k=10, *, collection=None, path=None, filters=None, fields=None, compact=False, all_passages=False
+        self,
+        query,
+        k=10,
+        *,
+        collection=None,
+        path=None,
+        filters=None,
+        fields=None,
+        compact=False,
+        all_passages=False,
+        sort=None,
     ):
         """Semantic search: cosine similarity between the query and every chunk."""
-        k, where, fields = _check_k(k), _where(self.db, collection, path, filters), _check_fields(fields)
-        return _present(self._hits(self._semantic(query, k, *where, all_passages)), fields, compact)
+        k, where = _check_k(k), _where(self.db, collection, path, filters)
+        fields, sort = _check_fields(fields), _check_sort(sort)
+        return _present(self._hits(self._semantic(query, k, *where, all_passages)), fields, compact, sort)
 
     def query(
         self,
@@ -288,10 +330,12 @@ class Index:
         fields=None,
         compact=False,
         all_passages=False,
+        sort=None,
         candidates=40,
     ):
         """Hybrid search for RAG: keyword and semantic candidates, fused by reciprocal rank, then reranked."""
-        k, where, fields = _check_k(k), _where(self.db, collection, path, filters), _check_fields(fields)
+        k, where = _check_k(k), _where(self.db, collection, path, filters)
+        fields, sort = _check_fields(fields), _check_sort(sort)
         candidates = max(candidates, k)
         fused = {}
         for ranked in (
@@ -307,7 +351,8 @@ class Index:
         for h, s in zip(hits, scores):
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])
-        return _present((hits if all_passages else _first_of_each(hits, itemgetter("id")))[:k], fields, compact)
+        hits = hits if all_passages else _first_of_each(hits, itemgetter("id"))
+        return _present(hits[:k], fields, compact, sort)
 
     def get(self, id, lines=None):
         """Text of an indexed document, by its `collection/path` id: all of it, or `lines` such as "17-26", as
