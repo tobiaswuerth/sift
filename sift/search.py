@@ -161,18 +161,35 @@ def _any_word(query):
     return " OR ".join(f'"{w}"' for w in dict.fromkeys(_words(query)))
 
 
-def _passage(hit, asked):
-    """What the reranker reads of a hit: its title, the front-matter values that share a word with the query `asked`
-    (a set of words), e.g. an author's name or an id, and its text. Only those: all of them (links, licences, long
-    author lists) diluted the passage, and topical queries ranked worse."""
-    named = [
+def _named(hit, asked):
+    """The front-matter values of a hit, but its title, that share a word with the query `asked` (a set of words):
+    an author's name, an id."""
+    return [
         str(value)
         for key, field in json.loads(hit["meta"]).items()
         if key != "title"
         for value in (field if isinstance(field, list) else [field])
         if asked & set(_words(value))
     ]
+
+
+def _passage(hit, named):
+    """What the reranker reads of a hit: its title, the front-matter values the query names, and its text. Only those:
+    all of them (links, licences, long author lists) diluted the passage, and topical queries ranked worse."""
     return f"{hit['title']}\n{' '.join(named)}\n\n{hit['text']}" if named else f"{hit['title']}\n\n{hit['text']}"
+
+
+COSINE_WEIGHT = 0.5  # how much the cosine counts in `query`, in units of the reranker's spread: see docs/benchmarks.md
+
+
+def _blend(rerank, cosine, named, weight=COSINE_WEIGHT):
+    """`query`'s scores: the reranker's, plus the candidates' cosine with the query, centred and in units of the
+    spread of the reranker's scores, so one weight fits any reranker's scale and the scores keep it. A reranker
+    trained on web search ranked scientific claims worse than the embedding did. Candidates whose front matter the
+    query names keep the best cosine: the embedding never sees front matter."""
+    cosine = np.where(named, cosine.max(), cosine)
+    spread = rerank.std() / cosine.std() if np.ptp(cosine) > 0 else 0.0  # ptp: exactly 0 when all agree
+    return rerank + weight * spread * (cosine - cosine.mean())
 
 
 def _first_of_each(items, key):
@@ -288,8 +305,16 @@ class Index:
                 continue
             name, path, title, meta, start, end, text = row
             hit = {"id": f"{name}/{path}", "title": title, "lines": f"{start}-{end}", "score": round(score, 4)}
-            hits.append(hit | {"meta": meta, "text": text})  # meta for _present, text for reranking
+            hits.append(hit | {"meta": meta, "text": text, "chunk": chunk})  # for _present, and `query`'s scores
         return hits
+
+    def _cosines(self, scores, chunks):
+        """The cosines of these chunks among all `scores`; one not embedded yet gets their mean, neither a bonus nor a
+        penalty."""
+        at = np.searchsorted(self.vectors.ids, chunks)  # the vector ids are sorted
+        found = (at < len(self.vectors.ids)) & (self.vectors.ids[np.minimum(at, len(self.vectors.ids) - 1)] == chunks)
+        cosine = np.where(found, scores[np.minimum(at, len(scores) - 1)], np.nan)
+        return np.where(np.isnan(cosine), np.nanmean(cosine) if found.any() else 0.0, cosine)
 
     # --- public API ----------------------------------------------------------
 
@@ -358,13 +383,16 @@ class Index:
         fields, sort = _check_fields(fields), _check_sort(sort)
         candidates = max(candidates, k)
         keyword = self._keyword(_any_word(query), candidates, *where, all_passages)
-        semantic = self._semantic(query, candidates, *where, all_passages)
+        cosines = self._scores(query) if query.strip() else None  # for the semantic candidates and every other
+        semantic = self._nearest(cosines, candidates, *where, all_passages) if cosines is not None else []
         hits = self._hits([(chunk, 0.0) for chunk in dict.fromkeys(chunk for chunk, _ in keyword + semantic)])
         if not hits:
             return []
         asked = set(_words(query))
-        scores = self.models.rerank(query, [_passage(h, asked) for h in hits])
-        for h, s in zip(hits, scores):  # raw: Ettin's sigmoid saturates, 0.9999 for every good match
+        named = [_named(h, asked) for h in hits]
+        rerank = np.asarray(self.models.rerank(query, [_passage(h, n) for h, n in zip(hits, named)]), np.float64)
+        scores = _blend(rerank, self._cosines(cosines, [h["chunk"] for h in hits]), np.array([bool(n) for n in named]))
+        for h, s in zip(hits, scores):
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])
         hits = hits if all_passages else _first_of_each(hits, itemgetter("id"))

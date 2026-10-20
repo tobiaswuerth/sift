@@ -239,10 +239,18 @@ def test_search_uses_the_models_it_is_given(embedded):
     assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
 
 
-def test_query_scores_are_the_rerankers_raw_scores(embedded):
+class Alike(Constant):
+    """Constant models whose vectors are all alike, so every cosine with a query is the same."""
+
+    def vectors(self, ids, matrix):
+        return super().vectors(ids, np.ones_like(matrix))
+
+
+def test_query_scores_are_the_rerankers_raw_scores_when_the_cosines_agree(embedded):
     # Through a sigmoid they ran from 0 to 1, but saturated: Ettin scores close matches 8 to 12, so every hit showed
-    # 0.9999, and an off-topic query's best still 0.98. The raw scores tell strong hits from weak ones.
-    hits = Index(embedded[0], models=Constant()).query("anything")
+    # 0.9999, and an off-topic query's best still 0.98. The raw scores tell strong hits from weak ones; the cosine
+    # shifts them only where the candidates differ in meaning.
+    hits = Index(embedded[0], models=Alike()).query("anything")
     assert [h["score"] for h in hits] == [2.0, 1.0, 0.0]
 
 
@@ -283,6 +291,65 @@ def test_the_reranker_reads_only_the_front_matter_values_a_query_names(embedded_
     models.texts.clear()
     Index(embedded_paper.db, models=models).query("sequence transduction")
     assert "Attention\n\n# Attention\n\nSequence transduction with attention only." in models.texts
+
+
+# --- query: the reranker, and the passage's meaning ---------------------------------
+
+
+def test_blend_is_the_rerankers_score_when_the_cosines_agree():
+    rerank = np.array([3.0, 1.0, 2.0])
+    assert search._blend(rerank, np.full(3, 0.8), np.zeros(3, bool)).tolist() == rerank.tolist()
+
+
+def test_blend_lifts_a_passage_closer_in_meaning():
+    # The reranker alone ranked scientific claims worse than the embedding did (BEIR SciFact nDCG@10 0.760 against
+    # 0.840): the cosine has a say too.
+    # The reranker prefers the second slightly (its third candidate it clearly dislikes); the first is far closer.
+    blended = search._blend(np.array([1.0, 1.05, 0.0]), np.array([0.9, 0.5, 0.5]), np.zeros(3, bool))
+    assert blended[0] > blended[1] > blended[2]
+
+
+def test_blend_fits_any_rerankers_scale():
+    # Rerankers score on scales of their own; the cosine counts in units of their spread, so one weight fits all.
+    rerank, cosine, named = np.array([1.0, 1.1, 0.4]), np.array([0.9, 0.5, 0.7]), np.zeros(3, bool)
+    assert np.allclose(search._blend(10 * rerank, cosine, named), 10 * search._blend(rerank, cosine, named))
+
+
+def test_blend_leaves_front_matter_matches_to_the_reranker():
+    # The embedding never sees front matter: a paper found by its author must not lose for a low cosine.
+    blended = search._blend(np.array([1.1, 1.0]), np.array([0.5, 0.9]), np.array([True, False]))
+    assert blended[0] > blended[1]
+
+
+class Disagreeing(Recording):
+    """Models that embed as the fakes do (bag of words) and rerank like a reranker that slightly prefers one passage
+    to the one closest in meaning, and clearly dislikes a third."""
+
+    def __init__(self, fakes, preferred, disliked):
+        super().__init__()
+        self.fakes, self.preferred, self.disliked = fakes, preferred, disliked
+
+    def encode(self, texts, query=False):
+        return self.fakes.encode(texts, query)
+
+    def rerank(self, query, texts):
+        self.texts += texts
+        return np.array([1.01 if self.preferred in t else 0.0 if self.disliked in t else 1.0 for t in texts])
+
+
+def test_query_weighs_meaning_as_well_as_the_reranker(embedded, fake_models):
+    models = Disagreeing(fake_models, preferred="Reward", disliked="Colour")
+    hits = Index(embedded[0], models=models).query("painting robot brush strokes", k=1)
+    assert ids(hits) == ["notes/robots/brush.md"]  # far closer in meaning; the reranker's preference is slight
+
+
+def test_query_finds_documents_not_embedded_yet(embedded):
+    # After `sift index` and before `sift embed`, a new document has no vector: keyword search still finds it, and
+    # its cosine counts as the others' mean, neither for it nor against it.
+    db, root = embedded
+    write(root / "new.md", "# Pigment chart\n\npigment pigment\n")
+    indexing.index(db)
+    assert "notes/new.md" in ids(Index(db).query("pigment chart"))
 
 
 def test_hits_skip_chunks_removed_meanwhile(corpus):
