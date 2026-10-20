@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from sift import search, store
@@ -99,6 +100,16 @@ def test_vsearch(embedded):
     assert ids(index.vsearch("anything", filters={"categories": "cs.RO"})) == ["notes/robots/brush.md"]
     assert index.vsearch("anything", filters={"categories": "none"}) == []
     assert len(index.vsearch("anything", k=100)) == 3
+
+
+def test_broken_vectors_do_not_hide_the_others(embedded):
+    # PyTorch ranks NaN above every number, so as many NaN vectors as results asked for left vsearch with none.
+    db, _ = embedded
+    nan = np.full(64, np.nan, np.float16).tobytes()
+    db.execute("UPDATE vectors SET vec = ? WHERE chunk IN (SELECT chunk FROM vectors ORDER BY chunk LIMIT 2)", (nan,))
+    store.touch(db)
+    db.commit()
+    assert len(Index(db).vsearch("anything", k=2)) == 1  # the one intact vector of three
 
 
 @pytest.mark.parametrize("fp16, dtype", [(True, "float16"), (False, "float32")])

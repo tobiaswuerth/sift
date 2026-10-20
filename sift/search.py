@@ -1,4 +1,7 @@
-"""The three search modes: exact keyword (BM25), semantic (exact GPU vector search) and hybrid with reranking."""
+"""The three search modes: exact keyword (BM25), semantic (exact vector search) and hybrid with reranking.
+
+Through a worker (SIFT_EMBED_REMOTE), queries are embedded and reranked there, vectors are searched as a NumPy
+matrix, and PyTorch never loads: a search starts in a fraction of a second, even on a light notebook."""
 
 import json
 import re
@@ -6,7 +9,7 @@ import sqlite3
 
 import numpy as np
 
-from . import store
+from . import remote, store
 
 STOPWORDS = set(
     "a an and are as at be by can do does for from has have how i in is it of on or that the this to "
@@ -114,6 +117,25 @@ def _any_word(query):
     return " OR ".join(f'"{w}"' for w in dict.fromkeys(words))
 
 
+def _models():
+    """What embeds and reranks: the worker, if there is one, without loading PyTorch; else the models here."""
+    if remote.REMOTE:
+        return remote
+    from . import embed
+
+    return embed
+
+
+def _top(ids, scores, k):
+    """The k best (chunk id, score) pairs, best first. A broken (NaN) vector ranks last: PyTorch's topk ranked NaN
+    first, so a few broken vectors pushed every other result out."""
+    scores = np.where(np.isnan(scores), -np.inf, scores)
+    k = min(k, len(scores))
+    best = np.argpartition(-scores, k - 1)[:k]
+    best = best[np.lexsort((best, -scores[best]))]  # by score, ties by position: the same order every time
+    return [(int(ids[i]), float(scores[i])) for i in best if scores[i] > -np.inf]
+
+
 class Index:
     def __init__(self, db=None):
         self.db = db or store.connect()
@@ -135,11 +157,8 @@ class Index:
         raise ValueError(f"invalid search query {match!r}: {error}")
 
     def _load(self):
-        """Load all vectors into RAM; reload when the index has changed since the last load."""
-        import torch
-
-        from . import embed
-
+        """Load all vectors into RAM; reload when the index has changed since the last load. Through a worker they
+        stay a NumPy matrix; otherwise they become a tensor, which moves to the GPU while in use."""
         version = store.get_meta(self.db, "version")
         if version is not None and version == self.version:
             return
@@ -149,10 +168,17 @@ class Index:
         ids, mat = np.empty(n, np.int64), np.empty((n, int(store.get_meta(self.db, "dim"))), np.float16)
         for row, (chunk, vec) in enumerate(self.db.execute("SELECT chunk, vec FROM vectors ORDER BY chunk")):
             ids[row], mat[row] = chunk, np.frombuffer(vec, np.float16)
-        host = torch.from_numpy(mat)
-        self.ids, self.host = ids, host if embed.fp16() else host.float()  # CPUs are slow at fp16 matmul
-        embed.discard(self._key)  # a GPU copy of the old vectors goes with them
-        self.mat = None if embed.gpu() else self.host
+        if remote.REMOTE:
+            self.ids, self.host, self.mat = ids, mat.astype(np.float32), None  # CPUs are slow at fp16 matmul
+        else:
+            import torch
+
+            from . import embed
+
+            host = torch.from_numpy(mat)
+            self.ids, self.host = ids, host if embed.fp16() else host.float()
+            embed.discard(self._key)  # a GPU copy of the old vectors goes with them
+            self.mat = None if embed.gpu() else self.host
         self.version = version
 
     def _vectors(self):
@@ -168,26 +194,27 @@ class Index:
     def _release(self):
         self.mat = None  # the copy in RAM stays
 
-    def _semantic(self, query, k, where, args):
+    def _scores(self, query):
+        """Cosine similarity of the query with every chunk, as a NumPy array: on the GPU if there is one, which
+        holds the vectors; through a worker, in RAM."""
+        self._load()
+        q = _models().encode([query], query=True)[0]
+        if remote.REMOTE:
+            return self.host @ q.astype(np.float32)
         import torch
 
-        from .embed import encode
+        _, mat = self._vectors()
+        return (mat @ torch.from_numpy(q).to(mat.device, mat.dtype)).float().cpu().numpy()
 
+    def _semantic(self, query, k, where, args):
         if not query.strip():  # the embedding of nothing is close to arbitrary chunks
             return []
-        ids, mat = self._vectors()
-        q = torch.from_numpy(encode([query], query=True)[0]).to(mat.device, mat.dtype)
-        scores = mat @ q
+        scores = self._scores(query)
         if args:  # restrict to chunks of matching documents
             sql = f"SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE {where}"
-            allowed = np.array([c for (c,) in self.db.execute(sql, args)], np.int64)
-            pos = np.searchsorted(ids, allowed)
-            pos = pos[(pos < len(ids)) & (ids[np.minimum(pos, len(ids) - 1)] == allowed)]
-            keep = torch.zeros(len(ids), dtype=torch.bool, device=mat.device)
-            keep[torch.from_numpy(pos).to(mat.device)] = True
-            scores = scores.masked_fill(~keep, float("-inf"))
-        top = torch.topk(scores.float(), min(k, len(ids)))
-        return [(int(ids[i]), s) for s, i in zip(top.values.tolist(), top.indices.tolist()) if s > float("-inf")]
+            allowed = np.fromiter((c for (c,) in self.db.execute(sql, args)), np.int64)
+            scores = np.where(np.isin(self.ids, allowed, assume_unique=True), scores, -np.inf)
+        return _top(self.ids, scores, k)
 
     def _hits(self, ranked):
         sql = """SELECT co.name, d.path, d.title, d.meta, c.line_start, c.line_end, substr(d.text, c.pos + 1, c.len)
@@ -223,8 +250,6 @@ class Index:
 
     def query(self, query, k=10, collection=None, path=None, filters=None, fields=None, compact=False, candidates=40):
         """Hybrid search for RAG: keyword and semantic candidates, fused by reciprocal rank, then reranked."""
-        from .embed import rerank
-
         k, where, fields = _check_k(k), _where(self.db, collection, path, filters), _check_fields(fields)
         candidates = max(candidates, k)
         fused = {}
@@ -234,7 +259,7 @@ class Index:
         hits = self._hits(sorted(fused.items(), key=lambda x: -x[1]))
         if not hits:
             return []
-        scores = rerank(query, [f"{h['title']}\n\n{h['text']}" for h in hits])
+        scores = _models().rerank(query, [f"{h['title']}\n\n{h['text']}" for h in hits])
         for h, s in zip(hits, scores):
             h["score"] = round(float(s), 4)
         return _present(sorted(hits, key=lambda h: -h["score"])[:k], fields, compact)

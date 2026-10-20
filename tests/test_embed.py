@@ -19,9 +19,9 @@ def vector_count(db):
 
 
 def models_in_a_fresh_process(**env):
-    """The models and remote sift.embed picks when imported with these environment variables, without sift's own."""
+    """The models and remote sift picks when imported with these environment variables, without sift's own."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("SIFT_")} | env
-    code = "from sift import embed; print(embed.EMBED_MODEL, embed.RERANK_MODEL, embed.REMOTE)"
+    code = "from sift import embed, remote; print(embed.EMBED_MODEL, embed.RERANK_MODEL, remote.REMOTE)"
     run = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=120)
     assert run.returncode == 0, run.stderr
     return tuple(run.stdout.split())
@@ -35,11 +35,11 @@ def test_default_models():
 
 def test_models_load_with_limits(fake_models):
     model = fake_models.embedder()
-    assert (model.name, model.device, model.max_seq_length, model.halved) == (
+    assert (model.name, model.device, model.max_seq_length, model.dtype) == (
         fake_models.EMBED_MODEL,
         "cpu",
         fake_models.MAX_TOKENS,
-        False,
+        "float32",
     )
     assert fake_models.reranker().name == fake_models.RERANK_MODEL
     assert fake_models.embedder() is model  # loaded once
@@ -54,12 +54,26 @@ def test_device_prefers_cuda_then_mps_then_cpu(fake_models, monkeypatch, cuda, m
     assert fake_models._device() == device
 
 
-@pytest.mark.parametrize("device, fp16", [("cuda", True), ("cuda:1", True), ("mps", True), ("cpu", False)])
-def test_models_use_fp16_on_gpus(fake_models, monkeypatch, device, fp16):
+@pytest.mark.parametrize(
+    "device, bf16, dtype",
+    [
+        ("cuda", True, "bfloat16"),
+        ("cuda:1", True, "bfloat16"),
+        ("cuda", False, "float32"),  # an older GPU without bfloat16
+        ("mps", True, "float32"),
+        ("cpu", True, "float32"),
+    ],
+)
+def test_models_compute_in_a_half_precision_that_cannot_overflow(fake_models, monkeypatch, device, bf16, dtype):
+    # EmbeddingGemma overflows in fp16 now and then, and the vector comes out NaN; so may Qwen models. bfloat16 has
+    # the range of float32.
+    import torch
+
     monkeypatch.setattr(fake_models, "DEVICE", device)
-    assert fake_models.fp16() == fp16
-    assert fake_models.embedder().halved == fp16
-    assert fake_models.reranker().model.halved == fp16
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda *a, **k: bf16)
+    assert fake_models.embedder().dtype == dtype
+    assert fake_models.reranker().model.dtype == dtype
+    assert fake_models.rerank_here("brush", ["brush strokes"]).shape == (1,)  # its scoring head converted too
 
 
 def test_encode_returns_normalised_fp16(fake_models):
@@ -120,6 +134,53 @@ def test_embed_pending(corpus, fake_models, capsys):
     assert "embedded 3 chunks" in capsys.readouterr().err
     fake_models.embed_pending(db)
     assert "nothing to embed" in capsys.readouterr().err
+
+
+NAN = np.full(64, np.nan, np.float16).tobytes()
+
+
+def test_vectors_the_model_broke_are_not_stored(corpus, fake_models, monkeypatch, capsys):
+    real = fake_models.encode
+
+    def breaking(texts, query=False):
+        vectors = real(texts, query).copy()
+        vectors[[i for i, t in enumerate(texts) if "Reward" in t]] = np.nan  # an overflow inside the model
+        return vectors
+
+    monkeypatch.setattr(fake_models, "encode", breaking)
+    fake_models.embed_pending(corpus[0])
+    assert vector_count(corpus[0]) == 2  # the third stays pending, for another try
+    assert "1 chunk could not be embedded" in capsys.readouterr().err
+
+
+def test_broken_vectors_from_older_versions_are_embedded_again(embedded, fake_models, capsys):
+    # sift 0.5 and older embedded in fp16, where EmbeddingGemma overflows now and then into NaN vectors.
+    db, _ = embedded
+    (chunk,) = db.execute("SELECT chunk FROM vectors LIMIT 1").fetchone()
+    db.execute("UPDATE vectors SET vec = ? WHERE chunk = ?", (NAN, chunk))
+    db.execute("DELETE FROM meta WHERE key = 'vectors_checked'")  # an index from before the check
+    db.commit()
+    capsys.readouterr()
+    fake_models.embed_pending(db)
+    (vec,) = db.execute("SELECT vec FROM vectors WHERE chunk = ?", (chunk,)).fetchone()
+    assert np.isfinite(np.frombuffer(vec, np.float16)).all()
+    assert "1 broken vector" in capsys.readouterr().err
+    fake_models.embed_pending(db)  # checked once, not on every run
+    assert "checking" not in capsys.readouterr().err
+
+
+def test_intact_vectors_from_older_versions_stay(embedded, fake_models, capsys):
+    db, _ = embedded
+    db.execute("DELETE FROM meta WHERE key = 'vectors_checked'")  # an index from before the check
+    db.commit()
+    before = dict(db.execute("SELECT chunk, vec FROM vectors"))
+    capsys.readouterr()
+    fake_models.embed_pending(db)
+    assert dict(db.execute("SELECT chunk, vec FROM vectors")) == before
+    err = capsys.readouterr().err
+    assert "checking 3 vectors" in err
+    assert "dropped" not in err
+    assert "nothing to embed" in err
 
 
 def test_embed_pending_reports_progress_after_every_batch(corpus, fake_models, monkeypatch, capsys):
@@ -219,7 +280,7 @@ def test_too_little_free_gpu_memory_falls_back_to_cpu(fake_models, gpu_memory, m
     monkeypatch.setattr(fake_models, "DEVICE", "cuda")
     gpu_memory.free = 2 * GiB  # less than the 2 GiB budget the models need, after headroom
     model = fake_models.embedder()
-    assert (model.device, fake_models.DEVICE, model.halved) == ("cpu", "cpu", False)
+    assert (model.device, fake_models.DEVICE, model.dtype) == ("cpu", "cpu", "float32")
     assert gpu_memory.budgets == []
     assert "only 2.0 GB of GPU memory is free; using the CPU" in capsys.readouterr().err
 
@@ -375,7 +436,7 @@ def test_models_wait_in_ram_until_used(fake_models, monkeypatch):
     monkeypatch.setattr(fake_models, "DEVICE", "cuda")
     embedder, reranker = fake_models.embedder(), fake_models.reranker()
     assert (embedder.device, reranker.device) == ("cpu", "cpu")
-    assert embedder.halved  # fp16 already, so moving to the GPU is quick
+    assert embedder.dtype == "bfloat16"  # half precision already, so moving to the GPU is quick
     fake_models.encode(["brush strokes"])
     assert (embedder.device, reranker.device) == ("cuda", "cpu")
     fake_models.rerank("brush", ["brush strokes"])
@@ -534,8 +595,7 @@ def test_coming_back_to_a_busy_gpu_uses_the_cpu(fake_models, clock, gpu_memory, 
     assert fake_models.rerank("brush", ["brush strokes"]).shape == (1,)
     embedder, reranker = fake_models.embedder(), fake_models.reranker()
     assert (fake_models.DEVICE, embedder.device, reranker.device) == ("cpu", "cpu", "cpu")
-    assert not embedder.halved  # float32 again: CPUs are slow at fp16
-    assert not reranker.model.halved
+    assert embedder.dtype == reranker.model.dtype == "float32"  # float32 again: CPUs are slow at half precision
     assert len(gpu_memory.budgets) == 1  # no budget for memory that isn't there
     assert "using the CPU" in capsys.readouterr().err
 

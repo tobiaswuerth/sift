@@ -2,12 +2,13 @@ import io
 import json
 import runpy
 import sqlite3
+import subprocess
 import sys
 
 import pytest
 from mcp.server.mcpserver import MCPServer
 
-from sift import cli, store
+from sift import cli, remote, store
 
 
 def run(capsys, *argv):
@@ -28,6 +29,41 @@ def test_add_index_embed(notes, home, fake_models, capsys):
     assert "3 added" in run(capsys, "index").err
     assert "embedded 3 chunks" in run(capsys, "embed").err
     assert "embedded 3 chunks" in run(capsys, "embed", "--reset").err
+
+
+@pytest.mark.parametrize(
+    "argv, target",
+    [
+        (["embed"], "sift.embed.embed_pending"),
+        (["vsearch", "x"], "sift.search.Index.vsearch"),
+        (["query", "x"], "sift.search.Index.query"),
+        (["serve"], "sift.server.serve"),
+        (["worker"], "sift.worker.serve"),
+    ],
+)
+def test_slow_commands_say_they_started_before_loading_anything(home, monkeypatch, capsys, argv, target):
+    # Loading PyTorch can take long, longer still with Intel's GPU build: without a word first, sift looked hung.
+    said = []
+    monkeypatch.setattr(target, lambda *args, **kwargs: said.append(capsys.readouterr().err) or [])
+    cli.main(argv)
+    assert said[0].startswith(f"sift {argv[0]}: starting")
+
+
+def test_the_cli_starts_with_the_standard_library_alone():
+    # CI installs the wheel without dependencies and runs `sift --version`; importing NumPy at the top of the CLI
+    # broke that. It also keeps the first line quick.
+    code = "import sys; sys.modules.update(numpy=None, torch=None); from sift import cli; cli.main(['--version'])"
+    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.startswith("sift ")
+
+
+@pytest.mark.parametrize("command", ["vsearch", "query"])
+def test_searching_through_a_worker_says_nothing_of_pytorch(home, monkeypatch, capsys, command):
+    monkeypatch.setattr(remote, "REMOTE", "https://t.p@workstation:8766")
+    monkeypatch.setattr(f"sift.search.Index.{command}", lambda *args, **kwargs: [])
+    cli.main([command, "x"])
+    assert "PyTorch" not in capsys.readouterr().err  # it doesn't load it
 
 
 @pytest.mark.parametrize("command", ["search", "vsearch", "query"])
