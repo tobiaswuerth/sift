@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-20
+
 ### Added
 
 - Keyword search covers front-matter values, such as authors and ids, in `search` and in `query`: "Vaswani
@@ -216,7 +218,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/tobiaswuerth/sift/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/tobiaswuerth/sift/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tobiaswuerth/sift/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/tobiaswuerth/sift/compare/v0.4.1...v0.5.1
