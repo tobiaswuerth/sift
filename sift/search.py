@@ -3,7 +3,6 @@
 import json
 import re
 import sqlite3
-from pathlib import Path
 
 import numpy as np
 
@@ -191,9 +190,8 @@ class Index:
         return [(int(ids[i]), s) for s, i in zip(top.values.tolist(), top.indices.tolist()) if s > float("-inf")]
 
     def _hits(self, ranked):
-        sql = """SELECT co.name, d.path, d.title, d.meta, c.line_start, c.line_end, fts.text FROM chunks c
-                 JOIN docs d ON d.id = c.doc JOIN collections co ON co.id = d.collection JOIN fts ON fts.rowid = c.id
-                 WHERE c.id = ?"""
+        sql = """SELECT co.name, d.path, d.title, d.meta, c.line_start, c.line_end, substr(d.text, c.pos + 1, c.len)
+                 FROM chunks c JOIN docs d ON d.id = c.doc JOIN collections co ON co.id = d.collection WHERE c.id = ?"""
         hits = []
         for chunk, score in ranked:
             row = self.db.execute(sql, (chunk,)).fetchone()
@@ -244,10 +242,10 @@ class Index:
     def get(self, id, lines=None):
         """Text of an indexed document, by its `collection/path` id: all of it, or `lines` such as "17-26", as
         search hits give them. The path may leave out folders if the file name is unique in the collection.
-        Other files are never read."""
+        The text comes from the index as it was indexed, so it always matches the hits."""
         span = None if lines is None else _line_span(lines)
         name, _, rel = id.partition("/")
-        sql = "SELECT co.path, d.path FROM docs d JOIN collections co ON co.id = d.collection WHERE co.name = ? AND "
+        sql = "SELECT d.text, d.path FROM docs d JOIN collections co ON co.id = d.collection WHERE co.name = ? AND "
         rows = self.db.execute(sql + "d.path = ?", (name, rel)).fetchall()
         if not rows and rel:  # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
             rows = self.db.execute(sql + "substr(d.path, -?) = ? LIMIT 6", (name, len(rel) + 1, "/" + rel)).fetchall()
@@ -256,11 +254,7 @@ class Index:
             raise LookupError(f"{id!r} matches {matches}; give the whole id")
         if not rows:
             raise LookupError(f"unknown document {id!r}")
-        root, rel = rows[0]
-        try:
-            text = store.decode((Path(root) / rel).read_bytes()).replace("\r\n", "\n")  # as indexed
-        except OSError as e:
-            raise LookupError(f"cannot read {id!r}: {e.strerror or e}") from None
+        text = rows[0][0]
         return text if span is None else "".join(store.LINE.findall(text)[span[0] - 1 : span[1]])
 
     def fields(self, collection, docs):

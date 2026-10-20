@@ -174,3 +174,12 @@ def test_unusable_home_is_a_message(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "HOME", home)
     with pytest.raises(SystemExit, match=r"^error: "):
         cli.main(["status"])
+
+
+def test_add_with_chosen_fields(tmp_path, home, capsys):
+    folder = tmp_path / "qa"
+    folder.mkdir()
+    (folder / "qa.jsonl").write_text(json.dumps({"key": "q1", "q": "Why?", "a": "Because."}) + "\n", encoding="utf-8")
+    run(capsys, "add", str(folder), "--id", "key", "--title", "q", "--text", "q,a")
+    run(capsys, "index")
+    assert run(capsys, "get", "qa/qa/q1").out == "# Why?\n\nWhy?\n\nBecause.\n"  # a final newline for the shell

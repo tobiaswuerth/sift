@@ -60,6 +60,13 @@ def main(argv=None):
     s = sub.add_parser("add", help="register a folder as a collection")
     s.add_argument("path")
     s.add_argument("--name", help="collection name (default: folder name)")
+    s.add_argument("--id", help="JSON Lines: the field with each record's id (default: id or _id, else the line)")
+    s.add_argument("--title", help="JSON Lines: the title field (default: title, name, headline or subject)")
+    s.add_argument(
+        "--text",
+        help="JSON Lines: the text field(s), comma-separated "
+        "(default: text, content, body, abstract, description or summary, else the longest string)",
+    )
     s = sub.add_parser("rm", help="remove a collection from the index (its files stay on disk)")
     s.add_argument("name")
     s = sub.add_parser("index", help="scan collections and update the keyword index")
@@ -105,7 +112,8 @@ def main(argv=None):
 
 def _run(a, db):
     if a.cmd == "add":
-        name = store.add_collection(db, a.path, a.name)
+        chosen = {"id": a.id, "title": a.title, "text": a.text and [f.strip() for f in a.text.split(",")]}
+        name = store.add_collection(db, a.path, a.name, {k: v for k, v in chosen.items() if v})
         print(f"added collection {name!r}; run `sift index` next", file=sys.stderr)
     elif a.cmd == "rm":
         n = store.remove_collection(db, a.name)
@@ -127,7 +135,8 @@ def _run(a, db):
     elif a.cmd == "get":
         from .search import Index
 
-        sys.stdout.write(Index(db).get(a.id, a.lines))
+        text = Index(db).get(a.id, a.lines)
+        sys.stdout.write(text if text.endswith("\n") or not text else text + "\n")  # JSON records end without one
     elif a.cmd == "status":
         from .search import Index
 

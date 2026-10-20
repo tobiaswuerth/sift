@@ -5,6 +5,22 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- JSON Lines files (`.jsonl`, `.ndjson`): one document per line, with the id, title and text found by name (`id`,
+  `title`, `text`, `abstract`, ...) and every other field as metadata. `sift add --id/--title/--text` chooses other
+  fields. A changed file re-indexes only its changed records.
+
+### Changed
+
+- **The index holds the documents' text** (once: chunks are spans of it), so `get` reads the index instead of the
+  file, and results and documents always agree. **Indexes made by sift 0.2 or older must be rebuilt**: delete
+  `sift.db` and run `sift add`, `sift index` and `sift embed` again. The layout now has a version, so later changes
+  can migrate.
+- The default embedding model is `google/embeddinggemma-2` (768 dimensions, Apache-2.0), replacing
+  `Qwen/Qwen3-Embedding-0.6B`. Run `sift embed --reset` to switch an existing index. It needs Pillow and
+  torchvision, now dependencies; with pip, install torchvision from the same index as torch.
+
 ## [0.2.0] - 2026-10-19
 
 ### Added
