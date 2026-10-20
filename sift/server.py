@@ -13,7 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from . import embed
 from .search import Index
 
-INSTRUCTIONS = """Search the user's local text and Markdown files, indexed by sift.
+INSTRUCTIONS = """Search the user's local documents and notes, indexed by sift.
 When a question touches what these collections cover, search here before answering from memory or searching the web,
 and cite what you find; say so when nothing relevant turns up.
 
@@ -51,7 +51,7 @@ def _run(fn, *args):
     agent; anything else counts as a crash, and the MCP library tells the agent just "Error executing tool"."""
     try:
         return fn(*args)
-    except (LookupError, ValueError, sqlite3.Error) as e:
+    except (LookupError, ValueError, ConnectionError, sqlite3.Error) as e:  # ConnectionError: the embedding remote
         raise ToolError(str(e)) from None
 
 
@@ -126,14 +126,24 @@ async def _release_gpu_when_idle():
 
 
 async def _serve_http(mcp, host, port):
-    """The MCP library's HTTP server, but with a time limit on shutdown. Without one, uvicorn waits for every
+    app = mcp.streamable_http_app(host=host)  # the host decides on DNS-rebinding protection
+    await serve_app(app, host, port, mcp.settings.log_level.lower())
+
+
+async def serve_app(app, host, port, log_level="info", access_log=True):
+    """Serve an HTTP app with uvicorn, but with a time limit on shutdown. Without one, uvicorn waits for every
     connection to close (Python 3.12+), even after a second Ctrl+C, and a client that leaves a request unfinished
     keeps the server from ever stopping."""
     import uvicorn
 
-    app = mcp.streamable_http_app(host=host)  # the host decides on DNS-rebinding protection
-    log_level = mcp.settings.log_level.lower()
-    config = uvicorn.Config(app, host=host, port=port, log_level=log_level, timeout_graceful_shutdown=SHUTDOWN_SECONDS)
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level=log_level,
+        access_log=access_log,
+        timeout_graceful_shutdown=SHUTDOWN_SECONDS,
+    )
     logging.getLogger("uvicorn.error").addFilter(_no_cancelled_requests)  # after Config, which sets up logging
     await uvicorn.Server(config).serve()
 
@@ -158,7 +168,13 @@ async def _serve(mcp, host, port, stdio):
 def serve(host="127.0.0.1", port=8765, stdio=False):
     mcp, index = build()
     print("loading models and vectors into RAM ...", file=sys.stderr)  # they move to the GPU when used
-    embed.embedder()
+    if not embed.REMOTE:
+        embed.embedder()
+    else:  # the remote embeds queries; keyword search works without it
+        try:
+            embed.remote_model()
+        except ConnectionError as e:
+            print(f"warning: {e}", file=sys.stderr)
     embed.reranker()
     try:
         index._load()

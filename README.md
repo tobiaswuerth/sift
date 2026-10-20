@@ -55,6 +55,7 @@ sift get papers/2401.02225.md --lines 14-23   # only some lines, e.g. those of a
 sift status                            # collections and counts
 sift rm papers                         # remove a collection from the index; its files stay on disk
 sift serve                             # MCP server on http://127.0.0.1:8765/mcp
+sift worker                            # embed for other machines on this one's GPU (see below)
 ```
 
 `sift index` and `sift embed` are incremental: run them again after files change, and only new or changed files are
@@ -174,16 +175,49 @@ A registration made without `--scope user` can be removed in the folder where it
 Connectors in claude.ai and in the Chat tab of the Claude apps can't use sift: claude.ai reaches connectors from
 Anthropic's servers, which can't reach a server on your computer.
 
+## Embedding on another machine
+
+A machine without a GPU, such as a notebook, can borrow another machine's. Run `sift worker` on the one with the GPU:
+
+```bash
+sift worker            # listens on port 8766 and prints the address to use
+```
+
+and point sift at it on the other, e.g. in PowerShell (`setx` keeps it for new terminals; bash:
+`export SIFT_EMBED_REMOTE=...`):
+
+```powershell
+setx SIFT_EMBED_REMOTE http://workstation:8766
+```
+
+`sift embed` then sends the chunks to the worker, 256 at a time, and stores the vectors it gets back, without loading
+the model itself. Searches embed their queries there too, in the CLI and in `sift serve`; the reranker stays local.
+The worker only computes: it sees the texts it embeds, but no index and no files. It sizes its batches to its GPU
+and gives the GPU back after 5 idle minutes, like `sift serve`. The worker's `SIFT_EMBED_MODEL` decides the model,
+and sift refuses a worker whose model differs from the one the index was embedded with.
+
+The worker listens to the whole network and has no password, and texts travel unencrypted: use it on networks you
+trust. To let it through the Windows firewall from your own subnet only, in PowerShell as administrator:
+
+```powershell
+New-NetFirewallRule -DisplayName "sift worker" -Direction Inbound -Protocol TCP -LocalPort 8766 -Action Allow -RemoteAddress LocalSubnet
+```
+
+If Windows asks whether to let Python through the firewall, allow it: cancelling adds a rule that blocks Python, and
+blocking rules win over allowing ones. On Linux with ufw: `sudo ufw allow from 192.168.1.0/24 to any port 8766
+proto tcp`, with your network's range.
+
 ## Configuration
 
 None needed: sift picks the device, the GPU memory budget, the batch size and the number of worker processes itself.
-Three optional settings exist for special cases:
+Four optional settings exist for special cases:
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `SIFT_HOME` | `~/.sift` | Where the index lives |
 | `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model |
 | `SIFT_RERANK_MODEL` | `cross-encoder/ettin-reranker-150m-v1` | Any Sentence Transformers cross-encoder |
+| `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed on, e.g. `http://workstation:8766` |
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
 
@@ -196,6 +230,9 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   those). Each kind of file has a reader, chosen by extension, that turns it into documents; adding a format means
   adding a reader. Markdown, including documents converted to it, is split into chunks of about 3,000 characters
   (about 750 tokens) on line boundaries, preferring headings, with a small overlap.
+- **Remote embedding:** plain HTTP. `GET /` names the worker's model and vector length; `POST /embed` takes
+  `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per text. The worker takes
+  JSON only, so a web page can't put it to work, and runs one request at a time on the GPU.
 - **Storage:** one SQLite database in WAL mode holds every document's text, metadata, the FTS5 keyword index and
   the vectors (fp16). The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
   Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.

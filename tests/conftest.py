@@ -196,7 +196,7 @@ def fake_models(monkeypatch, gpu_memory, clock):
     monkeypatch.setattr(embed, "_batch_size", 128)
     monkeypatch.setattr(embed, "_resident", {})  # nothing on the GPU yet
     monkeypatch.setattr(embed, "_released", False)
-    caches = (embed.embedder, embed.reranker, embed.limit_gpu_memory)
+    caches = (embed.embedder, embed.reranker, embed.limit_gpu_memory, embed._remote_info)
     for cached in caches:
         cached.cache_clear()
     yield embed
@@ -207,6 +207,11 @@ def fake_models(monkeypatch, gpu_memory, clock):
 def write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="")  # the same bytes on every OS
+
+
+def nobody_listens():
+    """An address no connection can reach. Port 0 fails at once; a closed port takes 2 s to refuse on Windows."""
+    return "http://127.0.0.1:0"
 
 
 def index_contents(db):
