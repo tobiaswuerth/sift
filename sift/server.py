@@ -82,6 +82,10 @@ Fields = Annotated[
     Field(description='Front-matter fields to add to each result, e.g. ["url", "created"]; ["*"] for all of them.'),
 ]
 Compact = Annotated[bool, Field(description="Leave out the text: survey many results, then `get` those that matter.")]
+AllPassages = Annotated[
+    bool,
+    Field(description="Every matching passage, several per document; by default only each document's best one."),
+]
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 
 
@@ -97,9 +101,10 @@ def _add_search(mcp, index, name, description, query_description):
         filters: Filters = None,
         fields: Fields = None,
         compact: Compact = False,
+        all_passages: AllPassages = False,
     ) -> list[dict]:
         options = {"collection": collection, "path": path, "filters": filters, "fields": fields, "compact": compact}
-        return _run(method, query, k, **options)
+        return _run(method, query, k, all_passages=all_passages, **options)
 
     mcp.tool(name, description=description, annotations=READ_ONLY)(tool)
 

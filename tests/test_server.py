@@ -269,6 +269,22 @@ def test_search_tools_take_fields_compact_and_ranges(mcp, tool):
     assert [(h["id"], h["fields"], "text" in h) for h in hits] == [("notes/robots/brush.md", {"year": 2024}, False)]
 
 
+@pytest.mark.parametrize("tool", ["search", "vsearch", "query"])
+def test_search_tools_pass_every_option_on(embedded, monkeypatch, tool):
+    index, calls = Index(embedded[0]), []
+    monkeypatch.setattr(index, tool, lambda *args, **kwargs: calls.append((args, kwargs)) or [])
+    options = {
+        "collection": "notes",
+        "path": "*.md",
+        "filters": {"year": 2024},
+        "fields": ["year"],
+        "compact": True,
+        "all_passages": True,
+    }
+    call(server.build(index)[0], tool, {"query": "brush", "k": 3} | options)
+    assert calls == [(("brush", 3), options)]
+
+
 @pytest.mark.parametrize("lines", ["1", "1-1", 1])
 def test_get_takes_lines(mcp, lines):
     result = call(mcp, "get", {"id": "notes/rl.md", "lines": lines})

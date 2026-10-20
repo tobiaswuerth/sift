@@ -84,6 +84,33 @@ def test_search_command_fields_and_compact(cli_corpus, capsys):
     assert "Kubelka" not in run(capsys, "search", "brush", "--compact").out
 
 
+@pytest.mark.parametrize("command", ["search", "vsearch", "query"])
+def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, command):
+    from sift.search import Index
+
+    calls = []
+    monkeypatch.setattr(Index, command, lambda self, *args, **kwargs: calls.append((args, kwargs)) or [])
+    run(capsys, command, "brush", "-k", "3", "-c", "notes", "--path", "*.md", "-f", "year=2024", "--fields", "year")
+    run(capsys, command, "brush", "--compact", "--all-passages")
+    assert calls == [
+        (
+            ("brush", 3),
+            {
+                "collection": "notes",
+                "path": "*.md",
+                "filters": {"year": 2024},
+                "fields": ["year"],
+                "compact": False,
+                "all_passages": False,
+            },
+        ),
+        (
+            ("brush", 10),
+            {"collection": None, "path": None, "filters": {}, "fields": None, "compact": True, "all_passages": True},
+        ),
+    ]
+
+
 def test_search_command_says_when_nothing_matches(cli_corpus, capsys):
     result = run(capsys, "search", "quantum")
     assert (result.out, result.err.strip()) == ("", "no matches")

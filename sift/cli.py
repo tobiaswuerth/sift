@@ -39,6 +39,11 @@ def _filters(pairs):
     return {key: c["="] if list(c) == ["="] else c for key, c in out.items()}
 
 
+def _fields(text):
+    """--fields url,created as a list of field names."""
+    return text and [field.strip() for field in text.split(",")]
+
+
 def _listed(value):
     return value if isinstance(value, list) else [value]
 
@@ -102,6 +107,9 @@ def main(argv=None):
         )
         s.add_argument("--fields", help='front-matter fields to show, comma-separated (e.g. "url,created"; "*": all)')
         s.add_argument("--compact", action="store_true", help="leave out the text")
+        s.add_argument(
+            "--all-passages", action="store_true", help="every matching passage, not just each document's best"
+        )
         s.add_argument("--json", action="store_true", help="print results as JSON")
     s = sub.add_parser("get", help="print a document by its id (collection/path)")
     s.add_argument("id")
@@ -158,13 +166,21 @@ def _run(a, db):
     elif a.cmd in ("search", "vsearch", "query"):
         from .search import Index
 
-        fields = a.fields and [f.strip() for f in a.fields.split(",")]
-        options = {"collection": a.collection, "path": a.path, "filters": _filters(a.filter), "fields": fields}
-        _print_hits(getattr(Index(db), a.cmd)(a.query, a.k, compact=a.compact, **options), a.json)
+        hits = getattr(Index(db), a.cmd)(
+            a.query,
+            a.k,
+            collection=a.collection,
+            path=a.path,
+            filters=_filters(a.filter),
+            fields=_fields(a.fields),
+            compact=a.compact,
+            all_passages=a.all_passages,
+        )
+        _print_hits(hits, a.json)
     elif a.cmd == "get":
         from .search import Index
 
-        document = Index(db).document(a.id, a.lines, a.fields and [f.strip() for f in a.fields.split(",")])
+        document = Index(db).document(a.id, a.lines, _fields(a.fields))
         for key, value in document.get("fields", {}).items():
             print(f"{key}: {_shown(value)}")
         if "fields" in document:

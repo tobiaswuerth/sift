@@ -423,6 +423,53 @@ def test_bad_range_filters_are_clear_errors(corpus, condition):
         Index(corpus[0]).search("x", filters={"created": condition})
 
 
+# --- one result per document -----------------------------------------------------
+
+LONG = "notes/long.md"
+
+
+@pytest.fixture
+def long(embedded, fake_models):
+    """The notes, and a document of several passages, all about pigment mixing, each with a word of its own."""
+    db, root = embedded
+    parts = [f"## Part {i}\n\n" + f"pigment mixing part{i} " * 150 for i in range(3)]
+    write(root / "long.md", "# Long\n\n" + "\n\n".join(parts) + "\n")
+    indexing.index(db)
+    embed.embed_pending(db)
+    assert (
+        db.execute("SELECT count(*) FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.path = 'long.md'").fetchone()[0]
+        > 2
+    )
+    return Index(db)
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_one_result_per_document(long, mode):
+    # The passages of one long document filled the results, and the other documents were never seen.
+    hits = getattr(long, mode)("pigment mixing part0 part1 part2", k=2)
+    assert len(hits) == 2
+    assert ids(hits)[0] == LONG
+    assert len(set(ids(hits))) == 2
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_all_passages(long, mode):
+    hits = getattr(long, mode)("pigment mixing part0 part1 part2", k=10, all_passages=True)
+    assert ids(hits).count(LONG) > 2
+
+
+@pytest.mark.parametrize("mode", ["search", "query"])
+def test_a_document_shows_its_best_passage(long, mode):
+    hit = getattr(long, mode)("part2", k=1)[0]
+    assert (hit["id"], "part2" in hit["text"]) == (LONG, True)
+
+
+def test_vsearch_looks_further_for_other_documents(long):
+    # When the best passages all come from one document, vsearch looks further down for more documents.
+    hits = long.vsearch("pigment mixing part0 part1 part2", k=4, filters={"categories": {"not": "cs.LG"}})
+    assert len(set(ids(hits))) == 4
+
+
 # --- keyword search falls back to any term ---------------------------------------
 
 

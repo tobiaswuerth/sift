@@ -6,6 +6,7 @@ as a NumPy matrix and PyTorch never loads: a search starts in a fraction of a se
 import json
 import re
 import sqlite3
+from operator import itemgetter
 
 import numpy as np
 
@@ -137,6 +138,14 @@ def _any_word(query):
     return " OR ".join(f'"{w}"' for w in dict.fromkeys(words))
 
 
+def _first_of_each(items, key):
+    """The first of the items with the same key, in order."""
+    first = {}
+    for item in items:
+        first.setdefault(key(item), item)
+    return list(first.values())
+
+
 def _top(ids, scores, k):
     """The k best (chunk id, score) pairs, best first. A broken (NaN) vector ranks last: PyTorch's topk ranked NaN
     first, so a few broken vectors pushed every other result out."""
@@ -163,11 +172,18 @@ class Index:
 
     # --- candidates as [(chunk_id, score)] -----------------------------------
 
-    def _keyword(self, match, k, where, args):
+    def _keyword(self, match, k, where, args, all_passages=False):
+        """The best passage of each of the k documents that best match an FTS5 query, by BM25; or the k best
+        passages."""
         if not match.strip():
             return []
-        sql = f"""SELECT fts.rowid, -bm25(fts, 2.0, 1.0) FROM fts JOIN chunks c ON c.id = fts.rowid
-                  JOIN docs d ON d.id = c.doc WHERE fts MATCH ? AND {where} ORDER BY bm25(fts, 2.0, 1.0) LIMIT ?"""
+        passages = f"""SELECT fts.rowid passage, c.doc doc, -bm25(fts, 2.0, 1.0) score FROM fts
+                       JOIN chunks c ON c.id = fts.rowid JOIN docs d ON d.id = c.doc WHERE fts MATCH ? AND {where}"""
+        if all_passages:
+            sql = f"SELECT passage, score FROM ({passages}) ORDER BY score DESC LIMIT ?"
+        else:  # MATERIALIZED: SQLite can't take bm25() into an aggregate
+            sql = f"""WITH p AS MATERIALIZED ({passages})
+                      SELECT passage, max(score) FROM p GROUP BY doc ORDER BY 2 DESC LIMIT ?"""
         for attempt in (match, _phrases(match)):
             try:
                 return self.db.execute(sql, [attempt, *args, k]).fetchall()
@@ -195,15 +211,35 @@ class Index:
         self.load()
         return self.vectors.scores(self.models.encode([query], query=True)[0])
 
-    def _semantic(self, query, k, where, args):
+    def _semantic(self, query, k, where, args, all_passages=False):
         if not query.strip():  # the embedding of nothing is close to arbitrary chunks
             return []
-        scores = self._scores(query)
+        return self._nearest(self._scores(query), k, where, args, all_passages)
+
+    def _nearest(self, scores, k, where, args, all_passages):
+        """The best passage of each of the k documents with the best `scores` (one per vector), among the documents
+        `where` allows; or the k best passages."""
         if args:  # restrict to chunks of matching documents
             sql = f"SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE {where}"
             allowed = np.fromiter((c for (c,) in self.db.execute(sql, args)), np.int64)
             scores = np.where(np.isin(self.vectors.ids, allowed, assume_unique=True), scores, -np.inf)
-        return _top(self.vectors.ids, scores, k)
+        if all_passages:
+            return _top(self.vectors.ids, scores, k)
+        n = k
+        while True:  # when the best passages come from a few documents, look further for others
+            ranked = _top(self.vectors.ids, scores, n)
+            best = self._per_document(ranked)
+            if len(best) >= k or len(ranked) < n:
+                return best[:k]
+            n *= 4
+
+    def _per_document(self, ranked):
+        """The first, best, of each document's passages in `ranked`."""
+        sql = "SELECT c.id, c.doc FROM json_each(?) j JOIN chunks c ON c.id = j.value"
+        docs = dict(self.db.execute(sql, (json.dumps([chunk for chunk, _ in ranked]),)))
+        return _first_of_each(
+            (r for r in ranked if r[0] in docs), lambda r: docs[r[0]]
+        )  # in docs: not removed meanwhile
 
     def _hits(self, ranked):
         sql = """SELECT co.name, d.path, d.title, d.meta, c.line_start, c.line_end, substr(d.text, c.pos + 1, c.len)
@@ -220,31 +256,48 @@ class Index:
 
     # --- public API ----------------------------------------------------------
 
-    # Every search takes `fields`, front-matter fields to add to each hit (["*"] for all), and `compact`, which
-    # leaves out the text.
+    # Every search returns the best passage of each document it finds, or with `all_passages` every passage, and
+    # takes `fields`, front-matter fields to add to each hit (["*"] for all), and `compact`, which leaves out the text.
 
-    def search(self, query, k=10, *, collection=None, path=None, filters=None, fields=None, compact=False):
+    def search(
+        self, query, k=10, *, collection=None, path=None, filters=None, fields=None, compact=False, all_passages=False
+    ):
         """Exact keyword search, ranked by BM25. Accepts FTS5 syntax: "phrases", prefix*, AND, OR, NOT.
         If no chunk holds all terms of a query without operators, chunks with any of them are returned."""
         k, where, fields = _check_k(k), _where(self.db, collection, path, filters), _check_fields(fields)
-        ranked = self._keyword(query, k, *where)
+        ranked = self._keyword(query, k, *where, all_passages)
         if not ranked and (relaxed := _any_term(query)):
-            ranked = self._keyword(relaxed, k, *where)
+            ranked = self._keyword(relaxed, k, *where, all_passages)
         return _present(self._hits(ranked), fields, compact)
 
-    def vsearch(self, query, k=10, *, collection=None, path=None, filters=None, fields=None, compact=False):
+    def vsearch(
+        self, query, k=10, *, collection=None, path=None, filters=None, fields=None, compact=False, all_passages=False
+    ):
         """Semantic search: cosine similarity between the query and every chunk."""
         k, where, fields = _check_k(k), _where(self.db, collection, path, filters), _check_fields(fields)
-        return _present(self._hits(self._semantic(query, k, *where)), fields, compact)
+        return _present(self._hits(self._semantic(query, k, *where, all_passages)), fields, compact)
 
     def query(
-        self, query, k=10, *, collection=None, path=None, filters=None, fields=None, compact=False, candidates=40
+        self,
+        query,
+        k=10,
+        *,
+        collection=None,
+        path=None,
+        filters=None,
+        fields=None,
+        compact=False,
+        all_passages=False,
+        candidates=40,
     ):
         """Hybrid search for RAG: keyword and semantic candidates, fused by reciprocal rank, then reranked."""
         k, where, fields = _check_k(k), _where(self.db, collection, path, filters), _check_fields(fields)
         candidates = max(candidates, k)
         fused = {}
-        for ranked in (self._keyword(_any_word(query), candidates, *where), self._semantic(query, candidates, *where)):
+        for ranked in (
+            self._keyword(_any_word(query), candidates, *where, all_passages),
+            self._semantic(query, candidates, *where, all_passages),
+        ):
             for rank, (chunk, _) in enumerate(ranked):
                 fused[chunk] = fused.get(chunk, 0) + 1 / (RRF_K + rank)
         hits = self._hits(sorted(fused.items(), key=lambda x: -x[1]))
@@ -253,7 +306,8 @@ class Index:
         scores = self.models.rerank(query, [f"{h['title']}\n\n{h['text']}" for h in hits])
         for h, s in zip(hits, scores):
             h["score"] = round(float(s), 4)
-        return _present(sorted(hits, key=lambda h: -h["score"])[:k], fields, compact)
+        hits = sorted(hits, key=lambda h: -h["score"])
+        return _present((hits if all_passages else _first_of_each(hits, itemgetter("id")))[:k], fields, compact)
 
     def get(self, id, lines=None):
         """Text of an indexed document, by its `collection/path` id: all of it, or `lines` such as "17-26", as
