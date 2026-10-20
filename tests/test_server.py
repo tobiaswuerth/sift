@@ -10,7 +10,7 @@ import pytest
 from mcp import Client
 from mcp.server.mcpserver import MCPServer
 
-from sift import remote, server
+from sift import indexing, remote, server
 from sift.search import Index
 
 from .conftest import nobody_listens, write
@@ -265,7 +265,7 @@ def test_instructions_for_a_collection_without_front_matter(tmp_path):
     write(folder / "note.md", "# Note\n")
     db = store.connect(tmp_path / "home")
     store.add_collection(db, folder)
-    store.index(db)
+    indexing.index(db)
     assert "- plain: 1 document\n" in server.build(Index(db))[0].instructions + "\n"
 
 

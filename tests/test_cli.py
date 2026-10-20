@@ -8,7 +8,7 @@ import sys
 import pytest
 from mcp.server.mcpserver import MCPServer
 
-from sift import cli, remote, store
+from sift import cli, indexing, remote, store
 
 
 def run(capsys, *argv):
@@ -147,7 +147,7 @@ def test_database_errors_are_messages(home, monkeypatch):
     def locked(*args):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(store, "index", locked)
+    monkeypatch.setattr(indexing, "index", locked)
     with pytest.raises(SystemExit, match="error: database is locked"):
         cli.main(["index"])
 
@@ -156,7 +156,7 @@ def test_ctrl_c_exits_quietly(home, monkeypatch):
     def interrupted(*args):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(store, "index", interrupted)
+    monkeypatch.setattr(indexing, "index", interrupted)
     with pytest.raises(SystemExit) as exc:
         cli.main(["index"])
     assert exc.value.code == 130

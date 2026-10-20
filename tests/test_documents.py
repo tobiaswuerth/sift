@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from sift import store
+from sift import indexing, readers, store
 from sift.search import Index
 
 from .conftest import index_contents, write
@@ -28,7 +28,7 @@ def sample(ext):
 
 def read(ext):
     """The one document of a sample."""
-    (doc,), problems = store.load(sample(ext))
+    (doc,), problems = readers.load(sample(ext))
     assert problems == []
     return doc
 
@@ -41,12 +41,12 @@ def line_of(text, pos):
 
 
 def test_every_extension_sift_reads_has_a_sample():
-    assert {p.suffix for p in SAMPLES.glob("sample.*") if p.suffix != ".py"} == set(store.READERS)
+    assert {p.suffix for p in SAMPLES.glob("sample.*") if p.suffix != ".py"} == set(readers.READERS)
 
 
-@pytest.mark.parametrize("ext", sorted(store.READERS))
+@pytest.mark.parametrize("ext", sorted(readers.READERS))
 def test_every_reader_keeps_the_contract(ext):
-    docs, problems = store.load(sample(ext))
+    docs, problems = readers.load(sample(ext))
     assert problems == []
     (doc,) = docs
     assert f"This sample is the {ext[1:].upper()} file." in doc.text  # its own content, read in full
@@ -61,34 +61,34 @@ def test_every_reader_keeps_the_contract(ext):
         assert piece == piece.strip()
         assert (first, last) == (line_of(doc.text, pos), line_of(doc.text, pos + length - 1))
     assert any(PARAGRAPH in doc.text[pos : pos + length] for _, _, pos, length in doc.chunks)
-    assert store.load(sample(ext)) == (docs, problems)  # the same file reads the same every time
+    assert readers.load(sample(ext)) == (docs, problems)  # the same file reads the same every time
 
 
 def test_extensions_match_in_any_case(tmp_path):
     shutil.copy(sample(".pdf"), tmp_path / "SCAN.PDF")
     shutil.copy(sample(".md"), tmp_path / "Notes.MD")
-    assert store.load(tmp_path / "SCAN.PDF") == store.load(sample(".pdf"))
-    assert store.load(tmp_path / "Notes.MD")[0][0].text == read(".md").text
-    assert sorted(Path(p).name for p, _, _ in store.walk(str(tmp_path))) == ["Notes.MD", "SCAN.PDF"]
+    assert readers.load(tmp_path / "SCAN.PDF") == readers.load(sample(".pdf"))
+    assert readers.load(tmp_path / "Notes.MD")[0][0].text == read(".md").text
+    assert sorted(Path(p).name for p, _, _ in indexing.walk(str(tmp_path))) == ["Notes.MD", "SCAN.PDF"]
 
 
 def test_a_new_kind_of_file_needs_only_a_reader(tmp_path, home, monkeypatch):
     def read_csv(raw, name, fields):
         text = raw.decode()
-        return [store.Doc("", "digest", name, {}, text, list(store.chunk(text)))], []
+        return [readers.Doc("", "digest", name, {}, text, list(readers.chunk(text)))], []
 
-    monkeypatch.setitem(store.READERS, ".csv", read_csv)
+    monkeypatch.setitem(readers.READERS, ".csv", read_csv)
     write(tmp_path / "c" / "pigments.csv", "pigment,index\nUltramarine,PB29\n")
     db = store.connect(home)
     store.add_collection(db, tmp_path / "c", "c")
-    store.index(db)
+    indexing.index(db)
     assert Index(db).get("c/pigments.csv") == "pigment,index\nUltramarine,PB29\n"
 
 
 # --- documents: PDF, office files, e-books and web pages --------------------------
 
 
-@pytest.mark.parametrize("ext", sorted(set(store.DOCUMENTS) - set(PAGES)))
+@pytest.mark.parametrize("ext", sorted(set(readers.DOCUMENTS) - set(PAGES)))
 def test_document_properties_are_metadata(ext):
     doc = read(ext)
     assert doc.title == "Pigment mixing"  # the document's own title, not its first heading
@@ -127,7 +127,7 @@ def test_a_web_page_is_its_text(ext):
 )
 def test_a_damaged_document_is_skipped_with_the_reason(tmp_path, name, raw):
     (tmp_path / name).write_bytes(raw)
-    docs, (problem,) = store.load(tmp_path / name)
+    docs, (problem,) = readers.load(tmp_path / name)
     assert docs == []
     assert re.fullmatch(r"skipped \(.+\)", problem)
 
@@ -144,7 +144,7 @@ def test_an_office_file_that_compresses_very_well_is_no_zip_bomb(tmp_path):
     with zipfile.ZipFile(path) as z:
         entry = z.getinfo("word/document.xml")
         assert entry.file_size / entry.compress_size > 800  # as compressed as the slides that were skipped
-    docs, problems = store.load(path)
+    docs, problems = readers.load(path)
     assert problems == []
     assert docs[0].text.count("x") == 2_000_000
 
@@ -164,13 +164,13 @@ def test_a_real_zip_bomb_is_still_skipped(tmp_path):
                 for _ in range(110):
                     f.write(b"x" * (1 << 20))
                 f.write(b"</w:t></w:r></w:p></w:body></w:document>")
-    docs, (problem,) = store.load(path)
+    docs, (problem,) = readers.load(path)
     assert docs == []
     assert "exceeds limit" in problem
 
 
 def test_a_document_without_text_is_skipped():
-    assert store.load(SAMPLES / "blank.pdf") == ([], ["skipped (no text in it: a scan? sift runs no OCR)"])
+    assert readers.load(SAMPLES / "blank.pdf") == ([], ["skipped (no text in it: a scan? sift runs no OCR)"])
 
 
 # --- indexing documents --------------------------------------------------------
@@ -185,7 +185,7 @@ def library(tmp_path, home):
         shutil.copy(sample(ext), root / f"pigments{ext}")
     db = store.connect(home)
     store.add_collection(db, root, "library")
-    store.index(db)
+    indexing.index(db)
     return db, root
 
 
@@ -202,22 +202,22 @@ def test_documents_are_indexed_and_found(library):
 def test_a_damaged_document_is_reported_once_and_read_again_when_it_changes(library, capsys):
     db, root = library
     (root / "broken.pdf").write_bytes(b"%PDF-1.4 the rest is missing")
-    store.index(db)
+    indexing.index(db)
     assert "library: broken.pdf: skipped (" in capsys.readouterr().err
-    store.index(db)
+    indexing.index(db)
     assert "broken.pdf" not in capsys.readouterr().err  # unchanged since, so not read again
     shutil.copy(sample(".pdf"), root / "broken.pdf")
-    store.index(db)
+    indexing.index(db)
     assert "1 added" in capsys.readouterr().err
     assert Index(db).get("library/broken.pdf") == read(".pdf").text
 
 
 def test_documents_are_converted_in_worker_processes(library, tmp_path, monkeypatch, pools):
     db, root = library
-    monkeypatch.setattr(store, "_cpus", lambda: 3)  # two workers, one CPU for writing
-    monkeypatch.setattr(store, "FILES_PER_WORKER", 1)
+    monkeypatch.setattr(indexing, "_cpus", lambda: 3)  # two workers, one CPU for writing
+    monkeypatch.setattr(indexing, "FILES_PER_WORKER", 1)
     parallel = store.connect(tmp_path / "parallel")
     store.add_collection(parallel, root, "library")
-    store.index(parallel)
+    indexing.index(parallel)
     assert pools == [(2, "spawn")]
     assert index_contents(parallel) == index_contents(db)

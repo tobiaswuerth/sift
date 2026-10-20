@@ -7,7 +7,7 @@ import zlib
 import numpy as np
 import pytest
 
-from sift import store
+from sift import indexing, store
 from sift.accelerator import Accelerator
 
 DIM = 64
@@ -252,12 +252,12 @@ def pools(monkeypatch):
     """Records every worker process pool that indexing starts."""
     created = []
 
-    class RecordingPool(store.ProcessPoolExecutor):
+    class RecordingPool(indexing.ProcessPoolExecutor):
         def __init__(self, max_workers, mp_context=None):
             created.append((max_workers, mp_context and mp_context.get_start_method()))
             super().__init__(max_workers, mp_context=mp_context)
 
-    monkeypatch.setattr(store, "ProcessPoolExecutor", RecordingPool)
+    monkeypatch.setattr(indexing, "ProcessPoolExecutor", RecordingPool)
     return created
 
 
@@ -291,7 +291,7 @@ def corpus(notes, home):
     """An index of `notes`, keyword search ready, not embedded."""
     db = store.connect(home)
     store.add_collection(db, notes, "notes")
-    store.index(db)
+    indexing.index(db)
     return db, notes
 
 

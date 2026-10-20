@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from sift import embed, store
+from sift import embed, indexing, readers, store
 from sift.search import Index
 
 from .conftest import write
@@ -40,7 +40,7 @@ def papers(tmp_path, home):
     write(root / "notes.md", "# Notes\n\nA Markdown file in the same collection.\n")
     db = store.connect(home)
     store.add_collection(db, root, "arxiv")
-    store.index(db)
+    indexing.index(db)
     return db, root
 
 
@@ -110,7 +110,7 @@ def test_fields_are_found_by_name(tmp_path, home, record, title, text):
     write(tmp_path / "c" / "r.jsonl", json.dumps(record) + "\n")
     db = store.connect(home)
     store.add_collection(db, tmp_path / "c", "c")
-    store.index(db)
+    indexing.index(db)
     assert db.execute("SELECT title, text FROM docs").fetchone() == (title, text)
 
 
@@ -118,7 +118,7 @@ def test_records_without_an_id_are_numbered_by_line(tmp_path, home):
     write(tmp_path / "c" / "r.jsonl", jsonl([{"text": "first"}, {"text": "second"}]))
     db = store.connect(home)
     store.add_collection(db, tmp_path / "c", "c")
-    store.index(db)
+    indexing.index(db)
     assert sorted(docs(db)) == ["r/1", "r/2"]
 
 
@@ -126,7 +126,7 @@ def test_fields_chosen_when_adding_the_collection(tmp_path, home):
     write(tmp_path / "c" / "qa.jsonl", json.dumps({"key": "q1", "q": "Why?", "a": "Because.", "text": "not this"}))
     db = store.connect(home)
     store.add_collection(db, tmp_path / "c", "c", fields={"id": "key", "title": "q", "text": ["q", "a"]})
-    store.index(db)
+    indexing.index(db)
     assert db.execute("SELECT path, title, text FROM docs").fetchone() == (
         "qa/q1",
         "Why?",
@@ -153,7 +153,7 @@ def test_bad_lines_are_skipped_and_reported(tmp_path, home, capsys):
     write(tmp_path / "c" / "r.jsonl", "\n".join(lines) + "\n")
     db = store.connect(home)
     store.add_collection(db, tmp_path / "c", "c")
-    store.index(db)
+    indexing.index(db)
     assert db.execute("SELECT path, text FROM docs").fetchall() == [("r/2", "kept")]
     err = capsys.readouterr().err
     assert "4 lines skipped" in err
@@ -171,8 +171,8 @@ def doc_ids(db):
 def test_an_unchanged_file_is_not_read_again(papers, monkeypatch):
     db, _ = papers
     read = []
-    monkeypatch.setattr(store, "load", lambda path, fields=None: read.append(path))
-    store.index(db)
+    monkeypatch.setattr(readers, "load", lambda path, fields=None: read.append(path))
+    indexing.index(db)
     assert read == []
 
 
@@ -186,7 +186,7 @@ def test_only_changed_records_are_indexed_again(papers, capsys):
     ]
     write(root / "2021" / "2021-01.jsonl", jsonl(changed))
     capsys.readouterr()
-    store.index(db)
+    indexing.index(db)
     after = doc_ids(db)
     assert after["2021/2021-01/2101.00001"] == before["2021/2021-01/2101.00001"]  # untouched, the same row
     # Not "a new row id" for the changed one: SQLite may reuse the highest id after a delete, and which paper has
@@ -203,7 +203,7 @@ def test_removed_records_and_files_leave_the_index(papers, capsys):
     write(root / "2021" / "2021-01.jsonl", jsonl(PAPERS[:1]))
     (root / "1999" / "1999-01.jsonl").unlink()
     capsys.readouterr()
-    store.index(db)
+    indexing.index(db)
     assert sorted(docs(db)) == ["2021/2021-01/2101.00001", "notes.md"]
     assert "0 added, 0 changed, 2 removed" in capsys.readouterr().err
     assert db.execute("SELECT count(*) FROM sources").fetchone() == (2,)
@@ -214,7 +214,7 @@ def test_vectors_of_unchanged_records_are_kept(papers, fake_models):
     db, root = papers
     embed.embed_pending(db)
     write(root / "2021" / "2021-01.jsonl", jsonl([PAPERS[0], dict(PAPERS[1], abstract="New text.")]))
-    store.index(db)
+    indexing.index(db)
     pending = db.execute("SELECT count(*) FROM chunks WHERE id NOT IN (SELECT chunk FROM vectors)").fetchone()
     assert pending == (1,)  # only the changed record needs embedding
 
@@ -228,7 +228,7 @@ def test_chunks_are_spans_of_the_stored_text(tmp_path, home):
     write(tmp_path / "c" / "r.jsonl", json.dumps({"id": 1, "title": "R", "text": long}) + "\n")
     db = store.connect(home)
     store.add_collection(db, tmp_path / "c", "c")
-    store.index(db)
+    indexing.index(db)
     rows = db.execute("""SELECT d.text, c.pos, c.len, c.line_start, c.line_end, t.text FROM chunks c
                          JOIN docs d ON d.id = c.doc JOIN chunk_text t ON t.id = c.id""").fetchall()
     assert len(rows) > 4
@@ -236,7 +236,7 @@ def test_chunks_are_spans_of_the_stored_text(tmp_path, home):
         assert chunk == text[pos : pos + length]
         assert chunk.splitlines()[0] in text.split("\n")[first - 1]  # the line numbers match the span
         assert chunk.splitlines()[-1] in text.split("\n")[last - 1]
-        assert len(chunk) <= store.CHUNK_CHARS
+        assert len(chunk) <= readers.CHUNK_CHARS
 
 
 def test_get_returns_the_indexed_text_until_the_next_index(corpus):
@@ -245,7 +245,7 @@ def test_get_returns_the_indexed_text_until_the_next_index(corpus):
     write(root / "rl.md", "# Rewritten\n")
     assert Index(db).get("notes/rl.md").startswith("# Reward shaping")
     (root / "rl.md").unlink()
-    store.index(db)
+    indexing.index(db)
     with pytest.raises(LookupError, match="unknown document"):
         Index(db).get("notes/rl.md")
 
@@ -282,6 +282,6 @@ def test_a_record_named_like_a_file_is_skipped(tmp_path, home, capsys):
     write(tmp_path / "c" / "a.jsonl", json.dumps({"id": "b.md", "text": "record"}) + "\n")
     db = store.connect(home)
     store.add_collection(db, tmp_path / "c", "c")
-    store.index(db)
+    indexing.index(db)
     assert db.execute("SELECT count(*) FROM docs WHERE path = 'a/b.md'").fetchone() == (1,)
     assert "a/b.md: a document of this name exists already, skipped" in capsys.readouterr().err

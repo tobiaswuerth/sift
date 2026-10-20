@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from sift import embed, search, store
+from sift import embed, indexing, search, store
 from sift.search import Index, _any_word
 
 from .conftest import PretendGpu, write
@@ -80,7 +80,7 @@ def test_bad_filters_are_clear_errors(corpus, kwargs, error):
 def test_nan_in_front_matter_does_not_break_filters(corpus):
     db, root = corpus
     write(root / "odd.md", "---\nscore: NaN\nlimit: Infinity\n---\n# Odd\nbrush\n")
-    store.index(db)
+    indexing.index(db)
     assert ids(Index(db).search("brush", filters={"categories": "cs.RO"})) == ["notes/robots/brush.md"]
     assert ids(Index(db).search("brush", filters={"score": "NaN"})) == ["notes/odd.md"]
 
@@ -117,7 +117,7 @@ def test_vsearch_reloads_after_index_changes(embedded):
     index = Index(db)
     assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
     (root / "rl.md").unlink()
-    store.index(db)  # deletes rl.md and its vector; the cached matrix must not serve it
+    indexing.index(db)  # deletes rl.md and its vector; the cached matrix must not serve it
     assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
 
 
@@ -214,7 +214,7 @@ def test_vectors_reload_while_on_the_gpu(embedded, make_local):
     index = Index(db, models=make_local(accelerator=PretendGpu))
     assert "notes/rl.md" in ids(index.vsearch("reward shaping"))
     (root / "rl.md").unlink()
-    store.index(db)
+    indexing.index(db)
     assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
 
 
@@ -248,7 +248,7 @@ def test_get_serves_indexed_documents_only(corpus):
 def test_get_reads_utf16_documents(corpus):
     db, root = corpus
     (root / "utf16.txt").write_bytes("\ufeff# Héllo\r\nworld\r\n".encode("utf-16-le"))
-    store.index(db)
+    indexing.index(db)
     assert Index(db).get("notes/utf16.txt") == "# Héllo\nworld\n"
 
 
@@ -256,7 +256,7 @@ def test_get_returns_lines_as_indexed(corpus):
     # \n line endings, as in hits, so that `get(id, hit["lines"])` gives the hit's text
     db, root = corpus
     (root / "crlf.md").write_bytes(b"# One\r\n\r\ntwo\r\n")
-    store.index(db)
+    indexing.index(db)
     index = Index(db)
     assert index.get("notes/crlf.md") == "# One\n\ntwo\n"
     assert index.get("notes/crlf.md", "3") == "two\n"
@@ -315,7 +315,7 @@ def dated(embedded, fake_models):
     db, root = embedded
     for day in DAYS:
         write(root / "dated" / f"{day}.md", f'---\ncreated: "{day}"\n---\n# Paper of {day}\npigment\n')
-    store.index(db)
+    indexing.index(db)
     embed.embed_pending(db)
     return Index(db)
 
@@ -357,7 +357,7 @@ def test_range_filters_on_numbers(corpus):
 def test_range_on_a_list_needs_one_element_in_range(corpus):
     db, root = corpus
     write(root / "multi.md", "---\nyears: [2019, 2030]\n---\n# Multi\nbrush\n")
-    store.index(db)
+    indexing.index(db)
     assert Index(db).search("brush", filters={"years": {">": 2020, "<": 2025}}) == []
 
 
@@ -438,7 +438,7 @@ def test_get_by_a_file_name_several_documents_have(corpus):
     db, root = corpus
     for folder in ("a", "b"):
         write(root / folder / "same.md", f"# {folder}\n")
-    store.index(db)
+    indexing.index(db)
     with pytest.raises(LookupError, match=r"'notes/same\.md' matches notes/a/same\.md, notes/b/same\.md;"):
         Index(db).get("notes/same.md")
 
@@ -455,6 +455,6 @@ def test_get_by_a_file_name_many_documents_have(corpus):
     db, root = corpus
     for folder in "abcdef":
         write(root / folder / "same.md", f"# {folder}\n")
-    store.index(db)
+    indexing.index(db)
     with pytest.raises(LookupError, match=r"notes/e/same\.md, \.\.\.; give the whole id"):
         Index(db).get("notes/same.md")

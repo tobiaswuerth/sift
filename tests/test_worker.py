@@ -195,7 +195,7 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
         textwrap.dedent(f"""
             import sys
             import numpy as np
-            from sift import remote, store
+            from sift import indexing, remote, store
             from sift.search import Index
 
             remote.REMOTE = "https://t.p@worker:8766"
@@ -206,7 +206,7 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
             open(notes + "/brush.md", "w").write("# Brush strokes\\n\\nA robot paints.\\n")
             db = store.connect({str(tmp_path / "home")!r})
             store.add_collection(db, notes, "notes")
-            store.index(db)
+            indexing.index(db)
             for (chunk,) in db.execute("SELECT id FROM chunks").fetchall():
                 db.execute("INSERT INTO vectors VALUES(?, ?)", (chunk, np.full(4, 0.5, np.float16).tobytes()))
             store.set_meta(db, "dim", 4)
