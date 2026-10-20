@@ -5,6 +5,37 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `similar`: documents like a given one, by its id, e.g. more papers like one found (MCP tool, `sift similar ID`).
+  It runs no model: half a second over 3 million arXiv abstracts, with or without a GPU.
+- Filters take a list for any of its values, `{"categories": ["cs.RO", "cs.CV"]}`, and `{"not": ...}` for none of
+  them. On the command line: `-f KEY=VALUE` repeated, and `-f KEY!=VALUE`.
+- `sort` orders the results by a front-matter field instead of score, e.g. `"-created"` for the newest first
+  (`--sort=-created`).
+- `get` takes `fields`, and then returns the document with them as `{id, title, fields, text}`
+  (`sift get --fields url,created`). It takes a line number as well as a range.
+- `all_passages` (`--all-passages`) returns every matching passage, as searches did before (see Changed).
+- Every MCP tool parameter is described in the tool's schema, and the tools are marked read-only.
+- The README explains setting up MCP and updating, step by step.
+- `sift index` shows a progress bar, like `sift embed`.
+
+### Changed
+
+- Searches return one result per document, with its best passage: the passages of one long document no longer fill
+  the results.
+- `query` scores run from 0 to 1: the reranker's raw scores through a sigmoid. A worker returns raw scores, whatever
+  activation the reranker's configuration names.
+- Keyword search weighs a title like the text. Titles were weighted double on top of being indexed twice, so a paper
+  that only named a term in its title outranked an abstract about it.
+- An empty environment variable counts as unset; `SIFT_HOME=` meant the current folder.
+
+### Fixed
+
+- A tool that failed for an unexpected reason told the agent only "Error executing tool"; the agent now gets the
+  error's type and message, and the server's log the traceback.
+- `get` ignored `fields` without a word: the MCP library drops arguments a tool doesn't take.
+
 ## [0.6.0] - 2026-10-20
 
 ### Added
