@@ -151,6 +151,12 @@ def test_filters_on_the_command_line(pairs, filters):
     assert cli._filters(pairs) == filters
 
 
+@pytest.mark.parametrize("pair", ["year", "my-key=1", "-->", "=1"])
+def test_filters_need_a_field_name_and_an_operator(pair):
+    with pytest.raises(SystemExit, match="filter must be"):
+        cli._filters([pair])
+
+
 def test_get_lines_command(cli_corpus, capsys):
     assert run(capsys, "get", "notes/rl.md", "--lines", "1").out == "# Reward shaping\n"
 
