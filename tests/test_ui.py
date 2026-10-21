@@ -508,7 +508,7 @@ def test_sift_ui_starts_the_server_when_none_runs(home, opened, monkeypatch):
     assert opened == [f"http://127.0.0.1:{port}/ui/"]
 
 
-def test_sift_ui_on_all_interfaces_opens_the_local_address(home, opened, monkeypatch):
+def test_sift_ui_on_all_interfaces_opens_the_local_address(home, opened):
     port, stop = answering(200)
     try:
         cli.main(["ui", "--host", "0.0.0.0", "--port", str(port)])

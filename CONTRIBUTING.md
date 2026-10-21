@@ -37,9 +37,9 @@ pre-commit install
 Search and embedding never ask where the models run: they take a `Models` object, `Local` or `Remote`. Only
 `accelerator.py` imports PyTorch at the top, so a machine that searches through a worker never loads it. No module
 reads the environment except `settings.py`. Results go to stdout from `cli.py` alone, and everything else sift says
-goes to stderr through `console.py`, so output can be piped. Tests build these objects around
-fakes (Sentence Transformers, GPU memory, the clock) instead of patching module state, and change settings with the
-`configure` fixture.
+goes to stderr through `console.py`, so output can be piped. Tests build these objects around fakes (Sentence
+Transformers, GPU memory, the clock) instead of patching module state, and change settings with the `configure`
+fixture.
 
 ## How changes are made
 

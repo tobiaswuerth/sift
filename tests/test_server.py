@@ -204,13 +204,13 @@ def test_serve_with_a_remote_loads_no_models(embedded, transports, fake_models, 
     assert transports.started
 
 
-def test_serve_warns_when_the_remote_is_unreachable(embedded, transports, fake_models, monkeypatch, capsys, configure):
+def test_serve_warns_when_the_remote_is_unreachable(embedded, transports, fake_models, capsys, configure):
     configure(remote=nobody_listens())
     server.serve(stdio=True)  # keyword search works without it
     assert "warning: embedding remote" in capsys.readouterr().err
 
 
-def test_an_unreachable_remote_reaches_the_agent(mcp, fake_models, monkeypatch, configure):
+def test_an_unreachable_remote_reaches_the_agent(mcp, fake_models, configure):
     configure(remote=nobody_listens())
     result = call(mcp, "vsearch", {"query": "brush"})
     assert result.is_error

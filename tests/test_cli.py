@@ -213,7 +213,7 @@ def test_rm_reports_a_single_document(tmp_path, home, capsys):
         (["rm", "missing"], "no collection named 'missing'"),
     ],
 )
-def test_errors_are_messages_not_tracebacks(home, capsys, argv, message):
+def test_errors_are_messages_not_tracebacks(home, argv, message):
     with pytest.raises(SystemExit) as exc:
         cli.main(argv)
     assert message in str(exc.value)
@@ -280,7 +280,7 @@ def test_serve_stops_without_a_traceback(cli_corpus, monkeypatch, error, code):
     assert exc.value.code == code
 
 
-def test_unusable_home_is_a_message(tmp_path, monkeypatch, configure):
+def test_unusable_home_is_a_message(tmp_path, configure):
     home = tmp_path / "home"
     home.write_text("a file, not a folder", encoding="utf-8")
     configure(home=home)
