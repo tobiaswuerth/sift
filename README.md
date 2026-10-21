@@ -31,11 +31,14 @@ Or run it without installing: `uvx --torch-backend auto sift-rag serve`. With pi
 
 To upgrade later, see [Updating](#updating).
 
-On first use, sift downloads its two models from Hugging Face (about 1.5 GB).
+On first use, sift downloads its two models from Hugging Face (about 2 GB).
 
 ### GPU support
 
 sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, which works but embeds slowly.
+`query`'s reranker is slow there too: about 25 seconds per query on 8 CPU threads, against 0.3 seconds on an RTX
+4090. A machine without a GPU can borrow one through a [`sift worker`](#embedding-on-another-machine), which reranks as
+well as embeds, or use `search` and `vsearch`, which need no reranker.
 
 - **Linux, macOS:** nothing to do. PyTorch from PyPI includes CUDA on Linux and uses the Apple GPU on macOS.
 - **Windows:** PyTorch from PyPI has no CUDA support. uv's `--torch-backend auto`, used above, picks the CUDA build
@@ -302,6 +305,10 @@ Four optional settings exist for special cases:
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
 
+For a new index of business documents, `Snowflake/snowflake-arctic-embed-l-v2.0` is a good alternative embedding
+model. On our [benchmarks](docs/benchmarks.md) it ties EmbeddingGemma-2 on average. It's better on financial questions
+and long German documents, worse on scientific claims, and it embeds 1.6 times as fast.
+
 ## How it works
 
 - **Indexing:** worker processes read and parse files in parallel while the previous batch is written; small
@@ -346,7 +353,8 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
     reranker's spread over the candidates. One weight thus fits any reranker, and the scores keep the reranker's
     scale. A reranker alone ranked scientific claims worse than the embedding did. Candidates whose front matter the
     query names keep the best cosine, since the embedding never sees front matter.
-  - **The evidence** is in [docs/benchmarks.md](docs/benchmarks.md): 12 rerankers on seven datasets. Scores are raw:
+  - **The evidence** is in [docs/benchmarks.md](docs/benchmarks.md): rerankers, embedding models and blends on
+    seven datasets, from scientific claims to long German documents. Scores are raw:
     a sigmoid saturates, at 0.9999 for every good match.
 - **`similar`:** the mean of a document's passage vectors, scored against every passage as `vsearch` scores a query.
   No model runs, so it takes half a second over 3 million passages, with or without a GPU.
