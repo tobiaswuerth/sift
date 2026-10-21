@@ -138,7 +138,7 @@ def test_a_keyword_index_needs_no_models(linked, monkeypatch):
     assert index.reindex(["vault/a.md"]) == [{"id": "vault/a.md", "status": "added", "chunks": 1, "embedded": 0}]
 
 
-def test_without_the_index_s_model_nothing_is_embedded(live, configure):
+def test_without_the_index_s_model_nothing_is_embedded(live):
     index, vault = live
     store.set_meta(index.db, "model", "another/model")
     index.db.commit()
