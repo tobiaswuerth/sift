@@ -213,7 +213,7 @@ def _first_of_each(items, key):
 
 
 VIA = ("path", "name", "alias")  # how a link resolved, when it did
-AMBIGUOUS_SHOWN = links.AMBIGUOUS_SHOWN  # notes an error names, of those a name matches
+AMBIGUOUS_SHOWN = links.AMBIGUOUS_SHOWN  # notes an ambiguous link or name lists, of those it matches
 MENTION_CHARS = 3  # names `mentions` looks for have at least this many characters
 UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss"})
 LINKING_SHOWN = 5  # documents an unresolved target names, of those linking it
@@ -229,7 +229,7 @@ def _link_out(row, how, through, named):
     if via in VIA:
         link |= {"id": named[docs[0]][0], "title": named[docs[0]][1], "via": via}
     elif via == "ambiguous":
-        link["ambiguous"] = [named[doc][0] for doc in docs[: links.AMBIGUOUS_SHOWN]]
+        link["ambiguous"] = [named[doc][0] for doc in docs[:AMBIGUOUS_SHOWN]]
     else:
         link["unresolved"] = True
     return link | ({"through": named[through][0]} if through else {})
