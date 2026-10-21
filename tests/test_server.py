@@ -97,9 +97,8 @@ def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
     index, threads = Index(embedded[0]), []
     real = getattr(index, tool)
     monkeypatch.setattr(index, tool, lambda *a, **kw: threads.append(threading.current_thread()) or real(*a, **kw))
-    rl = {"id": "notes/rl.md"}
-    args = {"get": rl, "similar": rl, "links": rl, "status": {}, "unresolved": {}, "reindex": {"paths": [rl["id"]]}}
-    args["mentions"] = rl
+    args = {name: {"id": "notes/rl.md"} for name in ("get", "similar", "links", "mentions")}
+    args |= {"status": {}, "unresolved": {}, "reindex": {"paths": ["notes/rl.md"]}}
     args = args.get(tool, {"query": "brush"})
     assert not call(server.build(index)[0], tool, args).is_error
     assert threads == [threading.main_thread()]
@@ -186,8 +185,16 @@ def test_search_tools_take_links(linked, fake_models, tool):
     assert [h["id"] for h in hits] == [HANS]
     hits = data(call(mcp, tool, {"query": "customer", "k": 1, "linked_from": ["vault/Hans Müller.md"]}))
     assert [h["id"] for h in hits] == [ACME]
-    hits = data(call(mcp, "similar", {"id": ACME, "links_to": ["Hans Müller"], "filters": {"org": "[[Acme]]"}}))
-    assert hits == []  # nothing links Hans whose org is Acme AG
+
+
+def test_similar_tool_takes_links(linked, fake_models):
+    from sift import embed
+
+    embed.embed_pending(linked[0])
+    mcp = server.build(Index(linked[0]))[0]
+    offer = "vault/03_Interactions/2026-10-14 Offerte.md"
+    hits = data(call(mcp, "similar", {"id": offer, "links_to": ["Acme AG"], "filters": {"org": "[[Acme AG]]"}}))
+    assert [h["id"] for h in hits] == [HANS]
 
 
 def test_reindex_tool(linked, fake_models):
