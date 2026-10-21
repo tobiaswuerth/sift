@@ -162,7 +162,9 @@ def test_filters_need_a_field_name_and_an_operator(pair):
 
 def test_bench_command(cli_corpus, capsys, tmp_path):
     path = tmp_path / "cases.json"
-    path.write_text(json.dumps([{"query": "reward shaping reinforcement", "relevant": ["notes/rl.md"]}]))
+    path.write_text(
+        json.dumps([{"query": "reward shaping reinforcement", "relevant": ["notes/rl.md"]}]), encoding="utf-8"
+    )
     result = run(capsys, "bench", str(path))
     assert "sift bench: starting" in result.err  # it runs vsearch and query: PyTorch may load
     lines = result.out.splitlines()

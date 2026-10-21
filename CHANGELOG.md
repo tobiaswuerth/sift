@@ -51,6 +51,8 @@ with a new major version. [Versioning](README.md#versioning) lists what that cov
 
 - `sift ui` opened a collection's files in the UI's own origin, so a saved web page with scripts could read the
   whole index through it. Files now open sandboxed, PDFs excepted (see [SECURITY.md](SECURITY.md)).
+- `sift ui` kept copies of the last pages it showed in the browser's local storage, the text of documents included;
+  going back now asks the server again. htmx no longer runs scripts or evaluates code in what it swaps in.
 
 ## [0.10.0] - 2026-10-21
 

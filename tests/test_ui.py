@@ -2,6 +2,7 @@
 the document they lead to, whose parts htmx swaps in place."""
 
 import html
+import json
 import re
 import socket
 import threading
@@ -297,6 +298,13 @@ def test_a_long_document_opens_at_its_hit(log):
     end = log.get("/ui/", params={"doc": "notes/log.txt", "at": "95"}).text
     assert shown(end) == list(range(95, 101))
     assert 'class="later"' not in end
+
+
+def test_the_browser_keeps_no_copies_of_documents(browser):
+    # htmx kept the last pages in localStorage, where the text of private documents stayed on disk; going back asks
+    # the server instead. Nor may it run scripts in what it swaps in, whatever slips through.
+    config = re.search(r"<meta name=\"htmx-config\" content='([^']+)'>", browser.get("/ui/").text)
+    assert json.loads(config[1]) == {"historyCacheSize": 0, "allowEval": False, "allowScriptTags": False}
 
 
 def test_going_back_gets_the_whole_page(browser):
