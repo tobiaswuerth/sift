@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% if view.q %}{{ view.q }} · {% endif %}sift</title>
+<meta name="htmx-config" content='{"historyCacheSize": 0, "allowEval": false, "allowScriptTags": false}'>
+<title>{{ title }}</title>
 <link rel="stylesheet" href="/ui/static/ui.css">
 <script src="/ui/static/htmx.min.js" defer></script>
 <script src="/ui/static/ui.js" defer></script>
@@ -13,7 +14,7 @@
 <header>
   <a class="brand" href="/ui/">sift</a>
   <form id="search" action="/ui/" hx-get="/ui/" hx-target="#explore" hx-swap="outerHTML" hx-push-url="true" hx-trigger="submit, change, search">
-    <input id="q" name="q" type="search" value="{{ view.q }}" placeholder="Search the index   /" autocomplete="off" spellcheck="false" aria-label="Search">
+    {% include "query.html" %}
     {% include "controls.html" %}
   </form>
 </header>

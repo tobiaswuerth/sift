@@ -1,4 +1,4 @@
-# sift
+# sift: local RAG search and MCP server for AI agents
 
 [![CI](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/sift-rag)](https://pypi.org/project/sift-rag/)
@@ -10,15 +10,23 @@
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
 [![CodeQL](https://github.com/tobiaswuerth/sift/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/tobiaswuerth/sift/actions/workflows/github-code-scanning/codeql)
 
-Fast local search over your documents and notes, built for AI agents.
-
-sift indexes folders of Markdown, text, PDF, office and JSON Lines files, embeds them on your GPU, and runs a server
-that agents query over MCP.
-It offers four kinds of search: exact keyword matching, semantic search, hybrid retrieval with reranking for RAG,
-and documents like a given one.
-Everything runs locally. No cloud services, no API keys.
+sift indexes your documents and notes, embeds them on your GPU, and serves them to Claude Code and other AI agents
+over MCP (Model Context Protocol), with keyword, semantic and hybrid search. Everything runs locally: no cloud
+services, no API keys, and your documents stay on your own machines.
 
 ![sift ui: a keyword search over 3.2 million arXiv abstracts, filtered by category, with one paper open](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-search.png)
+
+- **Four kinds of search:** exact keyword search (BM25, SQLite FTS5), semantic vector search, hybrid retrieval with
+  cross-encoder reranking for RAG, and documents similar to a given one.
+- **Your files as they are:** Markdown with YAML front matter (Obsidian notes too), text, PDF, Word, PowerPoint,
+  Excel, OpenDocument, RTF, EPUB, HTML and JSON Lines, indexed incrementally.
+- **An MCP server** for Claude Code and any other MCP client, with filters on front-matter fields, results that cite
+  their source lines, and compact results that save an agent's context.
+- **A browser UI** to search, browse and read the index yourself.
+- **Measured, not guessed:** the default models and ranking were chosen on seven retrieval benchmarks, from BEIR's
+  SciFact to long German documents ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md)).
+- **Runs on what you have:** NVIDIA or Apple GPUs, or the CPU, or another machine's GPU through `sift worker`, on
+  Linux, macOS and Windows.
 
 ## Install
 
@@ -85,17 +93,17 @@ it returns the chunks that have any of them, those with more terms first. Operat
 parentheses group: `'"notice period" AND (contract OR agreement)'`. A query with operators is taken as it is; when
 it finds nothing, drop terms.
 
-Scores rank the results of one search, on a scale of its own: BM25 for `search` (0 and up), cosine similarity for
-`vsearch` and `similar` (-1 to 1), and for `query` the reranker's score, nudged by the passage's cosine, on the
-reranker's scale. It compares across queries: with the default reranker, close matches score about 2.5 to 4, and
-unrelated results below 2.
+Scores rank the results of one search, each kind on a scale of its own: BM25 for `search` (0 and up), cosine
+similarity for `vsearch` and `similar` (-1 to 1), and for `query` the reranker's score, nudged by the passage's
+cosine. `query`'s scores also compare across queries: with the default reranker, close matches score about 2.5 to 4,
+and unrelated results below 2.
 
 ### Browsing the index
 
 `sift ui` opens the index in your browser, at `http://127.0.0.1:8765/ui/`, to look through the sources yourself. It
 uses the `sift serve` that runs on that port, or starts one, which then serves agents too.
 
-![sift ui in dark mode: the 2025 folder of an arXiv collection, filtered by category, with its subfolders, authors and categories to drill into](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-browse-dark.png)
+![sift ui in dark mode: the 2025 folder of an arXiv collection, filtered by category, with its subfolders and the categories and dates of its papers to drill into](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-browse-dark.png)
 
 - **Search** in three modes: *Keyword* as you type, *Meaning* and *Hybrid* (`vsearch` and `query`) on Enter. The
   words found are marked in each passage, and a bar shows each result's score.
@@ -103,8 +111,9 @@ uses the `sift serve` that runs on that port, or starts one, which then serves a
   counts (authors, categories, years), each a click to filter by. Filters show as chips; click one to remove it.
   Results can also be sorted by any front-matter field.
 - **Read** a result next to the list: the whole document, its passage marked and scrolled to, and its front matter,
-  whose values filter too, and whose links open. *Similar* lists documents like it, and *Open file* opens the
-  original file: a PDF shows in the browser.
+  whose values filter too, and whose links open. A long document shows 2,000 lines at a time. *Similar* lists
+  documents like it, and *Open file* opens the original file: a PDF shows in the browser's viewer, and other files
+  open without running any script they hold.
 - **Keys:** `/` to search, `↑` `↓` to move through results, `Enter` to open one.
 - Every view has its own address, so reloading, the back button and links work.
 
@@ -121,8 +130,8 @@ them, with the ids of the documents that answer them, as search results show the
 ]
 ```
 
-A few dozen questions are enough to compare modes and to see whether a change helps your documents. Grades (2 for
-the answer, 1 for a useful one) are optional.
+A few dozen questions are enough to compare modes and to see whether a change helps your documents. Grades are
+optional: 2 for the answer, 1 for a useful one, and 0, as in TREC's judgements, for one read and found irrelevant.
 
 ### Front matter
 
@@ -147,7 +156,8 @@ sift search policy -f departments!=legal                         # not in legal
 ```
 
 Filters on different fields must all hold. Repeated for one field, `=` matches any of the values, and `!=` leaves out
-documents with any of them; documents without the field stay in.
+documents with any of them; documents without the field stay in. Fields go by the names the front matter gives them,
+e.g. `-f journal-ref=Nature` or `-f "date created>=2024"`.
 
 Filters can also be ranges, with `>`, `>=`, `<` and `<=`. Dates compare at the precision given, so `created<=2024`
 includes all of 2024 and `created>2024` starts in 2025; a number compares with the number a date starts with:
@@ -235,8 +245,8 @@ fields each has.
 3. Start a new Claude Code session: running sessions don't pick up new servers. `claude mcp list` should now show
    sift as connected, and an agent asked for sift's status gets your collections.
 
-One server serves any number of agents, with the models loaded once. Other MCP clients connect the same way, to the
-streamable HTTP endpoint `http://127.0.0.1:8765/mcp`. The same server shows the index to you at
+One server serves any number of agents, with the models loaded once. Other MCP clients, such as Cursor, VS Code or
+Windsurf, connect the same way, to the streamable HTTP endpoint `http://127.0.0.1:8765/mcp`. The same server shows the index to you at
 `http://127.0.0.1:8765/ui/` (see [Browsing the index](#browsing-the-index)).
 
 Or let every session start a server of its own over stdio; then each session loads the models into memory itself:
@@ -255,8 +265,8 @@ Anthropic's servers, which can't reach a server on your computer.
 
 A running sift keeps the version it started with, so an update takes an upgrade and a restart of each part:
 
-1. **Upgrade** on every machine that runs sift; a machine that embeds through a `sift worker` needs the same version
-   as the worker:
+1. **Upgrade** on every machine that runs sift; a machine that embeds through a `sift worker` needs the same major
+   version as the worker (see [Versioning](#versioning)):
 
    ```bash
    uv tool upgrade sift-rag     # with pip: pip install -U sift-rag
@@ -292,10 +302,10 @@ setx SIFT_EMBED_REMOTE https://<key>@workstation:8766
 `sift embed` then sends the chunks to the worker, 256 at a time, and stores the vectors it gets back, without loading
 the model itself. Searches embed their queries and rerank there too, in the CLI and in `sift serve`, so the machine
 searching never loads PyTorch: `vsearch` and `query` answer in a fraction of a second, even on a light notebook.
-Both machines need the same sift version. The worker only computes: it sees the texts it embeds and reranks, but no
-index and no files. It sizes its batches to its GPU
-and gives the GPU back after 5 idle minutes, like `sift serve`. The worker's `SIFT_EMBED_MODEL` decides the model,
-and sift refuses a worker whose model differs from the one the index was embedded with.
+Both machines need the same major version of sift; sift refuses a worker of another one, and says which runs where.
+The worker only computes: it sees the texts it embeds and reranks, but no index and no files. It sizes its batches to
+its GPU and gives the GPU back after 5 idle minutes, like `sift serve`. The worker's `SIFT_EMBED_MODEL` decides the
+model, and sift refuses a worker whose model differs from the one the index was embedded with.
 
 The texts travel encrypted, over HTTPS. On its first start the worker makes a certificate of its own and an access
 token, kept in `~/.sift/worker` (readable by you only), and the key it prints holds both: the token, and the
@@ -343,10 +353,10 @@ claims, and it embeds 1.6 times as fast.
   adding a reader. Markdown, including documents converted to it, is split into chunks of about 3,000 characters
   (about 750 tokens) on line boundaries, preferring headings, with a small overlap.
 - **Remote embedding:** HTTPS with the worker's self-made certificate (EC P-256), pinned by its SHA-256 in the key,
-  and a bearer token of 32 random bytes. `GET /` names the worker's models and vector length; `POST /embed` takes
-  `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per text; `POST /rerank`
-  takes `{"query": "...", "texts": [...]}` and returns the raw scores, `{"scores": [...]}`. The worker runs one
-  request at a time on the GPU. Through a worker, the vectors are searched with NumPy, in RAM.
+  and a bearer token of 32 random bytes. `GET /` names the worker's models, vector length and sift version;
+  `POST /embed` takes `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per
+  text; `POST /rerank` takes `{"query": "...", "texts": [...]}` and returns the raw scores, `{"scores": [...]}`. The
+  worker runs one request at a time on the GPU. Through a worker, the vectors are searched with NumPy, in RAM.
 - **Storage:** one SQLite database in WAL mode holds every document's text, metadata, the FTS5 keyword index and
   the vectors (fp16). The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
   Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.
@@ -395,6 +405,18 @@ NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise CPU; one user, any number of 
 
 Out of scope for now: OCR of scans and images; answer generation (sift retrieves, the agent writes); approximate
 nearest-neighbour indexes; live file watching; remote access and authentication.
+
+## Versioning
+
+sift follows [semantic versioning](https://semver.org/). Within a major version, such as 1.x, these stay compatible:
+
+- the commands, their options and their JSON output (`--json`, `sift status`);
+- the MCP tools and their parameters;
+- the four settings;
+- the index: one made by 1.x opens in every later 1.x, which updates its layout on first use if it must;
+- the worker protocol: every 1.x embeds through every 1.x worker.
+
+sift's Python modules are its own: they may change in any release.
 
 ## Development
 

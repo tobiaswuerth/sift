@@ -18,11 +18,13 @@
     </dl>
     {% endif %}
   </header>
-  <div class="text">
+  {% if reader.part %}<p class="part">Showing {{ reader.part }}{% if reader.earlier %} · <a class="earlier" href="{{ reader.earlier }}" hx-target="#reader">earlier</a>{% endif %}{% if reader.later %} · <a class="later" href="{{ reader.later }}" hx-target="#reader">later</a>{% endif %}</p>{% endif %}
+  <div class="text"{% if reader.at > 1 %} style="counter-reset: line {{ reader.at - 1 }}"{% endif %}>
     {% for line in reader.lines %}
     <div class="l{% if line.kind %} {{ line.kind }}{% endif %}{% if line.hit %} hit{% endif %}" id="L{{ line.n }}">{{ line.text }}</div>
     {% endfor %}
   </div>
+  {% if reader.later %}<a class="more later" href="{{ reader.later }}" hx-target="#reader">Later lines</a>{% endif %}
 {% else %}
   <p class="empty">Pick a result to read it here.<br><kbd>/</kbd> search · <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> open</p>
 {% endif %}

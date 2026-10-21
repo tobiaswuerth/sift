@@ -1,3 +1,6 @@
+"""Searching the index: keyword, semantic and hybrid search, filters and sorting, documents like one, `get`, and
+browsing by folder."""
+
 import numpy as np
 import pytest
 
@@ -112,7 +115,8 @@ def test_not_with_a_range(corpus):
 @pytest.mark.parametrize(
     "kwargs, error",
     [
-        ({"filters": {"bad key": 1}}, ValueError),
+        ({"filters": {'bad"key': 1}}, ValueError),
+        ({"filters": {"": 1}}, ValueError),
         ({"filters": {"categories": []}}, ValueError),
         ({"filters": {"categories": [None]}}, ValueError),
         ({"filters": {"categories": None}}, ValueError),
@@ -124,6 +128,19 @@ def test_not_with_a_range(corpus):
 def test_bad_filters_are_clear_errors(corpus, kwargs, error):
     with pytest.raises(error):
         Index(corpus[0]).search("brush", **kwargs)
+
+
+def test_filters_and_sort_take_any_field_name(corpus):
+    # Front matter and JSON Lines name fields freely, e.g. "journal-ref" or "date created".
+    db, root = corpus
+    write(root / "cited.md", "---\njournal-ref: Nature 12\ndate created: 2024-05-01\n---\n# Cited\nbrush\n")
+    indexing.index(db)
+    index = Index(db)
+    assert ids(index.search("brush", filters={"journal-ref": "Nature 12"})) == ["notes/cited.md"]
+    assert ids(index.search("brush", filters={"date created": {">=": "2024-05"}})) == ["notes/cited.md"]
+    assert ids(index.search("brush", filters={"journal-ref": {"not": "Nature 12"}})) == ["notes/robots/brush.md"]
+    assert ids(index.search("brush", sort="-date created"))[0] == "notes/cited.md"
+    assert ids(index.browse(sort="-date created"))[0] == "notes/cited.md"
 
 
 def test_nan_in_front_matter_does_not_break_filters(corpus):
@@ -660,7 +677,7 @@ def test_sort_puts_numbers_before_text(corpus):
     assert [day(h) for h in Index(db).search("ranked", sort="rank")] == ["a", "c", "b", "d"]
 
 
-@pytest.mark.parametrize("sort", ["", "-", "bad key", 1, ["created"]])
+@pytest.mark.parametrize("sort", ["", "-", 'bad"key', 1, ["created"]])
 def test_bad_sort_is_a_clear_error(corpus, sort):
     with pytest.raises(ValueError, match="sort"):
         Index(corpus[0]).search("brush", sort=sort)
@@ -750,12 +767,28 @@ def test_fallback_keeps_the_filters(corpus):
         ("1", "# Reward shaping\n"),
         ("2-3", "\nReward shaping speeds up reinforcement learning.\n"),
         ("3-99", "Reward shaping speeds up reinforcement learning.\n"),
-        ("9", ""),
         (1, "# Reward shaping\n"),  # a line number, as agents also send it
     ],
 )
 def test_get_lines(corpus, lines, text):
     assert Index(corpus[0]).get("notes/rl.md", lines) == text
+
+
+def test_get_returns_the_indexed_text_until_the_next_index(corpus):
+    # Hits and get always agree: both come from the index, not from the file as it is now.
+    db, root = corpus
+    write(root / "rl.md", "# Rewritten\n")
+    assert Index(db).get("notes/rl.md").startswith("# Reward shaping")
+    (root / "rl.md").unlink()
+    indexing.index(db)
+    with pytest.raises(LookupError, match="unknown document"):
+        Index(db).get("notes/rl.md")
+
+
+def test_lines_past_the_end_are_a_clear_error(corpus):
+    # An empty answer read to agents as an empty passage.
+    with pytest.raises(ValueError, match=r"notes/rl\.md has 3 lines; line 9 is past its end"):
+        Index(corpus[0]).get("notes/rl.md", "9-12")
 
 
 def test_get_the_lines_of_a_hit(corpus):
@@ -801,6 +834,14 @@ def test_browse_lists_documents_without_a_query(corpus):
     assert ids(docs) == ["notes/plain.txt", "notes/rl.md", "notes/robots/brush.md"]  # by path
     assert docs[1]["title"] == "Reward shaping"
     assert docs[1]["text"].startswith("# Reward shaping")  # the document's start, as a hit's passage
+    assert docs[2]["text"].startswith("# Brush stroke planning")  # after its front matter, as its first passage
+
+
+def test_browse_lists_documents_of_front_matter_alone(corpus):
+    db, root = corpus
+    write(root / "empty.md", "---\ntitle: Only metadata\n---\n")
+    indexing.index(db)
+    assert {"id": "notes/empty.md", "title": "Only metadata", "text": ""} in Index(db).browse()
 
 
 def test_browse_takes_what_searches_take(corpus):
@@ -824,6 +865,9 @@ def test_folders_are_those_directly_inside_a_path(corpus):
     assert index.folders("notes") == ["robots", "z"]
     assert index.folders("notes", "robots/") == ["arms", "legs"]
     assert index.folders("notes", "robots/arms/") == []
+    for written in ("robots", "/robots", "robots//"):  # as a person might write the folder
+        assert index.folders("notes", written) == ["arms", "legs"]
+    assert index.folders("notes", "/") == ["robots", "z"]
     with pytest.raises(LookupError, match="no collection named 'nope'"):
         index.folders("nope")
 

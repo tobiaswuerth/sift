@@ -16,7 +16,7 @@ def test_without_a_remote_the_models_are_this_machines(fake_models):
     assert models.default() is models.default()  # chosen once
 
 
-def test_with_a_remote_the_models_are_the_workers(fake_models, monkeypatch, configure):
+def test_with_a_remote_the_models_are_the_workers(fake_models, configure):
     configure(remote="https://t.p@workstation:8766")
     worker = models.default()
     assert isinstance(worker, Remote)

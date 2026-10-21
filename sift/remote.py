@@ -17,6 +17,8 @@ import urllib.parse
 import weakref
 from functools import cached_property
 
+from . import __version__
+
 PORT = 8766  # the worker's default
 BATCH = 256  # texts per request to embed
 TIMEOUT = 600  # seconds to wait for an answer; a busy worker can take long, a dead one fails at once
@@ -29,6 +31,13 @@ class RemoteError(ConnectionError):
 def fingerprint(der):
     """A certificate's SHA-256, as the key carries it."""
     return base64.urlsafe_b64encode(hashlib.sha256(der).digest()).rstrip(b"=").decode()
+
+
+def _series(version):
+    """What two sifts must share to work together, by semantic versioning: from 1.0 on the major version, before it
+    the minor one too."""
+    parts = str(version).split(".")
+    return parts[:1] if parts[0] != "0" else parts[:2]
 
 
 class _Connection(http.client.HTTPSConnection):
@@ -75,8 +84,14 @@ class Remote:
 
     @cached_property
     def info(self):
-        """What the worker says about itself: its models and the length of its vectors. Asked once."""
-        return json.loads(self._request("/"))
+        """What the worker says about itself: its models, the length of its vectors and its version. Asked once."""
+        info = json.loads(self._request("/"))
+        if _series(info.get("version")) != _series(__version__):
+            raise RemoteError(
+                f"embedding remote {self.address} runs sift {info.get('version')}, this machine sift {__version__}: "
+                "install the same version on both"
+            )
+        return info
 
     @property
     def name(self):

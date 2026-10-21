@@ -1,3 +1,5 @@
+"""`sift serve`: the MCP tools agents call, the errors and instructions they read, and the server around them."""
+
 import asyncio
 import json
 import logging
@@ -123,7 +125,7 @@ def test_get_and_status(mcp):
     [
         ("search", {"query": "x", "collection": "missing"}, "no collection named 'missing'"),
         ("vsearch", {"query": "x", "k": 0}, "k must be a positive integer"),
-        ("query", {"query": "x", "filters": {"bad key": "v"}}, "invalid filter field 'bad key'"),
+        ("query", {"query": "x", "filters": {'bad"key': "v"}}, "invalid filter field 'bad\"key'"),
         ("get", {"id": "missing/x.md"}, "unknown document 'missing/x.md'"),
     ],
 )
@@ -161,6 +163,12 @@ def transports(monkeypatch):
     return fakes
 
 
+@pytest.mark.parametrize("host, warned", [("0.0.0.0", True), ("192.168.1.5", True), ("127.0.0.1", False)])
+def test_serving_other_machines_warns_that_they_can_read_everything(embedded, transports, capsys, host, warned):
+    server.serve(host=host, port=9000)
+    assert ("anyone who reaches port 9000 can read every indexed document" in capsys.readouterr().err) == warned
+
+
 @pytest.mark.parametrize(
     "stdio, expected", [(True, ("stdio", {})), (False, ("http", {"host": "127.0.0.1", "port": 9000}))]
 )
@@ -196,13 +204,13 @@ def test_serve_with_a_remote_loads_no_models(embedded, transports, fake_models, 
     assert transports.started
 
 
-def test_serve_warns_when_the_remote_is_unreachable(embedded, transports, fake_models, monkeypatch, capsys, configure):
+def test_serve_warns_when_the_remote_is_unreachable(embedded, transports, fake_models, capsys, configure):
     configure(remote=nobody_listens())
     server.serve(stdio=True)  # keyword search works without it
     assert "warning: embedding remote" in capsys.readouterr().err
 
 
-def test_an_unreachable_remote_reaches_the_agent(mcp, fake_models, monkeypatch, configure):
+def test_an_unreachable_remote_reaches_the_agent(mcp, fake_models, configure):
     configure(remote=nobody_listens())
     result = call(mcp, "vsearch", {"query": "brush"})
     assert result.is_error

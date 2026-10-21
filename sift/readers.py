@@ -77,7 +77,8 @@ def parse(text, fallback_title):
         meta = _front_matter(m.group(1) or "")
         first_line += text.count("\n", 0, m.end())
         text = text[m.end() :]
-    title = meta.get("title") if isinstance(meta.get("title"), str) and meta["title"].strip() else None
+    title = meta.get("title")
+    title = str(title).strip() if isinstance(title, str | int | float) and not isinstance(title, bool) else None
     return title or _heading(text) or fallback_title, meta, text, first_line
 
 

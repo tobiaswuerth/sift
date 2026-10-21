@@ -32,6 +32,18 @@ def recall(ranked, relevant, k=K):
     return len(set(ranked[:k]) & set(relevant)) / len(relevant)
 
 
+def _grades(relevant):
+    """A case's relevant documents as {id: grade}: a list of ids, each of grade 1, or ids with grades. Grade 0 means
+    read and found irrelevant, as in TREC's judgements, so those stay out. None if nothing is relevant."""
+    if isinstance(relevant, list) and all(isinstance(id, str) for id in relevant):
+        relevant = dict.fromkeys(relevant, 1)
+    if not isinstance(relevant, dict):
+        return None
+    if not all(isinstance(g, int | float) and not isinstance(g, bool) and g >= 0 for g in relevant.values()):
+        return None
+    return {id: grade for id, grade in relevant.items() if grade > 0} or None
+
+
 def load(path, index):
     """The cases of a bench file as (query, {document id: grade}), each id as the index knows it."""
     cases = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -39,10 +51,12 @@ def load(path, index):
         raise ValueError(f'{path} must hold a list of cases: {{"query": ..., "relevant": [document ids]}}')
     loaded = []
     for n, case in enumerate(cases, 1):
-        relevant = case.get("relevant") if isinstance(case, dict) else None
-        if not (isinstance(case, dict) and isinstance(case.get("query"), str) and relevant):
-            raise ValueError(f"case {n} needs a query and the ids of the documents it should find")
-        grades = relevant if isinstance(relevant, dict) else dict.fromkeys(relevant, 1)
+        grades = _grades(case.get("relevant")) if isinstance(case, dict) else None
+        if not (grades and isinstance(case.get("query"), str)):
+            raise ValueError(
+                f"case {n} needs a query and the ids of the documents it should find: a list of them, or a dict of "
+                "them with grades above 0"
+            )
         try:
             loaded.append((case["query"], {index.document(id)["id"]: grade for id, grade in grades.items()}))
         except LookupError as e:

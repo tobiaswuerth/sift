@@ -1,3 +1,3 @@
 """sift: fast local search over your documents and notes, built for AI agents."""
 
-__version__ = "0.10.0"
+__version__ = "1.0.0"

@@ -1,3 +1,5 @@
+"""The `sift` command, run as users run it: every subcommand, its options, and errors as messages."""
+
 import io
 import json
 import runpy
@@ -145,13 +147,14 @@ def test_search_command_says_when_nothing_matches(cli_corpus, capsys):
         (["categories!=cs.CV", "categories!=cs.GR"], {"categories": {"not": ["cs.CV", "cs.GR"]}}),  # none of them
         (["year>=2020", "year=2024", "year=2025"], {"year": {">=": 2020, "=": [2024, 2025]}}),
         (['tags=["a","b"]', "tags=c"], {"tags": ["a", "b", "c"]}),
+        (["journal-ref=Nature", "date created>=2024"], {"journal-ref": "Nature", "date created": {">=": 2024}}),
     ],
 )
 def test_filters_on_the_command_line(pairs, filters):
     assert cli._filters(pairs) == filters
 
 
-@pytest.mark.parametrize("pair", ["year", "my-key=1", "-->", "=1"])
+@pytest.mark.parametrize("pair", ["year", "-->", "=1", " =1"])
 def test_filters_need_a_field_name_and_an_operator(pair):
     with pytest.raises(SystemExit, match="filter must be"):
         cli._filters([pair])
@@ -159,7 +162,9 @@ def test_filters_need_a_field_name_and_an_operator(pair):
 
 def test_bench_command(cli_corpus, capsys, tmp_path):
     path = tmp_path / "cases.json"
-    path.write_text(json.dumps([{"query": "reward shaping reinforcement", "relevant": ["notes/rl.md"]}]))
+    path.write_text(
+        json.dumps([{"query": "reward shaping reinforcement", "relevant": ["notes/rl.md"]}]), encoding="utf-8"
+    )
     result = run(capsys, "bench", str(path))
     assert "sift bench: starting" in result.err  # it runs vsearch and query: PyTorch may load
     lines = result.out.splitlines()
@@ -208,7 +213,7 @@ def test_rm_reports_a_single_document(tmp_path, home, capsys):
         (["rm", "missing"], "no collection named 'missing'"),
     ],
 )
-def test_errors_are_messages_not_tracebacks(home, capsys, argv, message):
+def test_errors_are_messages_not_tracebacks(home, argv, message):
     with pytest.raises(SystemExit) as exc:
         cli.main(argv)
     assert message in str(exc.value)
@@ -275,7 +280,7 @@ def test_serve_stops_without_a_traceback(cli_corpus, monkeypatch, error, code):
     assert exc.value.code == code
 
 
-def test_unusable_home_is_a_message(tmp_path, monkeypatch, configure):
+def test_unusable_home_is_a_message(tmp_path, configure):
     home = tmp_path / "home"
     home.write_text("a file, not a folder", encoding="utf-8")
     configure(home=home)

@@ -1,7 +1,6 @@
 """JSON Lines files: one document per line, with id, title and text found by name and the rest as metadata."""
 
 import json
-import sqlite3
 
 import pytest
 
@@ -237,43 +236,6 @@ def test_chunks_are_spans_of_the_stored_text(tmp_path, home):
         assert chunk.splitlines()[0] in text.split("\n")[first - 1]  # the line numbers match the span
         assert chunk.splitlines()[-1] in text.split("\n")[last - 1]
         assert len(chunk) <= readers.CHUNK_CHARS
-
-
-def test_get_returns_the_indexed_text_until_the_next_index(corpus):
-    # Hits and get always agree: both come from the index, not from the file as it is now.
-    db, root = corpus
-    write(root / "rl.md", "# Rewritten\n")
-    assert Index(db).get("notes/rl.md").startswith("# Reward shaping")
-    (root / "rl.md").unlink()
-    indexing.index(db)
-    with pytest.raises(LookupError, match="unknown document"):
-        Index(db).get("notes/rl.md")
-
-
-# --- the database layout has a version -------------------------------------------
-
-
-def test_a_new_index_records_its_layout_version(home):
-    assert store.connect(home).execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
-
-
-def test_an_index_from_an_older_sift_asks_to_be_rebuilt(home):
-    home.mkdir()
-    old = sqlite3.connect(home / "sift.db")
-    old.execute("CREATE TABLE docs(id INTEGER PRIMARY KEY, path TEXT)")  # sift 0.2 had no layout version
-    old.commit()
-    old.close()
-    with pytest.raises(SystemExit, match=r"older sift.*sift\.db.*sift add"):
-        store.connect(home)
-
-
-def test_an_index_from_a_newer_sift_asks_for_an_upgrade(home):
-    home.mkdir()
-    newer = sqlite3.connect(home / "sift.db")
-    newer.execute(f"PRAGMA user_version = {store.SCHEMA_VERSION + 1}")
-    newer.close()
-    with pytest.raises(SystemExit, match="newer sift"):
-        store.connect(home)
 
 
 def test_a_record_named_like_a_file_is_skipped(tmp_path, home, capsys):

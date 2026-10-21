@@ -5,6 +5,7 @@ indexing (see `indexing`, and `readers` for the kinds of file).
 """
 
 import json
+import os
 import re
 import sqlite3
 import time
@@ -109,11 +110,7 @@ def _fields(fields):
         if key not in ("id", "title", "text"):
             raise SystemExit(f"unknown field choice {key!r}: choose the id, title or text field")
         names = value if key == "text" else [value]
-        if (
-            not (isinstance(value, list) or key != "text")
-            or not names
-            or not all(isinstance(n, str) and n for n in names)
-        ):
+        if not (isinstance(names, list) and names and all(isinstance(n, str) and n for n in names)):
             raise SystemExit(
                 f"the {key} field must be {'one or more field names' if key == 'text' else 'a field name'}, "
                 f"got {value!r}"
@@ -127,6 +124,9 @@ def add_collection(db, path, name=None, fields=None):
     path = Path(path).expanduser().resolve()
     if not path.is_dir():
         raise SystemExit(f"not a directory: {path}")
+    for other, folder in db.execute("SELECT name, path FROM collections"):
+        if os.path.normcase(folder) == os.path.normcase(path):  # registered twice, its documents were found twice
+            raise SystemExit(f"{path} is the collection {other!r} already")
     name = name or path.name
     if not re.fullmatch(r"[\w.-]+", name):
         raise SystemExit(f"invalid collection name {name!r}: choose one with --name, of letters, digits, '_', '-', '.'")

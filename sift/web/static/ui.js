@@ -11,6 +11,7 @@ document.addEventListener("input", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return; // the browser's own shortcuts, such as Ctrl+K
   const typing = e.target.matches("input, select, textarea");
   if (e.key === "/" && !typing) {
     e.preventDefault();
@@ -19,7 +20,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Escape" && typing) return e.target.blur();
-  if (typing && e.key !== "ArrowDown") return;
+  if (typing && !(e.target === box() && e.key === "ArrowDown")) return; // from the box down into the results
   const hits = [...document.querySelectorAll("a.hit")];
   const at = hits.indexOf(document.activeElement);
   const step = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[e.key];

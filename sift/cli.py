@@ -28,12 +28,12 @@ def _filters(pairs):
     KEY=VALUE stands for any of the values, and KEY!=VALUE for none of them."""
     out = {}
     for pair in pairs:
-        m = re.fullmatch(r"(\w+)(>=|<=|!=|=|<|>)(.*)", pair)  # a field name, as search takes them
+        m = re.fullmatch(r"(\w[^=<>!]*)(>=|<=|!=|=|<|>)(.*)", pair)  # a field name: "journal-ref", "date created"
         if not m:
             raise SystemExit(
                 f"filter must be KEY=VALUE, KEY!=VALUE, or KEY>=VALUE and the like for ranges, got {pair!r}"
             )
-        key, op, value = m[1], "not" if m[2] == "!=" else m[2], _value(m[3])
+        key, op, value = m[1].rstrip(), "not" if m[2] == "!=" else m[2], _value(m[3])
         conditions = out.setdefault(key, {})
         if op in ("=", "not") and op in conditions:
             value = _listed(conditions[op]) + _listed(value)
