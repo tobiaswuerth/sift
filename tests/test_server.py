@@ -123,7 +123,7 @@ def test_get_and_status(mcp):
     [
         ("search", {"query": "x", "collection": "missing"}, "no collection named 'missing'"),
         ("vsearch", {"query": "x", "k": 0}, "k must be a positive integer"),
-        ("query", {"query": "x", "filters": {"bad key": "v"}}, "invalid filter field 'bad key'"),
+        ("query", {"query": "x", "filters": {'bad"key': "v"}}, "invalid filter field 'bad\"key'"),
         ("get", {"id": "missing/x.md"}, "unknown document 'missing/x.md'"),
     ],
 )
@@ -159,6 +159,12 @@ def transports(monkeypatch):
     monkeypatch.setattr(MCPServer, "run_stdio_async", stdio)
     monkeypatch.setattr(uvicorn.Server, "serve", http)
     return fakes
+
+
+@pytest.mark.parametrize("host, warned", [("0.0.0.0", True), ("192.168.1.5", True), ("127.0.0.1", False)])
+def test_serving_other_machines_warns_that_they_can_read_everything(embedded, transports, capsys, host, warned):
+    server.serve(host=host, port=9000)
+    assert ("anyone who reaches port 9000 can read every indexed document" in capsys.readouterr().err) == warned
 
 
 @pytest.mark.parametrize(

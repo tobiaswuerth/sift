@@ -11,8 +11,8 @@ from pathlib import Path
 
 import numpy as np
 
+from . import console, readers, store
 from . import models as _models
-from . import readers, store
 
 STOPWORDS = set(
     "a an and are as at be by can do does for from has have how i in is it of on or that the this to "
@@ -46,6 +46,13 @@ def _condition(key, op, value):
     return f"CAST(value AS REAL) {op} ?", [value]  # SQLite reads "2024-06-15" as 2024
 
 
+def _field(name, what="filter field"):
+    """A front-matter field name, as SQLite's JSON functions address it: any name without a double quote."""
+    if not (isinstance(name, str) and name and '"' not in name):
+        raise ValueError(f"invalid {what} {name!r}")
+    return f'$."{name}"'
+
+
 def _collection_id(db, name):
     row = db.execute("SELECT id FROM collections WHERE name = ?", (name,)).fetchone()
     if not row:
@@ -65,20 +72,18 @@ def _where(db, collection=None, path=None, filters=None):
         sql.append("d.path GLOB ?")
         args.append(path)
     for key, value in (filters or {}).items():
-        if not re.fullmatch(r"\w+", key):
-            raise ValueError(f"invalid filter field {key!r}")
+        field = _field(key)
         if value == {}:
             raise ValueError(f"filter {key!r} has no condition")
         conditions = value if isinstance(value, dict) else {"=": value}
         some = [_condition(key, op, v) for op, v in conditions.items() if op != "not"]
-        values = f"SELECT 1 FROM json_each(d.meta, '$.{key}') WHERE"
         if some:
-            sql.append(f"EXISTS ({values} {' AND '.join(c for c, _ in some)})")
-            args += [arg for _, condition_args in some for arg in condition_args]
+            sql.append(f"EXISTS (SELECT 1 FROM json_each(d.meta, ?) WHERE {' AND '.join(c for c, _ in some)})")
+            args += [field, *(arg for _, condition_args in some for arg in condition_args)]
         if "not" in conditions:
             condition, condition_args = _condition(key, "not", conditions["not"])
-            sql.append(f"NOT EXISTS ({values} {condition})")
-            args += condition_args
+            sql.append(f"NOT EXISTS (SELECT 1 FROM json_each(d.meta, ?) WHERE {condition})")
+            args += [field, *condition_args]
     return " AND ".join(sql), args
 
 
@@ -97,10 +102,13 @@ def _pick(meta, fields):
 
 
 def _check_sort(sort):
-    if sort is not None and not (isinstance(sort, str) and re.fullmatch(r"-?\w+", sort)):
-        raise ValueError(
-            f"sort must be a front-matter field, with - first to sort descending, e.g. '-created'; got {sort!r}"
-        )
+    if sort is not None:
+        try:
+            _field(sort.removeprefix("-") if isinstance(sort, str) else sort)
+        except ValueError:
+            raise ValueError(
+                f"sort must be a front-matter field, with - first to sort descending, e.g. '-created'; got {sort!r}"
+            ) from None
     return sort
 
 
@@ -128,7 +136,7 @@ def _present(hits, fields, compact, sort):
     return out
 
 
-def _line_span(lines):
+def line_span(lines):
     """First and last line of a range such as "17-26", or of a single line: "17" or 17."""
     if isinstance(lines, int) and not isinstance(lines, bool):
         lines = str(lines)
@@ -416,10 +424,15 @@ class Index:
     def document(self, id, lines=None, fields=None):
         """A document as {"id", "title", "text"}, the whole id even if asked by file name, and with "fields" if asked
         for, as in hits; `id` and `lines` as for `get`."""
-        span, fields = None if lines is None else _line_span(lines), _check_fields(fields)
+        span, fields = None if lines is None else line_span(lines), _check_fields(fields)
         _, whole, title, meta, text = self._find(id)
         document = {"id": whole, "title": title} | ({"fields": _pick(meta, fields)} if fields else {})
-        return document | {"text": text if span is None else "".join(readers.LINE.findall(text)[span[0] - 1 : span[1]])}
+        if span:
+            every = readers.LINE.findall(text)
+            if span[0] > len(every):
+                raise ValueError(f"{whole} has {console.count(len(every), 'line')}; line {span[0]} is past its end")
+            text = "".join(every[span[0] - 1 : span[1]])
+        return document | {"text": text}
 
     def similar(
         self,
@@ -471,14 +484,15 @@ class Index:
         field instead, as in searches."""
         k, (where, args) = _check_k(k), _where(self.db, collection, path, filters)
         fields, sort = _check_fields(fields), _check_sort(sort)
-        order = "co.name, d.path"
+        order, by = "co.name, d.path", []
         if sort:
-            value = f"json_extract(d.meta, '$.{sort.removeprefix('-')}')"  # a checked field name
+            value = "json_extract(d.meta, ?)"
             order = f"{value} IS NULL, {value}{' DESC' if sort[0] == '-' else ''}, {order}"
+            by = [_field(sort.removeprefix("-"))] * 2
         sql = f"""SELECT co.name, d.path, d.title, d.meta, substr(d.text, 1, {START}) FROM docs d
                   JOIN collections co ON co.id = d.collection WHERE {where} ORDER BY {order} LIMIT ?"""
         docs = []
-        for name, doc_path, title, meta, text in self.db.execute(sql, [*args, k]):
+        for name, doc_path, title, meta, text in self.db.execute(sql, [*args, *by, k]):
             doc = {"id": f"{name}/{doc_path}", "title": title}
             if fields:
                 doc["fields"] = _pick(meta, fields)
@@ -488,6 +502,7 @@ class Index:
     def folders(self, collection, path=""):
         """The folders directly inside the folder `path` ("" or e.g. "2024/") of a collection, by name. Each folder
         is one jump through the index, so a folder holding millions of documents costs as little as an empty one."""
+        path = path.strip("/") + "/" if path.strip("/") else ""  # "2024", "/2024/": the folder 2024/
         cid, found, after = _collection_id(self.db, collection), [], path
         sql = "SELECT path FROM docs WHERE collection = ? AND path > ? AND path < ? ORDER BY path LIMIT 1"
         while row := self.db.execute(sql, (cid, after, path + LAST)).fetchone():

@@ -14,5 +14,10 @@ Security fixes go into the latest release.
 
 sift runs locally. `sift serve` binds to `127.0.0.1` by default and has no authentication, so anyone who can reach
 its port can search the indexed files and read them in full, through MCP and through the browser UI under `/ui`.
-Expose it beyond your machine only behind something that authenticates. Bound to a local address, both answer only
-requests that name a local host, so a web page can't reach them under its own domain (DNS rebinding).
+Expose it beyond your machine only behind something that authenticates; bound to any other address, it warns that
+it can be read from elsewhere. Bound to a local address, both answer only requests that name a local host, so a web
+page can't reach them under its own domain (DNS rebinding). Files opened from the UI carry
+`Content-Security-Policy: sandbox`, so a saved web page in a collection can't run its scripts as the UI and read the
+index; PDFs are left to the browser's viewer, which runs none of their scripts as the page.
+
+`sift worker` admits only requests with its token, over HTTPS with a certificate whose fingerprint the key carries.

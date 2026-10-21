@@ -5,6 +5,48 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-21
+
+sift is stable: from now on, its commands, MCP tools, settings, index and worker protocol change incompatibly only
+with a new major version. [Versioning](README.md#versioning) lists what that covers.
+
+### Changed
+
+- `get` of lines past the end of a document, in the CLI and over MCP, is an error that says how many lines the
+  document has. It returned an empty text, which agents took for an empty passage.
+- A `sift worker` and the machines that use it must run the same major version (before 1.0: the same minor one).
+  sift refuses another worker and says which version runs where.
+- `sift add` refuses a folder that is a collection already: registered twice, its documents were found twice.
+- `sift serve` on an address other than `127.0.0.1` or `localhost` warns that anyone who reaches it can read every
+  indexed document.
+- `sift bench` takes grade 0 for a document read and found irrelevant, as TREC's judgements do.
+- `sift ui`: the facets that most results share come first; folders take a few lines instead of one each; a long
+  document shows 2,000 lines at a time; and on a narrow window the search box gets its own row, with the filters
+  above the results instead of hidden.
+
+### Fixed
+
+- Filters, sorting and `-f` took field names of letters, digits and `_` only, so fields such as `journal-ref` or
+  `date created` couldn't be used. Any name without a double quote works now.
+- A front-matter title that reads as a number, such as `title: 1984`, was ignored for the first heading or the file
+  name.
+- `sift bench` split a single id given as text, not in a list, into letters, and failed with a division by zero on a
+  case whose grades were all 0. Both are now errors that say what a case needs.
+- `sift ui`:
+  - after *Similar* or another link that changes the search, the search box still showed the old query, and the
+    next change of mode brought it back; sorting a list of similar documents lost the list;
+  - filtering by a value such as `007` or `1.10` found nothing: the value was read as the number 7 or 1.1;
+  - yes/no fields, such as `draft: true`, weren't facets;
+  - a folder whose name holds `[` showed other folders' documents, and `?path=2024` without its slash showed a folder
+    named "" and the documents of `2024x/` too;
+  - the window title didn't follow the search;
+  - `?k=²` failed with a server error.
+
+### Security
+
+- `sift ui` opened a collection's files in the UI's own origin, so a saved web page with scripts could read the
+  whole index through it. Files now open sandboxed, PDFs excepted (see [SECURITY.md](SECURITY.md)).
+
 ## [0.10.0] - 2026-10-21
 
 ### Added
@@ -268,14 +310,15 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/tobiaswuerth/sift/compare/v0.10.0...v1.0.0
 [0.10.0]: https://github.com/tobiaswuerth/sift/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/tobiaswuerth/sift/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/tobiaswuerth/sift/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/tobiaswuerth/sift/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/tobiaswuerth/sift/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tobiaswuerth/sift/compare/v0.5.1...v0.6.0
-[0.5.1]: https://github.com/tobiaswuerth/sift/compare/v0.4.1...v0.5.1
+[0.5.1]: https://github.com/tobiaswuerth/sift/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/tobiaswuerth/sift/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/tobiaswuerth/sift/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/tobiaswuerth/sift/compare/v0.3.0...v0.4.0

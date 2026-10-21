@@ -145,13 +145,14 @@ def test_search_command_says_when_nothing_matches(cli_corpus, capsys):
         (["categories!=cs.CV", "categories!=cs.GR"], {"categories": {"not": ["cs.CV", "cs.GR"]}}),  # none of them
         (["year>=2020", "year=2024", "year=2025"], {"year": {">=": 2020, "=": [2024, 2025]}}),
         (['tags=["a","b"]', "tags=c"], {"tags": ["a", "b", "c"]}),
+        (["journal-ref=Nature", "date created>=2024"], {"journal-ref": "Nature", "date created": {">=": 2024}}),
     ],
 )
 def test_filters_on_the_command_line(pairs, filters):
     assert cli._filters(pairs) == filters
 
 
-@pytest.mark.parametrize("pair", ["year", "my-key=1", "-->", "=1"])
+@pytest.mark.parametrize("pair", ["year", "-->", "=1", " =1"])
 def test_filters_need_a_field_name_and_an_operator(pair):
     with pytest.raises(SystemExit, match="filter must be"):
         cli._filters([pair])

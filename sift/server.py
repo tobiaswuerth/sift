@@ -1,4 +1,5 @@
-"""MCP server exposing search, vsearch, query, get and status."""
+"""`sift serve`: the MCP server agents search through (search, vsearch, query, similar, get and status), with the UI
+for people under /ui (see `ui`)."""
 
 import asyncio
 import logging
@@ -279,8 +280,15 @@ async def _serve(mcp, index, host, port, stdio, models):
         if stdio:
             await mcp.run_stdio_async()
         else:
+            from .ui import LOCAL_HOSTS
+
             local = "127.0.0.1" if host in ("0.0.0.0", "::") else host
             console.say(f"sift MCP server on http://{host}:{port}/mcp; browse the index at http://{local}:{port}/ui/")
+            if host not in LOCAL_HOSTS:
+                console.say(
+                    f"warning: listening on {host}, so anyone who reaches port {port} can read every indexed "
+                    "document, through MCP and the UI: sift has no authentication"
+                )
             await _serve_http(mcp, index, host, port)
         tasks.cancel_scope.cancel()
 
@@ -293,10 +301,7 @@ def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
     for step in (models.load, index.load):
         try:
             step()
-        except (
-            ConnectionError,
-            LookupError,
-        ) as e:  # a worker that doesn't answer, no vectors yet: keyword search works
+        except (ConnectionError, LookupError) as e:  # a worker that doesn't answer, no vectors yet: keywords work
             console.say(f"warning: {e}")
     try:
         anyio.run(_serve, mcp, index, host, port, stdio, models)

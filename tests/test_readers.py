@@ -44,7 +44,9 @@ def test_parse_title_fallbacks():
     assert readers.parse("intro\n## Second level ##\n", "file")[0] == "Second level"
     assert readers.parse("no heading here\n", "file")[0] == "file"
     assert readers.parse('---\ntitle: ""\n---\n# From heading\n', "file")[0] == "From heading"
-    assert readers.parse("---\ntitle: 42\n---\nbody\n", "file")[0] == "file"
+    assert readers.parse("---\ntitle: 1984\n---\nbody\n", "file")[0] == "1984"  # a number the author chose
+    assert readers.parse("---\ntitle: true\n---\nbody\n", "file")[0] == "file"
+    assert readers.parse('---\ntitle: ["a", "b"]\n---\nbody\n', "file")[0] == "file"
 
 
 def test_parse_without_closing_front_matter_is_plain_text():

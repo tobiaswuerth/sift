@@ -4,12 +4,12 @@
     <h2>Collections</h2>
     <ul>
       {% for name, n in collections %}
-      <li><a href="{{ view.href(c=name, path='', f=(), q='', similar='', k=30) }}"{% if name == view.c %} class="on"{% endif %}>{{ name }} <span class="n">{{ n|num }}</span></a></li>
+      <li><a href="{{ view.href(c=name, path='', f=(), q='', similar='', k=PAGE) }}"{% if name == view.c %} class="on"{% endif %}>{{ name }} <span class="n">{{ n|num }}</span></a></li>
       {% endfor %}
     </ul>
   </section>
   {% if folders %}
-  <section>
+  <section class="folders">
     <h2>Folders</h2>
     <ul>
       {% for name, href in folders %}
@@ -33,7 +33,7 @@
   <div class="scope">
     {% if crumbs %}<nav class="crumbs">{% for name, href in crumbs %}<a href="{{ href }}">{{ name }}</a>{% if not loop.last %}<span>/</span>{% endif %}{% endfor %}</nav>{% endif %}
     {% for label, href in chips %}<a class="chip" href="{{ href }}" title="Remove this filter">{{ label }}<span aria-hidden="true">×</span></a>{% endfor %}
-    {% if kind == "similar" %}<a class="chip" href="{{ view.href(similar='', k=30) }}" title="Back">Similar to {{ similar_title }}<span aria-hidden="true">×</span></a>{% endif %}
+    {% if kind == "similar" %}<a class="chip" href="{{ view.href(similar='', k=PAGE) }}" title="Back">Similar to {{ similar_title }}<span aria-hidden="true">×</span></a>{% endif %}
     <span class="count">
       {% if kind == "results" or kind == "similar" %}{{ hits|length }}{% if more %}+{% endif %} result{{ "" if hits|length == 1 else "s" }}
       {% elif kind == "documents" %}{{ "first " if more }}{{ hits|length }} document{{ "" if hits|length == 1 else "s" }}{% endif %}
@@ -64,4 +64,8 @@
   {% if more %}<a class="more" href="{{ more }}">More</a>{% endif %}
 </section>
 </div>
-{% if oob %}{% include "controls.html" %}{% endif %}
+{% if oob %}
+<title>{{ title }}</title>
+{% include "controls.html" %}
+{% if not typed %}{% include "query.html" %}{% endif %}
+{% endif %}

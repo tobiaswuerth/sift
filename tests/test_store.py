@@ -56,11 +56,19 @@ def test_add_collection_rejects_bad_names(tmp_path, notes, name):
 
 
 def test_add_collection_errors(corpus, tmp_path):
-    db, notes = corpus
+    db = corpus[0]
+    (tmp_path / "other").mkdir()
     with pytest.raises(SystemExit, match="already exists"):
-        store.add_collection(db, notes, "notes")
+        store.add_collection(db, tmp_path / "other", "notes")
     with pytest.raises(SystemExit, match="not a directory"):
         store.add_collection(db, tmp_path / "missing", "x")
+
+
+def test_a_folder_is_one_collection(corpus):
+    # Registered twice, every document of it was found twice.
+    db, notes = corpus
+    with pytest.raises(SystemExit, match=f"{notes.name} is the collection 'notes' already"):
+        store.add_collection(db, notes / ".." / notes.name, "again")
 
 
 def test_remove_collection(corpus):

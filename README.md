@@ -103,8 +103,9 @@ uses the `sift serve` that runs on that port, or starts one, which then serves a
   counts (authors, categories, years), each a click to filter by. Filters show as chips; click one to remove it.
   Results can also be sorted by any front-matter field.
 - **Read** a result next to the list: the whole document, its passage marked and scrolled to, and its front matter,
-  whose values filter too, and whose links open. *Similar* lists documents like it, and *Open file* opens the
-  original file: a PDF shows in the browser.
+  whose values filter too, and whose links open. A long document shows 2,000 lines at a time. *Similar* lists
+  documents like it, and *Open file* opens the original file: a PDF shows in the browser's viewer, and other files
+  open without running any script they hold.
 - **Keys:** `/` to search, `↑` `↓` to move through results, `Enter` to open one.
 - Every view has its own address, so reloading, the back button and links work.
 
@@ -121,8 +122,8 @@ them, with the ids of the documents that answer them, as search results show the
 ]
 ```
 
-A few dozen questions are enough to compare modes and to see whether a change helps your documents. Grades (2 for
-the answer, 1 for a useful one) are optional.
+A few dozen questions are enough to compare modes and to see whether a change helps your documents. Grades are
+optional: 2 for the answer, 1 for a useful one, and 0, as in TREC's judgements, for one read and found irrelevant.
 
 ### Front matter
 
@@ -147,7 +148,8 @@ sift search policy -f departments!=legal                         # not in legal
 ```
 
 Filters on different fields must all hold. Repeated for one field, `=` matches any of the values, and `!=` leaves out
-documents with any of them; documents without the field stay in.
+documents with any of them; documents without the field stay in. Fields go by the names the front matter gives them,
+e.g. `-f journal-ref=Nature` or `-f "date created>=2024"`.
 
 Filters can also be ranges, with `>`, `>=`, `<` and `<=`. Dates compare at the precision given, so `created<=2024`
 includes all of 2024 and `created>2024` starts in 2025; a number compares with the number a date starts with:
@@ -255,8 +257,8 @@ Anthropic's servers, which can't reach a server on your computer.
 
 A running sift keeps the version it started with, so an update takes an upgrade and a restart of each part:
 
-1. **Upgrade** on every machine that runs sift; a machine that embeds through a `sift worker` needs the same version
-   as the worker:
+1. **Upgrade** on every machine that runs sift; a machine that embeds through a `sift worker` needs the same major
+   version as the worker (see [Versioning](#versioning)):
 
    ```bash
    uv tool upgrade sift-rag     # with pip: pip install -U sift-rag
@@ -292,10 +294,10 @@ setx SIFT_EMBED_REMOTE https://<key>@workstation:8766
 `sift embed` then sends the chunks to the worker, 256 at a time, and stores the vectors it gets back, without loading
 the model itself. Searches embed their queries and rerank there too, in the CLI and in `sift serve`, so the machine
 searching never loads PyTorch: `vsearch` and `query` answer in a fraction of a second, even on a light notebook.
-Both machines need the same sift version. The worker only computes: it sees the texts it embeds and reranks, but no
-index and no files. It sizes its batches to its GPU
-and gives the GPU back after 5 idle minutes, like `sift serve`. The worker's `SIFT_EMBED_MODEL` decides the model,
-and sift refuses a worker whose model differs from the one the index was embedded with.
+Both machines need the same major version of sift; sift refuses a worker of another one, and says which runs where.
+The worker only computes: it sees the texts it embeds and reranks, but no index and no files. It sizes its batches to
+its GPU and gives the GPU back after 5 idle minutes, like `sift serve`. The worker's `SIFT_EMBED_MODEL` decides the
+model, and sift refuses a worker whose model differs from the one the index was embedded with.
 
 The texts travel encrypted, over HTTPS. On its first start the worker makes a certificate of its own and an access
 token, kept in `~/.sift/worker` (readable by you only), and the key it prints holds both: the token, and the
@@ -395,6 +397,18 @@ NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise CPU; one user, any number of 
 
 Out of scope for now: OCR of scans and images; answer generation (sift retrieves, the agent writes); approximate
 nearest-neighbour indexes; live file watching; remote access and authentication.
+
+## Versioning
+
+sift follows [semantic versioning](https://semver.org/). Within a major version, such as 1.x, these stay compatible:
+
+- the commands, their options and their output with `--json`;
+- the MCP tools and their parameters;
+- the four settings;
+- the index: one made by 1.x opens in every later 1.x, which updates its layout on first use if it must;
+- the worker protocol: every 1.x embeds through every 1.x worker.
+
+sift's Python modules are its own: they may change in any release.
 
 ## Development
 

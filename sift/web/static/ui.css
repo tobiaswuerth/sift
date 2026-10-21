@@ -61,6 +61,8 @@ main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 3
 }
 .side li a:hover { background: var(--accent-soft); }
 .side li a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.folders ul { display: flex; flex-wrap: wrap; }  /* folders such as years: several to a row */
+.folders li { max-width: 100%; }
 .n { color: var(--dim); font-variant-numeric: tabular-nums; }
 
 .results { padding: 8px 0; }
@@ -104,6 +106,8 @@ a.hit:focus, a.hit.on { outline: none; background: var(--panel); border-left-col
 .fields dd { margin: 0; display: flex; flex-wrap: wrap; gap: 4px; overflow-wrap: anywhere; }
 .fields dd a { padding: 0 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); }
 .fields dd a[target] { padding: 0; background: none; text-decoration: underline; text-underline-offset: 2px; }
+.part { margin: 10px 0 0; color: var(--dim); font-size: 12px; }
+.part a { color: var(--accent); }
 .text { margin-top: 12px; counter-reset: line; }
 .l { position: relative; padding-left: 44px; min-height: 1.45em; white-space: pre-wrap; overflow-wrap: anywhere; }
 .l::before {
@@ -116,9 +120,10 @@ a.hit:focus, a.hit.on { outline: none; background: var(--panel); border-left-col
 .l.t { font: 12px var(--mono); }
 
 @media (max-width: 900px) {
+  #search { flex-wrap: wrap; }
+  #q { flex-basis: 100%; }
   main { display: block; overflow: auto; }
   #explore { grid-template-columns: 1fr; border-right: 0; }
-  .side { display: none; }
+  .side { max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--line); }
   #reader:has(header) { border-top: 1px solid var(--line); }
-  #controls select { display: none; }
 }

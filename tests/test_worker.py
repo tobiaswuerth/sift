@@ -356,6 +356,21 @@ def test_a_remote_with_another_model_is_refused(embedded, fake_models, monkeypat
         embed.embed_pending(embedded[0])
 
 
+@pytest.mark.parametrize(
+    "here, there, works",
+    [("1.0.0", "1.4.2", True), ("1.4.2", "1.0.0", True), ("1.0.0", "2.0.0", False), ("0.9.1", "0.10.0", False)],
+)
+def test_a_worker_must_run_a_compatible_sift(live, monkeypatch, here, there, works):
+    # Semantic versioning: from 1.0 the protocol changes only with the major version, before it with the minor one.
+    monkeypatch.setattr(remote, "__version__", here)
+    monkeypatch.setattr(worker, "__version__", there)
+    if works:
+        remote.Remote(live.url).load()
+    else:
+        with pytest.raises(remote.RemoteError, match=f"runs sift {there}, this machine sift {here}"):
+            remote.Remote(live.url).load()
+
+
 def test_the_cli_reports_an_unreachable_remote(corpus, fake_models, monkeypatch, configure):
     configure(remote=nobody_listens())
     with pytest.raises(SystemExit, match="^" + re.escape("error: embedding remote https://127.0.0.1:0 is unreachable")):

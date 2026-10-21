@@ -44,11 +44,23 @@ def test_bench_takes_ids_as_get_does(embedded, cases):
     assert [relevant for _, relevant in bench.load(cases, index)] == [{"notes/rl.md": 1}, {"notes/robots/brush.md": 2}]
 
 
+def test_documents_graded_0_are_not_relevant(embedded, tmp_path):
+    # As in TREC's judgements, which list documents read and found irrelevant with grade 0.
+    path = tmp_path / "graded.json"
+    path.write_text('[{"query": "reward", "relevant": {"notes/rl.md": 1, "notes/plain.txt": 0}}]', encoding="utf-8")
+    assert bench.load(path, Index(embedded[0])) == [("reward", {"notes/rl.md": 1})]
+
+
 @pytest.mark.parametrize(
     "content, error",
     [
         ('[{"query": "x", "relevant": ["notes/missing.md"]}]', "case 1: unknown document"),
         ('[{"query": "x", "relevant": []}]', "case 1 needs"),
+        ('[{"query": "x", "relevant": "notes/rl.md"}]', "case 1 needs"),  # no list: it was split into letters
+        ('[{"query": "x", "relevant": [["notes/rl.md"]]}]', "case 1 needs"),
+        ('[{"query": "x", "relevant": {"notes/rl.md": 0}}]', "case 1 needs"),  # nothing relevant: nDCG divided by 0
+        ('[{"query": "x", "relevant": {"notes/rl.md": "high"}}]', "case 1 needs"),
+        ('[{"query": "x", "relevant": {"notes/rl.md": -1}}]', "case 1 needs"),
         ('[{"relevant": ["notes/rl.md"]}]', "case 1 needs"),
         ('{"query": "x"}', "a list of cases"),
         ("[]", "a list of cases"),
