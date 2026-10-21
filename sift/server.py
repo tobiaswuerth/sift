@@ -280,10 +280,10 @@ async def _serve(mcp, index, host, port, stdio, models):
         if stdio:
             await mcp.run_stdio_async()
         else:
-            from .ui import LOCAL_HOSTS
+            from .ui import LOCAL_HOSTS, PREFIX, address
 
-            local = "127.0.0.1" if host in ("0.0.0.0", "::") else host
-            console.say(f"sift MCP server on http://{host}:{port}/mcp; browse the index at http://{local}:{port}/ui/")
+            listening = f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
+            console.say(f"sift MCP server on {listening}/mcp; browse the index at {address(host, port)}{PREFIX}")
             if host not in LOCAL_HOSTS:
                 console.say(
                     f"warning: listening on {host}, so anyone who reaches port {port} can read every indexed "

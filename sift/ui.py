@@ -15,7 +15,7 @@ from collections import Counter
 from dataclasses import dataclass, fields, replace
 from itertools import islice
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from markupsafe import Markup, escape
 
@@ -360,10 +360,16 @@ def app(index, host="127.0.0.1"):
     return TrustedHostMiddleware(ui, allowed_hosts=list(LOCAL_HOSTS)) if host in LOCAL_HOSTS else ui
 
 
+def address(host, port):
+    """Where to reach a server listening on `host`: this machine's own address if it listens on all of them, and
+    IPv6 addresses in brackets."""
+    host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
+    return f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
+
+
 def open_in_browser(host="127.0.0.1", port=8765):
     """`sift ui`: open the UI of the `sift serve` on this port in the browser, starting the server if none runs."""
-    local = "127.0.0.1" if host in ("0.0.0.0", "::") else host
-    url = f"http://{local}:{port}{PREFIX}"
+    url = address(host, port) + PREFIX
     try:
         urllib.request.urlopen(url, timeout=5).close()
     except urllib.error.HTTPError as e:
@@ -377,7 +383,7 @@ def open_in_browser(host="127.0.0.1", port=8765):
 
         from . import server
 
-        threading.Thread(target=_open_when_up, args=(local, port, url), daemon=True).start()
+        threading.Thread(target=_open_when_up, args=(url,), daemon=True).start()
         server.serve(host, port)
         return
     _open(url)
@@ -388,12 +394,12 @@ def _open(url):
     webbrowser.open(url)
 
 
-def _open_when_up(host, port, url, wait=STARTUP_SECONDS):
-    """Open the page once something listens on the port, within `wait` seconds."""
-    deadline = time.monotonic() + wait
+def _open_when_up(url, wait=STARTUP_SECONDS):
+    """Open the page once something listens on its port, within `wait` seconds."""
+    deadline, parts = time.monotonic() + wait, urlsplit(url)
     while time.monotonic() < deadline:
         try:
-            socket.create_connection((host, port), timeout=0.2).close()
+            socket.create_connection((parts.hostname, parts.port), timeout=0.2).close()
         except OSError:
             time.sleep(0.1)
             continue

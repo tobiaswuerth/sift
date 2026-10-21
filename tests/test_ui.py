@@ -503,8 +503,22 @@ def test_sift_ui_needs_a_server_with_the_ui(home, opened):
     assert opened == []
 
 
+@pytest.mark.parametrize(
+    "host, address",
+    [
+        ("127.0.0.1", "http://127.0.0.1:8765"),
+        ("0.0.0.0", "http://127.0.0.1:8765"),  # every address of this machine: open its own
+        ("::1", "http://[::1]:8765"),  # IPv6 in brackets: `sift ui --host ::1` failed with "nonnumeric port"
+        ("::", "http://[::1]:8765"),
+        ("workstation", "http://workstation:8765"),
+    ],
+)
+def test_the_address_to_open_for_a_server(host, address):
+    assert ui.address(host, 8765) == address
+
+
 def test_the_page_opens_only_once_the_server_answers(opened):
-    ui._open_when_up("127.0.0.1", free_port(), "http://example/ui/", wait=0.3)  # nobody ever listens
+    ui._open_when_up(f"http://127.0.0.1:{free_port()}/ui/", wait=0.3)  # nobody ever listens
     assert opened == []
 
 
@@ -517,6 +531,8 @@ def test_serve_says_where_the_ui_is(embedded, monkeypatch, capsys):
     monkeypatch.setattr(uvicorn.Server, "serve", nothing)
     server.serve(port=9000)
     assert "browse the index at http://127.0.0.1:9000/ui/" in capsys.readouterr().err
+    server.serve(host="::", port=9000)
+    assert "on http://[::]:9000/mcp; browse the index at http://[::1]:9000/ui/" in capsys.readouterr().err
 
 
 def test_links_carry_the_whole_view(browser):
