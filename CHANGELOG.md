@@ -47,6 +47,7 @@ with a new major version. [Versioning](README.md#versioning) lists what that cov
   - the mode buttons couldn't be reached by keyboard; ArrowDown on the sort menu jumped to the results, and Ctrl+J
     and Ctrl+K were taken for `j` and `k`;
   - browsing showed a Markdown document's front matter as its passage;
+  - a page that held all the results still offered *More*, and counted "30+" for 30;
   - `?k=²` failed with a server error.
 
 ### Security

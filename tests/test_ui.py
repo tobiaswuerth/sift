@@ -182,6 +182,30 @@ def test_more_results_are_one_click_away(embedded):
     assert f"k={3 + ui.PAGE}" in html.unescape(more[1])  # a page more
 
 
+@pytest.mark.parametrize("params", [{"c": "notes"}, {"q": "brush OR reward OR colour"}])
+def test_no_more_when_a_page_holds_them_all(browser, params):
+    # A page as long as the results offered more of them, and counted "3+" for 3.
+    response = browser.get("/ui/", params=params | {"k": "3"})
+    assert len(ids(response)) == 3
+    assert 'class="more"' not in response.text
+    assert re.search(r'<span class="count">\s*3 (results|documents)\s*</span>', response.text)
+
+
+def test_a_search_sorted_by_a_field_shows_its_k_best(embedded):
+    # One result more, as the other pages ask for, would sort a different set: the third best is the newest.
+    db, root = embedded
+    for name, year, text in (
+        ("a", 2020, "pigment pigment pigment"),
+        ("b", 2021, "pigment pigment filler"),
+        ("c", 2025, "pigment filler filler"),
+    ):
+        write(root / "years" / f"{name}.md", f"---\nyear: {year}\n---\n{text}\n")
+    indexing.index(db)
+    response = page(Index(db)).get("/ui/", params={"q": "pigment", "k": "2", "sort": "-year"})
+    assert ids(response) == ["notes/years/b.md", "notes/years/a.md"]  # the two best, newest first
+    assert 'class="more"' in response.text  # as many as asked for: there may be more
+
+
 def test_a_document_opens_in_the_reader_with_its_hit_marked(browser):
     response = browser.get("/ui/", params={"q": "reinforcement", "doc": "notes/rl.md", "lines": "3-3"})
     reader = re.search(r'<article id="reader".*?</article>', response.text, re.S)[0]

@@ -223,27 +223,34 @@ def _explore(index, view, pattern):
         "sort": view.sort or None,
     }
     context = {"kind": "overview", "hits": [], "folders": [], "crumbs": _crumbs(view), "error": None}
+    # One result more than the page tells whether there are more; but a search sorted by a field sorts its k best,
+    # which one more would change.
+    peek = not (view.sort and (view.q or view.similar))
+    ask = view.k + peek
     try:
         options["filters"] = view.filters()
         if view.q:  # typed while documents like one are listed: a search
-            context |= {"kind": "results", "hits": getattr(index, view.mode)(view.q, view.k, **options)}
+            context |= {"kind": "results", "hits": getattr(index, view.mode)(view.q, ask, **options)}
         elif view.similar:
-            context |= {"kind": "similar", "hits": index.similar(view.similar, view.k, **options)}
+            context |= {"kind": "similar", "hits": index.similar(view.similar, ask, **options)}
             context["similar_title"] = index.document(view.similar)["title"]
         elif view.c or view.f:
-            context |= {"kind": "documents", "hits": index.browse(view.k, **options)}
+            context |= {"kind": "documents", "hits": index.browse(ask, **options)}
             if view.c:
                 context["folders"] = [
                     (name, view.href(path=view.path + name + "/", k=PAGE)) for name in index.folders(view.c, view.path)
                 ]
     except ERRORS as e:
         context["error"] = str(e)
-    hits = _scored(context["hits"], view, pattern)
+    found = context["hits"]
+    hits = _scored(found[: view.k], view, pattern)
+    more = len(found) > view.k if peek else len(found) == view.k
     sortable = sorted({key for hit in hits for key in hit.get("fields", {})} | ({view.sort.lstrip("-")} - {""}))
     return context | {
+        "hits": hits,
         "facets": _facets(hits, view),
         "chips": [(pair.replace("=", ": ", 1), view.filtered(*pair.split("=", 1))) for pair in view.f if "=" in pair],
-        "more": view.href(k=view.k + PAGE) if len(hits) == view.k and view.k < MOST else None,
+        "more": view.href(k=view.k + PAGE) if more and view.k < MOST else None,
         "sortable": sortable,
     }
 
