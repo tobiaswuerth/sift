@@ -80,8 +80,9 @@ parentheses group: `'"stroke" AND (painting OR rendering)'`. A query with operat
 nothing, drop terms.
 
 Scores rank the results of one search, on a scale of its own: BM25 for `search` (0 and up), cosine similarity for
-`vsearch` and `similar` (-1 to 1), and for `query` the reranker's raw score, which compares across queries: with
-the default reranker, close matches score about 8 to 12, and unrelated results below 5.
+`vsearch` and `similar` (-1 to 1), and for `query` the reranker's score, nudged by the passage's cosine, on the
+reranker's scale. It compares across queries: with the default reranker, close matches score about 2.5 to 4, and
+unrelated results below 2.
 
 ### Measuring search on your own documents
 
@@ -296,7 +297,7 @@ Four optional settings exist for special cases:
 |---|---|---|
 | `SIFT_HOME` | `~/.sift` | Where the index lives |
 | `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model |
-| `SIFT_RERANK_MODEL` | `cross-encoder/ettin-reranker-150m-v1` | Any Sentence Transformers cross-encoder |
+| `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
 | `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed on: the `https://<key>@workstation:8766` it prints |
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
@@ -339,10 +340,14 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   index, so nothing to tune and no recall loss; a million 768-dimensional vectors take about 1.5 GB of VRAM. When the
   best passages come from a few documents, it looks further down until it has `k` documents.
 - **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are reranked together, in one GPU
-  batch; the reranker alone decides the order, as fusing the candidates' first ranks into it made results worse.
-  The reranker reads each candidate's title, the front-matter values that share a word with the query (an author's
-  name, an id; all of them would dilute the passage), and the passage. Scores are the reranker's raw ones: a sigmoid
-  saturates, at 0.9999 for every good match.
+  batch. The reranker reads each candidate's title, the front-matter values that share a word with the query (an
+  author's name, an id; all of them would dilute the passage), and the passage.
+  - **Scoring.** A candidate's score is the reranker's, plus half its cosine with the query, measured in units of the
+    reranker's spread over the candidates. One weight thus fits any reranker, and the scores keep the reranker's
+    scale. A reranker alone ranked scientific claims worse than the embedding did. Candidates whose front matter the
+    query names keep the best cosine, since the embedding never sees front matter.
+  - **The evidence** is in [docs/benchmarks.md](docs/benchmarks.md): 12 rerankers on seven datasets. Scores are raw:
+    a sigmoid saturates, at 0.9999 for every good match.
 - **`similar`:** the mean of a document's passage vectors, scored against every passage as `vsearch` scores a query.
   No model runs, so it takes half a second over 3 million passages, with or without a GPU.
 - **Server:** `sift serve` loads models and vectors once and keeps them in memory.

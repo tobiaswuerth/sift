@@ -10,7 +10,7 @@ def test_the_defaults_need_no_environment():
     assert Settings.from_env({}) == Settings(
         home=Path.home() / ".sift",
         embed_model="google/embeddinggemma-2",
-        rerank_model="cross-encoder/ettin-reranker-150m-v1",
+        rerank_model="Alibaba-NLP/gte-reranker-modernbert-base",
         remote=None,
     )
 

@@ -376,9 +376,11 @@ class Index:
         sort=None,
         candidates=40,
     ):
-        """Hybrid search for RAG: keyword and semantic candidates, all reranked together. The reranker alone decides
-        the order: fusing the candidates' ranks into it, e.g. by reciprocal rank, made results worse (MRR@10 0.69 to
-        0.64 on a known-item test over 3.2 million arXiv abstracts)."""
+        """Hybrid search for RAG: keyword and semantic candidates, all reranked together, and ordered by the reranker's
+        score blended with their cosine (see _blend). Fusing the candidates' first ranks into the order, e.g. by
+        reciprocal rank, made results worse (MRR@10 0.69 to 0.64 on a known-item test over 3.2 million arXiv
+        abstracts); the blend made them better on six of the seven sets in docs/benchmarks.md, and cost a little on
+        those arXiv known items (0.937 to 0.929)."""
         k, where = _check_k(k), _where(self.db, collection, path, filters)
         fields, sort = _check_fields(fields), _check_sort(sort)
         candidates = max(candidates, k)
