@@ -420,6 +420,20 @@ def test_search_commands_take_links(cli_vault, capsys):
     assert [h["id"] for h in hits] == ["vault/01_People/Hans Müller.md"]
 
 
+def test_mentions_command(vault, home, capsys):
+    run(capsys, "add", str(vault[0]), "--title-from", "name")
+    run(capsys, "add", str(vault[1]))
+    run(capsys, "index")
+    out = run(capsys, "mentions", "vault/Hans Müller.md").out
+    assert "work/contract.md:1-3  Maintenance contract" in out.splitlines()[0]
+    hits = json.loads(run(capsys, "mentions", "vault/Acme AG.md", "-c", "vault", "--also", "aliases", "--json").out)
+    assert hits == []
+    hits = json.loads(
+        run(capsys, "mentions", "vault/Acme AG.md", "-k", "1", "--compact", "--fields", "*", "--json").out
+    )
+    assert [(h["id"], "text" in h) for h in hits] == [("work/contract.md", False)]
+
+
 def test_unresolved_command(cli_vault, capsys):
     assert run(capsys, "unresolved").out.splitlines() == [
         "     1  Peter Frei  vault/01_People/Hans Müller.md",

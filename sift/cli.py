@@ -192,6 +192,14 @@ def main(argv=None):
     s.add_argument("--field", help="only links in this front-matter field")
     s.add_argument("-k", type=int, default=50, help="at most this many links each way (default: 50)")
     s.add_argument("--json", action="store_true", help="print the links as JSON")
+    s = sub.add_parser("mentions", help="documents that name a note without linking to it")
+    s.add_argument("id")
+    s.add_argument("-k", type=int, default=10, help="number of results (default: 10)")
+    s.add_argument("-c", "--collection")
+    s.add_argument("--also", help='front-matter fields whose values are names of the note too, e.g. "emails"')
+    s.add_argument("--fields", help='front-matter fields to show, comma-separated (e.g. "url,created"; "*": all)')
+    s.add_argument("--compact", action="store_true", help="leave out the text")
+    s.add_argument("--json", action="store_true", help="print results as JSON")
     s = sub.add_parser("unresolved", help="link targets no note answers to yet, most linked first")
     s.add_argument("-c", "--collection")
     s.add_argument("-k", type=int, default=50, help="number of targets (default: 50)")
@@ -328,6 +336,12 @@ def _run(a, db):
         from .search import Index
 
         _print_links(Index(db).links(a.id, a.direction, a.depth, a.field, a.k), a.json)
+    elif a.cmd == "mentions":
+        from .search import Index
+
+        also, fields = _fields(a.also), _fields(a.fields)
+        hits = Index(db).mentions(a.id, a.k, collection=a.collection, also=also, fields=fields, compact=a.compact)
+        _print_hits(hits, a.json)
     elif a.cmd == "unresolved":
         from .search import Index
 

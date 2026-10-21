@@ -127,4 +127,4 @@ show_missing = true
 skip_covered = true
 
 [tool.codespell]
-ignore-words-list = "pard"  # an RTF control word, in tests/samples/make_samples.py
+ignore-words-list = "pard,ue"  # an RTF control word, in tests/samples/make_samples.py; ü written as ue

@@ -31,6 +31,7 @@ and cite what you find; say so when nothing relevant turns up.
 - `get`: a document, or some of its lines, such as a result's.
 - `links`: the links of a note ([[wikilinks]], embeds, Markdown links): those it holds, and those into it (backlinks).
 - `unresolved`: link targets no note answers to yet: the notes a collection lacks.
+- `mentions`: documents that name a note without linking to it.
 - `reindex`: after writing, changing or deleting files in a collection, index them again, so searches find them.
 Results carry `id` (collection/path), `lines`, `title`, `score` and the passage's `text`. Scores rank the results of
 one call; each tool has its own scale, so don't compare them across tools. All search tools take `collection`, a
@@ -277,6 +278,23 @@ def build(index=None):
         """Link targets no document answers to: the notes a collection lacks, most linked first, each with how many
         documents link it and the ids of a few of them."""
         return _run(index.unresolved, collection, k)
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def mentions(
+        id: Id,
+        k: K = 10,
+        collection: Collection = None,
+        also: Annotated[
+            list[str] | None,
+            Field(description='Front-matter fields of the note whose values count as its names too, e.g. ["emails"].'),
+        ] = None,
+        fields: Fields = None,
+        compact: Compact = False,
+    ) -> list[dict]:
+        """Documents that name a note without linking to it (unlinked mentions), in any collection: found by keyword
+        search for the note's names as phrases, its file name, title and aliases. Results look like search results;
+        the note itself and the documents linking it are left out. Read the passages to judge which mean the note."""
+        return _run(index.mentions, id, k, collection=collection, also=also, fields=fields, compact=compact)
 
     @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True))
     async def reindex(

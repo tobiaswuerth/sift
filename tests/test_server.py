@@ -58,6 +58,7 @@ def test_lists_tools(mcp):
         "status",
         "links",
         "unresolved",
+        "mentions",
         "reindex",
     ]
 
@@ -88,7 +89,8 @@ def test_search_tools(mcp, tool):
 
 
 @pytest.mark.parametrize(
-    "tool", ["search", "vsearch", "query", "similar", "get", "status", "links", "unresolved", "reindex"]
+    "tool",
+    ["search", "vsearch", "query", "similar", "get", "status", "links", "unresolved", "mentions", "reindex"],
 )
 def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
     # PyTorch crashes in worker threads on Python 3.15 (Windows, macOS), so no tool may run in one.
@@ -97,6 +99,7 @@ def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
     monkeypatch.setattr(index, tool, lambda *a, **kw: threads.append(threading.current_thread()) or real(*a, **kw))
     rl = {"id": "notes/rl.md"}
     args = {"get": rl, "similar": rl, "links": rl, "status": {}, "unresolved": {}, "reindex": {"paths": [rl["id"]]}}
+    args["mentions"] = rl
     args = args.get(tool, {"query": "brush"})
     assert not call(server.build(index)[0], tool, args).is_error
     assert threads == [threading.main_thread()]
@@ -198,6 +201,14 @@ def test_reindex_tool(linked, fake_models):
     assert found == [{"id": "vault/06_Topics/Wartungsvertrag 2027.md", "status": "added", "chunks": 1, "embedded": 1}]
     hits = data(call(mcp, "vsearch", {"query": "maintenance of the press line", "k": 1}))
     assert [h["id"] for h in hits] == ["vault/06_Topics/Wartungsvertrag 2027.md"]
+
+
+def test_mentions_tool(linked):
+    mcp = server.build(Index(linked[0]))[0]
+    hits = data(call(mcp, "mentions", {"id": HANS, "k": 3, "collection": "work", "also": ["aliases"]}))
+    assert [h["id"] for h in hits] == ["work/contract.md"]
+    hits = data(call(mcp, "mentions", {"id": HANS, "compact": True, "fields": ["*"]}))
+    assert set(hits[0]) == {"id", "title", "lines", "score", "fields"}
 
 
 def test_unresolved_tool(linked):

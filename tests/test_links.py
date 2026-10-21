@@ -546,3 +546,45 @@ def test_a_wikilink_filter_matches_the_note_however_the_link_is_written(tmp_path
     # a note not written yet: the links to it, however written
     assert ids(index.browse(filters={"org": ["[[beta.md]]", "Acme AG"]})) == ["v/d.md", "v/f.md", "v/h.md"]
     assert ids(index.browse(filters={"client": "[[Acme]]"})) == ["v/g.md"]
+
+
+# --- mentions without links --------------------------------------------------
+
+
+def test_documents_that_mention_a_note_without_linking_it(linked):
+    index = Index(linked[0])
+    assert ids(index.mentions(HANS)) == ["work/contract.md"]  # Anna, Acme AG and the offer link him
+    assert ids(index.mentions(ACME)) == ["work/contract.md"]  # Hans names Acme AG, but links it too
+    hit = index.mentions(HANS)[0]
+    assert set(hit) == {"id", "title", "lines", "score", "text"}
+    assert "Hans Müller" in hit["text"]
+    assert index.mentions(HANS, collection="vault") == []
+    assert set(index.mentions(HANS, compact=True, fields=["*"])[0]) == {"id", "title", "lines", "score", "fields"}
+
+
+def test_mentions_by_every_name_of_a_note(tmp_path, home):
+    db, _ = note_vault(
+        tmp_path,
+        home,
+        {
+            "Jürg Bühler.md": '---\ntitle: "Dr. J. Bühler"\naliases: [JB Consulting]\nemails: [jb@example.com]\n---\n',
+            "a.md": "Met Juerg Buehler today.",  # as written without umlauts
+            "b.md": "Met Jurg Buhler today.",  # the keyword index ignores diacritics
+            "c.md": "Invoice from JB Consulting.",
+            "d.md": "Letter to Dr. J. Bühler.",
+            "e.md": "Mail from jb@example.com.",
+            "f.md": "Nothing about anyone.",
+            "AI.md": "",
+        },
+    )
+    index = Index(db)
+    assert sorted(ids(index.mentions("v/Jürg Bühler.md"))) == ["v/a.md", "v/b.md", "v/c.md", "v/d.md"]
+    assert "v/e.md" in ids(index.mentions("v/Jürg Bühler.md", also=["emails"]))
+    assert "v/e.md" in ids(index.mentions("v/Jürg Bühler.md", also="emails"))
+    assert index.mentions("v/AI.md") == []  # too short a name: it would be everywhere
+
+
+@pytest.mark.parametrize("also", [[1], [""], 5])
+def test_mentions_takes_field_names(linked, also):
+    with pytest.raises(ValueError, match="also must name front-matter fields"):
+        Index(linked[0]).mentions(HANS, also=also)

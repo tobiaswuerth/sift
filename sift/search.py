@@ -4,6 +4,7 @@ The models embed queries and rerank, wherever they run (see `models`). Through a
 as a NumPy matrix and PyTorch never loads: a search starts in a fraction of a second, even on a light notebook."""
 
 import json
+import posixpath
 import re
 import sqlite3
 from collections import Counter
@@ -212,6 +213,8 @@ def _first_of_each(items, key):
 
 
 VIA = ("path", "name", "alias")  # how a link resolved, when it did
+MENTION_CHARS = 3  # names `mentions` looks for have at least this many characters
+UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss"})
 LINKING_SHOWN = 5  # documents an unresolved target names, of those linking it
 LINE_CHARS = 300  # characters of a linking line a link into a document shows, around the link
 
@@ -779,6 +782,35 @@ class Index:
             {"target": target, "docs": len(docs), "ids": sorted(named[doc][0] for doc in docs)[:LINKING_SHOWN]}
             for _, target, docs, _ in found
         ]
+
+    def mentions(self, id, k=10, *, collection=None, also=None, fields=None, compact=False):
+        """Documents that name the note `id` without linking to it, found as search finds them, by its names as phrases:
+        its file name, its `title`, its aliases, and the values of the front-matter fields `also` names, e.g.
+        ["emails"]. The note itself and the documents linking it are left out, and names shorter than MENTION_CHARS,
+        which would be everywhere. A name with ä, ö, ü or ß is also looked for as written with ae, oe, ue or ss: the
+        keyword index finds Müller as Muller, but not as Mueller."""
+        k, fields = _check_k(k), _check_fields(fields)
+        also = [also] if isinstance(also, str) else also
+        if also is not None and not (isinstance(also, list | tuple) and all(isinstance(f, str) and f for f in also)):
+            raise ValueError(f'also must name front-matter fields, e.g. ["emails"], got {also!r}')
+        doc, whole, _, meta, _ = self._find(id)
+        meta = json.loads(meta)
+        names = [posixpath.splitext(whole.rsplit("/", 1)[-1])[0], *links.aliases(meta)]
+        for value in [meta.get("title"), *(meta.get(field) for field in also or [])]:
+            names += [v for v in (value if isinstance(value, list) else [value]) if isinstance(v, str)]
+        phrases = {}
+        for name in names:
+            for variant in (name, name.translate(UMLAUTS)):
+                variant = " ".join(variant.split())
+                if len(variant) >= MENTION_CHARS and re.search(r"\w", variant) and not _wikilinks(variant):
+                    phrases.setdefault(readers.fold(variant), variant)
+        if not phrases:
+            return []
+        where, args = self._where(collection)
+        linking = {row[0] for row in links.incoming(self.db, links.Resolver(self.db), doc)} | {doc}
+        where, args = where + " AND d.id NOT IN (SELECT value FROM json_each(?))", [*args, _ids(linking)]
+        match = " OR ".join('"' + phrase.replace('"', '""') + '"' for phrase in phrases.values())
+        return _present(self._hits(self._keyword(match, k, where, args)), fields, compact, None)
 
     # --- reading files again (see indexing.reindex) ---------------------------
 

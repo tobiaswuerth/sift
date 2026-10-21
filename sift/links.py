@@ -24,16 +24,20 @@ AMBIGUOUS_SHOWN = 5  # candidates an ambiguous link names
 UNRESOLVED = ("unresolved", [])
 
 
-def names(path, meta):
-    """The names a file answers to, as (key, kind): its file name, and its aliases (`aliases`, or the older `alias`;
-    one or a list)."""
-    found = {(readers.key(path.rsplit("/", 1)[-1]), "name")}
+def aliases(meta):
+    """A note's aliases, from its front matter: Obsidian's `aliases`, or the older `alias`; one or a list."""
+    found = []
     for field in ("aliases", "alias"):
         value = meta.get(field)
-        for alias in value if isinstance(value, list) else [value]:
-            if isinstance(alias, str) and alias.strip():
-                found.add((readers.key(alias.strip()), "alias"))
-    return sorted(found)
+        found += [
+            a.strip() for a in (value if isinstance(value, list) else [value]) if isinstance(a, str) and a.strip()
+        ]
+    return found
+
+
+def names(path, meta):
+    """The names a file answers to, as (key, kind): its file name, and its aliases."""
+    return sorted({(readers.key(path.rsplit("/", 1)[-1]), "name")} | {(readers.key(a), "alias") for a in aliases(meta)})
 
 
 def save(db, docs):
