@@ -7,9 +7,12 @@ Readers run in worker processes while indexing, so they read from bytes and retu
 
 import hashlib
 import json
+import posixpath
 import re
+import unicodedata
 from collections import namedtuple
 from pathlib import Path
+from urllib.parse import unquote
 
 from . import console
 
@@ -79,17 +82,24 @@ def _front_matter(block):
     return meta
 
 
-def _heading(text):
-    """The first Markdown heading outside fenced code blocks, or None."""
+def _prose(text, first_line=1):
+    """The lines of Markdown `text` outside fenced code blocks, with their numbers."""
     fence = None
-    for line in text.split("\n"):
+    for n, line in enumerate(text.split("\n"), first_line):
         if m := FENCE.match(line):
             mark = m.group(1)
             if not fence:
                 fence = mark
             elif mark[0] == fence[0] and len(mark) >= len(fence) and not line[m.end() :].strip():
                 fence = None
-        elif not fence and HEADING.match(line):
+        elif not fence:
+            yield n, line
+
+
+def _heading(text):
+    """The first Markdown heading outside fenced code blocks, or None."""
+    for _, line in _prose(text):
+        if HEADING.match(line):
             title = line.strip().lstrip("#").strip()
             if (bare := title.rstrip("#")) != title and (not bare or bare[-1] in " \t"):
                 title = bare.strip()  # a closing sequence: "## Title ##", but not "# C#"
@@ -156,9 +166,9 @@ def decode(raw):
     return raw.decode("utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig", "replace")
 
 
-Doc = namedtuple("Doc", "key digest title meta text chunks")
+Doc = namedtuple("Doc", "key digest title meta text chunks links", defaults=((),))
 """A document read from a file: key is "" for a whole file, the record id for a JSON Lines record; chunks are
-(first line, last line, position, length) spans of text."""
+(first line, last line, position, length) spans of text; links are the Links of a Markdown file."""
 
 ID_FIELDS = ("id", "_id")
 TITLE_FIELDS = ("title", "name", "headline", "subject")
@@ -206,12 +216,110 @@ def _text(raw, name, fields):
 
 
 def note(text, name, fields=None):
-    """The document of a Markdown or text file named `name`, from its text. The index keeps that text, so a newer
-    sift can read the note again without its file."""
+    """The document of a Markdown or text file named `name`, from its text, with the links of a Markdown file. The
+    index keeps that text, so a newer sift can read the note again without its file."""
     title, meta, body, first_line = parse(text, Path(name).stem, (fields or {}).get("title_from", "heading"))
     offset = len(text) - len(body)  # the chunks are spans of the whole file, front matter included
     chunks = [(first, last, offset + pos, length) for first, last, pos, length in chunk(body, first_line)]
-    return Doc("", "", title, meta, text, chunks)
+    found = links(text, offset, first_line) if name.lower().endswith(MARKDOWN) else ()
+    return Doc("", "", title, meta, text, chunks, found)
+
+
+# --- links -------------------------------------------------------------------
+
+MARKDOWN = (".md", ".markdown")  # the files whose links sift reads; links name them without the extension
+ATTACHMENTS = frozenset(
+    ".avif .bmp .gif .heic .ico .jpeg .jpg .png .svg .tif .tiff .webp .3gp .aac .flac .m4a .mp3 .ogg .opus .wav "
+    ".avi .mkv .mov .mp4 .ogv .webm .base .canvas .csv .json .tsv .xml .yaml .yml .7z .gz .rar .tar .zip .doc .ppt "
+    ".xls".split()
+)  # what links point to that sift doesn't read: a link to one is neither resolved nor missing
+WIKILINK = re.compile(r"(!?)\[\[([^\[\]\n]+)\]\]")  # [[target#fragment|shown]], ![[...]] embeds
+MARKDOWN_LINK = re.compile(  # [shown](target#fragment "title"), CommonMark's inline link, one level of brackets in each
+    r"!?\[((?:[^\[\]\n]|\[[^\[\]\n]*\])*)\]\(\s*(<[^<>\n]*>|(?:[^\s()<>]|\([^\s()<>]*\))+)"
+    r"(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?\s*\)"
+)
+SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]+:")  # https:, mailto:, obsidian:: not a link between notes
+BACKTICKS = re.compile(r"`+")
+
+Link = namedtuple("Link", "field line kind target key fragment shown")
+"""A link in a Markdown file: the front-matter field it is in (None in the text), its line in the file, its kind
+("wikilink", "embed" for ![[...]], "markdown"), its target as written (decoded, in a Markdown link) without the
+heading or block it points into (`fragment`) and the text it shows, and the target's `key`."""
+
+
+def fold(name):
+    """A name as names compare: case-insensitively, and composed (macOS file names arrive decomposed)."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", name).casefold())
+
+
+def key(name):
+    """What a file name or the last part of a link's target compares as: folded, without a Markdown extension."""
+    stem, ext = posixpath.splitext(name)
+    return fold(stem if ext.lower() in MARKDOWN else name)
+
+
+def links(text, offset, first_line):
+    """The links of a Markdown file's `text` in order: wikilinks in the front matter, text[:offset], and wikilinks and
+    Markdown links in the body, from line `first_line`, outside code."""
+    if "[[" not in text and "](" not in text:  # most files of a collection without links, at the cost of a scan
+        return ()
+    found, field = [], None
+    for n, line in enumerate(text[:offset].split("\n")[:-1], 1):  # the front matter: `key: value` lines
+        name, colon, value = line.partition(":")
+        if colon and name.strip() and not name[0].isspace() and name[0] not in "#-":
+            field, line = name.strip(), value
+        if field and "[[" in line and not line.lstrip().startswith("#"):  # a value of `field`, not a comment
+            found += _in_line(line, n, field)
+    for n, line in _prose(text[offset:], first_line):
+        if "[[" in line or "](" in line:
+            found += _in_line(line, n)
+    return tuple(found)
+
+
+def _in_line(line, n, field=None):
+    """The links in line `n`, in order: in the body all kinds, in the front-matter field `field` wikilinks."""
+    line, found = _without_code(line), []
+    for m in WIKILINK.finditer(line):
+        target, _, shown = m[2].partition("|")
+        target, _, fragment = target.removesuffix("\\").partition("#")  # [[a\|b]] in a table
+        found.append((m.start(), _link(field, n, "embed" if m[1] else "wikilink", target, fragment, shown)))
+    if field is None and "](" in line:
+        line = WIKILINK.sub(lambda m: " " * len(m[0]), line)  # [[a]](b) is one link
+        for m in MARKDOWN_LINK.finditer(line):
+            target = m[2][1:-1] if m[2].startswith("<") else m[2]
+            if not SCHEME.match(target) and not target.startswith(("#", "//")):
+                target, _, fragment = target.partition("#")
+                found.append((m.start(), _link(None, n, "markdown", unquote(target), unquote(fragment), m[1])))
+    return [link for _, link in sorted(found, key=lambda item: item[0]) if link]
+
+
+def _link(field, n, kind, target, fragment, shown):
+    """A Link, or None for one into its own note, to a folder, or to a file sift doesn't read."""
+    target = target.strip()
+    last = target.rsplit("/", 1)[-1]
+    if last in ("", ".", "..") or posixpath.splitext(last)[1].lower() in ATTACHMENTS:
+        return None
+    return Link(field, n, kind, target, key(last), fragment.strip() or None, shown.strip() or None)
+
+
+def _without_code(line):
+    """The line with its code spans, `code` or ``co`de``, blanked out: a span ends at the next run of as many
+    backticks, and a run without one is just backticks."""
+    if "`" not in line:
+        return line
+    runs = [m.span() for m in BACKTICKS.finditer(line)]
+    following, last_of_length = [None] * len(runs), {}  # the next run of the same length, found from the end
+    for i in range(len(runs) - 1, -1, -1):
+        length = runs[i][1] - runs[i][0]
+        following[i], last_of_length[length] = last_of_length.get(length), i
+    pieces, i, end = [], 0, 0
+    while i < len(runs):
+        if (j := following[i]) is None:
+            i += 1
+            continue
+        pieces += [line[end : runs[i][0]], " " * (runs[j][1] - runs[i][0])]
+        i, end = j + 1, runs[j][1]
+    return "".join(pieces) + line[end:]
 
 
 def _records(raw, name, fields):
