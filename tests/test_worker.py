@@ -1,9 +1,12 @@
 """`sift worker` lends a machine's GPU to other machines' sift: they send texts over HTTPS, with the worker's key, and
 get vectors and reranking scores back."""
 
+import asyncio
 import json
 import os
 import re
+import select
+import socket
 import subprocess
 import sys
 import textwrap
@@ -162,19 +165,26 @@ def test_the_key_files_are_private(home, fake_models):
 @pytest.fixture
 def live(fake_models, home):
     """A real worker serving HTTPS on a free local port, from a thread, with models of its own that compute as the
-    fakes do, without PyTorch, which needs the main thread. Records the paths of the requests that reach it."""
+    fakes do, without PyTorch, which needs the main thread. Records the paths of the requests that reach it, and the
+    client ports they came from, one per connection. It closes connections that idle for a second."""
     import uvicorn
 
-    found, seen, worker_models = worker.credentials(), [], NumpyModels()
+    found, seen, clients, worker_models, loops = worker.credentials(), [], [], NumpyModels(), []
     app = worker.app(found.token, worker_models)
 
     async def recording(scope, receive, send):
         if scope["type"] == "http":
             seen.append(scope["path"])
+            clients.append(scope["client"][1])
+            loops[:] = [asyncio.get_running_loop()]
         await app(scope, receive, send)
 
     tls = {"ssl_certfile": str(found.cert), "ssl_keyfile": str(found.private_key)}
-    server = uvicorn.Server(uvicorn.Config(recording, host="127.0.0.1", port=0, log_level="warning", **tls))
+    # As the worker does, it stops within a second even with connections open, such as one a client kept.
+    config = uvicorn.Config(
+        recording, port=0, log_level="warning", timeout_keep_alive=1, timeout_graceful_shutdown=1, **tls
+    )
+    server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     deadline = time.monotonic() + 10  # a hang detector, not a timing assumption
@@ -187,9 +197,16 @@ def live(fake_models, home):
         address=f"https://127.0.0.1:{port}",
         port=port,
         seen=seen,
+        clients=clients,
+        server=server,
         models=worker_models,
         **found._asdict(),
     )
+    for loop in loops:  # drop the connections clients kept, as a worker that stops does, before stopping
+        loop.call_soon_threadsafe(lambda: [c.transport.abort() for c in list(server.server_state.connections)])
+    deadline = time.monotonic() + 10  # a hang detector
+    while server.server_state.connections and time.monotonic() < deadline:
+        time.sleep(0.01)
     server.should_exit = True
     thread.join(timeout=10)
 
@@ -220,6 +237,63 @@ def test_searches_embed_and_rerank_on_the_worker(embedded, live, monkeypatch, mo
     assert [h["id"] for h in there] == [h["id"] for h in here]
     assert [h["score"] for h in there] == pytest.approx([h["score"] for h in here], abs=1e-3)
     assert set(paths) <= set(live.seen)  # it really asked the worker
+
+
+def test_requests_to_a_worker_share_one_connection(live):
+    # A connection per request repeated the name lookup, the connection attempts and the TLS handshake for every 256
+    # texts.
+    worker_remote = remote.Remote(live.url)
+    for text in ("brush strokes", "pigments", "canvas"):
+        worker_remote.encode([text])
+    assert sorted(live.seen) == ["/", "/embed", "/embed", "/embed"]  # three batches, and the vectors' length once
+    assert len(set(live.clients)) == 1
+
+
+def test_a_connection_the_worker_closed_is_opened_again(live):
+    # The worker closes connections that idle for a few seconds, as between two searches; the next request must
+    # still get its answer.
+    worker_remote = remote.Remote(live.url)
+    worker_remote.encode(["brush strokes"])
+    deadline = time.monotonic() + 10  # a hang detector, not a timing assumption
+    while not all(c.transport.is_closing() for c in live.server.server_state.connections):
+        assert time.monotonic() < deadline, "the worker kept the idle connection"
+        time.sleep(0.02)
+    assert worker_remote.encode(["pigments"]).tolist() == live.models.encode(["pigments"]).tolist()
+    assert len(set(live.clients)) == 2
+
+
+@pytest.fixture
+def ipv6_listener():
+    """A socket listening on the IPv6 loopback that never answers, as an address the worker doesn't serve."""
+    listener = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    try:
+        listener.bind(("::1", 0))
+    except OSError:
+        listener.close()
+        pytest.skip("this machine has no IPv6 loopback")
+    listener.listen()
+    yield listener
+    listener.close()
+
+
+def test_a_worker_is_reached_over_ipv4_where_it_listens(live, ipv6_listener, monkeypatch):
+    # The worker listens on IPv4, but a name often resolves to an IPv6 link-local address first. Where a firewall
+    # dropped those connection attempts, each request waited 21 s for the attempt to fail before trying IPv4.
+    resolve = socket.getaddrinfo
+
+    def names(host, port, family=0, type=0, proto=0, flags=0):
+        if host != "workstation.test":
+            return resolve(host, port, family, type, proto, flags)
+        ipv6 = (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::1", ipv6_listener.getsockname()[1], 0, 0))
+        ipv4 = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", live.port))
+        return [a for a in (ipv6, ipv4) if family in (0, a[0])]
+
+    monkeypatch.setattr(socket, "getaddrinfo", names)
+    monkeypatch.setattr(remote, "TIMEOUT", 2)  # the IPv6 address takes the connection but never answers
+    worker_remote = remote.Remote(f"https://{live.token}.{live.pin}@workstation.test:{live.port}")
+    assert worker_remote.encode(["brush strokes"]).tolist() == live.models.encode(["brush strokes"]).tolist()
+    ready, _, _ = select.select([ipv6_listener], [], [], 0)
+    assert not ready  # no connection waits there
 
 
 def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
