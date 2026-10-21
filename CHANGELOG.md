@@ -32,8 +32,8 @@ with a new major version. [Versioning](README.md#versioning) lists what that cov
   `date created` couldn't be used. Any name without a double quote works now.
 - On an IPv6 address, `sift ui` failed with "nonnumeric port", and `sift serve` printed addresses without the
   brackets IPv6 needs in them.
-- A front-matter title that reads as a number, such as `title: 1984`, was ignored for the first heading or the file
-  name.
+- A front-matter title that reads as a number, such as `title: 1984`, was passed over: the document took its first
+  heading or its file name as title instead.
 - `sift bench` split a single id given as text, not in a list, into letters, and failed with a division by zero on a
   case whose grades were all 0. Both are now errors that say what a case needs.
 - `sift ui`:
