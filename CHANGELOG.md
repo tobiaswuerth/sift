@@ -20,6 +20,8 @@ with a new major version. [Versioning](README.md#versioning) lists what that cov
 - `sift serve` on an address other than `127.0.0.1` or `localhost` warns that anyone who reaches it can read every
   indexed document.
 - `sift bench` takes grade 0 for a document read and found irrelevant, as TREC's judgements do.
+- The package declares every package sift imports itself: uvicorn, Starlette, AnyIO, Pydantic and MarkupSafe came
+  only through mcp and Jinja2.
 - `sift ui`: the facets that most results share come first; folders take a few lines instead of one each; a long
   document shows 2,000 lines at a time; and on a narrow window the search box gets its own row, with the filters
   above the results instead of hidden.
@@ -40,6 +42,9 @@ with a new major version. [Versioning](README.md#versioning) lists what that cov
   - a folder whose name holds `[` showed other folders' documents, and `?path=2024` without its slash showed a folder
     named "" and the documents of `2024x/` too;
   - the window title didn't follow the search;
+  - the mode buttons couldn't be reached by keyboard; ArrowDown on the sort menu jumped to the results, and Ctrl+J
+    and Ctrl+K were taken for `j` and `k`;
+  - browsing showed a Markdown document's front matter as its passage;
   - `?k=²` failed with a server error.
 
 ### Security

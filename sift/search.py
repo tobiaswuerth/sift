@@ -22,7 +22,7 @@ STOPWORDS = set(
 SQLITE_INT = 2**63  # SQLite integers are 64-bit
 OPERATORS = ("=", "<", "<=", ">", ">=", "not")
 FIELD_SAMPLE = 1000  # documents per collection whose front matter tells which fields exist
-START = 600  # characters of a document that `browse` shows, as its passage
+START = 600  # characters of a document's start that `browse` shows, as its passage
 LAST = "\U0010ffff"  # the last character there is: every path starting with p sorts between p and p + LAST
 
 
@@ -489,7 +489,10 @@ class Index:
             value = "json_extract(d.meta, ?)"
             order = f"{value} IS NULL, {value}{' DESC' if sort[0] == '-' else ''}, {order}"
             by = [_field(sort.removeprefix("-"))] * 2
-        sql = f"""SELECT co.name, d.path, d.title, d.meta, substr(d.text, 1, {START}) FROM docs d
+        # The passage starts where the first chunk does, after any front matter; as a subquery, not a join, so that
+        # sorting a whole collection doesn't join every document first (0.4 s, against 5 s, for 3 million).
+        first = f"SELECT substr(d.text, c.pos + 1, {START}) FROM chunks c WHERE c.doc = d.id AND c.seq = 0"
+        sql = f"""SELECT co.name, d.path, d.title, d.meta, coalesce(({first}), '') FROM docs d
                   JOIN collections co ON co.id = d.collection WHERE {where} ORDER BY {order} LIMIT ?"""
         docs = []
         for name, doc_path, title, meta, text in self.db.execute(sql, [*args, *by, k]):

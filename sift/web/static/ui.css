@@ -38,10 +38,11 @@ body > header { display: flex; align-items: center; gap: 12px; padding: 8px 12px
 #q:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 #controls { display: flex; gap: 8px; align-items: center; }
 .modes { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.modes label { padding: 5px 10px; cursor: pointer; color: var(--dim); }
+.modes label { position: relative; padding: 5px 10px; cursor: pointer; color: var(--dim); }
 .modes label + label { border-left: 1px solid var(--line); }
-.modes input { display: none; }
+.modes input { position: absolute; opacity: 0; pointer-events: none; }  /* hidden, yet reachable by keyboard */
 .modes label:has(input:checked) { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.modes label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
 select {
   font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
   padding: 5px 6px;

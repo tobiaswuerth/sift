@@ -823,6 +823,14 @@ def test_browse_lists_documents_without_a_query(corpus):
     assert ids(docs) == ["notes/plain.txt", "notes/rl.md", "notes/robots/brush.md"]  # by path
     assert docs[1]["title"] == "Reward shaping"
     assert docs[1]["text"].startswith("# Reward shaping")  # the document's start, as a hit's passage
+    assert docs[2]["text"].startswith("# Brush stroke planning")  # after its front matter, as its first passage
+
+
+def test_browse_lists_documents_of_front_matter_alone(corpus):
+    db, root = corpus
+    write(root / "empty.md", "---\ntitle: Only metadata\n---\n")
+    indexing.index(db)
+    assert {"id": "notes/empty.md", "title": "Only metadata", "text": ""} in Index(db).browse()
 
 
 def test_browse_takes_what_searches_take(corpus):
