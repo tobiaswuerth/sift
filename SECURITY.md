@@ -20,4 +20,8 @@ page can't reach them under its own domain (DNS rebinding). Files opened from th
 `Content-Security-Policy: sandbox`, so a saved web page in a collection can't run its scripts as the UI and read the
 index; PDFs are left to the browser's viewer, which runs none of their scripts as the page.
 
+sift never writes to the indexed files. One MCP tool changes anything, `reindex`, and only sift's index: it reads the
+files it is given again, and only files that `sift index` would read too, inside a registered collection, outside
+hidden and linked folders.
+
 `sift worker` admits only requests with its token, over HTTPS with a certificate whose fingerprint the key carries.

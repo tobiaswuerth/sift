@@ -143,8 +143,8 @@ optional: 2 for the answer, 1 for a useful one, and 0, as in TREC's judgements, 
 
 ### Front matter
 
-YAML front matter with flat `key: value` lines becomes filterable metadata; lists can be inline or one `- item` per
-line. A list field matches when it contains the value:
+YAML front matter with flat `key: value` lines becomes filterable metadata; lists can be inline, quoted or not
+(`aliases: [Hans Mueller, H. Müller]`), or one `- item` per line. A list field matches when it contains the value:
 
 ```markdown
 ---
@@ -174,10 +174,59 @@ includes all of 2024 and `created>2024` starts in 2025; a number compares with t
 sift search invoice -f "created>=2024-06" -f "created<2025"
 ```
 
-The `title` field, or else the first heading outside code blocks, or else the file name, becomes the document title.
+The `title` field, or else the first heading outside code blocks, or else the file name, becomes the document title;
+in a collection added with `--title-from name`, the file name comes before the heading (see
+[Linked notes](#linked-notes)).
 
 Keyword search covers the front matter too, so an author's name or an id finds its documents, in `search` and in
-`query`. `meta:` limits a term to the front matter, e.g. `sift search "meta: Smith"`.
+`query`. `meta:` limits a term to the front matter, e.g. `sift search "meta: Smith"`. A note of front matter alone,
+such as a contact's, has its front matter as its passage.
+
+### Linked notes
+
+In an Obsidian vault, or any folder of Markdown notes that link to each other, sift keeps the links of every note as
+written and resolves them when asked, as Obsidian does. Obsidian names a note by its file name, so add a vault with
+its notes titled so; `sift add` suggests it for a folder with `.obsidian/` in it:
+
+```bash
+sift add ~/vault --title-from name     # for a vault added before, the same command retitles its notes
+```
+
+**Links** are `[[Note]]`, `[[Folder/Note]]`, `[[Note|shown text]]`, `[[Note#Heading]]`, `[[Note#^block]]`, embeds
+such as `![[contract.pdf]]`, and Markdown links such as `[text](../People/Hans.md)`, in the text and, as wikilinks, in
+front-matter values: `org: "[[Acme AG]]"`. Links in code, to web addresses, and to files sift doesn't read, such as
+images, are left out.
+
+**A link resolves** within its note's collection:
+
+1. a relative path, `[text](../People/Hans.md)` or `[[./Hans]]`, to the file at that path from the note's folder;
+2. a path, `[[01_People/Hans Müller]]`, to the file whose path it is, else the one file whose path ends with it;
+3. a name, `[[Hans Müller]]`, to the one file of that name, or of several, the one in the note's folder;
+4. and else to the one note whose `aliases` hold it, which Obsidian itself doesn't do.
+
+Names compare in any case, and a note's name leaves out `.md`. A link that several files match is ambiguous, and one
+that none matches is unresolved: a note not written yet. As links resolve when asked, they follow notes as they come
+and go, without the linking notes being read again.
+
+```bash
+sift links vault/People/Hans.md                  # each link of the note, and where it leads
+sift links "Hans Müller" --direction in          # the notes linking to it, with the lines that do
+sift links "Acme AG" --direction in --field org --depth 2   # through org only, and one step further
+sift unresolved -c vault                         # the notes the vault lacks, most linked first
+sift mentions "Hans Müller" --also emails        # documents naming the note without a link
+sift search contract --links-to "Acme AG"        # only documents linking to Acme AG
+sift search contract --linked-from "Hans Müller" # only documents Hans Müller links to
+sift search contract -f "org=[[Acme AG]]"        # org links to Acme AG, however written: [[acme ag|Acme]] too
+```
+
+A note is named by its id or as links name it, if one note answers to that name. `mentions` looks for a note's file
+name, title and aliases as phrases, and for a name with ä, ö, ü or ß also as written with ae, oe, ue or ss; names
+shorter than three characters are left out.
+
+**A note written a moment ago** is found by the next search, if the agent that wrote it calls `reindex` (or you run
+`sift index --files`): it reads those files at once, or drops the documents of files that are gone, without scanning
+the collection. Over MCP it also embeds their new passages, if the index is embedded, and a running server takes up
+their vectors without loading the others again. sift still never writes to your files.
 
 ### JSON Lines
 
@@ -222,10 +271,14 @@ damaged ones, until they change. Older binary Office files (`.doc`, `.ppt`, `.xl
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. |
 | `similar` | Documents like a given one, by its id: more documents like one already found. |
 | `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. With `fields`, it returns the document with those front-matter fields. An id may leave out folders if the file name is unique. |
-| `status` | Collections, counts and front-matter fields. |
+| `status` | Collections, counts, front-matter fields, and how many links each collection's notes hold. |
+| `links` | The links of a note: out, each with where it leads (`via` path, name or alias, `ambiguous`, or `unresolved`), and in, the notes linking to it, with the lines that do. `depth` 2 goes one step further, `field` keeps to one front-matter field. |
+| `unresolved` | Link targets no note answers to yet, most linked first. |
+| `mentions` | Documents that name a note without linking to it. |
+| `reindex` | Read files again right after writing, changing or deleting them, so that the next search finds them. The one tool that changes anything: sift's index, never a file. |
 
 The search tools take `query` (`similar`: `id`), `k`, `collection`, `path`, `filters`, `fields`, `compact`,
-`all_passages` and `sort`, as the commands above do. Every result carries `id` (`collection/path`), `title`, `lines`,
+`all_passages`, `sort`, `links_to` and `linked_from`, as the commands above do. Every result carries `id` (`collection/path`), `title`, `lines`,
 `score` and the passage's `text`, so agents can cite their sources. `fields` adds front-matter fields to each result,
 e.g. `["url", "created"]`, and `compact: true` leaves out the text, so an agent can survey many results without
 filling its context and then read the ones that matter. Filters take a value, a list for any of its values,
@@ -288,8 +341,9 @@ A running sift keeps the version it started with, so an update takes an upgrade 
    may keep that list even after reconnecting: a running session then misses new tools and parameters, and its calls
    with them fail or lose arguments. In Claude Code, start a new session; the registration stays as it is.
 
-The index and the vectors carry over. When a new version changes how the keyword index is laid out, the first
-command rebuilds it, once, and says so: a few minutes for millions of documents; nothing gets embedded again. The
+The index and the vectors carry over. When a new version changes how the index is laid out, the first command updates
+it, once, and says so, from what the index holds: no file is read, and nothing gets embedded again. sift 1.1 adds the
+links of the notes, in seconds for tens of thousands of notes, and in a moment for an index without notes. The
 [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists what changed.
 
 ## Embedding on another machine
@@ -400,6 +454,11 @@ claims, and it embeds 1.6 times as fast.
     Scores are raw: a sigmoid saturates, at 0.9999 for every good match.
 - **`similar`:** the mean of a document's passage vectors, scored against every passage as `vsearch` scores a query.
   No model runs, so it takes half a second over 3 million passages, with or without a GPU.
+- **Links:** read with each Markdown note, as written, with the front-matter field and line of each, and stored with
+  the names each file answers to: its file name and aliases. They resolve when asked, by those names, through an
+  index on each, so the backlinks of a note linked by 6,000 others take 16 ms
+  ([timings](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#links-between-notes)). `reindex`
+  patches a running server's vectors in memory rather than loading millions again.
 - **Server:** `sift serve` loads models and vectors once and keeps them in memory.
 - **UI:** pages rendered on the server with Jinja2, whose panes [htmx](https://htmx.org) swaps in place: no build step
   and no Node, and the UI is tested with the rest. It runs on the server's event loop, as the MCP tools do. Browsing
@@ -412,7 +471,8 @@ In scope: text, Markdown and JSON Lines files, PDF, office documents, e-books an
 NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise CPU; one user, any number of local agents.
 
 Out of scope for now: OCR of scans and images; answer generation (sift retrieves, the agent writes); approximate
-nearest-neighbour indexes; live file watching; remote access and authentication.
+nearest-neighbour indexes; live file watching (an agent calls `reindex` after writing); remote access and
+authentication; writing to your files.
 
 ## Versioning
 
