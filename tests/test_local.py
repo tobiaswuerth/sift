@@ -61,6 +61,18 @@ def test_loading_the_models_draws_no_progress_bars(fake_models):
     assert not logging.is_progress_bar_enabled()
 
 
+def test_a_reranker_that_reads_fewer_tokens_keeps_its_limit(fake_models, monkeypatch):
+    # sift asked every reranker for 1024 tokens; one that reads at most 512 (MiniLM) failed on every long passage:
+    # "The size of tensor a (972) must match the size of tensor b (512)".
+    monkeypatch.setattr(FakeCrossEncoder, "limit", 512)
+    assert fake_models.rerank("brush strokes", ["brush strokes"]).shape == (1,)
+    assert fake_models.reranker().max_seq_length == 512
+
+
+def test_a_reranker_that_reads_more_tokens_is_capped(fake_models):
+    assert fake_models.reranker().max_seq_length == local.MAX_TOKENS  # longer inputs cost time and memory
+
+
 def test_where_and_how_much(make_local):
     models = make_local("cuda")
     assert (models.address, models.batch) == ("cuda", 128)
