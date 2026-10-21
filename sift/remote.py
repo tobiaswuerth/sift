@@ -10,8 +10,11 @@ import base64
 import hashlib
 import http.client
 import json
+import socket
 import ssl
+import threading
 import urllib.parse
+import weakref
 from functools import cached_property
 
 PORT = 8766  # the worker's default
@@ -28,6 +31,31 @@ def fingerprint(der):
     return base64.urlsafe_b64encode(hashlib.sha256(der).digest()).rstrip(b"=").decode()
 
 
+class _Connection(http.client.HTTPSConnection):
+    """HTTPS to the worker, kept open between requests. Every connect checks that the worker shows the certificate
+    its key names, also when http.client reconnects by itself."""
+
+    def __init__(self, host, port, pin):
+        # The worker's certificate is its own, signed by no authority: the fingerprint in the key vouches for it
+        # instead, checked before anything is sent, so a machine posing as the worker gets neither the token nor any
+        # text.
+        self._tls = ssl.create_default_context()
+        self._tls.check_hostname, self._tls.verify_mode = False, ssl.CERT_NONE
+        super().__init__(host, port, timeout=TIMEOUT, context=self._tls)
+        self._pin = pin
+
+    def connect(self):
+        # The worker listens on IPv4, but a name often resolves to an IPv6 link-local address first. Where a firewall
+        # dropped those attempts, every request waited 21 s for one to fail before the system tried IPv4.
+        found = socket.getaddrinfo(self.host, self.port, type=socket.SOCK_STREAM)
+        address = min(found, key=lambda a: a[0] != socket.AF_INET)[4][:2]  # IPv4 if the name has one
+        self.sock = self._tls.wrap_socket(socket.create_connection(address, self.timeout), server_hostname=self.host)
+        if fingerprint(self.sock.getpeercert(binary_form=True)) != self._pin:
+            self.close()
+            address = f"https://{self.host}:{self.port}"
+            raise RemoteError(f"embedding remote {address} has another certificate than its key: not that worker")
+
+
 class Remote:
     """A `sift worker`, used like the models of this machine (see `models.Models`)."""
 
@@ -42,6 +70,8 @@ class Remote:
             )
         self.host, self.port = parts.hostname, PORT if parts.port is None else parts.port
         self.address = f"https://{self.host}:{self.port}"  # without the key, to show
+        self._connection, self._lock = _Connection(self.host, self.port, self._pin), threading.Lock()
+        weakref.finalize(self, self._connection.close)  # the kept connection closes with this object
 
     @cached_property
     def info(self):
@@ -83,32 +113,37 @@ class Remote:
         return False
 
     def _request(self, path, payload=None):
-        """The body of the worker's answer to a GET of `path`, or to a POST of `payload` as JSON."""
-        # The worker's certificate is its own, signed by no authority: the fingerprint in the key vouches for it
-        # instead, checked before anything is sent, so a machine posing as the worker gets neither the token nor any
-        # text.
-        context = ssl.create_default_context()
-        context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
-        connection = http.client.HTTPSConnection(self.host, self.port, timeout=TIMEOUT, context=context)
-        try:
-            connection.connect()
-            if fingerprint(connection.sock.getpeercert(binary_form=True)) != self._pin:
-                raise RemoteError(
-                    f"embedding remote {self.address} has another certificate than its key: not that worker"
-                )
-            body = None if payload is None else json.dumps(payload).encode()
-            headers = {"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"}
-            connection.request("GET" if body is None else "POST", path, body, headers)
-            response = connection.getresponse()
-            data = response.read()
-        except RemoteError:
-            raise
-        except (OSError, http.client.HTTPException) as e:  # refused, timed out, TLS failed, connection dropped
-            raise RemoteError(f"embedding remote {self.address} is unreachable or failed: {e}") from None
-        finally:
-            connection.close()
+        """The body of the worker's answer to a GET of `path`, or to a POST of `payload` as JSON, one request at a
+        time over the connection kept from the last one."""
+        body = None if payload is None else json.dumps(payload).encode()
+        headers = {"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"}
+        with self._lock:
+            try:
+                response, data = self._exchange("GET" if body is None else "POST", path, body, headers)
+            except RemoteError:
+                raise
+            except (OSError, http.client.HTTPException) as e:  # refused, timed out, TLS failed, connection dropped
+                self._connection.close()
+                raise RemoteError(f"embedding remote {self.address} is unreachable or failed: {e}") from None
         if response.status == 401:
             raise RemoteError(f"embedding remote {self.address} refused the key; copy it again from `sift worker`")
         if response.status != 200:
             raise RemoteError(f"embedding remote {self.address} answered {response.status}: {data[:200].decode()}")
         return data
+
+    def _exchange(self, *request):
+        """The worker's response and its body. The worker closes connections that idle for a few seconds, so if the
+        one kept from an earlier request turns out closed, the request goes once more, on a new connection."""
+        kept = self._connection.sock is not None
+        try:
+            return self._send(*request)
+        except ConnectionError as e:  # the worker had closed it: reset, or no answer at all
+            self._connection.close()
+            if isinstance(e, RemoteError) or not kept:
+                raise
+        return self._send(*request)
+
+    def _send(self, method, path, body, headers):
+        self._connection.request(method, path, body, headers)
+        response = self._connection.getresponse()
+        return response, response.read()
