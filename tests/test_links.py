@@ -528,6 +528,12 @@ def test_links_to_unknown_notes(linked, notes, error):
         Index(linked[0]).search("Hans", links_to=notes)
 
 
+def test_a_name_many_notes_answer_to_names_a_few(tmp_path, home):
+    db, _ = note_vault(tmp_path, home, {f"{i}/Same.md": "" for i in range(7)})
+    with pytest.raises(LookupError, match=r"'Same' matches v/0/Same\.md, .*v/4/Same\.md, \.\.\.; give the whole id"):
+        Index(db).browse(links_to=["Same"])
+
+
 def test_linked_from_an_unknown_or_ambiguous_note(tmp_path, home):
     db, _ = note_vault(tmp_path, home, {"a/Same.md": "", "b/Same.md": "", "n.md": "[[Missing]]"})
     with pytest.raises(LookupError, match="no note 'Missing' in the index"):

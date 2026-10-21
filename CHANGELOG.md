@@ -35,7 +35,7 @@ Links between Markdown notes, for Obsidian vaults and any notes that link to eac
 
 - The index's layout is version 4. An index of sift 1.0 updates itself on first use, once, from what it holds: no
   file is read and nothing is embedded again. 20,000 notes take about 3 seconds, 3.2 million JSON Lines records a
-  moment.
+  moment. sift 1.0 doesn't open an index so updated: upgrade every sift that uses it.
 - A filter value that is a wikilink, `{"org": "[[Acme AG]]"}`, also matches links to the same note written otherwise:
   `[[acme ag|Acme]]`, `[[02_Organizations/Acme AG]]`, or by an alias. Other values compare exactly, as before.
 - A note of front matter alone, such as a contact's, has its front matter as its passage: no search found it before,

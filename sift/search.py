@@ -213,6 +213,7 @@ def _first_of_each(items, key):
 
 
 VIA = ("path", "name", "alias")  # how a link resolved, when it did
+AMBIGUOUS_SHOWN = links.AMBIGUOUS_SHOWN  # notes an error names, of those a name matches
 MENTION_CHARS = 3  # names `mentions` looks for have at least this many characters
 UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss"})
 LINKING_SHOWN = 5  # documents an unresolved target names, of those linking it
@@ -357,7 +358,8 @@ class Index:
             matches = {doc for how, docs in ways if how != "unresolved" for doc in docs}
             if len(matches) > 1:
                 named = sorted(whole for whole, _ in self._named(matches).values())
-                raise LookupError(f"{spec!r} matches {', '.join(named)}; give the whole id, or a collection")
+                shown = ", ".join(named[:AMBIGUOUS_SHOWN]) + (", ..." if len(named) > AMBIGUOUS_SHOWN else "")
+                raise LookupError(f"{spec!r} matches {shown}; give the whole id, or a collection")
             found[spec] = next(iter(matches), None)
         return found
 
@@ -859,8 +861,8 @@ class Index:
         if model is None:  # never embedded: keyword search alone, and no model to load
             return None
         sql = """SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
-                 WHERE c.doc IN (SELECT value FROM json_each(?)) AND c.id NOT IN (SELECT chunk FROM vectors)
-                 ORDER BY c.id"""
+                 WHERE c.doc IN (SELECT value FROM json_each(?))
+                 AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id) ORDER BY c.id"""
         rows = self.db.execute(sql, (json.dumps(docs),)).fetchall()
         if not rows:
             return None

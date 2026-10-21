@@ -162,6 +162,18 @@ def test_without_a_worker_the_index_still_follows(live, monkeypatch):
     assert ids(index.search("alpha")) == ["vault/a.md"]  # keyword search finds it
 
 
+def test_a_passage_the_model_breaks_stays_to_embed(live, monkeypatch):
+    # Now and then a model overflows into NaN: that vector is never stored, and the passage stays to embed.
+    index, vault = live
+    real = index.models.encode
+    monkeypatch.setattr(index.models, "encode", lambda texts, query=False: real(texts, query) * np.nan)
+    write(vault / "a.md", "Alpha note.\n")
+    (found,) = index.reindex(["vault/a.md"])
+    assert (found["chunks"], found["embedded"]) == (1, 0)
+    assert "could not be embedded" in found["note"]
+    assert ids(index.search("alpha")) == ["vault/a.md"]
+
+
 def test_the_same_file_twice_counts_once(live):
     index, vault = live
     write(vault / "a.md", "Alpha note.\n")
