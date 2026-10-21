@@ -104,7 +104,7 @@ def test_chunk_breaks_unbroken_text():
 
 def test_load(tmp_path):
     path = tmp_path / "note.md"
-    path.write_bytes("﻿---\ntitle: BOM\n---\nbody \xe9\n".encode())
+    path.write_bytes("﻿---\ntitle: BOM\n---\nbody \xe9\n".encode())  # a UTF-8 byte order mark first
     doc = loaded(path)
     assert (doc.key, doc.title, doc.meta, doc.chunks) == ("", "BOM", {"title": "BOM"}, [(4, 4, "body \xe9")])
     assert doc.text == "---\ntitle: BOM\n---\nbody \xe9\n"  # the whole file, as get returns it
