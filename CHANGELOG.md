@@ -10,6 +10,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `sift bench FILE`: how well each search mode finds the documents a set of questions should find, on your own
   index (nDCG@10, MRR@10, Recall@10 and time per query), from a JSON list of questions and the ids of their answers.
 
+### Changed
+
+- `query` ranks better, across subjects and languages. The new default reranker is gte-reranker-modernbert-base, the
+  same size and speed as Ettin-150M, and each candidate's score now counts its closeness in meaning to the query as
+  well. A reranker alone ranked scientific claims worse than the embedding did. Over seven benchmarks (scientific,
+  medical, financial, German, literature search, arXiv known items), the mean went from 0.646 to 0.696; on long
+  German documents from 0.48 to 0.69; on SciFact from 0.76 to 0.81. The arXiv known items cost a little (MRR 0.936 to
+  0.929). Details in [docs/benchmarks.md](docs/benchmarks.md).
+- The first `query` after upgrading downloads the new reranker (about 600 MB). Indexes and vectors stay as they are;
+  nothing is re-embedded. `SIFT_RERANK_MODEL=cross-encoder/ettin-reranker-150m-v1` brings the old reranker back.
+- Scores keep the reranker's scale: close matches score about 2.5 to 4, and unrelated results below 2.
+
 ### Fixed
 
 - A reranker that reads fewer than 1024 tokens, such as MiniLM (512), failed on every long passage ("The size of

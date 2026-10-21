@@ -31,11 +31,14 @@ Or run it without installing: `uvx --torch-backend auto sift-rag serve`. With pi
 
 To upgrade later, see [Updating](#updating).
 
-On first use, sift downloads its two models from Hugging Face (about 1.5 GB).
+On first use, sift downloads its two models from Hugging Face (about 2 GB).
 
 ### GPU support
 
 sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, which works but embeds slowly.
+`query`'s reranker is slow there too: about 25 seconds per query on 8 CPU threads, against 0.3 seconds on an RTX
+4090. A machine without a GPU can borrow one through a [`sift worker`](#embedding-on-another-machine), which reranks as
+well as embeds, or use `search` and `vsearch`, which need no reranker.
 
 - **Linux, macOS:** nothing to do. PyTorch from PyPI includes CUDA on Linux and uses the Apple GPU on macOS.
 - **Windows:** PyTorch from PyPI has no CUDA support. uv's `--torch-backend auto`, used above, picks the CUDA build
@@ -80,8 +83,9 @@ parentheses group: `'"stroke" AND (painting OR rendering)'`. A query with operat
 nothing, drop terms.
 
 Scores rank the results of one search, on a scale of its own: BM25 for `search` (0 and up), cosine similarity for
-`vsearch` and `similar` (-1 to 1), and for `query` the reranker's raw score, which compares across queries: with
-the default reranker, close matches score about 8 to 12, and unrelated results below 5.
+`vsearch` and `similar` (-1 to 1), and for `query` the reranker's score, nudged by the passage's cosine, on the
+reranker's scale. It compares across queries: with the default reranker, close matches score about 2.5 to 4, and
+unrelated results below 2.
 
 ### Measuring search on your own documents
 
@@ -296,10 +300,14 @@ Four optional settings exist for special cases:
 |---|---|---|
 | `SIFT_HOME` | `~/.sift` | Where the index lives |
 | `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model |
-| `SIFT_RERANK_MODEL` | `cross-encoder/ettin-reranker-150m-v1` | Any Sentence Transformers cross-encoder |
+| `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
 | `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed on: the `https://<key>@workstation:8766` it prints |
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
+
+For a new index of business documents, `Snowflake/snowflake-arctic-embed-l-v2.0` is a good alternative embedding
+model. On our [benchmarks](docs/benchmarks.md) it ties EmbeddingGemma-2 on average. It's better on financial questions
+and long German documents, worse on scientific claims, and it embeds 1.6 times as fast.
 
 ## How it works
 
@@ -339,10 +347,15 @@ After changing the embedding model, run `sift embed --reset`. Models are downloa
   index, so nothing to tune and no recall loss; a million 768-dimensional vectors take about 1.5 GB of VRAM. When the
   best passages come from a few documents, it looks further down until it has `k` documents.
 - **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are reranked together, in one GPU
-  batch; the reranker alone decides the order, as fusing the candidates' first ranks into it made results worse.
-  The reranker reads each candidate's title, the front-matter values that share a word with the query (an author's
-  name, an id; all of them would dilute the passage), and the passage. Scores are the reranker's raw ones: a sigmoid
-  saturates, at 0.9999 for every good match.
+  batch. The reranker reads each candidate's title, the front-matter values that share a word with the query (an
+  author's name, an id; all of them would dilute the passage), and the passage.
+  - **Scoring.** A candidate's score is the reranker's, plus half its cosine with the query, measured in units of the
+    reranker's spread over the candidates. One weight thus fits any reranker, and the scores keep the reranker's
+    scale. A reranker alone ranked scientific claims worse than the embedding did. Candidates whose front matter the
+    query names keep the best cosine, since the embedding never sees front matter.
+  - **The evidence** is in [docs/benchmarks.md](docs/benchmarks.md): rerankers, embedding models and blends on
+    seven datasets, from scientific claims to long German documents. Scores are raw:
+    a sigmoid saturates, at 0.9999 for every good match.
 - **`similar`:** the mean of a document's passage vectors, scored against every passage as `vsearch` scores a query.
   No model runs, so it takes half a second over 3 million passages, with or without a GPU.
 - **Server:** `sift serve` loads models and vectors once and keeps them in memory.

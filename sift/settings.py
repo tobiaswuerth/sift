@@ -20,7 +20,7 @@ class Settings:
         return cls(
             home=Path(environ.get("SIFT_HOME") or Path.home() / ".sift"),
             embed_model=environ.get("SIFT_EMBED_MODEL") or "google/embeddinggemma-2",
-            rerank_model=environ.get("SIFT_RERANK_MODEL") or "cross-encoder/ettin-reranker-150m-v1",
+            rerank_model=environ.get("SIFT_RERANK_MODEL") or "Alibaba-NLP/gte-reranker-modernbert-base",
             remote=environ.get("SIFT_EMBED_REMOTE") or None,
         )
 

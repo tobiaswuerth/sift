@@ -18,7 +18,7 @@ def test_models_load_once_with_limits(fake_models):
         local.MAX_TOKENS,
         "float32",
     )
-    assert fake_models.reranker().name == "cross-encoder/ettin-reranker-150m-v1"
+    assert fake_models.reranker().name == "Alibaba-NLP/gte-reranker-modernbert-base"
     assert fake_models.embedder() is model
     assert (fake_models.name, fake_models.reranker_name) == ("google/embeddinggemma-2", fake_models.reranker().name)
 

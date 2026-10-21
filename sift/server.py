@@ -164,7 +164,7 @@ def build(index=None):
         "query",
         "Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. Best for questions. "
         "Scores are the reranker's raw scores, higher for more relevant; with the default reranker, close matches "
-        "score about 8 to 12, and unrelated results below 5.",
+        "score about 2.5 to 4, and unrelated results below 2.",
         "A question, or a description of what to find.",
     )
 
