@@ -22,6 +22,9 @@ services, no API keys, and your documents stay on your own machines.
   Excel, OpenDocument, RTF, EPUB, HTML and JSON Lines, indexed incrementally.
 - **An MCP server** for Claude Code and any other MCP client, with filters on front-matter fields, results that cite
   their source lines, and compact results that save an agent's context.
+- **Linked notes:** in an Obsidian vault, or any Markdown with `[[wikilinks]]`, the links of a note and its backlinks,
+  the notes not written yet, and the documents that mention a note without linking it; links resolve as Obsidian
+  resolves them, and searches can keep to a note's links. A note an agent just wrote is found by the next search.
 - **A browser UI** to search, browse and read the index yourself.
 - **Measured, not guessed:** the default models and ranking were chosen on seven retrieval benchmarks, from BEIR's
   SciFact to long German documents ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md)).
@@ -70,6 +73,10 @@ sift similar handbook/hr/leave.md      # documents like this one
 sift get handbook/hr/leave.md          # full document
 sift get handbook/hr/leave.md --lines 14-23   # only some lines, e.g. those of a search hit
 sift get handbook/hr/leave.md --fields owner,modified   # front-matter fields first, then the text
+sift links vault/People/Hans.md --direction both   # the links of a note, and its backlinks (see Linked notes)
+sift unresolved                        # link targets no note answers to yet
+sift mentions vault/People/Hans.md     # documents that name a note without linking to it
+sift index --files ~/vault/new.md      # read a file just written at once, or drop one just deleted
 sift status                            # collections and counts
 sift bench questions.json              # how well each mode finds what you expect (see below)
 sift rm handbook                       # remove a collection from the index; its files stay on disk
@@ -86,7 +93,8 @@ Search commands, `similar` included, return one result per document, with its be
 of results), `-c` (collection), `--path` (glob within the collection, e.g. `"2024/*"`), `-f` (front-matter filter,
 repeatable, see below), `--fields` (front-matter fields to show with each hit, e.g. `url,created`, or `*` for all),
 `--compact` (no text), `--all-passages` (every matching passage, several per document), `--sort=-created` (order the
-results by a front-matter field instead of score; `-` for descending) and `--json`.
+results by a front-matter field instead of score; `-` for descending), `--links-to` and `--linked-from` (see
+[Linked notes](#linked-notes)) and `--json`.
 
 `search` requires every term. If no chunk has them all and the query has no operators (`AND`, `OR`, `NOT`, `NEAR`),
 it returns the chunks that have any of them, those with more terms first. Operators are written in capitals, and
@@ -112,8 +120,8 @@ uses the `sift serve` that runs on that port, or starts one, which then serves a
   Results can also be sorted by any front-matter field.
 - **Read** a result next to the list: the whole document, its passage marked and scrolled to, and its front matter,
   whose values filter too, and whose links open. A long document shows 2,000 lines at a time. *Similar* lists
-  documents like it, and *Open file* opens the original file: a PDF shows in the browser's viewer, and other files
-  open without running any script they hold.
+  documents like it, *Backlinks* and *Links* the notes linking to it and those it links to, and *Open file* opens the
+  original file: a PDF shows in the browser's viewer, and other files open without running any script they hold.
 - **Keys:** `/` to search, `↑` `↓` to move through results, `Enter` to open one.
 - Every view has its own address, so reloading, the back button and links work.
 

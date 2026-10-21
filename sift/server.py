@@ -77,6 +77,13 @@ Id = Annotated[
         'out if the file name is unique: "papers/attention.md".'
     ),
 ]
+Note = Annotated[
+    str,
+    Field(
+        description='A note\'s id, e.g. "notes/People/Hans Müller.md", or its name as links write it, e.g. "Hans '
+        'Müller", if one note answers to it.'
+    ),
+]
 K = Annotated[int, Field(description="Number of results.")]
 Collection = Annotated[str | None, Field(description="Search only this collection.")]
 PathGlob = Annotated[
@@ -245,7 +252,7 @@ def build(index=None):
 
     @mcp.tool(annotations=READ_ONLY)
     async def links(
-        id: Id,
+        id: Note,
         direction: Annotated[
             Literal["out", "in", "both"],
             Field(description='"out": the links the note holds; "in": the documents linking it (backlinks).'),
@@ -281,7 +288,7 @@ def build(index=None):
 
     @mcp.tool(annotations=READ_ONLY)
     async def mentions(
-        id: Id,
+        id: Note,
         k: K = 10,
         collection: Collection = None,
         also: Annotated[

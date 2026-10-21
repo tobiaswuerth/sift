@@ -193,8 +193,23 @@ def test_links_reject_bad_options(linked, options, error):
 
 
 def test_links_of_unknown_documents(linked):
-    with pytest.raises(LookupError, match="unknown document"):
+    with pytest.raises(LookupError, match=r"unknown document 'vault/Nobody\.md'"):
         Index(linked[0]).links("vault/Nobody.md")
+    with pytest.raises(LookupError, match="unknown document 'Wartungsvertrag 2027'"):
+        Index(linked[0]).links("Wartungsvertrag 2027")  # linked, but not written yet
+
+
+def test_a_note_named_as_links_name_it(linked, tmp_path):
+    db = linked[0]
+    index = Index(db)
+    assert index.links("Acme AG", "in")["id"] == ACME
+    assert index.links("[[Hans Mueller]]")["id"] == HANS  # by its alias
+    assert [h["id"] for h in index.mentions("Hans Müller")] == ["work/contract.md"]
+    write(tmp_path / "other" / "Acme AG.md", "Another Acme.\n")
+    store.add_collection(db, tmp_path / "other", "other")
+    indexing.index(db)
+    with pytest.raises(LookupError, match=r"'Acme AG' matches other/Acme AG\.md, vault/02_Organizations/Acme AG\.md"):
+        index.links("Acme AG")
 
 
 def test_unresolved_targets(linked):

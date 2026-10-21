@@ -639,6 +639,17 @@ class Index:
             rows = self.db.execute(sql + "substr(d.path, -?) = ? LIMIT 6", (name, len(rel) + 1, "/" + rel)).fetchall()
         return rows
 
+    def _note(self, id):
+        """The document `id` names, as for `get`, or else the note `id` names as links name it, "Acme AG" or
+        "[[Acme AG]]", if one note answers to it in all collections: as _find gives it."""
+        try:
+            return self._find(id)
+        except LookupError as unknown:
+            note = self._notes([id], "id", None, links.Resolver(self.db))[id]
+            if note is None:
+                raise unknown from None
+            return self._find(self._named([note])[note][0])
+
     def _find(self, id):
         """The document `id` names (see `get`), as (row id, whole id, title, meta, text)."""
         name, rows = id.partition("/")[0], self._rows(id)
@@ -721,7 +732,7 @@ class Index:
         if field is not None and not isinstance(field, str):
             raise ValueError(f"field must be the name of a front-matter field, got {field!r}")
         k = _check_k(k)
-        doc, whole, title, _, _ = self._find(id)
+        doc, whole, title, _, _ = self._note(id)
         resolver, found = links.Resolver(self.db), {"id": whole, "title": title}
         if direction != "in":
             found["out"] = self._out(resolver, doc, depth, field, k)
@@ -768,7 +779,7 @@ class Index:
 
     def link_count(self, id):
         """How many documents link to the document `id`, and how many documents it links to: (in, out)."""
-        doc, resolver = self._find(id)[0], links.Resolver(self.db)
+        doc, resolver = self._note(id)[0], links.Resolver(self.db)
         into = {row[0] for row in links.incoming(self.db, resolver, doc)}
         out = {docs[0] for _, (via, docs) in links.outgoing(self.db, resolver, doc) if via in VIA}
         return len(into), len(out)
@@ -800,7 +811,7 @@ class Index:
         also = [also] if isinstance(also, str) else also
         if also is not None and not (isinstance(also, list | tuple) and all(isinstance(f, str) and f for f in also)):
             raise ValueError(f'also must name front-matter fields, e.g. ["emails"], got {also!r}')
-        doc, whole, _, meta, _ = self._find(id)
+        doc, whole, _, meta, _ = self._note(id)
         meta = json.loads(meta)
         names = [posixpath.splitext(whole.rsplit("/", 1)[-1])[0], *links.aliases(meta)]
         for value in [meta.get("title"), *(meta.get(field) for field in also or [])]:

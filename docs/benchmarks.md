@@ -172,6 +172,25 @@ The embedding models embedded 2,000 passages (half SciFact, half MLDR) and 100 q
   `search` and `vsearch`, which need no reranker.
 - **Query embedding is minor next to reranking:** 51 ms against 284 ms.
 
+### Links between notes
+
+A synthetic vault of 20,000 notes and 220,000 links: one note linked by 6,000 others, a tenth of the links to notes
+not written yet. On the same machine, best of 3:
+
+| Operation | Time |
+|---|---|
+| `sift index` (the notes read in 20 processes) | 6.9 s |
+| `links` out of a note; both ways, two steps | 0.1 ms; 1.5 ms |
+| `links` into the most linked note, 50; 10,000 | 16 ms; 42 ms |
+| `unresolved` over the vault | 210 ms |
+| `search` with `links_to` the most linked note (without it) | 25 ms (19 ms) |
+| `mentions` of the most linked note | 20 ms |
+| Upgrading an index of sift 1.0 that holds these notes | 3.0 s |
+
+- **Notes without links read as fast as before:** 20,000 of them in 0.617 s before reading links, 0.626 s after.
+- **An index without notes upgrades in a moment:** 3.2 million arXiv abstracts in JSON Lines took under a second,
+  and searched as before, result for result.
+
 ## Query expansion by the agent
 
 QMD ([github.com/tobi/qmd](https://github.com/tobi/qmd)) expands each query into keywords, a rewrite and a
