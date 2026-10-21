@@ -19,6 +19,13 @@ dependencies = [
     "pillow>=10",  # embeddinggemma-2 handles images and video too, so transformers needs Pillow
     "torchvision",  # and torchvision even for text; it must match torch, so install them together
     "mcp>=2.0",
+    # what sift imports itself, though mcp and jinja2 bring them too: the HTTP servers, their event loop, the
+    # parameter schemas of the MCP tools, and the UI's escaping
+    "uvicorn>=0.31",
+    "starlette>=0.48",
+    "anyio>=4.9",
+    "pydantic>=2.12",
+    "markupsafe>=2",
     "nvidia-ml-py>=12",  # NVML: free GPU memory as nvidia-smi sees it
     "xberg>=1.3",  # reads PDF, office files, e-books and web pages
     "cryptography>=42",  # the certificate `sift worker` makes for HTTPS

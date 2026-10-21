@@ -85,10 +85,10 @@ it returns the chunks that have any of them, those with more terms first. Operat
 parentheses group: `'"notice period" AND (contract OR agreement)'`. A query with operators is taken as it is; when
 it finds nothing, drop terms.
 
-Scores rank the results of one search, on a scale of its own: BM25 for `search` (0 and up), cosine similarity for
-`vsearch` and `similar` (-1 to 1), and for `query` the reranker's score, nudged by the passage's cosine, on the
-reranker's scale. It compares across queries: with the default reranker, close matches score about 2.5 to 4, and
-unrelated results below 2.
+Scores rank the results of one search, each kind on a scale of its own: BM25 for `search` (0 and up), cosine
+similarity for `vsearch` and `similar` (-1 to 1), and for `query` the reranker's score, nudged by the passage's
+cosine. `query`'s scores also compare across queries: with the default reranker, close matches score about 2.5 to 4,
+and unrelated results below 2.
 
 ### Browsing the index
 
