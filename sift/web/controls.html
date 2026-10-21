@@ -1,7 +1,7 @@
 <div id="controls"{% if oob %} hx-swap-oob="true"{% endif %}>
   <div class="modes" role="radiogroup" aria-label="Search by">
-    {% for mode, label in modes.items() %}
-    <label title="{{ {'search': 'Exact words (BM25): fast, as you type', 'vsearch': 'Closeness in meaning: press Enter', 'query': 'Keywords and meaning, reranked: best for questions, press Enter'}[mode] }}"><input type="radio" name="mode" value="{{ mode }}"{% if mode == view.mode %} checked{% endif %}>{{ label }}</label>
+    {% for mode, (label, hint) in modes.items() %}
+    <label title="{{ hint }}"><input type="radio" name="mode" value="{{ mode }}"{% if mode == view.mode %} checked{% endif %}>{{ label }}</label>
     {% endfor %}
   </div>
   <select name="sort" aria-label="Order">

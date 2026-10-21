@@ -24,7 +24,11 @@ from .search import STOPWORDS, line_span
 
 WEB = Path(__file__).parent / "web"
 PREFIX = "/ui/"
-MODES = {"search": "Keyword", "vsearch": "Meaning", "query": "Hybrid"}
+MODES = {  # the searches, by name: their label and what they do
+    "search": ("Keyword", "Exact words (BM25): fast, as you type"),
+    "vsearch": ("Meaning", "Closeness in meaning: press Enter"),
+    "query": ("Hybrid", "Keywords and meaning, reranked: best for questions, press Enter"),
+}
 PAGE = 30  # results per page, and how many more "More" shows
 MOST = 500  # results one page can ask for
 FACET_VALUES = 8  # values shown per front-matter field, the most common first
