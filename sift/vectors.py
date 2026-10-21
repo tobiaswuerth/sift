@@ -1,5 +1,6 @@
 """All chunk vectors of an index as one matrix, to score a query against every chunk at once: in RAM with NumPy, or
-on the GPU with PyTorch while in use. Both offer `ids`, `scores(query)` and `close()`."""
+on the GPU with PyTorch while in use; and `patch`ed, to follow a few chunks changing without loading them all again.
+All offer `ids`, in chunk order, `scores(query)`, one per id, and `close()`."""
 
 import numpy as np
 
@@ -49,3 +50,42 @@ class OnGpu:
     def close(self):
         """Replaced by newer vectors: the GPU need not move these back any more."""
         self.accelerator.discard(self._key)
+
+
+class Patched:
+    """Vectors as loaded, `base`, but for those of the chunks since removed (`keep` False, or None for none removed),
+    and with those of chunks since embedded, scored in RAM: `added` ids, the rows of `matrix`."""
+
+    def __init__(self, base, keep, added, matrix):
+        self.base, self.keep, self.added, self.matrix = base, keep, added, matrix
+        self.ids = np.concatenate([base.ids if keep is None else base.ids[keep], added])
+
+    def scores(self, query):
+        scores = self.base.scores(query)
+        return np.concatenate(
+            [scores if self.keep is None else scores[self.keep], self.matrix @ query.astype(np.float32)]
+        )
+
+    def close(self):
+        self.base.close()
+
+
+def patch(vectors, removed, ids, matrix):
+    """`vectors` without those of the chunks `removed` and with those of the chunks `ids`, the rows of `matrix`: a
+    note indexed again while the server runs, without loading millions of vectors again. None if a new chunk would
+    come before an old one: the ids must stay in order, and a full load sorts them best."""
+    if isinstance(vectors, Patched):
+        base, keep, added, rows = vectors.base, vectors.keep, vectors.added, vectors.matrix
+    else:
+        base, keep, added, rows = vectors, None, np.empty(0, np.int64), np.empty((0, matrix.shape[1]), np.float32)
+    gone = np.isin(base.ids, removed)
+    if gone.any():
+        keep = ~gone if keep is None else keep & ~gone
+    still = ~np.isin(added, removed)
+    added = np.concatenate([added[still], np.asarray(ids, np.int64)])
+    rows = np.concatenate([rows[still], matrix.astype(np.float32)])
+    order = np.argsort(added, kind="stable")
+    old = base.ids if keep is None else base.ids[keep]
+    if len(added) and len(old) and added[order[0]] <= old[-1]:
+        return None
+    return Patched(base, keep, added[order], rows[order])

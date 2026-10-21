@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -133,6 +134,13 @@ def main(argv=None):
     s.add_argument("name")
     s = sub.add_parser("index", help="scan collections and update the keyword index")
     s.add_argument("names", nargs="*", help="collections to scan (default: all)")
+    s.add_argument(
+        "--files",
+        nargs="+",
+        metavar="PATH",
+        help="read only these files now, or drop them if gone: paths in a collection, or ids (collection/path); "
+        "`sift embed` embeds them",
+    )
     s = sub.add_parser("embed", help="embed all chunks that have no vector yet")
     s.add_argument("--reset", action="store_true", help="drop all vectors first (after changing the model)")
     for name, desc, subject in (
@@ -259,6 +267,15 @@ def _run(a, db):
             f"removed collection {a.name!r} and its {console.count(n, 'document')} from the index; "
             "the files on disk are untouched"
         )
+    elif a.cmd == "index" and a.files:
+        from .indexing import reindex
+
+        if a.names:
+            raise SystemExit("error: give collections or --files, not both")
+        # a path from the current folder, as the shell completes it; anything else may be an id
+        paths = [os.path.abspath(p) if os.path.exists(p) else p for p in a.files]
+        for entry, _ in reindex(db, paths).files:
+            console.say(f"{entry['id']}: {entry['status']}" + (f" ({entry['note']})" if "note" in entry else ""))
     elif a.cmd == "index":
         from .indexing import index
 

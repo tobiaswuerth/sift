@@ -37,7 +37,7 @@ def embed_pending(db, reset=False, models=None):
     with console.Progress(total, "chunks") as progress:
         while rows := db.execute(slab + "ORDER BY c.id LIMIT ?", (last, SLAB)).fetchall():
             texts = [text_of(*row[1:]) for row in rows]
-            vectors = _embed(models, texts, lambda n, before=done: progress.update(before + n))
+            vectors = encode(models, texts, lambda n, before=done: progress.update(before + n))
             broken += _store_vectors(db, [row[0] for row in rows], vectors, using)
             done, last = done + len(rows), rows[-1][0]
     console.say(f"embedded {done - broken:,} chunks in {console.duration(progress.elapsed)}")
@@ -87,7 +87,7 @@ def _longest_pending(db):
     return max((text_of(*row) for row in db.execute(sql + " LIMIT 100")), key=len, default=None)
 
 
-def _embed(models, texts, report):
+def encode(models, texts, report=None):
     """Vectors for texts, longest first in batches of similar length; report(n) after each batch, n texts done."""
     order, step, vectors = sorted(range(len(texts)), key=lambda i: -len(texts[i])), models.batch, None
     for start in range(0, len(order), step):
@@ -96,7 +96,8 @@ def _embed(models, texts, report):
         if vectors is None:
             vectors = np.empty((len(texts), out.shape[1]), np.float16)
         vectors[part] = out
-        report(start + len(part))
+        if report:
+            report(start + len(part))
     return vectors
 
 

@@ -31,6 +31,7 @@ and cite what you find; say so when nothing relevant turns up.
 - `get`: a document, or some of its lines, such as a result's.
 - `links`: the links of a note ([[wikilinks]], embeds, Markdown links): those it holds, and those into it (backlinks).
 - `unresolved`: link targets no note answers to yet: the notes a collection lacks.
+- `reindex`: after writing, changing or deleting files in a collection, index them again, so searches find them.
 Results carry `id` (collection/path), `lines`, `title`, `score` and the passage's `text`. Scores rank the results of
 one call; each tool has its own scale, so don't compare them across tools. All search tools take `collection`, a
 `path` glob, `filters` on front-matter fields and `fields` to show; with `compact: true` results leave out the text:
@@ -276,6 +277,22 @@ def build(index=None):
         """Link targets no document answers to: the notes a collection lacks, most linked first, each with how many
         documents link it and the ids of a few of them."""
         return _run(index.unresolved, collection, k)
+
+    @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True))
+    async def reindex(
+        paths: Annotated[
+            list[str],
+            Field(
+                description='Files to index again: ids, e.g. "notes/People/Hans Müller.md", or absolute paths inside '
+                "a collection. A file that is gone has its documents removed."
+            ),
+        ],
+    ) -> list[dict]:
+        """Index files again right after writing, changing or deleting them, so that the next search finds them as
+        they are now: their text, front matter and links, and, if the index is embedded, their passages for vsearch
+        and query. Changes only sift's index, never a file. Per file: its id and status (added, changed, unchanged,
+        removed, not found, skipped, unreadable), its passages (`chunks`) and how many are `embedded`."""
+        return _run(index.reindex, paths)
 
     return mcp, index
 

@@ -438,3 +438,28 @@ def test_unresolved_command_names_a_few_documents(tmp_path, home, capsys):
     write(tmp_path / "v" / "Missing.md", "")
     run(capsys, "index")
     assert run(capsys, "unresolved").err == "no unresolved links\n"
+
+
+def test_index_files(cli_vault, capsys, monkeypatch):
+    write(cli_vault / "06_Topics" / "Wartungsvertrag 2027.md", "Press line overhaul from 2027.\n")
+    write(cli_vault / "log.jsonl", "not json\n")
+    (cli_vault / "02_Organizations" / "Acme AG.md").unlink()
+    monkeypatch.chdir(cli_vault / "06_Topics")  # a path from the current folder, as the shell completes it
+    err = run(
+        capsys, "index", "--files", "Wartungsvertrag 2027.md", "vault/02_Organizations/Acme AG.md", "vault/log.jsonl"
+    ).err
+    assert err.splitlines() == [
+        "vault/06_Topics/Wartungsvertrag 2027.md: added",
+        "vault/02_Organizations/Acme AG.md: removed",
+        "vault/log.jsonl: skipped (1 line skipped (line 1: not JSON))",
+    ]
+    hits = json.loads(run(capsys, "search", "overhaul", "--json").out)
+    assert [h["id"] for h in hits] == ["vault/06_Topics/Wartungsvertrag 2027.md"]
+
+
+def test_index_files_or_collections(cli_vault, capsys, tmp_path):
+    with pytest.raises(SystemExit, match="collections or --files, not both"):
+        run(capsys, "index", "vault", "--files", "vault/x.md")
+    write(tmp_path / "elsewhere.md", "x")
+    with pytest.raises(SystemExit, match="is in no collection"):
+        run(capsys, "index", "--files", str(tmp_path / "elsewhere.md"))

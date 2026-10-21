@@ -12,8 +12,9 @@ from pathlib import Path
 
 import numpy as np
 
-from . import console, links, readers, store
+from . import console, embed, indexing, links, readers, store
 from . import models as _models
+from .vectors import patch
 
 STOPWORDS = set(
     "a an and are as at be by can do does for from has have how i in is it of on or that the this to "
@@ -778,6 +779,76 @@ class Index:
             {"target": target, "docs": len(docs), "ids": sorted(named[doc][0] for doc in docs)[:LINKING_SHOWN]}
             for _, target, docs, _ in found
         ]
+
+    # --- reading files again (see indexing.reindex) ---------------------------
+
+    def reindex(self, paths):
+        """Read files again now, after they were written, changed or deleted, and embed their new passages if the index
+        is embedded: the next search finds them as they are, its vectors in memory following without a full load. Per
+        file: {"id", "status"}, see indexing.reindex, with "chunks", its documents' passages, and "embedded", how many
+        of them have vectors; and a "note" on anything that went wrong."""
+        done = indexing.reindex(self.db, paths)
+        self._patch(done.before, done.after, removed=done.removed)
+        note = self._embed_new([doc for _, docs in done.files for doc in docs])
+        sql = """SELECT count(c.id), count(v.chunk) FROM chunks c LEFT JOIN vectors v ON v.chunk = c.id
+                 WHERE c.doc IN (SELECT value FROM json_each(?))"""
+        results = []
+        for entry, docs in done.files:
+            if entry["status"] in ("added", "changed", "unchanged"):
+                chunks, embedded = self.db.execute(sql, (json.dumps(docs),)).fetchone()
+                entry |= {"chunks": chunks, "embedded": embedded}
+                if note and embedded < chunks:
+                    entry["note"] = "; ".join(filter(None, [entry.get("note"), note]))
+            results.append(entry)
+        return results
+
+    def _embed_new(self, docs):
+        """Embed the passages of these documents that have no vector yet, if the index is embedded, and add them to the
+        vectors in memory. Returns why some weren't, or None."""
+        model = store.get_meta(self.db, "model")
+        if model is None:  # never embedded: keyword search alone, and no model to load
+            return None
+        sql = """SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
+                 WHERE c.doc IN (SELECT value FROM json_each(?)) AND c.id NOT IN (SELECT chunk FROM vectors)
+                 ORDER BY c.id"""
+        rows = self.db.execute(sql, (json.dumps(docs),)).fetchall()
+        if not rows:
+            return None
+        try:
+            if (using := self.models.name) != model:
+                return f"not embedded: the index was embedded with {model}; run `sift embed --reset` for {using}"
+            matrix = embed.encode(self.models, [embed.text_of(*row[1:]) for row in rows])
+        except ConnectionError as e:  # a worker that doesn't answer: keyword search finds them meanwhile
+            return f"not embedded: {e}"
+        intact = np.isfinite(matrix).all(axis=1)
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            before = store.get_meta(self.db, "version")
+            sql = "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))"  # not removed meanwhile
+            still = {c for (c,) in self.db.execute(sql, (json.dumps([row[0] for row in rows]),))}
+            keep = [i for i, row in enumerate(rows) if intact[i] and row[0] in still]
+            self.db.executemany(
+                "INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)",
+                [(rows[i][0], matrix[i].tobytes()) for i in keep],
+            )
+            store.touch(self.db)
+            after = store.get_meta(self.db, "version")
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+        self._patch(before, after, ids=[rows[i][0] for i in keep], matrix=matrix[keep])
+        return None if intact.all() else "some passages could not be embedded (the model returned NaN); try again"
+
+    def _patch(self, before, after, removed=(), ids=(), matrix=None):
+        """Bring the vectors in memory from the index's version `before` to `after`, a change this index made itself,
+        without loading them all again. Vectors of another version are loaded anew by the next search anyway."""
+        if self.vectors is None or self.version != before or before == after:
+            return
+        if matrix is None:
+            matrix = np.empty((0, int(store.get_meta(self.db, "dim"))), np.float16)
+        patched = patch(self.vectors, list(removed), list(ids), matrix)
+        self.vectors, self.version = (self.vectors, None) if patched is None else (patched, after)
 
     def fields(self, collection, docs):
         """The front-matter fields of a collection (by id with `docs` documents), from a sample spread over it."""
