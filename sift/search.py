@@ -480,8 +480,8 @@ class Index:
 
     def browse(self, k=50, *, collection=None, path=None, filters=None, fields=None, compact=False, sort=None):
         """Documents without a query, by path: what a collection, folder or filter holds. They come as hits without
-        lines and score, with the start of the document as their passage; `sort` orders them by a front-matter
-        field instead, as in searches."""
+        lines and score, with the start of their text, after any front matter, as their passage; `sort` orders them
+        by a front-matter field instead, as in searches."""
         k, (where, args) = _check_k(k), _where(self.db, collection, path, filters)
         fields, sort = _check_fields(fields), _check_sort(sort)
         order, by = "co.name, d.path", []

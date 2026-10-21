@@ -1,5 +1,6 @@
 """The SQLite index: connecting, the layout's version, collections, deleting documents, the vectors' version."""
 
+import sqlite3
 import time
 
 import pytest
@@ -18,6 +19,29 @@ def doc_ids(db):
 def test_connect_uses_home(home):
     store.connect()
     assert (home / "sift.db").exists()
+
+
+def test_a_new_index_records_its_layout_version(home):
+    assert store.connect(home).execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
+
+
+def test_an_index_from_an_older_sift_asks_to_be_rebuilt(home):
+    home.mkdir()
+    old = sqlite3.connect(home / "sift.db")
+    old.execute("CREATE TABLE docs(id INTEGER PRIMARY KEY, path TEXT)")  # sift 0.2 had no layout version
+    old.commit()
+    old.close()
+    with pytest.raises(SystemExit, match=r"older sift.*sift\.db.*sift add"):
+        store.connect(home)
+
+
+def test_an_index_from_a_newer_sift_asks_for_an_upgrade(home):
+    home.mkdir()
+    newer = sqlite3.connect(home / "sift.db")
+    newer.execute(f"PRAGMA user_version = {store.SCHEMA_VERSION + 1}")
+    newer.close()
+    with pytest.raises(SystemExit, match="newer sift"):
+        store.connect(home)
 
 
 # The keyword index of sift 0.7 and older: title and text, no front matter.

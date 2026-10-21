@@ -774,6 +774,17 @@ def test_get_lines(corpus, lines, text):
     assert Index(corpus[0]).get("notes/rl.md", lines) == text
 
 
+def test_get_returns_the_indexed_text_until_the_next_index(corpus):
+    # Hits and get always agree: both come from the index, not from the file as it is now.
+    db, root = corpus
+    write(root / "rl.md", "# Rewritten\n")
+    assert Index(db).get("notes/rl.md").startswith("# Reward shaping")
+    (root / "rl.md").unlink()
+    indexing.index(db)
+    with pytest.raises(LookupError, match="unknown document"):
+        Index(db).get("notes/rl.md")
+
+
 def test_lines_past_the_end_are_a_clear_error(corpus):
     # An empty answer read to agents as an empty passage.
     with pytest.raises(ValueError, match=r"notes/rl\.md has 3 lines; line 9 is past its end"):
