@@ -278,13 +278,13 @@ damaged ones, until they change. Older binary Office files (`.doc`, `.ppt`, `.xl
 | `reindex` | Read files again right after writing, changing or deleting them, so that the next search finds them. The one tool that changes anything: sift's index, never a file. |
 
 The search tools take `query` (`similar`: `id`), `k`, `collection`, `path`, `filters`, `fields`, `compact`,
-`all_passages`, `sort`, `links_to` and `linked_from`, as the commands above do. Every result carries `id` (`collection/path`), `title`, `lines`,
-`score` and the passage's `text`, so agents can cite their sources. `fields` adds front-matter fields to each result,
-e.g. `["url", "created"]`, and `compact: true` leaves out the text, so an agent can survey many results without
-filling its context and then read the ones that matter. Filters take a value, a list for any of its values,
-`{"not": ...}`, or ranges, e.g. `{"created": {">=": "2024-06", "<": "2025"}}`. Every parameter is described in the
-tools' schemas, and the server tells agents when they connect which collections there are and which front-matter
-fields each has.
+`all_passages`, `sort`, `links_to` and `linked_from`, as the commands above do. Every result carries `id`
+(`collection/path`), `title`, `lines`, `score` and the passage's `text`, so agents can cite their sources. `fields`
+adds front-matter fields to each result, e.g. `["url", "created"]`, and `compact: true` leaves out the text, so an
+agent can survey many results without filling its context and then read the ones that matter. Filters take a value,
+a list for any of its values, `{"not": ...}`, or ranges, e.g. `{"created": {">=": "2024-06", "<": "2025"}}`. Every
+parameter is described in the tools' schemas, and the server tells agents when they connect which collections there
+are, which front-matter fields each has, and how many links its notes hold.
 
 ### Setting up
 
