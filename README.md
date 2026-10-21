@@ -345,10 +345,10 @@ claims, and it embeds 1.6 times as fast.
   adding a reader. Markdown, including documents converted to it, is split into chunks of about 3,000 characters
   (about 750 tokens) on line boundaries, preferring headings, with a small overlap.
 - **Remote embedding:** HTTPS with the worker's self-made certificate (EC P-256), pinned by its SHA-256 in the key,
-  and a bearer token of 32 random bytes. `GET /` names the worker's models and vector length; `POST /embed` takes
-  `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per text; `POST /rerank`
-  takes `{"query": "...", "texts": [...]}` and returns the raw scores, `{"scores": [...]}`. The worker runs one
-  request at a time on the GPU. Through a worker, the vectors are searched with NumPy, in RAM.
+  and a bearer token of 32 random bytes. `GET /` names the worker's models, vector length and sift version;
+  `POST /embed` takes `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per
+  text; `POST /rerank` takes `{"query": "...", "texts": [...]}` and returns the raw scores, `{"scores": [...]}`. The
+  worker runs one request at a time on the GPU. Through a worker, the vectors are searched with NumPy, in RAM.
 - **Storage:** one SQLite database in WAL mode holds every document's text, metadata, the FTS5 keyword index and
   the vectors (fp16). The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
   Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.
@@ -402,7 +402,7 @@ nearest-neighbour indexes; live file watching; remote access and authentication.
 
 sift follows [semantic versioning](https://semver.org/). Within a major version, such as 1.x, these stay compatible:
 
-- the commands, their options and their output with `--json`;
+- the commands, their options and their JSON output (`--json`, `sift status`);
 - the MCP tools and their parameters;
 - the four settings;
 - the index: one made by 1.x opens in every later 1.x, which updates its layout on first use if it must;

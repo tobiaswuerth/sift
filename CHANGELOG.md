@@ -219,7 +219,8 @@ Tagged but never published: its worker spoke plain HTTP, without a key. 0.5.1 re
   `Alibaba-NLP/gte-reranker-modernbert-base`: the same size and speed, better in Hugging Face's published comparison
   (MTEB English retrieval and NanoBEIR, reranking six embedders' results, EmbeddingGemma's among them), and it
   improves on the first-stage ranking of the scientific sets SciFact, NFCorpus and SCIDOCS. It downloads on first
-  use; nothing needs re-indexing or re-embedding. `SIFT_RERANK_MODEL=Alibaba-NLP/gte-reranker-modernbert-base` keeps the old one.
+  use; nothing needs re-indexing or re-embedding. `SIFT_RERANK_MODEL=Alibaba-NLP/gte-reranker-modernbert-base` keeps
+  the old one.
 
 ### Fixed
 
