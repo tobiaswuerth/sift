@@ -1,17 +1,18 @@
 name: CI
 
-# Every pull request must pass these checks before it can merge into main. Main isn't tested again: the release
-# workflow publishes what the pull request tested, and runs these checks itself only when main's code differs.
+# Every pull request must pass these checks before it can merge, and they run again on each commit the merges make
+# on main. The release workflow publishes only a commit of main whose run here passed.
 on:
   pull_request:
-  workflow_call:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}  # each commit of main keeps its run: it may be a release
 
 jobs:
   lint:
