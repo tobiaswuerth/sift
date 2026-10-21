@@ -149,7 +149,7 @@ def build(index=None):
         "query without operators, passages holding any of them are returned; a query with operators is taken as it "
         "is, so drop terms when it finds nothing.",
         'Keywords. "Exact phrases", prefix*, AND, OR, NOT (in capitals) and parentheses work, e.g. '
-        '"stroke" AND (painting OR rendering); title: and meta: limit a term to the title or the front matter.',
+        '"notice period" AND (contract OR agreement); title: and meta: limit a term to the title or the front matter.',
     )
     _add_search(
         mcp,

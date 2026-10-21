@@ -37,8 +37,8 @@ On first use, sift downloads its two models from Hugging Face (about 2 GB).
 
 sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, which works but embeds slowly.
 `query`'s reranker is slow there too: about 25 seconds per query on 8 CPU threads, against 0.3 seconds on an RTX
-4090. A machine without a GPU can borrow one through a [`sift worker`](#embedding-on-another-machine), which reranks as
-well as embeds, or use `search` and `vsearch`, which need no reranker.
+4090. A machine without a GPU can borrow one through a [`sift worker`](#embedding-on-another-machine), which reranks
+as well as embeds, or use `search` and `vsearch`, which need no reranker.
 
 - **Linux, macOS:** nothing to do. PyTorch from PyPI includes CUDA on Linux and uses the Apple GPU on macOS.
 - **Windows:** PyTorch from PyPI has no CUDA support. uv's `--torch-backend auto`, used above, picks the CUDA build
@@ -50,19 +50,19 @@ If an NVIDIA GPU sits unused, sift says so on start-up and prints the command th
 ## Usage
 
 ```bash
-sift add ~/papers --name papers        # register a folder as a collection
+sift add ~/handbook --name handbook    # register a folder as a collection
 sift index                             # scan files, chunk them, build the keyword index
 sift embed                             # embed every chunk that has no vector yet
-sift search '"reward shaping"'         # exact keyword search
-sift vsearch "how do robots plan brush strokes"
-sift query "mixing pigments to match a target colour"
-sift similar papers/2401.02225.md      # documents like this one
-sift get papers/2401.02225.md          # full document
-sift get papers/2401.02225.md --lines 14-23   # only some lines, e.g. those of a search hit
-sift get papers/2401.02225.md --fields url,created   # front-matter fields first, then the text
+sift search '"notice period"'          # exact keyword search
+sift vsearch "how much leave do new employees get"
+sift query "who approves travel expenses abroad"
+sift similar handbook/hr/leave.md      # documents like this one
+sift get handbook/hr/leave.md          # full document
+sift get handbook/hr/leave.md --lines 14-23   # only some lines, e.g. those of a search hit
+sift get handbook/hr/leave.md --fields owner,modified   # front-matter fields first, then the text
 sift status                            # collections and counts
 sift bench questions.json              # how well each mode finds what you expect (see below)
-sift rm papers                         # remove a collection from the index; its files stay on disk
+sift rm handbook                       # remove a collection from the index; its files stay on disk
 sift serve                             # MCP server on http://127.0.0.1:8765/mcp
 sift worker                            # embed for other machines on this one's GPU (see below)
 ```
@@ -79,8 +79,8 @@ results by a front-matter field instead of score; `-` for descending) and `--jso
 
 `search` requires every term. If no chunk has them all and the query has no operators (`AND`, `OR`, `NOT`, `NEAR`),
 it returns the chunks that have any of them, those with more terms first. Operators are written in capitals, and
-parentheses group: `'"stroke" AND (painting OR rendering)'`. A query with operators is taken as it is; when it finds
-nothing, drop terms.
+parentheses group: `'"notice period" AND (contract OR agreement)'`. A query with operators is taken as it is; when
+it finds nothing, drop terms.
 
 Scores rank the results of one search, on a scale of its own: BM25 for `search` (0 and up), cosine similarity for
 `vsearch` and `similar` (-1 to 1), and for `query` the reranker's score, nudged by the passage's cosine, on the
@@ -110,19 +110,19 @@ line. A list field matches when it contains the value:
 
 ```markdown
 ---
-title: "Brush stroke planning"
-categories: ["cs.RO", "cs.GR"]
-year: 2024
+title: "Travel expenses"
+departments: ["finance", "hr"]
+year: 2025
 tags:
-  - painting
-  - robots
+  - travel
+  - expenses
 ---
 ```
 
 ```bash
-sift query "stroke order" -f categories=cs.RO -f year=2024
-sift search robot -f categories=cs.RO -f categories=cs.CV   # in either category
-sift search robot -f categories!=cs.CV                      # not in cs.CV
+sift query "per diem abroad" -f departments=finance -f year=2025
+sift search policy -f departments=finance -f departments=legal   # in either department
+sift search policy -f departments!=legal                         # not in legal
 ```
 
 Filters on different fields must all hold. Repeated for one field, `=` matches any of the values, and `!=` leaves out
@@ -132,13 +132,13 @@ Filters can also be ranges, with `>`, `>=`, `<` and `<=`. Dates compare at the p
 includes all of 2024 and `created>2024` starts in 2025; a number compares with the number a date starts with:
 
 ```bash
-sift search pigment -f "created>=2024-06" -f "created<2025"
+sift search invoice -f "created>=2024-06" -f "created<2025"
 ```
 
 The `title` field, or else the first heading outside code blocks, or else the file name, becomes the document title.
 
 Keyword search covers the front matter too, so an author's name or an id finds its documents, in `search` and in
-`query`. `meta:` limits a term to the front matter, e.g. `sift search "meta: Vaswani"`.
+`query`. `meta:` limits a term to the front matter, e.g. `sift search "meta: Smith"`.
 
 ### JSON Lines
 
@@ -151,9 +151,9 @@ A `.jsonl` (or `.ndjson`) file holds one document per line, as a JSON object. si
 | text | the first of `text`, `content`, `body`, `abstract`, `description` and `summary`, else the longest string; a list of strings becomes paragraphs |
 | metadata | every other field, for filters and `fields`, as front matter is for Markdown |
 
-A record's id is its file's path plus its id: line `{"id": "2101.00001", ...}` of `2021/2021-01.jsonl` becomes
-`papers/2021/2021-01/2101.00001`, which `get` also finds as `papers/2101.00001`. Other field names can be chosen
-when adding the collection:
+A record's id is its file's path plus its id: line `{"id": "T-1042", ...}` of `2025/tickets.jsonl` in the collection
+`support` becomes `support/2025/tickets/T-1042`, which `get` also finds as `support/T-1042`. Other field names can be
+chosen when adding the collection:
 
 ```bash
 sift add ~/qa --id key --title question --text question,answer
@@ -181,7 +181,7 @@ damaged ones, until they change. Older binary Office files (`.doc`, `.ppt`, `.xl
 | `search` | Exact keyword search, ranked by BM25. Supports `"phrases"`, `prefix*`, `AND`, `OR`, `NOT` and parentheses. |
 | `vsearch` | Semantic search. |
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. |
-| `similar` | Documents like a given one, by its id: more papers like one found. |
+| `similar` | Documents like a given one, by its id: more documents like one already found. |
 | `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. With `fields`, it returns the document with those front-matter fields. An id may leave out folders if the file name is unique. |
 | `status` | Collections, counts and front-matter fields. |
 
@@ -250,7 +250,8 @@ A running sift keeps the version it started with, so an update takes an upgrade 
 
 The index and the vectors carry over. When a new version changes how the keyword index is laid out, the first
 command rebuilds it, once, and says so: a few minutes for millions of documents; nothing gets embedded again. The
-[changelog](CHANGELOG.md) lists what changed.
+[changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists what changed.
+
 ## Embedding on another machine
 
 A machine without a GPU, such as a notebook, can borrow another machine's. Run `sift worker` on the one with the GPU:
@@ -306,8 +307,9 @@ Four optional settings exist for special cases:
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
 
 For a new index of business documents, `Snowflake/snowflake-arctic-embed-l-v2.0` is a good alternative embedding
-model. On our [benchmarks](docs/benchmarks.md) it ties EmbeddingGemma-2 on average. It's better on financial questions
-and long German documents, worse on scientific claims, and it embeds 1.6 times as fast.
+model. On sift's [benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md) it ties
+EmbeddingGemma-2 on average. It's better on financial questions and long German documents, worse on scientific
+claims, and it embeds 1.6 times as fast.
 
 ## How it works
 
@@ -353,9 +355,9 @@ and long German documents, worse on scientific claims, and it embeds 1.6 times a
     reranker's spread over the candidates. One weight thus fits any reranker, and the scores keep the reranker's
     scale. A reranker alone ranked scientific claims worse than the embedding did. Candidates whose front matter the
     query names keep the best cosine, since the embedding never sees front matter.
-  - **The evidence** is in [docs/benchmarks.md](docs/benchmarks.md): rerankers, embedding models and blends on
-    seven datasets, from scientific claims to long German documents. Scores are raw:
-    a sigmoid saturates, at 0.9999 for every good match.
+  - **The evidence** is in [docs/benchmarks.md](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md):
+    rerankers, embedding models and blends on seven datasets, from scientific claims to long German documents.
+    Scores are raw: a sigmoid saturates, at 0.9999 for every good match.
 - **`similar`:** the mean of a document's passage vectors, scored against every passage as `vsearch` scores a query.
   No model runs, so it takes half a second over 3 million passages, with or without a GPU.
 - **Server:** `sift serve` loads models and vectors once and keeps them in memory.
@@ -379,9 +381,9 @@ pytest --cov            # 100% line and branch coverage is required
 ```
 
 The tests replace the embedding and reranking models with small deterministic fakes, so they need no GPU and no
-model downloads; everything else, including the MCP server, runs for real. See [CONTRIBUTING.md](CONTRIBUTING.md)
-for how changes and releases work.
+model downloads; everything else, including the MCP server, runs for real. See
+[CONTRIBUTING.md](https://github.com/tobiaswuerth/sift/blob/main/CONTRIBUTING.md) for how changes and releases work.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/tobiaswuerth/sift/blob/main/LICENSE)
