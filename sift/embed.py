@@ -88,7 +88,8 @@ def _longest_pending(db):
 
 
 def encode(models, texts, report=None):
-    """Vectors for texts, longest first in batches of similar length; report(n) after each batch, n texts done."""
+    """Vectors for texts, longest first in batches of similar length; report(n), if given, after each batch, n texts
+    done."""
     order, step, vectors = sorted(range(len(texts)), key=lambda i: -len(texts[i])), models.batch, None
     for start in range(0, len(order), step):
         part = order[start : start + step]

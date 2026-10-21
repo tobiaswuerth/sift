@@ -1,5 +1,5 @@
-"""`sift serve`: the MCP server agents search through (search, vsearch, query, similar, get and status), with the UI
-for people under /ui (see `ui`)."""
+"""`sift serve`: the MCP server agents search through (search, vsearch, query, similar, get, status, links,
+unresolved, mentions and reindex), with the UI for people under /ui (see `ui`)."""
 
 import asyncio
 import logging
@@ -35,8 +35,9 @@ and cite what you find; say so when nothing relevant turns up.
 - `reindex`: after writing, changing or deleting files in a collection, index them again, so searches find them.
 Results carry `id` (collection/path), `lines`, `title`, `score` and the passage's `text`. Scores rank the results of
 one call; each tool has its own scale, so don't compare them across tools. All search tools take `collection`, a
-`path` glob, `filters` on front-matter fields and `fields` to show; with `compact: true` results leave out the text:
-survey many results compactly, then read the ones that matter."""
+`path` glob, `filters` on front-matter fields, `fields` to show, and `links_to` and `linked_from` to keep to a note's
+links; with `compact: true` results leave out the text: survey many results compactly, then read the ones that
+matter."""
 
 
 def _collections(index):

@@ -29,25 +29,23 @@ def into(index, id, **options):
 
 def resolved(links):
     """Each link out as (target, where it leads): an id with how, "ambiguous" with the candidates, or "unresolved"."""
-    return [
-        (
-            lk["target"],
-            (lk["id"], lk["via"])
-            if "id" in lk
-            else ("ambiguous", lk["ambiguous"])
-            if "ambiguous" in lk
-            else "unresolved",
-        )
-        for lk in links
-    ]
+    return [(link["target"], _leads(link)) for link in links]
 
 
-def note_vault(tmp_path, home, files, **fields):
+def _leads(link):
+    if "id" in link:
+        return link["id"], link["via"]
+    if "ambiguous" in link:
+        return "ambiguous", link["ambiguous"]
+    return "unresolved"
+
+
+def note_vault(tmp_path, home, files):
     """A collection "v" of these notes, {path: text}, indexed."""
     for path, text in files.items():
         write(tmp_path / "v" / path, text)
     db = store.connect(home)
-    store.add_collection(db, tmp_path / "v", "v", fields or None)
+    store.add_collection(db, tmp_path / "v", "v")
     indexing.index(db)
     return db, tmp_path / "v"
 
