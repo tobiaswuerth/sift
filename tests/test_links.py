@@ -225,6 +225,14 @@ def test_unresolved_targets_most_linked_first(tmp_path, home):
     ]
 
 
+def test_a_path_to_nowhere_is_unresolved_though_its_name_is_known(tmp_path, home):
+    db, _ = note_vault(tmp_path, home, {"People/Hans.md": "", "a.md": "[[Other/Hans]] [x](Nope/Hans.md) [[Hans]]"})
+    assert Index(db).unresolved() == [
+        {"target": "Nope/Hans.md", "docs": 1, "ids": ["v/a.md"]},
+        {"target": "Other/Hans", "docs": 1, "ids": ["v/a.md"]},
+    ]
+
+
 def test_status_counts_links(linked):
     collections = {c["name"]: c for c in Index(linked[0]).status()["collections"]}
     assert (collections["vault"]["links"], collections["vault"]["unresolved"]) == (6, 2)

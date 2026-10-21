@@ -165,9 +165,12 @@ def unresolved(db, cid=None):
     most often written, [ids of the documents linking it], number of links). Links to the same path are one target,
     however written: `[[Missing]]`, `[[missing.md]]`."""
     resolver, targets = Resolver(db), {}
-    sql, args = f"SELECT {LINK} FROM links l JOIN docs d ON d.id = l.doc", []
-    if cid is not None:
-        sql, args = sql + " WHERE l.collection = ?", [cid]
+    # A link by name alone can't be unresolved if any file answers to its key: so only those, and links by path, need
+    # resolving, of the hundreds of thousands a vault may hold.
+    sql = f"""SELECT {LINK} FROM links l JOIN docs d ON d.id = l.doc WHERE (l.kind = 'markdown'
+              OR instr(l.target, '/') OR NOT EXISTS (SELECT 1 FROM names n WHERE n.collection = l.collection
+              AND n.key = l.key))"""
+    sql, args = (sql + " AND l.collection = ?", [cid]) if cid is not None else (sql, [])
     for row in db.execute(sql + " ORDER BY l.id", args):
         if _resolve(resolver, row)[0] != "unresolved":
             continue
