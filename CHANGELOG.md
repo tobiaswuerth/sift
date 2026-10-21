@@ -10,6 +10,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `sift bench FILE`: how well each search mode finds the documents a set of questions should find, on your own
   index (nDCG@10, MRR@10, Recall@10 and time per query), from a JSON list of questions and the ids of their answers.
 
+### Fixed
+
+- A reranker that reads fewer than 1024 tokens, such as MiniLM (512), failed on every long passage ("The size of
+  tensor a must match the size of tensor b"). sift now keeps the model's own limit and caps longer ones at 1024.
+
 ## [0.8.0] - 2026-10-20
 
 ### Added

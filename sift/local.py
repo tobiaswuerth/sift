@@ -37,7 +37,8 @@ def _reranker(name, dtype):
     from sentence_transformers import CrossEncoder
 
     _quietly()
-    model = CrossEncoder(name, device="cpu", max_length=MAX_TOKENS)  # into RAM, like the embedder
+    model = CrossEncoder(name, device="cpu")  # into RAM, like the embedder
+    model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)  # MiniLM reads at most 512 tokens
     if dtype:
         model.to(dtype)  # the whole model: its scoring head too, or PyTorch refuses to mix the two
     return model

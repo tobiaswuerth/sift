@@ -76,8 +76,11 @@ class FakeCrossEncoder:
     """A transformer (.model) with a scoring head on top, like a real cross-encoder: converting only the transformer
     to another dtype leaves the head behind, and PyTorch refuses to mix the two."""
 
+    limit = 8192  # the most tokens the model reads, as its position embeddings allow (MiniLM: 512)
+
     def __init__(self, name, device=None, max_length=None):
         self.name, self.device, self.model, self.head = name, device, FakeSentenceTransformer(name, device), "float32"
+        self.max_seq_length = max_length or self.limit  # sentence-transformers 6 truncates to this
 
     def to(self, target):
         import torch
@@ -97,6 +100,8 @@ class FakeCrossEncoder:
         assert show_progress_bar is False, "sift must not draw progress bars (the server's log is no terminal)"
         if self.model.dtype != self.head:
             raise RuntimeError(f"expected mat1 and mat2 to have the same dtype, but got: {self.model.dtype} != float")
+        if self.max_seq_length > self.limit:  # what PyTorch says when the input outgrows the position embeddings
+            raise RuntimeError(f"The size of tensor a (972) must match the size of tensor b ({self.limit})")
         raw = torch.tensor([fake_score(q, d) for q, d in pairs])
         return (activation_fn or self.activation or torch.nn.Identity())(raw).numpy()
 
