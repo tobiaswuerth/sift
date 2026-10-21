@@ -98,7 +98,7 @@ def test_patched_vectors_score_as_if_loaded_anew(pretend, make):
     assert patch(vectors, removed=[], ids=[], matrix=rows()).ids.tolist() == [30, 42]
 
 
-def test_patched_vectors_keep_chunk_order(pretend):
+def test_patched_vectors_keep_chunk_order():
     # Searches find a chunk's score by binary search over the ids: a new chunk among the old ones would need sorting
     # them all, which a full load does better.
     assert patch(InRam(IDS, MATRIX), removed=[], ids=[25], matrix=rows([1, 0])) is None

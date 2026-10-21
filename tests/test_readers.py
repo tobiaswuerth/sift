@@ -89,7 +89,7 @@ def test_load_takes_titles_from_file_names_if_the_collection_says_so(tmp_path):
     assert readers.load(path)[0][0].title == "Summary"
 
 
-def test_a_note_of_front_matter_alone_is_its_front_matter(tmp_path):
+def test_a_note_of_front_matter_alone_is_its_front_matter():
     # A vault's contact notes often hold properties only: without a passage, no search could find them, not even by
     # their name.
     doc = readers.note('---\norg: "[[Acme AG]]"\nemail: peter@acme.example\n---\n\n', "Peter Frei.md")

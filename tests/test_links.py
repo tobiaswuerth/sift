@@ -346,7 +346,7 @@ def test_names_compare_composed_and_in_any_case(tmp_path, home):
     assert [lk["via"] for lk in out(Index(db), "v/n.md")] == ["name", "name"]
 
 
-def test_links_stay_in_their_collection(tmp_path, home, linked):
+def test_links_stay_in_their_collection(tmp_path, linked):
     db = linked[0]
     write(tmp_path / "other" / "Peter Frei.md", "A note of another collection.\n")
     store.add_collection(db, tmp_path / "other", "other")
