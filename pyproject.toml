@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sift-rag"
 dynamic = ["version"]
-description = "Fast local search over your documents and notes, built for AI agents."
+description = "Local RAG search and MCP server for AI agents: keyword (BM25), semantic and hybrid search with reranking over your Markdown, PDF and Office files."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -31,7 +31,27 @@ dependencies = [
     "cryptography>=42",  # the certificate `sift worker` makes for HTTPS
     "jinja2>=3.1",  # the pages of `sift ui`
 ]
-keywords = ["search", "rag", "embeddings", "mcp", "markdown", "pdf", "bm25", "semantic-search"]
+keywords = [
+    "rag",
+    "retrieval-augmented-generation",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "semantic-search",
+    "hybrid-search",
+    "vector-search",
+    "full-text-search",
+    "bm25",
+    "reranking",
+    "embeddings",
+    "local-first",
+    "knowledge-base",
+    "ai-agents",
+    "claude-code",
+    "markdown",
+    "pdf",
+    "sqlite",
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
@@ -47,15 +67,21 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
+    "Natural Language :: English",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
     "Topic :: Text Processing :: Indexing",
+    "Topic :: Text Processing :: Markup :: Markdown",
 ]
 
 [project.urls]
 Homepage = "https://github.com/tobiaswuerth/sift"
 Documentation = "https://github.com/tobiaswuerth/sift#readme"
+Source = "https://github.com/tobiaswuerth/sift"
 Issues = "https://github.com/tobiaswuerth/sift/issues"
 Changelog = "https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md"
+Benchmarks = "https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "pre-commit>=4", "build>=1.2", "twine>=6"]

@@ -1,4 +1,4 @@
-# sift
+# sift: local RAG search and MCP server for AI agents
 
 [![CI](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/sift-rag)](https://pypi.org/project/sift-rag/)
@@ -10,15 +10,23 @@
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
 [![CodeQL](https://github.com/tobiaswuerth/sift/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/tobiaswuerth/sift/actions/workflows/github-code-scanning/codeql)
 
-Fast local search over your documents and notes, built for AI agents.
-
-sift indexes folders of Markdown, text, PDF, office and JSON Lines files, embeds them on your GPU, and runs a server
-that agents query over MCP.
-It offers four kinds of search: exact keyword matching, semantic search, hybrid retrieval with reranking for RAG,
-and documents like a given one.
-Everything runs locally. No cloud services, no API keys.
+sift indexes your documents and notes, embeds them on your GPU, and serves them to Claude Code and other AI agents
+over MCP (Model Context Protocol), with keyword, semantic and hybrid search. Everything runs locally: no cloud
+services, no API keys, and your documents stay on your own machines.
 
 ![sift ui: a keyword search over 3.2 million arXiv abstracts, filtered by category, with one paper open](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-search.png)
+
+- **Four kinds of search:** exact keyword search (BM25, SQLite FTS5), semantic vector search, hybrid retrieval with
+  cross-encoder reranking for RAG, and documents similar to a given one.
+- **Your files as they are:** Markdown with YAML front matter (Obsidian notes too), text, PDF, Word, PowerPoint,
+  Excel, OpenDocument, RTF, EPUB, HTML and JSON Lines, indexed incrementally.
+- **An MCP server** for Claude Code and any other MCP client, with filters on front-matter fields, results that cite
+  their source lines, and compact results that save an agent's context.
+- **A browser UI** to search, browse and read the index yourself.
+- **Measured, not guessed:** the default models and ranking were chosen on seven retrieval benchmarks, from BEIR's
+  SciFact to long German documents ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md)).
+- **Runs on what you have:** NVIDIA or Apple GPUs, or the CPU, or another machine's GPU through `sift worker`, on
+  Linux, macOS and Windows.
 
 ## Install
 
@@ -95,7 +103,7 @@ and unrelated results below 2.
 `sift ui` opens the index in your browser, at `http://127.0.0.1:8765/ui/`, to look through the sources yourself. It
 uses the `sift serve` that runs on that port, or starts one, which then serves agents too.
 
-![sift ui in dark mode: the 2025 folder of an arXiv collection, filtered by category, with its subfolders, authors and categories to drill into](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-browse-dark.png)
+![sift ui in dark mode: the 2025 folder of an arXiv collection, filtered by category, with its subfolders and the categories and dates of its papers to drill into](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-browse-dark.png)
 
 - **Search** in three modes: *Keyword* as you type, *Meaning* and *Hybrid* (`vsearch` and `query`) on Enter. The
   words found are marked in each passage, and a bar shows each result's score.
@@ -237,8 +245,8 @@ fields each has.
 3. Start a new Claude Code session: running sessions don't pick up new servers. `claude mcp list` should now show
    sift as connected, and an agent asked for sift's status gets your collections.
 
-One server serves any number of agents, with the models loaded once. Other MCP clients connect the same way, to the
-streamable HTTP endpoint `http://127.0.0.1:8765/mcp`. The same server shows the index to you at
+One server serves any number of agents, with the models loaded once. Other MCP clients, such as Cursor, VS Code or
+Windsurf, connect the same way, to the streamable HTTP endpoint `http://127.0.0.1:8765/mcp`. The same server shows the index to you at
 `http://127.0.0.1:8765/ui/` (see [Browsing the index](#browsing-the-index)).
 
 Or let every session start a server of its own over stdio; then each session loads the models into memory itself:
