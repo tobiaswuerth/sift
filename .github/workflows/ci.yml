@@ -1,10 +1,10 @@
 name: CI
 
+# Every pull request must pass these checks before it can merge into main. Main isn't tested again: the release
+# workflow publishes what the pull request tested, and runs these checks itself only when main's code differs.
 on:
-  push:
-    branches: [main]
   pull_request:
-  workflow_call:  # the release workflow runs the same checks first
+  workflow_call:
 
 permissions:
   contents: read
@@ -16,13 +16,13 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.12"
-      - run: pip install pre-commit
-      - run: pre-commit run --all-files --show-diff-on-failure
+      - run: uvx pre-commit run --all-files --show-diff-on-failure
 
   test:
     # Tests use small fake models, so they need neither a GPU nor model downloads. Coverage must stay at 100%.
@@ -32,37 +32,40 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
         python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20  # a hung install fails here instead of after GitHub's 6 hours
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: ${{ matrix.python }}
-          cache: pip
-      - run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -e ".[dev]"
+          activate-environment: true
+          enable-cache: true
+      - run: uv pip install --torch-backend cpu -e ".[dev]"
       - run: pytest -q --cov
 
   package:
-    # Builds the package and checks it as PyPI and users will see it. The release publishes exactly these files.
+    # Builds the package and checks it as PyPI and users will see it.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.12"
-      - run: pip install build twine
-      - run: python -m build
-      - run: twine check --strict dist/*
+      - name: Check that the changelog has a section for the version
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' sift/__init__.py)
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no section for $version, the version in sift/__init__.py"
+            exit 1
+          fi
+      - run: uv build
+      - run: uvx twine check --strict dist/*
       - name: Install the wheel in a clean environment and run both commands
         run: |
-          python -m venv /tmp/clean
-          /tmp/clean/bin/pip install --no-deps dist/*.whl
+          uv venv /tmp/clean
+          uv pip install --python /tmp/clean --no-deps dist/*.whl
           /tmp/clean/bin/sift --version
           /tmp/clean/bin/sift-rag --version
       - name: Check that the dependencies resolve
-        run: /tmp/clean/bin/pip install --dry-run --ignore-installed dist/*.whl
-      - uses: actions/upload-artifact@v7
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: error
+        run: uv pip install --python /tmp/clean --dry-run dist/*.whl

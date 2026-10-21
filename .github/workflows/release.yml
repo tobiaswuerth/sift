@@ -1,37 +1,86 @@
 name: Release
 
-# Runs when a version tag such as v0.1.0 is pushed. See "Releasing" in CONTRIBUTING.md.
+# Runs on every merge into main. When sift/__init__.py names a version without a tag, it publishes that version to
+# PyPI and makes a GitHub release, tagging the merge. See "Releasing" in CONTRIBUTING.md.
+#
+# The pull request already passed every check on this code, so the tests run here only when main's code differs
+# from the pull request's last commit (its branch was behind main when it merged).
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
 
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  version:
+  check:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      new: ${{ steps.version.outputs.new }}
+      tested: ${{ steps.tested.outputs.tested }}
     steps:
       - uses: actions/checkout@v7
-      - name: Check that the tag matches the package version
+      - name: Is this version released yet?
+        id: version
         run: |
           version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' sift/__init__.py)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME doesn't match version $version in sift/__init__.py"
-            exit 1
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "v$version is released already: nothing to publish."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$version is new."
+            echo "new=true" >> "$GITHUB_OUTPUT"
           fi
-          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no section for $version"
-            exit 1
+      - name: Did the pull request test this exact code?
+        id: tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].head.sha // empty')
+          tree=$(git rev-parse "$GITHUB_SHA^{tree}")
+          if [ -n "$head" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$head" --jq .commit.tree.sha)" = "$tree" ]; then
+            echo "main holds the same code as the pull request's last commit, $head, which passed every check."
+            echo "tested=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main's code differs from the pull request's last commit (${head:-none found}): testing it first."
+            echo "tested=false" >> "$GITHUB_OUTPUT"
           fi
 
   ci:
-    needs: version
+    needs: check
+    if: needs.check.outputs.new == 'true' && needs.check.outputs.tested != 'true'
     uses: ./.github/workflows/ci.yml
 
-  publish:
-    needs: ci
+  build:
+    needs: [check, ci]
+    if: ${{ !cancelled() && needs.check.outputs.new == 'true' && contains(fromJSON('["success", "skipped"]'), needs.ci.result) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.12"
+      - run: uv build
+      - run: uvx twine check --strict dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: pypi
       url: https://pypi.org/project/sift-rag/
@@ -45,8 +94,10 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   github-release:
-    needs: publish
+    needs: [check, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
     steps:
@@ -55,11 +106,11 @@ jobs:
         with:
           name: dist
           path: dist/
-      - name: Create the GitHub release with this version's changelog
+      - name: Tag the merge and make the GitHub release, with this version's changelog
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          awk -v v="$version" '/^## \[/ { found = index($0, "[" v "]") } found && !/^## \[/ && !/^\[.*\]: /' \
+          awk -v v="$VERSION" '/^## \[/ { found = index($0, "[" v "]") } found && !/^## \[/ && !/^\[.*\]: /' \
             CHANGELOG.md > notes.md
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --title "v$VERSION" --notes-file notes.md
