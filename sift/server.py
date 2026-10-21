@@ -87,8 +87,21 @@ Filters = Annotated[
         '"cs.RO"}, which a list field matches if it holds it; a list for any of its values, e.g. {"categories": '
         '["cs.RO", "cs.CV"]}; {"not": a value or list} for none of them (documents without the field pass); or a '
         'range, e.g. {"created": {">=": "2024-06", "<": "2025"}}. Dates compare at the precision given, so '
-        '{"<=": "2024"} includes all of 2024.'
+        '{"<=": "2024"} includes all of 2024. A wikilink, e.g. {"org": "[[Acme AG]]"}, matches a link to that note '
+        "however it is written."
     ),
+]
+LinksTo = Annotated[
+    list[str] | None,
+    Field(
+        description="Only documents that link to any of these notes, named by id or as links name them, e.g. "
+        '["Acme AG"] or ["[[Acme AG]]"]: search a note\'s backlinks. A name is resolved within `collection`, if '
+        "given; one that several notes answer to is an error that lists them."
+    ),
+]
+LinkedFrom = Annotated[
+    list[str] | None,
+    Field(description='Only documents that one of these notes links to, e.g. ["notes/People/Hans Müller.md"].'),
 ]
 Fields = Annotated[
     list[str] | None,
@@ -123,6 +136,8 @@ def _add_search(mcp, index, name, description, query_description):
         compact: Compact = False,
         all_passages: AllPassages = False,
         sort: Sort = None,
+        links_to: LinksTo = None,
+        linked_from: LinkedFrom = None,
     ) -> list[dict]:
         return _run(
             method,
@@ -135,6 +150,8 @@ def _add_search(mcp, index, name, description, query_description):
             compact=compact,
             all_passages=all_passages,
             sort=sort,
+            links_to=links_to,
+            linked_from=linked_from,
         )
 
     mcp.tool(name, description=description, annotations=READ_ONLY)(tool)
@@ -184,6 +201,8 @@ def build(index=None):
         compact: Compact = False,
         all_passages: AllPassages = False,
         sort: Sort = None,
+        links_to: LinksTo = None,
+        linked_from: LinkedFrom = None,
     ) -> list[dict]:
         """Documents closest in meaning to a document, e.g. more papers like one found; the document itself is left
         out (cosine similarity, -1 to 1)."""
@@ -198,6 +217,8 @@ def build(index=None):
             compact=compact,
             all_passages=all_passages,
             sort=sort,
+            links_to=links_to,
+            linked_from=linked_from,
         )
 
     @mcp.tool(annotations=READ_ONLY)

@@ -164,6 +164,13 @@ def main(argv=None):
             metavar="FIELD",
             help="order by a front-matter field instead of score; --sort=-created: newest first",
         )
+        s.add_argument(
+            "--links-to",
+            action="append",
+            metavar="NOTE",
+            help="only documents linking to this note, by id or as links name it, e.g. 'Acme AG'; repeatable: any",
+        )
+        s.add_argument("--linked-from", action="append", metavar="NOTE", help="only documents this note links to")
         s.add_argument("--json", action="store_true", help="print results as JSON")
     s = sub.add_parser("get", help="print a document by its id (collection/path)")
     s.add_argument("id")
@@ -273,6 +280,8 @@ def _run(a, db):
             compact=a.compact,
             all_passages=a.all_passages,
             sort=a.sort,
+            links_to=a.links_to,
+            linked_from=a.linked_from,
         )
         _print_hits(hits, a.json)
     elif a.cmd == "get":

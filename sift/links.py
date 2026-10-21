@@ -55,6 +55,14 @@ def _stem(path):
     return readers.fold(stem if ext.lower() in readers.MARKDOWN else path)
 
 
+def _path(source, kind, target):
+    """Where a link of the note at path `source` points in its collection, as written: from the note's folder for a
+    relative path or a Markdown link, else from the collection's root."""
+    if kind == "markdown" or target.startswith(("./", "../")):
+        return posixpath.normpath(posixpath.join(posixpath.dirname(source), target))
+    return target.lstrip("/")
+
+
 def _one(via, docs):
     """How a link resolves to these candidates, (doc id, path) each: to the one, or ambiguously."""
     return (via, [docs[0][0]]) if len(docs) == 1 else ("ambiguous", [doc for doc, _ in docs])
@@ -78,23 +86,24 @@ class Resolver:
         return self._named[cid, key]
 
     def resolve(self, cid, source, kind, target, key):
-        """Where a link of the note at path `source` in collection `cid` leads: ("path" | "name" | "alias", [doc id]),
-        ("ambiguous", [doc ids]) or ("unresolved", [])."""
+        """Where a link of the note at path `source` in collection `cid` leads, or with `source` None, a target named
+        from no note in particular: ("path" | "name" | "alias", [doc id]), ("ambiguous", [doc ids]) or ("unresolved",
+        [])."""
         named, aliased = self._candidates(cid, key)
         relative = target.startswith(("./", "../"))
-        if relative or kind == "markdown":
-            at = posixpath.normpath(posixpath.join(posixpath.dirname(source), target))
+        if (relative or kind == "markdown") and source is not None:
+            at = _path(source, kind, target)
             if found := [d for d in named if _stem(d[1]) == _stem(at)]:
                 return _one("path", found)
-            if relative:
-                return UNRESOLVED
+        if relative:
+            return UNRESOLVED
         path = target.lstrip("/")
         if "/" in path:
             found = [d for d in named if _stem(d[1]) == _stem(path)]
             found = found or [d for d in named if _stem(d[1]).endswith("/" + _stem(path))]
             return _one("path", found) if found else UNRESOLVED
         if len(named) > 1:
-            here = readers.fold(posixpath.dirname(source))
+            here = None if source is None else readers.fold(posixpath.dirname(source))
             found = [d for d in named if readers.fold(posixpath.dirname(d[1])) == here]
             return _one("name", found if len(found) == 1 else named)
         if named:
@@ -134,6 +143,19 @@ def incoming(db, resolver, doc, field=None):
     return [row for row in rows if _resolve(resolver, row) in (("path", [doc]), ("name", [doc]), ("alias", [doc]))]
 
 
+def written(db, cid, target, field=None):
+    """The documents of collection `cid` holding a link to `target`, from the collection's root, however written:
+    `[[Missing]]`, `[[missing.md]]` and, in a folder, `[text](../Missing.md)`; but not `[[Other/Missing]]`. With
+    `field`, only links in that front-matter field."""
+    want = _stem(target.lstrip("/"))
+    sql = f"SELECT {LINK} FROM links l JOIN docs d ON d.id = l.doc WHERE l.collection = ? AND l.key = ?"
+    args = [cid, readers.key(target.rsplit("/", 1)[-1])]
+    if field is not None:
+        sql, args = sql + " AND l.field = ?", [*args, field]
+    rows = db.execute(sql + " ORDER BY l.id", args)
+    return list(dict.fromkeys(row[0] for row in rows if _stem(_path(row[2], row[5], row[6])) == want))
+
+
 def unresolved(db, cid=None):
     """The targets of links in a collection, or in all, that no document answers to, each as (collection id, target as
     most often written, [ids of the documents linking it], number of links). Links to the same path are one target,
@@ -146,11 +168,7 @@ def unresolved(db, cid=None):
         if _resolve(resolver, row)[0] != "unresolved":
             continue
         doc, collection, source, _, _, kind, target = row[:7]
-        if target.startswith(("./", "../")) or kind == "markdown":
-            path = posixpath.normpath(posixpath.join(posixpath.dirname(source), target))
-        else:
-            path = target.lstrip("/")
-        written, docs = targets.setdefault((collection, _stem(path)), (Counter(), {}))
+        written, docs = targets.setdefault((collection, _stem(_path(source, kind, target))), (Counter(), {}))
         written[target] += 1
         docs[doc] = None
     return [

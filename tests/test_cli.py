@@ -136,7 +136,20 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
     calls = []
     monkeypatch.setattr(Index, command, lambda self, *args, **kwargs: calls.append((args, kwargs)) or [])
     run(capsys, command, "brush", "-k", "3", "-c", "notes", "--path", "*.md", "-f", "year=2024", "--fields", "year")
-    run(capsys, command, "brush", "--compact", "--all-passages", "--sort=-year")
+    run(
+        capsys,
+        command,
+        "brush",
+        "--compact",
+        "--all-passages",
+        "--sort=-year",
+        "--links-to",
+        "a",
+        "--links-to",
+        "b",
+        "--linked-from",
+        "c",
+    )
     assert calls == [
         (
             ("brush", 3),
@@ -148,6 +161,8 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
                 "compact": False,
                 "all_passages": False,
                 "sort": None,
+                "links_to": None,
+                "linked_from": None,
             },
         ),
         (
@@ -160,6 +175,8 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
                 "compact": True,
                 "all_passages": True,
                 "sort": "-year",
+                "links_to": ["a", "b"],
+                "linked_from": ["c"],
             },
         ),
     ]
@@ -391,6 +408,16 @@ def test_links_command_two_steps_away_as_json(cli_vault, capsys):
     out = run(capsys, "links", "vault/Acme AG.md", "--direction", "in", "--depth", "2").out
     assert "  vault/01_People/Anna Keller.md  Anna Keller  (through vault/01_People/Hans Müller.md)\n" in out
     assert "Acme AG" not in run(capsys, "links", "vault/Anna Keller.md").out  # two steps away only with --depth 2
+
+
+def test_search_commands_take_links(cli_vault, capsys):
+    hits = json.loads(run(capsys, "search", "Hans", "--links-to", "Acme AG", "--json").out)
+    assert [h["id"] for h in hits] == ["vault/01_People/Hans Müller.md"]
+    out = run(capsys, "search", "Summary", "--links-to", "Hans Müller", "--linked-from", "Hans Müller", "-k", "5").out
+    assert "vault/02_Organizations/Acme AG.md" in out  # links Hans, and Hans links it
+    assert "Anna Keller" not in out
+    hits = json.loads(run(capsys, "search", "Summary", "-f", "org=[[Acme AG|Acme]]", "--json").out)
+    assert [h["id"] for h in hits] == ["vault/01_People/Hans Müller.md"]
 
 
 def test_unresolved_command(cli_vault, capsys):

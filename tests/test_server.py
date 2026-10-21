@@ -155,6 +155,20 @@ def test_links_tool(linked):
     assert [lk["id"] for lk in found["out"]] == [HANS]  # Hans links nothing through colleague_of
 
 
+@pytest.mark.parametrize("tool", ["search", "query", "vsearch"])
+def test_search_tools_take_links(linked, fake_models, tool):
+    from sift import embed
+
+    embed.embed_pending(linked[0])
+    mcp = server.build(Index(linked[0]))[0]
+    hits = data(call(mcp, tool, {"query": "Hans", "k": 1, "links_to": ["[[Acme AG]]"], "collection": "vault"}))
+    assert [h["id"] for h in hits] == [HANS]
+    hits = data(call(mcp, tool, {"query": "customer", "k": 1, "linked_from": ["vault/Hans Müller.md"]}))
+    assert [h["id"] for h in hits] == [ACME]
+    hits = data(call(mcp, "similar", {"id": ACME, "links_to": ["Hans Müller"], "filters": {"org": "[[Acme]]"}}))
+    assert hits == []  # nothing links Hans whose org is Acme AG
+
+
 def test_unresolved_tool(linked):
     mcp = server.build(Index(linked[0]))[0]
     assert [t["target"] for t in data(call(mcp, "unresolved", {"collection": "vault", "k": 1}))] == ["Peter Frei"]
@@ -330,6 +344,8 @@ def test_search_tools_pass_every_option_on(embedded, monkeypatch, tool, first):
         "compact": True,
         "all_passages": True,
         "sort": "-year",
+        "links_to": ["a"],
+        "linked_from": ["b"],
     }
     call(server.build(index)[0], tool, {first: "brush", "k": 3} | options)
     assert calls == [(("brush", 3), options)]

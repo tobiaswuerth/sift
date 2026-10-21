@@ -440,3 +440,109 @@ def test_an_index_takes_its_links_once(linked, monkeypatch):
     monkeypatch.setattr(indexing, "add_links", lambda db: pytest.fail("links added twice"))
     store._add_links(db)  # what the second runs, after the first has finished
     assert rows(db, "links") == 6
+
+
+# --- searching by links ------------------------------------------------------
+
+
+def ids(hits):
+    return [h["id"] for h in hits]
+
+
+def test_search_the_documents_linking_a_note(linked):
+    index = Index(linked[0])
+    assert ids(index.search("Hans", links_to=["Acme AG"])) == [HANS]  # not Anna Keller, who links Hans
+    assert ids(index.search("Hans", links_to=["[[Acme AG]]"])) == [HANS]
+    assert ids(index.search("Hans", links_to=[ACME], collection="vault")) == [HANS]
+    assert ids(index.browse(links_to=["Hans Müller"])) == [ANNA, ACME, OFFER]
+    assert ids(index.browse(links_to=["Acme AG", "Wartungsvertrag 2027"])) == [HANS, OFFER]  # any; one not written yet
+
+
+def test_search_the_documents_a_note_links(linked):
+    index = Index(linked[0])
+    assert ids(index.browse(linked_from=["Hans Müller"])) == [ACME]  # and Peter Frei, who has no note
+    assert ids(index.search("customer", linked_from="vault/01_People/Hans Müller.md")) == [ACME]
+    assert ids(index.browse(links_to=["Acme AG"], linked_from=["Anna Keller"])) == [HANS]  # both must hold
+    assert index.browse(links_to=["Hans Müller"], linked_from=["Anna Keller"]) == []
+
+
+def test_every_search_takes_links(linked, fake_models):
+    from sift import embed
+
+    index = Index(linked[0])
+    embed.embed_pending(linked[0])
+    assert ids(index.vsearch("customer", k=1, links_to=["Hans Müller"])) == [ACME]
+    assert ids(index.query("customer since 2019", linked_from=["Hans Müller"])) == [ACME]
+    assert ids(index.similar(OFFER, links_to=["Acme AG"])) == [HANS]
+
+
+@pytest.mark.parametrize(
+    "notes, error",
+    [
+        (["Nobody"], "no note 'Nobody' in the index, and no link to one"),
+        (["vault/Nobody.md"], "no note 'vault/Nobody.md'"),
+        ([], "links_to needs at least one note"),
+        ([1], "links_to takes ids of documents or link targets"),
+        ([" "], "links_to takes ids of documents or link targets"),
+    ],
+)
+def test_links_to_unknown_notes(linked, notes, error):
+    with pytest.raises((LookupError, ValueError), match=error):
+        Index(linked[0]).search("Hans", links_to=notes)
+
+
+def test_linked_from_an_unknown_or_ambiguous_note(tmp_path, home):
+    db, _ = note_vault(tmp_path, home, {"a/Same.md": "", "b/Same.md": "", "n.md": "[[Missing]]"})
+    with pytest.raises(LookupError, match="no note 'Missing' in the index"):
+        Index(db).browse(linked_from=["Missing"])  # a note not written yet links nowhere
+    with pytest.raises(LookupError, match=r"'v/Same\.md' matches v/a/Same\.md, v/b/Same\.md; give the whole id"):
+        Index(db).browse(linked_from=["v/Same.md"])
+
+
+def test_a_note_named_in_several_places_must_be_chosen(linked, tmp_path):
+    db = linked[0]
+    write(tmp_path / "other" / "Acme AG.md", "Another Acme.\n")
+    store.add_collection(db, tmp_path / "other", "other")
+    indexing.index(db)
+    index = Index(db)
+    with pytest.raises(LookupError, match=r"'Acme AG' matches other/Acme AG.md, vault/02_Organizations/Acme AG.md"):
+        index.search("Hans", links_to=["Acme AG"])
+    assert ids(index.search("Hans", links_to=["Acme AG"], collection="vault")) == [HANS]
+    write(tmp_path / "other" / "Sub" / "Acme AG.md", "A third.\n")
+    indexing.index(db)
+    with pytest.raises(LookupError, match=r"'Acme AG' matches other/Acme AG.md, other/Sub/Acme AG.md"):
+        index.search("Hans", links_to=["Acme AG"], collection="other")
+
+
+def test_a_wikilink_filter_matches_the_note_however_the_link_is_written(tmp_path, home):
+    db, _ = note_vault(
+        tmp_path,
+        home,
+        {
+            "Orgs/Acme AG.md": "---\naliases: [Acme]\n---\n",
+            "a.md": '---\norg: "[[Acme AG]]"\n---\n',
+            "b.md": '---\norg: "[[Acme AG|Acme]]"\n---\n',
+            "c.md": "---\norg: [[acme ag]]\n---\n",
+            "d.md": '---\norg: ["[[Orgs/Acme AG]]", "[[Beta]]"]\n---\n',
+            "e.md": '---\norg: "[[Acme#History]]"\n---\n',  # by its alias
+            "f.md": '---\norg: "[[Beta]]"\n---\n',
+            "g.md": '---\nclient: "[[Acme AG]]"\n---\n',  # another field
+            "h.md": "---\norg: Acme AG\n---\n",  # text, no link
+            "r.jsonl": json.dumps({"id": "r1", "org": "[[Acme AG]]", "text": "A record."}) + "\n",
+        },
+    )
+    index = Index(db)
+    acme = ["v/a.md", "v/b.md", "v/c.md", "v/d.md", "v/e.md"]
+    assert ids(index.browse(filters={"org": "[[Acme AG|Acme]]"})) == acme
+    assert ids(index.browse(filters={"org": "[[Acme AG]]"})) == [*acme, "v/r/r1"]  # a record by its value, as before
+    assert ids(index.browse(filters={"org": "[[Orgs/Acme AG]]"})) == acme
+    assert ids(index.browse(filters={"org": {"not": "[[Acme AG]]"}})) == [
+        "v/Orgs/Acme AG.md",
+        "v/f.md",
+        "v/g.md",
+        "v/h.md",
+    ]
+    assert ids(index.browse(filters={"org": "Acme AG"})) == ["v/h.md"]  # a value that is no link compares exactly
+    # a note not written yet: the links to it, however written
+    assert ids(index.browse(filters={"org": ["[[beta.md]]", "Acme AG"]})) == ["v/d.md", "v/f.md", "v/h.md"]
+    assert ids(index.browse(filters={"client": "[[Acme]]"})) == ["v/g.md"]

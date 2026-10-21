@@ -1,5 +1,6 @@
 """The package as it is published: what it depends on."""
 
+import ast
 import importlib.metadata
 import re
 import sys
@@ -15,9 +16,11 @@ def test_every_package_sift_imports_is_a_dependency():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     declared = {re.match(r"[\w.-]+", d)[0].lower() for d in project["dependencies"]}
     imported = {
-        module
+        name.split(".")[0]
         for path in (ROOT / "sift").glob("*.py")
-        for module in re.findall(r"^\s*(?:from|import) (\w+)", path.read_text(encoding="utf-8"), re.M)
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Import) or (isinstance(node, ast.ImportFrom) and not node.level)  # not `from . import`
+        for name in ([a.name for a in node.names] if isinstance(node, ast.Import) else [node.module])
     }
     distributions = importlib.metadata.packages_distributions()
     undeclared = {
