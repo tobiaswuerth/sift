@@ -69,6 +69,44 @@ def _print_hits(hits, as_json):
             print(textwrap.indent(textwrap.shorten(h["text"], 300), " " * 10))
 
 
+def _print_links(found, as_json):
+    """`sift links`: each link out with where it leads, and each document linking in with its lines."""
+    if as_json:
+        print(json.dumps(found, ensure_ascii=False, indent=2))
+        return
+    note = f"{found['title']} ({found['id']})"
+    for way, heading in (("out", f"{note} links to"), ("in", f"Linking to {note}")):
+        if way not in found:
+            continue
+        print(f"{heading}:" if found[way] else f"{heading}: nothing")
+        for link in found[way]:
+            through = f"  (through {link['through']})" if "through" in link else ""
+            if way == "in":
+                print(f"  {link['id']}  {link['title']}{through}")
+                for line in link["links"]:
+                    print(f"{line['line']:>6}  {line['text']}")
+                continue
+            written = (f"{link['field']}: " if "field" in link else "") + link["target"]
+            written += f"#{link['fragment']}" if "fragment" in link else ""
+            if "id" in link:
+                to = link["id"] + (" (alias)" if link["via"] == "alias" else "")
+            else:
+                to = "ambiguous: " + ", ".join(link["ambiguous"]) if "ambiguous" in link else "unresolved"
+            print(f"{link['line']:>6}  {written}  ->  {to}{through}")
+
+
+def _print_unresolved(targets, as_json):
+    """`sift unresolved`: each target with how many documents link it, and a few of them."""
+    if as_json:
+        print(json.dumps(targets, ensure_ascii=False, indent=2))
+        return
+    if not targets:
+        console.say("no unresolved links")
+    for target in targets:
+        more = ", ..." if target["docs"] > len(target["ids"]) else ""
+        print(f"{target['docs']:>6}  {target['target']}  {', '.join(target['ids'])}{more}")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="sift", description="Fast local search over your documents and notes.")
     p.add_argument("--version", action="version", version=f"sift {__version__}")
@@ -132,6 +170,17 @@ def main(argv=None):
     s.add_argument("--lines", help='only these lines, e.g. "17-26"')
     s.add_argument("--fields", help='front-matter fields to show first, comma-separated (e.g. "url,created"; "*": all)')
     sub.add_parser("status", help="show collections and index statistics")
+    s = sub.add_parser("links", help="the links of a Markdown note: those it holds, and those into it")
+    s.add_argument("id")
+    s.add_argument("--direction", choices=["out", "in", "both"], default="out", help="out (default), in, or both")
+    s.add_argument("--depth", type=int, choices=[1, 2], default=1, help="2: also the notes one link further")
+    s.add_argument("--field", help="only links in this front-matter field")
+    s.add_argument("-k", type=int, default=50, help="at most this many links each way (default: 50)")
+    s.add_argument("--json", action="store_true", help="print the links as JSON")
+    s = sub.add_parser("unresolved", help="link targets no note answers to yet, most linked first")
+    s.add_argument("-c", "--collection")
+    s.add_argument("-k", type=int, default=50, help="number of targets (default: 50)")
+    s.add_argument("--json", action="store_true", help="print the targets as JSON")
     s = sub.add_parser("bench", help="measure each search mode on questions whose answers you know")
     s.add_argument("file", help='JSON: [{"query": "...", "relevant": ["collection/path", ...]}, ...]')
     s.add_argument("-c", "--collection", help="search only this collection")
@@ -249,6 +298,14 @@ def _run(a, db):
         from .search import Index
 
         print(json.dumps(Index(db).status(), indent=2))
+    elif a.cmd == "links":
+        from .search import Index
+
+        _print_links(Index(db).links(a.id, a.direction, a.depth, a.field, a.k), a.json)
+    elif a.cmd == "unresolved":
+        from .search import Index
+
+        _print_unresolved(Index(db).unresolved(a.collection, a.k), a.json)
     elif a.cmd == "ui":
         from .ui import open_in_browser
 

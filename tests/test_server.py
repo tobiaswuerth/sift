@@ -49,7 +49,7 @@ def tools(mcp):
 
 
 def test_lists_tools(mcp):
-    assert list(tools(mcp)) == ["search", "vsearch", "query", "similar", "get", "status"]
+    assert list(tools(mcp)) == ["search", "vsearch", "query", "similar", "get", "status", "links", "unresolved"]
 
 
 def test_every_parameter_is_described(mcp):
@@ -73,13 +73,14 @@ def test_search_tools(mcp, tool):
     assert "notes/rl.md" in [h["id"] for h in hits]
 
 
-@pytest.mark.parametrize("tool", ["search", "vsearch", "query", "similar", "get", "status"])
+@pytest.mark.parametrize("tool", ["search", "vsearch", "query", "similar", "get", "status", "links", "unresolved"])
 def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
     # PyTorch crashes in worker threads on Python 3.15 (Windows, macOS), so no tool may run in one.
     index, threads = Index(embedded[0]), []
     real = getattr(index, tool)
     monkeypatch.setattr(index, tool, lambda *a, **kw: threads.append(threading.current_thread()) or real(*a, **kw))
-    args = {"get": {"id": "notes/rl.md"}, "similar": {"id": "notes/rl.md"}, "status": {}}.get(tool, {"query": "brush"})
+    rl = {"id": "notes/rl.md"}
+    args = {"get": rl, "similar": rl, "links": rl, "status": {}, "unresolved": {}}.get(tool, {"query": "brush"})
     assert not call(server.build(index)[0], tool, args).is_error
     assert threads == [threading.main_thread()]
 
@@ -127,6 +128,9 @@ def test_get_and_status(mcp):
         ("vsearch", {"query": "x", "k": 0}, "k must be a positive integer"),
         ("query", {"query": "x", "filters": {'bad"key': "v"}}, "invalid filter field 'bad\"key'"),
         ("get", {"id": "missing/x.md"}, "unknown document 'missing/x.md'"),
+        ("links", {"id": "notes/rl.md", "direction": "up"}, "'out', 'in' or 'both'"),
+        ("links", {"id": "notes/rl.md", "depth": 3}, "1 or 2"),
+        ("unresolved", {"collection": "missing"}, "no collection named 'missing'"),
     ],
 )
 def test_errors_tell_the_agent_what_went_wrong(mcp, tool, args, reason):
@@ -135,6 +139,35 @@ def test_errors_tell_the_agent_what_went_wrong(mcp, tool, args, reason):
     result = call(mcp, tool, args)
     assert result.is_error
     assert reason in result.content[0].text
+
+
+HANS, ACME = "vault/01_People/Hans Müller.md", "vault/02_Organizations/Acme AG.md"
+
+
+def test_links_tool(linked):
+    mcp = server.build(Index(linked[0]))[0]
+    found = data(call(mcp, "links", {"id": ACME, "direction": "both"}))
+    assert [lk["id"] for lk in found["out"]] == [HANS]
+    assert found["in"] == [
+        {"id": HANS, "title": "Hans Müller", "links": [{"line": 3, "field": "org", "text": 'org: "[[Acme AG]]"'}]}
+    ]
+    found = data(call(mcp, "links", {"id": "vault/Anna Keller.md", "depth": 2, "field": "colleague_of", "k": 5}))
+    assert [lk["id"] for lk in found["out"]] == [HANS]  # Hans links nothing through colleague_of
+
+
+def test_unresolved_tool(linked):
+    mcp = server.build(Index(linked[0]))[0]
+    assert [t["target"] for t in data(call(mcp, "unresolved", {"collection": "vault", "k": 1}))] == ["Peter Frei"]
+
+
+def test_instructions_count_links(linked):
+    # Agents should know which collections hold linked notes, and how many of their links lead nowhere yet.
+    mcp = server.build(Index(linked[0]))[0]
+    assert "- vault: 4 documents; front matter: aliases, colleague_of, org, reports_to; 6 links, 2 unresolved" in (
+        mcp.instructions
+    )
+    assert "- work: 1 document\n" in mcp.instructions + "\n"
+    assert "`links`" in mcp.instructions
 
 
 @pytest.fixture

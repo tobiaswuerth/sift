@@ -337,3 +337,77 @@ def test_add_with_chosen_fields(tmp_path, home, capsys):
     run(capsys, "add", str(folder), "--id", "key", "--title", "q", "--text", "q,a")
     run(capsys, "index")
     assert run(capsys, "get", "qa/qa/q1").out == "# Why?\n\nWhy?\n\nBecause.\n"  # a final newline for the shell
+
+
+# --- links -------------------------------------------------------------------
+
+
+@pytest.fixture
+def cli_vault(vault, home, capsys):
+    run(capsys, "add", str(vault[0]), "--title-from", "name")
+    run(capsys, "index")
+    return vault[0]
+
+
+def test_links_command(cli_vault, capsys):
+    out = run(capsys, "links", "vault/Hans Müller.md").out
+    assert out.splitlines() == [
+        "Hans Müller (vault/01_People/Hans Müller.md) links to:",
+        "     3  org: Acme AG  ->  vault/02_Organizations/Acme AG.md",
+        "     4  reports_to: Peter Frei  ->  unresolved",
+    ]
+    out = run(capsys, "links", "vault/Acme AG.md", "--direction", "in").out
+    assert out.splitlines() == [
+        "Linking to Acme AG (vault/02_Organizations/Acme AG.md):",
+        "  vault/01_People/Hans Müller.md  Hans Müller",
+        '     3  org: "[[Acme AG]]"',
+    ]
+
+
+def test_links_command_shows_how_links_resolve(tmp_path, home, capsys):
+    for path, text in {"a/Same.md": "", "b/Same.md": "", "Alias.md": "---\naliases: [Other]\n---\n"}.items():
+        write(tmp_path / "v" / path, text)
+    write(tmp_path / "v" / "n.md", "[[Same]] [[Other#Part|it]] [[Alias]]")
+    run(capsys, "add", str(tmp_path / "v"))
+    run(capsys, "index")
+    assert run(capsys, "links", "v/n.md", "--direction", "both", "--depth", "2").out.splitlines() == [
+        "n (v/n.md) links to:",
+        "     1  Same  ->  ambiguous: v/a/Same.md, v/b/Same.md",
+        "     1  Other#Part  ->  v/Alias.md (alias)",
+        "     1  Alias  ->  v/Alias.md",
+        "Linking to n (v/n.md): nothing",
+    ]
+
+
+def test_links_command_two_steps_away_as_json(cli_vault, capsys):
+    found = json.loads(run(capsys, "links", "vault/Anna Keller.md", "--depth", "2", "-k", "5", "--json").out)
+    assert [(lk["id"], lk.get("through")) for lk in found["out"]] == [
+        ("vault/01_People/Hans Müller.md", None),
+        ("vault/02_Organizations/Acme AG.md", "vault/01_People/Hans Müller.md"),
+    ]
+    out = run(capsys, "links", "vault/Acme AG.md", "--direction", "in", "--depth", "2", "--field", "org").out
+    assert "  vault/01_People/Hans Müller.md  Hans Müller\n" in out
+    assert "through" not in out  # nothing links Hans through org
+    out = run(capsys, "links", "vault/Acme AG.md", "--direction", "in", "--depth", "2").out
+    assert "  vault/01_People/Anna Keller.md  Anna Keller  (through vault/01_People/Hans Müller.md)\n" in out
+    assert "Acme AG" not in run(capsys, "links", "vault/Anna Keller.md").out  # two steps away only with --depth 2
+
+
+def test_unresolved_command(cli_vault, capsys):
+    assert run(capsys, "unresolved").out.splitlines() == [
+        "     1  Peter Frei  vault/01_People/Hans Müller.md",
+        "     1  Wartungsvertrag 2027  vault/03_Interactions/2026-10-14 Offerte.md",
+    ]
+    found = json.loads(run(capsys, "unresolved", "-c", "vault", "-k", "1", "--json").out)
+    assert found == [{"target": "Peter Frei", "docs": 1, "ids": ["vault/01_People/Hans Müller.md"]}]
+
+
+def test_unresolved_command_names_a_few_documents(tmp_path, home, capsys):
+    for i in range(7):
+        write(tmp_path / "v" / f"n{i}.md", "[[Missing]]")
+    run(capsys, "add", str(tmp_path / "v"))
+    run(capsys, "index")
+    assert run(capsys, "unresolved").out == "     7  Missing  v/n0.md, v/n1.md, v/n2.md, v/n3.md, v/n4.md, ...\n"
+    write(tmp_path / "v" / "Missing.md", "")
+    run(capsys, "index")
+    assert run(capsys, "unresolved").err == "no unresolved links\n"

@@ -4,7 +4,7 @@ for people under /ui (see `ui`)."""
 import asyncio
 import logging
 import sqlite3
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import anyio
 from mcp.server.mcpserver import MCPServer
@@ -29,6 +29,8 @@ and cite what you find; say so when nothing relevant turns up.
 - `vsearch`: semantic search. Best when the wording of the answer is unknown.
 - `similar`: documents like a given one, e.g. more papers like one found.
 - `get`: a document, or some of its lines, such as a result's.
+- `links`: the links of a note ([[wikilinks]], embeds, Markdown links): those it holds, and those into it (backlinks).
+- `unresolved`: link targets no note answers to yet: the notes a collection lacks.
 Results carry `id` (collection/path), `lines`, `title`, `score` and the passage's `text`. Scores rank the results of
 one call; each tool has its own scale, so don't compare them across tools. All search tools take `collection`, a
 `path` glob, `filters` on front-matter fields and `fields` to show; with `compact: true` results leave out the text:
@@ -41,11 +43,13 @@ def _collections(index):
                                LEFT JOIN docs d ON d.collection = co.id GROUP BY co.id ORDER BY co.name""").fetchall()
     if not rows:
         return "No collections are indexed yet."
-    lines = []
+    lines, (linked, broken) = [], index.link_counts()
     for cid, name, n in rows:
         line = f"- {name}: {n:,} document{'' if n == 1 else 's'}"
         if fields := index.fields(cid, n):
             line += "; front matter: " + ", ".join(fields)
+        if cid in linked:
+            line += f"; {console.count(linked[cid], 'link')}, {broken[cid]:,} unresolved"
         lines.append(line)
     return "Indexed collections:\n" + "\n".join(lines)
 
@@ -213,8 +217,44 @@ def build(index=None):
 
     @mcp.tool(annotations=READ_ONLY)
     async def status() -> dict:
-        """Collections, document and chunk counts, and the embedding model."""
+        """Collections, document and chunk counts, link counts, and the embedding model."""
         return _run(index.status)
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def links(
+        id: Id,
+        direction: Annotated[
+            Literal["out", "in", "both"],
+            Field(description='"out": the links the note holds; "in": the documents linking it (backlinks).'),
+        ] = "out",
+        depth: Annotated[
+            Literal[1, 2],
+            Field(description="2: also the notes one link further, each with the note it was reached `through`."),
+        ] = 1,
+        field: Annotated[
+            str | None,
+            Field(
+                description='Only links in this front-matter field, e.g. "org": with direction "in", the notes whose '
+                "org links to this one."
+            ),
+        ] = None,
+        k: Annotated[int, Field(description="At most this many links out, and this many documents in.")] = 50,
+    ) -> dict:
+        """Links between Markdown notes: [[wikilinks]], ![[embeds]] and [Markdown](links.md), in the text and in
+        front-matter values. "out" lists each link the note holds, with its line and front-matter field, and where it
+        leads: the document's id, and `via` path, name or alias; or `ambiguous`, with the candidates; or `unresolved`,
+        a note not written yet. "in" lists the documents linking the note, each with the lines that do, so you see
+        the context without `get`. Links resolve within their collection, as Obsidian resolves them."""
+        return _run(index.links, id, direction, depth, field, k)
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def unresolved(
+        collection: Annotated[str | None, Field(description="Only this collection's links.")] = None,
+        k: Annotated[int, Field(description="Number of targets.")] = 50,
+    ) -> list[dict]:
+        """Link targets no document answers to: the notes a collection lacks, most linked first, each with how many
+        documents link it and the ids of a few of them."""
+        return _run(index.unresolved, collection, k)
 
     return mcp, index
 
