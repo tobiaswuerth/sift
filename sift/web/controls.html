@@ -15,6 +15,8 @@
   {% if view.path %}<input type="hidden" name="path" value="{{ view.path }}">{% endif %}
   {% for pair in view.f %}<input type="hidden" name="f" value="{{ pair }}">{% endfor %}
   {% if view.similar and not view.q %}<input type="hidden" name="similar" value="{{ view.similar }}">{% endif %}
+  {% if view.to %}<input type="hidden" name="to" value="{{ view.to }}">{% endif %}
+  {% if view.by %}<input type="hidden" name="by" value="{{ view.by }}">{% endif %}
   {% if view.doc %}<input type="hidden" name="doc" value="{{ view.doc }}">{% endif %}
   {% if view.lines %}<input type="hidden" name="lines" value="{{ view.lines }}">{% endif %}
   {% if view.at %}<input type="hidden" name="at" value="{{ view.at }}">{% endif %}

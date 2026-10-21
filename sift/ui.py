@@ -52,6 +52,8 @@ class View:
     sort: str = ""
     k: int = PAGE
     similar: str = ""  # a document whose like to list
+    to: str = ""  # a note: only documents linking to it
+    by: str = ""  # a note: only documents it links to
     doc: str = ""  # the document in the reader
     lines: str = ""  # its lines to mark
     at: int = 0  # the first of its lines to show; 0: a little before the marked ones
@@ -68,6 +70,8 @@ class View:
             sort=params.get("sort", ""),
             k=min(int(k), MOST) if re.fullmatch("[0-9]+", k) and int(k) > 0 else PAGE,
             similar=params.get("similar", ""),
+            to=params.get("to", ""),
+            by=params.get("by", ""),
             doc=params.get("doc", ""),
             lines=params.get("lines", ""),
             at=int(at) if re.fullmatch("[0-9]+", at) else 0,
@@ -195,10 +199,10 @@ def _crumbs(view):
     """The collection and folders the view is in, each a link to browse it."""
     if not view.c:
         return []
-    crumbs, path = [(view.c, view.href(path="", q="", similar="", f=(), k=PAGE))], ""
+    crumbs, path = [(view.c, view.href(path="", q="", similar="", f=(), to="", by="", k=PAGE))], ""
     for part in view.path.strip("/").split("/") if view.path else []:
         path += part + "/"
-        crumbs.append((part, view.href(path=path, q="", similar="", f=(), k=PAGE)))
+        crumbs.append((part, view.href(path=path, q="", similar="", f=(), to="", by="", k=PAGE)))
     return crumbs
 
 
@@ -221,8 +225,10 @@ def _explore(index, view, pattern):
         "path": view.path and _glob(view.path),
         "fields": ["*"],
         "sort": view.sort or None,
+        "links_to": [view.to] if view.to else None,
+        "linked_from": [view.by] if view.by else None,
     }
-    context = {"kind": "overview", "hits": [], "folders": [], "crumbs": _crumbs(view), "error": None}
+    context = {"kind": "overview", "hits": [], "folders": [], "crumbs": _crumbs(view), "error": None, "linking": []}
     # One result more than the page tells whether there are more; but a search sorted by a field sorts its k best,
     # which one more would change.
     peek = not (view.sort and (view.q or view.similar))
@@ -234,22 +240,26 @@ def _explore(index, view, pattern):
         elif view.similar:
             context |= {"kind": "similar", "hits": index.similar(view.similar, ask, **options)}
             context["similar_title"] = index.document(view.similar)["title"]
-        elif view.c or view.f:
+        elif view.c or view.f or view.to or view.by:
             context |= {"kind": "documents", "hits": index.browse(ask, **options)}
             if view.c:
                 context["folders"] = [
                     (name, view.href(path=view.path + name + "/", k=PAGE)) for name in index.folders(view.c, view.path)
                 ]
+        for note, label, name in ((view.to, "Linking to", "to"), (view.by, "Linked from", "by")):
+            if note:
+                context["linking"].append((f"{label} {_title(index, note)}", view.href(**{name: ""}, k=PAGE)))
     except ERRORS as e:
         context["error"] = str(e)
     found = context["hits"]
     hits = _scored(found[: view.k], view, pattern)
     more = len(found) > view.k if peek else len(found) == view.k
     sortable = sorted({key for hit in hits for key in hit.get("fields", {})} | ({view.sort.lstrip("-")} - {""}))
+    filters = [(pair.replace("=", ": ", 1), view.filtered(*pair.split("=", 1))) for pair in view.f if "=" in pair]
     return context | {
         "hits": hits,
         "facets": _facets(hits, view),
-        "chips": [(pair.replace("=", ": ", 1), view.filtered(*pair.split("=", 1))) for pair in view.f if "=" in pair],
+        "chips": context["linking"] + filters,
         "more": view.href(k=view.k + PAGE) if more and view.k < MOST else None,
         "sortable": sortable,
     }
@@ -275,16 +285,27 @@ def _field(view, key, value):
     return {"value": value, "href": view.filtered(key, value) if _short(value) else None}
 
 
+def _title(index, note):
+    """A note's title, or as named if it names none: a link target, in an address written by hand."""
+    try:
+        return index.document(note)["title"]
+    except LookupError:
+        return note
+
+
 def _reader(index, view, pattern):
-    """The document a view reads, with its front matter as filters; None if it reads none."""
+    """The document a view reads, with its front matter as filters, and the notes linking it and that it links;
+    None if it reads none."""
     if not view.doc:
         return None
     try:
         span = line_span(view.lines) if view.lines else None
         document = index.document(view.doc, fields=["*"])
         path = index.file(document["id"])
+        into, out = index.link_count(document["id"])
     except ERRORS as e:
         return {"error": str(e)}
+    listing = {"q": "", "similar": "", "c": "", "path": "", "f": (), "k": PAGE}  # all of them, wherever they are
     fields_ = [(key, [_field(view, key, v) for v in _values(value)]) for key, value in document["fields"].items()]
     text = document["text"]
     total = text.count("\n") + (not text.endswith("\n") and text != "")
@@ -301,6 +322,8 @@ def _reader(index, view, pattern):
         "later": view.href(at=end + 1) if end < total else None,
         "file": PREFIX + "file?" + urlencode({"id": document["id"]}) if path and path.is_file() else None,
         "similar": view.href(similar=document["id"], q="", k=PAGE),
+        "backlinks": (into, view.href(to=document["id"], by="", **listing)) if into else None,
+        "links": (out, view.href(by=document["id"], to="", **listing)) if out else None,
     }
 
 

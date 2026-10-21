@@ -572,3 +572,55 @@ def test_links_carry_the_whole_view(browser):
         "doc": ["notes/robots/brush.md"],
         "lines": params["lines"],
     }
+
+
+# --- links between notes -----------------------------------------------------
+
+HANS, ANNA, ACME = (
+    "vault/01_People/Hans Müller.md",
+    "vault/01_People/Anna Keller.md",
+    "vault/02_Organizations/Acme AG.md",
+)
+OFFER = "vault/03_Interactions/2026-10-14 Offerte.md"
+
+
+@pytest.fixture
+def vault_browser(linked):
+    return page(Index(linked[0]))
+
+
+def test_the_reader_leads_to_a_note_s_backlinks_and_links(vault_browser):
+    reader = vault_browser.get("/ui/", params={"doc": HANS}).text
+    backlinks = re.search(r'<a href="([^"]+)" title="[^"]+">Backlinks <span class="n">3</span></a>', reader)
+    links = re.search(r'<a href="([^"]+)" title="[^"]+">Links <span class="n">1</span></a>', reader)  # Peter Frei: none
+    listed = vault_browser.get(html.unescape(backlinks[1]))
+    assert ids(listed) == [ANNA, ACME, OFFER]
+    chip = re.search(r'<a class="chip" href="([^"]+)"[^>]*>Linking to Hans Müller', listed.text)
+    assert "to=" not in html.unescape(chip[1])  # removing the chip lists them all again
+    assert ids(vault_browser.get(html.unescape(links[1]))) == [ACME]
+    assert "Linked from Hans Müller" in vault_browser.get(html.unescape(links[1])).text
+
+
+def test_a_search_among_a_note_s_backlinks(vault_browser):
+    response = vault_browser.get("/ui/", params={"to": HANS, "q": "project"})
+    assert ids(response) == [ANNA]
+    assert '<input type="hidden" name="to" value="vault/01_People/Hans Müller.md">' in response.text  # the next too
+
+
+def test_an_address_may_name_a_note_as_links_do(vault_browser):
+    response = vault_browser.get("/ui/", params={"to": "Acme AG"})
+    assert ids(response) == [HANS]
+    assert "Linking to Acme AG" in response.text
+
+
+def test_a_note_without_links_offers_none(browser):
+    reader = browser.get("/ui/", params={"doc": BRUSH}).text
+    assert "Backlinks" not in reader
+    assert ">Links <" not in reader
+
+
+def test_a_link_filter_of_an_unknown_note_says_so(vault_browser):
+    assert (
+        "no note &#39;vault/Nobody.md&#39; in the index"
+        in vault_browser.get("/ui/", params={"by": "vault/Nobody.md"}).text
+    )

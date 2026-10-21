@@ -766,6 +766,13 @@ class Index:
             for source, rows, through in found
         ]
 
+    def link_count(self, id):
+        """How many documents link to the document `id`, and how many documents it links to: (in, out)."""
+        doc, resolver = self._find(id)[0], links.Resolver(self.db)
+        into = {row[0] for row in links.incoming(self.db, resolver, doc)}
+        out = {docs[0] for _, (via, docs) in links.outgoing(self.db, resolver, doc) if via in VIA}
+        return len(into), len(out)
+
     def _named(self, docs):
         """The whole id and title of documents, by row id."""
         sql = """SELECT d.id, co.name || '/' || d.path, d.title FROM docs d JOIN collections co ON co.id = d.collection
