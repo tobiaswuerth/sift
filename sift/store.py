@@ -12,7 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import console, settings
+from . import console, readers, settings
 
 SCHEMA_VERSION = 3  # in SQLite's user_version; sift 0.2 and older had none, 0.3 to 0.7 had 2
 # The keyword index reads chunks through a view: each with its document's title, and its front-matter values but the
@@ -103,10 +103,15 @@ def touch(db):
 
 
 def _fields(fields):
-    """A collection's choice of JSON fields, {"id": name, "title": name, "text": [names]}, as stored."""
+    """A collection's choices, as stored: JSON Lines fields, {"id": name, "title": name, "text": [names]}, and where
+    its Markdown and text files take their titles from, {"title_from": "heading" or "name"}."""
     if not fields:
         return None
     for key, value in fields.items():
+        if key == "title_from":
+            if value not in readers.TITLE_FROM:
+                raise SystemExit(f"titles come from 'heading' or 'name', got {value!r}")
+            continue
         if key not in ("id", "title", "text"):
             raise SystemExit(f"unknown field choice {key!r}: choose the id, title or text field")
         names = value if key == "text" else [value]
@@ -124,9 +129,8 @@ def add_collection(db, path, name=None, fields=None):
     path = Path(path).expanduser().resolve()
     if not path.is_dir():
         raise SystemExit(f"not a directory: {path}")
-    for other, folder in db.execute("SELECT name, path FROM collections"):
-        if os.path.normcase(folder) == os.path.normcase(path):  # registered twice, its documents were found twice
-            raise SystemExit(f"{path} is the collection {other!r} already")
+    if other := collection_at(db, path):  # registered twice, its documents were found twice
+        raise SystemExit(f"{path} is the collection {other!r} already")
     name = name or path.name
     if not re.fullmatch(r"[\w.-]+", name):
         raise SystemExit(f"invalid collection name {name!r}: choose one with --name, of letters, digits, '_', '-', '.'")
@@ -136,6 +140,27 @@ def add_collection(db, path, name=None, fields=None):
         raise SystemExit(f"collection {name!r} already exists") from None
     db.commit()
     return name
+
+
+def collection_at(db, path):
+    """The name of the collection of the folder `path`, or None."""
+    path = os.path.normcase(Path(path).expanduser().resolve())
+    return next(
+        (name for name, folder in db.execute("SELECT name, path FROM collections") if os.path.normcase(folder) == path),
+        None,
+    )
+
+
+def set_title_from(db, name, title_from):
+    """Choose where a collection's Markdown and text files take their titles from. Returns the collection's id and
+    its choices."""
+    row = db.execute("SELECT id, fields FROM collections WHERE name = ?", (name,)).fetchone()
+    if not row:
+        raise SystemExit(f"no collection named {name!r}")
+    fields = json.loads(row[1]) if row[1] else {}
+    fields = {key: value for key, value in fields.items() if key != "title_from"} | {"title_from": title_from}
+    db.execute("UPDATE collections SET fields = ? WHERE id = ?", (_fields(fields), row[0]))
+    return row[0], fields
 
 
 def remove_collection(db, name):
@@ -151,17 +176,25 @@ def remove_collection(db, name):
     return len(docs)
 
 
+def keywords(db, docs, add=True):
+    """Add the keyword index's entries for the chunks of these documents, by id, or delete them, as the chunk_text
+    view reads them now. Delete them before a document's text, title or meta changes, and add them after: entries
+    that no longer match the view can't be deleted any more. One statement for all, as one per document took twice
+    as long."""
+    columns, values = ("rowid", "id") if add else ("fts, rowid", "'delete', id")
+    db.execute(
+        f"INSERT INTO fts({columns}, title, text, meta) SELECT {values}, title, text, meta FROM chunk_text "
+        "WHERE id IN (SELECT c.id FROM chunks c JOIN json_each(?) j ON c.doc = j.value)",
+        (json.dumps(docs),),
+    )
+
+
 def delete_docs(db, doc_ids):
     for i in range(0, len(doc_ids), 500):
         batch = doc_ids[i : i + 500]
         marks = ",".join("?" * len(batch))
         chunk_ids = f"SELECT id FROM chunks WHERE doc IN ({marks})"
-        # the keyword index reads text from chunk_text, so its entries go first, while their text is still there
-        db.execute(
-            f"INSERT INTO fts(fts, rowid, title, text, meta) SELECT 'delete', id, title, text, meta FROM chunk_text "
-            f"WHERE id IN ({chunk_ids})",
-            batch,
-        )
+        keywords(db, batch, add=False)  # first, while their text is still there
         db.execute(f"DELETE FROM vectors WHERE chunk IN ({chunk_ids})", batch)
         db.execute(f"DELETE FROM chunks WHERE doc IN ({marks})", batch)
         db.execute(f"DELETE FROM docs WHERE id IN ({marks})", batch)

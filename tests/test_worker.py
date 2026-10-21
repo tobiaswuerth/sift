@@ -195,7 +195,7 @@ def test_embed_through_a_worker(corpus, fake_models, live, monkeypatch, capsys, 
                          JOIN vectors v ON v.chunk = c.id""").fetchall()
     assert len(rows) == 3
     for seq, title, text, vec in rows:
-        expected = fake_vector(embed._text(seq, title, text)).astype(np.float16)
+        expected = fake_vector(embed.text_of(seq, title, text)).astype(np.float16)
         assert np.frombuffer(vec, np.float16).tolist() == expected.tolist()
     assert store.get_meta(db, "model") == fake_models.name
     err = capsys.readouterr().err

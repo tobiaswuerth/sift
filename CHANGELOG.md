@@ -5,6 +5,21 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `sift add --title-from name`: Markdown and text files take their file name as title, unless their front matter
+  sets one, as notes in an Obsidian vault are named. In a vault whose notes start with `## Summary`, every note was
+  titled "Summary". The same command changes a collection added before: it retitles the notes from the text the
+  index holds, without reading a file, and says which passages `sift embed` must embed again. `sift add` of an
+  Obsidian vault suggests it.
+
+### Fixed
+
+- Front matter: a YAML list with unquoted items, `aliases: [Hans Mueller, H. Müller]`, was one string. It is a list
+  now; a single wikilink, `org: [[Acme AG]]`, stays the link it means.
+- `search`: when no passage held every term, the search for any of them dropped column filters such as `title:`,
+  and found the words anywhere.
+
 ## [1.0.0] - 2026-10-21
 
 sift is stable: from now on, its commands, MCP tools, settings, index and worker protocol change incompatibly only

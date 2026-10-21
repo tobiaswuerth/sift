@@ -5,7 +5,6 @@ web pages one each, converted to Markdown by Xberg. Every document's text is cut
 Readers run in worker processes while indexing, so they read from bytes and return plain data (`Doc`).
 """
 
-import asyncio
 import hashlib
 import json
 import re
@@ -25,14 +24,44 @@ LIST_ITEM = re.compile(r"[ \t]*-[ \t]+(.*)")
 HEADING = re.compile(r" {0,3}#{1,6}[ \t]")  # how a Markdown (ATX) heading starts
 FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")  # how a fenced code block starts and ends
 LINE = re.compile(r"[^\n]*\n|[^\n]+")  # only \n ends a line, as in editors; str.splitlines knows eight more
+WIKILINK_VALUE = re.compile(r"\[\[[^\[\]\n]*\]\]")
+TITLE_FROM = ("heading", "name")  # where a Markdown or text file's title comes from, after its `title:` field
 
 
 def _value(text):
-    """A front-matter value: JSON if it parses (lists, numbers, quoted strings), else plain text."""
+    """A front-matter value: JSON if it parses (lists, numbers, quoted strings), else a YAML flow list of unquoted
+    items, else plain text."""
     try:
         return json.loads(text, parse_constant=str)  # NaN/Infinity stay strings: SQLite's JSON rejects them
     except ValueError:
-        return text.strip("'\"")
+        items = _flow_list(text)
+        return text.strip("'\"") if items is None else items
+
+
+def _flow_list(text):
+    """The items of a YAML flow list such as `[Hans Mueller, "H. Müller"]`, or None if `text` isn't one list. A single
+    wikilink, `[[Acme AG]]`, is a link, as Obsidian users mean it, though YAML reads a list in a list."""
+    if not (text.startswith("[") and text.endswith("]")) or WIKILINK_VALUE.fullmatch(text):
+        return None
+    items, depth, quote, start = [], 0, None, 1
+    for i, c in enumerate(text):
+        if quote:
+            quote = None if c == quote else quote
+        elif c in "\"'" and not text[start:i].strip():  # only at an item's start: O'Brien is no quote
+            quote = c
+        elif c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if not depth and i < len(text) - 1:  # closed before the end: `[[A]], [[B]]`, `[Draft] My note`
+                return None
+        elif c == "," and depth == 1:
+            items.append(text[start:i])
+            start = i + 1
+    if depth or quote:
+        return None
+    items.append(text[start:-1])
+    return [_value(item.strip()) for item in items if item.strip()]
 
 
 def _front_matter(block):
@@ -69,8 +98,9 @@ def _heading(text):
     return None
 
 
-def parse(text, fallback_title):
-    """Split off YAML front matter. Returns title, meta, body and the body's first line number."""
+def parse(text, fallback_title, title_from="heading"):
+    """Split off YAML front matter. Returns title, meta, body and the body's first line number. The title is the
+    `title` field, else with title_from "heading" the first heading, else `fallback_title`, the file name."""
     meta, first_line = {}, 1
     m = FRONT_MATTER.match(text)
     if m:
@@ -79,7 +109,7 @@ def parse(text, fallback_title):
         text = text[m.end() :]
     title = meta.get("title")
     title = str(title).strip() if isinstance(title, str | int | float) and not isinstance(title, bool) else None
-    return title or _heading(text) or fallback_title, meta, text, first_line
+    return title or (title_from == "heading" and _heading(text)) or fallback_title, meta, text, first_line
 
 
 def chunk(text, first_line=1):
@@ -172,10 +202,16 @@ def _record(obj, line, fields):
 def _text(raw, name, fields):
     """A Markdown or text file: one document, with its YAML front matter as metadata."""
     text = decode(raw).replace("\r\n", "\n")  # same chunks on every OS
-    title, meta, body, first_line = parse(text, Path(name).stem)
+    return [note(text, name, fields)._replace(digest=_digest(raw))], []
+
+
+def note(text, name, fields=None):
+    """The document of a Markdown or text file named `name`, from its text. The index keeps that text, so a newer
+    sift can read the note again without its file."""
+    title, meta, body, first_line = parse(text, Path(name).stem, (fields or {}).get("title_from", "heading"))
     offset = len(text) - len(body)  # the chunks are spans of the whole file, front matter included
     chunks = [(first, last, offset + pos, length) for first, last, pos, length in chunk(body, first_line)]
-    return [Doc("", _digest(raw), title, meta, text, chunks)], []
+    return Doc("", "", title, meta, text, chunks)
 
 
 def _records(raw, name, fields):
@@ -221,6 +257,8 @@ PROPERTIES = {  # the document properties sift keeps as metadata: Xberg's name, 
 def _document(raw, name, fields):
     """A PDF, office file, e-book or web page, converted to Markdown by Xberg: one document, with its properties
     as metadata. Without OCR a scan has no text."""
+    import asyncio
+
     import xberg  # only indexing documents needs it
     from xberg.options import ConversionOptions, SecurityLimits
 

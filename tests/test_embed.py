@@ -106,7 +106,7 @@ def test_embed_pending_reports_progress_after_every_batch(corpus, fake_models, m
                          JOIN vectors v ON v.chunk = c.id""").fetchall()
     assert len(rows) == 8
     for seq, title, text, vec in rows:
-        expected = fake_vector(embed._text(seq, title, text)).astype(np.float16)
+        expected = fake_vector(embed.text_of(seq, title, text)).astype(np.float16)
         assert np.frombuffer(vec, np.float16).tolist() == expected.tolist()
 
 

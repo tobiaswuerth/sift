@@ -12,6 +12,8 @@ from mcp.server.mcpserver import MCPServer
 
 from sift import cli, indexing
 
+from .conftest import write
+
 
 def run(capsys, *argv):
     cli.main(list(argv))
@@ -31,6 +33,46 @@ def test_add_index_embed(notes, home, fake_models, capsys):
     assert "3 added" in run(capsys, "index").err
     assert "embedded 3 chunks" in run(capsys, "embed").err
     assert "embedded 3 chunks" in run(capsys, "embed", "--reset").err
+
+
+def test_add_a_collection_titled_by_file_names(notes, home, capsys):
+    write(notes / "Hans Müller.md", "## Summary\n\nKey account.\n")
+    run(capsys, "add", str(notes), "--title-from", "name")
+    run(capsys, "index")
+    assert [h["title"] for h in json.loads(run(capsys, "search", "account", "--json").out)] == ["Hans Müller"]
+
+
+def test_add_again_changes_where_titles_come_from(cli_corpus, capsys):
+    write(cli_corpus / "Hans Müller.md", "## Summary\n\nKey account.\n")
+    run(capsys, "index")
+    err = run(capsys, "add", str(cli_corpus), "--title-from", "name").err
+    assert "collection 'notes' takes titles from file names now: 2 titles changed" in err
+    assert [h["title"] for h in json.loads(run(capsys, "search", "account", "--json").out)] == ["Hans Müller"]
+    err = run(capsys, "add", str(cli_corpus), "--name", "notes", "--title-from", "heading").err
+    assert "takes titles from headings now: 2 titles changed" in err
+
+
+def test_add_again_says_which_passages_to_embed_again(cli_corpus, capsys):
+    write(cli_corpus / "long.md", "## Summary\n\n" + "first part " * 200 + "\n\n## Details\n\n" + "second part " * 200)
+    run(capsys, "index")
+    run(capsys, "embed")
+    err = run(capsys, "add", str(cli_corpus), "--title-from", "name").err
+    assert "run `sift embed` to embed 1 passage again, which carries its title" in err
+    assert "embedded 1 chunk" in run(capsys, "embed").err
+
+
+@pytest.mark.parametrize("options", [[], ["--id", "key"], ["--title-from", "name", "--name", "other"]])
+def test_add_again_with_anything_else_is_an_error(cli_corpus, capsys, options):
+    with pytest.raises(SystemExit, match="is the collection 'notes' already"):
+        run(capsys, "add", str(cli_corpus), *options)
+
+
+def test_add_an_obsidian_vault_suggests_titles_from_file_names(notes, home, capsys):
+    (notes / ".obsidian").mkdir()
+    assert "--title-from name" in run(capsys, "add", str(notes)).err
+    other = notes.parent / "other"
+    (other / ".obsidian").mkdir(parents=True)
+    assert "--title-from" not in run(capsys, "add", str(other), "--title-from", "name").err
 
 
 @pytest.mark.parametrize(

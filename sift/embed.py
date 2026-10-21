@@ -9,7 +9,7 @@ from . import models as _models
 SLAB = 20000  # chunks per commit; length sorting happens within a slab
 
 
-def _text(seq, title, text):
+def text_of(seq, title, text):
     """What gets embedded: chunks after the first repeat their document title, unless they already start with it."""
     return text if seq == 0 or text.lstrip("# ").startswith(title) else f"{title}\n\n{text}"
 
@@ -36,7 +36,7 @@ def embed_pending(db, reset=False, models=None):
     slab = f"SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} AND c.id > ? "
     with console.Progress(total, "chunks") as progress:
         while rows := db.execute(slab + "ORDER BY c.id LIMIT ?", (last, SLAB)).fetchall():
-            texts = [_text(*row[1:]) for row in rows]
+            texts = [text_of(*row[1:]) for row in rows]
             vectors = _embed(models, texts, lambda n, before=done: progress.update(before + n))
             broken += _store_vectors(db, [row[0] for row in rows], vectors, using)
             done, last = done + len(rows), rows[-1][0]
@@ -84,7 +84,7 @@ def _longest_pending(db):
     sql = (
         f"SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} ORDER BY c.len + length(d.title) DESC"
     )
-    return max((_text(*row) for row in db.execute(sql + " LIMIT 100")), key=len, default=None)
+    return max((text_of(*row) for row in db.execute(sql + " LIMIT 100")), key=len, default=None)
 
 
 def _embed(models, texts, report):

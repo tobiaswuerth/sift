@@ -7,8 +7,9 @@ import re
 import sqlite3
 import sys
 import textwrap
+from pathlib import Path
 
-from . import __version__, console, settings, store
+from . import __version__, console, readers, settings, store
 
 # The commands that load PyTorch, unless a worker does it for them; with SIFT_EMBED_REMOTE, THROUGH_WORKER do.
 SLOW = ("embed", "vsearch", "query", "similar", "bench", "serve", "worker")
@@ -82,6 +83,13 @@ def main(argv=None):
         "--text",
         help="JSON Lines: the text field(s), comma-separated "
         "(default: text, content, body, abstract, description or summary, else the longest string)",
+    )
+    s.add_argument(
+        "--title-from",
+        choices=readers.TITLE_FROM,
+        help="Markdown and text files: a file's title, unless its front matter sets one, is its first heading "
+        "(default) or its file name, as in an Obsidian vault. Given for a folder that is a collection already, it "
+        "changes that collection",
     )
     s = sub.add_parser("rm", help="remove a collection from the index (its files stay on disk)")
     s.add_argument("name")
@@ -158,11 +166,37 @@ def main(argv=None):
         raise SystemExit(130) from None
 
 
+def _add(a, db):
+    """`sift add`: register a folder; or, for a folder registered already, change where its titles come from."""
+    chosen = {"id": a.id, "title": a.title, "text": a.text and [f.strip() for f in a.text.split(",")]}
+    chosen = {k: v for k, v in chosen.items() if v} | ({"title_from": a.title_from} if a.title_from else {})
+    existing = store.collection_at(db, a.path)
+    if existing and list(chosen) == ["title_from"] and a.name in (None, existing):
+        from .indexing import retitle
+
+        changed, dropped = retitle(db, existing, a.title_from)
+        source = "file names" if a.title_from == "name" else "headings"
+        console.say(
+            f"collection {existing!r} takes titles from {source} now: {console.count(changed, 'title')} changed"
+            + (
+                f"; run `sift embed` to embed {console.count(dropped, 'passage')} again, which carries its title"
+                if dropped
+                else ""
+            )
+        )
+        return
+    name = store.add_collection(db, a.path, a.name, chosen)
+    console.say(f"added collection {name!r}; run `sift index` next")
+    if not a.title_from and (Path(a.path).expanduser() / ".obsidian").is_dir():
+        console.say(
+            f"{a.path} is an Obsidian vault: to title its notes by their file names, as Obsidian does, run "
+            f"`sift add {a.path} --title-from name`"
+        )
+
+
 def _run(a, db):
     if a.cmd == "add":
-        chosen = {"id": a.id, "title": a.title, "text": a.text and [f.strip() for f in a.text.split(",")]}
-        name = store.add_collection(db, a.path, a.name, {k: v for k, v in chosen.items() if v})
-        console.say(f"added collection {name!r}; run `sift index` next")
+        _add(a, db)
     elif a.cmd == "rm":
         n = store.remove_collection(db, a.name)
         console.say(

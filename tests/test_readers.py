@@ -49,6 +49,46 @@ def test_parse_title_fallbacks():
     assert readers.parse('---\ntitle: ["a", "b"]\n---\nbody\n', "file")[0] == "file"
 
 
+@pytest.mark.parametrize(
+    "value, parsed",
+    [
+        ("[Hans Mueller, H. Müller]", ["Hans Mueller", "H. Müller"]),  # YAML's flow list, items unquoted
+        ('["a", "b"]', ["a", "b"]),
+        ("[a, 'b, c', \"d\", O'Brien]", ["a", "b, c", "d", "O'Brien"]),  # a quote starts a quoted item only
+        ("[1, two, 3.5, true]", [1, "two", 3.5, True]),
+        ("[a, [b, c]]", ["a", ["b", "c"]]),
+        ("[a, b, ]", ["a", "b"]),
+        ("[ ]", []),
+        ("[[Acme AG]]", "[[Acme AG]]"),  # one wikilink: a link, as Obsidian users mean it, not YAML's nested list
+        ("[[Acme AG|Acme]]", "[[Acme AG|Acme]]"),
+        ("[[[Anna Keller]], [[Peter Frei|Peter]]]", ["[[Anna Keller]]", "[[Peter Frei|Peter]]"]),
+        ('["[[Anna Keller]]", "[[Peter Frei]]"]', ["[[Anna Keller]]", "[[Peter Frei]]"]),
+        ("[[A]], [[B]]", "[[A]], [[B]]"),  # no list: its first bracket closes early
+        ("[Draft] My note", "[Draft] My note"),
+        ("[unclosed, list", "[unclosed, list"),
+        ('["unclosed, quote]', '["unclosed, quote]'),
+        ("[a]]", "[a]]"),
+    ],
+)
+def test_front_matter_flow_lists(value, parsed):
+    # `aliases: [Hans Mueller, H. Müller]` was one string, "[Hans Mueller, H. Müller]": no alias matched.
+    assert readers.parse(f"---\nkey: {value}\n---\n", "f")[1] == {"key": parsed}
+
+
+def test_titles_from_file_names():
+    # In a vault whose notes start with "## Summary", every note was titled "Summary".
+    assert readers.parse("## Summary\n", "Hans Müller", "name")[0] == "Hans Müller"
+    assert readers.parse("---\ntitle: Set\n---\n## Summary\n", "Hans Müller", "name")[0] == "Set"
+    assert readers.parse("## Summary\n", "Hans Müller", "heading")[0] == "Summary"
+
+
+def test_load_takes_titles_from_file_names_if_the_collection_says_so(tmp_path):
+    path = tmp_path / "Hans Müller.md"
+    path.write_text("## Summary\n\nKey account.\n", encoding="utf-8")
+    assert readers.load(path, {"title_from": "name"})[0][0].title == "Hans Müller"
+    assert readers.load(path)[0][0].title == "Summary"
+
+
 def test_parse_without_closing_front_matter_is_plain_text():
     title, meta, body, _ = readers.parse("---\ntitle: x\nno end\n", "file")
     assert (title, meta) == ("file", {})

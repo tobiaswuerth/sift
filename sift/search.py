@@ -163,6 +163,8 @@ def _any_term(query):
     terms = [t for t in re.findall(r'"[^"]*"|[^\s"]+', query) if re.search(r"\w", t)]
     if len(terms) < 2 or any(t in ("AND", "OR", "NOT") or t.startswith("NEAR(") for t in terms):
         return None
+    if re.search(r"(?:^|\s)-?(?:title|text|meta|\{[^}]*\})\s*:", query):  # a column filter: "title: ...", "{a b}: ..."
+        return None
     return " OR ".join(t if t[0] == '"' else f'"{t[:-1]}" *' if t[-1] == "*" else f'"{t}"' for t in terms)
 
 

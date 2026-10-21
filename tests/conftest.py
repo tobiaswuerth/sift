@@ -323,6 +323,19 @@ def index_contents(db):
     )
 
 
+def keywords_agree(db):
+    """Whether the keyword index holds exactly what the chunk_text view reads now, term by term: an entry left from an
+    old title or meta can't be deleted any more. (FTS5's integrity-check fails on the view, as 'rebuild' does.)"""
+    db.executescript("""
+        CREATE VIRTUAL TABLE temp.fresh USING fts5(title, text, meta, tokenize='unicode61 remove_diacritics 2');
+        INSERT INTO temp.fresh(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text;
+        CREATE VIRTUAL TABLE temp.held USING fts5vocab(main, fts, instance);
+        CREATE VIRTUAL TABLE temp.made USING fts5vocab(temp, fresh, instance);""")
+    held, made = (db.execute(f"SELECT * FROM temp.{t} ORDER BY 1, 2, 3, 4").fetchall() for t in ("held", "made"))
+    db.executescript("DROP TABLE temp.held; DROP TABLE temp.made; DROP TABLE temp.fresh;")
+    return held == made and len(held) > 0
+
+
 @pytest.fixture
 def pools(monkeypatch):
     """Records every worker process pool that indexing starts."""

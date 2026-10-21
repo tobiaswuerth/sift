@@ -50,6 +50,13 @@ def test_blank_queries_find_nothing(embedded, mode, query):
     assert getattr(Index(embedded[0]), mode)(query) == []
 
 
+@pytest.mark.parametrize("query", ["title: speeds learning", "{title meta}: speeds up", "meta:speeds learning"])
+def test_a_column_filter_holds_when_nothing_matches(corpus, query):
+    # When no passage matched, sift looked for any of the terms, and "title:" became a word like the others: passages
+    # with "speeds" in their text came back for a search of titles.
+    assert Index(corpus[0]).search(query) == []
+
+
 def test_unusable_query_is_a_clear_error(corpus, monkeypatch):
     monkeypatch.setattr(search, "_phrases", lambda q: "(")
     with pytest.raises(ValueError, match="invalid search query"):

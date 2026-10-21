@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
 from itertools import repeat
 
-from . import console, readers, store
+from . import console, embed, readers, store
 
 SKIP_DIRS = {"node_modules", "__pycache__"}
 WRITE_BATCH = 5000  # files per commit
@@ -94,16 +94,67 @@ def _store(db, cid, sid, rel, docs, counts, note):
             note(f"{path}: a document of this name exists already, skipped")
             continue
         counts["changed" if old else "added"] += 1
-    # The keyword entries of the file's new documents, read through the view as deleting reads them: in one statement,
-    # as one per document took twice as long.
-    db.execute(
-        "INSERT INTO fts(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text WHERE id IN "
-        "(SELECT c.id FROM chunks c JOIN json_each(?) j ON c.doc = j.value)",
-        (json.dumps(added),),
-    )
+    store.keywords(db, added)
     gone = [i for p, (i, _) in existing.items() if p not in kept]
     store.delete_docs(db, gone)
     counts["removed"] += len(gone)
+
+
+REFRESH_BATCH = 1000  # documents read again from the index at a time
+
+
+def retitle(db, name, title_from):
+    """Choose where a collection's Markdown and text files take their titles from (see readers.parse), and retitle
+    those indexed from the text the index holds: no file is read again. Returns how many titles changed, and how many
+    passages lost their vectors for `sift embed` to embed again."""
+    cid, fields = store.set_title_from(db, name, title_from)
+    changed = dropped = 0
+    for rows in _notes(db, cid):
+        c, d = _refresh(db, rows, fields)
+        changed, dropped = changed + c, dropped + d
+    db.commit()
+    return changed, dropped
+
+
+def _notes(db, cid):
+    """The indexed Markdown and text files of a collection, REFRESH_BATCH at a time: (id, path, title, meta, text) of
+    each. A file's document is the one with the file's path; JSON Lines files hold records."""
+    sql = """SELECT s.id, d.id, d.path, d.title, d.meta, d.text FROM sources s
+             JOIN docs d ON d.collection = s.collection AND d.path = s.path AND d.source = s.id
+             WHERE s.collection = ? AND s.id > ? ORDER BY s.id LIMIT ?"""
+    after = 0
+    while rows := db.execute(sql, (cid, after, REFRESH_BATCH)).fetchall():
+        after = rows[-1][0]
+        yield [row[1:] for row in rows if row[2].lower().endswith(readers.TEXT)]
+
+
+def _refresh(db, rows, fields):
+    """Read notes again from the text the index holds, (id, path, title, meta, text) of each, as this sift reads them
+    with the collection's `fields`. Titles and front matter that changed go into the documents and the keyword index;
+    passages embedded with a title that changed lose their vectors. Returns how many documents changed, and how many
+    vectors went."""
+    changed = {}
+    for doc_id, path, title, meta, text in rows:
+        doc = readers.note(text, path.rsplit("/", 1)[-1], fields)
+        stored = json.dumps(doc.meta, ensure_ascii=False)
+        if (doc.title, stored) != (title, meta):
+            changed[doc_id] = (title, doc.title, stored)
+    if not changed:
+        return 0, 0
+    store.keywords(db, list(changed), add=False)
+    db.executemany("UPDATE docs SET title = ?, meta = ? WHERE id = ?", [(t, m, i) for i, (_, t, m) in changed.items()])
+    store.keywords(db, list(changed))
+    sql = """SELECT c.id, c.doc, c.seq, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
+             WHERE c.doc IN (SELECT value FROM json_each(?)) AND c.seq > 0"""
+    stale = [
+        (chunk,)
+        for chunk, doc, seq, text in db.execute(sql, (json.dumps(list(changed)),))
+        if embed.text_of(seq, changed[doc][0], text) != embed.text_of(seq, changed[doc][1], text)
+    ]
+    dropped = db.executemany("DELETE FROM vectors WHERE chunk = ?", stale).rowcount
+    if dropped:
+        store.touch(db)
+    return len(changed), dropped
 
 
 def _drop_source(db, sid):
