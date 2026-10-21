@@ -331,7 +331,8 @@ def open_in_browser(host="127.0.0.1", port=8765):
     url = f"http://{local}:{port}{PREFIX}"
     try:
         urllib.request.urlopen(url, timeout=5).close()
-    except urllib.error.HTTPError:
+    except urllib.error.HTTPError as e:
+        e.close()  # it holds the answer open: a ResourceWarning on Python 3.14+ when left to the garbage collector
         raise SystemExit(
             f"error: the server on port {port} has no UI; restart `sift serve` with this version of sift"
         ) from None
