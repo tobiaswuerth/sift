@@ -127,6 +127,31 @@ class NumpyModels:
         return np.array([fake_score(query, t) for t in texts], np.float32)
 
 
+class Client:
+    """Requests to an app that runs on this, the main, thread, as under uvicorn. Starlette's TestClient runs it in a
+    thread of its own, where PyTorch crashes on Python 3.15 (macOS)."""
+
+    def __init__(self, app, headers=None, base_url="http://testserver"):
+        self.app, self.headers, self.base_url = app, headers or {}, base_url
+
+    def request(self, method, path, **kwargs):
+        import anyio
+        import httpx2  # what MCP and Starlette use
+
+        async def send():
+            transport = httpx2.ASGITransport(self.app, client=("testclient", 50000))
+            async with httpx2.AsyncClient(transport=transport, base_url=self.base_url, headers=self.headers) as c:
+                return await c.request(method, path, **kwargs)
+
+        return anyio.run(send)
+
+    def get(self, path, **kwargs):
+        return self.request("GET", path, **kwargs)
+
+    def post(self, path, **kwargs):
+        return self.request("POST", path, **kwargs)
+
+
 GiB = 2**30
 
 

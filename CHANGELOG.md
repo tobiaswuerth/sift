@@ -5,6 +5,22 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-21
+
+### Added
+
+- `sift ui`: the index in your browser, to search, browse and read the sources yourself. It opens the UI of the
+  `sift serve` on port 8765, or starts one, which then serves agents too. The page has three panes:
+  - collections and folders, and the front-matter values of the results with their counts, each a filter;
+  - the results of a keyword search as you type, or of a search by meaning or hybrid search, with the words found
+    marked;
+  - the document a result leads to, its passage marked, with its front matter, similar documents and its original
+    file.
+
+  Every view has its own address. On 3.2 million arXiv abstracts, a keyword search answers in 30 to 250 ms.
+- `sift serve` serves the UI under `/ui`, and its address alone leads there. Bound to a local address, it answers
+  only requests that name a local host, as MCP does.
+
 ## [0.9.1] - 2026-10-21
 
 ### Fixed
@@ -252,7 +268,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/tobiaswuerth/sift/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/tobiaswuerth/sift/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/tobiaswuerth/sift/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/tobiaswuerth/sift/compare/v0.7.0...v0.8.0

@@ -1,4 +1,5 @@
-exclude: ^tests/samples/(sample|blank)\.  # test fixtures: the tests read them as they are
+# Test fixtures, which the tests read as they are, and htmx, kept as its release ships it.
+exclude: ^(tests/samples/(sample|blank)\.|sift/web/static/htmx\.min\.js$)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

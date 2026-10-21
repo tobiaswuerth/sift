@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 from operator import itemgetter
+from pathlib import Path
 
 import numpy as np
 
@@ -21,6 +22,8 @@ STOPWORDS = set(
 SQLITE_INT = 2**63  # SQLite integers are 64-bit
 OPERATORS = ("=", "<", "<=", ">", ">=", "not")
 FIELD_SAMPLE = 1000  # documents per collection whose front matter tells which fields exist
+START = 600  # characters of a document that `browse` shows, as its passage
+LAST = "\U0010ffff"  # the last character there is: every path starting with p sorts between p and p + LAST
 
 
 def _condition(key, op, value):
@@ -43,17 +46,21 @@ def _condition(key, op, value):
     return f"CAST(value AS REAL) {op} ?", [value]  # SQLite reads "2024-06-15" as 2024
 
 
+def _collection_id(db, name):
+    row = db.execute("SELECT id FROM collections WHERE name = ?", (name,)).fetchone()
+    if not row:
+        raise LookupError(f"no collection named {name!r}")
+    return row[0]
+
+
 def _where(db, collection=None, path=None, filters=None):
     """SQL condition on docs `d`. Filters match front-matter fields: a value, which a list field matches if it
     contains it, a list of values for any of them, or conditions such as {">=": "2024-06", "<": "2025"}, which one
     value or list element must satisfy, and {"not": value or list}, which none may match."""
     sql, args = ["1"], []
     if collection:
-        row = db.execute("SELECT id FROM collections WHERE name = ?", (collection,)).fetchone()
-        if not row:
-            raise LookupError(f"no collection named {collection!r}")
         sql.append("d.collection = ?")
-        args.append(row[0])
+        args.append(_collection_id(db, collection))
     if path:
         sql.append("d.path GLOB ?")
         args.append(path)
@@ -457,6 +464,46 @@ class Index:
             raise LookupError(f"unknown document {id!r}")
         doc, path, title, meta, text = rows[0]
         return doc, f"{name}/{path}", title, meta, text
+
+    def browse(self, k=50, *, collection=None, path=None, filters=None, fields=None, compact=False, sort=None):
+        """Documents without a query, by path: what a collection, folder or filter holds. They come as hits without
+        lines and score, with the start of the document as their passage; `sort` orders them by a front-matter
+        field instead, as in searches."""
+        k, (where, args) = _check_k(k), _where(self.db, collection, path, filters)
+        fields, sort = _check_fields(fields), _check_sort(sort)
+        order = "co.name, d.path"
+        if sort:
+            value = f"json_extract(d.meta, '$.{sort.removeprefix('-')}')"  # a checked field name
+            order = f"{value} IS NULL, {value}{' DESC' if sort[0] == '-' else ''}, {order}"
+        sql = f"""SELECT co.name, d.path, d.title, d.meta, substr(d.text, 1, {START}) FROM docs d
+                  JOIN collections co ON co.id = d.collection WHERE {where} ORDER BY {order} LIMIT ?"""
+        docs = []
+        for name, doc_path, title, meta, text in self.db.execute(sql, [*args, k]):
+            doc = {"id": f"{name}/{doc_path}", "title": title}
+            if fields:
+                doc["fields"] = _pick(meta, fields)
+            docs.append(doc if compact else doc | {"text": text})
+        return docs
+
+    def folders(self, collection, path=""):
+        """The folders directly inside the folder `path` ("" or e.g. "2024/") of a collection, by name. Each folder
+        is one jump through the index, so a folder holding millions of documents costs as little as an empty one."""
+        cid, found, after = _collection_id(self.db, collection), [], path
+        sql = "SELECT path FROM docs WHERE collection = ? AND path > ? AND path < ? ORDER BY path LIMIT 1"
+        while row := self.db.execute(sql, (cid, after, path + LAST)).fetchone():
+            name, slash, _ = row[0][len(path) :].partition("/")
+            if slash:
+                found.append(name)
+            after = path + name + (slash and "/" + LAST)  # past the folder, or past the document
+        return sorted(found)
+
+    def file(self, id):
+        """The file a document was read from, by its id as for `get`; None for a JSON Lines record, which is a part
+        of its file."""
+        sql = """SELECT co.path, s.path, d.path FROM docs d JOIN sources s ON s.id = d.source
+                 JOIN collections co ON co.id = d.collection WHERE d.id = ?"""
+        root, source, path = self.db.execute(sql, (self._find(id)[0],)).fetchone()
+        return Path(root) / source if source == path else None
 
     def fields(self, collection, docs):
         """The front-matter fields of a collection (by id with `docs` documents), from a sample spread over it."""

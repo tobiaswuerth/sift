@@ -131,6 +131,9 @@ def main(argv=None):
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--stdio", action="store_true", help="serve over stdio instead of HTTP")
+    s = sub.add_parser("ui", help="search, browse and read the index in a web browser (starts `sift serve` if needed)")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=8765)
     s = sub.add_parser("worker", help="embed for sift on other machines, which set SIFT_EMBED_REMOTE to this one")
     s.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all of this machine's)")
     s.add_argument("--port", type=int, default=8766)
@@ -212,6 +215,10 @@ def _run(a, db):
         from .search import Index
 
         print(json.dumps(Index(db).status(), indent=2))
+    elif a.cmd == "ui":
+        from .ui import open_in_browser
+
+        open_in_browser(a.host, a.port)
     else:  # serve
         from .server import serve
 

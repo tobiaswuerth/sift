@@ -344,12 +344,12 @@ def test_http_shutdown_gives_up_on_unfinished_requests(embedded, fake_models, mo
         await serve(self, sockets)
 
     monkeypatch.setattr(uvicorn.Server, "serve", recording)
-    mcp = server.build(Index(embedded[0]))[0]
+    mcp, index = server.build(Index(embedded[0]))
 
     async def main():
         with anyio.fail_after(10):  # a hang detector: the server stops within half a second
             async with anyio.create_task_group() as tasks:
-                tasks.start_soon(server._serve, mcp, "127.0.0.1", 0, False, fake_models)
+                tasks.start_soon(server._serve, mcp, index, "127.0.0.1", 0, False, fake_models)
                 while not (servers and servers[0].started):
                     await anyio.sleep(0.01)
                 port = servers[0].servers[0].sockets[0].getsockname()[1]

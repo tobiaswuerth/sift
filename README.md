@@ -18,6 +18,8 @@ It offers four kinds of search: exact keyword matching, semantic search, hybrid 
 and documents like a given one.
 Everything runs locally. No cloud services, no API keys.
 
+![sift ui: a keyword search over 3.2 million arXiv abstracts, filtered by category, with one paper open](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-search.png)
+
 ## Install
 
 Requires Python 3.11 or newer. With [uv](https://docs.astral.sh/uv/):
@@ -63,6 +65,7 @@ sift get handbook/hr/leave.md --fields owner,modified   # front-matter fields fi
 sift status                            # collections and counts
 sift bench questions.json              # how well each mode finds what you expect (see below)
 sift rm handbook                       # remove a collection from the index; its files stay on disk
+sift ui                                # search, browse and read the index in your browser (see below)
 sift serve                             # MCP server on http://127.0.0.1:8765/mcp
 sift worker                            # embed for other machines on this one's GPU (see below)
 ```
@@ -86,6 +89,24 @@ Scores rank the results of one search, on a scale of its own: BM25 for `search` 
 `vsearch` and `similar` (-1 to 1), and for `query` the reranker's score, nudged by the passage's cosine, on the
 reranker's scale. It compares across queries: with the default reranker, close matches score about 2.5 to 4, and
 unrelated results below 2.
+
+### Browsing the index
+
+`sift ui` opens the index in your browser, at `http://127.0.0.1:8765/ui/`, to look through the sources yourself. It
+uses the `sift serve` that runs on that port, or starts one, which then serves agents too.
+
+![sift ui in dark mode: the 2025 folder of an arXiv collection, filtered by category, with its subfolders, authors and categories to drill into](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-browse-dark.png)
+
+- **Search** in three modes: *Keyword* as you type, *Meaning* and *Hybrid* (`vsearch` and `query`) on Enter. The
+  words found are marked in each passage, and a bar shows each result's score.
+- **Drill down** without typing: collections and their folders, and the front-matter values of the results with their
+  counts (authors, categories, years), each a click to filter by. Filters show as chips; click one to remove it.
+  Results can also be sorted by any front-matter field.
+- **Read** a result next to the list: the whole document, its passage marked and scrolled to, and its front matter,
+  whose values filter too, and whose links open. *Similar* lists documents like it, and *Open file* opens the
+  original file: a PDF shows in the browser.
+- **Keys:** `/` to search, `↑` `↓` to move through results, `Enter` to open one.
+- Every view has its own address, so reloading, the back button and links work.
 
 ### Measuring search on your own documents
 
@@ -215,7 +236,8 @@ fields each has.
    sift as connected, and an agent asked for sift's status gets your collections.
 
 One server serves any number of agents, with the models loaded once. Other MCP clients connect the same way, to the
-streamable HTTP endpoint `http://127.0.0.1:8765/mcp`.
+streamable HTTP endpoint `http://127.0.0.1:8765/mcp`. The same server shows the index to you at
+`http://127.0.0.1:8765/ui/` (see [Browsing the index](#browsing-the-index)).
 
 Or let every session start a server of its own over stdio; then each session loads the models into memory itself:
 
@@ -361,6 +383,10 @@ claims, and it embeds 1.6 times as fast.
 - **`similar`:** the mean of a document's passage vectors, scored against every passage as `vsearch` scores a query.
   No model runs, so it takes half a second over 3 million passages, with or without a GPU.
 - **Server:** `sift serve` loads models and vectors once and keeps them in memory.
+- **UI:** pages rendered on the server with Jinja2, whose panes [htmx](https://htmx.org) swaps in place: no build step
+  and no Node, and the UI is tested with the rest. It runs on the server's event loop, as the MCP tools do. Browsing
+  a folder jumps through the index folder by folder, so it stays quick in collections of millions of documents, and
+  the collections are counted once per change of the index.
 
 ## Scope
 

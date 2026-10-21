@@ -68,5 +68,6 @@ jobs:
           uv pip install --python /tmp/clean --no-deps dist/*.whl
           /tmp/clean/bin/sift --version
           /tmp/clean/bin/sift-rag --version
+          /tmp/clean/bin/python -c "import sift.ui as ui; assert (ui.WEB / 'page.html').is_file() and (ui.WEB / 'static' / 'htmx.min.js').is_file()"
       - name: Check that the dependencies resolve
         run: uv pip install --python /tmp/clean --dry-run dist/*.whl
