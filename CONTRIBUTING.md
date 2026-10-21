@@ -49,15 +49,17 @@ fakes (Sentence Transformers, GPU memory, the clock) instead of patching module 
   endings, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schema checks, actionlint and codespell.
 - **Pull requests.** `main` is protected: changes arrive through pull requests, which are squash-merged once every CI
   check passes. CI runs the tests on Linux (x86 and ARM), macOS and Windows for Python 3.11 to 3.15, and builds and
-  checks the package. It runs on pull requests only, not again after the merge.
+  checks the package. It runs on pull requests, and again on the commit each merge makes on `main`, which may combine
+  changes no pull request tested together.
 - **Changelog.** Note user-visible changes under "Unreleased" in [CHANGELOG.md](CHANGELOG.md).
 
 ## Releasing
 
 1. In a pull request, set the version in `sift/__init__.py` and move the "Unreleased" changes in `CHANGELOG.md` under
    that version. CI checks that the changelog has a section for it.
-2. Merge it. That's all: the release workflow sees a version without a tag and publishes it.
-   - It builds the package and publishes it to PyPI through trusted publishing (no tokens).
-   - It tags the merge commit and creates a GitHub release with that version's changelog.
-   - It doesn't run the tests again, because the pull request tested the same code. If main's code differs from the
-     pull request's last commit, because its branch was behind main, the workflow runs every check first.
+2. Merge it. That's all: once CI has passed on the merge commit, the release workflow sees a version without a tag and
+   publishes that commit.
+   - It builds the package and publishes it to PyPI through trusted publishing (no tokens). The `pypi` environment
+     deploys from `main` only.
+   - It tags the commit CI tested and creates a GitHub release with that version's changelog.
+   - It doesn't run the tests itself: it starts only after CI passed on that exact commit, and never for a failed run.

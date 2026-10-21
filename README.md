@@ -1,6 +1,6 @@
 # sift
 
-[![CI](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
+[![CI](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/sift-rag)](https://pypi.org/project/sift-rag/)
 [![Python](https://img.shields.io/pypi/pyversions/sift-rag?logo=python&logoColor=white)](https://pypi.org/project/sift-rag/)
 [![Downloads](https://img.shields.io/pypi/dm/sift-rag)](https://pypistats.org/packages/sift-rag)
