@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import console, readers, settings
 
-SCHEMA_VERSION = 3  # in SQLite's user_version; sift 0.2 and older had none, 0.3 to 0.7 had 2
+SCHEMA_VERSION = 4  # in SQLite's user_version; sift 0.2 and older had none, 0.3 to 0.7 had 2, 0.8 to 1.0 had 3
 # The keyword index reads chunks through a view: each with its document's title, and its front-matter values but the
 # title, e.g. authors and ids, as `meta`. Inserting and deleting read it alike, so the two always agree.
 KEYWORD_INDEX = """
@@ -37,6 +37,19 @@ CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY, doc INTEGER NOT NULL, 
     line_start INTEGER, line_end INTEGER, pos INTEGER NOT NULL, len INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS chunks_doc ON chunks(doc);
 CREATE TABLE IF NOT EXISTS vectors(chunk INTEGER PRIMARY KEY, vec BLOB NOT NULL);
+"""
+# The links of Markdown notes as written, and the names files answer to, both by key: see `links`, which resolves the
+# one to the other when asked.
+LINKS = """
+CREATE TABLE IF NOT EXISTS links(id INTEGER PRIMARY KEY, doc INTEGER NOT NULL, collection INTEGER NOT NULL,
+    field TEXT, line INTEGER NOT NULL, kind TEXT NOT NULL, target TEXT NOT NULL, key TEXT NOT NULL, fragment TEXT,
+    shown TEXT);
+CREATE INDEX IF NOT EXISTS links_doc ON links(doc);
+CREATE INDEX IF NOT EXISTS links_key ON links(collection, key);
+CREATE TABLE IF NOT EXISTS names(doc INTEGER NOT NULL, collection INTEGER NOT NULL, key TEXT NOT NULL,
+    kind TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS names_doc ON names(doc);
+CREATE INDEX IF NOT EXISTS names_key ON names(collection, key);
 """
 
 
@@ -61,15 +74,18 @@ def _layout(db, path):
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version > SCHEMA_VERSION:
         raise SystemExit(f"{path} was made by a newer sift; upgrade sift to use it")
-    if version == 2:  # sift 0.3 to 0.7: everything stays but the keyword index, which gains the front matter
-        _rebuild_keyword_index(db)
-    elif version < SCHEMA_VERSION and db.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]:
+    if version < 2 and db.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]:
         raise SystemExit(
             f"this index was made by an older sift, which stored documents differently: delete {path}, "
             "then run `sift add`, `sift index` and `sift embed` again"
         )
-    elif version < SCHEMA_VERSION:
-        db.executescript(SCHEMA + KEYWORD_INDEX + f"PRAGMA user_version = {SCHEMA_VERSION};")
+    if version < 2:
+        db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + f"PRAGMA user_version = {SCHEMA_VERSION};")
+        return
+    if version == 2:  # sift 0.3 to 0.7: everything stays but the keyword index, which gains the front matter
+        _rebuild_keyword_index(db)
+    if version <= 3:  # sift 0.8 to 1.0: everything stays, and the notes' links join it
+        _add_links(db)
 
 
 def _rebuild_keyword_index(db):
@@ -80,9 +96,28 @@ def _rebuild_keyword_index(db):
         "BEGIN; DROP TABLE fts; DROP VIEW chunk_text;"
         + KEYWORD_INDEX
         + "INSERT INTO fts(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text;"
-        + f"PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+        + "PRAGMA user_version = 3; COMMIT;"
     )
     console.say(f"keyword index updated in {console.duration(time.perf_counter() - start)}")
+
+
+def _add_links(db):
+    """Add the links of Markdown notes and the names files answer to, read from the text the index holds: no file is
+    read, nothing embedded again (see indexing.add_links). In one transaction, which another sift starting at the same
+    time waits for, and then finds done."""
+    from . import indexing  # it reads notes as indexing does
+
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if db.execute("PRAGMA user_version").fetchone()[0] == 3:
+            for statement in ["DROP TABLE IF EXISTS links", "DROP TABLE IF EXISTS names", *LINKS.split(";")[:-1]]:
+                db.execute(statement)
+            indexing.add_links(db)
+            db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
 
 
 def get_meta(db, key, default=None):
@@ -196,6 +231,8 @@ def delete_docs(db, doc_ids):
         chunk_ids = f"SELECT id FROM chunks WHERE doc IN ({marks})"
         keywords(db, batch, add=False)  # first, while their text is still there
         db.execute(f"DELETE FROM vectors WHERE chunk IN ({chunk_ids})", batch)
+        db.execute(f"DELETE FROM links WHERE doc IN ({marks})", batch)
+        db.execute(f"DELETE FROM names WHERE doc IN ({marks})", batch)
         db.execute(f"DELETE FROM chunks WHERE doc IN ({marks})", batch)
         db.execute(f"DELETE FROM docs WHERE id IN ({marks})", batch)
     if doc_ids:

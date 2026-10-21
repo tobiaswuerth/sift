@@ -6,12 +6,13 @@ as a NumPy matrix and PyTorch never loads: a search starts in a fraction of a se
 import json
 import re
 import sqlite3
+from collections import Counter
 from operator import itemgetter
 from pathlib import Path
 
 import numpy as np
 
-from . import console, readers, store
+from . import console, links, readers, store
 from . import models as _models
 
 STOPWORDS = set(
@@ -215,6 +216,49 @@ def _first_of_each(items, key):
     for item in items:
         first.setdefault(key(item), item)
     return list(first.values())
+
+
+VIA = ("path", "name", "alias")  # how a link resolved, when it did
+LINKING_SHOWN = 5  # documents an unresolved target names, of those linking it
+LINE_CHARS = 300  # characters of a linking line a link into a document shows, around the link
+
+
+def _link_out(row, how, through, named):
+    """A link out of a document, as `links` returns it: as written, and where it leads."""
+    _, _, _, field, line, kind, target, _, fragment, shown = row
+    link = {"target": target, "line": line, "kind": kind}
+    link |= {key: value for key, value in (("field", field), ("fragment", fragment), ("shown", shown)) if value}
+    via, docs = how
+    if via in VIA:
+        link |= {"id": named[docs[0]][0], "title": named[docs[0]][1], "via": via}
+    elif via == "ambiguous":
+        link["ambiguous"] = [named[doc][0] for doc in docs[: links.AMBIGUOUS_SHOWN]]
+    else:
+        link["unresolved"] = True
+    return link | ({"through": named[through][0]} if through else {})
+
+
+def _by_document(rows):
+    """Link rows by the document holding them, in order."""
+    found = {}
+    for row in rows:
+        found.setdefault(row[0], []).append(row)
+    return found
+
+
+def _lines_of(rows, text):
+    """The lines of a document holding these links, once each: their number, front-matter field, and text, around the
+    link if the line is long."""
+    every, found = text.split("\n"), {}
+    for _, _, _, field, line, _, target, *_ in rows:
+        if line not in found:
+            content = every[line - 1].strip()
+            if len(content) > LINE_CHARS:
+                start = max(0, content.find(target) - LINE_CHARS // 3)
+                end = start + LINE_CHARS
+                content = ("…" if start else "") + content[start:end] + ("…" if end < len(content) else "")
+            found[line] = {"line": line} | ({"field": field} if field else {}) | {"text": content}
+    return list(found.values())
 
 
 def _top(ids, scores, k):
@@ -525,6 +569,82 @@ class Index:
         root, source, path = self.db.execute(sql, (self._find(id)[0],)).fetchone()
         return Path(root) / source if source == path else None
 
+    # --- links between notes (see `links`) -----------------------------------
+
+    def links(self, id, direction="out", depth=1, field=None, k=50):
+        """The links of a document `id` (as for `get`), as {"id", "title", "out", "in"}: "out" the links it holds, in
+        order, each with where it leads; "in" the documents linking it, by path, each with the lines that do. Depth 2
+        adds those one link further, each with the document it was reached `through`; `field` keeps to links in that
+        front-matter field; k caps each way."""
+        if direction not in ("out", "in", "both"):
+            raise ValueError(f'direction must be "out", "in" or "both", got {direction!r}')
+        if depth not in (1, 2) or isinstance(depth, bool):
+            raise ValueError(f"depth must be 1 or 2, got {depth!r}")
+        if field is not None and not isinstance(field, str):
+            raise ValueError(f"field must be the name of a front-matter field, got {field!r}")
+        k = _check_k(k)
+        doc, whole, title, _, _ = self._find(id)
+        resolver, found = links.Resolver(self.db), {"id": whole, "title": title}
+        if direction != "in":
+            found["out"] = self._out(resolver, doc, depth, field, k)
+        if direction != "out":
+            found["in"] = self._in(resolver, doc, depth, field, k)
+        return found
+
+    def _out(self, resolver, doc, depth, field, k):
+        """The links out of a document, and with depth 2, the documents they lead to link: (row, how, through)."""
+        first = links.outgoing(self.db, resolver, doc, field)
+        found = [(row, how, None) for row, how in first]
+        if depth == 2:
+            reached = [docs[0] for _, (via, docs) in first if via in VIA]
+            seen = {doc, *reached}
+            for step in dict.fromkeys(reached):
+                for row, (via, docs) in links.outgoing(self.db, resolver, step, field):
+                    if via in VIA and docs[0] not in seen:
+                        seen.add(docs[0])
+                        found.append((row, (via, docs), step))
+        found = found[:k]
+        named = self._named([d for _, (_, docs), through in found for d in [*docs, through] if d])
+        return [_link_out(row, how, through, named) for row, how, through in found]
+
+    def _in(self, resolver, doc, depth, field, k):
+        """The documents linking a document, and with depth 2, those linking them: (doc, its links, through)."""
+        first = _by_document(links.incoming(self.db, resolver, doc, field))
+        found = [(source, rows, None) for source, rows in first.items()]
+        if depth == 2:
+            seen = {doc, *first}
+            for step in first:
+                for source, rows in _by_document(links.incoming(self.db, resolver, step, field)).items():
+                    if source not in seen:
+                        seen.add(source)
+                        found.append((source, rows, step))
+        found = found[:k]
+        named = self._named([d for source, _, through in found for d in (source, through) if d])
+        sql = "SELECT id, text FROM docs WHERE id IN (SELECT value FROM json_each(?))"
+        texts = dict(self.db.execute(sql, (json.dumps([source for source, _, _ in found]),)))
+        return [
+            {"id": named[source][0], "title": named[source][1], "links": _lines_of(rows, texts[source])}
+            | ({"through": named[through][0]} if through else {})
+            for source, rows, through in found
+        ]
+
+    def _named(self, docs):
+        """The whole id and title of documents, by row id."""
+        sql = """SELECT d.id, co.name || '/' || d.path, d.title FROM docs d JOIN collections co ON co.id = d.collection
+                 WHERE d.id IN (SELECT value FROM json_each(?))"""
+        return {doc: (whole, title) for doc, whole, title in self.db.execute(sql, (json.dumps(list(set(docs))),))}
+
+    def unresolved(self, collection=None, k=50):
+        """Link targets no document answers to, in a collection or in all: notes not written yet. The most linked
+        first, each with how many documents link it and the ids of a few of them."""
+        k, cid = _check_k(k), _collection_id(self.db, collection) if collection else None
+        found = sorted(links.unresolved(self.db, cid), key=lambda t: (-len(t[2]), t[1]))[:k]
+        named = self._named([doc for _, _, docs, _ in found for doc in docs])
+        return [
+            {"target": target, "docs": len(docs), "ids": sorted(named[doc][0] for doc in docs)[:LINKING_SHOWN]}
+            for _, target, docs, _ in found
+        ]
+
     def fields(self, collection, docs):
         """The front-matter fields of a collection (by id with `docs` documents), from a sample spread over it."""
         sql = """SELECT DISTINCT j.key FROM (SELECT meta FROM docs WHERE collection = ? AND id % ? = 0 LIMIT ?) d,
@@ -536,11 +656,21 @@ class Index:
             SELECT co.id, co.name, co.path, count(DISTINCT d.id), count(c.id), count(v.chunk) FROM collections co
             LEFT JOIN docs d ON d.collection = co.id LEFT JOIN chunks c ON c.doc = d.id
             LEFT JOIN vectors v ON v.chunk = c.id GROUP BY co.id ORDER BY co.name""").fetchall()
+        linked, broken = self.link_counts()
         return {
             "index": self.db.execute("PRAGMA database_list").fetchone()[2],
             "model": store.get_meta(self.db, "model"),
             "collections": [
                 {"name": n, "path": p, "docs": d, "chunks": c, "embedded": e, "fields": self.fields(i, d)}
+                | {"links": linked.get(i, 0), "unresolved": broken.get(i, 0)}
                 for i, n, p, d, c, e in rows
             ],
         }
+
+    def link_counts(self):
+        """How many links the notes of each collection hold, and how many of them are unresolved, by collection id."""
+        linked = dict(self.db.execute("SELECT collection, count(*) FROM links GROUP BY collection"))
+        broken = Counter()
+        for cid, _, _, n in links.unresolved(self.db):
+            broken[cid] += n
+        return linked, broken

@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
 from itertools import repeat
 
-from . import console, embed, readers, store
+from . import console, embed, links, readers, store
 
 SKIP_DIRS = {"node_modules", "__pycache__"}
 WRITE_BATCH = 5000  # files per commit
@@ -62,7 +62,8 @@ def _read(pool, workers, fields, batch):
 
 
 def _insert(db, cid, sid, path, doc):
-    """Add a document and its chunks, and return its id. Their keyword entries come with their file's (see _store)."""
+    """Add a document, its chunks, its links and, if it is a whole file, its names, and return its id. Its keyword
+    entries come with its file's (see _store)."""
     meta = json.dumps(doc.meta, ensure_ascii=False)
     doc_id = db.execute(
         "INSERT INTO docs(collection, source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?,?)",
@@ -72,6 +73,8 @@ def _insert(db, cid, sid, path, doc):
         "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?,?,?,?,?,?)",
         [(doc_id, seq, first, last, pos, length) for seq, (first, last, pos, length) in enumerate(doc.chunks)],
     )
+    if doc.links or not doc.key:  # a JSON Lines record has no name, and no links: millions of them cost nothing
+        links.save(db, [(doc_id, cid, path, doc.meta, doc.links, not doc.key)])
     return doc_id
 
 
@@ -100,7 +103,7 @@ def _store(db, cid, sid, rel, docs, counts, note):
     counts["removed"] += len(gone)
 
 
-REFRESH_BATCH = 1000  # documents read again from the index at a time
+REFRESH_BATCH = 1000  # files read again from the index at a time
 
 
 def retitle(db, name, title_from):
@@ -109,36 +112,65 @@ def retitle(db, name, title_from):
     passages lost their vectors for `sift embed` to embed again."""
     cid, fields = store.set_title_from(db, name, title_from)
     changed = dropped = 0
-    for rows in _notes(db, cid):
-        c, d = _refresh(db, rows, fields)
+    for _, files in _files(db, cid):
+        c, d = _reread(db, cid, files, fields)
         changed, dropped = changed + c, dropped + d
     db.commit()
     return changed, dropped
 
 
-def _notes(db, cid):
-    """The indexed Markdown and text files of a collection, REFRESH_BATCH at a time: (id, path, title, meta, text) of
-    each. A file's document is the one with the file's path; JSON Lines files hold records."""
-    sql = """SELECT s.id, d.id, d.path, d.title, d.meta, d.text FROM sources s
-             JOIN docs d ON d.collection = s.collection AND d.path = s.path AND d.source = s.id
+def add_links(db):
+    """Read every indexed file's document again from the text the index holds, as this sift reads it, and store its
+    links and names: what an index of sift 1.0 lacks. Front matter is read again too, as lists of unquoted items were
+    text before. No file is read; nothing is embedded again, unless its title changed (see _reread)."""
+    total = db.execute("SELECT count(*) FROM sources").fetchone()[0]
+    console.say(f"reading links from the {console.count(total, 'file')} in the index, once ...")
+    done = 0
+    with console.Progress(total, "files", prefix="links: ") as progress:
+        for cid, fields in db.execute("SELECT id, fields FROM collections").fetchall():
+            for n, files in _files(db, cid):
+                _reread(db, cid, files, json.loads(fields) if fields else {})
+                done += n
+                progress.update(done)
+    console.say(f"links read in {console.duration(progress.elapsed)}")
+
+
+def _files(db, cid):
+    """The documents of a collection's files, REFRESH_BATCH files at a time: how many files, and (id, path, title,
+    meta) of their documents. A file's document has the file's path; a JSON Lines file has records instead."""
+    sql = """SELECT s.id, d.id, d.path, d.title, d.meta FROM sources s
+             LEFT JOIN docs d ON d.collection = s.collection AND d.path = s.path AND d.source = s.id
              WHERE s.collection = ? AND s.id > ? ORDER BY s.id LIMIT ?"""
     after = 0
     while rows := db.execute(sql, (cid, after, REFRESH_BATCH)).fetchall():
         after = rows[-1][0]
-        yield [row[1:] for row in rows if row[2].lower().endswith(readers.TEXT)]
+        yield len(rows), [row[1:] for row in rows if row[1] is not None]
 
 
-def _refresh(db, rows, fields):
-    """Read notes again from the text the index holds, (id, path, title, meta, text) of each, as this sift reads them
-    with the collection's `fields`. Titles and front matter that changed go into the documents and the keyword index;
-    passages embedded with a title that changed lose their vectors. Returns how many documents changed, and how many
-    vectors went."""
-    changed = {}
-    for doc_id, path, title, meta, text in rows:
-        doc = readers.note(text, path.rsplit("/", 1)[-1], fields)
+def _reread(db, cid, files, fields):
+    """Read the documents of files again from the index, (id, path, title, meta) of each: Markdown and text files from
+    the text the index holds, as this sift reads them with the collection's `fields`, other files only for their
+    names. Their names and links are stored anew; titles and front matter that changed go into the documents and the
+    keyword index, and passages embedded with a title that changed lose their vectors. Returns how many documents
+    changed, and how many vectors went."""
+    notes = [doc for doc, path, _, _ in files if path.lower().endswith(readers.TEXT)]
+    texts = dict(
+        db.execute("SELECT id, text FROM docs WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(notes),))
+    )
+    changed, saved = {}, []
+    for doc_id, path, title, meta in files:
+        if doc_id not in texts:
+            saved.append((doc_id, cid, path, json.loads(meta), (), True))
+            continue
+        doc = readers.note(texts[doc_id], path.rsplit("/", 1)[-1], fields)
+        saved.append((doc_id, cid, path, doc.meta, doc.links, True))
         stored = json.dumps(doc.meta, ensure_ascii=False)
         if (doc.title, stored) != (title, meta):
             changed[doc_id] = (title, doc.title, stored)
+    ids = json.dumps([doc for doc, *_ in files])
+    for table in ("links", "names"):
+        db.execute(f"DELETE FROM {table} WHERE doc IN (SELECT value FROM json_each(?))", (ids,))
+    links.save(db, saved)
     if not changed:
         return 0, 0
     store.keywords(db, list(changed), add=False)

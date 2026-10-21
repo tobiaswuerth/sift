@@ -448,6 +448,7 @@ def test_status(embedded):
     path = status["collections"][0]["path"]
     assert status["collections"] == [
         {"name": "notes", "path": path, "docs": 3, "chunks": 3, "embedded": 3, "fields": fields}
+        | {"links": 0, "unresolved": 0}
     ]
 
 
