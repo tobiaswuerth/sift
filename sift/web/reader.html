@@ -1,0 +1,29 @@
+<article id="reader" hx-boost="true" hx-target="#explore" hx-swap="outerHTML" hx-push-url="true" aria-label="Document">
+{% if reader and reader.error %}
+  <p class="error">{{ reader.error }}</p>
+{% elif reader %}
+  <header>
+    <h1>{{ reader.title }}</h1>
+    <div class="actions">
+      <code title="The document's id, as searches and agents name it">{{ reader.id }}</code>
+      <a href="{{ reader.similar }}">Similar</a>
+      {% if reader.file %}<a href="{{ reader.file }}" target="_blank" rel="noopener" hx-boost="false">Open file</a>{% endif %}
+    </div>
+    {% if reader.fields %}
+    <dl class="fields">
+      {% for key, values in reader.fields %}
+      <dt>{{ key }}</dt>
+      <dd>{% for v in values %}{% if v.link %}<a href="{{ v.link }}" target="_blank" rel="noopener" hx-boost="false">{{ v.value }}</a>{% elif v.href %}<a href="{{ v.href }}">{{ v.value }}</a>{% else %}<span>{{ v.value }}</span>{% endif %}{% endfor %}</dd>
+      {% endfor %}
+    </dl>
+    {% endif %}
+  </header>
+  <div class="text">
+    {% for line in reader.lines %}
+    <div class="l{% if line.kind %} {{ line.kind }}{% endif %}{% if line.hit %} hit{% endif %}" id="L{{ line.n }}">{{ line.text }}</div>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="empty">Pick a result to read it here.<br><kbd>/</kbd> search · <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Enter</kbd> open</p>
+{% endif %}
+</article>

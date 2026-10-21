@@ -22,6 +22,7 @@ dependencies = [
     "nvidia-ml-py>=12",  # NVML: free GPU memory as nvidia-smi sees it
     "xberg>=1.3",  # reads PDF, office files, e-books and web pages
     "cryptography>=42",  # the certificate `sift worker` makes for HTTPS
+    "jinja2>=3.1",  # the pages of `sift ui`
 ]
 keywords = ["search", "rag", "embeddings", "mcp", "markdown", "pdf", "bm25", "semantic-search"]
 classifiers = [
@@ -58,6 +59,9 @@ sift-rag = "sift.cli:main"  # so that `uvx sift-rag ...` works: uvx runs the com
 
 [tool.setuptools]
 packages = ["sift"]
+
+[tool.setuptools.package-data]
+sift = ["web/*.html", "web/static/*"]  # the pages, styles and scripts of `sift ui`
 
 [tool.setuptools.dynamic]
 version = { attr = "sift.__version__" }

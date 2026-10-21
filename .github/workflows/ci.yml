@@ -68,5 +68,9 @@ jobs:
           uv pip install --python /tmp/clean --no-deps dist/*.whl
           /tmp/clean/bin/sift --version
           /tmp/clean/bin/sift-rag --version
+      - name: Check that the wheel holds the pages and scripts of `sift ui`
+        run: |
+          /tmp/clean/bin/python -c "import pathlib, sift; web = pathlib.Path(sift.__file__).parent / 'web'; \
+            assert (web / 'page.html').is_file() and (web / 'static' / 'htmx.min.js').is_file()"
       - name: Check that the dependencies resolve
         run: uv pip install --python /tmp/clean --dry-run dist/*.whl

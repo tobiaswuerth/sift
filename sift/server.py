@@ -229,9 +229,23 @@ async def release_when_idle(models):
         models.release_idle()
 
 
-async def _serve_http(mcp, host, port):
+def http_app(mcp, index, host):
+    """The app `sift serve` runs over HTTP: MCP under /mcp, and the UI under /ui, where the address alone leads."""
+    from starlette.responses import RedirectResponse
+    from starlette.routing import Mount, Route
+
+    from . import ui
+
+    async def home(request):
+        return RedirectResponse(ui.PREFIX)
+
     app = mcp.streamable_http_app(host=host)  # the host decides on DNS-rebinding protection
-    await serve_app(app, host, port, mcp.settings.log_level.lower())
+    app.router.routes += [Mount("/ui", ui.app(index, host)), Route("/", home)]
+    return app
+
+
+async def _serve_http(mcp, index, host, port):
+    await serve_app(http_app(mcp, index, host), host, port, mcp.settings.log_level.lower())
 
 
 async def serve_app(app, host, port, log_level="info", access_log=True, **options):
@@ -258,15 +272,16 @@ def _no_cancelled_requests(record):
     return not (record.exc_info and isinstance(record.exc_info[1], asyncio.CancelledError))
 
 
-async def _serve(mcp, host, port, stdio, models):
+async def _serve(mcp, index, host, port, stdio, models):
     # One event loop for the transport and the idle check: both stay on the main thread, where PyTorch must run.
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(release_when_idle, models)
         if stdio:
             await mcp.run_stdio_async()
         else:
-            console.say(f"sift MCP server on http://{host}:{port}/mcp")
-            await _serve_http(mcp, host, port)
+            local = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+            console.say(f"sift MCP server on http://{host}:{port}/mcp; browse the index at http://{local}:{port}/ui/")
+            await _serve_http(mcp, index, host, port)
         tasks.cancel_scope.cancel()
 
 
@@ -284,6 +299,6 @@ def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
         ) as e:  # a worker that doesn't answer, no vectors yet: keyword search works
             console.say(f"warning: {e}")
     try:
-        anyio.run(_serve, mcp, host, port, stdio, models)
+        anyio.run(_serve, mcp, index, host, port, stdio, models)
     except BaseExceptionGroup as group:  # from the task group; the error inside is the transport's (or Ctrl+C)
         raise group.exceptions[0] from None

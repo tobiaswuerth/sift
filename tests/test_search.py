@@ -796,6 +796,48 @@ def test_get_by_file_name_needs_the_whole_name(corpus, bad):
         Index(corpus[0]).get(bad)
 
 
+def test_browse_lists_documents_without_a_query(corpus):
+    docs = Index(corpus[0]).browse()
+    assert ids(docs) == ["notes/plain.txt", "notes/rl.md", "notes/robots/brush.md"]  # by path
+    assert docs[1]["title"] == "Reward shaping"
+    assert docs[1]["text"].startswith("# Reward shaping")  # the document's start, as a hit's passage
+
+
+def test_browse_takes_what_searches_take(corpus):
+    index = Index(corpus[0])
+    assert ids(index.browse(path="robots/*")) == ["notes/robots/brush.md"]
+    assert ids(index.browse(collection="notes", k=1)) == ["notes/plain.txt"]
+    assert index.browse(filters={"year": 2024}, fields=["year"], compact=True) == [
+        {"id": "notes/robots/brush.md", "title": "Brush stroke planning", "fields": {"year": 2024}}
+    ]
+    assert ids(index.browse(sort="-year"))[0] == "notes/robots/brush.md"  # those without the field come last
+    with pytest.raises(LookupError, match="no collection named 'nope'"):
+        index.browse(collection="nope")
+
+
+def test_folders_are_those_directly_inside_a_path(corpus):
+    db, root = corpus
+    for path in ("robots/arms/grip.md", "robots/arms/lift.md", "robots/legs/walk.md", "z/deep/er/x.md"):
+        write(root / path, "# x\n")
+    indexing.index(db)
+    index = Index(db)
+    assert index.folders("notes") == ["robots", "z"]
+    assert index.folders("notes", "robots/") == ["arms", "legs"]
+    assert index.folders("notes", "robots/arms/") == []
+    with pytest.raises(LookupError, match="no collection named 'nope'"):
+        index.folders("nope")
+
+
+def test_the_file_a_document_came_from(corpus, tmp_path):
+    db, root = corpus
+    write(tmp_path / "qa" / "faq.jsonl", '{"id": "q1", "text": "a record"}\n')
+    store.add_collection(db, tmp_path / "qa", "qa")
+    indexing.index(db)
+    index = Index(db)
+    assert index.file("notes/brush.md") == root / "robots" / "brush.md"  # ids as for get
+    assert index.file("qa/faq/q1") is None  # a record is a part of its file, not one of its own
+
+
 def test_get_by_a_file_name_many_documents_have(corpus):
     db, root = corpus
     for folder in "abcdef":

@@ -1,0 +1,67 @@
+<div id="explore" hx-boost="true" hx-target="#explore" hx-swap="outerHTML" hx-push-url="true">
+<nav class="side" aria-label="Collections and filters">
+  <section>
+    <h2>Collections</h2>
+    <ul>
+      {% for name, n in collections %}
+      <li><a href="{{ view.href(c=name, path='', f=(), q='', similar='', k=30) }}"{% if name == view.c %} class="on"{% endif %}>{{ name }} <span class="n">{{ n|num }}</span></a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% if folders %}
+  <section>
+    <h2>Folders</h2>
+    <ul>
+      {% for name, href in folders %}
+      <li><a href="{{ href }}">{{ name }}/</a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+  {% for field, values in facets %}
+  <section class="facet">
+    <h2>{{ field }}</h2>
+    <ul>
+      {% for v in values %}
+      <li><a href="{{ v.href }}"{% if v.on %} class="on"{% endif %}>{{ v.value }} <span class="n">{{ v.count }}</span></a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+</nav>
+<section class="results" aria-label="Results">
+  <div class="scope">
+    {% if crumbs %}<nav class="crumbs">{% for name, href in crumbs %}<a href="{{ href }}">{{ name }}</a>{% if not loop.last %}<span>/</span>{% endif %}{% endfor %}</nav>{% endif %}
+    {% for label, href in chips %}<a class="chip" href="{{ href }}" title="Remove this filter">{{ label }}<span aria-hidden="true">×</span></a>{% endfor %}
+    {% if kind == "similar" %}<a class="chip" href="{{ view.href(similar='', k=30) }}" title="Back">Similar to {{ similar_title }}<span aria-hidden="true">×</span></a>{% endif %}
+    <span class="count">
+      {% if kind == "results" or kind == "similar" %}{{ hits|length }}{% if more %}+{% endif %} result{{ "" if hits|length == 1 else "s" }}
+      {% elif kind == "documents" %}{{ "first " if more }}{{ hits|length }} document{{ "" if hits|length == 1 else "s" }}{% endif %}
+    </span>
+  </div>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if kind == "overview" %}
+  <ul class="cards">
+    {% for name, n in collections %}
+    <li><a href="{{ view.href(c=name) }}"><strong>{{ name }}</strong><span>{{ n|num }} document{{ "" if n == 1 else "s" }}</span></a></li>
+    {% else %}
+    <li class="empty">Nothing is indexed yet: <code>sift add FOLDER</code>, then <code>sift index</code>.</li>
+    {% endfor %}
+  </ul>
+  {% elif not hits and not error %}
+  <p class="empty">Nothing found.</p>
+  {% endif %}
+  <ol class="hits">
+    {% for hit in hits %}
+    <li><a class="hit{% if hit.id == view.doc %} on{% endif %}" data-id="{{ hit.id }}" href="{{ hit.href }}" hx-target="#reader">
+      <span class="title">{{ hit.title }}</span>
+      {% if hit.bar is defined %}<span class="score" title="score {{ hit.score }}"><i style="width: {{ (hit.bar * 100)|round(1) }}%"></i></span>{% endif %}
+      <span class="id">{{ hit.id }}{% if hit.lines %}:{{ hit.lines }}{% endif %}</span>
+      <span class="snippet">{{ hit.snippet }}</span>
+    </a></li>
+    {% endfor %}
+  </ol>
+  {% if more %}<a class="more" href="{{ more }}">More</a>{% endif %}
+</section>
+</div>
+{% if oob %}{% include "controls.html" %}{% endif %}

@@ -14,40 +14,15 @@ import threading
 import time
 import types
 
-import anyio
 import numpy as np
 import pytest
 
 from sift import __version__, cli, embed, models, remote, store, worker
 from sift.search import Index
 
-from .conftest import FakeSentenceTransformer, NumpyModels, fake_vector, nobody_listens
+from .conftest import Client, FakeSentenceTransformer, NumpyModels, fake_vector, nobody_listens
 
 TOKEN = "s3cret-token"
-
-
-class Client:
-    """Requests to an app that runs on this, the main, thread, as under uvicorn. Starlette's TestClient runs it in a
-    thread of its own, where PyTorch crashes on Python 3.15 (macOS)."""
-
-    def __init__(self, app, headers=None):
-        self.app, self.headers = app, headers or {}
-
-    def request(self, method, path, **kwargs):
-        import httpx2  # what MCP and Starlette use
-
-        async def send():
-            transport = httpx2.ASGITransport(self.app, client=("testclient", 50000))
-            async with httpx2.AsyncClient(transport=transport, base_url="http://testserver", headers=self.headers) as c:
-                return await c.request(method, path, **kwargs)
-
-        return anyio.run(send)
-
-    def get(self, path, **kwargs):
-        return self.request("GET", path, **kwargs)
-
-    def post(self, path, **kwargs):
-        return self.request("POST", path, **kwargs)
 
 
 @pytest.fixture

@@ -1,0 +1,19 @@
+<div id="controls"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <div class="modes" role="radiogroup" aria-label="Search by">
+    {% for mode, label in modes.items() %}
+    <label title="{{ {'search': 'Exact words (BM25): fast, as you type', 'vsearch': 'Closeness in meaning: press Enter', 'query': 'Keywords and meaning, reranked: best for questions, press Enter'}[mode] }}"><input type="radio" name="mode" value="{{ mode }}"{% if mode == view.mode %} checked{% endif %}>{{ label }}</label>
+    {% endfor %}
+  </div>
+  <select name="sort" aria-label="Order">
+    <option value="">{{ "By relevance" if view.q or view.similar else "By path" }}</option>
+    {% for field in sortable %}
+    <option value="-{{ field }}"{% if view.sort == "-" ~ field %} selected{% endif %}>{{ field }} ↓</option>
+    <option value="{{ field }}"{% if view.sort == field %} selected{% endif %}>{{ field }} ↑</option>
+    {% endfor %}
+  </select>
+  {% if view.c %}<input type="hidden" name="c" value="{{ view.c }}">{% endif %}
+  {% if view.path %}<input type="hidden" name="path" value="{{ view.path }}">{% endif %}
+  {% for pair in view.f %}<input type="hidden" name="f" value="{{ pair }}">{% endfor %}
+  {% if view.doc %}<input type="hidden" name="doc" value="{{ view.doc }}">{% endif %}
+  {% if view.lines %}<input type="hidden" name="lines" value="{{ view.lines }}">{% endif %}
+</div>
