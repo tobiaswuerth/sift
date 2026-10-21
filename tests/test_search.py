@@ -1,3 +1,6 @@
+"""Searching the index: keyword, semantic and hybrid search, filters and sorting, documents like one, `get`, and
+browsing by folder."""
+
 import numpy as np
 import pytest
 

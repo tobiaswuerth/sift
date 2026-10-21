@@ -1,3 +1,5 @@
+"""`sift serve`: the MCP tools agents call, the errors and instructions they read, and the server around them."""
+
 import asyncio
 import json
 import logging

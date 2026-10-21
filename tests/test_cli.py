@@ -1,3 +1,5 @@
+"""The `sift` command, run as users run it: every subcommand, its options, and errors as messages."""
+
 import io
 import json
 import runpy
