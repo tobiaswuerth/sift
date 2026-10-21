@@ -849,7 +849,9 @@ def test_browse_lists_documents_of_front_matter_alone(corpus):
     db, root = corpus
     write(root / "empty.md", "---\ntitle: Only metadata\n---\n")
     indexing.index(db)
-    assert {"id": "notes/empty.md", "title": "Only metadata", "text": ""} in Index(db).browse()
+    # its passage is its front matter, as for search
+    assert {"id": "notes/empty.md", "title": "Only metadata", "text": "title: Only metadata"} in Index(db).browse()
+    assert [h["id"] for h in Index(db).search("metadata")] == ["notes/empty.md"]
 
 
 def test_browse_takes_what_searches_take(corpus):

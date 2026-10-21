@@ -72,13 +72,17 @@ def _insert(db, cid, sid, path, doc):
         "INSERT INTO docs(collection, source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?,?)",
         (cid, sid, path, doc.digest, doc.title, meta, doc.text),
     ).lastrowid
-    db.executemany(
-        "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?,?,?,?,?,?)",
-        [(doc_id, seq, first, last, pos, length) for seq, (first, last, pos, length) in enumerate(doc.chunks)],
-    )
+    _add_chunks(db, doc_id, doc.chunks)
     if doc.links or not doc.key:  # a JSON Lines record has no name, and no links: millions of them cost nothing
         links.save(db, [(doc_id, cid, path, doc.meta, doc.links, not doc.key)])
     return doc_id
+
+
+def _add_chunks(db, doc_id, chunks):
+    db.executemany(
+        "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?,?,?,?,?,?)",
+        [(doc_id, seq, first, last, pos, length) for seq, (first, last, pos, length) in enumerate(chunks)],
+    )
 
 
 def _store(db, cid, sid, rel, docs, counts, note):
@@ -154,13 +158,13 @@ def _reread(db, cid, files, fields):
     """Read the documents of files again from the index, (id, path, title, meta) of each: Markdown and text files from
     the text the index holds, as this sift reads them with the collection's `fields`, other files only for their
     names. Their names and links are stored anew; titles and front matter that changed go into the documents and the
-    keyword index, and passages embedded with a title that changed lose their vectors. Returns how many documents
-    changed, and how many vectors went."""
-    notes = [doc for doc, path, _, _ in files if path.lower().endswith(readers.TEXT)]
-    texts = dict(
-        db.execute("SELECT id, text FROM docs WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(notes),))
-    )
-    changed, saved = {}, []
+    keyword index, and passages embedded with a title that changed lose their vectors. A note of front matter alone
+    gets its passage (sift 1.0 gave it none). Returns how many documents changed, and how many vectors went."""
+    notes = json.dumps([doc for doc, path, _, _ in files if path.lower().endswith(readers.TEXT)])
+    texts = dict(db.execute("SELECT id, text FROM docs WHERE id IN (SELECT value FROM json_each(?))", (notes,)))
+    sql = "SELECT doc, count(*) FROM chunks WHERE doc IN (SELECT value FROM json_each(?)) GROUP BY doc"
+    passages = dict(db.execute(sql, (notes,)))
+    changed, fresh, saved = {}, {}, []
     for doc_id, path, title, meta in files:
         if doc_id not in texts:
             saved.append((doc_id, cid, path, json.loads(meta), (), True))
@@ -170,15 +174,19 @@ def _reread(db, cid, files, fields):
         stored = json.dumps(doc.meta, ensure_ascii=False)
         if (doc.title, stored) != (title, meta):
             changed[doc_id] = (title, doc.title, stored)
+        if doc.chunks and doc_id not in passages:
+            fresh[doc_id] = doc.chunks
     ids = json.dumps([doc for doc, *_ in files])
     for table in ("links", "names"):
         db.execute(f"DELETE FROM {table} WHERE doc IN (SELECT value FROM json_each(?))", (ids,))
     links.save(db, saved)
-    if not changed:
-        return 0, 0
     store.keywords(db, list(changed), add=False)
     db.executemany("UPDATE docs SET title = ?, meta = ? WHERE id = ?", [(t, m, i) for i, (_, t, m) in changed.items()])
-    store.keywords(db, list(changed))
+    for doc_id, chunks in fresh.items():
+        _add_chunks(db, doc_id, chunks)
+    store.keywords(db, list(changed.keys() | fresh.keys()))
+    if not changed:
+        return 0, 0
     sql = """SELECT c.id, c.doc, c.seq, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
              WHERE c.doc IN (SELECT value FROM json_each(?)) AND c.seq > 0"""
     stale = [

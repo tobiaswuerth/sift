@@ -221,6 +221,8 @@ def note(text, name, fields=None):
     title, meta, body, first_line = parse(text, Path(name).stem, (fields or {}).get("title_from", "heading"))
     offset = len(text) - len(body)  # the chunks are spans of the whole file, front matter included
     chunks = [(first, last, offset + pos, length) for first, last, pos, length in chunk(body, first_line)]
+    if not chunks and (m := FRONT_MATTER.match(text)) and m.group(1):  # front matter alone, as contact notes are
+        chunks = [(first, last, m.start(1) + pos, length) for first, last, pos, length in chunk(m.group(1), 2)]
     found = links(text, offset, first_line) if name.lower().endswith(MARKDOWN) else ()
     return Doc("", "", title, meta, text, chunks, found)
 

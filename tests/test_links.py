@@ -415,6 +415,20 @@ def test_an_index_of_sift_1_0_gets_its_links(linked, fake_models, home, capsys, 
     assert Index(db).search("Acme") == before
 
 
+def test_an_index_of_sift_1_0_gets_passages_for_notes_of_front_matter_alone(linked, home):
+    db, vault, _ = linked
+    write(vault / "01_People" / "Peter Frei.md", '---\norg: "[[Acme AG]]"\nemail: peter@acme.example\n---\n')
+    indexing.index(db)
+    (doc,) = db.execute("SELECT id FROM docs WHERE path = '01_People/Peter Frei.md'").fetchone()
+    store.keywords(db, [doc], add=False)
+    db.execute("DELETE FROM chunks WHERE doc = ?", (doc,))  # sift 1.0 gave it no passage
+    as_made_by_sift_1_0(db)
+    db.close()
+    db = store.connect(home)
+    assert "vault/01_People/Peter Frei.md" in [h["id"] for h in Index(db).search("Peter Frei")]
+    assert keywords_agree(db)
+
+
 def test_an_interrupted_upgrade_leaves_the_index_as_it_was(linked, home, monkeypatch):
     db = linked[0]
     as_made_by_sift_1_0(db)

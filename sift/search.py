@@ -664,8 +664,8 @@ class Index:
         linked_from=None,
     ):
         """Documents without a query, by path: what a collection, folder or filter holds. They come as hits without
-        lines and score, with the start of their text, after any front matter, as their passage; `sort` orders them
-        by a front-matter field instead, as in searches."""
+        lines and score, with the start of their first passage, after any front matter, as their passage; `sort`
+        orders them by a front-matter field instead, as in searches."""
         k, (where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
         order, by = "co.name, d.path", []
@@ -673,9 +673,9 @@ class Index:
             value = "json_extract(d.meta, ?)"
             order = f"{value} IS NULL, {value}{' DESC' if sort[0] == '-' else ''}, {order}"
             by = [_field(sort.removeprefix("-"))] * 2
-        # The passage starts where the first chunk does, after any front matter; as a subquery, not a join, so that
-        # sorting a whole collection doesn't join every document first (0.4 s, against 5 s, for 3 million).
-        first = f"SELECT substr(d.text, c.pos + 1, {START}) FROM chunks c WHERE c.doc = d.id AND c.seq = 0"
+        # The first chunk's start, after any front matter; as a subquery, not a join, so that sorting a whole collection
+        # doesn't join every document first (0.4 s, against 5 s, for 3 million).
+        first = f"SELECT substr(d.text, c.pos + 1, min(c.len, {START})) FROM chunks c WHERE c.doc = d.id AND c.seq = 0"
         sql = f"""SELECT co.name, d.path, d.title, d.meta, coalesce(({first}), '') FROM docs d
                   JOIN collections co ON co.id = d.collection WHERE {where} ORDER BY {order} LIMIT ?"""
         docs = []

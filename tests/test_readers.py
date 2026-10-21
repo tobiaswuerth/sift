@@ -89,6 +89,18 @@ def test_load_takes_titles_from_file_names_if_the_collection_says_so(tmp_path):
     assert readers.load(path)[0][0].title == "Summary"
 
 
+def test_a_note_of_front_matter_alone_is_its_front_matter(tmp_path):
+    # A vault's contact notes often hold properties only: without a passage, no search could find them, not even by
+    # their name.
+    doc = readers.note('---\norg: "[[Acme AG]]"\nemail: peter@acme.example\n---\n\n', "Peter Frei.md")
+    assert [(a, b, doc.text[p : p + n]) for a, b, p, n in doc.chunks] == [
+        (2, 3, 'org: "[[Acme AG]]"\nemail: peter@acme.example')
+    ]
+    assert readers.note("---\n---\n", "Empty.md").chunks == []
+    assert readers.note("---\n  \n---\n", "Blank.md").chunks == []
+    assert len(readers.note("---\na: 1\n---\nA body.\n", "Body.md").chunks) == 1  # the body alone, as before
+
+
 def test_parse_without_closing_front_matter_is_plain_text():
     title, meta, body, _ = readers.parse("---\ntitle: x\nno end\n", "file")
     assert (title, meta) == ("file", {})
