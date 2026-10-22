@@ -226,9 +226,9 @@ def test_documents_are_converted_in_worker_processes(library, tmp_path, monkeypa
 # --- saved emails ------------------------------------------------------------
 
 
-def email_file(tmp_path, *, name="mail.eml", body="Plain words.", html=None, attachments=(), **headers):
-    """An .eml file with these headers (From, To, Subject, ...), a plain body and, if given, its HTML alternative."""
-    from email import policy
+def message(*, body="Plain words.", html=None, attachments=(), **headers):
+    """An email with these headers (From, To, Subject, ...), a plain body and, if given, its HTML alternative, and
+    attachments: (file name, bytes, type), or (file name or None, a message) for a mail attached as message/rfc822."""
     from email.message import EmailMessage
 
     msg = EmailMessage()
@@ -241,11 +241,21 @@ def email_file(tmp_path, *, name="mail.eml", body="Plain words.", html=None, att
             msg.set_content(html, subtype="html")
         else:
             msg.add_alternative(html, subtype="html")
-    for filename, data, kind in attachments:
-        main, sub = kind.split("/")
-        msg.add_attachment(data, maintype=main, subtype=sub, filename=filename)
+    for filename, data, *kind in attachments:
+        if kind:
+            main, sub = kind[0].split("/")
+            msg.add_attachment(data, maintype=main, subtype=sub, filename=filename)
+        else:
+            msg.add_attachment(data, filename=filename)
+    return msg
+
+
+def email_file(tmp_path, *, name="mail.eml", **parts):
+    """An .eml file of the message these parts make (see `message`)."""
+    from email import policy
+
     path = tmp_path / name
-    path.write_bytes(msg.as_bytes(policy=policy.SMTP))
+    path.write_bytes(message(**parts).as_bytes(policy=policy.SMTP))
     return path
 
 
@@ -349,12 +359,12 @@ def test_attachments_sift_reads_are_documents_of_their_own(tmp_path):
             ("notes.md", b"# Notes, again\n", "text/markdown"),
             ("../../evil.md", b"# Evil\n", "text/markdown"),
             ("photo.png", b"\x89PNG", "image/png"),
-            ("forwarded.eml", b"Subject: inner\r\n\r\nInner.\r\n", "message/rfc822"),
+            ("forwarded.eml", message(Subject="inner", body="Inner.")),
         ],
     )
     docs, problems = readers.load(path)
     assert problems == []
-    assert [doc.key for doc in docs] == ["", "contract.pdf", "notes.md", "notes (2).md", "evil.md"]
+    assert [doc.key for doc in docs] == ["", "contract.pdf", "notes.md", "notes (2).md", "evil.md", "forwarded.eml"]
     mail, pdf = docs[:2]
     assert mail.meta["attachments"] == ["contract.pdf", "notes.md", "notes.md", "evil.md", "photo.png", "forwarded.eml"]
     assert "Attachments: contract.pdf, notes.md, notes.md, evil.md, photo.png, forwarded.eml" in mail.text
@@ -367,6 +377,57 @@ def test_an_attachment_named_like_an_extension_has_none(tmp_path):
     path = email_file(tmp_path, Subject="Odd", attachments=[(".md", b"# Dot\n", "text/markdown")])
     (mail,), problems = readers.load(path)
     assert (mail.meta["attachments"], problems) == ([".md"], [])
+
+
+def test_a_mail_attached_to_a_mail_is_read_as_one(tmp_path):
+    # As mail clients forward a mail "as attachment": its headers, text and attachments are documents too, named by
+    # its subject if it has no file name; and a mail saved as .eml and attached as a file reads the same.
+    original = message(
+        Subject="Offer 2/2026",
+        From="Anna <anna@acme.example>",
+        body="The original words.",
+        attachments=[("contract.pdf", sample(".pdf").read_bytes(), "application/pdf")],
+    )
+    saved = b"Subject: Saved\r\n\r\nSaved words.\r\n"
+    path = email_file(
+        tmp_path,
+        Subject="Fwd: Offer",
+        attachments=[(None, original), ("saved.eml", saved, "application/octet-stream"), (None, message(body="x"))],
+    )
+    docs, problems = readers.load(path)
+    keys = ["", "Offer 2-2026.eml", "Offer 2-2026/contract.pdf", "saved.eml", "message.eml"]
+    assert ([doc.key for doc in docs], problems) == (keys, [])
+    mail, forwarded, pdf, saved_doc, _ = docs
+    assert mail.meta["attachments"] == ["Offer 2-2026.eml", "saved.eml", "message.eml"]
+    assert (forwarded.title, forwarded.meta["from"]) == ("Offer 2/2026", "anna@acme.example")
+    assert forwarded.text.endswith("The original words.")
+    assert PARAGRAPH in pdf.text
+    assert saved_doc.text == "# Saved\n\nSaved words."
+
+
+def test_mail_in_mail_is_read_three_levels_deep(tmp_path):
+    # A mail that nests mails without end must not take sift down with it; the deepest it reads lists the next.
+    inner = message(Subject="0")
+    for level in range(1, 6):
+        inner = message(Subject=str(level), attachments=[(None, inner)])
+    docs, problems = readers.load(email_file(tmp_path, Subject="top", attachments=[(None, inner)]))
+    assert ([doc.key for doc in docs], problems) == (["", "5.eml", "5/4.eml", "5/4/3.eml"], [])
+    assert docs[-1].meta["attachments"] == ["2.eml"]
+
+
+def test_a_damaged_mail_attached_is_reported_and_the_mail_still_reads(tmp_path, monkeypatch):
+    path = email_file(tmp_path, Subject="Fwd", attachments=[(None, message(Subject="inner"))])
+    real = readers._mail_headers
+    monkeypatch.setattr(readers, "_mail_headers", lambda msg: real(msg) if msg["subject"] == "Fwd" else 1 / 0)
+    docs, problems = readers.load(path)
+    assert ([doc.key for doc in docs], problems) == ([""], ["inner.eml: skipped (division by zero)"])
+
+
+def test_an_attachment_without_a_name_is_passed_over(tmp_path):
+    # Its document would be named by its file name; but for a mail, it has nothing else to be named by.
+    path = email_file(tmp_path, Subject="x", attachments=[(None, b"# Notes\n", "text/markdown")])
+    (mail,), problems = readers.load(path)
+    assert (mail.meta, problems) == ({}, [])
 
 
 def test_an_email_of_attachments_alone(tmp_path):

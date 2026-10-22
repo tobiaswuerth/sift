@@ -295,7 +295,9 @@ A saved email (`.eml`) is a document titled by its subject, with `From`, `To`, `
 is its plain text, else its HTML as Markdown. Its metadata holds the addresses bare, for filters, and the date as
 ISO 8601 in UTC, for ranges and sorting: `from`, `to`, `cc`, `date`, `message_id`, `in_reply_to` and `attachments`,
 the file names. An attachment sift reads (Markdown, text, PDF, office files and the rest above) is a document of its
-own, named by its file name: `mail/2026/offer.eml` holds `mail/2026/offer/contract.pdf`.
+own, named by its file name: `mail/2026/offer.eml` holds `mail/2026/offer/contract.pdf`. So is a mail attached to a
+mail, as mail clients forward one "as attachment", named by its subject if it has no file name, with its attachments
+below it, three levels deep: `mail/2026/fwd.eml` holds `mail/2026/fwd/Offer.eml` and `mail/2026/fwd/Offer/price.pdf`.
 
 ```bash
 sift search "price list" -f from=anna@acme.example -f "date>=2026-06"

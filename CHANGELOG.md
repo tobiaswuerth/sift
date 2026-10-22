@@ -13,7 +13,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   `.siftignore` sift can't read, as an offline OneDrive file, skips its collection, which keeps its documents.
 - Saved emails (`.eml`): one document per mail, titled by its subject, with its sender, recipients and date above
   its text and as metadata for filters: the addresses bare, the date as ISO 8601 in UTC, so mails sort by time.
-  Each attachment sift reads is a document of its own.
+  Each attachment sift reads is a document of its own, a text file in the charset its mail declares; so is a mail
+  attached to a mail, as one forwarded "as attachment", with its own attachments, three levels deep.
 - `sift status --json`, as the other commands take it; `status` prints JSON anyway.
 
 ### Changed

@@ -13,6 +13,7 @@ import re
 import unicodedata
 from collections import namedtuple
 from datetime import UTC
+from functools import partial
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -396,22 +397,26 @@ def _document(raw, name, fields):
     return [Doc("", _digest(raw), title, meta, doc.content, list(chunk(doc.content)))], []
 
 
-def _email(raw, name, fields):
+MAIL_DEPTH = 3  # levels of mail attached to mail that sift reads; a mail that nests mails without end must not stall it
+
+
+def _email(raw, name, fields, depth=MAIL_DEPTH):
     """A saved email (.eml): one document, titled by its subject, with its sender, recipients, date and ids as metadata
     (the addresses bare, for filters) and above its text, which is its plain text, else its HTML as Markdown; and one
-    document for each attachment sift reads, named by its file name. A damaged mail is skipped, as a document is."""
+    document for each attachment sift reads, named by its file name, and a mail attached `depth` levels deep with its
+    own. A damaged mail is skipped, as a document is."""
     from email import message_from_bytes, policy
 
     try:
         msg = message_from_bytes(raw, policy=policy.default)
         meta, shown = _mail_headers(msg)
-        if names := [n for part in msg.iter_attachments() if (n := _file_name(part))]:
+        if names := [n for part in msg.iter_attachments() if (n := _attachment_name(part))]:
             meta["attachments"] = names
             shown.append("Attachments: " + ", ".join(names))
         title = str(msg.get("subject") or "").strip() or Path(name).stem
         body, problems = _mail_text(msg, fields)
         text = "\n\n".join(part for part in (f"# {title}", "\n".join(shown), body) if part)
-        attached, trouble = _attachments(msg, fields)
+        attached, trouble = _attachments(msg, fields, depth)
     except Exception as error:  # a damaged mail can fail in many ways; it must not stop indexing the others
         return [], [f"skipped ({error})"]
     return [Doc("", _digest(raw), title, meta, text, list(chunk(text))), *attached], problems + trouble
@@ -452,25 +457,48 @@ def _mail_text(msg, fields):
     return (docs[0].text.strip() if docs else ""), [f"its HTML: {problem}" for problem in problems]
 
 
-ATTACHED = (*TEXT, *DOCUMENTS)  # the attachments of an email sift reads: whole files; no records, no mail in mail
+ATTACHED = (*TEXT, *DOCUMENTS)  # the files attached to an email sift reads, besides mails: whole files, no records
 
 
-def _attachments(msg, fields):
-    """The documents of an email's attachments sift reads, each named by its file name, made unique; and what had to
-    be skipped of them."""
+def _attachments(msg, fields, depth):
+    """The documents of an email's attachments sift reads, each named by its file name, made unique, with those of a
+    mail attached while `depth` lasts below it; and what had to be skipped of them."""
     docs, problems, taken = [], [], set()
     for part in msg.iter_attachments():
-        name = _file_name(part)
-        if not (name and extension(name) in ATTACHED):
+        name = _attachment_name(part)
+        if not (name and (read := _reader(part, name, depth))):
             continue
-        raw = part.get_payload(decode=True) or b""
-        if extension(name) in TEXT:
-            raw = _as_utf8(raw, part.get_content_charset())
-        found, trouble = READERS[extension(name)](raw, name, fields)
+        found, trouble = read(_content(part, name), name, fields)
         key = _unique(name, taken)
-        docs += [doc._replace(key=key) for doc in found]
+        docs += [doc._replace(key=_within(key, doc.key)) for doc in found]
         problems += [f"{name}: {problem}" for problem in trouble]
     return docs, problems
+
+
+def _reader(part, name, depth):
+    """How sift reads an attachment: a mail while `depth` lasts, a file it reads whole; None for others."""
+    if _attached_mail(part) is not None or extension(name) in EMAIL:
+        return partial(_email, depth=depth - 1) if depth else None
+    return READERS[extension(name)] if extension(name) in ATTACHED else None
+
+
+def _content(part, name):
+    """An attachment's bytes: a mail attached as message/rfc822 as that mail's, a text file's as UTF-8."""
+    if (mail := _attached_mail(part)) is not None:
+        return mail.as_bytes()
+    raw = part.get_payload(decode=True) or b""
+    return _as_utf8(raw, part.get_content_charset()) if extension(name) in TEXT else raw
+
+
+def _attached_mail(part):
+    """The mail a message/rfc822 attachment holds, or None."""
+    payload = part.get_payload() if part.get_content_type() == "message/rfc822" else None
+    return payload[0] if isinstance(payload, list) and payload else None
+
+
+def _within(key, inner):
+    """The key of the document keyed `inner` of the attachment keyed `key`: the attachment's own, or one below it."""
+    return f"{posixpath.splitext(key)[0]}/{inner}" if inner else key
 
 
 def _as_utf8(raw, charset):
@@ -492,10 +520,16 @@ def _utf8(raw):
     return True
 
 
-def _file_name(part):
-    """An attachment's file name without any folders it claims, or None if it has none."""
+def _attachment_name(part):
+    """An attachment's file name without any folders it claims; a mail attached without one named by its subject, or
+    "message.eml". None for any other attachment without a name."""
     name = re.split(r"[\\/]", part.get_filename() or "")[-1].strip()
-    return name if name not in ("", ".", "..") else None
+    if name not in ("", ".", ".."):
+        return name
+    if (mail := _attached_mail(part)) is None:
+        return None
+    subject = re.sub(r"[\\/]", "-", str(mail.get("subject") or "")).strip(" .")
+    return f"{subject or 'message'}.eml"
 
 
 def _unique(name, taken):
