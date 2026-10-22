@@ -157,6 +157,11 @@ tags:
 ---
 ```
 
+A value is read as JSON first, so a program that writes front matter can write each value as JSON on its line and
+rely on it: a JSON string reads back as exactly that string, whatever it holds (quotes, colons, `#`, brackets, `---`,
+`\n`), and numbers, `true`, `false`, `null`, lists and objects read as such. Anything that isn't JSON is read as
+described above.
+
 ```bash
 sift query "per diem abroad" -f departments=finance -f year=2025
 sift search policy -f departments=finance -f departments=legal   # in either department
