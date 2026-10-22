@@ -177,6 +177,13 @@ def add_collection(db, path, name=None, fields=None):
     return name
 
 
+def no_collection(db, name):
+    """The error for a collection the index doesn't have: it names those it has."""
+    names = [n for (n,) in db.execute("SELECT name FROM collections ORDER BY name")]
+    there = f"the collections are {', '.join(names)}" if names else "none is registered yet: `sift add FOLDER`"
+    return LookupError(f"no collection named {name!r}; {there}")
+
+
 def collection_at(db, path):
     """The name of the collection of the folder `path`, or None."""
     path = os.path.normcase(Path(path).expanduser().resolve())

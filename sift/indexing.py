@@ -13,7 +13,8 @@ import time
 from collections import Counter, namedtuple
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
-from itertools import repeat
+from itertools import repeat, takewhile
+from pathlib import Path
 
 from . import console, embed, links, readers, store
 
@@ -244,13 +245,13 @@ def _locate(db, path):
         full = os.path.normpath(given)
         inside = [c for c in collections if os.path.normcase(full).startswith(os.path.normcase(os.path.join(c[2], "")))]
         if not inside:
-            raise ValueError(f"{path} is in no collection")
+            raise ValueError(_nowhere(path, full, collections))
         (cid, name, root, fields), rel = inside[0], os.path.relpath(full, inside[0][2]).replace(os.sep, "/")
     else:
         name, _, rel = path.replace("\\", "/").partition("/")
         match = [c for c in collections if c[1] == name]
         if not match:
-            raise LookupError(f"no collection named {name!r}")
+            raise store.no_collection(db, name)
         (cid, name, root, fields), rel = match[0], posixpath.normpath(rel) if rel else ""
         if rel in ("", "."):
             raise ValueError(f"{path!r}: name a file of the collection, as collection/path, or by its absolute path")
@@ -278,6 +279,29 @@ def _locate(db, path):
     if not os.path.lexists(os.path.join(root, *parts)):  # gone: the file as indexed, in whatever spelling
         rel = next(iter(_indexed_as(db, cid, rel)), rel)
     return cid, name, root, fields, rel
+
+
+NEAREST_SHOWN = 5  # collections an error about a file in none names, the nearest first
+
+
+def _nowhere(path, full, collections):
+    """Why the file at `full` is in no collection, and how it could be: the collections' folders, nearest first, and
+    the `sift add` that would cover it."""
+
+    parts = Path(os.path.normcase(full)).parts
+
+    def shared(root):  # how many folders, from the drive or root on, the file and the folder have in common
+        return len(list(takewhile(lambda pair: pair[0] == pair[1], zip(parts, Path(os.path.normcase(root)).parts))))
+
+    nearest = sorted(collections, key=lambda c: (-shared(c[2]), c[1]))
+    listing = "; ".join(f"{name}: {root}" for _, name, root, _ in nearest[:NEAREST_SHOWN])
+    listing += "; ..." if len(nearest) > NEAREST_SHOWN else ""
+    head = f"The collections and their folders: {listing}." if collections else "none is registered yet."
+    folder = os.path.dirname(full)
+    return (
+        f"{path} is in no collection{'.' if collections else ':'} {head} To index files there, add their folder as a "
+        f"collection: `sift add {folder}`"
+    )
 
 
 def _spelled(root, parts):

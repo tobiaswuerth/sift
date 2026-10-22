@@ -112,13 +112,14 @@ def test_similar_tool(mcp):
 
 def test_instructions_tell_agents_what_is_indexed(mcp):
     # Agents read these when they connect: without the collections they can't tell when sift is worth asking.
-    assert "notes: 3 documents" in mcp.instructions
+    assert "): 3 documents" in mcp.instructions
     assert "before answering from memory" in mcp.instructions
 
 
-def test_instructions_name_the_front_matter_fields(mcp):
-    # Agents can filter on these and ask for them in hits, if they know they exist.
-    assert "- notes: 3 documents; front matter: categories, title, year" in mcp.instructions
+def test_instructions_name_the_front_matter_fields(mcp, embedded):
+    # Agents can filter on these and ask for them in hits, if they know they exist; and with the folder, they
+    # know which collection a file they write belongs to.
+    assert f"- notes ({embedded[1]}): 3 documents; front matter: categories, title, year" in mcp.instructions
 
 
 def test_instructions_for_an_empty_index(tmp_path):
@@ -134,10 +135,11 @@ def test_server_log_stays_quiet(mcp):
         assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING, name
 
 
-def test_get_and_status(mcp):
+def test_get_and_status(mcp, embedded):
     result = call(mcp, "get", {"id": "notes/rl.md"})
     assert result.content[0].text.startswith("# Reward shaping")
-    assert data(call(mcp, "status"))["collections"][0]["docs"] == 3
+    (collection,) = data(call(mcp, "status"))["collections"]
+    assert (collection["docs"], collection["path"]) == (3, str(embedded[1]))
 
 
 @pytest.mark.parametrize(
@@ -226,10 +228,13 @@ def test_unresolved_tool(linked):
 def test_instructions_count_links(linked):
     # Agents should know which collections hold linked notes, and how many of their links lead nowhere yet.
     mcp = server.build(Index(linked[0]))[0]
-    assert "- vault: 4 documents; front matter: aliases, colleague_of, org, reports_to; 6 links, 2 unresolved" in (
-        mcp.instructions
+    vault, work = linked[1:]
+    lines = mcp.instructions.split("\n")
+    assert (
+        f"- vault ({vault}): 4 documents; front matter: aliases, colleague_of, org, reports_to; 6 links, 2 unresolved"
+        in lines
     )
-    assert "- work: 1 document\n" in mcp.instructions + "\n"
+    assert f"- work ({work}): 1 document" in lines
     assert "`links`" in mcp.instructions
 
 
@@ -434,7 +439,7 @@ def test_instructions_for_a_collection_without_front_matter(tmp_path):
     db = store.connect(tmp_path / "home")
     store.add_collection(db, folder)
     indexing.index(db)
-    assert "- plain: 1 document\n" in server.build(Index(db))[0].instructions + "\n"
+    assert f"- plain ({folder.resolve()}): 1 document\n" in server.build(Index(db))[0].instructions + "\n"
 
 
 def test_http_shutdown_gives_up_on_unfinished_requests(embedded, fake_models, monkeypatch, capsys):

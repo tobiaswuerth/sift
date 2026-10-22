@@ -59,7 +59,7 @@ def _field(name, what="filter field"):
 def _collection_id(db, name):
     row = db.execute("SELECT id FROM collections WHERE name = ?", (name,)).fetchone()
     if not row:
-        raise LookupError(f"no collection named {name!r}")
+        raise store.no_collection(db, name)
     return row[0]
 
 
