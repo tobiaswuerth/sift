@@ -280,8 +280,9 @@ def _run(a, db):
 
         if a.names:
             raise SystemExit("error: give collections or --files, not both")
-        # a path from the current folder, as the shell completes it; anything else may be an id
-        paths = [os.path.abspath(p) if os.path.exists(p) else p for p in a.files]
+        # a path from the current folder, as the shell completes it, or ./ or ../ before a file gone; else an id
+        relative = tuple(dots + sep for dots in (".", "..") for sep in {"/", os.sep})
+        paths = [os.path.abspath(p) if os.path.exists(p) or p.startswith(relative) else p for p in a.files]
         for entry, _ in reindex(db, paths).files:
             console.say(f"{entry['id']}: {entry['status']}" + (f" ({entry['note']})" if "note" in entry else ""))
     elif a.cmd == "index":

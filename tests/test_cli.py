@@ -471,6 +471,23 @@ def test_index_files(cli_vault, capsys, monkeypatch):
     assert [h["id"] for h in hits] == ["vault/06_Topics/Wartungsvertrag 2027.md"]
 
 
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "./vault/02_Organizations/Acme AG.md",
+        pytest.param(
+            ".\\vault\\02_Organizations\\Acme AG.md",
+            marks=pytest.mark.skipif(sys.platform != "win32", reason="a backslash separates folders on Windows only"),
+        ),
+    ],
+)
+def test_index_files_takes_a_relative_path_to_a_file_gone(cli_vault, capsys, monkeypatch, relative):
+    # The file no longer exists, so "./vault/..." was taken for an id, of a collection named ".".
+    (cli_vault / "02_Organizations" / "Acme AG.md").unlink()
+    monkeypatch.chdir(cli_vault.parent)
+    assert run(capsys, "index", "--files", relative).err == "vault/02_Organizations/Acme AG.md: removed\n"
+
+
 def test_index_files_or_collections(cli_vault, capsys, tmp_path):
     with pytest.raises(SystemExit, match="collections or --files, not both"):
         run(capsys, "index", "vault", "--files", "vault/x.md")

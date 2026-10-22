@@ -72,12 +72,14 @@ class Patched:
 
 def patch(vectors, removed, ids, matrix):
     """`vectors` without those of the chunks `removed` and with those of the chunks `ids`, the rows of `matrix`: a
-    note indexed again while the server runs, without loading millions of vectors again. None if a new chunk would
-    come before an old one: the ids must stay in order, and a full load sorts them best."""
+    note indexed again while the server runs, without loading millions of vectors again. A chunk of `ids` that the
+    vectors hold already gets the new vector: SQLite hands out the ids of deleted chunks again. None if a new chunk
+    would come before an old one: the ids must stay in order, and a full load sorts them best."""
     if isinstance(vectors, Patched):
         base, keep, added, rows = vectors.base, vectors.keep, vectors.added, vectors.matrix
     else:
         base, keep, added, rows = vectors, None, np.empty(0, np.int64), np.empty((0, matrix.shape[1]), np.float32)
+    removed = np.concatenate([np.asarray(removed, np.int64), np.asarray(ids, np.int64)])
     gone = np.isin(base.ids, removed)
     if gone.any():
         keep = ~gone if keep is None else keep & ~gone

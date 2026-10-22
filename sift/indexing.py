@@ -86,15 +86,16 @@ def _add_chunks(db, doc_id, chunks):
 
 
 def _store(db, cid, sid, rel, docs, counts, note):
-    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included.
-    note(text) tells the user of a document that had to be skipped."""
+    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
+    row ids are returned. note(text) tells the user of a document that had to be skipped."""
     existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
-    base, kept, added = rel.rsplit(".", 1)[0], set(), []
+    base, kept, added, unchanged = rel.rsplit(".", 1)[0], set(), [], set()
     for doc in docs:
         path = f"{base}/{doc.key}" if doc.key else rel
         kept.add(path)
         old = existing.get(path)
         if old and old[1] == doc.digest:
+            unchanged.add(old[0])
             continue
         if old:
             store.delete_docs(db, [old[0]])
@@ -108,6 +109,7 @@ def _store(db, cid, sid, rel, docs, counts, note):
     gone = [i for p, (i, _) in existing.items() if p not in kept]
     store.delete_docs(db, gone)
     counts["removed"] += len(gone)
+    return unchanged
 
 
 REFRESH_BATCH = 1000  # files read again from the index at a time
@@ -306,13 +308,13 @@ def _indexed_as(db, cid, rel):
 
 def _reindex_file(db, cid, name, root, fields, rel):
     """Read one file again, or remove its documents if it is gone, as `sift index` would: ({"id", "status"}, its
-    documents' row ids, the chunks removed)."""
+    documents' row ids, the chunks removed). A chunk removed is every chunk of a document replaced or removed: SQLite
+    hands the ids of deleted chunks out again, so the new chunks of a note may carry its old ones' ids."""
     entry = {"id": f"{name}/{rel}"}
     known = db.execute("SELECT id FROM sources WHERE collection = ? AND path = ?", (cid, rel)).fetchone()
     sid = known and known[0]
-    chunks = [
-        c for (c,) in db.execute("SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?", (sid,))
-    ]
+    sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
+    chunks = db.execute(sql, (sid,)).fetchall()
     path = os.path.join(root, *rel.split("/"))
     try:
         info = os.stat(path)  # through a link, as `sift index` reads it
@@ -322,7 +324,7 @@ def _reindex_file(db, cid, name, root, fields, rel):
         if sid is None:
             return entry | {"status": "not found"}, [], []
         _drop_source(db, sid)
-        return entry | {"status": "removed"}, [], chunks
+        return entry | {"status": "removed"}, [], [chunk for _, chunk in chunks]
     read = readers.load(path, fields)
     if read is None:
         return entry | {"status": "unreadable"}, [], []
@@ -330,12 +332,9 @@ def _reindex_file(db, cid, name, root, fields, rel):
     if sid is None:
         sid = db.execute("INSERT INTO sources(collection, path) VALUES(?, ?)", (cid, rel)).lastrowid
     had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
-    _store(db, cid, sid, rel, docs, counts, problems.append)
+    unchanged = _store(db, cid, sid, rel, docs, counts, problems.append)
     db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (info.st_mtime_ns, info.st_size, sid))
     now = [d for (d,) in db.execute("SELECT id FROM docs WHERE source = ?", (sid,))]
-    left = {
-        c for (c,) in db.execute("SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?", (sid,))
-    }
     if not now and problems:
         status = "skipped"
     elif not (counts["added"] or counts["changed"] or counts["removed"]):
@@ -343,7 +342,7 @@ def _reindex_file(db, cid, name, root, fields, rel):
     else:
         status = "changed" if had else "added"
     note = {"note": "; ".join(problems)} if problems else {}
-    return entry | {"status": status} | note, now, [c for c in chunks if c not in left]
+    return entry | {"status": status} | note, now, [chunk for doc, chunk in chunks if doc not in unchanged]
 
 
 def _drop_source(db, sid):

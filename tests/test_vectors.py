@@ -105,6 +105,16 @@ def test_patched_vectors_keep_chunk_order():
     assert patch(InRam(IDS, MATRIX), removed=[30], ids=[30], matrix=rows([1, 0])).ids.tolist() == [10, 20, 30]
 
 
+def test_a_chunk_patched_in_again_replaces_its_old_vector(pretend):
+    # SQLite hands out the ids of deleted chunks again: a chunk patched in under an id the vectors hold already is the
+    # new vector of that chunk, not a second one.
+    vectors = patch(InRam(IDS, MATRIX), removed=[], ids=[30], matrix=rows([1, 0]))
+    assert scored(vectors) == {10: 1.0, 20: 0.0, 30: 1.0}
+    vectors = patch(vectors, removed=[], ids=[40], matrix=rows([0, 1]))
+    vectors = patch(vectors, removed=[], ids=[40, 50], matrix=rows([1, 0], [0.6, 0.8]))
+    assert scored(vectors) == {10: 1.0, 20: 0.0, 30: 1.0, 40: 1.0, 50: 0.6}
+
+
 def test_closing_patched_vectors_closes_those_beneath(pretend, clock):
     vectors = patch(OnGpu(IDS, MATRIX, pretend), removed=[10], ids=[], matrix=rows())
     vectors.scores(np.array([1, 0], np.float16))

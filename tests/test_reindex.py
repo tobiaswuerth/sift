@@ -89,6 +89,70 @@ def test_vectors_in_memory_follow_every_change(live):
     assert held == pytest.approx(loaded)
 
 
+def held_and_loaded(index):
+    """The vectors a running server holds, and those it would load anew: {chunk id: score} each, and the ids."""
+    query = np.ones(64, np.float16) / 8
+    held = (index.vectors.ids.tolist(), index.vectors.scores(query).tolist())
+    fresh = Index(index.db, index.models)
+    fresh.load()
+    return held, (fresh.vectors.ids.tolist(), fresh.vectors.scores(query).tolist())
+
+
+def test_a_note_rewritten_under_its_old_chunk_ids(live):
+    # The newest note's chunks hold the highest ids, which SQLite hands out again once they are deleted: its new
+    # passage came under the old id, the server kept the old vector next to the new one, and the old wording still
+    # found the note.
+    index, vault = live
+    write(vault / "Beat Keller.md", "Segelt Regatten auf dem Bodensee.\n")
+    index.reindex(["vault/Beat Keller.md"])
+    write(vault / "Beat Keller.md", "Arbeitet bei Acme AG im Einkauf.\n")
+    assert index.reindex(["vault/Beat Keller.md"])[0]["status"] == "changed"
+    (held_ids, held), (loaded_ids, loaded) = held_and_loaded(index)
+    assert held_ids == loaded_ids
+    assert held == pytest.approx(loaded)
+    assert "vault/Beat Keller.md" not in ids(index.vsearch("Regatten Bodensee", k=1))
+
+
+def test_a_note_rewritten_under_its_old_chunk_ids_while_no_model_answers(live, monkeypatch):
+    # Not embedded now, the new passage has no vector yet: the old one, under the same id, must go all the same.
+    index, vault = live
+    write(vault / "Beat Keller.md", "Segelt Regatten auf dem Bodensee.\n")
+    index.reindex(["vault/Beat Keller.md"])
+
+    def unreachable(texts, query=False):
+        raise ConnectionError("embedding remote https://workstation:8766 does not answer")
+
+    monkeypatch.setattr(index.models, "encode", unreachable)
+    write(vault / "Beat Keller.md", "Arbeitet bei Acme AG im Einkauf.\n")
+    assert index.reindex(["vault/Beat Keller.md"])[0]["embedded"] == 0
+    monkeypatch.undo()
+    (held_ids, _), (loaded_ids, _) = held_and_loaded(index)
+    assert held_ids == loaded_ids
+
+
+def test_vectors_in_memory_match_a_fresh_load_through_many_changes(live):
+    # Notes written, extended, rewritten and deleted in random order, as an agent works: after each reindex the
+    # server must hold what it would load anew.
+    import random
+
+    index, vault = live
+    rng, words = random.Random(1), "alpha beta gamma delta epsilon zeta eta theta iota kappa".split()
+    for step in range(40):
+        name = f"n{rng.randrange(6)}.md"
+        if rng.random() < 0.2:
+            (vault / name).unlink(missing_ok=True)
+        else:
+            parts = rng.randrange(1, 4)  # passages: a section of about 1,800 characters each
+            write(
+                vault / name,
+                "".join(f"## Part {p}\n\n" + " ".join(rng.choices(words, k=300)) + "\n\n" for p in range(parts)),
+            )
+        index.reindex([f"vault/{name}"])
+        (held_ids, held), (loaded_ids, loaded) = held_and_loaded(index)
+        assert held_ids == loaded_ids, f"step {step}"
+        assert held == pytest.approx(loaded), f"step {step}"
+
+
 def test_vectors_changed_elsewhere_are_loaded_anew(live, monkeypatch):
     # Another process changed the index meanwhile: patching the vectors in memory would miss its changes.
     index, vault = live
