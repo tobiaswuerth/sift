@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sift-rag"
 dynamic = ["version"]
-description = "Local RAG search and MCP server for AI agents: keyword (BM25), semantic and hybrid search with reranking over your Markdown, PDF and Office files."
+description = "Local RAG search and MCP server for AI agents like Claude Code: hybrid BM25 + semantic search with reranking over Markdown and Obsidian notes, PDF, Office files and emails. Backlinks, metadata filters, browser UI. Runs on your own GPU or CPU: no cloud, no API keys."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -48,8 +48,13 @@ keywords = [
     "knowledge-base",
     "ai-agents",
     "claude-code",
+    "llm",
+    "search-engine",
+    "document-search",
+    "obsidian",
     "markdown",
     "pdf",
+    "email",
     "sqlite",
 ]
 classifiers = [
