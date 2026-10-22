@@ -19,7 +19,7 @@ services, no API keys, and your documents stay on your own machines.
 - **Four kinds of search:** exact keyword search (BM25, SQLite FTS5), semantic vector search, hybrid retrieval with
   cross-encoder reranking for RAG, and documents similar to a given one.
 - **Your files as they are:** Markdown with YAML front matter (Obsidian notes too), text, PDF, Word, PowerPoint,
-  Excel, OpenDocument, RTF, EPUB, HTML and JSON Lines, indexed incrementally.
+  Excel, OpenDocument, RTF, EPUB, HTML, saved emails and JSON Lines, indexed incrementally.
 - **An MCP server** for Claude Code and any other MCP client, with filters on front-matter fields, results that cite
   their source lines, and compact results that save an agent's context.
 - **Linked notes:** in an Obsidian vault, or any Markdown with `[[wikilinks]]`, the links of a note and its backlinks,
@@ -287,6 +287,18 @@ title is the document's own, else the first heading, else the file name.
 sift runs no OCR, so a scanned PDF without a text layer has no text. Such files are skipped and reported, as are
 damaged ones, until they change. Older binary Office files (`.doc`, `.ppt`, `.xls`) aren't read.
 
+### Emails
+
+A saved email (`.eml`) is a document titled by its subject, with `From`, `To`, `Cc` and `Date` above its text, which
+is its plain text, else its HTML as Markdown. Its metadata holds the addresses bare, for filters, and the date as
+ISO 8601, for ranges and sorting: `from`, `to`, `cc`, `date`, `message_id`, `in_reply_to` and `attachments`, the
+file names. An attachment sift reads (Markdown, text, PDF, office files and the rest above) is a document of its
+own, named by its file name: `mail/2026/offer.eml` holds `mail/2026/offer/contract.pdf`.
+
+```bash
+sift search "price list" -f from=anna@acme.example -f "date>=2026-06"
+```
+
 ## MCP
 
 `sift serve` runs an MCP server that agents search through:
@@ -494,8 +506,8 @@ claims, and it embeds 1.6 times as fast.
 
 ## Scope
 
-In scope: text, Markdown and JSON Lines files, PDF, office documents, e-books and web pages; Linux, macOS and Windows;
-NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise CPU; one user, any number of local agents.
+In scope: text, Markdown and JSON Lines files, PDF, office documents, e-books, web pages and saved emails; Linux,
+macOS and Windows; NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise CPU; one user, any number of local agents.
 
 Out of scope for now: OCR of scans and images; answer generation (sift retrieves, the agent writes); approximate
 nearest-neighbour indexes; live file watching (an agent calls `reindex` after writing); remote access and

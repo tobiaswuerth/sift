@@ -1,6 +1,7 @@
 """Reading files into documents, one reader per kind of file (READERS, by extension): Markdown and text files are
 one document each, with YAML front matter as metadata; JSON Lines files one per line; PDF, office files, e-books and
-web pages one each, converted to Markdown by Xberg. Every document's text is cut into chunks with their line numbers.
+web pages one each, converted to Markdown by Xberg; saved emails one each, and one per attachment sift reads. Every
+document's text is cut into chunks with their line numbers.
 
 Readers run in worker processes while indexing, so they read from bytes and return plain data (`Doc`).
 """
@@ -19,6 +20,7 @@ from . import console
 TEXT = (".md", ".markdown", ".txt")
 JSONL = (".jsonl", ".ndjson")
 DOCUMENTS = (".pdf", ".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods", ".rtf", ".epub", ".html", ".htm")  # by Xberg
+EMAIL = (".eml",)
 CHUNK_CHARS, OVERLAP_CHARS = 3000, 300  # ~750 tokens, well inside the models' 1024-token window
 
 
@@ -393,7 +395,100 @@ def _document(raw, name, fields):
     return [Doc("", _digest(raw), title, meta, doc.content, list(chunk(doc.content)))], []
 
 
-READERS = {**dict.fromkeys(TEXT, _text), **dict.fromkeys(JSONL, _records), **dict.fromkeys(DOCUMENTS, _document)}
+def _email(raw, name, fields):
+    """A saved email (.eml): one document, titled by its subject, with its sender, recipients, date and ids as metadata
+    (the addresses bare, for filters) and above its text, which is its plain text, else its HTML as Markdown; and one
+    document for each attachment sift reads, named by its file name. A damaged mail is skipped, as a document is."""
+    from email import message_from_bytes, policy
+
+    try:
+        msg = message_from_bytes(raw, policy=policy.default)
+        meta, shown = _mail_headers(msg)
+        if names := [n for part in msg.iter_attachments() if (n := _file_name(part))]:
+            meta["attachments"] = names
+            shown.append("Attachments: " + ", ".join(names))
+        title = str(msg.get("subject") or "").strip() or Path(name).stem
+        text = "\n\n".join(part for part in (f"# {title}", "\n".join(shown), _mail_text(msg, fields)) if part)
+        attached, problems = _attachments(msg, fields)
+    except Exception as error:  # a damaged mail can fail in many ways; it must not stop indexing the others
+        return [], [f"skipped ({error})"]
+    return [Doc("", _digest(raw), title, meta, text, list(chunk(text))), *attached], problems
+
+
+def _mail_headers(msg):
+    """An email's metadata, and its headers as they show above its text: From, To, Cc and Date."""
+    meta, shown = {}, []
+    for key in ("from", "to", "cc"):
+        header = msg.get(key)
+        if addresses := [a.addr_spec for a in getattr(header, "addresses", ()) if a.addr_spec]:
+            meta[key] = addresses[0] if key == "from" else addresses
+            shown.append(f"{key.capitalize()}: {header}")
+    if date := msg.get("date"):
+        when = getattr(date, "datetime", None)  # None for a date that doesn't parse: then as written
+        meta["date"] = when.isoformat() if when else str(date)
+        shown.append(f"Date: {meta['date']}")
+    for key in ("message-id", "in-reply-to"):
+        if value := str(msg.get(key) or "").strip():
+            meta[key.replace("-", "_")] = value
+    return meta, shown
+
+
+def _mail_text(msg, fields):
+    """An email's text: its plain part, else its HTML part as Markdown; "" if it has none."""
+    part = msg.get_body(preferencelist=("plain", "html"))
+    if part is None:
+        return ""
+    try:
+        content = part.get_content()
+    except (LookupError, UnicodeError):  # a charset Python doesn't know: as UTF-8, with what doesn't decode replaced
+        content = decode(part.get_payload(decode=True) or b"")
+    if part.get_content_subtype() == "html":
+        docs, _ = _document(content.encode(), "mail.html", fields)
+        content = docs[0].text if docs else ""
+    return content.replace("\r\n", "\n").strip()
+
+
+ATTACHED = (*TEXT, *DOCUMENTS)  # the attachments of an email sift reads: whole files; no records, no mail in mail
+
+
+def _attachments(msg, fields):
+    """The documents of an email's attachments sift reads, each named by its file name, made unique; and what had to
+    be skipped of them."""
+    docs, problems, taken = [], [], set()
+    for part in msg.iter_attachments():
+        name = _file_name(part)
+        if not (name and name.lower().endswith(ATTACHED)):
+            continue
+        found, trouble = READERS[Path(name).suffix.lower()](part.get_payload(decode=True) or b"", name, fields)
+        key = _unique(name, taken)
+        docs += [doc._replace(key=key) for doc in found]
+        problems += [f"{name}: {problem}" for problem in trouble]
+    return docs, problems
+
+
+def _file_name(part):
+    """An attachment's file name without any folders it claims, or None if it has none."""
+    name = re.split(r"[\\/]", part.get_filename() or "")[-1].strip()
+    return name if name not in ("", ".", "..") else None
+
+
+def _unique(name, taken):
+    """`name`, or `name (2)` and so on if a name of `taken` is the same in any case; added to `taken`."""
+    stem, ext = posixpath.splitext(name)
+    key, n = name, 1
+    while fold(key) in taken:
+        n += 1
+        key = f"{stem} ({n}){ext}"
+    taken.add(fold(key))
+    return key
+
+
+READERS = {
+    **dict.fromkeys(TEXT, _text),
+    **dict.fromkeys(JSONL, _records),
+    **dict.fromkeys(DOCUMENTS, _document),
+    **dict.fromkeys(EMAIL, _email),
+}
 """How sift reads each kind of file, by extension: reader(content, file name, fields) -> (documents, problems),
 where fields are the collection's field choices and problems say what was skipped and why."""
 

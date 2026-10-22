@@ -221,3 +221,153 @@ def test_documents_are_converted_in_worker_processes(library, tmp_path, monkeypa
     indexing.index(parallel)
     assert pools == [(2, "spawn")]
     assert index_contents(parallel) == index_contents(db)
+
+
+# --- saved emails ------------------------------------------------------------
+
+
+def email_file(tmp_path, *, name="mail.eml", body="Plain words.", html=None, attachments=(), **headers):
+    """An .eml file with these headers (From, To, Subject, ...), a plain body and, if given, its HTML alternative."""
+    from email import policy
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    for key, value in headers.items():
+        msg[key.replace("_", "-")] = value
+    if body is not None:
+        msg.set_content(body)
+    if html is not None:
+        if body is None:
+            msg.set_content(html, subtype="html")
+        else:
+            msg.add_alternative(html, subtype="html")
+    for filename, data, kind in attachments:
+        main, sub = kind.split("/")
+        msg.add_attachment(data, maintype=main, subtype=sub, filename=filename)
+    path = tmp_path / name
+    path.write_bytes(msg.as_bytes(policy=policy.SMTP))
+    return path
+
+
+def test_an_email_is_a_document_of_its_headers_and_text():
+    doc = read(".eml")
+    assert doc.title == "Pigment mixing"
+    assert doc.meta == {
+        "from": "ada@example.com",
+        "to": ["bo@example.org", "cy@example.org"],
+        "cc": ["di@example.net"],
+        "date": "2024-05-01T12:00:00+00:00",
+        "message_id": "<pigments@example.com>",
+    }
+    assert doc.text.startswith(
+        "# Pigment mixing\n\nFrom: Ada Example <ada@example.com>\nTo: Bo Reader <bo@example.org>, cy@example.org\n"
+        "Cc: Di Copy <di@example.net>\nDate: 2024-05-01T12:00:00+00:00\n\nKubelka-Munk theory\n\n"
+    )
+    assert "<h1>" not in doc.text  # its plain text, not the HTML beside it
+
+
+def test_an_email_of_html_alone_reads_as_markdown(tmp_path):
+    path = email_file(tmp_path, body=None, html="<h1>Offer</h1><p>Prices for <b>2027</b>.</p>", Subject="Offer")
+    (doc,), _ = readers.load(path)
+    assert "Prices for" in doc.text
+    assert "<p>" not in doc.text
+
+
+def test_email_headers_as_mail_writes_them(tmp_path):
+    # Encoded words, folded lines, a date in another zone; and a mail without subject, date or body.
+    path = email_file(
+        tmp_path,
+        Subject="Grüße from Zürich, and a line so long that a mail client folds it, as mail clients fold long lines",
+        From="Jürg Bühler <jb@example.ch>",
+        Date="Tue, 14 Oct 2026 09:30:00 +0200",
+        In_Reply_To="<earlier@example.ch>",
+    )
+    (doc,), _ = readers.load(path)
+    assert (
+        doc.title
+        == "Grüße from Zürich, and a line so long that a mail client folds it, as mail clients fold long lines"
+    )
+    assert doc.meta == {
+        "from": "jb@example.ch",
+        "date": "2026-10-14T09:30:00+02:00",
+        "in_reply_to": "<earlier@example.ch>",
+    }
+    assert "From: Jürg Bühler <jb@example.ch>" in doc.text
+    (bare,), problems = readers.load(email_file(tmp_path, name="Bare note.eml", body=None))
+    assert (bare.title, bare.meta, problems) == ("Bare note", {}, [])
+    (tmp_path / "odd.eml").write_bytes(b"Date: sometime soon\r\n\r\nPlain words.\r\n")  # EmailMessage drops such dates
+    (odd,), _ = readers.load(tmp_path / "odd.eml")
+    assert odd.meta == {"date": "sometime soon"}
+
+
+def test_an_email_in_an_unknown_charset_still_reads(tmp_path):
+    path = tmp_path / "x.eml"
+    path.write_bytes(
+        b'Subject: x\r\nContent-Type: text/plain; charset="x-unknown"\r\n\r\nPlain Gr\xc3\xbc\xc3\x9fe.\r\n'
+    )
+    (doc,), _ = readers.load(path)
+    assert "Plain Grüße." in doc.text
+
+
+def test_attachments_sift_reads_are_documents_of_their_own(tmp_path):
+    path = email_file(
+        tmp_path,
+        Subject="Contract",
+        attachments=[
+            ("contract.pdf", sample(".pdf").read_bytes(), "application/pdf"),
+            ("notes.md", b"# Notes\n\nSee the contract.\n", "text/markdown"),
+            ("notes.md", b"# Notes, again\n", "text/markdown"),
+            ("../../evil.md", b"# Evil\n", "text/markdown"),
+            ("photo.png", b"\x89PNG", "image/png"),
+            ("forwarded.eml", b"Subject: inner\r\n\r\nInner.\r\n", "message/rfc822"),
+        ],
+    )
+    docs, problems = readers.load(path)
+    assert problems == []
+    assert [doc.key for doc in docs] == ["", "contract.pdf", "notes.md", "notes (2).md", "evil.md"]
+    mail, pdf = docs[:2]
+    assert mail.meta["attachments"] == ["contract.pdf", "notes.md", "notes.md", "evil.md", "photo.png", "forwarded.eml"]
+    assert "Attachments: contract.pdf, notes.md, notes.md, evil.md, photo.png, forwarded.eml" in mail.text
+    assert PARAGRAPH in pdf.text
+    assert pdf.digest != mail.digest  # unchanged attachments keep their vectors when the mail changes
+
+
+def test_an_email_of_attachments_alone(tmp_path):
+    path = email_file(tmp_path, body=None, Subject="Scan", attachments=[("a.md", b"# A\n", "text/markdown")])
+    (mail, _), _ = readers.load(path)
+    assert mail.text == "# Scan\n\nAttachments: a.md"
+
+
+def test_a_mail_the_parser_fails_on_is_skipped(tmp_path, monkeypatch):
+    # Which input breaks Python's email parser changes with Python's version; that one does must not stop indexing.
+    import email
+
+    def failing(raw, policy):
+        raise ValueError("header line 3: no colon")
+
+    monkeypatch.setattr(email, "message_from_bytes", failing)
+    assert readers.load(email_file(tmp_path)) == ([], ["skipped (header line 3: no colon)"])
+
+
+def test_a_damaged_attachment_is_reported_and_the_mail_still_reads(tmp_path):
+    path = email_file(tmp_path, Subject="Scan", attachments=[("scan.pdf", b"%PDF-1.4 broken", "application/pdf")])
+    docs, problems = readers.load(path)
+    assert [doc.key for doc in docs] == [""]
+    assert [problem[:17] for problem in problems] == ["scan.pdf: skipped"]
+
+
+def test_a_folder_of_mail_is_searched_and_filtered(tmp_path, home):
+    (tmp_path / "mail").mkdir()
+    email_file(
+        tmp_path / "mail",
+        name="offer.eml",
+        Subject="Offer",
+        From="Ada Example <ada@example.com>",
+        attachments=[("contract.pdf", sample(".pdf").read_bytes(), "application/pdf")],
+    )
+    db = store.connect(home)
+    store.add_collection(db, tmp_path / "mail", "mail")
+    indexing.index(db)
+    index = Index(db)
+    assert [h["id"] for h in index.search("Kubelka-Munk")] == ["mail/offer/contract.pdf"]
+    assert [h["id"] for h in index.search("offer", filters={"from": "ada@example.com"})] == ["mail/offer.eml"]

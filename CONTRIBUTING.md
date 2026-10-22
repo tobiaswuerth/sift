@@ -18,7 +18,7 @@ pre-commit install
 |---|---|
 | `cli.py` | The `sift` command |
 | `store.py` | The SQLite index: layout, its version and upgrades, connection, collections, deleting documents |
-| `readers.py` | Files into documents: one reader per kind of file (Markdown, JSON Lines, documents via Xberg), chunking, and the links of Markdown notes |
+| `readers.py` | Files into documents: one reader per kind of file (Markdown, JSON Lines, documents via Xberg, emails), chunking, and the links of Markdown notes |
 | `indexing.py` | `sift index`: scanning folders, reading changed files in worker processes, incremental updates; `reindex` of given files |
 | `links.py` | Links between notes in the index: the names files answer to, resolving links when asked, backlinks |
 | `search.py` | Keyword, semantic and hybrid search over the index, documents like a document, `get`, and links, mentions and `reindex` |
