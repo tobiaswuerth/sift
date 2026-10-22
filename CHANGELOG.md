@@ -12,8 +12,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   `reindex` refuses what it leaves out. Hidden folders, `node_modules` and `__pycache__` stay out as before. A
   `.siftignore` sift can't read, as an offline OneDrive file, skips its collection, which keeps its documents.
 - Saved emails (`.eml`): one document per mail, titled by its subject, with its sender, recipients and date above
-  its text and, the addresses bare and the date as ISO 8601, as metadata for filters. Each attachment sift reads
-  is a document of its own.
+  its text and as metadata for filters: the addresses bare, the date as ISO 8601 in UTC, so mails sort by time.
+  Each attachment sift reads is a document of its own.
 - `sift status --json`, as the other commands take it; `status` prints JSON anyway.
 
 ### Changed

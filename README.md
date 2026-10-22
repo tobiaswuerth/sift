@@ -292,8 +292,8 @@ damaged ones, until they change. Older binary Office files (`.doc`, `.ppt`, `.xl
 
 A saved email (`.eml`) is a document titled by its subject, with `From`, `To`, `Cc` and `Date` above its text, which
 is its plain text, else its HTML as Markdown. Its metadata holds the addresses bare, for filters, and the date as
-ISO 8601, for ranges and sorting: `from`, `to`, `cc`, `date`, `message_id`, `in_reply_to` and `attachments`, the
-file names. An attachment sift reads (Markdown, text, PDF, office files and the rest above) is a document of its
+ISO 8601 in UTC, for ranges and sorting: `from`, `to`, `cc`, `date`, `message_id`, `in_reply_to` and `attachments`,
+the file names. An attachment sift reads (Markdown, text, PDF, office files and the rest above) is a document of its
 own, named by its file name: `mail/2026/offer.eml` holds `mail/2026/offer/contract.pdf`.
 
 ```bash

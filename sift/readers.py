@@ -12,6 +12,7 @@ import posixpath
 import re
 import unicodedata
 from collections import namedtuple
+from datetime import UTC
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -426,6 +427,8 @@ def _mail_headers(msg):
             shown.append(f"{key.capitalize()}: {header}")
     if date := msg.get("date"):
         when = getattr(date, "datetime", None)  # None for a date that doesn't parse: then as written
+        if when and when.tzinfo:  # in UTC, so that dates sort as times do; one without a zone (-0000) as it is
+            when = when.astimezone(UTC)
         meta["date"] = when.isoformat() if when else str(date)
         shown.append(f"Date: {meta['date']}")
     for key in ("message-id", "in-reply-to"):

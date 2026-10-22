@@ -289,7 +289,7 @@ def test_email_headers_as_mail_writes_them(tmp_path):
     )
     assert doc.meta == {
         "from": "jb@example.ch",
-        "date": "2026-10-14T09:30:00+02:00",
+        "date": "2026-10-14T07:30:00+00:00",
         "in_reply_to": "<earlier@example.ch>",
     }
     assert "From: Jürg Bühler <jb@example.ch>" in doc.text
@@ -298,6 +298,15 @@ def test_email_headers_as_mail_writes_them(tmp_path):
     (tmp_path / "odd.eml").write_bytes(b"Date: sometime soon\r\n\r\nPlain words.\r\n")  # EmailMessage drops such dates
     (odd,), _ = readers.load(tmp_path / "odd.eml")
     assert odd.meta == {"date": "sometime soon"}
+
+
+def test_mail_dates_sort_as_time_whatever_the_zone(tmp_path):
+    # With the sender's offset, 09:30 in Zurich sorted after 08:00 in London, though it was sent first.
+    zurich = email_file(tmp_path, name="a.eml", Date="Tue, 14 Oct 2026 09:30:00 +0200")
+    london = email_file(tmp_path, name="b.eml", Date="Tue, 14 Oct 2026 08:00:00 +0000")
+    unknown = email_file(tmp_path, name="c.eml", Date="Tue, 14 Oct 2026 08:00:00 -0000")  # a zone unknown, RFC 5322
+    dates = [readers.load(path)[0][0].meta["date"] for path in (zurich, london, unknown)]
+    assert dates == ["2026-10-14T07:30:00+00:00", "2026-10-14T08:00:00+00:00", "2026-10-14T08:00:00"]
 
 
 def test_an_email_in_an_unknown_charset_still_reads(tmp_path):
