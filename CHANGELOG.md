@@ -5,6 +5,26 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `.siftignore`: a collection's folder may name, in gitignore's syntax, the files and folders sift leaves out, as
+  apps keep their own files out and users their drafts, exports or binaries. `sift index` follows its changes, and
+  `reindex` refuses what it leaves out. Hidden folders, `node_modules` and `__pycache__` stay out as before.
+- Saved emails (`.eml`): one document per mail, titled by its subject, with its sender, recipients and date above
+  its text and, the addresses bare and the date as ISO 8601, as metadata for filters. Each attachment sift reads
+  is a document of its own.
+- `sift status --json`, as the other commands take it; `status` prints JSON anyway.
+
+### Changed
+
+- The instructions agents read when they connect name each collection's folder, and the docs say that `status`
+  holds it as `path`: agents can tell which collection a file belongs to.
+- `reindex` of a file in no collection lists the collections and their folders, nearest first, and the `sift add`
+  that would cover it; an agent told only "is in no collection" tried other spellings of the path. A collection
+  name the index doesn't know, in `reindex` or a search, lists the names it does.
+- The README states as part of the format that a front-matter value is read as JSON first, so programs that write
+  front matter can write any value as JSON and rely on reading it back as written; tests hold it.
+
 ## [1.1.0] - 2026-10-22
 
 Links between Markdown notes, for Obsidian vaults and any notes that link to each other

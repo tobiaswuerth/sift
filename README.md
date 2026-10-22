@@ -77,7 +77,7 @@ sift links vault/People/Hans.md --direction both   # the links of a note, and it
 sift unresolved                        # link targets no note answers to yet
 sift mentions vault/People/Hans.md     # documents that name a note without linking to it
 sift index --files ~/vault/new.md      # read a file just written at once, or drop one just deleted
-sift status                            # collections and counts
+sift status                            # collections, their folders, and counts, as JSON
 sift bench questions.json              # how well each mode finds what you expect (see below)
 sift rm handbook                       # remove a collection from the index; its files stay on disk
 sift ui                                # search, browse and read the index in your browser (see below)
@@ -310,7 +310,7 @@ sift search "price list" -f from=anna@acme.example -f "date>=2026-06"
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. |
 | `similar` | Documents like a given one, by its id: more documents like one already found. |
 | `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. With `fields`, it returns the document with those front-matter fields. An id may leave out folders if the file name is unique. |
-| `status` | Collections, counts, front-matter fields, and how many links each collection's notes hold. |
+| `status` | Collections with their folders (`path`), counts, front-matter fields, and how many links each collection's notes hold. |
 | `links` | The links of a note: out, each with where it leads (`via` path, name or alias, `ambiguous`, or `unresolved`), and in, the notes linking to it, with the lines that do. `depth` 2 goes one step further, `field` keeps to one front-matter field. |
 | `unresolved` | Link targets no note answers to yet, most linked first. |
 | `mentions` | Documents that name a note without linking to it. |
@@ -323,7 +323,7 @@ adds front-matter fields to each result, e.g. `["url", "created"]`, and `compact
 agent can survey many results without filling its context and then read the ones that matter. Filters take a value,
 a list for any of its values, `{"not": ...}`, or ranges, e.g. `{"created": {">=": "2024-06", "<": "2025"}}`. Every
 parameter is described in the tools' schemas, and the server tells agents when they connect which collections there
-are, which front-matter fields each has, and how many links its notes hold.
+are, which folder each covers, which front-matter fields each has, and how many links its notes hold.
 
 ### Setting up
 
