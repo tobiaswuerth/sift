@@ -28,9 +28,16 @@ def ignores(lines, path, folder=False, ignore_case=False):
         ("**/temp", "a/b/temp", True, True),
         ("a/**/b", "a/b", False, True),
         ("a/**/b", "a/x/y/b", False, True),
+        ("**/private/**", "x/private/a.md", False, True),
+        ("**/private/**", "private/a.md", False, True),
+        ("**/private/**", "x/private", True, False),  # what is inside, not the folder
+        ("a/**/b/**/c", "a/x/b/y/z/c", False, True),
+        ("a/**/b/**/c", "a/x/c", False, False),
         ("logs/**", "logs/a/b.md", False, True),
         ("logs/**", "logs", True, False),  # what is inside, not the folder itself
         ("**", "any/thing.md", False, True),
+        ("notes*", "notes", False, True),  # a star matches nothing too
+        ("*notes*", "my notes 2", False, True),
         ("?.md", "a.md", False, True),
         ("?.md", "ab.md", False, False),
         ("[ab].md", "b.md", False, True),
@@ -41,6 +48,10 @@ def ignores(lines, path, folder=False, ignore_case=False):
         ("# a comment", "# a comment", False, False),
         ("\\#hash.md", "#hash.md", False, True),
         ("\\!bang.md", "!bang.md", False, True),
+        ("what\\?.md", "what?.md", False, True),  # an escaped wildcard is itself
+        ("what\\?.md", "whatx.md", False, False),
+        ("a\\\\?.md", "a\\x.md", False, True),  # an escaped backslash, then a wildcard
+        ("\\*.md", "x.md", False, False),
         ("trailing.md   ", "trailing.md", False, True),  # spaces at the end don't count ...
         ("space\\ ", "space ", False, True),  # ... unless escaped
         ("a.md\n\n\n", "a.md", False, True),
@@ -54,6 +65,26 @@ def ignores(lines, path, folder=False, ignore_case=False):
 )
 def test_patterns_as_in_gitignore(lines, path, folder, ignored):
     assert ignores(lines, path, folder) == ignored
+
+
+def test_a_range_backwards_matches_nothing():
+    # As in git; as a regex it raised "bad character range", and stopped sift index.
+    assert not ignores("[z-a].md", "b.md")
+    assert ignores("[z-ab].md", "b.md")
+    assert ignores("[!z-a].md", "b.md")
+
+
+def test_names_match_as_fnmatch_matches_them():
+    # Within one name, gitignore's * ? [...] mean what fnmatch's do: thousands of random patterns and names agree.
+    import fnmatch
+    import random
+
+    rng = random.Random(3)
+    for _ in range(5000):
+        pattern = "".join(rng.choice("ab*?[]!-") for _ in range(rng.randrange(1, 9)))
+        name = "".join(rng.choice("ab-]![") for _ in range(rng.randrange(9)))
+        if not pattern.startswith("!"):  # which takes back in, in a .siftignore
+            assert ignores(pattern, name) == fnmatch.fnmatchcase(name, pattern), (pattern, name)
 
 
 def test_case_as_the_file_system_takes_it():
@@ -81,6 +112,17 @@ def test_a_siftignore_sift_cannot_read_is_an_error(tmp_path):
     (tmp_path / ".siftignore").mkdir()
     with pytest.raises(OSError, match=r"\.siftignore"):
         Ignore.of(tmp_path)
+
+
+def test_a_pattern_of_many_stars_stays_fast():
+    # As a regex, nine stars took 73 s against a name of 50 a's: each star tried every split of the rest.
+    import time
+
+    ignore, name = Ignore(["*a" * 9 + "*b", "x/" + "*a" * 9 + "*b/**/*c"]), "a" * 200
+    start = time.perf_counter()
+    assert not ignore(name)
+    assert not ignore("x/" + name + "/" + name)
+    assert time.perf_counter() - start < 1
 
 
 def test_many_patterns_stay_fast():

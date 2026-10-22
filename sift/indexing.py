@@ -16,7 +16,8 @@ from contextlib import nullcontext
 from itertools import repeat, takewhile
 from pathlib import Path
 
-from . import console, embed, ignore, links, readers, store
+from . import console, embed, links, readers, store
+from .ignore import NAME as SIFTIGNORE
 from .ignore import Ignore
 
 SKIP_DIRS = {"node_modules", "__pycache__"}
@@ -265,7 +266,7 @@ def _locate(db, path):
         if part.startswith(".") or part in SKIP_DIRS:
             raise ValueError(f"{name}/{rel}: sift indexes no files in {part}/")
     if Ignore.of(root).excludes("/".join(parts)):
-        raise ValueError(f"{name}/{rel}: the collection's {ignore.NAME} leaves it out")
+        raise ValueError(f"{name}/{rel}: the collection's {SIFTIGNORE} leaves it out")
     ext = posixpath.splitext(parts[-1])[1].lower()
     if ext not in readers.READERS:
         raise ValueError(f"{name}/{rel}: sift doesn't index {f'{ext} files' if ext else 'files without an extension'}")
@@ -290,7 +291,6 @@ NEAREST_SHOWN = 5  # collections an error about a file in none names, the neares
 def _nowhere(path, full, collections):
     """Why the file at `full` is in no collection, and how it could be: the collections' folders, nearest first, and
     the `sift add` that would cover it."""
-
     parts = Path(os.path.normcase(full)).parts
 
     def shared(root):  # how many folders, from the drive or root on, the file and the folder have in common
