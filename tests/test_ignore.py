@@ -117,6 +117,10 @@ def test_of_a_folder(tmp_path):
     (tmp_path / ".siftignore").write_bytes("\ufeff# exports\r\n*.pdf\r\n".encode())
     assert Ignore.of(tmp_path)("exports/x.pdf")
     assert not Ignore.of(tmp_path)("x.md")
+    (tmp_path / ".siftignore").write_bytes(
+        "drafts/\r\n".encode("utf-16")
+    )  # `"drafts/" > .siftignore` in PowerShell 5.1
+    assert Ignore.of(tmp_path)("drafts", folder=True)
 
 
 def test_a_siftignore_sift_cannot_read_is_an_error(tmp_path):
