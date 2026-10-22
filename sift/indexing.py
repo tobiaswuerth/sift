@@ -265,7 +265,11 @@ def _locate(db, path):
     for part in parts[:-1]:
         if part.startswith(".") or part in SKIP_DIRS:
             raise ValueError(f"{name}/{rel}: sift indexes no files in {part}/")
-    if Ignore.of(root).excludes("/".join(parts)):
+    try:
+        ignore = Ignore.of(root)
+    except OSError as error:
+        raise ValueError(f"{name}: its {SIFTIGNORE} can't be read, so no file was reindexed: {error}") from None
+    if ignore.excludes("/".join(parts)):
         raise ValueError(f"{name}/{rel}: the collection's {SIFTIGNORE} leaves it out")
     ext = posixpath.splitext(parts[-1])[1].lower()
     if ext not in readers.READERS:

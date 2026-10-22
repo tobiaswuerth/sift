@@ -294,6 +294,14 @@ def test_reindex_refuses_files_outside_every_collection(live, tmp_path):
         index.reindex([str(vault) + "-other/a.md"])  # a folder whose name starts like the collection's
 
 
+def test_reindex_refuses_files_of_a_collection_whose_siftignore_it_cannot_read(live):
+    # As `sift index` skips the collection; an error the agent is told, not a bug in the server's log.
+    index, vault = live
+    (vault / ".siftignore").mkdir()
+    with pytest.raises(ValueError, match=r"^vault: its \.siftignore can't be read, so no file was reindexed: "):
+        index.reindex(["vault/a.md"])
+
+
 def test_a_file_in_no_collection_says_which_there_are_and_how_to_add_one(live, tmp_path):
     # An agent told only "is in no collection" tried other spellings of the path until it gave up.
     index, vault = live
