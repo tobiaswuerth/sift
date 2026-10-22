@@ -16,7 +16,8 @@ from contextlib import nullcontext
 from itertools import repeat, takewhile
 from pathlib import Path
 
-from . import console, embed, links, readers, store
+from . import console, embed, ignore, links, readers, store
+from .ignore import Ignore
 
 SKIP_DIRS = {"node_modules", "__pycache__"}
 MOST_FILES = 1000  # files `reindex` reads at once; `sift index` reads any number
@@ -263,6 +264,8 @@ def _locate(db, path):
     for part in parts[:-1]:
         if part.startswith(".") or part in SKIP_DIRS:
             raise ValueError(f"{name}/{rel}: sift indexes no files in {part}/")
+    if Ignore.of(root).excludes("/".join(parts)):
+        raise ValueError(f"{name}/{rel}: the collection's {ignore.NAME} leaves it out")
     ext = posixpath.splitext(parts[-1])[1].lower()
     if ext not in readers.READERS:
         raise ValueError(f"{name}/{rel}: sift doesn't index {f'{ext} files' if ext else 'files without an extension'}")
@@ -376,20 +379,26 @@ def _drop_source(db, sid):
     return len(docs)
 
 
-def walk(root):
-    """Yield (path, mtime_ns, size) for the files sift has a reader for. DirEntry.stat() is free on Windows."""
-    exts, stack = tuple(readers.READERS), [root]
+def walk(root, ignore=None):
+    """Yield (path, mtime_ns, size) for the files sift has a reader for, but those in hidden folders, SKIP_DIRS and
+    what `ignore`, the collection's .siftignore, leaves out. DirEntry.stat() is free on Windows."""
+    exts, stack = tuple(readers.READERS), [(root, "")]
     while stack:
+        folder, rel = stack.pop()
         try:
-            entries = os.scandir(stack.pop())
+            entries = os.scandir(folder)
         except OSError:
             continue
         with entries:
             for e in entries:
                 if e.is_dir(follow_symlinks=False):
-                    if not e.name.startswith(".") and e.name not in SKIP_DIRS:
-                        stack.append(e.path)
-                elif e.name.lower().endswith(exts):
+                    if (
+                        not e.name.startswith(".")
+                        and e.name not in SKIP_DIRS
+                        and not (ignore and ignore(rel + e.name, True))
+                    ):
+                        stack.append((e.path, rel + e.name + "/"))
+                elif e.name.lower().endswith(exts) and not (ignore and ignore(rel + e.name)):
                     try:
                         st = e.stat()
                     except OSError:  # e.g. a broken symlink
@@ -439,7 +448,7 @@ def _index_collection(db, cid, name, root, fields):
 def _scan(root, known):
     """The files to read, new or changed since `known` (path -> id, mtime, size), and every file seen."""
     todo, seen = [], set()
-    for path, mtime, size in walk(root):
+    for path, mtime, size in walk(root, Ignore.of(root)):
         rel = os.path.relpath(path, root).replace(os.sep, "/")
         try:
             rel.encode()

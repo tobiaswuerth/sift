@@ -6,6 +6,7 @@ import os
 import pytest
 
 from sift import embed, indexing, readers, store
+from sift.ignore import Ignore
 from sift.search import Index
 
 from .conftest import index_contents, keywords_agree, write
@@ -43,6 +44,25 @@ def test_walk_survives_missing_root_and_unstatable_files(tmp_path, monkeypatch):
     assert list(indexing.walk("anywhere")) == []
 
 
+def test_walk_leaves_out_what_siftignore_names(notes):
+    write(notes / ".siftignore", "plain.txt\nrobots/\n")
+    write(notes / "robots" / "deep" / "x.md", "# Inside a folder left out\n")
+    found = [os.path.relpath(p, notes) for p, _, _ in indexing.walk(str(notes), Ignore.of(notes))]
+    assert found == ["rl.md"]
+
+
+def test_index_follows_siftignore_as_it_changes(corpus, capsys):
+    # An app keeps its own files out, a user drafts or exports; and what is left out after all leaves the index.
+    db, root = corpus
+    write(root / ".siftignore", "# drafts and exports\nrobots/\n*.txt\n")
+    indexing.index(db)
+    assert sorted(doc_ids(db)) == ["rl.md"]
+    assert "2 removed" in capsys.readouterr().err
+    write(root / ".siftignore", "robots/\n")
+    indexing.index(db)
+    assert sorted(doc_ids(db)) == ["plain.txt", "rl.md"]
+
+
 # --- indexing ----------------------------------------------------------------
 
 
@@ -73,7 +93,9 @@ def test_index_says_what_it_scans_and_counts_file_by_file(notes, home, monkeypat
     db = store.connect(home)
     store.add_collection(db, notes, "notes")
     walk, said = indexing.walk, []
-    monkeypatch.setattr(indexing, "walk", lambda root: said.append(capsys.readouterr().err) or walk(root))
+    monkeypatch.setattr(
+        indexing, "walk", lambda root, ignore: said.append(capsys.readouterr().err) or walk(root, ignore)
+    )
     indexing.index(db)
     assert said[0].startswith(f"notes: scanning {notes}")  # before walking the folder
     err = capsys.readouterr().err
@@ -188,9 +210,9 @@ def test_index_skips_file_names_sqlite_cannot_store(corpus, monkeypatch, capsys)
     db, root = corpus
     real_walk = indexing.walk
 
-    def walk(path):
+    def walk(path, ignore):
         yield os.path.join(path, "r\udce9sum\udce9.md"), 1, 1
-        yield from real_walk(path)
+        yield from real_walk(path, ignore)
 
     monkeypatch.setattr(indexing, "walk", walk)
     write(root / "new.md", "# New\n")

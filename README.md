@@ -141,6 +141,28 @@ them, with the ids of the documents that answer them, as search results show the
 A few dozen questions are enough to compare modes and to see whether a change helps your documents. Grades are
 optional: 2 for the answer, 1 for a useful one, and 0, as in TREC's judgements, for one read and found irrelevant.
 
+### Leaving files out
+
+sift indexes the files it has a reader for, but not those in folders whose name starts with a dot, such as
+`.obsidian/` or `.git/`, nor in `node_modules` and `__pycache__`. A `.siftignore` file in a collection's folder leaves
+out more, in gitignore's syntax:
+
+```gitignore
+# drafts, exports and what an app keeps for itself
+drafts/
+/exports
+*.tmp.md
+**/private/**
+!private/README.md
+```
+
+`*`, `?` and `[abc]` match within a name and `**` across folders; a pattern with a slash at its start or in its middle
+is taken from the collection's folder, one without matches at any level; a slash at the end matches folders only; `!`
+takes back in what an earlier pattern left out, but never a file in a folder left out. Case counts as on the file
+system: on Windows and macOS, not at all. Only the `.siftignore` in the collection's folder counts. The next
+`sift index` follows a changed `.siftignore`: what it leaves out now leaves the index, and what it no longer leaves out
+joins it; `reindex` refuses what it leaves out.
+
 ### Front matter
 
 YAML front matter with flat `key: value` lines becomes filterable metadata; lists can be inline, quoted or not

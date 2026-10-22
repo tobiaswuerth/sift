@@ -276,6 +276,15 @@ def test_reindex_refuses_what_sift_index_would_not_read(live, path, error):
         index.reindex(["vault/a.md", path])
 
 
+def test_reindex_refuses_what_siftignore_leaves_out(live):
+    index, vault = live
+    write(vault / ".siftignore", "Private/\n*.tmp.md\n")
+    write(vault / "Private" / "keep.md", "x")
+    for path in ("vault/Private/keep.md", "vault/a.tmp.md"):
+        with pytest.raises(ValueError, match=r"\.siftignore leaves it out"):
+            index.reindex([path])
+
+
 def test_reindex_refuses_files_outside_every_collection(live, tmp_path):
     index, vault = live
     write(tmp_path / "elsewhere" / "a.md", "x")
