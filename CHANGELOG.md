@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-22
+
 Links between Markdown notes, for Obsidian vaults and any notes that link to each other
 ([Linked notes](README.md#linked-notes)).
 
@@ -366,7 +368,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/tobiaswuerth/sift/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/tobiaswuerth/sift/compare/v0.10.0...v1.0.0
 [0.10.0]: https://github.com/tobiaswuerth/sift/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/tobiaswuerth/sift/compare/v0.9.0...v0.9.1
