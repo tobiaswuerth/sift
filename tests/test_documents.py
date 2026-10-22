@@ -318,6 +318,27 @@ def test_an_email_in_an_unknown_charset_still_reads(tmp_path):
     assert "Plain Grüße." in doc.text
 
 
+def test_a_text_attachment_reads_in_the_charset_its_mail_declares(tmp_path):
+    # sift reads text files as UTF-8; a mail can say that an attachment is Latin-1, whose umlauts came out as "�".
+    def attachment(name, charset, data):
+        return (
+            f"--b\r\nContent-Type: text/plain; charset={charset}\r\n"
+            f"Content-Disposition: attachment; filename={name}\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"
+        ).encode() + data
+
+    head = b"Subject: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
+    (tmp_path / "m.eml").write_bytes(
+        head
+        + attachment("latin.txt", "iso-8859-1", b"Gr\xfc\xdfe aus Z\xfcrich\r\n")
+        + attachment("ascii.txt", "us-ascii", "Grüße\r\n".encode())  # UTF-8 already, whatever the mail calls it
+        + attachment("odd.txt", "x-unknown", b"Gr\xfc\xdfe\r\n")  # a charset Python doesn't know: as any text file
+        + b"--b--\r\n"
+    )
+    (_, *attached), problems = readers.load(tmp_path / "m.eml")
+    assert [doc.text for doc in attached] == ["Grüße aus Zürich", "Grüße", "Gr\ufffd\ufffde"]
+    assert problems == []
+
+
 def test_attachments_sift_reads_are_documents_of_their_own(tmp_path):
     path = email_file(
         tmp_path,

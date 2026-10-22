@@ -463,11 +463,33 @@ def _attachments(msg, fields):
         name = _file_name(part)
         if not (name and extension(name) in ATTACHED):
             continue
-        found, trouble = READERS[extension(name)](part.get_payload(decode=True) or b"", name, fields)
+        raw = part.get_payload(decode=True) or b""
+        if extension(name) in TEXT:
+            raw = _as_utf8(raw, part.get_content_charset())
+        found, trouble = READERS[extension(name)](raw, name, fields)
         key = _unique(name, taken)
         docs += [doc._replace(key=key) for doc in found]
         problems += [f"{name}: {problem}" for problem in trouble]
     return docs, problems
+
+
+def _as_utf8(raw, charset):
+    """A text attachment as UTF-8, as sift reads text files: as it is if it is UTF-8 already, whatever its mail says
+    (mail clients call text us-ascii that isn't), else in the charset its mail declares, if Python knows it."""
+    if not charset or _utf8(raw):
+        return raw
+    try:
+        return raw.decode(charset, "replace").encode()
+    except LookupError:
+        return raw
+
+
+def _utf8(raw):
+    try:
+        raw.decode()
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def _file_name(part):
