@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-22
+
+For collections that other programs write to: a `.siftignore`, saved emails, the folder of each collection, and
+errors that say what to do ([Leaving files out](README.md#leaving-files-out), [Emails](README.md#emails)).
+
 ### Added
 
 - `.siftignore`: a collection's folder may name, in gitignore's syntax, the files and folders sift leaves out, as
@@ -396,7 +401,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/tobiaswuerth/sift/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/tobiaswuerth/sift/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/tobiaswuerth/sift/compare/v0.10.0...v1.0.0
 [0.10.0]: https://github.com/tobiaswuerth/sift/compare/v0.9.1...v0.10.0
