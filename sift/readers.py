@@ -458,9 +458,9 @@ def _attachments(msg, fields):
     docs, problems, taken = [], [], set()
     for part in msg.iter_attachments():
         name = _file_name(part)
-        if not (name and name.lower().endswith(ATTACHED)):
+        if not (name and extension(name) in ATTACHED):
             continue
-        found, trouble = READERS[Path(name).suffix.lower()](part.get_payload(decode=True) or b"", name, fields)
+        found, trouble = READERS[extension(name)](part.get_payload(decode=True) or b"", name, fields)
         key = _unique(name, taken)
         docs += [doc._replace(key=key) for doc in found]
         problems += [f"{name}: {problem}" for problem in trouble]
@@ -494,6 +494,12 @@ READERS = {
 where fields are the collection's field choices and problems say what was skipped and why."""
 
 
+def extension(name):
+    """A file name's extension, lowercase, by which sift picks its reader; "" for none, as for `.md`, a name that
+    starts with a dot."""
+    return posixpath.splitext(name)[1].lower()
+
+
 def load(path, fields=None):
     """Read one file into documents with the reader for its extension (runs in worker processes). Returns
     (documents, problems), or None if the file can't be read."""
@@ -502,4 +508,4 @@ def load(path, fields=None):
         raw = path.read_bytes()
     except OSError:
         return None
-    return READERS[path.suffix.lower()](raw, path.name, fields or {})
+    return READERS[extension(path.name)](raw, path.name, fields or {})

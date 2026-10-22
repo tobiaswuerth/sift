@@ -332,6 +332,13 @@ def test_attachments_sift_reads_are_documents_of_their_own(tmp_path):
     assert pdf.digest != mail.digest  # unchanged attachments keep their vectors when the mail changes
 
 
+def test_an_attachment_named_like_an_extension_has_none(tmp_path):
+    # As a file named `.md` has none; looking up its reader by an empty extension threw the mail away.
+    path = email_file(tmp_path, Subject="Odd", attachments=[(".md", b"# Dot\n", "text/markdown")])
+    (mail,), problems = readers.load(path)
+    assert (mail.meta["attachments"], problems) == ([".md"], [])
+
+
 def test_an_email_of_attachments_alone(tmp_path):
     path = email_file(tmp_path, body=None, Subject="Scan", attachments=[("a.md", b"# A\n", "text/markdown")])
     (mail, _), _ = readers.load(path)

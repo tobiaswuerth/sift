@@ -271,7 +271,7 @@ def _locate(db, path):
         raise ValueError(f"{name}: its {SIFTIGNORE} can't be read, so no file was reindexed: {error}") from None
     if ignore.excludes("/".join(parts)):
         raise ValueError(f"{name}/{rel}: the collection's {SIFTIGNORE} leaves it out")
-    ext = posixpath.splitext(parts[-1])[1].lower()
+    ext = readers.extension(parts[-1])
     if ext not in readers.READERS:
         raise ValueError(f"{name}/{rel}: sift doesn't index {f'{ext} files' if ext else 'files without an extension'}")
     for i in range(1, len(parts)):
@@ -385,7 +385,7 @@ def _drop_source(db, sid):
 def walk(root, ignore=None):
     """Yield (path, mtime_ns, size) for the files sift has a reader for, but those in hidden folders, SKIP_DIRS and
     what `ignore`, the collection's .siftignore, leaves out. DirEntry.stat() is free on Windows."""
-    exts, stack = tuple(readers.READERS), [(root, "")]
+    stack = [(root, "")]
     while stack:
         folder, rel = stack.pop()
         try:
@@ -401,7 +401,7 @@ def walk(root, ignore=None):
                         and not (ignore and ignore(rel + e.name, True))
                     ):
                         stack.append((e.path, rel + e.name + "/"))
-                elif e.name.lower().endswith(exts) and not (ignore and ignore(rel + e.name)):
+                elif readers.extension(e.name) in readers.READERS and not (ignore and ignore(rel + e.name)):
                     try:
                         st = e.stat()
                     except OSError:  # e.g. a broken symlink

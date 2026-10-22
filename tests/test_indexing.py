@@ -44,6 +44,19 @@ def test_walk_survives_missing_root_and_unstatable_files(tmp_path, monkeypatch):
     assert list(indexing.walk("anywhere")) == []
 
 
+def test_a_file_named_like_an_extension_has_none(corpus, capsys):
+    # As for `reindex`: `.md` is a name starting with a dot, not a Markdown file without one. `sift index` listed it,
+    # found no reader for it, and stopped with "error: ''"; an app that names a note by its empty title writes one.
+    db, root = corpus
+    write(root / ".md", "# Nameless\n")
+    write(root / ".notes.md", "# A note whose name starts with a dot\n")
+    found = {os.path.relpath(p, root) for p, _, _ in indexing.walk(str(root))}
+    assert ".notes.md" in found
+    assert ".md" not in found
+    indexing.index(db)
+    assert ".notes.md" in doc_ids(db)
+
+
 def test_walk_leaves_out_what_siftignore_names(notes):
     write(notes / ".siftignore", "plain.txt\nrobots/\n")
     write(notes / "robots" / "deep" / "x.md", "# Inside a folder left out\n")

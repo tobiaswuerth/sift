@@ -29,6 +29,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - The `sift add` that `sift add` suggests for an Obsidian vault quotes a path with spaces, so it can be pasted.
+- A file named like an extension, such as `.md`, stopped `sift index` with `error: ''`. As `reindex` did already,
+  sift takes it for a name that starts with a dot and has no extension, and leaves it out.
 
 ## [1.1.0] - 2026-10-22
 
