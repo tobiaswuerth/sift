@@ -57,7 +57,8 @@ def _rule(line):
     """A line of a .siftignore as (a test of a path's names, taken back?, folders only?), or None for a blank line or
     a comment."""
     kept = line.rstrip(" ")
-    if kept.endswith("\\") and len(kept) < len(line):  # an escaped space at the end stays
+    backslashes = len(kept) - len(kept.rstrip("\\"))
+    if backslashes % 2 and len(kept) < len(line):  # an escaped space at the end stays, not one after `\\`
         kept += " "
     if not kept or kept.startswith("#"):
         return None

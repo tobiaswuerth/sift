@@ -54,6 +54,8 @@ def ignores(lines, path, folder=False, ignore_case=False):
         ("\\*.md", "x.md", False, False),
         ("trailing.md   ", "trailing.md", False, True),  # spaces at the end don't count ...
         ("space\\ ", "space ", False, True),  # ... unless escaped
+        ("a\\\\  ", "a\\", False, True),  # ... and not after an escaped backslash
+        ("a\\\\\\  ", "a\\ ", False, True),
         ("a.md\n\n\n", "a.md", False, True),
         ("*.md\n!keep.md", "keep.md", False, False),  # the last pattern that matches decides
         ("*.md\n!keep.md", "other.md", False, True),
