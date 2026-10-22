@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-22
+
+### Changed
+
+- The package's description and keywords on PyPI name what 1.1 and 1.2 added: Obsidian notes, backlinks and saved
+  emails. Nothing else changed.
+
 ## [1.2.0] - 2026-10-22
 
 For collections that other programs write to: a `.siftignore`, saved emails, the folder of each collection, and
@@ -401,7 +408,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/tobiaswuerth/sift/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/tobiaswuerth/sift/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/tobiaswuerth/sift/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/tobiaswuerth/sift/compare/v0.10.0...v1.0.0
