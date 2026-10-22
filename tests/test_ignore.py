@@ -94,6 +94,16 @@ def test_case_as_the_file_system_takes_it():
     assert not ignores("Drafts/", "drafts", True, ignore_case=False)
 
 
+def test_names_in_any_unicode_form_where_case_does_not_count():
+    # macOS hands out names decomposed, u and a combining diaeresis for ü, while a .siftignore is typed composed.
+    import unicodedata
+
+    decomposed = unicodedata.normalize("NFD", "Entwürfe")
+    assert ignores("entwürfe/", decomposed, True, ignore_case=True)
+    assert ignores(decomposed + "/", "ENTWÜRFE", True, ignore_case=True)
+    assert not ignores("Entwürfe/", decomposed, True, ignore_case=False)  # elsewhere names are as they are, as in git
+
+
 def test_a_file_in_a_folder_left_out_stays_out():
     # As in git, a file can't be taken back in when a folder above it is left out.
     ignore = Ignore(["private/", "!private/keep.md"])

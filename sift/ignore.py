@@ -2,7 +2,8 @@
 and `__pycache__`. One file in the collection's folder, in gitignore's syntax: `*`, `?`, `[abc]` and `**`; a pattern
 with a slash at its start or in its middle is taken from the collection's folder, one without matches at any level; a
 slash at the end matches folders only; `!` takes back in what an earlier pattern left out, but never a file in a
-folder left out; `#` starts a comment; `\\` escapes. Case counts as on the file system: not on Windows and macOS.
+folder left out; `#` starts a comment; `\\` escapes. Case counts as on the file system: not on Windows and macOS,
+where neither does the Unicode form of a name.
 
 A name's pattern is matched as the pieces between its stars, and a path's as the names between its `**` parts: the
 first at the start, the last at the end, those between found from left to right. That takes at most the path's length
@@ -26,8 +27,8 @@ class Ignore:
     """The patterns of a .siftignore, to ask of paths in the collection, `/`-separated, whether they are left out."""
 
     def __init__(self, lines, ignore_case=CASELESS):
-        self.ignore_case = ignore_case
-        self.rules = [rule for line in lines if (rule := _rule(line.lower() if ignore_case else line))]
+        self.fold = readers.fold if ignore_case else str  # with case, Unicode form: macOS hands out names decomposed
+        self.rules = [rule for line in lines if (rule := _rule(self.fold(line)))]
 
     @classmethod
     def of(cls, folder):
@@ -41,7 +42,7 @@ class Ignore:
 
     def __call__(self, path, folder=False):
         """Whether the pattern that last matches the file, or with `folder` the folder, at `path` leaves it out."""
-        names = (path.lower() if self.ignore_case else path).split("/")
+        names = self.fold(path).split("/")
         for matches, taken_back, folders_only in reversed(self.rules):
             if (folder or not folders_only) and matches(names):
                 return not taken_back
