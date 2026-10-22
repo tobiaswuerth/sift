@@ -408,11 +408,12 @@ def _email(raw, name, fields):
             meta["attachments"] = names
             shown.append("Attachments: " + ", ".join(names))
         title = str(msg.get("subject") or "").strip() or Path(name).stem
-        text = "\n\n".join(part for part in (f"# {title}", "\n".join(shown), _mail_text(msg, fields)) if part)
-        attached, problems = _attachments(msg, fields)
+        body, problems = _mail_text(msg, fields)
+        text = "\n\n".join(part for part in (f"# {title}", "\n".join(shown), body) if part)
+        attached, trouble = _attachments(msg, fields)
     except Exception as error:  # a damaged mail can fail in many ways; it must not stop indexing the others
         return [], [f"skipped ({error})"]
-    return [Doc("", _digest(raw), title, meta, text, list(chunk(text))), *attached], problems
+    return [Doc("", _digest(raw), title, meta, text, list(chunk(text))), *attached], problems + trouble
 
 
 def _mail_headers(msg):
@@ -434,18 +435,18 @@ def _mail_headers(msg):
 
 
 def _mail_text(msg, fields):
-    """An email's text: its plain part, else its HTML part as Markdown; "" if it has none."""
+    """An email's text: its plain part, else its HTML part as Markdown, "" if it has none; and what went wrong."""
     part = msg.get_body(preferencelist=("plain", "html"))
     if part is None:
-        return ""
+        return "", []
     try:
         content = part.get_content()
     except (LookupError, UnicodeError):  # a charset Python doesn't know: as UTF-8, with what doesn't decode replaced
         content = decode(part.get_payload(decode=True) or b"")
-    if part.get_content_subtype() == "html":
-        docs, _ = _document(content.encode(), "mail.html", fields)
-        content = docs[0].text if docs else ""
-    return content.replace("\r\n", "\n").strip()
+    if part.get_content_subtype() != "html":
+        return content.replace("\r\n", "\n").strip(), []
+    docs, problems = _document(content.encode(), "mail.html", fields)
+    return (docs[0].text.strip() if docs else ""), [f"its HTML: {problem}" for problem in problems]
 
 
 ATTACHED = (*TEXT, *DOCUMENTS)  # the attachments of an email sift reads: whole files; no records, no mail in mail

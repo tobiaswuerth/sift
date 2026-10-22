@@ -338,6 +338,13 @@ def test_an_email_of_attachments_alone(tmp_path):
     assert mail.text == "# Scan\n\nAttachments: a.md"
 
 
+def test_a_mail_whose_html_fails_says_so(tmp_path, monkeypatch):
+    # The mail stays, with its headers; that its text is missing is reported, not passed over.
+    monkeypatch.setattr(readers, "_document", lambda raw, name, fields: ([], ["skipped (no text in it)"]))
+    (mail,), problems = readers.load(email_file(tmp_path, body=None, html="<p>x</p>", Subject="Offer"))
+    assert (mail.text, problems) == ("# Offer", ["its HTML: skipped (no text in it)"])
+
+
 def test_a_mail_the_parser_fails_on_is_skipped(tmp_path, monkeypatch):
     # Which input breaks Python's email parser changes with Python's version; that one does must not stop indexing.
     import email
