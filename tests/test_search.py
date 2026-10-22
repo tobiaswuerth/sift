@@ -50,6 +50,13 @@ def test_blank_queries_find_nothing(embedded, mode, query):
     assert getattr(Index(embedded[0]), mode)(query) == []
 
 
+@pytest.mark.parametrize("query", ["title: speeds learning", "{title meta}: speeds up", "meta:speeds learning"])
+def test_a_column_filter_holds_when_nothing_matches(corpus, query):
+    # When no passage matched, sift looked for any of the terms, and "title:" became a word like the others: passages
+    # with "speeds" in their text came back for a search of titles.
+    assert Index(corpus[0]).search(query) == []
+
+
 def test_unusable_query_is_a_clear_error(corpus, monkeypatch):
     monkeypatch.setattr(search, "_phrases", lambda q: "(")
     with pytest.raises(ValueError, match="invalid search query"):
@@ -441,6 +448,7 @@ def test_status(embedded):
     path = status["collections"][0]["path"]
     assert status["collections"] == [
         {"name": "notes", "path": path, "docs": 3, "chunks": 3, "embedded": 3, "fields": fields}
+        | {"links": 0, "unresolved": 0}
     ]
 
 
@@ -841,7 +849,9 @@ def test_browse_lists_documents_of_front_matter_alone(corpus):
     db, root = corpus
     write(root / "empty.md", "---\ntitle: Only metadata\n---\n")
     indexing.index(db)
-    assert {"id": "notes/empty.md", "title": "Only metadata", "text": ""} in Index(db).browse()
+    # its passage is its front matter, as for search
+    assert {"id": "notes/empty.md", "title": "Only metadata", "text": "title: Only metadata"} in Index(db).browse()
+    assert [h["id"] for h in Index(db).search("metadata")] == ["notes/empty.md"]
 
 
 def test_browse_takes_what_searches_take(corpus):

@@ -7,6 +7,8 @@
     <div class="actions">
       <code title="The document's id, as searches and agents name it">{{ reader.id }}</code>
       <a href="{{ reader.similar }}">Similar</a>
+      {% if reader.backlinks %}<a href="{{ reader.backlinks[1] }}" title="The notes that link to this one">Backlinks <span class="n">{{ reader.backlinks[0]|num }}</span></a>{% endif %}
+      {% if reader.links %}<a href="{{ reader.links[1] }}" title="The notes this one links to">Links <span class="n">{{ reader.links[0]|num }}</span></a>{% endif %}
       {% if reader.file %}<a href="{{ reader.file }}" target="_blank" rel="noopener" hx-boost="false">Open file</a>{% endif %}
     </div>
     {% if reader.fields %}

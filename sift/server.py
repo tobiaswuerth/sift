@@ -1,10 +1,10 @@
-"""`sift serve`: the MCP server agents search through (search, vsearch, query, similar, get and status), with the UI
-for people under /ui (see `ui`)."""
+"""`sift serve`: the MCP server agents search through (search, vsearch, query, similar, get, status, links,
+unresolved, mentions and reindex), with the UI for people under /ui (see `ui`)."""
 
 import asyncio
 import logging
 import sqlite3
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import anyio
 from mcp.server.mcpserver import MCPServer
@@ -29,10 +29,15 @@ and cite what you find; say so when nothing relevant turns up.
 - `vsearch`: semantic search. Best when the wording of the answer is unknown.
 - `similar`: documents like a given one, e.g. more papers like one found.
 - `get`: a document, or some of its lines, such as a result's.
+- `links`: the links of a note ([[wikilinks]], embeds, Markdown links): those it holds, and those into it (backlinks).
+- `unresolved`: link targets no note answers to yet: the notes a collection lacks.
+- `mentions`: documents that name a note without linking to it.
+- `reindex`: after writing, changing or deleting files in a collection, index them again, so searches find them.
 Results carry `id` (collection/path), `lines`, `title`, `score` and the passage's `text`. Scores rank the results of
 one call; each tool has its own scale, so don't compare them across tools. All search tools take `collection`, a
-`path` glob, `filters` on front-matter fields and `fields` to show; with `compact: true` results leave out the text:
-survey many results compactly, then read the ones that matter."""
+`path` glob, `filters` on front-matter fields, `fields` to show, and `links_to` and `linked_from` to keep to a note's
+links; with `compact: true` results leave out the text: survey many results compactly, then read the ones that
+matter."""
 
 
 def _collections(index):
@@ -41,11 +46,13 @@ def _collections(index):
                                LEFT JOIN docs d ON d.collection = co.id GROUP BY co.id ORDER BY co.name""").fetchall()
     if not rows:
         return "No collections are indexed yet."
-    lines = []
+    lines, (linked, broken) = [], index.link_counts()
     for cid, name, n in rows:
         line = f"- {name}: {n:,} document{'' if n == 1 else 's'}"
         if fields := index.fields(cid, n):
             line += "; front matter: " + ", ".join(fields)
+        if cid in linked:
+            line += f"; {console.count(linked[cid], 'link')}, {broken[cid]:,} unresolved"
         lines.append(line)
     return "Indexed collections:\n" + "\n".join(lines)
 
@@ -71,6 +78,13 @@ Id = Annotated[
         'out if the file name is unique: "papers/attention.md".'
     ),
 ]
+Note = Annotated[
+    str,
+    Field(
+        description='A note\'s id, e.g. "notes/People/Hans Müller.md", or its name as links write it, e.g. "Hans '
+        'Müller", if one note answers to it.'
+    ),
+]
 K = Annotated[int, Field(description="Number of results.")]
 Collection = Annotated[str | None, Field(description="Search only this collection.")]
 PathGlob = Annotated[
@@ -83,8 +97,21 @@ Filters = Annotated[
         '"cs.RO"}, which a list field matches if it holds it; a list for any of its values, e.g. {"categories": '
         '["cs.RO", "cs.CV"]}; {"not": a value or list} for none of them (documents without the field pass); or a '
         'range, e.g. {"created": {">=": "2024-06", "<": "2025"}}. Dates compare at the precision given, so '
-        '{"<=": "2024"} includes all of 2024.'
+        '{"<=": "2024"} includes all of 2024. A wikilink, e.g. {"org": "[[Acme AG]]"}, matches a link to that note '
+        "however it is written."
     ),
+]
+LinksTo = Annotated[
+    list[str] | None,
+    Field(
+        description="Only documents that link to any of these notes, named by id or as links name them, e.g. "
+        '["Acme AG"] or ["[[Acme AG]]"]: search a note\'s backlinks. A name is resolved within `collection`, if '
+        "given; one that several notes answer to is an error that lists them."
+    ),
+]
+LinkedFrom = Annotated[
+    list[str] | None,
+    Field(description='Only documents that one of these notes links to, e.g. ["notes/People/Hans Müller.md"].'),
 ]
 Fields = Annotated[
     list[str] | None,
@@ -119,6 +146,8 @@ def _add_search(mcp, index, name, description, query_description):
         compact: Compact = False,
         all_passages: AllPassages = False,
         sort: Sort = None,
+        links_to: LinksTo = None,
+        linked_from: LinkedFrom = None,
     ) -> list[dict]:
         return _run(
             method,
@@ -131,6 +160,8 @@ def _add_search(mcp, index, name, description, query_description):
             compact=compact,
             all_passages=all_passages,
             sort=sort,
+            links_to=links_to,
+            linked_from=linked_from,
         )
 
     mcp.tool(name, description=description, annotations=READ_ONLY)(tool)
@@ -180,6 +211,8 @@ def build(index=None):
         compact: Compact = False,
         all_passages: AllPassages = False,
         sort: Sort = None,
+        links_to: LinksTo = None,
+        linked_from: LinkedFrom = None,
     ) -> list[dict]:
         """Documents closest in meaning to a document, e.g. more papers like one found; the document itself is left
         out (cosine similarity, -1 to 1)."""
@@ -194,6 +227,8 @@ def build(index=None):
             compact=compact,
             all_passages=all_passages,
             sort=sort,
+            links_to=links_to,
+            linked_from=linked_from,
         )
 
     @mcp.tool(annotations=READ_ONLY)
@@ -213,8 +248,77 @@ def build(index=None):
 
     @mcp.tool(annotations=READ_ONLY)
     async def status() -> dict:
-        """Collections, document and chunk counts, and the embedding model."""
+        """Collections, document and chunk counts, link counts, and the embedding model."""
         return _run(index.status)
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def links(
+        id: Note,
+        direction: Annotated[
+            Literal["out", "in", "both"],
+            Field(description='"out": the links the note holds; "in": the documents linking it (backlinks).'),
+        ] = "out",
+        depth: Annotated[
+            Literal[1, 2],
+            Field(description="2: also the notes one link further, each with the note it was reached `through`."),
+        ] = 1,
+        field: Annotated[
+            str | None,
+            Field(
+                description='Only links in this front-matter field, e.g. "org": with direction "in", the notes whose '
+                "org links to this one."
+            ),
+        ] = None,
+        k: Annotated[int, Field(description="At most this many links out, and this many documents in.")] = 50,
+    ) -> dict:
+        """Links between Markdown notes: [[wikilinks]], ![[embeds]] and [Markdown](links.md), in the text and in
+        front-matter values. "out" lists each link the note holds, with its line and front-matter field, and where it
+        leads: the document's id, and `via` path, name or alias; or `ambiguous`, with the candidates; or `unresolved`,
+        a note not written yet. "in" lists the documents linking the note, each with the lines that do, so you see
+        the context without `get`. Links resolve within their collection, as Obsidian resolves them."""
+        return _run(index.links, id, direction, depth, field, k)
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def unresolved(
+        collection: Annotated[str | None, Field(description="Only this collection's links.")] = None,
+        k: Annotated[int, Field(description="Number of targets.")] = 50,
+    ) -> list[dict]:
+        """Link targets no document answers to: the notes a collection lacks, most linked first, each with how many
+        documents link it and the ids of a few of them."""
+        return _run(index.unresolved, collection, k)
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def mentions(
+        id: Note,
+        k: K = 10,
+        collection: Collection = None,
+        also: Annotated[
+            list[str] | None,
+            Field(description='Front-matter fields of the note whose values count as its names too, e.g. ["emails"].'),
+        ] = None,
+        fields: Fields = None,
+        compact: Compact = False,
+    ) -> list[dict]:
+        """Documents that name a note without linking to it (unlinked mentions), in any collection: found by keyword
+        search for the note's names as phrases, its file name, title and aliases. Results look like search results;
+        the note itself and the documents linking it are left out. Read the passages to judge which mean the note."""
+        return _run(index.mentions, id, k, collection=collection, also=also, fields=fields, compact=compact)
+
+    @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True))
+    async def reindex(
+        paths: Annotated[
+            list[str],
+            Field(
+                description='Files to index again: ids, e.g. "notes/People/Hans Müller.md", or absolute paths inside '
+                "a collection. A file that is gone has its documents removed."
+            ),
+        ],
+    ) -> list[dict]:
+        """Index files again right after writing, changing or deleting them, so that the next search finds them as
+        they are now: their text, front matter and links, and, if the index is embedded, their passages for vsearch
+        and query. Changes only sift's index, never a file. Per file: its id and status (added, changed, unchanged,
+        removed, not found, skipped, unreadable), its passages (`chunks`) and how many are `embedded`."""
+        return _run(index.reindex, paths)
 
     return mcp, index
 

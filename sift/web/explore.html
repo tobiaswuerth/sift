@@ -4,7 +4,7 @@
     <h2>Collections</h2>
     <ul>
       {% for name, n in collections %}
-      <li><a href="{{ view.href(c=name, path='', f=(), q='', similar='', k=PAGE) }}"{% if name == view.c %} class="on"{% endif %}>{{ name }} <span class="n">{{ n|num }}</span></a></li>
+      <li><a href="{{ view.href(c=name, path='', f=(), q='', similar='', to='', by='', k=PAGE) }}"{% if name == view.c %} class="on"{% endif %}>{{ name }} <span class="n">{{ n|num }}</span></a></li>
       {% endfor %}
     </ul>
   </section>

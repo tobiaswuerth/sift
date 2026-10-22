@@ -12,6 +12,8 @@ from mcp.server.mcpserver import MCPServer
 
 from sift import cli, indexing
 
+from .conftest import write
+
 
 def run(capsys, *argv):
     cli.main(list(argv))
@@ -31,6 +33,46 @@ def test_add_index_embed(notes, home, fake_models, capsys):
     assert "3 added" in run(capsys, "index").err
     assert "embedded 3 chunks" in run(capsys, "embed").err
     assert "embedded 3 chunks" in run(capsys, "embed", "--reset").err
+
+
+def test_add_a_collection_titled_by_file_names(notes, home, capsys):
+    write(notes / "Hans Müller.md", "## Summary\n\nKey account.\n")
+    run(capsys, "add", str(notes), "--title-from", "name")
+    run(capsys, "index")
+    assert [h["title"] for h in json.loads(run(capsys, "search", "account", "--json").out)] == ["Hans Müller"]
+
+
+def test_add_again_changes_where_titles_come_from(cli_corpus, capsys):
+    write(cli_corpus / "Hans Müller.md", "## Summary\n\nKey account.\n")
+    run(capsys, "index")
+    err = run(capsys, "add", str(cli_corpus), "--title-from", "name").err
+    assert "collection 'notes' takes titles from file names now: 2 titles changed" in err
+    assert [h["title"] for h in json.loads(run(capsys, "search", "account", "--json").out)] == ["Hans Müller"]
+    err = run(capsys, "add", str(cli_corpus), "--name", "notes", "--title-from", "heading").err
+    assert "takes titles from headings now: 2 titles changed" in err
+
+
+def test_add_again_says_which_passages_to_embed_again(cli_corpus, capsys):
+    write(cli_corpus / "long.md", "## Summary\n\n" + "first part " * 200 + "\n\n## Details\n\n" + "second part " * 200)
+    run(capsys, "index")
+    run(capsys, "embed")
+    err = run(capsys, "add", str(cli_corpus), "--title-from", "name").err
+    assert "run `sift embed` to embed 1 passage again, which carries its title" in err
+    assert "embedded 1 chunk" in run(capsys, "embed").err
+
+
+@pytest.mark.parametrize("options", [[], ["--id", "key"], ["--title-from", "name", "--name", "other"]])
+def test_add_again_with_anything_else_is_an_error(cli_corpus, capsys, options):
+    with pytest.raises(SystemExit, match="is the collection 'notes' already"):
+        run(capsys, "add", str(cli_corpus), *options)
+
+
+def test_add_an_obsidian_vault_suggests_titles_from_file_names(notes, home, capsys):
+    (notes / ".obsidian").mkdir()
+    assert "--title-from name" in run(capsys, "add", str(notes)).err
+    other = notes.parent / "other"
+    (other / ".obsidian").mkdir(parents=True)
+    assert "--title-from" not in run(capsys, "add", str(other), "--title-from", "name").err
 
 
 @pytest.mark.parametrize(
@@ -94,7 +136,20 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
     calls = []
     monkeypatch.setattr(Index, command, lambda self, *args, **kwargs: calls.append((args, kwargs)) or [])
     run(capsys, command, "brush", "-k", "3", "-c", "notes", "--path", "*.md", "-f", "year=2024", "--fields", "year")
-    run(capsys, command, "brush", "--compact", "--all-passages", "--sort=-year")
+    run(
+        capsys,
+        command,
+        "brush",
+        "--compact",
+        "--all-passages",
+        "--sort=-year",
+        "--links-to",
+        "a",
+        "--links-to",
+        "b",
+        "--linked-from",
+        "c",
+    )
     assert calls == [
         (
             ("brush", 3),
@@ -106,6 +161,8 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
                 "compact": False,
                 "all_passages": False,
                 "sort": None,
+                "links_to": None,
+                "linked_from": None,
             },
         ),
         (
@@ -118,6 +175,8 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
                 "compact": True,
                 "all_passages": True,
                 "sort": "-year",
+                "links_to": ["a", "b"],
+                "linked_from": ["c"],
             },
         ),
     ]
@@ -295,3 +354,143 @@ def test_add_with_chosen_fields(tmp_path, home, capsys):
     run(capsys, "add", str(folder), "--id", "key", "--title", "q", "--text", "q,a")
     run(capsys, "index")
     assert run(capsys, "get", "qa/qa/q1").out == "# Why?\n\nWhy?\n\nBecause.\n"  # a final newline for the shell
+
+
+# --- links -------------------------------------------------------------------
+
+
+@pytest.fixture
+def cli_vault(vault, home, capsys):
+    run(capsys, "add", str(vault[0]), "--title-from", "name")
+    run(capsys, "index")
+    return vault[0]
+
+
+def test_links_command(cli_vault, capsys):
+    out = run(capsys, "links", "vault/Hans Müller.md").out
+    assert out.splitlines() == [
+        "Hans Müller (vault/01_People/Hans Müller.md) links to:",
+        "     3  org: Acme AG  ->  vault/02_Organizations/Acme AG.md",
+        "     4  reports_to: Peter Frei  ->  unresolved",
+    ]
+    out = run(capsys, "links", "vault/Acme AG.md", "--direction", "in").out
+    assert out.splitlines() == [
+        "Linking to Acme AG (vault/02_Organizations/Acme AG.md):",
+        "  vault/01_People/Hans Müller.md  Hans Müller",
+        '     3  org: "[[Acme AG]]"',
+    ]
+
+
+def test_links_command_shows_how_links_resolve(tmp_path, home, capsys):
+    for path, text in {"a/Same.md": "", "b/Same.md": "", "Alias.md": "---\naliases: [Other]\n---\n"}.items():
+        write(tmp_path / "v" / path, text)
+    write(tmp_path / "v" / "n.md", "[[Same]] [[Other#Part|it]] [[Alias]]")
+    run(capsys, "add", str(tmp_path / "v"))
+    run(capsys, "index")
+    assert run(capsys, "links", "v/n.md", "--direction", "both", "--depth", "2").out.splitlines() == [
+        "n (v/n.md) links to:",
+        "     1  Same  ->  ambiguous: v/a/Same.md, v/b/Same.md",
+        "     1  Other#Part  ->  v/Alias.md (alias)",
+        "     1  Alias  ->  v/Alias.md",
+        "Linking to n (v/n.md): nothing",
+    ]
+
+
+def test_links_command_two_steps_away_as_json(cli_vault, capsys):
+    found = json.loads(run(capsys, "links", "vault/Anna Keller.md", "--depth", "2", "-k", "5", "--json").out)
+    assert [(lk["id"], lk.get("through")) for lk in found["out"]] == [
+        ("vault/01_People/Hans Müller.md", None),
+        ("vault/02_Organizations/Acme AG.md", "vault/01_People/Hans Müller.md"),
+    ]
+    out = run(capsys, "links", "vault/Acme AG.md", "--direction", "in", "--depth", "2", "--field", "org").out
+    assert "  vault/01_People/Hans Müller.md  Hans Müller\n" in out
+    assert "through" not in out  # nothing links Hans through org
+    out = run(capsys, "links", "vault/Acme AG.md", "--direction", "in", "--depth", "2").out
+    assert "  vault/01_People/Anna Keller.md  Anna Keller  (through vault/01_People/Hans Müller.md)\n" in out
+    assert "Acme AG" not in run(capsys, "links", "vault/Anna Keller.md").out  # two steps away only with --depth 2
+
+
+def test_search_commands_take_links(cli_vault, capsys):
+    hits = json.loads(run(capsys, "search", "Hans", "--links-to", "Acme AG", "--json").out)
+    assert [h["id"] for h in hits] == ["vault/01_People/Hans Müller.md"]
+    out = run(capsys, "search", "Summary", "--links-to", "Hans Müller", "--linked-from", "Hans Müller", "-k", "5").out
+    assert "vault/02_Organizations/Acme AG.md" in out  # links Hans, and Hans links it
+    assert "Anna Keller" not in out
+    hits = json.loads(run(capsys, "search", "Summary", "-f", "org=[[Acme AG|Acme]]", "--json").out)
+    assert [h["id"] for h in hits] == ["vault/01_People/Hans Müller.md"]
+
+
+def test_mentions_command(vault, home, capsys):
+    run(capsys, "add", str(vault[0]), "--title-from", "name")
+    run(capsys, "add", str(vault[1]))
+    run(capsys, "index")
+    out = run(capsys, "mentions", "vault/Hans Müller.md").out
+    assert "work/contract.md:1-3  Maintenance contract" in out.splitlines()[0]
+    hits = json.loads(run(capsys, "mentions", "vault/Acme AG.md", "-c", "vault", "--also", "aliases", "--json").out)
+    assert hits == []
+    hits = json.loads(
+        run(capsys, "mentions", "vault/Acme AG.md", "-k", "1", "--compact", "--fields", "*", "--json").out
+    )
+    assert [(h["id"], "text" in h) for h in hits] == [("work/contract.md", False)]
+
+
+def test_unresolved_command(cli_vault, capsys):
+    assert run(capsys, "unresolved").out.splitlines() == [
+        "     1  Peter Frei  vault/01_People/Hans Müller.md",
+        "     1  Wartungsvertrag 2027  vault/03_Interactions/2026-10-14 Offerte.md",
+    ]
+    found = json.loads(run(capsys, "unresolved", "-c", "vault", "-k", "1", "--json").out)
+    assert found == [{"target": "Peter Frei", "docs": 1, "ids": ["vault/01_People/Hans Müller.md"]}]
+
+
+def test_unresolved_command_names_a_few_documents(tmp_path, home, capsys):
+    for i in range(7):
+        write(tmp_path / "v" / f"n{i}.md", "[[Missing]]")
+    run(capsys, "add", str(tmp_path / "v"))
+    run(capsys, "index")
+    assert run(capsys, "unresolved").out == "     7  Missing  v/n0.md, v/n1.md, v/n2.md, v/n3.md, v/n4.md, ...\n"
+    write(tmp_path / "v" / "Missing.md", "")
+    run(capsys, "index")
+    assert run(capsys, "unresolved").err == "no unresolved links\n"
+
+
+def test_index_files(cli_vault, capsys, monkeypatch):
+    write(cli_vault / "06_Topics" / "Wartungsvertrag 2027.md", "Press line overhaul from 2027.\n")
+    write(cli_vault / "log.jsonl", "not json\n")
+    (cli_vault / "02_Organizations" / "Acme AG.md").unlink()
+    monkeypatch.chdir(cli_vault / "06_Topics")  # a path from the current folder, as the shell completes it
+    err = run(
+        capsys, "index", "--files", "Wartungsvertrag 2027.md", "vault/02_Organizations/Acme AG.md", "vault/log.jsonl"
+    ).err
+    assert err.splitlines() == [
+        "vault/06_Topics/Wartungsvertrag 2027.md: added",
+        "vault/02_Organizations/Acme AG.md: removed",
+        "vault/log.jsonl: skipped (1 line skipped (line 1: not JSON))",
+    ]
+    hits = json.loads(run(capsys, "search", "overhaul", "--json").out)
+    assert [h["id"] for h in hits] == ["vault/06_Topics/Wartungsvertrag 2027.md"]
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "./vault/02_Organizations/Acme AG.md",
+        pytest.param(
+            ".\\vault\\02_Organizations\\Acme AG.md",
+            marks=pytest.mark.skipif(sys.platform != "win32", reason="a backslash separates folders on Windows only"),
+        ),
+    ],
+)
+def test_index_files_takes_a_relative_path_to_a_file_gone(cli_vault, capsys, monkeypatch, relative):
+    # The file no longer exists, so "./vault/..." was taken for an id, of a collection named ".".
+    (cli_vault / "02_Organizations" / "Acme AG.md").unlink()
+    monkeypatch.chdir(cli_vault.parent)
+    assert run(capsys, "index", "--files", relative).err == "vault/02_Organizations/Acme AG.md: removed\n"
+
+
+def test_index_files_or_collections(cli_vault, capsys, tmp_path):
+    with pytest.raises(SystemExit, match="collections or --files, not both"):
+        run(capsys, "index", "vault", "--files", "vault/x.md")
+    write(tmp_path / "elsewhere.md", "x")
+    with pytest.raises(SystemExit, match="is in no collection"):
+        run(capsys, "index", "--files", str(tmp_path / "elsewhere.md"))

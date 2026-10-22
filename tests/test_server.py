@@ -49,7 +49,18 @@ def tools(mcp):
 
 
 def test_lists_tools(mcp):
-    assert list(tools(mcp)) == ["search", "vsearch", "query", "similar", "get", "status"]
+    assert list(tools(mcp)) == [
+        "search",
+        "vsearch",
+        "query",
+        "similar",
+        "get",
+        "status",
+        "links",
+        "unresolved",
+        "mentions",
+        "reindex",
+    ]
 
 
 def test_every_parameter_is_described(mcp):
@@ -60,8 +71,12 @@ def test_every_parameter_is_described(mcp):
 
 
 def test_tools_are_marked_read_only(mcp):
-    # Clients may then run them without asking the user each time.
-    assert all(tool.annotations.read_only_hint for tool in tools(mcp).values())
+    # Clients may then run them without asking the user each time. reindex changes only sift's index, never a
+    # file, and running it twice does what running it once does.
+    found = tools(mcp)
+    assert all(tool.annotations.read_only_hint for name, tool in found.items() if name != "reindex")
+    hints = found["reindex"].annotations
+    assert (hints.read_only_hint, hints.destructive_hint, hints.idempotent_hint) == (False, False, True)
 
 
 @pytest.mark.parametrize("tool", ["search", "vsearch", "query"])
@@ -73,13 +88,18 @@ def test_search_tools(mcp, tool):
     assert "notes/rl.md" in [h["id"] for h in hits]
 
 
-@pytest.mark.parametrize("tool", ["search", "vsearch", "query", "similar", "get", "status"])
+@pytest.mark.parametrize(
+    "tool",
+    ["search", "vsearch", "query", "similar", "get", "status", "links", "unresolved", "mentions", "reindex"],
+)
 def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
     # PyTorch crashes in worker threads on Python 3.15 (Windows, macOS), so no tool may run in one.
     index, threads = Index(embedded[0]), []
     real = getattr(index, tool)
     monkeypatch.setattr(index, tool, lambda *a, **kw: threads.append(threading.current_thread()) or real(*a, **kw))
-    args = {"get": {"id": "notes/rl.md"}, "similar": {"id": "notes/rl.md"}, "status": {}}.get(tool, {"query": "brush"})
+    args = {name: {"id": "notes/rl.md"} for name in ("get", "similar", "links", "mentions")}
+    args |= {"status": {}, "unresolved": {}, "reindex": {"paths": ["notes/rl.md"]}}
+    args = args.get(tool, {"query": "brush"})
     assert not call(server.build(index)[0], tool, args).is_error
     assert threads == [threading.main_thread()]
 
@@ -127,6 +147,10 @@ def test_get_and_status(mcp):
         ("vsearch", {"query": "x", "k": 0}, "k must be a positive integer"),
         ("query", {"query": "x", "filters": {'bad"key': "v"}}, "invalid filter field 'bad\"key'"),
         ("get", {"id": "missing/x.md"}, "unknown document 'missing/x.md'"),
+        ("links", {"id": "notes/rl.md", "direction": "up"}, "'out', 'in' or 'both'"),
+        ("links", {"id": "notes/rl.md", "depth": 3}, "1 or 2"),
+        ("unresolved", {"collection": "missing"}, "no collection named 'missing'"),
+        ("reindex", {"paths": ["notes/.git/x.md"]}, "sift indexes no files in .git/"),
     ],
 )
 def test_errors_tell_the_agent_what_went_wrong(mcp, tool, args, reason):
@@ -135,6 +159,78 @@ def test_errors_tell_the_agent_what_went_wrong(mcp, tool, args, reason):
     result = call(mcp, tool, args)
     assert result.is_error
     assert reason in result.content[0].text
+
+
+HANS, ACME = "vault/01_People/Hans Müller.md", "vault/02_Organizations/Acme AG.md"
+
+
+def test_links_tool(linked):
+    mcp = server.build(Index(linked[0]))[0]
+    found = data(call(mcp, "links", {"id": ACME, "direction": "both"}))
+    assert [lk["id"] for lk in found["out"]] == [HANS]
+    assert found["in"] == [
+        {"id": HANS, "title": "Hans Müller", "links": [{"line": 3, "field": "org", "text": 'org: "[[Acme AG]]"'}]}
+    ]
+    found = data(call(mcp, "links", {"id": "vault/Anna Keller.md", "depth": 2, "field": "colleague_of", "k": 5}))
+    assert [lk["id"] for lk in found["out"]] == [HANS]  # Hans links nothing through colleague_of
+
+
+@pytest.mark.parametrize("tool", ["search", "query", "vsearch"])
+def test_search_tools_take_links(linked, fake_models, tool):
+    from sift import embed
+
+    embed.embed_pending(linked[0])
+    mcp = server.build(Index(linked[0]))[0]
+    hits = data(call(mcp, tool, {"query": "Hans", "k": 1, "links_to": ["[[Acme AG]]"], "collection": "vault"}))
+    assert [h["id"] for h in hits] == [HANS]
+    hits = data(call(mcp, tool, {"query": "customer", "k": 1, "linked_from": ["vault/Hans Müller.md"]}))
+    assert [h["id"] for h in hits] == [ACME]
+
+
+def test_similar_tool_takes_links(linked, fake_models):
+    from sift import embed
+
+    embed.embed_pending(linked[0])
+    mcp = server.build(Index(linked[0]))[0]
+    offer = "vault/03_Interactions/2026-10-14 Offerte.md"
+    hits = data(call(mcp, "similar", {"id": offer, "links_to": ["Acme AG"], "filters": {"org": "[[Acme AG]]"}}))
+    assert [h["id"] for h in hits] == [HANS]
+
+
+def test_reindex_tool(linked, fake_models):
+    from sift import embed
+
+    db, vault, _ = linked
+    embed.embed_pending(db)
+    mcp = server.build(Index(db))[0]
+    write(vault / "06_Topics" / "Wartungsvertrag 2027.md", "Maintenance of the press line, from 2027.\n")
+    found = data(call(mcp, "reindex", {"paths": [str(vault / "06_Topics" / "Wartungsvertrag 2027.md")]}))
+    assert found == [{"id": "vault/06_Topics/Wartungsvertrag 2027.md", "status": "added", "chunks": 1, "embedded": 1}]
+    hits = data(call(mcp, "vsearch", {"query": "maintenance of the press line", "k": 1}))
+    assert [h["id"] for h in hits] == ["vault/06_Topics/Wartungsvertrag 2027.md"]
+
+
+def test_mentions_tool(linked):
+    mcp = server.build(Index(linked[0]))[0]
+    hits = data(call(mcp, "mentions", {"id": HANS, "k": 3, "collection": "work", "also": ["aliases"]}))
+    assert [h["id"] for h in hits] == ["work/contract.md"]
+    hits = data(call(mcp, "mentions", {"id": HANS, "compact": True, "fields": ["*"]}))
+    assert set(hits[0]) == {"id", "title", "lines", "score", "fields"}
+
+
+def test_unresolved_tool(linked):
+    mcp = server.build(Index(linked[0]))[0]
+    assert [t["target"] for t in data(call(mcp, "unresolved", {"collection": "vault", "k": 1}))] == ["Peter Frei"]
+
+
+def test_instructions_count_links(linked):
+    # Agents should know which collections hold linked notes, and how many of their links lead nowhere yet.
+    mcp = server.build(Index(linked[0]))[0]
+    assert "- vault: 4 documents; front matter: aliases, colleague_of, org, reports_to; 6 links, 2 unresolved" in (
+        mcp.instructions
+    )
+    assert "- work: 1 document\n" in mcp.instructions + "\n"
+    assert "`links`" in mcp.instructions
 
 
 @pytest.fixture
@@ -297,6 +393,8 @@ def test_search_tools_pass_every_option_on(embedded, monkeypatch, tool, first):
         "compact": True,
         "all_passages": True,
         "sort": "-year",
+        "links_to": ["a"],
+        "linked_from": ["b"],
     }
     call(server.build(index)[0], tool, {first: "brush", "k": 3} | options)
     assert calls == [(("brush", 3), options)]

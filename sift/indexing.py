@@ -1,21 +1,24 @@
 """`sift index`: bringing the index in step with the files on disk, incrementally. Files are compared by modification
 time and size, documents by content hash; new and changed files are read in worker processes (see `readers`) while
-the previous batch is written.
+the previous batch is written. `reindex` reads given files at once, for a note just written to be found.
 """
 
 import json
 import multiprocessing
 import os
+import posixpath
 import sqlite3
+import stat
 import time
-from collections import Counter
+from collections import Counter, namedtuple
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
 from itertools import repeat
 
-from . import console, readers, store
+from . import console, embed, links, readers, store
 
 SKIP_DIRS = {"node_modules", "__pycache__"}
+MOST_FILES = 1000  # files `reindex` reads at once; `sift index` reads any number
 WRITE_BATCH = 5000  # files per commit
 BATCH_BYTES = 256 << 20  # and at most this much file content, for big JSON Lines files
 FILES_PER_WORKER = 1000  # a worker process only pays off for at least this many files
@@ -62,29 +65,37 @@ def _read(pool, workers, fields, batch):
 
 
 def _insert(db, cid, sid, path, doc):
-    """Add a document and its chunks, and return its id. Their keyword entries come with their file's (see _store)."""
+    """Add a document, its chunks, its links and, if it is a whole file, its names, and return its id. Its keyword
+    entries come with its file's (see _store)."""
     meta = json.dumps(doc.meta, ensure_ascii=False)
     doc_id = db.execute(
         "INSERT INTO docs(collection, source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?,?)",
         (cid, sid, path, doc.digest, doc.title, meta, doc.text),
     ).lastrowid
-    db.executemany(
-        "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?,?,?,?,?,?)",
-        [(doc_id, seq, first, last, pos, length) for seq, (first, last, pos, length) in enumerate(doc.chunks)],
-    )
+    _add_chunks(db, doc_id, doc.chunks)
+    if doc.links or not doc.key:  # a JSON Lines record has no name, and no links: millions of them cost nothing
+        links.save(db, [(doc_id, cid, path, doc.meta, doc.links, not doc.key)])
     return doc_id
 
 
+def _add_chunks(db, doc_id, chunks):
+    db.executemany(
+        "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?,?,?,?,?,?)",
+        [(doc_id, seq, first, last, pos, length) for seq, (first, last, pos, length) in enumerate(chunks)],
+    )
+
+
 def _store(db, cid, sid, rel, docs, counts, note):
-    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included.
-    note(text) tells the user of a document that had to be skipped."""
+    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
+    row ids are returned. note(text) tells the user of a document that had to be skipped."""
     existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
-    base, kept, added = rel.rsplit(".", 1)[0], set(), []
+    base, kept, added, unchanged = rel.rsplit(".", 1)[0], set(), [], set()
     for doc in docs:
         path = f"{base}/{doc.key}" if doc.key else rel
         kept.add(path)
         old = existing.get(path)
         if old and old[1] == doc.digest:
+            unchanged.add(old[0])
             continue
         if old:
             store.delete_docs(db, [old[0]])
@@ -94,16 +105,244 @@ def _store(db, cid, sid, rel, docs, counts, note):
             note(f"{path}: a document of this name exists already, skipped")
             continue
         counts["changed" if old else "added"] += 1
-    # The keyword entries of the file's new documents, read through the view as deleting reads them: in one statement,
-    # as one per document took twice as long.
-    db.execute(
-        "INSERT INTO fts(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text WHERE id IN "
-        "(SELECT c.id FROM chunks c JOIN json_each(?) j ON c.doc = j.value)",
-        (json.dumps(added),),
-    )
+    store.keywords(db, added)
     gone = [i for p, (i, _) in existing.items() if p not in kept]
     store.delete_docs(db, gone)
     counts["removed"] += len(gone)
+    return unchanged
+
+
+REFRESH_BATCH = 1000  # files read again from the index at a time
+
+
+def retitle(db, name, title_from):
+    """Choose where a collection's Markdown and text files take their titles from (see readers.parse), and retitle
+    those indexed from the text the index holds: no file is read again. Returns how many titles changed, and how many
+    passages lost their vectors for `sift embed` to embed again."""
+    cid, fields = store.set_title_from(db, name, title_from)
+    changed = dropped = 0
+    for _, files in _files(db, cid):
+        c, d = _reread(db, cid, files, fields)
+        changed, dropped = changed + c, dropped + d
+    db.commit()
+    return changed, dropped
+
+
+def add_links(db):
+    """Read every indexed file's document again from the text the index holds, as this sift reads it, and store its
+    links and names: what an index of sift 1.0 lacks. Front matter is read again too, as lists of unquoted items were
+    text before. No file is read; nothing is embedded again, unless its title changed (see _reread)."""
+    total = db.execute("SELECT count(*) FROM sources").fetchone()[0]
+    console.say(f"reading links from the {console.count(total, 'file')} in the index, once ...")
+    done = 0
+    with console.Progress(total, "files", prefix="links: ") as progress:
+        for cid, fields in db.execute("SELECT id, fields FROM collections").fetchall():
+            for n, files in _files(db, cid):
+                _reread(db, cid, files, json.loads(fields) if fields else {})
+                done += n
+                progress.update(done)
+    console.say(f"links read in {console.duration(progress.elapsed)}")
+
+
+def _files(db, cid):
+    """The documents of a collection's files, REFRESH_BATCH files at a time: how many files, and (id, path, title,
+    meta) of their documents. A file's document has the file's path; a JSON Lines file has records instead."""
+    sql = """SELECT s.id, d.id, d.path, d.title, d.meta FROM sources s
+             LEFT JOIN docs d ON d.collection = s.collection AND d.path = s.path AND d.source = s.id
+             WHERE s.collection = ? AND s.id > ? ORDER BY s.id LIMIT ?"""
+    after = 0
+    while rows := db.execute(sql, (cid, after, REFRESH_BATCH)).fetchall():
+        after = rows[-1][0]
+        yield len(rows), [row[1:] for row in rows if row[1] is not None]
+
+
+def _reread(db, cid, files, fields):
+    """Read the documents of files again from the index, (id, path, title, meta) of each: Markdown and text files from
+    the text the index holds, as this sift reads them with the collection's `fields`, other files only for their
+    names. Their names and links are stored anew; titles and front matter that changed go into the documents and the
+    keyword index, and passages embedded with a title that changed lose their vectors. A note of front matter alone
+    gets its passage (sift 1.0 gave it none). Returns how many documents changed, and how many vectors went."""
+    notes = json.dumps([doc for doc, path, _, _ in files if path.lower().endswith(readers.TEXT)])
+    texts = dict(db.execute("SELECT id, text FROM docs WHERE id IN (SELECT value FROM json_each(?))", (notes,)))
+    sql = "SELECT doc, count(*) FROM chunks WHERE doc IN (SELECT value FROM json_each(?)) GROUP BY doc"
+    passages = dict(db.execute(sql, (notes,)))
+    changed, fresh, saved = {}, {}, []
+    for doc_id, path, title, meta in files:
+        if doc_id not in texts:
+            saved.append((doc_id, cid, path, json.loads(meta), (), True))
+            continue
+        doc = readers.note(texts[doc_id], path.rsplit("/", 1)[-1], fields)
+        saved.append((doc_id, cid, path, doc.meta, doc.links, True))
+        stored = json.dumps(doc.meta, ensure_ascii=False)
+        if (doc.title, stored) != (title, meta):
+            changed[doc_id] = (title, doc.title, stored)
+        if doc.chunks and doc_id not in passages:
+            fresh[doc_id] = doc.chunks
+    ids = json.dumps([doc for doc, *_ in files])
+    for table in ("links", "names"):
+        db.execute(f"DELETE FROM {table} WHERE doc IN (SELECT value FROM json_each(?))", (ids,))
+    links.save(db, saved)
+    store.keywords(db, list(changed), add=False)
+    db.executemany("UPDATE docs SET title = ?, meta = ? WHERE id = ?", [(t, m, i) for i, (_, t, m) in changed.items()])
+    for doc_id, chunks in fresh.items():
+        _add_chunks(db, doc_id, chunks)
+    store.keywords(db, list(changed.keys() | fresh.keys()))
+    if not changed:
+        return 0, 0
+    sql = """SELECT c.id, c.doc, c.seq, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
+             WHERE c.doc IN (SELECT value FROM json_each(?)) AND c.seq > 0"""
+    stale = [
+        (chunk,)
+        for chunk, doc, seq, text in db.execute(sql, (json.dumps(list(changed)),))
+        if embed.text_of(seq, changed[doc][0], text) != embed.text_of(seq, changed[doc][1], text)
+    ]
+    dropped = db.executemany("DELETE FROM vectors WHERE chunk = ?", stale).rowcount
+    if dropped:
+        store.touch(db)
+    return len(changed), dropped
+
+
+Reindexed = namedtuple("Reindexed", "files removed before after")
+"""What `reindex` did: per file, ({"id", "status"[, "note"]}, its documents' row ids); the chunks it removed; and the
+index's version before and after, for a server to follow without loading every vector again."""
+
+
+def reindex(db, paths):
+    """Read files again now, or remove their documents if they are gone, so that the next search finds them as they
+    are: their text, front matter, links and keyword entries. `paths` are ids, `collection/path`, or absolute paths in
+    a collection, each a file `sift index` would read; if one isn't, nothing is read. A file's status is "added",
+    "changed", "unchanged", "removed", "not found", "skipped" (no documents in it, with a "note" saying why) or
+    "unreadable". In one transaction."""
+    if not isinstance(paths, list | tuple) or not all(isinstance(path, str) for path in paths):
+        raise ValueError(f"paths must be a list of ids or absolute paths, got {paths!r}")
+    if not paths:
+        raise ValueError("paths needs at least one id or absolute path")
+    if len(paths) > MOST_FILES:
+        raise ValueError(f"at most {MOST_FILES:,} files at a time; `sift index` reads any number")
+    files = list(dict.fromkeys(_locate(db, path) for path in paths))
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        before, found, removed = store.get_meta(db, "version"), [], []
+        for cid, name, root, fields, rel in files:
+            entry, docs, gone = _reindex_file(db, cid, name, root, json.loads(fields) if fields else {}, rel)
+            found.append((entry, docs))
+            removed += gone
+        after = store.get_meta(db, "version")
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    return Reindexed(found, removed, before, after)
+
+
+def _locate(db, path):
+    """The file an id or absolute path names, as `sift index` stores it: (collection id, name, folder, fields, path in
+    it), in the file system's spelling. A file `sift index` wouldn't read is an error."""
+    collections = db.execute("SELECT id, name, path, fields FROM collections ORDER BY length(path) DESC").fetchall()
+    given = os.path.expanduser(path)
+    if os.path.isabs(given):
+        full = os.path.normpath(given)
+        inside = [c for c in collections if os.path.normcase(full).startswith(os.path.normcase(os.path.join(c[2], "")))]
+        if not inside:
+            raise ValueError(f"{path} is in no collection")
+        (cid, name, root, fields), rel = inside[0], os.path.relpath(full, inside[0][2]).replace(os.sep, "/")
+    else:
+        name, _, rel = path.replace("\\", "/").partition("/")
+        match = [c for c in collections if c[1] == name]
+        if not match:
+            raise LookupError(f"no collection named {name!r}")
+        (cid, name, root, fields), rel = match[0], posixpath.normpath(rel) if rel else ""
+        if rel in ("", "."):
+            raise ValueError(f"{path!r}: name a file of the collection, as collection/path, or by its absolute path")
+        if rel == ".." or rel.startswith(("../", "/")):
+            raise ValueError(f"{path!r} is outside the collection {name!r}")
+    if not os.path.isdir(root):  # never take an unplugged drive for files deleted
+        raise ValueError(f"{name}: folder not found: {root}")
+    parts = _spelled(root, rel.split("/"))
+    for part in parts[:-1]:
+        if part.startswith(".") or part in SKIP_DIRS:
+            raise ValueError(f"{name}/{rel}: sift indexes no files in {part}/")
+    ext = posixpath.splitext(parts[-1])[1].lower()
+    if ext not in readers.READERS:
+        raise ValueError(f"{name}/{rel}: sift doesn't index {f'{ext} files' if ext else 'files without an extension'}")
+    for i in range(1, len(parts)):
+        if os.path.islink(os.path.join(root, *parts[:i])):
+            raise ValueError(
+                f"{name}/{rel}: {parts[i - 1]}/ is linked from elsewhere, and `sift index` doesn't follow it"
+            )
+    rel = "/".join(parts)
+    try:
+        rel.encode()
+    except UnicodeEncodeError:  # bytes that aren't UTF-8 (Linux); SQLite stores only valid text
+        raise ValueError(f"{name}: unsupported file name {rel!r}") from None
+    if not os.path.lexists(os.path.join(root, *parts)):  # gone: the file as indexed, in whatever spelling
+        rel = next(iter(_indexed_as(db, cid, rel)), rel)
+    return cid, name, root, fields, rel
+
+
+def _spelled(root, parts):
+    """A path's parts as the file system spells them: on Windows and macOS a path names a file in any case or Unicode
+    form, which indexed so would be the file a second time. Parts that don't exist stay as given."""
+    folder, spelled = root, []
+    for i, part in enumerate(parts):
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            return spelled + parts[i:]
+        if part not in names:
+            same = [n for n in names if readers.fold(n) == readers.fold(part)]
+            part = same[0] if len(same) == 1 else part
+        spelled.append(part)
+        folder = os.path.join(folder, part)
+    return spelled
+
+
+def _indexed_as(db, cid, rel):
+    """The paths of the collection's files that `rel` names, in any case or Unicode form: one, or none."""
+    if db.execute("SELECT 1 FROM sources WHERE collection = ? AND path = ?", (cid, rel)).fetchone():
+        return [rel]
+    paths = [p for (p,) in db.execute("SELECT path FROM sources WHERE collection = ?", (cid,))]
+    same = [p for p in paths if readers.fold(p) == readers.fold(rel)]
+    return same if len(same) == 1 else []
+
+
+def _reindex_file(db, cid, name, root, fields, rel):
+    """Read one file again, or remove its documents if it is gone, as `sift index` would: ({"id", "status"}, its
+    documents' row ids, the chunks removed). A chunk removed is every chunk of a document replaced or removed: SQLite
+    hands the ids of deleted chunks out again, so the new chunks of a note may carry its old ones' ids."""
+    entry = {"id": f"{name}/{rel}"}
+    known = db.execute("SELECT id FROM sources WHERE collection = ? AND path = ?", (cid, rel)).fetchone()
+    sid = known and known[0]
+    sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
+    chunks = db.execute(sql, (sid,)).fetchall()
+    path = os.path.join(root, *rel.split("/"))
+    try:
+        info = os.stat(path)  # through a link, as `sift index` reads it
+    except OSError:
+        info = None
+    if info is None or not stat.S_ISREG(info.st_mode):
+        if sid is None:
+            return entry | {"status": "not found"}, [], []
+        _drop_source(db, sid)
+        return entry | {"status": "removed"}, [], [chunk for _, chunk in chunks]
+    read = readers.load(path, fields)
+    if read is None:
+        return entry | {"status": "unreadable"}, [], []
+    docs, problems = read
+    if sid is None:
+        sid = db.execute("INSERT INTO sources(collection, path) VALUES(?, ?)", (cid, rel)).lastrowid
+    had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
+    unchanged = _store(db, cid, sid, rel, docs, counts, problems.append)
+    db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (info.st_mtime_ns, info.st_size, sid))
+    now = [d for (d,) in db.execute("SELECT id FROM docs WHERE source = ?", (sid,))]
+    if not now and problems:
+        status = "skipped"
+    elif not (counts["added"] or counts["changed"] or counts["removed"]):
+        status = "unchanged"
+    else:
+        status = "changed" if had else "added"
+    note = {"note": "; ".join(problems)} if problems else {}
+    return entry | {"status": status} | note, now, [chunk for doc, chunk in chunks if doc not in unchanged]
 
 
 def _drop_source(db, sid):

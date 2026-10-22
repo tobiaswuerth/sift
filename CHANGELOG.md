@@ -5,6 +5,53 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-22
+
+Links between Markdown notes, for Obsidian vaults and any notes that link to each other
+([Linked notes](README.md#linked-notes)).
+
+### Added
+
+- Links: sift reads the wikilinks, embeds and Markdown links of every Markdown note, in its text and its front matter,
+  and resolves them when asked, within the note's collection, as Obsidian does: by path, by name, preferring the
+  note's own folder, and by alias. So they follow notes as they come and go, without the linking notes being read
+  again.
+  - `links` (MCP tool and `sift links`): the links of a note, each with where it leads, `ambiguous` or `unresolved`;
+    the notes linking to it, with the lines that do; two steps away with `depth` 2; through one front-matter field.
+  - `unresolved` (MCP tool and `sift unresolved`): the link targets no note answers to yet, most linked first.
+  - `mentions` (MCP tool and `sift mentions`): the documents that name a note without linking to it.
+  - `links_to` and `linked_from` on `search`, `vsearch`, `query` and `similar` (`--links-to`, `--linked-from`): only
+    documents linking to these notes, or linked from them. A note is named by its id or as links name it.
+  - `status` counts each collection's links and how many are unresolved, and agents learn of both when they connect.
+  - `sift ui`: the reader leads to a note's backlinks and links.
+- `reindex` (MCP tool) and `sift index --files`: read the files given at once, or drop the documents of files that
+  are gone, so that the next search finds a note an agent just wrote. Over MCP it embeds the new passages too, and the
+  server takes up their vectors without loading the others again. It reads only files `sift index` would read.
+- `sift add --title-from name`: Markdown and text files take their file name as title, unless their front matter
+  sets one, as notes in an Obsidian vault are named. In a vault whose notes start with `## Summary`, every note was
+  titled "Summary". The same command changes a collection added before: it retitles the notes from the text the
+  index holds, without reading a file, and says which passages `sift embed` must embed again. `sift add` of an
+  Obsidian vault suggests it.
+
+### Changed
+
+- The index's layout is version 4. An index of sift 1.0 updates itself on first use, once, from what it holds: no
+  file is read and nothing is embedded again. 20,000 notes take about 3 seconds, 3.2 million JSON Lines records a
+  moment. sift 1.0 doesn't open an index so updated: upgrade every sift that uses it.
+- A filter value that is a wikilink, `{"org": "[[Acme AG]]"}`, also matches links to the same note written otherwise:
+  `[[acme ag|Acme]]`, `[[02_Organizations/Acme AG]]`, or by an alias. Other values compare exactly, as before.
+- A note of front matter alone, such as a contact's, has its front matter as its passage: no search found it before,
+  not even by its name. An index of sift 1.0 gets these passages when it updates; `sift embed` embeds them.
+- `sift ui`: a document's passage while browsing is the start of its first passage, which kept the closing `---` of
+  a note of front matter alone out.
+
+### Fixed
+
+- Front matter: a YAML list with unquoted items, `aliases: [Hans Mueller, H. Müller]`, was one string. It is a list
+  now; a single wikilink, `org: [[Acme AG]]`, stays the link it means.
+- `search`: when no passage held every term, the search for any of them dropped column filters such as `title:`,
+  and found the words anywhere.
+
 ## [1.0.0] - 2026-10-21
 
 sift is stable: from now on, its commands, MCP tools, settings, index and worker protocol change incompatibly only
@@ -321,7 +368,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/tobiaswuerth/sift/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/tobiaswuerth/sift/compare/v0.10.0...v1.0.0
 [0.10.0]: https://github.com/tobiaswuerth/sift/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/tobiaswuerth/sift/compare/v0.9.0...v0.9.1

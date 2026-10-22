@@ -79,6 +79,25 @@ def test_add_collection_rejects_bad_names(tmp_path, notes, name):
         store.add_collection(db, notes, name or "/")
 
 
+def test_a_collection_can_take_titles_from_file_names(tmp_path, notes):
+    db = store.connect(tmp_path / "h")
+    store.add_collection(db, notes, fields={"title_from": "name"})
+    assert db.execute("SELECT fields FROM collections").fetchone() == ('{"title_from": "name"}',)
+
+
+@pytest.mark.parametrize("choice", ["file", "", None, 1])
+def test_titles_come_from_headings_or_file_names(tmp_path, notes, choice):
+    db = store.connect(tmp_path / "h")
+    with pytest.raises(SystemExit, match="titles come from 'heading' or 'name'"):
+        store.add_collection(db, notes, fields={"title_from": choice})
+
+
+def test_the_collection_at_a_folder(corpus, tmp_path):
+    db, notes = corpus
+    assert store.collection_at(db, notes / ".." / notes.name) == "notes"
+    assert store.collection_at(db, tmp_path) is None
+
+
 def test_add_collection_errors(corpus, tmp_path):
     db = corpus[0]
     (tmp_path / "other").mkdir()

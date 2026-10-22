@@ -323,6 +323,19 @@ def index_contents(db):
     )
 
 
+def keywords_agree(db):
+    """Whether the keyword index holds exactly what the chunk_text view reads now, term by term: an entry left from an
+    old title or meta can't be deleted any more. (FTS5's integrity-check fails on the view, as 'rebuild' does.)"""
+    db.executescript("""
+        CREATE VIRTUAL TABLE temp.fresh USING fts5(title, text, meta, tokenize='unicode61 remove_diacritics 2');
+        INSERT INTO temp.fresh(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text;
+        CREATE VIRTUAL TABLE temp.held USING fts5vocab(main, fts, instance);
+        CREATE VIRTUAL TABLE temp.made USING fts5vocab(temp, fresh, instance);""")
+    held, made = (db.execute(f"SELECT * FROM temp.{t} ORDER BY 1, 2, 3, 4").fetchall() for t in ("held", "made"))
+    db.executescript("DROP TABLE temp.held; DROP TABLE temp.made; DROP TABLE temp.fresh;")
+    return held == made and len(held) > 0
+
+
 @pytest.fixture
 def pools(monkeypatch):
     """Records every worker process pool that indexing starts."""
@@ -369,6 +382,43 @@ def corpus(notes, home):
     store.add_collection(db, notes, "notes")
     indexing.index(db)
     return db, notes
+
+
+@pytest.fixture
+def vault(tmp_path):
+    """An Obsidian vault of linked notes, and a folder of other documents: (vault, work)."""
+    root = tmp_path / "vault"
+    write(
+        root / "01_People" / "Hans Müller.md",
+        '---\naliases: [Hans Mueller, H. Müller]\norg: "[[Acme AG]]"\nreports_to: "[[Peter Frei]]"\n---\n'
+        "## Summary\n\nKey account manager at Acme AG, based in Zürich.\n\n## Kontakt\n\nhans.mueller@acme.example\n",
+    )
+    write(
+        root / "01_People" / "Anna Keller.md",
+        '---\ncolleague_of: ["[[Hans Müller|Hans]]"]\n---\n## Summary\n\nProject lead for the maintenance contract.\n',
+    )
+    write(
+        root / "02_Organizations" / "Acme AG.md",
+        "## Summary\n\nIndustrial customer since 2019.\nKey contact: [[01_People/Hans Müller#Kontakt]]\n",
+    )
+    write(
+        root / "03_Interactions" / "2026-10-14 Offerte.md",
+        "## Summary\n\nCall with [[Hans Mueller]] about [[Wartungsvertrag 2027]].\n`[[Not a link]]`\n\n"
+        "```\n[[Also not a link]]\n```\n",
+    )
+    work = tmp_path / "work"
+    write(work / "contract.md", "# Maintenance contract\n\nSigned by Hans Müller for Acme AG in October.\n")
+    return root, work
+
+
+@pytest.fixture
+def linked(vault, home):
+    """The vault, its notes titled by their file names, and the work folder, indexed: (db, vault, work)."""
+    db = store.connect(home)
+    store.add_collection(db, vault[0], "vault", {"title_from": "name"})
+    store.add_collection(db, vault[1], "work")
+    indexing.index(db)
+    return db, *vault
 
 
 @pytest.fixture

@@ -5,9 +5,10 @@ import os
 
 import pytest
 
-from sift import indexing, readers, store
+from sift import embed, indexing, readers, store
+from sift.search import Index
 
-from .conftest import index_contents, write
+from .conftest import index_contents, keywords_agree, write
 
 
 def doc_ids(db):
@@ -196,6 +197,65 @@ def test_index_skips_file_names_sqlite_cannot_store(corpus, monkeypatch, capsys)
     indexing.index(db)
     assert "new.md" in doc_ids(db)
     assert "unsupported file name, skipped: " in capsys.readouterr().err
+
+
+# --- titles from file names --------------------------------------------------
+
+
+def titles(db):
+    return dict(db.execute("SELECT path, title FROM docs"))
+
+
+def test_a_collection_retitled_from_the_text_the_index_holds(corpus, monkeypatch):
+    db, root = corpus
+    write(root / "Hans Müller.md", "## Summary\n\nKey account at Acme.\n")
+    write(root / "records.jsonl", '{"id": "r1", "text": "## Summary\\n\\nA record."}\n')
+    indexing.index(db)
+    monkeypatch.setattr(readers, "load", lambda *args: pytest.fail("a file was read again"))
+    assert indexing.retitle(db, "notes", "heading") == (0, 0)  # as they are
+    assert indexing.retitle(db, "notes", "name") == (2, 0)
+    assert titles(db) == {
+        "Hans Müller.md": "Hans Müller",
+        "rl.md": "rl",
+        "robots/brush.md": "Brush stroke planning",  # its title field wins
+        "plain.txt": "plain",
+        "records/r1": "Summary",  # a record's title comes from its fields
+    }
+    assert keywords_agree(db)
+    for query, found in (("title: Müller", ["notes/Hans Müller.md"]), ("title: Summary", ["notes/records/r1"])):
+        assert [h["id"] for h in Index(db).search(query)] == found
+    assert indexing.retitle(db, "notes", "heading") == (2, 0)
+    assert titles(db)["Hans Müller.md"] == "Summary"
+    assert keywords_agree(db)
+
+
+def test_retitled_notes_stay_retitled_when_indexed_again(corpus):
+    db, root = corpus
+    indexing.retitle(db, "notes", "name")
+    write(root / "Hans Müller.md", "## Summary\n")
+    indexing.index(db)
+    assert titles(db)["Hans Müller.md"] == "Hans Müller"
+    assert titles(db)["rl.md"] == "rl"
+
+
+def test_retitling_drops_vectors_embedded_with_the_old_title(embedded):
+    # Passages after a document's first are embedded with its title before them: "Summary" would stay in them.
+    db, root = embedded
+    write(root / "long.md", "## Summary\n\n" + "first part " * 200 + "\n\n## Details\n\n" + "second part " * 200)
+    indexing.index(db)
+    embed.embed_pending(db)
+    before = store.get_meta(db, "version")
+    assert indexing.retitle(db, "notes", "name") == (2, 1)
+    missing = db.execute(
+        "SELECT d.path, c.seq FROM chunks c JOIN docs d ON d.id = c.doc WHERE c.id NOT IN (SELECT chunk FROM vectors)"
+    ).fetchall()
+    assert missing == [("long.md", 1)]  # the first passage is embedded without its title
+    assert store.get_meta(db, "version") != before  # a running server loads the vectors again
+
+
+def test_retitling_an_unknown_collection(corpus):
+    with pytest.raises(SystemExit, match="no collection named 'nope'"):
+        indexing.retitle(corpus[0], "nope", "name")
 
 
 def test_a_few_big_files_still_get_workers(monkeypatch):
