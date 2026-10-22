@@ -63,6 +63,19 @@ def test_index_follows_siftignore_as_it_changes(corpus, capsys):
     assert sorted(doc_ids(db)) == ["plain.txt", "rl.md"]
 
 
+def test_a_collection_whose_siftignore_cannot_be_read_is_skipped(corpus, tmp_path, capsys):
+    # Indexing all of it would take in the very files the .siftignore keeps out, as an offline OneDrive file can't
+    # be read; its documents stay, and the collections after it are indexed still.
+    db, root = corpus
+    write(tmp_path / "other" / "x.md", "# X\n")
+    store.add_collection(db, tmp_path / "other", "other")
+    (root / ".siftignore").mkdir()
+    before = doc_ids(db)
+    indexing.index(db)
+    assert "notes: skipped, as its .siftignore can't be read: " in capsys.readouterr().err
+    assert doc_ids(db).keys() == before.keys() | {"x.md"}
+
+
 # --- indexing ----------------------------------------------------------------
 
 

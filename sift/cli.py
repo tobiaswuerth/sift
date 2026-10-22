@@ -263,7 +263,7 @@ def _add(a, db):
     if not a.title_from and (Path(a.path).expanduser() / ".obsidian").is_dir():
         console.say(
             f"{a.path} is an Obsidian vault: to title its notes by their file names, as Obsidian does, run "
-            f"`sift add {a.path} --title-from name`"
+            f"`{console.command('sift', 'add', a.path, '--title-from', 'name')}`"
         )
 
 

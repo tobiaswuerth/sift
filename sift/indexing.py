@@ -300,10 +300,9 @@ def _nowhere(path, full, collections):
     listing = "; ".join(f"{name}: {root}" for _, name, root, _ in nearest[:NEAREST_SHOWN])
     listing += "; ..." if len(nearest) > NEAREST_SHOWN else ""
     head = f"The collections and their folders: {listing}." if collections else "none is registered yet."
-    folder = os.path.dirname(full)
     return (
         f"{path} is in no collection{'.' if collections else ':'} {head} To index files there, add their folder as a "
-        f"collection: `sift add {folder}`"
+        f"collection: `{console.command('sift', 'add', os.path.dirname(full))}`"
     )
 
 
@@ -419,10 +418,15 @@ def index(db, names=None):
         if not os.path.isdir(root):  # never treat an unplugged drive as "all files deleted"
             console.say(f"{name}: folder not found, skipped: {root}")
             continue
-        _index_collection(db, cid, name, root, json.loads(fields) if fields else {})
+        try:
+            ignore = Ignore.of(root)
+        except OSError as error:  # indexing all would take in the very files it keeps out
+            console.say(f"{name}: skipped, as its {SIFTIGNORE} can't be read: {error}")
+            continue
+        _index_collection(db, cid, name, root, json.loads(fields) if fields else {}, ignore)
 
 
-def _index_collection(db, cid, name, root, fields):
+def _index_collection(db, cid, name, root, fields, ignore):
     """Bring one collection in sync: drop what is gone, read what is new or changed."""
     t0 = time.perf_counter()
     known = {
@@ -430,7 +434,7 @@ def _index_collection(db, cid, name, root, fields):
         for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources WHERE collection=?", (cid,))
     }
     console.say(f"{name}: scanning {root}")  # a large or cloud folder takes a while
-    todo, seen = _scan(root, known)
+    todo, seen = _scan(root, known, ignore)
     counts = Counter()
     for rel in known.keys() - seen:
         counts["removed"] += _drop_source(db, known[rel][0])
@@ -445,10 +449,11 @@ def _index_collection(db, cid, name, root, fields):
     )
 
 
-def _scan(root, known):
-    """The files to read, new or changed since `known` (path -> id, mtime, size), and every file seen."""
+def _scan(root, known, ignore):
+    """The files to read, new or changed since `known` (path -> id, mtime, size), and every file seen but those
+    `ignore` leaves out."""
     todo, seen = [], set()
-    for path, mtime, size in walk(root, Ignore.of(root)):
+    for path, mtime, size in walk(root, ignore):
         rel = os.path.relpath(path, root).replace(os.sep, "/")
         try:
             rel.encode()

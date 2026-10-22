@@ -308,6 +308,15 @@ def test_a_file_in_no_collection_says_which_there_are_and_how_to_add_one(live, t
     assert message.endswith(f"To index files there, add their folder as a collection: `sift add {outside.parent}`")
 
 
+def test_the_sift_add_it_suggests_can_be_pasted(live, tmp_path):
+    outside = tmp_path / "My Notes" / "x.md"
+    write(outside, "x")
+    with pytest.raises(ValueError, match="is in no collection") as refused:
+        live[0].reindex([str(outside)])
+    quoted = f'"{outside.parent}"' if os.name == "nt" else f"'{outside.parent}'"
+    assert str(refused.value).endswith(f"`sift add {quoted}`")
+
+
 def test_a_file_in_no_collection_nearest_first(home, tmp_path):
     db = store.connect(home)
     for name in ("a", "b"):

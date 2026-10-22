@@ -160,9 +160,9 @@ drafts/
 is taken from the collection's folder, one without matches at any level; a slash at the end matches folders only; `!`
 takes back in what an earlier pattern left out, but never a file in a folder left out. Folders are separated by `/`,
 on Windows too, since `\` escapes the character after it, as in `\#notes.md`. Case counts as on the file system: on
-Windows and macOS, not at all. Only the `.siftignore` in the collection's folder counts. The next `sift index`
-follows a changed `.siftignore`: what it leaves out now leaves the index, and what it no longer leaves out joins it;
-`reindex` refuses what it leaves out.
+Windows and macOS, not at all. Only the `.siftignore` in the collection's folder counts; if sift can't read it,
+`sift index` skips the collection and says so. The next `sift index` follows a changed `.siftignore`: what it leaves
+out now leaves the index, and what it no longer leaves out joins it; `reindex` refuses what it leaves out.
 
 ### Front matter
 

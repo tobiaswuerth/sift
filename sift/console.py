@@ -2,6 +2,8 @@
 and one kind of progress line (`Progress`) for every long step, which redraws itself so the time keeps moving even
 while a single step takes minutes."""
 
+import shlex
+import subprocess
 import sys
 import threading
 from time import perf_counter
@@ -22,6 +24,12 @@ def duration(seconds):
     """Seconds as H:MM:SS."""
     seconds = int(seconds)
     return f"{seconds // 3600}:{seconds // 60 % 60:02}:{seconds % 60:02}"
+
+
+def command(*words, platform=sys.platform):
+    """A command line to suggest, quoted so it can be pasted into the shells there: double quotes for cmd and
+    PowerShell on Windows, single quotes elsewhere."""
+    return subprocess.list2cmdline(words) if platform == "win32" else shlex.join(words)
 
 
 class Line:
