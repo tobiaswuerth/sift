@@ -1,6 +1,7 @@
 """Reading files into documents, one reader per kind of file (READERS, by extension): Markdown and text files are
 one document each, with YAML front matter as metadata; JSON Lines files one per line; PDF, office files, e-books and
-web pages one each, converted to Markdown by Xberg. Every document's text is cut into chunks with their line numbers.
+web pages one each, converted to Markdown by Xberg; saved emails one each, and one per attachment sift reads. Every
+document's text is cut into chunks with their line numbers.
 
 Readers run in worker processes while indexing, so they read from bytes and return plain data (`Doc`).
 """
@@ -11,6 +12,8 @@ import posixpath
 import re
 import unicodedata
 from collections import namedtuple
+from datetime import UTC
+from functools import partial
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -19,6 +22,7 @@ from . import console
 TEXT = (".md", ".markdown", ".txt")
 JSONL = (".jsonl", ".ndjson")
 DOCUMENTS = (".pdf", ".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods", ".rtf", ".epub", ".html", ".htm")  # by Xberg
+EMAIL = (".eml",)
 CHUNK_CHARS, OVERLAP_CHARS = 3000, 300  # ~750 tokens, well inside the models' 1024-token window
 
 
@@ -393,9 +397,166 @@ def _document(raw, name, fields):
     return [Doc("", _digest(raw), title, meta, doc.content, list(chunk(doc.content)))], []
 
 
-READERS = {**dict.fromkeys(TEXT, _text), **dict.fromkeys(JSONL, _records), **dict.fromkeys(DOCUMENTS, _document)}
+MAIL_DEPTH = 3  # levels of mail attached to mail that sift reads; a mail that nests mails without end must not stall it
+
+
+def _email(raw, name, fields, depth=MAIL_DEPTH):
+    """A saved email (.eml): one document, titled by its subject, with its sender, recipients, date and ids as metadata
+    (the addresses bare, for filters) and above its text, which is its plain text, else its HTML as Markdown; and one
+    document for each attachment sift reads, named by its file name, and a mail attached `depth` levels deep with its
+    own. A damaged mail is skipped, as a document is."""
+    from email import message_from_bytes, policy
+
+    try:
+        msg = message_from_bytes(raw, policy=policy.default)
+        meta, shown = _mail_headers(msg)
+        if names := [n for part in msg.iter_attachments() if (n := _attachment_name(part))]:
+            meta["attachments"] = names
+            shown.append("Attachments: " + ", ".join(names))
+        title = str(msg.get("subject") or "").strip() or Path(name).stem
+        body, problems = _mail_text(msg, fields)
+        text = "\n\n".join(part for part in (f"# {title}", "\n".join(shown), body) if part)
+        attached, trouble = _attachments(msg, fields, depth)
+    except Exception as error:  # a damaged mail can fail in many ways; it must not stop indexing the others
+        return [], [f"skipped ({error})"]
+    return [Doc("", _digest(raw), title, meta, text, list(chunk(text))), *attached], problems + trouble
+
+
+def _mail_headers(msg):
+    """An email's metadata, and its headers as they show above its text: From, To, Cc and Date."""
+    meta, shown = {}, []
+    for key in ("from", "to", "cc"):
+        header = msg.get(key)
+        if addresses := [a.addr_spec for a in getattr(header, "addresses", ()) if a.addr_spec]:
+            meta[key] = addresses[0] if key == "from" else addresses
+            shown.append(f"{key.capitalize()}: {header}")
+    if date := msg.get("date"):
+        when = getattr(date, "datetime", None)  # None for a date that doesn't parse: then as written
+        if when and when.tzinfo:  # in UTC, so that dates sort as times do; one without a zone (-0000) as it is
+            when = when.astimezone(UTC)
+        meta["date"] = when.isoformat() if when else str(date)
+        shown.append(f"Date: {meta['date']}")
+    for key in ("message-id", "in-reply-to"):
+        if value := str(msg.get(key) or "").strip():
+            meta[key.replace("-", "_")] = value
+    return meta, shown
+
+
+def _mail_text(msg, fields):
+    """An email's text: its plain part, else its HTML part as Markdown, "" if it has none; and what went wrong."""
+    part = msg.get_body(preferencelist=("plain", "html"))
+    if part is None:
+        return "", []
+    try:
+        content = part.get_content()
+    except (LookupError, UnicodeError):  # a charset Python doesn't know: as UTF-8, with what doesn't decode replaced
+        content = decode(part.get_payload(decode=True) or b"")
+    if part.get_content_subtype() != "html":
+        return content.replace("\r\n", "\n").strip(), []
+    docs, problems = _document(content.encode(), "mail.html", fields)
+    return (docs[0].text.strip() if docs else ""), [f"its HTML: {problem}" for problem in problems]
+
+
+ATTACHED = (*TEXT, *DOCUMENTS)  # the files attached to an email sift reads, besides mails: whole files, no records
+
+
+def _attachments(msg, fields, depth):
+    """The documents of an email's attachments sift reads, each named by its file name, made unique, with those of a
+    mail attached while `depth` lasts below it; and what had to be skipped of them."""
+    docs, problems, taken = [], [], set()
+    for part in msg.iter_attachments():
+        name = _attachment_name(part)
+        if not (name and (read := _reader(part, name, depth))):
+            continue
+        found, trouble = read(_content(part, name), name, fields)
+        key = _unique(name, taken)
+        docs += [doc._replace(key=_within(key, doc.key)) for doc in found]
+        problems += [f"{name}: {problem}" for problem in trouble]
+    return docs, problems
+
+
+def _reader(part, name, depth):
+    """How sift reads an attachment: a mail while `depth` lasts, a file it reads whole; None for others."""
+    if _attached_mail(part) is not None or extension(name) in EMAIL:
+        return partial(_email, depth=depth - 1) if depth else None
+    return READERS[extension(name)] if extension(name) in ATTACHED else None
+
+
+def _content(part, name):
+    """An attachment's bytes: a mail attached as message/rfc822 as that mail's, a text file's as UTF-8."""
+    if (mail := _attached_mail(part)) is not None:
+        return mail.as_bytes()
+    raw = part.get_payload(decode=True) or b""
+    return _as_utf8(raw, part.get_content_charset()) if extension(name) in TEXT else raw
+
+
+def _attached_mail(part):
+    """The mail a message/rfc822 attachment holds, or None."""
+    payload = part.get_payload() if part.get_content_type() == "message/rfc822" else None
+    return payload[0] if isinstance(payload, list) and payload else None
+
+
+def _within(key, inner):
+    """The key of the document keyed `inner` of the attachment keyed `key`: the attachment's own, or one below it."""
+    return f"{posixpath.splitext(key)[0]}/{inner}" if inner else key
+
+
+def _as_utf8(raw, charset):
+    """A text attachment as UTF-8, as sift reads text files: as it is if it is UTF-8 already, whatever its mail says
+    (mail clients call text us-ascii that isn't), else in the charset its mail declares, if Python knows it."""
+    if not charset or _utf8(raw):
+        return raw
+    try:
+        return raw.decode(charset, "replace").encode()
+    except LookupError:
+        return raw
+
+
+def _utf8(raw):
+    try:
+        raw.decode()
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _attachment_name(part):
+    """An attachment's file name without any folders it claims; a mail attached without one named by its subject, or
+    "message.eml". None for any other attachment without a name."""
+    name = re.split(r"[\\/]", part.get_filename() or "")[-1].strip()
+    if name not in ("", ".", ".."):
+        return name
+    if (mail := _attached_mail(part)) is None:
+        return None
+    subject = re.sub(r"[\\/]", "-", str(mail.get("subject") or "")).strip(" .")
+    return f"{subject or 'message'}.eml"
+
+
+def _unique(name, taken):
+    """`name`, or `name (2)` and so on if a name of `taken` is the same in any case; added to `taken`."""
+    stem, ext = posixpath.splitext(name)
+    key, n = name, 1
+    while fold(key) in taken:
+        n += 1
+        key = f"{stem} ({n}){ext}"
+    taken.add(fold(key))
+    return key
+
+
+READERS = {
+    **dict.fromkeys(TEXT, _text),
+    **dict.fromkeys(JSONL, _records),
+    **dict.fromkeys(DOCUMENTS, _document),
+    **dict.fromkeys(EMAIL, _email),
+}
 """How sift reads each kind of file, by extension: reader(content, file name, fields) -> (documents, problems),
 where fields are the collection's field choices and problems say what was skipped and why."""
+
+
+def extension(name):
+    """A file name's extension, lowercase, by which sift picks its reader; "" for none, as for `.md`, a name that
+    starts with a dot."""
+    return posixpath.splitext(name)[1].lower()
 
 
 def load(path, fields=None):
@@ -406,4 +567,4 @@ def load(path, fields=None):
         raw = path.read_bytes()
     except OSError:
         return None
-    return READERS[path.suffix.lower()](raw, path.name, fields or {})
+    return READERS[extension(path.name)](raw, path.name, fields or {})

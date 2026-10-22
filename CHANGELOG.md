@@ -5,6 +5,39 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-22
+
+For collections that other programs write to: a `.siftignore`, saved emails, the folder of each collection, and
+errors that say what to do ([Leaving files out](README.md#leaving-files-out), [Emails](README.md#emails)).
+
+### Added
+
+- `.siftignore`: a collection's folder may name, in gitignore's syntax, the files and folders sift leaves out, as
+  apps keep their own files out and users their drafts, exports or binaries. `sift index` follows its changes, and
+  `reindex` refuses what it leaves out. Hidden folders, `node_modules` and `__pycache__` stay out as before. A
+  `.siftignore` sift can't read, as an offline OneDrive file, skips its collection, which keeps its documents.
+- Saved emails (`.eml`): one document per mail, titled by its subject, with its sender, recipients and date above
+  its text and as metadata for filters: the addresses bare, the date as ISO 8601 in UTC, so mails sort by time.
+  Each attachment sift reads is a document of its own, a text file in the charset its mail declares; so is a mail
+  attached to a mail, as one forwarded "as attachment", with its own attachments, three levels deep.
+- `sift status --json`, as the other commands take it; `status` prints JSON anyway.
+
+### Changed
+
+- The instructions agents read when they connect name each collection's folder, and the docs say that `status`
+  holds it as `path`: agents can tell which collection a file belongs to.
+- `reindex` of a file in no collection lists the collections and their folders, nearest first, and the `sift add`
+  that would cover it; an agent told only "is in no collection" tried other spellings of the path. A collection
+  name the index doesn't know, in `reindex` or a search, lists the names it does.
+- The README states as part of the format that a front-matter value is read as JSON first, so programs that write
+  front matter can write any value as JSON and rely on reading it back as written; tests hold it.
+
+### Fixed
+
+- The `sift add` that `sift add` suggests for an Obsidian vault quotes a path with spaces, so it can be pasted.
+- A file named like an extension, such as `.md`, stopped `sift index` with `error: ''`. As `reindex` did already,
+  sift takes it for a name that starts with a dot and has no extension, and leaves it out.
+
 ## [1.1.0] - 2026-10-22
 
 Links between Markdown notes, for Obsidian vaults and any notes that link to each other
@@ -368,7 +401,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/tobiaswuerth/sift/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/tobiaswuerth/sift/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/tobiaswuerth/sift/compare/v0.10.0...v1.0.0
 [0.10.0]: https://github.com/tobiaswuerth/sift/compare/v0.9.1...v0.10.0

@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# a mail as mail clients write it: lines end in CRLF
+tests/samples/sample.eml -text

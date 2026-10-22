@@ -13,9 +13,12 @@ import time
 from collections import Counter, namedtuple
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
-from itertools import repeat
+from itertools import repeat, takewhile
+from pathlib import Path
 
 from . import console, embed, links, readers, store
+from .ignore import NAME as SIFTIGNORE
+from .ignore import Ignore
 
 SKIP_DIRS = {"node_modules", "__pycache__"}
 MOST_FILES = 1000  # files `reindex` reads at once; `sift index` reads any number
@@ -244,13 +247,13 @@ def _locate(db, path):
         full = os.path.normpath(given)
         inside = [c for c in collections if os.path.normcase(full).startswith(os.path.normcase(os.path.join(c[2], "")))]
         if not inside:
-            raise ValueError(f"{path} is in no collection")
+            raise ValueError(_nowhere(path, full, collections))
         (cid, name, root, fields), rel = inside[0], os.path.relpath(full, inside[0][2]).replace(os.sep, "/")
     else:
         name, _, rel = path.replace("\\", "/").partition("/")
         match = [c for c in collections if c[1] == name]
         if not match:
-            raise LookupError(f"no collection named {name!r}")
+            raise store.no_collection(db, name)
         (cid, name, root, fields), rel = match[0], posixpath.normpath(rel) if rel else ""
         if rel in ("", "."):
             raise ValueError(f"{path!r}: name a file of the collection, as collection/path, or by its absolute path")
@@ -262,7 +265,13 @@ def _locate(db, path):
     for part in parts[:-1]:
         if part.startswith(".") or part in SKIP_DIRS:
             raise ValueError(f"{name}/{rel}: sift indexes no files in {part}/")
-    ext = posixpath.splitext(parts[-1])[1].lower()
+    try:
+        ignore = Ignore.of(root)
+    except OSError as error:
+        raise ValueError(f"{name}: its {SIFTIGNORE} can't be read, so no file was reindexed: {error}") from None
+    if ignore.excludes("/".join(parts)):
+        raise ValueError(f"{name}/{rel}: the collection's {SIFTIGNORE} leaves it out")
+    ext = readers.extension(parts[-1])
     if ext not in readers.READERS:
         raise ValueError(f"{name}/{rel}: sift doesn't index {f'{ext} files' if ext else 'files without an extension'}")
     for i in range(1, len(parts)):
@@ -278,6 +287,27 @@ def _locate(db, path):
     if not os.path.lexists(os.path.join(root, *parts)):  # gone: the file as indexed, in whatever spelling
         rel = next(iter(_indexed_as(db, cid, rel)), rel)
     return cid, name, root, fields, rel
+
+
+NEAREST_SHOWN = 5  # collections an error about a file in none names, the nearest first
+
+
+def _nowhere(path, full, collections):
+    """Why the file at `full` is in no collection, and how it could be: the collections' folders, nearest first, and
+    the `sift add` that would cover it."""
+    parts = Path(os.path.normcase(full)).parts
+
+    def shared(root):  # how many folders, from the drive or root on, the file and the folder have in common
+        return len(list(takewhile(lambda pair: pair[0] == pair[1], zip(parts, Path(os.path.normcase(root)).parts))))
+
+    nearest = sorted(collections, key=lambda c: (-shared(c[2]), c[1]))
+    listing = "; ".join(f"{name}: {root}" for _, name, root, _ in nearest[:NEAREST_SHOWN])
+    listing += "; ..." if len(nearest) > NEAREST_SHOWN else ""
+    head = f"The collections and their folders: {listing}." if collections else "none is registered yet."
+    return (
+        f"{path} is in no collection{'.' if collections else ':'} {head} To index files there, add their folder as a "
+        f"collection: `{console.command('sift', 'add', os.path.dirname(full))}`"
+    )
 
 
 def _spelled(root, parts):
@@ -352,20 +382,26 @@ def _drop_source(db, sid):
     return len(docs)
 
 
-def walk(root):
-    """Yield (path, mtime_ns, size) for the files sift has a reader for. DirEntry.stat() is free on Windows."""
-    exts, stack = tuple(readers.READERS), [root]
+def walk(root, ignore=None):
+    """Yield (path, mtime_ns, size) for the files sift has a reader for, but those in hidden folders, SKIP_DIRS and
+    what `ignore`, the collection's .siftignore, leaves out. DirEntry.stat() is free on Windows."""
+    stack = [(root, "")]
     while stack:
+        folder, rel = stack.pop()
         try:
-            entries = os.scandir(stack.pop())
+            entries = os.scandir(folder)
         except OSError:
             continue
         with entries:
             for e in entries:
                 if e.is_dir(follow_symlinks=False):
-                    if not e.name.startswith(".") and e.name not in SKIP_DIRS:
-                        stack.append(e.path)
-                elif e.name.lower().endswith(exts):
+                    if (
+                        not e.name.startswith(".")
+                        and e.name not in SKIP_DIRS
+                        and not (ignore and ignore(rel + e.name, True))
+                    ):
+                        stack.append((e.path, rel + e.name + "/"))
+                elif readers.extension(e.name) in readers.READERS and not (ignore and ignore(rel + e.name)):
                     try:
                         st = e.stat()
                     except OSError:  # e.g. a broken symlink
@@ -386,10 +422,15 @@ def index(db, names=None):
         if not os.path.isdir(root):  # never treat an unplugged drive as "all files deleted"
             console.say(f"{name}: folder not found, skipped: {root}")
             continue
-        _index_collection(db, cid, name, root, json.loads(fields) if fields else {})
+        try:
+            ignore = Ignore.of(root)
+        except OSError as error:  # indexing all would take in the very files it keeps out
+            console.say(f"{name}: skipped, as its {SIFTIGNORE} can't be read: {error}")
+            continue
+        _index_collection(db, cid, name, root, json.loads(fields) if fields else {}, ignore)
 
 
-def _index_collection(db, cid, name, root, fields):
+def _index_collection(db, cid, name, root, fields, ignore):
     """Bring one collection in sync: drop what is gone, read what is new or changed."""
     t0 = time.perf_counter()
     known = {
@@ -397,7 +438,7 @@ def _index_collection(db, cid, name, root, fields):
         for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources WHERE collection=?", (cid,))
     }
     console.say(f"{name}: scanning {root}")  # a large or cloud folder takes a while
-    todo, seen = _scan(root, known)
+    todo, seen = _scan(root, known, ignore)
     counts = Counter()
     for rel in known.keys() - seen:
         counts["removed"] += _drop_source(db, known[rel][0])
@@ -412,10 +453,11 @@ def _index_collection(db, cid, name, root, fields):
     )
 
 
-def _scan(root, known):
-    """The files to read, new or changed since `known` (path -> id, mtime, size), and every file seen."""
+def _scan(root, known, ignore):
+    """The files to read, new or changed since `known` (path -> id, mtime, size), and every file seen but those
+    `ignore` leaves out."""
     todo, seen = [], set()
-    for path, mtime, size in walk(root):
+    for path, mtime, size in walk(root, ignore):
         rel = os.path.relpath(path, root).replace(os.sep, "/")
         try:
             rel.encode()

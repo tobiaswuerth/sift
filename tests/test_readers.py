@@ -1,6 +1,9 @@
 """Reading files into documents: front matter, titles, chunks with their lines, encodings. Each kind of file has a
 reader (see test_documents.py for the contract they all keep, and test_jsonl.py for JSON Lines)."""
 
+import json
+import random
+
 import pytest
 
 from sift import readers
@@ -365,3 +368,47 @@ def test_link_search_stays_fast_on_long_lines():
     # Every line of a note is searched for links; a regex that backtracks would stall `sift index` on one long line.
     for line in ("[" * 200_000, "[[" * 100_000, "[a](" * 50_000, "`" * 100_000 + "x", "[x] " * 50_000 + "](y"):
         assert readers.note(line + "\n" + "](\n", "Note.md").links == ()
+
+
+# --- front matter written by programs, as JSON --------------------------------
+
+TRICKY = [
+    "a: b",
+    'say "hi"',
+    "it's",
+    "[Draft] My note",
+    "[a, b]",
+    "[[Acme AG]] and more",
+    "# not a comment",
+    "  padded  ",
+    "C:\\Users\\Hans",
+    '{"a": 1}',
+    "Zürich ✓ 日本",
+    "two\nlines",
+    "---",
+    "",
+    "123",
+    "true",
+    "null",
+]
+
+
+@pytest.mark.parametrize("value", TRICKY)
+def test_a_json_string_in_front_matter_reads_back_as_written(value):
+    # The format's promise to programs that write front matter: a value written as JSON reads back as it was,
+    # whatever it holds.
+    for written in (json.dumps(value), json.dumps(value, ensure_ascii=False)):
+        assert readers.parse(f"---\nkey: {written}\ntitle: {written}\n---\n", "f")[1] == {"key": value, "title": value}
+
+
+@pytest.mark.parametrize("value", [TRICKY, {"names": TRICKY, "n": -2.5e10, "ok": False, "none": None}, 0, True, None])
+def test_any_json_value_in_front_matter_reads_as_json(value):
+    assert readers.parse(f"---\nkey: {json.dumps(value)}\n---\n", "f")[1] == {"key": value}
+
+
+def test_random_json_strings_in_front_matter_read_back_as_written():
+    rng = random.Random(7)
+    alphabet = "ab :#-[]{}\"'\\|>!&*,\t\nä✓"
+    for _ in range(500):
+        value = "".join(rng.choice(alphabet) for _ in range(rng.randrange(30)))
+        assert readers.parse(f"---\nkey: {json.dumps(value)}\n---\n", "f")[1] == {"key": value}, repr(value)

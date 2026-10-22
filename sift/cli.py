@@ -184,7 +184,8 @@ def main(argv=None):
     s.add_argument("id")
     s.add_argument("--lines", help='only these lines, e.g. "17-26"')
     s.add_argument("--fields", help='front-matter fields to show first, comma-separated (e.g. "url,created"; "*": all)')
-    sub.add_parser("status", help="show collections and index statistics")
+    s = sub.add_parser("status", help="show collections, their folders, and index statistics, as JSON")
+    s.add_argument("--json", action="store_true", help="as other commands take it: status prints JSON anyway")
     s = sub.add_parser("links", help="the links of a Markdown note: those it holds, and those into it")
     s.add_argument("id")
     s.add_argument("--direction", choices=["out", "in", "both"], default="out", help="out (default), in, or both")
@@ -262,7 +263,7 @@ def _add(a, db):
     if not a.title_from and (Path(a.path).expanduser() / ".obsidian").is_dir():
         console.say(
             f"{a.path} is an Obsidian vault: to title its notes by their file names, as Obsidian does, run "
-            f"`sift add {a.path} --title-from name`"
+            f"`{console.command('sift', 'add', a.path, '--title-from', 'name')}`"
         )
 
 

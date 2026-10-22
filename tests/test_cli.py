@@ -73,6 +73,10 @@ def test_add_an_obsidian_vault_suggests_titles_from_file_names(notes, home, caps
     other = notes.parent / "other"
     (other / ".obsidian").mkdir(parents=True)
     assert "--title-from" not in run(capsys, "add", str(other), "--title-from", "name").err
+    spaced = notes.parent / "My Vault"
+    (spaced / ".obsidian").mkdir(parents=True)
+    quoted = f'"{spaced}"' if sys.platform == "win32" else f"'{spaced}'"
+    assert f"`sift add {quoted} --title-from name`" in run(capsys, "add", str(spaced), "--name", "vault").err
 
 
 @pytest.mark.parametrize(
@@ -246,6 +250,8 @@ def test_get_status_rm(cli_corpus, capsys):
     assert run(capsys, "get", "notes/rl.md").out.startswith("# Reward shaping")
     status = json.loads(run(capsys, "status").out)
     assert status["collections"][0]["embedded"] == 3
+    assert json.loads(run(capsys, "status", "--json").out) == status  # as other commands take it; JSON anyway
+    assert status["collections"][0]["path"] == str(cli_corpus)
     err = run(capsys, "rm", "notes").err
     assert "removed collection 'notes' and its 3 documents from the index" in err
     assert "files on disk are untouched" in err

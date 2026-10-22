@@ -41,14 +41,14 @@ matter."""
 
 
 def _collections(index):
-    """The indexed collections with their sizes and front-matter fields, read when the server starts."""
-    rows = index.db.execute("""SELECT co.id, co.name, count(d.id) FROM collections co
+    """The indexed collections with their folders, sizes and front-matter fields, read when the server starts."""
+    rows = index.db.execute("""SELECT co.id, co.name, co.path, count(d.id) FROM collections co
                                LEFT JOIN docs d ON d.collection = co.id GROUP BY co.id ORDER BY co.name""").fetchall()
     if not rows:
         return "No collections are indexed yet."
     lines, (linked, broken) = [], index.link_counts()
-    for cid, name, n in rows:
-        line = f"- {name}: {n:,} document{'' if n == 1 else 's'}"
+    for cid, name, folder, n in rows:
+        line = f"- {name} ({folder}): {n:,} document{'' if n == 1 else 's'}"
         if fields := index.fields(cid, n):
             line += "; front matter: " + ", ".join(fields)
         if cid in linked:
@@ -248,7 +248,7 @@ def build(index=None):
 
     @mcp.tool(annotations=READ_ONLY)
     async def status() -> dict:
-        """Collections, document and chunk counts, link counts, and the embedding model."""
+        """Collections with their folders (`path`), document and chunk counts, link counts, and the embedding model."""
         return _run(index.status)
 
     @mcp.tool(annotations=READ_ONLY)

@@ -217,6 +217,25 @@ def epub(path):
             book.writestr(zipfile.ZipInfo(name, stamp), text, zipfile.ZIP_DEFLATED)
 
 
+def eml(path):
+    """A saved email: plain text and the same as HTML, headers as a mail client writes them, lines ending in CRLF."""
+    from email import policy
+    from email.message import EmailMessage
+    from email.utils import format_datetime
+
+    msg = EmailMessage()
+    msg["From"] = f"{AUTHOR} <ada@example.com>"
+    msg["To"] = "Bo Reader <bo@example.org>, cy@example.org"
+    msg["Cc"] = "Di Copy <di@example.net>"
+    msg["Subject"] = TITLE
+    msg["Date"] = format_datetime(CREATED.replace(tzinfo=datetime.UTC))
+    msg["Message-ID"] = "<pigments@example.com>"
+    msg.set_content(f"{HEADING}\n\n{PARAGRAPH}\n\n{sentence('EML')}\n")
+    msg.add_alternative(f"<h1>{HEADING}</h1><p>{PARAGRAPH}</p><p>{sentence('EML')}</p>", subtype="html")
+    msg.set_boundary("sift-sample")
+    path.write_bytes(msg.as_bytes(policy=policy.SMTP))
+
+
 def blank_pdf(path):
     """A page without text, as a scan is to sift (it runs no OCR)."""
     from fpdf import FPDF
@@ -240,7 +259,7 @@ def text(fmt):
 
 def main():
     made = {"pdf": pdf, "docx": docx, "pptx": pptx, "xlsx": xlsx, "odt": odt, "odp": odp, "ods": ods, "rtf": rtf}
-    for ext, make in {**made, "epub": epub}.items():
+    for ext, make in {**made, "epub": epub, "eml": eml}.items():
         make(HERE / f"sample.{ext}")
     for ext in ("html", "htm"):
         (HERE / f"sample.{ext}").write_bytes(html(ext.upper()).encode())

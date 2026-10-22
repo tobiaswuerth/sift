@@ -19,7 +19,7 @@ services, no API keys, and your documents stay on your own machines.
 - **Four kinds of search:** exact keyword search (BM25, SQLite FTS5), semantic vector search, hybrid retrieval with
   cross-encoder reranking for RAG, and documents similar to a given one.
 - **Your files as they are:** Markdown with YAML front matter (Obsidian notes too), text, PDF, Word, PowerPoint,
-  Excel, OpenDocument, RTF, EPUB, HTML and JSON Lines, indexed incrementally.
+  Excel, OpenDocument, RTF, EPUB, HTML, saved emails and JSON Lines, indexed incrementally.
 - **An MCP server** for Claude Code and any other MCP client, with filters on front-matter fields, results that cite
   their source lines, and compact results that save an agent's context.
 - **Linked notes:** in an Obsidian vault, or any Markdown with `[[wikilinks]]`, the links of a note and its backlinks,
@@ -77,7 +77,7 @@ sift links vault/People/Hans.md --direction both   # the links of a note, and it
 sift unresolved                        # link targets no note answers to yet
 sift mentions vault/People/Hans.md     # documents that name a note without linking to it
 sift index --files ~/vault/new.md      # read a file just written at once, or drop one just deleted
-sift status                            # collections and counts
+sift status                            # collections, their folders, and counts, as JSON
 sift bench questions.json              # how well each mode finds what you expect (see below)
 sift rm handbook                       # remove a collection from the index; its files stay on disk
 sift ui                                # search, browse and read the index in your browser (see below)
@@ -141,6 +141,30 @@ them, with the ids of the documents that answer them, as search results show the
 A few dozen questions are enough to compare modes and to see whether a change helps your documents. Grades are
 optional: 2 for the answer, 1 for a useful one, and 0, as in TREC's judgements, for one read and found irrelevant.
 
+### Leaving files out
+
+sift indexes the files it has a reader for, but not those in folders whose name starts with a dot, such as
+`.obsidian/` or `.git/`, nor in `node_modules` and `__pycache__`. A `.siftignore` file in a collection's folder leaves
+out more, in gitignore's syntax:
+
+```gitignore
+# drafts, exports and what an app keeps for itself
+drafts/
+/exports
+*.tmp.md
+**/private/**
+!private/README.md
+```
+
+`*`, `?` and `[abc]` match within a name and `**` across folders; a pattern with a slash at its start or in its middle
+is taken from the collection's folder, one without matches at any level; a slash at the end matches folders only; `!`
+takes back in what an earlier pattern left out, but never a file in a folder left out. Folders are separated by `/`,
+on Windows too, since `\` escapes the character after it, as in `\#notes.md`. Case counts as on the file system: on
+Windows and macOS, not at all, nor how a letter such as `ü` is encoded. Only the `.siftignore` in the collection's
+folder counts; if sift can't read it, `sift index` skips the collection and says so. The next `sift index` follows a
+changed `.siftignore`: what it leaves out now leaves the index, and what it no longer leaves out joins it; `reindex`
+refuses what it leaves out.
+
 ### Front matter
 
 YAML front matter with flat `key: value` lines becomes filterable metadata; lists can be inline, quoted or not
@@ -156,6 +180,11 @@ tags:
   - expenses
 ---
 ```
+
+A value is read as JSON first, so a program that writes front matter can write each value as JSON on its line and
+rely on it: a JSON string reads back as exactly that string, whatever it holds (quotes, colons, `#`, brackets, `---`,
+`\n`), and numbers, `true`, `false`, `null`, lists and objects read as such. Anything that isn't JSON is read as
+described above.
 
 ```bash
 sift query "per diem abroad" -f departments=finance -f year=2025
@@ -260,6 +289,20 @@ title is the document's own, else the first heading, else the file name.
 sift runs no OCR, so a scanned PDF without a text layer has no text. Such files are skipped and reported, as are
 damaged ones, until they change. Older binary Office files (`.doc`, `.ppt`, `.xls`) aren't read.
 
+### Emails
+
+A saved email (`.eml`) is a document titled by its subject, with `From`, `To`, `Cc` and `Date` above its text, which
+is its plain text, else its HTML as Markdown. Its metadata holds the addresses bare, for filters, and the date as
+ISO 8601 in UTC, for ranges and sorting: `from`, `to`, `cc`, `date`, `message_id`, `in_reply_to` and `attachments`,
+the file names. An attachment sift reads (Markdown, text, PDF, office files and the rest above) is a document of its
+own, named by its file name: `mail/2026/offer.eml` holds `mail/2026/offer/contract.pdf`. So is a mail attached to a
+mail, as mail clients forward one "as attachment", named by its subject if it has no file name, with its attachments
+below it, three levels deep: `mail/2026/fwd.eml` holds `mail/2026/fwd/Offer.eml` and `mail/2026/fwd/Offer/price.pdf`.
+
+```bash
+sift search "price list" -f from=anna@acme.example -f "date>=2026-06"
+```
+
 ## MCP
 
 `sift serve` runs an MCP server that agents search through:
@@ -271,7 +314,7 @@ damaged ones, until they change. Older binary Office files (`.doc`, `.ppt`, `.xl
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. |
 | `similar` | Documents like a given one, by its id: more documents like one already found. |
 | `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. With `fields`, it returns the document with those front-matter fields. An id may leave out folders if the file name is unique. |
-| `status` | Collections, counts, front-matter fields, and how many links each collection's notes hold. |
+| `status` | Collections with their folders (`path`), counts, front-matter fields, and how many links each collection's notes hold. |
 | `links` | The links of a note: out, each with where it leads (`via` path, name or alias, `ambiguous`, or `unresolved`), and in, the notes linking to it, with the lines that do. `depth` 2 goes one step further, `field` keeps to one front-matter field. |
 | `unresolved` | Link targets no note answers to yet, most linked first. |
 | `mentions` | Documents that name a note without linking to it. |
@@ -284,7 +327,7 @@ adds front-matter fields to each result, e.g. `["url", "created"]`, and `compact
 agent can survey many results without filling its context and then read the ones that matter. Filters take a value,
 a list for any of its values, `{"not": ...}`, or ranges, e.g. `{"created": {">=": "2024-06", "<": "2025"}}`. Every
 parameter is described in the tools' schemas, and the server tells agents when they connect which collections there
-are, which front-matter fields each has, and how many links its notes hold.
+are, which folder each covers, which front-matter fields each has, and how many links its notes hold.
 
 ### Setting up
 
@@ -467,8 +510,8 @@ claims, and it embeds 1.6 times as fast.
 
 ## Scope
 
-In scope: text, Markdown and JSON Lines files, PDF, office documents, e-books and web pages; Linux, macOS and Windows;
-NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise CPU; one user, any number of local agents.
+In scope: text, Markdown and JSON Lines files, PDF, office documents, e-books, web pages and saved emails; Linux,
+macOS and Windows; NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise CPU; one user, any number of local agents.
 
 Out of scope for now: OCR of scans and images; answer generation (sift retrieves, the agent writes); approximate
 nearest-neighbour indexes; live file watching (an agent calls `reindex` after writing); remote access and

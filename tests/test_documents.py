@@ -221,3 +221,258 @@ def test_documents_are_converted_in_worker_processes(library, tmp_path, monkeypa
     indexing.index(parallel)
     assert pools == [(2, "spawn")]
     assert index_contents(parallel) == index_contents(db)
+
+
+# --- saved emails ------------------------------------------------------------
+
+
+def message(*, body="Plain words.", html=None, attachments=(), **headers):
+    """An email with these headers (From, To, Subject, ...), a plain body and, if given, its HTML alternative, and
+    attachments: (file name, bytes, type), or (file name or None, a message) for a mail attached as message/rfc822."""
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    for key, value in headers.items():
+        msg[key.replace("_", "-")] = value
+    if body is not None:
+        msg.set_content(body)
+    if html is not None:
+        if body is None:
+            msg.set_content(html, subtype="html")
+        else:
+            msg.add_alternative(html, subtype="html")
+    for filename, data, *kind in attachments:
+        if kind:
+            main, sub = kind[0].split("/")
+            msg.add_attachment(data, maintype=main, subtype=sub, filename=filename)
+        else:
+            msg.add_attachment(data, filename=filename)
+    return msg
+
+
+def email_file(tmp_path, *, name="mail.eml", **parts):
+    """An .eml file of the message these parts make (see `message`)."""
+    from email import policy
+
+    path = tmp_path / name
+    path.write_bytes(message(**parts).as_bytes(policy=policy.SMTP))
+    return path
+
+
+def test_an_email_is_a_document_of_its_headers_and_text():
+    doc = read(".eml")
+    assert doc.title == "Pigment mixing"
+    assert doc.meta == {
+        "from": "ada@example.com",
+        "to": ["bo@example.org", "cy@example.org"],
+        "cc": ["di@example.net"],
+        "date": "2024-05-01T12:00:00+00:00",
+        "message_id": "<pigments@example.com>",
+    }
+    assert doc.text.startswith(
+        "# Pigment mixing\n\nFrom: Ada Example <ada@example.com>\nTo: Bo Reader <bo@example.org>, cy@example.org\n"
+        "Cc: Di Copy <di@example.net>\nDate: 2024-05-01T12:00:00+00:00\n\nKubelka-Munk theory\n\n"
+    )
+    assert "<h1>" not in doc.text  # its plain text, not the HTML beside it
+
+
+def test_an_email_of_html_alone_reads_as_markdown(tmp_path):
+    path = email_file(tmp_path, body=None, html="<h1>Offer</h1><p>Prices for <b>2027</b>.</p>", Subject="Offer")
+    (doc,), _ = readers.load(path)
+    assert "Prices for" in doc.text
+    assert "<p>" not in doc.text
+
+
+def test_email_headers_as_mail_writes_them(tmp_path):
+    # Encoded words, folded lines, a date in another zone; and a mail without subject, date or body.
+    path = email_file(
+        tmp_path,
+        Subject="Grüße from Zürich, and a line so long that a mail client folds it, as mail clients fold long lines",
+        From="Jürg Bühler <jb@example.ch>",
+        Date="Tue, 14 Oct 2026 09:30:00 +0200",
+        In_Reply_To="<earlier@example.ch>",
+    )
+    (doc,), _ = readers.load(path)
+    assert (
+        doc.title
+        == "Grüße from Zürich, and a line so long that a mail client folds it, as mail clients fold long lines"
+    )
+    assert doc.meta == {
+        "from": "jb@example.ch",
+        "date": "2026-10-14T07:30:00+00:00",
+        "in_reply_to": "<earlier@example.ch>",
+    }
+    assert "From: Jürg Bühler <jb@example.ch>" in doc.text
+    (bare,), problems = readers.load(email_file(tmp_path, name="Bare note.eml", body=None))
+    assert (bare.title, bare.meta, problems) == ("Bare note", {}, [])
+    (tmp_path / "odd.eml").write_bytes(b"Date: sometime soon\r\n\r\nPlain words.\r\n")  # EmailMessage drops such dates
+    (odd,), _ = readers.load(tmp_path / "odd.eml")
+    assert odd.meta == {"date": "sometime soon"}
+
+
+def test_mail_dates_sort_as_time_whatever_the_zone(tmp_path):
+    # With the sender's offset, 09:30 in Zurich sorted after 08:00 in London, though it was sent first.
+    zurich = email_file(tmp_path, name="a.eml", Date="Tue, 14 Oct 2026 09:30:00 +0200")
+    london = email_file(tmp_path, name="b.eml", Date="Tue, 14 Oct 2026 08:00:00 +0000")
+    unknown = email_file(tmp_path, name="c.eml", Date="Tue, 14 Oct 2026 08:00:00 -0000")  # a zone unknown, RFC 5322
+    dates = [readers.load(path)[0][0].meta["date"] for path in (zurich, london, unknown)]
+    assert dates == ["2026-10-14T07:30:00+00:00", "2026-10-14T08:00:00+00:00", "2026-10-14T08:00:00"]
+
+
+def test_an_email_in_an_unknown_charset_still_reads(tmp_path):
+    path = tmp_path / "x.eml"
+    path.write_bytes(
+        b'Subject: x\r\nContent-Type: text/plain; charset="x-unknown"\r\n\r\nPlain Gr\xc3\xbc\xc3\x9fe.\r\n'
+    )
+    (doc,), _ = readers.load(path)
+    assert "Plain Grüße." in doc.text
+
+
+def test_a_text_attachment_reads_in_the_charset_its_mail_declares(tmp_path):
+    # sift reads text files as UTF-8; a mail can say that an attachment is Latin-1, whose umlauts came out as "�".
+    def attachment(name, charset, data):
+        return (
+            f"--b\r\nContent-Type: text/plain; charset={charset}\r\n"
+            f"Content-Disposition: attachment; filename={name}\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"
+        ).encode() + data
+
+    head = b"Subject: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
+    (tmp_path / "m.eml").write_bytes(
+        head
+        + attachment("latin.txt", "iso-8859-1", b"Gr\xfc\xdfe aus Z\xfcrich\r\n")
+        + attachment("ascii.txt", "us-ascii", "Grüße\r\n".encode())  # UTF-8 already, whatever the mail calls it
+        + attachment("odd.txt", "x-unknown", b"Gr\xfc\xdfe\r\n")  # a charset Python doesn't know: as any text file
+        + b"--b--\r\n"
+    )
+    (_, *attached), problems = readers.load(tmp_path / "m.eml")
+    assert [doc.text for doc in attached] == ["Grüße aus Zürich", "Grüße", "Gr\ufffd\ufffde"]
+    assert problems == []
+
+
+def test_attachments_sift_reads_are_documents_of_their_own(tmp_path):
+    path = email_file(
+        tmp_path,
+        Subject="Contract",
+        attachments=[
+            ("contract.pdf", sample(".pdf").read_bytes(), "application/pdf"),
+            ("notes.md", b"# Notes\n\nSee the contract.\n", "text/markdown"),
+            ("notes.md", b"# Notes, again\n", "text/markdown"),
+            ("../../evil.md", b"# Evil\n", "text/markdown"),
+            ("photo.png", b"\x89PNG", "image/png"),
+            ("forwarded.eml", message(Subject="inner", body="Inner.")),
+        ],
+    )
+    docs, problems = readers.load(path)
+    assert problems == []
+    assert [doc.key for doc in docs] == ["", "contract.pdf", "notes.md", "notes (2).md", "evil.md", "forwarded.eml"]
+    mail, pdf = docs[:2]
+    assert mail.meta["attachments"] == ["contract.pdf", "notes.md", "notes.md", "evil.md", "photo.png", "forwarded.eml"]
+    assert "Attachments: contract.pdf, notes.md, notes.md, evil.md, photo.png, forwarded.eml" in mail.text
+    assert PARAGRAPH in pdf.text
+    assert pdf.digest != mail.digest  # unchanged attachments keep their vectors when the mail changes
+
+
+def test_an_attachment_named_like_an_extension_has_none(tmp_path):
+    # As a file named `.md` has none; looking up its reader by an empty extension threw the mail away.
+    path = email_file(tmp_path, Subject="Odd", attachments=[(".md", b"# Dot\n", "text/markdown")])
+    (mail,), problems = readers.load(path)
+    assert (mail.meta["attachments"], problems) == ([".md"], [])
+
+
+def test_a_mail_attached_to_a_mail_is_read_as_one(tmp_path):
+    # As mail clients forward a mail "as attachment": its headers, text and attachments are documents too, named by
+    # its subject if it has no file name; and a mail saved as .eml and attached as a file reads the same.
+    original = message(
+        Subject="Offer 2/2026",
+        From="Anna <anna@acme.example>",
+        body="The original words.",
+        attachments=[("contract.pdf", sample(".pdf").read_bytes(), "application/pdf")],
+    )
+    saved = b"Subject: Saved\r\n\r\nSaved words.\r\n"
+    path = email_file(
+        tmp_path,
+        Subject="Fwd: Offer",
+        attachments=[(None, original), ("saved.eml", saved, "application/octet-stream"), (None, message(body="x"))],
+    )
+    docs, problems = readers.load(path)
+    keys = ["", "Offer 2-2026.eml", "Offer 2-2026/contract.pdf", "saved.eml", "message.eml"]
+    assert ([doc.key for doc in docs], problems) == (keys, [])
+    mail, forwarded, pdf, saved_doc, _ = docs
+    assert mail.meta["attachments"] == ["Offer 2-2026.eml", "saved.eml", "message.eml"]
+    assert (forwarded.title, forwarded.meta["from"]) == ("Offer 2/2026", "anna@acme.example")
+    assert forwarded.text.endswith("The original words.")
+    assert PARAGRAPH in pdf.text
+    assert saved_doc.text == "# Saved\n\nSaved words."
+
+
+def test_mail_in_mail_is_read_three_levels_deep(tmp_path):
+    # A mail that nests mails without end must not take sift down with it; the deepest it reads lists the next.
+    inner = message(Subject="0")
+    for level in range(1, 6):
+        inner = message(Subject=str(level), attachments=[(None, inner)])
+    docs, problems = readers.load(email_file(tmp_path, Subject="top", attachments=[(None, inner)]))
+    assert ([doc.key for doc in docs], problems) == (["", "5.eml", "5/4.eml", "5/4/3.eml"], [])
+    assert docs[-1].meta["attachments"] == ["2.eml"]
+
+
+def test_a_damaged_mail_attached_is_reported_and_the_mail_still_reads(tmp_path, monkeypatch):
+    path = email_file(tmp_path, Subject="Fwd", attachments=[(None, message(Subject="inner"))])
+    real = readers._mail_headers
+    monkeypatch.setattr(readers, "_mail_headers", lambda msg: real(msg) if msg["subject"] == "Fwd" else 1 / 0)
+    docs, problems = readers.load(path)
+    assert ([doc.key for doc in docs], problems) == ([""], ["inner.eml: skipped (division by zero)"])
+
+
+def test_an_attachment_without_a_name_is_passed_over(tmp_path):
+    # Its document would be named by its file name; but for a mail, it has nothing else to be named by.
+    path = email_file(tmp_path, Subject="x", attachments=[(None, b"# Notes\n", "text/markdown")])
+    (mail,), problems = readers.load(path)
+    assert (mail.meta, problems) == ({}, [])
+
+
+def test_an_email_of_attachments_alone(tmp_path):
+    path = email_file(tmp_path, body=None, Subject="Scan", attachments=[("a.md", b"# A\n", "text/markdown")])
+    (mail, _), _ = readers.load(path)
+    assert mail.text == "# Scan\n\nAttachments: a.md"
+
+
+def test_a_mail_whose_html_fails_says_so(tmp_path, monkeypatch):
+    # The mail stays, with its headers; that its text is missing is reported, not passed over.
+    monkeypatch.setattr(readers, "_document", lambda raw, name, fields: ([], ["skipped (no text in it)"]))
+    (mail,), problems = readers.load(email_file(tmp_path, body=None, html="<p>x</p>", Subject="Offer"))
+    assert (mail.text, problems) == ("# Offer", ["its HTML: skipped (no text in it)"])
+
+
+def test_a_mail_the_parser_fails_on_is_skipped(tmp_path, monkeypatch):
+    # Which input breaks Python's email parser changes with Python's version; that one does must not stop indexing.
+    import email
+
+    def failing(raw, policy):
+        raise ValueError("header line 3: no colon")
+
+    monkeypatch.setattr(email, "message_from_bytes", failing)
+    assert readers.load(email_file(tmp_path)) == ([], ["skipped (header line 3: no colon)"])
+
+
+def test_a_damaged_attachment_is_reported_and_the_mail_still_reads(tmp_path):
+    path = email_file(tmp_path, Subject="Scan", attachments=[("scan.pdf", b"%PDF-1.4 broken", "application/pdf")])
+    docs, problems = readers.load(path)
+    assert [doc.key for doc in docs] == [""]
+    assert [problem[:17] for problem in problems] == ["scan.pdf: skipped"]
+
+
+def test_a_folder_of_mail_is_searched_and_filtered(tmp_path, home):
+    (tmp_path / "mail").mkdir()
+    email_file(
+        tmp_path / "mail",
+        name="offer.eml",
+        Subject="Offer",
+        From="Ada Example <ada@example.com>",
+        attachments=[("contract.pdf", sample(".pdf").read_bytes(), "application/pdf")],
+    )
+    db = store.connect(home)
+    store.add_collection(db, tmp_path / "mail", "mail")
+    indexing.index(db)
+    index = Index(db)
+    assert [h["id"] for h in index.search("Kubelka-Munk")] == ["mail/offer/contract.pdf"]
+    assert [h["id"] for h in index.search("offer", filters={"from": "ada@example.com"})] == ["mail/offer.eml"]

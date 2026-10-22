@@ -276,6 +276,15 @@ def test_reindex_refuses_what_sift_index_would_not_read(live, path, error):
         index.reindex(["vault/a.md", path])
 
 
+def test_reindex_refuses_what_siftignore_leaves_out(live):
+    index, vault = live
+    write(vault / ".siftignore", "Private/\n*.tmp.md\n")
+    write(vault / "Private" / "keep.md", "x")
+    for path in ("vault/Private/keep.md", "vault/a.tmp.md"):
+        with pytest.raises(ValueError, match=r"\.siftignore leaves it out"):
+            index.reindex([path])
+
+
 def test_reindex_refuses_files_outside_every_collection(live, tmp_path):
     index, vault = live
     write(tmp_path / "elsewhere" / "a.md", "x")
@@ -283,6 +292,66 @@ def test_reindex_refuses_files_outside_every_collection(live, tmp_path):
         index.reindex([str(tmp_path / "elsewhere" / "a.md")])
     with pytest.raises(ValueError, match="is in no collection"):
         index.reindex([str(vault) + "-other/a.md"])  # a folder whose name starts like the collection's
+
+
+def test_reindex_refuses_files_of_a_collection_whose_siftignore_it_cannot_read(live):
+    # As `sift index` skips the collection; an error the agent is told, not a bug in the server's log.
+    index, vault = live
+    (vault / ".siftignore").mkdir()
+    with pytest.raises(ValueError, match=r"^vault: its \.siftignore can't be read, so no file was reindexed: "):
+        index.reindex(["vault/a.md"])
+
+
+def test_a_file_in_no_collection_says_which_there_are_and_how_to_add_one(live, tmp_path):
+    # An agent told only "is in no collection" tried other spellings of the path until it gave up.
+    index, vault = live
+    outside = tmp_path / "archive" / "2026" / "x.md"
+    write(outside, "x")
+    with pytest.raises(ValueError, match="is in no collection") as refused:
+        index.reindex([str(outside)])
+    message = str(refused.value)
+    assert message.startswith(f"{outside} is in no collection. The collections and their folders: ")
+    assert f"vault: {vault}" in message
+    assert f"work: {tmp_path / 'work'}" in message
+    assert message.endswith(f"To index files there, add their folder as a collection: `sift add {outside.parent}`")
+
+
+def test_the_sift_add_it_suggests_can_be_pasted(live, tmp_path):
+    outside = tmp_path / "My Notes" / "x.md"
+    write(outside, "x")
+    with pytest.raises(ValueError, match="is in no collection") as refused:
+        live[0].reindex([str(outside)])
+    quoted = f'"{outside.parent}"' if os.name == "nt" else f"'{outside.parent}'"
+    assert str(refused.value).endswith(f"`sift add {quoted}`")
+
+
+def test_a_file_in_no_collection_nearest_first(home, tmp_path):
+    db = store.connect(home)
+    for name in ("a", "b"):
+        (tmp_path / name / "notes").mkdir(parents=True)
+    store.add_collection(db, tmp_path / "a", "far")
+    store.add_collection(db, tmp_path / "b" / "notes", "near")
+    write(tmp_path / "b" / "x.md", "x")
+    with pytest.raises(ValueError, match=r"folders: near: .*; far: "):
+        Index(db).reindex([str(tmp_path / "b" / "x.md")])
+    for i in range(4):
+        (tmp_path / f"c{i}").mkdir()
+        store.add_collection(db, tmp_path / f"c{i}")
+    with pytest.raises(ValueError, match=r"folders: near: [^;]*(; [^;]*){4}; \.\.\.\. To index"):  # five, and more
+        Index(db).reindex([str(tmp_path / "b" / "x.md")])
+
+
+def test_a_file_while_no_collection_is_registered(home, tmp_path):
+    write(tmp_path / "x.md", "x")
+    with pytest.raises(ValueError, match=r"is in no collection: none is registered yet\. To index files there, add"):
+        Index(store.connect(home)).reindex([str(tmp_path / "x.md")])
+
+
+def test_an_unknown_collection_names_those_there_are(live):
+    with pytest.raises(LookupError, match="no collection named 'nope'; the collections are vault, work"):
+        live[0].reindex(["nope/a.md"])
+    with pytest.raises(LookupError, match="no collection named 'nope'; the collections are vault, work"):
+        live[0].search("x", collection="nope")
 
 
 def test_reindex_refuses_files_behind_a_linked_folder(live, tmp_path, monkeypatch):

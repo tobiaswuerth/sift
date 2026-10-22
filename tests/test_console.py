@@ -26,6 +26,19 @@ def test_duration(seconds, text):
     assert console.duration(seconds) == text
 
 
+@pytest.mark.parametrize(
+    "platform, path, text",
+    [
+        ("win32", "C:\\My Notes", 'sift add "C:\\My Notes"'),  # as cmd and PowerShell take it
+        ("win32", "C:\\notes", "sift add C:\\notes"),
+        ("linux", "/home/me/My Notes", "sift add '/home/me/My Notes'"),
+        ("darwin", "/notes", "sift add /notes"),
+    ],
+)
+def test_a_command_to_paste_is_quoted_for_the_shells_there(platform, path, text):
+    assert console.command("sift", "add", path, platform=platform) == text
+
+
 def test_a_line_blanks_out_what_a_longer_one_left_behind(capsys):
     line = console.Line()
     line.show("a longer line")
