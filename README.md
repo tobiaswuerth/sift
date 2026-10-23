@@ -91,7 +91,8 @@ new vectors on its own.
 
 The commands that change the index or serve it (`add`, `rm`, `index`, `embed`, `serve`, `worker`) each write what
 they say, with the time of each line, to a log of their own, `logs/serve-2026-10-23_210509.log` under `SIFT_HOME`:
-the server's requests and the errors of the libraries it runs too, and how the command ended if it failed. Every log is kept.
+the server's requests and the errors of the libraries it runs too, and how the command ended if it failed. Every log
+is kept.
 
 Every command may run while `sift serve` does: they share the index, which takes one write at a time (the next waits
 up to 30 seconds), and the server finds what a command wrote with its next search, reloading the vectors when they
