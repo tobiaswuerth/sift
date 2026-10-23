@@ -8,16 +8,21 @@ import sys
 import threading
 from time import perf_counter
 
+from . import logs
+
 REDRAW_SECONDS = 1  # a progress line redraws itself this often, so a slow step still shows sift at work
 _drawn = None  # the Progress whose line is on screen now, if any
 
 
 def say(*parts):
-    """A message; while a progress line is drawn, on a line of its own above it, as a Progress's note."""
+    """A message; while a progress line is drawn, on a line of its own above it, as a Progress's note. Into the
+    command's log too, if it keeps one."""
+    text = " ".join(map(str, parts))
+    logs.said.info(text)
     if _drawn is not None:
-        _drawn.note(" ".join(map(str, parts)))
+        _drawn.note(text)
     else:
-        print(*parts, file=sys.stderr, flush=True)
+        print(text, file=sys.stderr, flush=True)
 
 
 def count(n, noun):
@@ -76,6 +81,7 @@ class Progress:
         self._thread.join()
         with self._lock:
             self._line.end()
+        logs.said.info(self.text())  # where it ended, once: a log has no line to redraw
 
     def _redraw(self):
         while not self._stop.wait(REDRAW_SECONDS):
@@ -97,7 +103,8 @@ class Progress:
             self._line.end()
         self.draw()
 
-    def draw(self):
+    def text(self):
+        """The progress line as it is now."""
         seconds, share = self.elapsed, self.done / self.total if self.total else 1
         text = f"{self.prefix}[{'#' * round(20 * share):<20}] {share:4.0%} {self.done:,}/{self.total:,} {self.unit}, "
         rate = self.done / seconds if seconds > 0 else 0  # coarse clocks can return the same reading twice
@@ -106,5 +113,9 @@ class Progress:
         text += f"{duration(seconds)} elapsed"
         if rate:
             text += f", {duration((self.total - self.done) / rate)} left"
+        return text
+
+    def draw(self):
+        text = self.text()
         with self._lock:
             self._line.show(text)

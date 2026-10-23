@@ -8,9 +8,10 @@ import re
 import sqlite3
 import sys
 import textwrap
+from datetime import datetime
 from pathlib import Path
 
-from . import __version__, console, readers, settings, store
+from . import __version__, console, logs, readers, settings, store
 
 # The commands that load PyTorch, unless a worker does it for them; with SIFT_EMBED_REMOTE, THROUGH_WORKER do.
 SLOW = ("embed", "vsearch", "query", "similar", "bench", "serve", "worker")
@@ -228,21 +229,26 @@ def main(argv=None):
     a = p.parse_args(argv)
     if (sys.stdout.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
         sys.stdout.reconfigure(encoding="utf-8")
-    if a.cmd in SLOW:  # loading PyTorch alone can take long: say first that sift runs
-        loading = "" if settings.current().remote and a.cmd in THROUGH_WORKER else ", loading PyTorch"
-        console.say(f"sift {a.cmd}: starting{loading} ...")
     try:
-        if a.cmd == "worker":  # needs no index
-            from .worker import serve
-
-            serve(a.host, a.port)
-            return
-        with contextlib.closing(store.connect()) as db:
-            _run(a, db)
+        with logs.kept(a.cmd, datetime.now()) if a.cmd in logs.LOGGED else contextlib.nullcontext():
+            _command(a)
     except (LookupError, ValueError, OSError, sqlite3.Error) as e:
         raise SystemExit(f"error: {e}") from None
     except KeyboardInterrupt:
         raise SystemExit(130) from None
+
+
+def _command(a):
+    if a.cmd in SLOW:  # loading PyTorch alone can take long: say first that sift runs
+        loading = "" if settings.current().remote and a.cmd in THROUGH_WORKER else ", loading PyTorch"
+        console.say(f"sift {a.cmd}: starting{loading} ...")
+    if a.cmd == "worker":  # needs no index
+        from .worker import serve
+
+        serve(a.host, a.port)
+        return
+    with contextlib.closing(store.connect()) as db:
+        _run(a, db)
 
 
 def _add(a, db):

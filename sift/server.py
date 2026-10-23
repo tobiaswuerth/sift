@@ -13,7 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import console
+from . import console, logs
 from . import models as _models
 from .search import Index
 
@@ -370,6 +370,7 @@ async def serve_app(app, host, port, log_level="info", access_log=True, **option
         **options,
     )
     logging.getLogger("uvicorn.error").addFilter(_no_cancelled_requests)  # after Config, which sets up logging
+    logs.attach("uvicorn", "uvicorn.access")
     await uvicorn.Server(config).serve()
 
 
