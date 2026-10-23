@@ -25,7 +25,7 @@ def test_each_variable_overrides_its_default(tmp_path):
     assert Settings.from_env(environ) == Settings(tmp_path, "a/embedder", "b/reranker", "https://key@worker:8766")
 
 
-def test_where_scans_are_read(monkeypatch):
+def test_where_scans_are_read():
     assert Settings.from_env({}).ocr == "auto"
     assert Settings.from_env({"SIFT_OCR": " Off "}).ocr == "off"
 
