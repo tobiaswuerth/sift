@@ -5,6 +5,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-23
+
+### Fixed
+
+- The server's `reindex` skipped every PDF, office file, e-book and web page it was given, and every one attached to
+  a mail, with "asyncio.run() cannot be called from a running event loop": the converter runs in a coroutine of its
+  own, and the server's tools run on its event loop. They are read now; the files it skipped, and mails with one
+  attached, are read again by the next `sift index`, once.
+- Without a GPU, the models computed in the type their checkpoint is saved in, bfloat16 for embeddinggemma-2, which
+  is slow on CPUs, and Sentence Transformers warned about it; they load in float32 there, as intended.
+- With huggingface_hub 2, which uses httpx2, `sift serve` logged every request to Hugging Face again.
+
 ## [1.3.0] - 2026-10-23
 
 Scans are read, and two things real collections met are mended: mails whose HTML the converter failed on, and a
@@ -436,7 +448,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/tobiaswuerth/sift/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/tobiaswuerth/sift/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/tobiaswuerth/sift/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/tobiaswuerth/sift/compare/v1.1.0...v1.2.0

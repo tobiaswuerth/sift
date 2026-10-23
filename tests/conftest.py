@@ -36,13 +36,11 @@ class FakeSentenceTransformer:
     max_batch = 10**6  # batches above this run out of GPU memory
     gpu = "cuda"  # whose out-of-memory error to raise: "cuda" or "mps"
     gpu_memory = None  # a FakeGpuMemory, consulted when the model runs on CUDA
+    saved_in = "bfloat16"  # the checkpoint's dtype, which the model loads in unless it is given one, as embeddinggemma
 
-    def __init__(self, name, device=None):
-        self.name, self.device, self.max_seq_length, self.dtype = name, device, None, "float32"
-
-    def half(self):
-        self.dtype = "float16"
-        return self
+    def __init__(self, name, device=None, model_kwargs=None):
+        self.name, self.device, self.max_seq_length = name, device, None
+        self.dtype = str((model_kwargs or {}).get("dtype", self.saved_in)).removeprefix("torch.")
 
     def to(self, target):
         """A device or a dtype, as nn.Module.to takes them."""
@@ -78,8 +76,9 @@ class FakeCrossEncoder:
 
     limit = 8192  # the most tokens the model reads, as its position embeddings allow (MiniLM: 512)
 
-    def __init__(self, name, device=None, max_length=None):
-        self.name, self.device, self.model, self.head = name, device, FakeSentenceTransformer(name, device), "float32"
+    def __init__(self, name, device=None, max_length=None, model_kwargs=None):
+        self.name, self.device, self.model = name, device, FakeSentenceTransformer(name, device, model_kwargs)
+        self.head = self.model.dtype  # loaded in one dtype, the transformer and its head alike
         self.max_seq_length = max_length or self.limit  # sentence-transformers 6 truncates to this
 
     def to(self, target):

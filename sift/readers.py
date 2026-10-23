@@ -6,12 +6,14 @@ document's text is cut into chunks with their line numbers.
 Readers run in worker processes while indexing, so they read from bytes and return plain data (`Doc`).
 """
 
+import asyncio
 import hashlib
 import json
 import posixpath
 import re
 import unicodedata
 from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
 from functools import partial
 from html.parser import HTMLParser
@@ -372,8 +374,6 @@ PROPERTIES = {  # the document properties sift keeps as metadata: Xberg's name, 
 
 def _xberg(raw, name):
     """Xberg's reading of a file's bytes, converted to Markdown, with its properties. Raises what Xberg raises."""
-    import asyncio
-
     import xberg  # only indexing documents needs it
     from xberg.options import ConversionOptions, SecurityLimits
 
@@ -386,9 +386,20 @@ def _xberg(raw, name):
         # for zip bombs. Its caps on unpacked size, 100 MB a file and 500 MB in all, still stop those.
         security_limits=SecurityLimits(max_compression_ratio=10_000),
     )
-    result = asyncio.run(xberg.extract(xberg.ExtractInput(kind="bytes", bytes=raw, filename=name), config))
+    result = _finished(lambda: xberg.extract(xberg.ExtractInput(kind="bytes", bytes=raw, filename=name), config))
     (doc,) = result.results  # one per input
     return doc
+
+
+def _finished(make):
+    """The result of the coroutine make() returns, run to its end; in a thread of its own where an event loop already
+    runs in this one, as in sift's server, whose tools run on its loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(make())
+    with ThreadPoolExecutor(1) as thread:
+        return thread.submit(lambda: asyncio.run(make())).result()
 
 
 def _document(raw, name, fields):

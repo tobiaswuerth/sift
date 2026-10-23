@@ -380,7 +380,7 @@ def test_scans_are_marked_to_be_read_again_once(corpus):
     db, _ = corpus
     db.execute("UPDATE sources SET mtime = 1")
     db.commit()
-    store._read_scans_again(db)  # what the second runs, after the first has finished
+    store._read_again(db, "scans_read", (".pdf",))  # what the second runs, after the first has finished
     assert db.execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (0,)
 
 
@@ -393,5 +393,5 @@ def test_an_interrupted_marking_leaves_the_index_as_it_was(tmp_path, home, monke
     db.commit()
     monkeypatch.setattr(store, "set_meta", lambda *args: (_ for _ in ()).throw(KeyboardInterrupt))
     with pytest.raises(KeyboardInterrupt):
-        store._read_scans_again(db)
+        store._read_again(db, "scans_read", (".pdf",))
     assert db.execute("SELECT mtime FROM sources").fetchone() == (1,)  # rolled back: tried again on the next start

@@ -225,6 +225,30 @@ def test_documents_are_converted_in_worker_processes(library, tmp_path, monkeypa
     assert index_contents(parallel) == index_contents(db)
 
 
+def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home, monkeypatch):
+    # The server of sift 1.3.0 and older skipped every document its reindex tool was given: their files, and mails
+    # with one attached, are read again by the next index.
+    root, word = tmp_path / "docs", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    root.mkdir()
+    shutil.copy(sample(".docx"), root / "offer.docx")
+    email_file(root, Subject="Offer", attachments=[("offer.docx", sample(".docx").read_bytes(), word)])
+    db = store.connect(home)
+    store.add_collection(db, root, "docs")
+    with monkeypatch.context() as patched:
+        patched.setattr(readers, "_xberg", lambda raw, name: 1 / 0)
+        indexing.index(db)  # as that server did: no documents of them
+    assert [p for (p,) in db.execute("SELECT path FROM docs")] == ["mail.eml"]
+    db.execute("DELETE FROM meta WHERE key = 'documents_read'")  # as an index of sift 1.3.0 has it
+    db.commit()
+    db.close()
+    db = store.connect(home)
+    assert db.execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (2,)  # the file and the mail
+    indexing.index(db)
+    assert sorted(p for (p,) in db.execute("SELECT path FROM docs")) == ["mail.eml", "mail/offer.docx", "offer.docx"]
+    db.close()
+    assert store.connect(home).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (0,)
+
+
 # --- saved emails ------------------------------------------------------------
 
 
