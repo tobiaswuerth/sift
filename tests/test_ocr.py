@@ -54,7 +54,7 @@ class FakeModel:
     loop_again = False  # loop with a repetition penalty too; without one, it reads "word8 word9" instead
 
     def __init__(self):
-        self.device, self.dtype, self.generated, self.penalties = "cpu", None, 0, []
+        self.device, self.dtype, self.generated, self.penalties = "cpu", None, [], []  # per generate(): tokens, penalty
 
     def to(self, target):
         if isinstance(target, torch.dtype):
@@ -90,7 +90,7 @@ class FakeModel:
                 break
         if self.loop and not looping:
             ids += [8, 9]
-        self.generated = len(ids) - input_ids.shape[1]
+        self.generated.append(len(ids) - input_ids.shape[1])
         return torch.tensor([[*ids, 0]])
 
 
@@ -211,7 +211,7 @@ def test_a_page_that_loops_is_read_again_with_a_repetition_penalty(engine, tmp_p
     (text,) = engine.read(images)
     assert engine.model.penalties == [None, ocr.RETRY_PENALTY]
     assert text == "word1089 word1540 word8 word9"  # the second reading, which got further
-    assert engine.model.generated < ocr.NEW_TOKENS
+    assert engine.model.generated[0] <= 2 + 400 // len(" word7") + ocr.LOOP_STEP  # stopped soon after the loop showed
 
 
 def test_a_loop_the_second_reading_doesnt_better_is_cut(engine, tmp_path):
