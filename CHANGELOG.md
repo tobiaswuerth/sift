@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-23
+
 Scans are read, and two things real collections met are mended: mails whose HTML the converter failed on, and a
 collection added inside another.
 
@@ -434,7 +436,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/tobiaswuerth/sift/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/tobiaswuerth/sift/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/tobiaswuerth/sift/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/tobiaswuerth/sift/compare/v1.0.0...v1.1.0
