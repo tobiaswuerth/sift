@@ -297,7 +297,8 @@ parameters (Apache-2.0), which writes each page as Markdown, tables and columns 
 the other models use, in under 3 GB, once per scan: an RTX 4090 reads a page in 15 to 30 seconds, and the first scan
 downloads the model (2 GB). Up to 50 pages of a scan are read, and its metadata says `ocr`. On a machine without a GPU,
 scans are skipped and reported, unless `SIFT_OCR=on` has the CPU read them, at minutes a page; `SIFT_OCR=off` never
-reads them. A mail's attached scan is read like any other.
+reads them. A mail's attached scan is read like any other. The server's `reindex` leaves scans to the next
+`sift index`, as reading one would hold up every search meanwhile; `sift index --files` reads them at once.
 
 Damaged files are skipped and reported, until they change. Older binary Office files (`.doc`, `.ppt`, `.xls`) aren't
 read.

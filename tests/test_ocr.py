@@ -258,6 +258,19 @@ def test_scans_are_read_outside_any_write(tmp_path, home, scans, monkeypatch):
     assert writing == [False, False]
 
 
+def test_the_servers_reindex_leaves_a_scan_to_sift_index(tmp_path, home, scans):
+    # Tools run on the server's event loop: a scan read there would hold every other search up for minutes.
+    root = tmp_path / "docs"
+    scan(root / "a.pdf")
+    db = store.connect(home)
+    store.add_collection(db, root, "docs")
+    (entry,) = Index(db).reindex(["docs/a.pdf"])
+    assert (entry["status"], entry["note"]) == ("skipped", "a.pdf: a scan, left for `sift index` to read with OCR")
+    assert scans.engine.processor.pages == 0
+    indexing.index(db)  # though the file hasn't changed since
+    assert (scans.engine.processor.pages, len(Index(db).search("word1540"))) == (1, 1)
+
+
 def test_reindex_reads_a_scan(tmp_path, home, scans):
     root = tmp_path / "docs"
     write(root / "x.md", "# x\n")
