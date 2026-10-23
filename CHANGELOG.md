@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-23
+
+### Added
+
+- A log per run: `sift add`, `rm`, `index`, `embed`, `serve` and `worker` each write what they say, with the time of
+  each line, to `SIFT_HOME/logs/<command>-<time>.log`: a progress line once, where it ended; the server's requests
+  and the records of the libraries it runs; and how the command ended if it failed. Every log is kept.
+
 ## [1.3.2] - 2026-10-23
 
 ### Fixed
