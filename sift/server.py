@@ -4,6 +4,7 @@ unresolved, mentions and reindex), with the UI for people under /ui (see `ui`)."
 import asyncio
 import logging
 import sqlite3
+import sys
 from typing import Annotated, Any, Literal
 
 import anyio
@@ -372,6 +373,15 @@ async def serve_app(app, host, port, log_level="info", access_log=True, **option
     await uvicorn.Server(config).serve()
 
 
+def loop_options(stdio=False):
+    """How anyio runs a server's event loop. On Windows, HTTP is served on a selector loop: the default one, the
+    proactor, closes the listening socket for good when one accept fails (WinError 64, a client gone mid-accept), and
+    the server then runs on but answers no one. Over stdio, which listens on no socket, the default stays."""
+    if sys.platform == "win32" and not stdio:
+        return {"loop_factory": asyncio.SelectorEventLoop}
+    return {}
+
+
 def _no_cancelled_requests(record):
     """Drop the traceback uvicorn logs for each request it cancels at shutdown; it says beforehand that it does."""
     return not (record.exc_info and isinstance(record.exc_info[1], asyncio.CancelledError))
@@ -408,6 +418,6 @@ def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
         except (ConnectionError, LookupError) as e:  # a worker that doesn't answer, no vectors yet: keywords work
             console.say(f"warning: {e}")
     try:
-        anyio.run(_serve, mcp, index, host, port, stdio, models)
+        anyio.run(_serve, mcp, index, host, port, stdio, models, backend_options=loop_options(stdio))
     except BaseExceptionGroup as group:  # from the task group; the error inside is the transport's (or Ctrl+C)
         raise group.exceptions[0] from None

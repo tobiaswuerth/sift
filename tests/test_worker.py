@@ -407,6 +407,25 @@ def test_worker_serves_https_with_its_key_on_all_interfaces(home, fake_models, s
     assert f"SIFT_EMBED_REMOTE=https://{found.key}@" in capsys.readouterr().err  # what to set on the other machine
 
 
+def test_a_worker_on_windows_serves_on_a_selector_loop(home, fake_models, monkeypatch):
+    # As `sift serve`: the proactor loop stops accepting for good after one failed accept.
+    import asyncio
+    import sys
+
+    import uvicorn
+
+    loops = []
+
+    async def capture(self, *args, **kwargs):
+        loops.append(asyncio.get_running_loop())
+
+    monkeypatch.setattr(uvicorn.Server, "serve", capture)
+    monkeypatch.setattr(fake_models, "prepare", lambda longest: None)
+    monkeypatch.setattr(sys, "platform", "win32")
+    worker.serve(models=fake_models)
+    assert isinstance(loops[0], asyncio.SelectorEventLoop)
+
+
 def test_a_worker_serves_its_own_machines_models(home, fake_models, started, monkeypatch, capsys, configure):
     # Even with SIFT_EMBED_REMOTE set: a worker passing work on to another would be a chain nobody asked for.
     configure(remote="https://t.p@elsewhere:8766")
