@@ -11,7 +11,7 @@ collection added inside another.
 ### Added
 
 - Scans: PDFs without text of their own are read with OCR, by LightOnOCR-2 (one billion parameters, Apache-2.0), on
-  the GPU the other models use, in under 3 GB: each page as Markdown, up to 50 pages a scan, once per scan new or
+  the GPU the other models use, in about 3 GB: each page as Markdown, up to 50 pages a scan, once per scan new or
   changed. A mail's attached scan too. Their metadata says `ocr`. On a machine without a GPU they are skipped and
   reported, as before; `SIFT_OCR=on` reads them on the CPU, `SIFT_OCR=off` never. The first scan downloads the model
   (2 GB). Scans an older sift skipped, and mails with a PDF attached, are read again by the next `sift index`, once.
