@@ -25,3 +25,7 @@ files it is given again, and only files that `sift index` would read too, inside
 hidden and linked folders.
 
 `sift worker` admits only requests with its token, over HTTPS with a certificate whose fingerprint the key carries.
+
+sift downloads its models from Hugging Face on first use: the embedding model, the reranker and, for scans, the OCR
+model. It loads their weights with transformers' own classes and runs no code that comes with a model. Scanned PDFs
+are rendered with PDFium, which runs no scripts they hold; what OCR reads of a page is text, like any other.
