@@ -67,6 +67,12 @@ def test_add_again_with_anything_else_is_an_error(cli_corpus, capsys, options):
         run(capsys, "add", str(cli_corpus), *options)
 
 
+def test_add_a_folder_inside_a_collection_only_when_told(cli_corpus, capsys):
+    with pytest.raises(SystemExit, match="is inside the collection 'notes'"):
+        run(capsys, "add", str(cli_corpus / "robots"))
+    assert "added collection 'robots'" in run(capsys, "add", str(cli_corpus / "robots"), "--nested").err
+
+
 def test_add_an_obsidian_vault_suggests_titles_from_file_names(notes, home, capsys):
     (notes / ".obsidian").mkdir()
     assert "--title-from name" in run(capsys, "add", str(notes)).err

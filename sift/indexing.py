@@ -16,7 +16,7 @@ from contextlib import nullcontext
 from itertools import repeat, takewhile
 from pathlib import Path
 
-from . import console, embed, links, readers, store
+from . import console, embed, links, ocr, readers, store
 from .ignore import NAME as SIFTIGNORE
 from .ignore import Ignore
 
@@ -90,16 +90,23 @@ def _add_chunks(db, doc_id, chunks):
 
 def _store(db, cid, sid, rel, docs, counts, note):
     """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
-    row ids are returned. note(text) tells the user of a document that had to be skipped."""
+    row ids are returned. A scan new or changed is read with OCR first. note(text) tells the user of a document that
+    had to be skipped, and of a scan read."""
     existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
     base, kept, added, unchanged = rel.rsplit(".", 1)[0], set(), [], set()
     for doc in docs:
         path = f"{base}/{doc.key}" if doc.key else rel
-        kept.add(path)
         old = existing.get(path)
         if old and old[1] == doc.digest:
+            kept.add(path)
             unchanged.add(old[0])
             continue
+        if doc.scan is not None:
+            doc, said = ocr.default().read(doc)
+            note(f"{path}: {said}")
+            if doc is None:
+                continue
+        kept.add(path)
         if old:
             store.delete_docs(db, [old[0]])
         try:

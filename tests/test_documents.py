@@ -169,8 +169,10 @@ def test_a_real_zip_bomb_is_still_skipped(tmp_path):
     assert "exceeds limit" in problem
 
 
-def test_a_document_without_text_is_skipped():
-    assert readers.load(SAMPLES / "blank.pdf") == ([], ["skipped (no text in it: a scan? sift runs no OCR)"])
+def test_a_pdf_without_text_is_passed_on_as_a_scan():
+    # Readers run in worker processes: the process that writes the index reads the scan with OCR (see test_ocr).
+    (doc,), problems = readers.load(SAMPLES / "blank.pdf")
+    assert (doc.scan, doc.text, doc.chunks, problems) == ((SAMPLES / "blank.pdf").read_bytes(), "", [], [])
 
 
 # --- indexing documents --------------------------------------------------------
@@ -436,11 +438,29 @@ def test_an_email_of_attachments_alone(tmp_path):
     assert mail.text == "# Scan\n\nAttachments: a.md"
 
 
-def test_a_mail_whose_html_fails_says_so(tmp_path, monkeypatch):
+def test_a_mail_whose_html_has_no_text_says_so(tmp_path):
     # The mail stays, with its headers; that its text is missing is reported, not passed over.
-    monkeypatch.setattr(readers, "_document", lambda raw, name, fields: ([], ["skipped (no text in it)"]))
-    (mail,), problems = readers.load(email_file(tmp_path, body=None, html="<p>x</p>", Subject="Offer"))
-    assert (mail.text, problems) == ("# Offer", ["its HTML: skipped (no text in it)"])
+    (mail,), problems = readers.load(email_file(tmp_path, body=None, html="<p> </p><div></div>", Subject="Offer"))
+    assert (mail.text, problems) == ("# Offer", ["its HTML: no text in it"])
+
+
+def test_html_the_converter_fails_on_is_read_as_plain_text(tmp_path, monkeypatch):
+    # Xberg's converter panicked on some marketing mails ("begin > end (2 > 0)"), and their text was lost.
+    def panic(raw, name):
+        raise RuntimeError("Parsing error: HTML conversion failed: Internal panic: begin > end (2 > 0)")
+
+    monkeypatch.setattr(readers, "_xberg", panic)
+    html = (
+        "<html><head><title>T</title><style>p {color: red}</style></head><body><h1>Offer</h1>"
+        "<p>Prices for <b>2027</b> &amp; later.</p><ul><li>One</li><li>Two</li></ul><script>run()</script>"
+        "</body></html>"
+    )
+    (mail,), problems = readers.load(email_file(tmp_path, body=None, html=html, Subject="Offer"))
+    assert mail.text.endswith("Offer\n\nPrices for 2027 & later.\n\nOne\n\nTwo")
+    assert problems == [
+        "its HTML: read as plain text, as converting it failed (Parsing error: HTML conversion failed: Internal "
+        "panic: begin > end (2 > 0))"
+    ]
 
 
 def test_a_mail_the_parser_fails_on_is_skipped(tmp_path, monkeypatch):

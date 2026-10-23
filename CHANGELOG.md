@@ -5,6 +5,24 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Scans are read, and two things real collections met are mended: mails whose HTML the converter failed on, and a
+collection added inside another.
+
+### Added
+
+- Scans: PDFs without text of their own are read with OCR, by LightOnOCR-2 (one billion parameters, Apache-2.0), on
+  the GPU the other models use, in under 3 GB: each page as Markdown, up to 50 pages a scan, once per scan new or
+  changed. A mail's attached scan too. Their metadata says `ocr`. On a machine without a GPU they are skipped and
+  reported, as before; `SIFT_OCR=on` reads them on the CPU, `SIFT_OCR=off` never. The first scan downloads the model
+  (2 GB). Scans an older sift skipped, and mails with a PDF attached, are read again by the next `sift index`, once.
+- `sift add --nested`: a folder inside a collection, or one that holds a collection, is refused without it, since
+  the files of both would be indexed twice.
+
+### Fixed
+
+- A mail whose HTML Xberg's converter fails on ("Internal panic: begin > end") keeps its words: its HTML is read as
+  plain text, and that is reported. Its text was lost before.
+
 ## [1.2.1] - 2026-10-22
 
 ### Changed
