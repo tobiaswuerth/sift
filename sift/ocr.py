@@ -90,7 +90,6 @@ class Ocr:
         return [self._page(model, processor, image) for image in images]
 
     def _page(self, model, processor, image):
-
         inputs = processor.apply_chat_template(
             [{"role": "user", "content": [{"type": "image", "image": image}]}],
             add_generation_prompt=True,
