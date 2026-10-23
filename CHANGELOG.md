@@ -16,8 +16,11 @@ collection added inside another.
   reported, as before; `SIFT_OCR=on` reads them on the CPU, `SIFT_OCR=off` never. The first scan downloads the model
   (2 GB). Scans an older sift skipped, and mails with a PDF attached, are read again by the next `sift index`, once.
   The server's `reindex` leaves scans to `sift index`, so that no search waits for one.
-- `sift add --nested`: a folder inside a collection, or one that holds a collection, is refused without it, since
-  the files of both would be indexed twice.
+
+### Changed
+
+- `sift add` refuses a folder inside a collection, or one that holds a collection, since the files of both were
+  indexed twice and found twice; `sift add --nested` adds it anyway.
 
 ### Fixed
 
