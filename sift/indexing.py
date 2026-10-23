@@ -88,25 +88,42 @@ def _add_chunks(db, doc_id, chunks):
     )
 
 
-def _store(db, cid, sid, rel, docs, counts, note):
-    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
-    row ids are returned. A scan new or changed is read with OCR first. note(text) tells the user of a document that
-    had to be skipped, and of a scan read."""
-    existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
-    base, kept, added, unchanged = rel.rsplit(".", 1)[0], set(), [], set()
+def _path(rel, doc):
+    """A document's path in its collection: its file's, or for a record or an attachment, one below it."""
+    return f"{rel.rsplit('.', 1)[0]}/{doc.key}" if doc.key else rel
+
+
+def _read_scans(db, sid, rel, docs, note):
+    """A file's documents with the scans among them read by OCR, those new or changed since the file `sid` was
+    indexed (see `ocr`); a scan that can't be read is left out, and said, as is one read. Reading a scan takes a while,
+    so what is written is committed first: no other writer, such as the server's `reindex`, waits for it."""
+    known = dict(db.execute("SELECT path, hash FROM docs WHERE source = ?", (sid,))) if sid else {}
+    read = []
     for doc in docs:
-        path = f"{base}/{doc.key}" if doc.key else rel
-        old = existing.get(path)
-        if old and old[1] == doc.digest:
-            kept.add(path)
-            unchanged.add(old[0])
-            continue
-        if doc.scan is not None:
+        path = _path(rel, doc)
+        if doc.scan is not None and known.get(path) != doc.digest:
+            if db.in_transaction:
+                db.commit()
             doc, said = ocr.default().read(doc)
             note(f"{path}: {said}")
             if doc is None:
                 continue
+        read.append(doc)
+    return read
+
+
+def _store(db, cid, sid, rel, docs, counts, note):
+    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
+    row ids are returned. note(text) tells the user of a document that had to be skipped."""
+    existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
+    kept, added, unchanged = set(), [], set()
+    for doc in docs:
+        path = _path(rel, doc)
         kept.add(path)
+        old = existing.get(path)
+        if old and old[1] == doc.digest:
+            unchanged.add(old[0])
+            continue
         if old:
             store.delete_docs(db, [old[0]])
         try:
@@ -230,11 +247,14 @@ def reindex(db, paths):
     if len(paths) > MOST_FILES:
         raise ValueError(f"at most {MOST_FILES:,} files at a time; `sift index` reads any number")
     files = list(dict.fromkeys(_locate(db, path) for path in paths))
+    on_disk = [
+        _reindex_read(db, cid, root, json.loads(fields) if fields else {}, rel) for cid, _, root, fields, rel in files
+    ]
     db.execute("BEGIN IMMEDIATE")
     try:
         before, found, removed = store.get_meta(db, "version"), [], []
-        for cid, name, root, fields, rel in files:
-            entry, docs, gone = _reindex_file(db, cid, name, root, json.loads(fields) if fields else {}, rel)
+        for (cid, name, _, _, rel), (info, read) in zip(files, on_disk):
+            entry, docs, gone = _reindex_file(db, cid, name, rel, info, read)
             found.append((entry, docs))
             removed += gone
         after = store.get_meta(db, "version")
@@ -343,26 +363,39 @@ def _indexed_as(db, cid, rel):
     return same if len(same) == 1 else []
 
 
-def _reindex_file(db, cid, name, root, fields, rel):
-    """Read one file again, or remove its documents if it is gone, as `sift index` would: ({"id", "status"}, its
-    documents' row ids, the chunks removed). A chunk removed is every chunk of a document replaced or removed: SQLite
-    hands the ids of deleted chunks out again, so the new chunks of a note may carry its old ones' ids."""
-    entry = {"id": f"{name}/{rel}"}
-    known = db.execute("SELECT id FROM sources WHERE collection = ? AND path = ?", (cid, rel)).fetchone()
-    sid = known and known[0]
-    sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
-    chunks = db.execute(sql, (sid,)).fetchall()
+def _reindex_read(db, cid, root, fields, rel):
+    """A file as `reindex` finds it, before anything is written: its stat, None if it is gone; and its documents and
+    problems as `sift index` reads them, scans read, None if it can't be read."""
     path = os.path.join(root, *rel.split("/"))
     try:
         info = os.stat(path)  # through a link, as `sift index` reads it
     except OSError:
         info = None
     if info is None or not stat.S_ISREG(info.st_mode):
+        return None, None
+    read = readers.load(path, fields)
+    if read is None:
+        return info, None
+    docs, problems = read
+    known = db.execute("SELECT id FROM sources WHERE collection = ? AND path = ?", (cid, rel)).fetchone()
+    return info, (_read_scans(db, known and known[0], rel, docs, problems.append), problems)
+
+
+def _reindex_file(db, cid, name, rel, info, read):
+    """Bring one file's documents up to date with what `_reindex_read` found, or remove them if it is gone, as `sift
+    index` would: ({"id", "status"}, its documents' row ids, the chunks removed). A chunk removed is every chunk of a
+    document replaced or removed: SQLite hands the ids of deleted chunks out again, so the new chunks of a note may
+    carry its old ones' ids."""
+    entry = {"id": f"{name}/{rel}"}
+    known = db.execute("SELECT id FROM sources WHERE collection = ? AND path = ?", (cid, rel)).fetchone()
+    sid = known and known[0]
+    sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
+    chunks = db.execute(sql, (sid,)).fetchall()
+    if info is None:
         if sid is None:
             return entry | {"status": "not found"}, [], []
         _drop_source(db, sid)
         return entry | {"status": "removed"}, [], [chunk for _, chunk in chunks]
-    read = readers.load(path, fields)
     if read is None:
         return entry | {"status": "unreadable"}, [], []
     docs, problems = read
@@ -503,11 +536,13 @@ def _read_and_store(db, cid, name, fields, known, todo, counts, progress):
                 docs, problems = res
                 for problem in problems:
                     progress.note(f"{name}: {rel}: {problem}")
+                note = lambda text: progress.note(f"{name}: {text}")  # noqa: E731
+                docs = _read_scans(db, known[rel][0] if rel in known else None, rel, docs, note)
                 sid = (
                     known[rel][0]
                     if rel in known
                     else db.execute("INSERT INTO sources(collection, path) VALUES(?, ?)", (cid, rel)).lastrowid
                 )
-                _store(db, cid, sid, rel, docs, counts, lambda text: progress.note(f"{name}: {text}"))
+                _store(db, cid, sid, rel, docs, counts, note)
                 db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (mtime, size, sid))
             db.commit()

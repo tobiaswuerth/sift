@@ -489,7 +489,8 @@ class _Words(HTMLParser):
             self.end_paragraph()
 
     def handle_endtag(self, tag):
-        self.hidden -= tag in self.HIDDEN and self.hidden > 0
+        if tag in self.HIDDEN and self.hidden:
+            self.hidden -= 1
         if tag in self.BLOCKS:
             self.end_paragraph()
 

@@ -241,6 +241,23 @@ def test_ocr_shares_the_accelerator_of_this_machines_models(fake_models, configu
     assert isinstance(ocr.Scans().engine.accelerator, Accelerator)
 
 
+def test_scans_are_read_outside_any_write(tmp_path, home, scans, monkeypatch):
+    # Reading a scan takes a while; meanwhile `sift serve` may want to write a note an agent reindexes.
+    root = tmp_path / "docs"
+    for n in range(3):
+        write(root / f"note{n}.md", f"# Note {n}\n")
+    scan(root / "a.pdf")
+    db = store.connect(home)
+    store.add_collection(db, root, "docs")
+    writing, read = [], scans.engine.read
+    monkeypatch.setattr(scans.engine, "read", lambda images: writing.append(db.in_transaction) or read(images))
+    indexing.index(db)
+    (root / "a.pdf").unlink()
+    scan(root / "a.pdf", pages=2)
+    indexing.reindex(db, ["docs/note0.md", "docs/a.pdf"])
+    assert writing == [False, False]
+
+
 def test_reindex_reads_a_scan(tmp_path, home, scans):
     root = tmp_path / "docs"
     write(root / "x.md", "# x\n")
