@@ -114,6 +114,16 @@ def test_a_folder_is_one_collection(corpus):
         store.add_collection(db, notes / ".." / notes.name, "again")
 
 
+def test_a_folder_inside_a_collection_or_around_one_is_refused(corpus):
+    # Its files would be indexed twice, once in each collection, and found twice.
+    db, notes = corpus
+    with pytest.raises(SystemExit, match=r"robots is inside the collection 'notes' \(.*\): its files would be "):
+        store.add_collection(db, notes / "robots", "robots")
+    with pytest.raises(SystemExit, match=r"holds the collection 'notes' \(.*\): .* --nested"):
+        store.add_collection(db, notes.parent, "everything")
+    assert store.add_collection(db, notes / "robots", "robots", nested=True) == "robots"
+
+
 def test_remove_collection(corpus):
     db, root = corpus
     assert store.remove_collection(db, "notes") == 3  # documents removed

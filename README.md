@@ -89,6 +89,11 @@ sift worker                            # embed for other machines on this one's 
 processed. Deleted files are removed. An interrupted `sift embed` continues where it stopped. A running server picks up
 new vectors on its own.
 
+Every command may run while `sift serve` does: they share the index, which takes one write at a time (the next waits
+up to 30 seconds), and the server finds what a command wrote with its next search, reloading the vectors when they
+changed. A folder inside a collection, or one that holds a collection, isn't added: the files of both would be indexed
+twice, once in each collection; `sift add --nested` adds it anyway.
+
 Search commands, `similar` included, return one result per document, with its best passage. They accept `-k` (number
 of results), `-c` (collection), `--path` (glob within the collection, e.g. `"2024/*"`), `-f` (front-matter filter,
 repeatable, see below), `--fields` (front-matter fields to show with each hit, e.g. `url,created`, or `*` for all),
@@ -286,8 +291,17 @@ become sections and sheets become tables, and `get` returns that Markdown. The d
 as far as the file has them: `title`, `authors`, `subject`, `keywords`, `language`, `created` and `modified`. The
 title is the document's own, else the first heading, else the file name.
 
-sift runs no OCR, so a scanned PDF without a text layer has no text. Such files are skipped and reported, as are
-damaged ones, until they change. Older binary Office files (`.doc`, `.ppt`, `.xls`) aren't read.
+**Scans**, PDFs without text of their own as scanners and phones make them, are read with OCR: their pages, as
+pictures at 200 dpi, by [LightOnOCR-2](https://huggingface.co/lightonai/LightOnOCR-2-1B), a model of one billion
+parameters (Apache-2.0), which writes each page as Markdown, tables and columns in reading order. It runs on the GPU
+the other models use, in about 3 GB, once per scan: an RTX 4090 reads a page in 15 to 30 seconds, a dense one in up
+to a minute, and the first scan downloads the model (2 GB). Up to 50 pages of a scan are read, and its metadata says `ocr`. On a machine without a GPU,
+scans are skipped and reported, unless `SIFT_OCR=on` has the CPU read them, at minutes a page; `SIFT_OCR=off` never
+reads them. A mail's attached scan is read like any other. The server's `reindex` leaves scans to the next
+`sift index`, as reading one would hold up every search meanwhile; `sift index --files` reads them at once.
+
+Damaged files are skipped and reported, until they change. Older binary Office files (`.doc`, `.ppt`, `.xls`) aren't
+read.
 
 ### Emails
 
@@ -432,7 +446,7 @@ proto tcp`, with your network's range.
 ## Configuration
 
 None needed: sift picks the device, the GPU memory budget, the batch size and the number of worker processes itself.
-Four optional settings exist for special cases:
+Five optional settings exist for special cases:
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -440,6 +454,7 @@ Four optional settings exist for special cases:
 | `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model |
 | `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
 | `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed on: the `https://<key>@workstation:8766` it prints |
+| `SIFT_OCR` | `auto` | Where scans are read: `auto` on a GPU, `on` also on the CPU (slow), `off` never |
 
 After changing the embedding model, run `sift embed --reset`. Models are downloaded from Hugging Face on first use.
 
@@ -510,11 +525,12 @@ claims, and it embeds 1.6 times as fast.
 
 ## Scope
 
-In scope: text, Markdown and JSON Lines files, PDF, office documents, e-books, web pages and saved emails; Linux,
-macOS and Windows; NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise CPU; one user, any number of local agents.
+In scope: text, Markdown and JSON Lines files, PDF (scans too), office documents, e-books, web pages and saved
+emails; Linux, macOS and Windows; NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise CPU; one user, any number of
+local agents.
 
-Out of scope for now: OCR of scans and images; answer generation (sift retrieves, the agent writes); approximate
-nearest-neighbour indexes; live file watching (an agent calls `reindex` after writing); remote access and
+Out of scope for now: OCR of pictures that aren't PDFs; answer generation (sift retrieves, the agent writes);
+approximate nearest-neighbour indexes; live file watching (an agent calls `reindex` after writing); remote access and
 authentication; writing to your files.
 
 ## Versioning
@@ -523,7 +539,7 @@ sift follows [semantic versioning](https://semver.org/). Within a major version,
 
 - the commands, their options and their JSON output (`--json`, `sift status`);
 - the MCP tools and their parameters;
-- the four settings;
+- the settings;
 - the index: one made by 1.x opens in every later 1.x, which updates its layout on first use if it must;
 - the worker protocol: every 1.x embeds through every 1.x worker.
 

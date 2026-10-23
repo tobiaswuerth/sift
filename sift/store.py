@@ -81,11 +81,40 @@ def _layout(db, path):
         )
     if version < 2:
         db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + f"PRAGMA user_version = {SCHEMA_VERSION};")
+        set_meta(db, SCANS_READ, 1)
+        db.commit()
         return
     if version == 2:  # sift 0.3 to 0.7: everything stays but the keyword index, which gains the front matter
         _rebuild_keyword_index(db)
     if version <= 3:  # sift 0.8 to 1.0: everything stays, and the notes' links join it
         _add_links(db)
+    if get_meta(db, SCANS_READ) is None:  # sift 1.2 and older read no scans
+        _read_scans_again(db)
+
+
+SCANS_READ = "scans_read"  # in the meta table, once the scans an older sift skipped are to be read again
+
+
+def _read_scans_again(db):
+    """Have the next `sift index` read again what sift 1.2 and older found no text in: PDFs without documents, and
+    mails with a PDF attached; once. Their unchanged documents stay, vectors included. In one transaction, which
+    another sift starting at the same time waits for, and then finds done."""
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if get_meta(db, SCANS_READ) is None:
+            db.execute(
+                """UPDATE sources SET mtime = NULL
+                   WHERE (lower(path) LIKE '%.pdf' AND id NOT IN (SELECT source FROM docs))
+                   OR (lower(path) LIKE '%.eml' AND id IN (SELECT d.source FROM docs d,
+                       json_each(CASE WHEN json_type(d.meta, '$.attachments') = 'array'
+                                 THEN json_extract(d.meta, '$.attachments') END) a
+                       WHERE lower(a.value) LIKE '%.pdf'))"""
+            )
+            set_meta(db, SCANS_READ, 1)
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
 
 
 def _rebuild_keyword_index(db):
@@ -158,14 +187,22 @@ def _fields(fields):
     return json.dumps(fields)
 
 
-def add_collection(db, path, name=None, fields=None):
-    """Register a folder. `fields` chooses JSON Lines fields instead of the defaults: {"id", "title", "text"}."""
+def add_collection(db, path, name=None, fields=None, nested=False):
+    """Register a folder. `fields` chooses JSON Lines fields instead of the defaults: {"id", "title", "text"}. A folder
+    inside a collection, or one holding a collection, only if `nested`: the files of both would be indexed twice."""
     stored = _fields(fields)
     path = Path(path).expanduser().resolve()
     if not path.is_dir():
         raise SystemExit(f"not a directory: {path}")
     if other := collection_at(db, path):  # registered twice, its documents were found twice
         raise SystemExit(f"{path} is the collection {other!r} already")
+    if not nested and (overlap := _overlapping(db, path)):
+        other, folder, inside = overlap
+        where = "is inside" if inside else "holds"
+        raise SystemExit(
+            f"{path} {where} the collection {other!r} ({folder}): its files would be indexed twice, once in each "
+            "collection, and found twice; add it anyway with --nested"
+        )
     name = name or path.name
     if not re.fullmatch(r"[\w.-]+", name):
         raise SystemExit(f"invalid collection name {name!r}: choose one with --name, of letters, digits, '_', '-', '.'")
@@ -191,6 +228,17 @@ def collection_at(db, path):
         (name for name, folder in db.execute("SELECT name, path FROM collections") if os.path.normcase(folder) == path),
         None,
     )
+
+
+def _overlapping(db, path):
+    """A collection whose folder holds the folder `path`, or lies inside it: (its name, its folder, whether `path` is
+    inside it); None if there is none."""
+    mine = Path(os.path.normcase(path))
+    for name, folder in db.execute("SELECT name, path FROM collections ORDER BY name"):
+        theirs = Path(os.path.normcase(folder))
+        if mine.is_relative_to(theirs) or theirs.is_relative_to(mine):
+            return name, folder, mine.is_relative_to(theirs)
+    return None
 
 
 def set_title_from(db, name, title_from):

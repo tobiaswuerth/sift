@@ -14,6 +14,7 @@ import unicodedata
 from collections import namedtuple
 from datetime import UTC
 from functools import partial
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -170,9 +171,10 @@ def decode(raw):
     return raw.decode("utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig", "replace")
 
 
-Doc = namedtuple("Doc", "key digest title meta text chunks links", defaults=((),))
+Doc = namedtuple("Doc", "key digest title meta text chunks links scan", defaults=((), None))
 """A document read from a file: key is "" for a whole file, the record id for a JSON Lines record; chunks are
-(first line, last line, position, length) spans of text; links are the Links of a Markdown file."""
+(first line, last line, position, length) spans of text; links are the Links of a Markdown file; scan is the bytes of a
+PDF without text, for the process that writes the index to read with OCR (see `ocr`), else None."""
 
 ID_FIELDS = ("id", "_id")
 TITLE_FIELDS = ("title", "name", "headline", "subject")
@@ -368,9 +370,8 @@ PROPERTIES = {  # the document properties sift keeps as metadata: Xberg's name, 
 }
 
 
-def _document(raw, name, fields):
-    """A PDF, office file, e-book or web page, converted to Markdown by Xberg: one document, with its properties
-    as metadata. Without OCR a scan has no text."""
+def _xberg(raw, name):
+    """Xberg's reading of a file's bytes, converted to Markdown, with its properties. Raises what Xberg raises."""
     import asyncio
 
     import xberg  # only indexing documents needs it
@@ -379,21 +380,30 @@ def _document(raw, name, fields):
     config = xberg.ExtractionConfig(
         output_format="markdown",
         use_cache=False,  # sift keeps what it needs in the index
-        disable_ocr=True,  # slow, and needs Tesseract or a model
+        disable_ocr=True,  # Xberg's needs Tesseract; sift reads scans with a model of its own (see `ocr`)
         html_options=ConversionOptions(extract_metadata=False),  # it puts the <head> as broken YAML before the text
         # Office XML compresses at up to about 1000:1, the most deflate can do, which Xberg's default of 100:1 took
         # for zip bombs. Its caps on unpacked size, 100 MB a file and 500 MB in all, still stop those.
         security_limits=SecurityLimits(max_compression_ratio=10_000),
     )
+    result = asyncio.run(xberg.extract(xberg.ExtractInput(kind="bytes", bytes=raw, filename=name), config))
+    (doc,) = result.results  # one per input
+    return doc
+
+
+def _document(raw, name, fields):
+    """A PDF, office file, e-book or web page, converted to Markdown by Xberg: one document, with its properties
+    as metadata. A PDF without text is a scan, passed on for OCR."""
     try:
-        result = asyncio.run(xberg.extract(xberg.ExtractInput(kind="bytes", bytes=raw, filename=name), config))
-        (doc,) = result.results  # one per input
+        doc = _xberg(raw, name)
     except Exception as error:  # a damaged file can fail in many ways; it must not stop indexing the others
         return [], [f"skipped ({error})"]
-    if not doc.content.strip():
-        return [], ["skipped (no text in it: a scan? sift runs no OCR)"]
+    if not doc.content.strip() and extension(name) != ".pdf":
+        return [], ["skipped (no text in it)"]
     meta = {ours: value for theirs, ours in PROPERTIES.items() if (value := getattr(doc.metadata, theirs))}
     title = meta.get("title", "").strip() or _heading(doc.content) or Path(name).stem
+    if not doc.content.strip():
+        return [Doc("", _digest(raw), title, meta, "", [], scan=raw)], []
     return [Doc("", _digest(raw), title, meta, doc.content, list(chunk(doc.content)))], []
 
 
@@ -453,8 +463,54 @@ def _mail_text(msg, fields):
         content = decode(part.get_payload(decode=True) or b"")
     if part.get_content_subtype() != "html":
         return content.replace("\r\n", "\n").strip(), []
-    docs, problems = _document(content.encode(), "mail.html", fields)
-    return (docs[0].text.strip() if docs else ""), [f"its HTML: {problem}" for problem in problems]
+    try:
+        text = _xberg(content.encode(), "mail.html").content.strip()
+    except Exception as error:  # Xberg's converter panics on some HTML: the words are still worth having
+        return _plain(content), [f"its HTML: read as plain text, as converting it failed ({error})"]
+    return text, [] if text else ["its HTML: no text in it"]
+
+
+class _Words(HTMLParser):
+    """The words of HTML, a paragraph per block, without scripts and styles."""
+
+    BLOCKS = frozenset(
+        "address article aside blockquote br dd div dl dt figcaption footer form h1 h2 h3 h4 h5 h6 header hr li main "
+        "nav ol p pre section table td th tr ul".split()
+    )
+    HIDDEN = frozenset(("head", "script", "style", "template"))
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.paragraphs, self.words, self.hidden = [], [], 0
+
+    def handle_starttag(self, tag, attrs):
+        self.hidden += tag in self.HIDDEN
+        if tag in self.BLOCKS:
+            self.end_paragraph()
+
+    def handle_endtag(self, tag):
+        if tag in self.HIDDEN and self.hidden:
+            self.hidden -= 1
+        if tag in self.BLOCKS:
+            self.end_paragraph()
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.words.append(data)
+
+    def end_paragraph(self):
+        if paragraph := " ".join("".join(self.words).split()):
+            self.paragraphs.append(paragraph)
+        self.words = []
+
+
+def _plain(html):
+    """HTML's words, a paragraph per block: what is left when converting it to Markdown fails."""
+    words = _Words()
+    words.feed(html)
+    words.close()
+    words.end_paragraph()
+    return "\n\n".join(words.paragraphs)
 
 
 ATTACHED = (*TEXT, *DOCUMENTS)  # the files attached to an email sift reads, besides mails: whole files, no records

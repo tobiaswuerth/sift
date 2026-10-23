@@ -130,6 +130,12 @@ def main(argv=None):
         "(default) or its file name, as in an Obsidian vault. Given for a folder that is a collection already, it "
         "changes that collection",
     )
+    s.add_argument(
+        "--nested",
+        action="store_true",
+        help="add a folder inside a collection, or one that holds a collection, though the files of both are then "
+        "indexed twice",
+    )
     s = sub.add_parser("rm", help="remove a collection from the index (its files stay on disk)")
     s.add_argument("name")
     s = sub.add_parser("index", help="scan collections and update the keyword index")
@@ -258,7 +264,7 @@ def _add(a, db):
             )
         )
         return
-    name = store.add_collection(db, a.path, a.name, chosen)
+    name = store.add_collection(db, a.path, a.name, chosen, nested=a.nested)
     console.say(f"added collection {name!r}; run `sift index` next")
     if not a.title_from and (Path(a.path).expanduser() / ".obsidian").is_dir():
         console.say(

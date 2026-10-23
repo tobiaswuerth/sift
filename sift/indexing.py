@@ -16,7 +16,7 @@ from contextlib import nullcontext
 from itertools import repeat, takewhile
 from pathlib import Path
 
-from . import console, embed, links, readers, store
+from . import console, embed, links, ocr, readers, store
 from .ignore import NAME as SIFTIGNORE
 from .ignore import Ignore
 
@@ -88,13 +88,42 @@ def _add_chunks(db, doc_id, chunks):
     )
 
 
+def _path(rel, doc):
+    """A document's path in its collection: its file's, or for a record or an attachment, one below it."""
+    return f"{rel.rsplit('.', 1)[0]}/{doc.key}" if doc.key else rel
+
+
+def _read_scans(db, sid, rel, docs, note, now=True):
+    """A file's documents with the scans among them read by OCR, those new or changed since the file `sid` was
+    indexed (see `ocr`); a scan that can't be read is left out, and noted, as is one read. Reading a scan takes a
+    while, so what is written is committed first: no other writer, such as the server's `reindex`, waits for it.
+    Unless `now`, a scan to read is left out for `sift index`. Returns the documents, and whether a scan was left."""
+    known = dict(db.execute("SELECT path, hash FROM docs WHERE source = ?", (sid,))) if sid else {}
+    read, left = [], False
+    for doc in docs:
+        path = _path(rel, doc)
+        if doc.scan is not None and known.get(path) != doc.digest:
+            if not now:
+                note(f"{path}: a scan, left for `sift index` to read with OCR")
+                left = True
+                continue
+            if db.in_transaction:
+                db.commit()
+            doc, said = ocr.default().read(doc)
+            note(f"{path}: {said}")
+            if doc is None:
+                continue
+        read.append(doc)
+    return read, left
+
+
 def _store(db, cid, sid, rel, docs, counts, note):
     """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
     row ids are returned. note(text) tells the user of a document that had to be skipped."""
     existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
-    base, kept, added, unchanged = rel.rsplit(".", 1)[0], set(), [], set()
+    kept, added, unchanged = set(), [], set()
     for doc in docs:
-        path = f"{base}/{doc.key}" if doc.key else rel
+        path = _path(rel, doc)
         kept.add(path)
         old = existing.get(path)
         if old and old[1] == doc.digest:
@@ -210,12 +239,13 @@ Reindexed = namedtuple("Reindexed", "files removed before after")
 index's version before and after, for a server to follow without loading every vector again."""
 
 
-def reindex(db, paths):
+def reindex(db, paths, scans=True):
     """Read files again now, or remove their documents if they are gone, so that the next search finds them as they
     are: their text, front matter, links and keyword entries. `paths` are ids, `collection/path`, or absolute paths in
     a collection, each a file `sift index` would read; if one isn't, nothing is read. A file's status is "added",
     "changed", "unchanged", "removed", "not found", "skipped" (no documents in it, with a "note" saying why) or
-    "unreadable". In one transaction."""
+    "unreadable". In one transaction. Without `scans`, scans to read with OCR are left for `sift index`, which reads
+    their files again even if they don't change."""
     if not isinstance(paths, list | tuple) or not all(isinstance(path, str) for path in paths):
         raise ValueError(f"paths must be a list of ids or absolute paths, got {paths!r}")
     if not paths:
@@ -223,11 +253,15 @@ def reindex(db, paths):
     if len(paths) > MOST_FILES:
         raise ValueError(f"at most {MOST_FILES:,} files at a time; `sift index` reads any number")
     files = list(dict.fromkeys(_locate(db, path) for path in paths))
+    on_disk = [
+        _reindex_read(db, cid, root, json.loads(fields) if fields else {}, rel, scans)
+        for cid, _, root, fields, rel in files
+    ]
     db.execute("BEGIN IMMEDIATE")
     try:
         before, found, removed = store.get_meta(db, "version"), [], []
-        for cid, name, root, fields, rel in files:
-            entry, docs, gone = _reindex_file(db, cid, name, root, json.loads(fields) if fields else {}, rel)
+        for (cid, name, _, _, rel), found_on_disk in zip(files, on_disk):
+            entry, docs, gone = _reindex_file(db, cid, name, rel, *found_on_disk)
             found.append((entry, docs))
             removed += gone
         after = store.get_meta(db, "version")
@@ -336,26 +370,41 @@ def _indexed_as(db, cid, rel):
     return same if len(same) == 1 else []
 
 
-def _reindex_file(db, cid, name, root, fields, rel):
-    """Read one file again, or remove its documents if it is gone, as `sift index` would: ({"id", "status"}, its
-    documents' row ids, the chunks removed). A chunk removed is every chunk of a document replaced or removed: SQLite
-    hands the ids of deleted chunks out again, so the new chunks of a note may carry its old ones' ids."""
-    entry = {"id": f"{name}/{rel}"}
-    known = db.execute("SELECT id FROM sources WHERE collection = ? AND path = ?", (cid, rel)).fetchone()
-    sid = known and known[0]
-    sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
-    chunks = db.execute(sql, (sid,)).fetchall()
+def _reindex_read(db, cid, root, fields, rel, scans):
+    """A file as `reindex` finds it, before anything is written: its stat, None if it is gone; its documents and
+    problems as `sift index` reads them, scans read if `scans`, None if it can't be read; and whether a scan was left
+    for `sift index`."""
     path = os.path.join(root, *rel.split("/"))
     try:
         info = os.stat(path)  # through a link, as `sift index` reads it
     except OSError:
         info = None
     if info is None or not stat.S_ISREG(info.st_mode):
+        return None, None, False
+    read = readers.load(path, fields)
+    if read is None:
+        return info, None, False
+    docs, problems = read
+    known = db.execute("SELECT id FROM sources WHERE collection = ? AND path = ?", (cid, rel)).fetchone()
+    docs, left = _read_scans(db, known and known[0], rel, docs, problems.append, now=scans)
+    return info, (docs, problems), left
+
+
+def _reindex_file(db, cid, name, rel, info, read, left):
+    """Bring one file's documents up to date with what `_reindex_read` found, or remove them if it is gone, as `sift
+    index` would: ({"id", "status"}, its documents' row ids, the chunks removed). A chunk removed is every chunk of a
+    document replaced or removed: SQLite hands the ids of deleted chunks out again, so the new chunks of a note may
+    carry its old ones' ids. A file with a scan `left` is read again by the next `sift index`."""
+    entry = {"id": f"{name}/{rel}"}
+    known = db.execute("SELECT id FROM sources WHERE collection = ? AND path = ?", (cid, rel)).fetchone()
+    sid = known and known[0]
+    sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
+    chunks = db.execute(sql, (sid,)).fetchall()
+    if info is None:
         if sid is None:
             return entry | {"status": "not found"}, [], []
         _drop_source(db, sid)
         return entry | {"status": "removed"}, [], [chunk for _, chunk in chunks]
-    read = readers.load(path, fields)
     if read is None:
         return entry | {"status": "unreadable"}, [], []
     docs, problems = read
@@ -363,7 +412,8 @@ def _reindex_file(db, cid, name, root, fields, rel):
         sid = db.execute("INSERT INTO sources(collection, path) VALUES(?, ?)", (cid, rel)).lastrowid
     had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
     unchanged = _store(db, cid, sid, rel, docs, counts, problems.append)
-    db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (info.st_mtime_ns, info.st_size, sid))
+    mtime = None if left else info.st_mtime_ns  # no time: `sift index` takes it for changed
+    db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (mtime, info.st_size, sid))
     now = [d for (d,) in db.execute("SELECT id FROM docs WHERE source = ?", (sid,))]
     if not now and problems:
         status = "skipped"
@@ -496,11 +546,13 @@ def _read_and_store(db, cid, name, fields, known, todo, counts, progress):
                 docs, problems = res
                 for problem in problems:
                     progress.note(f"{name}: {rel}: {problem}")
+                note = lambda text: progress.note(f"{name}: {text}")  # noqa: E731
+                docs, _ = _read_scans(db, known[rel][0] if rel in known else None, rel, docs, note)
                 sid = (
                     known[rel][0]
                     if rel in known
                     else db.execute("INSERT INTO sources(collection, path) VALUES(?, ?)", (cid, rel)).lastrowid
                 )
-                _store(db, cid, sid, rel, docs, counts, lambda text: progress.note(f"{name}: {text}"))
+                _store(db, cid, sid, rel, docs, counts, note)
                 db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (mtime, size, sid))
             db.commit()

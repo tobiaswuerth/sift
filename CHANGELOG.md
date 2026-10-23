@@ -5,6 +5,34 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-23
+
+Scans are read, and two things real collections met are mended: mails whose HTML the converter failed on, and a
+collection added inside another.
+
+### Added
+
+- Scans: PDFs without text of their own are read with OCR, by LightOnOCR-2 (one billion parameters, Apache-2.0), on
+  the GPU the other models use, in about 3 GB: each page as Markdown, up to 50 pages a scan, once per scan new or
+  changed. A mail's attached scan too. Their metadata says `ocr`. On a machine without a GPU they are skipped and
+  reported, as before; `SIFT_OCR=on` reads them on the CPU, `SIFT_OCR=off` never. The first scan downloads the model
+  (2 GB). Scans an older sift skipped, and mails with a PDF attached, are read again by the next `sift index`, once.
+  The server's `reindex` leaves scans to `sift index`, so that no search waits for one. A page whose reading falls
+  into a loop, as greedy decoding does now and then on forms, is stopped there and read once more with a repetition
+  penalty, which got 5 to 10 times as far on the pages that looped.
+
+### Changed
+
+- `sift add` refuses a folder inside a collection, or one that holds a collection, since the files of both were
+  indexed twice and found twice; `sift add --nested` adds it anyway.
+
+### Fixed
+
+- A mail whose HTML Xberg's converter fails on ("Internal panic: begin > end") keeps its words: its HTML is read as
+  plain text, and that is reported. Its text was lost before.
+- A message said while a progress line is drawn, such as the GPU memory sift takes, gets a line of its own instead of
+  running on after the progress line.
+
 ## [1.2.1] - 2026-10-22
 
 ### Changed
@@ -408,7 +436,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/tobiaswuerth/sift/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/tobiaswuerth/sift/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/tobiaswuerth/sift/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/tobiaswuerth/sift/compare/v1.0.0...v1.1.0

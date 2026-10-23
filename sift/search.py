@@ -838,8 +838,9 @@ class Index:
         """Read files again now, after they were written, changed or deleted, and embed their new passages if the index
         is embedded: the next search finds them as they are, its vectors in memory following without a full load. Per
         file: {"id", "status"}, see indexing.reindex, with "chunks", its documents' passages, and "embedded", how many
-        of them have vectors; and a "note" on anything that went wrong."""
-        done = indexing.reindex(self.db, paths)
+        of them have vectors; and a "note" on anything that went wrong. Scans are left for `sift index` to read with
+        OCR: a server runs this on its event loop, which reading one would hold up for minutes."""
+        done = indexing.reindex(self.db, paths, scans=False)
         self._patch(done.before, done.after, removed=done.removed)
         note = self._embed_new([doc for _, docs in done.files for doc in docs])
         sql = """SELECT count(c.id), count(v.chunk) FROM chunks c LEFT JOIN vectors v ON v.chunk = c.id

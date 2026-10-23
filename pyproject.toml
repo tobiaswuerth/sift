@@ -28,6 +28,7 @@ dependencies = [
     "markupsafe>=2",
     "nvidia-ml-py>=12",  # NVML: free GPU memory as nvidia-smi sees it
     "xberg>=1.3",  # reads PDF, office files, e-books and web pages
+    "pypdfium2>=4.30",  # the pages of scans as pictures, for OCR (Apache-2.0 and BSD-3-Clause, PDFium inside)
     "cryptography>=42",  # the certificate `sift worker` makes for HTTPS
     "jinja2>=3.1",  # the pages of `sift ui`
 ]

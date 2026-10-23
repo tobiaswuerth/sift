@@ -14,5 +14,6 @@ pydantic>=2.12
 markupsafe>=2
 nvidia-ml-py>=12
 xberg>=1.3
+pypdfium2>=4.30
 cryptography>=42
 jinja2>=3.1
