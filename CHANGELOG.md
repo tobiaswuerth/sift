@@ -28,6 +28,8 @@ collection added inside another.
 
 - A mail whose HTML Xberg's converter fails on ("Internal panic: begin > end") keeps its words: its HTML is read as
   plain text, and that is reported. Its text was lost before.
+- A message said while a progress line is drawn, such as the GPU memory sift takes, gets a line of its own instead of
+  running on after the progress line.
 
 ## [1.2.1] - 2026-10-22
 
