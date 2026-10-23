@@ -54,6 +54,7 @@ def _load(name, dtype):
     import transformers
 
     transformers.logging.disable_progress_bar()  # no "Loading weights" bar: it fills the log of `sift serve`
+    transformers.logging.set_verbosity_error()  # nor its note that the checkpoint's type, mistral3, isn't lighton_ocr
     model = transformers.LightOnOcrForConditionalGeneration.from_pretrained(name, dtype=dtype or torch.float32)
     return model.eval(), transformers.LightOnOcrProcessor.from_pretrained(name)
 

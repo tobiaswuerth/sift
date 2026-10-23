@@ -9,10 +9,15 @@ import threading
 from time import perf_counter
 
 REDRAW_SECONDS = 1  # a progress line redraws itself this often, so a slow step still shows sift at work
+_drawn = None  # the Progress whose line is on screen now, if any
 
 
 def say(*parts):
-    print(*parts, file=sys.stderr, flush=True)
+    """A message; while a progress line is drawn, on a line of its own above it, as a Progress's note."""
+    if _drawn is not None:
+        _drawn.note(" ".join(map(str, parts)))
+    else:
+        print(*parts, file=sys.stderr, flush=True)
 
 
 def count(n, noun):
@@ -58,11 +63,15 @@ class Progress:
         self._thread = threading.Thread(target=self._redraw, name="sift-progress", daemon=True)
 
     def __enter__(self):
+        global _drawn
         self.draw()
         self._thread.start()
+        self._outer, _drawn = _drawn, self
         return self
 
     def __exit__(self, *exc):
+        global _drawn
+        _drawn = self._outer
         self._stop.set()
         self._thread.join()
         with self._lock:

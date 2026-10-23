@@ -98,6 +98,19 @@ def test_a_note_takes_the_progress_line_and_the_bar_continues_below(progress, ca
     assert "100% 2/2 chunks" in lines[1]
 
 
+def test_a_message_said_during_progress_takes_a_line_of_its_own(progress, capsys):
+    # A model loading in the middle of `sift index` says so: its words ran on after the progress line's.
+    with progress(2) as bar:
+        bar.update(1)
+        console.say("loading the OCR model", "(2 GB)")
+        bar.update(2)
+    console.say("done")
+    lines = capsys.readouterr().err.split("\n")
+    assert lines[0].rsplit("\r", 1)[-1].startswith("loading the OCR model (2 GB)")
+    assert "100% 2/2 chunks" in lines[1]
+    assert lines[2] == "done"  # once the progress line is done, messages are as ever
+
+
 def progress_threads():
     return [t for t in threading.enumerate() if t.name == "sift-progress"]
 

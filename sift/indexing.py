@@ -95,9 +95,9 @@ def _path(rel, doc):
 
 def _read_scans(db, sid, rel, docs, note, now=True):
     """A file's documents with the scans among them read by OCR, those new or changed since the file `sid` was
-    indexed (see `ocr`); a scan that can't be read is left out, and said, as is one read. Reading a scan takes a while,
-    so what is written is committed first: no other writer, such as the server's `reindex`, waits for it. Unless
-    `now`, a scan to read is left out for `sift index`. Returns the documents, and whether a scan was left."""
+    indexed (see `ocr`); a scan that can't be read is left out, and noted, as is one read. Reading a scan takes a
+    while, so what is written is committed first: no other writer, such as the server's `reindex`, waits for it.
+    Unless `now`, a scan to read is left out for `sift index`. Returns the documents, and whether a scan was left."""
     known = dict(db.execute("SELECT path, hash FROM docs WHERE source = ?", (sid,))) if sid else {}
     read, left = [], False
     for doc in docs:

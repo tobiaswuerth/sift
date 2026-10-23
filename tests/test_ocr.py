@@ -120,7 +120,9 @@ def test_a_scan_is_read_by_ocr_when_indexed(tmp_path, home, scans, capsys):
     assert text == "word1089 word1540\n\nword1089 word1540"  # each page as the model read it
     assert (title, meta["ocr"]) == ("Lieferschein", ocr.MODEL)
     assert [hit["id"] for hit in Index(db).search("word1089")] == ["docs/Lieferschein.pdf"]
-    assert "Lieferschein.pdf: a scan, read with OCR (2 pages" in capsys.readouterr().err
+    said = capsys.readouterr().err
+    assert "Lieferschein.pdf: a scan, read with OCR (2 pages" in said
+    assert f"\rloading the OCR model {ocr.MODEL}" in said  # on a line of its own, not after the progress line's
     assert scans.engine.loads == [(ocr.MODEL, None)]  # loaded once, in float32 on this pretended GPU
 
 
@@ -222,7 +224,7 @@ def test_the_model_loads_with_transformers(monkeypatch):
 
     module = types.ModuleType("transformers")
     module.LightOnOcrForConditionalGeneration = module.LightOnOcrProcessor = Loaded
-    module.logging = types.SimpleNamespace(disable_progress_bar=lambda: None)
+    module.logging = types.SimpleNamespace(disable_progress_bar=lambda: None, set_verbosity_error=lambda: None)
     monkeypatch.setitem(sys.modules, "transformers", module)
     model, processor = ocr._load(ocr.MODEL, None)
     assert (model.name, model.dtype, model.evaluated) == (ocr.MODEL, torch.float32, True)  # inference, not training
