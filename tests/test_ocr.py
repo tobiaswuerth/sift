@@ -50,9 +50,11 @@ class FakeModel:
     """LightOnOcrForConditionalGeneration: reads a picture as the words of its width and height."""
 
     out_of_memory = False
+    loop = False  # read a page, then "word7" without end, as greedy decoding loops on some forms
+    loop_again = False  # loop with a repetition penalty too; without one, it reads "word8 word9" instead
 
     def __init__(self):
-        self.device, self.dtype = "cpu", None
+        self.device, self.dtype, self.generated, self.penalties = "cpu", None, 0, []
 
     def to(self, target):
         if isinstance(target, torch.dtype):
@@ -64,13 +66,32 @@ class FakeModel:
     def eval(self):
         return self
 
-    def generate(self, input_ids, pixel_values, image_sizes, max_new_tokens, do_sample):
+    def generate(
+        self,
+        input_ids,
+        pixel_values,
+        image_sizes,
+        max_new_tokens,
+        do_sample,
+        stopping_criteria,
+        repetition_penalty=None,
+    ):
         assert not do_sample
         assert max_new_tokens == ocr.NEW_TOKENS
         if self.out_of_memory:
             raise torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 3.00 GiB")
+        self.penalties.append(repetition_penalty)
         ((height, width),) = image_sizes.tolist()
-        return torch.tensor([[*input_ids[0].tolist(), width, height, 0]])
+        ids = [*input_ids[0].tolist(), width, height]  # a token at a time, as generate() makes them
+        looping = self.loop and (repetition_penalty is None or self.loop_again)
+        while looping and len(ids) - input_ids.shape[1] < max_new_tokens:
+            ids.append(7)
+            if stopping_criteria(torch.tensor([ids]), None).all():
+                break
+        if self.loop and not looping:
+            ids += [8, 9]
+        self.generated = len(ids) - input_ids.shape[1]
+        return torch.tensor([[*ids, 0]])
 
 
 @pytest.fixture
@@ -157,6 +178,52 @@ def test_the_model_moves_to_the_gpu_while_reading(engine, tmp_path):
     engine.read(images)
     assert engine.model.device == "cpu"  # a PretendGpu's tensors stay on the CPU, but it went "to the GPU"
     assert engine.accelerator._resident
+
+
+@pytest.mark.parametrize(
+    "text, looping",
+    [
+        ("# Form\n\n" + "Datum:\n" * 9, False),  # a form may repeat a line a few times
+        ("# Form\n\n" + "Datum:\n" * 10, True),  # ten times running, the model reads no more: it loops
+        ("# Form\n\n" + "Datum:\n\n" * 10, True),  # blank lines between change nothing
+        ("x" * 399, False),
+        ("Text. " + "ab" * 200, True),  # a short pattern, 400 characters long, within a line
+        ("Text. " + "Lorem ipsum dolor sit amet. " * 15, True),
+        ("The real page: no loop at all, as most pages read.\n" * 3, False),
+        (" ".join(str(n) for n in range(200)), False),  # long, but never the same twice
+    ],
+)
+def test_a_loop_is_told_from_text(text, looping):
+    assert ocr.looping(text) is looping
+
+
+def test_a_loop_is_cut_to_one_of_its_lines():
+    text = "# Lieferschein\n\n| Pos | Menge |\n" + "| 1 | 2 |\n" * 12
+    assert ocr.without_loop(text) == "# Lieferschein\n\n| Pos | Menge |\n| 1 | 2 |"
+    assert ocr.without_loop("Line\nLine\nOther") == "Line\nLine\nOther"  # repeats that are no loop stay
+
+
+def test_a_page_that_loops_is_read_again_with_a_repetition_penalty(engine, tmp_path):
+    # Greedy decoding loops now and then on forms; without a stop, a page took the 4,096 tokens it may, and what came
+    # after the loop was lost. A repetition penalty breaks loops, but would bend the words of every page.
+    images, _ = ocr.pages(scan(tmp_path / "a.pdf").read_bytes())
+    engine.model.loop = True
+    (text,) = engine.read(images)
+    assert engine.model.penalties == [None, ocr.RETRY_PENALTY]
+    assert text == "word1089 word1540 word8 word9"  # the second reading, which got further
+    assert engine.model.generated < ocr.NEW_TOKENS
+
+
+def test_a_loop_the_second_reading_doesnt_better_is_cut(engine, tmp_path):
+    images, _ = ocr.pages(scan(tmp_path / "a.pdf").read_bytes())
+    engine.model.loop, engine.model.loop_again = True, True
+    assert engine.read(images) == ["word1089 word1540 word7"]  # cut to one turn of the loop
+
+
+def test_a_page_that_doesnt_loop_is_read_once(engine, tmp_path):
+    images, _ = ocr.pages(scan(tmp_path / "a.pdf").read_bytes())
+    engine.read(images)
+    assert engine.model.penalties == [None]
 
 
 def test_a_scan_ocr_fails_on_is_skipped_and_said(tmp_path, home, scans, capsys):

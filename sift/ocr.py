@@ -15,6 +15,10 @@ SETTINGS = ("auto", "on", "off")
 PAGES = 50  # of a scan, read; the rest of a longer one stays unread, and is said
 DPI, LONGEST = 200, 1540  # the pictures the model was trained on: 200 dpi, at most 1540 pixels on the longer side
 NEW_TOKENS = 4096  # per page: a dense page has about 2,000
+LOOP_LINES = 10  # the same line this many times running: the model loops, as greedy decoding does now and then
+LOOP_CHARS, LOOP_PERIOD = 400, 60  # or this many characters of a pattern of at most this many repeated, in a line
+LOOP_STEP = 16  # tokens between looks for a loop while a page is read
+RETRY_PENALTY = 1.1  # the repetition penalty a page that looped is read again with: it got 5 to 10 times as far
 # Pages are read one at a time: on an RTX 4090, 26 s a page in 3 GB; 4 at once took 14 s a page but 7 GB, 8 at once
 # 12 s and 20 GB, too much of a GPU other programs share.
 
@@ -86,7 +90,6 @@ class Ocr:
         return [self._page(model, processor, image) for image in images]
 
     def _page(self, model, processor, image):
-        import torch
 
         inputs = processor.apply_chat_template(
             [{"role": "user", "content": [{"type": "image", "image": image}]}],
@@ -100,9 +103,84 @@ class Ocr:
             key: value.to(device=device, dtype=dtype) if dtype and value.is_floating_point() else value.to(device)
             for key, value in inputs.items()
         }
+        text = self._generate(model, processor, inputs)
+        if looping(text):  # read once more, with a penalty that breaks loops, but would bend every page's words
+            text = max(
+                without_loop(text), without_loop(self._generate(model, processor, inputs, RETRY_PENALTY)), key=len
+            )
+        return without_loop(text)
+
+    def _generate(self, model, processor, inputs, repetition_penalty=None):
+        import torch
+
+        prompt = inputs["input_ids"].shape[1]
+        penalty = {"repetition_penalty": repetition_penalty} if repetition_penalty else {}
         with torch.inference_mode():
-            out = model.generate(**inputs, max_new_tokens=NEW_TOKENS, do_sample=False)
-        return processor.decode(out[0, inputs["input_ids"].shape[1] :], skip_special_tokens=True)
+            out = model.generate(
+                **inputs,
+                max_new_tokens=NEW_TOKENS,
+                do_sample=False,
+                stopping_criteria=_guard(processor, prompt),
+                **penalty,
+            )
+        return processor.decode(out[0, prompt:], skip_special_tokens=True)
+
+
+def _guard(processor, prompt):
+    """What stops generate() once a page's text loops, looking every LOOP_STEP tokens: on two pages of the first
+    twelve scans read, greedy decoding repeated a line until it ran out of tokens, two minutes a page."""
+    import torch
+    from transformers import StoppingCriteria, StoppingCriteriaList
+
+    class Loop(StoppingCriteria):
+        def __call__(self, input_ids, scores, **kwargs):
+            new = input_ids.shape[1] - prompt
+            stop = new % LOOP_STEP == 0 and looping(processor.decode(input_ids[0, prompt:], skip_special_tokens=True))
+            return torch.full((input_ids.shape[0],), stop, dtype=torch.bool, device=input_ids.device)
+
+    return StoppingCriteriaList([Loop()])
+
+
+def looping(text):
+    """Whether a page's text ends in a loop: the same line LOOP_LINES times running, or a pattern of at most
+    LOOP_PERIOD characters repeated for LOOP_CHARS."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) >= LOOP_LINES and len(set(lines[-LOOP_LINES:])) == 1:
+        return True
+    return _repeated_tail(text) is not None
+
+
+def _repeated_tail(text):
+    """Where the pattern that repeats for at least LOOP_CHARS at the end of `text` begins, and its length; or None."""
+    tail = text[-LOOP_CHARS:]
+    if len(tail) < LOOP_CHARS:
+        return None
+    for period in range(1, LOOP_PERIOD + 1):
+        if tail[period:] == tail[:-period]:
+            start = len(text) - LOOP_CHARS
+            while start > 0 and text[start - 1] == text[start - 1 + period]:
+                start -= 1
+            return start, period
+    return None
+
+
+def without_loop(text):
+    """A page's text with its loops cut to one turn each: a pattern repeated at its end, and a line repeated
+    LOOP_LINES times or more running, blank lines between aside."""
+    if found := _repeated_tail(text):
+        start, period = found
+        text = text[: start + period]
+    lines = text.rstrip().split("\n")
+    filled = [i for i, line in enumerate(lines) if line.strip()]
+    dropped, first = set(), 0
+    while first < len(filled):
+        last = first
+        while last + 1 < len(filled) and lines[filled[last + 1]].strip() == lines[filled[first]].strip():
+            last += 1
+        if last - first + 1 >= LOOP_LINES:
+            dropped.update(range(filled[first] + 1, filled[last] + 1))
+        first = last + 1
+    return "\n".join(line for i, line in enumerate(lines) if i not in dropped)
 
 
 class Scans:

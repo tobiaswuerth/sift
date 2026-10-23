@@ -15,7 +15,9 @@ collection added inside another.
   changed. A mail's attached scan too. Their metadata says `ocr`. On a machine without a GPU they are skipped and
   reported, as before; `SIFT_OCR=on` reads them on the CPU, `SIFT_OCR=off` never. The first scan downloads the model
   (2 GB). Scans an older sift skipped, and mails with a PDF attached, are read again by the next `sift index`, once.
-  The server's `reindex` leaves scans to `sift index`, so that no search waits for one.
+  The server's `reindex` leaves scans to `sift index`, so that no search waits for one. A page whose reading falls
+  into a loop, as greedy decoding does now and then on forms, is stopped there and read once more with a repetition
+  penalty, which got 5 to 10 times as far on the pages that looped.
 
 ### Changed
 
