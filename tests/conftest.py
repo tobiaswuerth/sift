@@ -42,10 +42,6 @@ class FakeSentenceTransformer:
         self.name, self.device, self.max_seq_length = name, device, None
         self.dtype = str((model_kwargs or {}).get("dtype", self.saved_in)).removeprefix("torch.")
 
-    def half(self):
-        self.dtype = "float16"
-        return self
-
     def to(self, target):
         """A device or a dtype, as nn.Module.to takes them."""
         import torch
