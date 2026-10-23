@@ -3,9 +3,11 @@
 import asyncio
 import json
 import logging
+import shutil
 import sqlite3
 import threading
 import types
+from pathlib import Path
 
 import anyio
 import pytest
@@ -16,6 +18,8 @@ from sift import indexing, remote, server
 from sift.search import Index
 
 from .conftest import nobody_listens, write
+
+SAMPLES = Path(__file__).parent / "samples"
 
 
 def call(mcp, name, args=None):
@@ -131,7 +135,7 @@ def test_instructions_for_an_empty_index(tmp_path):
 
 def test_server_log_stays_quiet(mcp):
     # The MCP library logs everything at INFO; model loading would then print dozens of HTTP requests.
-    for name in ("httpx", "huggingface_hub", "sentence_transformers"):
+    for name in ("httpx", "httpx2", "huggingface_hub", "sentence_transformers"):
         assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING, name
 
 
@@ -210,6 +214,17 @@ def test_reindex_tool(linked, fake_models):
     assert found == [{"id": "vault/06_Topics/Wartungsvertrag 2027.md", "status": "added", "chunks": 1, "embedded": 1}]
     hits = data(call(mcp, "vsearch", {"query": "maintenance of the press line", "k": 1}))
     assert [h["id"] for h in hits] == ["vault/06_Topics/Wartungsvertrag 2027.md"]
+
+
+@pytest.mark.parametrize("ext", [".docx", ".pdf", ".html"])
+def test_reindex_tool_reads_documents(linked, fake_models, ext):
+    # Xberg reads documents in a coroutine of its own, and the tools run on the server's event loop.
+    db, vault, _ = linked
+    shutil.copy(SAMPLES / f"sample{ext}", vault / f"Offerte{ext}")
+    mcp = server.build(Index(db))[0]
+    (found,) = data(call(mcp, "reindex", {"paths": [str(vault / f"Offerte{ext}")]}))
+    assert (found["id"], found["status"]) == (f"vault/Offerte{ext}", "added")
+    assert f"This sample is the {ext[1:].upper()} file." in call(mcp, "get", {"id": found["id"]}).content[0].text
 
 
 def test_mentions_tool(linked):

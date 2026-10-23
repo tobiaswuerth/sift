@@ -81,36 +81,43 @@ def _layout(db, path):
         )
     if version < 2:
         db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + f"PRAGMA user_version = {SCHEMA_VERSION};")
-        set_meta(db, SCANS_READ, 1)
+        for key in READ_AGAIN:
+            set_meta(db, key, 1)
         db.commit()
         return
     if version == 2:  # sift 0.3 to 0.7: everything stays but the keyword index, which gains the front matter
         _rebuild_keyword_index(db)
     if version <= 3:  # sift 0.8 to 1.0: everything stays, and the notes' links join it
         _add_links(db)
-    if get_meta(db, SCANS_READ) is None:  # sift 1.2 and older read no scans
-        _read_scans_again(db)
+    for key, kinds in READ_AGAIN.items():
+        if get_meta(db, key) is None:
+            _read_again(db, key, kinds)
 
 
-SCANS_READ = "scans_read"  # in the meta table, once the scans an older sift skipped are to be read again
+READ_AGAIN = {  # in the meta table, once the files of these kinds that an older sift skipped are to be read again
+    "scans_read": (".pdf",),  # sift 1.2 and older read no scans
+    "documents_read": readers.DOCUMENTS,  # the server of sift 1.3.0 and older skipped every document it reindexed
+}
 
 
-def _read_scans_again(db):
-    """Have the next `sift index` read again what sift 1.2 and older found no text in: PDFs without documents, and
-    mails with a PDF attached; once. Their unchanged documents stay, vectors included. In one transaction, which
-    another sift starting at the same time waits for, and then finds done."""
+def _read_again(db, key, kinds):
+    """Have the next `sift index` read again the files of these kinds without documents, and the mails with one
+    attached; once, as the meta `key` records. Their unchanged documents stay, vectors included. In one transaction,
+    which another sift starting at the same time waits for, and then finds done."""
     db.execute("BEGIN IMMEDIATE")
     try:
-        if get_meta(db, SCANS_READ) is None:
+        if get_meta(db, key) is None:
             db.execute(
                 """UPDATE sources SET mtime = NULL
-                   WHERE (lower(path) LIKE '%.pdf' AND id NOT IN (SELECT source FROM docs))
-                   OR (lower(path) LIKE '%.eml' AND id IN (SELECT d.source FROM docs d,
+                   WHERE (id NOT IN (SELECT source FROM docs)
+                          AND EXISTS (SELECT 1 FROM json_each(:kinds) k WHERE lower(sources.path) LIKE '%' || k.value))
+                   OR (lower(sources.path) LIKE '%.eml' AND EXISTS (SELECT 1 FROM docs d,
                        json_each(CASE WHEN json_type(d.meta, '$.attachments') = 'array'
-                                 THEN json_extract(d.meta, '$.attachments') END) a
-                       WHERE lower(a.value) LIKE '%.pdf'))"""
+                                 THEN json_extract(d.meta, '$.attachments') END) a, json_each(:kinds) k
+                       WHERE d.source = sources.id AND lower(a.value) LIKE '%' || k.value))""",
+                {"kinds": json.dumps(kinds)},
             )
-            set_meta(db, SCANS_READ, 1)
+            set_meta(db, key, 1)
         db.commit()
     except BaseException:
         db.rollback()

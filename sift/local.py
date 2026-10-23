@@ -10,8 +10,9 @@ from .vectors import InRam, OnGpu
 
 MAX_TOKENS = 1024
 
-# The MCP server logs at INFO, where loading a model logs every HTTP request to Hugging Face.
-for _name in ("httpx", "huggingface_hub", "sentence_transformers"):
+# The MCP server logs at INFO, where loading a model logs every HTTP request to Hugging Face: through httpx, or
+# httpx2, which huggingface_hub 2 uses.
+for _name in ("httpx", "httpx2", "huggingface_hub", "sentence_transformers"):
     logging.getLogger(_name).setLevel(logging.WARNING)
 
 
@@ -22,13 +23,19 @@ def _quietly():
     logging.disable_progress_bar()
 
 
+def _in(dtype):
+    """How to load a model in `dtype` (None: float32), not the checkpoint's: embeddinggemma's is bfloat16, slow on
+    CPUs."""
+    import torch
+
+    return {"dtype": dtype or torch.float32}
+
+
 def _embedder(name, dtype):
     from sentence_transformers import SentenceTransformer
 
     _quietly()
-    model = SentenceTransformer(name, device="cpu")  # into RAM; it moves to the GPU when used
-    if dtype:
-        model.to(dtype)
+    model = SentenceTransformer(name, device="cpu", model_kwargs=_in(dtype))  # into RAM; to the GPU when used
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)
     return model
 
@@ -37,10 +44,8 @@ def _reranker(name, dtype):
     from sentence_transformers import CrossEncoder
 
     _quietly()
-    model = CrossEncoder(name, device="cpu")  # into RAM, like the embedder
+    model = CrossEncoder(name, device="cpu", model_kwargs=_in(dtype))  # into RAM, its scoring head in dtype too
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)  # MiniLM reads at most 512 tokens
-    if dtype:
-        model.to(dtype)  # the whole model: its scoring head too, or PyTorch refuses to mix the two
     return model
 
 
