@@ -17,7 +17,7 @@ from collections import namedtuple
 import anyio
 
 from . import __version__, console, remote, settings
-from .server import release_when_idle, serve_app
+from .server import loop_options, release_when_idle, serve_app
 
 Credentials = namedtuple("Credentials", "token pin cert private_key")
 Credentials.key = property(lambda self: f"{self.token}.{self.pin}")  # what other machines put before @
@@ -166,6 +166,6 @@ def serve(host="0.0.0.0", port=8766, models=None):
     console.say(f"on other machines, set SIFT_EMBED_REMOTE=https://{found.key}@{socket.gethostname()}:{port}")
     console.say("keep that key private: it lets a machine use this worker")
     try:
-        anyio.run(_serve, application, host, port, found, models)
+        anyio.run(_serve, application, host, port, found, models, backend_options=loop_options())
     except BaseExceptionGroup as group:  # from the task group; the error inside is uvicorn's (or Ctrl+C)
         raise group.exceptions[0] from None

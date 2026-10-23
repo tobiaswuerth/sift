@@ -5,6 +5,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-23
+
+### Fixed
+
+- On Windows, `sift serve` (and `sift worker`) could stop answering for good while it kept running: when one
+  client went away in the middle of being accepted (`WinError 64`), Windows' default event loop closed the
+  listening socket. It happened with 20 agents connecting at once. Both now serve HTTP on Python's selector loop,
+  which only logs such a failed accept; 6,400 connections reset mid-accept leave it answering.
+
 ## [1.3.1] - 2026-10-23
 
 ### Fixed

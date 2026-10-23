@@ -357,6 +357,30 @@ def test_serve_raises_transport_errors_as_they_are(embedded, monkeypatch, error)
         server.serve(stdio=True)
 
 
+def test_on_windows_http_is_served_on_a_selector_loop(embedded, monkeypatch):
+    # Windows' default loop, the proactor, closes the listening socket for good when one accept fails (WinError 64,
+    # a client gone mid-accept): with 20 agents connecting at once, sift ran on but answered no one.
+    import uvicorn
+
+    loops = []
+
+    async def capture(self, *args, **kwargs):
+        loops.append(asyncio.get_running_loop())
+
+    monkeypatch.setattr(uvicorn.Server, "serve", capture)
+    monkeypatch.setattr(server.sys, "platform", "win32")
+    server.serve(port=8765)
+    assert isinstance(loops[0], asyncio.SelectorEventLoop)
+
+
+def test_the_loop_is_chosen_for_windows_and_http_only(monkeypatch):
+    monkeypatch.setattr(server.sys, "platform", "win32")
+    assert server.loop_options() == {"loop_factory": asyncio.SelectorEventLoop}
+    assert server.loop_options(stdio=True) == {}  # stdio's pipes are the proactor's to read
+    monkeypatch.setattr(server.sys, "platform", "linux")
+    assert server.loop_options() == {}  # elsewhere the default loop is a selector loop already
+
+
 @pytest.fixture
 def http_app(embedded, monkeypatch):
     """The HTTP app `sift serve` runs, captured instead of served."""
