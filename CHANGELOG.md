@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-24
+
+### Fixed
+
+- A long step's progress goes into the command's log once a minute: a first `sift index` of a large folder, scans
+  read with OCR, said nothing in its log between loading the model and its end, half an hour or more later.
+
 ## [1.4.0] - 2026-10-23
 
 ### Added

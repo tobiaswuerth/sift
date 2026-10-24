@@ -133,6 +133,18 @@ def test_progress_keeps_counting_while_a_step_takes_long(progress, clock, monkey
     assert progress_threads() == []
 
 
+def test_a_long_step_goes_into_the_log_every_minute(progress, clock, monkeypatch):
+    # `sift index` ran for half an hour with OCR; its log said nothing between loading the model and the end.
+    monkeypatch.setattr(console, "REDRAW_SECONDS", 0.01)
+    logged = threading.Event()
+    monkeypatch.setattr(console.logs.said, "info", lambda text: "0:01:00 elapsed" in text and logged.set())
+    with progress(3) as bar:
+        bar.update(1)
+        clock.advance(30)
+        clock.advance(30)  # a minute in: once into the log
+        assert logged.wait(timeout=10), "the log heard nothing of a long step"
+
+
 def test_progress_stops_redrawing_when_interrupted(progress):
     with pytest.raises(KeyboardInterrupt), progress(3):
         raise KeyboardInterrupt  # Ctrl+C
