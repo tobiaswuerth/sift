@@ -76,7 +76,7 @@ Id = Annotated[
     str,
     Field(
         description='A document\'s id from a search result, e.g. "papers/2024/attention.md"; folders may be left '
-        'out if the file name is unique: "papers/attention.md".'
+        'out if the file name is unique: "papers/attention.md". Or the file\'s absolute path.'
     ),
 ]
 Note = Annotated[

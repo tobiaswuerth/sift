@@ -5,6 +5,20 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-24
+
+### Added
+
+- A document's absolute path is an id too: `get` (with `fields` too), `similar`, `links` and `mentions` take the path
+  of a file in a collection's folder, in any case where it names one file, as an agent that wrote the file or was
+  given its path has it.
+
+### Fixed
+
+- `sift index` and `sift embed` crashed now and then on Python 3.15 (seen on macOS) while a progress line was drawn:
+  the garbage collector ran on the thread that redraws it and freed PyTorch's tensors there, which PyTorch doesn't
+  survive. While a progress line is drawn, the collector now runs on the working thread, at each update.
+
 ## [1.4.1] - 2026-10-24
 
 ### Fixed
@@ -472,7 +486,11 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/tobiaswuerth/sift/compare/v1.4.1...v1.5.0
+[1.4.1]: https://github.com/tobiaswuerth/sift/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/tobiaswuerth/sift/compare/v1.3.2...v1.4.0
+[1.3.2]: https://github.com/tobiaswuerth/sift/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/tobiaswuerth/sift/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/tobiaswuerth/sift/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/tobiaswuerth/sift/compare/v1.2.0...v1.2.1

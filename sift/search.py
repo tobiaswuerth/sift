@@ -4,6 +4,7 @@ The models embed queries and rerank, wherever they run (see `models`). Through a
 as a NumPy matrix and PyTorch never loads: a search starts in a fraction of a second, even on a light notebook."""
 
 import json
+import os
 import posixpath
 import re
 import sqlite3
@@ -631,15 +632,33 @@ class Index:
         scores = np.where(np.isin(self.vectors.ids, [chunk for chunk, _ in own]), -np.inf, scores)
         return _present(self._hits(self._nearest(scores, k, *where, all_passages)), fields, compact, sort)
 
+    def _place(self, id):
+        """The collection and the path in it that `id` names: "collection/path", or an absolute path in a
+        collection's folder, the nearest that holds it; (None, "") for an absolute path in none."""
+        if not os.path.isabs(id):
+            name, _, rel = id.partition("/")
+            return name, rel
+        full = os.path.normpath(id)
+        for name, root in self.db.execute("SELECT name, path FROM collections ORDER BY length(path) DESC"):
+            root = os.path.normpath(root)
+            if os.path.normcase(full).startswith(os.path.normcase(os.path.join(root, ""))):
+                return name, os.path.relpath(full, root).replace(os.sep, "/")
+        return None, ""
+
     def _rows(self, id):
         """The documents `id` may name (see `get`), at most six: (row id, path, title, meta, text) of each."""
-        name, _, rel = id.partition("/")
+        name, rel = self._place(id)
         sql = """SELECT d.id, d.path, d.title, d.meta, d.text FROM docs d JOIN collections co ON co.id = d.collection
                  WHERE co.name = ? AND """
         rows = self.db.execute(sql + "d.path = ?", (name, rel)).fetchall()
-        if not rows and rel:  # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
-            rows = self.db.execute(sql + "substr(d.path, -?) = ? LIMIT 6", (name, len(rel) + 1, "/" + rel)).fetchall()
-        return rows
+        if rows or not rel:
+            return rows
+        if os.path.isabs(id):  # in another case, as Windows and macOS name the same file, and `reindex` takes it
+            found = self.db.execute(sql + "lower(d.path) = lower(?)", (name, rel)).fetchall()
+            same = [row for row in found if readers.fold(row[1]) == readers.fold(rel)]
+            return same if len(same) == 1 else []
+        # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
+        return self.db.execute(sql + "substr(d.path, -?) = ? LIMIT 6", (name, len(rel) + 1, "/" + rel)).fetchall()
 
     def _note(self, id):
         """The document `id` names, as for `get`, or else the note `id` names as links name it, "Acme AG" or
@@ -654,7 +673,7 @@ class Index:
 
     def _find(self, id):
         """The document `id` names (see `get`), as (row id, whole id, title, meta, text)."""
-        name, rows = id.partition("/")[0], self._rows(id)
+        name, rows = self._place(id)[0], self._rows(id)
         if len(rows) > 1:
             matches = ", ".join(f"{name}/{row[1]}" for row in rows[:5]) + (", ..." if len(rows) > 5 else "")
             raise LookupError(f"{id!r} matches {matches}; give the whole id")

@@ -2,6 +2,7 @@
 and one kind of progress line (`Progress`) for every long step, which redraws itself so the time keeps moving even
 while a single step takes minutes."""
 
+import gc
 import shlex
 import subprocess
 import sys
@@ -13,6 +14,8 @@ from . import logs
 REDRAW_SECONDS = 1  # a progress line redraws itself this often, so a slow step still shows sift at work
 LOG_SECONDS = 60  # and goes into the command's log this often, which has no line to redraw
 _drawn = None  # the Progress whose line is on screen now, if any
+_held = False  # whether progress lines hold the collector off, so that it runs where they are updated
+_collections = 0  # made since they did
 
 
 def say(*parts):
@@ -43,6 +46,16 @@ def command(*words, platform=sys.platform):
     return subprocess.list2cmdline(words) if platform == "win32" else shlex.join(words)
 
 
+def _collect():
+    """While progress lines hold the collector off, collect here, on the thread that updates them and does the work,
+    as often as the collector would: the young objects when enough were made, every tenth time the older ones too,
+    every hundredth all."""
+    global _collections
+    if _held and gc.get_count()[0] >= gc.get_threshold()[0]:
+        _collections += 1
+        gc.collect(2 if _collections % 100 == 0 else 1 if _collections % 10 == 0 else 0)
+
+
 class Line:
     """One line on stderr, rewritten in place; a shorter text blanks out what a longer one left behind."""
 
@@ -71,19 +84,26 @@ class Progress:
         self._thread = threading.Thread(target=self._redraw, name="sift-progress", daemon=True)
 
     def __enter__(self):
-        global _drawn
+        global _drawn, _held, _collections
+        self._holds = gc.isenabled()  # the outermost line, unless the collector is off anyway
+        if self._holds:
+            gc.disable()  # its thread mustn't free PyTorch's tensors, which crashes PyTorch (Python 3.15)
+            _held, _collections = True, 0
         self.draw()
         self._thread.start()
         self._outer, _drawn = _drawn, self
         return self
 
     def __exit__(self, *exc):
-        global _drawn
+        global _drawn, _held
         _drawn = self._outer
         self._stop.set()
         self._thread.join()
         with self._lock:
             self._line.end()
+        if self._holds:
+            _held = False
+            gc.enable()
         logs.said.info(self.text())  # where it ended, once: a log has no line to redraw
 
     def _redraw(self):
@@ -100,6 +120,7 @@ class Progress:
 
     def update(self, done):
         self.done = done
+        _collect()
         self.draw()
 
     def note(self, text):

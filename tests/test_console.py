@@ -1,5 +1,6 @@
 """What sift tells the user while it works, on stderr: messages, plurals, durations, and one kind of progress line."""
 
+import gc
 import io
 import sys
 import threading
@@ -168,3 +169,35 @@ def test_progress_stops_redrawing_when_interrupted(progress):
     with pytest.raises(KeyboardInterrupt), progress(3):
         raise KeyboardInterrupt  # Ctrl+C
     assert progress_threads() == []
+    assert gc.isenabled()
+
+
+def test_garbage_is_freed_on_the_working_thread_while_a_line_redraws(progress, monkeypatch):
+    # The collector ran on the redrawing thread and freed PyTorch's tensors there, which crashed it (Python 3.15).
+    collected = []
+    monkeypatch.setattr(gc, "collect", lambda generation=2: collected.append((generation, threading.current_thread())))
+    monkeypatch.setattr(gc, "get_count", lambda: (10**6, 0, 0))  # always due
+    with progress(300) as bar, progress(2) as inner:
+        assert not gc.isenabled()
+        inner.update(1)
+        for done in range(1, 101):
+            bar.update(done)
+        assert not gc.isenabled()  # the inner line ended; the outer one still draws
+    assert gc.isenabled()
+    assert {thread for _, thread in collected} == {threading.main_thread()}
+    generations = [generation for generation, _ in collected]
+    assert (generations.count(0), generations.count(1), generations.count(2)) == (91, 9, 1)  # young, older, all
+
+
+def test_garbage_waits_while_the_collector_is_off(progress, monkeypatch):
+    collected = []
+    monkeypatch.setattr(gc, "collect", lambda generation=2: collected.append(generation))
+    monkeypatch.setattr(gc, "get_count", lambda: (10**6, 0, 0))
+    gc.disable()
+    try:
+        with progress(2) as bar:
+            bar.update(1)
+        assert not gc.isenabled()  # as it was
+    finally:
+        gc.enable()
+    assert collected == []
