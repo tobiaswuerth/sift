@@ -145,6 +145,25 @@ def test_a_long_step_goes_into_the_log_every_minute(progress, clock, monkeypatch
         assert logged.wait(timeout=10), "the log heard nothing of a long step"
 
 
+def test_a_step_shorter_than_a_minute_goes_into_the_log_once_where_it_ended(progress, clock, monkeypatch):
+    monkeypatch.setattr(console, "REDRAW_SECONDS", 0.01)
+    logged, redrawn = [], threading.Event()
+    monkeypatch.setattr(console.logs.said, "info", logged.append)
+
+    class Terminal(io.StringIO):
+        def write(self, text):
+            if "0:00:30 elapsed" in text:
+                redrawn.set()
+            return super().write(text)
+
+    monkeypatch.setattr(sys, "stderr", Terminal())
+    with progress(3):
+        clock.advance(30)
+        assert redrawn.wait(timeout=10), "the progress line stood still"
+    assert len(logged) == 1  # where it ended, as ever
+    assert "0:00:30 elapsed" in logged[0]
+
+
 def test_progress_stops_redrawing_when_interrupted(progress):
     with pytest.raises(KeyboardInterrupt), progress(3):
         raise KeyboardInterrupt  # Ctrl+C
