@@ -21,6 +21,7 @@ from .ignore import NAME as SIFTIGNORE
 from .ignore import Ignore
 
 SKIP_DIRS = {"node_modules", "__pycache__"}
+GONE = (FileNotFoundError, NotADirectoryError)  # a path that isn't there any more; other errors: there, out of reach
 MOST_FILES = 1000  # files `reindex` reads at once; `sift index` reads any number
 WRITE_BATCH = 5000  # files per commit
 BATCH_BYTES = 256 << 20  # and at most this much file content, for big JSON Lines files
@@ -371,14 +372,16 @@ def _indexed_as(db, cid, rel):
 
 
 def _reindex_read(db, cid, root, fields, rel, scans):
-    """A file as `reindex` finds it, before anything is written: its stat, None if it is gone; its documents and
-    problems as `sift index` reads them, scans read if `scans`, None if it can't be read; and whether a scan was left
-    for `sift index`."""
+    """A file as `reindex` finds it, before anything is written: its stat, the error that kept it from being stat'ed
+    (it is there but out of reach, and kept as indexed), or None if it is gone; its documents and problems as `sift
+    index` reads them, scans read if `scans`, None if it can't be read; and whether a scan was left for `sift index`."""
     path = os.path.join(root, *rel.split("/"))
     try:
         info = os.stat(path)  # through a link, as `sift index` reads it
-    except OSError:
+    except GONE:
         info = None
+    except OSError as error:
+        return error, None, False
     if info is None or not stat.S_ISREG(info.st_mode):
         return None, None, False
     read = readers.load(path, fields)
@@ -434,35 +437,46 @@ def _drop_source(db, sid):
 
 def walk(root, ignore=None, unlisted=None):
     """Yield (path, mtime_ns, size) for the files sift has a reader for, but those in hidden folders, SKIP_DIRS and
-    what `ignore`, the collection's .siftignore, leaves out. DirEntry.stat() is free on Windows. A folder that is
-    there but can't be listed (access denied, a share that doesn't answer) goes into `unlisted`, if given, as (its
-    path relative to root, with a slash, or "" for root; the error); one gone meanwhile is passed over."""
+    what `ignore`, the collection's .siftignore, leaves out. DirEntry.stat() is free on Windows. What is there but out
+    of reach for the moment (access denied, a share that doesn't answer) goes into `unlisted`, if given, as (its path
+    relative to root, the error): a folder that can't be listed, or whose listing breaks off, with a slash, or "" for
+    root; a file that can't be stat'ed. What is gone meanwhile, a broken link too, is passed over."""
+
+    def unreachable(rel, error):
+        if unlisted is not None:
+            unlisted.append((rel, error))
+
     stack = [(root, "")]
     while stack:
         folder, rel = stack.pop()
         try:
             entries = os.scandir(folder)
-        except FileNotFoundError:
+        except GONE:
             continue
         except OSError as error:
-            if unlisted is not None:
-                unlisted.append((rel, error))
+            unreachable(rel, error)
             continue
         with entries:
-            for e in entries:
-                if e.is_dir(follow_symlinks=False):
-                    if (
-                        not e.name.startswith(".")
-                        and e.name not in SKIP_DIRS
-                        and not (ignore and ignore(rel + e.name, True))
-                    ):
-                        stack.append((e.path, rel + e.name + "/"))
-                elif readers.extension(e.name) in readers.READERS and not (ignore and ignore(rel + e.name)):
-                    try:
-                        st = e.stat()
-                    except OSError:  # e.g. a broken symlink
-                        continue
-                    yield e.path, st.st_mtime_ns, st.st_size
+            try:
+                for e in entries:
+                    if e.is_dir(follow_symlinks=False):
+                        if (
+                            not e.name.startswith(".")
+                            and e.name not in SKIP_DIRS
+                            and not (ignore and ignore(rel + e.name, True))
+                        ):
+                            stack.append((e.path, rel + e.name + "/"))
+                    elif readers.extension(e.name) in readers.READERS and not (ignore and ignore(rel + e.name)):
+                        try:
+                            st = e.stat()
+                        except GONE:  # e.g. a broken symlink
+                            continue
+                        except OSError as error:
+                            unreachable(rel + e.name, error)
+                            continue
+                        yield e.path, st.st_mtime_ns, st.st_size
+            except OSError as error:  # the listing broke off
+                unreachable(rel, error)
 
 
 def index(db, names=None):
@@ -514,13 +528,15 @@ def _kept(name, unseen, unlisted):
     """The files not seen that are kept as indexed, as they lie in a folder that couldn't be listed: an unanswering
     share or a denied folder is no folder deleted. Says so for each folder."""
     kept = set()
-    for folder, error in unlisted:
-        inside = {rel for rel in unseen if rel.startswith(folder)}
+    for where, error in unlisted:
+        why = f"{name}: {where or 'its folder'} can't be read ({error.strerror or error})"
+        if where and not where.endswith("/"):  # a file
+            kept |= {where} & unseen
+            console.say(f"{why}: {'kept as indexed' if where in unseen else 'left for the next index'}")
+            continue
+        inside = {rel for rel in unseen if rel.startswith(where)}
         kept |= inside
-        console.say(
-            f"{name}: {folder or 'its folder'} can't be read ({error.strerror or error}): "
-            f"{console.count(len(inside), 'file')} in it kept as indexed"
-        )
+        console.say(f"{why}: {console.count(len(inside), 'file')} in it kept as indexed")
     return kept
 
 
