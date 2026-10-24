@@ -86,8 +86,9 @@ sift worker                            # embed for other machines on this one's 
 ```
 
 `sift index` and `sift embed` are incremental: run them again after files change, and only new or changed files are
-processed. Deleted files are removed. An interrupted `sift embed` continues where it stopped. A running server picks up
-new vectors on its own.
+processed. Deleted files are removed; the files of a folder that can't be read for the moment (access denied, a share
+that doesn't answer) are kept as indexed, as are those of a collection whose folder is missing. An interrupted
+`sift embed` continues where it stopped. A running server picks up new vectors on its own.
 
 The commands that change the index or serve it (`add`, `rm`, `index`, `embed`, `serve`, `worker`) each write what
 they say, with the time of each line, to a log of their own, `logs/serve-2026-10-23_210509.log` under `SIFT_HOME`:

@@ -432,15 +432,21 @@ def _drop_source(db, sid):
     return len(docs)
 
 
-def walk(root, ignore=None):
+def walk(root, ignore=None, unlisted=None):
     """Yield (path, mtime_ns, size) for the files sift has a reader for, but those in hidden folders, SKIP_DIRS and
-    what `ignore`, the collection's .siftignore, leaves out. DirEntry.stat() is free on Windows."""
+    what `ignore`, the collection's .siftignore, leaves out. DirEntry.stat() is free on Windows. A folder that is
+    there but can't be listed (access denied, a share that doesn't answer) goes into `unlisted`, if given, as (its
+    path relative to root, with a slash, or "" for root; the error); one gone meanwhile is passed over."""
     stack = [(root, "")]
     while stack:
         folder, rel = stack.pop()
         try:
             entries = os.scandir(folder)
-        except OSError:
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            if unlisted is not None:
+                unlisted.append((rel, error))
             continue
         with entries:
             for e in entries:
@@ -488,9 +494,10 @@ def _index_collection(db, cid, name, root, fields, ignore):
         for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources WHERE collection=?", (cid,))
     }
     console.say(f"{name}: scanning {root}")  # a large or cloud folder takes a while
-    todo, seen = _scan(root, known, ignore)
+    todo, seen, unlisted = _scan(root, known, ignore)
+    kept = _kept(name, known.keys() - seen, unlisted)
     counts = Counter()
-    for rel in known.keys() - seen:
+    for rel in known.keys() - seen - kept:
         counts["removed"] += _drop_source(db, known[rel][0])
     if todo:
         with console.Progress(len(todo), "files", prefix=f"{name}: ") as progress:
@@ -503,11 +510,25 @@ def _index_collection(db, cid, name, root, fields, ignore):
     )
 
 
+def _kept(name, unseen, unlisted):
+    """The files not seen that are kept as indexed, as they lie in a folder that couldn't be listed: an unanswering
+    share or a denied folder is no folder deleted. Says so for each folder."""
+    kept = set()
+    for folder, error in unlisted:
+        inside = {rel for rel in unseen if rel.startswith(folder)}
+        kept |= inside
+        console.say(
+            f"{name}: {folder or 'its folder'} can't be read ({error.strerror or error}): "
+            f"{console.count(len(inside), 'file')} in it kept as indexed"
+        )
+    return kept
+
+
 def _scan(root, known, ignore):
-    """The files to read, new or changed since `known` (path -> id, mtime, size), and every file seen but those
-    `ignore` leaves out."""
-    todo, seen = [], set()
-    for path, mtime, size in walk(root, ignore):
+    """The files to read, new or changed since `known` (path -> id, mtime, size), every file seen but those `ignore`
+    leaves out, and the folders that couldn't be listed (see `walk`)."""
+    todo, seen, unlisted = [], set(), []
+    for path, mtime, size in walk(root, ignore, unlisted):
         rel = os.path.relpath(path, root).replace(os.sep, "/")
         try:
             rel.encode()
@@ -518,7 +539,7 @@ def _scan(root, known, ignore):
         k = known.get(rel)
         if not k or k[1] != mtime or k[2] != size:
             todo.append((path, rel, mtime, size))
-    return todo, seen
+    return todo, seen, unlisted
 
 
 def _read_and_store(db, cid, name, fields, known, todo, counts, progress):

@@ -2,6 +2,7 @@
 step with the files, incrementally."""
 
 import os
+import shutil
 
 import pytest
 
@@ -119,9 +120,7 @@ def test_index_says_what_it_scans_and_counts_file_by_file(notes, home, monkeypat
     db = store.connect(home)
     store.add_collection(db, notes, "notes")
     walk, said = indexing.walk, []
-    monkeypatch.setattr(
-        indexing, "walk", lambda root, ignore: said.append(capsys.readouterr().err) or walk(root, ignore)
-    )
+    monkeypatch.setattr(indexing, "walk", lambda root, *more: said.append(capsys.readouterr().err) or walk(root, *more))
     indexing.index(db)
     assert said[0].startswith(f"notes: scanning {notes}")  # before walking the folder
     err = capsys.readouterr().err
@@ -217,6 +216,51 @@ def test_index_skips_missing_folder_without_deleting(corpus, capsys):
     assert "folder not found" in capsys.readouterr().err
 
 
+def test_a_folder_that_cannot_be_listed_keeps_its_documents(corpus, monkeypatch, capsys):
+    # A share that briefly denied access looked empty: sift dropped its documents, and the vectors embedded for them.
+    db, root = corpus
+    real = os.scandir
+
+    def scandir(path):
+        if os.path.basename(path) == "robots":
+            raise PermissionError(13, "Access is denied")
+        return real(path)
+
+    monkeypatch.setattr(indexing.os, "scandir", scandir)
+    indexing.index(db)
+    assert "robots/brush.md" in doc_ids(db)
+    assert "notes: robots/ can't be read (Access is denied): 1 file in it kept as indexed" in capsys.readouterr().err
+    monkeypatch.undo()
+    shutil.rmtree(root / "robots")  # gone for good: its documents go
+    indexing.index(db)
+    assert "robots/brush.md" not in doc_ids(db)
+
+
+def test_walk_names_the_folders_it_cannot_list_when_asked(tmp_path, monkeypatch):
+    def scandir(path):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(indexing.os, "scandir", scandir)
+    assert list(indexing.walk(str(tmp_path))) == []
+    unlisted = []
+    assert list(indexing.walk(str(tmp_path), None, unlisted)) == []
+    assert [(rel, error.strerror) for rel, error in unlisted] == [("", "Access is denied")]
+
+
+def test_a_collection_whose_folder_cannot_be_listed_keeps_everything(corpus, monkeypatch, capsys):
+    db, _ = corpus
+
+    def scandir(path):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(indexing.os, "scandir", scandir)
+    indexing.index(db)
+    assert len(doc_ids(db)) == 3
+    assert (
+        "notes: its folder can't be read (Access is denied): 3 files in it kept as indexed" in capsys.readouterr().err
+    )
+
+
 def test_index_skips_unreadable_files_and_retries_later(notes, home, monkeypatch, capsys):
     real_load = readers.load
     monkeypatch.setattr(readers, "load", lambda path, fields=None: None if path.endswith("rl.md") else real_load(path))
@@ -236,9 +280,9 @@ def test_index_skips_file_names_sqlite_cannot_store(corpus, monkeypatch, capsys)
     db, root = corpus
     real_walk = indexing.walk
 
-    def walk(path, ignore):
+    def walk(path, *more):
         yield os.path.join(path, "r\udce9sum\udce9.md"), 1, 1
-        yield from real_walk(path, ignore)
+        yield from real_walk(path, *more)
 
     monkeypatch.setattr(indexing, "walk", walk)
     write(root / "new.md", "# New\n")
