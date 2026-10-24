@@ -332,7 +332,7 @@ sift search "price list" -f from=anna@acme.example -f "date>=2026-06"
 | `vsearch` | Semantic search. |
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. |
 | `similar` | Documents like a given one, by its id: more documents like one already found. |
-| `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. With `fields`, it returns the document with those front-matter fields. An id may leave out folders if the file name is unique. |
+| `get` | Text of an indexed document by its id: all of it, or only `lines` such as a hit's `"17-26"`. With `fields`, it returns the document with those front-matter fields. An id may leave out folders if the file name is unique, or be the file's absolute path. |
 | `status` | Collections with their folders (`path`), counts, front-matter fields, and how many links each collection's notes hold. |
 | `links` | The links of a note: out, each with where it leads (`via` path, name or alias, `ambiguous`, or `unresolved`), and in, the notes linking to it, with the lines that do. `depth` 2 goes one step further, `field` keeps to one front-matter field. |
 | `unresolved` | Link targets no note answers to yet, most linked first. |

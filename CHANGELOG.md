@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-24
+
+### Added
+
+- A document's absolute path is an id too: `get`, `similar`, `links` and `mentions` take the path of a file in a
+  collection's folder, as an agent that wrote the file or was given its path has it.
+
 ## [1.4.1] - 2026-10-24
 
 ### Fixed

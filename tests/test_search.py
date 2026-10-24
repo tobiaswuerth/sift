@@ -411,6 +411,17 @@ def test_get(corpus):
             index.get(bad)
 
 
+def test_get_by_the_file_s_absolute_path(corpus):
+    # An agent that has a file's path, as glean's reviews have each email's, reads it without working out its id.
+    db, root = corpus
+    index = Index(db)
+    assert index.get(str(root / "rl.md")) == index.get("notes/rl.md")
+    assert index.document(str(root / "robots" / "brush.md"))["id"] == "notes/robots/brush.md"
+    for outside in (root.parent / "rl.md", root / "brush.md"):  # in no collection; not by its file name alone
+        with pytest.raises(LookupError, match="unknown document"):
+            index.get(str(outside))
+
+
 def test_document_with_front_matter_fields(corpus):
     # An agent reading a paper wants its link and date with it, without a search to find them.
     index = Index(corpus[0])
