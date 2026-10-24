@@ -422,6 +422,14 @@ def test_get_by_the_file_s_absolute_path(corpus):
             index.get(str(outside))
 
 
+def test_an_absolute_path_names_its_file_in_another_case_too(corpus):
+    # As Windows and macOS name the file, and as `reindex` takes the path.
+    db, root = corpus
+    index = Index(db)
+    assert index.get(str(root / "Robots" / "BRUSH.md")) == index.get("notes/robots/brush.md")
+    assert index.links(str(root / "RL.md"))["id"] == index.links("notes/rl.md")["id"]
+
+
 def test_document_with_front_matter_fields(corpus):
     # An agent reading a paper wants its link and date with it, without a search to find them.
     index = Index(corpus[0])

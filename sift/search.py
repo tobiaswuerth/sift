@@ -651,9 +651,14 @@ class Index:
         sql = """SELECT d.id, d.path, d.title, d.meta, d.text FROM docs d JOIN collections co ON co.id = d.collection
                  WHERE co.name = ? AND """
         rows = self.db.execute(sql + "d.path = ?", (name, rel)).fetchall()
-        if not rows and rel and not os.path.isabs(id):  # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
-            rows = self.db.execute(sql + "substr(d.path, -?) = ? LIMIT 6", (name, len(rel) + 1, "/" + rel)).fetchall()
-        return rows
+        if rows or not rel:
+            return rows
+        if os.path.isabs(id):  # in another case, as Windows and macOS name the same file, and `reindex` takes it
+            found = self.db.execute(sql + "lower(d.path) = lower(?)", (name, rel)).fetchall()
+            same = [row for row in found if readers.fold(row[1]) == readers.fold(rel)]
+            return same if len(same) == 1 else []
+        # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
+        return self.db.execute(sql + "substr(d.path, -?) = ? LIMIT 6", (name, len(rel) + 1, "/" + rel)).fetchall()
 
     def _note(self, id):
         """The document `id` names, as for `get`, or else the note `id` names as links name it, "Acme AG" or
