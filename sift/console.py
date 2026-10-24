@@ -11,6 +11,7 @@ from time import perf_counter
 from . import logs
 
 REDRAW_SECONDS = 1  # a progress line redraws itself this often, so a slow step still shows sift at work
+LOG_SECONDS = 60  # and goes into the command's log this often, which has no line to redraw
 _drawn = None  # the Progress whose line is on screen now, if any
 
 
@@ -60,10 +61,12 @@ class Line:
 
 class Progress:
     """A progress line, used as a context manager: a bar, `done` of `total` units, the speed, and the time taken and
-    left. It draws at once, on every update, and every REDRAW_SECONDS in between."""
+    left. It draws at once, on every update, and every REDRAW_SECONDS in between; into the command's log every
+    LOG_SECONDS, and where it ended."""
 
     def __init__(self, total, unit, prefix=""):
         self.total, self.unit, self.prefix, self.done, self.start = total, unit, prefix, 0, perf_counter()
+        self._logged = 0.0  # seconds in, when it last went into the log
         self._line, self._lock, self._stop = Line(), threading.Lock(), threading.Event()
         self._thread = threading.Thread(target=self._redraw, name="sift-progress", daemon=True)
 
@@ -86,6 +89,9 @@ class Progress:
     def _redraw(self):
         while not self._stop.wait(REDRAW_SECONDS):
             self.draw()
+            if self.elapsed - self._logged >= LOG_SECONDS:
+                self._logged = self.elapsed
+                logs.said.info(self.text())
 
     @property
     def elapsed(self):
