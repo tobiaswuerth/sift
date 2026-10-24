@@ -13,6 +13,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
   of a file in a collection's folder, in any case where it names one file, as an agent that wrote the file or was
   given its path has it.
 
+### Fixed
+
+- `sift index` and `sift embed` crashed now and then on Python 3.15 (seen on macOS) while a progress line was drawn:
+  the garbage collector ran on the thread that redraws it and freed PyTorch's tensors there, which PyTorch doesn't
+  survive. While a progress line is drawn, the collector now runs on the working thread, at each update.
+
 ## [1.4.1] - 2026-10-24
 
 ### Fixed
