@@ -14,14 +14,25 @@ said.propagate = False  # handler of the root logger prints it twice
 _handler = None  # the log file of this command, while there is one
 
 
+def _claim(folder, stem):
+    """A new log file in `folder`, created at once: `stem`.log, or `stem`-2.log and so on if that is taken, so that two
+    commands started in the same second, in two processes too, never write into one."""
+    folder.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while True:
+        path = folder / (stem + (f"-{n}" if n > 1 else "") + ".log")
+        try:
+            path.open("x").close()
+            return path
+        except FileExistsError:
+            n += 1
+
+
 @contextlib.contextmanager
 def kept(name, now):
     """Log this command, `name`, to a new file while the block runs; yields its path."""
     global _handler
-    folder = settings.current().home / "logs"
-    folder.mkdir(parents=True, exist_ok=True)
-    stem = f"{name}-{now:%Y-%m-%d_%H%M%S}"
-    path = next(p for n in range(1, 1000) if not (p := folder / (stem + (f"-{n}" if n > 1 else "") + ".log")).exists())
+    path = _claim(settings.current().home / "logs", f"{name}-{now:%Y-%m-%d_%H%M%S}")
     handler, outer = logging.FileHandler(path, encoding="utf-8"), _handler
     handler.setFormatter(logging.Formatter(FORMAT))
     root, level = logging.getLogger(), logging.getLogger().level

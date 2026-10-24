@@ -2,6 +2,7 @@
 
 import datetime
 import logging
+import pathlib
 
 import pytest
 
@@ -82,6 +83,14 @@ def test_two_in_one_second_get_two_files_and_every_log_is_kept(home):
         pass
     assert len(list((home / "logs").glob("index-*.log"))) == len(older) + 3
     logs.attach("uvicorn")  # no command running: nothing to attach
+
+
+def test_a_log_file_is_claimed_at_once(home, monkeypatch):
+    # Two commands started in the same second each found the name free, and wrote into one file.
+    monkeypatch.setattr(pathlib.Path, "exists", lambda self: False)  # what another process can't see yet
+    with logs.kept("index", NOW) as first, logs.kept("index", NOW) as second:
+        pass
+    assert first != second
 
 
 def test_commands_that_change_or_serve_the_index_keep_logs(notes, home, capsys):

@@ -10,6 +10,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `sift index` keeps the documents of a folder it can't list for the moment (access denied, a network share that
   doesn't answer) as indexed, and says so for each such folder; it took their files for deleted and dropped them with
   their vectors, which then had to be read and embedded again. A folder that is gone is still dropped.
+- Two commands started in the same second, in two processes, each keep a log of their own: both could take the same
+  free name and write into one file.
 
 ## [1.5.0] - 2026-10-24
 
