@@ -5,6 +5,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-25
+
+### Fixed
+
+- `sift index` keeps the documents of a folder it can't list for the moment (access denied, a network share that
+  doesn't answer) as indexed, and says so for each such folder; it took their files for deleted and dropped them with
+  their vectors, which then had to be read and embedded again. A folder that is gone is still dropped. So too a
+  file it can't stat, and a folder whose listing breaks off midway; `reindex` calls such a file `unreadable`, not
+  `removed`.
+- Two commands started in the same second, in two processes, each keep a log of their own: both could take the same
+  free name and write into one file.
+
 ## [1.5.0] - 2026-10-24
 
 ### Added
@@ -486,7 +498,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/tobiaswuerth/sift/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/tobiaswuerth/sift/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/tobiaswuerth/sift/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/tobiaswuerth/sift/compare/v1.3.2...v1.4.0
