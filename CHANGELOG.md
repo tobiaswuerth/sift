@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-25
+
 ### Fixed
 
 - `sift index` keeps the documents of a folder it can't list for the moment (access denied, a network share that
@@ -496,7 +498,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/tobiaswuerth/sift/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/tobiaswuerth/sift/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/tobiaswuerth/sift/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/tobiaswuerth/sift/compare/v1.3.2...v1.4.0
