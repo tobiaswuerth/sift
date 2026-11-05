@@ -237,7 +237,7 @@ def _reread(db, cid, files, fields):
 
 Reindexed = namedtuple("Reindexed", "files removed before after")
 """What `reindex` did: per file, ({"id", "status"[, "note"]}, its documents' row ids); the chunks it removed; and the
-index's version before and after, for a server to follow without loading every vector again."""
+index's version before and after, for a server to follow without loading every code again."""
 
 
 def reindex(db, paths, scans=True):
