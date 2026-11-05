@@ -69,7 +69,7 @@ def test_embed_some_collections_calibrates_on_their_longest_chunk(two_collection
 
 
 class Ones:
-    """The least a set of models needs to offer embed_pending: a name, a place, a batch size and vectors."""
+    """The least a set of models needs to offer embed_pending: a name, a place, a batch size, prepare and encode."""
 
     name, address, batch = "ones/v1", "nowhere", 2
 

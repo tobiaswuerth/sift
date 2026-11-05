@@ -432,7 +432,7 @@ def test_retitling_drops_vectors_embedded_with_the_old_title(embedded):
         "SELECT d.path, c.seq FROM chunks c JOIN docs d ON d.id = c.doc WHERE c.id NOT IN (SELECT chunk FROM vectors)"
     ).fetchall()
     assert missing == [("long.md", 1)]  # the first passage is embedded without its title
-    assert store.get_meta(db, "version") != before  # a running server loads the vectors again
+    assert store.get_meta(db, "version") != before  # a running server loads the codes again
 
 
 def test_retitling_an_unknown_collection(corpus):
