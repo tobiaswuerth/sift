@@ -400,8 +400,9 @@ def test_records_have_no_names(tmp_path, home):
 
 
 def as_made_by_sift_1_0(db):
-    """Turn an index into one sift 1.0 made: no links or names, and front-matter lists of unquoted items as text."""
-    db.executescript("DROP TABLE links; DROP TABLE names;")
+    """Turn an index into one sift 1.0 made: no links, names or codes, and front-matter lists of unquoted items as
+    text."""
+    db.executescript("DROP TABLE links; DROP TABLE names; DROP TRIGGER codes_go_with_vectors; DROP TABLE codes;")
     (doc,) = db.execute("SELECT id FROM docs WHERE path = '01_People/Hans Müller.md'").fetchone()
     store.keywords(db, [doc], add=False)
     meta = json.loads(db.execute("SELECT meta FROM docs WHERE id = ?", (doc,)).fetchone()[0])
@@ -429,6 +430,7 @@ def test_an_index_of_sift_1_0_gets_its_links(linked, fake_models, home, capsys, 
     assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
     assert "reading links" in capsys.readouterr().err
     assert (rows(db, "links"), rows(db, "names"), rows(db, "vectors")) == (7, 9, vectors)  # nothing embedded again
+    assert rows(db, "codes") == vectors
     assert Index(db).document(HANS, fields=["aliases"])["fields"] == {"aliases": ["Hans Mueller", "H. Müller"]}
     assert keywords_agree(db)
     assert resolved(out(Index(db), OFFER))[0] == ("Hans Mueller", (HANS, "alias"))

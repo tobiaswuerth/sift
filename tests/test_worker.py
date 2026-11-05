@@ -13,10 +13,12 @@ import textwrap
 import threading
 import time
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+import sift
 from sift import __version__, cli, embed, models, remote, store, worker
 from sift.search import Index
 
@@ -291,8 +293,8 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
             db = store.connect({str(tmp_path / "home")!r})
             store.add_collection(db, notes, "notes")
             indexing.index(db)
-            for (chunk,) in db.execute("SELECT id FROM chunks").fetchall():
-                db.execute("INSERT INTO vectors VALUES(?, ?)", (chunk, np.full(4, 0.5, np.float16).tobytes()))
+            chunks = [chunk for (chunk,) in db.execute("SELECT id FROM chunks")]
+            store.put_vectors(db, chunks, np.full((len(chunks), 4), 0.5, np.float16))
             store.set_meta(db, "dim", 4)
             db.commit()
             index = Index(db)
@@ -301,7 +303,9 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
         """),
         encoding="utf-8",
     )
-    run = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120)
+    code = str(Path(sift.__file__).parent.parent)  # this sift, not one installed elsewhere
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [code, os.environ.get("PYTHONPATH")]))}
+    run = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120, env=env)
     assert run.returncode == 0, run.stderr
     assert run.stdout.strip() == "False"
 

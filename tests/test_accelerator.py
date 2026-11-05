@@ -1,5 +1,5 @@
-"""The accelerator: which device sift computes on, how much of its memory it may use, and when models and vectors
-leave the GPU. GPU memory and the clock are fakes; PyTorch itself is real."""
+"""The accelerator: which device sift computes on, how much of its memory it may use, and when models leave the GPU.
+GPU memory and the clock are fakes; PyTorch itself is real."""
 
 import logging
 import sys
@@ -37,6 +37,24 @@ def test_the_device_is_cuda_then_mps_then_cpu(monkeypatch, cuda, mps, device):
     assert Accelerator().device == device
 
 
+def test_a_virtual_mac_gpu_is_passed_over_quietly(monkeypatch):
+    # Asked for the Apple GPU on a virtual Mac, PyTorch warns "Skipping device Apple Paravirtual device that does not
+    # support Metal 2.0": noise on every start, and with warnings as errors (the tests) a failure.
+    import warnings
+
+    import torch
+
+    def is_available():
+        warnings.warn(
+            "Skipping device Apple Paravirtual device that does not support Metal 2.0", UserWarning, stacklevel=2
+        )
+        return False
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", is_available)
+    assert accelerator.detect() == "cpu"
+
+
 @pytest.mark.parametrize(
     "device, bf16, half",
     [
@@ -54,11 +72,6 @@ def test_half_precision_is_bfloat16_where_the_gpu_has_it(make, monkeypatch, devi
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda *a, **k: bf16)
     dtype = make(device).half_precision
     assert (None if dtype is None else str(dtype).removeprefix("torch.")) == half
-
-
-@pytest.mark.parametrize("device, gpu", [("cuda", True), ("cuda:1", True), ("mps", True), ("cpu", False)])
-def test_vectors_are_searched_in_fp16_on_gpus_only(make, device, gpu):
-    assert (make(device).gpu, make(device).fp16) == (gpu, gpu)  # CPUs are slow at fp16
 
 
 def test_harmless_torch_windows_note_is_silenced():
@@ -201,7 +214,7 @@ def test_no_calibration_off_cuda(make, gpu_memory, device):
 
 
 class Thing:
-    """Something that moves between RAM and the GPU, like a model or the vectors."""
+    """Something that moves between RAM and the GPU, like a model."""
 
     def __init__(self, device):
         self.device, self.place = device, "ram"

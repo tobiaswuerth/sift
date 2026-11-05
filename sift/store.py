@@ -1,4 +1,5 @@
-"""The SQLite index: one database holding every collection, document, chunk, the keyword index (FTS5) and the vectors.
+"""The SQLite index: one database holding every collection, document, chunk, the keyword index (FTS5), the vectors and
+their codes.
 
 The index holds the text of every document, so searching and reading never touch the files; they are read only when
 indexing (see `indexing`, and `readers` for the kinds of file).
@@ -14,7 +15,7 @@ from pathlib import Path
 
 from . import console, readers, settings
 
-SCHEMA_VERSION = 4  # in SQLite's user_version; sift 0.2 and older had none, 0.3 to 0.7 had 2, 0.8 to 1.0 had 3
+SCHEMA_VERSION = 5  # in SQLite's user_version; sift 0.2 and older had none, 0.3-0.7 had 2, 0.8-1.0 3, 1.1-1.6 4
 # The keyword index reads chunks through a view: each with its document's title, and its front-matter values but the
 # title, e.g. authors and ids, as `meta`. Inserting and deleting read it alike, so the two always agree.
 KEYWORD_INDEX = """
@@ -51,6 +52,14 @@ CREATE TABLE IF NOT EXISTS names(doc INTEGER NOT NULL, collection INTEGER NOT NU
 CREATE INDEX IF NOT EXISTS names_doc ON names(doc);
 CREATE INDEX IF NOT EXISTS names_key ON names(collection, key);
 """
+# Each vector's code, its signs a bit per dimension, which searches load instead of the vectors (see `vectors`);
+# written with the vector (put_vectors), and deleted with it by the trigger, wherever vectors are deleted.
+CODES = """
+CREATE TABLE IF NOT EXISTS codes(chunk INTEGER PRIMARY KEY, bits BLOB NOT NULL);
+CREATE TRIGGER IF NOT EXISTS codes_go_with_vectors AFTER DELETE ON vectors
+    BEGIN DELETE FROM codes WHERE chunk = OLD.chunk; END;
+"""
+CODES_BATCH = 100_000  # codes per batch as searches load them, and per transaction as an older index gets them
 
 
 def connect(home=None) -> sqlite3.Connection:
@@ -80,7 +89,7 @@ def _layout(db, path):
             "then run `sift add`, `sift index` and `sift embed` again"
         )
     if version < 2:
-        db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + f"PRAGMA user_version = {SCHEMA_VERSION};")
+        db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + CODES + f"PRAGMA user_version = {SCHEMA_VERSION};")
         for key in READ_AGAIN:
             set_meta(db, key, 1)
         db.commit()
@@ -89,6 +98,8 @@ def _layout(db, path):
         _rebuild_keyword_index(db)
     if version <= 3:  # sift 0.8 to 1.0: everything stays, and the notes' links join it
         _add_links(db)
+    if version <= 4:  # sift 1.1 to 1.6: everything stays, and the vectors' codes join it
+        _add_codes(db)
     for key, kinds in READ_AGAIN.items():
         if get_meta(db, key) is None:
             _read_again(db, key, kinds)
@@ -149,11 +160,54 @@ def _add_links(db):
             for statement in ["DROP TABLE IF EXISTS links", "DROP TABLE IF EXISTS names", *LINKS.split(";")[:-1]]:
                 db.execute(statement)
             indexing.add_links(db)
-            db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            db.execute("PRAGMA user_version = 4")
         db.commit()
     except BaseException:
         db.rollback()
         raise
+
+
+def _add_codes(db):
+    """Add the codes searches load, computed from the vectors the index holds: nothing is embedded again. A batch per
+    transaction, so that an upgrade stopped half-way goes on where it stopped, and another sift waits a batch at
+    most."""
+    import numpy as np  # here, not at the top: the CLI starts with the standard library alone
+
+    db.executescript(CODES)
+    uncoded = "vectors v WHERE NOT EXISTS (SELECT 1 FROM codes c WHERE c.chunk = v.chunk)"
+    if missing := db.execute(f"SELECT count(*) FROM {uncoded}").fetchone()[0]:  # all, unless an upgrade stopped
+        console.say(f"adding the codes of {console.count(missing, 'vector')}, once, which searches load instead ...")
+    last = -1
+    sql = f"SELECT v.chunk, v.vec FROM {uncoded} AND v.chunk > ? ORDER BY v.chunk LIMIT ?"
+    size, batch = 2 * int(get_meta(db, "dim", 0)), True
+    while batch:
+        db.execute("BEGIN IMMEDIATE")  # before reading: another sift may change vectors until then
+        try:
+            if batch := db.execute(sql, (last, CODES_BATCH)).fetchall():
+                last, rows = batch[-1][0], [row for row in batch if len(row[1]) == size]  # another length: skipped
+                matrix = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), size // 2)
+                _put_codes(db, [chunk for chunk, _ in rows], matrix)
+            else:
+                db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+
+
+def put_vectors(db, chunks, matrix):
+    """Store the vectors of chunks (fp16 rows of `matrix`) with their codes, replacing any they had."""
+    chunks = [int(chunk) for chunk in chunks]
+    rows = zip(chunks, (vector.tobytes() for vector in matrix))
+    db.executemany("INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)", rows)
+    _put_codes(db, chunks, matrix)
+
+
+def _put_codes(db, chunks, matrix):
+    from .vectors import codes  # imports NumPy
+
+    bits = codes(matrix)
+    db.executemany("INSERT OR REPLACE INTO codes(chunk, bits) VALUES(?, ?)", zip(chunks, (b.tobytes() for b in bits)))
 
 
 def get_meta(db, key, default=None):
@@ -166,7 +220,7 @@ def set_meta(db, key, value):
 
 
 def touch(db):
-    """Mark the vectors as changed, so a running server reloads them. Random, as clocks can tick too slowly."""
+    """Mark the vectors as changed, so a running server reloads their codes. Random, as clocks can tick too slowly."""
     set_meta(db, "version", uuid.uuid4().hex)
 
 

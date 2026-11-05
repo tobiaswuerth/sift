@@ -30,9 +30,6 @@ class Models(Protocol):
     def rerank(self, query, texts):
         """Scores of (query, text) pairs, higher for better matches."""
 
-    def vectors(self, ids, matrix):
-        """The index's vectors, ready to be scored against queries where these models run (see `vectors`)."""
-
     def release_idle(self) -> bool:
         """Hand the GPU back after a while without use. Returns whether anything moved."""
 

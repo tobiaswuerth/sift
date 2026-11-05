@@ -324,7 +324,7 @@ def build(index=None):
     return mcp, index
 
 
-IDLE_CHECK_SECONDS = 30  # how often the server checks whether models and vectors can leave the GPU
+IDLE_CHECK_SECONDS = 30  # how often the server checks whether the models can leave the GPU
 SHUTDOWN_SECONDS = 3  # how long Ctrl+C waits for open requests before the server stops anyway
 
 
@@ -412,7 +412,7 @@ def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
     """Run the MCP server, with `models` (default: `models.default()`) loaded up front, so the first search is quick."""
     models = models or _models.default()
     mcp, index = build(Index(models=models))
-    console.say("loading models and vectors into RAM ...")  # they move to the GPU when used
+    console.say("loading the models and the vectors' codes into RAM ...")  # the models move to the GPU when used
     for step in (models.load, index.load):
         try:
             step()

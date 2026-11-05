@@ -35,6 +35,29 @@ def test_add_index_embed(notes, home, fake_models, capsys):
     assert "embedded 3 chunks" in run(capsys, "embed", "--reset").err
 
 
+def test_embed_some_collections(notes, tmp_path, home, fake_models, capsys):
+    other = tmp_path / "other"
+    write(other / "a.md", "# Other\n\nSomething else entirely.\n")
+    run(capsys, "add", str(notes))
+    run(capsys, "add", str(other))
+    run(capsys, "index")
+    assert "embedding 1 chunk of other with" in run(capsys, "embed", "other").err
+    assert "nothing to embed in other" in run(capsys, "embed", "other").err
+    assert "embedded 3 chunks" in run(capsys, "embed").err
+    with pytest.raises(SystemExit, match="no collection named 'nope'; the collections are notes, other"):
+        run(capsys, "embed", "nope")
+
+
+def test_embed_reset_takes_no_collection_names(notes, home, fake_models, capsys):
+    # A reset drops the vectors of every collection: embedding only those named left the others without any.
+    run(capsys, "add", str(notes))
+    run(capsys, "index")
+    run(capsys, "embed")
+    with pytest.raises(SystemExit, match="--reset embeds every collection again"):
+        run(capsys, "embed", "notes", "--reset")
+    assert "nothing to embed" in run(capsys, "embed").err  # nothing dropped
+
+
 def test_add_a_collection_titled_by_file_names(notes, home, capsys):
     write(notes / "Hans Müller.md", "## Summary\n\nKey account.\n")
     run(capsys, "add", str(notes), "--title-from", "name")

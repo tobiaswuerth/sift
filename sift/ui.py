@@ -36,7 +36,7 @@ SHORT = 60  # characters a front-matter value may have to filter by it
 SNIPPET = 260  # characters of a passage shown in the results
 READER_LINES = 2000  # lines of a document the reader shows at once: a long log would make a page of megabytes
 LOCAL_HOSTS = ("127.0.0.1", "localhost")
-STARTUP_SECONDS = 600  # how long `sift ui` waits for the server it started: loading vectors can take minutes
+STARTUP_SECONDS = 600  # how long `sift ui` waits for the server it started: loading models and codes takes a while
 ERRORS = (LookupError, ValueError, ConnectionError, sqlite3.Error)  # what a view shows, as the MCP tools say it
 
 

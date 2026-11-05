@@ -7,7 +7,7 @@ import pytest
 from sift import embed, indexing, search, store
 from sift.search import Index, _any_word
 
-from .conftest import PretendGpu, write
+from .conftest import write
 
 
 def ids(hits):
@@ -208,7 +208,8 @@ def test_vsearch(embedded):
 
 
 def test_broken_vectors_do_not_hide_the_others(embedded):
-    # PyTorch ranks NaN above every number, so as many NaN vectors as results asked for left vsearch with none.
+    # A NaN vector has no cosine. When PyTorch scored them it ranked NaN first: as many NaN vectors as results asked
+    # for left vsearch with none.
     db, _ = embedded
     nan = np.full(64, np.nan, np.float16).tobytes()
     db.execute("UPDATE vectors SET vec = ? WHERE chunk IN (SELECT chunk FROM vectors ORDER BY chunk LIMIT 2)", (nan,))
@@ -222,14 +223,39 @@ def test_vsearch_reloads_after_index_changes(embedded):
     index = Index(db)
     assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
     (root / "rl.md").unlink()
-    indexing.index(db)  # deletes rl.md and its vector; the cached matrix must not serve it
+    indexing.index(db)  # deletes rl.md and its vector; the codes in memory must not serve it
     assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
+
+
+def test_codes_load_in_batches(embedded, monkeypatch):
+    # Millions of codes load a batch at a time, not as one list of rows.
+    monkeypatch.setattr(store, "CODES_BATCH", 2)
+    found = ids(Index(embedded[0]).vsearch("reward shaping", k=3))
+    assert (found[0], len(found)) == ("notes/rl.md", 3)
+
+
+def test_codes_gone_while_loading_ask_for_embedding(embedded):
+    # Another process dropped every vector (`sift embed --reset`) between counting the codes and reading them.
+    db, _ = embedded
+
+    class Racing:
+        def __getattr__(self, name):
+            return getattr(db, name)
+
+        def execute(self, sql, *args):
+            if sql.startswith("SELECT chunk, bits FROM codes"):
+                db.execute("DELETE FROM vectors")
+                db.commit()
+            return db.execute(sql, *args)
+
+    with pytest.raises(LookupError, match="sift embed"):
+        Index(Racing()).vsearch("reward")
 
 
 def test_vsearch_after_interrupted_reset_asks_for_embedding(embedded, fake_models, monkeypatch):
     db, _ = embedded
     index = Index(db)
-    index.vsearch("reward")  # vectors cached
+    index.vsearch("reward")  # codes in memory
 
     def interrupted(texts, query=False):
         raise KeyboardInterrupt
@@ -250,11 +276,6 @@ class Constant:
     def rerank(self, query, texts):
         return np.arange(len(texts), dtype=np.float32)  # the later a candidate, the better
 
-    def vectors(self, ids, matrix):
-        from sift.vectors import InRam
-
-        return InRam(ids, matrix)
-
 
 def test_search_uses_the_models_it_is_given(embedded):
     index = Index(embedded[0], models=Constant())
@@ -263,18 +284,14 @@ def test_search_uses_the_models_it_is_given(embedded):
     assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
 
 
-class Alike(Constant):
-    """Constant models whose vectors are all alike, so every cosine with a query is the same."""
-
-    def vectors(self, ids, matrix):
-        return super().vectors(ids, np.ones_like(matrix))
-
-
 def test_query_scores_are_the_rerankers_raw_scores_when_the_cosines_agree(embedded):
     # Through a sigmoid they ran from 0 to 1, but saturated: Ettin scores close matches 8 to 12, so every hit showed
     # 0.9999, and an off-topic query's best still 0.98. The raw scores tell strong hits from weak ones; the cosine
     # shifts them only where the candidates differ in meaning.
-    hits = Index(embedded[0], models=Alike()).query("anything")
+    db = embedded[0]
+    db.execute("UPDATE vectors SET vec = ?", (np.ones(64, np.float16).tobytes(),))  # every cosine the same
+    db.commit()
+    hits = Index(db, models=Constant()).query("anything")
     assert [h["score"] for h in hits] == [2.0, 1.0, 0.0]
 
 
@@ -469,15 +486,6 @@ def test_status(embedded):
         {"name": "notes", "path": path, "docs": 3, "chunks": 3, "embedded": 3, "fields": fields}
         | {"links": 0, "unresolved": 0}
     ]
-
-
-def test_vectors_reload_while_on_the_gpu(embedded, make_local):
-    db, root = embedded
-    index = Index(db, models=make_local(accelerator=PretendGpu))
-    assert "notes/rl.md" in ids(index.vsearch("reward shaping"))
-    (root / "rl.md").unlink()
-    indexing.index(db)
-    assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
 
 
 # --- edge cases ----------------------------------------------------------------

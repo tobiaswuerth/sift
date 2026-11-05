@@ -25,8 +25,51 @@ def test_embed_pending(corpus, fake_models, capsys):
     assert "nothing to embed" in capsys.readouterr().err
 
 
+def pending(db):
+    """Chunks without a vector, per collection."""
+    sql = """SELECT co.name, count(*) FROM chunks c JOIN docs d ON d.id = c.doc
+             JOIN collections co ON co.id = d.collection
+             WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id) GROUP BY co.name"""
+    return dict(db.execute(sql))
+
+
+@pytest.fixture
+def two_collections(corpus, tmp_path):
+    """The notes and a second collection, indexed, neither embedded."""
+    db, _ = corpus
+    write(tmp_path / "other" / "a.md", "# Other\n\nSomething else entirely.\n")
+    store.add_collection(db, tmp_path / "other", "other")
+    indexing.index(db)
+    return db
+
+
+def test_embed_only_the_collections_named(two_collections, fake_models, capsys):
+    # Embedding a few collections first, before a big one that takes days.
+    db = two_collections
+    embed.embed_pending(db, collections=["other"])
+    assert pending(db) == {"notes": 3}
+    assert "embedding 1 chunk of other with" in capsys.readouterr().err
+    embed.embed_pending(db, collections=["other", "notes"])
+    assert pending(db) == {}
+
+
+def test_embed_an_unknown_collection_names_those_there_are(two_collections, fake_models):
+    with pytest.raises(LookupError, match="no collection named 'nope'; the collections are notes, other"):
+        embed.embed_pending(two_collections, collections=["nope"])
+    assert pending(two_collections) == {"notes": 3, "other": 1}  # nothing embedded before the error
+
+
+def test_embed_some_collections_calibrates_on_their_longest_chunk(two_collections, corpus, fake_models, monkeypatch):
+    write(corpus[1] / "long.md", "# Long\n" + "word " * 1000 + "\n")
+    indexing.index(two_collections)
+    samples = []
+    monkeypatch.setattr(fake_models, "prepare", lambda longest: samples.append(longest()))
+    embed.embed_pending(two_collections, collections=["other"])
+    assert samples == ["# Other\n\nSomething else entirely."]  # not the longer chunk of notes
+
+
 class Ones:
-    """The least a set of models needs to offer embed_pending: a name, a place, a batch size and vectors."""
+    """The least a set of models needs to offer embed_pending: a name, a place, a batch size, prepare and encode."""
 
     name, address, batch = "ones/v1", "nowhere", 2
 

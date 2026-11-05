@@ -1,7 +1,8 @@
-"""Search: exact keyword (BM25), semantic (exact vector search), hybrid with reranking, and documents like one.
+"""Search: exact keyword (BM25), semantic (codes of the vectors, the nearest scored exactly), hybrid with reranking,
+and documents like one.
 
-The models embed queries and rerank, wherever they run (see `models`). Through a worker, the vectors are searched
-as a NumPy matrix and PyTorch never loads: a search starts in a fraction of a second, even on a light notebook."""
+The models embed queries and rerank, wherever they run (see `models`). Through a worker, PyTorch never loads: a search
+starts in a fraction of a second, even on a light notebook."""
 
 import json
 import os
@@ -16,7 +17,7 @@ import numpy as np
 
 from . import console, embed, indexing, links, readers, store
 from . import models as _models
-from .vectors import patch
+from .vectors import Codes, codes
 
 STOPWORDS = set(
     "a an and are as at be by can do does for from has have how i in is it of on or that the this to "
@@ -259,16 +260,6 @@ def _lines_of(rows, text):
     return list(found.values())
 
 
-def _top(ids, scores, k):
-    """The k best (chunk id, score) pairs, best first. A broken (NaN) vector ranks last: PyTorch's topk ranked NaN
-    first, so a few broken vectors pushed every other result out."""
-    scores = np.where(np.isnan(scores), -np.inf, scores)
-    k = min(k, len(scores))
-    best = np.argpartition(-scores, k - 1)[:k]
-    best = best[np.lexsort((best, -scores[best]))]  # by score, ties by position: the same order every time
-    return [(int(ids[i]), float(scores[i])) for i in best if scores[i] > -np.inf]
-
-
 class Index:
     """Search over an index. Semantic search uses `models` (default: `models.default()`, chosen when first needed,
     so keyword search loads no models)."""
@@ -423,42 +414,56 @@ class Index:
         raise ValueError(f"invalid search query {match!r}: {error}")
 
     def load(self):
-        """Load all vectors, where the models score them; reload when the index has changed since the last load."""
+        """Load the codes of the vectors (see `vectors`), batch by batch; again when the index has changed since the
+        last load."""
         version = store.get_meta(self.db, "version")
         if version is not None and version == self.version:
             return
-        n = self.db.execute("SELECT count(*) FROM vectors").fetchone()[0]
-        if not n:
+        n = self.db.execute("SELECT count(*) FROM codes").fetchone()[0]
+        ids, bits, row = np.empty(n, np.int64), None, 0
+        cursor = self.db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
+        while row < n and (batch := cursor.fetchmany(store.CODES_BATCH)):
+            batch = batch[: n - row]  # codes added since the count wait for the next load
+            if bits is None:
+                bits = np.empty((n, len(batch[0][1])), np.uint8)
+            rows = np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)
+            ids[row : row + len(batch)], bits[row : row + len(batch)] = [chunk for chunk, _ in batch], rows
+            row += len(batch)
+        if not row:  # none, or all deleted meanwhile
             raise LookupError("no embeddings yet, run `sift embed`")
-        ids, mat = np.empty(n, np.int64), np.empty((n, int(store.get_meta(self.db, "dim"))), np.float16)
-        for row, (chunk, vec) in enumerate(self.db.execute("SELECT chunk, vec FROM vectors ORDER BY chunk")):
-            ids[row], mat[row] = chunk, np.frombuffer(vec, np.float16)
-        if self.vectors:
-            self.vectors.close()  # a GPU copy of the old vectors goes with them
-        self.vectors, self.version = self.models.vectors(ids, mat), version
+        self.vectors, self.version = Codes(ids[:row], bits[:row], self._exact), version
 
-    def _scores(self, query):
-        """Cosine similarity of the query with every chunk, as a NumPy array."""
+    def _exact(self, chunks):
+        """The vectors the index holds of these chunks, as (their ids, fp16 rows): those deleted meanwhile, and any of
+        another length than the index's vectors, are left out."""
+        sql = "SELECT chunk, vec FROM vectors WHERE chunk IN (SELECT value FROM json_each(?))"
+        size = 2 * int(store.get_meta(self.db, "dim", 0))
+        rows = [row for row in self.db.execute(sql, (json.dumps(np.asarray(chunks).tolist()),)) if len(row[1]) == size]
+        matrix = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), size // 2)
+        return np.array([chunk for chunk, _ in rows], np.int64), matrix
+
+    def _vector(self, query):
+        """The query's vector, with the codes loaded to search with it."""
         self.load()
-        return self.vectors.scores(self.models.encode([query], query=True)[0])
+        return self.models.encode([query], query=True)[0].astype(np.float32)
 
     def _semantic(self, query, k, where, args, all_passages=False):
         if not query.strip():  # the embedding of nothing is close to arbitrary chunks
             return []
-        return self._nearest(self._scores(query), k, where, args, all_passages)
+        return self._nearest(self._vector(query), k, where, args, all_passages)
 
-    def _nearest(self, scores, k, where, args, all_passages):
-        """The best passage of each of the k documents with the best `scores` (one per vector), among the documents
-        `where` allows; or the k best passages."""
+    def _nearest(self, query, k, where, args, all_passages, excluded=None):
+        """The best passage of each of the k documents nearest the query's vector, among the documents `where`
+        allows, but the chunks `excluded`; or the k best passages."""
+        allowed = None
         if args:  # restrict to chunks of matching documents
             sql = f"SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE {where}"
             allowed = np.fromiter((c for (c,) in self.db.execute(sql, args)), np.int64)
-            scores = np.where(np.isin(self.vectors.ids, allowed, assume_unique=True), scores, -np.inf)
         if all_passages:
-            return _top(self.vectors.ids, scores, k)
+            return self.vectors.top(query, k, allowed, excluded)
         n = k
         while True:  # when the best passages come from a few documents, look further for others
-            ranked = _top(self.vectors.ids, scores, n)
+            ranked = self.vectors.top(query, n, allowed, excluded)
             best = self._per_document(ranked)
             if len(best) >= k or len(ranked) < n:
                 return best[:k]
@@ -485,13 +490,15 @@ class Index:
             hits.append(hit | {"meta": meta, "text": text, "chunk": chunk})  # for _present, and `query`'s scores
         return hits
 
-    def _cosines(self, scores, chunks):
-        """The cosines of these chunks among all `scores`; one not embedded yet gets their mean, neither a bonus nor a
-        penalty."""
-        at = np.searchsorted(self.vectors.ids, chunks)  # the vector ids are sorted
-        found = (at < len(self.vectors.ids)) & (self.vectors.ids[np.minimum(at, len(self.vectors.ids) - 1)] == chunks)
-        cosine = np.where(found, scores[np.minimum(at, len(scores) - 1)], np.nan)
-        return np.where(np.isnan(cosine), np.nanmean(cosine) if found.any() else 0.0, cosine)
+    def _cosines(self, query, chunks):
+        """The cosines of these chunks with the query's vector, exactly; one not embedded yet, or broken, gets the
+        others' mean, neither a bonus nor a penalty."""
+        found, rows = self._exact(np.array(chunks, np.int64))
+        exact = dict(zip(found.tolist(), (rows.astype(np.float32) @ query).tolist()))
+        cosine = np.array([exact.get(chunk, np.nan) for chunk in chunks], np.float64)
+        cosine[~np.isfinite(cosine)] = np.nan
+        known = np.isfinite(cosine)
+        return np.where(known, cosine, np.nanmean(cosine) if known.any() else 0.0)
 
     # --- public API ----------------------------------------------------------
 
@@ -538,7 +545,7 @@ class Index:
         links_to=None,
         linked_from=None,
     ):
-        """Semantic search: cosine similarity between the query and every chunk."""
+        """Semantic search: the passages nearest the query's embedding, by cosine similarity (see `vectors`)."""
         k, where = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
         return _present(self._hits(self._semantic(query, k, *where, all_passages)), fields, compact, sort)
@@ -568,15 +575,15 @@ class Index:
         fields, sort = _check_fields(fields), _check_sort(sort)
         candidates = max(candidates, k)
         keyword = self._keyword(_any_word(query), candidates, *where, all_passages)
-        cosines = self._scores(query) if query.strip() else None  # for the semantic candidates and every other
-        semantic = self._nearest(cosines, candidates, *where, all_passages) if cosines is not None else []
+        vector = self._vector(query) if query.strip() else None  # for the semantic candidates and every cosine
+        semantic = self._nearest(vector, candidates, *where, all_passages) if vector is not None else []
         hits = self._hits([(chunk, 0.0) for chunk in dict.fromkeys(chunk for chunk, _ in keyword + semantic)])
         if not hits:
             return []
         asked = set(_words(query))
         named = [_named(h, asked) for h in hits]
         rerank = np.asarray(self.models.rerank(query, [_passage(h, n) for h, n in zip(hits, named)]), np.float64)
-        scores = _blend(rerank, self._cosines(cosines, [h["chunk"] for h in hits]), np.array([bool(n) for n in named]))
+        scores = _blend(rerank, self._cosines(vector, [h["chunk"] for h in hits]), np.array([bool(n) for n in named]))
         for h, s in zip(hits, scores):
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])
@@ -628,9 +635,9 @@ class Index:
         if not own:
             raise LookupError(f"{id!r} has no embeddings yet, run `sift embed`")
         mean = np.mean([np.frombuffer(vec, np.float16) for _, vec in own], axis=0, dtype=np.float32)
-        scores = self.vectors.scores(mean / np.linalg.norm(mean))
-        scores = np.where(np.isin(self.vectors.ids, [chunk for chunk, _ in own]), -np.inf, scores)
-        return _present(self._hits(self._nearest(scores, k, *where, all_passages)), fields, compact, sort)
+        excluded = np.array([chunk for chunk, _ in own], np.int64)
+        nearest = self._nearest(mean / np.linalg.norm(mean), k, *where, all_passages, excluded)
+        return _present(self._hits(nearest), fields, compact, sort)
 
     def _place(self, id):
         """The collection and the path in it that `id` names: "collection/path", or an absolute path in a
@@ -855,7 +862,7 @@ class Index:
 
     def reindex(self, paths):
         """Read files again now, after they were written, changed or deleted, and embed their new passages if the index
-        is embedded: the next search finds them as they are, its vectors in memory following without a full load. Per
+        is embedded: the next search finds them as they are, the codes in memory following without a full load. Per
         file: {"id", "status"}, see indexing.reindex, with "chunks", its documents' passages, and "embedded", how many
         of them have vectors; and a "note" on anything that went wrong. Scans are left for `sift index` to read with
         OCR: a server runs this on its event loop, which reading one would hold up for minutes."""
@@ -875,8 +882,8 @@ class Index:
         return results
 
     def _embed_new(self, docs):
-        """Embed the passages of these documents that have no vector yet, if the index is embedded, and add them to the
-        vectors in memory. Returns why some weren't, or None."""
+        """Embed the passages of these documents that have no vector yet, if the index is embedded, and add their codes
+        to those in memory. Returns why some weren't, or None."""
         model = store.get_meta(self.db, "model")
         if model is None:  # never embedded: keyword search alone, and no model to load
             return None
@@ -899,10 +906,7 @@ class Index:
             sql = "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))"  # not removed meanwhile
             still = {c for (c,) in self.db.execute(sql, (json.dumps([row[0] for row in rows]),))}
             keep = [i for i, row in enumerate(rows) if intact[i] and row[0] in still]
-            self.db.executemany(
-                "INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)",
-                [(rows[i][0], matrix[i].tobytes()) for i in keep],
-            )
+            store.put_vectors(self.db, [rows[i][0] for i in keep], matrix[keep])
             store.touch(self.db)
             after = store.get_meta(self.db, "version")
             self.db.commit()
@@ -913,14 +917,13 @@ class Index:
         return None if intact.all() else "some passages could not be embedded (the model returned NaN); try again"
 
     def _patch(self, before, after, removed=(), ids=(), matrix=None):
-        """Bring the vectors in memory from the index's version `before` to `after`, a change this index made itself,
-        without loading them all again. Vectors of another version are loaded anew by the next search anyway."""
+        """Bring the codes in memory from the index's version `before` to `after`, a change this index made itself,
+        without loading them all again. Codes of another version are loaded anew by the next search anyway."""
         if self.vectors is None or self.version != before or before == after:
             return
         if matrix is None:
             matrix = np.empty((0, int(store.get_meta(self.db, "dim"))), np.float16)
-        patched = patch(self.vectors, list(removed), list(ids), matrix)
-        self.vectors, self.version = (self.vectors, None) if patched is None else (patched, after)
+        self.vectors, self.version = self.vectors.patched(list(removed), list(ids), codes(matrix)), after
 
     def fields(self, collection, docs):
         """The front-matter fields of a collection (by id with `docs` documents), from a sample spread over it."""

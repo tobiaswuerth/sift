@@ -109,19 +109,13 @@ class Remote:
         import numpy as np  # here, not at the top: the CLI imports this module and starts with the standard library
 
         raw = self._request("/embed", {"texts": texts, "query": query})
-        return np.frombuffer(bytearray(raw), np.float16).reshape(len(texts), self.info["dim"])  # writable for PyTorch
+        return np.frombuffer(raw, np.float16).reshape(len(texts), self.info["dim"])
 
     def rerank(self, query, texts):
         """The worker's scores of (query, text) pairs."""
         import numpy as np
 
         return np.array(json.loads(self._request("/rerank", {"query": query, "texts": texts}))["scores"], np.float32)
-
-    def vectors(self, ids, matrix):
-        """The vectors stay in RAM, scored with NumPy: the worker only embeds and reranks."""
-        from .vectors import InRam
-
-        return InRam(ids, matrix)
 
     def release_idle(self):
         """The worker hands its GPU back itself."""
