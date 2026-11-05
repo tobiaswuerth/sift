@@ -117,12 +117,6 @@ class Remote:
 
         return np.array(json.loads(self._request("/rerank", {"query": query, "texts": texts}))["scores"], np.float32)
 
-    def vectors(self, ids, matrix):
-        """The vectors stay in RAM, scored with NumPy: the worker only embeds and reranks."""
-        from .vectors import InRam
-
-        return InRam(ids, matrix)
-
     def release_idle(self):
         """The worker hands its GPU back itself."""
         return False

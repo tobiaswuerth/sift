@@ -6,7 +6,7 @@ import os
 import numpy as np
 import pytest
 
-from sift import indexing, readers, store
+from sift import indexing, readers, search, store
 from sift.search import Index
 
 from .conftest import write
@@ -41,7 +41,7 @@ def test_a_new_note_is_found_at_once(live, monkeypatch):
     assert index.reindex([NEW]) == [{"id": NEW, "status": "added", "chunks": 1, "embedded": 1}]
     assert len(reads) == 1  # the offer linking it isn't read again
     assert ids(index.search("press line")) == [NEW]
-    monkeypatch.setattr(index.models, "vectors", lambda *args: pytest.fail("all vectors loaded again"))
+    monkeypatch.setattr(search, "Codes", lambda *args: pytest.fail("all codes loaded again"))
     assert ids(index.vsearch("maintenance of the press line", k=1)) == [NEW]
     assert index.links(OFFER)["out"][1]["id"] == NEW
 
@@ -82,20 +82,18 @@ def test_vectors_in_memory_follow_every_change(live):
     write(vault / "a.md", "Alpha note, changed.\n")
     (vault / "b.md").unlink()
     index.reindex(["vault/a.md", "vault/b.md"])
-    held = dict(zip(index.vectors.ids.tolist(), index.vectors.scores(np.ones(64, np.float16) / 8).tolist()))
-    index.version = None
-    index.load()
-    loaded = dict(zip(index.vectors.ids.tolist(), index.vectors.scores(np.ones(64, np.float16) / 8).tolist()))
-    assert held == pytest.approx(loaded)
+    (held_ids, held), (loaded_ids, loaded) = held_and_loaded(index)
+    assert held_ids == loaded_ids
+    assert held == loaded
 
 
 def held_and_loaded(index):
-    """The vectors a running server holds, and those it would load anew: {chunk id: score} each, and the ids."""
-    query = np.ones(64, np.float16) / 8
-    held = (index.vectors.ids.tolist(), index.vectors.scores(query).tolist())
+    """The codes a running server holds, and those it would load anew: (chunk ids, codes as bytes) each."""
     fresh = Index(index.db, index.models)
     fresh.load()
-    return held, (fresh.vectors.ids.tolist(), fresh.vectors.scores(query).tolist())
+    return [
+        (ids.tolist(), [row.tobytes() for row in bits]) for ids, bits in (index.vectors.live(), fresh.vectors.live())
+    ]
 
 
 def test_a_note_rewritten_under_its_old_chunk_ids(live):
@@ -109,7 +107,7 @@ def test_a_note_rewritten_under_its_old_chunk_ids(live):
     assert index.reindex(["vault/Beat Keller.md"])[0]["status"] == "changed"
     (held_ids, held), (loaded_ids, loaded) = held_and_loaded(index)
     assert held_ids == loaded_ids
-    assert held == pytest.approx(loaded)
+    assert held == loaded
     assert "vault/Beat Keller.md" not in ids(index.vsearch("Regatten Bodensee", k=1))
 
 
@@ -150,7 +148,7 @@ def test_vectors_in_memory_match_a_fresh_load_through_many_changes(live):
         index.reindex([f"vault/{name}"])
         (held_ids, held), (loaded_ids, loaded) = held_and_loaded(index)
         assert held_ids == loaded_ids, f"step {step}"
-        assert held == pytest.approx(loaded), f"step {step}"
+        assert held == loaded, f"step {step}"
 
 
 def test_vectors_changed_elsewhere_are_loaded_anew(live, monkeypatch):
@@ -160,8 +158,8 @@ def test_vectors_changed_elsewhere_are_loaded_anew(live, monkeypatch):
     index.db.commit()
     write(vault / "a.md", "Alpha note.\n")
     index.reindex(["vault/a.md"])
-    loads, real = [], index.models.vectors
-    monkeypatch.setattr(index.models, "vectors", lambda *args: loads.append(1) or real(*args))
+    loads, real = [], search.Codes
+    monkeypatch.setattr(search, "Codes", lambda *args: loads.append(1) or real(*args))
     assert ids(index.vsearch("alpha note", k=1)) == ["vault/a.md"]
     assert loads == [1]
 

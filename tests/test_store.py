@@ -3,9 +3,10 @@
 import sqlite3
 import time
 
+import numpy as np
 import pytest
 
-from sift import store
+from sift import embed, store, vectors
 from sift.search import Index
 
 
@@ -65,6 +66,101 @@ def test_an_index_of_sift_0_7_gets_front_matter_into_its_keyword_index(embedded,
     assert db.execute("SELECT count(*) FROM vectors").fetchone() == vectors
     assert [h["id"] for h in Index(db).search("cs.GR")] == ["notes/robots/brush.md"]
     assert "updating the keyword index" in capsys.readouterr().err
+
+
+def codes_and_vectors(db):
+    """The codes the index holds, and the codes of the vectors it holds: the same when they agree."""
+    held = dict(db.execute("SELECT chunk, bits FROM codes"))
+    rows = db.execute("SELECT chunk, vec FROM vectors ORDER BY chunk").fetchall()
+    dim = int(store.get_meta(db, "dim"))
+    expected = {
+        chunk: vectors.codes(np.frombuffer(vec, np.float16).reshape(1, dim))[0].tobytes() for chunk, vec in rows
+    }
+    return held, expected
+
+
+def test_vectors_are_stored_with_their_codes(embedded):
+    held, expected = codes_and_vectors(embedded[0])
+    assert held == expected
+    assert len(held) == 3
+
+
+def test_an_index_of_sift_1_6_gets_its_codes_once(embedded, home, capsys):
+    # Codes come from the vectors the index holds: no file is read, nothing embedded again.
+    db, _ = embedded
+    db.executescript("DROP TRIGGER codes_go_with_vectors; DROP TABLE codes; PRAGMA user_version = 4;")
+    db.close()
+    capsys.readouterr()
+    db = store.connect(home)
+    assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
+    held, expected = codes_and_vectors(db)
+    assert held == expected
+    assert "adding the codes of 3 vectors" in capsys.readouterr().err
+    store.connect(home)
+    assert "codes" not in capsys.readouterr().err  # once
+
+
+def test_an_upgrade_stopped_half_way_goes_on(embedded, home):
+    db, _ = embedded
+    db.execute("DELETE FROM codes WHERE chunk = (SELECT max(chunk) FROM codes)")  # as if stopped before the last
+    db.execute("PRAGMA user_version = 4")
+    db.commit()
+    db.close()
+    held, expected = codes_and_vectors(store.connect(home))
+    assert held == expected
+
+
+def test_an_upgrade_interrupted_in_a_batch_keeps_the_batches_before(embedded, home, monkeypatch):
+    db, _ = embedded
+    db.executescript("DROP TRIGGER codes_go_with_vectors; DROP TABLE codes; PRAGMA user_version = 4;")
+    db.close()
+    monkeypatch.setattr(store, "CODES_BATCH", 1)
+    calls, real = [], store._put_codes
+
+    def interrupted(*args):
+        calls.append(1)
+        real(*args)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(store, "_put_codes", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        store.connect(home)
+    monkeypatch.undo()
+    db = sqlite3.connect(home / "sift.db")
+    assert (db.execute("PRAGMA user_version").fetchone(), db.execute("SELECT count(*) FROM codes").fetchone()) == (
+        (4,),
+        (1,),
+    )
+    db.close()
+    held, expected = codes_and_vectors(store.connect(home))
+    assert held == expected
+
+
+def test_an_upgrade_skips_vectors_of_another_length(embedded, home):
+    # A vector of another length than the index's can't be searched with the others: it gets no code, and the upgrade
+    # still finishes.
+    db, _ = embedded
+    db.executescript("DROP TRIGGER codes_go_with_vectors; DROP TABLE codes; PRAGMA user_version = 4;")
+    odd = db.execute("SELECT max(chunk) FROM vectors").fetchone()[0]
+    db.execute("UPDATE vectors SET vec = ? WHERE chunk = ?", (bytes(10), odd))
+    db.commit()
+    db.close()
+    db = store.connect(home)
+    assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
+    assert [chunk for (chunk,) in db.execute("SELECT chunk FROM codes")] == sorted(
+        chunk for (chunk,) in db.execute("SELECT chunk FROM vectors WHERE chunk != ?", (odd,))
+    )
+
+
+def test_codes_go_with_their_vectors(embedded):
+    db, _ = embedded
+    store.delete_docs(db, [doc_ids(db)["rl.md"]])
+    held, expected = codes_and_vectors(db)
+    assert held == expected
+    assert len(held) == 2
+    embed.embed_pending(db, reset=True)
+    assert codes_and_vectors(db)[0] == codes_and_vectors(db)[1]
 
 
 def test_add_collection_defaults_name_to_folder(tmp_path, notes):

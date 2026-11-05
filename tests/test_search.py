@@ -226,6 +226,13 @@ def test_vsearch_reloads_after_index_changes(embedded):
     assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
 
 
+def test_codes_load_in_batches(embedded, monkeypatch):
+    # Millions of codes load a batch at a time, not as one list of rows.
+    monkeypatch.setattr(store, "CODES_BATCH", 2)
+    found = ids(Index(embedded[0]).vsearch("reward shaping", k=3))
+    assert (found[0], len(found)) == ("notes/rl.md", 3)
+
+
 def test_vsearch_after_interrupted_reset_asks_for_embedding(embedded, fake_models, monkeypatch):
     db, _ = embedded
     index = Index(db)
@@ -250,11 +257,6 @@ class Constant:
     def rerank(self, query, texts):
         return np.arange(len(texts), dtype=np.float32)  # the later a candidate, the better
 
-    def vectors(self, ids, matrix):
-        from sift.vectors import InRam
-
-        return InRam(ids, matrix)
-
 
 def test_search_uses_the_models_it_is_given(embedded):
     index = Index(embedded[0], models=Constant())
@@ -263,18 +265,14 @@ def test_search_uses_the_models_it_is_given(embedded):
     assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
 
 
-class Alike(Constant):
-    """Constant models whose vectors are all alike, so every cosine with a query is the same."""
-
-    def vectors(self, ids, matrix):
-        return super().vectors(ids, np.ones_like(matrix))
-
-
 def test_query_scores_are_the_rerankers_raw_scores_when_the_cosines_agree(embedded):
     # Through a sigmoid they ran from 0 to 1, but saturated: Ettin scores close matches 8 to 12, so every hit showed
     # 0.9999, and an off-topic query's best still 0.98. The raw scores tell strong hits from weak ones; the cosine
     # shifts them only where the candidates differ in meaning.
-    hits = Index(embedded[0], models=Alike()).query("anything")
+    db = embedded[0]
+    db.execute("UPDATE vectors SET vec = ?", (np.ones(64, np.float16).tobytes(),))  # every cosine the same
+    db.commit()
+    hits = Index(db, models=Constant()).query("anything")
     assert [h["score"] for h in hits] == [2.0, 1.0, 0.0]
 
 
@@ -471,7 +469,7 @@ def test_status(embedded):
     ]
 
 
-def test_vectors_reload_while_on_the_gpu(embedded, make_local):
+def test_codes_reload_with_the_models_on_the_gpu(embedded, make_local):
     db, root = embedded
     index = Index(db, models=make_local(accelerator=PretendGpu))
     assert "notes/rl.md" in ids(index.vsearch("reward shaping"))

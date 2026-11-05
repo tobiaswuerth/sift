@@ -1,5 +1,5 @@
-"""The accelerator: which device sift computes on, how much of its memory it may use, and when models and vectors
-leave the GPU. GPU memory and the clock are fakes; PyTorch itself is real."""
+"""The accelerator: which device sift computes on, how much of its memory it may use, and when models leave the GPU.
+GPU memory and the clock are fakes; PyTorch itself is real."""
 
 import logging
 import sys
@@ -54,11 +54,6 @@ def test_half_precision_is_bfloat16_where_the_gpu_has_it(make, monkeypatch, devi
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda *a, **k: bf16)
     dtype = make(device).half_precision
     assert (None if dtype is None else str(dtype).removeprefix("torch.")) == half
-
-
-@pytest.mark.parametrize("device, gpu", [("cuda", True), ("cuda:1", True), ("mps", True), ("cpu", False)])
-def test_vectors_are_searched_in_fp16_on_gpus_only(make, device, gpu):
-    assert (make(device).gpu, make(device).fp16) == (gpu, gpu)  # CPUs are slow at fp16
 
 
 def test_harmless_torch_windows_note_is_silenced():

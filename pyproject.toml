@@ -12,7 +12,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Tobias Würth" }]
 requires-python = ">=3.11"
 dependencies = [
-    "numpy>=1.26",
+    "numpy>=2.0",  # np.bitwise_count, which counts the bits of the codes
     "torch>=2.4",
     "sentence-transformers>=6.1",  # the module layout embeddinggemma-2 is saved in
     "transformers>=5.18",  # the first release with embeddinggemma-2

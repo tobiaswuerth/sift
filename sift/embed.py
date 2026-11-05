@@ -125,10 +125,7 @@ def _store_vectors(db, chunks, vectors, model):
     """Store the intact vectors and commit. A NaN vector, an overflow inside the model, stays out, so its chunk
     stays pending. Returns how many stayed out."""
     intact = np.isfinite(vectors).all(axis=1)
-    db.executemany(
-        "INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)",
-        [(chunk, vec.tobytes()) for chunk, vec, ok in zip(chunks, vectors, intact) if ok],
-    )
+    store.put_vectors(db, [chunk for chunk, ok in zip(chunks, intact) if ok], vectors[intact])
     store.set_meta(db, "model", model)
     store.set_meta(db, "dim", vectors.shape[1])
     store.touch(db)  # tells a running server to reload vectors
