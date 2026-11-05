@@ -14,8 +14,7 @@ from pathlib import Path
 
 from . import console, readers, settings
 
-SCHEMA_VERSION = 5  # in SQLite's user_version; sift 0.2 and older had none, 0.3 to 0.7 had 2, 0.8 to 1.0 had 3, 1.1 to
-# 1.6 had 4
+SCHEMA_VERSION = 5  # in SQLite's user_version; sift 0.2 and older had none, 0.3-0.7 had 2, 0.8-1.0 3, 1.1-1.6 4
 # The keyword index reads chunks through a view: each with its document's title, and its front-matter values but the
 # title, e.g. authors and ids, as `meta`. Inserting and deleting read it alike, so the two always agree.
 KEYWORD_INDEX = """
