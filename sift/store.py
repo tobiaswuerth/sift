@@ -173,12 +173,11 @@ def _add_codes(db):
     import numpy as np  # here, not at the top: the CLI starts with the standard library alone
 
     db.executescript(CODES)
-    total = db.execute("SELECT count(*) FROM vectors").fetchone()[0]
-    if total:
-        console.say(f"adding the codes of {total:,} vectors, once, which searches load instead of the vectors ...")
+    uncoded = "vectors v WHERE NOT EXISTS (SELECT 1 FROM codes c WHERE c.chunk = v.chunk)"
+    if missing := db.execute(f"SELECT count(*) FROM {uncoded}").fetchone()[0]:  # all, unless an upgrade stopped
+        console.say(f"adding the codes of {console.count(missing, 'vector')}, once, which searches load instead ...")
     last = -1
-    sql = """SELECT v.chunk, v.vec FROM vectors v WHERE v.chunk > ?
-             AND NOT EXISTS (SELECT 1 FROM codes c WHERE c.chunk = v.chunk) ORDER BY v.chunk LIMIT ?"""
+    sql = f"SELECT v.chunk, v.vec FROM {uncoded} AND v.chunk > ? ORDER BY v.chunk LIMIT ?"
     size, batch = 2 * int(get_meta(db, "dim", 0)), True
     while batch:
         db.execute("BEGIN IMMEDIATE")  # before reading: another sift may change vectors until then

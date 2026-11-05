@@ -100,14 +100,16 @@ def test_an_index_of_sift_1_6_gets_its_codes_once(embedded, home, capsys):
     assert "codes" not in capsys.readouterr().err  # once
 
 
-def test_an_upgrade_stopped_half_way_goes_on(embedded, home):
+def test_an_upgrade_stopped_half_way_goes_on(embedded, home, capsys):
     db, _ = embedded
     db.execute("DELETE FROM codes WHERE chunk = (SELECT max(chunk) FROM codes)")  # as if stopped before the last
     db.execute("PRAGMA user_version = 4")
     db.commit()
     db.close()
+    capsys.readouterr()
     held, expected = codes_and_vectors(store.connect(home))
     assert held == expected
+    assert "adding the codes of 1 vector," in capsys.readouterr().err  # those still without one
 
 
 def test_an_upgrade_interrupted_in_a_batch_keeps_the_batches_before(embedded, home, monkeypatch):
@@ -182,8 +184,18 @@ def test_codes_go_with_their_vectors(embedded):
     held, expected = codes_and_vectors(db)
     assert held == expected
     assert len(held) == 2
-    embed.embed_pending(db, reset=True)
-    assert codes_and_vectors(db)[0] == codes_and_vectors(db)[1]
+
+
+def test_codes_go_with_a_reset(embedded, fake_models, monkeypatch):
+    db, _ = embedded
+
+    def interrupted(texts, query=False):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(fake_models, "encode", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        embed.embed_pending(db, reset=True)
+    assert db.execute("SELECT count(*) FROM codes").fetchone() == (0,)
 
 
 def test_add_collection_defaults_name_to_folder(tmp_path, notes):
@@ -247,7 +259,7 @@ def test_remove_collection(corpus):
     db, root = corpus
     assert store.remove_collection(db, "notes") == 3  # documents removed
     assert (root / "rl.md").exists()  # only the index changes, never the files
-    for table in ("collections", "sources", "docs", "chunks", "fts", "vectors"):
+    for table in ("collections", "sources", "docs", "chunks", "fts", "vectors", "codes"):
         assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
     with pytest.raises(SystemExit, match="no collection"):
         store.remove_collection(db, "notes")
