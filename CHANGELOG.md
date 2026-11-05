@@ -29,6 +29,11 @@ Semantic search over tens of millions of passages, in RAM and without a GPU.
   goes on where it stopped. An older sift doesn't open an index so updated: upgrade every sift that uses it.
 - NumPy 2.0 or later is required.
 
+### Fixed
+
+- On a virtual Mac, PyTorch's warning that the GPU doesn't support Metal 2.0 no longer shows on every start; sift uses
+  the CPU there, as before.
+
 ## [1.6.0] - 2026-10-25
 
 ### Fixed
