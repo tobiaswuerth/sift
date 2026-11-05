@@ -396,7 +396,8 @@ def test_an_interrupted_reindex_changes_nothing(live, monkeypatch):
 def test_an_interrupted_embedding_stores_no_vectors(live, monkeypatch):
     index, vault = live
     write(vault / "a.md", "Alpha note.\n")
-    vectors = index.db.execute("SELECT count(*) FROM vectors").fetchone()
+    counts = "SELECT (SELECT count(*) FROM vectors), (SELECT count(*) FROM codes)"
+    before = index.db.execute(counts).fetchone()
 
     def failing(db):
         raise KeyboardInterrupt
@@ -404,7 +405,7 @@ def test_an_interrupted_embedding_stores_no_vectors(live, monkeypatch):
     monkeypatch.setattr(store, "touch", failing)
     with pytest.raises(KeyboardInterrupt):
         index.reindex(["vault/a.md"])
-    assert index.db.execute("SELECT count(*) FROM vectors").fetchone() == vectors
+    assert index.db.execute(counts).fetchone() == before
 
 
 @pytest.mark.parametrize("paths, error", [([], "at least one"), ("vault/a.md", "a list"), ([1], "a list")])
