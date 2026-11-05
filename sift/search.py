@@ -862,7 +862,7 @@ class Index:
 
     def reindex(self, paths):
         """Read files again now, after they were written, changed or deleted, and embed their new passages if the index
-        is embedded: the next search finds them as they are, its vectors in memory following without a full load. Per
+        is embedded: the next search finds them as they are, the codes in memory following without a full load. Per
         file: {"id", "status"}, see indexing.reindex, with "chunks", its documents' passages, and "embedded", how many
         of them have vectors; and a "note" on anything that went wrong. Scans are left for `sift index` to read with
         OCR: a server runs this on its event loop, which reading one would hold up for minutes."""
@@ -882,8 +882,8 @@ class Index:
         return results
 
     def _embed_new(self, docs):
-        """Embed the passages of these documents that have no vector yet, if the index is embedded, and add them to the
-        vectors in memory. Returns why some weren't, or None."""
+        """Embed the passages of these documents that have no vector yet, if the index is embedded, and add their codes
+        to those in memory. Returns why some weren't, or None."""
         model = store.get_meta(self.db, "model")
         if model is None:  # never embedded: keyword search alone, and no model to load
             return None

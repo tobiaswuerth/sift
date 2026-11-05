@@ -267,7 +267,7 @@ shorter than three characters are left out.
 **A note written a moment ago** is found by the next search, if the agent that wrote it calls `reindex` (or you run
 `sift index --files`): it reads those files at once, or drops the documents of files that are gone, without scanning
 the collection. Over MCP it also embeds their new passages, if the index is embedded, and a running server takes up
-their vectors without loading the others again. sift still never writes to your files.
+their codes without loading the others again. sift still never writes to your files.
 
 ### JSON Lines
 

@@ -1,4 +1,5 @@
-"""The SQLite index: one database holding every collection, document, chunk, the keyword index (FTS5) and the vectors.
+"""The SQLite index: one database holding every collection, document, chunk, the keyword index (FTS5), the vectors and
+their codes.
 
 The index holds the text of every document, so searching and reading never touch the files; they are read only when
 indexing (see `indexing`, and `readers` for the kinds of file).
@@ -219,7 +220,7 @@ def set_meta(db, key, value):
 
 
 def touch(db):
-    """Mark the vectors as changed, so a running server reloads them. Random, as clocks can tick too slowly."""
+    """Mark the vectors as changed, so a running server reloads their codes. Random, as clocks can tick too slowly."""
     set_meta(db, "version", uuid.uuid4().hex)
 
 
