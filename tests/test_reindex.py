@@ -1,5 +1,5 @@
 """Indexing files again on demand: a note written a moment ago is found by the next search, its links resolve, and a
-running server follows without loading every vector again."""
+running server follows without loading every code again."""
 
 import os
 
