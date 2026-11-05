@@ -21,6 +21,11 @@ PENDING = "chunks c JOIN docs d ON d.id = c.doc WHERE NOT EXISTS (SELECT 1 FROM 
 def embed_pending(db, reset=False, models=None, collections=None):
     """Embed every chunk without a vector, of the `collections` named or of all, slab by slab, with `models` (default:
     `models.default()`). Safe to interrupt and resume."""
+    if reset and collections:
+        raise SystemExit(
+            "--reset embeds every collection again, since all must share one model: "
+            "run `sift embed --reset` without collection names"
+        )
     scope, args = _scope(db, collections)
     models = models or _models.default()
     if reset:

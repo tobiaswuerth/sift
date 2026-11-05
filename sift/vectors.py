@@ -1,7 +1,7 @@
 """The index's vectors in memory as one bit per dimension, its sign: millions of passages searched in a sixteenth of the
 memory their fp16 vectors take, and without the GPU. `Codes.top` finds candidates by Hamming distance and scores the
 best of them exactly, with the vectors the index holds: over 3.2 million arXiv abstracts, scoring the 4,000 nearest
-exactly found 99.6% of exact search's top 10 and the same known-item MRR (docs/benchmarks.md).
+exactly found 99.6% of exact search's top 10, and a known-item MRR of 0.9528 against 0.9530 (docs/benchmarks.md).
 """
 
 import os

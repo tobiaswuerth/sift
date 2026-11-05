@@ -509,7 +509,7 @@ claims, and it embeds 1.6 times as fast.
   a sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with
   all of them by Hamming distance, on the CPU's cores (about 75 ms for 3.2 million), and the 4,000 nearest are scored
   exactly with their vectors from the index. Over 3.2 million arXiv abstracts this finds 99.6% of exact search's top
-  10, with the same MRR
+  10, with an MRR of 0.9528 against 0.9530
   ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#vectors-in-memory)). No index to
   build or tune, and no GPU. When the best passages come from a few documents, it looks further down until it has `k`
   documents.

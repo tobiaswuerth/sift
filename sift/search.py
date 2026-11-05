@@ -1,7 +1,8 @@
-"""Search: exact keyword (BM25), semantic (exact vector search), hybrid with reranking, and documents like one.
+"""Search: exact keyword (BM25), semantic (codes of the vectors, the nearest scored exactly), hybrid with reranking,
+and documents like one.
 
-The models embed queries and rerank, wherever they run (see `models`). Through a worker, the vectors are searched
-as a NumPy matrix and PyTorch never loads: a search starts in a fraction of a second, even on a light notebook."""
+The models embed queries and rerank, wherever they run (see `models`). Through a worker, PyTorch never loads: a search
+starts in a fraction of a second, even on a light notebook."""
 
 import json
 import os
@@ -419,17 +420,17 @@ class Index:
         if version is not None and version == self.version:
             return
         n = self.db.execute("SELECT count(*) FROM codes").fetchone()[0]
-        if not n:
-            raise LookupError("no embeddings yet, run `sift embed`")
         ids, bits, row = np.empty(n, np.int64), None, 0
         cursor = self.db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
-        while (batch := cursor.fetchmany(store.CODES_BATCH)) and row < n:
+        while row < n and (batch := cursor.fetchmany(store.CODES_BATCH)):
             batch = batch[: n - row]  # codes added since the count wait for the next load
             if bits is None:
                 bits = np.empty((n, len(batch[0][1])), np.uint8)
             rows = np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)
             ids[row : row + len(batch)], bits[row : row + len(batch)] = [chunk for chunk, _ in batch], rows
             row += len(batch)
+        if not row:  # none, or all deleted meanwhile
+            raise LookupError("no embeddings yet, run `sift embed`")
         self.vectors, self.version = Codes(ids[:row], bits[:row], self._exact), version
 
     def _exact(self, chunks):
@@ -544,7 +545,7 @@ class Index:
         links_to=None,
         linked_from=None,
     ):
-        """Semantic search: cosine similarity between the query and every chunk."""
+        """Semantic search: the passages nearest the query's embedding, by cosine similarity (see `vectors`)."""
         k, where = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
         return _present(self._hits(self._semantic(query, k, *where, all_passages)), fields, compact, sort)

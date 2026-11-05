@@ -196,7 +196,7 @@ def test_no_calibration_off_cuda(make, gpu_memory, device):
 
 
 class Thing:
-    """Something that moves between RAM and the GPU, like a model or the vectors."""
+    """Something that moves between RAM and the GPU, like a model."""
 
     def __init__(self, device):
         self.device, self.place = device, "ram"

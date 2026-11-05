@@ -48,6 +48,16 @@ def test_embed_some_collections(notes, tmp_path, home, fake_models, capsys):
         run(capsys, "embed", "nope")
 
 
+def test_embed_reset_takes_no_collection_names(notes, home, fake_models, capsys):
+    # A reset drops the vectors of every collection: embedding only those named left the others without any.
+    run(capsys, "add", str(notes))
+    run(capsys, "index")
+    run(capsys, "embed")
+    with pytest.raises(SystemExit, match="--reset embeds every collection again"):
+        run(capsys, "embed", "notes", "--reset")
+    assert "nothing to embed" in run(capsys, "embed").err  # nothing dropped
+
+
 def test_add_a_collection_titled_by_file_names(notes, home, capsys):
     write(notes / "Hans Müller.md", "## Summary\n\nKey account.\n")
     run(capsys, "add", str(notes), "--title-from", "name")

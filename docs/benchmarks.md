@@ -17,7 +17,8 @@ winner on a single dataset. To measure sift on your own documents, use
 - **Speed:** reranking takes about 0.3 seconds per query on an RTX 4090 and about 25 seconds on a CPU. Machines without
   a GPU should rerank through a [`sift worker`](../README.md#embedding-on-another-machine).
 - **Vectors in memory:** `vsearch` keeps one bit per dimension in RAM and scores the 4,000 nearest exactly. Over 3.2
-  million arXiv abstracts it finds 99.6% of exact search's top 10, with the same MRR, in a sixteenth of the memory.
+  million arXiv abstracts it finds 99.6% of exact search's top 10, with an MRR of 0.9528 against 0.9530, in a
+  sixteenth of the memory.
 
 ## Datasets
 

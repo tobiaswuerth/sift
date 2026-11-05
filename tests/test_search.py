@@ -233,6 +233,24 @@ def test_codes_load_in_batches(embedded, monkeypatch):
     assert (found[0], len(found)) == ("notes/rl.md", 3)
 
 
+def test_codes_gone_while_loading_ask_for_embedding(embedded):
+    # Another process dropped every vector (`sift embed --reset`) between counting the codes and reading them.
+    db, _ = embedded
+
+    class Racing:
+        def __getattr__(self, name):
+            return getattr(db, name)
+
+        def execute(self, sql, *args):
+            if sql.startswith("SELECT chunk, bits FROM codes"):
+                db.execute("DELETE FROM vectors")
+                db.commit()
+            return db.execute(sql, *args)
+
+    with pytest.raises(LookupError, match="sift embed"):
+        Index(Racing()).vsearch("reward")
+
+
 def test_vsearch_after_interrupted_reset_asks_for_embedding(embedded, fake_models, monkeypatch):
     db, _ = embedded
     index = Index(db)
