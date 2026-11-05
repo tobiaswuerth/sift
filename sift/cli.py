@@ -149,6 +149,7 @@ def main(argv=None):
         "`sift embed` embeds them",
     )
     s = sub.add_parser("embed", help="embed all chunks that have no vector yet")
+    s.add_argument("names", nargs="*", help="collections to embed (default: all)")
     s.add_argument("--reset", action="store_true", help="drop all vectors first (after changing the model)")
     for name, desc, subject in (
         ("search", "exact keyword search (BM25)", "query"),
@@ -305,7 +306,7 @@ def _run(a, db):
     elif a.cmd == "embed":
         from .embed import embed_pending
 
-        embed_pending(db, a.reset)
+        embed_pending(db, a.reset, collections=a.names)
     elif a.cmd in SEARCHES:
         from .search import Index
 

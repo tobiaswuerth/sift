@@ -18,24 +18,27 @@ PENDING = "chunks c JOIN docs d ON d.id = c.doc WHERE NOT EXISTS (SELECT 1 FROM 
 """The chunks still without a vector, as a FROM clause."""
 
 
-def embed_pending(db, reset=False, models=None):
-    """Embed every chunk without a vector, slab by slab, with `models` (default: `models.default()`). Safe to
-    interrupt and resume."""
+def embed_pending(db, reset=False, models=None, collections=None):
+    """Embed every chunk without a vector, of the `collections` named or of all, slab by slab, with `models` (default:
+    `models.default()`). Safe to interrupt and resume."""
+    scope, args = _scope(db, collections)
     models = models or _models.default()
     if reset:
         _forget_vectors(db)
     using = _model_for(db, models)
     _drop_broken_vectors(db)
-    total = db.execute(f"SELECT count(*) FROM {PENDING}").fetchone()[0]
+    total = db.execute(f"SELECT count(*) FROM {PENDING}{scope}", args).fetchone()[0]
+    named = ", ".join(collections or ())
     if not total:
-        console.say("nothing to embed")
+        console.say(f"nothing to embed in {named}" if named else "nothing to embed")
         return
-    console.say(f"embedding {total:,} chunks with {using} on {models.address}")
-    models.prepare(lambda: _longest_pending(db))
+    of = f" of {named}" if named else ""
+    console.say(f"embedding {console.count(total, 'chunk')}{of} with {using} on {models.address}")
+    models.prepare(lambda: _longest_pending(db, scope, args))
     done = broken = last = 0
-    slab = f"SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} AND c.id > ? "
+    slab = f"SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING}{scope} AND c.id > ? "
     with console.Progress(total, "chunks") as progress:
-        while rows := db.execute(slab + "ORDER BY c.id LIMIT ?", (last, SLAB)).fetchall():
+        while rows := db.execute(slab + "ORDER BY c.id LIMIT ?", (*args, last, SLAB)).fetchall():
             texts = [text_of(*row[1:]) for row in rows]
             vectors = encode(models, texts, lambda n, before=done: progress.update(before + n))
             broken += _store_vectors(db, [row[0] for row in rows], vectors, using)
@@ -43,6 +46,20 @@ def embed_pending(db, reset=False, models=None):
     console.say(f"embedded {done - broken:,} chunks in {console.duration(progress.elapsed)}")
     if broken:
         console.say(f"{console.count(broken, 'chunk')} could not be embedded (the model returned NaN); try again")
+
+
+def _scope(db, collections):
+    """A condition on the pending chunks' documents that keeps to the collections named, and its arguments; none for
+    all. An unknown name is an error that names those there are."""
+    if not collections:
+        return "", ()
+    ids = []
+    for name in collections:
+        row = db.execute("SELECT id FROM collections WHERE name = ?", (name,)).fetchone()
+        if row is None:
+            raise store.no_collection(db, name)
+        ids.append(row[0])
+    return f" AND d.collection IN ({', '.join('?' * len(ids))})", tuple(ids)
 
 
 def _forget_vectors(db):
@@ -79,12 +96,14 @@ def _drop_broken_vectors(db):
     db.commit()
 
 
-def _longest_pending(db):
-    """The longest text still to embed, to calibrate on: no batch can need more memory per text. None if none."""
+def _longest_pending(db, scope="", args=()):
+    """The longest text still to embed (within `scope`), to calibrate on: no batch can need more memory per text. None
+    if none."""
     sql = (
-        f"SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} ORDER BY c.len + length(d.title) DESC"
+        f"SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING}{scope} "
+        "ORDER BY c.len + length(d.title) DESC"
     )
-    return max((text_of(*row) for row in db.execute(sql + " LIMIT 100")), key=len, default=None)
+    return max((text_of(*row) for row in db.execute(sql + " LIMIT 100", args)), key=len, default=None)
 
 
 def encode(models, texts, report=None):
