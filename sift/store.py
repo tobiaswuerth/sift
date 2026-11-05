@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS codes(chunk INTEGER PRIMARY KEY, bits BLOB NOT NULL);
 CREATE TRIGGER IF NOT EXISTS codes_go_with_vectors AFTER DELETE ON vectors
     BEGIN DELETE FROM codes WHERE chunk = OLD.chunk; END;
 """
-CODES_BATCH = 100_000  # vectors per transaction while adding codes to an older index
+CODES_BATCH = 100_000  # codes per batch as searches load them, and per transaction as an older index gets them
 
 
 def connect(home=None) -> sqlite3.Connection:

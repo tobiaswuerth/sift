@@ -1,4 +1,4 @@
-"""sift's settings: four optional environment variables, read once per process."""
+"""sift's settings: five optional environment variables, read once per process."""
 
 from pathlib import Path
 

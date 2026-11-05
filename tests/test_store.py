@@ -135,8 +135,10 @@ def test_an_upgrade_interrupted_in_a_batch_keeps_the_batches_before(embedded, ho
         (1,),
     )
     db.close()
-    held, expected = codes_and_vectors(store.connect(home))
+    db = store.connect(home)
+    held, expected = codes_and_vectors(db)
     assert held == expected
+    assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
 
 
 def test_an_upgrade_codes_the_vectors_as_they_are_when_it_writes(embedded, home, monkeypatch):

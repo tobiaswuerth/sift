@@ -24,9 +24,9 @@ Semantic search over tens of millions of passages, in RAM and without a GPU.
   of 0.9528 against 0.9530 ([benchmarks](docs/benchmarks.md#vectors-in-memory)).
 - Only the models use the GPU; searching compares codes on the CPU's cores, and takes about 0.1 seconds over 3.3
   million passages.
-- The index's layout is version 5. An index of sift 1.1 to 1.6 updates itself on first use, once, from the vectors
-  it holds: nothing is embedded again. 3.3 million vectors take about a minute, and an update stopped half-way goes
-  on where it stopped. sift 1.6 doesn't open an index so updated: upgrade every sift that uses it.
+- The index's layout is version 5. An index of an earlier sift (0.3 on) updates itself on first use, once, from the
+  vectors it holds: nothing is embedded again. 3.3 million vectors take about a minute, and an update stopped half-way
+  goes on where it stopped. An older sift doesn't open an index so updated: upgrade every sift that uses it.
 - NumPy 2.0 or later is required.
 
 ## [1.6.0] - 2026-10-25
