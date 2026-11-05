@@ -8,6 +8,7 @@ leave free, minus headroom, and with too little, it uses the CPU instead.
 import contextlib
 import logging
 import sys
+import warnings
 from time import monotonic
 
 import torch
@@ -31,7 +32,9 @@ def detect():
     """An NVIDIA GPU (CUDA) if there is one, else an Apple GPU (MPS), else the CPU."""
     if torch.cuda.is_available():
         return "cuda"
-    return "mps" if torch.backends.mps.is_available() else "cpu"
+    with warnings.catch_warnings():  # a virtual Mac's: "Skipping device ... that does not support Metal 2.0"
+        warnings.filterwarnings("ignore", "Skipping device", UserWarning)
+        return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
 def cuda_pytorch_command(platform=sys.platform):

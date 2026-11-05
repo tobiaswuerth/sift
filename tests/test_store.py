@@ -128,7 +128,7 @@ def test_an_upgrade_interrupted_in_a_batch_keeps_the_batches_before(embedded, ho
     monkeypatch.setattr(store, "_put_codes", interrupted)
     with pytest.raises(KeyboardInterrupt):
         store.connect(home)
-    monkeypatch.undo()
+    monkeypatch.setattr(store, "_put_codes", real)  # not undo(): that would also undo closing the databases opened
     db = sqlite3.connect(home / "sift.db")
     assert (db.execute("PRAGMA user_version").fetchone(), db.execute("SELECT count(*) FROM codes").fetchone()) == (
         (4,),

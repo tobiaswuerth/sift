@@ -37,6 +37,24 @@ def test_the_device_is_cuda_then_mps_then_cpu(monkeypatch, cuda, mps, device):
     assert Accelerator().device == device
 
 
+def test_a_virtual_mac_gpu_is_passed_over_quietly(monkeypatch):
+    # Asked for the Apple GPU on a virtual Mac, PyTorch warns "Skipping device Apple Paravirtual device that does not
+    # support Metal 2.0": noise on every start, and with warnings as errors (the tests) a failure.
+    import warnings
+
+    import torch
+
+    def is_available():
+        warnings.warn(
+            "Skipping device Apple Paravirtual device that does not support Metal 2.0", UserWarning, stacklevel=2
+        )
+        return False
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", is_available)
+    assert accelerator.detect() == "cpu"
+
+
 @pytest.mark.parametrize(
     "device, bf16, half",
     [
