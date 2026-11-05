@@ -7,7 +7,7 @@ import pytest
 from sift import embed, indexing, search, store
 from sift.search import Index, _any_word
 
-from .conftest import PretendGpu, write
+from .conftest import write
 
 
 def ids(hits):
@@ -208,7 +208,8 @@ def test_vsearch(embedded):
 
 
 def test_broken_vectors_do_not_hide_the_others(embedded):
-    # PyTorch ranks NaN above every number, so as many NaN vectors as results asked for left vsearch with none.
+    # A NaN vector has no cosine. When PyTorch scored them it ranked NaN first: as many NaN vectors as results asked
+    # for left vsearch with none.
     db, _ = embedded
     nan = np.full(64, np.nan, np.float16).tobytes()
     db.execute("UPDATE vectors SET vec = ? WHERE chunk IN (SELECT chunk FROM vectors ORDER BY chunk LIMIT 2)", (nan,))
@@ -222,7 +223,7 @@ def test_vsearch_reloads_after_index_changes(embedded):
     index = Index(db)
     assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
     (root / "rl.md").unlink()
-    indexing.index(db)  # deletes rl.md and its vector; the cached matrix must not serve it
+    indexing.index(db)  # deletes rl.md and its vector; the codes in memory must not serve it
     assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
 
 
@@ -254,7 +255,7 @@ def test_codes_gone_while_loading_ask_for_embedding(embedded):
 def test_vsearch_after_interrupted_reset_asks_for_embedding(embedded, fake_models, monkeypatch):
     db, _ = embedded
     index = Index(db)
-    index.vsearch("reward")  # vectors cached
+    index.vsearch("reward")  # codes in memory
 
     def interrupted(texts, query=False):
         raise KeyboardInterrupt
@@ -485,15 +486,6 @@ def test_status(embedded):
         {"name": "notes", "path": path, "docs": 3, "chunks": 3, "embedded": 3, "fields": fields}
         | {"links": 0, "unresolved": 0}
     ]
-
-
-def test_codes_reload_with_the_models_on_the_gpu(embedded, make_local):
-    db, root = embedded
-    index = Index(db, models=make_local(accelerator=PretendGpu))
-    assert "notes/rl.md" in ids(index.vsearch("reward shaping"))
-    (root / "rl.md").unlink()
-    indexing.index(db)
-    assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
 
 
 # --- edge cases ----------------------------------------------------------------

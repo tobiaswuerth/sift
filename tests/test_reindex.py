@@ -21,7 +21,7 @@ def ids(hits):
 
 @pytest.fixture
 def live(linked, fake_models):
-    """The vault, embedded, and searched once, so its vectors are in memory as in a running server: (index, vault)."""
+    """The vault, embedded, and searched once, so its codes are in memory as in a running server: (index, vault)."""
     from sift import embed
 
     db, vault, _ = linked
@@ -73,7 +73,7 @@ def test_a_deleted_note(live):
     ]
 
 
-def test_vectors_in_memory_follow_every_change(live):
+def test_codes_in_memory_follow_every_change(live):
     # What a running server holds must equal what it would load anew.
     index, vault = live
     write(vault / "a.md", "Alpha note.\n")
@@ -128,7 +128,7 @@ def test_a_note_rewritten_under_its_old_chunk_ids_while_no_model_answers(live, m
     assert held_ids == loaded_ids
 
 
-def test_vectors_in_memory_match_a_fresh_load_through_many_changes(live):
+def test_codes_in_memory_match_a_fresh_load_through_many_changes(live):
     # Notes written, extended, rewritten and deleted in random order, as an agent works: after each reindex the
     # server must hold what it would load anew.
     import random
@@ -151,8 +151,8 @@ def test_vectors_in_memory_match_a_fresh_load_through_many_changes(live):
         assert held == loaded, f"step {step}"
 
 
-def test_vectors_changed_elsewhere_are_loaded_anew(live, monkeypatch):
-    # Another process changed the index meanwhile: patching the vectors in memory would miss its changes.
+def test_codes_changed_elsewhere_are_loaded_anew(live, monkeypatch):
+    # Another process changed the index meanwhile: patching the codes in memory would miss its changes.
     index, vault = live
     store.touch(index.db)
     index.db.commit()

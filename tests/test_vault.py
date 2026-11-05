@@ -28,7 +28,7 @@ def agent(linked, fake_models):
     def tool(name, **args):
         return data(call(mcp, name, args))
 
-    tool("vsearch", query="anything")  # the vectors are in memory, as in a running server
+    tool("vsearch", query="anything")  # the codes are in memory, as in a running server
     return tool, vault
 
 

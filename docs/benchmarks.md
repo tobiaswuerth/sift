@@ -220,8 +220,10 @@ and hit@10 are those of each paper's own first passage. "+ exact top N" scores t
 - **Hamming distance with 4,000 rescored** comes close to the float query's ranking (the query's values against the
   codes' signs) with 1,000. Hamming distance is 12 bit counts per code instead of 768 multiply-adds, and the 4,000
   vectors read from SQLite cost little next to a scan of millions.
-- Comparing a query with 3.2 million codes took about 75 ms on the i9-14900K's cores, measured while the machine was
-  busy with other work.
+- **On a copy of a real index**, 145 GB with 3,261,593 vectors (arXiv abstracts and notes), on the i9-14900K while it
+  was busy with other work: the upgrade from sift 1.6 added the codes in 65 seconds, `sift serve` loads them in 2.2
+  seconds, and a search (Hamming scan and exact scores) takes 95 ms (median; 108 ms at the 90th percentile). Of 200
+  of the title queries, it found 99.4% of exact search's top 10.
 
 ## Query expansion by the agent
 
