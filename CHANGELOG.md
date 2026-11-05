@@ -5,6 +5,28 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-05
+
+Semantic search over tens of millions of passages, in RAM and without a GPU.
+
+### Added
+
+- `sift embed COLLECTION ...` embeds only the chunks of the collections named, a new one first, say, while the others
+  wait. Without names it embeds every collection, as before.
+
+### Changed
+
+- `vsearch`, `query` and `similar` keep a code of each vector in memory, one bit per dimension, instead of the
+  vectors: a sixteenth of the memory, so 3.2 million passages take 0.3 GB of RAM instead of 4.9 GB on the GPU, and
+  40 million fit a desktop's RAM. The 4,000 nearest codes by Hamming distance are scored exactly with the vectors
+  the index holds. Over 3.2 million arXiv abstracts this finds 99.6% of exact search's top 10, with the same MRR
+  ([benchmarks](docs/benchmarks.md#vectors-in-memory)).
+- Only the models use the GPU; searching compares codes on the CPU's cores, about 75 ms for 3.2 million.
+- The index's layout is version 5. An index of sift 1.1 to 1.6 updates itself on first use, once, from the vectors
+  it holds: nothing is embedded again. A million vectors take about 7 seconds, and an update stopped half-way goes on
+  where it stopped. sift 1.6 doesn't open an index so updated: upgrade every sift that uses it.
+- NumPy 2.0 or later is required.
+
 ## [1.6.0] - 2026-10-25
 
 ### Fixed

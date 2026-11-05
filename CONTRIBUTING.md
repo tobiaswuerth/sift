@@ -30,7 +30,7 @@ pre-commit install
 | `local.py` | `Local`: the embedding model and reranker of this machine |
 | `remote.py` | `Remote`: a `sift worker` on another machine, used like `Local` |
 | `accelerator.py` | `Accelerator`: the device, its memory budget, batch sizes, and what is on the GPU when |
-| `vectors.py` | The index's vectors as one matrix to score queries against: `InRam` (NumPy) or `OnGpu` (PyTorch) |
+| `vectors.py` | The vectors' codes in RAM, one bit per dimension: candidates by Hamming distance, scored exactly |
 | `server.py` | `sift serve`: the MCP server, and the UI under /ui |
 | `ui.py` | `sift ui`: the views of the browser UI; `web/` holds its templates, styles and script, and htmx 2.0.11 (0BSD) as its release ships it |
 | `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |

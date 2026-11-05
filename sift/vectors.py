@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 RESCORE = 4000  # candidates scored exactly, at least
-BLOCK = 1 << 20  # codes per thread at a time
+BLOCK = 1 << 15  # codes per thread at a time: their XOR, 3 MB at 768 dimensions, stays in the cache
 THREADS = min(16, os.cpu_count() or 1)
 FAR = np.iinfo(np.uint16).max  # the distance of a code left out
 

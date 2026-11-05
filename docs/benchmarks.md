@@ -16,6 +16,8 @@ winner on a single dataset. To measure sift on your own documents, use
   worse on scientific text, and indexes 1.6 times as fast.
 - **Speed:** reranking takes about 0.3 seconds per query on an RTX 4090 and about 25 seconds on a CPU. Machines without
   a GPU should rerank through a [`sift worker`](../README.md#embedding-on-another-machine).
+- **Vectors in memory:** `vsearch` keeps one bit per dimension in RAM and scores the 4,000 nearest exactly. Over 3.2
+  million arXiv abstracts it finds 99.6% of exact search's top 10, with the same MRR, in a sixteenth of the memory.
 
 ## Datasets
 
@@ -190,6 +192,35 @@ not written yet. On the same machine, best of 3:
 - **Notes without links read as fast as before:** 20,000 of them in 0.617 s before reading links, 0.626 s after.
 - **An index without notes upgrades in a moment:** 3.2 million arXiv abstracts in JSON Lines took under a second,
   and searched as before, result for result.
+
+## Vectors in memory
+
+Exact search over fp16 vectors holds 1.5 KB per 768-dimensional passage: 4.9 GB for 3.2 million arXiv abstracts, 60 GB
+for 40 million passages. Each scheme below was compared with exact search over the 3,215,416 arXiv abstract passages
+(EmbeddingGemma-2), for 2,000 known-item title queries: recall@k is the share of exact search's top k it finds, MRR@10
+and hit@10 are those of each paper's own first passage. "+ exact top N" scores the N nearest by the scheme exactly.
+
+| Scheme | Bytes per vector | Recall@10 | Recall@40 | MRR@10 | Hit@10 |
+|---|---|---|---|---|---|
+| Exact (fp16) | 1,536 | 1.000 | 1.000 | 0.9530 | 0.9905 |
+| int8, a scale per vector | 772 | 0.965 | 0.968 | 0.9527 | 0.9905 |
+| First 512 dimensions | 1,024 | 0.852 | 0.848 | 0.9483 | 0.9885 |
+| First 256 dimensions | 512 | 0.686 | 0.671 | 0.9280 | 0.9790 |
+| Binary, Hamming distance | 96 | 0.454 | 0.420 | 0.8936 | 0.9680 |
+| Binary, Hamming + exact top 100 | 96 | 0.839 | 0.614 | 0.9513 | 0.9865 |
+| Binary, Hamming + exact top 400 | 96 | 0.949 | 0.847 | 0.9525 | 0.9900 |
+| Binary, Hamming + exact top 1,000 | 96 | 0.980 | 0.933 | 0.9528 | 0.9905 |
+| **Binary, Hamming + exact top 4,000** | **96** | **0.996** | **0.986** | **0.9528** | **0.9905** |
+| Binary, float query + exact top 400 | 96 | 0.992 | 0.955 | 0.9530 | 0.9905 |
+| Binary, float query + exact top 1,000 | 96 | 0.998 | 0.988 | 0.9528 | 0.9905 |
+
+- **One bit per dimension, then exact scores, keeps the quality** at a sixteenth of the memory. Truncating to fewer
+  dimensions (EmbeddingGemma is trained for it) loses more than binary codes rescored.
+- **Hamming distance with 4,000 rescored** comes close to the float query's ranking (the query's values against the
+  codes' signs) with 1,000. Hamming distance is 12 bit counts per code instead of 768 multiply-adds, and the 4,000
+  vectors read from SQLite cost little next to a scan of millions.
+- Comparing a query with 3.2 million codes took about 75 ms on the i9-14900K's cores, measured while the machine was
+  busy with other work.
 
 ## Query expansion by the agent
 
