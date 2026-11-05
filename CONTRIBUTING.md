@@ -34,7 +34,7 @@ pre-commit install
 | `server.py` | `sift serve`: the MCP server, and the UI under /ui |
 | `ui.py` | `sift ui`: the views of the browser UI; `web/` holds its templates, styles and script, and htmx 2.0.11 (0BSD) as its release ships it |
 | `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |
-| `settings.py` | The four optional environment variables, read once (`settings.current()`) |
+| `settings.py` | The five optional environment variables, read once (`settings.current()`) |
 | `console.py` | What sift tells the user, on stderr: messages, plurals, commands to paste, and one progress bar for every long step |
 
 Search and embedding never ask where the models run: they take a `Models` object, `Local` or `Remote`. Only

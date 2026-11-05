@@ -109,7 +109,7 @@ class Remote:
         import numpy as np  # here, not at the top: the CLI imports this module and starts with the standard library
 
         raw = self._request("/embed", {"texts": texts, "query": query})
-        return np.frombuffer(bytearray(raw), np.float16).reshape(len(texts), self.info["dim"])  # writable for PyTorch
+        return np.frombuffer(raw, np.float16).reshape(len(texts), self.info["dim"])
 
     def rerank(self, query, texts):
         """The worker's scores of (query, text) pairs."""

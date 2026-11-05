@@ -137,6 +137,29 @@ def test_an_upgrade_interrupted_in_a_batch_keeps_the_batches_before(embedded, ho
     assert held == expected
 
 
+def test_an_upgrade_codes_the_vectors_as_they_are_when_it_writes(embedded, home, monkeypatch):
+    # Another sift may re-embed a chunk between the upgrade reading a batch and writing its codes: each code must be
+    # that of the vector the index holds afterwards.
+    db, _ = embedded
+    db.executescript("DROP TRIGGER codes_go_with_vectors; DROP TABLE codes; PRAGMA user_version = 4;")
+    chunk, vec = db.execute("SELECT chunk, vec FROM vectors LIMIT 1").fetchone()
+    db.close()
+    flipped, real = (-np.frombuffer(vec, np.float16)).tobytes(), sqlite3.connect
+
+    class Racing(sqlite3.Connection):
+        def execute(self, sql, *args):
+            if sql == "BEGIN IMMEDIATE":  # the other sift writes just before the upgrade takes the lock
+                other = real(home / "sift.db")
+                other.execute("UPDATE vectors SET vec = ? WHERE chunk = ?", (flipped, chunk))
+                other.commit()
+                other.close()
+            return super().execute(sql, *args)
+
+    monkeypatch.setattr(store.sqlite3, "connect", lambda *args, **kwargs: real(*args, factory=Racing, **kwargs))
+    held, expected = codes_and_vectors(store.connect(home))
+    assert held == expected
+
+
 def test_an_upgrade_skips_vectors_of_another_length(embedded, home):
     # A vector of another length than the index's can't be searched with the others: it gets no code, and the upgrade
     # still finishes.

@@ -170,6 +170,8 @@ def _add_codes(db):
     """Add the codes searches load, computed from the vectors the index holds: nothing is embedded again. A batch per
     transaction, so that an upgrade stopped half-way goes on where it stopped, and another sift waits a batch at
     most."""
+    import numpy as np  # here, not at the top: the CLI starts with the standard library alone
+
     db.executescript(CODES)
     total = db.execute("SELECT count(*) FROM vectors").fetchone()[0]
     if total:
@@ -177,21 +179,20 @@ def _add_codes(db):
     last = -1
     sql = """SELECT v.chunk, v.vec FROM vectors v WHERE v.chunk > ?
              AND NOT EXISTS (SELECT 1 FROM codes c WHERE c.chunk = v.chunk) ORDER BY v.chunk LIMIT ?"""
-    import numpy as np  # here, not at the top: the CLI starts with the standard library alone
-
-    size = 2 * int(get_meta(db, "dim", 0))
-    while rows := db.execute(sql, (last, CODES_BATCH)).fetchall():
-        last, rows = rows[-1][0], [row for row in rows if len(row[1]) == size]  # another length: searches skip it
-        db.execute("BEGIN IMMEDIATE")
+    size, batch = 2 * int(get_meta(db, "dim", 0)), True
+    while batch:
+        db.execute("BEGIN IMMEDIATE")  # before reading: another sift may change vectors until then
         try:
-            matrix = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), size // 2)
-            _put_codes(db, [chunk for chunk, _ in rows], matrix)
+            if batch := db.execute(sql, (last, CODES_BATCH)).fetchall():
+                last, rows = batch[-1][0], [row for row in batch if len(row[1]) == size]  # another length: skipped
+                matrix = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), size // 2)
+                _put_codes(db, [chunk for chunk, _ in rows], matrix)
+            else:
+                db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             db.commit()
         except BaseException:
             db.rollback()
             raise
-    db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    db.commit()
 
 
 def put_vectors(db, chunks, matrix):
