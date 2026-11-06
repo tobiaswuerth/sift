@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import runpy
 import sqlite3
 import subprocess
@@ -281,10 +282,13 @@ def test_get_status_rm(cli_corpus, capsys):
     assert status["collections"][0]["embedded"] == 3
     assert json.loads(run(capsys, "status", "--json").out) == status  # as other commands take it; JSON anyway
     assert status["collections"][0]["path"] == str(cli_corpus)
+    store = status["collections"][0]["store"]
     err = run(capsys, "rm", "notes").err
-    assert "removed collection 'notes' and its 3 documents from the index" in err
+    assert "removed collection 'notes' and its index of 3 documents" in err
     assert "files on disk are untouched" in err
     assert json.loads(run(capsys, "status").out)["collections"] == []
+    assert not os.path.exists(store)  # its index is gone, its files stay
+    assert (cli_corpus / "rl.md").exists()
 
 
 def test_rm_reports_a_single_document(tmp_path, home, capsys):
@@ -293,7 +297,7 @@ def test_rm_reports_a_single_document(tmp_path, home, capsys):
     (folder / "only.md").write_text("# Only\n", encoding="utf-8")
     run(capsys, "add", str(folder))
     run(capsys, "index")
-    assert "and its 1 document from" in run(capsys, "rm", "one").err
+    assert "and its index of 1 document;" in run(capsys, "rm", "one").err
 
 
 @pytest.mark.parametrize(

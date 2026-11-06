@@ -6,10 +6,11 @@ import os
 
 import pytest
 
-from sift import indexing, store
+from sift import indexing
+from sift.catalog import Catalog
 from sift.search import Index
 
-from .conftest import keywords_agree, write
+from .conftest import write
 
 HANS, ANNA, ACME = (
     "vault/01_People/Hans Müller.md",
@@ -44,10 +45,10 @@ def note_vault(tmp_path, home, files):
     """A collection "v" of these notes, {path: text}, indexed."""
     for path, text in files.items():
         write(tmp_path / "v" / path, text)
-    db = store.connect(home)
-    store.add_collection(db, tmp_path / "v", "v")
-    indexing.index(db)
-    return db, tmp_path / "v"
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "v", "v")
+    indexing.index(catalog)
+    return catalog, tmp_path / "v"
 
 
 # --- the vault ---------------------------------------------------------------
@@ -108,16 +109,18 @@ def test_links_into_a_note(linked):
 def test_a_long_line_shows_around_its_link(tmp_path, home):
     # A paragraph is one line in Markdown: all of it, for each link, would fill an agent's context.
     before, after = "words " * 200, " more" * 200
-    db, _ = note_vault(tmp_path, home, {"Hans.md": "", "a.md": f"{before}[[Hans]]{after}", "b.md": f"[[Hans]]{after}"})
-    (a,), (b,) = (entry["links"] for entry in into(Index(db), "v/Hans.md"))
+    catalog, _ = note_vault(
+        tmp_path, home, {"Hans.md": "", "a.md": f"{before}[[Hans]]{after}", "b.md": f"[[Hans]]{after}"}
+    )
+    (a,), (b,) = (entry["links"] for entry in into(Index(catalog), "v/Hans.md"))
     assert (a["text"][0], a["text"][-1], len(a["text"])) == ("…", "…", 302)
     assert "[[Hans]]" in a["text"]
     assert (b["text"][:13], b["text"][-1], len(b["text"])) == ("[[Hans]] more", "…", 301)
 
 
 def test_a_line_shows_once_however_often_it_links(tmp_path, home):
-    db, _ = note_vault(tmp_path, home, {"Hans.md": "", "a.md": "[[Hans]] and [[Hans|him]]\n\n[[hans]]"})
-    assert into(Index(db), "v/Hans.md")[0]["links"] == [
+    catalog, _ = note_vault(tmp_path, home, {"Hans.md": "", "a.md": "[[Hans]] and [[Hans|him]]\n\n[[hans]]"})
+    assert into(Index(catalog), "v/Hans.md")[0]["links"] == [
         {"line": 1, "text": "[[Hans]] and [[Hans|him]]"},
         {"line": 3, "text": "[[hans]]"},
     ]
@@ -198,14 +201,14 @@ def test_links_of_unknown_documents(linked):
 
 
 def test_a_note_named_as_links_name_it(linked, tmp_path):
-    db = linked[0]
-    index = Index(db)
+    catalog = linked[0]
+    index = Index(catalog)
     assert index.links("Acme AG", "in")["id"] == ACME
     assert index.links("[[Hans Mueller]]")["id"] == HANS  # by its alias
     assert [h["id"] for h in index.mentions("Hans Müller")] == ["work/contract.md"]
     write(tmp_path / "other" / "Acme AG.md", "Another Acme.\n")
-    store.add_collection(db, tmp_path / "other", "other")
-    indexing.index(db)
+    catalog.add(tmp_path / "other", "other")
+    indexing.index(catalog)
     with pytest.raises(LookupError, match=r"'Acme AG' matches other/Acme AG\.md, vault/02_Organizations/Acme AG\.md"):
         index.links("Acme AG")
 
@@ -223,7 +226,7 @@ def test_unresolved_targets(linked):
 
 
 def test_unresolved_targets_most_linked_first(tmp_path, home):
-    db, _ = note_vault(
+    catalog, _ = note_vault(
         tmp_path,
         home,
         {
@@ -232,15 +235,15 @@ def test_unresolved_targets_most_linked_first(tmp_path, home):
             "c.md": "[[Missing]]",
         },
     )
-    assert Index(db).unresolved(k=2) == [
+    assert Index(catalog).unresolved(k=2) == [
         {"target": "Missing", "docs": 3, "ids": ["v/a.md", "v/b.md", "v/c.md"]},
         {"target": "Elsewhere/Missing", "docs": 1, "ids": ["v/b.md"]},
     ]
 
 
 def test_a_path_to_nowhere_is_unresolved_though_its_name_is_known(tmp_path, home):
-    db, _ = note_vault(tmp_path, home, {"People/Hans.md": "", "a.md": "[[Other/Hans]] [x](Nope/Hans.md) [[Hans]]"})
-    assert Index(db).unresolved() == [
+    catalog, _ = note_vault(tmp_path, home, {"People/Hans.md": "", "a.md": "[[Other/Hans]] [x](Nope/Hans.md) [[Hans]]"})
+    assert Index(catalog).unresolved() == [
         {"target": "Nope/Hans.md", "docs": 1, "ids": ["v/a.md"]},
         {"target": "Other/Hans", "docs": 1, "ids": ["v/a.md"]},
     ]
@@ -256,7 +259,7 @@ def test_status_counts_links(linked):
 
 
 def test_a_link_resolves_as_obsidian_resolves_it(tmp_path, home):
-    db, _ = note_vault(
+    catalog, _ = note_vault(
         tmp_path,
         home,
         {
@@ -272,7 +275,7 @@ def test_a_link_resolves_as_obsidian_resolves_it(tmp_path, home):
             "notes.txt": "plain text",
         },
     )
-    index = Index(db)
+    index = Index(catalog)
     hans = ["v/Archive/People/Hans.md", "v/People/Hans.md", "v/Projects/Hans.md"]
     assert resolved(out(index, "v/Projects/Plan.md")) == [
         ("Hans", ("v/Projects/Hans.md", "name")),  # of several of that name, the one in the note's folder
@@ -296,26 +299,26 @@ def test_a_link_resolves_as_obsidian_resolves_it(tmp_path, home):
 
 
 def test_a_partial_path_must_be_unique(tmp_path, home):
-    db, _ = note_vault(tmp_path, home, {"x/People/Hans.md": "", "y/People/Hans.md": "", "n.md": "[[People/Hans]]"})
-    assert resolved(out(Index(db), "v/n.md")) == [
+    catalog, _ = note_vault(tmp_path, home, {"x/People/Hans.md": "", "y/People/Hans.md": "", "n.md": "[[People/Hans]]"})
+    assert resolved(out(Index(catalog), "v/n.md")) == [
         ("People/Hans", ("ambiguous", ["v/x/People/Hans.md", "v/y/People/Hans.md"]))
     ]
 
 
 def test_an_alias_of_several_notes_is_ambiguous(tmp_path, home):
-    db, _ = note_vault(
+    catalog, _ = note_vault(
         tmp_path, home, {"a.md": "---\nalias: X\n---\n", "b.md": "---\naliases: [X]\n---\n", "n.md": "[[x]]"}
     )
-    assert resolved(out(Index(db), "v/n.md")) == [("x", ("ambiguous", ["v/a.md", "v/b.md"]))]
+    assert resolved(out(Index(catalog), "v/n.md")) == [("x", ("ambiguous", ["v/a.md", "v/b.md"]))]
 
 
 def test_ambiguous_links_name_a_few_candidates(tmp_path, home):
-    db, _ = note_vault(tmp_path, home, {**{f"{i}/Same.md": "" for i in range(7)}, "n.md": "[[Same]]"})
-    assert len(out(Index(db), "v/n.md")[0]["ambiguous"]) == 5
+    catalog, _ = note_vault(tmp_path, home, {**{f"{i}/Same.md": "" for i in range(7)}, "n.md": "[[Same]]"})
+    assert len(out(Index(catalog), "v/n.md")[0]["ambiguous"]) == 5
 
 
 def test_markdown_links_are_relative_to_their_note(tmp_path, home):
-    db, _ = note_vault(
+    catalog, _ = note_vault(
         tmp_path,
         home,
         {
@@ -328,7 +331,7 @@ def test_markdown_links_are_relative_to_their_note(tmp_path, home):
             "Notes/Plan B.md": "",
         },
     )
-    assert resolved(out(Index(db), "v/Notes/Plan.md")) == [
+    assert resolved(out(Index(catalog), "v/Notes/Plan.md")) == [
         ("../People/Hans.md", ("v/People/Hans.md", "path")),
         ("Hans.md", ("v/Notes/Hans.md", "path")),
         ("./Hans.md", ("v/Notes/Hans.md", "path")),
@@ -342,141 +345,60 @@ def test_markdown_links_are_relative_to_their_note(tmp_path, home):
 
 def test_names_compare_composed_and_in_any_case(tmp_path, home):
     # macOS hands out file names decomposed: ü as u and a combining diaeresis.
-    db, _ = note_vault(tmp_path, home, {"Hans Müller.md": "", "n.md": "[[hans müller]] [[HANS MÜLLER.md]]"})
-    assert [lk["via"] for lk in out(Index(db), "v/n.md")] == ["name", "name"]
+    catalog, _ = note_vault(tmp_path, home, {"Hans Müller.md": "", "n.md": "[[hans müller]] [[HANS MÜLLER.md]]"})
+    assert [lk["via"] for lk in out(Index(catalog), "v/n.md")] == ["name", "name"]
 
 
 def test_links_stay_in_their_collection(tmp_path, linked):
-    db = linked[0]
+    catalog = linked[0]
     write(tmp_path / "other" / "Peter Frei.md", "A note of another collection.\n")
-    store.add_collection(db, tmp_path / "other", "other")
-    indexing.index(db)
-    assert resolved(out(Index(db), HANS))[1] == ("Peter Frei", "unresolved")
+    catalog.add(tmp_path / "other", "other")
+    indexing.index(catalog)
+    assert resolved(out(Index(catalog), HANS))[1] == ("Peter Frei", "unresolved")
 
 
 def test_links_follow_notes_as_they_come_and_go(linked):
     # Without the linking notes being read again.
-    db, vault, _ = linked
-    offer = db.execute("SELECT id FROM docs WHERE path LIKE '03_Interactions/%'").fetchone()
+    catalog, vault, _ = linked
+    offer = catalog.store("vault").execute("SELECT id FROM docs WHERE path LIKE '03_Interactions/%'").fetchone()
     write(vault / "06_Topics" / "Wartungsvertrag 2027.md", "# Maintenance contract 2027\n")
-    indexing.index(db)
-    assert resolved(out(Index(db), OFFER))[1] == (
+    indexing.index(catalog)
+    assert resolved(out(Index(catalog), OFFER))[1] == (
         "Wartungsvertrag 2027",
         ("vault/06_Topics/Wartungsvertrag 2027.md", "name"),
     )
     (vault / "02_Organizations" / "Acme AG.md").rename(vault / "02_Organizations" / "Acme Group.md")
-    indexing.index(db)
-    assert resolved(out(Index(db), HANS))[0] == ("Acme AG", "unresolved")
-    assert db.execute("SELECT id FROM docs WHERE path LIKE '03_Interactions/%'").fetchone() == offer
+    indexing.index(catalog)
+    assert resolved(out(Index(catalog), HANS))[0] == ("Acme AG", "unresolved")
+    assert catalog.store("vault").execute("SELECT id FROM docs WHERE path LIKE '03_Interactions/%'").fetchone() == offer
 
 
 # --- storing links -----------------------------------------------------------
 
 
-def rows(db, table):
-    return db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+def rows(catalog, table):
+    """The rows of a table, in every collection's store."""
+    sql = f"SELECT count(*) FROM {table}"
+    return sum(catalog.store(c).execute(sql).fetchone()[0] for c in catalog.collections())
 
 
 def test_links_and_names_go_with_their_documents(linked):
-    db, vault, _ = linked
-    assert (rows(db, "links"), rows(db, "names")) == (6, 7)  # names: the 5 files, and Hans's 2 aliases
-    links_before = db.execute("SELECT id FROM links ORDER BY id").fetchall()
+    catalog, vault, _ = linked
+    assert (rows(catalog, "links"), rows(catalog, "names")) == (6, 7)  # names: the 5 files, and Hans's 2 aliases
+    links_before = catalog.store("vault").execute("SELECT id FROM links ORDER BY id").fetchall()
     os.utime(vault / "01_People" / "Hans Müller.md", ns=(10**18, 10**18))  # touched, unchanged: its rows stay
-    indexing.index(db)
-    assert db.execute("SELECT id FROM links ORDER BY id").fetchall() == links_before
+    indexing.index(catalog)
+    assert catalog.store("vault").execute("SELECT id FROM links ORDER BY id").fetchall() == links_before
     (vault / "01_People" / "Hans Müller.md").unlink()
-    indexing.index(db)
-    assert (rows(db, "links"), rows(db, "names")) == (4, 4)
-    store.remove_collection(db, "vault")
-    assert (rows(db, "links"), rows(db, "names")) == (0, 1)
+    indexing.index(catalog)
+    assert (rows(catalog, "links"), rows(catalog, "names")) == (4, 4)
+    catalog.remove("vault")
+    assert (rows(catalog, "links"), rows(catalog, "names")) == (0, 1)
 
 
 def test_records_have_no_names(tmp_path, home):
-    db, _ = note_vault(tmp_path, home, {"r.jsonl": json.dumps({"id": "Hans", "text": "[[Hans]]"}) + "\n"})
-    assert (rows(db, "links"), rows(db, "names")) == (0, 0)
-
-
-# --- an index of sift 1.0 ----------------------------------------------------
-
-
-def as_made_by_sift_1_0(db):
-    """Turn an index into one sift 1.0 made: no links, names or codes, and front-matter lists of unquoted items as
-    text."""
-    db.executescript("DROP TABLE links; DROP TABLE names; DROP TRIGGER codes_go_with_vectors; DROP TABLE codes;")
-    (doc,) = db.execute("SELECT id FROM docs WHERE path = '01_People/Hans Müller.md'").fetchone()
-    store.keywords(db, [doc], add=False)
-    meta = json.loads(db.execute("SELECT meta FROM docs WHERE id = ?", (doc,)).fetchone()[0])
-    meta["aliases"] = "[Hans Mueller, H. Müller]"
-    db.execute("UPDATE docs SET meta = ? WHERE id = ?", (json.dumps(meta, ensure_ascii=False), doc))
-    store.keywords(db, [doc])
-    db.execute("PRAGMA user_version = 3")
-    db.commit()
-
-
-def test_an_index_of_sift_1_0_gets_its_links(linked, fake_models, home, capsys, monkeypatch):
-    from sift import embed, readers
-
-    db, vault, _ = linked
-    write(vault / "page.html", "<html><body><h1>Price list</h1><p>Rates for 2027.</p></body></html>")
-    write(vault / "Prices.md", "See ![[page.html]].\n")
-    indexing.index(db)
-    embed.embed_pending(db)
-    before = Index(db).search("Acme")
-    vectors = rows(db, "vectors")
-    as_made_by_sift_1_0(db)
-    db.close()
-    monkeypatch.setattr(readers, "load", lambda *args: pytest.fail("a file was read again"))
-    db = store.connect(home)
-    assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
-    assert "reading links" in capsys.readouterr().err
-    assert (rows(db, "links"), rows(db, "names"), rows(db, "vectors")) == (7, 9, vectors)  # nothing embedded again
-    assert rows(db, "codes") == vectors
-    assert Index(db).document(HANS, fields=["aliases"])["fields"] == {"aliases": ["Hans Mueller", "H. Müller"]}
-    assert keywords_agree(db)
-    assert resolved(out(Index(db), OFFER))[0] == ("Hans Mueller", (HANS, "alias"))
-    assert resolved(out(Index(db), "vault/Prices.md")) == [("page.html", ("vault/page.html", "name"))]
-    assert Index(db).search("Acme") == before
-
-
-def test_an_index_of_sift_1_0_gets_passages_for_notes_of_front_matter_alone(linked, home):
-    db, vault, _ = linked
-    write(vault / "01_People" / "Peter Frei.md", '---\norg: "[[Acme AG]]"\nemail: peter@acme.example\n---\n')
-    indexing.index(db)
-    (doc,) = db.execute("SELECT id FROM docs WHERE path = '01_People/Peter Frei.md'").fetchone()
-    store.keywords(db, [doc], add=False)
-    db.execute("DELETE FROM chunks WHERE doc = ?", (doc,))  # sift 1.0 gave it no passage
-    as_made_by_sift_1_0(db)
-    db.close()
-    db = store.connect(home)
-    assert "vault/01_People/Peter Frei.md" in [h["id"] for h in Index(db).search("Peter Frei")]
-    assert keywords_agree(db)
-
-
-def test_an_interrupted_upgrade_leaves_the_index_as_it_was(linked, home, monkeypatch):
-    db = linked[0]
-    as_made_by_sift_1_0(db)
-    db.close()
-
-    def interrupted(db):
-        db.execute("INSERT INTO links(doc, collection, line, kind, target, key) VALUES(1, 1, 1, 'wikilink', 'x', 'x')")
-        raise KeyboardInterrupt
-
-    real = indexing.add_links
-    monkeypatch.setattr(indexing, "add_links", interrupted)
-    with pytest.raises(KeyboardInterrupt):
-        store.connect(home)
-    monkeypatch.setattr(indexing, "add_links", real)
-    db = store.connect(home)  # tries again, from the start
-    assert rows(db, "links") == 6
-
-
-def test_an_index_takes_its_links_once(linked, monkeypatch):
-    # Two sifts that start at once both see an index of 1.0; the second must find the work done once it has the
-    # database, and not add every link a second time.
-    db = linked[0]
-    monkeypatch.setattr(indexing, "add_links", lambda db: pytest.fail("links added twice"))
-    store._add_links(db)  # what the second runs, after the first has finished
-    assert rows(db, "links") == 6
+    catalog, _ = note_vault(tmp_path, home, {"r.jsonl": json.dumps({"id": "Hans", "text": "[[Hans]]"}) + "\n"})
+    assert (rows(catalog, "links"), rows(catalog, "names")) == (0, 0)
 
 
 # --- searching by links ------------------------------------------------------
@@ -529,36 +451,36 @@ def test_links_to_unknown_notes(linked, notes, error):
 
 
 def test_a_name_many_notes_answer_to_names_a_few(tmp_path, home):
-    db, _ = note_vault(tmp_path, home, {f"{i}/Same.md": "" for i in range(7)})
+    catalog, _ = note_vault(tmp_path, home, {f"{i}/Same.md": "" for i in range(7)})
     with pytest.raises(LookupError, match=r"'Same' matches v/0/Same\.md, .*v/4/Same\.md, \.\.\.; give the whole id"):
-        Index(db).browse(links_to=["Same"])
+        Index(catalog).browse(links_to=["Same"])
 
 
 def test_linked_from_an_unknown_or_ambiguous_note(tmp_path, home):
-    db, _ = note_vault(tmp_path, home, {"a/Same.md": "", "b/Same.md": "", "n.md": "[[Missing]]"})
+    catalog, _ = note_vault(tmp_path, home, {"a/Same.md": "", "b/Same.md": "", "n.md": "[[Missing]]"})
     with pytest.raises(LookupError, match="no note 'Missing' in the index"):
-        Index(db).browse(linked_from=["Missing"])  # a note not written yet links nowhere
+        Index(catalog).browse(linked_from=["Missing"])  # a note not written yet links nowhere
     with pytest.raises(LookupError, match=r"'v/Same\.md' matches v/a/Same\.md, v/b/Same\.md; give the whole id"):
-        Index(db).browse(linked_from=["v/Same.md"])
+        Index(catalog).browse(linked_from=["v/Same.md"])
 
 
 def test_a_note_named_in_several_places_must_be_chosen(linked, tmp_path):
-    db = linked[0]
+    catalog = linked[0]
     write(tmp_path / "other" / "Acme AG.md", "Another Acme.\n")
-    store.add_collection(db, tmp_path / "other", "other")
-    indexing.index(db)
-    index = Index(db)
+    catalog.add(tmp_path / "other", "other")
+    indexing.index(catalog)
+    index = Index(catalog)
     with pytest.raises(LookupError, match=r"'Acme AG' matches other/Acme AG.md, vault/02_Organizations/Acme AG.md"):
         index.search("Hans", links_to=["Acme AG"])
     assert ids(index.search("Hans", links_to=["Acme AG"], collection="vault")) == [HANS]
     write(tmp_path / "other" / "Sub" / "Acme AG.md", "A third.\n")
-    indexing.index(db)
+    indexing.index(catalog)
     with pytest.raises(LookupError, match=r"'Acme AG' matches other/Acme AG.md, other/Sub/Acme AG.md"):
         index.search("Hans", links_to=["Acme AG"], collection="other")
 
 
 def test_a_wikilink_filter_matches_the_note_however_the_link_is_written(tmp_path, home):
-    db, _ = note_vault(
+    catalog, _ = note_vault(
         tmp_path,
         home,
         {
@@ -574,7 +496,7 @@ def test_a_wikilink_filter_matches_the_note_however_the_link_is_written(tmp_path
             "r.jsonl": json.dumps({"id": "r1", "org": "[[Acme AG]]", "text": "A record."}) + "\n",
         },
     )
-    index = Index(db)
+    index = Index(catalog)
     acme = ["v/a.md", "v/b.md", "v/c.md", "v/d.md", "v/e.md"]
     assert ids(index.browse(filters={"org": "[[Acme AG|Acme]]"})) == acme
     assert ids(index.browse(filters={"org": "[[Acme AG]]"})) == [*acme, "v/r/r1"]  # a record by its value, as before
@@ -606,7 +528,7 @@ def test_documents_that_mention_a_note_without_linking_it(linked):
 
 
 def test_mentions_by_every_name_of_a_note(tmp_path, home):
-    db, _ = note_vault(
+    catalog, _ = note_vault(
         tmp_path,
         home,
         {
@@ -620,7 +542,7 @@ def test_mentions_by_every_name_of_a_note(tmp_path, home):
             "AI.md": "",
         },
     )
-    index = Index(db)
+    index = Index(catalog)
     assert sorted(ids(index.mentions("v/Jürg Bühler.md"))) == ["v/a.md", "v/b.md", "v/c.md", "v/d.md"]
     assert "v/e.md" in ids(index.mentions("v/Jürg Bühler.md", also=["emails"]))
     assert "v/e.md" in ids(index.mentions("v/Jürg Bühler.md", also="emails"))

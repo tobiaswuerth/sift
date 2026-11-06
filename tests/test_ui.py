@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from sift import cli, indexing, server, store, ui
+from sift import cli, indexing, server, ui
 from sift.search import Index
 
 from .conftest import Client, write
@@ -91,40 +91,42 @@ def test_facets_count_the_values_of_the_results_and_filter_by_them(browser):
 def test_facets_filter_by_numbers_written_as_text(embedded):
     # "007" and "1.10" are text in the front matter; read from the address as the numbers 7 and 1.1, they matched
     # nothing.
-    db, root = embedded
+    catalog, root = embedded
     write(root / "agent.md", '---\ncode: "007"\nversion: "1.10"\nyear: 2024\n---\n# Agent\n')
-    indexing.index(db)
-    browser = page(Index(db))
+    indexing.index(catalog)
+    browser = page(Index(catalog))
     for pair in ("code=007", "version=1.10"):
         assert ids(browser.get("/ui/", params={"c": "notes", "f": pair})) == ["notes/agent.md"]
     assert ids(browser.get("/ui/", params={"c": "notes", "f": "year=2024"})) == ["notes/agent.md", BRUSH]
 
 
 def test_yes_no_fields_are_facets(embedded):
-    db, root = embedded
+    catalog, root = embedded
     write(root / "draft.md", "---\ndraft: true\n---\n# Draft\n")
-    indexing.index(db)
-    browser = page(Index(db))
+    indexing.index(catalog)
+    browser = page(Index(catalog))
     link = re.search(r'<a href="([^"]+)"[^>]*>true <span class="n">1</span>', browser.get("/ui/?c=notes").text)
     assert ids(browser.get(html.unescape(link[1]))) == ["notes/draft.md"]
 
 
 def test_fields_of_any_name_filter(embedded):
-    db, root = embedded
+    catalog, root = embedded
     write(root / "cited.md", "---\njournal-ref: Nature 12\n---\n# Cited\n")
-    indexing.index(db)
-    browser = page(Index(db))
+    indexing.index(catalog)
+    browser = page(Index(catalog))
     link = re.search(r'<a href="([^"]+)"[^>]*>Nature 12 <span', browser.get("/ui/?c=notes").text)
     assert ids(browser.get(html.unescape(link[1]))) == ["notes/cited.md"]
 
 
 def test_a_field_whose_values_all_differ_is_no_facet(embedded):
     # Filtering by an id or a link finds one document each time: such a field only crowds the facets.
-    db, root = embedded
+    catalog, root = embedded
     for n in range(ui.FACET_VALUES + 1):
         write(root / "refs" / f"{n}.md", f"---\nref: R-{n}\nkind: memo\n---\n# Memo {n}\n")
-    indexing.index(db)
-    side = re.search(r'<nav class="side".*?</nav>', page(Index(db)).get("/ui/", params={"c": "notes"}).text, re.S)[0]
+    indexing.index(catalog)
+    side = re.search(r'<nav class="side".*?</nav>', page(Index(catalog)).get("/ui/", params={"c": "notes"}).text, re.S)[
+        0
+    ]
     assert "<h2>kind</h2>" in side
     assert "<h2>ref</h2>" not in side
 
@@ -140,21 +142,21 @@ def test_browsing_a_collection_shows_its_folders_and_documents(browser):
 
 @pytest.mark.parametrize("path", ["robots", "/robots/", "robots//"])
 def test_a_folder_is_a_folder_however_written(embedded, path):
-    db, root = embedded
+    catalog, root = embedded
     write(root / "robots-old.md", "# Old robots\n")  # what "robots*" matched too
-    indexing.index(db)
-    response = page(Index(db)).get("/ui/", params={"c": "notes", "path": path})
+    indexing.index(catalog)
+    response = page(Index(catalog)).get("/ui/", params={"c": "notes", "path": path})
     assert ids(response) == [BRUSH]
     assert ">/</a>" not in response.text  # no folder without a name
 
 
 def test_folders_with_brackets_in_their_names(embedded):
     # Folder names went into a glob, where [old] matches one letter: o, l or d.
-    db, root = embedded
+    catalog, root = embedded
     write(root / "drafts [old]" / "a.md", "# Old draft\n")
     write(root / "drafts o" / "b.md", "# Other\n")
-    indexing.index(db)
-    browser = page(Index(db))
+    indexing.index(catalog)
+    browser = page(Index(catalog))
     folder = re.search(r'<a href="([^"]+)"[^>]*>drafts \[old\]/</a>', browser.get("/ui/", params={"c": "notes"}).text)
     assert ids(browser.get(html.unescape(folder[1]))) == ["notes/drafts [old]/a.md"]
 
@@ -172,11 +174,11 @@ def test_a_search_inside_a_folder_stays_inside_it(browser):
 
 
 def test_more_results_are_one_click_away(embedded):
-    db, root = embedded
+    catalog, root = embedded
     for n in range(5):
         write(root / f"extra{n}.md", f"# Extra {n}\n\nbrush\n")
-    indexing.index(db)
-    response = page(Index(db)).get("/ui/", params={"q": "brush", "k": "3"})
+    indexing.index(catalog)
+    response = page(Index(catalog)).get("/ui/", params={"q": "brush", "k": "3"})
     assert len(ids(response)) == 3
     more = re.search(r'<a class="more" href="([^"]+)"', response.text)
     assert f"k={3 + ui.PAGE}" in html.unescape(more[1])  # a page more
@@ -193,15 +195,15 @@ def test_no_more_when_a_page_holds_them_all(browser, params):
 
 def test_a_search_sorted_by_a_field_shows_its_k_best(embedded):
     # One result more, as the other pages ask for, would sort a different set: the third best is the newest.
-    db, root = embedded
+    catalog, root = embedded
     for name, year, text in (
         ("a", 2020, "pigment pigment pigment"),
         ("b", 2021, "pigment pigment filler"),
         ("c", 2025, "pigment filler filler"),
     ):
         write(root / "years" / f"{name}.md", f"---\nyear: {year}\n---\n{text}\n")
-    indexing.index(db)
-    response = page(Index(db)).get("/ui/", params={"q": "pigment", "k": "2", "sort": "-year"})
+    indexing.index(catalog)
+    response = page(Index(catalog)).get("/ui/", params={"q": "pigment", "k": "2", "sort": "-year"})
     assert ids(response) == ["notes/years/b.md", "notes/years/a.md"]  # the two best, newest first
     assert 'class="more"' in response.text  # as many as asked for: there may be more
 
@@ -223,10 +225,10 @@ def test_the_reader_shows_the_front_matter_as_filters(browser):
 
 
 def test_links_in_the_front_matter_open_their_page(embedded):
-    db, root = embedded
+    catalog, root = embedded
     write(root / "linked.md", "---\nurl: https://example.org/paper\n---\n# Linked\n")
-    indexing.index(db)
-    browser = page(Index(db))
+    indexing.index(catalog)
+    browser = page(Index(catalog))
     reader = browser.get("/ui/", params={"doc": "notes/linked.md"}).text
     assert '<a href="https://example.org/paper" target="_blank" rel="noopener" hx-boost="false">' in reader
     side = re.search(r'<nav class="side".*?</nav>', browser.get("/ui/", params={"c": "notes"}).text, re.S)[0]
@@ -282,11 +284,11 @@ def test_the_title_follows_the_search(browser):
 
 def test_the_facets_that_narrow_most_come_first(embedded):
     # A field most results share, such as a category, narrows them more than one whose values differ.
-    db, root = embedded
+    catalog, root = embedded
     for n in range(3):
         write(root / "memos" / f"{n}.md", f"---\nauthor: A{n}\nkind: memo\n---\n# Memo {n}\n")
-    indexing.index(db)
-    side = page(Index(db)).get("/ui/", params={"c": "notes"}).text
+    indexing.index(catalog)
+    side = page(Index(catalog)).get("/ui/", params={"c": "notes"}).text
     assert re.findall(r'<section class="facet">\s*<h2>(\w+)</h2>', side) == ["kind", "author", "categories", "year"]
 
 
@@ -294,10 +296,10 @@ def test_the_facets_that_narrow_most_come_first(embedded):
 def log(embedded, monkeypatch):
     """A document of 100 lines, in a reader that shows 10 at a time."""
     monkeypatch.setattr(ui, "READER_LINES", 10)
-    db, root = embedded
+    catalog, root = embedded
     write(root / "log.txt", "".join(f"entry {n}\n" for n in range(1, 101)))
-    indexing.index(db)
-    return page(Index(db))
+    indexing.index(catalog)
+    return page(Index(catalog))
 
 
 def shown(text):
@@ -358,10 +360,10 @@ def test_searching_by_meaning_needs_embeddings(corpus, fake_models):
 
 
 def test_text_from_documents_is_escaped(embedded):
-    db, root = embedded
+    catalog, root = embedded
     write(root / "evil.md", "# <script>alert(1)</script>\n\nbrush <img src=x onerror=alert(2)>\n")
-    indexing.index(db)
-    browser = page(Index(db))
+    indexing.index(catalog)
+    browser = page(Index(catalog))
     for response in (browser.get("/ui/", params={"q": "brush"}), browser.get("/ui/", params={"doc": "notes/evil.md"})):
         assert "<script>alert" not in response.text
         assert "<img src=x" not in response.text
@@ -369,15 +371,15 @@ def test_text_from_documents_is_escaped(embedded):
 
 
 def test_the_original_file_opens_in_the_browser(embedded, browser, tmp_path):
-    db, root = embedded
+    catalog, root = embedded
     response = browser.get("/ui/file", params={"id": "notes/rl.md"})
     assert response.status_code == 200
     assert response.content == (root / "rl.md").read_bytes()
     assert response.headers["content-disposition"].startswith("inline")
     assert 'href="/ui/file?id=notes%2Frl.md"' in browser.get("/ui/", params={"doc": "notes/rl.md"}).text
     write(tmp_path / "qa" / "faq.jsonl", '{"id": "q1", "text": "a record"}\n')
-    store.add_collection(db, tmp_path / "qa", "qa")
-    indexing.index(db)
+    catalog.add(tmp_path / "qa", "qa")
+    indexing.index(catalog)
     for missing in ("notes/missing.md", "qa/faq/q1"):  # unknown, and a record, which is no file of its own
         assert browser.get("/ui/file", params={"id": missing}).status_code == 404
     assert "/ui/file?" not in browser.get("/ui/", params={"doc": "qa/faq/q1"}).text
@@ -385,10 +387,10 @@ def test_the_original_file_opens_in_the_browser(embedded, browser, tmp_path):
 
 def test_files_open_without_running_their_scripts(embedded):
     # A saved web page in a collection would otherwise run its scripts as the UI, free to read the whole index.
-    db, root = embedded
+    catalog, root = embedded
     write(root / "saved.html", "<html><body><h1>Saved</h1><p>text</p><script>fetch('/ui/?q=a')</script></body></html>")
-    indexing.index(db)
-    response = page(Index(db)).get("/ui/file", params={"id": "notes/saved.html"})
+    indexing.index(catalog)
+    response = page(Index(catalog)).get("/ui/file", params={"id": "notes/saved.html"})
     assert response.status_code == 200
     assert response.headers["content-security-policy"] == "sandbox"
     assert response.headers["x-content-type-options"] == "nosniff"
@@ -396,10 +398,10 @@ def test_files_open_without_running_their_scripts(embedded):
 
 def test_a_pdf_opens_in_the_browsers_viewer(embedded):
     # Chromium's PDF viewer refuses sandboxed documents; it runs no scripts of the PDF as the page.
-    db, root = embedded
+    catalog, root = embedded
     (root / "paper.pdf").write_bytes((SAMPLES / "sample.pdf").read_bytes())
-    indexing.index(db)
-    response = page(Index(db)).get("/ui/file", params={"id": "notes/paper.pdf"})
+    indexing.index(catalog)
+    response = page(Index(catalog)).get("/ui/file", params={"id": "notes/paper.pdf"})
     assert response.headers["content-type"] == "application/pdf"
     assert "content-security-policy" not in response.headers
     assert response.headers["x-content-type-options"] == "nosniff"
@@ -435,15 +437,15 @@ def test_searches_run_on_the_event_loop_thread(embedded, monkeypatch):
 
 def test_the_collections_are_counted_once_per_change_of_the_index(embedded, monkeypatch):
     # Counting millions of documents for every keystroke would make typing slow.
-    db, root = embedded
-    browser, counted = page(Index(db)), []
+    catalog, root = embedded
+    browser, counted = page(Index(catalog)), []
     real = ui._collections
-    monkeypatch.setattr(ui, "_collections", lambda db: counted.append(1) or real(db))
+    monkeypatch.setattr(ui, "_collections", lambda catalog: counted.append(1) or real(catalog))
     browser.get("/ui/", params={"q": "brush"})
     browser.get("/ui/", params={"q": "brus"})
     assert len(counted) == 1
     write(root / "new.md", "# New\n")
-    indexing.index(db)
+    indexing.index(catalog)
     assert "4 documents" in browser.get("/ui/").text
 
 

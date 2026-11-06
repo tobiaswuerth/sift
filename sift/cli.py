@@ -11,7 +11,8 @@ import textwrap
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, console, logs, readers, settings, store
+from . import __version__, console, logs, readers, settings
+from .catalog import SUFFIX, Catalog
 
 # The commands that load PyTorch, unless a worker does it for them; with SIFT_EMBED_REMOTE, THROUGH_WORKER do.
 SLOW = ("embed", "vsearch", "query", "similar", "bench", "serve", "worker")
@@ -137,8 +138,23 @@ def main(argv=None):
         help="add a folder inside a collection, or one that holds a collection, though the files of both are then "
         "indexed twice",
     )
-    s = sub.add_parser("rm", help="remove a collection from the index (its files stay on disk)")
+    s.add_argument(
+        "--store",
+        metavar="PATH",
+        help=f"where its index goes: a folder, or a file ending in {SUFFIX} (default: the folder collections in "
+        "SIFT_HOME)",
+    )
+    s = sub.add_parser("rm", help="remove a collection and delete its index (its files stay on disk)")
     s.add_argument("name")
+    s = sub.add_parser("move", help="move the index of collections, or of all, to another folder or drive")
+    s.add_argument("names", nargs="*", metavar="NAME", help="collections to move (default: all)")
+    s.add_argument("to", metavar="TO", help=f"a folder, or for one collection, a file ending in {SUFFIX}")
+    s = sub.add_parser("activate", help="search collections deactivated before again")
+    s.add_argument("names", nargs="+", metavar="NAME")
+    s = sub.add_parser(
+        "deactivate", help="leave collections out of searches, and of `sift index` and `sift embed` unless named"
+    )
+    s.add_argument("names", nargs="+", metavar="NAME")
     s = sub.add_parser("index", help="scan collections and update the keyword index")
     s.add_argument("names", nargs="*", help="collections to scan (default: all)")
     s.add_argument(
@@ -192,7 +208,9 @@ def main(argv=None):
     s.add_argument("id")
     s.add_argument("--lines", help='only these lines, e.g. "17-26"')
     s.add_argument("--fields", help='front-matter fields to show first, comma-separated (e.g. "url,created"; "*": all)')
-    s = sub.add_parser("status", help="show collections, their folders, and index statistics, as JSON")
+    s = sub.add_parser(
+        "status", help="show collections: their folders, whether active, their index files, and statistics, as JSON"
+    )
     s.add_argument("--json", action="store_true", help="as other commands take it: status prints JSON anyway")
     s = sub.add_parser("links", help="the links of a Markdown note: those it holds, and those into it")
     s.add_argument("id")
@@ -248,19 +266,21 @@ def _command(a):
 
         serve(a.host, a.port)
         return
-    with contextlib.closing(store.connect()) as db:
-        _run(a, db)
+    # An index of sift 1.7 or older is split into a store per collection on first use; moving them all, straight there.
+    into = a.to if a.cmd == "move" and not a.names and not a.to.lower().endswith(SUFFIX) else None
+    with contextlib.closing(Catalog(split_into=into)) as catalog:
+        _run(a, catalog)
 
 
-def _add(a, db):
+def _add(a, catalog):
     """`sift add`: register a folder; or, for a folder registered already, change where its titles come from."""
     chosen = {"id": a.id, "title": a.title, "text": a.text and [f.strip() for f in a.text.split(",")]}
     chosen = {k: v for k, v in chosen.items() if v} | ({"title_from": a.title_from} if a.title_from else {})
-    existing = store.collection_at(db, a.path)
-    if existing and list(chosen) == ["title_from"] and a.name in (None, existing):
+    existing = catalog.collection_at(a.path)
+    if existing and list(chosen) == ["title_from"] and a.name in (None, existing) and not a.store:
         from .indexing import retitle
 
-        changed, dropped = retitle(db, existing, a.title_from)
+        changed, dropped = retitle(catalog, existing, a.title_from)
         source = "file names" if a.title_from == "name" else "headings"
         console.say(
             f"collection {existing!r} takes titles from {source} now: {console.count(changed, 'title')} changed"
@@ -271,8 +291,8 @@ def _add(a, db):
             )
         )
         return
-    name = store.add_collection(db, a.path, a.name, chosen, nested=a.nested)
-    console.say(f"added collection {name!r}; run `sift index` next")
+    name = catalog.add(a.path, a.name, chosen, nested=a.nested, into=a.store)
+    console.say(f"added collection {name!r}, its index at {catalog.get(name).store}; run `sift index` next")
     if not a.title_from and (Path(a.path).expanduser() / ".obsidian").is_dir():
         console.say(
             f"{a.path} is an Obsidian vault: to title its notes by their file names, as Obsidian does, run "
@@ -280,14 +300,24 @@ def _add(a, db):
         )
 
 
-def _run(a, db):
+def _run(a, catalog):
     if a.cmd == "add":
-        _add(a, db)
+        _add(a, catalog)
     elif a.cmd == "rm":
-        n = store.remove_collection(db, a.name)
+        n = catalog.remove(a.name)
+        held = "" if n is None else f" and its index of {console.count(n, 'document')}"
+        console.say(f"removed collection {a.name!r}{held}; the files on disk are untouched")
+    elif a.cmd == "move":
+        moved = catalog.move(a.names, a.to)
+        console.say(f"moved the index of {', '.join(moved)} to {a.to}" if moved else "nothing moved")
+    elif a.cmd in ("activate", "deactivate"):
+        active = a.cmd == "activate"
+        changed = catalog.set_active(a.names, active)
+        state = "active: searched again" if active else "inactive: left out of searches"
         console.say(
-            f"removed collection {a.name!r} and its {console.count(n, 'document')} from the index; "
-            "the files on disk are untouched"
+            f"{', '.join(changed)} {'is' if len(changed) == 1 else 'are'} {state}"
+            if changed
+            else f"{', '.join(a.names)} {'was' if len(a.names) == 1 else 'were'} {a.cmd}d already"
         )
     elif a.cmd == "index" and a.files:
         from .indexing import reindex
@@ -297,20 +327,20 @@ def _run(a, db):
         # a path from the current folder, as the shell completes it, or ./ or ../ before a file gone; else an id
         relative = tuple(dots + sep for dots in (".", "..") for sep in {"/", os.sep})
         paths = [os.path.abspath(p) if os.path.exists(p) or p.startswith(relative) else p for p in a.files]
-        for entry, _ in reindex(db, paths).files:
+        for entry, _ in reindex(catalog, paths).files:
             console.say(f"{entry['id']}: {entry['status']}" + (f" ({entry['note']})" if "note" in entry else ""))
     elif a.cmd == "index":
         from .indexing import index
 
-        index(db, a.names)
+        index(catalog, a.names)
     elif a.cmd == "embed":
         from .embed import embed_pending
 
-        embed_pending(db, a.reset, collections=a.names)
+        embed_pending(catalog, a.reset, collections=a.names)
     elif a.cmd in SEARCHES:
         from .search import Index
 
-        hits = getattr(Index(db), a.cmd)(
+        hits = getattr(Index(catalog), a.cmd)(
             a.subject,
             a.k,
             collection=a.collection,
@@ -327,7 +357,7 @@ def _run(a, db):
     elif a.cmd == "get":
         from .search import Index
 
-        document = Index(db).document(a.id, a.lines, _fields(a.fields))
+        document = Index(catalog).document(a.id, a.lines, _fields(a.fields))
         for key, value in document.get("fields", {}).items():
             print(f"{key}: {_shown(value)}")
         if "fields" in document:
@@ -338,7 +368,7 @@ def _run(a, db):
         from . import bench
         from .search import Index
 
-        index = Index(db)
+        index = Index(catalog)
         results = bench.run(index, bench.load(a.file, index), collection=a.collection)
         print(f"{'mode':10}{'nDCG@10':>10}{'MRR@10':>10}{'Recall@10':>11}{'ms/query':>10}")
         for mode, r in results.items():
@@ -346,21 +376,21 @@ def _run(a, db):
     elif a.cmd == "status":
         from .search import Index
 
-        print(json.dumps(Index(db).status(), indent=2))
+        print(json.dumps(Index(catalog).status(), indent=2))
     elif a.cmd == "links":
         from .search import Index
 
-        _print_links(Index(db).links(a.id, a.direction, a.depth, a.field, a.k), a.json)
+        _print_links(Index(catalog).links(a.id, a.direction, a.depth, a.field, a.k), a.json)
     elif a.cmd == "mentions":
         from .search import Index
 
         also, fields = _fields(a.also), _fields(a.fields)
-        hits = Index(db).mentions(a.id, a.k, collection=a.collection, also=also, fields=fields, compact=a.compact)
+        hits = Index(catalog).mentions(a.id, a.k, collection=a.collection, also=also, fields=fields, compact=a.compact)
         _print_hits(hits, a.json)
     elif a.cmd == "unresolved":
         from .search import Index
 
-        _print_unresolved(Index(db).unresolved(a.collection, a.k), a.json)
+        _print_unresolved(Index(catalog).unresolved(a.collection, a.k), a.json)
     elif a.cmd == "ui":
         from .ui import open_in_browser
 
