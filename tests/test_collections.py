@@ -344,8 +344,8 @@ def split_and_whole(tmp_path, fake_models):
 
 
 def scores(hits):
-    """Each hit's score, by its path."""
-    return {h["id"].split("/", 1)[1].removeprefix("all/").split("/", 1)[-1]: h["score"] for h in hits}
+    """Each hit's score, by its file's path in the folder `all` and its lines: the same of two collections and one."""
+    return {(h["id"].removeprefix("all/"), h["lines"]): h["score"] for h in hits}
 
 
 @pytest.mark.parametrize(
