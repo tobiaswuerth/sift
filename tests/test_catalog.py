@@ -97,18 +97,17 @@ def test_a_store_of_a_collection_on_a_missing_drive_is_not_given_away(home, note
         catalog.add(tmp_path / "other", into=tmp_path / "x.sqlite")
 
 
-def test_names_differing_in_case_only_get_stores_of_their_own(home, tmp_path):
+def test_names_differing_in_case_only_never_share_a_store(home, tmp_path):
+    # On Windows and macOS, Notes.sqlite and notes.sqlite are one file.
+    write(tmp_path / "upper" / "a.md", "# A\n")
+    write(tmp_path / "lower" / "a.md", "# a\n")
     catalog = Catalog(home)
-    for name in ("Notes", "notes"):
-        write(tmp_path / name.upper() / "a.md", "# A\n") if name == "Notes" else write(
-            tmp_path / "low" / "a.md", "# a\n"
-        )
-    catalog.add(tmp_path / "NOTES", "Notes")
-    if os.path.normcase("A") == "a" or (home / "collections" / "NOTES.sqlite").exists():  # case-insensitive files
+    catalog.add(tmp_path / "upper", "Notes")
+    if (home / "collections" / "notes.sqlite").exists():  # a file system that ignores case
         with pytest.raises(SystemExit, match="exists already"):
-            catalog.add(tmp_path / "low", "notes")
+            catalog.add(tmp_path / "lower", "notes")
     else:
-        catalog.add(tmp_path / "low", "notes")
+        catalog.add(tmp_path / "lower", "notes")
         assert len({c.store for c in catalog.collections()}) == 2
 
 
