@@ -18,7 +18,7 @@ from sift.search import Index
 
 from .conftest import keywords_agree, write
 
-# The layout of sift 1.1 to 1.7, of one database holding every collection.
+# The layout of sift 1.7 (5): one database holding every collection. The older ones are made from it.
 LAYOUT_5 = """
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE collections(id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, path TEXT NOT NULL, fields TEXT);
@@ -46,7 +46,7 @@ CREATE INDEX names_key ON names(collection, key);
 CREATE TABLE codes(chunk INTEGER PRIMARY KEY, bits BLOB NOT NULL);
 CREATE TRIGGER codes_go_with_vectors AFTER DELETE ON vectors BEGIN DELETE FROM codes WHERE chunk = OLD.chunk; END;
 """
-# What sift 1.0 lacked (layout 3), and what 1.1 to 1.6 (layout 4)
+# What sift 1.1 to 1.6 lacked (layout 4), and what sift 1.0 lacked besides (layout 3)
 WITHOUT_CODES = "DROP TRIGGER codes_go_with_vectors; DROP TABLE codes; PRAGMA user_version = 4;"
 WITHOUT_LINKS = "DROP TABLE links; DROP TABLE names; PRAGMA user_version = 3;"
 # The keyword index of sift 0.7 and older (layout 2): title and text, no front matter.

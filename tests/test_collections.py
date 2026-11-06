@@ -288,3 +288,13 @@ def test_with_every_collection_inactive_a_search_says_how_to_activate_one(three)
     assert index.search("robot") == []
     with pytest.raises(LookupError, match="no collection is active: `sift activate NAME`"):
         index.vsearch("robot")
+
+
+def test_a_note_whose_collection_is_removed_meanwhile_is_a_clear_error(three, monkeypatch):
+    # Another sift removed the collection between finding the note and reading its links.
+    index = Index(three)
+    found = index._note("diary/monday.md")
+    three.remove("diary")
+    monkeypatch.setattr(Index, "_note", lambda self, id: found)
+    with pytest.raises(LookupError, match="its collection was removed meanwhile"):
+        index.links("diary/monday.md")

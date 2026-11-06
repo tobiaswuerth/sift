@@ -352,7 +352,9 @@ class Index:
     def _owner(self, row_id):
         """The collection a document or chunk belongs to, by its row id."""
         cid = store.owner(row_id)
-        return next(c for c in self.catalog.collections() if c.id == cid)
+        if found := next((c for c in self.catalog.collections() if c.id == cid), None):
+            return found
+        raise LookupError("its collection was removed meanwhile")
 
     def _db(self, row_id):
         """The store holding a document or chunk, by its row id."""
