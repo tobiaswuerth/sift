@@ -15,6 +15,7 @@ from mcp import Client
 from mcp.server.mcpserver import MCPServer
 
 from sift import indexing, remote, server
+from sift.catalog import Catalog
 from sift.search import Index
 
 from .conftest import nobody_listens, write
@@ -127,9 +128,8 @@ def test_instructions_name_the_front_matter_fields(mcp, embedded):
 
 
 def test_instructions_for_an_empty_index(tmp_path):
-    from sift import store
 
-    mcp = server.build(Index(store.connect(tmp_path / "empty")))[0]
+    mcp = server.build(Index(Catalog(tmp_path / "empty")))[0]
     assert "No collections are indexed yet" in mcp.instructions
 
 
@@ -206,9 +206,9 @@ def test_similar_tool_takes_links(linked, fake_models):
 def test_reindex_tool(linked, fake_models):
     from sift import embed
 
-    db, vault, _ = linked
-    embed.embed_pending(db)
-    mcp = server.build(Index(db))[0]
+    catalog, vault, _ = linked
+    embed.embed_pending(catalog)
+    mcp = server.build(Index(catalog))[0]
     write(vault / "06_Topics" / "Wartungsvertrag 2027.md", "Maintenance of the press line, from 2027.\n")
     found = data(call(mcp, "reindex", {"paths": [str(vault / "06_Topics" / "Wartungsvertrag 2027.md")]}))
     assert found == [{"id": "vault/06_Topics/Wartungsvertrag 2027.md", "status": "added", "chunks": 1, "embedded": 1}]
@@ -219,9 +219,9 @@ def test_reindex_tool(linked, fake_models):
 @pytest.mark.parametrize("ext", [".docx", ".pdf", ".html"])
 def test_reindex_tool_reads_documents(linked, fake_models, ext):
     # Xberg reads documents in a coroutine of its own, and the tools run on the server's event loop.
-    db, vault, _ = linked
+    catalog, vault, _ = linked
     shutil.copy(SAMPLES / f"sample{ext}", vault / f"Offerte{ext}")
-    mcp = server.build(Index(db))[0]
+    mcp = server.build(Index(catalog))[0]
     (found,) = data(call(mcp, "reindex", {"paths": [str(vault / f"Offerte{ext}")]}))
     assert (found["id"], found["status"]) == (f"vault/Offerte{ext}", "added")
     assert f"This sample is the {ext[1:].upper()} file." in call(mcp, "get", {"id": found["id"]}).content[0].text
@@ -471,14 +471,13 @@ def test_unexpected_errors_reach_the_agent_too(embedded, monkeypatch, caplog):
 
 
 def test_instructions_for_a_collection_without_front_matter(tmp_path):
-    from sift import store
 
     folder = tmp_path / "plain"
     write(folder / "note.md", "# Note\n")
-    db = store.connect(tmp_path / "home")
-    store.add_collection(db, folder)
-    indexing.index(db)
-    assert f"- plain ({folder.resolve()}): 1 document\n" in server.build(Index(db))[0].instructions + "\n"
+    catalog = Catalog(tmp_path / "home")
+    catalog.add(folder)
+    indexing.index(catalog)
+    assert f"- plain ({folder.resolve()}): 1 document\n" in server.build(Index(catalog))[0].instructions + "\n"
 
 
 def test_http_shutdown_gives_up_on_unfinished_requests(embedded, fake_models, monkeypatch, capsys):

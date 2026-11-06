@@ -3,7 +3,7 @@ acceptance test of sift's links."""
 
 import pytest
 
-from sift import embed, indexing, store
+from sift import embed
 from sift.search import Index
 from sift.server import build
 
@@ -21,9 +21,9 @@ OFFER, TOPIC = "vault/03_Interactions/2026-10-14 Offerte.md", "vault/06_Topics/W
 @pytest.fixture
 def agent(linked, fake_models):
     """What an agent reaches: the MCP tools of a server over the vault and the work folder, embedded and searched."""
-    db, vault, _ = linked
-    embed.embed_pending(db)
-    mcp = build(Index(db))[0]
+    catalog, vault, _ = linked
+    embed.embed_pending(catalog)
+    mcp = build(Index(catalog))[0]
 
     def tool(name, **args):
         return data(call(mcp, name, args))
@@ -77,18 +77,3 @@ def test_an_agent_works_with_a_vault(agent):
         "field": "org",
         "unresolved": True,
     }
-
-
-def test_an_index_of_sift_1_0_opens_with_its_links(linked, home, capsys):
-    # sift 1.0 kept no links: its index gains them on first use, from the text it holds, and searches as before.
-    db = linked[0]
-    before = Index(db).search("Acme")
-    db.executescript("DROP TABLE links; DROP TABLE names; PRAGMA user_version = 3;")
-    db.close()
-    db = store.connect(home)
-    assert "reading links" in capsys.readouterr().err
-    assert Index(db).search("Acme") == before
-    assert ids(Index(db).links(HANS, "in")["in"]) == [ANNA, ACME, OFFER]
-    assert {c["name"]: c["links"] for c in Index(db).status()["collections"]} == {"vault": 6, "work": 0}
-    indexing.index(db)  # and nothing is left to do
-    assert "0 added, 0 changed, 0 removed" in capsys.readouterr().err

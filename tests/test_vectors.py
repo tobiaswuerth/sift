@@ -1,5 +1,5 @@
-"""The index's vectors in memory as one bit per dimension, its sign: candidates by Hamming distance, the best of them
-scored exactly with the vectors the index holds."""
+"""The stores' vectors in memory as one bit per dimension, its sign: candidates by Hamming distance, among the codes of
+every collection searched, the best of them scored exactly with the vectors the stores hold."""
 
 import numpy as np
 import pytest
@@ -33,7 +33,12 @@ def random_index(n=500, dim=64, seed=1):
     matrix = unit(rng.standard_normal((n, dim))).astype(np.float16)
     ids = np.arange(10, 10 * (n + 1), 10, dtype=np.int64)  # sorted, with gaps, as chunk ids are
     exact = Exact(ids, matrix)
-    return ids, matrix, exact, Codes(ids, codes(matrix), exact)
+    return ids, matrix, exact, Codes(ids, codes(matrix))
+
+
+def top(held, exact, query, k, **kwargs):
+    """The k nearest among the codes `held`, one Codes or a list, one per collection."""
+    return vectors.top(held if isinstance(held, list) else [held], query, k, exact, **kwargs)
 
 
 def exact_top(ids, matrix, query, k, keep=None):
@@ -55,9 +60,9 @@ def test_codes_are_the_signs_one_bit_a_dimension_in_whole_words():
 
 
 def test_with_every_vector_a_candidate_top_is_exact_search():
-    ids, matrix, _, index = random_index()
+    ids, matrix, exact, index = random_index()
     for query in unit(np.random.default_rng(2).standard_normal((20, 64))):
-        ranked = index.top(query, 10)
+        ranked = top(index, exact, query, 10)
         assert chunks(ranked) == exact_top(ids, matrix, query, 10)
         expected = (matrix.astype(np.float32) @ query)[np.searchsorted(ids, chunks(ranked))]
         assert [score for _, score in ranked] == pytest.approx(expected.tolist(), abs=1e-3)  # exact cosines
@@ -70,15 +75,15 @@ def test_with_few_candidates_the_nearest_still_come_first(monkeypatch):
     rng = np.random.default_rng(3)
     for i in rng.choice(5000, 30, replace=False):  # a query close to one passage finds it first
         query = unit(matrix[i : i + 1].astype(np.float32) + 0.05 * rng.standard_normal((1, 128)))[0]
-        assert chunks(index.top(query, 1)) == [ids[i]]
+        assert chunks(top(index, exact, query, 1)) == [ids[i]]
     assert exact.asked == [100] * 30  # only the candidates are read from the index
 
 
 def test_top_keeps_to_the_allowed_chunks_and_leaves_out_the_excluded():
-    ids, matrix, _, index = random_index()
+    ids, matrix, exact, index = random_index()
     query = unit(np.ones((1, 64)))[0]
     allowed = ids[::3]
-    ranked = index.top(query, 5, allowed=allowed, excluded=allowed[:2])
+    ranked = top(index, exact, query, 5, allowed=allowed, excluded=allowed[:2])
     keep = set(allowed.tolist()) - set(allowed[:2].tolist())
     assert chunks(ranked) == exact_top(ids, matrix, query, 5, keep)
 
@@ -86,18 +91,19 @@ def test_top_keeps_to_the_allowed_chunks_and_leaves_out_the_excluded():
 def test_allowed_chunks_far_from_the_query_are_still_found(monkeypatch):
     # A filter applies before the candidates are picked: a small collection among millions isn't crowded out.
     monkeypatch.setattr(vectors, "RESCORE", 10)
-    ids, matrix, _, index = random_index(n=2000)
+    ids, matrix, exact, index = random_index(n=2000)
     query = unit(np.ones((1, 64)))[0]
     farthest = [int(ids[i]) for i in np.argsort(matrix.astype(np.float32) @ query)[:3]]
-    assert sorted(chunks(index.top(query, 10, allowed=np.array(farthest)))) == sorted(farthest)
+    assert sorted(chunks(top(index, exact, query, 10, allowed=np.array(farthest)))) == sorted(farthest)
 
 
 def test_top_of_more_than_there_are_and_of_none():
-    ids, matrix, _, index = random_index(n=7)
+    ids, matrix, exact, index = random_index(n=7)
     query = unit(np.ones((1, 64)))[0]
-    assert chunks(index.top(query, 50)) == exact_top(ids, matrix, query, 7)
-    assert index.top(query, 5, allowed=np.array([], np.int64)) == []
-    assert Codes(np.empty(0, np.int64), codes(np.empty((0, 64), np.float16)), Exact([], [])).top(query, 5) == []
+    assert chunks(top(index, exact, query, 50)) == exact_top(ids, matrix, query, 7)
+    assert top(index, exact, query, 5, allowed=np.array([], np.int64)) == []
+    assert top(Codes(np.empty(0, np.int64), codes(np.empty((0, 64), np.float16))), Exact([], []), query, 5) == []
+    assert top([], Exact([], []), query, 5) == []
 
 
 def test_vectors_gone_from_the_index_meanwhile_are_left_out():
@@ -106,7 +112,7 @@ def test_vectors_gone_from_the_index_meanwhile_are_left_out():
     query = unit(np.ones((1, 64)))[0]
     best = exact_top(ids, matrix, query, 3)
     del exact.rows[best[0]]
-    assert chunks(index.top(query, 2)) == best[1:]
+    assert chunks(top(index, exact, query, 2)) == best[1:]
 
 
 def test_broken_vectors_are_left_out():
@@ -115,23 +121,23 @@ def test_broken_vectors_are_left_out():
     query = unit(np.ones((1, 64)))[0]
     best = exact_top(ids, matrix, query, 3)
     exact.rows[best[0]] = np.full(64, np.nan, np.float16)
-    assert chunks(index.top(query, 2)) == best[1:]
-    assert best[0] not in chunks(index.top(query, 20))
-    assert len(index.top(query, 20)) == 19
+    assert chunks(top(index, exact, query, 2)) == best[1:]
+    assert best[0] not in chunks(top(index, exact, query, 20))
+    assert len(top(index, exact, query, 20)) == 19
 
 
 def test_distances_split_over_threads_agree(monkeypatch):
-    *_, index = random_index(n=1000)
+    *_, exact, index = random_index(n=1000)
     query = unit(np.random.default_rng(4).standard_normal((1, 64)))[0]
-    whole = index.top(query, 20)
+    whole = top(index, exact, query, 20)
     monkeypatch.setattr(vectors, "BLOCK", 7)  # many blocks, each in a thread
-    assert index.top(query, 20) == whole
+    assert top(index, exact, query, 20) == whole
 
 
 def test_dimensions_that_fill_no_whole_word():
-    ids, matrix, _, index = random_index(n=40, dim=4)
+    ids, matrix, exact, index = random_index(n=40, dim=4)
     query = unit(np.array([[1, 2, -1, 0.5]]))[0]
-    assert chunks(index.top(query, 5)) == exact_top(ids, matrix, query, 5)
+    assert chunks(top(index, exact, query, 5)) == exact_top(ids, matrix, query, 5)
 
 
 # --- codes patched instead of loaded anew --------------------------------------
@@ -147,26 +153,29 @@ def test_patched_codes_find_new_vectors_and_forget_removed():
     exact.rows[2000] = new[0]
     del exact.rows[best]
     patched = index.patched(removed=[best], ids=[2000], bits=codes(new))
-    assert chunks(patched.top(query, 2))[0] == 2000
-    assert best not in chunks(patched.top(query, 100))
-    assert (len(index), 2000 in chunks(index.top(query, 100))) == (100, False)  # the codes patched from stay as were
+    assert chunks(top(patched, exact, query, 2))[0] == 2000
+    assert best not in chunks(top(patched, exact, query, 100))
+    assert (len(index), 2000 in chunks(top(index, exact, query, 100))) == (
+        100,
+        False,
+    )  # the codes patched from stay as were
 
 
 def test_a_chunk_patched_in_again_is_its_new_vector_only():
-    # SQLite hands out the ids of deleted chunks again: a chunk patched in under an id the codes hold already is the
-    # new vector of that chunk, not a second one.
+    # A chunk embedded again is patched in under an id the codes hold already: it is the new vector of that chunk, not
+    # a second one.
     ids, matrix, exact, index = random_index(n=100)
     query = unit(np.ones((1, 64)))[0]
     worst = exact_top(ids, matrix, -query, 1)[0]
     new = unit(query[None, :] + 0.01).astype(np.float16)
     exact.rows[worst] = new[0]
     patched = index.patched(removed=[], ids=[worst], bits=codes(new))
-    ranked = chunks(patched.top(query, 100))
+    ranked = chunks(top(patched, exact, query, 100))
     assert ranked[0] == worst
     assert ranked.count(worst) == 1
     again = patched.patched(removed=[worst], ids=[worst, 3000], bits=codes(np.vstack([new, new])))
     exact.rows[3000] = new[0]
-    assert sorted(chunks(again.top(query, 2))) == [worst, 3000]
+    assert sorted(chunks(top(again, exact, query, 2))) == [worst, 3000]
     assert len(again) == 101
 
 
@@ -177,7 +186,7 @@ def test_codes_patched_many_times_hold_what_a_fresh_load_would():
     rng, held = np.random.default_rng(5), dict(zip(ids.tolist(), codes(matrix)))
     for step in range(200):
         removed = rng.choice(list(held), size=rng.integers(0, 3), replace=False).tolist()
-        added = rng.choice(80, size=rng.integers(0, 4), replace=False).tolist()  # ids taken again, as SQLite does
+        added = rng.choice(80, size=rng.integers(0, 4), replace=False).tolist()  # ids embedded again too
         rows = codes(rng.standard_normal((len(added), 64)))
         index = index.patched(removed=removed, ids=added, bits=rows)
         for chunk in removed:
@@ -188,3 +197,38 @@ def test_codes_patched_many_times_hold_what_a_fresh_load_would():
         assert (live_bits == np.array([held[c] for c in sorted(held)]).reshape(len(held), -1)).all(), f"step {step}"
         assert len(index) == len(held)
         assert len(index._parts) <= 2
+
+
+# --- the codes of several collections ------------------------------------------
+
+
+def test_the_codes_of_several_collections_are_searched_as_one():
+    # Each collection's store has its codes: the candidates are the nearest of them all, as if they were one.
+    ids, matrix, exact, whole = random_index(n=900)
+    parts = [Codes(ids[i::3], codes(matrix[i::3])) for i in range(3)]
+    for query in unit(np.random.default_rng(6).standard_normal((10, 64))):
+        assert top(parts, exact, query, 10) == top(whole, exact, query, 10)
+        assert top(parts, exact, query, 10, allowed=ids[::4]) == top(whole, exact, query, 10, allowed=ids[::4])
+
+
+def test_few_candidates_are_the_nearest_of_all_collections(monkeypatch):
+    # 4,000 candidates of all collections together, not of each: a collection far from the query gives none.
+    monkeypatch.setattr(vectors, "RESCORE", 20)
+    ids, matrix, exact, _ = random_index(n=400)
+    query = unit(np.ones((1, 64)))[0]
+    order = np.argsort(-(matrix.astype(np.float32) @ query))
+    near, far = order[:200], order[200:]
+    parts = [Codes(ids[near], codes(matrix[near])), Codes(ids[far], codes(matrix[far]))]
+    top(parts, exact, query, 5)
+    assert exact.asked == [20]
+
+
+def test_the_nearest_codes_of_one_collection():
+    *_, index = random_index(n=100)
+    query = unit(np.ones((1, 64)))[0]
+    found, distance = index.nearest(codes(query[None, :])[0], 10)
+    assert len(found) == len(distance) == 10
+    everything, all_distances = index.nearest(codes(query[None, :])[0], 1000)
+    assert len(everything) == 100
+    assert sorted(distance.tolist()) == sorted(all_distances.tolist())[:10]
+    assert index.nearest(codes(query[None, :])[0], 5, allowed=np.array([], np.int64))[0].tolist() == []

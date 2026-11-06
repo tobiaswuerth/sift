@@ -1,7 +1,8 @@
-"""The index's vectors in memory as one bit per dimension, its sign: millions of passages searched in a sixteenth of the
-memory their fp16 vectors take, and without the GPU. `Codes.top` finds candidates by Hamming distance and scores the
-best of them exactly, with the vectors the index holds: over 3.2 million arXiv abstracts, scoring the 4,000 nearest
-exactly found 99.6% of exact search's top 10, and a known-item MRR of 0.9528 against 0.9530 (docs/benchmarks.md).
+"""The stores' vectors in memory as one bit per dimension, its sign: millions of passages searched in a sixteenth of
+the memory their fp16 vectors take, and without the GPU. `top` finds candidates by Hamming distance, among the codes of
+every collection searched, and scores the best of them exactly, with the vectors the stores hold: over 3.2 million
+arXiv abstracts, scoring the 4,000 nearest exactly found 99.6% of exact search's top 10, and a known-item MRR of
+0.9528 against 0.9530 (docs/benchmarks.md).
 """
 
 import os
@@ -22,36 +23,54 @@ def codes(matrix):
     return np.pad(bits, ((0, 0), (0, pad))) if pad else bits
 
 
-class Codes:
-    """The codes of the vectors of chunks `ids`, rows of `bits`; `exact(ids)` gives the vectors the index holds of
-    those of the ids it still has, as (ids, fp16 rows). Patched codes keep these as they are and add to them."""
+def top(held, query, k, exact, allowed=None, excluded=None):
+    """The k chunks nearest `query`, a normalised vector, as [(id, cosine)], best first, ties by id, among the codes
+    `held` (a Codes per collection): of those `allowed` (ids; None for all) but those `excluded`. At least RESCORE of
+    the nearest by Hamming distance, of all collections together, are scored exactly with `exact(ids)`, which gives
+    the vectors the stores hold of those of the ids they still have, as (ids, fp16 rows); so a filter applies before
+    the candidates are picked."""
+    query = np.asarray(query, np.float32)
+    bits, want = codes(query[None, :])[0], max(RESCORE, k)
+    nearest = [c.nearest(bits, want, allowed, excluded) for c in held]
+    ids = np.concatenate([np.empty(0, np.int64), *(ids for ids, _ in nearest)])
+    distance = np.concatenate([np.empty(0, np.uint16), *(d for _, d in nearest)])
+    if len(ids) > want:
+        ids = ids[np.argpartition(distance, want - 1)[:want]]
+    if not len(ids):
+        return []
+    found, rows = exact(np.sort(ids))
+    scores = rows.astype(np.float32) @ query
+    intact = np.isfinite(scores)  # a vector the model broke (NaN) has no cosine
+    found, scores = found[intact], scores[intact]
+    order = np.lexsort((found, -scores))[:k]
+    return [(int(found[i]), float(scores[i])) for i in order]
 
-    def __init__(self, ids, bits, exact, *, _parts=None, _alive=None):
-        self.ids, self.exact = np.asarray(ids, np.int64), exact
+
+class Codes:
+    """The codes of the vectors of chunks `ids`, rows of `bits`, of one collection. Patched codes keep these as they
+    are and add to them."""
+
+    def __init__(self, ids, bits, *, _parts=None, _alive=None):
+        self.ids = np.asarray(ids, np.int64)
         self._parts = _parts or [np.ascontiguousarray(bits)]  # rows of codes, in the order of `ids`
         self._alive = _alive  # which of `ids` still count; None: all
 
     def __len__(self):
         return len(self.ids) if self._alive is None else int(self._alive.sum())
 
-    def top(self, query, k, allowed=None, excluded=None):
-        """The k chunks nearest `query`, a normalised vector, as [(id, cosine)], best first, ties by id: of those
-        `allowed` (ids; None for all) but those `excluded`. At least RESCORE of the nearest by Hamming distance are
-        scored exactly, so a filter applies before the candidates are picked."""
-        query = np.asarray(query, np.float32)
-        distance = self._distances(codes(query[None, :])[0], self._keep(allowed, excluded))
-        candidates = np.flatnonzero(distance < FAR)
-        want = max(RESCORE, k)
-        if len(candidates) > want:
-            candidates = np.argpartition(distance, want - 1)[:want]
-        if not len(candidates):
-            return []
-        found, rows = self.exact(np.sort(self.ids[candidates]))
-        scores = rows.astype(np.float32) @ query
-        intact = np.isfinite(scores)  # a vector the model broke (NaN) has no cosine
-        found, scores = found[intact], scores[intact]
-        order = np.lexsort((found, -scores))[:k]
-        return [(int(found[i]), float(scores[i])) for i in order]
+    @property
+    def width(self):
+        """The bytes of each code."""
+        return self._parts[0].shape[1]
+
+    def nearest(self, query_bits, n, allowed=None, excluded=None):
+        """The n chunks whose codes are nearest `query_bits` by Hamming distance, of those `allowed` (ids; None for
+        all) but those `excluded`: (their ids, the distances), in no order."""
+        distance = self._distances(query_bits, self._keep(allowed, excluded))
+        rows = np.flatnonzero(distance < FAR)
+        if len(rows) > n:
+            rows = rows[np.argpartition(distance[rows], n - 1)[:n]]
+        return self.ids[rows], distance[rows]
 
     def live(self):
         """The ids that count and their codes, by id."""
@@ -61,7 +80,7 @@ class Codes:
 
     def patched(self, removed, ids, bits):
         """These codes without those of the chunks `removed`, and with those of the chunks `ids`, rows of `bits`, which
-        replace any these hold under the same ids: SQLite hands out the ids of deleted chunks again. The codes loaded
+        replace any these hold under the same ids, as of a chunk embedded again. The codes loaded
         stay as they are, masked; the added ones form one more part, rebuilt on every patch, small."""
         ids, base = np.asarray(ids, np.int64), self._parts[0]
         gone = np.concatenate([np.asarray(removed, np.int64), ids])
@@ -73,7 +92,6 @@ class Codes:
         return Codes(
             np.concatenate([self.ids[: len(base)], self.ids[len(base) :][added], ids]),
             None,
-            self.exact,
             _parts=[base, np.concatenate([added_bits, np.asarray(bits, np.uint8)])],
             _alive=np.concatenate([alive[: len(base)], np.ones(len(added) + len(ids), bool)]),
         )

@@ -11,8 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from sift import indexing, readers, store
+from sift import indexing, readers
+from sift.catalog import Catalog
 from sift.search import Index
+from tests.conftest import only
 
 from .conftest import index_contents, write
 
@@ -79,10 +81,10 @@ def test_a_new_kind_of_file_needs_only_a_reader(tmp_path, home, monkeypatch):
 
     monkeypatch.setitem(readers.READERS, ".csv", read_csv)
     write(tmp_path / "c" / "pigments.csv", "pigment,index\nUltramarine,PB29\n")
-    db = store.connect(home)
-    store.add_collection(db, tmp_path / "c", "c")
-    indexing.index(db)
-    assert Index(db).get("c/pigments.csv") == "pigment,index\nUltramarine,PB29\n"
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert Index(catalog).get("c/pigments.csv") == "pigment,index\nUltramarine,PB29\n"
 
 
 # --- documents: PDF, office files, e-books and web pages --------------------------
@@ -185,15 +187,15 @@ def library(tmp_path, home):
     root.mkdir()
     for ext in (".pdf", ".docx", ".xlsx"):
         shutil.copy(sample(ext), root / f"pigments{ext}")
-    db = store.connect(home)
-    store.add_collection(db, root, "library")
-    indexing.index(db)
-    return db, root
+    catalog = Catalog(home)
+    catalog.add(root, "library")
+    indexing.index(catalog)
+    return catalog, root
 
 
 def test_documents_are_indexed_and_found(library):
-    db, _ = library
-    index = Index(db)
+    catalog, _ = library
+    index = Index(catalog)
     hits = index.search("absorbs scatters", fields=["authors", "created"])
     assert sorted(h["id"] for h in hits) == ["library/pigments.docx", "library/pigments.pdf", "library/pigments.xlsx"]
     assert all(h["fields"]["authors"] == ["Ada Example"] for h in hits)
@@ -202,27 +204,27 @@ def test_documents_are_indexed_and_found(library):
 
 
 def test_a_damaged_document_is_reported_once_and_read_again_when_it_changes(library, capsys):
-    db, root = library
+    catalog, root = library
     (root / "broken.pdf").write_bytes(b"%PDF-1.4 the rest is missing")
-    indexing.index(db)
+    indexing.index(catalog)
     assert "library: broken.pdf: skipped (" in capsys.readouterr().err
-    indexing.index(db)
+    indexing.index(catalog)
     assert "broken.pdf" not in capsys.readouterr().err  # unchanged since, so not read again
     shutil.copy(sample(".pdf"), root / "broken.pdf")
-    indexing.index(db)
+    indexing.index(catalog)
     assert "1 added" in capsys.readouterr().err
-    assert Index(db).get("library/broken.pdf") == read(".pdf").text
+    assert Index(catalog).get("library/broken.pdf") == read(".pdf").text
 
 
 def test_documents_are_converted_in_worker_processes(library, tmp_path, monkeypatch, pools):
-    db, root = library
+    catalog, root = library
     monkeypatch.setattr(indexing, "_cpus", lambda: 3)  # two workers, one CPU for writing
     monkeypatch.setattr(indexing, "FILES_PER_WORKER", 1)
-    parallel = store.connect(tmp_path / "parallel")
-    store.add_collection(parallel, root, "library")
+    parallel = Catalog(tmp_path / "parallel")
+    parallel.add(root, "library")
     indexing.index(parallel)
     assert pools == [(2, "spawn")]
-    assert index_contents(parallel) == index_contents(db)
+    assert index_contents(only(parallel)) == index_contents(only(catalog))
 
 
 def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home, monkeypatch):
@@ -232,21 +234,27 @@ def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home, mon
     root.mkdir()
     shutil.copy(sample(".docx"), root / "offer.docx")
     email_file(root, Subject="Offer", attachments=[("offer.docx", sample(".docx").read_bytes(), word)])
-    db = store.connect(home)
-    store.add_collection(db, root, "docs")
+    catalog = Catalog(home)
+    catalog.add(root, "docs")
     with monkeypatch.context() as patched:
         patched.setattr(readers, "_xberg", lambda raw, name: 1 / 0)
-        indexing.index(db)  # as that server did: no documents of them
-    assert [p for (p,) in db.execute("SELECT path FROM docs")] == ["mail.eml"]
-    db.execute("DELETE FROM meta WHERE key = 'documents_read'")  # as an index of sift 1.3.0 has it
-    db.commit()
-    db.close()
-    db = store.connect(home)
-    assert db.execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (2,)  # the file and the mail
-    indexing.index(db)
-    assert sorted(p for (p,) in db.execute("SELECT path FROM docs")) == ["mail.eml", "mail/offer.docx", "offer.docx"]
-    db.close()
-    assert store.connect(home).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (0,)
+        indexing.index(catalog)  # as that server did: no documents of them
+    assert [p for (p,) in only(catalog).execute("SELECT path FROM docs")] == ["mail.eml"]
+    only(catalog).execute("DELETE FROM meta WHERE key = 'documents_read'")  # as an index of sift 1.3.0 has it
+    only(catalog).commit()
+    catalog.close()
+    catalog = Catalog(home)
+    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (
+        2,
+    )  # the file and the mail
+    indexing.index(catalog)
+    assert sorted(p for (p,) in only(catalog).execute("SELECT path FROM docs")) == [
+        "mail.eml",
+        "mail/offer.docx",
+        "offer.docx",
+    ]
+    catalog.close()
+    assert only(Catalog(home)).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (0,)
 
 
 # --- saved emails ------------------------------------------------------------
@@ -514,9 +522,9 @@ def test_a_folder_of_mail_is_searched_and_filtered(tmp_path, home):
         From="Ada Example <ada@example.com>",
         attachments=[("contract.pdf", sample(".pdf").read_bytes(), "application/pdf")],
     )
-    db = store.connect(home)
-    store.add_collection(db, tmp_path / "mail", "mail")
-    indexing.index(db)
-    index = Index(db)
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "mail", "mail")
+    indexing.index(catalog)
+    index = Index(catalog)
     assert [h["id"] for h in index.search("Kubelka-Munk")] == ["mail/offer/contract.pdf"]
     assert [h["id"] for h in index.search("offer", filters={"from": "ada@example.com"})] == ["mail/offer.eml"]

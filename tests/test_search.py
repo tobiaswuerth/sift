@@ -29,7 +29,7 @@ def test_keyword_search(corpus):
 def test_a_document_about_a_term_outranks_one_that_names_it_in_its_title(corpus):
     # The title is indexed twice already, as the text's heading and as its own column; weighted double on top, a
     # title word outranked a whole abstract about it.
-    db, root = corpus
+    catalog, root = corpus
     write(
         root / "named.md",
         "# A transformer for music\n\nWe compose melodies with a sequence model of notes and chords.\n",
@@ -39,8 +39,8 @@ def test_a_document_about_a_term_outranks_one_that_names_it_in_its_title(corpus)
         "# Attention models\n\nA transformer replaces recurrence with attention. Each transformer layer attends to "
         "every token, and stacked transformer blocks train in parallel.\n",
     )
-    indexing.index(db)
-    assert ids(Index(db).search("transformer", k=2)) == ["notes/about.md", "notes/named.md"]
+    indexing.index(catalog)
+    assert ids(Index(catalog).search("transformer", k=2)) == ["notes/about.md", "notes/named.md"]
 
 
 @pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
@@ -139,10 +139,10 @@ def test_bad_filters_are_clear_errors(corpus, kwargs, error):
 
 def test_filters_and_sort_take_any_field_name(corpus):
     # Front matter and JSON Lines name fields freely, e.g. "journal-ref" or "date created".
-    db, root = corpus
+    catalog, root = corpus
     write(root / "cited.md", "---\njournal-ref: Nature 12\ndate created: 2024-05-01\n---\n# Cited\nbrush\n")
-    indexing.index(db)
-    index = Index(db)
+    indexing.index(catalog)
+    index = Index(catalog)
     assert ids(index.search("brush", filters={"journal-ref": "Nature 12"})) == ["notes/cited.md"]
     assert ids(index.search("brush", filters={"date created": {">=": "2024-05"}})) == ["notes/cited.md"]
     assert ids(index.search("brush", filters={"journal-ref": {"not": "Nature 12"}})) == ["notes/robots/brush.md"]
@@ -151,11 +151,11 @@ def test_filters_and_sort_take_any_field_name(corpus):
 
 
 def test_nan_in_front_matter_does_not_break_filters(corpus):
-    db, root = corpus
+    catalog, root = corpus
     write(root / "odd.md", "---\nscore: NaN\nlimit: Infinity\n---\n# Odd\nbrush\n")
-    indexing.index(db)
-    assert ids(Index(db).search("brush", filters={"categories": "cs.RO"})) == ["notes/robots/brush.md"]
-    assert ids(Index(db).search("brush", filters={"score": "NaN"})) == ["notes/odd.md"]
+    indexing.index(catalog)
+    assert ids(Index(catalog).search("brush", filters={"categories": "cs.RO"})) == ["notes/robots/brush.md"]
+    assert ids(Index(catalog).search("brush", filters={"score": "NaN"})) == ["notes/odd.md"]
 
 
 # --- front matter in keyword search ------------------------------------------
@@ -168,10 +168,10 @@ PAPER = (
 
 @pytest.fixture
 def paper(corpus):
-    db, root = corpus
+    catalog, root = corpus
     write(root / "paper.md", PAPER)
-    indexing.index(db)
-    return Index(db)
+    indexing.index(catalog)
+    return Index(catalog)
 
 
 @pytest.mark.parametrize("query", ["Vaswani", "1706.03762", "Shazeer attention"])
@@ -182,12 +182,14 @@ def test_keyword_search_finds_front_matter_values(paper, query):
 
 
 def test_a_changed_front_matter_value_is_no_longer_found(paper, corpus):
-    db, root = corpus
+    catalog, root = corpus
     write(root / "paper.md", PAPER.replace("Ashish Vaswani", "Someone Else"))
-    indexing.index(db)
+    indexing.index(catalog)
     assert paper.search("Vaswani") == []
     assert ids(paper.search("Someone")) == ["notes/paper.md"]
-    db.execute("INSERT INTO fts(fts) VALUES('integrity-check')")  # raises if deleting missed what inserting added
+    catalog.store("notes").execute(
+        "INSERT INTO fts(fts) VALUES('integrity-check')"
+    )  # raises if deleting missed what inserting added
 
 
 # --- semantic and hybrid search ----------------------------------------------
@@ -210,20 +212,22 @@ def test_vsearch(embedded):
 def test_broken_vectors_do_not_hide_the_others(embedded):
     # A NaN vector has no cosine. When PyTorch scored them it ranked NaN first: as many NaN vectors as results asked
     # for left vsearch with none.
-    db, _ = embedded
+    catalog, _ = embedded
     nan = np.full(64, np.nan, np.float16).tobytes()
-    db.execute("UPDATE vectors SET vec = ? WHERE chunk IN (SELECT chunk FROM vectors ORDER BY chunk LIMIT 2)", (nan,))
-    store.touch(db)
-    db.commit()
-    assert len(Index(db).vsearch("anything", k=2)) == 1  # the one intact vector of three
+    catalog.store("notes").execute(
+        "UPDATE vectors SET vec = ? WHERE chunk IN (SELECT chunk FROM vectors ORDER BY chunk LIMIT 2)", (nan,)
+    )
+    store.touch(catalog.store("notes"))
+    catalog.store("notes").commit()
+    assert len(Index(catalog).vsearch("anything", k=2)) == 1  # the one intact vector of three
 
 
 def test_vsearch_reloads_after_index_changes(embedded):
-    db, root = embedded
-    index = Index(db)
+    catalog, root = embedded
+    index = Index(catalog)
     assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
     (root / "rl.md").unlink()
-    indexing.index(db)  # deletes rl.md and its vector; the codes in memory must not serve it
+    indexing.index(catalog)  # deletes rl.md and its vector; the codes in memory must not serve it
     assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
 
 
@@ -234,27 +238,29 @@ def test_codes_load_in_batches(embedded, monkeypatch):
     assert (found[0], len(found)) == ("notes/rl.md", 3)
 
 
-def test_codes_gone_while_loading_ask_for_embedding(embedded):
+def test_codes_gone_while_loading_ask_for_embedding(embedded, monkeypatch):
     # Another process dropped every vector (`sift embed --reset`) between counting the codes and reading them.
-    db, _ = embedded
+    catalog, _ = embedded
+    real = catalog.store("notes")
 
     class Racing:
         def __getattr__(self, name):
-            return getattr(db, name)
+            return getattr(real, name)
 
         def execute(self, sql, *args):
             if sql.startswith("SELECT chunk, bits FROM codes"):
-                db.execute("DELETE FROM vectors")
-                db.commit()
-            return db.execute(sql, *args)
+                real.execute("DELETE FROM vectors")
+                real.commit()
+            return real.execute(sql, *args)
 
+    monkeypatch.setattr(catalog, "store", lambda collection: Racing())
     with pytest.raises(LookupError, match="sift embed"):
-        Index(Racing()).vsearch("reward")
+        Index(catalog).vsearch("reward")
 
 
 def test_vsearch_after_interrupted_reset_asks_for_embedding(embedded, fake_models, monkeypatch):
-    db, _ = embedded
-    index = Index(db)
+    catalog, _ = embedded
+    index = Index(catalog)
     index.vsearch("reward")  # codes in memory
 
     def interrupted(texts, query=False):
@@ -262,7 +268,7 @@ def test_vsearch_after_interrupted_reset_asks_for_embedding(embedded, fake_model
 
     monkeypatch.setattr(fake_models, "encode", interrupted)
     with pytest.raises(KeyboardInterrupt):
-        embed.embed_pending(db, reset=True)
+        embed.embed_pending(catalog, reset=True)
     with pytest.raises(LookupError, match="sift embed"):
         index.vsearch("reward")
 
@@ -288,22 +294,24 @@ def test_query_scores_are_the_rerankers_raw_scores_when_the_cosines_agree(embedd
     # Through a sigmoid they ran from 0 to 1, but saturated: Ettin scores close matches 8 to 12, so every hit showed
     # 0.9999, and an off-topic query's best still 0.98. The raw scores tell strong hits from weak ones; the cosine
     # shifts them only where the candidates differ in meaning.
-    db = embedded[0]
-    db.execute("UPDATE vectors SET vec = ?", (np.ones(64, np.float16).tobytes(),))  # every cosine the same
-    db.commit()
-    hits = Index(db, models=Constant()).query("anything")
+    catalog = embedded[0]
+    catalog.store("notes").execute(
+        "UPDATE vectors SET vec = ?", (np.ones(64, np.float16).tobytes(),)
+    )  # every cosine the same
+    catalog.store("notes").commit()
+    hits = Index(catalog, models=Constant()).query("anything")
     assert [h["score"] for h in hits] == [2.0, 1.0, 0.0]
 
 
 @pytest.fixture
 def embedded_paper(embedded, fake_models):
     """The notes, a paper with authors, and an abstract that cites one of them."""
-    db, root = embedded
+    catalog, root = embedded
     write(root / "paper.md", PAPER)
     write(root / "survey.md", "# Survey\n\nSince Vaswani et al., attention is everywhere.\n")
-    indexing.index(db)
-    embed.embed_pending(db)
-    return Index(db)
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    return Index(catalog)
 
 
 def test_query_finds_a_paper_by_its_author(embedded_paper):
@@ -327,10 +335,10 @@ def test_the_reranker_reads_only_the_front_matter_values_a_query_names(embedded_
     # All of them (links, licences, 30 authors) diluted the passage: topical queries ranked worse (known-item
     # evaluation, MRR 0.92 to 0.75), while values the query names lifted author and id queries (0.69 to 0.92 overall).
     models = Recording()
-    Index(embedded_paper.db, models=models).query("Shazeer attention")
+    Index(embedded_paper.catalog, models=models).query("Shazeer attention")
     assert "Attention\nNoam Shazeer\n\n# Attention\n\nSequence transduction with attention only." in models.texts
     models.texts.clear()
-    Index(embedded_paper.db, models=models).query("sequence transduction")
+    Index(embedded_paper.catalog, models=models).query("sequence transduction")
     assert "Attention\n\n# Attention\n\nSequence transduction with attention only." in models.texts
 
 
@@ -387,10 +395,10 @@ def test_query_weighs_meaning_as_well_as_the_reranker(embedded, fake_models):
 def test_query_finds_documents_not_embedded_yet(embedded):
     # After `sift index` and before `sift embed`, a new document has no vector: keyword search still finds it, and
     # its cosine counts as the others' mean, neither for it nor against it.
-    db, root = embedded
+    catalog, root = embedded
     write(root / "new.md", "# Pigment chart\n\npigment pigment\n")
-    indexing.index(db)
-    assert "notes/new.md" in ids(Index(db).query("pigment chart"))
+    indexing.index(catalog)
+    assert "notes/new.md" in ids(Index(catalog).query("pigment chart"))
 
 
 def test_hits_skip_chunks_removed_meanwhile(corpus):
@@ -430,8 +438,8 @@ def test_get(corpus):
 
 def test_get_by_the_file_s_absolute_path(corpus):
     # An agent that has a file's path, as glean's reviews have each email's, reads it without working out its id.
-    db, root = corpus
-    index = Index(db)
+    catalog, root = corpus
+    index = Index(catalog)
     assert index.get(str(root / "rl.md")) == index.get("notes/rl.md")
     assert index.document(str(root / "robots" / "brush.md"))["id"] == "notes/robots/brush.md"
     for outside in (root.parent / "rl.md", root / "brush.md"):  # in no collection; not by its file name alone
@@ -441,8 +449,8 @@ def test_get_by_the_file_s_absolute_path(corpus):
 
 def test_an_absolute_path_names_its_file_in_another_case_too(corpus):
     # As Windows and macOS name the file, and as `reindex` takes the path.
-    db, root = corpus
-    index = Index(db)
+    catalog, root = corpus
+    index = Index(catalog)
     assert index.get(str(root / "Robots" / "BRUSH.md")) == index.get("notes/robots/brush.md")
     assert index.links(str(root / "RL.md"))["id"] == index.links("notes/rl.md")["id"]
 
@@ -476,16 +484,20 @@ def test_get_a_folder_is_no_document(corpus):
         Index(corpus[0]).get("notes/robots")
 
 
-def test_status(embedded):
+def test_status(embedded, home):
     status = Index(embedded[0]).status()
-    assert status["index"].endswith("sift.db")
+    assert status["index"] == str(home / "sift.db")
     assert status["model"]
     fields = ["categories", "title", "year"]
-    path = status["collections"][0]["path"]
-    assert status["collections"] == [
-        {"name": "notes", "path": path, "docs": 3, "chunks": 3, "embedded": 3, "fields": fields}
-        | {"links": 0, "unresolved": 0}
-    ]
+    (entry,) = status["collections"]
+    assert entry == {
+        "name": "notes",
+        "path": str(embedded[1].resolve()),
+        "active": True,
+        "store": str(home / "collections" / "notes.sqlite"),
+        "size": entry["size"],
+    } | {"docs": 3, "chunks": 3, "embedded": 3, "fields": fields, "links": 0, "unresolved": 0}
+    assert entry["size"] >= (home / "collections" / "notes.sqlite").stat().st_size > 0
 
 
 # --- edge cases ----------------------------------------------------------------
@@ -516,18 +528,18 @@ def test_get_serves_indexed_documents_only(corpus):
 
 
 def test_get_reads_utf16_documents(corpus):
-    db, root = corpus
+    catalog, root = corpus
     (root / "utf16.txt").write_bytes("\ufeff# Héllo\r\nworld\r\n".encode("utf-16-le"))
-    indexing.index(db)
-    assert Index(db).get("notes/utf16.txt") == "# Héllo\nworld\n"
+    indexing.index(catalog)
+    assert Index(catalog).get("notes/utf16.txt") == "# Héllo\nworld\n"
 
 
 def test_get_returns_lines_as_indexed(corpus):
     # \n line endings, as in hits, so that `get(id, hit["lines"])` gives the hit's text
-    db, root = corpus
+    catalog, root = corpus
     (root / "crlf.md").write_bytes(b"# One\r\n\r\ntwo\r\n")
-    indexing.index(db)
-    index = Index(db)
+    indexing.index(catalog)
+    index = Index(catalog)
     assert index.get("notes/crlf.md") == "# One\n\ntwo\n"
     assert index.get("notes/crlf.md", "3") == "two\n"
 
@@ -582,12 +594,12 @@ DAYS = ["2023-12-31", "2024-01-01", "2024-06-15", "2024-12-31", "2025-01-01"]
 
 @pytest.fixture
 def dated(embedded, fake_models):
-    db, root = embedded
+    catalog, root = embedded
     for day in DAYS:
         write(root / "dated" / f"{day}.md", f'---\ncreated: "{day}"\n---\n# Paper of {day}\npigment\n')
-    indexing.index(db)
-    embed.embed_pending(db)
-    return Index(db)
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    return Index(catalog)
 
 
 def days(hits):
@@ -625,10 +637,10 @@ def test_range_filters_on_numbers(corpus):
 
 
 def test_range_on_a_list_needs_one_element_in_range(corpus):
-    db, root = corpus
+    catalog, root = corpus
     write(root / "multi.md", "---\nyears: [2019, 2030]\n---\n# Multi\nbrush\n")
-    indexing.index(db)
-    assert Index(db).search("brush", filters={"years": {">": 2020, "<": 2025}}) == []
+    indexing.index(catalog)
+    assert Index(catalog).search("brush", filters={"years": {">": 2020, "<": 2025}}) == []
 
 
 @pytest.mark.parametrize("condition", [{}, {"=>": "2024"}, {">": ["2024"]}, {">": None}, {">": 10**30}])
@@ -645,16 +657,18 @@ LONG = "notes/long.md"
 @pytest.fixture
 def long(embedded, fake_models):
     """The notes, and a document of several passages, all about pigment mixing, each with a word of its own."""
-    db, root = embedded
+    catalog, root = embedded
     parts = [f"## Part {i}\n\n" + f"pigment mixing part{i} " * 150 for i in range(3)]
     write(root / "long.md", "# Long\n\n" + "\n\n".join(parts) + "\n")
-    indexing.index(db)
-    embed.embed_pending(db)
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
     assert (
-        db.execute("SELECT count(*) FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.path = 'long.md'").fetchone()[0]
+        catalog.store("notes")
+        .execute("SELECT count(*) FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.path = 'long.md'")
+        .fetchone()[0]
         > 2
     )
-    return Index(db)
+    return Index(catalog)
 
 
 @pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
@@ -705,11 +719,11 @@ def test_sort_in_every_mode(dated, mode):
 
 
 def test_sort_puts_numbers_before_text(corpus):
-    db, root = corpus
+    catalog, root = corpus
     for name, rank in (("a", "2"), ("b", '"x"'), ("c", "10"), ("d", "null")):
         write(root / "ranked" / f"{name}.md", f"---\nrank: {rank}\n---\n# {name}\nranked\n")
-    indexing.index(db)
-    assert [day(h) for h in Index(db).search("ranked", sort="rank")] == ["a", "c", "b", "d"]
+    indexing.index(catalog)
+    assert [day(h) for h in Index(catalog).search("ranked", sort="rank")] == ["a", "c", "b", "d"]
 
 
 @pytest.mark.parametrize("sort", ["", "-", 'bad"key', 1, ["created"]])
@@ -751,11 +765,11 @@ def test_similar_needs_embeddings(corpus, fake_models):
 
 
 def test_similar_to_a_document_not_embedded_yet(embedded):
-    db, root = embedded
+    catalog, root = embedded
     write(root / "new.md", "# New\nfresh\n")
-    indexing.index(db)
+    indexing.index(catalog)
     with pytest.raises(LookupError, match=r"'notes/new\.md' has no embeddings yet, run `sift embed`"):
-        Index(db).similar("notes/new.md")
+        Index(catalog).similar("notes/new.md")
 
 
 def test_similar_to_an_unknown_document(embedded):
@@ -811,13 +825,13 @@ def test_get_lines(corpus, lines, text):
 
 def test_get_returns_the_indexed_text_until_the_next_index(corpus):
     # Hits and get always agree: both come from the index, not from the file as it is now.
-    db, root = corpus
+    catalog, root = corpus
     write(root / "rl.md", "# Rewritten\n")
-    assert Index(db).get("notes/rl.md").startswith("# Reward shaping")
+    assert Index(catalog).get("notes/rl.md").startswith("# Reward shaping")
     (root / "rl.md").unlink()
-    indexing.index(db)
+    indexing.index(catalog)
     with pytest.raises(LookupError, match="unknown document"):
-        Index(db).get("notes/rl.md")
+        Index(catalog).get("notes/rl.md")
 
 
 def test_lines_past_the_end_are_a_clear_error(corpus):
@@ -848,12 +862,12 @@ def test_get_finds_a_document_by_its_file_name(corpus, short):
 
 
 def test_get_by_a_file_name_several_documents_have(corpus):
-    db, root = corpus
+    catalog, root = corpus
     for folder in ("a", "b"):
         write(root / folder / "same.md", f"# {folder}\n")
-    indexing.index(db)
+    indexing.index(catalog)
     with pytest.raises(LookupError, match=r"'notes/same\.md' matches notes/a/same\.md, notes/b/same\.md;"):
-        Index(db).get("notes/same.md")
+        Index(catalog).get("notes/same.md")
 
 
 @pytest.mark.parametrize(
@@ -873,12 +887,12 @@ def test_browse_lists_documents_without_a_query(corpus):
 
 
 def test_browse_lists_documents_of_front_matter_alone(corpus):
-    db, root = corpus
+    catalog, root = corpus
     write(root / "empty.md", "---\ntitle: Only metadata\n---\n")
-    indexing.index(db)
+    indexing.index(catalog)
     # its passage is its front matter, as for search
-    assert {"id": "notes/empty.md", "title": "Only metadata", "text": "title: Only metadata"} in Index(db).browse()
-    assert [h["id"] for h in Index(db).search("metadata")] == ["notes/empty.md"]
+    assert {"id": "notes/empty.md", "title": "Only metadata", "text": "title: Only metadata"} in Index(catalog).browse()
+    assert [h["id"] for h in Index(catalog).search("metadata")] == ["notes/empty.md"]
 
 
 def test_browse_takes_what_searches_take(corpus):
@@ -894,11 +908,11 @@ def test_browse_takes_what_searches_take(corpus):
 
 
 def test_folders_are_those_directly_inside_a_path(corpus):
-    db, root = corpus
+    catalog, root = corpus
     for path in ("robots/arms/grip.md", "robots/arms/lift.md", "robots/legs/walk.md", "z/deep/er/x.md"):
         write(root / path, "# x\n")
-    indexing.index(db)
-    index = Index(db)
+    indexing.index(catalog)
+    index = Index(catalog)
     assert index.folders("notes") == ["robots", "z"]
     assert index.folders("notes", "robots/") == ["arms", "legs"]
     assert index.folders("notes", "robots/arms/") == []
@@ -910,19 +924,19 @@ def test_folders_are_those_directly_inside_a_path(corpus):
 
 
 def test_the_file_a_document_came_from(corpus, tmp_path):
-    db, root = corpus
+    catalog, root = corpus
     write(tmp_path / "qa" / "faq.jsonl", '{"id": "q1", "text": "a record"}\n')
-    store.add_collection(db, tmp_path / "qa", "qa")
-    indexing.index(db)
-    index = Index(db)
+    catalog.add(tmp_path / "qa", "qa")
+    indexing.index(catalog)
+    index = Index(catalog)
     assert index.file("notes/brush.md") == root / "robots" / "brush.md"  # ids as for get
     assert index.file("qa/faq/q1") is None  # a record is a part of its file, not one of its own
 
 
 def test_get_by_a_file_name_many_documents_have(corpus):
-    db, root = corpus
+    catalog, root = corpus
     for folder in "abcdef":
         write(root / folder / "same.md", f"# {folder}\n")
-    indexing.index(db)
+    indexing.index(catalog)
     with pytest.raises(LookupError, match=r"notes/e/same\.md, \.\.\.; give the whole id"):
-        Index(db).get("notes/same.md")
+        Index(catalog).get("notes/same.md")

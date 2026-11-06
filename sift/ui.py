@@ -188,11 +188,9 @@ def _facets(hits, view):
     return facets
 
 
-def _collections(db):
-    """The collections and their number of documents, by name."""
-    sql = """SELECT co.name, count(d.id) FROM collections co LEFT JOIN docs d ON d.collection = co.id
-             GROUP BY co.id ORDER BY co.name"""
-    return db.execute(sql).fetchall()
+def _collections(stores):
+    """The collections and their number of documents, by name, of [(collection, its store)]."""
+    return [(c.name, db.execute("SELECT count(*) FROM docs").fetchone()[0]) for c, db in stores]
 
 
 def _crumbs(view):
@@ -344,11 +342,15 @@ def app(index, host="127.0.0.1"):
     counted = {}  # the collections, by the state of the index: counting millions of documents per keystroke is slow
 
     def collections():
-        # Removing documents changes the version; adding them, the newest document's id.
-        version = store.get_meta(index.db, "version"), index.db.execute("SELECT max(id) FROM docs").fetchone()[0]
+        # The active collections; removing documents changes a store's version, adding them its newest document's id.
+        stores = [(c, index.catalog.store(c)) for c in index.active().values()]
+        version = tuple(
+            (c.id, store.get_meta(db, "version"), db.execute("SELECT max(id) FROM docs").fetchone()[0])
+            for c, db in stores
+        )
         if version not in counted:
             counted.clear()
-            counted[version] = _collections(index.db)
+            counted[version] = _collections(stores)
         return counted[version]
 
     async def page(request):

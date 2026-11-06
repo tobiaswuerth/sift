@@ -9,7 +9,6 @@ import os
 import posixpath
 import re
 import sqlite3
-from collections import Counter
 from operator import itemgetter
 from pathlib import Path
 
@@ -17,7 +16,8 @@ import numpy as np
 
 from . import console, embed, indexing, links, readers, store
 from . import models as _models
-from .vectors import Codes, codes
+from .catalog import Catalog
+from .vectors import Codes, codes, top
 
 STOPWORDS = set(
     "a an and are as at be by can do does for from has have how i in is it of on or that the this to "
@@ -56,13 +56,6 @@ def _field(name, what="filter field"):
     if not (isinstance(name, str) and name and '"' not in name):
         raise ValueError(f"invalid {what} {name!r}")
     return f'$."{name}"'
-
-
-def _collection_id(db, name):
-    row = db.execute("SELECT id FROM collections WHERE name = ?", (name,)).fetchone()
-    if not row:
-        raise store.no_collection(db, name)
-    return row[0]
 
 
 def _target(spec):
@@ -224,7 +217,7 @@ LINE_CHARS = 300  # characters of a linking line a link into a document shows, a
 
 def _link_out(row, how, through, named):
     """A link out of a document, as `links` returns it: as written, and where it leads."""
-    _, _, _, field, line, kind, target, _, fragment, shown = row
+    _, _, field, line, kind, target, _, fragment, shown = row
     link = {"target": target, "line": line, "kind": kind}
     link |= {key: value for key, value in (("field", field), ("fragment", fragment), ("shown", shown)) if value}
     via, docs = how
@@ -249,7 +242,7 @@ def _lines_of(rows, text):
     """The lines of a document holding these links, once each: their number, front-matter field, and text, around the
     link if the line is long."""
     every, found = text.split("\n"), {}
-    for _, _, _, field, line, _, target, *_ in rows:
+    for _, _, field, line, _, target, *_ in rows:
         if line not in found:
             content = every[line - 1].strip()
             if len(content) > LINE_CHARS:
@@ -260,13 +253,57 @@ def _lines_of(rows, text):
     return list(found.values())
 
 
-class Index:
-    """Search over an index. Semantic search uses `models` (default: `models.default()`, chosen when first needed,
-    so keyword search loads no models)."""
+def _by_value(rows, descending):
+    """Rows of several stores, (collection, path, ..., value), each store's in SQLite's order by value and path,
+    merged in that order: numbers before text, ascending or descending, and rows without a value last; then by
+    collection and path."""
+    rows = sorted(rows, key=itemgetter(0, 1))
+    valued = [row for row in rows if row[-1] is not None]
+    valued.sort(key=lambda row: (0, row[-1]) if isinstance(row[-1], int | float) else (1, row[-1]), reverse=descending)
+    return valued + [row for row in rows if row[-1] is None]
 
-    def __init__(self, db=None, models=None):
-        self.db = db or store.connect()
-        self._models, self.version, self.vectors = models, None, None
+
+def _codes(db):
+    """The codes of a store's vectors, batch by batch; None if it has none."""
+    n = db.execute("SELECT count(*) FROM codes").fetchone()[0]
+    ids, bits, row = np.empty(n, np.int64), None, 0
+    cursor = db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
+    while row < n and (batch := cursor.fetchmany(store.CODES_BATCH)):
+        batch = batch[: n - row]  # codes added since the count wait for the next load
+        if bits is None:
+            bits = np.empty((n, len(batch[0][1])), np.uint8)
+        rows = np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)
+        ids[row : row + len(batch)], bits[row : row + len(batch)] = [chunk for chunk, _ in batch], rows
+        row += len(batch)
+    return Codes(ids[:row], bits[:row]) if row else None  # none, or all deleted meanwhile
+
+
+def _size(path):
+    """The bytes a store takes on disk, its write-ahead log included."""
+    return sum(os.path.getsize(file) for file in (path, f"{path}-wal") if os.path.isfile(file))
+
+
+class _Resolvers(dict):
+    """A links.Resolver for each collection, made when first needed."""
+
+    def __init__(self, catalog):
+        super().__init__()
+        self.catalog = catalog
+
+    def __missing__(self, collection):
+        self[collection] = resolver = links.Resolver(self.catalog.store(collection))
+        return resolver
+
+
+class Index:
+    """Search over the active collections of a catalog (default: SIFT_HOME's). Semantic search uses `models` (default:
+    `models.default()`, chosen when first needed, so keyword search loads no models)."""
+
+    def __init__(self, catalog=None, models=None):
+        self.catalog = catalog or Catalog()
+        self._models = models
+        self.vectors = {}  # collection id: (its store's version, the Codes of its vectors)
+        self._said = set()  # warnings given, each once
 
     @property
     def models(self):
@@ -274,19 +311,69 @@ class Index:
             self._models = _models.default()
         return self._models
 
-    # --- which documents a search may find -----------------------------------
+    def _warn(self, text):
+        if text not in self._said:
+            self._said.add(text)
+            console.say(f"warning: {text}")
+
+    # --- which collections and documents a search may find -----------------------
+
+    def active(self):
+        """The active collections whose stores are there, by id; the codes of others are let go."""
+        found = {}
+        for c in self.catalog.collections():
+            if not c.active:
+                self.catalog.release(c.id)
+            elif os.path.isfile(c.store):
+                found[c.id] = c
+            else:
+                self._warn(f"{c.name}: its index is missing: {c.store}; searches pass it over")
+        for cid in self.vectors.keys() - found.keys():
+            del self.vectors[cid]
+        return found
+
+    def _scope(self, collection):
+        """The collections a search covers: the one named, or every active one."""
+        if not collection:
+            return list(self.active().values())
+        c = self.catalog.get(collection)
+        self._readable(c)
+        return [c]
+
+    def _readable(self, collection):
+        """The store of a collection to read from; an error if the collection is inactive, or its store missing."""
+        if not collection.active:
+            raise LookupError(
+                f"collection {collection.name!r} is inactive: "
+                f"`{console.command('sift', 'activate', collection.name)}` to search it"
+            )
+        return self.catalog.store(collection)
+
+    def _owner(self, row_id):
+        """The collection a document or chunk belongs to, by its row id."""
+        cid = store.owner(row_id)
+        return next(c for c in self.catalog.collections() if c.id == cid)
+
+    def _db(self, row_id):
+        """The store holding a document or chunk, by its row id."""
+        return self.catalog.store(self._owner(row_id))
+
+    def _by_store(self, ids):
+        """Row ids of documents or chunks by the collection they belong to, of those still there: (collection, its
+        store, [ids]) each."""
+        known, groups = {c.id: c for c in self.catalog.collections()}, {}
+        for i in ids:
+            groups.setdefault(store.owner(i), []).append(int(i))
+        return [(known[cid], self.catalog.store(known[cid]), group) for cid, group in groups.items() if cid in known]
 
     def _where(self, collection=None, path=None, filters=None, links_to=None, linked_from=None):
-        """SQL condition on docs `d`, and its arguments. Filters match front-matter fields: a value, which a list field
-        matches if it contains it, a list of values for any of them, or conditions such as {">=": "2024-06", "<":
-        "2025"}, which one value or list element must satisfy, and {"not": value or list}, which none may match. A
-        value that is a wikilink, "[[Acme AG]]", matches a link to the same note however it is written. `links_to`
-        and `linked_from` name notes (see _notes): only documents linking one of the first, and linked from one of
-        the second."""
-        sql, args, resolver = ["1"], [], links.Resolver(self.db)
-        if collection:
-            sql.append("d.collection = ?")
-            args.append(_collection_id(self.db, collection))
+        """The collections to search, and an SQL condition on their docs `d` with its arguments. Filters match
+        front-matter fields: a value, which a list field matches if it contains it, a list of values for any of them,
+        or conditions such as {">=": "2024-06", "<": "2025"}, which one value or list element must satisfy, and
+        {"not": value or list}, which none may match. A value that is a wikilink, "[[Acme AG]]", matches a link to the
+        same note however it is written. `links_to` and `linked_from` name notes (see _notes): only documents linking
+        one of the first, and linked from one of the second."""
+        scope, sql, args, resolvers = self._scope(collection), ["1"], [], _Resolvers(self.catalog)
         if path:
             sql.append("d.path GLOB ?")
             args.append(path)
@@ -299,7 +386,7 @@ class Index:
             if some:
                 condition = f"EXISTS (SELECT 1 FROM json_each(d.meta, ?) WHERE {' AND '.join(c for c, _ in some)})"
                 args += [field, *(arg for _, condition_args in some for arg in condition_args)]
-                if list(conditions) == ["="] and (linked := self._linking(key, conditions["="], collection, resolver)):
+                if list(conditions) == ["="] and (linked := self._linking(key, conditions["="], scope, resolvers)):
                     condition = f"({condition} OR d.id IN (SELECT value FROM json_each(?)))"
                     args.append(_ids(linked))
                 sql.append(condition)
@@ -307,32 +394,26 @@ class Index:
                 condition, condition_args = _condition(key, "not", conditions["not"])
                 sql.append(f"NOT EXISTS (SELECT 1 FROM json_each(d.meta, ?) WHERE {condition})")
                 args += [field, *condition_args]
-                if linked := self._linking(key, conditions["not"], collection, resolver):
+                if linked := self._linking(key, conditions["not"], scope, resolvers):
                     sql.append("d.id NOT IN (SELECT value FROM json_each(?))")
                     args.append(_ids(linked))
-        allowed = self._linked(links_to, linked_from, collection, resolver)
+        allowed = self._linked(links_to, linked_from, scope, resolvers)
         if allowed is not None:
             sql.append("d.id IN (SELECT value FROM json_each(?))")
             args.append(_ids(allowed))
-        return " AND ".join(sql), args
+        return scope, " AND ".join(sql), args
 
-    def _collections(self, collection):
-        """The row id of a collection, or of every collection, as a list."""
-        if collection:
-            return [_collection_id(self.db, collection)]
-        return [cid for (cid,) in self.db.execute("SELECT id FROM collections ORDER BY id")]
-
-    def _resolve(self, spec, collection, resolver):
-        """Where a note named as links name it leads, from no note in particular, in `collection` or in each:
-        {collection id: (how, [doc ids])}."""
+    def _resolve(self, spec, scope, resolvers):
+        """Where a note named as links name it leads, from no note in particular, in each collection of `scope`:
+        {collection: (how, [doc ids])}."""
         target = _target(spec)
         key = readers.key(target.rsplit("/", 1)[-1])
-        return {cid: resolver.resolve(cid, None, "wikilink", target, key) for cid in self._collections(collection)}
+        return {c: resolvers[c].resolve(None, "wikilink", target, key) for c in scope}
 
-    def _notes(self, specs, what, collection, resolver):
+    def _notes(self, specs, what, scope, resolvers):
         """The notes that `specs`, one or a list, name: by a document's id, as for `get`, or as links name them,
-        "Acme AG" or "[[Acme AG]]", within `collection` if given, else wherever one note answers. As {spec: doc row
-        id, or None for a note no document answers to}; a name that more than one note answers to is an error."""
+        "Acme AG" or "[[Acme AG]]", in the collections of `scope`, wherever one note answers. As {spec: doc row id, or
+        None for a note no document answers to}; a name that more than one note answers to is an error."""
         specs = [specs] if isinstance(specs, str) else specs
         if not isinstance(specs, list | tuple) or not specs:
             raise ValueError(f"{what} needs at least one note: their ids, or link targets, got {specs!r}")
@@ -346,7 +427,7 @@ class Index:
                 continue
             if len(rows) > 1:
                 self._find(spec.strip())  # raises: an ambiguous id
-            ways = self._resolve(spec, collection, resolver).values()
+            ways = self._resolve(spec, scope, resolvers).values()
             matches = {doc for how, docs in ways if how != "unresolved" for doc in docs}
             if len(matches) > 1:
                 named = sorted(whole for whole, _ in self._named(matches).values())
@@ -355,48 +436,50 @@ class Index:
             found[spec] = next(iter(matches), None)
         return found
 
-    def _linked(self, links_to, linked_from, collection, resolver):
+    def _linked(self, links_to, linked_from, scope, resolvers):
         """The documents that link to any of the notes `links_to` names, and that one of `linked_from` links to, by
         row id; None if neither is given. A note no document answers to yet is linked by the links that name it."""
         allowed = None
         if links_to is not None:
             allowed = set()
-            for spec, note in self._notes(links_to, "links_to", collection, resolver).items():
+            for spec, note in self._notes(links_to, "links_to", scope, resolvers).items():
                 if note is not None:
-                    allowed |= {row[0] for row in links.incoming(self.db, resolver, note)}
-                elif docs := {
-                    d for cid in self._collections(collection) for d in links.written(self.db, cid, _target(spec))
-                }:
+                    c = self._owner(note)
+                    allowed |= {row[0] for row in links.incoming(self.catalog.store(c), resolvers[c], note)}
+                elif docs := {d for c in scope for d in links.written(self.catalog.store(c), _target(spec))}:
                     allowed |= docs
                 else:
                     raise LookupError(f"no note {spec!r} in the index, and no link to one")
         if linked_from is not None:
             to = set()
-            for spec, note in self._notes(linked_from, "linked_from", collection, resolver).items():
+            for spec, note in self._notes(linked_from, "linked_from", scope, resolvers).items():
                 if note is None:
                     raise LookupError(f"no note {spec!r} in the index")
-                to |= {docs[0] for _, (how, docs) in links.outgoing(self.db, resolver, note) if how in VIA}
+                c = self._owner(note)
+                outgoing = links.outgoing(self.catalog.store(c), resolvers[c], note)
+                to |= {docs[0] for _, (how, docs) in outgoing if how in VIA}
             allowed = to if allowed is None else allowed & to
         return allowed
 
-    def _linking(self, key, value, collection, resolver):
+    def _linking(self, key, value, scope, resolvers):
         """The documents whose front-matter field `key` links to a note that a wikilink among the filter values names,
         however the link is written; links to a note no document answers to, or to several, match as written. None if
         no value is a wikilink."""
         specs, docs = _wikilinks(value), set()
         for spec in specs:
-            for cid, (how, found) in self._resolve(spec, collection, resolver).items():
+            for c, (how, found) in self._resolve(spec, scope, resolvers).items():
+                db = self.catalog.store(c)
                 if how in VIA:
-                    docs |= {row[0] for row in links.incoming(self.db, resolver, found[0], key)}
+                    docs |= {row[0] for row in links.incoming(db, resolvers[c], found[0], key)}
                 else:
-                    docs |= set(links.written(self.db, cid, _target(spec), key))
+                    docs |= set(links.written(db, _target(spec), key))
         return docs if specs else None
 
     # --- candidates as [(chunk_id, score)] -----------------------------------
 
-    def _keyword(self, match, k, where, args, all_passages=False):
-        """The best passage of each of the k documents that best match an FTS5 query, by BM25; or the k best
-        passages."""
+    def _keyword(self, match, k, scope, where, args, all_passages=False):
+        """The best passage of each of the k documents that best match an FTS5 query, by BM25, or the k best
+        passages, in the collections of `scope`. Each store scores by its own collection's word counts."""
         if not match.strip():
             return []
         passages = f"""SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
@@ -408,38 +491,39 @@ class Index:
                       SELECT passage, max(score) FROM p GROUP BY doc ORDER BY 2 DESC LIMIT ?"""
         for attempt in (match, _phrases(match)):
             try:
-                return self.db.execute(sql, [attempt, *args, k]).fetchall()
+                found = [row for c in scope for row in self.catalog.store(c).execute(sql, [attempt, *args, k])]
             except sqlite3.OperationalError as e:
                 error = e
+                continue
+            return sorted(found, key=lambda row: -row[1])[:k]
         raise ValueError(f"invalid search query {match!r}: {error}")
 
     def load(self):
-        """Load the codes of the vectors (see `vectors`), batch by batch; again when the index has changed since the
-        last load."""
-        version = store.get_meta(self.db, "version")
-        if version is not None and version == self.version:
-            return
-        n = self.db.execute("SELECT count(*) FROM codes").fetchone()[0]
-        ids, bits, row = np.empty(n, np.int64), None, 0
-        cursor = self.db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
-        while row < n and (batch := cursor.fetchmany(store.CODES_BATCH)):
-            batch = batch[: n - row]  # codes added since the count wait for the next load
-            if bits is None:
-                bits = np.empty((n, len(batch[0][1])), np.uint8)
-            rows = np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)
-            ids[row : row + len(batch)], bits[row : row + len(batch)] = [chunk for chunk, _ in batch], rows
-            row += len(batch)
-        if not row:  # none, or all deleted meanwhile
+        """Load the codes of the active collections' vectors (see `vectors`), each store's batch by batch; again when a
+        store has changed since."""
+        for c in self.active().values():
+            db = self.catalog.store(c)
+            version, held = store.get_meta(db, "version"), self.vectors.get(c.id)
+            if held is not None and version is not None and held[0] == version:
+                continue
+            if (codes_held := _codes(db)) is None:
+                self.vectors.pop(c.id, None)
+            else:
+                self.vectors[c.id] = (version, codes_held)
+        if not self.vectors:
             raise LookupError("no embeddings yet, run `sift embed`")
-        self.vectors, self.version = Codes(ids[:row], bits[:row], self._exact), version
 
-    def _exact(self, chunks):
-        """The vectors the index holds of these chunks, as (their ids, fp16 rows): those deleted meanwhile, and any of
-        another length than the index's vectors, are left out."""
+    def _exact(self, chunks, dim):
+        """The vectors the stores hold of these chunks, of `dim` dimensions, as (their ids, fp16 rows): those deleted
+        meanwhile, and any of another length, are left out."""
         sql = "SELECT chunk, vec FROM vectors WHERE chunk IN (SELECT value FROM json_each(?))"
-        size = 2 * int(store.get_meta(self.db, "dim", 0))
-        rows = [row for row in self.db.execute(sql, (json.dumps(np.asarray(chunks).tolist()),)) if len(row[1]) == size]
-        matrix = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), size // 2)
+        rows = [
+            row
+            for _, db, group in self._by_store(np.asarray(chunks).tolist())
+            for row in db.execute(sql, (json.dumps(group),))
+            if len(row[1]) == 2 * dim
+        ]
+        matrix = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), dim)
         return np.array([chunk for chunk, _ in rows], np.int64), matrix
 
     def _vector(self, query):
@@ -447,23 +531,33 @@ class Index:
         self.load()
         return self.models.encode([query], query=True)[0].astype(np.float32)
 
-    def _semantic(self, query, k, where, args, all_passages=False):
+    def _semantic(self, query, k, scope, where, args, all_passages=False):
         if not query.strip():  # the embedding of nothing is close to arbitrary chunks
             return []
-        return self._nearest(self._vector(query), k, where, args, all_passages)
+        return self._nearest(self._vector(query), k, scope, where, args, all_passages)
 
-    def _nearest(self, query, k, where, args, all_passages, excluded=None):
-        """The best passage of each of the k documents nearest the query's vector, among the documents `where`
-        allows, but the chunks `excluded`; or the k best passages."""
+    def _nearest(self, query, k, scope, where, args, all_passages, excluded=None):
+        """The best passage of each of the k documents nearest the query's vector, among the documents of the
+        collections of `scope` that `where` allows, but the chunks `excluded`; or the k best passages."""
         allowed = None
         if args:  # restrict to chunks of matching documents
             sql = f"SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE {where}"
-            allowed = np.fromiter((c for (c,) in self.db.execute(sql, args)), np.int64)
+            allowed = np.fromiter((i for c in scope for (i,) in self.catalog.store(c).execute(sql, args)), np.int64)
+        held, width = [], codes(query[None, :]).shape[1]
+        for c in scope:
+            if c.id in self.vectors and (theirs := self.vectors[c.id][1]).width != width:
+                self._warn(f"{c.name} was embedded with another model: `sift embed --reset` embeds it with this one")
+            elif c.id in self.vectors:
+                held.append(theirs)
+
+        def exact(ids):
+            return self._exact(ids, len(query))
+
         if all_passages:
-            return self.vectors.top(query, k, allowed, excluded)
+            return top(held, query, k, exact, allowed, excluded)
         n = k
         while True:  # when the best passages come from a few documents, look further for others
-            ranked = self.vectors.top(query, n, allowed, excluded)
+            ranked = top(held, query, n, exact, allowed, excluded)
             best = self._per_document(ranked)
             if len(best) >= k or len(ranked) < n:
                 return best[:k]
@@ -471,29 +565,29 @@ class Index:
 
     def _per_document(self, ranked):
         """The first, best, of each document's passages in `ranked`."""
-        sql = "SELECT c.id, c.doc FROM json_each(?) j JOIN chunks c ON c.id = j.value"
-        docs = dict(self.db.execute(sql, (json.dumps([chunk for chunk, _ in ranked]),)))
-        return _first_of_each(
-            (r for r in ranked if r[0] in docs), lambda r: docs[r[0]]
-        )  # in docs: not removed meanwhile
+        sql, docs = "SELECT c.id, c.doc FROM json_each(?) j JOIN chunks c ON c.id = j.value", {}
+        for _, db, group in self._by_store(chunk for chunk, _ in ranked):
+            docs |= dict(db.execute(sql, (json.dumps(group),)))
+        return _first_of_each((r for r in ranked if r[0] in docs), lambda r: docs[r[0]])  # in docs: not removed
 
     def _hits(self, ranked):
-        sql = """SELECT co.name, d.path, d.title, d.meta, c.line_start, c.line_end, substr(d.text, c.pos + 1, c.len)
-                 FROM chunks c JOIN docs d ON d.id = c.doc JOIN collections co ON co.id = d.collection WHERE c.id = ?"""
-        hits = []
+        sql = """SELECT d.path, d.title, d.meta, c.line_start, c.line_end, substr(d.text, c.pos + 1, c.len)
+                 FROM chunks c JOIN docs d ON d.id = c.doc WHERE c.id = ?"""
+        known, hits = {c.id: c for c in self.catalog.collections()}, []
         for chunk, score in ranked:
-            row = self.db.execute(sql, (chunk,)).fetchone()
-            if row is None:  # removed by a concurrent `sift index`
+            c = known.get(store.owner(chunk))
+            row = c and self.catalog.store(c).execute(sql, (chunk,)).fetchone()
+            if not row:  # removed by a concurrent `sift index`
                 continue
-            name, path, title, meta, start, end, text = row
-            hit = {"id": f"{name}/{path}", "title": title, "lines": f"{start}-{end}", "score": round(score, 4)}
+            path, title, meta, start, end, text = row
+            hit = {"id": f"{c.name}/{path}", "title": title, "lines": f"{start}-{end}", "score": round(score, 4)}
             hits.append(hit | {"meta": meta, "text": text, "chunk": chunk})  # for _present, and `query`'s scores
         return hits
 
     def _cosines(self, query, chunks):
         """The cosines of these chunks with the query's vector, exactly; one not embedded yet, or broken, gets the
         others' mean, neither a bonus nor a penalty."""
-        found, rows = self._exact(np.array(chunks, np.int64))
+        found, rows = self._exact(np.array(chunks, np.int64), len(query))
         exact = dict(zip(found.tolist(), (rows.astype(np.float32) @ query).tolist()))
         cosine = np.array([exact.get(chunk, np.nan) for chunk in chunks], np.float64)
         cosine[~np.isfinite(cosine)] = np.nan
@@ -504,7 +598,8 @@ class Index:
 
     # Every search returns the best passage of each document it finds, or with `all_passages` every passage, and
     # takes `fields`, front-matter fields to add to each hit (["*"] for all), `compact`, which leaves out the text,
-    # and `sort`, a front-matter field to order the hits by instead of score ("-created": newest first).
+    # and `sort`, a front-matter field to order the hits by instead of score ("-created": newest first). Without a
+    # `collection`, a search covers every active one.
 
     def search(
         self,
@@ -523,11 +618,11 @@ class Index:
     ):
         """Exact keyword search, ranked by BM25. Accepts FTS5 syntax: "phrases", prefix*, AND, OR, NOT.
         If no chunk holds all terms of a query without operators, chunks with any of them are returned."""
-        k, where = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
+        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
-        ranked = self._keyword(query, k, *where, all_passages)
+        ranked = self._keyword(query, k, scope, where, args, all_passages)
         if not ranked and (relaxed := _any_term(query)):
-            ranked = self._keyword(relaxed, k, *where, all_passages)
+            ranked = self._keyword(relaxed, k, scope, where, args, all_passages)
         return _present(self._hits(ranked), fields, compact, sort)
 
     def vsearch(
@@ -546,9 +641,9 @@ class Index:
         linked_from=None,
     ):
         """Semantic search: the passages nearest the query's embedding, by cosine similarity (see `vectors`)."""
-        k, where = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
+        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
-        return _present(self._hits(self._semantic(query, k, *where, all_passages)), fields, compact, sort)
+        return _present(self._hits(self._semantic(query, k, scope, where, args, all_passages)), fields, compact, sort)
 
     def query(
         self,
@@ -571,12 +666,12 @@ class Index:
         reciprocal rank, made results worse (MRR@10 0.69 to 0.64 on a known-item test over 3.2 million arXiv
         abstracts); the blend made them better on six of the seven sets in docs/benchmarks.md, and cost a little on
         those arXiv known items (0.937 to 0.929)."""
-        k, where = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
+        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
         candidates = max(candidates, k)
-        keyword = self._keyword(_any_word(query), candidates, *where, all_passages)
+        keyword = self._keyword(_any_word(query), candidates, scope, where, args, all_passages)
         vector = self._vector(query) if query.strip() else None  # for the semantic candidates and every cosine
-        semantic = self._nearest(vector, candidates, *where, all_passages) if vector is not None else []
+        semantic = self._nearest(vector, candidates, scope, where, args, all_passages) if vector is not None else []
         hits = self._hits([(chunk, 0.0) for chunk in dict.fromkeys(chunk for chunk, _ in keyword + semantic)])
         if not hits:
             return []
@@ -626,68 +721,71 @@ class Index:
     ):
         """Documents closest in meaning to the document `id` (as for `get`), by cosine similarity with the mean of its
         passages' vectors; the document itself is left out."""
-        k, where = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
+        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
         doc = self._find(id)[0]
         self.load()
         sql = "SELECT v.chunk, v.vec FROM vectors v JOIN chunks c ON c.id = v.chunk WHERE c.doc = ?"
-        own = self.db.execute(sql, (doc,)).fetchall()
+        own = self._db(doc).execute(sql, (doc,)).fetchall()
         if not own:
             raise LookupError(f"{id!r} has no embeddings yet, run `sift embed`")
         mean = np.mean([np.frombuffer(vec, np.float16) for _, vec in own], axis=0, dtype=np.float32)
         excluded = np.array([chunk for chunk, _ in own], np.int64)
-        nearest = self._nearest(mean / np.linalg.norm(mean), k, *where, all_passages, excluded)
+        nearest = self._nearest(mean / np.linalg.norm(mean), k, scope, where, args, all_passages, excluded)
         return _present(self._hits(nearest), fields, compact, sort)
 
     def _place(self, id):
-        """The collection and the path in it that `id` names: "collection/path", or an absolute path in a
-        collection's folder, the nearest that holds it; (None, "") for an absolute path in none."""
+        """The collection, and the path in it, that `id` names: "collection/path", or an absolute path in a
+        collection's folder, the nearest that holds it; (None, path) for a collection there isn't, (None, "") for an
+        absolute path in none."""
+        collections = self.catalog.collections()
         if not os.path.isabs(id):
             name, _, rel = id.partition("/")
-            return name, rel
+            return next((c for c in collections if c.name == name), None), rel
         full = os.path.normpath(id)
-        for name, root in self.db.execute("SELECT name, path FROM collections ORDER BY length(path) DESC"):
-            root = os.path.normpath(root)
+        for c in sorted(collections, key=lambda c: -len(c.path)):
+            root = os.path.normpath(c.path)
             if os.path.normcase(full).startswith(os.path.normcase(os.path.join(root, ""))):
-                return name, os.path.relpath(full, root).replace(os.sep, "/")
+                return c, os.path.relpath(full, root).replace(os.sep, "/")
         return None, ""
 
     def _rows(self, id):
         """The documents `id` may name (see `get`), at most six: (row id, path, title, meta, text) of each."""
-        name, rel = self._place(id)
-        sql = """SELECT d.id, d.path, d.title, d.meta, d.text FROM docs d JOIN collections co ON co.id = d.collection
-                 WHERE co.name = ? AND """
-        rows = self.db.execute(sql + "d.path = ?", (name, rel)).fetchall()
+        collection, rel = self._place(id)
+        if collection is None:
+            return []
+        db, sql = self._readable(collection), "SELECT id, path, title, meta, text FROM docs WHERE "
+        rows = db.execute(sql + "path = ?", (rel,)).fetchall()
         if rows or not rel:
             return rows
         if os.path.isabs(id):  # in another case, as Windows and macOS name the same file, and `reindex` takes it
-            found = self.db.execute(sql + "lower(d.path) = lower(?)", (name, rel)).fetchall()
+            found = db.execute(sql + "lower(path) = lower(?)", (rel,)).fetchall()
             same = [row for row in found if readers.fold(row[1]) == readers.fold(rel)]
             return same if len(same) == 1 else []
         # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
-        return self.db.execute(sql + "substr(d.path, -?) = ? LIMIT 6", (name, len(rel) + 1, "/" + rel)).fetchall()
+        return db.execute(sql + "substr(path, -?) = ? ORDER BY path LIMIT 6", (len(rel) + 1, "/" + rel)).fetchall()
 
     def _note(self, id):
         """The document `id` names, as for `get`, or else the note `id` names as links name it, "Acme AG" or
-        "[[Acme AG]]", if one note answers to it in all collections: as _find gives it."""
+        "[[Acme AG]]", if one note answers to it in all active collections: as _find gives it."""
         try:
             return self._find(id)
         except LookupError as unknown:
-            note = self._notes([id], "id", None, links.Resolver(self.db))[id]
+            note = self._notes([id], "id", self._scope(None), _Resolvers(self.catalog))[id]
             if note is None:
                 raise unknown from None
             return self._find(self._named([note])[note][0])
 
     def _find(self, id):
         """The document `id` names (see `get`), as (row id, whole id, title, meta, text)."""
-        name, rows = self._place(id)[0], self._rows(id)
+        collection, rows = self._place(id)[0], self._rows(id)
         if len(rows) > 1:
-            matches = ", ".join(f"{name}/{row[1]}" for row in rows[:5]) + (", ..." if len(rows) > 5 else "")
+            matches = ", ".join(f"{collection.name}/{row[1]}" for row in rows[:5]) + (", ..." if len(rows) > 5 else "")
             raise LookupError(f"{id!r} matches {matches}; give the whole id")
         if not rows:
             raise LookupError(f"unknown document {id!r}")
         doc, path, title, meta, text = rows[0]
-        return doc, f"{name}/{path}", title, meta, text
+        return doc, f"{collection.name}/{path}", title, meta, text
 
     def browse(
         self,
@@ -702,23 +800,25 @@ class Index:
         links_to=None,
         linked_from=None,
     ):
-        """Documents without a query, by path: what a collection, folder or filter holds. They come as hits without
-        lines and score, with the start of their first passage, after any front matter, as their passage; `sort`
-        orders them by a front-matter field instead, as in searches."""
-        k, (where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
+        """Documents without a query, by collection and path: what a collection, folder or filter holds. They come as
+        hits without lines and score, with the start of their first passage, after any front matter, as their
+        passage; `sort` orders them by a front-matter field instead, as in searches."""
+        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
-        order, by = "co.name, d.path", []
+        value, order, by = "NULL", "d.path", []
         if sort:
             value = "json_extract(d.meta, ?)"
             order = f"{value} IS NULL, {value}{' DESC' if sort[0] == '-' else ''}, {order}"
-            by = [_field(sort.removeprefix("-"))] * 2
+            by = [_field(sort.removeprefix("-"))]
         # The first chunk's start, after any front matter; as a subquery, not a join, so that sorting a whole collection
         # doesn't join every document first (0.4 s, against 5 s, for 3 million).
         first = f"SELECT substr(d.text, c.pos + 1, min(c.len, {START})) FROM chunks c WHERE c.doc = d.id AND c.seq = 0"
-        sql = f"""SELECT co.name, d.path, d.title, d.meta, coalesce(({first}), '') FROM docs d
-                  JOIN collections co ON co.id = d.collection WHERE {where} ORDER BY {order} LIMIT ?"""
+        sql = f"""SELECT d.path, d.title, d.meta, coalesce(({first}), ''), {value} FROM docs d WHERE {where}
+                  ORDER BY {order} LIMIT ?"""
+        rows = [(c.name, *row) for c in scope for row in self.catalog.store(c).execute(sql, [*by, *args, *by * 2, k])]
+        rows = _by_value(rows, sort[0] == "-") if sort else rows  # else in order: the collections by name, each by path
         docs = []
-        for name, doc_path, title, meta, text in self.db.execute(sql, [*args, *by, k]):
+        for name, doc_path, title, meta, text, _ in rows[:k]:
             doc = {"id": f"{name}/{doc_path}", "title": title}
             if fields:
                 doc["fields"] = _pick(meta, fields)
@@ -729,9 +829,9 @@ class Index:
         """The folders directly inside the folder `path` ("" or e.g. "2024/") of a collection, by name. Each folder
         is one jump through the index, so a folder holding millions of documents costs as little as an empty one."""
         path = path.strip("/") + "/" if path.strip("/") else ""  # "2024", "/2024/": the folder 2024/
-        cid, found, after = _collection_id(self.db, collection), [], path
-        sql = "SELECT path FROM docs WHERE collection = ? AND path > ? AND path < ? ORDER BY path LIMIT 1"
-        while row := self.db.execute(sql, (cid, after, path + LAST)).fetchone():
+        db, found, after = self._readable(self.catalog.get(collection)), [], path
+        sql = "SELECT path FROM docs WHERE path > ? AND path < ? ORDER BY path LIMIT 1"
+        while row := db.execute(sql, (after, path + LAST)).fetchone():
             name, slash, _ = row[0][len(path) :].partition("/")
             if slash:
                 found.append(name)
@@ -741,10 +841,11 @@ class Index:
     def file(self, id):
         """The file a document was read from, by its id as for `get`; None for a JSON Lines record, which is a part
         of its file."""
-        sql = """SELECT co.path, s.path, d.path FROM docs d JOIN sources s ON s.id = d.source
-                 JOIN collections co ON co.id = d.collection WHERE d.id = ?"""
-        root, source, path = self.db.execute(sql, (self._find(id)[0],)).fetchone()
-        return Path(root) / source if source == path else None
+        doc = self._find(id)[0]
+        collection = self._owner(doc)
+        sql = "SELECT s.path, d.path FROM docs d JOIN sources s ON s.id = d.source WHERE d.id = ?"
+        source, path = self.catalog.store(collection).execute(sql, (doc,)).fetchone()
+        return Path(collection.path) / source if source == path else None
 
     # --- links between notes (see `links`) -----------------------------------
 
@@ -761,22 +862,23 @@ class Index:
             raise ValueError(f"field must be the name of a front-matter field, got {field!r}")
         k = _check_k(k)
         doc, whole, title, _, _ = self._note(id)
-        resolver, found = links.Resolver(self.db), {"id": whole, "title": title}
+        db = self._db(doc)
+        resolver, found = links.Resolver(db), {"id": whole, "title": title}
         if direction != "in":
-            found["out"] = self._out(resolver, doc, depth, field, k)
+            found["out"] = self._out(db, resolver, doc, depth, field, k)
         if direction != "out":
-            found["in"] = self._in(resolver, doc, depth, field, k)
+            found["in"] = self._in(db, resolver, doc, depth, field, k)
         return found
 
-    def _out(self, resolver, doc, depth, field, k):
+    def _out(self, db, resolver, doc, depth, field, k):
         """The links out of a document, and with depth 2, the documents they lead to link: (row, how, through)."""
-        first = links.outgoing(self.db, resolver, doc, field)
+        first = links.outgoing(db, resolver, doc, field)
         found = [(row, how, None) for row, how in first]
         if depth == 2:
             reached = [docs[0] for _, (via, docs) in first if via in VIA]
             seen = {doc, *reached}
             for step in dict.fromkeys(reached):
-                for row, (via, docs) in links.outgoing(self.db, resolver, step, field):
+                for row, (via, docs) in links.outgoing(db, resolver, step, field):
                     if via in VIA and docs[0] not in seen:
                         seen.add(docs[0])
                         found.append((row, (via, docs), step))
@@ -784,21 +886,21 @@ class Index:
         named = self._named([d for _, (_, docs), through in found for d in [*docs, through] if d])
         return [_link_out(row, how, through, named) for row, how, through in found]
 
-    def _in(self, resolver, doc, depth, field, k):
+    def _in(self, db, resolver, doc, depth, field, k):
         """The documents linking a document, and with depth 2, those linking them: (doc, its links, through)."""
-        first = _by_document(links.incoming(self.db, resolver, doc, field))
+        first = _by_document(links.incoming(db, resolver, doc, field))
         found = [(source, rows, None) for source, rows in first.items()]
         if depth == 2:
             seen = {doc, *first}
             for step in first:
-                for source, rows in _by_document(links.incoming(self.db, resolver, step, field)).items():
+                for source, rows in _by_document(links.incoming(db, resolver, step, field)).items():
                     if source not in seen:
                         seen.add(source)
                         found.append((source, rows, step))
         found = found[:k]
         named = self._named([d for source, _, through in found for d in (source, through) if d])
         sql = "SELECT id, text FROM docs WHERE id IN (SELECT value FROM json_each(?))"
-        texts = dict(self.db.execute(sql, (json.dumps([source for source, _, _ in found]),)))
+        texts = dict(db.execute(sql, (json.dumps([source for source, _, _ in found]),)))
         return [
             {"id": named[source][0], "title": named[source][1], "links": _lines_of(rows, texts[source])}
             | ({"through": named[through][0]} if through else {})
@@ -807,26 +909,30 @@ class Index:
 
     def link_count(self, id):
         """How many documents link to the document `id`, and how many documents it links to: (in, out)."""
-        doc, resolver = self._note(id)[0], links.Resolver(self.db)
-        into = {row[0] for row in links.incoming(self.db, resolver, doc)}
-        out = {docs[0] for _, (via, docs) in links.outgoing(self.db, resolver, doc) if via in VIA}
+        doc = self._note(id)[0]
+        db = self._db(doc)
+        resolver = links.Resolver(db)
+        into = {row[0] for row in links.incoming(db, resolver, doc)}
+        out = {docs[0] for _, (via, docs) in links.outgoing(db, resolver, doc) if via in VIA}
         return len(into), len(out)
 
     def _named(self, docs):
         """The whole id and title of documents, by row id."""
-        sql = """SELECT d.id, co.name || '/' || d.path, d.title FROM docs d JOIN collections co ON co.id = d.collection
-                 WHERE d.id IN (SELECT value FROM json_each(?))"""
-        return {doc: (whole, title) for doc, whole, title in self.db.execute(sql, (json.dumps(list(set(docs))),))}
+        sql, named = "SELECT id, path, title FROM docs WHERE id IN (SELECT value FROM json_each(?))", {}
+        for c, db, group in self._by_store(set(docs)):
+            named |= {doc: (f"{c.name}/{path}", title) for doc, path, title in db.execute(sql, (json.dumps(group),))}
+        return named
 
     def unresolved(self, collection=None, k=50):
-        """Link targets no document answers to, in a collection or in all: notes not written yet. The most linked
-        first, each with how many documents link it and the ids of a few of them."""
-        k, cid = _check_k(k), _collection_id(self.db, collection) if collection else None
-        found = sorted(links.unresolved(self.db, cid), key=lambda t: (-len(t[2]), t[1]))[:k]
-        named = self._named([doc for _, _, docs, _ in found for doc in docs])
+        """Link targets no document answers to, in a collection or in every active one: notes not written yet. The
+        most linked first, each with how many documents link it and the ids of a few of them."""
+        k, scope = _check_k(k), self._scope(collection)
+        found = [target for c in scope for target in links.unresolved(self.catalog.store(c))]
+        found = sorted(found, key=lambda t: (-len(t[1]), t[0]))[:k]
+        named = self._named([doc for _, docs, _ in found for doc in docs])
         return [
             {"target": target, "docs": len(docs), "ids": sorted(named[doc][0] for doc in docs)[:LINKING_SHOWN]}
-            for _, target, docs, _ in found
+            for target, docs, _ in found
         ]
 
     def mentions(self, id, k=10, *, collection=None, also=None, fields=None, compact=False):
@@ -852,29 +958,32 @@ class Index:
                     phrases.setdefault(readers.fold(variant), variant)
         if not phrases:
             return []
-        where, args = self._where(collection)
-        linking = {row[0] for row in links.incoming(self.db, links.Resolver(self.db), doc)} | {doc}
+        scope, where, args = self._where(collection)
+        db = self._db(doc)
+        linking = {row[0] for row in links.incoming(db, links.Resolver(db), doc)} | {doc}
         where, args = where + " AND d.id NOT IN (SELECT value FROM json_each(?))", [*args, _ids(linking)]
         match = " OR ".join('"' + phrase.replace('"', '""') + '"' for phrase in phrases.values())
-        return _present(self._hits(self._keyword(match, k, where, args)), fields, compact, None)
+        return _present(self._hits(self._keyword(match, k, scope, where, args)), fields, compact, None)
 
     # --- reading files again (see indexing.reindex) ---------------------------
 
     def reindex(self, paths):
-        """Read files again now, after they were written, changed or deleted, and embed their new passages if the index
-        is embedded: the next search finds them as they are, the codes in memory following without a full load. Per
-        file: {"id", "status"}, see indexing.reindex, with "chunks", its documents' passages, and "embedded", how many
-        of them have vectors; and a "note" on anything that went wrong. Scans are left for `sift index` to read with
-        OCR: a server runs this on its event loop, which reading one would hold up for minutes."""
-        done = indexing.reindex(self.db, paths, scans=False)
-        self._patch(done.before, done.after, removed=done.removed)
+        """Read files again now, after they were written, changed or deleted, and embed their new passages if their
+        collection is embedded: the next search finds them as they are, the codes in memory following without a full
+        load. Per file: {"id", "status"}, see indexing.reindex, with "chunks", its documents' passages, and
+        "embedded", how many of them have vectors; and a "note" on anything that went wrong. Scans are left for `sift
+        index` to read with OCR: a server runs this on its event loop, which reading one would hold up for minutes."""
+        done = indexing.reindex(self.catalog, paths, scans=False)
+        for cid, (before, after) in done.versions.items():
+            removed = [chunk for chunk in done.removed if store.owner(chunk) == cid]
+            self._patch(cid, before, after, removed=removed)
         note = self._embed_new([doc for _, docs in done.files for doc in docs])
         sql = """SELECT count(c.id), count(v.chunk) FROM chunks c LEFT JOIN vectors v ON v.chunk = c.id
                  WHERE c.doc IN (SELECT value FROM json_each(?))"""
         results = []
         for entry, docs in done.files:
             if entry["status"] in ("added", "changed", "unchanged"):
-                chunks, embedded = self.db.execute(sql, (json.dumps(docs),)).fetchone()
+                chunks, embedded = self._db(docs[0]).execute(sql, (json.dumps(docs),)).fetchone() if docs else (0, 0)
                 entry |= {"chunks": chunks, "embedded": embedded}
                 if note and embedded < chunks:
                     entry["note"] = "; ".join(filter(None, [entry.get("note"), note]))
@@ -882,75 +991,92 @@ class Index:
         return results
 
     def _embed_new(self, docs):
-        """Embed the passages of these documents that have no vector yet, if the index is embedded, and add their codes
-        to those in memory. Returns why some weren't, or None."""
-        model = store.get_meta(self.db, "model")
+        """Embed the passages of these documents that have no vector yet, in each collection already embedded, and add
+        their codes to those in memory. Returns why some weren't, or None."""
+        notes = [self._embed_new_in(c, db, group) for c, db, group in self._by_store(docs)]
+        return "; ".join(dict.fromkeys(filter(None, notes))) or None
+
+    def _embed_new_in(self, collection, db, docs):
+        model = store.get_meta(db, "model")
         if model is None:  # never embedded: keyword search alone, and no model to load
             return None
         sql = """SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
                  WHERE c.doc IN (SELECT value FROM json_each(?))
                  AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id) ORDER BY c.id"""
-        rows = self.db.execute(sql, (json.dumps(docs),)).fetchall()
+        rows = db.execute(sql, (json.dumps(docs),)).fetchall()
         if not rows:
             return None
         try:
             if (using := self.models.name) != model:
-                return f"not embedded: the index was embedded with {model}; run `sift embed --reset` for {using}"
+                return (
+                    f"not embedded: {collection.name} was embedded with {model}; run `sift embed --reset` for {using}"
+                )
             matrix = embed.encode(self.models, [embed.text_of(*row[1:]) for row in rows])
         except ConnectionError as e:  # a worker that doesn't answer: keyword search finds them meanwhile
             return f"not embedded: {e}"
         intact = np.isfinite(matrix).all(axis=1)
-        self.db.execute("BEGIN IMMEDIATE")
+        db.execute("BEGIN IMMEDIATE")
         try:
-            before = store.get_meta(self.db, "version")
+            before = store.get_meta(db, "version")
             sql = "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))"  # not removed meanwhile
-            still = {c for (c,) in self.db.execute(sql, (json.dumps([row[0] for row in rows]),))}
+            still = {c for (c,) in db.execute(sql, (json.dumps([row[0] for row in rows]),))}
             keep = [i for i, row in enumerate(rows) if intact[i] and row[0] in still]
-            store.put_vectors(self.db, [rows[i][0] for i in keep], matrix[keep])
-            store.touch(self.db)
-            after = store.get_meta(self.db, "version")
-            self.db.commit()
+            store.put_vectors(db, [rows[i][0] for i in keep], matrix[keep])
+            store.touch(db)
+            after = store.get_meta(db, "version")
+            db.commit()
         except BaseException:
-            self.db.rollback()
+            db.rollback()
             raise
-        self._patch(before, after, ids=[rows[i][0] for i in keep], matrix=matrix[keep])
+        self._patch(collection.id, before, after, ids=[rows[i][0] for i in keep], matrix=matrix[keep])
         return None if intact.all() else "some passages could not be embedded (the model returned NaN); try again"
 
-    def _patch(self, before, after, removed=(), ids=(), matrix=None):
-        """Bring the codes in memory from the index's version `before` to `after`, a change this index made itself,
-        without loading them all again. Codes of another version are loaded anew by the next search anyway."""
-        if self.vectors is None or self.version != before or before == after:
+    def _patch(self, cid, before, after, removed=(), ids=(), matrix=None):
+        """Bring the codes in memory of the collection `cid` from its store's version `before` to `after`, a change this
+        index made itself, without loading them all again. Codes of another version are loaded anew by the next
+        search anyway."""
+        held = self.vectors.get(cid)
+        if held is None or held[0] != before or before == after:
             return
-        if matrix is None:
-            matrix = np.empty((0, int(store.get_meta(self.db, "dim"))), np.float16)
-        self.vectors, self.version = self.vectors.patched(list(removed), list(ids), codes(matrix)), after
+        bits = codes(matrix) if matrix is not None else np.empty((0, held[1].width), np.uint8)
+        self.vectors[cid] = (after, held[1].patched(list(removed), list(ids), bits))
 
     def fields(self, collection, docs):
-        """The front-matter fields of a collection (by id with `docs` documents), from a sample spread over it."""
-        sql = """SELECT DISTINCT j.key FROM (SELECT meta FROM docs WHERE collection = ? AND id % ? = 0 LIMIT ?) d,
-                 json_each(d.meta) j ORDER BY j.key"""
-        return [key for (key,) in self.db.execute(sql, (collection, max(1, docs // FIELD_SAMPLE), FIELD_SAMPLE))]
+        """The front-matter fields of a collection with `docs` documents, from a sample spread over it."""
+        sql = """SELECT DISTINCT j.key FROM (SELECT meta FROM docs WHERE id % ? = 0 LIMIT ?) d, json_each(d.meta) j
+                 ORDER BY j.key"""
+        db = self.catalog.store(collection)
+        return [key for (key,) in db.execute(sql, (max(1, docs // FIELD_SAMPLE), FIELD_SAMPLE))]
 
     def status(self):
-        rows = self.db.execute("""
-            SELECT co.id, co.name, co.path, count(DISTINCT d.id), count(c.id), count(v.chunk) FROM collections co
-            LEFT JOIN docs d ON d.collection = co.id LEFT JOIN chunks c ON c.doc = d.id
-            LEFT JOIN vectors v ON v.chunk = c.id GROUP BY co.id ORDER BY co.name""").fetchall()
-        linked, broken = self.link_counts()
+        """The catalog, the model the active collections are embedded with, and every collection: its folder, whether
+        it is active, its store and the bytes it takes, or that it is missing; and of an active one, its documents,
+        chunks, those embedded, front-matter fields and links."""
+        collections, models = [], set()
+        for c in self.catalog.collections():
+            entry = {"name": c.name, "path": c.path, "active": c.active, "store": c.store}
+            if not os.path.isfile(c.store):
+                collections.append(entry | {"missing": True})
+                continue
+            entry["size"] = _size(c.store)
+            if c.active:
+                db = self.catalog.store(c)
+                sql = (
+                    "SELECT (SELECT count(*) FROM docs), (SELECT count(*) FROM chunks), (SELECT count(*) FROM vectors)"
+                )
+                docs, chunks, embedded = db.execute(sql).fetchone()
+                linked, unresolved = self.link_counts(c)
+                entry |= {"docs": docs, "chunks": chunks, "embedded": embedded, "fields": self.fields(c, docs)}
+                entry |= {"links": linked, "unresolved": unresolved}
+                models.add(store.get_meta(db, "model"))
+            collections.append(entry)
         return {
-            "index": self.db.execute("PRAGMA database_list").fetchone()[2],
-            "model": store.get_meta(self.db, "model"),
-            "collections": [
-                {"name": n, "path": p, "docs": d, "chunks": c, "embedded": e, "fields": self.fields(i, d)}
-                | {"links": linked.get(i, 0), "unresolved": broken.get(i, 0)}
-                for i, n, p, d, c, e in rows
-            ],
+            "index": str(self.catalog.path),
+            "model": ", ".join(sorted(filter(None, models))) or None,
+            "collections": collections,
         }
 
-    def link_counts(self):
-        """How many links the notes of each collection hold, and how many of them are unresolved, by collection id."""
-        linked = dict(self.db.execute("SELECT collection, count(*) FROM links GROUP BY collection"))
-        broken = Counter()
-        for cid, _, _, n in links.unresolved(self.db):
-            broken[cid] += n
-        return linked, broken
+    def link_counts(self, collection):
+        """How many links the notes of a collection hold, and how many of them are unresolved."""
+        db = self.catalog.store(collection)
+        return db.execute("SELECT count(*) FROM links").fetchone()[0], sum(n for *_, n in links.unresolved(db))
