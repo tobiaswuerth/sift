@@ -13,9 +13,8 @@ from sift import indexing, ocr, readers, store
 from sift.accelerator import Accelerator
 from sift.catalog import Catalog
 from sift.search import Index
-from tests.conftest import only
 
-from .conftest import PretendGpu, write
+from .conftest import PretendGpu, only, write
 from .test_documents import email_file
 
 

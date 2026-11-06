@@ -14,9 +14,8 @@ import pytest
 from sift import indexing, readers
 from sift.catalog import Catalog
 from sift.search import Index
-from tests.conftest import only
 
-from .conftest import index_contents, write
+from .conftest import index_contents, only, write
 
 SAMPLES = Path(__file__).parent / "samples"
 PARAGRAPH = "Kubelka-Munk theory predicts the colour of mixed paints from how each pigment absorbs and scatters light."

@@ -122,9 +122,10 @@ A collection whose index is missing, on a drive that isn't connected, is passed 
 server's console; `sift status` marks it `"missing": true`. sift never makes such an index anew.
 
 `sift deactivate NAME ...` leaves collections out: searches pass them over, a running server lets go of their vectors'
-codes with its next request and no longer lists them to agents, and `sift index` and `sift embed` skip them unless
-named. Their indexes stay as they are, `reindex` still updates them, and `sift activate NAME ...` takes them back.
-`sift status` lists every collection, `"active"` or not, with its index file (`"store"`) and its size in bytes.
+codes with its next request, a server started afterwards doesn't name them to agents, and `sift index` and `sift
+embed` skip them unless named. Their indexes stay as they are, `reindex` still updates them, and `sift activate NAME
+...` takes them back. `sift status` lists every collection, `"active"` or not, with its index file (`"store"`) and its
+size in bytes.
 
 Search commands, `similar` included, return one result per document, with its best passage. They accept `-k` (number
 of results), `-c` (collection), `--path` (glob within the collection, e.g. `"2024/*"`), `-f` (front-matter filter,

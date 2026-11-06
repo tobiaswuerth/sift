@@ -17,8 +17,8 @@ Each collection's index in a file of its own, wherever it fits, and collections 
   open.
 - `sift add --store PATH` puts a new collection's index in another folder, or in a file of your choice.
 - `sift deactivate NAME ...` and `sift activate NAME ...`: an inactive collection is passed over by searches, its
-  vectors' codes leave a running server's memory with its next request, the server no longer lists it to agents, and
-  `sift index` and `sift embed` skip it unless named. `reindex` still updates it.
+  vectors' codes leave a running server's memory with its next request, a server started afterwards doesn't name it
+  to agents, and `sift index` and `sift embed` skip it unless named. `reindex` still updates it.
 - `sift status` and the MCP `status` tool show each collection's `active`, its index file (`store`) and its `size` in
   bytes, or `missing` when its file isn't there; an inactive collection's counts aren't read.
 

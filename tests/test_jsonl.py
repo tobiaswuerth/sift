@@ -7,9 +7,8 @@ import pytest
 from sift import embed, indexing, readers
 from sift.catalog import Catalog
 from sift.search import Index
-from tests.conftest import only
 
-from .conftest import write
+from .conftest import only, write
 
 PAPERS = [
     {
