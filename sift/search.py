@@ -501,7 +501,10 @@ class Index:
     def load(self):
         """Load the codes of the active collections' vectors (see `vectors`), each store's batch by batch; again when a
         store has changed since."""
-        for c in self.active().values():
+        active = self.active()
+        if not active and self.catalog.collections():
+            raise LookupError("no collection is active: `sift activate NAME` takes one back into searches")
+        for c in active.values():
             db = self.catalog.store(c)
             version, held = store.get_meta(db, "version"), self.vectors.get(c.id)
             if held is not None and version is not None and held[0] == version:

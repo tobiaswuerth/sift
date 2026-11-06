@@ -280,3 +280,11 @@ def test_files_of_several_collections_are_reindexed_at_once(three, tmp_path):
         ("diary/monday.md", "unchanged"),
     ]
     assert ids(Index(three).search("basil")) == ["recipes/soup.md"]
+
+
+def test_with_every_collection_inactive_a_search_says_how_to_activate_one(three):
+    three.set_active(["diary", "papers", "recipes"], False)
+    index = Index(three)
+    assert index.search("robot") == []
+    with pytest.raises(LookupError, match="no collection is active: `sift activate NAME`"):
+        index.vsearch("robot")
