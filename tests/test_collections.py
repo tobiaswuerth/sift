@@ -298,3 +298,18 @@ def test_a_note_whose_collection_is_removed_meanwhile_is_a_clear_error(three, mo
     monkeypatch.setattr(Index, "_note", lambda self, id: found)
     with pytest.raises(LookupError, match="its collection was removed meanwhile"):
         index.links("diary/monday.md")
+
+
+def test_embedding_passes_over_a_collection_whose_store_is_missing_unless_named(three, tmp_path, capsys):
+    write(tmp_path / "papers" / "new.md", "# New\n\nA new paper.\n")
+    indexing.index(three)
+    stored = three.get("diary").store
+    three.release(three.get("diary").id)
+    os.replace(stored, stored + ".away")
+    capsys.readouterr()
+    embed.embed_pending(three)
+    err = capsys.readouterr().err
+    assert f"diary: its index is missing: {stored}" in err
+    assert "embedding 1 chunk with" in err  # the new paper's
+    with pytest.raises(LookupError, match="diary: its index is missing"):
+        embed.embed_pending(three, collections=["diary"])

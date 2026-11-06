@@ -33,7 +33,7 @@ def embed_pending(catalog, reset=False, models=None, collections=None):
         for db in [catalog.store(c) for c in catalog.collections()]:  # every one opens, or none changes
             _forget_vectors(db)
     using = models.name
-    stores = [(c, catalog.store(c)) for c in chosen]
+    stores = list(_stores(catalog, chosen, named=bool(collections)))
     for c, db in stores:
         _check_model(db, c.name, using)
         _drop_broken_vectors(db)
@@ -67,6 +67,18 @@ def _chosen(catalog, names):
     if names:
         return [catalog.get(name) for name in dict.fromkeys(names)]
     return [c for c in catalog.collections() if c.active]
+
+
+def _stores(catalog, collections, named):
+    """The collections with their stores: one whose store is missing is passed over, as `sift index` does, unless
+    `named`, which makes it an error."""
+    for c in collections:
+        try:
+            yield c, catalog.store(c)
+        except LookupError as missing:
+            if named:
+                raise
+            console.say(f"{missing}; skipped")
 
 
 def _forget_vectors(db):
