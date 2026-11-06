@@ -349,7 +349,18 @@ def scores(hits):
 
 
 @pytest.mark.parametrize(
-    "query", ["benchmark recall", "recall", '"hit rate" OR benchmark', "recall NOT cache", "bench*", "tests"]
+    "query",
+    [
+        "benchmark recall",
+        "recall",
+        '"hit rate" OR benchmark',
+        "recall NOT cache",
+        "(recall OR queue) AND a",
+        "bench*",
+        "bench *",
+        '"bench" *',
+        "tests",
+    ],
 )
 def test_keyword_scores_over_several_collections_are_those_of_one_index(split_and_whole, query):
     # Each collection's word counts alone would score a small collection's terms as common: a page about benchmarks,

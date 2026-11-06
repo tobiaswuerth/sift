@@ -160,7 +160,7 @@ def _any_term(query):
 
 
 QUOTED = r'"(?:[^"]|"")*"'
-PHRASE = re.compile(rf"{QUOTED}(?:\s*\*)?|[^\s()\"]+")  # a quoted phrase, prefix or not, or a bare word
+PHRASE = re.compile(rf"(?:{QUOTED}|[^\s()\"*]+)(?:\s*\*)?")  # a quoted phrase or a bare word, prefix or not
 PLACED = re.compile(r"NEAR\s*\(|[{}+^:]")  # operators that join phrases or tie them to columns or places
 K1, B = 1.2, 0.75  # the parameters of FTS5's bm25()
 MARK = "\x01"  # what highlight() puts before each phrase it finds, to count them
