@@ -39,8 +39,8 @@ Each collection's index in a file of its own, wherever it fits, and collections 
   by 1.8, `search`, `vsearch` and `query` returned what 1.7 returned, scores included. A query with NEAR or a column
   filter keeps each collection's own keyword scores.
 - The ids of documents and chunks never repeat (AUTOINCREMENT), and start at their collection's id times 2^40.
-- A collection whose index file is missing, on a drive that isn't connected, is passed over by searches with a
-  warning, and never made anew, empty.
+- A collection whose index file is missing, on a drive that isn't connected, is passed over by searches, `sift index`
+  and `sift embed`, with a warning, and never made anew, empty.
 - `sift rm` says it deleted the collection's index; an unknown collection is an error that lists those there are,
   whatever the command.
 
