@@ -33,8 +33,11 @@ Each collection's index in a file of its own, wherever it fits, and collections 
   before the catalog takes the old file's place. Nothing is read from the files or embedded again; it needs as much
   free space as the index takes, and a split stopped half-way goes on where it stopped. `sift move FOLDER` as the
   first command splits it straight into that folder. An older sift doesn't open an index so updated.
-- Keyword scores (BM25) use each collection's own word counts; searches over several collections merge each
-  collection's best. Semantic search scores the 4,000 nearest codes of all collections together, as before.
+- Searches ask each collection's index and merge the results, as one index ranked them: each collection's best
+  keyword hits are scored again with the word counts of all collections searched (FTS5's BM25 formula, from its own
+  counts), and semantic search scores the 4,000 nearest codes of all collections together. On an index of 1.7 split
+  by 1.8, `search`, `vsearch` and `query` returned what 1.7 returned, scores included. A query with NEAR or a column
+  filter keeps each collection's own keyword scores.
 - The ids of documents and chunks never repeat (AUTOINCREMENT), and start at their collection's id times 2^40.
 - A collection whose index file is missing, on a drive that isn't connected, is passed over by searches with a
   warning, and never made anew, empty.

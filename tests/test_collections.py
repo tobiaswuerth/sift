@@ -313,3 +313,88 @@ def test_embedding_passes_over_a_collection_whose_store_is_missing_unless_named(
     assert "embedding 1 chunk with" in err  # the new paper's
     with pytest.raises(LookupError, match="diary: its index is missing"):
         embed.embed_pending(three, collections=["diary"])
+
+
+# --- keyword scores over several collections -------------------------------------
+
+
+@pytest.fixture
+def split_and_whole(tmp_path, fake_models):
+    """The same files as two collections, one small, and as one: (two collections, one)."""
+    texts = {
+        "big/a.md": "# Caching\n\nA cache in front of the database. Recall the hit rate.\n",
+        "big/b.md": "# Queues\n\nA queue between services absorbs bursts.\n",
+        "big/c.md": "# Logging\n\nStructured logs for every request, and a benchmark of their cost.\n",
+        "big/d.md": "# Retries\n\nRetries with backoff and jitter.\n",
+        "big/e.md": "# Testing\n\nUnit tests first, then integration tests.\n",
+        "small/bench.md": "# Benchmark\n\nRecall at ten, in a benchmark of recall and precision.\n",
+        # tens of thousands of tokens: FTS5 keeps their counts in varints of two and three bytes
+        "big/long.md": "# Notes\n\n" + "\n\n".join(f"Note {i}: a cache, a recall of tests." for i in range(3000)),
+    }
+    for path, text in texts.items():
+        write(tmp_path / "all" / path, text)
+    two = Catalog(tmp_path / "two")
+    two.add(tmp_path / "all" / "big", "big")
+    two.add(tmp_path / "all" / "small", "small")
+    one = Catalog(tmp_path / "one")
+    one.add(tmp_path / "all", "all")
+    for catalog in (two, one):
+        indexing.index(catalog)
+    return two, one
+
+
+def scores(hits):
+    """Each hit's score, by its path."""
+    return {h["id"].split("/", 1)[1].removeprefix("all/").split("/", 1)[-1]: h["score"] for h in hits}
+
+
+@pytest.mark.parametrize(
+    "query", ["benchmark recall", "recall", '"hit rate" OR benchmark', "recall NOT cache", "bench*", "tests"]
+)
+def test_keyword_scores_over_several_collections_are_those_of_one_index(split_and_whole, query):
+    # Each collection's word counts alone would score a small collection's terms as common: a page about benchmarks,
+    # alone in its collection, would sink below every passage of the others.
+    two, one = split_and_whole
+    for all_passages in (False, True):
+        apart = Index(two).search(query, all_passages=all_passages)
+        together = Index(one).search(query, all_passages=all_passages)
+        assert scores(apart) == pytest.approx(scores(together), abs=1e-3)
+        assert [h["score"] for h in apart] == sorted((h["score"] for h in apart), reverse=True)
+
+
+def test_a_small_collections_page_ranks_as_in_one_index(split_and_whole):
+    two, _ = split_and_whole
+    assert ids(Index(two).search("benchmark recall"))[0] == "small/bench.md"
+
+
+def test_a_query_that_places_phrases_keeps_each_collections_scores(split_and_whole):
+    # NEAR, column filters and the like aren't taken apart into phrases: such hits are ranked by their own
+    # collection's word counts.
+    two, _ = split_and_whole
+    assert ids(Index(two).search("title: benchmark")) == ["small/bench.md"]
+    assert set(ids(Index(two).search("NEAR(benchmark recall)"))) == {"small/bench.md"}
+
+
+def test_a_documents_best_passage_is_that_of_one_index(tmp_path, fake_models):
+    # Its own collection's word counts can pick another passage as a document's best: in a collection of one
+    # document, a word in every passage counts for nothing there, and the passage of a rarer word wins.
+    filler = " ".join(f"word{i}" for i in range(400))
+    texts = {
+        "small/doc.md": f"# Doc\n\n## Alpha\n\nalpha alpha alpha alpha {filler}\n\n## Beta\n\nbeta alpha {filler}\n",
+        **{f"big/{i}.md": f"# Note {i}\n\nbeta and gamma, {i}.\n" for i in range(8)},
+    }
+    for path, text in texts.items():
+        write(tmp_path / "all" / path, text)
+    two, one = Catalog(tmp_path / "two"), Catalog(tmp_path / "one")
+    two.add(tmp_path / "all" / "big", "big")
+    two.add(tmp_path / "all" / "small", "small")
+    one.add(tmp_path / "all", "all")
+    for catalog in (two, one):
+        indexing.index(catalog)
+    assert two.store("small").execute("SELECT count(*) FROM chunks").fetchone()[0] > 1
+
+    def best(catalog, prefix):
+        hit = next(h for h in Index(catalog).search("alpha OR beta", k=20) if h["id"].startswith(prefix))
+        return hit["lines"], hit["score"]
+
+    assert best(two, "small/doc.md") == pytest.approx(best(one, "all/small/doc.md"), abs=1e-3)

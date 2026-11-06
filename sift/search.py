@@ -5,6 +5,7 @@ The models embed queries and rerank, wherever they run (see `models`). Through a
 starts in a fraction of a second, even on a light notebook."""
 
 import json
+import math
 import os
 import posixpath
 import re
@@ -156,6 +157,41 @@ def _any_term(query):
     if re.search(r"(?:^|\s)-?(?:title|text|meta|\{[^}]*\})\s*:", query):  # a column filter: "title: ...", "{a b}: ..."
         return None
     return " OR ".join(t if t[0] == '"' else f'"{t[:-1]}" *' if t[-1] == "*" else f'"{t}"' for t in terms)
+
+
+QUOTED = r'"(?:[^"]|"")*"'
+PHRASE = re.compile(rf"{QUOTED}(?:\s*\*)?|[^\s()\"]+")  # a quoted phrase, prefix or not, or a bare word
+PLACED = re.compile(r"NEAR\s*\(|[{}+^:]")  # operators that join phrases or tie them to columns or places
+K1, B = 1.2, 0.75  # the parameters of FTS5's bm25()
+MARK = "\x01"  # what highlight() puts before each phrase it finds, to count them
+MORE_CANDIDATES = 20  # each collection gives this many more of its best, or as many again, to be scored again
+
+
+def _phrases_of(match):
+    """The phrases of an FTS5 query that is phrases and AND, OR, NOT and parentheses alone, each as a query of its own;
+    None for another, such as one with NEAR or a column filter."""
+    if PLACED.search(re.sub(QUOTED, " ", match)):
+        return None
+    return [phrase for phrase in PHRASE.findall(match) if phrase not in ("AND", "OR", "NOT")]
+
+
+def _varints(blob):
+    """The numbers of a blob of SQLite varints, as FTS5 stores sizes and totals: 7 bits a byte, the high bit set on all
+    but the last. (Numbers from 2**56 on take a ninth byte of 8 bits; no count of tokens gets there.)"""
+    numbers, value = [], 0
+    for byte in blob:
+        value = value << 7 | byte & 0x7F
+        if not byte & 0x80:
+            numbers.append(value)
+            value = 0
+    return numbers
+
+
+def _totals(db):
+    """The rows of a store's keyword index, and the tokens they hold in all: FTS5's record of them."""
+    row = db.execute("SELECT block FROM fts_data WHERE id = 1").fetchone()
+    numbers = _varints(row[0]) if row else [0]
+    return numbers[0], sum(numbers[1:])
 
 
 def _words(text):
@@ -481,24 +517,67 @@ class Index:
 
     def _keyword(self, match, k, scope, where, args, all_passages=False):
         """The best passage of each of the k documents that best match an FTS5 query, by BM25, or the k best
-        passages, in the collections of `scope`. Each store scores by its own collection's word counts."""
+        passages, in the collections of `scope`. Over several collections, each one's best are scored again with the
+        word counts of all of them (see _as_one), unless the query places its phrases (NEAR, column filters)."""
         if not match.strip():
             return []
         passages = f"""SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
                        JOIN chunks c ON c.id = fts.rowid JOIN docs d ON d.id = c.doc WHERE fts MATCH ? AND {where}"""
         if all_passages:
-            sql = f"SELECT passage, score FROM ({passages}) ORDER BY score DESC LIMIT ?"
+            sql = f"SELECT passage, doc, score FROM ({passages}) ORDER BY score DESC LIMIT ?"
         else:  # MATERIALIZED: SQLite can't take bm25() into an aggregate
             sql = f"""WITH p AS MATERIALIZED ({passages})
-                      SELECT passage, max(score) FROM p GROUP BY doc ORDER BY 2 DESC LIMIT ?"""
+                      SELECT passage, doc, max(score) FROM p GROUP BY doc ORDER BY 3 DESC LIMIT ?"""
+        # Every passage of a collection's best documents: which is a document's best depends on the word counts too.
+        every = f"""WITH p AS MATERIALIZED ({passages}),
+                    best AS (SELECT doc FROM p GROUP BY doc ORDER BY max(score) DESC LIMIT ?)
+                    SELECT passage, doc, score FROM p WHERE doc IN (SELECT doc FROM best)"""
         for attempt in (match, _phrases(match)):
+            phrases = _phrases_of(attempt) if len(scope) > 1 else None
+            each = k if not phrases else k + max(k, MORE_CANDIDATES)  # a collection's best may rank otherwise
+            query = sql if all_passages or not phrases else every
             try:
-                found = [row for c in scope for row in self.catalog.store(c).execute(sql, [attempt, *args, k])]
+                found = {c: self.catalog.store(c).execute(query, [attempt, *args, each]).fetchall() for c in scope}
             except sqlite3.OperationalError as e:
                 error = e
                 continue
-            return sorted(found, key=lambda row: -row[1])[:k]
+            if phrases:
+                found = self._as_one(found, phrases)
+            ranked = sorted((row for rows in found.values() for row in rows), key=lambda row: -row[2])
+            ranked = ranked if all_passages else _first_of_each(ranked, itemgetter(1))
+            return [(passage, score) for passage, _, score in ranked[:k]]
         raise ValueError(f"invalid search query {match!r}: {error}")
+
+    def _as_one(self, found, phrases):
+        """The passages found in each collection, {collection: [(passage, doc, score)]}, scored again by BM25 as FTS5
+        scores them, with the word counts of all these collections together, as one index would. Each collection's own
+        would take a word common in a small collection for a common word: a page alone in its collection, about
+        benchmarks, sank below the passages of others that only mention them."""
+        rows = tokens = 0
+        holding = [0] * len(phrases)  # the rows that hold each phrase
+        for c in found:
+            db = self.catalog.store(c)
+            n, t = _totals(db)
+            rows, tokens = rows + n, tokens + t
+            for i, phrase in enumerate(phrases):
+                holding[i] += db.execute("SELECT count(*) FROM fts WHERE fts MATCH ?", (phrase,)).fetchone()[0]
+        idf = [math.log((rows - n + 0.5) / (n + 0.5)) for n in holding]
+        idf = [value if value > 0 else 1e-6 for value in idf]  # as FTS5 takes them
+        average = tokens / rows if rows else 1.0
+        highlighted = ", ".join(f"highlight(fts, {column}, '{MARK}', '')" for column in range(3))
+        hits = f"SELECT rowid, {highlighted} FROM fts WHERE fts MATCH ? AND rowid IN (SELECT value FROM json_each(?))"
+        scored = {}
+        for c, passages in found.items():
+            db, ids = self.catalog.store(c), json.dumps([passage for passage, _, _ in passages])
+            sizes = "SELECT id, sz FROM fts_docsize WHERE id IN (SELECT value FROM json_each(?))"
+            size = {i: sum(_varints(sz)) for i, sz in db.execute(sizes, (ids,))}
+            score = dict.fromkeys(size, 0.0)
+            for weight, phrase in zip(idf, phrases):
+                for passage, *columns in db.execute(hits, (phrase, ids)):
+                    n = sum(text.count(MARK) for text in columns if text)
+                    score[passage] += weight * n * (K1 + 1) / (n + K1 * (1 - B + B * size[passage] / average))
+            scored[c] = [(passage, doc, score.get(passage, 0.0)) for passage, doc, _ in passages]
+        return scored
 
     def load(self):
         """Load the codes of the active collections' vectors (see `vectors`), each store's batch by batch; again when a

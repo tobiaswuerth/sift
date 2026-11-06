@@ -520,9 +520,12 @@ claims, and it embeds 1.6 times as fast.
   index, the vectors (fp16) and their codes (one bit per dimension); a small one, the catalog, lists the collections.
   The text is stored once: chunks are spans of it, and the keyword index reads it through a view. The row ids of a
   collection start at its id times 2^40, so the results of several collections merge as they are. Searches ask each
-  collection's index and merge the results; keyword scores (BM25) use each collection's own word counts, and the
-  4,000 vectors scored exactly are the nearest codes of all collections together. Searching and `get` never touch the
-  files, so results and documents always agree, until the next `sift index`.
+  collection's index and merge the results. Over several collections, each one's best keyword hits are scored again
+  with the word counts of all of them, by FTS5's BM25 formula, as one index would score them: a collection's own
+  counts would take a word common in a small collection for a common word, and sink its pages. (A query with NEAR or
+  a column filter keeps each collection's scores.) The 4,000 vectors scored exactly are the nearest codes of all
+  collections together. Searching and `get` never touch the files, so results and documents always agree, until the
+  next `sift index`.
 - **Embedding:** PyTorch on the GPU (NVIDIA, else Apple), in batches sorted by length to keep padding low. The
   models compute in bfloat16 on NVIDIA GPUs that have it and in float32 elsewhere, never in fp16, where EmbeddingGemma
   overflows now and then into broken (NaN) vectors. Vectors are stored in fp16, and broken ones are never stored.
