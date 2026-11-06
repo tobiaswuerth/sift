@@ -5,6 +5,42 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-06
+
+Each collection's index in a file of its own, wherever it fits, and collections left out of searches until wanted.
+
+### Added
+
+- `sift move [NAME ...] TO` moves the index of the collections named, or of every one, to another folder or drive, or
+  one collection's to a file name of your choice ending in `.sqlite`. On the same drive it is instant; to another
+  drive the index is copied through SQLite, then the old file deleted. It refuses while another sift has the index
+  open.
+- `sift add --store PATH` puts a new collection's index in another folder, or in a file of your choice.
+- `sift deactivate NAME ...` and `sift activate NAME ...`: an inactive collection is passed over by searches, its
+  vectors' codes leave a running server's memory with its next request, the server no longer lists it to agents, and
+  `sift index` and `sift embed` skip it unless named. `reindex` still updates it.
+- `sift status` and the MCP `status` tool show each collection's `active`, its index file (`store`) and its `size` in
+  bytes, or `missing` when its file isn't there; an inactive collection's counts aren't read.
+
+### Changed
+
+- Each collection's index is a SQLite file of its own, `collections/NAME.sqlite` under `SIFT_HOME` by default, and
+  `SIFT_HOME/sift.db` is a small catalog of them, beside the logs and the worker's key. Removing a collection deletes
+  its file at once; `sift index` of one collection and `sift embed` of another no longer wait for each other; a
+  changed collection reloads only its own codes in a running server.
+- The index's layout is version 6. An index of an earlier sift (0.3 on) splits itself on first use, once: it is read
+  once, each collection's keyword index is made anew, the collections side by side, and every table's rows are counted
+  before the catalog takes the old file's place. Nothing is read from the files or embedded again; it needs as much
+  free space as the index takes, and a split stopped half-way goes on where it stopped. `sift move FOLDER` as the
+  first command splits it straight into that folder. An older sift doesn't open an index so updated.
+- Keyword scores (BM25) use each collection's own word counts; searches over several collections merge each
+  collection's best. Semantic search scores the 4,000 nearest codes of all collections together, as before.
+- The ids of documents and chunks never repeat (AUTOINCREMENT), and start at their collection's id times 2^40.
+- A collection whose index file is missing, on a drive that isn't connected, is passed over by searches with a
+  warning, and never made anew, empty.
+- `sift rm` says it deleted the collection's index; an unknown collection is an error that lists those there are,
+  whatever the command.
+
 ## [1.7.0] - 2026-11-05
 
 Semantic search over tens of millions of passages, in RAM and without a GPU.
@@ -527,7 +563,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/tobiaswuerth/sift/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/tobiaswuerth/sift/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tobiaswuerth/sift/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/tobiaswuerth/sift/compare/v1.4.1...v1.5.0
