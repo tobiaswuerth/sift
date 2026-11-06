@@ -394,7 +394,7 @@ def test_a_split_waits_for_every_other_sift_to_stop(old, home):
 def test_a_file_where_a_store_goes_stops_the_split(old, home):
     (home / "collections").mkdir()
     write(home / "collections" / "work.sqlite", "mine")
-    with pytest.raises(sqlite3.DatabaseError):
+    with pytest.raises(SystemExit, match=r"work\.sqlite is in the way of the split: move it away, then start sift"):
         Catalog(home)
     assert (home / "collections" / "work.sqlite").read_text() == "mine"
     old_index = sqlite3.connect(home / "sift.db")
@@ -484,3 +484,17 @@ def test_an_old_index_another_sift_opens_meanwhile_stays_till_it_stops(old, home
         Catalog(home)
     monkeypatch.setattr(upgrade.os, "replace", real)
     assert len(Catalog(home).collections()) == 2
+
+
+def test_the_stores_are_on_the_disk_before_the_old_index_goes(old, home, monkeypatch):
+    # Written without a journal, a store is written through to the disk before it takes its name: a power cut after
+    # the old index went must not take the stores with it.
+    synced, real = [], upgrade.os.fsync
+
+    def fsync(fd):
+        synced.append(fd)
+        real(fd)
+
+    monkeypatch.setattr(upgrade.os, "fsync", fsync)
+    Catalog(home)
+    assert len(synced) >= 2  # each store

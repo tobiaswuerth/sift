@@ -61,7 +61,10 @@ def _complete(file, cid):
     """Whether `file` is the complete store of the collection `cid`, from a split stopped later."""
     if not file.exists():
         return False
-    store.connect(file, cid).close()  # an error if it is another collection's, or no store
+    try:
+        store.connect(file, cid).close()
+    except (sqlite3.DatabaseError, SystemExit):  # another collection's index, or no index at all
+        raise SystemExit(f"{file} is in the way of the split: move it away, then start sift again") from None
     return True
 
 
@@ -228,8 +231,16 @@ def _finish(part, file, cid, name, fields, layout, sent):
         db.execute("PRAGMA journal_mode=WAL")
     finally:
         db.close()
+    _durable(part)
     os.replace(part, file)
     return f"{name}: done in {console.duration(time.perf_counter() - start)}"
+
+
+def _durable(file):
+    """Write a file through to the disk, written without SQLite's syncing as it was: the old index goes once its stores
+    are complete, and a power cut then must not take them with it."""
+    with open(file, "r+b") as written:
+        os.fsync(written.fileno())
 
 
 def _catalog(path, collections, files):

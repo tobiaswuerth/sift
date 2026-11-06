@@ -313,7 +313,7 @@ def _run(a, catalog):
     elif a.cmd in ("activate", "deactivate"):
         active = a.cmd == "activate"
         changed = catalog.set_active(a.names, active)
-        state = "active: searches find them" if active else "inactive: searches pass them over"
+        state = "active: searched again" if active else "inactive: left out of searches"
         console.say(
             f"{', '.join(changed)} {'is' if len(changed) == 1 else 'are'} {state}"
             if changed

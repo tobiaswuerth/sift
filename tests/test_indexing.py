@@ -212,8 +212,9 @@ def test_index_selected_collections(corpus, tmp_path):
     catalog.add(other, "other")
     indexing.index(catalog, ["notes"])
     assert "a.md" not in doc_ids(catalog)
-    with pytest.raises(SystemExit, match="'nope'"):
-        indexing.index(catalog, ["nope"])
+    with pytest.raises(LookupError, match="no collection named 'nope'; the collections are notes, other"):
+        indexing.index(catalog, ["other", "nope"])
+    assert "a.md" not in doc_ids(catalog)  # nothing indexed before the error
 
 
 def test_index_skips_missing_folder_without_deleting(corpus, capsys):

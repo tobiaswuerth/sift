@@ -481,11 +481,9 @@ def walk(root, ignore=None, unlisted=None):
 def index(catalog, names=None):
     """Bring the stores of the collections named, or of every active one, in sync with the files on disk. Only new or
     changed files are read, and of those only new or changed documents are indexed again."""
-    collections = catalog.collections()
-    unknown = set(names or ()) - {c.name for c in collections}
-    if unknown:
-        raise SystemExit(f"no collection named {', '.join(map(repr, sorted(unknown)))}")
-    for c in collections:
+    for name in names or ():
+        catalog.get(name)  # an unknown name is an error that names those there are, before anything is read
+    for c in catalog.collections():
         if names and c.name not in names:
             continue
         if not (names or c.active):
