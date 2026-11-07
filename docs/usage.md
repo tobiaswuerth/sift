@@ -36,6 +36,8 @@ sift move archive D:/data_archive.sqlite            # one collection's, under a 
 
 On the same drive a move is instant; to another drive the index is copied, then the old file deleted. No other sift
 may have the index open meanwhile: stop `sift serve`, and any `sift index` or `sift embed` of that collection, first.
+Beside an index lies an empty `NAME.sqlite.postings-lock`, which a sift locks while it updates the keyword postings,
+so that two never do at once; `sift move` and `sift rm` take it with the index.
 A collection whose index is missing, on a drive that isn't connected, is passed over by searches and said so on the
 server's console; `sift status` marks it `"missing": true`. sift never makes such an index anew.
 
