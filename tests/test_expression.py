@@ -4,6 +4,7 @@ tokenized as FTS5 tokenizes; what it leaves to FTS5 itself; and, for random quer
 import itertools
 import random
 import sqlite3
+from contextlib import closing
 
 import numpy as np
 import pytest
@@ -83,10 +84,17 @@ def random_query(rng, depth=0):
     return f"{left} {rng.choice(['AND', 'OR', 'NOT'])} {right}"
 
 
-def test_random_queries_match_what_fts5_matches():
-    db = sqlite3.connect(":memory:")
-    db.execute(f"CREATE VIRTUAL TABLE t USING fts5(x, tokenize='{store.TOKENIZER}')")
-    db.executemany("INSERT INTO t(rowid, x) VALUES (?, ?)", list(enumerate(ROWS, 1)))
+@pytest.fixture
+def rows():
+    """ROWS in an FTS5 table, tokenized as sift's are."""
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute(f"CREATE VIRTUAL TABLE t USING fts5(x, tokenize='{store.TOKENIZER}')")
+        db.executemany("INSERT INTO t(rowid, x) VALUES (?, ?)", list(enumerate(ROWS, 1)))
+        yield db
+
+
+def test_random_queries_match_what_fts5_matches(rows):
+    db = rows
     holding = {w: np.array([w in row.split() for row in ROWS]) for w in "abcdefx"}
     rng, read = random.Random(0), 0
     for _ in range(400):
