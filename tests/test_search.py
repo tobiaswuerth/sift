@@ -511,8 +511,24 @@ def test_status(embedded, home):
         "active": True,
         "store": str(home / "collections" / "notes.sqlite"),
         "size": entry["size"],
-    } | {"docs": 3, "chunks": 3, "embedded": 3, "fields": fields, "links": 0, "unresolved": 0}
+    } | {"docs": 3, "chunks": 3, "embedded": 3, "keywords": "ready", "fields": fields, "links": 0, "unresolved": 0}
     assert entry["size"] >= (home / "collections" / "notes.sqlite").stat().st_size > 0
+
+
+@pytest.mark.parametrize(
+    "state, shown",
+    [("never built", "not built"), ("behind", "1 chunk behind"), ("built", "ready")],
+)
+def test_status_says_how_keyword_postings_stand(corpus, state, shown):
+    # Until they are ready, keyword searches of the collection read FTS5, slower: `sift index` builds or updates them.
+    db = corpus[0].store("notes")
+    if state == "never built":
+        db.execute("DELETE FROM meta WHERE key = 'kw_built'")
+    elif state == "behind":
+        db.execute("INSERT INTO kw_dirty(chunk, change) SELECT min(id), 1 FROM chunks")
+    db.commit()
+    (entry,) = Index(corpus[0]).status()["collections"]
+    assert entry["keywords"] == shown
 
 
 def test_the_status_shows_the_counts_a_store_keeps(embedded):

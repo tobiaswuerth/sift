@@ -28,7 +28,7 @@ import struct
 import tempfile
 import zlib
 from concurrent.futures import ProcessPoolExecutor
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from functools import lru_cache
 from pathlib import Path
 
@@ -43,9 +43,9 @@ LONG = 4096  # postings from which a base list comes in blocks, with ranges; sho
 CHUNK_BLOCK = 65536  # chunks per block of lengths and documents
 K1, B = 1.2, 0.75  # the parameters of FTS5's bm25()
 TOP = K1 + 1  # the most a term score can be, idf aside
-MOST_SEGMENTS = 8  # the base and its deltas; one more, and the postings are built anew
+MOST_SEGMENTS = 8  # the base and its deltas; one more, and the deltas are merged into one
 REBUILD_SHARE = 0.05  # changed chunks of all, from which the postings are built anew rather than given a delta
-SMALL = 100_000  # chunks; a store this small is built anew on every update, in a moment
+SMALL = 10_000  # chunks; a store this small is built anew on every update, in about a second
 PARALLEL = 1_000_000  # chunks from which a build reads FTS5's index in worker processes
 FETCH = 1_000_000  # rows fetched at a time
 LEVEL = 6  # zlib's
@@ -276,10 +276,37 @@ def _shards():
     return [("", bounds[0]), *itertools.pairwise(bounds), (bounds[-1], "{"), ("{", None)]
 
 
+@contextmanager
+def _alone(path):
+    """True while this process alone builds the postings of the store at `path`, False if another sift is building
+    them: an exclusive transaction on a database of its own beside the store, which the OS ends with the process."""
+    lock = sqlite3.connect(f"{path}.postings-lock", timeout=0, isolation_level=None)
+    try:
+        try:
+            lock.execute("BEGIN EXCLUSIVE")
+        except sqlite3.OperationalError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            lock.execute("ROLLBACK")
+    finally:
+        lock.close()
+
+
 def build(db, path, name="", workers=0):
     """Build a store's postings anew, out of its FTS5 index: one base segment, which searches read once it is done.
     Chunks that change meanwhile stay dirty, so searches read FTS5 for this store until the next `update`. A large
-    store is read by `workers` processes."""
+    store is read by `workers` processes. Another sift building them already? Then nothing happens here."""
+    with _alone(path) as alone:
+        if not alone:
+            console.say(f"{name}: another sift is building its keyword postings; searches read FTS5 meanwhile")
+            return
+        _build(db, path, name, workers)
+
+
+def _build(db, path, name, workers):
     db.execute("BEGIN IMMEDIATE")
     try:
         change = int(store.get_meta(db, "kw_change", 0))
@@ -368,7 +395,8 @@ def ready(db):
 
 def update(db, path, name="", workers=0):
     """Bring a store's postings up to FTS5: build them if there are none, else add a delta of the chunks changed
-    since, or build them anew when deltas would grow too many or too large (MOST_SEGMENTS, REBUILD_SHARE)."""
+    since; when deltas grow too many, merge them into one (MOST_SEGMENTS), and when the chunks changed since the
+    postings were built grow too many, build them anew (REBUILD_SHARE)."""
     if not built(db):
         build(db, path, name, workers)
         return
@@ -378,20 +406,27 @@ def update(db, path, name="", workers=0):
     chunks = store.counts(db)["chunks"]
     segments = db.execute("SELECT count(*) FROM kw_segments").fetchone()[0]
     masked = db.execute("SELECT count(*) FROM kw_masked").fetchone()[0]
-    if chunks < SMALL or segments >= MOST_SEGMENTS or masked + dirty > REBUILD_SHARE * chunks:
+    if chunks < SMALL or masked + dirty > REBUILD_SHARE * chunks:
         build(db, path, name, workers)
     else:
-        _delta(db)
+        _delta(db, merge=segments >= MOST_SEGMENTS)
 
 
-def _delta(db):
+def _delta(db, merge=False):
     """Add a segment of the chunks changed since the postings were updated, tokenized as FTS5 tokenizes them, and mask
-    their postings in the segments before."""
+    their postings in the segments before. To `merge` the deltas, the chunks of those before go into it too, and it
+    takes their place, after the base."""
     change = int(store.get_meta(db, "kw_change", 0))
     dirty = [c for (c,) in db.execute("SELECT chunk FROM kw_dirty WHERE change <= ?", (change,))]
-    encoded, ids, lengths = _tokenized(db, dirty)
+    taken = sorted(set(dirty) | set(_delta_chunks(db))) if merge else dirty
+    encoded, ids, lengths = _tokenized(db, taken)
     db.execute("BEGIN IMMEDIATE")
     try:
+        if merge:  # the deltas go; their chunks, masked in the base, are the new one's
+            db.execute("DELETE FROM kw_terms WHERE segment > 1")
+            db.execute("DELETE FROM kw_chunks WHERE segment > 1")
+            db.execute("DELETE FROM kw_segments WHERE id > 1")
+            db.execute("UPDATE kw_masked SET segment = 2")
         segment, first_key = db.execute(
             "SELECT coalesce(max(id), 0) + 1, (SELECT coalesce(max(id) >> 24, 0) + 1 FROM kw_blocks) FROM kw_segments"
         ).fetchone()
@@ -410,6 +445,14 @@ def _delta(db):
     except BaseException:
         db.rollback()
         raise
+
+
+def _delta_chunks(db):
+    """The chunks the deltas hold."""
+    held = []
+    for (data,) in db.execute("SELECT data FROM kw_chunks WHERE segment > 1"):
+        held += decode_chunks(data)[0].tolist()
+    return held
 
 
 def _tokenized(db, chunks):

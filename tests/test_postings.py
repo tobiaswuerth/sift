@@ -2,6 +2,7 @@
 in step with it through changes (deltas, masks, rebuilds), and read back for searches."""
 
 import random
+import sqlite3
 
 import numpy as np
 import pytest
@@ -202,22 +203,39 @@ def test_changes_go_into_deltas_that_follow_fts5(prose, monkeypatch):
     rng = random.Random(11)
     for round_ in range(3):
         change_notes(root, rng)
-        indexing.index(catalog)
-        assert postings.behind(db) > 0
-        assert not postings.ready(db)
-        postings.update(db, path_of(catalog))
+        indexing.index(catalog)  # which updates the postings after
         assert postings.ready(db)
         assert db.execute("SELECT count(*) FROM kw_segments").fetchone() == (round_ + 2,)
         assert live(db) == fts5(db)
     assert db.execute("SELECT count(*) FROM kw_masked").fetchone()[0] > 0
 
 
+def test_changes_are_followed_once_updated(prose):
+    catalog, _ = prose
+    db = catalog.store("prose")
+    store.delete_docs(db, [db.execute("SELECT min(id) FROM docs").fetchone()[0]])  # as indexing does, then updates
+    db.commit()
+    assert postings.behind(db) > 0
+    assert not postings.ready(db)
+    postings.update(db, path_of(catalog))
+    assert postings.ready(db)
+    assert live(db) == fts5(db)
+
+
+def unbuilt(db):
+    """The store as an upgrade from sift 1.9 leaves it: no postings built."""
+    store.set_meta(db, "kw_built", "")
+    db.execute("DELETE FROM meta WHERE key = 'kw_built'")
+    for table in ("kw_terms", "kw_blocks", "kw_chunks", "kw_segments", "kw_masked", "kw_dirty"):
+        db.execute(f"DELETE FROM {table}")
+    db.commit()
+
+
 @pytest.mark.usefixtures("small_lists")
-@pytest.mark.parametrize("limit", ["MOST_SEGMENTS", "REBUILD_SHARE", "SMALL"])
-def test_deltas_grown_too_many_or_large_are_built_anew(prose, monkeypatch, limit):
+@pytest.mark.parametrize("limit", ["REBUILD_SHARE", "SMALL"])
+def test_postings_changed_too_much_are_built_anew(prose, monkeypatch, limit):
     monkeypatch.setattr(postings, "SMALL", 0)
     monkeypatch.setattr(postings, "REBUILD_SHARE", 1.0)
-    monkeypatch.setattr(postings, "MOST_SEGMENTS", 100)
     catalog, root = prose
     db = catalog.store("prose")
     postings.build(db, path_of(catalog))
@@ -226,7 +244,7 @@ def test_deltas_grown_too_many_or_large_are_built_anew(prose, monkeypatch, limit
     indexing.index(catalog)
     postings.update(db, path_of(catalog))
     assert db.execute("SELECT count(*) FROM kw_segments").fetchone() == (2,)
-    monkeypatch.setattr(postings, limit, {"MOST_SEGMENTS": 2, "REBUILD_SHARE": 0.001, "SMALL": 10**9}[limit])
+    monkeypatch.setattr(postings, limit, {"REBUILD_SHARE": 0.001, "SMALL": 10**9}[limit])
     change_notes(root, rng)
     indexing.index(catalog)
     postings.update(db, path_of(catalog))
@@ -235,10 +253,32 @@ def test_deltas_grown_too_many_or_large_are_built_anew(prose, monkeypatch, limit
     assert live(db) == fts5(db)
 
 
+@pytest.mark.usefixtures("small_lists")
+def test_deltas_grown_too_many_are_merged(prose, monkeypatch):
+    # Every reindex of a note adds a delta; rather than build anew, the deltas become one, read again from FTS5.
+    monkeypatch.setattr(postings, "SMALL", 0)
+    monkeypatch.setattr(postings, "REBUILD_SHARE", 1.0)
+    monkeypatch.setattr(postings, "MOST_SEGMENTS", 3)
+    catalog, root = prose
+    db = catalog.store("prose")
+    postings.build(db, path_of(catalog))
+    rng = random.Random(6)
+    segments = []
+    for _ in range(4):
+        change_notes(root, rng, 3)
+        indexing.index(catalog)
+        postings.update(db, path_of(catalog))
+        segments.append([s for (s,) in db.execute("SELECT id FROM kw_segments ORDER BY id")])
+        assert live(db) == fts5(db)
+    assert segments == [[1, 2], [1, 2, 3], [1, 2], [1, 2, 3]]  # with a third segment, the next update merges
+
+
 def test_an_update_builds_postings_never_built(prose):
     catalog, _ = prose
     db = catalog.store("prose")
+    unbuilt(db)
     assert not postings.built(db)
+    assert not postings.ready(db)
     postings.update(db, path_of(catalog))
     assert postings.ready(db)
     assert live(db) == fts5(db)
@@ -268,6 +308,117 @@ def test_chunks_changed_during_a_build_stay_dirty(prose, monkeypatch):
     postings.update(db, path_of(catalog))
     assert postings.ready(db)
     assert live(db) == fts5(db)
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_terms_occurrences_read_in_several_batches(prose, monkeypatch):
+    catalog, _ = prose
+    db = catalog.store("prose")
+    monkeypatch.setattr(postings, "FETCH", 7)  # far fewer rows than a common term has
+    postings.build(db, path_of(catalog))
+    assert live(db) == fts5(db)
+
+
+def test_chunks_added_before_the_build_reads_fts5_wait_for_the_next_update(tmp_path, home, monkeypatch):
+    # Lengths are read first, then FTS5's vocabulary: a chunk added between the two has postings but no length yet.
+    folder = tmp_path / "prose"
+    folder.mkdir()
+    catalog = Catalog(home)
+    catalog.add(folder, "prose")
+    indexing.index(catalog)  # nothing in it yet
+    db = catalog.store("prose")
+    real = postings._lengths
+
+    def meanwhile(*args):
+        read = real(*args)
+        write(folder / "first.md", "# First\n\nzebra quagga\n")
+        indexing.index(catalog)  # its update finds the build under way, and leaves it
+        return read
+
+    monkeypatch.setattr(postings, "_lengths", meanwhile)
+    postings.build(db, path_of(catalog))
+    monkeypatch.setattr(postings, "_lengths", real)
+    assert postings.behind(db) > 0
+    assert live(db) == {}
+    postings.update(db, path_of(catalog))
+    assert postings.ready(db)
+    assert live(db) == fts5(db)
+
+
+class Stop(Exception):
+    pass
+
+
+def stop(*args, **kwargs):
+    raise Stop
+
+
+@pytest.mark.parametrize("where", ["starting", "finishing"])
+def test_a_build_stopped_leaves_the_postings_to_be_built(prose, monkeypatch, where):
+    # Stopped as it starts, the postings are as they were; stopped later, unbuilt, which searches see (FTS5 answers),
+    # and the next update builds them.
+    catalog, _ = prose
+    db = catalog.store("prose")
+    before = live(db)
+    module, name = {"starting": (store, "set_meta"), "finishing": (postings, "_write_chunks")}[where]
+    real = getattr(module, name)
+    monkeypatch.setattr(module, name, stop)
+    with pytest.raises(Stop):
+        postings.build(db, path_of(catalog))
+    monkeypatch.setattr(module, name, real)  # not undo(): that would undo the fixtures' too
+    if where == "starting":
+        assert postings.ready(db)
+        assert live(db) == before
+    else:
+        assert not postings.built(db)
+    postings.update(db, path_of(catalog))
+    assert postings.ready(db)
+    assert live(db) == fts5(db)
+
+
+def test_a_delta_stopped_leaves_the_chunks_dirty(prose, monkeypatch):
+    monkeypatch.setattr(postings, "SMALL", 0)
+    catalog, _ = prose
+    db = catalog.store("prose")
+    store.delete_docs(db, [db.execute("SELECT min(id) FROM docs").fetchone()[0]])
+    db.commit()
+    behind, real = postings.behind(db), postings._write_terms
+    monkeypatch.setattr(postings, "_write_terms", stop)
+    with pytest.raises(Stop):
+        postings.update(db, path_of(catalog))
+    assert postings.behind(db) == behind
+    assert db.execute("SELECT count(*) FROM kw_segments").fetchone() == (1,)
+    monkeypatch.setattr(postings, "_write_terms", real)
+    postings.update(db, path_of(catalog))
+    assert postings.ready(db)
+    assert live(db) == fts5(db)
+
+
+def test_a_delta_of_deletions_alone(prose, monkeypatch):
+    monkeypatch.setattr(postings, "SMALL", 0)
+    catalog, _ = prose
+    db = catalog.store("prose")
+    store.delete_docs(db, [d for (d,) in db.execute("SELECT id FROM docs LIMIT 3")])
+    db.commit()
+    postings.update(db, path_of(catalog))
+    assert db.execute("SELECT chunks FROM kw_segments WHERE id = 2").fetchone() == (0,)
+    assert live(db) == fts5(db)
+
+
+def test_a_build_elsewhere_is_left_to_finish(prose, capsys):
+    # Two sifts building at once would write over each other: the second leaves the work to the first.
+    catalog, _ = prose
+    db = catalog.store("prose")
+    unbuilt(db)
+    other = sqlite3.connect(f"{path_of(catalog)}.postings-lock", isolation_level=None)
+    other.execute("BEGIN EXCLUSIVE")
+    postings.build(db, path_of(catalog), "prose")
+    assert "another sift is building" in capsys.readouterr().err
+    assert not postings.built(db)
+    other.execute("ROLLBACK")
+    other.close()  # as the OS does when that sift ends, however it ends
+    postings.build(db, path_of(catalog), "prose")
+    assert postings.ready(db)
 
 
 def test_a_document_retitled_in_place_is_followed(prose, monkeypatch):

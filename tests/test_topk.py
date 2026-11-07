@@ -199,6 +199,21 @@ def test_no_chunks_find_nothing(tmp_path, home):
 
 
 @pytest.mark.usefixtures("small_lists")
+def test_terms_in_ranges_apart(tmp_path, home):
+    # One term's ranges hold none of the other's: each long list read only where it occurs.
+    root = tmp_path / "apart"
+    for i in range(80):
+        write(root / f"n{i:03}.md", f"# n{i}\n\n{'alpha' if i < 40 else 'beta'} words {'alpha ' * (i % 3)}\n")
+    catalog = Catalog(home)
+    catalog.add(root, "apart")
+    indexing.index(catalog)
+    readers = [reader(catalog, "apart")]
+    assert all(t.long for term in ("alpha", "beta") for t in readers[0].term(term))
+    query = ("or", [("term", "alpha"), ("term", "beta")])
+    same(topk.search(readers, query, 100), brute(readers, query, 120), 100, query)
+
+
+@pytest.mark.usefixtures("small_lists")
 def test_most_ranges_are_never_read(built, monkeypatch):
     # The point of the bounds: a common term's best few documents are found having scored a few of its ranges.
     scored = []
