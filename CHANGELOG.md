@@ -22,7 +22,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `sift embed` sizes its batches with texts of the longest input the model takes, which fit any text, whatever the
   model. It no longer reads every pending chunk at the start to find the longest by characters: that took minutes on
   a large index, and a chunk with fewer characters could have more tokens, so the first batch ran out of memory and
-  every batch was halved.
+  every batch was halved. Counting the pending chunks at the start reads no document either: on 15 million PubMed
+  chunks, 19 seconds instead of 190.
+- The browser UI reads each collection's document count as its index keeps it.
 - The README is a third as long: what sift does, installing, connecting agents, the commands and settings. The
   details moved to [docs/usage.md](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md) (searching,
   filters, formats, linked notes, the UI),

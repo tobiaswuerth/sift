@@ -15,8 +15,11 @@ def text_of(seq, title, text):
     return text if seq == 0 or text.lstrip("# ").startswith(title) else f"{title}\n\n{text}"
 
 
+UNEMBEDDED = "chunks c WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)"
+"""The chunks without a vector, as a FROM clause, to count them: reading each one's document too took a start on
+15 million PubMed chunks 190 s, against 19 s. A chunk without a document counts; the slabs pass it over."""
 PENDING = "chunks c JOIN docs d ON d.id = c.doc WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)"
-"""The chunks still without a vector, as a FROM clause."""
+"""The chunks still without a vector, with their documents, as a FROM clause."""
 
 
 def embed_pending(catalog, reset=False, models=None, collections=None):
@@ -37,7 +40,7 @@ def embed_pending(catalog, reset=False, models=None, collections=None):
     for c, db in stores:
         _check_model(db, c.name, using)
         _drop_broken_vectors(db)
-    pending = [(c, db, db.execute(f"SELECT count(*) FROM {PENDING}").fetchone()[0]) for c, db in stores]
+    pending = [(c, db, db.execute(f"SELECT count(*) FROM {UNEMBEDDED}").fetchone()[0]) for c, db in stores]
     total, named = sum(n for *_, n in pending), ", ".join(collections or ())
     if not total:
         console.say(f"nothing to embed in {named}" if named else "nothing to embed")
@@ -98,7 +101,7 @@ def _drop_broken_vectors(db):
     once per store, so they are embedded again."""
     if store.get_meta(db, "vectors_checked"):
         return
-    if n := db.execute("SELECT count(*) FROM vectors").fetchone()[0]:
+    if n := store.counts(db)["vectors"]:
         console.say(f"checking {n:,} vectors for broken ones (once) ...")
         broken, cursor = [], db.execute("SELECT chunk, vec FROM vectors")
         while rows := cursor.fetchmany(100_000):

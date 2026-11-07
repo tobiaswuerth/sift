@@ -98,7 +98,7 @@ class Tokens(Ones):
         return np.array([[len(t), 0, 0, 0] for t in texts], np.float16)
 
 
-def test_a_batch_holds_texts_of_similar_length_to_the_model(fake_models):
+def test_a_batch_holds_texts_of_similar_length_to_the_model():
     # A batch is padded to its longest text: grouped by characters, which tell tokens poorly, PubMed abstracts were
     # padded to 1.5 times their tokens, and embedding took 1.5 times as long.
     texts = ["a b c d e f", "longwordsonly", "x y", "averyveryverylongword with two"]
@@ -234,14 +234,32 @@ def test_embed_pending_calibrates_first(corpus, make_local, gpu_memory):
 
 
 def test_embed_pending_skips_chunks_without_text(embedded, capsys):
-    # A chunk without a document can only come from an index changed meanwhile; there's nothing to embed.
+    # A chunk without a document can only come from an index changed meanwhile; there's nothing to embed. The count of
+    # pending chunks at the start reads no document, so it counts the chunk; the slabs, which read the documents, pass
+    # it over.
     catalog, _ = embedded
     capsys.readouterr()
     catalog.store("notes").execute(
         "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(999, 9, 1, 1, 0, 0)"
     )
     embed.embed_pending(catalog)  # raised "max() arg is an empty sequence"
-    assert "nothing to embed" in capsys.readouterr().err
+    assert "embedded 0 chunks" in capsys.readouterr().err
+    assert vector_count(catalog) == 3
+
+
+def test_counting_the_pending_chunks_reads_no_document(embedded, monkeypatch):
+    # Reading each pending chunk's document to count it took 190 s of a start on 15 million PubMed chunks, against
+    # 19 s without.
+    catalog, _ = embedded
+    statements = []
+    catalog.store("notes").set_trace_callback(statements.append)
+    try:
+        embed.embed_pending(catalog)
+    finally:
+        catalog.store("notes").set_trace_callback(None)
+    counts = [s for s in statements if "count(*)" in s and "vectors" in s]
+    assert counts
+    assert not any("docs" in s for s in counts)
 
 
 # --- what the user sees ---------------------------------------------------------

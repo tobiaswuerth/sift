@@ -339,19 +339,6 @@ def app(index, host="127.0.0.1"):
     env = Environment(loader=FileSystemLoader(WEB), autoescape=True, trim_blocks=True, lstrip_blocks=True)
     env.filters["num"] = lambda n: f"{n:,}"
     env.globals["PAGE"] = PAGE
-    counted = {}  # the collections, by the state of the index: counting millions of documents per keystroke is slow
-
-    def collections():
-        # The active collections; removing documents changes a store's version, adding them its newest document's id.
-        stores = [(c, index.catalog.store(c)) for c in index.active().values()]
-        version = tuple(
-            (c.id, store.get_meta(db, "version"), db.execute("SELECT max(id) FROM docs").fetchone()[0])
-            for c, db in stores
-        )
-        if version not in counted:
-            counted.clear()
-            counted[version] = _collections(stores)
-        return counted[version]
 
     async def page(request):
         view = View.of(request.query_params)
@@ -363,7 +350,7 @@ def app(index, host="127.0.0.1"):
             "oob": part == "explore",  # the form's parts come along, to show the view
             "typed": request.headers.get("hx-trigger") == "search",  # the box holds what is being typed: it stays
             "title": f"{view.q} · sift" if view.q else "sift",
-            "collections": collections(),
+            "collections": _collections([(c, index.catalog.store(c)) for c in index.active().values()]),
         }
         if part != "reader":
             context |= _explore(index, view, pattern)
