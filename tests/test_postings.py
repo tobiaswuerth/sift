@@ -4,6 +4,7 @@ in step with it through changes (deltas, masks, rebuilds), and read back for sea
 import itertools
 import random
 import sqlite3
+import tracemalloc
 from contextlib import contextmanager
 
 import numpy as np
@@ -120,6 +121,21 @@ def test_decoded_blocks_are_kept_to_a_budget_of_bytes():
         cache.get(n, lambda n=n: block(n))
     assert made == [1, 2, 3, 2]  # 1 used again before 3 came: 2 went, the least recently used
     assert cache.size <= 2000
+
+
+def test_a_decoded_block_holds_no_more_than_its_arrays():
+    # The cache counts a block's arrays: counts read straight off the decompressed bytes kept all of those alive, the
+    # gaps too, and the cache held half as much again as its budget.
+    ids = np.arange(postings.BLOCK, dtype=np.int64) * 3
+    data = postings.encode_block(ids, np.ones(postings.BLOCK, np.int64))
+    tracemalloc.start()
+    try:
+        before = tracemalloc.get_traced_memory()[0]
+        block = postings.decode_block(data)
+        held = tracemalloc.get_traced_memory()[0] - before
+    finally:
+        tracemalloc.stop()
+    assert held <= sum(part.nbytes for part in block) + 1024  # and the arrays' own few hundred bytes
 
 
 def test_varints_are_read_as_sqlite_writes_them():

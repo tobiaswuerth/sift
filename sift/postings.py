@@ -7,11 +7,12 @@ can't reach its best results (Block-Max Pruning, Mallia et al. 2024), at about a
   processes for a large store), and deltas, the chunks changed since, tokenized by FTS5 in a table of their own.
 - A term's postings in a segment: its chunks, ascending, each with how often the term occurs in it (all columns, as
   FTS5's bm25 counts). A short list is one blob (zlib) in kw_terms. A long one, in the base, comes in blocks of BLOCK
-  postings in kw_blocks, after a blob of its ranges: for each RANGE consecutive chunk ids holding the term, how many
-  postings it has there and its best term score there, rounded up to a byte. Summed over a query's terms, these bound
-  the score of every chunk in the range.
-- Per segment, each chunk's length in tokens (all columns), in blocks of LENGTHS consecutive chunk ids (kw_lengths):
-  a search reads those of the chunks it scores. Their documents come from the chunks table, for those found.
+  postings in kw_blocks, after a blob of its ranges: for each 2**RANGE_SHIFT consecutive chunk ids holding the term,
+  how many postings it has there and its best term score there, rounded up to a byte. Summed over a query's terms,
+  these bound the score of every chunk in the range.
+- Per segment, each chunk's length in tokens (all columns), in blocks of 2**LENGTHS_SHIFT consecutive chunk ids
+  (kw_lengths): a search reads those of the chunks it scores. Their documents come from the chunks table, for those
+  found.
 - A chunk whose postings changed after a segment was built is masked: its postings there count no more.
 - Statistics (chunks, tokens, document frequencies) are the segments', masked postings included, as Lucene's are: the
   same as FTS5's until something changes, and the same again after the next rebuild.
@@ -85,16 +86,18 @@ def encode_block(ids, tf):
 
 
 def decode_block(data):
-    """(chunk ids as int64, counts as stored: mostly a byte each) of an encoded block."""
+    """(chunk ids as int64, counts as stored: mostly a byte each) of an encoded block: arrays of their own, which keep
+    nothing else alive, as the cache counts them."""
     raw = zlib.decompress(data)
     first, n, width = _BLOCK.unpack_from(raw)
     at = _BLOCK.size
     ids = _ascending(first, np.frombuffer(raw, np.uint32, n - 1, at), n)
-    return ids, np.frombuffer(raw, _WIDTHS[width], n, at + 4 * (n - 1))
+    return ids, np.frombuffer(raw, _WIDTHS[width], n, at + 4 * (n - 1)).copy()
 
 
 def encode_ranges(rid, counts, best):
-    """A long list's ranges: their ids (ascending), postings in each (1 to RANGE), and best term score, as bytes."""
+    """A long list's ranges: their ids (ascending), postings in each (1 to 2**RANGE_SHIFT), and best term score, as
+    bytes."""
     return zlib.compress(
         _RANGES.pack(int(rid[0]), len(rid))
         + _gaps(rid).tobytes()

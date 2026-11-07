@@ -36,7 +36,8 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   transaction, and `sift index` (or `reindex`) then adds a delta of those chunks, tokenized by FTS5 in a table of its
   own, and masks their old postings, as Lucene's segments do. Many deltas are merged into one; once 5% of the chunks
   have changed, the postings are built anew. Until a collection's postings are up to date, its keyword searches read
-  FTS5, as before. Building them anew reads FTS5's vocabulary in worker processes, one per CPU but one.
+  FTS5, as before. Building them anew for a collection of a million passages or more reads FTS5's vocabulary in
+  worker processes, one per CPU but one.
 - Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.
 
 ## Embedding

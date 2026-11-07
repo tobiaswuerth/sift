@@ -6,11 +6,11 @@ import json
 import numpy as np
 import pytest
 
-from sift import embed, indexing, search, store
+from sift import embed, indexing, postings, search, store, topk
 from sift.catalog import Catalog
 from sift.search import Index, _any_word
 
-from .conftest import write
+from .conftest import write, write_prose
 
 
 def ids(hits):
@@ -68,20 +68,17 @@ def agree(got, want):
 def test_keyword_search_from_the_postings_finds_what_fts5_finds(prose, tmp_path, query, options):
     # The postings answer queries of terms, AND, OR and NOT once they are ready; FTS5 answers otherwise, as before,
     # and finds the same, score for score.
-    from .conftest import write_prose
-
     catalog, _ = prose
     write_prose(tmp_path / "more", 8, notes=40)
     catalog.add(tmp_path / "more", "more")
     indexing.index(catalog)
+    assert all(postings.ready(catalog.store(c)) for c in catalog.collections())  # else FTS5 would answer both
     fast = scored(Index(catalog).search(query, **options))
     through_fts5(catalog)
     agree(fast, scored(Index(catalog).search(query, **options)))
 
 
 def test_hybrid_candidates_come_from_the_postings(prose, fake_models, monkeypatch):
-    from sift import topk
-
     catalog, _ = prose
     embed.embed_pending(catalog)
     asked, real = [], topk.search
