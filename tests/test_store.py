@@ -1,5 +1,5 @@
-"""A collection's store: its layout, its ids, the vectors' codes, deleting documents, the vectors' version, and holding
-it alone."""
+"""A collection's store: its layout, its ids, the vectors' codes, the counts of its rows, deleting documents, the
+vectors' version, and holding it alone."""
 
 import sqlite3
 import time
@@ -198,6 +198,154 @@ def test_codes_go_with_a_reset(embedded, fake_models, monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         embed.embed_pending(catalog, reset=True)
     assert catalog.store("notes").execute("SELECT count(*) FROM codes").fetchone() == (0,)
+
+
+# --- counts --------------------------------------------------------------------
+
+
+def held(db):
+    """How many rows of each counted table a store holds, counted."""
+    return {table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in store.COUNTED}
+
+
+def as_sift_1_8_left_it(db):
+    """A store as sift 1.8 made it: layout 6, its rows not counted."""
+    triggers = db.execute("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name != 'codes_go_with_vectors'")
+    for (name,) in triggers.fetchall():
+        db.execute(f"DROP TRIGGER {name}")
+    db.execute("DROP TABLE counts")
+    db.execute("PRAGMA user_version = 6")
+    db.commit()
+
+
+def test_a_new_store_counts_nothing(tmp_path):
+    db = store.connect(tmp_path / "a.sqlite", 1, create=True)
+    assert store.counts(db) == {"docs": 0, "chunks": 0, "vectors": 0}
+
+
+def add_file(catalog, root):
+    write(root / "new.md", "# New\n\nA new note about pigments.\n")
+    indexing.index(catalog)
+
+
+def change_file(catalog, root):
+    write(root / "rl.md", "# Reward shaping\n\nReward shaping, written again.\n\n## More\n\nAnother passage.\n")
+    indexing.index(catalog)
+
+
+def remove_file(catalog, root):
+    (root / "rl.md").unlink()
+    indexing.index(catalog)
+
+
+def delete_document(catalog, root):
+    db = catalog.store("notes")
+    store.delete_docs(db, [doc_ids(db)["rl.md"]])
+    db.commit()
+
+
+def write_vector_again(catalog, root):
+    db = catalog.store("notes")
+    chunk, vec = db.execute("SELECT chunk, vec FROM vectors LIMIT 1").fetchone()
+    store.put_vectors(db, [chunk], -np.frombuffer(vec, np.float16).reshape(1, -1))
+    db.commit()
+
+
+def reset(catalog, root):
+    embed.embed_pending(catalog, reset=True)
+
+
+def drop_broken_vector(catalog, root):
+    db = catalog.store("notes")
+    chunk, vec = db.execute("SELECT chunk, vec FROM vectors LIMIT 1").fetchone()
+    db.execute(
+        "UPDATE vectors SET vec = ? WHERE chunk = ?", (np.full(len(vec) // 2, np.nan, np.float16).tobytes(), chunk)
+    )
+    db.execute("DELETE FROM meta WHERE key = 'vectors_checked'")
+    db.commit()
+    embed.embed_pending(catalog)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [add_file, change_file, remove_file, delete_document, write_vector_again, reset, drop_broken_vector],
+)
+def test_a_store_keeps_its_counts_through_every_change(embedded, change):
+    # So that a status needs no pass over a table: SQLite keeps no counts, and counting a large store's vectors read
+    # tens of gigabytes.
+    catalog, root = embedded
+    change(catalog, root)
+    db = catalog.store("notes")
+    assert store.counts(db) == held(db)
+    assert held(db)["docs"] > 0
+
+
+def test_a_vector_written_again_replaces_the_old_one(embedded):
+    db = embedded[0].store("notes")
+    chunk, vec = db.execute("SELECT chunk, vec FROM vectors LIMIT 1").fetchone()
+    flipped = -np.frombuffer(vec, np.float16).reshape(1, -1)
+    store.put_vectors(db, [chunk], flipped)
+    db.commit()
+    assert db.execute("SELECT vec FROM vectors WHERE chunk = ?", (chunk,)).fetchone() == (flipped.tobytes(),)
+    stored, expected = codes_and_vectors(db)
+    assert stored == expected
+    assert store.counts(db)["vectors"] == 3
+
+
+def test_counts_go_back_with_a_change_undone(embedded):
+    # Counted in the transaction of the change itself: whatever stops a change, rows and counts stay as one.
+    db = embedded[0].store("notes")
+    before = store.counts(db)
+    store.delete_docs(db, list(doc_ids(db).values()))
+    db.rollback()
+    assert store.counts(db) == before == held(db)
+
+
+def test_a_store_of_sift_1_8_counts_its_rows_once(embedded, capsys):
+    catalog, _ = embedded
+    as_sift_1_8_left_it(catalog.store("notes"))
+    before = held(catalog.store("notes"))
+    catalog.release(catalog.get("notes").id)
+    capsys.readouterr()
+    db = catalog.store("notes")
+    assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
+    assert store.counts(db) == before
+    assert "counting the rows of" in capsys.readouterr().err
+    catalog.release(catalog.get("notes").id)
+    catalog.store("notes")
+    assert "counting" not in capsys.readouterr().err  # once
+
+
+def test_a_store_counted_meanwhile_is_counted_once(embedded, capsys):
+    # Two sifts that open a store of 1.8 at once both see it uncounted; the second must find the counts there once it
+    # has the store, rather than fail or count again.
+    db = embedded[0].store("notes")
+    capsys.readouterr()
+    store._count_rows(db, "notes.sqlite")  # what the second runs, after the first has finished
+    assert store.counts(db) == held(db)
+    assert "counting" not in capsys.readouterr().err
+
+
+def test_counting_stopped_leaves_the_store_as_sift_1_8_left_it(embedded, monkeypatch):
+    catalog, _ = embedded
+    as_sift_1_8_left_it(catalog.store("notes"))
+    catalog.release(catalog.get("notes").id)
+
+    class StoppedAfterDocs:
+        def __iter__(self):
+            yield "docs"
+            raise KeyboardInterrupt
+
+    real = store.COUNTED
+    monkeypatch.setattr(store, "COUNTED", StoppedAfterDocs())
+    with pytest.raises(KeyboardInterrupt):
+        catalog.store("notes")
+    monkeypatch.setattr(store, "COUNTED", real)  # not undo(): that would also undo closing the databases opened
+    raw = sqlite3.connect(catalog.get("notes").store)
+    assert raw.execute("PRAGMA user_version").fetchone() == (6,)
+    assert raw.execute("SELECT count(*) FROM sqlite_master WHERE name = 'counts'").fetchone() == (0,)
+    raw.close()
+    assert store.counts(catalog.store("notes")) == held(catalog.store("notes"))  # counted on the next start
 
 
 # --- version -------------------------------------------------------------------

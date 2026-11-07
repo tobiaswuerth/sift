@@ -46,6 +46,14 @@ def test_the_page_shows_what_is_indexed(browser):
     assert '<script src="/ui/static/htmx.min.js"' in response.text
 
 
+def test_the_page_shows_the_document_counts_kept(embedded):
+    # Not counted anew after each change of the index: that took a collection of millions of documents seconds.
+    db = embedded[0].store("notes")
+    db.execute("UPDATE counts SET n = 1234567 WHERE name = 'docs'")
+    db.commit()
+    assert "1,234,567 documents" in page(Index(embedded[0])).get("/ui/").text
+
+
 def test_the_address_of_the_server_leads_to_the_ui(browser):
     response = browser.get("/", follow_redirects=False)
     assert response.status_code in (302, 307)
@@ -435,15 +443,11 @@ def test_searches_run_on_the_event_loop_thread(embedded, monkeypatch):
     assert threads == [threading.main_thread()]
 
 
-def test_the_collections_are_counted_once_per_change_of_the_index(embedded, monkeypatch):
-    # Counting millions of documents for every keystroke would make typing slow.
+def test_the_collections_counts_follow_the_index(embedded):
+    # Each page reads the counts the stores keep, which costs nothing per keystroke (see the test of the counts kept).
     catalog, root = embedded
-    browser, counted = page(Index(catalog)), []
-    real = ui._collections
-    monkeypatch.setattr(ui, "_collections", lambda catalog: counted.append(1) or real(catalog))
-    browser.get("/ui/", params={"q": "brush"})
-    browser.get("/ui/", params={"q": "brus"})
-    assert len(counted) == 1
+    browser = page(Index(catalog))
+    assert "3 documents" in browser.get("/ui/").text
     write(root / "new.md", "# New\n")
     indexing.index(catalog)
     assert "4 documents" in browser.get("/ui/").text

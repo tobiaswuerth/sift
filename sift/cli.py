@@ -156,7 +156,7 @@ def main(argv=None):
     )
     s.add_argument("names", nargs="+", metavar="NAME")
     s = sub.add_parser("index", help="scan collections and update the keyword index")
-    s.add_argument("names", nargs="*", help="collections to scan (default: all)")
+    s.add_argument("names", nargs="*", help="collections to scan (default: all active ones)")
     s.add_argument(
         "--files",
         nargs="+",
@@ -164,8 +164,10 @@ def main(argv=None):
         help="read only these files now, or drop them if gone: paths in a collection, or ids (collection/path); "
         "`sift embed` embeds them",
     )
-    s = sub.add_parser("embed", help="embed the chunks that have no vector yet, of all collections or those named")
-    s.add_argument("names", nargs="*", help="collections to embed (default: all)")
+    s = sub.add_parser(
+        "embed", help="embed the chunks that have no vector yet, of all active collections or those named"
+    )
+    s.add_argument("names", nargs="*", help="collections to embed (default: all active ones)")
     s.add_argument("--reset", action="store_true", help="drop all vectors first (after changing the model)")
     for name, desc, subject in (
         ("search", "exact keyword search (BM25)", "query"),

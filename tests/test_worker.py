@@ -405,13 +405,13 @@ def started(monkeypatch):
 
 def test_worker_serves_https_with_its_key_on_all_interfaces(home, fake_models, started, monkeypatch, capsys):
     calibrated = []
-    monkeypatch.setattr(fake_models, "prepare", lambda longest: calibrated.append(longest()))
+    monkeypatch.setattr(fake_models, "prepare", lambda: calibrated.append(True))
     worker.serve(models=fake_models)
     (config,) = started
     found = worker.credentials()
     assert (config.host, config.port) == ("0.0.0.0", 8766)
     assert (config.ssl_certfile, config.ssl_keyfile) == (str(found.cert), str(found.private_key))
-    assert calibrated == [None]  # batches sized to this GPU for the longest input, before the first request
+    assert calibrated == [True]  # batches sized to this GPU, before the first request
     assert fake_models._loaded  # both models loaded at start, so the first request is quick
     assert f"SIFT_EMBED_REMOTE=https://{found.key}@" in capsys.readouterr().err  # what to set on the other machine
 
@@ -429,7 +429,7 @@ def test_a_worker_on_windows_serves_on_a_selector_loop(home, fake_models, monkey
         loops.append(asyncio.get_running_loop())
 
     monkeypatch.setattr(uvicorn.Server, "serve", capture)
-    monkeypatch.setattr(fake_models, "prepare", lambda longest: None)
+    monkeypatch.setattr(fake_models, "prepare", lambda: None)
     monkeypatch.setattr(sys, "platform", "win32")
     worker.serve(models=fake_models)
     assert isinstance(loops[0], asyncio.SelectorEventLoop)
@@ -453,7 +453,7 @@ def test_worker_raises_server_errors_as_they_are(home, fake_models, monkeypatch,
         raise error("stop")
 
     monkeypatch.setattr(uvicorn.Server, "serve", failing)
-    monkeypatch.setattr(fake_models, "prepare", lambda longest: None)
+    monkeypatch.setattr(fake_models, "prepare", lambda: None)
     with pytest.raises(error, match="stop"):
         worker.serve(models=fake_models)
 

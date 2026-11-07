@@ -13,7 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import console, logs
+from . import console, logs, store
 from . import models as _models
 from .search import Index
 
@@ -48,9 +48,9 @@ def _collections(index):
         return "No collections are active." if index.catalog.collections() else "No collections are indexed yet."
     lines = []
     for c in active:
-        n = index.catalog.store(c).execute("SELECT count(*) FROM docs").fetchone()[0]
+        n = store.counts(index.catalog.store(c))["docs"]
         line = f"- {c.name} ({c.path}): {n:,} document{'' if n == 1 else 's'}"
-        if fields := index.fields(c, n):
+        if fields := index.fields(c):
             line += "; front matter: " + ", ".join(fields)
         linked, broken = index.link_counts(c)
         if linked:
@@ -251,7 +251,8 @@ def build(index=None):
     @mcp.tool(annotations=READ_ONLY)
     async def status() -> dict:
         """Collections with their folders (`path`), whether they are `active` (searched), their index files (`store`)
-        and sizes; of active ones document, chunk and link counts; and the embedding model."""
+        and sizes; of active ones the counts of documents, chunks and those `embedded`, their front-matter `fields`,
+        and their links; and the embedding model."""
         return _run(index.status)
 
     @mcp.tool(annotations=READ_ONLY)

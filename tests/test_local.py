@@ -117,28 +117,34 @@ def test_back_on_a_busy_gpu_the_models_reload_for_the_cpu(make_local, gpu_memory
     assert models.embedder().dtype == models.reranker().model.dtype == "float32"  # CPUs are slow at half precision
 
 
-def test_prepare_calibrates_on_the_longest_text(make_local, gpu_memory, monkeypatch):
-    seen, real = [], FakeSentenceTransformer.encode_document
-
-    def recording(self, texts, **kwargs):
-        seen.extend(texts)
-        return real(self, texts, **kwargs)
-
-    monkeypatch.setattr(FakeSentenceTransformer, "encode_document", recording)
-    models = make_local("cuda")
-    models.prepare(lambda: "a sample text")
-    assert set(seen) == {"a sample text"}
-    assert models.batch == 294  # see test_accelerator.test_calibration_fills_the_budget
-
-
-def test_prepare_without_a_sample_uses_the_longest_input(make_local, monkeypatch):
+def test_prepare_calibrates_with_the_longest_input_the_model_takes(make_local, gpu_memory, monkeypatch):
+    # A batch that fits there fits any text, whatever the model: none needs more memory than the longest input. The
+    # longest text still to embed, by characters, was read from every pending chunk at the start, and could have fewer
+    # tokens than others: it ran out of memory at once. Larger batches of short texts were slower (more padding).
     seen, real = [], FakeSentenceTransformer.encode_document
     monkeypatch.setattr(FakeSentenceTransformer, "encode_document", lambda s, t, **k: seen.extend(t) or real(s, t, **k))
     models = make_local("cuda")
-    models.prepare(lambda: None)  # nothing left to embed meanwhile
+    models.prepare()
+    assert len(set(seen)) == 1
     assert len(seen[0]) == 8 * models.embedder().max_seq_length  # longer than any input: it gets truncated
+    assert models.batch == 294  # see test_accelerator.test_calibration_fills_the_budget
 
 
-def test_prepare_off_cuda_asks_for_no_sample(fake_models):
-    fake_models.prepare(lambda: pytest.fail("no calibration on the CPU, so no sample needed"))
+def test_lengths_are_tokens_as_the_model_reads_them(fake_models, monkeypatch):
+    monkeypatch.setattr(local, "LENGTHS_AT_ONCE", 2)  # several rounds
+    texts = ["brush", "brush strokes on canvas", "word " * 5000, ""]
+    assert fake_models.lengths(texts) == [3, 6, local.MAX_TOKENS, 2]  # a token per word and two special ones, cut
+    assert fake_models.lengths([]) == []
+
+
+def test_lengths_of_a_model_without_an_attention_mask_are_characters(fake_models, monkeypatch):
+    # A static embedding model's tokens come flat, with offsets: no mask to count them by. The lengths only group
+    # texts into batches, so characters do.
+    monkeypatch.setattr(FakeSentenceTransformer, "preprocess", lambda self, inputs: {"input_ids": None})
+    assert fake_models.lengths(["brush", "brush strokes"]) == [5, 13]
+
+
+def test_prepare_off_cuda_calibrates_nothing(fake_models, monkeypatch):
+    monkeypatch.setattr(FakeSentenceTransformer, "encode_document", lambda *a, **k: pytest.fail("no calibration"))
+    fake_models.prepare()
     assert fake_models.batch == 128

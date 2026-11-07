@@ -151,7 +151,7 @@ class Catalog:
         collection = self.get(name)
         try:
             db = self.store(collection)
-            docs = db.execute("SELECT count(*) FROM docs").fetchone()[0]
+            docs = store.counts(db)["docs"]
         except LookupError as missing:
             console.say(f"{missing}: only the catalog changes")
             docs = None

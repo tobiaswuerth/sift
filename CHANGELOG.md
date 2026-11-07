@@ -5,6 +5,36 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-07
+
+Status in a moment on any index, embedding a third faster with the CPU left free, and a README to the point.
+
+### Changed
+
+- `sift status`, the MCP `status` tool and a starting server no longer read every vector and document of a
+  collection: they take its counts as its index keeps them, and its front-matter fields from 1,000 documents looked up
+  by id. On an index of tens of millions of chunks, `sift status` read over a hundred gigabytes and took over ten
+  minutes. A server loads the vectors' codes in one pass over them, not two.
+- The index's layout is version 7: each collection's index keeps the number of its documents, chunks and vectors,
+  counted as they change, in the transaction of each change. An index of 1.8 counts its rows on first use, once, in a
+  pass over its tables; another sift opening it meanwhile waits. An older sift doesn't open an index so updated.
+- `sift embed` batches texts of similar length in tokens, not in characters. A batch is padded to its longest text,
+  and characters tell tokens poorly: PubMed abstracts were padded to 1.5 times their tokens. On an RTX 4090, embedding
+  PubMed abstracts went from 171 to 230 chunks per second, the vectors the same.
+- Beside an NVIDIA GPU, PyTorch keeps a single CPU thread. With a thread per core, its idle threads waited busily after
+  each batch: several cores busy computing nothing.
+- `sift embed` sizes its batches with texts of the longest input the model takes, which fit any text, whatever the
+  model. It no longer reads every pending chunk at the start to find the longest by characters: that took minutes on
+  a large index, and a chunk with fewer characters could have more tokens, so the first batch ran out of memory and
+  every batch was halved. Counting the pending chunks at the start reads no document either: on 15 million PubMed
+  chunks, 19 seconds instead of 190.
+- The browser UI reads each collection's document count as its index keeps it.
+- The README is a third as long: what sift does, installing, connecting agents, the commands and settings. The
+  details moved to [docs/usage.md](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md) (searching,
+  filters, formats, linked notes, the UI),
+  [docs/architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md) (how it works) and
+  [docs/worker.md](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md) (embedding on another machine).
+
 ## [1.8.0] - 2026-11-06
 
 Each collection's index in a file of its own, wherever it fits, and collections left out of searches until wanted.
@@ -173,7 +203,7 @@ collection added inside another.
 ## [1.2.0] - 2026-10-22
 
 For collections that other programs write to: a `.siftignore`, saved emails, the folder of each collection, and
-errors that say what to do ([Leaving files out](README.md#leaving-files-out), [Emails](README.md#emails)).
+errors that say what to do ([Leaving files out](docs/usage.md#leaving-files-out), [Emails](docs/usage.md#emails)).
 
 ### Added
 
@@ -206,7 +236,7 @@ errors that say what to do ([Leaving files out](README.md#leaving-files-out), [E
 ## [1.1.0] - 2026-10-22
 
 Links between Markdown notes, for Obsidian vaults and any notes that link to each other
-([Linked notes](README.md#linked-notes)).
+([Linked notes](docs/usage.md#linked-notes)).
 
 ### Added
 
@@ -566,7 +596,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/tobiaswuerth/sift/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/tobiaswuerth/sift/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/tobiaswuerth/sift/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tobiaswuerth/sift/compare/v1.5.0...v1.6.0

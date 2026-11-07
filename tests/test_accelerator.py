@@ -122,6 +122,47 @@ def test_too_little_free_memory_means_the_cpu(make, gpu_memory, capsys):
     assert "only 2.0 GB of GPU memory is free; using the CPU" in capsys.readouterr().err
 
 
+def test_beside_an_nvidia_gpu_pytorch_keeps_one_cpu_thread(make):
+    # Its CPU steps beside the GPU are small, and the threads it keeps for them wait busily after each: a thread per
+    # core kept 9 of 24 cores busy through `sift embed`, computing nothing, and embedding ran 5% slower.
+    import torch
+
+    make("cuda").budget()
+    assert torch.get_num_threads() == accelerator.GPU_THREADS == 1
+
+
+@pytest.mark.parametrize("device", ["cpu", "mps"])
+def test_off_an_nvidia_gpu_pytorch_keeps_a_thread_per_core(make, device):
+    # On the CPU the threads compute the models.
+    import torch
+
+    torch.set_num_threads(1)
+    make(device).budget()
+    assert torch.get_num_threads() == accelerator.CPU_THREADS > 1
+
+
+def test_the_cpu_threads_come_back_with_too_little_gpu_memory(make, gpu_memory):
+    import torch
+
+    gpu_memory.free = 2 * GiB
+    make("cuda").budget()
+    assert torch.get_num_threads() == accelerator.CPU_THREADS
+
+
+def test_the_cpu_threads_come_back_with_a_busy_gpu_after_a_rest(make, gpu_memory, clock):
+    import torch
+
+    cuda = make("cuda")
+    cuda.budget()
+    Thing(cuda).use()
+    assert torch.get_num_threads() == accelerator.GPU_THREADS
+    clock.advance(accelerator.IDLE_SECONDS)
+    cuda.release_idle()
+    gpu_memory.free = 2 * GiB
+    Thing(cuda).use()
+    assert torch.get_num_threads() == accelerator.CPU_THREADS
+
+
 @pytest.mark.parametrize("device", ["cpu", "mps"])
 def test_no_budget_off_cuda(make, gpu_memory, device):
     assert make(device).budget() is None

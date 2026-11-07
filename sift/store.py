@@ -1,5 +1,6 @@
-"""A collection's database, its store: its documents, chunks, keyword index (FTS5), vectors and their codes, and its
-notes' links, in one SQLite file. The catalog (see `catalog`) lists the collections and where their stores lie.
+"""A collection's database, its store: its documents, chunks, keyword index (FTS5), vectors and their codes, its
+notes' links, and the counts of its rows, in one SQLite file. The catalog (see `catalog`) lists the collections and
+where their stores lie.
 
 A store holds the text of every document, so searching and reading never touch the files; they are read only when
 indexing (see `indexing`, and `readers` for the kinds of file).
@@ -16,7 +17,10 @@ from pathlib import Path
 
 from . import console, readers
 
-SCHEMA_VERSION = 6  # in SQLite's user_version; up to sift 1.7, one database held every collection (see `upgrade`)
+SCHEMA_VERSION = 7  # in SQLite's user_version; up to sift 1.7, one database held every collection (see `upgrade`)
+FIRST_LAYOUT = 6  # sift 1.8's, the first of a store per collection; its rows are counted once (see _count_rows)
+TIMEOUT = 30  # seconds to wait for another sift's transaction
+UPGRADE_WAIT = 3600  # seconds to wait while another sift counts a store's rows, once: minutes for a large one
 SHIFT = 40  # a collection's row ids start at its id << SHIFT: a trillion rows each, and millions of collections
 # The keyword index reads chunks through a view: each with its document's title, and its front-matter values but the
 # title, e.g. authors and ids, as `meta`. Inserting and deleting read it alike, so the two always agree.
@@ -57,6 +61,20 @@ CREATE TABLE IF NOT EXISTS codes(chunk INTEGER PRIMARY KEY, bits BLOB NOT NULL);
 CREATE TRIGGER IF NOT EXISTS codes_go_with_vectors AFTER DELETE ON vectors
     BEGIN DELETE FROM codes WHERE chunk = OLD.chunk; END;
 """
+# The rows of each table a status shows, counted as they come and go, since SQLite keeps no counts and counting a large
+# store's vectors reads all of them: by triggers, in the transaction of the change itself, so that no interruption
+# separates rows and counts. Vectors are written as upserts: SQLite deletes the row an INSERT OR REPLACE replaces
+# without firing delete triggers.
+COUNTED = ("docs", "chunks", "vectors")
+COUNTS = (
+    "CREATE TABLE IF NOT EXISTS counts(name TEXT PRIMARY KEY, n INTEGER NOT NULL)",
+    *(
+        f"CREATE TRIGGER IF NOT EXISTS {table}_{change} AFTER {event} ON {table} "
+        f"BEGIN UPDATE counts SET n = n {sign} 1 WHERE name = '{table}'; END"
+        for table in COUNTED
+        for change, event, sign in (("added", "INSERT", "+"), ("removed", "DELETE", "-"))
+    ),
+)
 CODES_BATCH = 100_000  # codes per batch as searches load them, and per transaction as vectors get them afterwards
 
 
@@ -76,11 +94,11 @@ def database(path, create=False) -> sqlite3.Connection:
     path = Path(path)
     if create:
         path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(path, timeout=30, check_same_thread=False)
+        db = sqlite3.connect(path, timeout=TIMEOUT, check_same_thread=False)
     elif not path.is_file():
         raise FileNotFoundError(f"not found: {path}")
     else:
-        db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True, timeout=30, check_same_thread=False)
+        db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True, timeout=TIMEOUT, check_same_thread=False)
     try:
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA synchronous=NORMAL")
@@ -113,10 +131,12 @@ def _layout(db, path, cid, create):
         return
     meta = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").fetchone()
     held = db.execute("SELECT value FROM meta WHERE key = 'collection'").fetchone() if meta else None
-    if version < SCHEMA_VERSION or held is None:
+    if version < FIRST_LAYOUT or held is None:
         raise SystemExit(f"{path} is not the index of a collection of this sift")
     if int(held[0]) != cid:
         raise SystemExit(f"{path} holds the index of another collection (id {held[0]}, not {cid})")
+    if version < SCHEMA_VERSION:
+        _count_rows(db, path)
     for key, kinds in READ_AGAIN.items():
         if get_meta(db, key) is None:
             _read_again(db, key, kinds)
@@ -125,7 +145,8 @@ def _layout(db, path, cid, create):
 def make(db, cid, read=True):
     """The tables of a new store of the collection `cid`, its ids starting at first_id(cid). Unless `read`, its files
     of the kinds an older sift skipped are still to be read again (READ_AGAIN)."""
-    db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + CODES)
+    db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + CODES + "".join(f"{statement};\n" for statement in COUNTS))
+    db.executemany("INSERT INTO counts(name, n) VALUES(?, 0)", [(table,) for table in COUNTED])
     first = first_id(cid)
     db.executemany("INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)", [("docs", first), ("chunks", first)])
     set_meta(db, "collection", cid)
@@ -186,6 +207,33 @@ def _read_again(db, key, kinds):
         raise
 
 
+def _count_rows(db, path):
+    """Count the rows of a store of sift 1.8 once, a pass over each table, and keep them counted from then on (layout
+    6 to 7). In one transaction, which another sift opening the store meanwhile waits for, and then finds done."""
+    db.execute(f"PRAGMA busy_timeout = {UPGRADE_WAIT * 1000}")
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if db.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+                console.say(f"counting the rows of {path} once, to keep them counted from now on ...")
+                for statement in COUNTS:
+                    db.execute(statement)
+                rows = [(table, db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]) for table in COUNTED]
+                db.executemany("INSERT INTO counts(name, n) VALUES(?, ?)", rows)
+                db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+    finally:
+        db.execute(f"PRAGMA busy_timeout = {TIMEOUT * 1000}")
+
+
+def counts(db):
+    """How many rows of each table in COUNTED the store holds, by table, as kept: no table is read."""
+    return dict(db.execute("SELECT name, n FROM counts"))
+
+
 def add_codes(db):
     """Add the codes of the vectors that have none, computed from the vectors: nothing is embedded again. A batch per
     transaction, so that this goes on where it stopped, and another sift waits a batch at most. Vectors of another
@@ -212,10 +260,13 @@ def add_codes(db):
 
 
 def put_vectors(db, chunks, matrix):
-    """Store the vectors of chunks (fp16 rows of `matrix`) with their codes, replacing any they had."""
+    """Store the vectors of chunks (fp16 rows of `matrix`) with their codes, replacing any they had: as an upsert,
+    which keeps the count (see COUNTS)."""
     chunks = [int(chunk) for chunk in chunks]
     rows = zip(chunks, (vector.tobytes() for vector in matrix))
-    db.executemany("INSERT OR REPLACE INTO vectors(chunk, vec) VALUES(?, ?)", rows)
+    db.executemany(
+        "INSERT INTO vectors(chunk, vec) VALUES(?, ?) ON CONFLICT(chunk) DO UPDATE SET vec = excluded.vec", rows
+    )
     _put_codes(db, chunks, matrix)
 
 

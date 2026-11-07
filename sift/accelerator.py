@@ -25,6 +25,10 @@ FILL = 0.9  # share of the memory budget a calibrated batch may use
 BATCH_SIZE = 128  # until calibrated on CUDA; a good size for CPUs and Apple GPUs
 MAX_BATCH = 1024
 IDLE_SECONDS = 300  # unused this long, the models give their GPU memory back
+CPU_THREADS = torch.get_num_threads()  # PyTorch's own choice, a thread per core: on the CPU they compute the models
+# Beside an NVIDIA GPU, PyTorch's CPU steps are small, and the threads it keeps for them wait busily after each (Intel
+# OpenMP's 200 ms): a thread per core kept 9 of 24 cores busy through `sift embed`, and embedding ran 5% slower.
+GPU_THREADS = 1
 _UNSET = object()
 
 
@@ -110,7 +114,12 @@ class Accelerator:
                 self._budget = None
             else:
                 self._budget = self._set_budget()
+            self._set_threads()
         return self._budget
+
+    def _set_threads(self):
+        """PyTorch's CPU threads for the device settled on: one beside an NVIDIA GPU, else a thread per core."""
+        torch.set_num_threads(GPU_THREADS if self.kind == "cuda" else CPU_THREADS)
 
     def _free(self):
         """Free and total memory of the GPU. On Windows (WDDM), CUDA counts memory other programs hold as free,
@@ -160,7 +169,7 @@ class Accelerator:
 
     def calibrate(self, run):
         """Measure the largest batch that fits the memory budget, and use it from now on. run(n) runs a batch of n
-        of the longest texts to come.
+        texts as long as any to come: of the longest input the model takes, so that the batch fits every text.
 
         Batches of 1, 2, 4, ... run until one uses half of the budget. Memory grows linearly with the batch size,
         so the last measurement predicts the size that fills FILL of the budget. A size that ran out of memory is
@@ -222,3 +231,4 @@ class Accelerator:
         if self._released and self.kind == "cuda":
             self._released = False
             self._budget = self._set_budget()
+            self._set_threads()

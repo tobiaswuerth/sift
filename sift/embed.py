@@ -15,8 +15,11 @@ def text_of(seq, title, text):
     return text if seq == 0 or text.lstrip("# ").startswith(title) else f"{title}\n\n{text}"
 
 
+UNEMBEDDED = "chunks c WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)"
+"""The chunks without a vector, as a FROM clause, to count them: reading each one's document too took a start on
+15 million PubMed chunks 190 s, against 19 s. A chunk without a document counts; the slabs pass it over."""
 PENDING = "chunks c JOIN docs d ON d.id = c.doc WHERE NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)"
-"""The chunks still without a vector, as a FROM clause."""
+"""The chunks still without a vector, with their documents, as a FROM clause."""
 
 
 def embed_pending(catalog, reset=False, models=None, collections=None):
@@ -37,16 +40,14 @@ def embed_pending(catalog, reset=False, models=None, collections=None):
     for c, db in stores:
         _check_model(db, c.name, using)
         _drop_broken_vectors(db)
-    pending = [(c, db, db.execute(f"SELECT count(*) FROM {PENDING}").fetchone()[0]) for c, db in stores]
+    pending = [(c, db, db.execute(f"SELECT count(*) FROM {UNEMBEDDED}").fetchone()[0]) for c, db in stores]
     total, named = sum(n for *_, n in pending), ", ".join(collections or ())
     if not total:
         console.say(f"nothing to embed in {named}" if named else "nothing to embed")
         return
     of = f" of {named}" if named else ""
     console.say(f"embedding {console.count(total, 'chunk')}{of} with {using} on {models.address}")
-    models.prepare(
-        lambda: max(filter(None, (_longest_pending(db) for _, db, n in pending if n)), key=len, default=None)
-    )
+    models.prepare()
     done = broken = 0
     slab = f"SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} AND c.id > ? "
     with console.Progress(total, "chunks") as progress:
@@ -100,7 +101,7 @@ def _drop_broken_vectors(db):
     once per store, so they are embedded again."""
     if store.get_meta(db, "vectors_checked"):
         return
-    if n := db.execute("SELECT count(*) FROM vectors").fetchone()[0]:
+    if n := store.counts(db)["vectors"]:
         console.say(f"checking {n:,} vectors for broken ones (once) ...")
         broken, cursor = [], db.execute("SELECT chunk, vec FROM vectors")
         while rows := cursor.fetchmany(100_000):
@@ -114,18 +115,11 @@ def _drop_broken_vectors(db):
     db.commit()
 
 
-def _longest_pending(db):
-    """The longest text still to embed, to calibrate on: no batch can need more memory per text. None if none."""
-    sql = (
-        f"SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} ORDER BY c.len + length(d.title) DESC"
-    )
-    return max((text_of(*row) for row in db.execute(sql + " LIMIT 100")), key=len, default=None)
-
-
 def encode(models, texts, report=None):
-    """Vectors for texts, longest first in batches of similar length; report(n), if given, after each batch, n texts
-    done."""
-    order, step, vectors = sorted(range(len(texts)), key=lambda i: -len(texts[i])), models.batch, None
+    """Vectors for texts, longest first in batches of similar length to the model: each batch is padded to its longest
+    text, and characters tell tokens poorly. report(n), if given, after each batch, n texts done."""
+    lengths, step, vectors = models.lengths(texts), models.batch, None
+    order = sorted(range(len(texts)), key=lambda i: -lengths[i])
     for start in range(0, len(order), step):
         part = order[start : start + step]
         out = models.encode([texts[i] for i in part])

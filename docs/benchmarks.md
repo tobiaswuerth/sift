@@ -3,7 +3,7 @@
 This page explains how sift's search defaults were chosen. Every change to how `query` ranks is measured on seven
 datasets, with several rerankers and embedding models. The default is the setting that does best overall, not the
 winner on a single dataset. To measure sift on your own documents, use
-[`sift bench`](../README.md#measuring-search-on-your-own-documents).
+[`sift bench`](usage.md#measuring-search-on-your-own-documents).
 
 ## Results in brief
 
@@ -15,7 +15,7 @@ winner on a single dataset. To measure sift on your own documents, use
   Snowflake Arctic-Embed-L v2.0 ties it on average: it does better on financial questions and long German documents,
   worse on scientific text, and indexes 1.6 times as fast.
 - **Speed:** reranking takes about 0.3 seconds per query on an RTX 4090 and about 25 seconds on a CPU. Machines without
-  a GPU should rerank through a [`sift worker`](../README.md#embedding-on-another-machine).
+  a GPU should rerank through a [`sift worker`](worker.md).
 - **Vectors in memory:** `vsearch` keeps one bit per dimension in RAM and scores the 4,000 nearest exactly. Over 3.2
   million arXiv abstracts it finds 99.6% of exact search's top 10, with an MRR of 0.9528 against 0.9530, in a
   sixteenth of the memory.
@@ -175,6 +175,28 @@ The embedding models embedded 2,000 passages (half SciFact, half MLDR) and 100 q
   `search` and `vsearch`, which need no reranker.
 - **Query embedding is minor next to reranking:** 51 ms against 284 ms.
 
+### Batching
+
+`sift embed` on the RTX 4090 with EmbeddingGemma-2, over 6,000 PubMed abstract passages (339 tokens on average) and
+their 6,000 titles (30 tokens); the mean of 2 runs, and for the titles the best of 2:
+
+| Batches | Passages per second | CPU cores busy |
+|---|---|---|
+| sift 1.8: grouped by characters, a CPU thread per core | 171 | 4.7 |
+| sift 1.9: grouped by tokens, one CPU thread | **230** | 0.9 |
+
+| Titles, batch of | Grouped by characters | Grouped by tokens |
+|---|---|---|
+| 140 | 2,295 per second, padded to 1.50 times their tokens | **2,504**, 1.04 times |
+| 1,024 | 1,742, 1.78 times | 2,424, 1.30 times |
+
+- **Grouping by tokens is what pays:** a batch is padded to its longest text, and characters tell tokens poorly.
+  Grouped by characters, the passages were padded to 1.51 times their tokens; by tokens, to 1.04 times.
+- **Larger batches of short texts don't:** a batch of 140 already keeps the GPU busy, so 1,024 only adds padding.
+  sift therefore sizes one batch for the longest input the model takes, and uses it for every length.
+- **One CPU thread beside the GPU** made embedding 5% faster and freed most of the cores: PyTorch's other threads only
+  waited busily after each batch.
+
 ### Links between notes
 
 A synthetic vault of 20,000 notes and 220,000 links: one note linked by 6,000 others, a tenth of the links to notes
@@ -239,5 +261,5 @@ ceiling, so sift doesn't expand queries itself, though agents are free to search
 - **Rerankers that need `trust_remote_code`, or have non-commercial licences.** sift's defaults must run anywhere,
   under licences that allow commercial use.
 - **Your documents.** The datasets above stand in for scientific, medical, financial, German and literature search.
-  Your own documents may behave differently. [`sift bench`](../README.md#measuring-search-on-your-own-documents)
+  Your own documents may behave differently. [`sift bench`](usage.md#measuring-search-on-your-own-documents)
   measures each search mode on questions you write, and `SIFT_RERANK_MODEL` and `SIFT_EMBED_MODEL` switch models.

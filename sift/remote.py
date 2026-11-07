@@ -101,7 +101,11 @@ class Remote:
         """Reach the worker now, to find out early whether it answers."""
         self.info  # noqa: B018 - asked for its side effect
 
-    def prepare(self, longest):
+    def lengths(self, texts):
+        """Characters: the tokens are the worker's to count, and asking it would cost a request."""
+        return [len(text) for text in texts]
+
+    def prepare(self):
         """The worker sizes its batches itself."""
 
     def encode(self, texts, query=False):

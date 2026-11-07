@@ -311,6 +311,17 @@ def test_an_older_index_gets_what_its_layout_lacks(made, home, layout, what, fak
     assert {c.name: contents(catalog.store(c)) for c in catalog.collections()} == held
 
 
+@pytest.mark.parametrize("layout", [5, 4, 3])
+def test_the_stores_of_a_split_keep_their_counts(made, home, layout):
+    home.mkdir()
+    as_made_by_sift_1_7(made, home / "sift.db", layout)
+    catalog = Catalog(home)
+    for c in catalog.collections():
+        db = catalog.store(c)
+        assert store.counts(db) == {t: db.execute(f"SELECT count(*) FROM {t}").fetchone()[0] for t in store.COUNTED}
+        assert store.counts(db)["vectors"] > 0
+
+
 def test_an_index_of_sift_1_0_reads_its_front_matter_again(made, home, capsys):
     # sift 1.0 read lists of unquoted items as text, and gave a note of front matter alone no passage.
     vault = made.store("vault")

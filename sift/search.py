@@ -300,8 +300,9 @@ def _by_value(rows, descending):
 
 
 def _codes(db):
-    """The codes of a store's vectors, batch by batch; None if it has none."""
-    n = db.execute("SELECT count(*) FROM codes").fetchone()[0]
+    """The codes of a store's vectors, batch by batch; None if it has none. At most as many as the vectors the store
+    counts, which it keeps: counting the codes was a pass over millions before the one that loads them."""
+    n = store.counts(db)["vectors"]
     ids, bits, row = np.empty(n, np.int64), None, 0
     cursor = db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
     while row < n and (batch := cursor.fetchmany(store.CODES_BATCH)):
@@ -1125,12 +1126,18 @@ class Index:
         bits = codes(matrix) if matrix is not None else np.empty((0, held[1].width), np.uint8)
         self.vectors[cid] = (after, held[1].patched(list(removed), list(ids), bits))
 
-    def fields(self, collection, docs):
-        """The front-matter fields of a collection with `docs` documents, from a sample spread over it."""
-        sql = """SELECT DISTINCT j.key FROM (SELECT meta FROM docs WHERE id % ? = 0 LIMIT ?) d, json_each(d.meta) j
-                 ORDER BY j.key"""
+    def fields(self, collection):
+        """The front-matter fields of a collection, from FIELD_SAMPLE documents spread from its first to its last,
+        each looked up by id: reading every document for its front matter took a large collection minutes."""
         db = self.catalog.store(collection)
-        return [key for (key,) in db.execute(sql, (max(1, docs // FIELD_SAMPLE), FIELD_SAMPLE))]
+        first, last = db.execute("SELECT (SELECT min(id) FROM docs), (SELECT max(id) FROM docs)").fetchone()
+        if first is None:
+            return []
+        steps = max(FIELD_SAMPLE - 1, 1)
+        ids = sorted({first + (last - first) * i // steps for i in range(steps + 1)})
+        sql = """SELECT DISTINCT j.key FROM json_each(?) p,
+                 json_each((SELECT meta FROM docs WHERE id >= p.value ORDER BY id LIMIT 1)) j ORDER BY j.key"""
+        return [key for (key,) in db.execute(sql, (json.dumps(ids),))]
 
     def status(self):
         """The catalog, the model the active collections are embedded with, and every collection: its folder, whether
@@ -1145,12 +1152,10 @@ class Index:
             entry["size"] = _size(c.store)
             if c.active:
                 db = self.catalog.store(c)
-                sql = (
-                    "SELECT (SELECT count(*) FROM docs), (SELECT count(*) FROM chunks), (SELECT count(*) FROM vectors)"
-                )
-                docs, chunks, embedded = db.execute(sql).fetchone()
+                counted = store.counts(db)
                 linked, unresolved = self.link_counts(c)
-                entry |= {"docs": docs, "chunks": chunks, "embedded": embedded, "fields": self.fields(c, docs)}
+                entry |= {"docs": counted["docs"], "chunks": counted["chunks"], "embedded": counted["vectors"]}
+                entry["fields"] = self.fields(c)
                 entry |= {"links": linked, "unresolved": unresolved}
                 models.add(store.get_meta(db, "model"))
             collections.append(entry)
