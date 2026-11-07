@@ -19,6 +19,10 @@ winner on a single dataset. To measure sift on your own documents, use
 - **Vectors in memory:** `vsearch` keeps one bit per dimension in RAM and scores the 4,000 nearest exactly. Over 3.2
   million arXiv abstracts it finds 99.6% of exact search's top 10, with an MRR of 0.9528 against 0.9530, in a
   sixteenth of the memory.
+- **Keyword search:** `search` ranks from postings of its own, scoring ranges of passages best bound first. Over 29.9
+  million PubMed passages, a common word takes 7 ms instead of 1.3 seconds, a question 26 ms instead of 5.3 seconds
+  (medians, the postings read before; 67 and 200 ms read anew), with FTS5's results, score for score, in about a
+  third of FTS5's storage ([details](#keyword-search)).
 
 ## Datasets
 

@@ -408,7 +408,7 @@ def test_an_interrupted_embedding_stores_no_vectors(live, monkeypatch):
     counts = "SELECT (SELECT count(*) FROM vectors), (SELECT count(*) FROM codes)"
     before = index.catalog.store("vault").execute(counts).fetchone()
 
-    def failing(catalog):
+    def failing(db):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(store, "touch", failing)
