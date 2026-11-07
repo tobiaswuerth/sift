@@ -39,6 +39,7 @@ def test_a_worker_manages_its_own_gpu():
     worker = Remote("https://t.p@pc:8766")
     assert worker.release_idle() is False  # nothing on this machine to hand back
     worker.prepare()  # the worker sizes its batches itself: nothing asked of it here
+    assert worker.lengths(["brush", "brush strokes"]) == [5, 13]  # characters: asking the worker would cost a request
 
 
 def test_choosing_the_models_loads_none_yet(monkeypatch, configure):

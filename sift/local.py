@@ -8,7 +8,7 @@ from . import settings
 from .accelerator import Accelerator
 
 MAX_TOKENS = 1024
-LENGTHS_AT_ONCE = 1000  # texts tokenized at a time to count their tokens: padded, 1,000 at most take 8 MB
+LENGTHS_AT_ONCE = 1000  # texts tokenized at a time to count their tokens: padded, their ids and mask take 16 MB
 
 # The MCP server logs at INFO, where loading a model logs every HTTP request to Hugging Face: through httpx, or
 # httpx2, which huggingface_hub 2 uses.

@@ -24,9 +24,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   a large index, and a chunk with fewer characters could have more tokens, so the first batch ran out of memory and
   every batch was halved.
 - The README is a third as long: what sift does, installing, connecting agents, the commands and settings. The
-  details moved to [docs/usage.md](docs/usage.md) (searching, filters, formats, linked notes, the UI),
-  [docs/architecture.md](docs/architecture.md) (how it works) and [docs/worker.md](docs/worker.md) (embedding on
-  another machine).
+  details moved to [docs/usage.md](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md) (searching,
+  filters, formats, linked notes, the UI),
+  [docs/architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md) (how it works) and
+  [docs/worker.md](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md) (embedding on another machine),
+  linked from the GitHub release notes too.
 
 ## [1.8.0] - 2026-11-06
 
