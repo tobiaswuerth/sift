@@ -1,6 +1,6 @@
-"""A collection's database, its store: its documents, chunks, keyword index (FTS5), vectors and their codes, its
-notes' links, and the counts of its rows, in one SQLite file. The catalog (see `catalog`) lists the collections and
-where their stores lie.
+"""A collection's database, its store: its documents, chunks, keyword index (FTS5) and keyword postings, vectors and
+their codes, its notes' links, and the counts of its rows, in one SQLite file. The catalog (see `catalog`) lists the
+collections and where their stores lie.
 
 A store holds the text of every document, so searching and reading never touch the files; they are read only when
 indexing (see `indexing`, and `readers` for the kinds of file).
@@ -336,7 +336,7 @@ def keywords(db, docs, add=True):
     """Add the keyword index's entries for the chunks of these documents, by id, or delete them, as the chunk_text
     view reads them now. Delete them before a document's text, title or meta changes, and add them after: entries
     that no longer match the view can't be deleted any more. One statement for all, as one per document took twice
-    as long."""
+    as long. Once the postings are built, the chunks are marked dirty too, until the postings follow."""
     columns, values = ("rowid", "id") if add else ("fts, rowid", "'delete', id")
     db.execute(
         f"INSERT INTO fts({columns}, title, text, meta) SELECT {values}, title, text, meta FROM chunk_text "

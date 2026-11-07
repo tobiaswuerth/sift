@@ -356,8 +356,8 @@ def index_contents(db):
 def keywords_agree(db):
     """Whether the keyword index holds exactly what the chunk_text view reads now, term by term: an entry left from an
     old title or meta can't be deleted any more. (FTS5's integrity-check fails on the view, as 'rebuild' does.)"""
-    db.executescript("""
-        CREATE VIRTUAL TABLE temp.fresh USING fts5(title, text, meta, tokenize='unicode61 remove_diacritics 2');
+    db.executescript(f"""
+        CREATE VIRTUAL TABLE temp.fresh USING fts5(title, text, meta, tokenize='{store.TOKENIZER}');
         INSERT INTO temp.fresh(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text;
         CREATE VIRTUAL TABLE temp.held USING fts5vocab(main, fts, instance);
         CREATE VIRTUAL TABLE temp.made USING fts5vocab(temp, fresh, instance);""")

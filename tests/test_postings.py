@@ -139,7 +139,7 @@ def test_varints_are_read_as_sqlite_writes_them():
 
 
 def test_term_scores_are_fts5s():
-    # bm25's term score, idf aside, as search._as_one computes it after FTS5
+    # bm25's term score, idf aside, as FTS5's bm25() computes it
     assert postings.term_scores([2], [10], 20)[0] == pytest.approx(2 * 2.2 / (2 + 1.2 * (0.25 + 0.75 * 10 / 20)))
 
 
@@ -268,7 +268,6 @@ def test_changes_are_followed_once_updated(prose):
 
 def unbuilt(db):
     """The store as an upgrade from sift 1.9 leaves it: no postings built."""
-    store.set_meta(db, "kw_built", "")
     db.execute("DELETE FROM meta WHERE key = 'kw_built'")
     for table in ("kw_terms", "kw_blocks", "kw_lengths", "kw_segments", "kw_masked", "kw_dirty"):
         db.execute(f"DELETE FROM {table}")
