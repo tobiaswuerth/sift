@@ -1,12 +1,13 @@
 """Indexing files again on demand: a note written a moment ago is found by the next search, its links resolve, and a
-running server follows without loading every vector again."""
+running server follows without loading every code again."""
 
 import os
 
 import numpy as np
 import pytest
 
-from sift import indexing, readers, store
+from sift import indexing, readers, search, store
+from sift.catalog import Catalog
 from sift.search import Index
 
 from .conftest import write
@@ -21,12 +22,12 @@ def ids(hits):
 
 @pytest.fixture
 def live(linked, fake_models):
-    """The vault, embedded, and searched once, so its vectors are in memory as in a running server: (index, vault)."""
+    """The vault, embedded, and searched once, so its codes are in memory as in a running server: (index, vault)."""
     from sift import embed
 
-    db, vault, _ = linked
-    embed.embed_pending(db)
-    index = Index(db)
+    catalog, vault, _ = linked
+    embed.embed_pending(catalog)
+    index = Index(catalog)
     index.vsearch("anything")
     return index, vault
 
@@ -41,7 +42,7 @@ def test_a_new_note_is_found_at_once(live, monkeypatch):
     assert index.reindex([NEW]) == [{"id": NEW, "status": "added", "chunks": 1, "embedded": 1}]
     assert len(reads) == 1  # the offer linking it isn't read again
     assert ids(index.search("press line")) == [NEW]
-    monkeypatch.setattr(index.models, "vectors", lambda *args: pytest.fail("all vectors loaded again"))
+    monkeypatch.setattr(search, "Codes", lambda *args: pytest.fail("all codes loaded again"))
     assert ids(index.vsearch("maintenance of the press line", k=1)) == [NEW]
     assert index.links(OFFER)["out"][1]["id"] == NEW
 
@@ -73,7 +74,7 @@ def test_a_deleted_note(live):
     ]
 
 
-def test_vectors_in_memory_follow_every_change(live):
+def test_codes_in_memory_follow_every_change(live):
     # What a running server holds must equal what it would load anew.
     index, vault = live
     write(vault / "a.md", "Alpha note.\n")
@@ -82,26 +83,31 @@ def test_vectors_in_memory_follow_every_change(live):
     write(vault / "a.md", "Alpha note, changed.\n")
     (vault / "b.md").unlink()
     index.reindex(["vault/a.md", "vault/b.md"])
-    held = dict(zip(index.vectors.ids.tolist(), index.vectors.scores(np.ones(64, np.float16) / 8).tolist()))
-    index.version = None
-    index.load()
-    loaded = dict(zip(index.vectors.ids.tolist(), index.vectors.scores(np.ones(64, np.float16) / 8).tolist()))
-    assert held == pytest.approx(loaded)
+    (held_ids, held), (loaded_ids, loaded) = held_and_loaded(index)
+    assert held_ids == loaded_ids
+    assert held == loaded
 
 
 def held_and_loaded(index):
-    """The vectors a running server holds, and those it would load anew: {chunk id: score} each, and the ids."""
-    query = np.ones(64, np.float16) / 8
-    held = (index.vectors.ids.tolist(), index.vectors.scores(query).tolist())
-    fresh = Index(index.db, index.models)
+    """The codes a running server holds, and those it would load anew: (chunk ids, codes as bytes) each."""
+    fresh = Index(index.catalog, index.models)
     fresh.load()
-    return held, (fresh.vectors.ids.tolist(), fresh.vectors.scores(query).tolist())
+    return [every_code(i) for i in (index, fresh)]
+
+
+def every_code(index):
+    """The codes an index holds, of every collection: (chunk ids, codes as bytes)."""
+    ids, bits = [], []
+    for cid in sorted(index.vectors):
+        held_ids, held = index.vectors[cid][1].live()
+        ids, bits = ids + held_ids.tolist(), bits + [row.tobytes() for row in held]
+    return ids, bits
 
 
 def test_a_note_rewritten_under_its_old_chunk_ids(live):
-    # The newest note's chunks hold the highest ids, which SQLite hands out again once they are deleted: its new
-    # passage came under the old id, the server kept the old vector next to the new one, and the old wording still
-    # found the note.
+    # The newest note's chunks held the highest ids, which SQLite handed out again once they were deleted, before ids
+    # grew by AUTOINCREMENT: its new passage came under the old id, the server kept the old vector next to the new
+    # one, and the old wording still found the note.
     index, vault = live
     write(vault / "Beat Keller.md", "Segelt Regatten auf dem Bodensee.\n")
     index.reindex(["vault/Beat Keller.md"])
@@ -109,7 +115,7 @@ def test_a_note_rewritten_under_its_old_chunk_ids(live):
     assert index.reindex(["vault/Beat Keller.md"])[0]["status"] == "changed"
     (held_ids, held), (loaded_ids, loaded) = held_and_loaded(index)
     assert held_ids == loaded_ids
-    assert held == pytest.approx(loaded)
+    assert held == loaded
     assert "vault/Beat Keller.md" not in ids(index.vsearch("Regatten Bodensee", k=1))
 
 
@@ -130,7 +136,7 @@ def test_a_note_rewritten_under_its_old_chunk_ids_while_no_model_answers(live, m
     assert held_ids == loaded_ids
 
 
-def test_vectors_in_memory_match_a_fresh_load_through_many_changes(live):
+def test_codes_in_memory_match_a_fresh_load_through_many_changes(live):
     # Notes written, extended, rewritten and deleted in random order, as an agent works: after each reindex the
     # server must hold what it would load anew.
     import random
@@ -150,18 +156,18 @@ def test_vectors_in_memory_match_a_fresh_load_through_many_changes(live):
         index.reindex([f"vault/{name}"])
         (held_ids, held), (loaded_ids, loaded) = held_and_loaded(index)
         assert held_ids == loaded_ids, f"step {step}"
-        assert held == pytest.approx(loaded), f"step {step}"
+        assert held == loaded, f"step {step}"
 
 
-def test_vectors_changed_elsewhere_are_loaded_anew(live, monkeypatch):
-    # Another process changed the index meanwhile: patching the vectors in memory would miss its changes.
+def test_codes_changed_elsewhere_are_loaded_anew(live, monkeypatch):
+    # Another process changed the index meanwhile: patching the codes in memory would miss its changes.
     index, vault = live
-    store.touch(index.db)
-    index.db.commit()
+    store.touch(index.catalog.store("vault"))
+    index.catalog.store("vault").commit()
     write(vault / "a.md", "Alpha note.\n")
     index.reindex(["vault/a.md"])
-    loads, real = [], index.models.vectors
-    monkeypatch.setattr(index.models, "vectors", lambda *args: loads.append(1) or real(*args))
+    loads, real = [], search.Codes
+    monkeypatch.setattr(search, "Codes", lambda *args: loads.append(1) or real(*args))
     assert ids(index.vsearch("alpha note", k=1)) == ["vault/a.md"]
     assert loads == [1]
 
@@ -195,8 +201,8 @@ def test_files_that_give_no_documents(live, monkeypatch):
 
 def test_a_keyword_index_needs_no_models(linked, monkeypatch):
     # Without `sift embed` ever run, reindex embeds nothing, and loads no model.
-    db, vault, _ = linked
-    index = Index(db)
+    catalog, vault, _ = linked
+    index = Index(catalog)
     monkeypatch.setattr(Index, "models", property(lambda self: pytest.fail("loaded a model")))
     write(vault / "a.md", "Alpha note.\n")
     assert index.reindex(["vault/a.md"]) == [{"id": "vault/a.md", "status": "added", "chunks": 1, "embedded": 0}]
@@ -204,12 +210,12 @@ def test_a_keyword_index_needs_no_models(linked, monkeypatch):
 
 def test_without_the_index_s_model_nothing_is_embedded(live):
     index, vault = live
-    store.set_meta(index.db, "model", "another/model")
-    index.db.commit()
+    store.set_meta(index.catalog.store("vault"), "model", "another/model")
+    index.catalog.store("vault").commit()
     write(vault / "a.md", "Alpha note.\n")
     (found,) = index.reindex(["vault/a.md"])
     assert (found["status"], found["embedded"]) == ("added", 0)
-    assert "index was embedded with another/model" in found["note"]
+    assert "vault was embedded with another/model" in found["note"]
 
 
 def test_without_a_worker_the_index_still_follows(live, monkeypatch):
@@ -326,25 +332,25 @@ def test_the_sift_add_it_suggests_can_be_pasted(live, tmp_path):
 
 
 def test_a_file_in_no_collection_nearest_first(home, tmp_path):
-    db = store.connect(home)
+    catalog = Catalog(home)
     for name in ("a", "b"):
         (tmp_path / name / "notes").mkdir(parents=True)
-    store.add_collection(db, tmp_path / "a", "far")
-    store.add_collection(db, tmp_path / "b" / "notes", "near")
+    catalog.add(tmp_path / "a", "far")
+    catalog.add(tmp_path / "b" / "notes", "near")
     write(tmp_path / "b" / "x.md", "x")
     with pytest.raises(ValueError, match=r"folders: near: .*; far: "):
-        Index(db).reindex([str(tmp_path / "b" / "x.md")])
+        Index(catalog).reindex([str(tmp_path / "b" / "x.md")])
     for i in range(4):
         (tmp_path / f"c{i}").mkdir()
-        store.add_collection(db, tmp_path / f"c{i}")
+        catalog.add(tmp_path / f"c{i}")
     with pytest.raises(ValueError, match=r"folders: near: [^;]*(; [^;]*){4}; \.\.\.\. To index"):  # five, and more
-        Index(db).reindex([str(tmp_path / "b" / "x.md")])
+        Index(catalog).reindex([str(tmp_path / "b" / "x.md")])
 
 
 def test_a_file_while_no_collection_is_registered(home, tmp_path):
     write(tmp_path / "x.md", "x")
     with pytest.raises(ValueError, match=r"is in no collection: none is registered yet\. To index files there, add"):
-        Index(store.connect(home)).reindex([str(tmp_path / "x.md")])
+        Index(Catalog(home)).reindex([str(tmp_path / "x.md")])
 
 
 def test_an_unknown_collection_names_those_there_are(live):
@@ -398,15 +404,16 @@ def test_an_interrupted_reindex_changes_nothing(live, monkeypatch):
 def test_an_interrupted_embedding_stores_no_vectors(live, monkeypatch):
     index, vault = live
     write(vault / "a.md", "Alpha note.\n")
-    vectors = index.db.execute("SELECT count(*) FROM vectors").fetchone()
+    counts = "SELECT (SELECT count(*) FROM vectors), (SELECT count(*) FROM codes)"
+    before = index.catalog.store("vault").execute(counts).fetchone()
 
-    def failing(db):
+    def failing(catalog):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(store, "touch", failing)
     with pytest.raises(KeyboardInterrupt):
         index.reindex(["vault/a.md"])
-    assert index.db.execute("SELECT count(*) FROM vectors").fetchone() == vectors
+    assert index.catalog.store("vault").execute(counts).fetchone() == before
 
 
 @pytest.mark.parametrize("paths, error", [([], "at least one"), ("vault/a.md", "a list"), ([1], "a list")])

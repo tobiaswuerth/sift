@@ -66,6 +66,7 @@ If an NVIDIA GPU sits unused, sift says so on start-up and prints the command th
 sift add ~/handbook --name handbook    # register a folder as a collection
 sift index                             # scan files, chunk them, build the keyword index
 sift embed                             # embed every chunk that has no vector yet
+sift embed handbook                    # only these collections' chunks, e.g. a new one first
 sift search '"notice period"'          # exact keyword search
 sift vsearch "how much leave do new employees get"
 sift query "who approves travel expenses abroad"
@@ -77,9 +78,12 @@ sift links vault/People/Hans.md --direction both   # the links of a note, and it
 sift unresolved                        # link targets no note answers to yet
 sift mentions vault/People/Hans.md     # documents that name a note without linking to it
 sift index --files ~/vault/new.md      # read a file just written at once, or drop one just deleted
-sift status                            # collections, their folders, and counts, as JSON
+sift status                            # collections: folders, active or not, index files, counts, as JSON
 sift bench questions.json              # how well each mode finds what you expect (see below)
-sift rm handbook                       # remove a collection from the index; its files stay on disk
+sift deactivate vault                  # leave collections out of searches until activated (see below)
+sift activate vault
+sift move D:/sift                      # move every collection's index to another folder or drive
+sift rm handbook                       # remove a collection and its index; its files stay on disk
 sift ui                                # search, browse and read the index in your browser (see below)
 sift serve                             # MCP server on http://127.0.0.1:8765/mcp
 sift worker                            # embed for other machines on this one's GPU (see below)
@@ -95,10 +99,33 @@ they say, with the time of each line, to a log of their own, `logs/serve-2026-10
 the server's requests and the errors of the libraries it runs too, a long step's progress once a minute, and how the
 command ended if it failed. Every log is kept.
 
-Every command may run while `sift serve` does: they share the index, which takes one write at a time (the next waits
-up to 30 seconds), and the server finds what a command wrote with its next search, reloading the vectors when they
-changed. A folder inside a collection, or one that holds a collection, isn't added: the files of both would be indexed
-twice, once in each collection; `sift add --nested` adds it anyway.
+Every command may run while `sift serve` does: they share the collections' indexes, each of which takes one write at a
+time (the next waits up to 30 seconds), and the server finds what a command wrote with its next search, reloading the
+vectors' codes of a collection when they changed. A folder inside a collection, or one that holds a collection, isn't
+added: the files of both would be indexed twice, once in each collection; `sift add --nested` adds it anyway.
+
+### Where the index lies, and which collections are searched
+
+Each collection's index is a SQLite file of its own, `collections/NAME.sqlite` under `SIFT_HOME` (`~/.sift`), where
+the catalog `sift.db` lists them, beside the logs and the worker's key. A large index can go anywhere else:
+
+```bash
+sift add ~/archive --store D:/sift                  # a new collection's index in another folder
+sift add ~/archive --store D:/data_archive.sqlite   # or under a name of your choice
+sift move D:/sift                                   # every collection's index into another folder
+sift move archive D:/data_archive.sqlite            # one collection's, under a name of your choice
+```
+
+On the same drive a move is instant; to another drive the index is copied, then the old file deleted. No other sift
+may have the index open meanwhile: stop `sift serve`, and any `sift index` or `sift embed` of that collection, first.
+A collection whose index is missing, on a drive that isn't connected, is passed over by searches and said so on the
+server's console; `sift status` marks it `"missing": true`. sift never makes such an index anew.
+
+`sift deactivate NAME ...` leaves collections out: searches pass them over, a running server lets go of their vectors'
+codes with its next request, a server started afterwards doesn't name them to agents, and `sift index` and `sift
+embed` skip them unless named. Their indexes stay as they are, `reindex` still updates them, and `sift activate NAME
+...` takes them back. `sift status` lists every collection, `"active"` or not, with its index file (`"store"`) and its
+size in bytes.
 
 Search commands, `similar` included, return one result per document, with its best passage. They accept `-k` (number
 of results), `-c` (collection), `--path` (glob within the collection, e.g. `"2024/*"`), `-f` (front-matter filter,
@@ -266,7 +293,7 @@ shorter than three characters are left out.
 **A note written a moment ago** is found by the next search, if the agent that wrote it calls `reindex` (or you run
 `sift index --files`): it reads those files at once, or drops the documents of files that are gone, without scanning
 the collection. Over MCP it also embeds their new passages, if the index is embedded, and a running server takes up
-their vectors without loading the others again. sift still never writes to your files.
+their codes without loading the others again. sift still never writes to your files.
 
 ### JSON Lines
 
@@ -373,7 +400,8 @@ One server serves any number of agents, with the models loaded once. Other MCP c
 Windsurf, connect the same way, to the streamable HTTP endpoint `http://127.0.0.1:8765/mcp`. The same server shows the index to you at
 `http://127.0.0.1:8765/ui/` (see [Browsing the index](#browsing-the-index)).
 
-Or let every session start a server of its own over stdio; then each session loads the models into memory itself:
+Or let every session start a server of its own over stdio; then each session loads the models and the codes into memory
+itself:
 
 ```bash
 claude mcp add --scope user sift -- sift serve --stdio
@@ -406,8 +434,13 @@ A running sift keeps the version it started with, so an update takes an upgrade 
 
 The index and the vectors carry over. When a new version changes how the index is laid out, the first command updates
 it, once, and says so, from what the index holds: no file is read, and nothing gets embedded again. sift 1.1 adds the
-links of the notes, in seconds for tens of thousands of notes, and in a moment for an index without notes. The
-[changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists what changed.
+links of the notes, in seconds for tens of thousands of notes, and in a moment for an index without notes. sift 1.7 adds
+a code to each vector, in about a minute for 3 million vectors. sift 1.8 splits the index into a file per collection:
+it reads the index once, then makes each collection's keyword index anew, the collections side by side, and needs as
+much free space as the index takes until the old file goes. Stop every other sift first. To split a large index
+straight onto another drive, make `sift move FOLDER` the first command of 1.8. A split stopped half-way goes on where
+it stopped. An older sift doesn't open an index so updated: upgrade every sift that uses it. The [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists what
+changed.
 
 ## Embedding on another machine
 
@@ -456,7 +489,7 @@ Five optional settings exist for special cases:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SIFT_HOME` | `~/.sift` | Where the index lives |
+| `SIFT_HOME` | `~/.sift` | Where the catalog, the logs and the worker's key live, and the collections' indexes unless moved |
 | `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model |
 | `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
 | `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed on: the `https://<key>@workstation:8766` it prints |
@@ -482,10 +515,17 @@ claims, and it embeds 1.6 times as fast.
   and a bearer token of 32 random bytes. `GET /` names the worker's models, vector length and sift version;
   `POST /embed` takes `{"texts": [...], "query": false}` as JSON and returns the vectors as raw fp16, one row per
   text; `POST /rerank` takes `{"query": "...", "texts": [...]}` and returns the raw scores, `{"scores": [...]}`. The
-  worker runs one request at a time on the GPU. Through a worker, the vectors are searched with NumPy, in RAM.
-- **Storage:** one SQLite database in WAL mode holds every document's text, metadata, the FTS5 keyword index and
-  the vectors (fp16). The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
-  Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.
+  worker runs one request at a time on the GPU.
+- **Storage:** a SQLite database in WAL mode per collection holds its documents' text, metadata, the FTS5 keyword
+  index, the vectors (fp16) and their codes (one bit per dimension); a small one, the catalog, lists the collections.
+  The text is stored once: chunks are spans of it, and the keyword index reads it through a view. The row ids of a
+  collection start at its id times 2^40, so the results of several collections merge as they are. Searches ask each
+  collection's index and merge the results. Over several collections, each one's best keyword hits are scored again
+  with the word counts of all of them, by FTS5's BM25 formula, as one index would score them: a collection's own
+  counts would take a word common in a small collection for a common word, and sink its pages. (A query with NEAR or
+  a column filter keeps each collection's scores.) The 4,000 vectors scored exactly are the nearest codes of all
+  collections together. Searching and `get` never touch the files, so results and documents always agree, until the
+  next `sift index`.
 - **Embedding:** PyTorch on the GPU (NVIDIA, else Apple), in batches sorted by length to keep padding low. The
   models compute in bfloat16 on NVIDIA GPUs that have it and in float32 elsewhere, never in fp16, where EmbeddingGemma
   overflows now and then into broken (NaN) vectors. Vectors are stored in fp16, and broken ones are never stored.
@@ -495,7 +535,7 @@ claims, and it embeds 1.6 times as fast.
   counts memory held by other programs as free. It then measures how much memory its longest text needs at growing
   batch sizes and uses the largest batch that fills 90% of that budget; if a batch still doesn't fit, it is halved.
   With less than 2 GB to spare, sift uses the CPU instead.
-- **Idle GPU:** models and vectors wait in RAM and move to the GPU when a search needs them. After 5 minutes
+- **Idle GPU:** the models wait in RAM and move to the GPU when a search needs them. After 5 minutes
   without GPU use, `sift serve` moves them back to RAM and hands the memory back; only CUDA's own context
   (about 0.3 GB) stays. The first search afterwards takes about a second longer; if other programs have taken the
   memory meanwhile, sift stays on the CPU rather than squeeze them. Keyword search never uses the GPU.
@@ -503,9 +543,14 @@ claims, and it embeds 1.6 times as fast.
   document's title (the first passage holds it as its heading too) and its front-matter values. Matches are grouped
   by document in SQL, each represented by its best passage. Input that isn't valid FTS5 syntax is treated as exact
   phrases.
-- **`vsearch`:** exact nearest-neighbour search as one matrix multiply over all vectors on the GPU. No approximate
-  index, so nothing to tune and no recall loss; a million 768-dimensional vectors take about 1.5 GB of VRAM. When the
-  best passages come from a few documents, it looks further down until it has `k` documents.
+- **`vsearch`:** every vector's code, its signs as one bit per dimension, waits in RAM: 96 bytes for 768 dimensions, a
+  sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with all
+  of them by Hamming distance, on the CPU's cores, and the 4,000 nearest are scored exactly with their vectors from the
+  index: about 0.1 seconds per search over 3.3 million passages. Over 3.2 million arXiv abstracts this finds 99.6% of
+  exact search's top 10, with an MRR of 0.9528 against 0.9530
+  ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#vectors-in-memory)). No index to build
+  or tune, and no GPU. When the best passages come from a few documents, it looks further down until it has `k`
+  documents.
 - **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are reranked together, in one GPU
   batch. The reranker reads each candidate's title, the front-matter values that share a word with the query (an
   author's name, an id; all of them would dilute the passage), and the passage.
@@ -517,13 +562,13 @@ claims, and it embeds 1.6 times as fast.
     rerankers, embedding models and blends on seven datasets, from scientific claims to long German documents.
     Scores are raw: a sigmoid saturates, at 0.9999 for every good match.
 - **`similar`:** the mean of a document's passage vectors, scored against every passage as `vsearch` scores a query.
-  No model runs, so it takes half a second over 3 million passages, with or without a GPU.
+  No model runs, so it needs no GPU.
 - **Links:** read with each Markdown note, as written, with the front-matter field and line of each, and stored with
   the names each file answers to: its file name and aliases. They resolve when asked, by those names, through an
   index on each, so the backlinks of a note linked by 6,000 others take 16 ms
   ([timings](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#links-between-notes)). `reindex`
-  patches a running server's vectors in memory rather than loading millions again.
-- **Server:** `sift serve` loads models and vectors once and keeps them in memory.
+  patches a running server's codes in memory rather than loading millions again.
+- **Server:** `sift serve` loads the models and the codes once and keeps them in memory.
 - **UI:** pages rendered on the server with Jinja2, whose panes [htmx](https://htmx.org) swaps in place: no build step
   and no Node, and the UI is tested with the rest. It runs on the server's event loop, as the MCP tools do. Browsing
   a folder jumps through the index folder by folder, so it stays quick in collections of millions of documents, and

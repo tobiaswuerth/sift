@@ -9,6 +9,7 @@ import pytest
 
 from sift import indexing, store
 from sift.accelerator import Accelerator
+from sift.catalog import Catalog
 
 DIM = 64
 
@@ -217,13 +218,13 @@ def gpu_memory(monkeypatch):
 @pytest.fixture(autouse=True)
 def close_databases(monkeypatch):
     """Close every database a test opens; one left to the garbage collector is a ResourceWarning (Python 3.13+)."""
-    opened, connect = [], store.connect
+    opened, database = [], store.database
 
     def tracked(*args, **kwargs):
-        opened.append(db := connect(*args, **kwargs))
+        opened.append(db := database(*args, **kwargs))
         return db
 
-    monkeypatch.setattr(store, "connect", tracked)
+    monkeypatch.setattr(store, "database", tracked)
     yield
     for db in opened:
         db.close()
@@ -314,6 +315,12 @@ def nobody_listens():
     return "https://s3cret.pin@127.0.0.1:0"
 
 
+def only(catalog):
+    """The store of a catalog's one collection."""
+    (collection,) = catalog.collections()
+    return catalog.store(collection)
+
+
 def index_contents(db):
     """Everything indexing produces, independent of row ids."""
     return sorted(
@@ -376,11 +383,11 @@ def home(tmp_path, configure):
 
 @pytest.fixture
 def corpus(notes, home):
-    """An index of `notes`, keyword search ready, not embedded."""
-    db = store.connect(home)
-    store.add_collection(db, notes, "notes")
-    indexing.index(db)
-    return db, notes
+    """A catalog with the collection `notes`, keyword search ready, not embedded."""
+    catalog = Catalog(home)
+    catalog.add(notes, "notes")
+    indexing.index(catalog)
+    return catalog, notes
 
 
 @pytest.fixture
@@ -412,12 +419,12 @@ def vault(tmp_path):
 
 @pytest.fixture
 def linked(vault, home):
-    """The vault, its notes titled by their file names, and the work folder, indexed: (db, vault, work)."""
-    db = store.connect(home)
-    store.add_collection(db, vault[0], "vault", {"title_from": "name"})
-    store.add_collection(db, vault[1], "work")
-    indexing.index(db)
-    return db, *vault
+    """The vault, its notes titled by their file names, and the work folder, indexed: (catalog, vault, work)."""
+    catalog = Catalog(home)
+    catalog.add(vault[0], "vault", {"title_from": "name"})
+    catalog.add(vault[1], "work")
+    indexing.index(catalog)
+    return catalog, *vault
 
 
 @pytest.fixture

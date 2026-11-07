@@ -1,13 +1,14 @@
 """The device sift computes on, and the share of its memory sift may use: an NVIDIA GPU, an Apple GPU or the CPU.
 
-Models and vectors wait in RAM and move to the GPU while in use (`acquire`); after IDLE_SECONDS without use they move
-back (`release_idle`), so the GPU stays free for other programs. On NVIDIA GPUs sift caps itself at the memory other
-programs leave free, minus headroom, and with too little, it uses the CPU instead.
+Models wait in RAM and move to the GPU while in use (`acquire`); after IDLE_SECONDS without use they move back
+(`release_idle`), so the GPU stays free for other programs. On NVIDIA GPUs sift caps itself at the memory other programs
+leave free, minus headroom, and with too little, it uses the CPU instead.
 """
 
 import contextlib
 import logging
 import sys
+import warnings
 from time import monotonic
 
 import torch
@@ -23,7 +24,7 @@ MIN_BUDGET = 2 * GiB  # with less GPU memory than this, the models run on the CP
 FILL = 0.9  # share of the memory budget a calibrated batch may use
 BATCH_SIZE = 128  # until calibrated on CUDA; a good size for CPUs and Apple GPUs
 MAX_BATCH = 1024
-IDLE_SECONDS = 300  # unused this long, models and vectors give their GPU memory back
+IDLE_SECONDS = 300  # unused this long, the models give their GPU memory back
 _UNSET = object()
 
 
@@ -31,7 +32,9 @@ def detect():
     """An NVIDIA GPU (CUDA) if there is one, else an Apple GPU (MPS), else the CPU."""
     if torch.cuda.is_available():
         return "cuda"
-    return "mps" if torch.backends.mps.is_available() else "cpu"
+    with warnings.catch_warnings():  # a virtual Mac's: "Skipping device ... that does not support Metal 2.0"
+        warnings.filterwarnings("ignore", "Skipping device", UserWarning)
+        return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
 def cuda_pytorch_command(platform=sys.platform):
@@ -89,11 +92,6 @@ class Accelerator:
         return self.kind in ("cuda", "mps")
 
     @property
-    def fp16(self):
-        """Whether vectors are searched in fp16: on GPUs; CPUs are slow at fp16 matmul."""
-        return self.gpu
-
-    @property
     def half_precision(self):
         """The 16-bit type models compute in: bfloat16 on NVIDIA GPUs that have it, None (float32) elsewhere. Never
         fp16: its range is too small for EmbeddingGemma, which overflows in it now and then into NaN vectors;
@@ -139,10 +137,10 @@ class Accelerator:
         return budget
 
     def _empty_cache(self):
-        """Hand cached memory back to the GPU, not just to PyTorch's cache."""
+        """Hand cached memory back to the GPU, not just to PyTorch's cache. Only GPUs come here: the CPU has none."""
         if self.kind == "cuda":
             self.memory.empty_cache()
-        elif self.kind == "mps":
+        else:
             torch.mps.empty_cache()
 
     # --- batches ---------------------------------------------------------------------
@@ -206,10 +204,6 @@ class Accelerator:
         to_gpu()
         self._resident[key] = off_gpu
 
-    def discard(self, key):
-        """Forget something that left the GPU on its own, such as vectors replaced by newer ones."""
-        self._resident.pop(key, None)
-
     def release_idle(self):
         """Move everything back to RAM once the GPU has been unused for IDLE_SECONDS. Returns whether it did."""
         if not self._resident or self.clock() < self._last_use + IDLE_SECONDS:  # not now - last use: rounding
@@ -219,7 +213,7 @@ class Accelerator:
         self._resident.clear()
         self._released = True
         self._empty_cache()
-        console.say(f"idle for {IDLE_SECONDS // 60} min: models and vectors moved off the GPU")
+        console.say(f"idle for {IDLE_SECONDS // 60} min: models moved off the GPU")
         return True
 
     def resume(self):

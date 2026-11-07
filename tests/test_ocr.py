@@ -11,9 +11,10 @@ from PIL import Image
 
 from sift import indexing, ocr, readers, store
 from sift.accelerator import Accelerator
+from sift.catalog import Catalog
 from sift.search import Index
 
-from .conftest import PretendGpu, write
+from .conftest import PretendGpu, only, write
 from .test_documents import email_file
 
 
@@ -118,10 +119,10 @@ def scans(engine, monkeypatch, configure):
     return reader
 
 
-def indexed(db, root, name="docs"):
-    store.add_collection(db, root, name)
-    indexing.index(db)
-    return {path: (title, json.loads(meta), text) for path, title, meta, text in db.execute(
+def indexed(catalog, root, name="docs"):
+    catalog.add(root, name)
+    indexing.index(catalog)
+    return {path: (title, json.loads(meta), text) for path, title, meta, text in only(catalog).execute(
         "SELECT path, title, meta, text FROM docs ORDER BY path")}  # fmt: skip
 
 
@@ -135,12 +136,12 @@ def test_pages_are_pictures_as_the_model_was_trained_on(tmp_path):
 
 def test_a_scan_is_read_by_ocr_when_indexed(tmp_path, home, scans, capsys):
     scan(tmp_path / "docs" / "Lieferschein.pdf", pages=2)
-    db = store.connect(home)
-    docs = indexed(db, tmp_path / "docs")
+    catalog = Catalog(home)
+    docs = indexed(catalog, tmp_path / "docs")
     title, meta, text = docs["Lieferschein.pdf"]
     assert text == "word1089 word1540\n\nword1089 word1540"  # each page as the model read it
     assert (title, meta["ocr"]) == ("Lieferschein", ocr.MODEL)
-    assert [hit["id"] for hit in Index(db).search("word1089")] == ["docs/Lieferschein.pdf"]
+    assert [hit["id"] for hit in Index(catalog).search("word1089")] == ["docs/Lieferschein.pdf"]
     said = capsys.readouterr().err
     assert "Lieferschein.pdf: a scan, read with OCR (2 pages" in said
     assert f"\rloading the OCR model {ocr.MODEL}" in said  # on a line of its own, not after the progress line's
@@ -149,10 +150,10 @@ def test_a_scan_is_read_by_ocr_when_indexed(tmp_path, home, scans, capsys):
 
 def test_a_scan_is_read_once(tmp_path, home, scans):
     path = scan(tmp_path / "docs" / "a.pdf")
-    db = store.connect(home)
-    indexed(db, tmp_path / "docs")
+    catalog = Catalog(home)
+    indexed(catalog, tmp_path / "docs")
     path.touch()  # its time changes, not its content
-    indexing.index(db)
+    indexing.index(catalog)
     assert scans.engine.processor.pages == 1
 
 
@@ -160,15 +161,15 @@ def test_a_scan_attached_to_a_mail_is_read_too(tmp_path, home, scans):
     pdf = scan(tmp_path / "scan.pdf").read_bytes()
     (tmp_path / "docs").mkdir()
     email_file(tmp_path / "docs", Subject="Ausweis", attachments=[("Ausweis.pdf", pdf, "application/pdf")])
-    db = store.connect(home)
-    docs = indexed(db, tmp_path / "docs")
+    catalog = Catalog(home)
+    docs = indexed(catalog, tmp_path / "docs")
     assert docs["mail/Ausweis.pdf"][2] == "word1089 word1540"
 
 
 def test_a_long_scan_is_read_up_to_its_first_pages(tmp_path, home, scans, monkeypatch, capsys):
     monkeypatch.setattr(ocr, "PAGES", 2)
     scan(tmp_path / "docs" / "book.pdf", pages=3)
-    docs = indexed(store.connect(home), tmp_path / "docs")
+    docs = indexed(Catalog(home), tmp_path / "docs")
     assert docs["book.pdf"][2].count("word1540") == 2
     assert "book.pdf: a scan, read with OCR (its first 2 of 3 pages" in capsys.readouterr().err
 
@@ -229,14 +230,14 @@ def test_a_page_that_doesnt_loop_is_read_once(engine, tmp_path):
 def test_a_scan_ocr_fails_on_is_skipped_and_said(tmp_path, home, scans, capsys):
     scans.engine.model.out_of_memory = True
     scan(tmp_path / "docs" / "a.pdf")
-    assert indexed(store.connect(home), tmp_path / "docs") == {}
+    assert indexed(Catalog(home), tmp_path / "docs") == {}
     assert "a.pdf: skipped (a scan, and OCR failed: CUDA out of memory" in capsys.readouterr().err
 
 
 def test_a_scan_ocr_finds_no_text_in_is_skipped(tmp_path, home, scans, capsys, monkeypatch):
     monkeypatch.setattr(scans.engine, "read", lambda images: ["  ", ""])
     scan(tmp_path / "docs" / "blank.pdf", pages=2)
-    assert indexed(store.connect(home), tmp_path / "docs") == {}
+    assert indexed(Catalog(home), tmp_path / "docs") == {}
     assert "blank.pdf: skipped (a scan, and OCR found no text in it)" in capsys.readouterr().err
 
 
@@ -251,7 +252,7 @@ def test_without_ocr_a_scan_is_skipped_and_said(tmp_path, home, scans, configure
     configure(ocr=setting)
     scans.engine.accelerator = PretendGpu("cpu") if gpu else Accelerator("cpu")
     scan(tmp_path / "docs" / "a.pdf")
-    assert indexed(store.connect(home), tmp_path / "docs") == {}
+    assert indexed(Catalog(home), tmp_path / "docs") == {}
     assert f"a.pdf: skipped (no text in it: a scan; {says}" in capsys.readouterr().err
     assert scans.engine.loads == []  # nothing loaded for nothing
 
@@ -260,14 +261,14 @@ def test_on_the_cpu_when_told(tmp_path, home, scans, configure):
     configure(ocr="on")
     scans.engine.accelerator = Accelerator("cpu")
     scan(tmp_path / "docs" / "a.pdf")
-    assert indexed(store.connect(home), tmp_path / "docs")["a.pdf"][2] == "word1089 word1540"
+    assert indexed(Catalog(home), tmp_path / "docs")["a.pdf"][2] == "word1089 word1540"
 
 
 def test_an_unknown_setting_says_what_it_takes(tmp_path, home, scans, configure):
     configure(ocr="yes")
     scan(tmp_path / "docs" / "a.pdf")
     with pytest.raises(SystemExit, match=r"SIFT_OCR is 'yes': auto \(on a GPU, the default\), on .* or off"):
-        indexed(store.connect(home), tmp_path / "docs")
+        indexed(Catalog(home), tmp_path / "docs")
 
 
 def test_a_document_without_text_that_is_no_pdf_is_no_scan(tmp_path, monkeypatch):
@@ -316,14 +317,16 @@ def test_scans_are_read_outside_any_write(tmp_path, home, scans, monkeypatch):
     for n in range(3):
         write(root / f"note{n}.md", f"# Note {n}\n")
     scan(root / "a.pdf")
-    db = store.connect(home)
-    store.add_collection(db, root, "docs")
+    catalog = Catalog(home)
+    catalog.add(root, "docs")
     writing, read = [], scans.engine.read
-    monkeypatch.setattr(scans.engine, "read", lambda images: writing.append(db.in_transaction) or read(images))
-    indexing.index(db)
+    monkeypatch.setattr(
+        scans.engine, "read", lambda images: writing.append(only(catalog).in_transaction) or read(images)
+    )
+    indexing.index(catalog)
     (root / "a.pdf").unlink()
     scan(root / "a.pdf", pages=2)
-    indexing.reindex(db, ["docs/note0.md", "docs/a.pdf"])
+    indexing.reindex(catalog, ["docs/note0.md", "docs/a.pdf"])
     assert writing == [False, False]
 
 
@@ -331,22 +334,22 @@ def test_the_servers_reindex_leaves_a_scan_to_sift_index(tmp_path, home, scans):
     # Tools run on the server's event loop: a scan read there would hold every other search up for minutes.
     root = tmp_path / "docs"
     scan(root / "a.pdf")
-    db = store.connect(home)
-    store.add_collection(db, root, "docs")
-    (entry,) = Index(db).reindex(["docs/a.pdf"])
+    catalog = Catalog(home)
+    catalog.add(root, "docs")
+    (entry,) = Index(catalog).reindex(["docs/a.pdf"])
     assert (entry["status"], entry["note"]) == ("skipped", "a.pdf: a scan, left for `sift index` to read with OCR")
     assert scans.engine.processor.pages == 0
-    indexing.index(db)  # though the file hasn't changed since
-    assert (scans.engine.processor.pages, len(Index(db).search("word1540"))) == (1, 1)
+    indexing.index(catalog)  # though the file hasn't changed since
+    assert (scans.engine.processor.pages, len(Index(catalog).search("word1540"))) == (1, 1)
 
 
 def test_reindex_reads_a_scan(tmp_path, home, scans):
     root = tmp_path / "docs"
     write(root / "x.md", "# x\n")
-    db = store.connect(home)
-    store.add_collection(db, root, "docs")
+    catalog = Catalog(home)
+    catalog.add(root, "docs")
     scan(root / "a.pdf")
-    ((entry, docs),) = indexing.reindex(db, ["docs/a.pdf"]).files
+    ((entry, docs),) = indexing.reindex(catalog, ["docs/a.pdf"]).files
     assert (entry["status"], len(docs)) == ("added", 1)
     assert entry["note"].startswith("a.pdf: a scan, read with OCR (1 page")
 
@@ -357,41 +360,50 @@ def test_scans_an_older_sift_skipped_are_read_again_once(tmp_path, home, scans, 
     scan(root / "a.pdf")
     email_file(root, Subject="Scan", attachments=[("b.pdf", scan(tmp_path / "b.pdf").read_bytes(), "application/pdf")])
     write(root / "note.md", "# Note\n")
-    db = store.connect(home)
-    store.add_collection(db, root, "docs")
+    catalog = Catalog(home)
+    catalog.add(root, "docs")
     configure(ocr="off")
-    indexing.index(db)  # as sift 1.2 did: no documents of the scans
-    assert sorted(p for (p,) in db.execute("SELECT path FROM docs")) == ["mail.eml", "note.md"]
-    db.execute("DELETE FROM meta WHERE key = 'scans_read'")  # as an index of sift 1.2 has it
-    db.commit()
-    db.close()
+    indexing.index(catalog)  # as sift 1.2 did: no documents of the scans
+    assert sorted(p for (p,) in only(catalog).execute("SELECT path FROM docs")) == ["mail.eml", "note.md"]
+    only(catalog).execute("DELETE FROM meta WHERE key = 'scans_read'")  # as an index of sift 1.2 has it
+    only(catalog).commit()
+    catalog.close()
     configure(ocr="auto")
-    db = store.connect(home)
-    assert db.execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (2,)  # the PDF and the mail
-    indexing.index(db)
-    assert sorted(p for (p,) in db.execute("SELECT path FROM docs")) == ["a.pdf", "mail.eml", "mail/b.pdf", "note.md"]
-    db.close()
-    assert store.connect(home).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (0,)
+    catalog = Catalog(home)
+    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (
+        2,
+    )  # the PDF and the mail
+    indexing.index(catalog)
+    assert sorted(p for (p,) in only(catalog).execute("SELECT path FROM docs")) == [
+        "a.pdf",
+        "mail.eml",
+        "mail/b.pdf",
+        "note.md",
+    ]
+    catalog.close()
+    assert only(Catalog(home)).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (0,)
 
 
 def test_scans_are_marked_to_be_read_again_once(corpus):
     # Two sifts that start at once both see an index of 1.2; the second must find the work done once it has the
     # database, and not have every scan read again a second time.
-    db, _ = corpus
-    db.execute("UPDATE sources SET mtime = 1")
-    db.commit()
-    store._read_again(db, "scans_read", (".pdf",))  # what the second runs, after the first has finished
-    assert db.execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (0,)
+    catalog, _ = corpus
+    only(catalog).execute("UPDATE sources SET mtime = 1")
+    only(catalog).commit()
+    store._read_again(only(catalog), "scans_read", (".pdf",))  # what the second runs, after the first has finished
+    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (0,)
 
 
 def test_an_interrupted_marking_leaves_the_index_as_it_was(tmp_path, home, monkeypatch):
     scan(tmp_path / "docs" / "a.pdf")
-    db = store.connect(home)
-    store.add_collection(db, tmp_path / "docs", "docs")
-    db.execute("INSERT INTO sources(collection, path, mtime, size) VALUES(1, 'a.pdf', 1, 1)")
-    db.execute("DELETE FROM meta WHERE key = 'scans_read'")
-    db.commit()
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "docs", "docs")
+    only(catalog).execute("INSERT INTO sources(path, mtime, size) VALUES('a.pdf', 1, 1)")
+    only(catalog).execute("DELETE FROM meta WHERE key = 'scans_read'")
+    only(catalog).commit()
     monkeypatch.setattr(store, "set_meta", lambda *args: (_ for _ in ()).throw(KeyboardInterrupt))
     with pytest.raises(KeyboardInterrupt):
-        store._read_again(db, "scans_read", (".pdf",))
-    assert db.execute("SELECT mtime FROM sources").fetchone() == (1,)  # rolled back: tried again on the next start
+        store._read_again(only(catalog), "scans_read", (".pdf",))
+    assert only(catalog).execute("SELECT mtime FROM sources").fetchone() == (
+        1,
+    )  # rolled back: tried again on the next start

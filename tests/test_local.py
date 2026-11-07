@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 
 from sift import accelerator, local
-from sift.vectors import InRam, OnGpu
 
 from .conftest import FakeCrossEncoder, FakeSentenceTransformer, GiB
 
@@ -143,9 +142,3 @@ def test_prepare_without_a_sample_uses_the_longest_input(make_local, monkeypatch
 def test_prepare_off_cuda_asks_for_no_sample(fake_models):
     fake_models.prepare(lambda: pytest.fail("no calibration on the CPU, so no sample needed"))
     assert fake_models.batch == 128
-
-
-@pytest.mark.parametrize("device, kind", [("cuda", OnGpu), ("mps", OnGpu), ("cpu", InRam)])
-def test_vectors_live_where_the_models_compute(make_local, device, kind):
-    vectors = make_local(device).vectors(np.arange(2), np.ones((2, 4), np.float16))
-    assert isinstance(vectors, kind)

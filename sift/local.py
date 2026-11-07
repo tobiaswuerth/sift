@@ -6,7 +6,6 @@ import numpy as np
 
 from . import settings
 from .accelerator import Accelerator
-from .vectors import InRam, OnGpu
 
 MAX_TOKENS = 1024
 
@@ -129,10 +128,6 @@ class Local:
             texts,
         )
 
-    def vectors(self, ids, matrix):
-        """The vectors to search, where these models compute: on the GPU, or in RAM."""
-        return OnGpu(ids, matrix, self.accelerator) if self.accelerator.gpu else InRam(ids, matrix)
-
     def release_idle(self):
-        """Move models and vectors back to RAM if the GPU has been idle long enough. Returns whether it did."""
+        """Move the models back to RAM if the GPU has been idle long enough. Returns whether it did."""
         return self.accelerator.release_idle()

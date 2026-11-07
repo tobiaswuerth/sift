@@ -17,7 +17,9 @@ pre-commit install
 | Module | What it does |
 |---|---|
 | `cli.py` | The `sift` command |
-| `store.py` | The SQLite index: layout, its version and upgrades, connection, collections, deleting documents |
+| `catalog.py` | The catalog: the collections, their folders, where their stores lie, which are active; adding, removing and moving them |
+| `store.py` | A collection's store, its SQLite file: layout, ids, codes, deleting documents, holding it alone |
+| `upgrade.py` | Splitting an index of sift 1.7 or older, one database for all collections, into a store per collection |
 | `readers.py` | Files into documents: one reader per kind of file (Markdown, JSON Lines, documents via Xberg, emails), chunking, and the links of Markdown notes |
 | `indexing.py` | `sift index`: scanning folders, reading changed files in worker processes, incremental updates; `reindex` of given files |
 | `ocr.py` | Reading scans: a PDF's pages as pictures, read by an OCR model in the process that writes the index, once per scan |
@@ -30,11 +32,11 @@ pre-commit install
 | `local.py` | `Local`: the embedding model and reranker of this machine |
 | `remote.py` | `Remote`: a `sift worker` on another machine, used like `Local` |
 | `accelerator.py` | `Accelerator`: the device, its memory budget, batch sizes, and what is on the GPU when |
-| `vectors.py` | The index's vectors as one matrix to score queries against: `InRam` (NumPy) or `OnGpu` (PyTorch) |
+| `vectors.py` | The vectors' codes in RAM, one bit per dimension: candidates by Hamming distance, scored exactly |
 | `server.py` | `sift serve`: the MCP server, and the UI under /ui |
 | `ui.py` | `sift ui`: the views of the browser UI; `web/` holds its templates, styles and script, and htmx 2.0.11 (0BSD) as its release ships it |
 | `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |
-| `settings.py` | The four optional environment variables, read once (`settings.current()`) |
+| `settings.py` | The five optional environment variables, read once (`settings.current()`) |
 | `console.py` | What sift tells the user, on stderr: messages, plurals, commands to paste, and one progress bar for every long step |
 
 Search and embedding never ask where the models run: they take a `Models` object, `Local` or `Remote`. Only

@@ -5,6 +5,74 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-06
+
+Each collection's index in a file of its own, wherever it fits, and collections left out of searches until wanted.
+
+### Added
+
+- `sift move [NAME ...] TO` moves the index of the collections named, or of every one, to another folder or drive, or
+  one collection's to a file name of your choice ending in `.sqlite`. On the same drive it is instant; to another
+  drive the index is copied through SQLite, then the old file deleted. It refuses while another sift has the index
+  open.
+- `sift add --store PATH` puts a new collection's index in another folder, or in a file of your choice.
+- `sift deactivate NAME ...` and `sift activate NAME ...`: an inactive collection is passed over by searches, its
+  vectors' codes leave a running server's memory with its next request, a server started afterwards doesn't name it
+  to agents, and `sift index` and `sift embed` skip it unless named. `reindex` still updates it.
+- `sift status` and the MCP `status` tool show each collection's `active`, its index file (`store`) and its `size` in
+  bytes, or `missing` when its file isn't there; an inactive collection's counts aren't read.
+
+### Changed
+
+- Each collection's index is a SQLite file of its own, `collections/NAME.sqlite` under `SIFT_HOME` by default, and
+  `SIFT_HOME/sift.db` is a small catalog of them, beside the logs and the worker's key. Removing a collection deletes
+  its file at once; `sift index` of one collection and `sift embed` of another no longer wait for each other; a
+  changed collection reloads only its own codes in a running server.
+- The index's layout is version 6. An index of an earlier sift (0.3 on) splits itself on first use, once: it is read
+  once, each collection's keyword index is made anew, the collections side by side, and every table's rows are counted
+  before the catalog takes the old file's place. Nothing is read from the files or embedded again; it needs as much
+  free space as the index takes, and a split stopped half-way goes on where it stopped. `sift move FOLDER` as the
+  first command splits it straight into that folder. An older sift doesn't open an index so updated.
+- Searches ask each collection's index and merge the results, as one index ranked them: each collection's best
+  keyword hits are scored again with the word counts of all collections searched (FTS5's BM25 formula, from its own
+  counts), and semantic search scores the 4,000 nearest codes of all collections together. On an index of 1.7 split
+  by 1.8, `search`, `vsearch` and `query` returned what 1.7 returned, scores included. A query with NEAR or a column
+  filter keeps each collection's own keyword scores.
+- The ids of documents and chunks never repeat (AUTOINCREMENT), and start at their collection's id times 2^40.
+- A collection whose index file is missing, on a drive that isn't connected, is passed over by searches, `sift index`
+  and `sift embed`, with a warning, and never made anew, empty.
+- `sift rm` says it deleted the collection's index; an unknown collection is an error that lists those there are,
+  whatever the command.
+
+## [1.7.0] - 2026-11-05
+
+Semantic search over tens of millions of passages, in RAM and without a GPU.
+
+### Added
+
+- `sift embed COLLECTION ...` embeds only the chunks of the collections named, a new one first, say, while the others
+  wait. Without names it embeds every collection, as before; so does `--reset`, which takes no names, since all
+  collections share one model.
+
+### Changed
+
+- `vsearch`, `query` and `similar` keep a code of each vector in memory, one bit per dimension, instead of the
+  vectors: a sixteenth of the memory, so 3.2 million passages take 0.3 GB of RAM instead of 4.9 GB on the GPU, and
+  40 million fit a desktop's RAM. The 4,000 nearest codes by Hamming distance are scored exactly with the vectors
+  the index holds. Over 3.2 million arXiv abstracts this finds 99.6% of exact search's top 10, with an MRR
+  of 0.9528 against 0.9530 ([benchmarks](docs/benchmarks.md#vectors-in-memory)).
+- Only the models use the GPU; searching compares codes on the CPU's cores, and takes about 0.1 seconds over 3.3
+  million passages.
+- The index's layout is version 5. An index of an earlier sift (0.3 on) updates itself on first use, once, from the
+  vectors it holds: nothing is embedded again. 3.3 million vectors take about a minute, and an update stopped half-way
+  goes on where it stopped. An older sift doesn't open an index so updated: upgrade every sift that uses it.
+- NumPy 2.0 or later is required.
+
+### Fixed
+
+- On a virtual Mac, PyTorch's warning that the GPU doesn't support Metal 2.0 no longer shows on every start; sift uses
+  the CPU there, as before.
+
 ## [1.6.0] - 2026-10-25
 
 ### Fixed
@@ -498,7 +566,9 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/tobiaswuerth/sift/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/tobiaswuerth/sift/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tobiaswuerth/sift/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/tobiaswuerth/sift/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/tobiaswuerth/sift/compare/v1.4.0...v1.4.1

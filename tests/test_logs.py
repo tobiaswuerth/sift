@@ -19,7 +19,7 @@ def lines(path):
 def serve_and_fail(kept):
     with logs.kept("serve", NOW) as path:
         kept.append(path)
-        console.say("loading models and vectors into RAM ...")
+        console.say("loading the models into RAM ...")
         with console.Progress(2, "files", "index: ") as progress:
             progress.update(2)
         logging.getLogger("mcp.server").warning("a library's record")
@@ -37,7 +37,7 @@ def test_a_log_holds_what_sift_said_the_libraries_logged_and_how_it_ended(home, 
     assert path == home / "logs" / "serve-2026-10-23_210509.log"
     found = lines(path)
     assert found[:2] == [f"INFO sift.console: sift {sift.__version__}, serve",
-                         "INFO sift.console: loading models and vectors into RAM ..."]  # fmt: skip
+                         "INFO sift.console: loading the models into RAM ..."]  # fmt: skip
     assert found[2].startswith("INFO sift.console: index: [####################] 100% 2/2 files, ")
     assert found[3:] == [
         "WARNING mcp.server: a library's record",

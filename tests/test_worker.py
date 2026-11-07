@@ -13,10 +13,12 @@ import textwrap
 import threading
 import time
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+import sift
 from sift import __version__, cli, embed, models, remote, store, worker
 from sift.search import Index
 
@@ -187,17 +189,21 @@ def live(fake_models, home):
 
 
 def test_embed_through_a_worker(corpus, fake_models, live, monkeypatch, capsys, configure):
-    db, _ = corpus
+    catalog, _ = corpus
     configure(remote=live.url)
     monkeypatch.setattr(fake_models, "embedder", lambda: pytest.fail("the model loaded here"))
-    embed.embed_pending(db)
-    rows = db.execute("""SELECT c.seq, t.title, t.text, v.vec FROM chunks c JOIN chunk_text t ON t.id = c.id
-                         JOIN vectors v ON v.chunk = c.id""").fetchall()
+    embed.embed_pending(catalog)
+    rows = (
+        catalog.store("notes")
+        .execute("""SELECT c.seq, t.title, t.text, v.vec FROM chunks c JOIN chunk_text t ON t.id = c.id
+                         JOIN vectors v ON v.chunk = c.id""")
+        .fetchall()
+    )
     assert len(rows) == 3
     for seq, title, text, vec in rows:
         expected = fake_vector(embed.text_of(seq, title, text)).astype(np.float16)
         assert np.frombuffer(vec, np.float16).tolist() == expected.tolist()
-    assert store.get_meta(db, "model") == fake_models.name
+    assert store.get_meta(catalog.store("notes"), "model") == fake_models.name
     err = capsys.readouterr().err
     assert f"embedding 3 chunks with {fake_models.name} on {live.address}" in err
     assert live.token not in err  # the key stays off the screen
@@ -205,10 +211,10 @@ def test_embed_through_a_worker(corpus, fake_models, live, monkeypatch, capsys, 
 
 @pytest.mark.parametrize("mode, paths", [("vsearch", ["/embed"]), ("query", ["/embed", "/rerank"])])
 def test_searches_embed_and_rerank_on_the_worker(embedded, live, mode, paths, configure):
-    db, _ = embedded
-    here = getattr(Index(db), mode)("brush strokes")
+    catalog, _ = embedded
+    here = getattr(Index(catalog), mode)("brush strokes")
     configure(remote=live.url)
-    there = getattr(Index(db), mode)("brush strokes")
+    there = getattr(Index(catalog), mode)("brush strokes")
     assert [h["id"] for h in there] == [h["id"] for h in here]
     assert [h["score"] for h in there] == pytest.approx([h["score"] for h in here], abs=1e-3)
     assert set(paths) <= set(live.seen)  # it really asked the worker
@@ -281,6 +287,7 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
             os.environ["SIFT_EMBED_REMOTE"] = "https://t.p@worker:8766"
             import numpy as np
             from sift import indexing, remote, store
+            from sift.catalog import Catalog
             from sift.search import Index
 
             remote.Remote.encode = lambda self, texts, query=False: np.full((len(texts), 4), 0.5, np.float16)
@@ -288,20 +295,22 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
             notes = {str(tmp_path / "notes")!r}
             __import__("os").makedirs(notes)
             open(notes + "/brush.md", "w").write("# Brush strokes\\n\\nA robot paints.\\n")
-            db = store.connect({str(tmp_path / "home")!r})
-            store.add_collection(db, notes, "notes")
-            indexing.index(db)
-            for (chunk,) in db.execute("SELECT id FROM chunks").fetchall():
-                db.execute("INSERT INTO vectors VALUES(?, ?)", (chunk, np.full(4, 0.5, np.float16).tobytes()))
-            store.set_meta(db, "dim", 4)
-            db.commit()
-            index = Index(db)
+            catalog = Catalog({str(tmp_path / "home")!r})
+            catalog.add(notes, "notes")
+            indexing.index(catalog)
+            chunks = [chunk for (chunk,) in catalog.store("notes").execute("SELECT id FROM chunks")]
+            store.put_vectors(catalog.store("notes"), chunks, np.full((len(chunks), 4), 0.5, np.float16))
+            store.set_meta(catalog.store("notes"), "dim", 4)
+            catalog.store("notes").commit()
+            index = Index(catalog)
             assert index.vsearch("robot") and index.query("robot")
             print("torch" in sys.modules)
         """),
         encoding="utf-8",
     )
-    run = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120)
+    code = str(Path(sift.__file__).parent.parent)  # this sift, not one installed elsewhere
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [code, os.environ.get("PYTHONPATH")]))}
+    run = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120, env=env)
     assert run.returncode == 0, run.stderr
     assert run.stdout.strip() == "False"
 
@@ -352,7 +361,7 @@ def test_an_unreachable_remote_is_a_clear_error(corpus, fake_models, configure):
 def test_a_remote_with_another_model_is_refused(embedded, fake_models, monkeypatch, configure):
     configure(remote="https://t.p@workstation:8766")
     monkeypatch.setattr(remote.Remote, "name", "other/model")
-    with pytest.raises(SystemExit, match=f"index was embedded with {fake_models.name}"):
+    with pytest.raises(SystemExit, match=f"notes was embedded with {fake_models.name}"):
         embed.embed_pending(embedded[0])
 
 

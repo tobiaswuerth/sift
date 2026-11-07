@@ -9,7 +9,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Settings:
-    home: Path  # SIFT_HOME: where the index lives
+    home: Path  # SIFT_HOME: where the catalog, logs and worker's key live, and the collections' stores unless moved
     embed_model: str  # SIFT_EMBED_MODEL: any Sentence Transformers embedding model
     rerank_model: str  # SIFT_RERANK_MODEL: any Sentence Transformers cross-encoder
     remote: str | None  # SIFT_EMBED_REMOTE: a `sift worker` to embed and rerank on, as it prints its address
