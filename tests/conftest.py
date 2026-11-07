@@ -1,4 +1,5 @@
 import functools
+import random
 import re
 import sys
 import types
@@ -411,6 +412,45 @@ def corpus(notes, home):
     catalog.add(notes, "notes")
     indexing.index(catalog)
     return catalog, notes
+
+
+PROSE_WORDS = [f"w{i}" for i in range(60)] + ["Müller", "naïve", "über", "日本語"]
+
+
+def prose_text(rng, words=40):
+    """Words drawn as in prose: a few common, most rare (Zipf)."""
+    weights = [1 / (i + 1) for i in range(len(PROSE_WORDS))]
+    return " ".join(rng.choices(PROSE_WORDS, weights, k=words))
+
+
+def write_prose(root, seed, notes=120):
+    """A folder of notes of drawn words."""
+    rng = random.Random(seed)
+    for i in range(notes):
+        write(
+            root / f"n{i:03}.md", f"# {prose_text(rng, 3)}\n\n{prose_text(rng)}\n\n## More\n\n{prose_text(rng, 80)}\n"
+        )
+
+
+@pytest.fixture
+def prose(tmp_path, home):
+    """A collection of 120 notes of drawn words, keyword search ready: (catalog, its folder)."""
+    root = tmp_path / "prose"
+    write_prose(root, 7)
+    catalog = Catalog(home)
+    catalog.add(root, "prose")
+    indexing.index(catalog)
+    return catalog, root
+
+
+@pytest.fixture
+def small_lists(monkeypatch):
+    """Keyword postings long from 8 postings, in blocks of 4, ranges of 4 chunk ids: a small collection has them all."""
+    from sift import postings
+
+    monkeypatch.setattr(postings, "LONG", 8)
+    monkeypatch.setattr(postings, "BLOCK", 4)
+    monkeypatch.setattr(postings, "RANGE_SHIFT", 2)
 
 
 @pytest.fixture

@@ -18,8 +18,9 @@ from pathlib import Path
 
 from . import console, readers
 
-SCHEMA_VERSION = 7  # in SQLite's user_version; up to sift 1.7, one database held every collection (see `upgrade`)
+SCHEMA_VERSION = 8  # in SQLite's user_version; up to sift 1.7, one database held every collection (see `upgrade`)
 FIRST_LAYOUT = 6  # sift 1.8's, the first of a store per collection; its rows are counted once (see _count_rows)
+COUNTED_LAYOUT = 7  # sift 1.9's, which counts rows; 8 adds the keyword postings' tables (POSTINGS)
 TIMEOUT = 30  # seconds to wait for another sift's transaction
 UPGRADE_WAIT = 3600  # seconds to wait while another sift counts a store's rows, once: minutes for a large one
 # While set, every statement on every database stops with "interrupted": a server sets it for a call its client
@@ -29,12 +30,13 @@ ABORT_STEPS = 100_000
 SHIFT = 40  # a collection's row ids start at its id << SHIFT: a trillion rows each, and millions of collections
 # The keyword index reads chunks through a view: each with its document's title, and its front-matter values but the
 # title, e.g. authors and ids, as `meta`. Inserting and deleting read it alike, so the two always agree.
-KEYWORD_INDEX = """
+TOKENIZER = "unicode61 remove_diacritics 2"  # FTS5's, as the keyword postings tokenize too (see `postings`)
+KEYWORD_INDEX = f"""
 CREATE VIEW IF NOT EXISTS chunk_text AS SELECT c.id AS id, d.title AS title, substr(d.text, c.pos + 1, c.len) AS text,
     (SELECT group_concat(j.atom, ' ') FROM json_tree(d.meta) j WHERE j.atom IS NOT NULL AND j.fullkey != '$.title')
     AS meta FROM chunks c JOIN docs d ON d.id = c.doc;
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, text, meta, content='chunk_text', content_rowid='id',
-    tokenize='unicode61 remove_diacritics 2');
+    tokenize='{TOKENIZER}');
 """
 # AUTOINCREMENT: ids grow from the collection's first (in sqlite_sequence), and are never handed out twice.
 SCHEMA = """
@@ -81,6 +83,20 @@ COUNTS = (
     ),
 )
 CODES_BATCH = 100_000  # codes per batch as searches load them, and per transaction as vectors get them afterwards
+# Keyword search's own postings (see `postings`), built from FTS5's index, which stays the reference: per term and
+# segment its postings, long lists in blocks; chunks' lengths and documents; the chunks whose postings in older
+# segments are void (masked). Once built (meta kw_built), every chunk whose FTS5 entries change is marked dirty, in
+# the same transaction, numbered by the change (meta kw_change), until the postings follow.
+POSTINGS = """
+CREATE TABLE IF NOT EXISTS kw_segments(id INTEGER PRIMARY KEY, chunks INTEGER NOT NULL, tokens INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS kw_terms(term TEXT NOT NULL, segment INTEGER NOT NULL, df INTEGER NOT NULL, list INTEGER,
+    data BLOB, PRIMARY KEY(term, segment)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS kw_blocks(id INTEGER PRIMARY KEY, data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS kw_chunks(id INTEGER PRIMARY KEY, segment INTEGER NOT NULL, first INTEGER NOT NULL,
+    data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS kw_masked(chunk INTEGER PRIMARY KEY, segment INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS kw_dirty(chunk INTEGER PRIMARY KEY, change INTEGER NOT NULL);
+"""
 
 
 def first_id(cid):
@@ -141,8 +157,10 @@ def _layout(db, path, cid, create):
         raise SystemExit(f"{path} is not the index of a collection of this sift")
     if int(held[0]) != cid:
         raise SystemExit(f"{path} holds the index of another collection (id {held[0]}, not {cid})")
-    if version < SCHEMA_VERSION:
+    if version < COUNTED_LAYOUT:
         _count_rows(db, path)
+    if version < SCHEMA_VERSION:
+        _add_postings_tables(db)
     for key, kinds in READ_AGAIN.items():
         if get_meta(db, key) is None:
             _read_again(db, key, kinds)
@@ -151,7 +169,9 @@ def _layout(db, path, cid, create):
 def make(db, cid, read=True):
     """The tables of a new store of the collection `cid`, its ids starting at first_id(cid). Unless `read`, its files
     of the kinds an older sift skipped are still to be read again (READ_AGAIN)."""
-    db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + CODES + "".join(f"{statement};\n" for statement in COUNTS))
+    db.executescript(
+        SCHEMA + KEYWORD_INDEX + LINKS + CODES + POSTINGS + "".join(f"{statement};\n" for statement in COUNTS)
+    )
     db.executemany("INSERT INTO counts(name, n) VALUES(?, 0)", [(table,) for table in COUNTED])
     first = first_id(cid)
     db.executemany("INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)", [("docs", first), ("chunks", first)])
@@ -220,19 +240,34 @@ def _count_rows(db, path):
     try:
         db.execute("BEGIN IMMEDIATE")
         try:
-            if db.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+            if db.execute("PRAGMA user_version").fetchone()[0] < COUNTED_LAYOUT:
                 console.say(f"counting the rows of {path} once, to keep them counted from now on ...")
                 for statement in COUNTS:
                     db.execute(statement)
                 rows = [(table, db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]) for table in COUNTED]
                 db.executemany("INSERT INTO counts(name, n) VALUES(?, ?)", rows)
-                db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                db.execute(f"PRAGMA user_version = {COUNTED_LAYOUT}")
             db.commit()
         except BaseException:
             db.rollback()
             raise
     finally:
         db.execute(f"PRAGMA busy_timeout = {TIMEOUT * 1000}")
+
+
+def _add_postings_tables(db):
+    """Add the keyword postings' tables to a store of sift 1.9 (layout 7 to 8), unbuilt: keyword search reads FTS5
+    until `sift index` builds them (see `postings`)."""
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if db.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+            for statement in filter(str.strip, POSTINGS.split(";")):  # not executescript, which would commit first
+                db.execute(statement)
+            db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
 
 
 def counts(db):
@@ -307,6 +342,19 @@ def keywords(db, docs, add=True):
         f"INSERT INTO fts({columns}, title, text, meta) SELECT {values}, title, text, meta FROM chunk_text "
         "WHERE id IN (SELECT c.id FROM chunks c JOIN json_each(?) j ON c.doc = j.value)",
         (json.dumps(docs),),
+    )
+    if docs and get_meta(db, "kw_built") is not None:
+        _mark_dirty(db, docs)
+
+
+def _mark_dirty(db, docs):
+    """Mark the chunks of these documents dirty, numbered by this change: their postings no longer follow FTS5."""
+    change = int(get_meta(db, "kw_change", 0)) + 1
+    set_meta(db, "kw_change", change)
+    db.execute(
+        "INSERT INTO kw_dirty(chunk, change) SELECT c.id, ? FROM chunks c JOIN json_each(?) j ON c.doc = j.value "
+        "WHERE true ON CONFLICT(chunk) DO UPDATE SET change = excluded.change",
+        (change, json.dumps(docs)),
     )
 
 
