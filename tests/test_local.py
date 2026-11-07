@@ -137,6 +137,13 @@ def test_lengths_are_tokens_as_the_model_reads_them(fake_models, monkeypatch):
     assert fake_models.lengths([]) == []
 
 
+def test_lengths_of_a_model_without_an_attention_mask_are_characters(fake_models, monkeypatch):
+    # A static embedding model's tokens come flat, with offsets: no mask to count them by. The lengths only group
+    # texts into batches, so characters do.
+    monkeypatch.setattr(FakeSentenceTransformer, "preprocess", lambda self, inputs, prompt=None: {"input_ids": None})
+    assert fake_models.lengths(["brush", "brush strokes"]) == [5, 13]
+
+
 def test_prepare_off_cuda_calibrates_nothing(fake_models, monkeypatch):
     monkeypatch.setattr(FakeSentenceTransformer, "encode_document", lambda *a, **k: pytest.fail("no calibration"))
     fake_models.prepare()

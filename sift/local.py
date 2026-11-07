@@ -98,13 +98,14 @@ class Local:
 
     def lengths(self, texts):
         """The tokens of each text, cut at the longest input the model takes, without the prompt it puts before every
-        text alike. Counted LENGTHS_AT_ONCE at a time, as they come padded."""
-        model = self.embedder()
-        return [
-            n
-            for start in range(0, len(texts), LENGTHS_AT_ONCE)
-            for n in model.preprocess(texts[start : start + LENGTHS_AT_ONCE])["attention_mask"].sum(dim=1).tolist()
-        ]
+        text alike; counted LENGTHS_AT_ONCE at a time, as they come padded. For a model whose tokens come with no
+        attention mask to count them by, such as a static embedding model, characters: they only group texts."""
+        model, found = self.embedder(), []
+        for start in range(0, len(texts), LENGTHS_AT_ONCE):
+            part = texts[start : start + LENGTHS_AT_ONCE]
+            mask = model.preprocess(part).get("attention_mask")
+            found += [len(text) for text in part] if mask is None else mask.sum(dim=1).tolist()
+        return found
 
     def prepare(self):
         """Size the batches to the GPU's memory, with texts of the longest input the model takes: a batch that fits
