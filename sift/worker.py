@@ -161,7 +161,7 @@ def serve(host="0.0.0.0", port=8766, models=None):
     console.say(f"loading {models.name} and {models.reranker_name} ...")
     models.load()  # now, so the first request is quick
     application = app(found.token, models)
-    models.prepare(lambda: None)  # batches sized for the longest input the model takes
+    models.prepare()  # batches sized to this GPU
     console.say(f"sift worker on https://{host}:{port}, embedding and reranking on {models.address}")
     console.say(f"on other machines, set SIFT_EMBED_REMOTE=https://{found.key}@{socket.gethostname()}:{port}")
     console.say("keep that key private: it lets a machine use this worker")

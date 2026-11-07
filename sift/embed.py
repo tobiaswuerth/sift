@@ -44,9 +44,7 @@ def embed_pending(catalog, reset=False, models=None, collections=None):
         return
     of = f" of {named}" if named else ""
     console.say(f"embedding {console.count(total, 'chunk')}{of} with {using} on {models.address}")
-    models.prepare(
-        lambda: max(filter(None, (_longest_pending(db) for _, db, n in pending if n)), key=len, default=None)
-    )
+    models.prepare()
     done = broken = 0
     slab = f"SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} AND c.id > ? "
     with console.Progress(total, "chunks") as progress:
@@ -114,18 +112,11 @@ def _drop_broken_vectors(db):
     db.commit()
 
 
-def _longest_pending(db):
-    """The longest text still to embed, to calibrate on: no batch can need more memory per text. None if none."""
-    sql = (
-        f"SELECT c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} ORDER BY c.len + length(d.title) DESC"
-    )
-    return max((text_of(*row) for row in db.execute(sql + " LIMIT 100")), key=len, default=None)
-
-
 def encode(models, texts, report=None):
-    """Vectors for texts, longest first in batches of similar length; report(n), if given, after each batch, n texts
-    done."""
-    order, step, vectors = sorted(range(len(texts)), key=lambda i: -len(texts[i])), models.batch, None
+    """Vectors for texts, longest first in batches of similar length to the model: each batch is padded to its longest
+    text, and characters tell tokens poorly. report(n), if given, after each batch, n texts done."""
+    lengths, step, vectors = models.lengths(texts), models.batch, None
+    order = sorted(range(len(texts)), key=lambda i: -lengths[i])
     for start in range(0, len(order), step):
         part = order[start : start + step]
         out = models.encode([texts[i] for i in part])

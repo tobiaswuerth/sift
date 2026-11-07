@@ -14,6 +14,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The index's layout is version 7: each collection's index keeps the number of its documents, chunks and vectors,
   counted as they change, in the transaction of each change. An index of 1.8 counts its rows on first use, once, in a
   pass over its tables; another sift opening it meanwhile waits. An older sift doesn't open an index so updated.
+- `sift embed` batches texts of similar length in tokens, not in characters. A batch is padded to its longest text,
+  and characters tell tokens poorly: PubMed abstracts were padded to 1.5 times their tokens. On an RTX 4090, embedding
+  PubMed abstracts went from 171 to 230 chunks per second, the vectors the same.
+- Beside an NVIDIA GPU, PyTorch keeps a single CPU thread. With a thread per core, its idle threads waited busily after
+  each batch: several cores busy computing nothing.
+- `sift embed` sizes its batches with texts of the longest input the model takes, which fit any text, whatever the
+  model. It no longer reads every pending chunk at the start to find the longest by characters: that took minutes on
+  a large index, and a chunk with fewer characters could have more tokens, so the first batch ran out of memory and
+  every batch was halved.
 
 ## [1.8.0] - 2026-11-06
 

@@ -21,8 +21,12 @@ class Models(Protocol):
     def load(self) -> None:
         """Get ready now, so the first request is quick."""
 
-    def prepare(self, longest) -> None:
-        """Size batches for the longest text to come, longest(), if that matters where the models run."""
+    def lengths(self, texts) -> list:
+        """How long each text is to the embedding model, to batch texts of similar length: a batch is padded to its
+        longest."""
+
+    def prepare(self) -> None:
+        """Size batches to the memory where the models run, if that matters there."""
 
     def encode(self, texts, query=False):
         """Normalised fp16 embeddings, one row per text."""

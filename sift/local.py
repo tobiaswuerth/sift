@@ -8,6 +8,7 @@ from . import settings
 from .accelerator import Accelerator
 
 MAX_TOKENS = 1024
+LENGTHS_AT_ONCE = 1000  # texts tokenized at a time to count their tokens: padded, 1,000 at most take 8 MB
 
 # The MCP server logs at INFO, where loading a model logs every HTTP request to Hugging Face: through httpx, or
 # httpx2, which huggingface_hub 2 uses.
@@ -95,13 +96,23 @@ class Local:
         self.embedder()
         self.reranker()
 
-    def prepare(self, longest):
-        """Size the batches to the GPU's memory, with the longest text to come, longest(), or None for the longest
-        input the model takes."""
+    def lengths(self, texts):
+        """The tokens of each text, cut at the longest input the model takes, without the prompt it puts before every
+        text alike. Counted LENGTHS_AT_ONCE at a time, as they come padded."""
+        model = self.embedder()
+        return [
+            n
+            for start in range(0, len(texts), LENGTHS_AT_ONCE)
+            for n in model.preprocess(texts[start : start + LENGTHS_AT_ONCE])["attention_mask"].sum(dim=1).tolist()
+        ]
+
+    def prepare(self):
+        """Size the batches to the GPU's memory, with texts of the longest input the model takes: a batch that fits
+        them fits any text, whatever the model."""
         if self.accelerator.kind != "cuda":
             return
         model = self._ready(self.embedder)
-        sample = longest() or "x " * (4 * model.max_seq_length)  # truncated to the longest input
+        sample = "x " * (4 * model.max_seq_length)  # truncated to the longest input
         self.accelerator.calibrate(lambda n: model.encode_document([sample] * n, batch_size=n, show_progress_bar=False))
 
     def encode(self, texts, query=False):

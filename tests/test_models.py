@@ -32,13 +32,13 @@ def test_both_kinds_offer_the_same_interface(make_local, make):
     # Looked up statically: asking a Remote for its name asks the worker.
     models = make(make_local)
     assert [m for m in MEMBERS if inspect.getattr_static(models, m, None) is None] == []
-    assert len(MEMBERS) == 8
+    assert len(MEMBERS) == 9
 
 
 def test_a_worker_manages_its_own_gpu():
     worker = Remote("https://t.p@pc:8766")
     assert worker.release_idle() is False  # nothing on this machine to hand back
-    worker.prepare(lambda: pytest.fail("a worker sizes its batches itself"))
+    worker.prepare()  # the worker sizes its batches itself: nothing asked of it here
 
 
 def test_choosing_the_models_loads_none_yet(monkeypatch, configure):

@@ -58,25 +58,54 @@ def test_embed_an_unknown_collection_names_those_there_are(two_collections, fake
     assert pending(two_collections) == {"notes": 3, "other": 1}  # nothing embedded before the error
 
 
-def test_embed_some_collections_calibrates_on_their_longest_chunk(two_collections, corpus, fake_models, monkeypatch):
-    write(corpus[1] / "long.md", "# Long\n" + "word " * 1000 + "\n")
-    indexing.index(two_collections)
-    samples = []
-    monkeypatch.setattr(fake_models, "prepare", lambda longest: samples.append(longest()))
-    embed.embed_pending(two_collections, collections=["other"])
-    assert samples == ["# Other\n\nSomething else entirely."]  # not the longer chunk of notes
+def test_embed_pending_calibrates_once_before_embedding(corpus, fake_models, monkeypatch):
+    # With the longest input the model takes (see test_local): sorting every pending chunk by length to find the
+    # longest took minutes on a large index, before the first vector.
+    calls, real = [], fake_models.encode
+    monkeypatch.setattr(fake_models, "prepare", lambda: calls.append("prepare"))
+    monkeypatch.setattr(fake_models, "encode", lambda texts, query=False: calls.append("encode") or real(texts))
+    embed.embed_pending(corpus[0])
+    assert calls == ["prepare", "encode"]
 
 
 class Ones:
-    """The least a set of models needs to offer embed_pending: a name, a place, a batch size, prepare and encode."""
+    """The least a set of models needs to offer embed_pending: a name, a place, a batch size, lengths, prepare and
+    encode."""
 
     name, address, batch = "ones/v1", "nowhere", 2
 
-    def prepare(self, longest):
+    def lengths(self, texts):
+        return [len(t) for t in texts]
+
+    def prepare(self):
         pass
 
     def encode(self, texts, query=False):
         return np.ones((len(texts), 4), np.float16)
+
+
+class Tokens(Ones):
+    """Texts as long as their words, whatever their characters; records each batch."""
+
+    def __init__(self):
+        self.batches = []
+
+    def lengths(self, texts):
+        return [len(t.split()) for t in texts]
+
+    def encode(self, texts, query=False):
+        self.batches.append(texts)
+        return np.array([[len(t), 0, 0, 0] for t in texts], np.float16)
+
+
+def test_a_batch_holds_texts_of_similar_length_to_the_model(fake_models):
+    # A batch is padded to its longest text: grouped by characters, which tell tokens poorly, PubMed abstracts were
+    # padded to 1.5 times their tokens, and embedding took 1.5 times as long.
+    texts = ["a b c d e f", "longwordsonly", "x y", "averyveryverylongword with two"]
+    models = Tokens()
+    vectors = embed.encode(models, texts)
+    assert models.batches == [["a b c d e f", "averyveryverylongword with two"], ["x y", "longwordsonly"]]
+    assert vectors[:, 0].tolist() == [len(t) for t in texts]  # each vector with its text
 
 
 def test_embed_pending_uses_the_models_it_is_given(corpus, capsys):
@@ -202,18 +231,6 @@ def test_embed_pending_calibrates_first(corpus, make_local, gpu_memory):
     embed.embed_pending(corpus[0], models=make_local("cuda"))
     assert gpu_memory.batches[:3] == [1, 2, 4]  # calibration, then the 3 chunks in one batch
     assert gpu_memory.batches[-1] == 3
-
-
-def test_embed_pending_calibrates_on_the_longest_chunk(corpus, fake_models, monkeypatch):
-    catalog, root = corpus
-    write(root / "long.md", "# Long\n" + "word " * 1000 + "\n\n" + "more " * 1000 + "\n")
-    indexing.index(catalog)
-    samples, embedded = [], []
-    real = fake_models.encode
-    monkeypatch.setattr(fake_models, "prepare", lambda longest: samples.append(longest()))
-    monkeypatch.setattr(fake_models, "encode", lambda texts, query=False: embedded.extend(texts) or real(texts))
-    embed.embed_pending(catalog)
-    assert samples == [max(embedded, key=len)]  # no batch in this run can be longer
 
 
 def test_embed_pending_skips_chunks_without_text(embedded, capsys):
