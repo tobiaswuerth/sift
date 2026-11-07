@@ -1,5 +1,6 @@
-"""A collection's database, its store: its documents, chunks, keyword index (FTS5), vectors and their codes, and its
-notes' links, in one SQLite file. The catalog (see `catalog`) lists the collections and where their stores lie.
+"""A collection's database, its store: its documents, chunks, keyword index (FTS5), vectors and their codes, its
+notes' links, and the counts of its rows, in one SQLite file. The catalog (see `catalog`) lists the collections and
+where their stores lie.
 
 A store holds the text of every document, so searching and reading never touch the files; they are read only when
 indexing (see `indexing`, and `readers` for the kinds of file).

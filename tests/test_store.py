@@ -1,5 +1,5 @@
-"""A collection's store: its layout, its ids, the vectors' codes, deleting documents, the vectors' version, and holding
-it alone."""
+"""A collection's store: its layout, its ids, the vectors' codes, the counts of its rows, deleting documents, the
+vectors' version, and holding it alone."""
 
 import sqlite3
 import time

@@ -189,8 +189,8 @@ def _facets(hits, view):
 
 
 def _collections(stores):
-    """The collections and their number of documents, by name, of [(collection, its store)]."""
-    return [(c.name, db.execute("SELECT count(*) FROM docs").fetchone()[0]) for c, db in stores]
+    """The collections and their number of documents, as their stores keep it, by name, of [(collection, its store)]."""
+    return [(c.name, store.counts(db)["docs"]) for c, db in stores]
 
 
 def _crumbs(view):

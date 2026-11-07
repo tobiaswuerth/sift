@@ -46,6 +46,14 @@ def test_the_page_shows_what_is_indexed(browser):
     assert '<script src="/ui/static/htmx.min.js"' in response.text
 
 
+def test_the_page_shows_the_document_counts_kept(embedded):
+    # Not counted anew after each change of the index: that took a collection of millions of documents seconds.
+    db = embedded[0].store("notes")
+    db.execute("UPDATE counts SET n = 1234567 WHERE name = 'docs'")
+    db.commit()
+    assert "1,234,567 documents" in page(Index(embedded[0])).get("/ui/").text
+
+
 def test_the_address_of_the_server_leads_to_the_ui(browser):
     response = browser.get("/", follow_redirects=False)
     assert response.status_code in (302, 307)

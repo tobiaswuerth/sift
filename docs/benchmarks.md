@@ -175,6 +175,28 @@ The embedding models embedded 2,000 passages (half SciFact, half MLDR) and 100 q
   `search` and `vsearch`, which need no reranker.
 - **Query embedding is minor next to reranking:** 51 ms against 284 ms.
 
+### Batching
+
+`sift embed` on the RTX 4090 with EmbeddingGemma-2, over 6,000 PubMed abstract passages (339 tokens on average) and
+their 6,000 titles (30 tokens); the mean of 2 runs, and for the titles the best of 2:
+
+| Batches | Passages per second | CPU cores busy |
+|---|---|---|
+| sift 1.8: grouped by characters, a CPU thread per core | 171 | 4.7 |
+| sift 1.9: grouped by tokens, one CPU thread | **230** | 0.9 |
+
+| Titles, batch of | Grouped by characters | Grouped by tokens |
+|---|---|---|
+| 140 | 2,295 per second, padded to 1.50 times their tokens | **2,504**, 1.04 times |
+| 1,024 | 1,742, 1.78 times | 2,424, 1.30 times |
+
+- **Grouping by tokens is what pays:** a batch is padded to its longest text, and characters tell tokens poorly.
+  Grouped by characters, the passages were padded to 1.51 times their tokens; by tokens, to 1.04 times.
+- **Larger batches of short texts don't:** a batch of 140 already keeps the GPU busy, so 1,024 only adds padding.
+  sift therefore sizes one batch for the longest input the model takes, and uses it for every length.
+- **One CPU thread beside the GPU** made embedding 5% faster and freed most of the cores: PyTorch's other threads only
+  waited busily after each batch.
+
 ### Links between notes
 
 A synthetic vault of 20,000 notes and 220,000 links: one note linked by 6,000 others, a tenth of the links to notes
