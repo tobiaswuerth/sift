@@ -10,7 +10,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `sift status`, the MCP `status` tool and a starting server no longer read every vector and document of a
   collection: they take its counts as its index keeps them, and its front-matter fields from 1,000 documents looked up
   by id. On an index of tens of millions of chunks, `sift status` read over a hundred gigabytes and took over ten
-  minutes.
+  minutes. A server loads the vectors' codes in one pass over them, not two.
 - The index's layout is version 7: each collection's index keeps the number of its documents, chunks and vectors,
   counted as they change, in the transaction of each change. An index of 1.8 counts its rows on first use, once, in a
   pass over its tables; another sift opening it meanwhile waits. An older sift doesn't open an index so updated.
