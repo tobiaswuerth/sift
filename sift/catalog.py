@@ -320,9 +320,9 @@ def _transfer(held, old, new, name):
 
 
 def _delete(path):
-    """Delete a store's file and its log; returns those that could not be, as another sift has them open (Windows)."""
+    """Delete a store's files; returns those that could not be, as another sift has them open (Windows)."""
     left = []
-    for file in (Path(path), Path(f"{path}-wal"), Path(f"{path}-shm")):
+    for file in store.files(path):
         try:
             file.unlink(missing_ok=True)
         except OSError:

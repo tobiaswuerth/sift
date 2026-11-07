@@ -19,13 +19,25 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 
 ## Storage
 
-- A SQLite database in WAL mode per collection holds its documents' text, metadata, the FTS5 keyword index, the
-  vectors (fp16) and their codes (one bit per dimension); a small one, the catalog, lists the collections.
+- A SQLite database in WAL mode per collection holds its documents' text, metadata, the FTS5 keyword index and the
+  keyword postings, the vectors (fp16) and their codes (one bit per dimension); a small one, the catalog, lists the
+  collections.
 - The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
 - The row ids of a collection start at its id times 2^40, so the results of several collections merge as they are.
 - Each index keeps the number of its documents, chunks and vectors, counted by triggers in the transaction of each
   change, so `sift status` and a starting server read no table whole: SQLite keeps no counts, and counting a large
   index's vectors reads all of them.
+- Keyword search ranks from postings of its own, read out of FTS5's index, which stays the reference (see below): per
+  term, its chunks and how often it occurs in each, zlib-compressed. A long list comes in blocks of 4,096 postings,
+  after its ranges: for every 128 consecutive chunk ids holding the term, how many postings it has there and its best
+  score there, rounded up to a byte. Chunks' lengths come in blocks of 1,024 ids. They take about a third of FTS5's
+  index, which holds every word's positions.
+- The postings follow FTS5 change by change: every chunk whose keyword entries change is marked in the same
+  transaction, and `sift index` (or `reindex`) then adds a delta of those chunks, tokenized by FTS5 in a table of its
+  own, and masks their old postings, as Lucene's segments do. Many deltas are merged into one; once 5% of the chunks
+  have changed, the postings are built anew. Until a collection's postings are up to date, its keyword searches read
+  FTS5, as before. Building them anew for a collection of a million passages or more reads FTS5's vocabulary in
+  worker processes, one per CPU but one.
 - Searching and `get` never touch the files, so results and documents always agree, until the next `sift index`.
 
 ## Embedding
@@ -54,12 +66,19 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 
 ## Searching
 
-- **`search`:** SQLite FTS5 with BM25, over three columns weighted alike: every passage is indexed with its document's
-  title (the first passage holds it as its heading too) and its front-matter values. Matches are grouped by document
-  in SQL, each represented by its best passage. Input that isn't valid FTS5 syntax is treated as exact phrases.
-- **Several collections:** searches ask each collection's index and merge the results. Each collection's best keyword
-  hits are scored again with the word counts of all of them, by FTS5's BM25 formula, as one index would score them: a
-  collection's own counts would take a word common in a small collection for a common word, and sink its pages. A
+- **`search`:** BM25 as FTS5 computes it, over three columns weighted alike: every passage is indexed with its
+  document's title (the first passage holds it as its heading too) and its front-matter values. Each document is
+  represented by its best passage. Input that isn't valid FTS5 syntax is treated as exact phrases.
+  - A query of words joined by AND, OR, NOT and parentheses (all of `query`'s, most of `search`'s) is answered from
+    the postings by Block-Max Pruning ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): each term's best
+    score in a range of chunk ids, summed over the query's terms, bounds every chunk there, so ranges are scored best
+    bound first until none left can beat the k-th best. FTS5 scores every match, about a microsecond each: "patients"
+    matches 8 million PubMed passages and took 8 seconds, a question of a dozen words 15. Now most of a common word's
+    postings are never read. The results are FTS5's, score for score.
+  - Phrases, prefixes, NEAR and column filters are FTS5's to answer, as before.
+- **Several collections:** searches ask each collection's index and merge the results, scored with the word counts of
+  all of them, as one index would score them: a collection's own counts would take a word common in a small
+  collection for a common word, and sink its pages. Through FTS5, each collection's best hits are scored again so; a
   query with NEAR or a column filter keeps each collection's scores.
 - **`vsearch`:** every vector's code, its signs as one bit per dimension, waits in RAM: 96 bytes for 768 dimensions, a
   sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with

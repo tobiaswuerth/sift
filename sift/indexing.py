@@ -16,7 +16,7 @@ from contextlib import nullcontext
 from itertools import repeat, takewhile
 from pathlib import Path
 
-from . import console, embed, links, ocr, readers, store
+from . import console, embed, links, ocr, postings, readers, store
 from .ignore import NAME as SIFTIGNORE
 from .ignore import Ignore
 
@@ -159,6 +159,7 @@ def retitle(catalog, name, title_from):
         c, d = _reread(db, files, collection.choices)
         changed, dropped = changed + c, dropped + d
     db.commit()
+    postings.update(db, collection.store, name)
     return changed, dropped
 
 
@@ -270,6 +271,7 @@ def reindex(catalog, paths, scans=True):
         except BaseException:
             db.rollback()
             raise
+        postings.update(db, collection.store, collection.name, rebuild=False)  # quick: what changed, no more
     return Reindexed(found, removed, versions)
 
 
@@ -503,10 +505,12 @@ def index(catalog, names=None):
             console.say(f"{missing}; skipped")
             continue
         _index_collection(db, c.name, c.path, c.choices, ignore)
+        postings.update(db, c.store, c.name, _cpus() - 1)
 
 
 def _index_collection(db, name, root, fields, ignore):
-    """Bring one collection in sync: drop what is gone, read what is new or changed."""
+    """Bring one collection in sync: drop what is gone, read what is new or changed; its keyword postings follow
+    after (see `postings`)."""
     t0 = time.perf_counter()
     known = {p: (i, m, s) for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources")}
     console.say(f"{name}: scanning {root}")  # a large or cloud folder takes a while

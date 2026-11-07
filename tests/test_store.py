@@ -7,7 +7,7 @@ import time
 import numpy as np
 import pytest
 
-from sift import embed, indexing, store, vectors
+from sift import embed, indexing, postings, store, vectors
 from sift.catalog import Catalog
 
 from .conftest import write
@@ -346,6 +346,133 @@ def test_counting_stopped_leaves_the_store_as_sift_1_8_left_it(embedded, monkeyp
     assert raw.execute("SELECT count(*) FROM sqlite_master WHERE name = 'counts'").fetchone() == (0,)
     raw.close()
     assert store.counts(catalog.store("notes")) == held(catalog.store("notes"))  # counted on the next start
+
+
+# --- the keyword postings' tables and changes -------------------------------------
+
+POSTINGS_TABLES = {"kw_segments", "kw_terms", "kw_blocks", "kw_lengths", "kw_masked", "kw_dirty"}
+
+
+def tables(db):
+    return {name for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+
+
+def as_sift_1_9_left_it(db):
+    """A store as sift 1.9 made it: layout 7, no postings of its own."""
+    for table in POSTINGS_TABLES:
+        db.execute(f"DROP TABLE {table}")
+    db.execute("DELETE FROM meta WHERE key IN ('kw_built', 'kw_change')")
+    db.execute("PRAGMA user_version = 7")
+    db.commit()
+
+
+@pytest.fixture
+def unfollowed(monkeypatch):
+    """Postings that indexing leaves as they are, so that the marks it makes stay to be seen."""
+    monkeypatch.setattr(postings, "update", lambda *args, **kwargs: None)
+
+
+def test_a_new_store_has_the_postings_tables_unbuilt(tmp_path):
+    db = store.connect(tmp_path / "a.sqlite", 1, create=True)
+    assert tables(db) >= POSTINGS_TABLES
+    assert store.get_meta(db, "kw_built") is None
+
+
+@pytest.mark.parametrize("left", [as_sift_1_9_left_it, as_sift_1_8_left_it])
+def test_an_older_store_gets_the_postings_tables_unbuilt(corpus, left):
+    catalog, _ = corpus
+    db = catalog.store("notes")
+    if left is as_sift_1_8_left_it:
+        as_sift_1_9_left_it(db)
+    left(db)
+    catalog.release(catalog.get("notes").id)
+    db = catalog.store("notes")
+    assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
+    assert tables(db) >= POSTINGS_TABLES
+    assert store.counts(db) == held(db)
+    assert store.get_meta(db, "kw_built") is None
+
+
+def test_a_store_upgraded_meanwhile_is_upgraded_once(corpus):
+    # Two sifts open a store of 1.9 at once; the second finds the tables there once it has the store.
+    db = corpus[0].store("notes")
+    before = tables(db)
+    store._add_postings_tables(db)  # what the second runs, after the first has finished
+    assert tables(db) == before
+
+
+def test_an_upgrade_stopped_leaves_the_store_as_sift_1_9_left_it(corpus, monkeypatch):
+    catalog, _ = corpus
+    as_sift_1_9_left_it(catalog.store("notes"))
+    catalog.release(catalog.get("notes").id)
+    real = store.POSTINGS
+    monkeypatch.setattr(store, "POSTINGS", real.replace("kw_dirty(", "kw_dirty(("))  # fails at the last table
+    with pytest.raises(sqlite3.OperationalError):
+        catalog.store("notes")
+    monkeypatch.setattr(store, "POSTINGS", real)
+    raw = sqlite3.connect(catalog.get("notes").store)
+    assert raw.execute("PRAGMA user_version").fetchone() == (7,)
+    assert not tables(raw) & POSTINGS_TABLES
+    raw.close()
+    assert tables(catalog.store("notes")) >= POSTINGS_TABLES  # upgraded on the next start
+
+
+def dirty(db):
+    return dict(db.execute("SELECT chunk, change FROM kw_dirty"))
+
+
+def chunks_of(db, path):
+    return {c for (c,) in db.execute("SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.path = ?", (path,))}
+
+
+@pytest.mark.usefixtures("unfollowed")
+def test_changes_are_marked_once_the_postings_are_built(corpus):
+    # The postings follow FTS5, whose entries change only through store.keywords: every chunk whose entries it adds or
+    # deletes is marked, in the same transaction, until the postings have it too.
+    catalog, root = corpus
+    db = catalog.store("notes")
+    db.execute("DELETE FROM meta WHERE key = 'kw_built'")
+    db.commit()
+    change_file(catalog, root)
+    assert dirty(db) == {}  # not built: nothing to follow
+    store.set_meta(db, "kw_built", 0)
+    db.commit()
+    old = chunks_of(db, "rl.md")
+    change_file_again(catalog, root)
+    new = chunks_of(db, "rl.md")
+    marked = dirty(db)
+    assert set(marked) == old | new
+    assert min(marked[c] for c in new) > max(marked[c] for c in old)  # numbered: the later the change, the higher
+    assert int(store.get_meta(db, "kw_change")) == max(marked.values())
+
+
+def change_file_again(catalog, root):
+    write(root / "rl.md", "# Reward shaping\n\nWritten a third time.\n")
+    indexing.index(catalog)
+
+
+def test_marks_go_back_with_a_change_undone(corpus):
+    db = corpus[0].store("notes")
+    store.set_meta(db, "kw_built", 0)
+    db.commit()
+    store.delete_docs(db, list(doc_ids(db).values()))
+    assert dirty(db)
+    db.rollback()
+    assert dirty(db) == {}
+
+
+@pytest.mark.usefixtures("unfollowed")
+def test_titles_read_again_mark_their_chunks(corpus):
+    # retitle changes a document's title in place: its chunks keep their ids, their entries change.
+    catalog, _ = corpus
+    db = catalog.store("notes")
+    store.set_meta(db, "kw_built", 0)
+    db.commit()
+    before = dict(db.execute("SELECT path, title FROM docs"))
+    indexing.retitle(catalog, "notes", "name")
+    retitled = [path for path, title in db.execute("SELECT path, title FROM docs") if before[path] != title]
+    assert retitled
+    assert set(dirty(db)) == set().union(*(chunks_of(db, path) for path in retitled))
 
 
 # --- version -------------------------------------------------------------------

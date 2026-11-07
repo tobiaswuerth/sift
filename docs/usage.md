@@ -36,6 +36,8 @@ sift move archive D:/data_archive.sqlite            # one collection's, under a 
 
 On the same drive a move is instant; to another drive the index is copied, then the old file deleted. No other sift
 may have the index open meanwhile: stop `sift serve`, and any `sift index` or `sift embed` of that collection, first.
+Beside an index lies an empty `NAME.sqlite.postings-lock`, which a sift locks while it updates the keyword postings,
+so that two never do at once; `sift move` and `sift rm` take it with the index.
 A collection whose index is missing, on a drive that isn't connected, is passed over by searches and said so on the
 server's console; `sift status` marks it `"missing": true`. sift never makes such an index anew.
 
@@ -45,7 +47,9 @@ server's console; `sift status` marks it `"missing": true`. sift never makes suc
 vectors' codes with its next request, a server started afterwards doesn't name them to agents, and `sift index` and
 `sift embed` skip them unless named. Their indexes stay as they are, `reindex` still updates them, and `sift activate
 NAME ...` takes them back. `sift status` lists every collection, `"active"` or not, with its index file (`"store"`),
-its size in bytes and, if active, its counts of documents, chunks and vectors.
+its size in bytes and, if active, its counts of documents, chunks and vectors, and how its keyword postings stand
+(`"keywords"`): `"ready"`, `"not built"`, or how many chunks they are behind. Until they are ready, keyword searches of
+the collection read FTS5, slower on a large one; `sift index` builds or updates them.
 
 ### Leaving files out
 

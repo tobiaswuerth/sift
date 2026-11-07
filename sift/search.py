@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import console, embed, indexing, links, readers, store
+from . import console, embed, expression, indexing, links, postings, readers, store, topk
 from . import models as _models
 from .catalog import Catalog
 from .vectors import Codes, codes, top
@@ -162,7 +162,6 @@ def _any_term(query):
 QUOTED = r'"(?:[^"]|"")*"'
 PHRASE = re.compile(rf"(?:{QUOTED}|[^\s()\"*]+)(?:\s*\*)?")  # a quoted phrase or a bare word, prefix or not
 PLACED = re.compile(r"NEAR\s*\(|[{}+^:]")  # operators that join phrases or tie them to columns or places
-K1, B = 1.2, 0.75  # the parameters of FTS5's bm25()
 MARK = "\x01"  # what highlight() puts before each phrase it finds, to count them
 MORE_CANDIDATES = 20  # each collection gives this many more of its best, or as many again, to be scored again
 
@@ -175,22 +174,10 @@ def _phrases_of(match):
     return [phrase for phrase in PHRASE.findall(match) if phrase not in ("AND", "OR", "NOT")]
 
 
-def _varints(blob):
-    """The numbers of a blob of SQLite varints, as FTS5 stores sizes and totals: 7 bits a byte, the high bit set on all
-    but the last. (Numbers from 2**56 on take a ninth byte of 8 bits; no count of tokens gets there.)"""
-    numbers, value = [], 0
-    for byte in blob:
-        value = value << 7 | byte & 0x7F
-        if not byte & 0x80:
-            numbers.append(value)
-            value = 0
-    return numbers
-
-
 def _totals(db):
     """The rows of a store's keyword index, and the tokens they hold in all: FTS5's record of them."""
     row = db.execute("SELECT block FROM fts_data WHERE id = 1").fetchone()
-    numbers = _varints(row[0]) if row else [0]
+    numbers = postings.varints(row[0])[0].tolist() if row else [0]
     return numbers[0], sum(numbers[1:])
 
 
@@ -320,6 +307,15 @@ def _size(path):
     return sum(os.path.getsize(file) for file in (path, f"{path}-wal") if os.path.isfile(file))
 
 
+def _postings_state(db):
+    """How a collection's keyword postings stand, for a status: "ready", "not built" or "N chunks behind" (searches
+    read FTS5 meanwhile, slower; `sift index` builds or updates them)."""
+    if not postings.built(db):
+        return "not built"
+    behind = postings.behind(db)
+    return f"{console.count(behind, 'chunk')} behind" if behind else "ready"
+
+
 class _Resolvers(dict):
     """A links.Resolver for each collection, made when first needed."""
 
@@ -341,6 +337,7 @@ class Index:
         self._models = models
         self._wrap = None
         self.vectors = {}  # collection id: (its store's version, the Codes of its vectors)
+        self._postings = {}  # collection id: (the state of its keyword postings, their postings.Reader)
         self._said = set()  # warnings given, each once
 
     @property
@@ -527,10 +524,15 @@ class Index:
 
     def _keyword(self, match, k, scope, where, args, all_passages=False):
         """The best passage of each of the k documents that best match an FTS5 query, by BM25, or the k best
-        passages, in the collections of `scope`. Over several collections, each one's best are scored again with the
-        word counts of all of them (see _as_one), unless the query places its phrases (NEAR, column filters)."""
+        passages, in the collections of `scope`, scored with the word counts of all of them. A query of terms, AND, OR
+        and NOT is answered from the keyword postings (see `topk`), where every collection has them ready; others by
+        FTS5, each collection's best scored again together (see _as_one), unless the query places its phrases (NEAR,
+        column filters)."""
         if not match.strip():
             return []
+        if (query := expression.parse(match)) is not None and (held := self._ready(scope)) is not None:
+            allowed = self._allowed(scope, where, args) if args else None
+            return topk.search(held, query, k, by_document=not all_passages, allowed=allowed)
         passages = f"""SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
                        JOIN chunks c ON c.id = fts.rowid JOIN docs d ON d.id = c.doc WHERE fts MATCH ? AND {where}"""
         if all_passages:
@@ -558,6 +560,36 @@ class Index:
             return [(passage, score) for passage, _, score in ranked[:k]]
         raise ValueError(f"invalid search query {match!r}: {error}")
 
+    def _ready(self, scope):
+        """The keyword postings of the collections of `scope`, one postings.Reader each, or None if any has none
+        ready: never built, or behind FTS5 since a change."""
+        readers = []
+        for c in scope:
+            db = self.catalog.store(c)
+            if not postings.ready(db):
+                return None
+            state = postings.Reader.state(db)
+            held = self._postings.get(c.id)
+            if held is None or held[0] != state or held[1].db is not db:  # changed, or the store opened anew
+                held = self._postings[c.id] = (state, postings.Reader(db))
+            readers.append(held[1])
+        return readers
+
+    def _allowed(self, scope, where, args):
+        """Which of a store's chunks the filter `where` (on their documents, `d`) lets through: for topk."""
+        by_id = {c.id: c for c in scope}
+        sql = (
+            f"SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc "
+            f"WHERE c.id IN (SELECT value FROM json_each(?)) AND {where}"
+        )
+
+        def allowed(chunks):
+            db = self.catalog.store(by_id[store.owner(chunks[0])])
+            passed = {chunk for (chunk,) in db.execute(sql, [json.dumps(chunks.tolist()), *args])}
+            return np.fromiter((chunk in passed for chunk in chunks.tolist()), bool, len(chunks))
+
+        return allowed
+
     def _as_one(self, found, phrases):
         """The passages found in each collection, {collection: [(passage, doc, score)]}, scored again by BM25 as FTS5
         scores them, with the word counts of all these collections together, as one index would. Each collection's own
@@ -580,12 +612,12 @@ class Index:
         for c, passages in found.items():
             db, ids = self.catalog.store(c), json.dumps([passage for passage, _, _ in passages])
             sizes = "SELECT id, sz FROM fts_docsize WHERE id IN (SELECT value FROM json_each(?))"
-            size = {i: sum(_varints(sz)) for i, sz in db.execute(sizes, (ids,))}
+            size = {i: int(postings.varints(sz)[0].sum()) for i, sz in db.execute(sizes, (ids,))}
             score = dict.fromkeys(size, 0.0)
             for weight, phrase in zip(idf, phrases):
                 for passage, *columns in db.execute(hits, (phrase, ids)):
                     n = sum(text.count(MARK) for text in columns if text)
-                    score[passage] += weight * n * (K1 + 1) / (n + K1 * (1 - B + B * size[passage] / average))
+                    score[passage] += weight * float(postings.term_scores(n, size[passage], average))
             scored[c] = [(passage, doc, score.get(passage, 0.0)) for passage, doc, _ in passages]
         return scored
 
@@ -1066,7 +1098,7 @@ class Index:
         collection is embedded: the next search finds them as they are, the codes in memory following without a full
         load. Per file: {"id", "status"}, see indexing.reindex, with "chunks", its documents' passages, and
         "embedded", how many of them have vectors; and a "note" on anything that went wrong. Scans are left for `sift
-        index` to read with OCR: a server runs this on its event loop, which reading one would hold up for minutes."""
+        index` to read with OCR: a server runs one call at a time, which reading one would hold up for minutes."""
         done = indexing.reindex(self.catalog, paths, scans=False)
         for cid, (before, after) in done.versions.items():
             removed = [chunk for chunk in done.removed if store.owner(chunk) == cid]
@@ -1151,7 +1183,7 @@ class Index:
     def status(self):
         """The catalog, the model the active collections are embedded with, and every collection: its folder, whether
         it is active, its store and the bytes it takes, or that it is missing; and of an active one, its documents,
-        chunks, those embedded, front-matter fields and links."""
+        chunks, those embedded, how its keyword postings stand, front-matter fields and links."""
         collections, models = [], set()
         for c in self.catalog.collections():
             entry = {"name": c.name, "path": c.path, "active": c.active, "store": c.store}
@@ -1164,6 +1196,7 @@ class Index:
                 counted = store.counts(db)
                 linked, unresolved = self.link_counts(c)
                 entry |= {"docs": counted["docs"], "chunks": counted["chunks"], "embedded": counted["vectors"]}
+                entry["keywords"] = _postings_state(db)
                 entry["fields"] = self.fields(c)
                 entry |= {"links": linked, "unresolved": unresolved}
                 models.add(store.get_meta(db, "model"))

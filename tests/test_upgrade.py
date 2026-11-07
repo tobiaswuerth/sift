@@ -144,7 +144,9 @@ def contents(db):
         "codes": f"SELECT {chunk.format('chunk')}, bits FROM codes",
         "links": f"SELECT {doc.format('doc')}, field, line, kind, target, key, fragment, shown FROM links",
         "names": f"SELECT {doc.format('doc')}, key, kind FROM names",
-        "meta": "SELECT key, value FROM meta WHERE key NOT IN ('version', 'collection')",
+        # the keyword postings are built from the rest (see `postings`), anew where an index is split
+        "meta": "SELECT key, value FROM meta WHERE key NOT IN ('version', 'collection') AND key NOT LIKE 'kw!_%' "
+        "ESCAPE '!'",
     }
     return {table: sorted(db.execute(sql).fetchall()) for table, sql in queries.items()}
 

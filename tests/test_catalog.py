@@ -274,6 +274,16 @@ def test_a_store_moves_to_another_folder(moved, tmp_path):
     assert searches(catalog) == before == (["notes/rl.md"], ["notes/rl.md"])
 
 
+def test_nothing_of_a_store_is_left_where_it_was(moved, tmp_path):
+    # Its log, and the lock its keyword postings are changed under, go with it.
+    catalog, _ = moved
+    old = Path(catalog.get("notes").store)
+    catalog.move(["notes"], tmp_path / "elsewhere")
+    assert not list(old.parent.glob(f"{old.name}*"))
+    catalog.remove("notes")
+    assert not list((tmp_path / "elsewhere").iterdir())
+
+
 def test_a_store_moves_to_a_file_of_another_name(moved, tmp_path):
     catalog, _ = moved
     catalog.move(["notes"], tmp_path / "data_notes.sqlite")
