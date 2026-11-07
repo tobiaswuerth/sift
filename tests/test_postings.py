@@ -469,7 +469,7 @@ def test_a_build_elsewhere_is_left_to_finish(prose, capsys):
     catalog, _ = prose
     db = catalog.store("prose")
     unbuilt(db)
-    other = sqlite3.connect(f"{path_of(catalog)}.postings-lock", isolation_level=None)
+    other = sqlite3.connect(store.postings_lock(path_of(catalog)), isolation_level=None)
     other.execute("BEGIN EXCLUSIVE")
     postings.build(db, path_of(catalog), "prose")
     assert "another sift is updating" in capsys.readouterr().err
@@ -487,7 +487,7 @@ def test_a_delta_waits_for_a_build_elsewhere(prose, monkeypatch):
     db = catalog.store("prose")
     store.delete_docs(db, [db.execute("SELECT min(id) FROM docs").fetchone()[0]])
     db.commit()
-    other = sqlite3.connect(f"{path_of(catalog)}.postings-lock", isolation_level=None)
+    other = sqlite3.connect(store.postings_lock(path_of(catalog)), isolation_level=None)
     other.execute("BEGIN EXCLUSIVE")
     postings.update(db, path_of(catalog))
     assert postings.behind(db) > 0

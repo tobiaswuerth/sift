@@ -272,7 +272,7 @@ def _alone(path):
     """True while this process alone changes the postings of the store at `path`, False if another sift is changing
     them: an exclusive transaction on a database of its own beside the store, which the OS ends with the process. A
     build reads the store for minutes, without holding the store's own lock, so other writers go on meanwhile."""
-    lock = sqlite3.connect(f"{path}.postings-lock", timeout=0, isolation_level=None)
+    lock = sqlite3.connect(store.postings_lock(path), timeout=0, isolation_level=None)
     try:
         try:
             lock.execute("BEGIN EXCLUSIVE")

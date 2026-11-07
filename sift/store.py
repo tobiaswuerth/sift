@@ -99,6 +99,16 @@ CREATE TABLE IF NOT EXISTS kw_dirty(chunk INTEGER PRIMARY KEY, change INTEGER NO
 """
 
 
+def postings_lock(path):
+    """The file beside the store at `path` whose lock is held while its keyword postings change (postings._alone)."""
+    return Path(f"{path}.postings-lock")
+
+
+def files(path):
+    """The files of the store at `path`: the database, its write-ahead log and shared memory, and its postings' lock."""
+    return [Path(path), Path(f"{path}-wal"), Path(f"{path}-shm"), postings_lock(path)]
+
+
 def first_id(cid):
     """The first row id of the collection `cid`."""
     return cid << SHIFT
