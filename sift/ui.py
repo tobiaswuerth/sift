@@ -19,7 +19,7 @@ from urllib.parse import urlencode, urlsplit
 
 from markupsafe import Markup, escape
 
-from . import console, readers, store
+from . import console, jobs, readers, store
 from .search import STOPWORDS, line_span
 
 WEB = Path(__file__).parent / "web"
@@ -328,7 +328,7 @@ def _reader(index, view, pattern):
 def app(index, host="127.0.0.1"):
     """The UI's ASGI app over `index`, to serve under /ui. Served on a local address, it answers only requests that
     name a local host: a web page could otherwise reach it under its own domain (DNS rebinding) and read the
-    documents. Its handlers are async, so searches run on the event loop's thread, as PyTorch needs."""
+    documents. Its pages are made as the MCP tools' calls are run: one at a time, off the event loop (see `jobs`)."""
     from jinja2 import Environment, FileSystemLoader
     from starlette.applications import Starlette
     from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -340,15 +340,13 @@ def app(index, host="127.0.0.1"):
     env.filters["num"] = lambda n: f"{n:,}"
     env.globals["PAGE"] = PAGE
 
-    async def page(request):
-        view = View.of(request.query_params)
-        part = request.headers.get("hx-target") if "hx-history-restore-request" not in request.headers else None
+    def render(view, part, headers):
         pattern = _pattern(view.q)
         context = {
             "view": view,
             "modes": MODES,
             "oob": part == "explore",  # the form's parts come along, to show the view
-            "typed": request.headers.get("hx-trigger") == "search",  # the box holds what is being typed: it stays
+            "typed": headers.get("hx-trigger") == "search",  # the box holds what is being typed: it stays
             "title": f"{view.q} · sift" if view.q else "sift",
             "collections": _collections([(c, index.catalog.store(c)) for c in index.active().values()]),
         }
@@ -357,13 +355,21 @@ def app(index, host="127.0.0.1"):
         if part != "explore":
             context["reader"] = _reader(index, view, pattern)
         name = {"explore": "explore.html", "reader": "reader.html"}.get(part, "page.html")
-        return HTMLResponse(env.get_template(name).render(context))
+        return env.get_template(name).render(context)
+
+    async def page(request):
+        view = View.of(request.query_params)
+        part = request.headers.get("hx-target") if "hx-history-restore-request" not in request.headers else None
+        return HTMLResponse(await jobs.run(render, view, part, request.headers))
+
+    def located(id):
+        try:
+            return index.file(id)
+        except LookupError:
+            return None
 
     async def file(request):
-        try:
-            path = index.file(request.query_params.get("id", ""))
-        except LookupError:
-            path = None
+        path = await jobs.run(located, request.query_params.get("id", ""))
         if path is None or not path.is_file():
             return PlainTextResponse("no such file", status_code=404)
         response = FileResponse(path, filename=path.name, content_disposition_type="inline")

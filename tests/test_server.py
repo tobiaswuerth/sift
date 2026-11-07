@@ -97,16 +97,95 @@ def test_search_tools(mcp, tool):
     "tool",
     ["search", "vsearch", "query", "similar", "get", "status", "links", "unresolved", "mentions", "reindex"],
 )
-def test_tools_run_on_the_event_loop_thread(embedded, monkeypatch, tool):
-    # PyTorch crashes in worker threads on Python 3.15 (Windows, macOS), so no tool may run in one.
-    index, threads = Index(embedded[0]), []
+def test_tools_run_off_the_event_loop_and_the_models_on_it(embedded, monkeypatch, tool):
+    # A tool's work runs on a worker thread, so the event loop stays free to answer and to hear cancellations; the
+    # models still run on the main thread, which holds the loop: PyTorch crashes in worker threads on Python 3.15
+    # (Windows, macOS).
+    index, threads, model_threads = Index(embedded[0]), [], []
     real = getattr(index, tool)
     monkeypatch.setattr(index, tool, lambda *a, **kw: threads.append(threading.current_thread()) or real(*a, **kw))
+    mcp = server.build(index)[0]
+    for name in ("encode", "rerank"):
+        method = getattr(embedded_models(index), name)
+        monkeypatch.setattr(
+            embedded_models(index),
+            name,
+            lambda *a, _m=method, **kw: model_threads.append(threading.current_thread()) or _m(*a, **kw),
+        )
     args = {name: {"id": "notes/rl.md"} for name in ("get", "similar", "links", "mentions")}
     args |= {"status": {}, "unresolved": {}, "reindex": {"paths": ["notes/rl.md"]}}
     args = args.get(tool, {"query": "brush"})
-    assert not call(server.build(index)[0], tool, args).is_error
-    assert threads == [threading.main_thread()]
+    assert not call(mcp, tool, args).is_error
+    assert len(threads) == 1
+    assert threads[0] is not threading.main_thread()
+    assert set(model_threads) <= {threading.main_thread()}
+    if tool in ("vsearch", "query"):
+        assert model_threads
+
+
+def embedded_models(index):
+    """The models behind the server's wrapper, which runs them on the main thread."""
+    return index.models._models
+
+
+# Endless for a test: tens of seconds. Truly endless, a regression would hang the test run rather than fail it.
+ENDLESS = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 300000000) SELECT count(*) FROM n"
+
+
+def slow_tool(index, monkeypatch, began, stopped):
+    """Make `search` run a statement that never ends by itself, on a store's connection."""
+    db = index.catalog.store(next(iter(index.active().values())))
+
+    def endless(*args, **kwargs):
+        began.set()
+        try:
+            db.execute(ENDLESS)
+        except sqlite3.OperationalError as e:
+            stopped.append(e)
+            raise
+
+    monkeypatch.setattr(index, "search", endless)
+
+
+def test_the_server_answers_while_a_tool_runs(embedded, monkeypatch):
+    # A slow search kept the event loop busy: the server answered no one, not even a client connecting anew.
+    index, began, stopped = Index(embedded[0]), threading.Event(), []
+    slow_tool(index, monkeypatch, began, stopped)
+    mcp = server.build(index)[0]
+
+    async def main():
+        async with Client(mcp) as client, anyio.create_task_group() as tasks:
+            tasks.start_soon(client.call_tool, "search", {"query": "x"})
+            with anyio.fail_after(5):
+                while not began.is_set():
+                    await anyio.sleep(0.01)
+                listed = await client.list_tools()  # answered while the search runs
+            tasks.cancel_scope.cancel()
+        return listed
+
+    assert len(anyio.run(main).tools) == 10
+
+
+def test_a_cancelled_search_stops_and_the_next_call_runs(embedded, monkeypatch):
+    # An agent that gave up on a search (its timeout) left it running for minutes, and every later call waited.
+    index, began, stopped = Index(embedded[0]), threading.Event(), []
+    slow_tool(index, monkeypatch, began, stopped)
+    mcp = server.build(index)[0]
+
+    async def main():
+        async with Client(mcp) as client:
+            with anyio.move_on_after(5) as gave_up:
+                async with anyio.create_task_group() as tasks:
+                    tasks.start_soon(client.call_tool, "search", {"query": "x"})
+                    while not began.is_set():
+                        await anyio.sleep(0.01)
+                    tasks.cancel_scope.cancel()  # what a client's timeout does
+            assert not gave_up.cancel_called
+            with anyio.fail_after(5):
+                return await client.call_tool("status", {})
+
+    assert not anyio.run(main).is_error
+    assert "interrupted" in str(stopped[0])
 
 
 def test_similar_tool(mcp):
@@ -478,6 +557,42 @@ def test_instructions_for_a_collection_without_front_matter(tmp_path):
     catalog.add(folder)
     indexing.index(catalog)
     assert f"- plain ({folder.resolve()}): 1 document\n" in server.build(Index(catalog))[0].instructions + "\n"
+
+
+def test_over_http_a_call_the_client_abandons_stops(embedded, fake_models, monkeypatch):
+    # How agents connect: over HTTP, a client that gives up on a call closes its request, which must stop the call.
+    import uvicorn
+
+    servers, serve = [], uvicorn.Server.serve
+
+    async def recording(self, sockets=None):
+        servers.append(self)
+        await serve(self, sockets)
+
+    monkeypatch.setattr(uvicorn.Server, "serve", recording)
+    index, began, stopped = Index(embedded[0]), threading.Event(), []
+    slow_tool(index, monkeypatch, began, stopped)
+    mcp, index = server.build(index)
+
+    async def main():
+        with anyio.fail_after(20):  # a hang detector
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(server._serve, mcp, index, "127.0.0.1", 0, False, fake_models)
+                while not (servers and servers[0].started):
+                    await anyio.sleep(0.01)
+                url = f"http://127.0.0.1:{servers[0].servers[0].sockets[0].getsockname()[1]}/mcp"
+                async with Client(url) as client:
+                    async with anyio.create_task_group() as calls:
+                        calls.start_soon(client.call_tool, "search", {"query": "x"})
+                        while not began.is_set():
+                            await anyio.sleep(0.01)
+                        calls.cancel_scope.cancel()  # the client's timeout
+                    status = await client.call_tool("status", {})
+                servers[0].should_exit = True
+        return status
+
+    assert not anyio.run(main).is_error
+    assert "interrupted" in str(stopped[0])
 
 
 def test_http_shutdown_gives_up_on_unfinished_requests(embedded, fake_models, monkeypatch, capsys):

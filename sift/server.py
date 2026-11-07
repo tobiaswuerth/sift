@@ -13,7 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import console, logs, store
+from . import console, jobs, logs, store
 from . import models as _models
 from .search import Index
 
@@ -59,14 +59,18 @@ def _collections(index):
     return "Indexed collections:\n" + "\n".join(lines)
 
 
-def _run(fn, *args, **kwargs):
-    """Call an Index method. Any failure becomes a ToolError, the only kind whose message the MCP library passes on
-    (it tells the agent just "Error executing tool" otherwise): expected ones as their message, others, which are
-    bugs, with their type, and with a traceback in the server's log."""
+async def _run(fn, *args, abortable=True, **kwargs):
+    """Call an Index method, off the event loop (see `jobs`). Any failure becomes a ToolError, the only kind whose
+    message the MCP library passes on (it tells the agent just "Error executing tool" otherwise): expected ones as
+    their message, others, which are bugs, with their type, and with a traceback in the server's log."""
+    return await jobs.run(_call, fn, *args, abortable=abortable, **kwargs)
+
+
+def _call(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except (LookupError, ValueError, ConnectionError, sqlite3.Error) as e:  # ConnectionError: the embedding remote
-        raise ToolError(str(e)) from None
+    except (LookupError, ValueError, ConnectionError, sqlite3.Error, jobs.Cancelled) as e:  # ConnectionError: the
+        raise ToolError(str(e)) from None  # embedding remote; sqlite3.Error and Cancelled: a call cancelled, too
     except Exception as e:
         log.exception("tool failed")
         raise ToolError(f"{type(e).__name__}: {e}") from None
@@ -151,7 +155,7 @@ def _add_search(mcp, index, name, description, query_description):
         links_to: LinksTo = None,
         linked_from: LinkedFrom = None,
     ) -> list[dict]:
-        return _run(
+        return await _run(
             method,
             query,
             k,
@@ -170,9 +174,10 @@ def _add_search(mcp, index, name, description, query_description):
 
 
 def build(index=None):
-    # Tools are async, so they run one at a time on the event-loop thread. That serialises GPU and SQLite work, and
-    # keeps PyTorch out of worker threads, where it crashes on Python 3.15 (Windows, macOS).
+    # Tools run one at a time on a worker thread (see `jobs`), which serialises GPU and SQLite work and leaves the
+    # event loop free; the models run on the main thread, which holds the loop.
     index = index or Index()
+    index.models_through(jobs.OnMainThread)
     mcp = MCPServer("sift", instructions=INSTRUCTIONS.format(collections=_collections(index)))
     _add_search(
         mcp,
@@ -218,7 +223,7 @@ def build(index=None):
     ) -> list[dict]:
         """Documents closest in meaning to a document, e.g. more papers like one found; the document itself is left
         out (cosine similarity, -1 to 1)."""
-        return _run(
+        return await _run(
             index.similar,
             id,
             k,
@@ -245,15 +250,15 @@ def build(index=None):
         """Text of a document, as indexed: all of it, or some of its lines. With `fields`, the document as
         {id, title, fields, text}."""
         if fields:
-            return _run(index.document, id, lines, fields)
-        return _run(index.get, id, lines)
+            return await _run(index.document, id, lines, fields)
+        return await _run(index.get, id, lines)
 
     @mcp.tool(annotations=READ_ONLY)
     async def status() -> dict:
         """Collections with their folders (`path`), whether they are `active` (searched), their index files (`store`)
         and sizes; of active ones the counts of documents, chunks and those `embedded`, their front-matter `fields`,
         and their links; and the embedding model."""
-        return _run(index.status)
+        return await _run(index.status)
 
     @mcp.tool(annotations=READ_ONLY)
     async def links(
@@ -280,7 +285,7 @@ def build(index=None):
         leads: the document's id, and `via` path, name or alias; or `ambiguous`, with the candidates; or `unresolved`,
         a note not written yet. "in" lists the documents linking the note, each with the lines that do, so you see
         the context without `get`. Links resolve within their collection, as Obsidian resolves them."""
-        return _run(index.links, id, direction, depth, field, k)
+        return await _run(index.links, id, direction, depth, field, k)
 
     @mcp.tool(annotations=READ_ONLY)
     async def unresolved(
@@ -289,7 +294,7 @@ def build(index=None):
     ) -> list[dict]:
         """Link targets no document answers to: the notes a collection lacks, most linked first, each with how many
         documents link it and the ids of a few of them."""
-        return _run(index.unresolved, collection, k)
+        return await _run(index.unresolved, collection, k)
 
     @mcp.tool(annotations=READ_ONLY)
     async def mentions(
@@ -306,7 +311,7 @@ def build(index=None):
         """Documents that name a note without linking to it (unlinked mentions), in any collection: found by keyword
         search for the note's names as phrases, its file name, title and aliases. Results look like search results;
         the note itself and the documents linking it are left out. Read the passages to judge which mean the note."""
-        return _run(index.mentions, id, k, collection=collection, also=also, fields=fields, compact=compact)
+        return await _run(index.mentions, id, k, collection=collection, also=also, fields=fields, compact=compact)
 
     @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True))
     async def reindex(
@@ -322,7 +327,7 @@ def build(index=None):
         they are now: their text, front matter and links, and, if the index is embedded, their passages for vsearch
         and query. Changes only sift's index, never a file. Per file: its id and status (added, changed, unchanged,
         removed, not found, skipped, unreadable), its passages (`chunks`) and how many are `embedded`."""
-        return _run(index.reindex, paths)
+        return await _run(index.reindex, paths, abortable=False)  # its writes run to their end
 
     return mcp, index
 

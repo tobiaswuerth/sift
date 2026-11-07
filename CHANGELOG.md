@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A call an agent gave up on, by its timeout or by cancelling, no longer runs on in `sift serve`: it stops within
+  about a millisecond, and the calls after it no longer wait for it. A slow keyword search had run on for minutes.
+- While a call runs, `sift serve` answers others: their connections, pings and cancellations. A slow search had kept
+  it from even accepting a client connecting anew. Calls still run one at a time, on a worker thread; the models run
+  on the main thread, as PyTorch needs.
+
 ## [1.9.0] - 2026-11-07
 
 Status in a moment on any index, embedding a third faster with the CPU left free, and a README to the point.

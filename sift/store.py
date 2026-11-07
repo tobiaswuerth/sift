@@ -11,6 +11,7 @@ they are (`owner`), so search results from several stores merge as they are.
 
 import json
 import sqlite3
+import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,6 +22,10 @@ SCHEMA_VERSION = 7  # in SQLite's user_version; up to sift 1.7, one database hel
 FIRST_LAYOUT = 6  # sift 1.8's, the first of a store per collection; its rows are counted once (see _count_rows)
 TIMEOUT = 30  # seconds to wait for another sift's transaction
 UPGRADE_WAIT = 3600  # seconds to wait while another sift counts a store's rows, once: minutes for a large one
+# While set, every statement on every database stops with "interrupted": a server sets it for a call its client
+# cancelled (see `jobs`). SQLite looks every ABORT_STEPS instructions, about a millisecond.
+ABORT = threading.Event()
+ABORT_STEPS = 100_000
 SHIFT = 40  # a collection's row ids start at its id << SHIFT: a trillion rows each, and millions of collections
 # The keyword index reads chunks through a view: each with its document's title, and its front-matter values but the
 # title, e.g. authors and ids, as `meta`. Inserting and deleting read it alike, so the two always agree.
@@ -103,6 +108,7 @@ def database(path, create=False) -> sqlite3.Connection:
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA synchronous=NORMAL")
         db.execute("PRAGMA cache_size=-262144")  # 256 MB
+        db.set_progress_handler(ABORT.is_set, ABORT_STEPS)
     except BaseException:
         db.close()
         raise
