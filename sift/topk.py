@@ -100,9 +100,10 @@ def search(readers, query, k, by_document=True, allowed=None):
         return []
     average = sum(r.tokens for r in readers) / chunks
     named = terms_of(query)
-    lists = [{t: r.term(t) for t in set(named)} for r in readers]
-    df = {t: sum(p.df for held in lists for p in held[t]) for t in set(named)}
-    weight = {t: idf(chunks, df[t]) for t in set(named)}
+    terms = list(dict.fromkeys(named))  # in the query's order, not a set's: scores summed alike in every process
+    lists = [{t: r.term(t) for t in terms} for r in readers]
+    df = {t: sum(p.df for held in lists for p in held[t]) for t in terms}
+    weight = {t: idf(chunks, df[t]) for t in terms}
     for reader, held in zip(readers, lists):
         _Store(reader, held, weight, named, average, query, best, allowed).search()
     return best.ranked()
