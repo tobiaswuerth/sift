@@ -43,14 +43,14 @@ class FakeSentenceTransformer:
         self.name, self.device, self.max_seq_length = name, device, None
         self.dtype = str((model_kwargs or {}).get("dtype", self.saved_in)).removeprefix("torch.")
 
-    def preprocess(self, inputs, prompt=None):
+    def preprocess(self, inputs):
         """Tokens as Sentence Transformers gives them, padded: one per word and two special ones, at most
         max_seq_length. Nothing for no inputs, as Sentence Transformers."""
         import torch
 
         if not inputs:
             return {}
-        lengths = [min(len(((prompt or "") + t).split()) + 2, self.max_seq_length) for t in inputs]
+        lengths = [min(len(t.split()) + 2, self.max_seq_length) for t in inputs]
         mask = torch.zeros((len(inputs), max(lengths)), dtype=torch.long)
         for i, n in enumerate(lengths):
             mask[i, :n] = 1

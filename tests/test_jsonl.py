@@ -189,8 +189,8 @@ def test_only_changed_records_are_indexed_again(papers, capsys):
     indexing.index(catalog)
     after = doc_ids(catalog)
     assert after["2021/2021-01/2101.00001"] == before["2021/2021-01/2101.00001"]  # untouched, the same row
-    # Not "a new row id" for the changed one: SQLite may reuse the highest id after a delete, and which paper has
-    # it depends on the order the OS lists files in (a macOS CI job failed on that).
+    # The changed one by its text, not its row id: ids never repeat (AUTOINCREMENT, see test_store), but which record
+    # gets which new id depends on the order the OS lists files in.
     text = only(catalog).execute("SELECT text FROM docs WHERE path = '2021/2021-01/2101.00002'").fetchone()[0]
     assert text == "# Reward shaping\n\nShaping is now different."
     assert "1 added, 1 changed, 0 removed" in capsys.readouterr().err
