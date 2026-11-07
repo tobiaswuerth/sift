@@ -11,7 +11,6 @@ import pytest
 
 from sift import indexing, postings, store
 from sift.catalog import Catalog
-from sift.search import _varints
 
 from .conftest import prose_text as text
 from .conftest import write
@@ -40,6 +39,17 @@ def live(db):
                 assert chunk not in found.get(term, {}), "a chunk counted twice"
                 found.setdefault(term, {})[chunk] = n
     return {term: chunks for term, chunks in found.items() if chunks}
+
+
+def _varints(blob):
+    """SQLite's varints read one byte at a time: the reference."""
+    numbers, value = [], 0
+    for byte in blob:
+        value = value << 7 | byte & 0x7F
+        if not byte & 0x80:
+            numbers.append(value)
+            value = 0
+    return numbers
 
 
 def lengths(db):

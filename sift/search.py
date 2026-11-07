@@ -162,7 +162,6 @@ def _any_term(query):
 QUOTED = r'"(?:[^"]|"")*"'
 PHRASE = re.compile(rf"(?:{QUOTED}|[^\s()\"*]+)(?:\s*\*)?")  # a quoted phrase or a bare word, prefix or not
 PLACED = re.compile(r"NEAR\s*\(|[{}+^:]")  # operators that join phrases or tie them to columns or places
-K1, B = 1.2, 0.75  # the parameters of FTS5's bm25()
 MARK = "\x01"  # what highlight() puts before each phrase it finds, to count them
 MORE_CANDIDATES = 20  # each collection gives this many more of its best, or as many again, to be scored again
 
@@ -175,22 +174,10 @@ def _phrases_of(match):
     return [phrase for phrase in PHRASE.findall(match) if phrase not in ("AND", "OR", "NOT")]
 
 
-def _varints(blob):
-    """The numbers of a blob of SQLite varints, as FTS5 stores sizes and totals: 7 bits a byte, the high bit set on all
-    but the last. (Numbers from 2**56 on take a ninth byte of 8 bits; no count of tokens gets there.)"""
-    numbers, value = [], 0
-    for byte in blob:
-        value = value << 7 | byte & 0x7F
-        if not byte & 0x80:
-            numbers.append(value)
-            value = 0
-    return numbers
-
-
 def _totals(db):
     """The rows of a store's keyword index, and the tokens they hold in all: FTS5's record of them."""
     row = db.execute("SELECT block FROM fts_data WHERE id = 1").fetchone()
-    numbers = _varints(row[0]) if row else [0]
+    numbers = postings.varints(row[0])[0].tolist() if row else [0]
     return numbers[0], sum(numbers[1:])
 
 
@@ -625,12 +612,12 @@ class Index:
         for c, passages in found.items():
             db, ids = self.catalog.store(c), json.dumps([passage for passage, _, _ in passages])
             sizes = "SELECT id, sz FROM fts_docsize WHERE id IN (SELECT value FROM json_each(?))"
-            size = {i: sum(_varints(sz)) for i, sz in db.execute(sizes, (ids,))}
+            size = {i: int(postings.varints(sz)[0].sum()) for i, sz in db.execute(sizes, (ids,))}
             score = dict.fromkeys(size, 0.0)
             for weight, phrase in zip(idf, phrases):
                 for passage, *columns in db.execute(hits, (phrase, ids)):
                     n = sum(text.count(MARK) for text in columns if text)
-                    score[passage] += weight * n * (K1 + 1) / (n + K1 * (1 - B + B * size[passage] / average))
+                    score[passage] += weight * float(postings.term_scores(n, size[passage], average))
             scored[c] = [(passage, doc, score.get(passage, 0.0)) for passage, doc, _ in passages]
         return scored
 
@@ -1111,7 +1098,7 @@ class Index:
         collection is embedded: the next search finds them as they are, the codes in memory following without a full
         load. Per file: {"id", "status"}, see indexing.reindex, with "chunks", its documents' passages, and
         "embedded", how many of them have vectors; and a "note" on anything that went wrong. Scans are left for `sift
-        index` to read with OCR: a server runs this on its event loop, which reading one would hold up for minutes."""
+        index` to read with OCR: a server runs one call at a time, which reading one would hold up for minutes."""
         done = indexing.reindex(self.catalog, paths, scans=False)
         for cid, (before, after) in done.versions.items():
             removed = [chunk for chunk in done.removed if store.owner(chunk) == cid]
@@ -1196,7 +1183,7 @@ class Index:
     def status(self):
         """The catalog, the model the active collections are embedded with, and every collection: its folder, whether
         it is active, its store and the bytes it takes, or that it is missing; and of an active one, its documents,
-        chunks, those embedded, front-matter fields and links."""
+        chunks, those embedded, how its keyword postings stand, front-matter fields and links."""
         collections, models = [], set()
         for c in self.catalog.collections():
             entry = {"name": c.name, "path": c.path, "active": c.active, "store": c.store}

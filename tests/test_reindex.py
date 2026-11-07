@@ -128,10 +128,11 @@ def test_a_note_rewritten_under_its_old_chunk_ids_while_no_model_answers(live, m
     def unreachable(texts, query=False):
         raise ConnectionError("embedding remote https://workstation:8766 does not answer")
 
+    real = index.models.encode
     monkeypatch.setattr(index.models, "encode", unreachable)
     write(vault / "Beat Keller.md", "Arbeitet bei Acme AG im Einkauf.\n")
     assert index.reindex(["vault/Beat Keller.md"])[0]["embedded"] == 0
-    monkeypatch.undo()
+    monkeypatch.setattr(index.models, "encode", real)  # not undo(): that would undo the fixtures' too, the home too
     (held_ids, _), (loaded_ids, _) = held_and_loaded(index)
     assert held_ids == loaded_ids
 

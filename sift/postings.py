@@ -151,8 +151,9 @@ def term_scores(tf, lengths, average):
 
 
 def varints(blob):
-    """The numbers of a blob of SQLite varints, as FTS5 stores sizes, and the offset each starts at: 7 bits a byte, the
-    high bit set on all but the last. Vectorised, for a blob of many."""
+    """The numbers of a blob of SQLite varints, as FTS5 stores sizes and totals, and the offset each starts at: 7 bits a
+    byte, the high bit set on all but the last. Vectorised, for a blob of many. (Numbers from 2**56 on take a ninth
+    byte of 8 bits; no count of tokens gets there.)"""
     raw = np.frombuffer(blob, np.uint8)
     last = (raw & 0x80) == 0
     starts = np.flatnonzero(np.r_[True, last[:-1]])
