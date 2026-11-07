@@ -27,7 +27,7 @@ Everything runs on your own machines: no cloud services, no API keys.
 - **Measured, not guessed:** the default models and ranking were chosen on seven retrieval benchmarks
   ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md)).
 - **Runs on what you have:** NVIDIA or Apple GPUs, the CPU, or another machine's GPU, on Linux, macOS and Windows.
-  Tens of millions of passages fit on one machine.
+  Tens of millions of passages fit on one machine, and keyword search answers over them in milliseconds.
 
 ## Install
 
@@ -173,16 +173,19 @@ The index and the vectors carry over. When a release changes how the index is la
 once, and says so, from what the index holds: no file is read again and nothing is embedded again. From 1.7 or older,
 the index is split into a file per collection: stop every other sift first, and have as much free space as the index
 takes; `sift move FOLDER` as the first command splits it straight into that folder, on another drive too. 1.9 counts
-each collection's rows once: about 10 seconds for 14 million vectors, longer from a cold disk. An older sift doesn't
-open an index so updated, so upgrade every sift that uses it. The
+each collection's rows once: about 10 seconds for 14 million vectors, longer from a cold disk. 1.10 adds keyword
+postings, which the next `sift index` builds: about a minute per 3 million passages on 24 cores; keyword search
+reads FTS5 until then. An older sift doesn't open an index so updated, so upgrade every sift that uses it. The
 [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists every change.
 
 ## How it works
 
-Each collection's index is a SQLite file: documents, FTS5 keyword index, fp16 vectors and their one-bit codes.
-Semantic search compares a query's code with every passage's, kept in RAM (96 bytes each), and scores the 4,000
-nearest exactly; it finds 99.6% of exact search's top 10 over 3.2 million abstracts in about 0.1 seconds, with no
-index to build. `query` reranks the best 40 keyword and semantic candidates on the GPU. Embedding runs in batches of
+Each collection's index is a SQLite file: documents, FTS5 keyword index and keyword postings, fp16 vectors and their
+one-bit codes. Keyword search ranks by BM25 from the postings, skipping the ranges of passages that can't reach its
+best results: milliseconds for a common word over 30 million passages, with FTS5's results. Semantic search compares a
+query's code with every passage's, kept in RAM (96 bytes each), and scores the 4,000 nearest exactly; it finds 99.6%
+of exact search's top 10 over 3.2 million abstracts in about 0.1 seconds, with no index to build. `query` reranks the
+best 40 keyword and semantic candidates on the GPU. Embedding runs in batches of
 similar length, sized to the GPU memory left by other programs, and gives the GPU back after 5 idle minutes. Details:
 [docs/architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md).
 

@@ -5,6 +5,29 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-07
+
+Keyword search in milliseconds over tens of millions of passages, and a server that stops what agents give up on.
+
+### Changed
+
+- Keyword search ranks from postings of its own, read out of FTS5's index: `search`, and the keyword candidates of
+  `query`. FTS5 scored every passage holding a query's words, about a microsecond each, so a common word over tens of
+  millions of passages took seconds, and a question of a dozen words, which `query` turns into any of its words, took
+  up to 16. The postings keep each word's best score per range of 128 passages, and a search scores ranges best bound
+  first until none left can beat its k-th best (Block-Max Pruning): over 29.9 million PubMed passages, a common word
+  went from 1.3 seconds to 7 ms, a question from 5.3 seconds to 26 ms (medians, the postings read before; read anew,
+  67 and 200 ms). The results are FTS5's, score for score. Queries with phrases, prefixes, NEAR or column filters are
+  FTS5's to answer, as before.
+- The index's layout is version 8: each collection's index holds the postings, about a third of the size of FTS5's
+  index (12 GB for PubMed's 29.9 million passages). An index of 1.9 gets their tables on first use, at once, and
+  `sift index` builds them: 69 seconds for 3.2 million arXiv abstracts on 24 cores, 18 minutes for PubMed. Until then,
+  keyword search reads FTS5. An older sift doesn't open an index so updated.
+- The postings follow every change: `sift index` and `reindex` add the passages changed since, as a delta, and `sift
+  index` builds them anew once 5% of a collection has changed. A collection whose postings are behind (during a long
+  `sift index`, say) is searched through FTS5 meanwhile. `sift status` and the MCP `status` tool say how they stand,
+  as `"keywords"`: `"ready"`, `"not built"`, or how many chunks behind.
+
 ### Fixed
 
 - A call an agent gave up on, by its timeout or by cancelling, no longer runs on in `sift serve`: it stops within
@@ -604,7 +627,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/tobiaswuerth/sift/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/tobiaswuerth/sift/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/tobiaswuerth/sift/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/tobiaswuerth/sift/compare/v1.6.0...v1.7.0

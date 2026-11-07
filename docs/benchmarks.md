@@ -197,6 +197,38 @@ their 6,000 titles (30 tokens); the mean of 2 runs, and for the titles the best 
 - **One CPU thread beside the GPU** made embedding 5% faster and freed most of the cores: PyTorch's other threads only
   waited busily after each batch.
 
+### Keyword search
+
+63 queries: 18 single words (from "crispr" to "the"), 20 of all their words ("graph neural network", ids), and 25
+questions as `query` asks them, any of their words ("effect of approximate or unsafe dynamic pruning in first-stage
+retrieval on effectiveness after neural reranking"). The best 10 documents, each by its best passage, on the RTX 4090
+machine (i9-14900K, NVMe); FTS5 read warm, as sift 1.9 did without its join to the documents, which only made it
+slower (196 seconds cold for "patients"). "Cold": the postings read anew, as by a `sift search`; "warm": read before,
+as by `sift serve`. Every query found the same documents as FTS5, score for score, on both.
+
+| Median | FTS5 | Postings, cold | Postings, warm |
+|---|---|---|---|
+| arXiv (3.2 million passages), single words | 120 ms | 10 ms | 0.7 ms |
+| arXiv, all words | 20 ms | 21 ms | 2 ms |
+| arXiv, questions | 510 ms | 115 ms | 13 ms |
+| PubMed (29.9 million passages), single words | 1.33 s | 67 ms | 7 ms |
+| PubMed, all words | 30 ms | 86 ms | 7 ms |
+| PubMed, questions | 5.3 s | 200 ms | 26 ms |
+
+- **FTS5 scores every passage a word occurs in:** about a microsecond each. "the" occurs in 29.6 million PubMed
+  passages: 25 seconds. The postings bound each range of 128 passages and score the best ranges first: for "the", a
+  few hundred postings.
+- **The slowest question** took 16 seconds in FTS5, 2.7 seconds cold and 1.1 warm from the postings: a dozen common
+  words bound most ranges high, so pruning skips less. Smaller ranges would bound them tighter, at more storage.
+- **All words of a few rare ones** remain FTS5's strength, read cold: it intersects the lists as it reads them.
+- **Storage:** 0.94 GB for arXiv's 431 million postings against 2.71 GB of FTS5's index, which holds every word's
+  positions: 2.2 bytes per posting. 12.2 GB for PubMed.
+- **Ranges of 128 or 64 passages:** on PubMed, with the postings in memory, 128 answered single words in 2.2 ms against
+  5.8 and questions in 16 against 23 (median), with the longest question slower (0.53 s against 0.24); 128 also takes
+  8% less storage.
+- **Building** reads FTS5's vocabulary in worker processes, a range of terms each: 69 seconds for arXiv on 24, 18
+  minutes for PubMed, where "the" alone, read by one worker, takes minutes.
+
 ### Links between notes
 
 A synthetic vault of 20,000 notes and 220,000 links: one note linked by 6,000 others, a tenth of the links to notes

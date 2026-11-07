@@ -28,8 +28,9 @@ import sqlite3
 import struct
 import tempfile
 import zlib
-from concurrent.futures import ProcessPoolExecutor
-from contextlib import contextmanager, nullcontext
+from collections import OrderedDict
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 
@@ -84,13 +85,12 @@ def encode_block(ids, tf):
 
 
 def decode_block(data):
-    """(chunk ids, counts), as int64, of an encoded block."""
+    """(chunk ids as int64, counts as stored: mostly a byte each) of an encoded block."""
     raw = zlib.decompress(data)
     first, n, width = _BLOCK.unpack_from(raw)
     at = _BLOCK.size
     ids = _ascending(first, np.frombuffer(raw, np.uint32, n - 1, at), n)
-    tf = np.frombuffer(raw, _WIDTHS[width], n, at + 4 * (n - 1)).astype(np.int64)
-    return ids, tf
+    return ids, np.frombuffer(raw, _WIDTHS[width], n, at + 4 * (n - 1))
 
 
 def encode_ranges(rid, counts, best):
@@ -254,10 +254,12 @@ def _shard(job):
 
 
 def _shards():
-    """Term ranges [lo, hi) covering every term: one per one- and two-character prefix of digits and letters, the rest
-    (non-ASCII) last. FTS5 orders terms by their UTF-8 bytes; its tokens hold letters and digits, lowercase."""
+    """Term ranges [lo, hi) covering every term: one per prefix of up to three digits and letters, the rest
+    (non-ASCII) last. FTS5 orders terms by their UTF-8 bytes; its tokens hold letters and digits, lowercase. With two
+    characters, one range held "the", "that", "this" and more, a tenth of all words, and the build waited on it."""
     alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
-    bounds = sorted(set(alphabet) | {a + b for a in alphabet for b in alphabet})
+    two = {a + b for a in alphabet for b in alphabet}
+    bounds = sorted(set(alphabet) | two | {ab + c for ab in two for c in alphabet})
     return [("", bounds[0]), *itertools.pairwise(bounds), (bounds[-1], "{"), ("{", None)]
 
 
@@ -312,18 +314,12 @@ def _build(db, path, name, workers):
         lengths_file = Path(folder) / "lengths.npy"
         np.save(lengths_file, np.stack([ids, lengths]))
         work = [(str(path), lo, hi, str(lengths_file), average) for lo, hi in jobs]
-        spawn = multiprocessing.get_context("spawn")
-        with (
-            ProcessPoolExecutor(workers, mp_context=spawn) if parallel else nullcontext() as pool,
-            console.Progress(len(jobs), "parts", prefix=f"{name}: keyword postings: ")
-            if parallel
-            else nullcontext() as progress,
-        ):
-            for done, encoded in enumerate((pool.map if pool else map)(_shard, work), 1):
+        if parallel:
+            _in_parallel(db, name, work, workers, keys)
+        else:
+            for encoded in map(_shard, work):
                 _write_terms(db, 1, encoded, keys)
                 db.commit()
-                if progress:
-                    progress.update(done)
     db.execute("BEGIN IMMEDIATE")
     try:
         _write_lengths(db, 1, ids, lengths)
@@ -334,6 +330,24 @@ def _build(db, path, name, workers):
     except BaseException:
         db.rollback()
         raise
+
+
+PROGRESS_LINES = 200  # updates of a build's progress at most: printing is slow on Windows consoles
+
+
+def _in_parallel(db, name, work, workers, keys):
+    """Run the shards in worker processes, writing each one's postings as it comes."""
+    spawn = multiprocessing.get_context("spawn")
+    step = max(1, len(work) // PROGRESS_LINES)
+    with (
+        ProcessPoolExecutor(workers, mp_context=spawn) as pool,
+        console.Progress(len(work), "parts", prefix=f"{name}: keyword postings: ") as progress,
+    ):
+        for done, future in enumerate(as_completed([pool.submit(_shard, job) for job in work]), 1):
+            _write_terms(db, 1, future.result(), keys)
+            db.commit()
+            if done % step == 0 or done == len(work):
+                progress.update(done)
 
 
 def _write_terms(db, segment, encoded, keys):
@@ -510,6 +524,29 @@ def slices(starts, ends):
     return np.repeat(starts - np.r_[0, np.cumsum(size)[:-1]], size) + np.arange(size.sum())
 
 
+class _Cache:
+    """Values by key, the most recently used kept up to `budget` bytes."""
+
+    def __init__(self, budget):
+        self.budget, self.held, self.size = budget, OrderedDict(), 0
+
+    def get(self, key, make):
+        if key in self.held:
+            self.held.move_to_end(key)
+            return self.held[key]
+        value = self.held[key] = make()
+        self.size += sum(part.nbytes for part in value)
+        while self.size > self.budget and len(self.held) > 1:
+            _, old = self.held.popitem(last=False)
+            self.size -= sum(part.nbytes for part in old)
+        return value
+
+
+BLOCK_CACHE = 512 << 20  # bytes of decoded blocks kept: a long question over PubMed reads about 150 MB of them
+_BLOCKS = _Cache(BLOCK_CACHE)  # shared by every reader: one budget for the process
+_readers = itertools.count()
+
+
 class Reader:
     """A store's postings as searches read them: segments and their statistics, terms, chunks' lengths, and which
     postings are masked. Made for a state of the postings (`state`), and read through caches."""
@@ -521,8 +558,12 @@ class Reader:
         self.masked = np.array([m[0] for m in masked], np.int64)
         self.masked_in = np.array([m[1] for m in masked], np.int64)
         self.ranges = lru_cache(maxsize=1024)(self._ranges)
-        self.block = lru_cache(maxsize=4096)(self._block)
+        self._me = next(_readers)
         self._dense = {}  # segment: (its first block, the lengths read so far by id from it, the blocks read)
+
+    def block(self, key, n):
+        """Block n (from 0) of a long list, decoded: through the cache all readers share."""
+        return _BLOCKS.get((self._me, key, n), lambda: self._block(key, n))
 
     @staticmethod
     def state(db):

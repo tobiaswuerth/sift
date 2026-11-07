@@ -1,6 +1,7 @@
 """Keyword search's own postings (sift.postings): their encoding, built out of FTS5's index posting for posting, kept
 in step with it through changes (deltas, masks, rebuilds), and read back for searches."""
 
+import itertools
 import random
 import sqlite3
 from contextlib import contextmanager
@@ -97,6 +98,20 @@ def test_lengths_round_trip_in_blocks_of_consecutive_ids():
     assert postings.decode_lengths(blocks[first >> postings.LENGTHS_SHIFT]).sum() == 305 + 70000  # 0 for no chunk
 
 
+def test_decoded_blocks_are_kept_to_a_budget_of_bytes():
+    made = []
+
+    def block(n):
+        made.append(n)
+        return np.zeros(100, np.int64), np.zeros(100, np.uint8)  # 900 bytes
+
+    cache = postings._Cache(2000)
+    for n in [1, 2, 1, 3, 1, 2]:
+        cache.get(n, lambda n=n: block(n))
+    assert made == [1, 2, 3, 2]  # 1 used again before 3 came: 2 went, the least recently used
+    assert cache.size <= 2000
+
+
 def test_varints_are_read_as_sqlite_writes_them():
     rng = random.Random(3)
     numbers = [rng.choice([0, 1, 127, 128, 300, 16383, 16384, 2**21, 2**28 + 5]) for _ in range(200)]
@@ -168,9 +183,24 @@ def test_a_build_in_worker_processes_is_the_same(prose, monkeypatch):
     postings.build(db, path_of(catalog))
     serial = sorted(db.execute("SELECT term, segment, df, data FROM kw_terms WHERE list IS NULL"))
     monkeypatch.setattr(postings, "PARALLEL", 0)
+    monkeypatch.setattr(postings, "_shards", lambda: [("", "m"), ("m", "w3"), ("w3", "{"), ("{", None)])  # a few
+    monkeypatch.setattr(postings, "PROGRESS_LINES", 2)  # shown every other part
     postings.build(db, path_of(catalog), workers=2)
     assert sorted(db.execute("SELECT term, segment, df, data FROM kw_terms WHERE list IS NULL")) == serial
     assert live(db) == fts5(db)
+
+
+def test_the_parts_of_a_build_cover_every_term_once():
+    shards = postings._shards()
+    assert shards[0][0] == ""
+    assert shards[-1][1] is None
+    assert all(hi == next_lo for (_, hi), (next_lo, _) in itertools.pairwise(shards))
+    assert all(lo < hi for lo, hi in shards[:-1])
+
+    def part(term):
+        return next(i for i, (lo, hi) in enumerate(shards) if lo <= term and (hi is None or term < hi))
+
+    assert len({part("that"), part("the"), part("this")}) == 3  # common words in parts of their own
 
 
 def test_an_empty_store_builds_to_nothing(tmp_path, home):
