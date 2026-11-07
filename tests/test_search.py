@@ -440,7 +440,7 @@ def test_get(corpus):
 
 
 def test_get_by_the_file_s_absolute_path(corpus):
-    # An agent that has a file's path, as glean's reviews have each email's, reads it without working out its id.
+    # An agent that has a file's path, as a tool reviewing emails has each email's, reads it without working out its id.
     catalog, root = corpus
     index = Index(catalog)
     assert index.get(str(root / "rl.md")) == index.get("notes/rl.md")
