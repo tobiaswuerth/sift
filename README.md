@@ -41,11 +41,11 @@ Or run it without installing: `uvx --torch-backend auto sift-rag serve`. With pi
 `pip install sift-rag`. On first use, sift downloads its two models from Hugging Face (about 2 GB).
 
 **GPU.** sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, which embeds slowly and
-reranks in about 25 seconds per query on 8 threads (0.3 seconds on an RTX 4090). On Linux and macOS, PyTorch from PyPI already uses
-the GPU. On Windows it doesn't: uv's `--torch-backend auto` picks the CUDA build that matches your driver, and with pip
-run `pip install --force-reinstall --no-deps torch torchvision --index-url https://download.pytorch.org/whl/cu128`
-afterwards. If an NVIDIA GPU sits unused, sift says so on start-up and prints the command that fixes it. A machine
-without a GPU can [borrow one](#another-machines-gpu).
+reranks in about 25 seconds per query on 8 threads (0.3 seconds on an RTX 4090). On Linux and macOS, PyTorch from PyPI
+already uses the GPU. On Windows it doesn't: uv's `--torch-backend auto` picks the CUDA build that matches your
+driver, and with pip run `pip install --force-reinstall --no-deps torch torchvision --index-url
+https://download.pytorch.org/whl/cu128` afterwards. If an NVIDIA GPU sits unused, sift says so on start-up and prints
+the command that fixes it. A machine without a GPU can [borrow one](#another-machines-gpu).
 
 ## Quick start
 
@@ -173,8 +173,8 @@ The index and the vectors carry over. When a release changes how the index is la
 once, and says so, from what the index holds: no file is read again and nothing is embedded again. From 1.7 or older,
 the index is split into a file per collection: stop every other sift first, and have as much free space as the index
 takes; `sift move FOLDER` as the first command splits it straight into that folder, on another drive too. 1.9 counts
-each collection's rows once, which takes minutes for tens of millions of vectors. An older sift doesn't open an index
-so updated, so upgrade every sift that uses it. The
+each collection's rows once: about 10 seconds for 14 million vectors, longer from a cold disk. An older sift doesn't
+open an index so updated, so upgrade every sift that uses it. The
 [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists every change.
 
 ## How it works

@@ -29,8 +29,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   details moved to [docs/usage.md](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md) (searching,
   filters, formats, linked notes, the UI),
   [docs/architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md) (how it works) and
-  [docs/worker.md](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md) (embedding on another machine),
-  linked from the GitHub release notes too.
+  [docs/worker.md](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md) (embedding on another machine).
 
 ## [1.8.0] - 2026-11-06
 
