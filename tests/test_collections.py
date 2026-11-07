@@ -160,6 +160,15 @@ def test_a_server_tells_agents_of_the_active_collections_only(three):
     assert _collections(Index(three)) == "No collections are active."
 
 
+def test_a_server_tells_agents_the_document_counts_kept(three):
+    # Not counted anew at each start: that took a large collection seconds to minutes.
+    db = three.store("papers")
+    db.execute("UPDATE counts SET n = 1234567 WHERE name = 'docs'")
+    db.commit()
+    assert "papers (" in _collections(Index(three))
+    assert "1,234,567 documents" in _collections(Index(three))
+
+
 # --- a store missing -----------------------------------------------------------
 
 

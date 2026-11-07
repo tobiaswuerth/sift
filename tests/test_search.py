@@ -1,10 +1,13 @@
 """Searching the index: keyword, semantic and hybrid search, filters and sorting, documents like one, `get`, and
 browsing by folder."""
 
+import json
+
 import numpy as np
 import pytest
 
 from sift import embed, indexing, search, store
+from sift.catalog import Catalog
 from sift.search import Index, _any_word
 
 from .conftest import write
@@ -498,6 +501,58 @@ def test_status(embedded, home):
         "size": entry["size"],
     } | {"docs": 3, "chunks": 3, "embedded": 3, "fields": fields, "links": 0, "unresolved": 0}
     assert entry["size"] >= (home / "collections" / "notes.sqlite").stat().st_size > 0
+
+
+def test_the_status_shows_the_counts_a_store_keeps(embedded):
+    # Not counted anew: counting a large store's vectors read tens of gigabytes, and took minutes.
+    db = embedded[0].store("notes")
+    db.execute("UPDATE counts SET n = 1234567 WHERE name = 'vectors'")
+    db.commit()
+    (entry,) = Index(embedded[0]).status()["collections"]
+    assert entry["embedded"] == 1234567
+
+
+def add_docs(db, metas):
+    """Documents with these front matters, after those there are; text and chunks don't matter here."""
+    source = db.execute("SELECT min(id) FROM sources").fetchone()[0]
+    db.executemany(
+        "INSERT INTO docs(source, path, title, meta, text) VALUES(?, ?, ?, ?, '')",
+        [(source, f"added/{i}.md", f"Added {i}", json.dumps(meta)) for i, meta in enumerate(metas)],
+    )
+    db.commit()
+
+
+def test_front_matter_fields_are_sampled_from_first_to_last_document(corpus, monkeypatch):
+    monkeypatch.setattr(search, "FIELD_SAMPLE", 2)
+    db = corpus[0].store("notes")
+    db.execute("""UPDATE docs SET meta = '{"first": 1}' WHERE id = (SELECT min(id) FROM docs)""")
+    add_docs(db, [{}] * 998 + [{"last": 1}])
+    (entry,) = Index(corpus[0]).status()["collections"]
+    assert entry["fields"] == ["first", "last"]
+
+
+def test_the_status_of_a_large_collection_reads_no_document_but_its_sample(corpus, monkeypatch):
+    # Reading every document for its front matter took a large collection's status minutes.
+    monkeypatch.setattr(search, "FIELD_SAMPLE", 10)
+    db = corpus[0].store("notes")
+    add_docs(db, [{"year": 2024}] * 20_000)
+    steps = []
+    db.set_progress_handler(lambda: steps.append(1), 100)  # every 100 instructions of SQLite's virtual machine
+    try:
+        (entry,) = Index(corpus[0]).status()["collections"]
+    finally:
+        db.set_progress_handler(None, 100)
+    assert entry["docs"] == 20_003
+    assert "year" in entry["fields"]
+    assert len(steps) < 100  # a pass over the documents takes several instructions each
+
+
+def test_the_status_of_an_empty_collection(tmp_path, home):
+    (tmp_path / "empty").mkdir()
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "empty", "empty")
+    (entry,) = Index(catalog).status()["collections"]
+    assert (entry["docs"], entry["chunks"], entry["embedded"], entry["fields"]) == (0, 0, 0, [])
 
 
 # --- edge cases ----------------------------------------------------------------

@@ -439,7 +439,9 @@ a code to each vector, in about a minute for 3 million vectors. sift 1.8 splits 
 it reads the index once, then makes each collection's keyword index anew, the collections side by side, and needs as
 much free space as the index takes until the old file goes. Stop every other sift first. To split a large index
 straight onto another drive, make `sift move FOLDER` the first command of 1.8. A split stopped half-way goes on where
-it stopped. An older sift doesn't open an index so updated: upgrade every sift that uses it. The [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists what
+it stopped. sift 1.9 counts the rows of each collection's index once, in a pass over its tables, which takes minutes
+for tens of millions of vectors; `sift status` then reads the counts kept. An older sift doesn't open an index so
+updated: upgrade every sift that uses it. The [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists what
 changed.
 
 ## Embedding on another machine
