@@ -241,6 +241,18 @@ def test_codes_load_in_batches(embedded, monkeypatch):
     assert (found[0], len(found)) == ("notes/rl.md", 3)
 
 
+def test_loading_the_codes_counts_none_of_them(embedded):
+    # They are read once, as they load: counting them first was a second pass over millions, at every server start.
+    db, statements = embedded[0].store("notes"), []
+    db.set_trace_callback(statements.append)
+    try:
+        Index(embedded[0]).load()
+    finally:
+        db.set_trace_callback(None)
+    assert any("FROM codes" in s for s in statements)
+    assert not any("count(*)" in s for s in statements)
+
+
 def test_codes_gone_while_loading_ask_for_embedding(embedded, monkeypatch):
     # Another process dropped every vector (`sift embed --reset`) between counting the codes and reading them.
     catalog, _ = embedded

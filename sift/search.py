@@ -300,8 +300,9 @@ def _by_value(rows, descending):
 
 
 def _codes(db):
-    """The codes of a store's vectors, batch by batch; None if it has none."""
-    n = db.execute("SELECT count(*) FROM codes").fetchone()[0]
+    """The codes of a store's vectors, batch by batch; None if it has none. At most as many as the vectors the store
+    counts, which it keeps: counting the codes was a pass over millions before the one that loads them."""
+    n = store.counts(db)["vectors"]
     ids, bits, row = np.empty(n, np.int64), None, 0
     cursor = db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
     while row < n and (batch := cursor.fetchmany(store.CODES_BATCH)):
