@@ -23,6 +23,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   model. It no longer reads every pending chunk at the start to find the longest by characters: that took minutes on
   a large index, and a chunk with fewer characters could have more tokens, so the first batch ran out of memory and
   every batch was halved.
+- The README is a third as long: what sift does, installing, connecting agents, the commands and settings. The
+  details moved to [docs/usage.md](docs/usage.md) (searching, filters, formats, linked notes, the UI),
+  [docs/architecture.md](docs/architecture.md) (how it works) and [docs/worker.md](docs/worker.md) (embedding on
+  another machine).
 
 ## [1.8.0] - 2026-11-06
 
