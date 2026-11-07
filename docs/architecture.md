@@ -96,7 +96,7 @@ a running server's codes in memory rather than loading millions again.
 - The UI's pages are rendered on the server with Jinja2, whose panes [htmx](https://htmx.org) swaps in place: no build
   step and no Node, and the UI is tested with the rest. It runs on the server's event loop, as the MCP tools do.
   Browsing a folder jumps through the index folder by folder, so it stays quick in collections of millions of
-  documents, and the collections are counted once per change of the index.
+  documents, and the collections' sizes are the counts their indexes keep.
 
 ## Worker protocol
 
