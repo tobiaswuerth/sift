@@ -196,7 +196,7 @@ collection added inside another.
 ## [1.2.0] - 2026-10-22
 
 For collections that other programs write to: a `.siftignore`, saved emails, the folder of each collection, and
-errors that say what to do ([Leaving files out](README.md#leaving-files-out), [Emails](README.md#emails)).
+errors that say what to do ([Leaving files out](docs/usage.md#leaving-files-out), [Emails](docs/usage.md#emails)).
 
 ### Added
 
@@ -229,7 +229,7 @@ errors that say what to do ([Leaving files out](README.md#leaving-files-out), [E
 ## [1.1.0] - 2026-10-22
 
 Links between Markdown notes, for Obsidian vaults and any notes that link to each other
-([Linked notes](README.md#linked-notes)).
+([Linked notes](docs/usage.md#linked-notes)).
 
 ### Added
 

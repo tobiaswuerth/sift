@@ -3,7 +3,7 @@
 This page explains how sift's search defaults were chosen. Every change to how `query` ranks is measured on seven
 datasets, with several rerankers and embedding models. The default is the setting that does best overall, not the
 winner on a single dataset. To measure sift on your own documents, use
-[`sift bench`](../README.md#measuring-search-on-your-own-documents).
+[`sift bench`](usage.md#measuring-search-on-your-own-documents).
 
 ## Results in brief
 
@@ -15,7 +15,7 @@ winner on a single dataset. To measure sift on your own documents, use
   Snowflake Arctic-Embed-L v2.0 ties it on average: it does better on financial questions and long German documents,
   worse on scientific text, and indexes 1.6 times as fast.
 - **Speed:** reranking takes about 0.3 seconds per query on an RTX 4090 and about 25 seconds on a CPU. Machines without
-  a GPU should rerank through a [`sift worker`](../README.md#embedding-on-another-machine).
+  a GPU should rerank through a [`sift worker`](worker.md).
 - **Vectors in memory:** `vsearch` keeps one bit per dimension in RAM and scores the 4,000 nearest exactly. Over 3.2
   million arXiv abstracts it finds 99.6% of exact search's top 10, with an MRR of 0.9528 against 0.9530, in a
   sixteenth of the memory.
@@ -239,5 +239,5 @@ ceiling, so sift doesn't expand queries itself, though agents are free to search
 - **Rerankers that need `trust_remote_code`, or have non-commercial licences.** sift's defaults must run anywhere,
   under licences that allow commercial use.
 - **Your documents.** The datasets above stand in for scientific, medical, financial, German and literature search.
-  Your own documents may behave differently. [`sift bench`](../README.md#measuring-search-on-your-own-documents)
+  Your own documents may behave differently. [`sift bench`](usage.md#measuring-search-on-your-own-documents)
   measures each search mode on questions you write, and `SIFT_RERANK_MODEL` and `SIFT_EMBED_MODEL` switch models.
