@@ -169,7 +169,7 @@ class Accelerator:
 
     def calibrate(self, run):
         """Measure the largest batch that fits the memory budget, and use it from now on. run(n) runs a batch of n
-        of the longest texts to come.
+        texts as long as any to come: of the longest input the model takes, so that the batch fits every text.
 
         Batches of 1, 2, 4, ... run until one uses half of the budget. Memory grows linearly with the batch size,
         so the last measurement predicts the size that fills FILL of the budget. A size that ran out of memory is
