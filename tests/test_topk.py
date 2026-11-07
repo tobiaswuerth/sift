@@ -49,7 +49,7 @@ def brute(readers, query, k, by_document=True, allowed=None):
                 ids, tf = part.everything()
                 alive = reader.alive(part.segment, ids)
                 ids, tf = ids[alive], tf[alive]
-                lengths, docs = reader.chunks_of(part.segment, ids)
+                lengths, docs = reader.lengths(part.segment, ids), reader.documents(ids)
                 term_scores = postings.term_scores(tf, lengths, average)  # as bm25 (see test_postings), to the bit
                 for chunk, s, doc in zip(ids.tolist(), term_scores.tolist(), docs.tolist()):
                     holding.setdefault(chunk, set()).add(t)

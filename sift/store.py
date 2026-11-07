@@ -84,16 +84,16 @@ COUNTS = (
 )
 CODES_BATCH = 100_000  # codes per batch as searches load them, and per transaction as vectors get them afterwards
 # Keyword search's own postings (see `postings`), built from FTS5's index, which stays the reference: per term and
-# segment its postings, long lists in blocks; chunks' lengths and documents; the chunks whose postings in older
-# segments are void (masked). Once built (meta kw_built), every chunk whose FTS5 entries change is marked dirty, in
-# the same transaction, numbered by the change (meta kw_change), until the postings follow.
+# segment its postings, long lists in blocks; chunks' lengths, in blocks of consecutive ids; the chunks whose postings
+# in older segments are void (masked). Once built (meta kw_built), every chunk whose FTS5 entries change is marked
+# dirty, in the same transaction, numbered by the change (meta kw_change), until the postings follow.
 POSTINGS = """
 CREATE TABLE IF NOT EXISTS kw_segments(id INTEGER PRIMARY KEY, chunks INTEGER NOT NULL, tokens INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS kw_terms(term TEXT NOT NULL, segment INTEGER NOT NULL, df INTEGER NOT NULL, list INTEGER,
     data BLOB, PRIMARY KEY(term, segment)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS kw_blocks(id INTEGER PRIMARY KEY, data BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS kw_chunks(id INTEGER PRIMARY KEY, segment INTEGER NOT NULL, first INTEGER NOT NULL,
-    data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS kw_lengths(segment INTEGER NOT NULL, block INTEGER NOT NULL, data BLOB NOT NULL,
+    PRIMARY KEY(segment, block)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS kw_masked(chunk INTEGER PRIMARY KEY, segment INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS kw_dirty(chunk INTEGER PRIMARY KEY, change INTEGER NOT NULL);
 """

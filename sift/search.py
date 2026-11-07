@@ -583,7 +583,7 @@ class Index:
                 return None
             state = postings.Reader.state(db)
             held = self._postings.get(c.id)
-            if held is None or held[0] != state:
+            if held is None or held[0] != state or held[1].db is not db:  # changed, or the store opened anew
                 held = self._postings[c.id] = (state, postings.Reader(db))
             readers.append(held[1])
         return readers

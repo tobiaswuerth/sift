@@ -3,6 +3,7 @@ in step with it through changes (deltas, masks, rebuilds), and read back for sea
 
 import random
 import sqlite3
+from contextlib import contextmanager
 
 import numpy as np
 import pytest
@@ -84,12 +85,16 @@ def test_ranges_round_trip_with_bounds_rounded_up():
     assert np.all(best - scores <= postings.TOP / 255 + 1e-9)
 
 
-def test_chunks_round_trip():
-    ids = np.array([10, 11, 12, 40, 41], np.int64) + (2 << 40)
-    docs = np.array([7, 7, 8, 3, 3], np.int64) + (2 << 40)  # a chunk added to an older document later
-    sizes = np.array([5, 300, 70000, 1, 0])
-    got = postings.decode_chunks(postings.encode_chunks(ids, sizes, docs))
-    assert [g.tolist() for g in got] == [ids.tolist(), sizes.tolist(), docs.tolist()]
+def test_lengths_round_trip_in_blocks_of_consecutive_ids():
+    first = (2 << 40) + 5 * (1 << postings.LENGTHS_SHIFT)
+    ids = np.array([first + 10, first + 11, first + 1023, first + 1024, first + 9000], np.int64)
+    sizes = np.array([5, 300, 70000, 1, 2])
+    blocks = postings.encode_lengths(ids, sizes)
+    assert sorted(blocks) == [(first >> postings.LENGTHS_SHIFT) + b for b in (0, 1, 8)]
+    for i, size in zip(ids, sizes):
+        held = postings.decode_lengths(blocks[int(i) >> postings.LENGTHS_SHIFT])
+        assert held[int(i) & ((1 << postings.LENGTHS_SHIFT) - 1)] == size
+    assert postings.decode_lengths(blocks[first >> postings.LENGTHS_SHIFT]).sum() == 305 + 70000  # 0 for no chunk
 
 
 def test_varints_are_read_as_sqlite_writes_them():
@@ -127,10 +132,9 @@ def test_a_build_holds_fts5s_postings(prose):
     assert reader.chunks == store.counts(db)["chunks"]
     assert reader.tokens == sum(lengths(db).values())
     ids = np.array(sorted(lengths(db)), np.int64)
-    got_lengths, got_docs = reader.chunks_of(1, ids)
-    assert got_lengths.tolist() == [lengths(db)[i] for i in ids.tolist()]
+    assert reader.lengths(1, ids).tolist() == [lengths(db)[i] for i in ids.tolist()]
     owner = dict(db.execute("SELECT id, doc FROM chunks"))
-    assert got_docs.tolist() == [owner[i] for i in ids.tolist()]
+    assert reader.documents(ids[::-1]).tolist() == [owner[i] for i in ids[::-1].tolist()]
 
 
 @pytest.mark.usefixtures("small_lists")
@@ -147,7 +151,7 @@ def test_long_lists_have_ranges_that_bound_their_scores(prose):
         rid, starts, ends, best = t.ranges()
         ids, tf = t.everything()
         assert np.array_equal(np.unique(ids >> postings.RANGE_SHIFT), rid)
-        scores = postings.term_scores(tf, reader.chunks_of(1, ids)[0], average)
+        scores = postings.term_scores(tf, reader.lengths(1, ids), average)
         for r, s, e, b in zip(rid, starts, ends, best):
             assert np.all(ids[s:e] >> postings.RANGE_SHIFT == r)
             assert scores[s:e].max() <= b
@@ -226,7 +230,7 @@ def unbuilt(db):
     """The store as an upgrade from sift 1.9 leaves it: no postings built."""
     store.set_meta(db, "kw_built", "")
     db.execute("DELETE FROM meta WHERE key = 'kw_built'")
-    for table in ("kw_terms", "kw_blocks", "kw_chunks", "kw_segments", "kw_masked", "kw_dirty"):
+    for table in ("kw_terms", "kw_blocks", "kw_lengths", "kw_segments", "kw_masked", "kw_dirty"):
         db.execute(f"DELETE FROM {table}")
     db.commit()
 
@@ -360,7 +364,7 @@ def test_a_build_stopped_leaves_the_postings_to_be_built(prose, monkeypatch, whe
     catalog, _ = prose
     db = catalog.store("prose")
     before = live(db)
-    module, name = {"starting": (store, "set_meta"), "finishing": (postings, "_write_chunks")}[where]
+    module, name = {"starting": (store, "set_meta"), "finishing": (postings, "_write_lengths")}[where]
     real = getattr(module, name)
     monkeypatch.setattr(module, name, stop)
     with pytest.raises(Stop):
@@ -413,11 +417,69 @@ def test_a_build_elsewhere_is_left_to_finish(prose, capsys):
     other = sqlite3.connect(f"{path_of(catalog)}.postings-lock", isolation_level=None)
     other.execute("BEGIN EXCLUSIVE")
     postings.build(db, path_of(catalog), "prose")
-    assert "another sift is building" in capsys.readouterr().err
+    assert "another sift is updating" in capsys.readouterr().err
     assert not postings.built(db)
     other.execute("ROLLBACK")
     other.close()  # as the OS does when that sift ends, however it ends
     postings.build(db, path_of(catalog), "prose")
+    assert postings.ready(db)
+
+
+def test_a_delta_waits_for_a_build_elsewhere(prose, monkeypatch):
+    # A build elsewhere rewrites every table: a delta written meanwhile would be lost, or mix with it.
+    monkeypatch.setattr(postings, "SMALL", 0)
+    catalog, _ = prose
+    db = catalog.store("prose")
+    store.delete_docs(db, [db.execute("SELECT min(id) FROM docs").fetchone()[0]])
+    db.commit()
+    other = sqlite3.connect(f"{path_of(catalog)}.postings-lock", isolation_level=None)
+    other.execute("BEGIN EXCLUSIVE")
+    postings.update(db, path_of(catalog))
+    assert postings.behind(db) > 0
+    assert db.execute("SELECT count(*) FROM kw_segments").fetchone() == (1,)
+    other.close()
+    postings.update(db, path_of(catalog))
+    assert postings.ready(db)
+
+
+def test_an_update_another_sift_did_meanwhile_is_not_done_again(prose, monkeypatch):
+    # Behind when asked, up to date once this sift has the lock: another sift updated them in between.
+    monkeypatch.setattr(postings, "SMALL", 0)
+    catalog, _ = prose
+    db = catalog.store("prose")
+    store.delete_docs(db, [db.execute("SELECT min(id) FROM docs").fetchone()[0]])
+    db.commit()
+    real = postings._alone
+
+    @contextmanager
+    def after_another(path):
+        with real(path) as alone:
+            postings._delta(db)  # what the other sift did, before this one got the lock
+            yield alone
+
+    monkeypatch.setattr(postings, "_alone", after_another)
+    postings.update(db, path_of(catalog))
+    assert db.execute("SELECT count(*) FROM kw_segments").fetchone() == (2,)  # its delta, no second one
+    assert postings.ready(db)
+
+
+def test_a_reindex_never_builds(prose, monkeypatch):
+    # An agent's reindex waits for its answer: it adds a delta of what changed, however much, and builds nothing,
+    # which reads the whole store; `sift index` does that.
+    monkeypatch.setattr(postings, "SMALL", 0)
+    monkeypatch.setattr(postings, "REBUILD_SHARE", 0.0)
+    catalog, root = prose
+    db = catalog.store("prose")
+    write(root / "n000.md", "# Changed\n\nw1 w2\n")
+    indexing.reindex(catalog, ["prose/n000.md"])
+    assert postings.ready(db)
+    assert db.execute("SELECT count(*) FROM kw_segments").fetchone() == (2,)  # a delta, though over the share
+    assert live(db) == fts5(db)
+    unbuilt(db)
+    write(root / "n001.md", "# Changed too\n")
+    indexing.reindex(catalog, ["prose/n001.md"])
+    assert not postings.built(db)  # left to `sift index`; searches read FTS5 meanwhile
+    indexing.index(catalog)
     assert postings.ready(db)
 
 

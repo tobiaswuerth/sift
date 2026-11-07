@@ -125,8 +125,7 @@ class _Store:
         ids, tf = part.everything()
         alive = self.reader.alive(part.segment, ids)
         ids, tf = ids[alive], tf[alive]
-        lengths, docs = self.reader.chunks_of(part.segment, ids)
-        return ids >> self.shift, ids, postings.term_scores(tf, lengths, self.average), docs
+        return ids >> self.shift, ids, postings.term_scores(tf, self.reader.lengths(part.segment, ids), self.average)
 
     def _slack(self, part):
         chunks, tokens = self.reader.segments[part.segment]
@@ -164,7 +163,7 @@ class _Store:
         present = {}
         for t in self.whole:
             here = np.zeros(span)
-            for rid, _, scores, _ in self.whole[t]:
+            for rid, _, scores in self.whole[t]:
                 np.maximum.at(here, rid - first, scores)
             for _, (rid, _, _, best), slack in self.ranged[t]:
                 at = rid - first
@@ -174,34 +173,35 @@ class _Store:
         return first, bound, present
 
     def _score(self, group):
-        """Score every chunk of these ranges (ascending), and offer those the query finds to the best."""
-        width = 1 << self.shift
-        owner = np.full(len(group) * width, -1, np.int64)
-        scores, present = {}, {}
-        for t in self.whole:
-            scores[t] = np.zeros(len(group) * width)
-            for ids, term_scores, docs in self._in(t, group):
-                slot = np.searchsorted(group, ids >> self.shift) * width + (ids & (width - 1))
-                scores[t][slot] = term_scores
-                owner[slot] = docs
+        """Score every chunk of these ranges (ascending) that holds any term, and offer those the query finds to the
+        best."""
+        found = {t: list(self._in(t, group)) for t in self.whole}  # a group's ranges hold some term's postings
+        every = [ids for parts in found.values() for ids, _ in parts]
+        chunks, where = np.unique(np.concatenate(every), return_inverse=True)  # each posting's chunk among them
+        scores, present, at = {}, {}, 0
+        for t, parts in found.items():
+            scores[t] = np.zeros(len(chunks))
+            for ids, term_scores in parts:
+                scores[t][where[at : at + len(ids)]] = term_scores
+                at += len(ids)
             present[t] = scores[t] > 0
-        found, terms = counted(self.query, present)
-        acc = np.zeros(len(group) * width)
-        for t, where in terms:
-            acc += np.where(where, self.weight[t] * scores[t], 0.0)
-        slots = np.flatnonzero(found & (acc >= self.best.threshold))
-        chunks = group[slots // width] * width + slots % width
+        holds, terms = counted(self.query, present)
+        acc = np.zeros(len(chunks))
+        for t, counts in terms:
+            acc += np.where(counts, self.weight[t] * scores[t], 0.0)
+        keep = np.flatnonzero(holds & (acc >= self.best.threshold))
+        chunks, acc = chunks[keep], acc[keep]
         if self.allowed is not None and len(chunks):
-            keep = np.asarray(self.allowed(chunks), bool)
-            slots, chunks = slots[keep], chunks[keep]
+            allowed = np.asarray(self.allowed(chunks), bool)
+            chunks, acc = chunks[allowed], acc[allowed]
         if len(chunks):
-            self.best.offer(chunks, owner[slots], acc[slots])
+            self.best.offer(chunks, self.reader.documents(chunks), acc)
 
     def _in(self, term, group):
-        """(chunk ids, term scores, documents) of a term's live postings in these ranges, a part per segment."""
-        for rid, ids, scores, docs in self.whole[term]:
-            take = _slices(np.searchsorted(rid, group), np.searchsorted(rid, group, side="right"))
-            yield ids[take], scores[take], docs[take]
+        """(chunk ids, term scores) of a term's live postings in these ranges, a part per segment."""
+        for rid, ids, scores in self.whole[term]:
+            take = postings.slices(np.searchsorted(rid, group), np.searchsorted(rid, group, side="right"))
+            yield ids[take], scores[take]
         for part, (rid, starts, ends, _), _ in self.ranged[term]:
             at = np.minimum(np.searchsorted(rid, group), len(rid) - 1)
             hit = rid[at] == group
@@ -210,11 +210,4 @@ class _Store:
             ids, tf = part.postings(starts[at[hit]], ends[at[hit]])
             alive = self.reader.alive(part.segment, ids)
             ids, tf = ids[alive], tf[alive]
-            lengths, docs = self.reader.chunks_of(part.segment, ids)
-            yield ids, postings.term_scores(tf, lengths, self.average), docs
-
-
-def _slices(starts, ends):
-    """The indexes from each start up to its end, in order."""
-    size = ends - starts
-    return np.repeat(starts - np.r_[0, np.cumsum(size)[:-1]], size) + np.arange(size.sum())
+            yield ids, postings.term_scores(tf, self.reader.lengths(part.segment, ids), self.average)

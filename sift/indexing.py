@@ -271,7 +271,7 @@ def reindex(catalog, paths, scans=True):
         except BaseException:
             db.rollback()
             raise
-        postings.update(db, collection.store, collection.name)
+        postings.update(db, collection.store, collection.name, rebuild=False)  # quick: what changed, no more
     return Reindexed(found, removed, versions)
 
 

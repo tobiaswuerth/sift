@@ -29,6 +29,76 @@ def test_keyword_search(corpus):
     assert index.search("nonexistentword") == []
 
 
+def through_fts5(catalog):
+    """Have keyword searches of every collection read FTS5: as if a chunk had changed since the postings."""
+    for c in catalog.collections():
+        db = catalog.store(c)
+        db.execute("INSERT INTO kw_dirty(chunk, change) VALUES(-1, 0)")  # no chunk has that id: nothing else changes
+        db.commit()
+
+
+def scored(hits):
+    return [(h["id"], h["lines"], round(h["score"], 6)) for h in hits]
+
+
+def agree(got, want):
+    """The same hits, score for score; among hits of equal score any order (FTS5 keeps none), and at the last score,
+    where the k-th place cuts a tie, any of them."""
+    assert [s for *_, s in got] == [s for *_, s in want]
+    last = want[-1][2] if want else None
+    for score in {s for *_, s in want} - {last}:
+        assert {h for h in got if h[2] == score} == {h for h in want if h[2] == score}
+
+
+@pytest.mark.parametrize(
+    "query, options",
+    [
+        ("w1", {}),
+        ("w2 w3", {}),  # all of them
+        ("w5 OR w40 OR muller", {"k": 25}),
+        ("w1 NOT w2", {}),
+        ("(w1 OR w9) AND w3", {"all_passages": True, "k": 30}),
+        ("w4", {"path": "n0*"}),
+        ("w1 w3", {"filters": {"title": {">=": "w"}}}),
+        ("w7 OR w8", {"collection": "more"}),
+        ("absent", {}),
+        ("w2 OR absent", {}),  # no chunk with all: any of them
+    ],
+)
+def test_keyword_search_from_the_postings_finds_what_fts5_finds(prose, tmp_path, query, options):
+    # The postings answer queries of terms, AND, OR and NOT once they are ready; FTS5 answers otherwise, as before,
+    # and finds the same, score for score.
+    from .conftest import write_prose
+
+    catalog, _ = prose
+    write_prose(tmp_path / "more", 8, notes=40)
+    catalog.add(tmp_path / "more", "more")
+    indexing.index(catalog)
+    fast = scored(Index(catalog).search(query, **options))
+    through_fts5(catalog)
+    agree(fast, scored(Index(catalog).search(query, **options)))
+
+
+def test_hybrid_candidates_come_from_the_postings(prose, fake_models, monkeypatch):
+    from sift import topk
+
+    catalog, _ = prose
+    embed.embed_pending(catalog)
+    asked, real = [], topk.search
+    monkeypatch.setattr(topk, "search", lambda *args, **kwargs: asked.append(args[1]) or real(*args, **kwargs))
+    assert Index(catalog).query("what are w3 and w9", k=3)
+    assert asked == [("or", [("term", "w3"), ("term", "w9")])]  # its meaningful words, any of them
+
+
+def test_the_postings_of_a_store_opened_anew_are_read_anew(prose):
+    # A search keeps a store's postings reader; the store closed and opened again, e.g. by `sift move`, needs another.
+    catalog, _ = prose
+    index = Index(catalog)
+    before = index.search("w1")
+    catalog.release(catalog.get("prose").id)
+    assert index.search("w1") == before
+
+
 def test_a_document_about_a_term_outranks_one_that_names_it_in_its_title(corpus):
     # The title is indexed twice already, as the text's heading and as its own column; weighted double on top, a
     # title word outranked a whole abstract about it.

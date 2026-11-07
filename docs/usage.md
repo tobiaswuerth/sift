@@ -45,7 +45,9 @@ server's console; `sift status` marks it `"missing": true`. sift never makes suc
 vectors' codes with its next request, a server started afterwards doesn't name them to agents, and `sift index` and
 `sift embed` skip them unless named. Their indexes stay as they are, `reindex` still updates them, and `sift activate
 NAME ...` takes them back. `sift status` lists every collection, `"active"` or not, with its index file (`"store"`),
-its size in bytes and, if active, its counts of documents, chunks and vectors.
+its size in bytes and, if active, its counts of documents, chunks and vectors, and how its keyword postings stand
+(`"keywords"`): `"ready"`, `"not built"`, or how many chunks they are behind. Until they are ready, keyword searches of
+the collection read FTS5, slower on a large one; `sift index` builds or updates them.
 
 ### Leaving files out
 

@@ -10,7 +10,8 @@ can't reach its best results (Block-Max Pruning, Mallia et al. 2024), at about a
   postings in kw_blocks, after a blob of its ranges: for each RANGE consecutive chunk ids holding the term, how many
   postings it has there and its best term score there, rounded up to a byte. Summed over a query's terms, these bound
   the score of every chunk in the range.
-- Per segment, each chunk's length in tokens (all columns) and its document, in blocks (kw_chunks).
+- Per segment, each chunk's length in tokens (all columns), in blocks of LENGTHS consecutive chunk ids (kw_lengths):
+  a search reads those of the chunks it scores. Their documents come from the chunks table, for those found.
 - A chunk whose postings changed after a segment was built is masked: its postings there count no more.
 - Statistics (chunks, tokens, document frequencies) are the segments', masked postings included, as Lucene's are: the
   same as FTS5's until something changes, and the same again after the next rebuild.
@@ -40,12 +41,12 @@ RANGE_SHIFT = 7  # a range is 128 consecutive chunk ids: on PubMed, quicker and 
 # most 8, as a range's postings are counted in a byte
 BLOCK = 4096  # postings per block of a long list: a few kilobytes read for a few postings
 LONG = 4096  # postings from which a base list comes in blocks, with ranges; shorter ones are read whole
-CHUNK_BLOCK = 65536  # chunks per block of lengths and documents
+LENGTHS_SHIFT = 10  # a block of lengths covers 1024 consecutive chunk ids: about a kilobyte or two to read
 K1, B = 1.2, 0.75  # the parameters of FTS5's bm25()
 TOP = K1 + 1  # the most a term score can be, idf aside
 MOST_SEGMENTS = 8  # the base and its deltas; one more, and the deltas are merged into one
 REBUILD_SHARE = 0.05  # changed chunks of all, from which the postings are built anew rather than given a delta
-SMALL = 10_000  # chunks; a store this small is built anew on every update, in about a second
+SMALL = 2_000  # chunks; a store this small is built anew by `sift index` rather than given a delta: in a moment
 PARALLEL = 1_000_000  # chunks from which a build reads FTS5's index in worker processes
 FETCH = 1_000_000  # rows fetched at a time
 LEVEL = 6  # zlib's
@@ -53,7 +54,6 @@ LEVEL = 6  # zlib's
 _BLOCK = struct.Struct("<qIB")  # first chunk id, postings, bytes per count (1, 2 or 4)
 _WIDTHS = {1: np.uint8, 2: np.uint16, 4: np.uint32}
 _RANGES = struct.Struct("<qI")  # first range id, ranges
-_CHUNKS = struct.Struct("<qqI")  # first chunk id, its document, chunks
 
 
 # --- encoding ------------------------------------------------------------------
@@ -121,27 +121,24 @@ def quantized(scores):
     return np.minimum(np.ceil(scores * (255 / TOP)), 255).astype(np.uint8)
 
 
-def encode_chunks(ids, lengths, docs):
-    """Chunks as stored: ids (ascending, at least one), lengths in tokens, documents."""
-    return zlib.compress(
-        _CHUNKS.pack(int(ids[0]), int(docs[0]), len(ids))
-        + _gaps(ids).tobytes()
-        + lengths.astype(np.uint32).tobytes()
-        + np.diff(docs).astype(np.int64).tobytes(),
-        LEVEL,
-    )
+def encode_lengths(ids, lengths):
+    """{block: data} of chunks' lengths (ids ascending): per block of 2**LENGTHS_SHIFT consecutive ids, the length of
+    each, 0 for an id no chunk of the segment has."""
+    if not len(ids):
+        return {}
+    blocks = ids >> LENGTHS_SHIFT
+    cuts = np.r_[0, np.flatnonzero(np.diff(blocks)) + 1, len(ids)]
+    encoded = {}
+    for start, end in itertools.pairwise(cuts.tolist()):
+        dense = np.zeros(1 << LENGTHS_SHIFT, np.uint32)
+        dense[ids[start:end] & ((1 << LENGTHS_SHIFT) - 1)] = lengths[start:end]
+        encoded[int(blocks[start])] = zlib.compress(dense.tobytes(), LEVEL)
+    return encoded
 
 
-def decode_chunks(data):
-    """(ids, lengths, documents), as int64, of encoded chunks."""
-    raw = zlib.decompress(data)
-    first, doc, n = _CHUNKS.unpack_from(raw)
-    at = _CHUNKS.size
-    ids = _ascending(first, np.frombuffer(raw, np.uint32, n - 1, at), n)
-    at += 4 * (n - 1)
-    lengths = np.frombuffer(raw, np.uint32, n, at).astype(np.int64)
-    docs = _ascending(doc, np.frombuffer(raw, np.int64, n - 1, at + 4 * n), n)
-    return ids, lengths, docs
+def decode_lengths(data):
+    """The lengths of a block's chunk ids, by id from its first, as int64 (0 for none)."""
+    return np.frombuffer(zlib.decompress(data), np.uint32).astype(np.int64)
 
 
 def term_scores(tf, lengths, average):
@@ -178,18 +175,6 @@ def _lengths(db, table):
         ids.append(np.fromiter((r[0] for r in batch), np.int64, len(batch)))
         lengths.append(np.bincount(row, weights=numbers, minlength=len(batch)).astype(np.int64))
     return np.concatenate(ids), np.concatenate(lengths)
-
-
-def _documents(db, ids):
-    """The documents of these chunks (ascending), a batch of the chunks table at a time."""
-    found, owners = [np.zeros(0, np.int64)], [np.zeros(0, np.int64)]
-    rows = db.execute("SELECT id, doc FROM chunks ORDER BY id")
-    for batch in iter(lambda: rows.fetchmany(FETCH), []):
-        found.append(np.fromiter((r[0] for r in batch), np.int64, len(batch)))
-        owners.append(np.fromiter((r[1] for r in batch), np.int64, len(batch)))
-    found, owners = np.concatenate(found), np.concatenate(owners)
-    at = np.minimum(np.searchsorted(found, ids), max(len(found) - 1, 0))
-    return np.where(found[at] == ids, owners[at], -1) if len(found) else np.full(len(ids), -1, np.int64)
 
 
 def _postings(rows):
@@ -278,8 +263,9 @@ def _shards():
 
 @contextmanager
 def _alone(path):
-    """True while this process alone builds the postings of the store at `path`, False if another sift is building
-    them: an exclusive transaction on a database of its own beside the store, which the OS ends with the process."""
+    """True while this process alone changes the postings of the store at `path`, False if another sift is changing
+    them: an exclusive transaction on a database of its own beside the store, which the OS ends with the process. A
+    build reads the store for minutes, without holding the store's own lock, so other writers go on meanwhile."""
     lock = sqlite3.connect(f"{path}.postings-lock", timeout=0, isolation_level=None)
     try:
         try:
@@ -301,7 +287,7 @@ def build(db, path, name="", workers=0):
     store is read by `workers` processes. Another sift building them already? Then nothing happens here."""
     with _alone(path) as alone:
         if not alone:
-            console.say(f"{name}: another sift is building its keyword postings; searches read FTS5 meanwhile")
+            console.say(f"{name}: another sift is updating its keyword postings; searches read FTS5 meanwhile")
             return
         _build(db, path, name, workers)
 
@@ -311,7 +297,7 @@ def _build(db, path, name, workers):
     try:
         change = int(store.get_meta(db, "kw_change", 0))
         store.set_meta(db, "kw_built", "building")  # changes are marked from now on: see store.keywords
-        for table in ("kw_terms", "kw_blocks", "kw_chunks", "kw_segments", "kw_masked"):
+        for table in ("kw_terms", "kw_blocks", "kw_lengths", "kw_segments", "kw_masked"):
             db.execute(f"DELETE FROM {table}")
         db.commit()
     except BaseException:
@@ -340,7 +326,7 @@ def _build(db, path, name, workers):
                     progress.update(done)
     db.execute("BEGIN IMMEDIATE")
     try:
-        _write_chunks(db, 1, ids, lengths, _documents(db, ids))
+        _write_lengths(db, 1, ids, lengths)
         db.execute("INSERT INTO kw_segments(id, chunks, tokens) VALUES(1, ?, ?)", (len(ids), int(lengths.sum())))
         store.set_meta(db, "kw_built", change)
         db.execute("DELETE FROM kw_dirty WHERE change <= ?", (change,))
@@ -365,13 +351,10 @@ def _write_terms(db, segment, encoded, keys):
     db.executemany("INSERT INTO kw_blocks(id, data) VALUES(?, ?)", blocks)
 
 
-def _write_chunks(db, segment, ids, lengths, docs):
+def _write_lengths(db, segment, ids, lengths):
     db.executemany(
-        "INSERT INTO kw_chunks(segment, first, data) VALUES(?, ?, ?)",
-        [
-            (segment, int(ids[i]), encode_chunks(*(a[i : i + CHUNK_BLOCK] for a in (ids, lengths, docs))))
-            for i in range(0, len(ids), CHUNK_BLOCK)
-        ],
+        "INSERT INTO kw_lengths(segment, block, data) VALUES(?, ?, ?)",
+        [(segment, block, data) for block, data in encode_lengths(ids, lengths).items()],
     )
 
 
@@ -393,23 +376,28 @@ def ready(db):
     return built(db) and not db.execute("SELECT 1 FROM kw_dirty LIMIT 1").fetchone()
 
 
-def update(db, path, name="", workers=0):
+def update(db, path, name="", workers=0, rebuild=True):
     """Bring a store's postings up to FTS5: build them if there are none, else add a delta of the chunks changed
     since; when deltas grow too many, merge them into one (MOST_SEGMENTS), and when the chunks changed since the
-    postings were built grow too many, build them anew (REBUILD_SHARE)."""
-    if not built(db):
-        build(db, path, name, workers)
+    postings were built grow too many, build them anew (REBUILD_SHARE). Without `rebuild`, as for a file an agent
+    reindexes, nothing is built: that reads the whole store, so `sift index` does it. Another sift changing the
+    postings meanwhile? Then nothing happens here, and searches read FTS5 until the next update."""
+    if built(db) and not behind(db):
         return
-    dirty = behind(db)
-    if not dirty:
-        return
-    chunks = store.counts(db)["chunks"]
-    segments = db.execute("SELECT count(*) FROM kw_segments").fetchone()[0]
-    masked = db.execute("SELECT count(*) FROM kw_masked").fetchone()[0]
-    if chunks < SMALL or masked + dirty > REBUILD_SHARE * chunks:
-        build(db, path, name, workers)
-    else:
-        _delta(db, merge=segments >= MOST_SEGMENTS)
+    with _alone(path) as alone:
+        if not alone:
+            console.say(f"{name}: another sift is updating its keyword postings; searches read FTS5 meanwhile")
+        elif not built(db):
+            if rebuild:
+                _build(db, path, name, workers)
+        elif dirty := behind(db):
+            chunks = store.counts(db)["chunks"]
+            segments = db.execute("SELECT count(*) FROM kw_segments").fetchone()[0]
+            masked = db.execute("SELECT count(*) FROM kw_masked").fetchone()[0]
+            if rebuild and (chunks < SMALL or masked + dirty > REBUILD_SHARE * chunks):
+                _build(db, path, name, workers)
+            else:
+                _delta(db, merge=segments >= MOST_SEGMENTS)
 
 
 def _delta(db, merge=False):
@@ -424,15 +412,14 @@ def _delta(db, merge=False):
     try:
         if merge:  # the deltas go; their chunks, masked in the base, are the new one's
             db.execute("DELETE FROM kw_terms WHERE segment > 1")
-            db.execute("DELETE FROM kw_chunks WHERE segment > 1")
+            db.execute("DELETE FROM kw_lengths WHERE segment > 1")
             db.execute("DELETE FROM kw_segments WHERE id > 1")
             db.execute("UPDATE kw_masked SET segment = 2")
         segment, first_key = db.execute(
             "SELECT coalesce(max(id), 0) + 1, (SELECT coalesce(max(id) >> 24, 0) + 1 FROM kw_blocks) FROM kw_segments"
         ).fetchone()
         _write_terms(db, segment, encoded, itertools.count(first_key))
-        if len(ids):
-            _write_chunks(db, segment, ids, lengths, _documents(db, ids))
+        _write_lengths(db, segment, ids, lengths)
         db.execute(
             "INSERT INTO kw_segments(id, chunks, tokens) VALUES(?, ?, ?)", (segment, len(ids), int(lengths.sum()))
         )
@@ -448,10 +435,10 @@ def _delta(db, merge=False):
 
 
 def _delta_chunks(db):
-    """The chunks the deltas hold."""
+    """The chunks the deltas hold: those with a length."""
     held = []
-    for (data,) in db.execute("SELECT data FROM kw_chunks WHERE segment > 1"):
-        held += decode_chunks(data)[0].tolist()
+    for block, data in db.execute("SELECT block, data FROM kw_lengths WHERE segment > 1"):
+        held += ((block << LENGTHS_SHIFT) + np.flatnonzero(decode_lengths(data))).tolist()
     return held
 
 
@@ -503,24 +490,29 @@ class Term:
         return self.reader.ranges(self.key)
 
     def postings(self, starts, ends):
-        """(chunk ids, counts) of the postings from each start up to its end, in the list's order."""
-        first, last = starts // BLOCK, (ends - 1) // BLOCK
-        n = last - first + 1
-        need = np.unique(np.repeat(first - np.r_[0, np.cumsum(n)[:-1]], n) + np.arange(n.sum()))
-        blocks = [self.reader.block(self.key, int(b)) for b in need]
-        ids = np.concatenate([b[0] for b in blocks])
-        tf = np.concatenate([b[1] for b in blocks])
-        at = np.zeros(int(need[-1]) + 1, np.int64)
-        at[need] = np.arange(len(need)) * BLOCK  # every block but a list's last holds BLOCK postings
-        size = ends - starts
-        begin = at[first] + starts - first * BLOCK
-        idx = np.repeat(begin - np.r_[0, np.cumsum(size)[:-1]], size) + np.arange(size.sum())
-        return ids[idx], tf[idx]
+        """(chunk ids, counts) of the postings from each start up to its end (ascending), in the list's order: only
+        those, from the blocks that hold them."""
+        idx = slices(starts, ends)
+        ids, tf = np.empty(len(idx), np.int64), np.empty(len(idx), np.int64)
+        block = idx // BLOCK
+        cuts = np.r_[0, np.flatnonzero(np.diff(block)) + 1, len(idx)]
+        for start, end in itertools.pairwise(cuts.tolist()):
+            n = int(block[start])
+            held_ids, held_tf = self.reader.block(self.key, n)
+            at = idx[start:end] - n * BLOCK
+            ids[start:end], tf[start:end] = held_ids[at], held_tf[at]
+        return ids, tf
+
+
+def slices(starts, ends):
+    """The indexes from each start up to its end, in order."""
+    size = ends - starts
+    return np.repeat(starts - np.r_[0, np.cumsum(size)[:-1]], size) + np.arange(size.sum())
 
 
 class Reader:
-    """A store's postings as searches read them: segments and their statistics, terms, chunks' lengths and documents,
-    and which postings are masked. Made for a state of the postings (`state`), and read through caches."""
+    """A store's postings as searches read them: segments and their statistics, terms, chunks' lengths, and which
+    postings are masked. Made for a state of the postings (`state`), and read through caches."""
 
     def __init__(self, db):
         self.db = db
@@ -528,13 +520,9 @@ class Reader:
         masked = db.execute("SELECT chunk, segment FROM kw_masked ORDER BY chunk").fetchall()
         self.masked = np.array([m[0] for m in masked], np.int64)
         self.masked_in = np.array([m[1] for m in masked], np.int64)
-        firsts = {}
-        for segment, first, rowid in db.execute("SELECT segment, first, id FROM kw_chunks ORDER BY segment, first"):
-            firsts.setdefault(segment, []).append((first, rowid))
-        self._firsts = {s: (np.array([f for f, _ in v]), [r for _, r in v]) for s, v in firsts.items()}
         self.ranges = lru_cache(maxsize=1024)(self._ranges)
         self.block = lru_cache(maxsize=4096)(self._block)
-        self._chunk_block = lru_cache(maxsize=1024)(self._read_chunks)
+        self._dense = {}  # segment: (its first block, the lengths read so far by id from it, the blocks read)
 
     @staticmethod
     def state(db):
@@ -563,20 +551,33 @@ class Reader:
     def _blob(self, rowid):
         return self.db.execute("SELECT data FROM kw_blocks WHERE id = ?", (rowid,)).fetchone()[0]
 
-    def chunks_of(self, segment, ids):
-        """(lengths, documents) of these chunks, by id, as the segment holds them."""
-        firsts, rowids = self._firsts[segment]
-        which = np.searchsorted(firsts, ids, side="right") - 1
-        lengths, docs = np.empty(len(ids), np.int64), np.empty(len(ids), np.int64)
-        for w in np.unique(which).tolist():
-            held_ids, held_lengths, held_docs = self._chunk_block(rowids[w])
-            sel = which == w
-            at = np.searchsorted(held_ids, ids[sel])
-            lengths[sel], docs[sel] = held_lengths[at], held_docs[at]
-        return lengths, docs
+    def lengths(self, segment, ids):
+        """The lengths of these chunks, by id, as the segment holds them: their blocks read once, into an array of
+        the segment's ids, which takes memory only where written."""
+        if segment not in self._dense:
+            first, last = self.db.execute(
+                "SELECT min(block), max(block) FROM kw_lengths WHERE segment = ?", (segment,)
+            ).fetchone()
+            blocks = last - first + 1 if first is not None else 0
+            self._dense[segment] = (first or 0, np.zeros(blocks << LENGTHS_SHIFT, np.int32), np.zeros(blocks, bool))
+        first, held, read = self._dense[segment]
+        blocks = (ids >> LENGTHS_SHIFT) - first
+        for block in np.unique(blocks[~read[blocks]]).tolist():
+            row = self.db.execute(
+                "SELECT data FROM kw_lengths WHERE segment = ? AND block = ?", (segment, block + first)
+            ).fetchone()
+            held[block << LENGTHS_SHIFT : (block + 1) << LENGTHS_SHIFT] = decode_lengths(row[0])
+            read[block] = True
+        return held[ids - (first << LENGTHS_SHIFT)]
 
-    def _read_chunks(self, rowid):
-        return decode_chunks(self.db.execute("SELECT data FROM kw_chunks WHERE id = ?", (rowid,)).fetchone()[0])
+    def documents(self, ids):
+        """The documents of these chunks, by id."""
+        owner = dict(
+            self.db.execute(
+                "SELECT id, doc FROM chunks WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(ids.tolist()),)
+            )
+        )
+        return np.fromiter((owner[i] for i in ids.tolist()), np.int64, len(ids))
 
     def alive(self, segment, ids):
         """Which of these postings of the segment count: those of chunks not masked since it was built."""

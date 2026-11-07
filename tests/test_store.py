@@ -350,7 +350,7 @@ def test_counting_stopped_leaves_the_store_as_sift_1_8_left_it(embedded, monkeyp
 
 # --- the keyword postings' tables and changes -------------------------------------
 
-POSTINGS_TABLES = {"kw_segments", "kw_terms", "kw_blocks", "kw_chunks", "kw_masked", "kw_dirty"}
+POSTINGS_TABLES = {"kw_segments", "kw_terms", "kw_blocks", "kw_lengths", "kw_masked", "kw_dirty"}
 
 
 def tables(db):
