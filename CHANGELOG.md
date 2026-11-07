@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-07
+
+Status in a moment on any index, embedding a third faster with the CPU left free, and a README to the point.
+
 ### Changed
 
 - `sift status`, the MCP `status` tool and a starting server no longer read every vector and document of a
@@ -592,7 +596,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/tobiaswuerth/sift/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/tobiaswuerth/sift/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/tobiaswuerth/sift/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/tobiaswuerth/sift/compare/v1.5.0...v1.6.0
