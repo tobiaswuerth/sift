@@ -251,7 +251,8 @@ def build(index=None):
     @mcp.tool(annotations=READ_ONLY)
     async def status() -> dict:
         """Collections with their folders (`path`), whether they are `active` (searched), their index files (`store`)
-        and sizes; of active ones document, chunk and link counts; and the embedding model."""
+        and sizes; of active ones the counts of documents, chunks and those `embedded`, their front-matter `fields`,
+        and their links; and the embedding model."""
         return _run(index.status)
 
     @mcp.tool(annotations=READ_ONLY)
