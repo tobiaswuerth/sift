@@ -13,7 +13,6 @@ import posixpath
 import re
 import unicodedata
 from collections import namedtuple
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
 from functools import partial
 from html.parser import HTMLParser
@@ -392,14 +391,9 @@ def _xberg(raw, name):
 
 
 def _finished(make):
-    """The result of the coroutine make() returns, run to its end; in a thread of its own where an event loop already
-    runs in this one, as in sift's server, whose tools run on its loop."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(make())
-    with ThreadPoolExecutor(1) as thread:
-        return thread.submit(lambda: asyncio.run(make())).result()
+    """The result of the coroutine make() returns, run to its end. No event loop runs in this thread: sift's server
+    runs its tools' work on a worker thread (see `jobs`)."""
+    return asyncio.run(make())
 
 
 def _document(raw, name, fields):

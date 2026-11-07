@@ -93,8 +93,12 @@ a running server's codes in memory rather than loading millions again.
 ## Server and UI
 
 - `sift serve` loads the models and the codes once and keeps them in memory, for any number of agents.
+- Calls run one at a time on a worker thread, so the event loop stays free to answer, to accept connections and to
+  hear that a client cancelled a call or went away. A cancelled call stops: its SQLite statements end within about a
+  millisecond, through a progress handler on every connection, and it runs the models no more. `reindex` runs to its
+  end. The models run on the main thread, which holds the loop: PyTorch crashes in worker threads on Python 3.15.
 - The UI's pages are rendered on the server with Jinja2, whose panes [htmx](https://htmx.org) swaps in place: no build
-  step and no Node, and the UI is tested with the rest. It runs on the server's event loop, as the MCP tools do.
+  step and no Node, and the UI is tested with the rest. Its pages are made as the MCP tools' calls are run.
   Browsing a folder jumps through the index folder by folder, so it stays quick in collections of millions of
   documents, and the collections' sizes are the counts their indexes keep.
 

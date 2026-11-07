@@ -37,6 +37,24 @@ def ids(response):
     return re.findall(r'class="hit[^"]*" data-id="([^"]+)"', response.text)
 
 
+def test_pages_are_made_off_the_event_loop(embedded, monkeypatch):
+    # Like the MCP tools: one call at a time on the worker thread, so a slow search leaves the server answering.
+    from sift import jobs
+
+    index, ran = Index(embedded[0]), []
+    real = jobs.run
+
+    async def recording(fn, *args, **kwargs):
+        ran.append(fn)
+        return await real(fn, *args, **kwargs)
+
+    monkeypatch.setattr(jobs, "run", recording)
+    browser = page(index)
+    assert browser.get("/ui/?q=brush").status_code == 200
+    assert browser.get("/ui/file?id=" + urllib.parse.quote(BRUSH)).status_code == 200
+    assert len(ran) == 2
+
+
 def test_the_page_shows_what_is_indexed(browser):
     response = browser.get("/ui/")
     assert response.status_code == 200
@@ -434,13 +452,31 @@ def test_the_ui_brings_its_scripts_and_styles(browser):
         assert kind in response.headers["content-type"]
 
 
-def test_searches_run_on_the_event_loop_thread(embedded, monkeypatch):
-    # PyTorch crashes in other threads on Python 3.15 (Windows, macOS), so the UI must not search in a thread pool.
-    index, threads = Index(embedded[0]), []
-    real = index.query
-    monkeypatch.setattr(index, "query", lambda *a, **kw: threads.append(threading.current_thread()) or real(*a, **kw))
-    page(index).get("/ui/", params={"q": "brush", "mode": "query"})
-    assert threads == [threading.main_thread()]
+def test_searches_run_off_the_event_loop_and_their_models_on_it(embedded, monkeypatch):
+    # PyTorch crashes in worker threads on Python 3.15 (Windows, macOS): the models run on the loop's thread (the main
+    # thread in `sift serve`), the rest of a search off it, so the server answers meanwhile.
+    from sift import jobs
+
+    index, seen = Index(embedded[0]), {}
+    real_query, real_run = index.query, jobs.run
+    monkeypatch.setattr(
+        index, "query", lambda *a, **kw: seen.setdefault("search", threading.current_thread()) and real_query(*a, **kw)
+    )
+
+    async def run(fn, *args, **kwargs):
+        seen["loop"] = threading.current_thread()
+        return await real_run(fn, *args, **kwargs)
+
+    monkeypatch.setattr(jobs, "run", run)
+    browser = page(index)
+    models = index.models._models
+    encode = models.encode
+    monkeypatch.setattr(
+        models, "encode", lambda *a, **kw: seen.setdefault("models", threading.current_thread()) and encode(*a, **kw)
+    )
+    assert browser.get("/ui/", params={"q": "brush", "mode": "query"}).status_code == 200
+    assert seen["search"] is not seen["loop"]
+    assert seen["models"] is seen["loop"]
 
 
 def test_the_collections_counts_follow_the_index(embedded):

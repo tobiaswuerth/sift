@@ -339,6 +339,7 @@ class Index:
     def __init__(self, catalog=None, models=None):
         self.catalog = catalog or Catalog()
         self._models = models
+        self._wrap = None
         self.vectors = {}  # collection id: (its store's version, the Codes of its vectors)
         self._said = set()  # warnings given, each once
 
@@ -346,7 +347,15 @@ class Index:
     def models(self):
         if self._models is None:
             self._models = _models.default()
+            if self._wrap:
+                self._models = self._wrap(self._models)
         return self._models
+
+    def models_through(self, wrap):
+        """Have the models used through wrap(models), e.g. jobs.OnMainThread: now if chosen, else once they are."""
+        self._wrap = wrap
+        if self._models is not None:
+            self._models = wrap(self._models)
 
     def _warn(self, text):
         if text not in self._said:
