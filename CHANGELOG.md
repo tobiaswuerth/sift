@@ -26,17 +26,24 @@ No search held up while `sift embed` runs beside the server, and phrases asked a
 - One file with an emoji's half alone (`"\ud83d"` in JSON, as exported chats hold), JSON nested deeper than SQLite
   stores (1,000) or Python reads, or a number too large for a float (`1e999`) no longer stops `sift index`, for every
   collection after it too, on every run: the half reads as U+FFFD, the number as written, and a line nested too deeply
-  is skipped and said, a front-matter value so nested kept as written.
+  is skipped and said, a front-matter value so nested, alone or in a list, kept as written.
 - `sift index` beside a server's `reindex` of the same folder: a note an agent wrote and reindexed meanwhile stopped
   it (`UNIQUE constraint failed`), for every collection after it too, and one deleted and reindexed meanwhile left
   its documents in the index for good.
-- A collection whose index can't be opened, damaged or updated by a newer sift, is passed over by searches,
-  `sift index`, `sift embed` and `sift serve`, and said, as a missing one is; `status` gives the reason as `error`. It
-  stopped all of them, and the status that would have said why.
+- A collection whose index can't be opened, damaged, updated by a newer sift, locked by another program or out of
+  reach, is passed over by searches, `sift index`, `sift embed` and `sift serve`, and said, as a missing one is;
+  `status` gives the reason as `error`. It stopped all of them, and the status that would have said why.
+- `sift index` holds no write lock while it reads files: `sift embed` or a server's `reindex` beside it waited while
+  it read a batch of up to 5,000 files, and gave up after 30 seconds. `sift add --title-from` of a large collection
+  retitles it a batch at a time.
+- A scan OCR couldn't read for the moment, as another program held the GPU's memory or OCR failed, is read again by
+  the next `sift index`: it waited for its file to change.
+- The UI's folders take a query each, not one per document lying in a folder: 200,000 took 1.6 seconds, on every
+  view, while every other call waited.
+- A keyword query of parentheses nested hundreds deep is searched as its words, not an error.
+- A panic in the document converter skips the document, as its other failures do.
 - A line of millions of characters, a log or a dump, is cut into passages in time linear in its length: 16 MB took
   8 seconds, 100 MB about five minutes.
-- `reindex` refuses names Windows reads as another file's, `C:x.md`, `sub./x.md` or `x.md:stream`: such a file was
-  indexed and found twice until the next `sift index`.
 - `sift ui` answered an address with a count of thousands of digits with a server error.
 - `sift embed` beside `sift index` no longer stores the vector of a passage deleted meanwhile: it counted as embedded,
   and the passage that took its place was never embedded.
@@ -57,6 +64,10 @@ No search held up while `sift embed` runs beside the server, and phrases asked a
 - `sift worker` no longer writes its key into its log, kept for good; it shows it on the terminal alone.
 - `sift serve --host ::1` answers only requests that name a local host, as on 127.0.0.1: a web page reaching it
   under its own domain could read the documents through the UI.
+- `reindex` refuses names Windows reads as another file's, `C:x.md`, `sub./x.md`, `x.md:stream` or a short name such
+  as `PRIVAT~1`: through a short name, a folder `.siftignore` leaves out, or a hidden one, was read, and a file was
+  indexed twice.
+- The UI serves no file outside its collection's folder, though an older sift's `reindex` may have stored one.
 
 ## [1.11.1] - 2026-11-08
 

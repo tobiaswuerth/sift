@@ -238,7 +238,8 @@ parameters (Apache-2.0), which writes each page as Markdown, tables and columns 
   seconds, a dense one in up to a minute. The first scan downloads the model (2 GB).
 - Up to 50 pages of a scan are read, and its metadata says `ocr`. A mail's attached scan is read like any other.
 - On a machine without a GPU, scans are skipped and reported, unless `SIFT_OCR=on` has the CPU read them, at minutes
-  a page; `SIFT_OCR=off` never reads them.
+  a page; `SIFT_OCR=off` never reads them. A scan skipped while other programs hold the GPU's memory, or one OCR
+  failed on, is read again by the next `sift index`.
 - The server's `reindex` leaves scans to the next `sift index`, as reading one would hold up every search meanwhile;
   `sift index --files` reads them at once.
 
