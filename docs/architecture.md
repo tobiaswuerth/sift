@@ -90,7 +90,14 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
     matches 8 million PubMed passages and took 8 seconds, a question of a dozen words 15. Now most of a common word's
     postings are never read. The results are FTS5's, score for score. A search reads the postings in one transaction,
     as they were when it began, whatever another sift builds meanwhile.
-  - Phrases, prefixes, NEAR and column filters are FTS5's to answer, as before.
+  - A query's common words are read only where they can matter. With all words required, the rarest is read first,
+    and each next one only where chunks holding all before it are left; with any of them, the words that together
+    can't bring a chunk to the k-th best score ("the", "of") only for the chunks the others bring within reach
+    (MaxScore). A question of 14 words over 3.2 million arXiv abstracts: 81 ms instead of 2.5 s.
+  - A phrase, quoted or a word FTS5 can't read as written ("first-stage"), is bounded by its words, at most as often
+    in a chunk as the rarest of them, and FTS5, which has the positions, finds the chunks that hold it once per
+    search and counts it in those within reach.
+  - Prefixes, NEAR and column filters are FTS5's to answer, as before.
   - With a time budget, a search from the postings stops once it is spent and has found any, and returns the best found
     so far, marked partial: ranges best bound first make that the anytime ranking of
     [Mackenzie et al. 2021](https://arxiv.org/abs/2104.08976), every collection's best ranges scored. Out of time, it
@@ -103,7 +110,8 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   scores.
 - **`vsearch`:** every vector's code, its signs as one bit per dimension, waits in RAM: 96 bytes for 768 dimensions, a
   sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with
-  all of them by Hamming distance, on the CPU's cores; the 10,000 nearest of all collections together, ties by id, are
+  all of them by Hamming distance, on the CPU's cores, each counting its codes at each distance and picking the
+  nearest of its own (46 million codes: 0.3 s); the 10,000 nearest of all collections together, ties by id, are
   ranked again by the query's own floats against their bits (a table lookup per byte), and the best 1,000 are scored
   exactly with their vectors from the index. Over 3.2 million arXiv abstracts this finds 99.75% of exact search's top
   10, and its known-item MRR, 0.9530; reading 1,000 vectors instead of 4,000 saves 18 ms warm
