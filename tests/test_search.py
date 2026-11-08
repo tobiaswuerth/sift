@@ -142,10 +142,10 @@ def test_a_keyword_search_reads_the_postings_as_they_were_when_it_began(prose, f
         other.close()
 
 
-@pytest.mark.usefixtures("small_lists")
-def test_a_keyword_search_out_of_time_asks_no_more(tmp_path, home, monkeypatch):
-    # Copies of a work left fewer than k hits, so the search asked for more: out of time, that second ask scored a
-    # range per store, and its hits took the place of the first ask's.
+@pytest.fixture
+def copies(tmp_path, home):
+    """Twelve notes of the same two words, the two best copies of one work (the same DOI): the best 3 documents are
+    2 works, so a search for 3 asks again, for 6."""
     root = tmp_path / "copies"
     for i in range(12):
         doi = "10.1000/same" if i < 2 else f"10.1000/{i}"
@@ -154,11 +154,34 @@ def test_a_keyword_search_out_of_time_asks_no_more(tmp_path, home, monkeypatch):
     catalog = Catalog(home)
     catalog.add(root, "copies")
     indexing.index(catalog)
-    monkeypatch.setattr(topk, "FIRST_BATCH", 1)
+    return catalog
+
+
+def asks(monkeypatch):
+    """The k of each search of the postings, as they are made."""
     asked, real = [], topk.search
     monkeypatch.setattr(topk, "search", lambda *args, **kwargs: asked.append(args[2]) or real(*args, **kwargs))
-    hits = Index(catalog).search("attention transformer", k=3, budget=1e-9)
+    return asked
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_keyword_search_out_of_time_asks_no_more(copies, monkeypatch):
+    # Copies of a work left fewer than k hits, so the search asked for more: out of time, that second ask scored a
+    # range per store, and its hits took the place of the first ask's.
+    monkeypatch.setattr(topk, "FIRST_BATCH", 1)
+    asked = asks(monkeypatch)
+    hits = Index(copies).search("attention transformer", k=3, budget=1e-9)
     assert hits
+    assert all(h["partial"] for h in hits)
+    assert asked == [3]
+
+
+def test_a_keyword_search_whose_time_ran_out_after_its_first_ask_asks_no_more(copies, monkeypatch):
+    # Its first ask done in time, the second began out of it, and took as long as it needed to find any.
+    asked = asks(monkeypatch)
+    monkeypatch.setattr(topk.Deadline, "over", lambda deadline: bool(asked))
+    hits = Index(copies).search("attention transformer", k=3, budget=60)
+    assert len(hits) == 2  # fewer than k: the copies are one work
     assert all(h["partial"] for h in hits)
     assert asked == [3]
 
@@ -1153,11 +1176,40 @@ def test_documents_like_one_are_one_hit_per_work(works):
     assert len(COPIES & {h["id"] for h in hits}) == 1
 
 
+@pytest.mark.parametrize("mode, subject", [("vsearch", "attention transformer"), ("similar", "a/nodoi.md")])
+def test_a_search_asking_again_keeps_its_filter(works, monkeypatch, mode, subject):
+    # Asking again for more works, as copies left fewer, it made its filter anew, which checked every chunk again.
+    made, real = [], search._Filter.__init__
+    monkeypatch.setattr(search._Filter, "__init__", lambda self, *args: made.append(1) or real(self, *args))
+    asked, top = [], search.top
+    monkeypatch.setattr(search, "top", lambda *args: asked.append(args[2]) or top(*args))
+    assert getattr(works, mode)(subject, k=4, path="*")
+    assert len(asked) > 1
+    assert made == [1]
+
+
 def test_documents_like_a_paper_leave_out_its_copies(works):
     # Its copy in another collection is no other paper like it, though closest of all.
     hits = works.similar("a/attention.md", k=10)
     assert not COPIES & {h["id"] for h in hits}
     assert hits
+
+
+def test_passages_like_a_paper_are_k_without_its_copies(tmp_path, home, fake_models):
+    # The passages of its copy, the nearest, were left out of the k found: fewer than k came back.
+    sections = "".join(f"## Part {i}\n\n{'attention transformer layers ' * 150}\n\n" for i in range(3))
+    for folder in ("a", "b"):
+        write(tmp_path / folder / "paper.md", f'---\ndoi: "10.1000/paper"\n---\n# Paper\n\n{sections}')
+    for i in range(8):
+        write(tmp_path / "b" / f"other{i}.md", f"# Other {i}\n\nattention transformer layers, and {i}\n")
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "a", "a")
+    catalog.add(tmp_path / "b", "b")
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    hits = Index(catalog).similar("a/paper.md", k=5, all_passages=True)
+    assert len(hits) == 5
+    assert "b/paper.md" not in {h["id"] for h in hits}
 
 
 @pytest.mark.parametrize(

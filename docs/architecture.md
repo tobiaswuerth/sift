@@ -93,8 +93,9 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   - Phrases, prefixes, NEAR and column filters are FTS5's to answer, as before.
   - With a time budget, a search from the postings stops once it is spent and has found any, and returns the best found
     so far, marked partial: ranges best bound first make that the anytime ranking of
-    [Mackenzie et al. 2021](https://arxiv.org/abs/2104.08976), every collection's best ranges scored. Without, the
-    results are exact.
+    [Mackenzie et al. 2021](https://arxiv.org/abs/2104.08976), every collection's best ranges scored. Out of time, it
+    looks no further down when copies left fewer than `k` works, and marks those partial too. Without, the results are
+    exact.
 - **Several collections:** searches ask each collection's index and merge the results, scored with the word counts of
   all of them, as one index would score them: a collection's own counts would take a word common in a small
   collection for a common word, and sink its pages. The postings add up the counts of all before scoring; through

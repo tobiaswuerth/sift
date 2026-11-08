@@ -741,10 +741,14 @@ class Index:
         self.load()
         return self.models.encode([query], query=True)[0].astype(np.float32)
 
-    def _nearest(self, query, k, scope, where, args, all_passages, excluded=None):
-        """The best passage of each of the k documents nearest the query's vector, among the documents of the
-        collections of `scope` that `where` allows, but the chunks `excluded`; or the k best passages."""
-        allowed = _Filter(self.catalog, scope, where, args) if args else None
+    def _filter(self, scope, where, args):
+        """A search's filter of the chunks `where` allows, or None for all: one per search, as it remembers what it was
+        asked (see _Filter)."""
+        return _Filter(self.catalog, scope, where, args) if args else None
+
+    def _nearest(self, query, k, scope, allowed, all_passages, excluded=None):
+        """The best passage of each of the k documents nearest the query's vector, among the chunks of the collections
+        of `scope` the filter `allowed` lets through (see _filter), but those `excluded`; or the k best passages."""
         held, width = [], codes(query[None, :]).shape[1]
         for c in scope:
             if c.id in self.vectors and (theirs := self.vectors[c.id][1]).width != width:
@@ -772,16 +776,15 @@ class Index:
             docs |= dict(db.execute(sql, (json.dumps(group),)))
         return _first_of_each((r for r in ranked if r[0] in docs), lambda r: docs[r[0]])  # in docs: not removed
 
-    def _works(self, rank, k, all_passages, more=lambda: True):
-        """The hits of the best k works by rank(n), the best n documents (or with `all_passages`, passages, of which
-        all are kept): one hit per work, as _one_per_work leaves them, asking for more while copies leave fewer, and
-        more() allows."""
-        if all_passages:
-            return self._hits(rank(k))
+    def _works(self, rank, k, all_passages, more=lambda: True, keep=lambda hit: True):
+        """The hits of the best k works by rank(n), the best n documents, of those keep(hit) keeps: one hit per work, as
+        _one_per_work leaves them, or with `all_passages` the best k passages; asking for more while fewer are left,
+        and more() allows."""
         n = k
         while True:
             ranked = rank(n)
-            hits = _one_per_work(self._hits(ranked))
+            hits = [hit for hit in self._hits(ranked) if keep(hit)]
+            hits = hits if all_passages else _one_per_work(hits)
             if len(hits) >= k or len(ranked) < n or not more():
                 return hits[:k]
             n *= 2
@@ -849,11 +852,15 @@ class Index:
                 ranked = self._keyword(relaxed, n, scope, where, args, all_passages, deadline)
             return ranked
 
+        stopped = []
+
         def in_time():  # asked again out of time, a search scores less than the first ask did
-            return deadline is None or not deadline.cut
+            if deadline is not None and (deadline.cut or deadline.over()):
+                stopped.append(True)
+            return not stopped
 
         hits = self._works(rank, k, all_passages, more=in_time)
-        for hit in () if in_time() else hits:
+        for hit in hits if stopped or (deadline is not None and deadline.cut) else ():
             hit["partial"] = True
         return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
@@ -878,8 +885,8 @@ class Index:
         fields, sort = _check_fields(fields), _check_sort(sort)
         if not query.strip():  # the embedding of nothing is close to arbitrary chunks
             return []
-        vector = self._vector(query)
-        hits = self._works(lambda n: self._nearest(vector, n, scope, where, args, all_passages), k, all_passages)
+        vector, allowed = self._vector(query), self._filter(scope, where, args)
+        hits = self._works(lambda n: self._nearest(vector, n, scope, allowed, all_passages), k, all_passages)
         return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
     def query(
@@ -909,7 +916,8 @@ class Index:
         candidates = max(candidates, k)
         keyword = self._keyword(_any_word(query), candidates, scope, where, args, all_passages)
         vector = self._vector(query) if query.strip() else None  # for the semantic candidates and every cosine
-        semantic = self._nearest(vector, candidates, scope, where, args, all_passages) if vector is not None else []
+        allowed = self._filter(scope, where, args)
+        semantic = self._nearest(vector, candidates, scope, allowed, all_passages) if vector is not None else []
         hits = self._hits([(chunk, 0.0) for chunk in dict.fromkeys(chunk for chunk, _ in keyword + semantic)])
         if not hits:
             return []
@@ -970,11 +978,14 @@ class Index:
             raise LookupError(f"{id!r} has no embeddings yet, run `sift embed`")
         mean = np.mean([np.frombuffer(vec, np.float16) for _, vec in own], axis=0, dtype=np.float32)
         excluded, vector = np.array([chunk for chunk, _ in own], np.int64), mean / np.linalg.norm(mean)
-        doi = _doi(meta)  # its copies in other collections are the same paper: one work more, left out
+        doi, allowed = _doi(meta), self._filter(scope, where, args)
+
+        def other(hit):  # its copies in other collections are the same paper
+            return doi is None or _doi(hit["meta"]) != doi
+
         hits = self._works(
-            lambda n: self._nearest(vector, n, scope, where, args, all_passages, excluded), k + bool(doi), all_passages
+            lambda n: self._nearest(vector, n, scope, allowed, all_passages, excluded), k, all_passages, keep=other
         )
-        hits = [hit for hit in hits if doi is None or _doi(hit["meta"]) != doi][:k]
         return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
     def _place(self, id):

@@ -16,7 +16,7 @@ for agents when few stand out.
   others under `also`. Copies share a DOI (front-matter field `doi`), compared in any case and without a link's
   prefix. `search`, `vsearch` and `similar` look further down until they have `k` papers, and `query` keeps one hit
   per paper of the candidates it reranks; `similar` leaves out the paper's own copies; `all_passages` keeps every
-  copy.
+  copy. `sift bench` counts the document sought as found when a hit lists it under `also`.
 - `adaptive` (`--adaptive`) for every search: up to `k` hits, those before the largest drop in score and five more
   (Adaptive-k, Taguchi et al. 2025). Over 2,000 arXiv titles, vsearch returned 6 of 10 or 50 on average, and kept the
   paper sought in 99.2 to 99.6% of the cases it was among them.

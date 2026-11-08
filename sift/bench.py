@@ -71,9 +71,14 @@ def run(index, cases, **options):
     for mode in MODES:
         scores, start = [], time.perf_counter()
         for query, relevant in cases:
-            ranked = [hit["id"] for hit in getattr(index, mode)(query, K, compact=True, **options)]
+            ranked = [_found(hit, relevant) for hit in getattr(index, mode)(query, K, compact=True, **options)]
             scores.append((ndcg(ranked, relevant), reciprocal_rank(ranked, relevant), recall(ranked, relevant)))
         elapsed = time.perf_counter() - start
         means = [sum(s[i] for s in scores) / len(scores) for i in range(3)]
         results[mode] = dict(zip(("nDCG@10", "MRR@10", "Recall@10"), means)) | {"ms": 1000 * elapsed / len(cases)}
     return results
+
+
+def _found(hit, relevant):
+    """The hit's id, or of its copies in other collections (`also`) the one the case grades best."""
+    return max([hit["id"], *hit.get("also", ())], key=lambda id: relevant.get(id, 0))

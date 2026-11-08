@@ -305,6 +305,34 @@ def test_postings_in_topical_order_are_closed_to_sift_1_10(ordered):
     assert postings.ready(db)
 
 
+def built_by_sift_1_10(db, path, monkeypatch):
+    """The postings built anew as a sift 1.10 still running builds them: in the chunks' order, with kw_order and its
+    meta left as they were, which it knows nothing of."""
+    order = db.execute("SELECT block, data FROM kw_order").fetchall()
+    meta = {key: store.get_meta(db, key) for key in ("kw_order", "kw_ordered")}
+    with monkeypatch.context() as patched:
+        patched.setattr(postings, "_topical", lambda *args: None)
+        postings.build(db, path)
+    db.executemany("INSERT INTO kw_order(block, data) VALUES(?, ?)", order)
+    for key, value in meta.items():
+        store.set_meta(db, key, value)
+    db.commit()
+
+
+def test_postings_sift_1_10_built_anew_over_an_order_are_read_in_theirs(ordered, monkeypatch):
+    # Read through the order sift 1.10 left behind, keyword searches found other documents than they scored.
+    catalog, root = ordered
+    db = catalog.store("prose")
+    built_by_sift_1_10(db, path_of(catalog), monkeypatch)
+    assert live(db) == fts5(db)
+    write(root / "n000.md", "# Changed\n\nw1 w2\n")
+    indexing.reindex(catalog, ["prose/n000.md"])  # a delta, its chunks at their ids too
+    assert live(db) == fts5(db)
+    indexing.index(catalog)  # orders them anew, though no more chunks got codes
+    assert store.get_meta(db, "kw_built").startswith(postings.ORDERED)
+    assert live(db) == fts5(db)
+
+
 @pytest.mark.usefixtures("small_lists")
 def test_merged_deltas_keep_their_chunks_places(ordered, monkeypatch):
     # A merge gave every chunk of the deltas a place anew: an agent reindexing note after note, which never builds the

@@ -463,6 +463,12 @@ def built(db):
     return str(store.get_meta(db, "kw_built", "")).removeprefix(ORDERED).isdigit()
 
 
+def _ordered(db):
+    """Whether the postings are in an order of their own (kw_built after ORDERED), kw_order holding it. Its meta alone
+    tells nothing: a sift 1.10 building the postings anew leaves both behind, stale."""
+    return str(store.get_meta(db, "kw_built", "")).startswith(ORDERED)
+
+
 def behind(db):
     """How many chunks changed since the store's postings were last updated."""
     return db.execute("SELECT count(*) FROM kw_dirty").fetchone()[0]
@@ -499,7 +505,9 @@ def update(db, path, name="", workers=0, rebuild=True):
 
 def _unordered(db):
     """Whether the postings are to be ordered anew: chunks that got codes since they were ordered (see `order`) are
-    more than ORDER_SHARE of all."""
+    more than ORDER_SHARE of all, or a sift 1.10 built them anew, in the chunks' order, over one."""
+    if store.get_meta(db, "kw_order") is not None and not _ordered(db):
+        return True
     counts = store.counts(db)
     return counts["vectors"] - int(store.get_meta(db, "kw_ordered", 0)) > ORDER_SHARE * counts["chunks"]
 
@@ -513,7 +521,7 @@ def _delta(db, merge=False):
     dirty = [c for (c,) in db.execute("SELECT chunk FROM kw_dirty WHERE change <= ?", (change,))]
     kept = _delta_places(db) if merge else {}  # the deltas' chunks keep their places: the deltas go
     taken = sorted(set(dirty) | set(kept)) if merge else dirty
-    used, first = store.get_meta(db, "kw_order"), _first(db)
+    used, first = store.get_meta(db, "kw_order") if _ordered(db) else None, _first(db)
     start = None if used is None else first + 1 + int(used)
     encoded, ids, places, lengths, new = _tokenized(db, taken, kept, start)
     db.execute("BEGIN IMMEDIATE")
@@ -553,7 +561,7 @@ def _delta_places(db):
     for block, data in db.execute("SELECT block, data FROM kw_lengths WHERE segment > 1"):
         places += ((block << LENGTHS_SHIFT) + np.flatnonzero(decode_lengths(data))).tolist()
     places = np.array(places, np.int64)
-    chunks = places if store.get_meta(db, "kw_order") is None else _chunks_at(db, places, _first(db))
+    chunks = _chunks_at(db, places, _first(db)) if _ordered(db) else places
     return dict(zip(chunks.tolist(), places.tolist()))
 
 
@@ -672,7 +680,7 @@ class Reader:
         self.ranges = lru_cache(maxsize=1024)(self._ranges)
         self._me = next(_readers)
         self._dense = {}  # what is read in blocks of places: (first block, values read so far, blocks read) by table
-        self._first = _first(db) if store.get_meta(db, "kw_order") is not None else None  # None: places are ids
+        self._first = _first(db) if _ordered(db) else None  # None: places are ids
 
     def block(self, key, n):
         """Block n (from 0) of a long list, decoded: through the cache all readers share."""

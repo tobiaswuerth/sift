@@ -161,12 +161,14 @@ def test_a_filter_letting_few_through_lists_them(monkeypatch):
     assert allowed.checked <= vectors.SCAN_SHARE * len(ids)  # given up on before checking more than a listing costs
 
 
-def test_a_filter_over_several_collections_and_with_exclusions():
-    ids, matrix, exact, whole = random_index(n=900)
+def test_a_filter_over_several_collections_and_with_exclusions(monkeypatch):
+    monkeypatch.setattr(vectors, "RESCORE", 5)  # checked, not listed, as in test_a_filter_letting_many_through...
+    ids, matrix, exact, whole = random_index(n=6000)
     parts = [Codes(ids[i::3], codes(matrix[i::3])) for i in range(3)]
     for query in unit(np.random.default_rng(8).standard_normal((10, 64))):
         expected = top(whole, exact, query, 10, allowed=ids[::4], excluded=ids[:40])
-        alike(top(parts, exact, query, 10, allowed=Allowed(ids[::4]), excluded=ids[:40]), expected)
+        alike(top(parts, exact, query, 10, allowed=(allowed := Allowed(ids[::4])), excluded=ids[:40]), expected)
+        assert allowed.lists == 0
 
 
 def test_a_filter_letting_nothing_through():

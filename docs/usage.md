@@ -336,3 +336,4 @@ sift bench questions.json
 
 A few dozen questions are enough to compare modes and to see whether a change helps your documents. Grades are
 optional: 2 for the answer, 1 for a useful one, and 0, as in TREC's judgements, for one read and found irrelevant.
+A document counts as found when a hit is it or lists it under `also`, as a copy of the same paper.
