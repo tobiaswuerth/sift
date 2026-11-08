@@ -164,8 +164,8 @@ class Catalog:
         try:
             db = self.store(collection)
             docs = store.counts(db)["docs"]
-        except LookupError as missing:
-            console.say(f"{missing}: only the catalog changes")
+        except LookupError as unusable:  # missing: only the catalog changes; damaged or a newer sift's: it goes too
+            console.say(f"{unusable}{'' if os.path.isfile(collection.store) else ': only the catalog changes'}")
             docs = None
         self.release(collection.id)
         self.db.execute("DELETE FROM collections WHERE id = ?", (collection.id,))
