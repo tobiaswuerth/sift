@@ -167,7 +167,7 @@ class Catalog:
 
     def remove(self, name):
         """Remove a collection: its store is deleted, its files stay on disk. Returns the number of documents its
-        store held, or None if it was missing."""
+        store held, or None if it was missing or couldn't be opened (damaged, or a newer sift's)."""
         collection = self.get(name)
         try:
             db = self.store(collection)
