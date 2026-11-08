@@ -943,7 +943,7 @@ def test_similar_to_an_unknown_document(embedded):
 )
 def test_search_falls_back_to_any_term(corpus, query, expected):
     # Every term is required, so one word too many returned nothing at all. With no document holding all
-    # terms, those holding any of them are better than nothing; BM25 ranks those with more of them first.
+    # terms, those holding any of them are better than nothing; BM25 favours those with more of them.
     assert sorted(ids(Index(corpus[0]).search(query))) == expected
 
 
