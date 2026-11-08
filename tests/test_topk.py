@@ -1,6 +1,7 @@
 """The best documents for a keyword query from the postings (sift.topk): exactly what scoring every posting finds, and
 what FTS5's bm25 finds, for random expressions of AND, OR and NOT, through changes, across stores, with filters."""
 
+import collections
 import math
 import random
 from pathlib import Path
@@ -260,6 +261,76 @@ def test_terms_in_ranges_apart(tmp_path, home, monkeypatch):
     same(topk.search(readers, query, 100), brute(readers, query, 120), 100, query)
     (beta,) = readers[0].term("beta")
     assert [g for g in groups if not set(g) & set(beta.ranges()[0].tolist())]  # a group of alpha's ranges alone
+
+
+def in_ranges(tmp_path, home, groups):
+    """A collection of a note per text, each note one chunk, numbered in the order given: each group a range of
+    places (small_lists: 4 a range), filled up with notes of "filler". Its postings built anew: (catalog, reads), the
+    ranges each term was read in (see _Store._in), counted once the reading is counted (`count`)."""
+    root, catalog = tmp_path / "ranged", Catalog(home)
+    root.mkdir()
+    catalog.add(root, "ranged")
+    texts = ["filler"] * 3  # chunk ids start one past the collection's first, a multiple of 4: 3 places in range 0
+    for group in groups:
+        texts += [*group, *["filler"] * (4 - len(group))]
+    for n, text in enumerate(texts):  # a note at a time: its chunk takes the next id, whatever order folders list in
+        write(root / f"n{n:04}.md", f"{text}\n")
+        indexing.index(catalog)
+    postings.build(catalog.store("ranged"), catalog.get("ranged").store)
+    return catalog
+
+
+def counting_reads(monkeypatch):
+    """How many ranges each term is read in, by _Store._in, from now on."""
+    read, real = collections.Counter(), topk._Store._in
+
+    def counted(store, term, group):
+        read[term] += len(group)
+        return real(store, term, group)
+
+    monkeypatch.setattr(topk._Store, "_in", counted)
+    return read
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_all_of_some_words_reads_each_only_where_chunks_with_all_rarer_ones_are_left(tmp_path, home, monkeypatch):
+    # A question's words, all required, that no chunk holds together: nothing found, nothing pruned, and every word,
+    # "the" and "of" too, read and scored in every range they all occur in: 1.2 s over 3.2M arXiv abstracts.
+    catalog = in_ranges(tmp_path, home, [["alpha beta gamma", "alpha beta delta", "alpha beta"]] * 10)
+    readers, read = [reader(catalog, "ranged")], counting_reads(monkeypatch)
+    query = ("and", [("term", "alpha"), ("term", "beta"), ("term", "gamma"), ("term", "delta")])
+    assert topk.search(readers, query, 10) == brute(readers, query, 10) == []
+    assert read["gamma"] == 10  # every range holds all four, in different chunks
+    assert read["alpha"] == read["beta"] == 0  # no chunk was left with the rarer ones
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_word_in_every_chunk_is_read_only_where_the_others_bring_a_chunk_near(tmp_path, home, monkeypatch):
+    # "of", "in", "the": in an OR of a question's words, they were read and scored in every range scored, and made a
+    # question ten times as slow, though all together they can't bring a chunk to the k-th best score. Here the best
+    # chunk holds apple and banana; the other ranges' bounds add up an apple's and a banana's in different chunks.
+    monkeypatch.setattr(topk, "FIRST_BATCH", 1)  # a range at a time: the best is found first, from the highest bound
+    best = ["apple banana stop", "apple apple apple stop"]  # a range bounded higher by the second
+    others = [["apple stop filler", "banana stop filler"]] * 8
+    catalog = in_ranges(tmp_path, home, [best, *others])
+    readers, read = [reader(catalog, "ranged")], counting_reads(monkeypatch)
+    query = ("or", [("term", "stop"), ("term", "apple"), ("term", "banana")])
+    same(topk.search(readers, query, 1), brute(readers, query, 21), 1, query)
+    assert read["stop"] < read["apple"] / 2
+
+
+def test_ranges_only_lazy_terms_are_in_offer_nothing(built):
+    # Bounded with a segment's average length (several stores, deltas), ranges of lazy terms alone can seem to reach
+    # the k-th best score; none of their chunks can.
+    held, query = reader(built), ("or", [("term", "w0"), ("term", "w1")])
+    named = topk.terms_of(query)
+    lists = {t: held.term(t) for t in dict.fromkeys(named)}
+    weight = {t: topk.idf(held.chunks, sum(p.df for p in lists[t])) for t in lists}
+    best = topk.Best(3)
+    store = topk._Store(held, lists, weight, named, held.tokens / held.chunks, query, best, None, None)
+    best.threshold = 1e9  # out of reach of both
+    store._score(np.arange(1 << 20))
+    assert best.found == {}
 
 
 @pytest.mark.usefixtures("small_lists")

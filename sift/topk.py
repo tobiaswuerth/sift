@@ -129,6 +129,10 @@ class _Store:
     def __init__(self, reader, lists, weight, named, average, query, best, allowed, deadline):
         self.reader, self.weight, self.average, self.deadline = reader, weight, average, deadline
         self.bounding = {t: w * named.count(t) for t, w in weight.items()}  # a term written twice counts twice
+        self.most = {t: b * postings.TOP for t, b in self.bounding.items()}  # the most a term adds to a chunk's score
+        terms_only = query[0] in ("and", "or") and all(child[0] == "term" for child in query[1])
+        self.flat = terms_only and query[0] == "or"  # each term counts where it is
+        self.conjunction = terms_only and query[0] == "and"  # a chunk counts if it holds them all
         self.query, self.best, self.allowed = query, best, allowed
         self.shift = postings.RANGE_SHIFT
         # a short list (every delta's) read whole, its term scores exact; a long list's ranges, with how far their
@@ -191,11 +195,31 @@ class _Store:
             present[t] = here > 0
         return first, bound, present
 
+    def _lazy(self):
+        """The terms that can't bring a chunk to the k-th best score, all of them together (MaxScore, Turtle and Flood
+        1995): in an OR of terms, a chunk must hold another to be found, so these are read only for the chunks the
+        others bring within reach of it. The words of a question that are in every chunk, "of", "in", "the", were read
+        and scored in every range scored, and made a question ten times as slow."""
+        lazy, total = [], 0.0
+        for term in sorted(self.most, key=self.most.get) if self.flat else ():
+            if total + self.most[term] >= self.best.threshold:
+                break
+            lazy.append(term)
+            total += self.most[term]
+        return lazy
+
     def _score(self, group):
         """Score every chunk of these ranges (ascending) that holds any term, and offer those the query finds to the
         best."""
-        found = {t: list(self._in(t, group)) for t in self.whole}  # a group's ranges hold some term's postings
+        if self.conjunction:
+            places, acc = self._all_of(group)
+            self._offer(self.reader.chunks_at(places), acc)
+            return
+        lazy = self._lazy()
+        found = {t: list(self._in(t, group)) for t in self.whole if t not in lazy}  # the group holds some term's
         every = [places for parts in found.values() for places, _ in parts]
+        if not any(len(places) for places in every):  # those of lazy terms alone: none can reach the k-th best
+            return
         places, where = np.unique(np.concatenate(every), return_inverse=True)  # each posting's chunk among them
         scores, present, at = {}, {}, 0
         for t, parts in found.items():
@@ -204,12 +228,20 @@ class _Store:
                 scores[t][where[at : at + len(held)]] = term_scores
                 at += len(held)
             present[t] = scores[t] > 0
-        holds, terms = counted(self.query, present)
-        acc = np.zeros(len(places))
-        for t, counts in terms:
-            acc += np.where(counts, self.weight[t] * scores[t], 0.0)
-        keep = np.flatnonzero(holds & (acc >= self.best.threshold))
-        chunks, acc = self.reader.chunks_at(places[keep]), acc[keep]
+        if lazy:
+            places, acc = self._with_lazy(places, scores, lazy)
+            chunks = self.reader.chunks_at(places)
+        else:
+            holds, terms = counted(self.query, present)
+            acc = np.zeros(len(places))
+            for t, counts in terms:
+                acc += np.where(counts, self.weight[t] * scores[t], 0.0)
+            keep = np.flatnonzero(holds & (acc >= self.best.threshold))
+            chunks, acc = self.reader.chunks_at(places[keep]), acc[keep]
+        self._offer(chunks, acc)
+
+    def _offer(self, chunks, acc):
+        """Offer these chunks, with their scores, to the best: those the filter allows, and not deleted meanwhile."""
         if self.allowed is not None and len(chunks):
             allowed = np.asarray(self.allowed(chunks), bool)
             chunks, acc = chunks[allowed], acc[allowed]
@@ -217,6 +249,50 @@ class _Store:
             docs = self.reader.documents(chunks)
             here = docs >= 0  # not deleted meanwhile
             self.best.offer(chunks[here], docs[here], acc[here])
+
+    def _all_of(self, group):
+        """The places, and scores, of the chunks of these ranges that hold every term and reach the k-th best score:
+        the rarest term read first, and each next one only in the ranges where chunks holding all before it are left.
+        Read all at once, the words of a question that no chunk holds together, "the" and "of" too, were read and
+        scored in every range they all occur in: nothing found, nothing pruned, 1.2 s over 3.2 million abstracts."""
+        places, acc = np.zeros(0, np.int64), np.zeros(0)
+        for n, term in enumerate(sorted(self.whole, key=lambda t: -self.weight[t])):
+            ranges = group if n == 0 else np.unique(places >> self.shift)
+            held, term_scores = self._merged(term, ranges)
+            if n == 0:
+                places, acc = held, self.bounding[term] * term_scores
+                continue
+            at = np.minimum(np.searchsorted(held, places), max(len(held) - 1, 0))
+            hit = np.flatnonzero(held[at] == places) if len(held) else at[:0]
+            places, acc = places[hit], acc[hit] + self.bounding[term] * term_scores[at[hit]]
+        keep = np.flatnonzero(acc >= self.best.threshold)
+        return places[keep], acc[keep]
+
+    def _merged(self, term, ranges):
+        """(places, term scores) of a term's live postings in these ranges, of every segment, ascending."""
+        parts = list(self._in(term, ranges)) if len(ranges) else []
+        if len(parts) == 1:
+            return parts[0]
+        held = np.concatenate([np.zeros(0, np.int64), *(p for p, _ in parts)])
+        term_scores = np.concatenate([np.zeros(0), *(s for _, s in parts)])
+        order = np.argsort(held, kind="stable")
+        return held[order], term_scores[order]
+
+    def _with_lazy(self, places, scores, lazy):
+        """The places, and scores, of the chunks that reach the k-th best score: those the other terms bring within
+        reach of it, with the lazy terms (see _lazy) read for them alone."""
+        acc = sum(self.bounding[t] * term_scores for t, term_scores in scores.items())
+        lazy = sorted(lazy, key=self.most.get, reverse=True)  # the least, "the", last: for the fewest chunks
+        for n, t in enumerate(lazy):
+            near = np.flatnonzero(acc + sum(self.most[u] for u in lazy[n:]) >= self.best.threshold)
+            places, acc = places[near], acc[near]
+            ranges = np.unique(places >> self.shift)
+            for held, term_scores in self._in(t, ranges) if len(ranges) else ():
+                at = np.minimum(np.searchsorted(held, places), len(held) - 1)
+                hit = np.flatnonzero(held[at] == places) if len(held) else at[:0]
+                acc[hit] += self.bounding[t] * term_scores[at[hit]]
+        keep = np.flatnonzero(acc >= self.best.threshold)
+        return places[keep], acc[keep]
 
     def _in(self, term, group):
         """(places, term scores) of a term's live postings in these ranges, a part per segment."""
