@@ -297,16 +297,23 @@ def counts(db):
 
 
 def read_codes(db, after=None, most=None):
-    """The codes of a store's vectors, by chunk id: (ids, rows of uint8), batch by batch; those of the chunks `after` a
-    chunk id if given; None if there are none. At most `most`, by default as many as the vectors the store counts,
-    which it keeps: counting the codes was a pass over millions before the one that reads them, and codes added since
-    the count wait for the next read."""
+    """The codes of a store's vectors, by chunk id: (ids, rows of uint8), batch by batch; None if there are none. All of
+    them, at most `most`, by default as many as the vectors the store counts, which it keeps, into room made for that
+    many at once: counting the codes was a pass over millions before the one that reads them, and codes added since
+    the count wait for the next read. Or those of the chunks `after` a chunk id, at most `most`, in room for those
+    found: a server reads them on every search while it reads all anew."""
     import numpy as np  # here, not at the top: the CLI starts with the standard library alone
 
+    if after is not None:
+        sql = "SELECT chunk, bits FROM codes WHERE chunk > ? ORDER BY chunk LIMIT ?"
+        cursor, parts = db.execute(sql, (after, -1 if most is None else most)), []
+        while batch := cursor.fetchmany(CODES_BATCH):
+            ids = np.fromiter((chunk for chunk, _ in batch), np.int64, len(batch))
+            parts.append((ids, np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)))
+        return (np.concatenate([i for i, _ in parts]), np.concatenate([b for _, b in parts])) if parts else None
     n = counts(db)["vectors"] if most is None else most
     ids, bits, row = np.empty(n, np.int64), None, 0
-    sql = "SELECT chunk, bits FROM codes" + (" WHERE chunk > ?" if after is not None else "") + " ORDER BY chunk"
-    cursor = db.execute(sql, () if after is None else (after,))
+    cursor = db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
     while row < n and (batch := cursor.fetchmany(CODES_BATCH)):
         batch = batch[: n - row]
         if bits is None:
@@ -374,6 +381,12 @@ def drop_vectors(db, where, args=()):
     return dropped
 
 
+def vectors_state(db):
+    """What a store says of its vectors, as a server follows them: (its version, the epoch of its codes, how many
+    vectors it counts)."""
+    return get_meta(db, "version"), get_meta(db, "codes_epoch"), counts(db)["vectors"]
+
+
 def codes_changed(db):
     """Mark that the codes changed otherwise than by codes written past the last: a server holding them reads them all
     again, beside its searches, where it reads only those past the last it holds as long as the epoch stays."""
@@ -397,7 +410,8 @@ def empty_log(db):
 
 
 def touch(db):
-    """Mark the vectors as changed, so a running server reloads their codes. Random, as clocks can tick too slowly."""
+    """Mark the vectors as changed, so a running server follows their codes (see codes_changed). Random, as clocks can
+    tick too slowly."""
     set_meta(db, "version", uuid.uuid4().hex)
 
 

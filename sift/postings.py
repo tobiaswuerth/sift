@@ -733,8 +733,8 @@ class _Cache:
 
 BLOCK_CACHE = 512 << 20  # bytes of decoded blocks kept: a long question over PubMed reads about 150 MB of them
 _BLOCKS = _Cache(BLOCK_CACHE)  # shared by every reader: one budget for the process
-PHRASE_CACHE = 256 << 20  # bytes of phrases' chunks, counts and lengths kept: 16 a chunk, 160 MB for a common phrase
-# over 30 million chunks
+PHRASE_CACHE = 512 << 20  # bytes of phrases' chunks, counts and lengths kept: 16 a chunk, as many chunks as 256 MB of
+# their ids alone held before; 160 MB for a phrase in 10 million chunks
 _PHRASES = _Cache(PHRASE_CACHE)
 _readers = itertools.count()
 
@@ -815,8 +815,8 @@ class Reader:
         if len(new):
             fresh = holding[new].tolist()
             found, size = matches(self.db, phrase_query(phrase), fresh), sizes(self.db, fresh)
-            counted[new] = [found.get(c, 0) for c in fresh]
             lengths[new] = [size.get(c, 0) for c in fresh]
+            counted[new] = [found.get(c, 0) for c in fresh]  # last: a chunk counted has its length
         out = np.zeros((2, len(ids)), np.int64)
         out[:, member] = counted[at[member]], lengths[at[member]]
         return out[0], out[1]

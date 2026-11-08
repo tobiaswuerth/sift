@@ -767,11 +767,13 @@ class Index:
         if (reading := self._reading.get(cid)) is not None and reading.done():
             del self._reading[cid]
             try:
-                self.vectors[cid] = reading.result()
-            except (sqlite3.Error, OSError) as error:  # read again for the next search
+                found = reading.result()
+            except Exception as error:  # a disk that failed, no room for a second copy: read again for the next search
                 self._warn(f"{collection.name}: its vectors' codes could not be read again: {error}")
-            if self.vectors.get(cid) is None:
-                self.vectors.pop(cid, None)
+            else:
+                self.vectors[cid] = found
+                if found is None:
+                    self.vectors.pop(cid)
         held = self.vectors.get(cid)
         with _snapshot([db]):
             version = store.get_meta(db, "version")
@@ -781,9 +783,13 @@ class Index:
             appended = held is not None and held.count is not None and held.epoch == epoch and count >= held.count
             most = count - held.count + 1 if appended else count
             tail = store.read_codes(db, after=held.last, most=most) if held is not None and count else None
+        if tail and tail[1].shape[1] != held.codes.width:  # another model's codes, after a reset: all read anew
+            tail, appended = None, False
         if not count:  # no vectors at all, as after `sift embed --reset`: no search can find any
             self.vectors.pop(cid, None)
+            self._reading.pop(cid, None)  # of the vectors gone
         elif held is None:
+            self._reading.pop(cid, None)  # older than what is read now
             if (found := _held(db)) is not None:
                 self.vectors[cid] = found
         elif appended and len(tail[0] if tail else ()) == count - held.count:
@@ -1305,7 +1311,7 @@ class Index:
         "embedded", how many of them have vectors; and a "note" on anything that went wrong. Scans are left for `sift
         index` to read with OCR: a server runs one call at a time, which reading one would hold up for minutes."""
         done = indexing.reindex(self.catalog, paths, scans=False)
-        for cid, (before, after) in done.versions.items():
+        for cid, (before, *after) in done.versions.items():
             removed = [chunk for chunk in done.removed if store.owner(chunk) == cid]
             self._patch(cid, before, after, removed=removed)
         note = self._embed_new([doc for _, docs in done.files for doc in docs])
@@ -1354,7 +1360,7 @@ class Index:
             keep = [i for i, row in enumerate(rows) if intact[i] and row[0] in still]
             store.put_vectors(db, [rows[i][0] for i in keep], matrix[keep])
             store.touch(db)
-            after = store.get_meta(db, "version")
+            after = store.vectors_state(db)
             db.commit()
         except BaseException:
             db.rollback()
@@ -1363,15 +1369,15 @@ class Index:
         return None if intact.all() else "some passages could not be embedded (the model returned NaN); try again"
 
     def _patch(self, cid, before, after, removed=(), ids=(), matrix=None):
-        """Bring the codes in memory of the collection `cid` from its store's version `before` to `after`, a change this
-        index made itself, without loading them all again. Codes of another version are loaded anew by the next
-        search anyway; and as what the store counts isn't known here, so are these at the store's next change."""
-        held = self.vectors.get(cid)
-        if held is None or held.version != before or before == after or cid in self._reading:
+        """Bring the codes in memory of the collection `cid` from its store's version `before` to the state `after`
+        (version, epoch, count of vectors: store.vectors_state, read in the change's transaction), a change this index
+        made itself, without loading them all again. Codes of another version are followed by the next search anyway."""
+        held, (version, epoch, count) = self.vectors.get(cid), after
+        if held is None or held.version != before or before == version or cid in self._reading:
             return
         bits = codes(matrix) if matrix is not None else np.empty((0, held.codes.width), np.uint8)
         last = max([held.last, *map(int, ids)])
-        self.vectors[cid] = _Held(after, held.codes.patched(list(removed), list(ids), bits), last=last)
+        self.vectors[cid] = _Held(version, held.codes.patched(list(removed), list(ids), bits), epoch, count, last)
 
     def fields(self, collection):
         """The front-matter fields of a collection, from FIELD_SAMPLE documents spread from its first to its last,

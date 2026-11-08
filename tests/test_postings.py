@@ -572,8 +572,8 @@ def test_highlights_mark_already_in_a_text_counts_for_nothing(tmp_path, home):
 
 
 def test_the_chunks_of_phrases_are_kept_to_a_budget_of_bytes(tmp_path, home, monkeypatch):
-    # A server asked ever new phrases kept the chunks of each for as long as the postings stood: 80 MB for a common
-    # phrase over 30 million chunks.
+    # A server asked ever new phrases kept the chunks of each for as long as the postings stood: 160 MB with their
+    # counts for a phrase in 10 million chunks.
     root, catalog = tmp_path / "phrases", Catalog(home)
     for i in range(6):
         write(root / f"n{i}.md", f"# Note\n\nw1 w2 w{i + 3}\n")

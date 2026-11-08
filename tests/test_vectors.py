@@ -296,9 +296,27 @@ def test_codes_appended_hold_what_a_fresh_load_would():
     live_ids, live_bits = held.live()
     assert live_ids.tolist() == ids[3:].tolist()
     assert (live_bits == bits[3:]).all()
-    assert len(held._parts) <= 2
     query = unit(np.ones((1, 64)))[0]
     assert top(held, exact, query, 10) == top(whole, exact, query, 10, excluded=ids[:3])
+
+
+def test_codes_appended_slab_by_slab_copy_only_what_they_merge():
+    # An embed from scratch beside a server appends a slab a minute for a day: joined to all appended before, each
+    # copied every code embedded so far, the last ones millions.
+    ids, matrix, exact, whole = random_index(n=1100)
+    bits = codes(matrix)
+    held = Codes(ids[:100], bits[:100])
+    base = held._parts[0]
+    for start in range(100, 1100, 10):
+        held = held.appended(ids[start : start + 10], bits[start : start + 10])
+    assert held._parts[0] is base  # the codes loaded, never copied
+    assert len(held._parts) <= 2 + int(np.log2(100))  # appended parts merge as they grow, halving in size
+    live_ids, live_bits = held.live()
+    assert (live_ids.tolist(), (live_bits == bits).all()) == (ids.tolist(), True)
+    query = unit(np.ones((1, 64)))[0]
+    assert top(held, exact, query, 10) == top(whole, exact, query, 10)
+    with pytest.raises(ValueError, match=r"16 bytes .* 8"):
+        held.appended([99999], np.zeros((1, 16), np.uint8))
 
 
 # --- the codes of several collections ------------------------------------------

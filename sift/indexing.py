@@ -235,9 +235,10 @@ def _reread(db, files, fields):
 
 
 Reindexed = namedtuple("Reindexed", "files removed versions")
-"""What `reindex` did: per file, ({"id", "status"[, "note"]}, its documents' row ids); the chunks it removed; and the
-version of each store it changed, before and after, by collection id, for a server to follow without loading every
-code again."""
+"""What `reindex` did: per file, ({"id", "status"[, "note"]}, its documents' row ids); the chunks it removed; and, by
+collection id, what each store it changed said of its vectors before and after: (version before, version after, the
+epoch of its codes after, how many vectors it counted after), read in the change's transaction, for a server to follow
+without loading every code again (see search.Index._patch)."""
 
 
 def reindex(catalog, paths, scans=True):
@@ -266,7 +267,7 @@ def reindex(catalog, paths, scans=True):
                     entry, docs, gone = _reindex_file(db, c.name, rel, *found_on_disk)
                     found[i] = (entry, docs)
                     removed += gone
-            versions[collection.id] = (before, store.get_meta(db, "version"))
+            versions[collection.id] = (before, *store.vectors_state(db))
             db.commit()
         except BaseException:
             db.rollback()

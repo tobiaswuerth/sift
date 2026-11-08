@@ -278,6 +278,6 @@ def _store_vectors(db, chunks, vectors, model):
     store.put_vectors(db, [chunk for chunk, ok in zip(chunks, intact) if ok], vectors[intact])
     store.set_meta(db, "model", model)
     store.set_meta(db, "dim", vectors.shape[1])
-    store.touch(db)  # tells a running server to reload the codes
+    store.touch(db)  # tells a running server the codes changed
     db.commit()
     return int((~intact).sum())

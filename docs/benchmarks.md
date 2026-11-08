@@ -279,9 +279,10 @@ as by `sift serve`. Every query found the same documents as FTS5, score for scor
   On the live index of six collections (46 million passages), the 14-word question had taken 13.5 s and the
   hyphenated one over ten minutes; with 1.11.1, 0.97 s and 8.7 s at first, 0.32 s and 2.2 s asked again.
 - **A phrase counted once per passage** (sift 1.11.2), kept with the passages that hold it: of a hyphenated question's
-  2.2 s, 62% had been FTS5 counting the phrase in the same passages again. Over arXiv, warm, with the same results:
-  the hyphenated question 93 ms instead of 429, "in this paper we propose" 131 ms instead of 2.6 s, other phrases 1
-  to 7 ms instead of 3 to 14. A new question's first call costs what it did.
+  2.2 s, 62% had been FTS5 counting the phrase in the same passages again. Over arXiv, warm, six queries with phrases
+  measured before and after, with the same results: the hyphenated question 93 ms instead of 429, "in this paper we
+  propose" 131 ms instead of 2.6 s, the four others 1 to 7 ms instead of 3 to 14. A new question's first call costs
+  what it did.
 - **A time budget** ends a search from the postings early, with the best found so far: ranges are scored best bound
   first, so the best results tend to come first ([Mackenzie et al. 2021](https://arxiv.org/abs/2104.08976)). Not
   measured on these queries yet.
@@ -379,9 +380,11 @@ and hit@10 are those of each paper's own first passage. "+ exact top N" scores t
   | 30% | 0.9957 | 0.9966 |
   | all (sift) | 0.9975 | 0.9975 |
 
-  A third of the codes would save about 0.3 s of a search over 46 million passages, at a loss of recall, and need
-  clusters kept in the index, the codes embedded since apart, and filters checked otherwise. An exact variant can't
-  prune: in 768 bits, a cluster's radius is about as large as the distances it would bound.
+  Scanning a third of the codes would save at most two thirds of the scan, 0.3 of the 0.5 s it took live over 46
+  million passages, at a loss of recall, and need clusters kept in the index, the codes embedded since apart, and
+  filters checked otherwise. An exact variant, a cluster skipped where the triangle inequality bounds its codes
+  beyond the 10,000th distance, is unlikely to skip any (reasoned, not measured): in 768 bits a cluster's radius is
+  of the order of the distances it would have to bound.
 - **On a copy of a real index**, 145 GB with 3,261,593 vectors (arXiv abstracts and notes), on the i9-14900K while it
   was busy with other work: the upgrade from sift 1.6 added the codes in 65 seconds, `sift serve` loads them in 2.2
   seconds, and a search (Hamming scan and exact scores) takes 95 ms (median; 108 ms at the 90th percentile). Of 200
