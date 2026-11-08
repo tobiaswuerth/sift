@@ -9,6 +9,7 @@ Readers run in worker processes while indexing, so they read from bytes and retu
 import asyncio
 import hashlib
 import json
+import math
 import posixpath
 import re
 import unicodedata
@@ -41,12 +42,39 @@ SURROGATE = re.compile(r"\\u[dD][89a-fA-F]")  # JSON's escape of a surrogate, "\
 LONE = re.compile("[\ud800-\udfff]")  # holding it can't be stored (SQLite takes UTF-8 only)
 
 
+JSON_DEPTH = 999  # how deeply a value may nest: SQLite stores JSON nested 1,000 deep at most, the document holding it
+# one level of that
+
+
+class NestedTooDeeply(RecursionError):
+    """JSON nested deeper than SQLite stores it (JSON_DEPTH)."""
+
+
 def _json(text):
-    """JSON as sift keeps it: NaN and Infinity as strings, which SQLite's JSON rejects, and a surrogate alone as
-    U+FFFD (a pair Python joins itself). Raises ValueError, and RecursionError for JSON nested deeper than Python
-    recurses."""
-    value = json.loads(text, parse_constant=str)
+    """JSON as sift keeps it: NaN, Infinity and numbers too large for a float (1e999) as written, which SQLite's JSON
+    rejects, and a surrogate alone as U+FFFD (a pair Python joins itself). Raises ValueError, and RecursionError for
+    JSON nested deeper than Python recurses or SQLite stores."""
+    value = json.loads(text, parse_constant=str, parse_float=_float)
+    if text.count("[") + text.count("{") > JSON_DEPTH and _depth(value) > JSON_DEPTH:
+        raise NestedTooDeeply(f"nested more than {JSON_DEPTH} deep")
     return _whole(value) if SURROGATE.search(text) else value
+
+
+def _float(text):
+    """A JSON number with a fraction or an exponent, as a float; as written if a float can't hold it."""
+    number = float(text)
+    return number if math.isfinite(number) else text
+
+
+def _depth(value):
+    """How deeply a JSON value nests lists and objects: 0 for none."""
+    deepest, todo = 0, [(value, 0)]
+    while todo:
+        item, depth = todo.pop()
+        if isinstance(item, list | dict):
+            deepest = max(deepest, depth + 1)
+            todo += [(inner, depth + 1) for inner in (item.values() if isinstance(item, dict) else item)]
+    return deepest
 
 
 def _whole(value):

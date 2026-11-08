@@ -112,6 +112,9 @@ def test_front_matter_values_sqlite_cant_store_or_python_cant_nest():
     _, meta, _, _ = readers.parse('---\ntags: ["\\udc00", {"k\\ud800": ["v\\ud83d"]}, 1]\n---\n', "f")
     assert meta["tags"] == ["�", {"k�": ["v�"]}, 1]  # in lists and objects too
     assert readers.parse('---\nemoji: "\\ud83d\\ude00"\n---\n', "f")[1] == {"emoji": "\U0001f600"}  # a pair is one
+    nested = "[" * 1100 + "1" + "]" * 1100  # deeper than SQLite stores JSON (1,000), though Python reads it
+    _, meta, _, _ = readers.parse(f"---\nx: {nested}\nsize: 1e400\n---\n", "f")
+    assert meta == {"x": nested, "size": "1e400"}  # as written
 
 
 def test_parse_without_closing_front_matter_is_plain_text():
