@@ -1172,15 +1172,15 @@ class Index:
 
     def folders(self, collection, path=""):
         """The folders directly inside the folder `path` ("" or e.g. "2024/") of a collection, by name. Each folder
-        is one jump through the index, so a folder holding millions of documents costs as little as an empty one."""
+        is one jump through the index, past the documents in it, so a folder holding millions of documents in its
+        folders costs as little as an empty one; documents lying in `path` itself are passed over within a query."""
         path = path.strip("/") + "/" if path.strip("/") else ""  # "2024", "/2024/": the folder 2024/
         db, found, after = self._readable(self.catalog.get(collection)), [], path
-        sql = "SELECT path FROM docs WHERE path > ? AND path < ? ORDER BY path LIMIT 1"
-        while row := db.execute(sql, (after, path + LAST)).fetchone():
-            name, slash, _ = row[0][len(path) :].partition("/")
-            if slash:
-                found.append(name)
-            after = path + name + (slash and "/" + LAST)  # past the folder, or past the document
+        sql = "SELECT path FROM docs WHERE path > ? AND path < ? AND instr(substr(path, ?), '/') ORDER BY path LIMIT 1"
+        while row := db.execute(sql, (after, path + LAST, len(path) + 1)).fetchone():
+            name = row[0][len(path) :].partition("/")[0]
+            found.append(name)
+            after = path + name + "/" + LAST  # past the folder
         return sorted(found)
 
     def file(self, id):

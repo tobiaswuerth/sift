@@ -1708,6 +1708,23 @@ def test_folders_are_those_directly_inside_a_path(corpus):
         index.folders("nope")
 
 
+def test_the_folders_of_a_folder_of_many_documents_take_a_query_each(corpus):
+    # A query per document lying directly in the folder: 200,000 of them took 1.6 s, on every view of the UI, while
+    # every other call waited.
+    catalog, root = corpus
+    for i in range(30):
+        write(root / f"flat{i:02}.md", "# Flat\n")
+    write(root / "z" / "a.md", "# Z\n")
+    indexing.index(catalog)
+    index, db, asked = Index(catalog), catalog.store("notes"), []
+    db.set_trace_callback(lambda sql: "FROM docs" in sql and asked.append(sql))
+    try:
+        assert index.folders("notes") == ["robots", "z"]
+    finally:
+        db.set_trace_callback(None)
+    assert len(asked) == 3  # one for each folder, and one that finds no more
+
+
 def test_the_file_a_document_came_from(corpus, tmp_path):
     catalog, root = corpus
     write(tmp_path / "qa" / "faq.jsonl", '{"id": "q1", "text": "a record"}\n')
