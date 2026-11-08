@@ -10,6 +10,7 @@ import os
 import posixpath
 import re
 import sqlite3
+from contextlib import contextmanager
 from operator import itemgetter
 from pathlib import Path
 
@@ -131,7 +132,8 @@ def _present(hits, fields, compact, sort):
     return out
 
 
-DOI_PREFIXES = ("https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi:")
+DOI_PREFIXES = tuple(f"{scheme}{host}doi.org/" for scheme in ("https://", "http://") for host in ("", "www.", "dx."))
+DOI_PREFIXES += ("doi:",)
 
 
 def _doi(meta):
@@ -142,7 +144,7 @@ def _doi(meta):
         return None
     value = value.strip().lower()
     for prefix in DOI_PREFIXES:
-        value = value.removeprefix(prefix)
+        value = value.removeprefix(prefix).strip()  # "doi: 10...."
     return value if value.startswith("10.") else None
 
 
@@ -359,6 +361,20 @@ def _postings_state(db):
         return "not built"
     behind = postings.behind(db)
     return f"{console.count(behind, 'chunk')} behind" if behind else "ready"
+
+
+@contextmanager
+def _snapshot(dbs):
+    """While this lasts, each of these stores is read in one transaction: as it was at the first read, whatever other
+    sifts write meanwhile (WAL). A store in a transaction already stays in it."""
+    began = [db for db in dbs if not db.in_transaction]
+    for db in began:
+        db.execute("BEGIN")
+    try:
+        yield
+    finally:
+        for db in began:
+            db.commit()  # nothing written: it ends the reading
 
 
 class _Filter(Filter):
@@ -611,9 +627,11 @@ class Index:
         the query places its phrases (NEAR, column filters)."""
         if not match.strip():
             return []
-        if (query := expression.parse(match)) is not None and (held := self._ready(scope)) is not None:
-            allowed = _Filter(self.catalog, scope, where, args).passes if args else None
-            return topk.search(held, query, k, by_document=not all_passages, allowed=allowed, deadline=deadline)
+        if (query := expression.parse(match)) is not None:
+            with _snapshot(self.catalog.store(c) for c in scope):  # postings rebuilt meanwhile are another state's
+                if (held := self._ready(scope)) is not None:
+                    allowed = _Filter(self.catalog, scope, where, args).passes if args else None
+                    return topk.search(held, query, k, by_document=not all_passages, allowed=allowed, deadline=deadline)
         passages = f"""SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
                        JOIN chunks c ON c.id = fts.rowid JOIN docs d ON d.id = c.doc WHERE fts MATCH ? AND {where}"""
         if all_passages:
@@ -754,16 +772,17 @@ class Index:
             docs |= dict(db.execute(sql, (json.dumps(group),)))
         return _first_of_each((r for r in ranked if r[0] in docs), lambda r: docs[r[0]])  # in docs: not removed
 
-    def _works(self, rank, k, all_passages):
+    def _works(self, rank, k, all_passages, more=lambda: True):
         """The hits of the best k works by rank(n), the best n documents (or with `all_passages`, passages, of which
-        all are kept): one hit per work, as _one_per_work leaves them, asking for more while copies leave fewer."""
+        all are kept): one hit per work, as _one_per_work leaves them, asking for more while copies leave fewer, and
+        more() allows."""
         if all_passages:
             return self._hits(rank(k))
         n = k
         while True:
             ranked = rank(n)
             hits = _one_per_work(self._hits(ranked))
-            if len(hits) >= k or len(ranked) < n:
+            if len(hits) >= k or len(ranked) < n or not more():
                 return hits[:k]
             n *= 2
 
@@ -830,8 +849,11 @@ class Index:
                 ranked = self._keyword(relaxed, n, scope, where, args, all_passages, deadline)
             return ranked
 
-        hits = self._works(rank, k, all_passages)
-        for hit in hits if deadline is not None and deadline.cut else ():
+        def in_time():  # asked again out of time, a search scores less than the first ask did
+            return deadline is None or not deadline.cut
+
+        hits = self._works(rank, k, all_passages, more=in_time)
+        for hit in () if in_time() else hits:
             hit["partial"] = True
         return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
@@ -940,7 +962,7 @@ class Index:
         passages' vectors; the document itself is left out."""
         k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
-        doc = self._find(id)[0]
+        doc, _, _, meta, _ = self._find(id)
         self.load()
         sql = "SELECT v.chunk, v.vec FROM vectors v JOIN chunks c ON c.id = v.chunk WHERE c.doc = ?"
         own = self._db(doc).execute(sql, (doc,)).fetchall()
@@ -948,9 +970,11 @@ class Index:
             raise LookupError(f"{id!r} has no embeddings yet, run `sift embed`")
         mean = np.mean([np.frombuffer(vec, np.float16) for _, vec in own], axis=0, dtype=np.float32)
         excluded, vector = np.array([chunk for chunk, _ in own], np.int64), mean / np.linalg.norm(mean)
+        doi = _doi(meta)  # its copies in other collections are the same paper: one work more, left out
         hits = self._works(
-            lambda n: self._nearest(vector, n, scope, where, args, all_passages, excluded), k, all_passages
+            lambda n: self._nearest(vector, n, scope, where, args, all_passages, excluded), k + bool(doi), all_passages
         )
+        hits = [hit for hit in hits if doi is None or _doi(hit["meta"]) != doi][:k]
         return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
     def _place(self, id):

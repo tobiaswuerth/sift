@@ -214,7 +214,7 @@ def _stores(catalog, collections, named):
 
 def _forget_vectors(db):
     db.execute("DELETE FROM vectors")
-    db.execute("DELETE FROM meta WHERE key IN ('model', 'dim')")
+    db.execute("DELETE FROM meta WHERE key IN ('model', 'dim', 'kw_ordered')")  # kw_ordered: see postings._unordered
     store.touch(db)
     db.commit()
 

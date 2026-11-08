@@ -53,6 +53,8 @@ TOP = K1 + 1  # the most a term score can be, idf aside
 MOST_SEGMENTS = 8  # the base and its deltas; one more, and the deltas are merged into one
 REBUILD_SHARE = 0.05  # changed chunks of all, from which the postings are built anew rather than given a delta
 ORDER_SHARE = 0.2  # chunks of all that got codes since the postings were ordered, from which they are ordered anew
+ORDERED = "o"  # before the change of meta kw_built, for postings in an order of their own: sift 1.10 takes postings
+# for built where it is a number alone, and would read their places as chunk ids
 SMALL = 2_000  # chunks; a store this small is built anew by `sift index` rather than given a delta: in a moment
 PARALLEL = 1_000_000  # chunks from which a build reads FTS5's index in worker processes
 FETCH = 1_000_000  # rows fetched at a time
@@ -343,7 +345,7 @@ def _build(db, path, name, workers):
             store.set_meta(db, "kw_order", len(sequence))
         store.set_meta(db, "kw_ordered", coded)  # if none had a code, the next build need not try again
         db.execute("INSERT INTO kw_segments(id, chunks, tokens) VALUES(1, ?, ?)", (len(ids), int(lengths.sum())))
-        store.set_meta(db, "kw_built", change)
+        store.set_meta(db, "kw_built", change if sequence is None else f"{ORDERED}{change}")
         store.set_meta(db, "kw_stamp", uuid.uuid4().hex)
         db.execute("DELETE FROM kw_dirty WHERE change <= ?", (change,))
         db.commit()
@@ -456,8 +458,9 @@ def _write_lengths(db, segment, ids, lengths):
 
 
 def built(db):
-    """Whether the store's postings are built (if behind FTS5 meanwhile, see `ready`)."""
-    return str(store.get_meta(db, "kw_built", "")).isdigit()
+    """Whether the store's postings are built (if behind FTS5 meanwhile, see `ready`): meta kw_built holds the change
+    they were built at, after ORDERED if they are in an order of their own."""
+    return str(store.get_meta(db, "kw_built", "")).removeprefix(ORDERED).isdigit()
 
 
 def behind(db):
@@ -508,10 +511,11 @@ def _delta(db, merge=False):
     (no other sift changes the postings meanwhile: see `_alone`)."""
     change = int(store.get_meta(db, "kw_change", 0))
     dirty = [c for (c,) in db.execute("SELECT chunk FROM kw_dirty WHERE change <= ?", (change,))]
-    taken = sorted(set(dirty) | set(_delta_chunks(db))) if merge else dirty
+    kept = _delta_places(db) if merge else {}  # the deltas' chunks keep their places: the deltas go
+    taken = sorted(set(dirty) | set(kept)) if merge else dirty
     used, first = store.get_meta(db, "kw_order"), _first(db)
     start = None if used is None else first + 1 + int(used)
-    encoded, ids, places, lengths = _tokenized(db, taken, start)
+    encoded, ids, places, lengths, new = _tokenized(db, taken, kept, start)
     db.execute("BEGIN IMMEDIATE")
     try:
         if merge:  # the deltas go; their chunks, masked in the base, are the new one's
@@ -523,10 +527,11 @@ def _delta(db, merge=False):
             "SELECT coalesce(max(id), 0) + 1, (SELECT coalesce(max(id) >> 24, 0) + 1 FROM kw_blocks) FROM kw_segments"
         ).fetchone()
         _write_terms(db, segment, encoded, itertools.count(first_key))
-        _write_lengths(db, segment, places, lengths)
+        by_place = np.argsort(places, kind="stable")
+        _write_lengths(db, segment, places[by_place], lengths[by_place])
         if used is not None:
-            _write_order(db, start, ids, first)
-            store.set_meta(db, "kw_order", int(used) + len(ids))
+            _write_order(db, start, new, first)
+            store.set_meta(db, "kw_order", int(used) + len(new))
         db.execute(
             "INSERT INTO kw_segments(id, chunks, tokens) VALUES(?, ?, ?)", (segment, len(ids), int(lengths.sum()))
         )
@@ -542,20 +547,29 @@ def _delta(db, merge=False):
         raise
 
 
-def _delta_chunks(db):
-    """The chunks the deltas hold: those with a length, at their places."""
+def _delta_places(db):
+    """The chunks the deltas hold, those with a length, and their places: {chunk: place}."""
     places = []
     for block, data in db.execute("SELECT block, data FROM kw_lengths WHERE segment > 1"):
         places += ((block << LENGTHS_SHIFT) + np.flatnonzero(decode_lengths(data))).tolist()
-    if store.get_meta(db, "kw_order") is None:
-        return places
-    return _chunks_at(db, places, _first(db)).tolist()
+    places = np.array(places, np.int64)
+    chunks = places if store.get_meta(db, "kw_order") is None else _chunks_at(db, places, _first(db))
+    return dict(zip(chunks.tolist(), places.tolist()))
 
 
-def _tokenized(db, chunks, start=None):
+def _placed(ids, kept, start):
+    """Places of these chunks (ascending): those `kept` ({chunk: place}) keep theirs, the others take the next free
+    ones from `start`, in the order of their ids. Returns (places, the chunks that took new ones)."""
+    places = np.fromiter((kept.get(c, -1) for c in ids.tolist()), np.int64, len(ids))
+    new = places < 0
+    places[new] = start + np.arange(int(new.sum()), dtype=np.int64)
+    return places, ids[new]
+
+
+def _tokenized(db, chunks, kept, start):
     """The postings of these chunks as they are now, tokenized by FTS5 in a table of their own: (encoded terms, chunk
-    ids, their places, lengths), the places from `start` on in the order of their ids, or their ids if None. Chunks
-    deleted meanwhile have none."""
+    ids, their places, lengths, the chunks placed anew). Their places are their ids if `start` is None, else as
+    _placed gives them. Chunks deleted meanwhile have none."""
     db.execute(f"CREATE VIRTUAL TABLE temp.kw_tokens USING fts5(title, text, meta, tokenize='{store.TOKENIZER}')")
     try:
         db.execute(
@@ -564,12 +578,12 @@ def _tokenized(db, chunks, start=None):
             (json.dumps(chunks),),
         )
         ids, lengths = _lengths(db, "temp.kw_tokens_docsize")
-        places = ids if start is None else start + np.arange(len(ids), dtype=np.int64)
+        places, new = (ids, ids[:0]) if start is None else _placed(ids, kept, start)
         average = lengths.sum() / len(ids) if len(ids) else 1.0
         db.execute("CREATE VIRTUAL TABLE temp.kw_tokens_vocabulary USING fts5vocab(temp, kw_tokens, instance)")
         rows = db.execute("SELECT term, doc FROM temp.kw_tokens_vocabulary")
         held = _Chunks(ids, places, lengths)
-        return [e for p in _postings(rows) if (e := _encoded(*p, held, average, False))], ids, places, lengths
+        return [e for p in _postings(rows) if (e := _encoded(*p, held, average, False))], ids, places, lengths, new
     finally:
         db.commit()  # the temporary table's rows: it goes next
         db.execute("DROP TABLE IF EXISTS temp.kw_tokens_vocabulary")

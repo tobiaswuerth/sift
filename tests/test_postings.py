@@ -293,6 +293,45 @@ def test_a_collection_without_codes_keeps_its_chunks_order(prose):
     ids = chunk_ids(db)
     assert postings.Reader(db).chunks_at(ids).tolist() == ids.tolist()
     assert db.execute("SELECT count(*) FROM kw_order").fetchone() == (0,)
+    assert store.get_meta(db, "kw_built").isdigit()  # as sift 1.10 reads them: chunk ids, as it takes them
+
+
+def test_postings_in_topical_order_are_closed_to_sift_1_10(ordered):
+    # sift 1.10 takes a place for the chunk of that id: one still running when sift 1.11 ordered the postings found
+    # other documents than its scores were of. It reads postings only where kw_built is a number, FTS5 elsewhere.
+    catalog, _ = ordered
+    db = catalog.store("prose")
+    assert not store.get_meta(db, "kw_built").isdigit()
+    assert postings.ready(db)
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_merged_deltas_keep_their_chunks_places(ordered, monkeypatch):
+    # A merge gave every chunk of the deltas a place anew: an agent reindexing note after note, which never builds the
+    # postings anew, grew the order with the square of its changes.
+    monkeypatch.setattr(postings, "SMALL", 0)
+    monkeypatch.setattr(postings, "REBUILD_SHARE", 1.0)
+    monkeypatch.setattr(postings, "MOST_SEGMENTS", 2)
+    catalog, root = ordered
+    db = catalog.store("prose")
+    rng = random.Random(14)
+    for _ in range(4):
+        change_notes(root, rng, 3)
+        indexing.index(catalog)
+    places = np.arange(int(store.get_meta(db, "kw_order")), dtype=np.int64) + postings._first(db) + 1
+    held = postings._chunks_at(db, places, postings._first(db)).tolist()
+    assert len(held) == len(set(held))  # each chunk at one place
+    assert live(db) == fts5(db)
+
+
+def test_vectors_embedded_anew_order_the_postings_anew(ordered):
+    # `sift embed --reset`: the codes the postings were ordered by are gone, and as many come back.
+    catalog, _ = ordered
+    db = catalog.store("prose")
+    state = postings.Reader.state(db)
+    embed.embed_pending(catalog, reset=True)
+    postings.update(db, path_of(catalog))
+    assert postings.Reader.state(db) != state
 
 
 def test_postings_are_ordered_anew_once_many_more_chunks_have_codes(prose, fake_models):

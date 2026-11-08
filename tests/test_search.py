@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from sift import embed, indexing, postings, search, store, topk, vectors
+from sift import embed, indexing, order, postings, search, store, topk, vectors
 from sift.catalog import Catalog
 from sift.search import Index, _any_word
 
@@ -110,6 +110,57 @@ def test_adaptive_keeps_the_hits_before_the_largest_drop_and_a_few_more(prose, f
 def test_adaptive_leaves_few_hits_as_they_are(prose):
     index = Index(prose[0])
     assert index.search("w1", k=2, adaptive=True) == index.search("w1", k=2)
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_keyword_search_reads_the_postings_as_they_were_when_it_began(prose, fake_models, monkeypatch):
+    # Another sift built them anew, in another order, while a search read them: it read the old places through the new
+    # order, and found other chunks, with the old scores; or found the tables emptied, and failed.
+    catalog, _ = prose
+    embed.embed_pending(catalog)
+    db, path, cid = catalog.store("prose"), catalog.get("prose").store, catalog.get("prose").id
+    postings.build(db, path)
+    exact = Index(catalog).search("w5 OR w6", k=10)
+    index = Index(catalog)
+    index.search("w1", k=10)  # its reader holds what it read of the postings as they are
+    other, real, built = store.connect(path, cid), postings.Reader.term, []
+
+    def meanwhile(reader, term):
+        if not built:  # as the search starts reading
+            built.append(1)
+            monkeypatch.setattr(order, "LEVELS", (3,))  # another order
+            postings.build(other, path)
+        return real(reader, term)
+
+    monkeypatch.setattr(store, "empty_log", lambda db: None)  # which waits for the readers
+    monkeypatch.setattr(postings.Reader, "term", meanwhile)
+    try:
+        assert index.search("w5 OR w6", k=10) == exact
+        assert built
+        assert index.search("w5 OR w6", k=10) == exact  # and the next, in the new order
+    finally:
+        other.close()
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_keyword_search_out_of_time_asks_no_more(tmp_path, home, monkeypatch):
+    # Copies of a work left fewer than k hits, so the search asked for more: out of time, that second ask scored a
+    # range per store, and its hits took the place of the first ask's.
+    root = tmp_path / "copies"
+    for i in range(12):
+        doi = "10.1000/same" if i < 2 else f"10.1000/{i}"
+        words = "attention transformer " * (2 if i < 2 else 1)
+        write(root / f"n{i:02}.md", f'---\ndoi: "{doi}"\n---\n# N{i}\n\n{words}\n')
+    catalog = Catalog(home)
+    catalog.add(root, "copies")
+    indexing.index(catalog)
+    monkeypatch.setattr(topk, "FIRST_BATCH", 1)
+    asked, real = [], topk.search
+    monkeypatch.setattr(topk, "search", lambda *args, **kwargs: asked.append(args[2]) or real(*args, **kwargs))
+    hits = Index(catalog).search("attention transformer", k=3, budget=1e-9)
+    assert hits
+    assert all(h["partial"] for h in hits)
+    assert asked == [3]
 
 
 @pytest.mark.parametrize("budget", [0, -1, "1", True, float("nan")])
@@ -1100,6 +1151,29 @@ def test_k_works_after_collapsing(works):
 def test_documents_like_one_are_one_hit_per_work(works):
     hits = works.similar("a/other.md", k=10)
     assert len(COPIES & {h["id"] for h in hits}) == 1
+
+
+def test_documents_like_a_paper_leave_out_its_copies(works):
+    # Its copy in another collection is no other paper like it, though closest of all.
+    hits = works.similar("a/attention.md", k=10)
+    assert not COPIES & {h["id"] for h in hits}
+    assert hits
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "10.48550/arXiv.1706.03762",
+        "https://doi.org/10.48550/ARXIV.1706.03762",
+        "https://www.doi.org/10.48550/arxiv.1706.03762",
+        "http://dx.doi.org/10.48550/arxiv.1706.03762",
+        "doi:10.48550/arxiv.1706.03762",
+        "doi: 10.48550/arxiv.1706.03762",
+        " DOI: 10.48550/arXiv.1706.03762 ",
+    ],
+)
+def test_a_doi_as_sources_write_it(written):
+    assert search._doi(json.dumps({"doi": written})) == "10.48550/arxiv.1706.03762"
 
 
 def test_every_passage_keeps_every_copy(works):

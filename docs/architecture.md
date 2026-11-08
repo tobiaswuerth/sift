@@ -88,7 +88,8 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
     score in a range of places, summed over the query's terms, bounds every chunk there, so ranges are scored best
     bound first until none left can beat the k-th best. FTS5 scores every match, about a microsecond each: "patients"
     matches 8 million PubMed passages and took 8 seconds, a question of a dozen words 15. Now most of a common word's
-    postings are never read. The results are FTS5's, score for score.
+    postings are never read. The results are FTS5's, score for score. A search reads the postings in one transaction,
+    as they were when it began, whatever another sift builds meanwhile.
   - Phrases, prefixes, NEAR and column filters are FTS5's to answer, as before.
   - With a time budget, a search from the postings stops once it is spent and has found any, and returns the best found
     so far, marked partial: ranges best bound first make that the anytime ranking of
@@ -113,8 +114,9 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
     90 microseconds. A filter that lets too few through for that, so that checking would cost more than a fifth of the
     passages, is listed instead. Either way, the candidates are the nearest the filter lets through.
 - **Copies of a work:** a paper in several collections (arXiv and PubMed, say) is one hit, the best ranked, which
-  names the others under `also`: copies share a DOI, compared in any case and without a link's prefix. Searches look
-  further down until they have `k` works.
+  names the others under `also`: copies share a DOI, compared in any case and without a link's prefix. `search`,
+  `vsearch` and `similar` look further down until they have `k` works, and `similar` leaves out the document's own
+  copies; `query` keeps one hit per work of the candidates it reranks.
 - **Adaptive k:** asked for it, a search returns those of its `k` hits before the largest drop in score, among the
   first 90% of the gaps between neighbours, and five more: Adaptive-k
   ([Taguchi et al. 2025](https://arxiv.org/abs/2506.08479)). Over 2,000 arXiv titles, vsearch then returned 6 hits of
