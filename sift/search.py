@@ -18,7 +18,7 @@ import numpy as np
 from . import console, embed, expression, indexing, links, postings, readers, store, topk
 from . import models as _models
 from .catalog import Catalog
-from .vectors import Codes, codes, top
+from .vectors import Codes, Filter, codes, top
 
 STOPWORDS = set(
     "a an and are as at be by can do does for from has have how i in is it of on or that the this to "
@@ -125,6 +125,8 @@ def _present(hits, fields, compact, sort):
             shown["text"] = hit["text"]
         if hit.get("also"):
             shown["also"] = hit["also"]
+        if hit.get("partial"):
+            shown["partial"] = True
         out.append(shown)
     return out
 
@@ -167,6 +169,27 @@ def line_span(lines):
     if not m or int(m[2] or m[1]) < int(m[1]):
         raise ValueError(f"lines must be a line number or a range such as '17-26', got {lines!r}")
     return int(m[1]), int(m[2] or m[1])
+
+
+ADAPTIVE_SHARE = 0.9  # of the gaps between neighbouring scores, the first, where the largest is looked for
+ADAPTIVE_BUFFER = 5  # hits kept after the largest gap, as the paper keeps: of 10 or 50 vsearch hits for 2,000 arXiv
+# titles, 6 on average, with the paper sought in 99.6% of the cases it was among them (docs/benchmarks.md)
+
+
+def _adaptive(hits):
+    """Hits, best first, up to the largest drop in score among the first ADAPTIVE_SHARE of their gaps, and
+    ADAPTIVE_BUFFER more: Adaptive-k (Taguchi et al. 2025, arXiv 2506.08479), the few that stand out instead of k."""
+    if len(hits) < 3:
+        return hits
+    scores = np.array([hit["score"] for hit in hits], np.float64)
+    gaps = scores[:-1] - scores[1:]
+    return hits[: int(np.argmax(gaps[: math.ceil(ADAPTIVE_SHARE * len(gaps))])) + 1 + ADAPTIVE_BUFFER]
+
+
+def _check_budget(budget):
+    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int | float) or not budget > 0):
+        raise ValueError(f"budget must be a positive number of seconds, got {budget!r}")
+    return budget
 
 
 def _check_k(k):
@@ -346,6 +369,41 @@ def _postings_state(db):
         return "not built"
     behind = postings.behind(db)
     return f"{console.count(behind, 'chunk')} behind" if behind else "ready"
+
+
+class _Filter(Filter):
+    """Which chunks of the collections of `scope` a search may find: those of the documents (`d`) that `where`, with
+    `args`, lets through. What it was asked is remembered, as a search goes on asking."""
+
+    CHUNKS = "SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE "
+
+    def __init__(self, catalog, scope, where, args):
+        self.stores, self.where, self.args = {c.id: catalog.store(c) for c in scope}, where, args
+        self.seen, self.passed = np.empty(0, np.int64), np.empty(0, bool)  # the chunks checked, by id, and which pass
+        self._listed = None
+
+    def check(self, ids):
+        ids = np.asarray(ids, np.int64)
+        if len(new := np.setdiff1d(ids, self.seen)):
+            seen = np.concatenate([self.seen, new])
+            order = np.argsort(seen, kind="stable")
+            self.seen, self.passed = seen[order], np.concatenate([self.passed, self._lookup(new)])[order]
+        return self.passed[np.searchsorted(self.seen, ids)]
+
+    def _lookup(self, ids):
+        """Which of these chunks (ascending, each once, of the collections of the scope) pass, as their stores tell."""
+        sql = f"{self.CHUNKS}c.id IN (SELECT value FROM json_each(?)) AND {self.where}"
+        owners, passed = ids >> store.SHIFT, []
+        for cid in np.unique(owners).tolist():
+            rows = self.stores[cid].execute(sql, [json.dumps(ids[owners == cid].tolist()), *self.args])
+            passed += [chunk for (chunk,) in rows]
+        return np.isin(ids, np.array(passed, np.int64))
+
+    def listed(self):
+        if self._listed is None:
+            rows = (i for db in self.stores.values() for (i,) in db.execute(self.CHUNKS + self.where, self.args))
+            self._listed = np.fromiter(rows, np.int64)
+        return self._listed
 
 
 class _Resolvers(dict):
@@ -554,17 +612,17 @@ class Index:
 
     # --- candidates as [(chunk_id, score)] -----------------------------------
 
-    def _keyword(self, match, k, scope, where, args, all_passages=False):
+    def _keyword(self, match, k, scope, where, args, all_passages=False, deadline=None):
         """The best passage of each of the k documents that best match an FTS5 query, by BM25, or the k best
         passages, in the collections of `scope`, scored with the word counts of all of them. A query of terms, AND, OR
-        and NOT is answered from the keyword postings (see `topk`), where every collection has them ready; others by
-        FTS5, each collection's best scored again together (see _as_one), unless the query places its phrases (NEAR,
-        column filters)."""
+        and NOT is answered from the keyword postings (see `topk`), until the topk.Deadline if given, where every
+        collection has them ready; others by FTS5, each collection's best scored again together (see _as_one), unless
+        the query places its phrases (NEAR, column filters)."""
         if not match.strip():
             return []
         if (query := expression.parse(match)) is not None and (held := self._ready(scope)) is not None:
-            allowed = self._allowed(scope, where, args) if args else None
-            return topk.search(held, query, k, by_document=not all_passages, allowed=allowed)
+            allowed = _Filter(self.catalog, scope, where, args).check if args else None
+            return topk.search(held, query, k, by_document=not all_passages, allowed=allowed, deadline=deadline)
         passages = f"""SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
                        JOIN chunks c ON c.id = fts.rowid JOIN docs d ON d.id = c.doc WHERE fts MATCH ? AND {where}"""
         if all_passages:
@@ -606,21 +664,6 @@ class Index:
                 held = self._postings[c.id] = (state, postings.Reader(db))
             readers.append(held[1])
         return readers
-
-    def _allowed(self, scope, where, args):
-        """Which of a store's chunks the filter `where` (on their documents, `d`) lets through: for topk."""
-        by_id = {c.id: c for c in scope}
-        sql = (
-            f"SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc "
-            f"WHERE c.id IN (SELECT value FROM json_each(?)) AND {where}"
-        )
-
-        def allowed(chunks):
-            db = self.catalog.store(by_id[store.owner(chunks[0])])
-            passed = {chunk for (chunk,) in db.execute(sql, [json.dumps(chunks.tolist()), *args])}
-            return np.fromiter((chunk in passed for chunk in chunks.tolist()), bool, len(chunks))
-
-        return allowed
 
     def _as_one(self, found, phrases):
         """The passages found in each collection, {collection: [(passage, doc, score)]}, scored again by BM25 as FTS5
@@ -692,10 +735,7 @@ class Index:
     def _nearest(self, query, k, scope, where, args, all_passages, excluded=None):
         """The best passage of each of the k documents nearest the query's vector, among the documents of the
         collections of `scope` that `where` allows, but the chunks `excluded`; or the k best passages."""
-        allowed = None
-        if args:  # restrict to chunks of matching documents
-            sql = f"SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE {where}"
-            allowed = np.fromiter((i for c in scope for (i,) in self.catalog.store(c).execute(sql, args)), np.int64)
+        allowed = _Filter(self.catalog, scope, where, args) if args else None
         held, width = [], codes(query[None, :]).shape[1]
         for c in scope:
             if c.id in self.vectors and (theirs := self.vectors[c.id][1]).width != width:
@@ -764,8 +804,9 @@ class Index:
 
     # Every search returns the best passage of each document it finds, or with `all_passages` every passage, and
     # takes `fields`, front-matter fields to add to each hit (["*"] for all), `compact`, which leaves out the text,
-    # and `sort`, a front-matter field to order the hits by instead of score ("-created": newest first). Without a
-    # `collection`, a search covers every active one.
+    # and `sort`, a front-matter field to order the hits by instead of score ("-created": newest first). With
+    # `adaptive`, k is the most hits returned: those before the largest drop in score, and a few more (see _adaptive).
+    # Without a `collection`, a search covers every active one.
 
     def search(
         self,
@@ -781,19 +822,27 @@ class Index:
         sort=None,
         links_to=None,
         linked_from=None,
+        adaptive=False,
+        budget=None,
     ):
         """Exact keyword search, ranked by BM25. Accepts FTS5 syntax: "phrases", prefix*, AND, OR, NOT.
-        If no chunk holds all terms of a query without operators, chunks with any of them are returned."""
+        If no chunk holds all terms of a query without operators, chunks with any of them are returned. With a
+        `budget` in seconds, a search the keyword postings answer stops once it is spent and has found any, and returns
+        the best found so far, each hit marked "partial"."""
         k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
-        fields, sort = _check_fields(fields), _check_sort(sort)
+        fields, sort, budget = _check_fields(fields), _check_sort(sort), _check_budget(budget)
+        deadline = topk.Deadline(budget) if budget is not None else None
 
         def rank(n):
-            ranked = self._keyword(query, n, scope, where, args, all_passages)
+            ranked = self._keyword(query, n, scope, where, args, all_passages, deadline)
             if not ranked and (relaxed := _any_term(query)):
-                ranked = self._keyword(relaxed, n, scope, where, args, all_passages)
+                ranked = self._keyword(relaxed, n, scope, where, args, all_passages, deadline)
             return ranked
 
-        return _present(self._works(rank, k, all_passages), fields, compact, sort)
+        hits = self._works(rank, k, all_passages)
+        for hit in hits if deadline is not None and deadline.cut else ():
+            hit["partial"] = True
+        return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
     def vsearch(
         self,
@@ -809,6 +858,7 @@ class Index:
         sort=None,
         links_to=None,
         linked_from=None,
+        adaptive=False,
     ):
         """Semantic search: the passages nearest the query's embedding, by cosine similarity (see `vectors`)."""
         k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
@@ -817,7 +867,7 @@ class Index:
             return []
         vector = self._vector(query)
         hits = self._works(lambda n: self._nearest(vector, n, scope, where, args, all_passages), k, all_passages)
-        return _present(hits, fields, compact, sort)
+        return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
     def query(
         self,
@@ -833,6 +883,7 @@ class Index:
         sort=None,
         links_to=None,
         linked_from=None,
+        adaptive=False,
         candidates=40,
     ):
         """Hybrid search for RAG: keyword and semantic candidates, all reranked together, and ordered by the reranker's
@@ -856,8 +907,8 @@ class Index:
         for h, s in zip(hits, scores):
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])
-        hits = hits if all_passages else _one_per_work(_first_of_each(hits, itemgetter("id")))
-        return _present(hits[:k], fields, compact, sort)
+        hits = (hits if all_passages else _one_per_work(_first_of_each(hits, itemgetter("id"))))[:k]
+        return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
     def get(self, id, lines=None):
         """Text of an indexed document, by its `collection/path` id: all of it, or `lines` such as "17-26", as
@@ -892,6 +943,7 @@ class Index:
         sort=None,
         links_to=None,
         linked_from=None,
+        adaptive=False,
     ):
         """Documents closest in meaning to the document `id` (as for `get`), by cosine similarity with the mean of its
         passages' vectors; the document itself is left out."""
@@ -908,7 +960,7 @@ class Index:
         hits = self._works(
             lambda n: self._nearest(vector, n, scope, where, args, all_passages, excluded), k, all_passages
         )
-        return _present(hits, fields, compact, sort)
+        return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
     def _place(self, id):
         """The collection, and the path in it, that `id` names: "collection/path", or an absolute path in a

@@ -135,11 +135,25 @@ Sort = Annotated[
         'e.g. "-created" for the newest first; results without the field come last.'
     ),
 ]
+Adaptive = Annotated[
+    bool,
+    Field(
+        description="Return up to k results: those before the largest drop in score, and a few more, instead of "
+        "always k. Ask for more, e.g. k=30, and read only the ones that stand out."
+    ),
+]
+Budget = Annotated[
+    float | None,
+    Field(
+        description="Seconds the search may take, roughly: once spent, and anything found, it returns the best found "
+        'so far, each marked "partial": better matches may be missing. Without, it finds the exact best.'
+    ),
+]
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 
 
 def _add_search(mcp, index, name, description, query_description):
-    """Add the tool for the Index search called `name`."""
+    """Add the tool for the Index search called `name`: keyword search's takes a budget too."""
     method = getattr(index, name)
 
     async def tool(
@@ -154,23 +168,37 @@ def _add_search(mcp, index, name, description, query_description):
         sort: Sort = None,
         links_to: LinksTo = None,
         linked_from: LinkedFrom = None,
+        adaptive: Adaptive = False,
     ) -> list[dict]:
-        return await _run(
-            method,
-            query,
-            k,
-            collection=collection,
-            path=path,
-            filters=filters,
-            fields=fields,
-            compact=compact,
-            all_passages=all_passages,
-            sort=sort,
-            links_to=links_to,
-            linked_from=linked_from,
-        )
+        return await _search(method, query, k, locals())
 
-    mcp.tool(name, description=description, annotations=READ_ONLY)(tool)
+    async def timed(
+        query: Annotated[str, Field(description=query_description)],
+        k: K = 10,
+        collection: Collection = None,
+        path: PathGlob = None,
+        filters: Filters = None,
+        fields: Fields = None,
+        compact: Compact = False,
+        all_passages: AllPassages = False,
+        sort: Sort = None,
+        links_to: LinksTo = None,
+        linked_from: LinkedFrom = None,
+        adaptive: Adaptive = False,
+        budget: Budget = None,
+    ) -> list[dict]:
+        return await _search(method, query, k, locals())
+
+    mcp.tool(name, description=description, annotations=READ_ONLY)(timed if name == "search" else tool)
+
+
+OPTIONS = ("collection", "path", "filters", "fields", "compact", "all_passages", "sort", "links_to", "linked_from")
+OPTIONS += ("adaptive", "budget")
+
+
+async def _search(method, subject, k, arguments):
+    """Run a search tool's Index method with the options among the tool's `arguments`, by name."""
+    return await _run(method, subject, k, **{key: arguments[key] for key in OPTIONS if key in arguments})
 
 
 def build(index=None):
@@ -220,23 +248,11 @@ def build(index=None):
         sort: Sort = None,
         links_to: LinksTo = None,
         linked_from: LinkedFrom = None,
+        adaptive: Adaptive = False,
     ) -> list[dict]:
         """Documents closest in meaning to a document, e.g. more papers like one found; the document itself is left
         out (cosine similarity, -1 to 1)."""
-        return await _run(
-            index.similar,
-            id,
-            k,
-            collection=collection,
-            path=path,
-            filters=filters,
-            fields=fields,
-            compact=compact,
-            all_passages=all_passages,
-            sort=sort,
-            links_to=links_to,
-            linked_from=linked_from,
-        )
+        return await _search(index.similar, id, k, locals())
 
     @mcp.tool(annotations=READ_ONLY)
     async def get(

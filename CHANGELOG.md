@@ -5,6 +5,37 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-08
+
+Keyword postings in topical order, quicker filtered and exact semantic search, one hit per paper, and fewer results
+for agents when few stand out.
+
+### Added
+
+- A paper that several collections hold, arXiv and PubMed say, is one hit: the best ranked copy, which lists the
+  others under `also`. Copies share a DOI (front-matter field `doi`), compared in any case and without a link's
+  prefix. Searches look further down until they have `k` papers; `all_passages` keeps every copy.
+- `adaptive` (`--adaptive`) for every search: up to `k` hits, those before the largest drop in score and five more
+  (Adaptive-k, Taguchi et al. 2025). Over 2,000 arXiv titles, vsearch returned 6 of 10 or 50 on average, and kept the
+  paper sought in 99.6% of the cases it was among them.
+- `budget` (`--budget SECONDS`) for keyword search: once spent, and anything found, a search from the postings stops
+  and returns the best found so far, each hit marked `"partial": true`. Without it, results stay exact.
+
+### Changed
+
+- The keyword postings number passages in a topical order, clusters of their vectors' codes, so that a range of
+  postings holds passages that share their words and its bound is tight. Over arXiv, questions scored a half to a
+  twentieth as many ranges, the slowest took 45 ms instead of 90, with the same results, and the postings took 8% less
+  space; single words took 0.7 ms instead of 0.3. The index layout goes to 9 by itself; the next `sift index` builds a
+  collection's postings anew once it has vectors, and again once a fifth of its passages got vectors since.
+- `vsearch` ranks the 10,000 nearest codes again by the query's own values against their bits, and reads and scores
+  the best 1,000 exactly instead of the 4,000 nearest: over 3.2 million arXiv abstracts it finds 99.75% of exact
+  search's top 10 instead of 99.6%, and reads a quarter of the vectors (7 ms instead of 25, warm). Candidates the same
+  distance away are taken by id, so the result no longer depends on how codes are split among collections.
+- A filtered `vsearch`, `query` or `similar` checks the nearest candidates against the filter, a batch at a time,
+  instead of listing every passage it lets through, which read every document: a category filter over arXiv took
+  about 0.3 seconds instead of 6 warm (56 cold). A filter that lets too few through for that is listed, as before.
+
 ## [1.10.1] - 2026-11-08
 
 Embedding with the GPU busy all the time, and no write-ahead log left at the size of a build.

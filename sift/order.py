@@ -4,8 +4,9 @@ a range mixes every topic: a question of a dozen common words bounded most range
 
 The order comes from the chunks' codes (see vectors), which the store keeps anyway: clusters of clusters (LEVELS), by
 binary k-means, Hamming distance and each cluster's bits by majority, trained on a sample; each cluster next to the
-one closest to it, and the chunks of a leaf in the order of their ids. Over 3.2 million arXiv abstracts, long
-questions scored a third as many ranges (docs/benchmarks.md), and the postings took 8% less space."""
+one closest to it, and the chunks of a leaf in the order of their ids. Over 3.2 million arXiv abstracts,
+questions scored a half to a twentieth as many ranges, the slowest in half the time (docs/benchmarks.md), and the
+postings took 8% less space."""
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -18,7 +19,8 @@ STEP = 65_536  # codes measured at a time, in a thread each
 
 
 def topical(ids, bits):
-    """`ids` in topical order, by `bits`, their codes (rows of uint8): see the module."""
+    """`ids` in topical order, by `bits`, their codes (rows of uint8 in whole 64-bit words, as vectors.codes packs
+    them): see the module."""
     ids = np.asarray(ids, np.int64)
     leaf = np.zeros(len(ids), np.int64)
     if len(ids) > 1:
@@ -48,18 +50,21 @@ def _kmeans(words, k, rng):
     sample = words[rng.choice(len(words), size, replace=False)] if len(words) > size else words
     centroids = sample[rng.choice(len(sample), min(k, len(sample)), replace=False)].copy()
     for _ in range(ROUNDS):
-        centroids = _majority(sample, _distances(sample, centroids).argmin(1), centroids)
-    return centroids, _distances(words, centroids).argmin(1)
+        centroids = _majority(sample, _nearest(sample, centroids), centroids)
+    return centroids, _nearest(words, centroids)
 
 
-def _distances(words, centroids):
-    """The Hamming distance of every code to every centroid, (codes, centroids), STEP codes at a time in threads."""
-    out = np.empty((len(words), len(centroids)), np.uint16)
+def _nearest(words, centroids):
+    """The centroid nearest to every code by Hamming distance, the first of those as near, STEP codes at a time in
+    threads: a part's distances alone are held."""
+    out = np.empty(len(words), np.int64)
 
     def part(start):
         rows = words[start : start + STEP]
+        distances = np.empty((len(rows), len(centroids)), np.uint16)
         for j, centroid in enumerate(centroids):
-            out[start : start + len(rows), j] = np.bitwise_count(rows ^ centroid).sum(1)
+            distances[:, j] = np.bitwise_count(rows ^ centroid).sum(1)
+        out[start : start + len(rows)] = distances.argmin(1)
 
     starts = range(0, len(words), STEP)
     if len(starts) > 1:

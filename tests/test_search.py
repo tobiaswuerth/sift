@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from sift import embed, indexing, postings, search, store, topk
+from sift import embed, indexing, postings, search, store, topk, vectors
 from sift.catalog import Catalog
 from sift.search import Index, _any_word
 
@@ -76,6 +76,46 @@ def test_keyword_search_from_the_postings_finds_what_fts5_finds(prose, tmp_path,
     fast = scored(Index(catalog).search(query, **options))
     through_fts5(catalog)
     agree(fast, scored(Index(catalog).search(query, **options)))
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_keyword_search_out_of_time_marks_its_hits_partial(prose, monkeypatch):
+    # A budget bounds a search of common words over millions of chunks: the best found so far, and said so.
+    monkeypatch.setattr(topk, "FIRST_BATCH", 1)
+    catalog, _ = prose
+    postings.build(catalog.store("prose"), catalog.get("prose").store)  # in ranges of a few chunks
+    index = Index(catalog)
+    hits = index.search("w0 OR w1 OR w2", k=50, budget=1e-9)
+    assert hits
+    assert all(h["partial"] for h in hits)
+    exact = index.search("w0 OR w1 OR w2", k=50)
+    assert not any("partial" in h for h in exact)
+    assert index.search("w0 OR w1 OR w2", k=50, budget=60) == exact
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query", "similar"])
+def test_adaptive_keeps_the_hits_before_the_largest_drop_and_a_few_more(prose, fake_models, monkeypatch, mode):
+    # Adaptive-k (2506.08479): an agent asks for up to k, and reads the few that stand out, not k.
+    catalog, _ = prose
+    embed.embed_pending(catalog)
+    monkeypatch.setattr(search, "ADAPTIVE_BUFFER", 1)
+    index, subject = Index(catalog), "prose/n001.md" if mode == "similar" else "w1 w2 w3"
+    every = getattr(index, mode)(subject, k=20)
+    scores = np.array([h["score"] for h in every])
+    gaps = scores[:-1] - scores[1:]
+    cut = int(np.argmax(gaps[: int(np.ceil(0.9 * len(gaps)))])) + 2  # the hits before the gap, and one more
+    assert getattr(index, mode)(subject, k=20, adaptive=True) == every[:cut]
+
+
+def test_adaptive_leaves_few_hits_as_they_are(prose):
+    index = Index(prose[0])
+    assert index.search("w1", k=2, adaptive=True) == index.search("w1", k=2)
+
+
+@pytest.mark.parametrize("budget", [0, -1, "1", True, float("nan")])
+def test_a_budget_is_a_positive_number_of_seconds(prose, budget):
+    with pytest.raises(ValueError, match="budget"):
+        Index(prose[0]).search("w1", budget=budget)
 
 
 def test_hybrid_candidates_come_from_the_postings(prose, fake_models, monkeypatch):
@@ -277,6 +317,52 @@ def test_vsearch(embedded):
     assert ids(index.vsearch("anything", filters={"categories": "cs.RO"})) == ["notes/robots/brush.md"]
     assert index.vsearch("anything", filters={"categories": "none"}) == []
     assert len(index.vsearch("anything", k=100)) == 3
+
+
+@pytest.mark.parametrize(
+    "options, lists",
+    [
+        ({"path": "n*"}, 0),  # most chunks: the nearest checked, none listed
+        ({"filters": {"title": {"not": "nothing"}}}, 0),
+        ({"path": "n00[0-3]*"}, 1),  # a few: listed, as checking candidates would find too few
+        ({"filters": {"title": "nothing"}}, 1),
+    ],
+)
+def test_a_filtered_vsearch_finds_the_same_checking_candidates_or_listing(
+    prose, tmp_path, fake_models, monkeypatch, options, lists
+):
+    # Listing the chunks a filter lets through read every document: seconds over millions, to find the few nearest.
+    catalog, _ = prose
+    write_prose(tmp_path / "more", 8, notes=40)
+    catalog.add(tmp_path / "more", "more")
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    monkeypatch.setattr(vectors, "RESCORE", 4)  # candidates of a large collection: few, as these are a few in millions
+    monkeypatch.setattr(vectors, "SHORTLIST", 1)
+    listed, real = [], search._Filter.listed
+    monkeypatch.setattr(search._Filter, "listed", lambda self: listed.append(1) or real(self))
+    checked = ids(Index(catalog).vsearch("w1 w2 w3 w4", k=4, **options))
+    assert len(listed) == lists
+    monkeypatch.setattr(vectors, "SCAN_SHARE", 0.0)  # always listed
+    assert ids(Index(catalog).vsearch("w1 w2 w3 w4", k=4, **options)) == checked
+    assert bool(checked) == (options != {"filters": {"title": "nothing"}})
+
+
+def test_a_filter_remembers_what_it_was_asked(prose, monkeypatch):
+    # A search asks again about the candidates it asked about before, as when it looks further for more documents:
+    # the stores are asked about each chunk once.
+    catalog, _ = prose
+    db = catalog.store("prose")
+    every = [c for (c,) in db.execute("SELECT id FROM chunks ORDER BY id")]
+    passing = {
+        c for (c,) in db.execute("SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.path GLOB 'n0*'")
+    }
+    allowed = search._Filter(catalog, [catalog.get("prose")], "d.path GLOB ?", ["n0*"])
+    looked_up, real = [], allowed._lookup
+    monkeypatch.setattr(allowed, "_lookup", lambda ids: looked_up.extend(ids.tolist()) or real(ids))
+    for asked in (every[40:0:-3], every[:60], every[:60], every[::-1]):
+        assert allowed.check(np.array(asked)).tolist() == [c in passing for c in asked]
+    assert sorted(looked_up) == every  # each once
 
 
 def test_broken_vectors_do_not_hide_the_others(embedded):

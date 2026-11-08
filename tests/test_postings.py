@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from sift import indexing, postings, store
+from sift import embed, indexing, postings, store
 from sift.catalog import Catalog
 
 from .conftest import prose_text as text
@@ -35,9 +35,9 @@ def live(db):
     found = {}
     for term in terms:
         for t in reader.term(term):
-            ids, tf = t.everything()
-            alive = reader.alive(t.segment, ids)
-            for chunk, n in zip(ids[alive].tolist(), tf[alive].tolist()):
+            places, tf = t.everything()
+            alive = reader.alive(t.segment, places)
+            for chunk, n in zip(reader.chunks_at(places[alive]).tolist(), tf[alive].tolist()):
                 assert chunk not in found.get(term, {}), "a chunk counted twice"
                 found.setdefault(term, {})[chunk] = n
     return {term: chunks for term, chunks in found.items() if chunks}
@@ -229,6 +229,109 @@ def test_a_build_leaves_no_write_ahead_log_behind(prose):
     assert Path(f"{path}-wal").stat().st_size == 0
     assert postings.ready(server)
     db.close()
+
+
+# --- in topical order ---------------------------------------------------------------
+# In the order chunks are indexed, a range of postings mixes every topic, and a question of common words bounded most
+# ranges high: the postings number chunks by their place in a topical order (see order), from their codes.
+
+
+@pytest.fixture
+def ordered(prose, fake_models):
+    """The prose collection embedded, its postings built anew in topical order, as `sift index` builds them."""
+    catalog, root = prose
+    embed.embed_pending(catalog)
+    postings.update(catalog.store("prose"), path_of(catalog))
+    return catalog, root
+
+
+def chunk_ids(db):
+    return np.array(sorted(c for (c,) in db.execute("SELECT id FROM chunks")), np.int64)
+
+
+def test_postings_number_chunks_in_topical_order(ordered):
+    catalog, _ = ordered
+    db = catalog.store("prose")
+    reader = postings.Reader(db)
+    ids = chunk_ids(db)
+    places = np.arange(len(ids), dtype=np.int64) + ids[0]  # dense, from the collection's first id
+    assert sorted(reader.chunks_at(places).tolist()) == ids.tolist()  # each chunk once
+    assert reader.chunks_at(places).tolist() != ids.tolist()  # in another order than indexed
+    assert live(db) == fts5(db)
+
+
+def test_a_collection_without_codes_keeps_its_chunks_order(prose):
+    catalog, _ = prose
+    db = catalog.store("prose")
+    ids = chunk_ids(db)
+    assert postings.Reader(db).chunks_at(ids).tolist() == ids.tolist()
+    assert db.execute("SELECT count(*) FROM kw_order").fetchone() == (0,)
+
+
+def test_postings_are_ordered_anew_once_many_more_chunks_have_codes(prose, fake_models):
+    catalog, _ = prose
+    db = catalog.store("prose")
+    embed.embed_pending(catalog)
+    postings.update(db, path_of(catalog), rebuild=False)  # a reindex builds nothing
+    assert db.execute("SELECT count(*) FROM kw_order").fetchone() == (0,)
+    postings.update(db, path_of(catalog))
+    assert db.execute("SELECT count(*) FROM kw_order").fetchone()[0] > 0
+    state = postings.Reader.state(db)
+    postings.update(db, path_of(catalog))  # ordered with these codes already
+    assert postings.Reader.state(db) == state
+
+
+def test_vectors_without_codes_order_nothing_and_build_once(prose):
+    # Vectors of another length than the store's get no code (store.add_codes): nothing to order them by, and each
+    # `sift index` building the postings anew to find that out again.
+    catalog, _ = prose
+    db = catalog.store("prose")
+    db.executemany("INSERT INTO vectors(chunk, vec) VALUES(?, ?)", [(int(c), b"\0" * 6) for c in chunk_ids(db)])
+    db.commit()
+    postings.update(db, path_of(catalog))
+    assert db.execute("SELECT count(*) FROM kw_order").fetchone() == (0,)
+    state = postings.Reader.state(db)
+    postings.update(db, path_of(catalog))
+    assert postings.Reader.state(db) == state
+
+
+def test_a_build_anew_is_a_new_state_for_readers(prose):
+    # A server keeps a store's reader for its state: a build that changes no chunk, as one in a new order, must
+    # still make another.
+    catalog, _ = prose
+    db = catalog.store("prose")
+    state = postings.Reader.state(db)
+    postings.build(db, path_of(catalog))
+    assert postings.Reader.state(db) != state
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_changes_after_ordering_take_places_after_all_others(ordered, monkeypatch):
+    monkeypatch.setattr(postings, "SMALL", 0)
+    monkeypatch.setattr(postings, "REBUILD_SHARE", 1.0)
+    catalog, root = ordered
+    db = catalog.store("prose")
+    last = int(store.get_meta(db, "kw_order"))
+    change_notes(root, random.Random(12))
+    indexing.index(catalog)
+    assert db.execute("SELECT count(*) FROM kw_segments").fetchone() == (2,)
+    assert int(store.get_meta(db, "kw_order")) > last  # the changed and new chunks, placed after the rest
+    assert live(db) == fts5(db)
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_ordered_deltas_grown_too_many_are_merged(ordered, monkeypatch):
+    monkeypatch.setattr(postings, "SMALL", 0)
+    monkeypatch.setattr(postings, "REBUILD_SHARE", 1.0)
+    monkeypatch.setattr(postings, "MOST_SEGMENTS", 2)
+    catalog, root = ordered
+    db = catalog.store("prose")
+    rng = random.Random(13)
+    for _ in range(3):
+        change_notes(root, rng, 3)
+        indexing.index(catalog)
+        assert live(db) == fts5(db)
+    assert db.execute("SELECT count(*) FROM kw_segments").fetchone()[0] <= 2
 
 
 def test_the_parts_of_a_build_cover_every_term_once():

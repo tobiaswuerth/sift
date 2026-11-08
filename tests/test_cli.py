@@ -195,7 +195,10 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
         "b",
         "--linked-from",
         "c",
+        "--adaptive",
+        *(["--budget", "0.5"] if command == "search" else []),  # only keyword search has a time budget
     )
+    budget = {"budget": None} if command == "search" else {}
     assert calls == [
         (
             ("brush", 3),
@@ -209,7 +212,9 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
                 "sort": None,
                 "links_to": None,
                 "linked_from": None,
-            },
+                "adaptive": False,
+            }
+            | budget,
         ),
         (
             ("brush", 10),
@@ -223,9 +228,16 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
                 "sort": "-year",
                 "links_to": ["a", "b"],
                 "linked_from": ["c"],
-            },
+                "adaptive": True,
+            }
+            | ({"budget": 0.5} if command == "search" else {}),
         ),
     ]
+
+
+def test_only_keyword_search_takes_a_budget(cli_corpus, capsys):
+    with pytest.raises(SystemExit):
+        run(capsys, "vsearch", "brush", "--budget", "1")
 
 
 def test_similar_command(cli_corpus, capsys):

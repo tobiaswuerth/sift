@@ -518,7 +518,8 @@ def test_search_tools_pass_every_option_on(embedded, monkeypatch, tool, first):
         "sort": "-year",
         "links_to": ["a"],
         "linked_from": ["b"],
-    }
+        "adaptive": True,
+    } | ({"budget": 0.5} if tool == "search" else {})  # only keyword search has a time budget
     call(server.build(index)[0], tool, {first: "brush", "k": 3} | options)
     assert calls == [(("brush", 3), options)]
 
