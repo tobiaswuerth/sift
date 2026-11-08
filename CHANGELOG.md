@@ -36,11 +36,14 @@ No search held up while `sift embed` runs beside the server, and phrases asked a
 - `sift index` holds no write lock while it reads files: `sift embed` or a server's `reindex` beside it waited while
   it read a batch of up to 5,000 files, and gave up after 30 seconds. `sift add --title-from` of a large collection
   retitles it a batch at a time.
-- A scan OCR couldn't read for the moment, as another program held the GPU's memory or OCR failed, is read again by
-  the next `sift index`: it waited for its file to change.
+- A scan OCR couldn't read for the moment, as another program held the GPU's memory or OCR ran out of it, is read
+  again by the next `sift index`: it waited for its file to change.
+- A saved mail with raw 8-bit bytes in its addresses, as old clients and spam write them, no longer stops
+  `sift index`, for every collection after it too, on every run: they read as U+FFFD. Whatever else a reader raises
+  for one file, or the index refuses of it, stops only that file, which is said and read again by the next run.
 - The UI's folders take a query each, not one per document lying in a folder: 200,000 took 1.6 seconds, on every
-  view, while every other call waited.
-- A keyword query of parentheses nested hundreds deep is searched as its words, not an error.
+  view, while every other call waited. A folder whose name starts with U+10FFFF made the server loop for good.
+- A keyword query of parentheses nested hundreds deep, or of a thousand NOTs, is searched as its words, not an error.
 - A panic in the document converter skips the document, as its other failures do.
 - A line of millions of characters, a log or a dump, is cut into passages in time linear in its length: 16 MB took
   8 seconds, 100 MB about five minutes.
