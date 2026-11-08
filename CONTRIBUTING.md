@@ -26,7 +26,7 @@ pre-commit install
 | `ignore.py` | `.siftignore`: the gitignore patterns of files and folders a collection leaves out, matched in linear time |
 | `links.py` | Links between notes in the index: the names files answer to, resolving links when asked, backlinks |
 | `search.py` | Keyword, semantic and hybrid search over the index, documents like a document, `get`, and links, mentions and `reindex` |
-| `expression.py` | Keyword queries of terms, AND, OR, NOT and parentheses, as FTS5 reads them, for the postings to answer |
+| `expression.py` | Keyword queries of words and phrases, AND, OR, NOT and parentheses, as FTS5 reads them, for the postings to answer |
 | `postings.py` | Keyword search's own postings, read out of FTS5's index, in a topical order of the chunks; deltas, merges and rebuilds as FTS5 changes |
 | `order.py` | The topical order of a collection's chunks in its postings, by binary k-means of their codes |
 | `topk.py` | The best documents for a keyword query from the postings, by Block-Max Pruning, until a deadline if given |

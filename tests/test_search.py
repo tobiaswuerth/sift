@@ -75,8 +75,8 @@ def agree(got, want):
     ],
 )
 def test_keyword_search_from_the_postings_finds_what_fts5_finds(prose, tmp_path, query, options):
-    # The postings answer queries of terms, AND, OR and NOT once they are ready; FTS5 answers otherwise, as before,
-    # and finds the same, score for score.
+    # The postings answer queries of words and phrases, AND, OR and NOT once they are ready; FTS5 answers otherwise,
+    # as before, and finds the same, score for score.
     catalog, _ = prose
     write_prose(tmp_path / "more", 8, notes=40)
     catalog.add(tmp_path / "more", "more")

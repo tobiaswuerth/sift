@@ -620,10 +620,10 @@ class Index:
 
     def _keyword(self, match, k, scope, where, args, all_passages=False, deadline=None):
         """The best passage of each of the k documents that best match an FTS5 query, by BM25, or the k best
-        passages, in the collections of `scope`, scored with the word counts of all of them. A query of terms, AND, OR
-        and NOT is answered from the keyword postings (see `topk`), until the topk.Deadline if given, where every
-        collection has them ready; others by FTS5, each collection's best scored again together (see _as_one), unless
-        the query places its phrases (NEAR, column filters)."""
+        passages, in the collections of `scope`, scored with the word counts of all of them. A query of words and
+        phrases, AND, OR and NOT is answered from the keyword postings (see `topk`), until the topk.Deadline if given,
+        where every collection has them ready; others by FTS5, each collection's best scored again together (see
+        _as_one), unless the query places its phrases (NEAR, column filters)."""
         if not match.strip():
             return []
         query = expression.parse(match)
