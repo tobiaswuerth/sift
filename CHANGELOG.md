@@ -31,8 +31,6 @@ for agents when few stand out.
   space; single words took 0.7 ms instead of 0.3. The index layout goes to 9 by itself; the next `sift index` builds a
   collection's postings anew once it has vectors, and again once a fifth of its passages got vectors since. A sift
   1.10 still running, which can't read the order, searches such a collection through FTS5.
-- A keyword search reads the postings in one transaction, as they were when it began: another sift building them anew
-  meanwhile made it fail, and, in a new order, find other passages than it scored.
 - `vsearch` ranks the 10,000 nearest codes again by the query's own values against their bits, and reads and scores
   the best 1,000 exactly instead of the 4,000 nearest: over 3.2 million arXiv abstracts it finds 99.75% of exact
   search's top 10 instead of 99.6%, and reads a quarter of the vectors (7 ms instead of 25, warm). Candidates the same
@@ -41,6 +39,11 @@ for agents when few stand out.
   instead of listing every passage it lets through, which read every document: a category filter over arXiv that
   lets 9% through took 0.6 seconds instead of 6 warm (56 cold). A filter that lets too few through for that, 1% say,
   is listed, as before.
+
+### Fixed
+
+- A keyword search reads the postings in one transaction, as they were when it began: another sift building them anew
+  meanwhile made it fail (as in 1.10), and, in a new order, find other passages than it scored.
 
 ## [1.10.1] - 2026-11-08
 
