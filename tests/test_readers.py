@@ -115,6 +115,12 @@ def test_front_matter_values_sqlite_cant_store_or_python_cant_nest():
     nested = "[" * 1100 + "1" + "]" * 1100  # deeper than SQLite stores JSON (1,000), though Python reads it
     _, meta, _, _ = readers.parse(f"---\nx: {nested}\nsize: 1e400\n---\n", "f")
     assert meta == {"x": nested, "size": "1e400"}  # as written
+    # Each value alone within the limit, but a list item, or an item of a list, is one level deeper, and the front
+    # matter one more: still too deep, so as written.
+    deep = "[" * 999 + "1" + "]" * 999
+    _, meta, _, _ = readers.parse(f"---\ntags:\n  - {deep}\n  - fine\nk: [x, {deep}]\nok: [[1]]\n---\n", "f")
+    assert meta == {"tags": [deep, "fine"], "k": f"[x, {deep}]", "ok": [[1]]}
+    assert readers._depth(meta) <= readers.JSON_DEPTH + 1  # what SQLite stores
 
 
 def test_parse_without_closing_front_matter_is_plain_text():

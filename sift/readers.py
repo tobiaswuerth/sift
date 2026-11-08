@@ -129,16 +129,26 @@ def _flow_list(text):
 
 def _front_matter(block):
     """Flat `key: value` lines, and lists as `- item` lines below a key without a value, as Obsidian writes them."""
-    meta, listing = {}, None
+    meta, listing, written = {}, None, {}  # written: each value's text, or its `- item` lines' texts
     for line in block.splitlines():
         if listing and (item := LIST_ITEM.match(line)):
-            meta[listing] = [*(meta[listing] or []), _value(item.group(1).strip())]
+            text = item.group(1).strip()
+            meta[listing] = [*(meta[listing] or []), _value(text)]
+            written[listing].append(text)
             continue
         key, sep, value = line.partition(":")
         if sep and key.strip() and not key[0].isspace() and key[0] != "#":  # not nested, not a comment
             key, value = key.strip(), value.strip()
             meta[key] = _value(value) if value else None
             listing = None if value else key
+            written[key] = value or []
+    if block.count("[") + block.count("{") >= JSON_DEPTH:  # else nothing in it nests too deeply
+        for key, value in meta.items():
+            if _depth(value) > JSON_DEPTH:  # in a list, or in the front matter, one level deeper than alone: as written
+                text = written[key]
+                meta[key] = (
+                    text if isinstance(text, str) else [v if _depth(v) < JSON_DEPTH else t for v, t in zip(value, text)]
+                )
     return meta
 
 
