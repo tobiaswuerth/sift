@@ -51,6 +51,8 @@ def top(held, query, k, exact, allowed=None, excluded=None):
     for all it lets through."""
     query = np.asarray(query, np.float32)
     bits, want = codes(query[None, :])[0], max(RESCORE, k)
+    if not sum(len(c) for c in held):  # nothing to find: no filter to list
+        return []
     if isinstance(allowed, Filter):
         found = _checked(held, bits, SHORTLIST * want, allowed, excluded)
         if found is None:

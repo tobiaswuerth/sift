@@ -176,6 +176,14 @@ def test_a_filter_letting_nothing_through():
     assert top(index, exact, unit(np.ones((1, 64)))[0], 5, allowed=Allowed([])) == []
 
 
+def test_a_filter_over_no_codes_lists_nothing():
+    # A collection not embedded yet: listing what the filter lets through read every document, to find nothing.
+    allowed, query = Allowed([1, 2]), unit(np.ones((1, 64)))[0]
+    assert top([Codes(np.empty(0, np.int64), codes(np.empty((0, 64))))], Exact([], []), query, 5, allowed=allowed) == []
+    assert top([], Exact([], []), query, 5, allowed=allowed) == []
+    assert allowed.lists == 0
+
+
 def test_top_of_more_than_there_are_and_of_none():
     ids, matrix, exact, index = random_index(n=7)
     query = unit(np.ones((1, 64)))[0]
