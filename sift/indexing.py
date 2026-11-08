@@ -159,7 +159,7 @@ def retitle(catalog, name, title_from):
     for _, files in _files(db):
         c, d = _reread(db, files, collection.choices)
         changed, dropped = changed + c, dropped + d
-    db.commit()
+        db.commit()  # a batch at a time: other writers wait for no more
     postings.update(db, collection.store, name)
     return changed, dropped
 
@@ -556,6 +556,7 @@ def _index_collection(db, name, root, fields, ignore):
     counts = Counter()
     for rel in known.keys() - seen - kept:
         counts["removed"] += _drop_source(db, known[rel][0])
+    db.commit()  # before any file is read: other writers wait for none of it
     if todo:
         with console.Progress(len(todo), "files", prefix=f"{name}: ") as progress:
             _read_and_store(db, name, fields, todo, counts, progress)
@@ -615,6 +616,7 @@ def _read_and_store(db, name, fields, todo, counts, progress):
             results = pending
             if b + 1 < len(batches):
                 pending = _read(pool, n, fields, batches[b + 1])
+            results = list(results)  # read before the batch's first write: no lock held while files are read
             for (path, rel, mtime, size), res in zip(batch, results):
                 done += 1
                 if done % step == 0 or done == len(todo):

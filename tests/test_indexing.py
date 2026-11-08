@@ -3,6 +3,7 @@ step with the files, incrementally."""
 
 import os
 import shutil
+import sqlite3
 
 import pytest
 
@@ -118,6 +119,42 @@ def test_a_note_a_server_removed_meanwhile_leaves_no_documents_behind(corpus, mo
     monkeypatch.setattr(indexing, "_read_scans", real)  # not undo(): that would undo the fixtures' too
     indexing.index(catalog)
     assert "rl.md" not in doc_ids(catalog)
+
+
+def lock_free(path):
+    """Whether another sift could take the store's write lock now, without waiting."""
+    other = sqlite3.connect(path, timeout=0, isolation_level=None)
+    try:
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("ROLLBACK")
+        return True
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        other.close()
+
+
+def test_sift_index_holds_no_write_lock_while_it_reads_files(corpus, monkeypatch):
+    # The first write of a batch, a removal too, took the store's lock until the batch's end: `sift embed` or a
+    # server's reindex beside it waited while every file of the batch was read, and gave up after 30 seconds.
+    catalog, root = corpus
+    for i in range(3):
+        write(root / f"new{i}.md", f"# New {i}\n")
+    (root / "plain.txt").unlink()  # removed first, before any file is read
+    path, real, free = catalog.get("notes").store, readers.load, []
+    monkeypatch.setattr(readers, "load", lambda *args: free.append(lock_free(path)) or real(*args))
+    indexing.index(catalog)
+    assert free == [True] * 3
+
+
+def test_retitling_holds_the_write_lock_a_batch_at_a_time(corpus, monkeypatch):
+    catalog, _ = corpus
+    monkeypatch.setattr(indexing, "REFRESH_BATCH", 1)
+    path, real, free = catalog.get("notes").store, indexing._reread, []
+    monkeypatch.setattr(indexing, "_reread", lambda db, *args: free.append(lock_free(path)) or real(db, *args))
+    indexing.retitle(catalog, "notes", "name")
+    assert len(free) == 3
+    assert all(free)
 
 
 def test_a_folder_gone_meanwhile_is_no_junction(tmp_path):
