@@ -115,7 +115,7 @@ def _by_field(hits, sort):
 
 def _present(hits, fields, compact, sort):
     """Hits as returned: ordered by `sort` if given, with the front-matter `fields` asked for, without text if
-    compact."""
+    compact, and the other copies of the same work under "also"."""
     out = []
     for hit in _by_field(hits, sort) if sort else hits:
         shown = {key: hit[key] for key in ("id", "title", "lines", "score")}
@@ -123,8 +123,40 @@ def _present(hits, fields, compact, sort):
             shown["fields"] = _pick(hit["meta"], fields)
         if not compact:
             shown["text"] = hit["text"]
+        if hit.get("also"):
+            shown["also"] = hit["also"]
         out.append(shown)
     return out
+
+
+DOI_PREFIXES = ("https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/", "doi:")
+
+
+def _doi(meta):
+    """A document's DOI, from its front-matter field `doi`, as DOIs compare: in any case, without the prefix of a link
+    or "doi:"; None if it has none, or one that is no DOI (they all start with "10.")."""
+    value = json.loads(meta).get("doi") if meta else None
+    if not isinstance(value, str):
+        return None
+    value = value.strip().lower()
+    for prefix in DOI_PREFIXES:
+        value = value.removeprefix(prefix)
+    return value if value.startswith("10.") else None
+
+
+def _one_per_work(hits):
+    """Ranked hits, one per work: a hit with the DOI of a better ranked one goes, as several collections hold the same
+    paper, and the better ranked one names it under "also"."""
+    kept, first = [], {}
+    for hit in hits:
+        doi = _doi(hit["meta"])
+        if doi is None or doi not in first:
+            kept.append(hit)
+            if doi is not None:
+                first[doi] = hit
+        else:
+            first[doi].setdefault("also", []).append(hit["id"])
+    return kept
 
 
 def line_span(lines):
@@ -657,11 +689,6 @@ class Index:
         self.load()
         return self.models.encode([query], query=True)[0].astype(np.float32)
 
-    def _semantic(self, query, k, scope, where, args, all_passages=False):
-        if not query.strip():  # the embedding of nothing is close to arbitrary chunks
-            return []
-        return self._nearest(self._vector(query), k, scope, where, args, all_passages)
-
     def _nearest(self, query, k, scope, where, args, all_passages, excluded=None):
         """The best passage of each of the k documents nearest the query's vector, among the documents of the
         collections of `scope` that `where` allows, but the chunks `excluded`; or the k best passages."""
@@ -695,6 +722,19 @@ class Index:
         for _, db, group in self._by_store(chunk for chunk, _ in ranked):
             docs |= dict(db.execute(sql, (json.dumps(group),)))
         return _first_of_each((r for r in ranked if r[0] in docs), lambda r: docs[r[0]])  # in docs: not removed
+
+    def _works(self, rank, k, all_passages):
+        """The hits of the best k works by rank(n), the best n documents (or with `all_passages`, passages, of which
+        all are kept): one hit per work, as _one_per_work leaves them, asking for more while copies leave fewer."""
+        if all_passages:
+            return self._hits(rank(k))
+        n = k
+        while True:
+            ranked = rank(n)
+            hits = _one_per_work(self._hits(ranked))
+            if len(hits) >= k or len(ranked) < n:
+                return hits[:k]
+            n *= 2
 
     def _hits(self, ranked):
         sql = """SELECT d.path, d.title, d.meta, c.line_start, c.line_end, substr(d.text, c.pos + 1, c.len)
@@ -746,10 +786,14 @@ class Index:
         If no chunk holds all terms of a query without operators, chunks with any of them are returned."""
         k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
-        ranked = self._keyword(query, k, scope, where, args, all_passages)
-        if not ranked and (relaxed := _any_term(query)):
-            ranked = self._keyword(relaxed, k, scope, where, args, all_passages)
-        return _present(self._hits(ranked), fields, compact, sort)
+
+        def rank(n):
+            ranked = self._keyword(query, n, scope, where, args, all_passages)
+            if not ranked and (relaxed := _any_term(query)):
+                ranked = self._keyword(relaxed, n, scope, where, args, all_passages)
+            return ranked
+
+        return _present(self._works(rank, k, all_passages), fields, compact, sort)
 
     def vsearch(
         self,
@@ -769,7 +813,11 @@ class Index:
         """Semantic search: the passages nearest the query's embedding, by cosine similarity (see `vectors`)."""
         k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
-        return _present(self._hits(self._semantic(query, k, scope, where, args, all_passages)), fields, compact, sort)
+        if not query.strip():  # the embedding of nothing is close to arbitrary chunks
+            return []
+        vector = self._vector(query)
+        hits = self._works(lambda n: self._nearest(vector, n, scope, where, args, all_passages), k, all_passages)
+        return _present(hits, fields, compact, sort)
 
     def query(
         self,
@@ -808,7 +856,7 @@ class Index:
         for h, s in zip(hits, scores):
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])
-        hits = hits if all_passages else _first_of_each(hits, itemgetter("id"))
+        hits = hits if all_passages else _one_per_work(_first_of_each(hits, itemgetter("id")))
         return _present(hits[:k], fields, compact, sort)
 
     def get(self, id, lines=None):
@@ -856,9 +904,11 @@ class Index:
         if not own:
             raise LookupError(f"{id!r} has no embeddings yet, run `sift embed`")
         mean = np.mean([np.frombuffer(vec, np.float16) for _, vec in own], axis=0, dtype=np.float32)
-        excluded = np.array([chunk for chunk, _ in own], np.int64)
-        nearest = self._nearest(mean / np.linalg.norm(mean), k, scope, where, args, all_passages, excluded)
-        return _present(self._hits(nearest), fields, compact, sort)
+        excluded, vector = np.array([chunk for chunk, _ in own], np.int64), mean / np.linalg.norm(mean)
+        hits = self._works(
+            lambda n: self._nearest(vector, n, scope, where, args, all_passages, excluded), k, all_passages
+        )
+        return _present(hits, fields, compact, sort)
 
     def _place(self, id):
         """The collection, and the path in it, that `id` names: "collection/path", or an absolute path in a

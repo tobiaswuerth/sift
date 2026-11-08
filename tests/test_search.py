@@ -680,9 +680,9 @@ def test_get_serves_indexed_documents_only(corpus):
 
 def test_get_reads_utf16_documents(corpus):
     catalog, root = corpus
-    (root / "utf16.txt").write_bytes("\ufeff# Héllo\r\nworld\r\n".encode("utf-16-le"))
+    (root / "utf16.txt").write_bytes("\ufeff# HÃ©llo\r\nworld\r\n".encode("utf-16-le"))
     indexing.index(catalog)
-    assert Index(catalog).get("notes/utf16.txt") == "# Héllo\nworld\n"
+    assert Index(catalog).get("notes/utf16.txt") == "# HÃ©llo\nworld\n"
 
 
 def test_get_returns_lines_as_indexed(corpus):
@@ -956,6 +956,58 @@ def test_fallback_keeps_the_filters(corpus):
     assert Index(corpus[0]).search("reward pigment", filters={"year": 2024}) == Index(corpus[0]).search(
         "pigment", filters={"year": 2024}
     )
+
+
+# --- one hit per work ------------------------------------------------------------
+# PubMed, OpenAlex, arXiv and bioRxiv hold many of the same papers: each copy took a place in the results.
+
+
+@pytest.fixture
+def works(tmp_path, home, fake_models):
+    """Two collections holding the same paper, its DOI written as each source writes it, beside documents without a
+    DOI or with one that is no DOI."""
+    a, b, best = tmp_path / "a", tmp_path / "b", "attention transformer attention transformer"  # the copies first
+    write(a / "attention.md", f'---\ndoi: "10.48550/arXiv.1706.03762"\n---\n# Attention\n\n{best}\n')
+    write(a / "other.md", '---\ndoi: "10.1000/other"\n---\n# Other\n\nattention transformer elsewhere\n')
+    write(a / "nodoi.md", "# No DOI\n\nattention transformer without an identifier\n")
+    write(b / "attention.md", f'---\ndoi: "https://doi.org/10.48550/ARXIV.1706.03762"\n---\n# Attention\n\n{best}\n')
+    for name in ("junk1", "junk2"):
+        write(b / f"{name}.md", f'---\ndoi: "n/a"\n---\n# {name}\n\nattention transformer {name}\n')
+    catalog = Catalog(home)
+    catalog.add(a, "a")
+    catalog.add(b, "b")
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    return Index(catalog)
+
+
+COPIES = {"a/attention.md", "b/attention.md"}
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_a_work_in_several_collections_is_one_hit(works, mode):
+    hits = getattr(works, mode)("attention transformer", k=10)
+    (copy,) = [h for h in hits if h["id"] in COPIES]  # the better ranked, the other under `also`
+    assert copy["also"] == list(COPIES - {copy["id"]})
+    assert {"a/other.md", "a/nodoi.md", "b/junk1.md", "b/junk2.md"} <= {h["id"] for h in hits}  # no DOI, or none
+    assert all("also" not in h for h in hits if h is not copy)
+
+
+def test_k_works_after_collapsing(works):
+    hits = works.search("attention transformer", k=2)
+    assert len(hits) == 2
+    assert len(COPIES & {h["id"] for h in hits}) == 1
+
+
+def test_documents_like_one_are_one_hit_per_work(works):
+    hits = works.similar("a/other.md", k=10)
+    assert len(COPIES & {h["id"] for h in hits}) == 1
+
+
+def test_every_passage_keeps_every_copy(works):
+    hits = works.search("attention transformer", k=10, all_passages=True)
+    assert {h["id"] for h in hits} >= COPIES
+    assert all("also" not in h for h in hits)
 
 
 # --- reading part of a document ------------------------------------------------

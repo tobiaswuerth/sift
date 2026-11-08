@@ -66,6 +66,8 @@ def _print_hits(hits, as_json):
         console.say("no matches")
     for h in hits:
         print(f"{h['score']:>8.4f}  {h['id']}:{h['lines']}  {h['title']}")
+        if "also" in h:
+            print(" " * 10 + "also: " + ", ".join(h["also"]))
         if "fields" in h:
             print(" " * 10 + "  ".join(f"{k}: {_shown(v)}" for k, v in h["fields"].items()))
         if "text" in h:

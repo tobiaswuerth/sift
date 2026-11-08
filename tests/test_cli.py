@@ -155,6 +155,18 @@ def test_search_commands(cli_corpus, capsys, command):
     assert [h["id"] for h in hits] == ["notes/robots/brush.md"]
 
 
+def test_search_command_names_the_other_copies_of_a_work(cli_corpus, tmp_path, capsys):
+    write(
+        tmp_path / "mirror" / "brush.md", '---\ndoi: "10.1000/brush"\n---\n# Brush stroke planning\n\nbrush strokes\n'
+    )
+    write(cli_corpus / "doi.md", '---\ndoi: "doi:10.1000/BRUSH"\n---\n# Brush stroke planning\n\nbrush strokes\n')
+    run(capsys, "add", str(tmp_path / "mirror"))
+    run(capsys, "index")
+    out = run(capsys, "search", "brush strokes", "--compact").out
+    assert out.count("Brush stroke planning\n") == 2  # one of the copies, and notes/robots/brush.md without a DOI
+    assert ("also: mirror/brush.md" in out) != ("also: notes/doi.md" in out)
+
+
 def test_search_command_fields_and_compact(cli_corpus, capsys):
     out = run(capsys, "search", "brush", "--fields", "year,categories").out
     assert 'year: 2024  categories: ["cs.RO", "cs.GR"]' in out
