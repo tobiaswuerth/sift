@@ -5,6 +5,73 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.11.2] - 2026-11-08
+
+No search held up while `sift embed` runs beside the server, and phrases asked again two to twenty times as fast.
+
+### Changed
+
+- A phrase is counted in each passage once for the keyword postings as they stand, and kept with the passages that
+  hold it: a question asked again, or another reaching the same passages, costs FTS5 nothing more for them. Over 3.2
+  million arXiv abstracts, warm, a question with a hyphenated word took 93 ms instead of 429, a common phrase ("in
+  this paper we propose") 131 ms instead of 2.6 s; the same results, score for score.
+
+### Fixed
+
+- `sift serve` no longer stalls while `sift embed` writes beside it. Each slab `sift embed` committed made the next
+  `vsearch`, `query` or `similar` read every code of the collection again: 18 seconds for PubMed's 29 million, about
+  once a minute while it embedded. The codes written past the last the server holds are read alone; after any other
+  change to a collection's vectors (deleted, or embedded again), all its codes are read again in a thread of their own,
+  while searches go on with those held, the passages embedded past them among them.
+- One file with an emoji's half alone (`"\ud83d"` in JSON, as exported chats hold), JSON nested deeper than SQLite
+  stores (1,000) or Python reads, or a number too large for a float (`1e999`) no longer stops `sift index`, for every
+  collection after it too, on every run: the half reads as U+FFFD, the number as written, and a line nested too deeply
+  is skipped and said, a front-matter value so nested, alone or in a list, kept as written.
+- `sift index` beside a server's `reindex` of the same folder: a note an agent wrote and reindexed meanwhile stopped
+  it (`UNIQUE constraint failed`), for every collection after it too, and one deleted and reindexed meanwhile left
+  its documents in the index for good.
+- A collection whose index can't be opened, damaged, updated by a newer sift, locked by another program or out of
+  reach, is passed over by searches, `sift index`, `sift embed` and `sift serve`, and said, as a missing one is;
+  `status` gives the reason as `error`. It stopped all of them, and the status that would have said why.
+- `sift index` holds no write lock while it reads files: `sift embed` or a server's `reindex` beside it waited while
+  it read a batch of up to 5,000 files, and gave up after 30 seconds. `sift add --title-from` of a large collection
+  retitles it a batch at a time.
+- A scan OCR couldn't read for the moment, as another program held the GPU's memory or OCR ran out of it, is read
+  again by the next `sift index`: it waited for its file to change.
+- A saved mail with raw 8-bit bytes in its addresses, as old clients and spam write them, no longer stops
+  `sift index`, for every collection after it too, on every run: they read as U+FFFD. Whatever else a reader raises
+  for one file, or the index refuses of it, stops only that file, which is said and read again by the next run.
+- The UI's folders take a query each, not one per document lying in a folder: 200,000 took 1.6 seconds, on every
+  view, while every other call waited. A folder whose name starts with U+10FFFF made the server loop for good.
+- A keyword query of parentheses nested hundreds deep, or of a thousand NOTs, is searched as its words, not an error.
+- A panic in the document converter skips the document, as its other failures do.
+- A line of millions of characters, a log or a dump, is cut into passages in time linear in its length: 16 MB took
+  8 seconds, 100 MB about five minutes.
+- `sift ui` answered an address with a count of thousands of digits with a server error.
+- `sift embed` beside `sift index` no longer stores the vector of a passage deleted meanwhile: it counted as embedded,
+  and the passage that took its place was never embedded.
+- A collection's store that refuses to open in a running server, as one a newer sift updated, fails the call that
+  opens it, not the server.
+- Searches return at most 10,000 hits: an agent asking `vsearch` for 10^8 had every vector of every collection
+  read, and `search` every posting of its words scored.
+- A running server lets go of a collection removed or deactivated meanwhile: its store, whose disk space `sift rm`
+  frees only once closed, and its keyword postings.
+
+### Security
+
+- `reindex` (and `sift index --files`) of an id such as `notes/D:/file.md` read that file on another drive into the
+  collection on Windows, from where searches returned it and the UI served it. Paths named so stay within their
+  collection.
+- Windows junctions in a collection's folder are passed over, as links are: one to elsewhere took in files of no
+  collection, one to the folder itself every file again.
+- `sift worker` no longer writes its key into its log, kept for good; it shows it on the terminal alone.
+- `sift serve --host ::1` answers only requests that name a local host, as on 127.0.0.1: a web page reaching it
+  under its own domain could read the documents through the UI.
+- `reindex` refuses names Windows reads as another file's, `C:x.md`, `sub./x.md`, `x.md:stream` or a short name such
+  as `PRIVAT~1`: through a short name, a folder `.siftignore` leaves out, or a hidden one, was read, and a file was
+  indexed twice.
+- The UI serves no file outside its collection's folder, though an older sift's `reindex` may have stored one.
+
 ## [1.11.1] - 2026-11-08
 
 Keyword questions and phrases in milliseconds, a quicker vsearch over many collections, and `sift embed` starting at
@@ -727,7 +794,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.11.1...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.11.2...HEAD
+[1.11.2]: https://github.com/tobiaswuerth/sift/compare/v1.11.1...v1.11.2
 [1.11.1]: https://github.com/tobiaswuerth/sift/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/tobiaswuerth/sift/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/tobiaswuerth/sift/compare/v1.10.0...v1.10.1

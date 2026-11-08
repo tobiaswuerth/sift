@@ -170,6 +170,19 @@ def test_a_real_zip_bomb_is_still_skipped(tmp_path):
     assert "exceeds limit" in problem
 
 
+def test_a_panic_in_the_converter_skips_the_document(monkeypatch):
+    # Xberg's Rust panics reach Python as pyo3's PanicException, which is no Exception: one would have gone through
+    # every `except Exception`, and stopped `sift index` for every collection after it.
+    class PanicException(BaseException):
+        pass
+
+    def panicking(make):
+        raise PanicException("index out of bounds")
+
+    monkeypatch.setattr(readers, "_finished", panicking)
+    assert readers.load(sample(".pdf")) == ([], ["skipped (Xberg failed: index out of bounds)"])
+
+
 def test_a_pdf_without_text_is_passed_on_as_a_scan():
     # Readers run in worker processes: the process that writes the index reads the scan with OCR (see test_ocr).
     (doc,), problems = readers.load(SAMPLES / "blank.pdf")
@@ -243,9 +256,8 @@ def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home, mon
     only(catalog).commit()
     catalog.close()
     catalog = Catalog(home)
-    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (
-        2,
-    )  # the file and the mail
+    # the file and the mail
+    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (2,)
     indexing.index(catalog)
     assert sorted(p for (p,) in only(catalog).execute("SELECT path FROM docs")) == [
         "mail.eml",
@@ -350,6 +362,77 @@ def test_mail_dates_sort_as_time_whatever_the_zone(tmp_path):
     unknown = email_file(tmp_path, name="c.eml", Date="Tue, 14 Oct 2026 08:00:00 -0000")  # a zone unknown, RFC 5322
     dates = [readers.load(path)[0][0].meta["date"] for path in (zurich, london, unknown)]
     assert dates == ["2026-10-14T07:30:00+00:00", "2026-10-14T08:00:00+00:00", "2026-10-14T08:00:00"]
+
+
+def test_raw_8_bit_addresses_read_without_halves_of_characters(tmp_path, home):
+    # Old mail clients and spam write addresses in raw 8-bit bytes: Python keeps each such byte as half a character
+    # (a lone surrogate), which SQLite refuses. One such mail stopped `sift index`, for every collection after it, on
+    # every run.
+    (tmp_path / "mail").mkdir()
+    (tmp_path / "mail" / "old.eml").write_bytes(
+        b"From: J\xf6rg <j\xf6rg@example.com>\r\nTo: Ann <ann@example.com>, B\xe4r <b\xe4r@example.com>\r\n"
+        b"Cc: c\xfc@example.com\r\nSubject: Hello\r\n\r\nPlain words.\r\n"
+    )
+    write(tmp_path / "notes" / "after.md", "# After\n\nindexed after the mail\n")
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "mail", "mail")
+    catalog.add(tmp_path / "notes", "notes")
+    indexing.index(catalog)
+    meta = json.loads(catalog.store("mail").execute("SELECT meta FROM docs").fetchone()[0])
+    assert meta["from"] == "j\ufffdrg@example.com"
+    assert meta["to"] == ["ann@example.com", "b\ufffdr@example.com"]
+    assert [h["id"] for h in Index(catalog).search("indexed after")] == ["notes/after.md"]
+
+
+def test_a_file_the_store_refuses_is_skipped_and_the_others_indexed(tmp_path, home, monkeypatch, capsys):
+    # Whatever else a reader leaves in a document that SQLite won't store, or a reader raises, stops no more than
+    # that file: it is said, and read again by the next index.
+    write(tmp_path / "c" / "a.md", "# A\n\nfine\n")
+    write(tmp_path / "c" / "b.md", "# B\n\nrefused\n")
+    write(tmp_path / "c" / "c.md", "# C\n\nraises\n")
+    write(tmp_path / "c" / "d.md", "# D\n\nrefused too\n")
+    real = readers.load
+
+    def load(path, fields=None):
+        if path.endswith("c.md"):
+            raise MemoryError("a record of gigabytes")
+        found = real(path, fields)
+        if path.endswith(("b.md", "d.md")):
+            found[0][0] = found[0][0]._replace(title="B \udcf6")  # half a character, as a reader might leave
+        return found
+
+    monkeypatch.setattr(readers, "load", load)
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert [p for (p,) in catalog.store("c").execute("SELECT path FROM docs")] == ["a.md"]
+    err = capsys.readouterr().err
+    assert "c: b.md: skipped (" in err
+    assert "c: c.md: skipped (MemoryError: a record of gigabytes)" in err
+    assert "c: 4 files, 1 added, 0 changed, 0 removed, 3 unreadable" in err  # each counted once
+    held = dict(catalog.store("c").execute("SELECT path, mtime IS NULL FROM sources"))
+    assert held.get("b.md", 1)  # read again by the next index
+    assert held.get("c.md", 1)
+
+
+def test_a_file_nested_too_deeply_to_store_is_skipped(tmp_path, home, monkeypatch, capsys):
+    # On Python 3.11, json.dumps of front matter a reader could still read may run out of stack: RecursionError,
+    # which stopped `sift index` for every collection.
+    write(tmp_path / "c" / "a.md", "# A\n")
+    write(tmp_path / "c" / "deep.md", "# Deep\n")
+    real = indexing._insert
+
+    def insert(db, sid, path, doc):
+        if path == "deep.md":
+            raise RecursionError("maximum recursion depth exceeded while encoding a JSON object")
+        return real(db, sid, path, doc)
+
+    monkeypatch.setattr(indexing, "_insert", insert)
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert [p for (p,) in catalog.store("c").execute("SELECT path FROM docs")] == ["a.md"]
+    assert "c: deep.md: skipped (maximum recursion depth" in capsys.readouterr().err
 
 
 def test_an_email_in_an_unknown_charset_still_reads(tmp_path):

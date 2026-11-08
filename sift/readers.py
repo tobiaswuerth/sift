@@ -9,6 +9,7 @@ Readers run in worker processes while indexing, so they read from bytes and retu
 import asyncio
 import hashlib
 import json
+import math
 import posixpath
 import re
 import unicodedata
@@ -37,14 +38,67 @@ WIKILINK_VALUE = re.compile(r"\[\[[^\[\]\n]*\]\]")
 TITLE_FROM = ("heading", "name")  # where a Markdown or text file's title comes from, after its `title:` field
 
 
+SURROGATE = re.compile(r"\\u[dD][89a-fA-F]")  # JSON's escape of a surrogate, "\ud83d", half an emoji: alone, a string
+LONE = re.compile("[\ud800-\udfff]")  # holding it can't be stored (SQLite takes UTF-8 only)
+
+
+JSON_DEPTH = 999  # how deeply a value may nest: SQLite stores JSON nested 1,000 deep at most, the document holding it
+# one level of that
+
+
+class NestedTooDeeply(RecursionError):
+    """JSON nested deeper than SQLite stores it (JSON_DEPTH)."""
+
+
+def _json(text):
+    """JSON as sift keeps it: NaN, Infinity and numbers too large for a float (1e999) as written, which SQLite's JSON
+    rejects, and a surrogate alone as U+FFFD (a pair Python joins itself). Raises ValueError, and RecursionError for
+    JSON nested deeper than Python recurses or SQLite stores."""
+    value = json.loads(text, parse_constant=str, parse_float=_float)
+    if text.count("[") + text.count("{") > JSON_DEPTH and _depth(value) > JSON_DEPTH:
+        raise NestedTooDeeply(f"nested more than {JSON_DEPTH} deep")
+    return _whole(value) if SURROGATE.search(text) else value
+
+
+def _float(text):
+    """A JSON number with a fraction or an exponent, as a float; as written if a float can't hold it."""
+    number = float(text)
+    return number if math.isfinite(number) else text
+
+
+def _depth(value):
+    """How deeply a JSON value nests lists and objects: 0 for none."""
+    deepest, todo = 0, [(value, 0)]
+    while todo:
+        item, depth = todo.pop()
+        if isinstance(item, list | dict):
+            deepest = max(deepest, depth + 1)
+            todo += [(inner, depth + 1) for inner in (item.values() if isinstance(item, dict) else item)]
+    return deepest
+
+
+def _whole(value):
+    """A JSON value with every surrogate alone in its strings as U+FFFD."""
+    if isinstance(value, str):
+        return LONE.sub("�", value)
+    if isinstance(value, list):
+        return [_whole(item) for item in value]
+    if isinstance(value, dict):
+        return {_whole(key): _whole(item) for key, item in value.items()}
+    return value
+
+
 def _value(text):
     """A front-matter value: JSON if it parses (lists, numbers, quoted strings), else a YAML flow list of unquoted
-    items, else plain text."""
+    items, else plain text; as written, if nested deeper than Python recurses."""
     try:
-        return json.loads(text, parse_constant=str)  # NaN/Infinity stay strings: SQLite's JSON rejects them
-    except ValueError:
-        items = _flow_list(text)
-        return text.strip("'\"") if items is None else items
+        try:
+            return _json(text)
+        except ValueError:
+            items = _flow_list(text)
+            return text.strip("'\"") if items is None else items
+    except RecursionError:
+        return text
 
 
 def _flow_list(text):
@@ -75,16 +129,26 @@ def _flow_list(text):
 
 def _front_matter(block):
     """Flat `key: value` lines, and lists as `- item` lines below a key without a value, as Obsidian writes them."""
-    meta, listing = {}, None
+    meta, listing, written = {}, None, {}  # written: each value's text, or its `- item` lines' texts
     for line in block.splitlines():
         if listing and (item := LIST_ITEM.match(line)):
-            meta[listing] = [*(meta[listing] or []), _value(item.group(1).strip())]
+            text = item.group(1).strip()
+            meta[listing] = [*(meta[listing] or []), _value(text)]
+            written[listing].append(text)
             continue
         key, sep, value = line.partition(":")
         if sep and key.strip() and not key[0].isspace() and key[0] != "#":  # not nested, not a comment
             key, value = key.strip(), value.strip()
             meta[key] = _value(value) if value else None
             listing = None if value else key
+            written[key] = value or []
+    if block.count("[") + block.count("{") >= JSON_DEPTH:  # else nothing in it nests too deeply
+        for key, value in meta.items():
+            if _depth(value) > JSON_DEPTH:  # in a list, or in the front matter, one level deeper than alone: as written
+                text = written[key]
+                meta[key] = (
+                    text if isinstance(text, str) else [v if _depth(v) < JSON_DEPTH else t for v, t in zip(value, text)]
+                )
     return meta
 
 
@@ -135,11 +199,13 @@ def chunk(text, first_line=1):
     """
     lines, pos = [], 0  # (line number, position, line)
     for n, line in enumerate(LINE.findall(text), first_line):
-        while len(line) > CHUNK_CHARS:  # break overlong lines at whitespace
-            cut = line.rfind(" ", 0, CHUNK_CHARS) + 1 or CHUNK_CHARS
-            lines.append((n, pos, line[:cut]))
-            pos, line = pos + cut, line[cut:]
-        lines.append((n, pos, line))
+        start = 0
+        while len(line) - start > CHUNK_CHARS:  # break overlong lines at whitespace, the rest of the line not copied
+            space = line.rfind(" ", start, start + CHUNK_CHARS)
+            end = space + 1 if space >= 0 else start + CHUNK_CHARS
+            lines.append((n, pos + start, line[start:end]))
+            start = end
+        lines.append((n, pos + start, line[start:]))
         pos += len(line)
 
     pieces, buf, size = [], [], 0
@@ -339,9 +405,12 @@ def _records(raw, name, fields):
         if not line:
             continue
         try:
-            obj = json.loads(line, parse_constant=str)  # NaN/Infinity stay strings: SQLite's JSON rejects them
+            obj = _json(line)
         except ValueError:
             problems.append(f"line {n}: not JSON")
+            continue
+        except RecursionError:
+            problems.append(f"line {n}: nested too deeply")
             continue
         if not isinstance(obj, dict):
             problems.append(f"line {n}: not an object")
@@ -385,7 +454,12 @@ def _xberg(raw, name):
         # for zip bombs. Its caps on unpacked size, 100 MB a file and 500 MB in all, still stop those.
         security_limits=SecurityLimits(max_compression_ratio=10_000),
     )
-    result = _finished(lambda: xberg.extract(xberg.ExtractInput(kind="bytes", bytes=raw, filename=name), config))
+    try:
+        result = _finished(lambda: xberg.extract(xberg.ExtractInput(kind="bytes", bytes=raw, filename=name), config))
+    except (Exception, KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as panic:  # a panic in Xberg's Rust: pyo3's PanicException is no Exception
+        raise RuntimeError(f"Xberg failed: {panic}") from None
     (doc,) = result.results  # one per input
     return doc
 
@@ -454,7 +528,8 @@ def _mail_headers(msg):
     for key in ("message-id", "in-reply-to"):
         if value := str(msg.get(key) or "").strip():
             meta[key.replace("-", "_")] = value
-    return meta, shown
+    # Raw 8-bit bytes in a header, as old clients and spam write them, come as halves of characters: as U+FFFD
+    return _whole(meta), [LONE.sub("�", line) for line in shown]
 
 
 def _mail_text(msg, fields):

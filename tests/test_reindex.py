@@ -160,17 +160,24 @@ def test_codes_in_memory_match_a_fresh_load_through_many_changes(live):
         assert held == loaded, f"step {step}"
 
 
-def test_codes_changed_elsewhere_are_loaded_anew(live, monkeypatch):
-    # Another process changed the index meanwhile: patching the codes in memory would miss its changes.
+@pytest.mark.parametrize("change", ["touched", "a vector dropped"])
+def test_codes_changed_elsewhere_are_loaded_anew(live, change):
+    # Another process changed the index meanwhile: patching the codes in memory would miss its changes. What the
+    # server holds afterwards must be what it would load anew, whatever the change.
     index, vault = live
-    store.touch(index.catalog.store("vault"))
-    index.catalog.store("vault").commit()
+    db = index.catalog.store("vault")
+    if change == "a vector dropped":
+        store.delete_docs(db, [db.execute("SELECT id FROM docs WHERE path LIKE '%Acme AG.md'").fetchone()[0]])
+    store.touch(db)
+    db.commit()
     write(vault / "a.md", "Alpha note.\n")
     index.reindex(["vault/a.md"])
-    loads, real = [], search.Codes
-    monkeypatch.setattr(search, "Codes", lambda *args: loads.append(1) or real(*args))
     assert ids(index.vsearch("alpha note", k=1)) == ["vault/a.md"]
-    assert loads == [1]
+    index.settle(timeout=10)
+    index.vsearch("alpha note", k=1)
+    (held_ids, held), (loaded_ids, loaded) = held_and_loaded(index)
+    assert held_ids == loaded_ids
+    assert held == loaded
 
 
 def test_a_json_lines_file(live):
@@ -283,6 +290,58 @@ def test_reindex_refuses_what_sift_index_would_not_read(live, path, error):
         index.reindex(["vault/a.md", path])
 
 
+def test_reindex_refuses_a_path_on_another_drive(live, monkeypatch):
+    # "vault/D:/README.md": joined to the vault's folder, Windows threw the folder away and read D:'s file, which
+    # searches then served, and the UI too.
+    index, vault = live
+    monkeypatch.setattr(indexing, "WINDOWS", True)
+    drive = next(d for d in "CDEFGHIJ" if not str(vault).upper().startswith(d))
+    for path in (f"vault/{drive}:/README.md", f"vault/sub/{drive}:/x.md", f"vault/{drive}:x.md", "vault/.. /x.md"):
+        with pytest.raises(ValueError, match=r"Windows takes .* for another name"):
+            index.reindex([path])
+
+
+def test_reindex_refuses_names_windows_reads_as_others(live, monkeypatch):
+    # "C:x.md" is x.md in the folder the drive stands in, "sub./x.md" is sub/x.md: indexed under such a name, a file
+    # was there twice, and found twice, until the next `sift index`.
+    index, vault = live
+    monkeypatch.setattr(indexing, "WINDOWS", True)
+    write(vault / "sub" / "x.md", "x")
+    drive = str(vault)[0] if os.name == "nt" else "C"
+    for path in (f"vault/{drive}:x.md", "vault/sub./x.md", "vault/sub /x.md", "vault/sub/x.md:hidden", "vault/x.md."):
+        with pytest.raises(ValueError, match="Windows takes"):
+            index.reindex([path])
+
+
+def test_reindex_refuses_another_name_of_a_file_or_folder(live, monkeypatch):
+    # Windows answers to a short name, PRIVAT~1, as to the folder's own: one .siftignore left out, or a hidden one,
+    # was read through it, and a file indexed under its short name was there twice.
+    index, vault = live
+    write(vault / ".hidden" / "x.md", "x")
+    write(vault / "Private notes" / "x.md", "x")
+    real = indexing.os.path.lexists
+    monkeypatch.setattr(indexing.os.path, "lexists", lambda path: "~1" in str(path) or real(path))  # as Windows does
+    for path in ("vault/HIDDEN~1/x.md", "vault/PRIVAT~1/x.md", "vault/Private notes/X~1.MD"):
+        with pytest.raises(ValueError, match="another name"):
+            index.reindex([path])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="short names are Windows'")
+def test_reindex_refuses_a_windows_short_name(live, tmp_path):
+    import ctypes
+
+    index, vault = live
+    write(vault / ".siftignore", "Private notes/\n")
+    write(vault / "Private notes" / "secret.md", "x")
+    buffer = ctypes.create_unicode_buffer(1024)
+    ctypes.windll.kernel32.GetShortPathNameW(str(vault / "Private notes"), buffer, 1024)
+    short = os.path.basename(buffer.value)
+    if short == "Private notes":
+        pytest.skip("this drive makes no short names")
+    with pytest.raises(ValueError, match="another name"):
+        index.reindex([f"vault/{short}/secret.md"])
+
+
 def test_reindex_refuses_what_siftignore_leaves_out(live):
     index, vault = live
     write(vault / ".siftignore", "Private/\n*.tmp.md\n")
@@ -372,6 +431,18 @@ def test_reindex_refuses_files_behind_a_linked_folder(live, tmp_path, monkeypatc
         monkeypatch.setattr(indexing.os.path, "islink", lambda path: path.endswith("linked"))
     with pytest.raises(ValueError, match="linked/ is linked from elsewhere"):
         index.reindex(["vault/linked/a.md"])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")
+def test_reindex_refuses_files_behind_a_junction(live, tmp_path):
+    # A junction leads elsewhere as a link does, and every user may make one.
+    import _winapi
+
+    index, vault = live
+    write(tmp_path / "secret" / "a.md", "x")
+    _winapi.CreateJunction(str(tmp_path / "secret"), str(vault / "joined"))
+    with pytest.raises(ValueError, match="joined/ is linked from elsewhere"):
+        index.reindex(["vault/joined/a.md"])
 
 
 def test_reindex_refuses_a_collection_whose_folder_is_gone(live):

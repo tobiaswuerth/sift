@@ -531,6 +531,33 @@ def test_a_phrase_is_counted_as_fts5s_bm25_counts_it(tmp_path, home):
     assert postings.matches(db, "w*", ids) == {ids[0]: 4, ids[1]: 2, ids[2]: 3}  # a prefix: each word it begins
 
 
+@pytest.mark.parametrize("phrase", [("w1", "w2"), ("w1", "w1")])  # counted by highlight(), or from the tokens
+def test_a_phrase_is_counted_in_a_chunk_once_for_these_postings(tmp_path, home, phrase):
+    # A question with a hyphenated word over 45 million chunks counted its phrase in the same chunks on every call,
+    # with FTS5: 62% of its 2.2 seconds.
+    root, catalog = tmp_path / "phrases", Catalog(home)
+    for name, words in (("a", "w1 w1 w1 w2"), ("b", "w1 w2 w9 w1 w2"), ("c", "w1 w1 w2")):
+        write(root / f"{name}.md", f"# {name}\n\n{words}\n")
+    catalog.add(root, "phrases")
+    indexing.index(catalog)
+    db = catalog.store("phrases")
+    chunks = dict(db.execute("SELECT d.path, c.id FROM chunks c JOIN docs d ON d.id = c.doc"))
+    reader, asked = postings.Reader(db), []
+    first = reader.phrase_counts(phrase, [chunks["a.md"], chunks["b.md"]])
+    db.set_trace_callback(asked.append)
+    try:
+        again = reader.phrase_counts(phrase, [chunks["b.md"], chunks["a.md"]])
+        assert asked == []  # nothing asked of the store
+        more = reader.phrase_counts(phrase, [chunks["a.md"], chunks["c.md"]])
+    finally:
+        db.set_trace_callback(None)
+    assert [list(part) for part in again] == [list(part)[::-1] for part in first]
+    assert [list(part) for part in more] == [
+        list(part) for part in postings.Reader(db).phrase_counts(phrase, [chunks["a.md"], chunks["c.md"]])
+    ]
+    assert all(str(chunks["a.md"]) not in s for s in asked)  # only the chunk not counted yet
+
+
 def test_highlights_mark_already_in_a_text_counts_for_nothing(tmp_path, home):
     # Control characters come with PDFs and mails; highlight()'s mark among them counted as phrases found.
     root, catalog = tmp_path / "marked", Catalog(home)
@@ -545,15 +572,15 @@ def test_highlights_mark_already_in_a_text_counts_for_nothing(tmp_path, home):
 
 
 def test_the_chunks_of_phrases_are_kept_to_a_budget_of_bytes(tmp_path, home, monkeypatch):
-    # A server asked ever new phrases kept the chunks of each for as long as the postings stood: 80 MB for a common
-    # phrase over 30 million chunks.
+    # A server asked ever new phrases kept the chunks of each for as long as the postings stood: 160 MB with their
+    # counts for a phrase in 10 million chunks.
     root, catalog = tmp_path / "phrases", Catalog(home)
     for i in range(6):
         write(root / f"n{i}.md", f"# Note\n\nw1 w2 w{i + 3}\n")
     catalog.add(root, "phrases")
     indexing.index(catalog)
     db = catalog.store("phrases")
-    budget = 8 * 8  # chunk ids: the six of "w1 w2" and one each of two other phrases
+    budget = 16 * 8  # chunk ids, counts and lengths: the six of "w1 w2" and one each of two other phrases
     monkeypatch.setattr(postings, "_PHRASES", postings._Cache(budget))
     reader, asked = postings.Reader(db), []
     db.set_trace_callback(lambda sql: "MATCH" in sql and asked.append(sql))

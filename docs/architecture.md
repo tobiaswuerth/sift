@@ -87,7 +87,7 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
     the postings by Block-Max Pruning ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): each term's best
     score in a range of places, summed over the query's terms, bounds every chunk there, so ranges are scored best
     bound first until none left can beat the k-th best. FTS5 scores every match, about a microsecond each: "patients"
-    matches 8 million PubMed passages and took 8 seconds, a question of a dozen words 15. Now most of a common word's
+    matches 8 million PubMed passages and took 8 seconds, a question of a dozen words 16. Now most of a common word's
     postings are never read. The results are FTS5's, score for score, but where FTS5 counts a word or phrase by where
     its readers happen to stand, in nested queries alone (see `topk`). A search reads the postings in one transaction,
     as they were when it began, whatever another sift builds meanwhile.
@@ -97,8 +97,10 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
     (MaxScore). A question of 14 words over 3.2 million arXiv abstracts: 81 ms instead of 2.5 s.
   - A phrase, quoted or a word FTS5 can't read as written ("first-stage"), is bounded by its words, at most as often
     in a chunk as the rarest of them, and FTS5, which has the positions, finds the chunks that hold it, once for the
-    postings as they stand (kept up to 256 MB), and counts it in those within reach. A word of no token, such as a dash
-    between words, matches nothing, as in FTS5: words side by side and OR leave it out.
+    postings as they stand, and counts it in those within reach, each once, kept with them (up to 512 MB in all): a
+    question asked again, or another reaching the same chunks, costs FTS5 nothing more, until the postings change. A
+    word of no token, such as a dash between words, matches nothing, as in FTS5: words side by side and OR leave it
+    out.
   - Prefixes, NEAR and column filters are FTS5's to answer, as before.
   - With a time budget, a search from the postings stops once it is spent and has found any, and returns the best found
     so far, marked partial: ranges best bound first make that the anytime ranking of
@@ -113,7 +115,7 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 - **`vsearch`:** every vector's code, its signs as one bit per dimension, waits in RAM: 96 bytes for 768 dimensions, a
   sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with
   all of them by Hamming distance, on the CPU's cores, each counting its codes at each distance; the counts summed
-  tell how near the nearest lie, and the cores pick the codes that near (46 million codes: 0.3 s). The 10,000
+  tell how near the nearest lie, and the cores pick the codes that near (46 million codes: 0.2 to 0.5 s). The 10,000
   nearest of all collections together, ties by id, are ranked again by the query's own floats against their bits (a
   table lookup per byte), and the best 1,000 are scored exactly with their vectors from the index. Over 3.2 million
   arXiv abstracts this finds 99.75% of exact search's top 10, and its known-item MRR, 0.9530; reading 1,000 vectors
@@ -121,6 +123,13 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#vectors-in-memory)). No index to
   build or tune, and no GPU. When the best passages come from a few documents, it looks further down until it has `k`
   documents.
+  - A server follows each collection's changes without stalling a search: the codes written past the last it holds,
+    as `sift embed` writes them slab by slab, are read alone, and join those held as parts merged as they grow, so
+    that a code is copied a few times over a day of slabs; its own `reindex` patches them. Any other change to the
+    vectors (deleted, embedded again, or written below the last code) gives the store's codes a new epoch, and the
+    server reads them all again in a thread of its own, while searches go on with those held, the codes past the last
+    among them, and the vectors as the store holds them. Every deletion of vectors goes through one function of the
+    store, which keeps the epoch.
   - A filter on front matter is checked for the nearest candidates first, a batch at a time, until enough pass: listing
     every chunk it lets through reads every document, 6 seconds over arXiv warm and 56 cold, while a check costs 4 to
     90 microseconds. A filter that lets too few through for that, so that checking would cost more than a fifth of the
@@ -151,8 +160,7 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 Links are read with each Markdown note, as written, with the front-matter field and line of each, and stored with the
 names each file answers to: its file name and aliases. They resolve when asked, by those names, through an index on
 each, so the backlinks of a note linked by 6,000 others take 16 ms
-([timings](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#links-between-notes)). `reindex` patches
-a running server's codes in memory rather than loading millions again.
+([timings](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#links-between-notes)).
 
 ## Server and UI
 

@@ -13,11 +13,12 @@ searching and filtering, the formats sift reads, linked notes, the browser UI an
 
 ## Collections
 
-A collection is a folder sift indexes. `sift add FOLDER --name NAME` registers one; `sift index` reads its files and
-`sift embed` embeds their passages. Both are incremental: run them again after files change, and only new or changed
-files are processed. Deleted files are removed; the files of a folder that can't be read for the moment (access
-denied, a share that doesn't answer) are kept as indexed, as are those of a collection whose folder is missing. An
-interrupted `sift embed` continues where it stopped, and a running server picks up new vectors on its own.
+A collection is a folder sift indexes. `sift add FOLDER` registers one, named after the folder unless `--name NAME` says
+otherwise; `sift index` reads its files and `sift embed` embeds their passages. Both are incremental: run them again
+after files change, and only new or changed files are processed. Deleted files are removed; the files of a folder that
+can't be read for the moment (access denied, a share that doesn't answer) are kept as indexed, as are those of a
+collection whose folder is missing. An interrupted `sift embed` continues where it stopped, and a running server picks
+up new vectors on its own.
 
 A folder inside a collection, or one that holds a collection, isn't added: the files of both would be indexed twice,
 once in each collection. `sift add --nested` adds it anyway.
@@ -39,7 +40,8 @@ may have the index open meanwhile: stop `sift serve`, and any `sift index` or `s
 Beside an index lies an empty `NAME.sqlite.postings-lock`, which a sift locks while it updates the keyword postings,
 so that two never do at once; `sift move` and `sift rm` take it with the index.
 A collection whose index is missing, on a drive that isn't connected, is passed over by searches and said so on the
-server's console; `sift status` marks it `"missing": true`. sift never makes such an index anew.
+server's console; `sift status` marks it `"missing": true`. sift never makes such an index anew. So is one whose index
+can't be opened, damaged or updated by a newer sift; `sift status` gives the reason as `"error"`.
 
 ### Active and inactive collections
 
@@ -54,8 +56,9 @@ the collection read FTS5, slower on a large one; `sift index` builds or updates 
 ### Leaving files out
 
 sift indexes the files it has a reader for, but not those in folders whose name starts with a dot, such as
-`.obsidian/` or `.git/`, nor in `node_modules` and `__pycache__`. A `.siftignore` file in a collection's folder leaves
-out more, in gitignore's syntax:
+`.obsidian/` or `.git/`, nor in `node_modules` and `__pycache__`, nor in linked folders (symbolic links, and junctions
+on Windows); a linked file is read as the file it points to, wherever that lies. A `.siftignore` file in a
+collection's folder leaves out more, in gitignore's syntax:
 
 ```gitignore
 # drafts, exports and what an app keeps for itself
@@ -84,9 +87,10 @@ say, with the time of each line, to a log of their own, such as `logs/serve-2026
 `SIFT_HOME`: the server's requests and the errors of the libraries it runs too, a long step's progress once a minute,
 and how the command ended if it failed. Every log is kept.
 
-Every command may run while `sift serve` does: they share the collections' indexes, each of which takes one write at a
-time (the next waits up to 30 seconds), and the server finds what a command wrote with its next search, reloading the
-vectors' codes of a collection when they changed.
+Every command but `sift move` may run while `sift serve` does: they share the collections' indexes, each of which takes
+one write at a time (the next waits up to 30 seconds), and the server finds what a command wrote with its next search.
+Of the vectors' codes, it reads only those `sift embed` added; after other changes to a collection's vectors it reads
+all of them again in the background, while searches go on with those it holds.
 
 ## Searching
 
@@ -98,7 +102,9 @@ vectors' codes of a collection when they changed.
 | `similar` | Documents like a given one, by its id | cosine, -1 to 1 |
 
 Scores rank the results of one search, each kind on a scale of its own. `query`'s scores also compare across queries:
-with the default reranker, close matches score about 2.5 to 4, and unrelated results below 2.
+with the default reranker, close matches score about 2.5 to 4, and unrelated results below 2. How fast and how
+well each finds, on one workstation and per kind of question:
+[reference values](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#reference-values).
 
 ### Options
 
@@ -108,7 +114,7 @@ collections hold under the same DOI (front-matter field `doi`) is the best ranke
 
 | Option | Effect |
 |---|---|
-| `-k N` | Number of results |
+| `-k N` | Number of results, at most 10,000 |
 | `-c NAME` | Only this collection |
 | `--path GLOB` | Only paths within the collection that match, e.g. `"2024/*"` |
 | `-f FIELD=VALUE` | Front-matter filter, repeatable (see [below](#front-matter-and-filters)) |
@@ -130,7 +136,7 @@ agreement)'`. `"phrases"` and `prefix*` work as in SQLite FTS5. A query with ope
 finds nothing, drop terms. Input that isn't valid FTS5 syntax is searched as exact phrases.
 
 Keyword search covers the front matter too, so an author's name or an id finds its documents, in `search` and in
-`query`. `meta:` limits a term to the front matter, e.g. `sift search "meta: Smith"`.
+`query`. `meta:` limits a term to the front matter and `title:` to the title, e.g. `sift search "meta: Smith"`.
 
 ### Reading a document
 
@@ -232,7 +238,8 @@ parameters (Apache-2.0), which writes each page as Markdown, tables and columns 
   seconds, a dense one in up to a minute. The first scan downloads the model (2 GB).
 - Up to 50 pages of a scan are read, and its metadata says `ocr`. A mail's attached scan is read like any other.
 - On a machine without a GPU, scans are skipped and reported, unless `SIFT_OCR=on` has the CPU read them, at minutes
-  a page; `SIFT_OCR=off` never reads them.
+  a page; `SIFT_OCR=off` never reads them. A scan skipped while other programs hold the GPU's memory, or one OCR
+  ran out of it on, is read again by the next `sift index`.
 - The server's `reindex` leaves scans to the next `sift index`, as reading one would hold up every search meanwhile;
   `sift index --files` reads them at once.
 
@@ -291,7 +298,8 @@ sift search contract -f "org=[[Acme AG]]"        # org links to Acme AG, however
 
 A note is named by its id or as links name it, if one note answers to that name. `mentions` looks for a note's file
 name, title and aliases as phrases, and for a name with ä, ö, ü or ß also as written with ae, oe, ue or ss; names
-shorter than three characters are left out.
+shorter than three characters are left out. `links` and `unresolved` return at most 50 (`-k`); `mentions` takes `-k`,
+`-c`, `--fields` and `--compact` as searches do.
 
 **A note written a moment ago** is found by the next search, if the agent that wrote it calls `reindex` (or you run
 `sift index --files`): it reads those files at once, or drops the documents of files that are gone, without scanning
@@ -331,7 +339,7 @@ with the ids of the documents that answer them, as search results show them:
 ```
 
 ```bash
-sift bench questions.json
+sift bench questions.json            # -c NAME: one collection only
 ```
 
 A few dozen questions are enough to compare modes and to see whether a change helps your documents. Grades are

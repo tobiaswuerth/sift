@@ -35,7 +35,7 @@ FACET_VALUES = 8  # values shown per front-matter field, the most common first
 SHORT = 60  # characters a front-matter value may have to filter by it
 SNIPPET = 260  # characters of a passage shown in the results
 READER_LINES = 2000  # lines of a document the reader shows at once: a long log would make a page of megabytes
-LOCAL_HOSTS = ("127.0.0.1", "localhost")
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 STARTUP_SECONDS = 600  # how long `sift ui` waits for the server it started: loading models and codes takes a while
 ERRORS = (LookupError, ValueError, ConnectionError, sqlite3.Error)  # what a view shows, as the MCP tools say it
 
@@ -60,7 +60,7 @@ class View:
 
     @classmethod
     def of(cls, params):
-        k, at, path = params.get("k", ""), params.get("at", ""), params.get("path", "").strip("/")
+        k, at, path = _count(params.get("k", "")), _count(params.get("at", "")), params.get("path", "").strip("/")
         return cls(
             q=params.get("q", "").strip(),
             mode=params.get("mode") if params.get("mode") in MODES else "search",
@@ -68,13 +68,13 @@ class View:
             path=path and path + "/",  # "2024", "/2024/": the folder 2024/
             f=tuple(params.getlist("f")),
             sort=params.get("sort", ""),
-            k=min(int(k), MOST) if re.fullmatch("[0-9]+", k) and int(k) > 0 else PAGE,
+            k=min(k, MOST) if k else PAGE,
             similar=params.get("similar", ""),
             to=params.get("to", ""),
             by=params.get("by", ""),
             doc=params.get("doc", ""),
             lines=params.get("lines", ""),
-            at=int(at) if re.fullmatch("[0-9]+", at) else 0,
+            at=at or 0,
         )
 
     def href(self, **changes):
@@ -102,6 +102,11 @@ class View:
         """This view with the filter key=value added, or removed if it is there; on the first page."""
         pair = f"{key}={value}"
         return self.href(f=tuple(p for p in self.f if p != pair) if pair in self.f else (*self.f, pair), k=PAGE)
+
+
+def _count(text):
+    """A count from the address, or None for anything else: one too long for int() to read, too."""
+    return int(text) if re.fullmatch("[0-9]{1,9}", text) else None
 
 
 def _forms(text):
@@ -331,7 +336,6 @@ def app(index, host="127.0.0.1"):
     documents. Its pages are made as the MCP tools' calls are run: one at a time, off the event loop (see `jobs`)."""
     from jinja2 import Environment, FileSystemLoader
     from starlette.applications import Starlette
-    from starlette.middleware.trustedhost import TrustedHostMiddleware
     from starlette.responses import FileResponse, HTMLResponse, PlainTextResponse
     from starlette.routing import Mount, Route
     from starlette.staticfiles import StaticFiles
@@ -382,7 +386,23 @@ def app(index, host="127.0.0.1"):
 
     routes = [Route("/", page), Route("/file", file), Mount("/static", StaticFiles(directory=WEB / "static"))]
     ui = Starlette(routes=routes)
-    return TrustedHostMiddleware(ui, allowed_hosts=list(LOCAL_HOSTS)) if host in LOCAL_HOSTS else ui
+    return _local_only(ui) if host in LOCAL_HOSTS else ui
+
+
+def _local_only(app):
+    """`app`, answering only requests whose Host names a local host, an IPv6 one in brackets too ("[::1]:8765"), which
+    Starlette's TrustedHostMiddleware cuts at its first colon."""
+    from starlette.responses import PlainTextResponse
+
+    async def checked(scope, receive, send):
+        host = dict(scope.get("headers", ())).get(b"host", b"").decode("latin-1")
+        name = host[1 : host.find("]")] if host.startswith("[") else host.partition(":")[0]
+        if scope["type"] != "lifespan" and name not in LOCAL_HOSTS:
+            await PlainTextResponse("Invalid host header", status_code=400)(scope, receive, send)
+            return
+        await app(scope, receive, send)
+
+    return checked
 
 
 def address(host, port):

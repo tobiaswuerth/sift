@@ -104,6 +104,25 @@ def test_a_note_of_front_matter_alone_is_its_front_matter():
     assert len(readers.note("---\na: 1\n---\nA body.\n", "Body.md").chunks) == 1  # the body alone, as before
 
 
+def test_front_matter_values_sqlite_cant_store_or_python_cant_nest(json_room):
+    # A lone surrogate, "\ud800" in JSON, which SQLite refuses; lists nested deeper than Python recurses.
+    deep = "[" * 5000 + "]" * 5000
+    title, meta, _, _ = readers.parse(f'---\ntitle: "a \\ud800 b"\nx: {deep}\n---\n', "f")
+    assert (title, meta["x"]) == ("a � b", deep)
+    _, meta, _, _ = readers.parse('---\ntags: ["\\udc00", {"k\\ud800": ["v\\ud83d"]}, 1]\n---\n', "f")
+    assert meta["tags"] == ["�", {"k�": ["v�"]}, 1]  # in lists and objects too
+    assert readers.parse('---\nemoji: "\\ud83d\\ude00"\n---\n', "f")[1] == {"emoji": "\U0001f600"}  # a pair is one
+    nested = "[" * 1100 + "1" + "]" * 1100  # deeper than SQLite stores JSON (1,000), though Python reads it
+    _, meta, _, _ = readers.parse(f"---\nx: {nested}\nsize: 1e400\n---\n", "f")
+    assert meta == {"x": nested, "size": "1e400"}  # as written
+    # Each value alone within the limit, but a list item, or an item of a list, is one level deeper, and the front
+    # matter one more: still too deep, so as written.
+    deep = "[" * 999 + "1" + "]" * 999
+    _, meta, _, _ = readers.parse(f"---\ntags:\n  - {deep}\n  - fine\nk: [x, {deep}]\nok: [[1]]\n---\n", "f")
+    assert meta == {"tags": [deep, "fine"], "k": f"[x, {deep}]", "ok": [[1]]}
+    assert readers._depth(meta) <= readers.JSON_DEPTH + 1  # what SQLite stores
+
+
 def test_parse_without_closing_front_matter_is_plain_text():
     title, meta, body, _ = readers.parse("---\ntitle: x\nno end\n", "file")
     assert (title, meta) == ("file", {})
@@ -152,6 +171,24 @@ def test_chunk_never_exceeds_limit_with_long_lines():
 def test_chunk_breaks_unbroken_text():
     chunks = list(pieces("x" * (readers.CHUNK_CHARS * 2 + 10)))
     assert [len(c[2]) for c in chunks] == [readers.CHUNK_CHARS, readers.CHUNK_CHARS, 10]
+
+
+def test_chunk_breaks_a_long_line_in_time_linear_in_its_length():
+    # Each piece cut off copied the rest of the line: 16 MB on one line, a log or a dump, took 8 seconds, 100 MB about
+    # five minutes, holding up `sift index` or a server's reindex. Four times the text, four times the time.
+    import time
+
+    def took(n):
+        text, best = "y" * n, float("inf")
+        for _ in range(3):
+            start = time.perf_counter()
+            found = list(readers.chunk(text))
+            best = min(best, time.perf_counter() - start)
+        assert len(found) == -(-n // readers.CHUNK_CHARS)
+        assert (found[0][2], found[-1][2] + found[-1][3]) == (0, n)  # the whole line, in pieces
+        return best
+
+    assert took(8 << 20) < 8 * took(2 << 20)
 
 
 # --- files -------------------------------------------------------------------

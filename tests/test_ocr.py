@@ -257,6 +257,46 @@ def test_without_ocr_a_scan_is_skipped_and_said(tmp_path, home, scans, configure
     assert scans.engine.loads == []  # nothing loaded for nothing
 
 
+@pytest.mark.parametrize("trouble", ["the GPU busy", "OCR failing"])
+def test_a_scan_ocr_could_not_read_for_now_is_read_by_the_next_index(tmp_path, home, scans, capsys, trouble):
+    # Its file's time was kept all the same, so later runs passed it over until it changed: a scan skipped while
+    # another program held the GPU, or while OCR failed, was never read.
+    scan(tmp_path / "docs" / "a.pdf")
+    if trouble == "the GPU busy":
+        scans.engine.accelerator = Accelerator("cpu")
+        scans.engine.accelerator.found = "cuda"  # as when too little of its memory was free
+    else:
+        scans.engine.model.out_of_memory = True
+    catalog = Catalog(home)
+    assert indexed(catalog, tmp_path / "docs") == {}
+    if trouble == "the GPU busy":
+        assert "too little of the GPU's memory is free now" in capsys.readouterr().err
+    scans.engine.accelerator, scans.engine.model.out_of_memory = PretendGpu("cpu"), False
+    indexing.index(catalog)
+    assert [p for (p,) in only(catalog).execute("SELECT path FROM docs")] == ["a.pdf"]
+
+
+def test_a_scan_ocr_always_fails_on_is_not_read_again_on_every_index(tmp_path, home, scans, monkeypatch):
+    # Every failure was taken for one of the moment: each run loaded the model again, 2 GB, and read the pages again.
+    def failing(images):
+        raise ValueError("the model can't take this page")
+
+    monkeypatch.setattr(scans.engine, "read", failing)
+    scan(tmp_path / "docs" / "a.pdf")
+    catalog = Catalog(home)
+    assert indexed(catalog, tmp_path / "docs") == {}
+    assert only(catalog).execute("SELECT mtime IS NOT NULL FROM sources").fetchone() == (1,)
+
+
+def test_a_scan_with_ocr_off_is_not_read_again_on_every_index(tmp_path, home, scans, configure):
+    # Its file read on every run, to be skipped again, would cost every `sift index` a read of each scan.
+    configure(ocr="off")
+    scan(tmp_path / "docs" / "a.pdf")
+    catalog = Catalog(home)
+    assert indexed(catalog, tmp_path / "docs") == {}
+    assert only(catalog).execute("SELECT mtime IS NOT NULL FROM sources").fetchone() == (1,)
+
+
 def test_on_the_cpu_when_told(tmp_path, home, scans, configure):
     configure(ocr="on")
     scans.engine.accelerator = Accelerator("cpu")
@@ -370,9 +410,8 @@ def test_scans_an_older_sift_skipped_are_read_again_once(tmp_path, home, scans, 
     catalog.close()
     configure(ocr="auto")
     catalog = Catalog(home)
-    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (
-        2,
-    )  # the PDF and the mail
+    # the PDF and the mail
+    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (2,)
     indexing.index(catalog)
     assert sorted(p for (p,) in only(catalog).execute("SELECT path FROM docs")) == [
         "a.pdf",
@@ -404,6 +443,5 @@ def test_an_interrupted_marking_leaves_the_index_as_it_was(tmp_path, home, monke
     monkeypatch.setattr(store, "set_meta", lambda *args: (_ for _ in ()).throw(KeyboardInterrupt))
     with pytest.raises(KeyboardInterrupt):
         store._read_again(only(catalog), "scans_read", (".pdf",))
-    assert only(catalog).execute("SELECT mtime FROM sources").fetchone() == (
-        1,
-    )  # rolled back: tried again on the next start
+    # rolled back: tried again on the next start
+    assert only(catalog).execute("SELECT mtime FROM sources").fetchone() == (1,)

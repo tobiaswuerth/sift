@@ -1,8 +1,10 @@
 """A collection's store: its layout, its ids, the vectors' codes, the counts of its rows, deleting documents, the
 vectors' version, and holding it alone."""
 
+import re
 import sqlite3
 import time
+import tracemalloc
 from pathlib import Path
 
 import numpy as np
@@ -502,6 +504,75 @@ def test_delete_marks_vectors_changed(corpus):
     assert store.get_meta(db, "version") == before
     store.delete_docs(db, list(doc_ids(db).values())[:1])
     assert store.get_meta(db, "version") != before
+
+
+def epoch(db):
+    return store.get_meta(db, "codes_epoch")
+
+
+def test_codes_appended_past_the_last_keep_their_epoch(embedded):
+    # A running server reads only the codes past the last it holds, as long as this stays: `sift embed` writes its
+    # slabs in the order of the chunks, each past the codes before.
+    db = embedded[0].store("notes")
+    last, before = db.execute("SELECT max(chunk) FROM codes").fetchone()[0], epoch(db)
+    vector = np.ones((1, 64), np.float16)
+    store.put_vectors(db, [last + 1], vector)
+    assert epoch(db) == before
+    store.put_vectors(db, [last + 1], -vector)  # embedded again: a code it holds changes
+    assert epoch(db) != before
+    again = epoch(db)
+    store.put_vectors(db, [last - 1], vector)  # one before the last
+    assert epoch(db) != again
+
+
+@pytest.mark.parametrize("dropped", [True, False])
+def test_vectors_dropped_change_the_epoch(embedded, dropped):
+    catalog, root = embedded
+    db = catalog.store("notes")
+    before = epoch(db)
+    if dropped:
+        store.delete_docs(db, [doc_ids(db)["rl.md"]])
+    else:
+        write(root / "new.md", "# New\n\nNot embedded yet.\n")
+        indexing.index(catalog)
+        store.delete_docs(db, [doc_ids(db)["new.md"]])  # it had no vector: no code changes
+    assert (epoch(db) != before) == dropped
+
+
+def test_every_deletion_of_vectors_goes_through_the_store():
+    # One place keeps the epoch: a deletion elsewhere would leave a running server holding codes of vectors gone.
+    package = Path(store.__file__).parent
+    found = [
+        f"{path.relative_to(package)}:{n}"
+        for path in sorted(package.rglob("*.py"))
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if re.search(r"(delete\s+from|drop\s+table|truncate)\s+(main\.)?vectors\b", line, re.IGNORECASE)
+    ]
+    assert len(found) == 1
+    assert found[0].startswith("store.py:")
+
+
+def test_codes_are_read_past_a_chunk(embedded):
+    db = embedded[0].store("notes")
+    ids, bits = store.read_codes(db)
+    tail_ids, tail_bits = store.read_codes(db, after=int(ids[0]))
+    assert (tail_ids.tolist(), tail_bits.tolist()) == (ids[1:].tolist(), bits[1:].tolist())
+    assert store.read_codes(db, after=int(ids[-1])) is None
+    assert store.read_codes(db, after=int(ids[0]), most=1)[0].tolist() == ids[1:2].tolist()
+
+
+def test_codes_read_past_a_chunk_take_the_room_of_those_found(embedded):
+    # A server reads the codes past the last it holds on every search while it reads all anew, at most as many as
+    # the store counts: room for 29 million was taken each time, for a few.
+    db = embedded[0].store("notes")
+    ids, _ = store.read_codes(db)
+    tracemalloc.start()
+    try:
+        store.read_codes(db, after=int(ids[0]), most=10_000_000)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 1_000_000
 
 
 def test_touch_changes_version_within_one_clock_tick(corpus, monkeypatch):

@@ -1,9 +1,9 @@
 # Benchmarks
 
-This page explains how sift's search defaults were chosen. Every change to how `query` ranks is measured on seven
-datasets, with several rerankers and embedding models. The default is the setting that does best overall, not the
-winner on a single dataset. To measure sift on your own documents, use
-[`sift bench`](usage.md#measuring-search-on-your-own-documents).
+This page gives what to expect of sift on one machine ([reference values](#reference-values)) and explains how its
+search defaults were chosen. Every change to how `query` ranks is measured on seven datasets, with several rerankers
+and embedding models. The default is the setting that does best overall, not the winner on a single dataset. To
+measure sift on your own documents, use [`sift bench`](usage.md#measuring-search-on-your-own-documents).
 
 ## Results in brief
 
@@ -21,11 +21,60 @@ winner on a single dataset. To measure sift on your own documents, use
   99.75% of exact search's top 10, and its MRR of 0.9530, in a sixteenth of the memory
   ([details](#vectors-in-memory)).
 - **Keyword search:** `search` ranks from postings of its own, scoring ranges of passages best bound first. Over 29.9
-  million PubMed passages, a common word takes 7 ms instead of 1.3 seconds, a question 26 ms instead of 5.3 seconds
+  million PubMed passages, a single word takes 7 ms instead of 1.3 seconds, a question 26 ms instead of 5.3 seconds
   (medians, the postings read before; 67 and 200 ms read anew), with FTS5's results, score for score, in about a
   third of FTS5's storage ([details](#keyword-search)).
 - **Embedding:** `sift embed` keeps the GPU 99% busy: 472 PubMed passages per second on an RTX 4090, against 382 for
   sift 1.10.0, the vectors the same ([details](#keeping-the-gpu-busy)).
+
+## Reference values
+
+What to expect, measured on one machine: an Intel Core i9-14900K (24 cores), 192 GB of RAM, an RTX 4090 (24 GB)
+and NVMe disks, on Windows 11. "Live" is an index of 45.7 million passages in six collections (arXiv 3.2 million,
+PubMed 29.9 million, OpenAlex 12.0 million, bioRxiv 0.47 million, the ACL Anthology 0.09 million and a folder of
+notes), searched through `sift serve` with sift 1.11.1, every passage embedded and the keyword postings in topical
+order; "arXiv" is that collection alone. Times are a query's first call and the median of two more ("warm": the
+postings and vectors it reads are in memory by then), including the MCP round trip, 10 hits each.
+
+| Use case | Mode | Live, first / warm | arXiv alone, warm |
+|---|---|---|---|
+| A name, an id, a rare term | `search`, one word | 93 / 10 ms | 0.7 ms |
+| A common word ("patients") | `search`, one word | 332 / 17 ms | |
+| A few words, all required | `search` | 66–122 / 31–46 ms | 2–7 ms |
+| A question of 15 words, by keywords | `search` | 594 / 223 ms | 34–81 ms |
+| A quoted phrase | `search` | 1.9 / 0.6–1.0 s | 1–131 ms (1.11.2) |
+| A question with a hyphenated word ("first-stage") | `search` | 2.8 / 1.6 s | 93 ms (1.11.2) |
+| By meaning | `vsearch` | 635 / 613 ms | 94 ms |
+| By meaning, filtered (a small collection, by year) | `vsearch` | 343 / 189 ms | |
+| A question for RAG, reranked on the GPU | `query` | 1.1 / 0.57 s | 0.28 s |
+| More papers like this one | `similar` | 708 / 702 ms | |
+
+- **Phrases** got faster in 1.11.2: counted once per passage and kept, a phrase asked again costs a half to a
+  twentieth of what it did over arXiv ([keyword search](#keyword-search)); the live figures above are 1.11.1's.
+- **On the CPU**, `query` takes about 25 seconds a question for its reranker; `search`, `vsearch` and `similar` need
+  no GPU, and a [`sift worker`](worker.md) lends one.
+- **Memory:** the vectors' codes take 96 bytes a passage in RAM, 4.4 GB for the 45.7 million; the keyword postings a
+  third of FTS5's index on disk.
+- **Building:** `sift embed` embeds 370 to 520 PubMed passages a second (EmbeddingGemma-2); `sift index` builds the
+  keyword postings of arXiv in 69 seconds on 24 processes and of PubMed in 13 to 15 minutes on 31, and orders 3.2
+  million passages by topic in about a minute; over unchanged folders it takes a moment (0.1 s for 2,364 files).
+
+How well each mode finds what is sought, by kind of question (nDCG@10, or MRR@10 for the known items; the details
+below):
+
+| Kind of question | `search` (BM25) | `vsearch` | `query` |
+|---|---|---|---|
+| Scientific claims against abstracts (SciFact) | 0.666 | 0.840 | 0.813 |
+| Medical questions (NFCorpus) | | 0.358 | 0.361 |
+| Financial questions against forum answers (FiQA) | | 0.314 | 0.464 |
+| German questions against passages (GermanQuAD) | | 0.955 | 0.987 |
+| Long German documents (MLDR, German) | | 0.534 | 0.685 |
+| Literature search over ML and NLP papers (LitSearch) | | 0.486 | 0.631 |
+| One known paper among 3.2 million (arXiv; MRR@10) | | | 0.929 |
+
+`vsearch` finds 99.75% of exact search's top 10 over the 3.2 million arXiv abstracts, in a sixteenth of the memory
+([vectors in memory](#vectors-in-memory)); keyword search scores as FTS5's bm25 does, nested queries aside
+([architecture](architecture.md#searching)).
 
 ## Datasets
 
@@ -277,7 +326,13 @@ as by `sift serve`. Every query found the same documents as FTS5, score for scor
   | quoted phrases, through FTS5 before | 10 to 97 ms | 3 to 16 ms |
 
   On the live index of six collections (46 million passages), the 14-word question had taken 13.5 s and the
-  hyphenated one over ten minutes.
+  hyphenated one over ten minutes; with 1.11.1, before its postings were built anew in topical order, 0.97 s and 8.7 s
+  at first, 0.32 s and 2.2 s asked again (since: [reference values](#reference-values)).
+- **A phrase counted once per passage** (sift 1.11.2), kept with the passages that hold it: of a hyphenated question's
+  2.2 s, 62% had been FTS5 counting the phrase in the same passages again. Over arXiv, warm, six queries with phrases
+  measured before and after, with the same results: the hyphenated question 93 ms instead of 429, "in this paper we
+  propose" 131 ms instead of 2.6 s, the four others 1 to 7 ms instead of 3 to 14. A new question's first call costs
+  what it did.
 - **A time budget** ends a search from the postings early, with the best found so far: ranges are scored best bound
   first, so the best results tend to come first ([Mackenzie et al. 2021](https://arxiv.org/abs/2104.08976)). Not
   measured on these queries yet.
@@ -364,6 +419,22 @@ and hit@10 are those of each paper's own first passage. "+ exact top N" scores t
   query's floats against such bits loses it: the centered vectors are no longer of one length. The whole cascade
   found 0.9788 instead of 0.9975; a correction per vector (as RaBitQ stores) might win back about 0.0015, against a
   new format and new codes for every vector.
+- **Scanning the nearest clusters only** (not adopted): the codes grouped by sift's own clustering of them (the
+  postings' topical order, 4,096 leaves), and only the leaves nearest the query scanned, as an inverted file does.
+  Over the 2,000 titles, of exact search's top 10, with the cascade among the codes scanned:
+
+  | Codes scanned | Leaves by Hamming distance | Leaves by the query's floats against their bits |
+  |---|---|---|
+  | 10% | 0.9822 | 0.9882 |
+  | 20% | 0.9928 | 0.9952 |
+  | 30% | 0.9957 | 0.9966 |
+  | all (sift) | 0.9975 | 0.9975 |
+
+  Scanning a third of the codes would save at most two thirds of the scan, 0.3 of the 0.5 s it took live over 46
+  million passages, at a loss of recall, and need clusters kept in the index, the codes embedded since apart, and
+  filters checked otherwise. An exact variant, a cluster skipped where the triangle inequality bounds its codes
+  beyond the 10,000th distance, is unlikely to skip any (reasoned, not measured): in 768 bits a cluster's radius is
+  of the order of the distances it would have to bound.
 - **On a copy of a real index**, 145 GB with 3,261,593 vectors (arXiv abstracts and notes), on the i9-14900K while it
   was busy with other work: the upgrade from sift 1.6 added the codes in 65 seconds, `sift serve` loads them in 2.2
   seconds, and a search (Hamming scan and exact scores) takes 95 ms (median; 108 ms at the 90th percentile). Of 200

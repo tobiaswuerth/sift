@@ -15,6 +15,16 @@ from sift.catalog import Catalog
 DIM = 64
 
 
+@pytest.fixture
+def json_room():
+    """Room for json to read JSON nested as deeply as SQLite stores, and deeper: Python 3.11's json counts its nesting
+    against the recursion limit (1,000), which the calls around it share. 3.12 gave C code a limit of its own."""
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(limit + 1000)
+    yield
+    sys.setrecursionlimit(limit)
+
+
 def words(text):
     return re.findall(r"\w+", text.lower())
 

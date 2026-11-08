@@ -309,14 +309,10 @@ def _encoded(term, chunks, tf, held, average, ranged):
     return term, len(places), encode_ranges(rid[starts], counts, quantized(best)), blocks
 
 
-def _read_only(path):
-    return sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True, timeout=store.TIMEOUT)
-
-
 def _shard(job):
     """The encoded postings of the terms from `lo` up to `hi` (None: all after), read out of a store's FTS5 index."""
     path, lo, hi, chunks_file, average = job
-    db = _read_only(path)
+    db = store.read_only(path)
     try:
         held = _Chunks(*np.load(chunks_file, mmap_mode="r"))  # one copy for all workers: the OS's
         db.execute("CREATE VIRTUAL TABLE temp.kw_vocabulary USING fts5vocab(main, fts, instance)")
@@ -737,7 +733,8 @@ class _Cache:
 
 BLOCK_CACHE = 512 << 20  # bytes of decoded blocks kept: a long question over PubMed reads about 150 MB of them
 _BLOCKS = _Cache(BLOCK_CACHE)  # shared by every reader: one budget for the process
-PHRASE_CACHE = 256 << 20  # bytes of the chunks of phrases kept: a common phrase over 30 million chunks takes 80 MB
+PHRASE_CACHE = 512 << 20  # bytes of phrases' chunks, counts and lengths kept: 16 a chunk, as many chunks as 256 MB of
+# their ids alone held before; 160 MB for a phrase in 10 million chunks
 _PHRASES = _Cache(PHRASE_CACHE)
 _readers = itertools.count()
 
@@ -791,11 +788,16 @@ class Reader:
     def phrase_chunks(self, phrase):
         """The chunks that hold the phrase (a tuple of tokens), ascending, as FTS5 finds them, which has the positions
         the postings leave out: found once for these postings, while the cache all readers share keeps them."""
-        return _PHRASES.get((self._me, phrase), lambda: (self._holding(phrase),))[0]
+        return self._phrase(phrase)[0]
+
+    def _phrase(self, phrase):
+        """(the chunks holding the phrase, how often it occurs in each and their lengths, -1 until counted), kept."""
+        return _PHRASES.get((self._me, phrase), lambda: self._holding(phrase))
 
     def _holding(self, phrase):
         rows = self.db.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rowid", (phrase_query(phrase),))
-        return np.fromiter((chunk for (chunk,) in rows), np.int64)
+        chunks = np.fromiter((chunk for (chunk,) in rows), np.int64)
+        return chunks, np.full(len(chunks), -1, np.int32), np.full(len(chunks), -1, np.int32)
 
     def phrase_df(self, phrase):
         """How many chunks hold the phrase, as FTS5's bm25 counts them."""
@@ -804,15 +806,20 @@ class Reader:
     def phrase_counts(self, phrase, chunks):
         """How often the phrase occurs in each of these chunks (ids), all columns, and their lengths in tokens:
         (counts, lengths), 0 for a chunk it isn't in. As FTS5's bm25 counts them, overlapping occurrences each (see
-        `matches`)."""
-        ids, holding = np.asarray(chunks, np.int64), self.phrase_chunks(phrase)
+        `matches`): each chunk once for these postings, kept with the phrase's chunks, as a question asked again, or
+        another with the phrase, scores the same chunks again."""
+        ids, (holding, counted, lengths) = np.asarray(chunks, np.int64), self._phrase(phrase)
         at = np.minimum(np.searchsorted(holding, ids), max(len(holding) - 1, 0))
-        members = (ids[holding[at] == ids] if len(holding) else ids[:0]).tolist()
-        if not members:
-            return np.zeros(len(ids), np.int64), np.zeros(len(ids), np.int64)
-        counts, length = matches(self.db, phrase_query(phrase), members), sizes(self.db, members)
-        found = np.fromiter((counts.get(c, 0) for c in ids.tolist()), np.int64, len(ids))
-        return found, np.fromiter((length.get(c, 0) for c in ids.tolist()), np.int64, len(ids))
+        member = holding[at] == ids if len(holding) else np.zeros(len(ids), bool)
+        new = np.unique(at[member][counted[at[member]] < 0])
+        if len(new):
+            fresh = holding[new].tolist()
+            found, size = matches(self.db, phrase_query(phrase), fresh), sizes(self.db, fresh)
+            lengths[new] = [size.get(c, 0) for c in fresh]
+            counted[new] = [found.get(c, 0) for c in fresh]  # last: a chunk counted has its length
+        out = np.zeros((2, len(ids)), np.int64)
+        out[:, member] = counted[at[member]], lengths[at[member]]
+        return out[0], out[1]
 
     def lengths(self, segment, places):
         """The lengths of the chunks at these places, as the segment holds them."""

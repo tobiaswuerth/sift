@@ -207,6 +207,20 @@ def test_a_collection_whose_store_is_missing_can_be_removed(corpus, capsys):
     assert catalog.collections() == []
 
 
+def test_a_collection_whose_store_is_damaged_is_removed_with_it(corpus, capsys):
+    # It goes, and its file with it: not "only the catalog changes", as for a store that is missing.
+    catalog, _ = corpus
+    stored = catalog.get("notes").store
+    catalog.release(catalog.get("notes").id)
+    Path(stored).write_bytes(b"not a database, " * 1000)
+    assert catalog.remove("notes") is None
+    err = capsys.readouterr().err
+    assert "notes: its index can't be opened" in err
+    assert "only the catalog changes" not in err
+    assert not os.path.exists(stored)
+    assert catalog.collections() == []
+
+
 def test_an_id_is_never_given_twice(corpus, tmp_path):
     # Ids of documents and chunks start at their collection's: a new collection under a removed one's id could meet
     # codes a running server still holds of it.

@@ -6,6 +6,7 @@ The models run on the main thread, as PyTorch needs, and never wait for the stor
 sorts them by length, another writes their vectors, both with the store's one connection, in turn."""
 
 import collections
+import json
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -211,7 +212,7 @@ def _stores(catalog, collections, named):
     `named`, which makes it an error."""
     for c in collections:
         try:
-            yield c, catalog.store(c)
+            yield c, catalog.opened(c)
         except LookupError as missing:
             if named:
                 raise
@@ -219,7 +220,7 @@ def _stores(catalog, collections, named):
 
 
 def _forget_vectors(db):
-    db.execute("DELETE FROM vectors")
+    store.drop_vectors(db, "1")
     db.execute("DELETE FROM meta WHERE key IN ('model', 'dim', 'kw_ordered')")  # kw_ordered: see postings._unordered
     store.touch(db)
     db.commit()
@@ -244,7 +245,7 @@ def _drop_broken_vectors(db):
             vectors = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), -1)
             broken += [rows[i][0] for i in np.flatnonzero(~np.isfinite(vectors).all(axis=1))]
         if broken:
-            db.executemany("DELETE FROM vectors WHERE chunk = ?", [(chunk,) for chunk in broken])
+            store.drop_vectors(db, "chunk IN (SELECT value FROM json_each(?))", (json.dumps(broken),))
             store.touch(db)
             console.say(f"{console.count(len(broken), 'broken vector')} dropped, to be embedded again")
     store.set_meta(db, "vectors_checked", 1)
@@ -271,12 +272,17 @@ def encode(models, texts):
 
 
 def _store_vectors(db, chunks, vectors, model):
-    """Store the intact vectors and commit. A NaN vector, an overflow inside the model, stays out, so its chunk
-    stays pending. Returns how many stayed out."""
+    """Store the intact vectors of the chunks still there, and commit. A NaN vector, an overflow inside the model,
+    stays out, so its chunk stays pending; so does the vector of a chunk another sift deleted meanwhile, which would
+    count as the vector of the chunk that took its place. Returns how many the model broke."""
     intact = np.isfinite(vectors).all(axis=1)
-    store.put_vectors(db, [chunk for chunk, ok in zip(chunks, intact) if ok], vectors[intact])
+    db.execute("BEGIN IMMEDIATE")  # what is still there, as it is written
+    sql = "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))"
+    there = {c for (c,) in db.execute(sql, (json.dumps([int(c) for c in chunks]),))}
+    keep = intact & np.fromiter((c in there for c in chunks), bool, len(chunks))
+    store.put_vectors(db, [chunk for chunk, ok in zip(chunks, keep) if ok], vectors[keep])
     store.set_meta(db, "model", model)
     store.set_meta(db, "dim", vectors.shape[1])
-    store.touch(db)  # tells a running server to reload the codes
+    store.touch(db)  # tells a running server the codes changed
     db.commit()
     return int((~intact).sum())

@@ -10,9 +10,13 @@ import os
 import posixpath
 import re
 import sqlite3
+import threading
+from concurrent.futures import Future, wait
 from contextlib import contextmanager
+from functools import partial
 from operator import itemgetter
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 
@@ -30,7 +34,6 @@ SQLITE_INT = 2**63  # SQLite integers are 64-bit
 OPERATORS = ("=", "<", "<=", ">", ">=", "not")
 FIELD_SAMPLE = 1000  # documents per collection whose front matter tells which fields exist
 START = 600  # characters of a document's start that `browse` shows, as its passage
-LAST = "\U0010ffff"  # the last character there is: every path starting with p sorts between p and p + LAST
 
 
 def _condition(key, op, value):
@@ -173,6 +176,8 @@ def line_span(lines):
     return int(m[1]), int(m[2] or m[1])
 
 
+MOST_HITS = 10_000  # hits a search returns at most: vsearch(k=10**8) read every vector of every collection, and
+# search(k=10**8) scored every posting of its words
 ADAPTIVE_SHARE = 0.9  # of the gaps between neighbouring scores, the first, where the largest is looked for
 ADAPTIVE_BUFFER = 5  # hits kept after the largest gap, as the paper keeps: of 10 or 50 vsearch hits for 2,000 arXiv
 # titles, 6 on average, with the paper sought in 99.2 to 99.6% of the cases it was among them (benchmarks.md)
@@ -194,10 +199,11 @@ def _check_budget(budget):
     return budget
 
 
-def _check_k(k):
+def _check_k(k, most=MOST_HITS):
+    """k as asked, at most `most`."""
     if not isinstance(k, int) or k < 1:
         raise ValueError(f"k must be a positive integer, got {k!r}")
-    return min(k, SQLITE_INT - 1)
+    return min(k, most)
 
 
 def _phrases(query):
@@ -342,10 +348,48 @@ def _by_value(rows, descending):
     return valued + [row for row in rows if row[-1] is None]
 
 
-def _codes(db):
-    """The codes of a store's vectors (see store.read_codes) to search; None if it has none."""
-    found = store.read_codes(db)
-    return Codes(*found) if found else None
+class _Held(NamedTuple):
+    """The codes of a collection's vectors in memory, and what its store said when they were read: its version, the
+    epoch of its codes (see store.codes_changed), how many vectors it counted (None: unknown, as after a patch), and
+    the last chunk read."""
+
+    version: str | None
+    codes: Codes
+    epoch: str | None = None
+    count: int | None = None
+    last: int = -1
+
+
+def _held(db):
+    """The codes of a store's vectors (see store.read_codes) to search, read in one snapshot with what the store says
+    of them; None if it has none."""
+    with _snapshot([db]):
+        version, epoch, count = store.get_meta(db, "version"), store.get_meta(db, "codes_epoch"), store.counts(db)
+        found = store.read_codes(db)
+    return _Held(version, Codes(*found), epoch, count["vectors"], int(found[0][-1])) if found else None
+
+
+def _read_anew(path):
+    """_held of the store at `path`, through a connection of its own, which a call cancelled meanwhile can't stop."""
+    db = store.read_only(path)
+    try:
+        return _held(db)
+    finally:
+        db.close()
+
+
+def _in_a_thread(work):
+    """A Future of work(), done in a thread of its own, which never holds up the process from ending."""
+    done = Future()
+
+    def run():
+        try:
+            done.set_result(work())
+        except BaseException as error:  # handed to whoever takes the result
+            done.set_exception(error)
+
+    threading.Thread(target=run, name="sift-codes", daemon=True).start()
+    return done
 
 
 def _size(path):
@@ -432,7 +476,8 @@ class Index:
         self.catalog = catalog or Catalog()
         self._models = models
         self._wrap = None
-        self.vectors = {}  # collection id: (its store's version, the Codes of its vectors)
+        self.vectors = {}  # collection id: the codes of its vectors, as _Held
+        self._reading = {}  # collection id: the Future of its codes read anew, in a thread of their own
         self._postings = {}  # collection id: (the state of its keyword postings, their postings.Reader)
         self._said = set()  # warnings given, each once
 
@@ -458,17 +503,24 @@ class Index:
     # --- which collections and documents a search may find -----------------------
 
     def active(self):
-        """The active collections whose stores are there, by id; the codes of others are let go."""
+        """The active collections whose stores open, by id; the codes of others are let go."""
         found = {}
         for c in self.catalog.collections():
             if not c.active:
                 self.catalog.release(c.id)
-            elif os.path.isfile(c.store):
-                found[c.id] = c
-            else:
+            elif not os.path.isfile(c.store):
                 self._warn(f"{c.name}: its index is missing: {c.store}; searches pass it over")
-        for cid in self.vectors.keys() - found.keys():
-            del self.vectors[cid]
+            else:
+                try:
+                    self.catalog.opened(c)
+                except LookupError as unusable:  # damaged, a newer sift's, locked or out of reach
+                    self._warn(f"{unusable}; searches pass it over")
+                else:
+                    found[c.id] = c
+        for held in (self.vectors, self._reading, self._postings):
+            for cid in held.keys() - found.keys():
+                del held[cid]
+        self.catalog.release_gone()  # a store `sift rm` deleted meanwhile: its space is freed once closed
         return found
 
     def _scope(self, collection):
@@ -704,22 +756,62 @@ class Index:
         return scored
 
     def load(self):
-        """Load the codes of the active collections' vectors (see `vectors`), each store's batch by batch; again when a
-        store has changed since."""
+        """Load the codes of the active collections' vectors (see `vectors`), each store's batch by batch; and follow a
+        store that changed since: the codes written past the last held are read alone, as `sift embed` writes them;
+        after another change, all are read again in a thread of their own, while searches go on with those held, which
+        the codes read then replace."""
         active = self.active()
         if not active and self.catalog.collections():
             raise LookupError("no collection is active: `sift activate NAME` takes one back into searches")
         for c in active.values():
-            db = self.catalog.store(c)
-            version, held = store.get_meta(db, "version"), self.vectors.get(c.id)
-            if held is not None and version is not None and held[0] == version:
-                continue
-            if (codes_held := _codes(db)) is None:
-                self.vectors.pop(c.id, None)
-            else:
-                self.vectors[c.id] = (version, codes_held)
+            self._follow(c)
         if not self.vectors:
             raise LookupError("no embeddings yet, run `sift embed`")
+
+    def _follow(self, collection):
+        """Bring the codes held of a collection up to its store (see load)."""
+        cid, db = collection.id, self.catalog.store(collection)
+        if (reading := self._reading.get(cid)) is not None and reading.done():
+            del self._reading[cid]
+            try:
+                found = reading.result()
+            except Exception as error:  # a disk that failed, no room for a second copy: read again for the next search
+                self._warn(f"{collection.name}: its vectors' codes could not be read again: {error}")
+            else:
+                self.vectors[cid] = found
+                if found is None:
+                    self.vectors.pop(cid)
+        held = self.vectors.get(cid)
+        with _snapshot([db]):
+            version = store.get_meta(db, "version")
+            if held is not None and version is not None and held.version == version:
+                return
+            count, epoch = store.counts(db)["vectors"], store.get_meta(db, "codes_epoch")
+            appended = held is not None and held.count is not None and held.epoch == epoch and count >= held.count
+            most = count - held.count + 1 if appended else count
+            tail = store.read_codes(db, after=held.last, most=most) if held is not None and count else None
+        if tail and tail[1].shape[1] != held.codes.width:  # another model's codes, after a reset: all read anew
+            tail, appended = None, False
+        if not count:  # no vectors at all, as after `sift embed --reset`: no search can find any
+            self.vectors.pop(cid, None)
+            self._reading.pop(cid, None)  # of the vectors gone
+        elif held is None:
+            self._reading.pop(cid, None)  # older than what is read now
+            if (found := _held(db)) is not None:
+                self.vectors[cid] = found
+        elif appended and len(tail[0] if tail else ()) == count - held.count:
+            codes, last = (held.codes.appended(*tail), int(tail[0][-1])) if tail else (held.codes, held.last)
+            self.vectors[cid] = _Held(version, codes, epoch, count, last)
+        else:  # read anew; meanwhile the codes past the last held join them, so that a note just embedded is found
+            if tail:
+                self.vectors[cid] = held._replace(codes=held.codes.appended(*tail), count=None, last=int(tail[0][-1]))
+            if cid not in self._reading:
+                self._reading[cid] = _in_a_thread(partial(_read_anew, collection.store))
+
+    def settle(self, timeout=None):
+        """Wait until the codes being read anew are read, at most `timeout` seconds each; the next search takes them."""
+        for reading in list(self._reading.values()):
+            wait([reading], timeout)
 
     def _exact(self, chunks, dim):
         """The vectors the stores hold of these chunks, of `dim` dimensions, as (their ids, fp16 rows): those deleted
@@ -911,7 +1003,7 @@ class Index:
         those arXiv known items (0.937 to 0.929)."""
         k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
-        candidates = max(candidates, k)
+        candidates = min(max(candidates, k), MOST_HITS)
         keyword = self._keyword(_any_word(query), candidates, scope, where, args, all_passages)
         vector = self._vector(query) if query.strip() else None  # for the semantic candidates and every cosine
         allowed = self._filter(scope, where, args)
@@ -1079,25 +1171,28 @@ class Index:
 
     def folders(self, collection, path=""):
         """The folders directly inside the folder `path` ("" or e.g. "2024/") of a collection, by name. Each folder
-        is one jump through the index, so a folder holding millions of documents costs as little as an empty one."""
+        is one jump through the index, past the documents in it, so a folder holding millions of documents in its
+        folders costs as little as an empty one; documents lying in `path` itself are passed over within a query."""
         path = path.strip("/") + "/" if path.strip("/") else ""  # "2024", "/2024/": the folder 2024/
         db, found, after = self._readable(self.catalog.get(collection)), [], path
-        sql = "SELECT path FROM docs WHERE path > ? AND path < ? ORDER BY path LIMIT 1"
-        while row := db.execute(sql, (after, path + LAST)).fetchone():
-            name, slash, _ = row[0][len(path) :].partition("/")
-            if slash:
+        within, bound = (" AND path < ?", [path[:-1] + "0"]) if path else ("", [])  # "0" follows "/"
+        sql = f"SELECT path FROM docs WHERE path > ?{within} AND instr(substr(path, ?), '/') ORDER BY path LIMIT 1"
+        while row := db.execute(sql, (after, *bound, len(path) + 1)).fetchone():
+            name = row[0][len(path) :].partition("/")[0]
+            if name:  # a record whose id starts with "/" lies in a folder of no name, which nothing could open
                 found.append(name)
-            after = path + name + (slash and "/" + LAST)  # past the folder, or past the document
+            after = path + name + "0"  # past the folder: whatever starts with `name/` sorts before
         return sorted(found)
 
     def file(self, id):
         """The file a document was read from, by its id as for `get`; None for a JSON Lines record, which is a part
-        of its file."""
+        of its file, and for a file outside the collection's folder, as an older sift's reindex stored "D:/x.md"."""
         doc = self._find(id)[0]
         collection = self._owner(doc)
         sql = "SELECT s.path, d.path FROM docs d JOIN sources s ON s.id = d.source WHERE d.id = ?"
         source, path = self.catalog.store(collection).execute(sql, (doc,)).fetchone()
-        return Path(collection.path) / source if source == path else None
+        full = os.path.normpath(os.path.join(collection.path, *source.split("/")))
+        return Path(full) if source == path and indexing.inside(collection.path, full) else None
 
     # --- links between notes (see `links`) -----------------------------------
 
@@ -1226,7 +1321,7 @@ class Index:
         "embedded", how many of them have vectors; and a "note" on anything that went wrong. Scans are left for `sift
         index` to read with OCR: a server runs one call at a time, which reading one would hold up for minutes."""
         done = indexing.reindex(self.catalog, paths, scans=False)
-        for cid, (before, after) in done.versions.items():
+        for cid, (before, *after) in done.versions.items():
             removed = [chunk for chunk in done.removed if store.owner(chunk) == cid]
             self._patch(cid, before, after, removed=removed)
         note = self._embed_new([doc for _, docs in done.files for doc in docs])
@@ -1275,7 +1370,7 @@ class Index:
             keep = [i for i, row in enumerate(rows) if intact[i] and row[0] in still]
             store.put_vectors(db, [rows[i][0] for i in keep], matrix[keep])
             store.touch(db)
-            after = store.get_meta(db, "version")
+            after = store.vectors_state(db)
             db.commit()
         except BaseException:
             db.rollback()
@@ -1284,14 +1379,15 @@ class Index:
         return None if intact.all() else "some passages could not be embedded (the model returned NaN); try again"
 
     def _patch(self, cid, before, after, removed=(), ids=(), matrix=None):
-        """Bring the codes in memory of the collection `cid` from its store's version `before` to `after`, a change this
-        index made itself, without loading them all again. Codes of another version are loaded anew by the next
-        search anyway."""
-        held = self.vectors.get(cid)
-        if held is None or held[0] != before or before == after:
+        """Bring the codes in memory of the collection `cid` from its store's version `before` to the state `after`
+        (version, epoch, count of vectors: store.vectors_state, read in the change's transaction), a change this index
+        made itself, without loading them all again. Codes of another version are followed by the next search anyway."""
+        held, (version, epoch, count) = self.vectors.get(cid), after
+        if held is None or held.version != before or before == version or cid in self._reading:
             return
-        bits = codes(matrix) if matrix is not None else np.empty((0, held[1].width), np.uint8)
-        self.vectors[cid] = (after, held[1].patched(list(removed), list(ids), bits))
+        bits = codes(matrix) if matrix is not None else np.empty((0, held.codes.width), np.uint8)
+        last = max([held.last, *map(int, ids)])
+        self.vectors[cid] = _Held(version, held.codes.patched(list(removed), list(ids), bits), epoch, count, last)
 
     def fields(self, collection):
         """The front-matter fields of a collection, from FIELD_SAMPLE documents spread from its first to its last,
@@ -1309,7 +1405,8 @@ class Index:
     def status(self):
         """The catalog, the model the active collections are embedded with, and every collection: its folder, whether
         it is active, its store and the bytes it takes, or that it is missing; and of an active one, its documents,
-        chunks, those embedded, how its keyword postings stand, front-matter fields and links."""
+        chunks, those embedded, how its keyword postings stand, front-matter fields and links, or why its store can't
+        be opened."""
         collections, models = [], set()
         for c in self.catalog.collections():
             entry = {"name": c.name, "path": c.path, "active": c.active, "store": c.store}
@@ -1318,7 +1415,11 @@ class Index:
                 continue
             entry["size"] = _size(c.store)
             if c.active:
-                db = self.catalog.store(c)
+                try:
+                    db = self.catalog.opened(c)
+                except LookupError as unusable:  # damaged, a newer sift's, locked or out of reach
+                    collections.append(entry | {"error": str(unusable)})
+                    continue
                 counted = store.counts(db)
                 linked, unresolved = self.link_counts(c)
                 entry |= {"docs": counted["docs"], "chunks": counted["chunks"], "embedded": counted["vectors"]}

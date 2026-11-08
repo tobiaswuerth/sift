@@ -145,6 +145,12 @@ def database(path, create=False) -> sqlite3.Connection:
     return db
 
 
+def read_only(path) -> sqlite3.Connection:
+    """The database at `path`, to read only, through a connection of its own: no setting changes, and no call
+    cancelled meanwhile (ABORT) stops what it reads."""
+    return sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True, timeout=TIMEOUT)
+
+
 def connect(path, cid, create=False) -> sqlite3.Connection:
     """The store of the collection `cid` at `path`; with `create`, a new one, made there."""
     db = database(path, create)
@@ -290,13 +296,22 @@ def counts(db):
     return dict(db.execute("SELECT name, n FROM counts"))
 
 
-def read_codes(db):
-    """The codes of a store's vectors, by chunk id: (ids, rows of uint8), batch by batch; None if it has none. At most
-    as many as the vectors the store counts, which it keeps: counting the codes was a pass over millions before the one
-    that reads them, and codes added since the count wait for the next read."""
+def read_codes(db, after=None, most=None):
+    """The codes of a store's vectors, by chunk id: (ids, rows of uint8), batch by batch; None if there are none. All of
+    them, at most `most`, by default as many as the vectors the store counts, which it keeps, into room made for that
+    many at once: counting the codes was a pass over millions before the one that reads them, and codes added since
+    the count wait for the next read. Or those of the chunks `after` a chunk id, at most `most`, in room for those
+    found: a server reads them on every search while it reads all anew."""
     import numpy as np  # here, not at the top: the CLI starts with the standard library alone
 
-    n = counts(db)["vectors"]
+    if after is not None:
+        sql = "SELECT chunk, bits FROM codes WHERE chunk > ? ORDER BY chunk LIMIT ?"
+        cursor, parts = db.execute(sql, (after, -1 if most is None else most)), []
+        while batch := cursor.fetchmany(CODES_BATCH):
+            ids = np.fromiter((chunk for chunk, _ in batch), np.int64, len(batch))
+            parts.append((ids, np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)))
+        return (np.concatenate([i for i, _ in parts]), np.concatenate([b for _, b in parts])) if parts else None
+    n = counts(db)["vectors"] if most is None else most
     ids, bits, row = np.empty(n, np.int64), None, 0
     cursor = db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
     while row < n and (batch := cursor.fetchmany(CODES_BATCH)):
@@ -346,10 +361,36 @@ def put_vectors(db, chunks, matrix):
 
 
 def _put_codes(db, chunks, matrix):
+    """Write the codes of these chunks' vectors. Codes written at or before the last there is change those a running
+    server holds: a new epoch (see codes_changed); `sift embed` writes past the last, which a server reads alone."""
     from .vectors import codes  # imports NumPy
 
+    last = db.execute("SELECT max(chunk) FROM codes").fetchone()[0]
+    if chunks and last is not None and min(chunks) <= last:
+        codes_changed(db)
     bits = codes(matrix)
     db.executemany("INSERT OR REPLACE INTO codes(chunk, bits) VALUES(?, ?)", zip(chunks, (b.tobytes() for b in bits)))
+
+
+def drop_vectors(db, where, args=()):
+    """Delete the vectors, and with them their codes, of the chunks `where` (SQL on the vectors' `chunk`, with `args`)
+    selects; a new epoch of the codes if any went. Every deletion of vectors goes through here. Returns how many."""
+    dropped = db.execute(f"DELETE FROM vectors WHERE {where}", args).rowcount
+    if dropped:
+        codes_changed(db)
+    return dropped
+
+
+def vectors_state(db):
+    """What a store says of its vectors, as a server follows them: (its version, the epoch of its codes, how many
+    vectors it counts)."""
+    return get_meta(db, "version"), get_meta(db, "codes_epoch"), counts(db)["vectors"]
+
+
+def codes_changed(db):
+    """Mark that the codes changed otherwise than by codes written past the last: a server holding them reads them all
+    again, beside its searches, where it reads only those past the last it holds as long as the epoch stays."""
+    set_meta(db, "codes_epoch", uuid.uuid4().hex)
 
 
 def get_meta(db, key, default=None):
@@ -369,7 +410,8 @@ def empty_log(db):
 
 
 def touch(db):
-    """Mark the vectors as changed, so a running server reloads their codes. Random, as clocks can tick too slowly."""
+    """Mark the vectors as changed, so a running server follows their codes (see codes_changed). Random, as clocks can
+    tick too slowly."""
     set_meta(db, "version", uuid.uuid4().hex)
 
 
@@ -405,7 +447,7 @@ def delete_docs(db, doc_ids):
         marks = ",".join("?" * len(batch))
         chunk_ids = f"SELECT id FROM chunks WHERE doc IN ({marks})"
         keywords(db, batch, add=False)  # first, while their text is still there
-        db.execute(f"DELETE FROM vectors WHERE chunk IN ({chunk_ids})", batch)
+        drop_vectors(db, f"chunk IN ({chunk_ids})", batch)
         db.execute(f"DELETE FROM links WHERE doc IN ({marks})", batch)
         db.execute(f"DELETE FROM names WHERE doc IN ({marks})", batch)
         db.execute(f"DELETE FROM chunks WHERE doc IN ({marks})", batch)

@@ -2,11 +2,13 @@
 browsing by folder."""
 
 import json
+import sqlite3
+import threading
 
 import numpy as np
 import pytest
 
-from sift import embed, indexing, order, postings, search, store, topk, vectors
+from sift import embed, expression, indexing, order, postings, search, store, topk, vectors
 from sift.catalog import Catalog
 from sift.search import Index, _any_word
 
@@ -85,6 +87,36 @@ def test_keyword_search_from_the_postings_finds_what_fts5_finds(prose, tmp_path,
     fast = scored(Index(catalog).search(query, **options))
     through_fts5(catalog)
     agree(fast, scored(Index(catalog).search(query, **options)))
+
+
+def test_a_phrases_counts_follow_the_postings(tmp_path, home):
+    # The same chunk ids, another title (as a collection's titles taken from file names write one): the postings
+    # follow, a new state, and so must the counts of a phrase kept for the state before.
+    root, catalog = tmp_path / "notes", Catalog(home)
+    for i in range(4):
+        write(root / f"n{i}.md", f"# Note {i}\n\nw1 w2 filler{i} words here\n")
+    for i in range(30):
+        write(root / f"o{i}.md", f"# Other {i}\n\nunrelated text {i}\n")
+    write(root / "z.md", "# Zed\n\nw1 w2 once\n")
+    catalog.add(root, "notes")
+    indexing.index(catalog)
+    index, db = Index(catalog), catalog.store("notes")
+    index.search('"w1 w2"', k=5)  # counted for these postings
+    (doc,) = [d for (d,) in db.execute("SELECT id FROM docs WHERE path = 'z.md'")]
+    store.keywords(db, [doc], add=False)
+    db.execute("UPDATE docs SET title = 'w1 w2 w1 w2' WHERE id = ?", (doc,))
+    store.keywords(db, [doc])
+    db.commit()
+    postings.update(db, catalog.get("notes").store)
+    assert postings.ready(db)
+    again = {h["id"]: h["score"] for h in index.search('"w1 w2"', k=5)}
+    other = store.read_only(catalog.get("notes").store)  # FTS5 as another sift reads it
+    sql = """WITH p AS MATERIALIZED (SELECT rowid r, -bm25(fts) s FROM fts WHERE fts MATCH '"w1 w2"')
+             SELECT max(s) FROM p JOIN chunks c ON c.id = p.r WHERE c.doc = ?"""
+    try:
+        assert again["notes/z.md"] == pytest.approx(other.execute(sql, (doc,)).fetchone()[0], abs=1e-4)
+    finally:
+        other.close()
 
 
 def test_a_phrase_is_found_from_the_postings(prose, monkeypatch):
@@ -259,6 +291,21 @@ def test_a_column_filter_holds_when_nothing_matches(corpus, query):
     assert Index(corpus[0]).search(query) == []
 
 
+@pytest.mark.parametrize("depth", [300, 3000])
+def test_parentheses_nested_deeply_are_searched_as_words(corpus, depth):
+    # The parser recursed once per parenthesis: RecursionError, a traceback in the server's log and an error page in
+    # the UI, where any query FTS5 can't read is searched as its words.
+    assert ids(Index(corpus[0]).search("(" * depth + "reward" + ")" * depth)) == ["notes/rl.md"]
+
+
+def test_a_long_chain_of_nots_is_left_to_fts5(corpus):
+    # Each NOT nests one level deeper, and scoring recursed once per level: RecursionError, past FTS5's own limit of
+    # 256 levels, which says what is wrong.
+    query = "reward" + " NOT w" * 1200
+    assert expression.parse(query) is None
+    assert Index(corpus[0]).search(query) == []  # what FTS5 can't read: its words, as phrases
+
+
 def test_unusable_query_is_a_clear_error(corpus, monkeypatch):
     monkeypatch.setattr(search, "_phrases", lambda q: "(")
     with pytest.raises(ValueError, match="invalid search query"):
@@ -389,9 +436,8 @@ def test_a_changed_front_matter_value_is_no_longer_found(paper, corpus):
     indexing.index(catalog)
     assert paper.search("Vaswani") == []
     assert ids(paper.search("Someone")) == ["notes/paper.md"]
-    catalog.store("notes").execute(
-        "INSERT INTO fts(fts) VALUES('integrity-check')"
-    )  # raises if deleting missed what inserting added
+    # raises if deleting missed what inserting added
+    catalog.store("notes").execute("INSERT INTO fts(fts) VALUES('integrity-check')")
 
 
 # --- semantic and hybrid search ----------------------------------------------
@@ -491,6 +537,296 @@ def test_vsearch_reloads_after_index_changes(embedded):
     assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
 
 
+def held_codes(index):
+    """The codes an index holds of every collection, (chunk ids, codes as bytes), as a fresh load would give them."""
+    found = []
+    for cid in sorted(index.vectors):
+        ids, bits = index.vectors[cid][1].live()
+        found += zip(ids.tolist(), (row.tobytes() for row in bits))
+    return found
+
+
+def fresh_codes(catalog):
+    fresh = Index(catalog)
+    fresh.load()
+    return held_codes(fresh)
+
+
+def reading_codes(monkeypatch):
+    """The `after` of each store.read_codes call from now on, and the thread that made it."""
+    calls, real = [], store.read_codes
+
+    def recorded(db, after=None, most=None):
+        calls.append((after, threading.current_thread()))
+        return real(db, after, most)
+
+    monkeypatch.setattr(store, "read_codes", recorded)
+    return calls
+
+
+def test_codes_embedded_meanwhile_are_read_alone(embedded, fake_models, monkeypatch):
+    # `sift embed` beside a server commits a slab a minute; each made the next search read every code of the
+    # collection anew: 18 seconds for PubMed's 29 million, once a minute while it embedded.
+    catalog, root = embedded
+    index = Index(catalog)
+    index.vsearch("anything")
+    for n in range(2):
+        write(root / f"new{n}.md", f"# Pigments {n}\n\npigment mixing on canvas, note {n}\n")
+        indexing.index(catalog)
+        embed.embed_pending(catalog)
+        with monkeypatch.context() as patched:
+            calls = reading_codes(patched)
+            assert ids(index.vsearch(f"Pigments {n} pigment mixing on canvas", k=1)) == [f"notes/new{n}.md"]
+            index.settle(timeout=10)  # and nothing read beside the search
+        assert calls
+        assert all(after is not None for after, _ in calls)  # the codes past those held, alone
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+def test_codes_embedded_after_the_servers_own_reindex_are_read_alone(embedded, fake_models, monkeypatch):
+    # An agent's note reindexed through the server, then a slab of `sift embed`: the server had patched its codes,
+    # knowing no longer what its store counted, and read all of them again.
+    catalog, root = embedded
+    index = Index(catalog)
+    index.vsearch("anything")
+    write(root / "agent.md", "# Agent\n\na note an agent wrote\n")
+    index.reindex(["notes/agent.md"])
+    write(root / "late.md", "# Late\n\nembedded by sift embed afterwards\n")
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    with monkeypatch.context() as patched:
+        calls = reading_codes(patched)
+        assert ids(index.vsearch("Late embedded by sift embed afterwards", k=1)) == ["notes/late.md"]
+        index.settle(timeout=10)
+    assert calls
+    assert all(after is not None for after, _ in calls)
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+@pytest.mark.parametrize("by", ["sift index", "an older sift"])
+def test_codes_changed_otherwise_are_read_anew_beside_the_searches(embedded, monkeypatch, by):
+    # A vector deleted or replaced: all codes are read again, in a thread of their own, while searches go on with
+    # those held; then the codes read take their place. An older sift doesn't mark such a change: the count tells,
+    # where it changes.
+    catalog, root = embedded
+    index = Index(catalog)
+    assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
+    if by == "sift index":
+        (root / "rl.md").unlink()
+        indexing.index(catalog)
+    else:
+        db = catalog.store("notes")
+        db.execute("DELETE FROM vectors WHERE chunk = (SELECT min(chunk) FROM vectors)")
+        store.touch(db)
+        db.commit()
+    real, reading, release, readers = store.read_codes, threading.Event(), threading.Event(), []
+
+    def slow(db, after=None, most=None):
+        if after is None:  # all of them: as long as PubMed's 29 million take
+            readers.append(threading.current_thread())
+            reading.set()
+            assert release.wait(10)
+        return real(db, after, most)
+
+    monkeypatch.setattr(store, "read_codes", slow)
+    found = ids(index.vsearch("reward shaping", k=3))  # answered with the codes held, while they are read
+    assert reading.wait(10)
+    assert len(found) == 2  # the vector gone is never found: the vectors scored are those the store holds
+    assert ids(index.vsearch("reward shaping", k=3)) == found  # and again: one read at a time
+    assert len(readers) == 1
+    assert readers[0] is not threading.current_thread()
+    release.set()
+    index.settle(timeout=10)
+    index.vsearch("reward shaping", k=3)  # takes them up
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+@pytest.mark.parametrize("error", [sqlite3.OperationalError("disk I/O error"), MemoryError("no room")])
+def test_codes_that_could_not_be_read_anew_are_read_again(embedded, monkeypatch, capsys, error):
+    # A store moved, a disk that failed, no room for a second copy meanwhile: searches go on with the codes held,
+    # and read them again.
+    catalog, root = embedded
+    index = Index(catalog)
+    index.vsearch("anything")
+    (root / "rl.md").unlink()
+    indexing.index(catalog)
+    real, failed = search._read_anew, []
+
+    def failing(path):
+        failed.append(path)
+        raise error
+
+    monkeypatch.setattr(search, "_read_anew", failing)
+    index.vsearch("anything")
+    index.settle(timeout=10)
+    assert len(index.vsearch("anything")) == 2  # with the codes held, and their vectors as the store holds them
+    assert f"could not be read again: {error}" in capsys.readouterr().err
+    monkeypatch.setattr(search, "_read_anew", real)
+    index.settle(timeout=10)  # the try the last search began
+    index.vsearch("anything")  # tries again
+    index.settle(timeout=10)
+    index.vsearch("anything")
+    assert failed
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+def test_codes_read_anew_of_a_collection_deactivated_meanwhile_are_let_go(embedded, monkeypatch):
+    catalog, root = embedded
+    index = Index(catalog)
+    index.vsearch("anything")
+    (root / "rl.md").unlink()
+    indexing.index(catalog)
+    release, real = threading.Event(), search._read_anew
+    monkeypatch.setattr(search, "_read_anew", lambda path: release.wait(10) and real(path))
+    index.vsearch("anything")  # reading begins
+    catalog.set_active(["notes"], False)
+    with pytest.raises(LookupError, match="no collection is active"):
+        index.load()
+    assert not index._reading  # what it reads, all the collection's codes, is let go with it
+    release.set()
+    catalog.set_active(["notes"], True)
+    index.vsearch("anything")
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+def test_codes_read_anew_that_are_none_are_read_at_once(embedded, monkeypatch):
+    # Read anew, a store had no codes (its vectors all of another length, say): the next search reads them itself.
+    catalog, root = embedded
+    index = Index(catalog)
+    index.vsearch("anything")
+    (root / "rl.md").unlink()
+    indexing.index(catalog)
+    monkeypatch.setattr(search, "_read_anew", lambda path: None)
+    index.vsearch("anything")
+    index.settle(timeout=10)
+    assert len(index.vsearch("anything")) == 2
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+def embedded_again(db, dim):
+    """What `sift embed --reset` with a model of `dim` dimensions leaves in a store: every chunk embedded again."""
+    embed._forget_vectors(db)
+    chunks = [c for (c,) in db.execute("SELECT id FROM chunks ORDER BY id")]
+    store.put_vectors(db, chunks, np.random.default_rng(0).standard_normal((len(chunks), dim)).astype(np.float16))
+    store.set_meta(db, "model", "another/model")
+    store.set_meta(db, "dim", dim)
+    store.touch(db)
+    db.commit()
+
+
+def test_codes_of_a_model_of_other_dimensions_are_read_anew(embedded, capsys):
+    # A reset to a model of other dimensions, with passages past the last code held: codes of another width joined
+    # those held, and every semantic search failed with NumPy's error until the server restarted.
+    catalog, root = embedded
+    index = Index(catalog)
+    index.load()
+    write(root / "late.md", "# Late\n\nindexed after the server loaded its codes\n")
+    indexing.index(catalog)
+    embedded_again(catalog.store("notes"), 128)  # codes of 16 bytes, not 8
+    assert index.vsearch("anything") == []  # the codes held, whose vectors are gone: nothing, and no failure
+    index.settle(timeout=10)
+    assert index.vsearch("anything") == []  # the other model's codes, which this model's queries can't search
+    assert "embedded with another model" in capsys.readouterr().err
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+def blocked_reads(monkeypatch):
+    """Reads of all codes anew that hand what they read over once released: (release, the reads begun, an Event set
+    once the first has read, so that a test changes the store only after it)."""
+    release, real, reads, read = threading.Event(), search._read_anew, [], threading.Event()
+
+    def slow(path):
+        reads.append(path)
+        found = real(path)
+        read.set()
+        assert release.wait(10)
+        return found
+
+    monkeypatch.setattr(search, "_read_anew", slow)
+    return release, reads, read
+
+
+def test_a_read_begun_before_the_codes_were_read_at_once_is_let_go(embedded, monkeypatch):
+    # The vectors all deleted while all codes were being read: the codes embedded since were read at once, and the
+    # read, of the codes before, took their place when it ended.
+    catalog, root = embedded
+    index = Index(catalog)
+    index.load()
+    (root / "rl.md").unlink()
+    indexing.index(catalog)
+    release, reads, read = blocked_reads(monkeypatch)
+    index.load()  # reading the codes as they are, before the reset
+    assert read.wait(10)
+    db = catalog.store("notes")
+    embed._forget_vectors(db)
+    with pytest.raises(LookupError, match="sift embed"):
+        index.load()
+    embedded_again(db, 64)  # codes other than those being read
+    index.load()  # nothing held: read at once
+    release.set()
+    index.settle(timeout=10)
+    index.load()
+    index.settle(timeout=10)
+    assert held_codes(index) == fresh_codes(catalog)
+    assert len(reads) == 1  # the older read let go, and none needed after it
+
+
+def test_a_slab_embedded_while_all_codes_are_read_is_caught_up(embedded, monkeypatch):
+    catalog, root = embedded
+    index = Index(catalog)
+    index.load()
+    (root / "rl.md").unlink()
+    indexing.index(catalog)
+    release, _, read = blocked_reads(monkeypatch)
+    index.load()
+    assert read.wait(10)  # the read's snapshot: before the slab
+    write(root / "new.md", "# Pigments\n\npigment mixing on canvas\n")
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    assert ids(index.vsearch("Pigments pigment mixing on canvas", k=1)) == ["notes/new.md"]  # found meanwhile
+    release.set()
+    index.settle(timeout=10)
+    index.load()  # the read takes their place, and the slab after it is caught up
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+def test_the_servers_own_reindex_while_all_codes_are_read(embedded, monkeypatch):
+    catalog, root = embedded
+    index = Index(catalog)
+    index.load()
+    (root / "rl.md").unlink()
+    indexing.index(catalog)
+    release, _, read = blocked_reads(monkeypatch)
+    index.load()
+    assert read.wait(10)
+    write(root / "ml.md", "# Pigments\n\ncompletely different words about pigments\n")
+    index.reindex([str(root / "ml.md")])
+    assert ids(index.vsearch("completely different words about pigments", k=1)) == ["notes/ml.md"]
+    release.set()
+    for _ in range(3):
+        index.settle(timeout=10)
+        index.load()
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+def test_a_collection_removed_meanwhile_is_let_go(embedded, tmp_path):
+    # `sift rm` by another sift: the server kept the store open, its file's space taken until it stopped, and the
+    # postings of a collection deactivated or removed stayed in its memory.
+    catalog, _ = embedded
+    write(tmp_path / "more" / "a.md", "# More\n\nanother collection's note\n")
+    catalog.add(tmp_path / "more", "more")
+    indexing.index(catalog)
+    index = Index(catalog)
+    index.search("note")
+    gone = catalog.get("more").id
+    other = Catalog(catalog.home)
+    other.remove("more")
+    other.close()
+    index.search("note")
+    assert gone not in index._postings
+    assert gone not in index.catalog._stores
+
+
 def test_codes_load_in_batches(embedded, monkeypatch):
     # Millions of codes load a batch at a time, not as one list of rows.
     monkeypatch.setattr(store, "CODES_BATCH", 2)
@@ -568,9 +904,8 @@ def test_query_scores_are_the_rerankers_raw_scores_when_the_cosines_agree(embedd
     # 0.9999, and an off-topic query's best still 0.98. The raw scores tell strong hits from weak ones; the cosine
     # shifts them only where the candidates differ in meaning.
     catalog = embedded[0]
-    catalog.store("notes").execute(
-        "UPDATE vectors SET vec = ?", (np.ones(64, np.float16).tobytes(),)
-    )  # every cosine the same
+    # every cosine the same
+    catalog.store("notes").execute("UPDATE vectors SET vec = ?", (np.ones(64, np.float16).tobytes(),))
     catalog.store("notes").commit()
     hits = Index(catalog, models=Constant()).query("anything")
     assert [h["score"] for h in hits] == [2.0, 1.0, 0.0]
@@ -842,6 +1177,26 @@ def test_the_status_of_an_empty_collection(tmp_path, home):
 
 
 # --- edge cases ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode, subject", [("vsearch", "reward"), ("query", "reward"), ("similar", "notes/rl.md")])
+def test_a_semantic_search_reads_at_most_so_many_vectors(embedded, monkeypatch, mode, subject):
+    # vsearch(k=10**8) over MCP read every vector of every collection, 45 GB for PubMed's alone.
+    asked, real = [], search.top
+    monkeypatch.setattr(search, "top", lambda held, query, k, *rest: asked.append(k) or real(held, query, k, *rest))
+    getattr(Index(embedded[0]), mode)(subject, k=10**8)
+    assert asked
+    assert max(asked) <= search.MOST_HITS
+
+
+@pytest.mark.parametrize("mode, subject", [("search", "reward OR brush"), ("mentions", "notes/robots/brush.md")])
+def test_a_keyword_search_scores_at_most_so_many_hits(corpus, monkeypatch, mode, subject):
+    # search(k=10**8) pruned nothing: every posting of its words was scored, every document found looked up, and all
+    # of them sent back, while the server answered no other call.
+    asked = asks(monkeypatch)
+    getattr(Index(corpus[0]), mode)(subject, k=10**8)
+    assert asked
+    assert max(asked) <= search.MOST_HITS
 
 
 @pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
@@ -1368,6 +1723,49 @@ def test_folders_are_those_directly_inside_a_path(corpus):
         index.folders("nope")
 
 
+def test_the_folders_of_a_folder_of_many_documents_take_a_query_each(corpus):
+    # A query per document lying directly in the folder: 200,000 of them took 1.6 s, on every view of the UI, while
+    # every other call waited.
+    catalog, root = corpus
+    for i in range(30):
+        write(root / f"flat{i:02}.md", "# Flat\n")
+    write(root / "z" / "a.md", "# Z\n")
+    indexing.index(catalog)
+    index, db, asked = Index(catalog), catalog.store("notes"), []
+    db.set_trace_callback(lambda sql: "FROM docs" in sql and asked.append(sql))
+    try:
+        assert index.folders("notes") == ["robots", "z"]
+    finally:
+        db.set_trace_callback(None)
+    assert len(asked) == 3  # one for each folder, and one that finds no more
+
+
+def test_folders_whose_names_start_with_the_last_character_there_is(corpus):
+    # The jump past a folder went to `folder/` and the last character: an entry starting with that character came back
+    # on every jump, and the server's one worker thread looped for good.
+    catalog, _ = corpus
+    db = catalog.store("notes")
+    source = db.execute("SELECT min(id) FROM sources").fetchone()[0]
+    for path in ("a/\U0010ffffx.md", "\U0010ffffz/y.md", "a/b/c.md"):
+        db.execute("INSERT INTO docs(source, path, title, meta, text) VALUES(?, ?, 'x', '{}', 'x')", (source, path))
+    db.commit()
+    found = []
+    thread = threading.Thread(target=lambda: found.append(Index(catalog).folders("notes")), daemon=True)
+    thread.start()
+    thread.join(timeout=10)
+    assert found == [["a", "robots", "\U0010ffffz"]]
+    assert Index(catalog).folders("notes", "a/") == ["b"]
+
+
+def test_a_record_whose_id_starts_with_a_slash_makes_no_folder_without_a_name(corpus):
+    catalog, root = corpus
+    write(root / "r.jsonl", '{"id": "/lead", "text": "a record"}\n')
+    indexing.index(catalog)
+    index = Index(catalog)
+    assert "r" in index.folders("notes")
+    assert index.folders("notes", "r/") == []  # not [""], which the UI couldn't open
+
+
 def test_the_file_a_document_came_from(corpus, tmp_path):
     catalog, root = corpus
     write(tmp_path / "qa" / "faq.jsonl", '{"id": "q1", "text": "a record"}\n')
@@ -1376,6 +1774,14 @@ def test_the_file_a_document_came_from(corpus, tmp_path):
     index = Index(catalog)
     assert index.file("notes/brush.md") == root / "robots" / "brush.md"  # ids as for get
     assert index.file("qa/faq/q1") is None  # a record is a part of its file, not one of its own
+    # A source an older sift stored outside the collection, as its reindex did of "notes/D:/x.md": no file to serve.
+    db = catalog.store("notes")
+    for outside in ("../outside.md", "D:/outside.md", "C:outside.md"):
+        sid = db.execute("INSERT INTO sources(path) VALUES(?)", (outside,)).lastrowid
+        db.execute("INSERT INTO docs(source, path, title, meta, text) VALUES(?, ?, 'x', '{}', 'x')", (sid, outside))
+        db.commit()
+        found = index.file(f"notes/{outside}")  # elsewhere than on Windows, a drive is a name like any
+        assert found is None or found.resolve().is_relative_to(root.resolve()), outside
 
 
 def test_get_by_a_file_name_many_documents_have(corpus):

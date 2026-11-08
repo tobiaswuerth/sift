@@ -73,6 +73,8 @@ def _call(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except (LookupError, ValueError, ConnectionError, sqlite3.Error, jobs.Cancelled) as e:  # ConnectionError: the
         raise ToolError(str(e)) from None  # embedding remote; sqlite3.Error and Cancelled: a call cancelled, too
+    except SystemExit as e:  # a store that refuses to open, as a newer sift's: the call fails, not the server
+        raise ToolError(str(e.code)) from None
     except Exception as e:
         log.exception("tool failed")
         raise ToolError(f"{type(e).__name__}: {e}") from None
@@ -93,7 +95,7 @@ Note = Annotated[
         'Müller", if one note answers to it.'
     ),
 ]
-K = Annotated[int, Field(description="Number of results.")]
+K = Annotated[int, Field(description="Number of results, at most 10,000.")]
 Collection = Annotated[str | None, Field(description="Search only this collection.")]
 PathGlob = Annotated[
     str | None, Field(description='Only documents whose path in the collection matches this glob, e.g. "2024/*".')
@@ -275,7 +277,8 @@ def build(index=None):
     async def status() -> dict:
         """Collections with their folders (`path`), whether they are `active` (searched), their index files (`store`)
         and sizes; of active ones the counts of documents, chunks and those `embedded`, whether keyword search is
-        quick (`keywords`: "ready"), their front-matter `fields`, and their links; and the embedding model."""
+        quick (`keywords`: "ready"), their front-matter `fields`, and their links, or why their index can't be opened
+        (`error`); and the embedding model."""
         return await _run(index.status)
 
     @mcp.tool(annotations=READ_ONLY)

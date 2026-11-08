@@ -7,9 +7,10 @@
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/tobiaswuerth/sift)](https://github.com/tobiaswuerth/sift/blob/main/LICENSE)
 
-**Local search over your documents, for AI agents.** sift indexes folders of documents and notes, embeds them on your
-GPU, and serves keyword, semantic and hybrid search to Claude Code and other agents over MCP (Model Context Protocol).
-Everything runs on your own machines: no cloud services, no API keys.
+**Local search over your documents, for AI agents.** sift indexes folders of documents and notes (Markdown, Obsidian
+vaults, PDF, Office files, emails), embeds them on your GPU, and serves keyword, semantic and hybrid search to Claude
+Code, Cursor and other agents as an MCP (Model Context Protocol) server. Everything runs on your own machines: no cloud
+services, no API keys.
 
 ![sift ui: a keyword search over 3.2 million arXiv abstracts, filtered by category, with one paper open](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-search.png)
 
@@ -105,8 +106,8 @@ on connecting which collections there are and which front-matter fields each has
 
 | Command | Does |
 |---|---|
-| `sift add FOLDER --name NAME` | Register a folder as a collection (`--store PATH` puts its index elsewhere) |
-| `sift index [--files PATH ...]` | Read new and changed files; with `--files`, only those, at once |
+| `sift add FOLDER [--name NAME]` | Register a folder as a collection, named after the folder by default (`--store PATH` puts its index elsewhere) |
+| `sift index [NAME ...] [--files PATH ...]` | Read new and changed files, of every active collection or those named; with `--files`, only those files, at once |
 | `sift embed [NAME ...]` | Embed every passage without a vector, of every active collection or those named |
 | `sift search`, `vsearch`, `query` `TEXT` | Keyword, semantic and hybrid search |
 | `sift similar ID` | Documents like this one |
@@ -117,9 +118,9 @@ on connecting which collections there are and which front-matter fields each has
 | `sift move [NAME ...] TO` | Move collections' indexes to another folder or drive |
 | `sift rm NAME` | Remove a collection and its index; its files stay on disk |
 | `sift ui` | Search, browse and read the index in your browser |
-| `sift serve [--stdio]` | The MCP server, and the UI under `/ui` |
-| `sift worker` | Embed and rerank for other machines on this one's GPU |
-| `sift bench QUESTIONS.json` | How well each search mode finds the answers you expect |
+| `sift serve [--stdio] [--host H] [--port N]` | The MCP server, and the UI under `/ui` (port 8765) |
+| `sift worker [--port N]` | Embed and rerank for other machines on this one's GPU (port 8766) |
+| `sift bench QUESTIONS.json [-c NAME]` | How well each search mode finds the answers you expect |
 
 Search commands take `-k`, `-c COLLECTION`, `--path GLOB`, `-f FIELD=VALUE` filters, `--fields`, `--compact`,
 `--all-passages`, `--sort=-FIELD`, `--links-to`, `--linked-from`, `--adaptive` and `--json`, and `sift search`
@@ -131,10 +132,10 @@ sift query "per diem abroad" -f departments=finance -f "created>=2024-06"
 sift links vault/People/Hans.md --direction both
 ```
 
-Every command may run while `sift serve` does; the server finds what a command wrote with its next search.
-[docs/usage.md](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md) covers search syntax and scores, filters
-and front matter, every format sift reads, linked notes, `.siftignore`, the UI, `sift bench`, and where the indexes
-lie.
+Every command but `sift move` may run while `sift serve` does; the server finds what a command wrote with its next
+search. [docs/usage.md](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md) covers search syntax and scores,
+filters and front matter, every format sift reads, linked notes, `.siftignore`, the UI, `sift bench`, and where the
+indexes lie.
 
 ## Configuration
 
@@ -146,7 +147,7 @@ variables exist for special cases:
 | `SIFT_HOME` | `~/.sift` | The catalog, the logs and the worker's key, and the collections' indexes unless moved |
 | `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model |
 | `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
-| `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed on: the `https://<key>@workstation:8766` it prints |
+| `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed and rerank on: the `https://<key>@workstation:8766` it prints |
 | `SIFT_OCR` | `auto` | Where scans are read: `auto` on a GPU, `on` also on the CPU (slow), `off` never |
 
 After changing the embedding model, run `sift embed --reset`. For business documents,
@@ -172,15 +173,30 @@ session starts, and a running session misses new ones. Machines that embed throu
 version as the worker.
 
 The index and the vectors carry over. When a release changes how the index is laid out, its first command updates it,
-once, and says so, from what the index holds: no file is read again and nothing is embedded again. From 1.7 or older,
-the index is split into a file per collection: stop every other sift first, and have as much free space as the index
-takes; `sift move FOLDER` as the first command splits it straight into that folder, on another drive too. 1.9 counts
-each collection's rows once: about 10 seconds for 14 million vectors, longer from a cold disk. 1.10 adds keyword
-postings, which the next `sift index` builds: about a minute per 3 million passages on 24 cores; keyword search
-reads FTS5 until then. 1.11 numbers the passages of the postings in a topical order, by their vectors: the next
-`sift index` builds them anew once, about a minute more per 3 million embedded passages. An older sift doesn't open an
-index so updated, so upgrade every sift that uses it.
-The [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists every change.
+once, and says so, from what the index holds: no file is read again and nothing is embedded again, and an older sift
+no longer opens it, so upgrade every sift that uses the index. From 1.7 or older, the index is split into a file per
+collection: stop every other sift first, and have as much free space as the index takes (`sift move FOLDER` as the
+first command splits it straight into that folder, on another drive too). The
+[changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) says what each release's update takes, such
+as the next `sift index` building the keyword postings anew.
+
+## How fast, how good
+
+On one workstation (Core i9-14900K, RTX 4090), over an index of 45.7 million passages (arXiv, PubMed, OpenAlex and
+more), searched warm through `sift serve`:
+
+| Use case | Mode | Time |
+|---|---|---|
+| A name, an id, a term | `search` | 10 to 50 ms |
+| A question, by its keywords | `search` | 0.2 s |
+| By meaning | `vsearch` | 0.6 s (0.1 s over 3.2 million) |
+| A question for RAG, reranked on the GPU | `query` | 0.6 s (0.3 s over 3.2 million) |
+| More documents like one | `similar` | 0.7 s |
+
+`query` scores nDCG@10 0.81 on scientific claims (SciFact), 0.69 on long German documents and 0.99 on German
+questions, and ranks a known paper among 3.2 million at MRR@10 0.93. `vsearch` finds 99.75% of exact search's top 10
+in a sixteenth of the memory. `sift embed` embeds 370 to 520 passages a second on the RTX 4090. Every figure, and how
+it was measured: [benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#reference-values).
 
 ## How it works
 
@@ -189,7 +205,7 @@ one-bit codes. Keyword search ranks by BM25 from the postings, skipping the rang
 best results: milliseconds for a common word over 30 million passages, with FTS5's results. Semantic search compares a
 query's code with every passage's, kept in RAM (96 bytes each), ranks the 10,000 nearest again by the query's own
 values, and scores the best 1,000 exactly; it finds 99.75% of exact search's top 10 over 3.2 million abstracts in
-about 0.1 seconds, with no index to build. `query` reranks the best 40 keyword and semantic candidates on the GPU.
+about 0.1 seconds, with no index to build. `query` reranks the best 40 keyword and 40 semantic candidates on the GPU.
 Embedding runs in batches of similar length, sized to the GPU memory left by other programs, and gives the GPU back
 after 5 idle minutes. Details: [docs/architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md).
 

@@ -3,6 +3,7 @@ step with the files, incrementally."""
 
 import os
 import shutil
+import sqlite3
 
 import pytest
 
@@ -58,6 +59,120 @@ def test_a_file_named_like_an_extension_has_none(corpus, capsys):
     assert ".md" not in found
     indexing.index(catalog)
     assert ".notes.md" in doc_ids(catalog)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")
+def test_walk_follows_no_junction(notes, tmp_path):
+    # A junction to the collection's own folder made every file come again, 64 times; one to elsewhere took in files
+    # of no collection.
+    import _winapi
+
+    write(tmp_path / "elsewhere" / "outside.md", "# Outside\n")
+    _winapi.CreateJunction(str(notes), str(notes / "loop"))
+    _winapi.CreateJunction(str(tmp_path / "elsewhere"), str(notes / "away"))
+    found = sorted(os.path.relpath(p, notes).replace(os.sep, "/") for p, _, _ in indexing.walk(str(notes)))
+    assert found == ["plain.txt", "rl.md", "robots/brush.md"]
+
+
+def orphans(db):
+    return db.execute("SELECT count(*) FROM docs WHERE source NOT IN (SELECT id FROM sources)").fetchone()[0]
+
+
+def reindexed_meanwhile(monkeypatch, catalog, paths, then=lambda: None):
+    """Have another sift, a server, run then() and reindex `paths` while `sift index` reads its first file."""
+    real, done = indexing._read_scans, []
+
+    def meanwhile(*args, **kwargs):
+        if not done:
+            done.append(1)
+            then()
+            other = Catalog(catalog.home)
+            indexing.reindex(other, paths)
+            other.close()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(indexing, "_read_scans", meanwhile)
+
+
+def test_a_note_a_server_reindexed_meanwhile_is_indexed_once(corpus, monkeypatch):
+    # An agent wrote a note and reindexed it while `sift index` read the folder: its source, new when scanned, was
+    # there by the time `sift index` stored it, which then failed for this collection and every one after it.
+    catalog, root = corpus
+    write(root / "new.md", "# New\n\nWritten by an agent.\n")
+    reindexed_meanwhile(monkeypatch, catalog, ["notes/new.md"])
+    indexing.index(catalog)
+    db = catalog.store("notes")
+    assert db.execute("SELECT count(*) FROM docs WHERE path = 'new.md'").fetchone() == (1,)
+    assert orphans(db) == 0
+
+
+def test_a_note_a_server_removed_meanwhile_leaves_no_documents_behind(corpus, monkeypatch):
+    # Deleted and reindexed while `sift index` read it, a note was stored under its source gone: no later `sift index`
+    # removed its documents, and searches found them for good.
+    catalog, root = corpus
+    write(root / "rl.md", "# Reward shaping\n\nWritten again.\n")
+    real = indexing._read_scans
+    reindexed_meanwhile(monkeypatch, catalog, ["notes/rl.md"], then=(root / "rl.md").unlink)
+    indexing.index(catalog)
+    db = catalog.store("notes")
+    assert orphans(db) == 0
+    monkeypatch.setattr(indexing, "_read_scans", real)  # not undo(): that would undo the fixtures' too
+    indexing.index(catalog)
+    assert "rl.md" not in doc_ids(catalog)
+
+
+def lock_free(path):
+    """Whether another sift could take the store's write lock now, without waiting."""
+    other = sqlite3.connect(path, timeout=0, isolation_level=None)
+    try:
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("ROLLBACK")
+        return True
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        other.close()
+
+
+def test_sift_index_holds_no_write_lock_while_it_reads_files(corpus, monkeypatch):
+    # The first write of a batch, a removal too, took the store's lock until the batch's end: `sift embed` or a
+    # server's reindex beside it waited while every file of the batch was read, and gave up after 30 seconds.
+    catalog, root = corpus
+    for i in range(3):
+        write(root / f"new{i}.md", f"# New {i}\n")
+    (root / "plain.txt").unlink()  # removed first, before any file is read
+    path, real, free = catalog.get("notes").store, readers.load, []
+    monkeypatch.setattr(readers, "load", lambda *args: free.append(lock_free(path)) or real(*args))
+    indexing.index(catalog)
+    assert free == [True] * 3
+
+
+def test_retitling_holds_the_write_lock_a_batch_at_a_time(corpus, monkeypatch):
+    catalog, _ = corpus
+    monkeypatch.setattr(indexing, "REFRESH_BATCH", 1)
+    path, real, free = catalog.get("notes").store, indexing._reread, []
+    monkeypatch.setattr(indexing, "_reread", lambda db, *args: free.append(lock_free(path)) or real(db, *args))
+    indexing.retitle(catalog, "notes", "name")
+    assert len(free) == 3
+    assert all(free)
+
+
+def test_junctions_are_told_apart_where_python_knows_no_reparse_tags(notes, monkeypatch):
+    # stat.IO_REPARSE_TAG_MOUNT_POINT is Windows' alone: elsewhere, asking for it failed every walk of every folder.
+    import stat
+
+    if hasattr(stat, "IO_REPARSE_TAG_MOUNT_POINT"):
+        assert indexing.MOUNT_POINT == stat.IO_REPARSE_TAG_MOUNT_POINT
+    monkeypatch.delattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", raising=False)
+    found = sorted(os.path.relpath(p, notes).replace(os.sep, "/") for p, _, _ in indexing.walk(str(notes)))
+    assert found == ["plain.txt", "rl.md", "robots/brush.md"]
+    assert not indexing._linked(str(notes / "robots"))
+
+
+def test_a_folder_gone_meanwhile_is_no_junction(tmp_path):
+    # Listed, then deleted before it is looked at: nothing to follow, and nothing to fail on.
+    assert indexing._junction(str(tmp_path / "gone")) is False
+    assert not indexing._linked(str(tmp_path / "gone"))
 
 
 def test_walk_leaves_out_what_siftignore_names(notes):

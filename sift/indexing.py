@@ -28,6 +28,7 @@ BATCH_BYTES = 256 << 20  # and at most this much file content, for big JSON Line
 FILES_PER_WORKER = 1000  # a worker process only pays off for at least this many files
 BYTES_PER_WORKER = 32 << 20  # or this much content
 PROGRESS_LINES = 200  # at most this many progress updates per collection: printing is slow on Windows consoles
+WINDOWS = os.name == "nt"  # where "C:x.md", "sub./x.md" and "x.md:stream" name other files, or none
 
 
 def _cpus():
@@ -64,8 +65,17 @@ def _read(pool, workers, fields, batch):
     """Load a batch of files: pool.map starts all of them at once, builtin map reads one at a time."""
     paths = [item[0] for item in batch]
     if pool:
-        return pool.map(readers.load, paths, repeat(fields), chunksize=max(1, min(64, len(paths) // (4 * workers))))
-    return map(readers.load, paths, repeat(fields))
+        return pool.map(_loaded, paths, repeat(fields), chunksize=max(1, min(64, len(paths) // (4 * workers))))
+    return map(_loaded, paths, repeat(fields))
+
+
+def _loaded(path, fields):
+    """What readers.load reads of a file, or the error a reader raised (runs in worker processes): one file's
+    trouble, a record of gigabytes, a reader's bug, mustn't stop the others, nor every later run."""
+    try:
+        return readers.load(path, fields)
+    except Exception as error:
+        return error
 
 
 def _insert(db, sid, path, doc):
@@ -98,7 +108,8 @@ def _read_scans(db, sid, rel, docs, note, now=True):
     """A file's documents with the scans among them read by OCR, those new or changed since the file `sid` was
     indexed (see `ocr`); a scan that can't be read is left out, and noted, as is one read. Reading a scan takes a
     while, so what is written is committed first: no other writer, such as the server's `reindex`, waits for it.
-    Unless `now`, a scan to read is left out for `sift index`. Returns the documents, and whether a scan was left."""
+    Unless `now`, a scan to read is left out for `sift index`. Returns the documents, and whether a scan was left,
+    for now or for a try that may read it (its GPU busy, OCR failing): its file is read again by the next index."""
     known = dict(db.execute("SELECT path, hash FROM docs WHERE source = ?", (sid,))) if sid else {}
     read, left = [], False
     for doc in docs:
@@ -110,9 +121,10 @@ def _read_scans(db, sid, rel, docs, note, now=True):
                 continue
             if db.in_transaction:
                 db.commit()
-            doc, said = ocr.default().read(doc)
+            doc, said, again = ocr.default().read(doc)
             note(f"{path}: {said}")
             if doc is None:
+                left |= again
                 continue
         read.append(doc)
     return read, left
@@ -158,7 +170,7 @@ def retitle(catalog, name, title_from):
     for _, files in _files(db):
         c, d = _reread(db, files, collection.choices)
         changed, dropped = changed + c, dropped + d
-    db.commit()
+        db.commit()  # a batch at a time: other writers wait for no more
     postings.update(db, collection.store, name)
     return changed, dropped
 
@@ -224,20 +236,21 @@ def _reread(db, files, fields):
     sql = """SELECT c.id, c.doc, c.seq, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
              WHERE c.doc IN (SELECT value FROM json_each(?)) AND c.seq > 0"""
     stale = [
-        (chunk,)
+        chunk
         for chunk, doc, seq, text in db.execute(sql, (json.dumps(list(changed)),))
         if embed.text_of(seq, changed[doc][0], text) != embed.text_of(seq, changed[doc][1], text)
     ]
-    dropped = db.executemany("DELETE FROM vectors WHERE chunk = ?", stale).rowcount
+    dropped = store.drop_vectors(db, "chunk IN (SELECT value FROM json_each(?))", (json.dumps(stale),))
     if dropped:
         store.touch(db)
     return len(changed), dropped
 
 
 Reindexed = namedtuple("Reindexed", "files removed versions")
-"""What `reindex` did: per file, ({"id", "status"[, "note"]}, its documents' row ids); the chunks it removed; and the
-version of each store it changed, before and after, by collection id, for a server to follow without loading every
-code again."""
+"""What `reindex` did: per file, ({"id", "status"[, "note"]}, its documents' row ids); the chunks it removed; and, by
+collection id, what each store it changed said of its vectors before and after: (version before, version after, the
+epoch of its codes after, how many vectors it counted after), read in the change's transaction, for a server to follow
+without loading every code again (see search.Index._patch)."""
 
 
 def reindex(catalog, paths, scans=True):
@@ -266,7 +279,7 @@ def reindex(catalog, paths, scans=True):
                     entry, docs, gone = _reindex_file(db, c.name, rel, *found_on_disk)
                     found[i] = (entry, docs)
                     removed += gone
-            versions[collection.id] = (before, store.get_meta(db, "version"))
+            versions[collection.id] = (before, *store.vectors_state(db))
             db.commit()
         except BaseException:
             db.rollback()
@@ -282,12 +295,10 @@ def _locate(catalog, path):
     given = os.path.expanduser(path)
     if os.path.isabs(given):
         full = os.path.normpath(given)
-        inside = [
-            c for c in collections if os.path.normcase(full).startswith(os.path.normcase(os.path.join(c.path, "")))
-        ]
-        if not inside:
+        holding = [c for c in collections if inside(c.path, full)]
+        if not holding:
             raise ValueError(_nowhere(path, full, collections))
-        collection, rel = inside[0], os.path.relpath(full, inside[0].path).replace(os.sep, "/")
+        collection, rel = holding[0], os.path.relpath(full, holding[0].path).replace(os.sep, "/")
     else:
         name, _, rel = path.replace("\\", "/").partition("/")
         collection, rel = catalog.get(name), posixpath.normpath(rel) if rel else ""
@@ -296,9 +307,15 @@ def _locate(catalog, path):
         if rel == ".." or rel.startswith(("../", "/")):
             raise ValueError(f"{path!r} is outside the collection {name!r}")
     name, root = collection.name, collection.path
+    # "D:/x.md" is D:'s x.md, "x.md:s" a stream of x.md, ".. /x.md" the parent's x.md: whatever else Windows reads
+    if WINDOWS and (other := next((p for p in rel.split("/") if ":" in p or p != p.rstrip(". ")), None)):
+        raise ValueError(f"{name}/{rel}: Windows takes {other!r} for another name; give the file's name as it is")
     if not os.path.isdir(root):  # never take an unplugged drive for files deleted
         raise ValueError(f"{name}: folder not found: {root}")
-    parts = _spelled(root, rel.split("/"))
+    try:
+        parts = _spelled(root, rel.split("/"))
+    except ValueError as aliased:
+        raise ValueError(f"{name}/{rel}: {aliased}") from None
     for part in parts[:-1]:
         if part.startswith(".") or part in SKIP_DIRS:
             raise ValueError(f"{name}/{rel}: sift indexes no files in {part}/")
@@ -312,7 +329,7 @@ def _locate(catalog, path):
     if ext not in readers.READERS:
         raise ValueError(f"{name}/{rel}: sift doesn't index {f'{ext} files' if ext else 'files without an extension'}")
     for i in range(1, len(parts)):
-        if os.path.islink(os.path.join(root, *parts[:i])):
+        if _linked(os.path.join(root, *parts[:i])):
             raise ValueError(
                 f"{name}/{rel}: {parts[i - 1]}/ is linked from elsewhere, and `sift index` doesn't follow it"
             )
@@ -324,6 +341,28 @@ def _locate(catalog, path):
     if not os.path.lexists(os.path.join(root, *parts)):  # gone: the file as indexed, in whatever spelling
         rel = next(iter(_indexed_as(catalog.store(collection), rel)), rel)
     return collection, rel
+
+
+def inside(root, full):
+    """Whether the normalised path `full` lies in the folder `root`, in the file system's case."""
+    return os.path.normcase(full).startswith(os.path.normcase(os.path.join(root, "")))
+
+
+def _linked(path):
+    """Whether a folder leads elsewhere: a symbolic link, or on Windows a junction, which any user may make."""
+    return os.path.islink(path) or _junction(path)
+
+
+MOUNT_POINT = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT, a junction's; module stat names it on Windows alone
+
+
+def _junction(path, entry=None):
+    """Whether a folder (its path, or the DirEntry of it) is a Windows junction; nothing elsewhere is."""
+    try:
+        found = entry.stat(follow_symlinks=False) if entry is not None else os.lstat(path)
+    except OSError:
+        return False
+    return getattr(found, "st_reparse_tag", 0) == MOUNT_POINT
 
 
 NEAREST_SHOWN = 5  # collections an error about a file in none names, the nearest first
@@ -349,7 +388,8 @@ def _nowhere(path, full, collections):
 
 def _spelled(root, parts):
     """A path's parts as the file system spells them: on Windows and macOS a path names a file in any case or Unicode
-    form, which indexed so would be the file a second time. Parts that don't exist stay as given."""
+    form, which indexed so would be the file a second time. Parts that don't exist stay as given; one that exists
+    under no such name, a Windows short name (PRIVAT~1), is an error: through it, a folder left out was read."""
     folder, spelled = root, []
     for i, part in enumerate(parts):
         try:
@@ -358,7 +398,10 @@ def _spelled(root, parts):
             return spelled + parts[i:]
         if part not in names:
             same = [n for n in names if readers.fold(n) == readers.fold(part)]
-            part = same[0] if len(same) == 1 else part
+            if len(same) == 1:
+                part = same[0]
+            elif os.path.lexists(os.path.join(folder, part)):
+                raise ValueError(f"{part!r} is another name of a file or folder there; give its name as it is")
         spelled.append(part)
         folder = os.path.join(folder, part)
     return spelled
@@ -390,8 +433,7 @@ def _reindex_read(db, root, fields, rel, scans):
     if read is None:
         return info, None, False
     docs, problems = read
-    known = db.execute("SELECT id FROM sources WHERE path = ?", (rel,)).fetchone()
-    docs, left = _read_scans(db, known and known[0], rel, docs, problems.append, now=scans)
+    docs, left = _read_scans(db, _source(db, rel), rel, docs, problems.append, now=scans)
     return info, (docs, problems), left
 
 
@@ -400,8 +442,7 @@ def _reindex_file(db, name, rel, info, read, left):
     index` would: ({"id", "status"}, its documents' row ids, the chunks removed). A chunk removed is every chunk of a
     document replaced or removed. A file with a scan `left` is read again by the next `sift index`."""
     entry = {"id": f"{name}/{rel}"}
-    known = db.execute("SELECT id FROM sources WHERE path = ?", (rel,)).fetchone()
-    sid = known and known[0]
+    sid = _source(db, rel)
     sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
     chunks = db.execute(sql, (sid,)).fetchall()
     if info is None:
@@ -412,8 +453,7 @@ def _reindex_file(db, name, rel, info, read, left):
     if read is None:
         return entry | {"status": "unreadable"}, [], []
     docs, problems = read
-    if sid is None:
-        sid = db.execute("INSERT INTO sources(path) VALUES(?)", (rel,)).lastrowid
+    sid = _source(db, rel, make=True)
     had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
     unchanged = _store(db, sid, rel, docs, counts, problems.append)
     mtime = None if left else info.st_mtime_ns  # no time: `sift index` takes it for changed
@@ -427,6 +467,15 @@ def _reindex_file(db, name, rel, info, read, left):
         status = "changed" if had else "added"
     note = {"note": "; ".join(problems)} if problems else {}
     return entry | {"status": status} | note, now, [chunk for doc, chunk in chunks if doc not in unchanged]
+
+
+def _source(db, rel, make=False):
+    """The id of the file `rel` as the store holds it now, made if `make`; None if there is none. Not as scanned: a
+    server's `reindex` may have added the file or dropped it since."""
+    if make:
+        db.execute("INSERT OR IGNORE INTO sources(path) VALUES(?)", (rel,))
+    row = db.execute("SELECT id FROM sources WHERE path = ?", (rel,)).fetchone()
+    return row and row[0]
 
 
 def _drop_source(db, sid):
@@ -465,6 +514,7 @@ def walk(root, ignore=None, unlisted=None):
                             not e.name.startswith(".")
                             and e.name not in SKIP_DIRS
                             and not (ignore and ignore(rel + e.name, True))
+                            and not _junction(e.path, e)
                         ):
                             stack.append((e.path, rel + e.name + "/"))
                     elif readers.extension(e.name) in readers.READERS and not (ignore and ignore(rel + e.name)):
@@ -500,7 +550,7 @@ def index(catalog, names=None):
             console.say(f"{c.name}: skipped, as its {SIFTIGNORE} can't be read: {error}")
             continue
         try:
-            db = catalog.store(c)
+            db = catalog.opened(c)
         except LookupError as missing:
             console.say(f"{missing}; skipped")
             continue
@@ -519,9 +569,10 @@ def _index_collection(db, name, root, fields, ignore):
     counts = Counter()
     for rel in known.keys() - seen - kept:
         counts["removed"] += _drop_source(db, known[rel][0])
+    db.commit()  # before any file is read: other writers wait for none of it
     if todo:
         with console.Progress(len(todo), "files", prefix=f"{name}: ") as progress:
-            _read_and_store(db, name, fields, known, todo, counts, progress)
+            _read_and_store(db, name, fields, todo, counts, progress)
     db.commit()
     unreadable = f", {counts['unreadable']} unreadable" if counts["unreadable"] else ""
     console.say(
@@ -564,7 +615,7 @@ def _scan(root, known, ignore):
     return todo, seen, unlisted
 
 
-def _read_and_store(db, name, fields, known, todo, counts, progress):
+def _read_and_store(db, name, fields, todo, counts, progress):
     """Read the files to do, in worker processes when it pays off, and store their documents batch by batch."""
     batches = _batches(todo)
     n = workers(len(todo), sum(item[3] for item in todo))  # parsing is CPU-bound: processes, not threads
@@ -578,24 +629,43 @@ def _read_and_store(db, name, fields, known, todo, counts, progress):
             results = pending
             if b + 1 < len(batches):
                 pending = _read(pool, n, fields, batches[b + 1])
+            results = list(results)  # read before the batch's first write: no lock held while files are read
             for (path, rel, mtime, size), res in zip(batch, results):
                 done += 1
                 if done % step == 0 or done == len(todo):
                     progress.update(done)
+                note = lambda text: progress.note(f"{name}: {text}")  # noqa: E731
                 if res is None:  # unreadable now; retried on the next run
                     progress.note(f"unreadable, skipped: {path}")
+                    counts["unreadable"] += 1
+                    continue
+                if isinstance(res, Exception):  # a reader failed: said, and read again by the next run
+                    note(f"{rel}: skipped ({type(res).__name__}: {res})")
                     counts["unreadable"] += 1
                     continue
                 docs, problems = res
                 for problem in problems:
                     progress.note(f"{name}: {rel}: {problem}")
-                note = lambda text: progress.note(f"{name}: {text}")  # noqa: E731
-                docs, _ = _read_scans(db, known[rel][0] if rel in known else None, rel, docs, note)
-                sid = (
-                    known[rel][0]
-                    if rel in known
-                    else db.execute("INSERT INTO sources(path) VALUES(?)", (rel,)).lastrowid
-                )
-                _store(db, sid, rel, docs, counts, note)
-                db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (mtime, size, sid))
+                docs, left = _read_scans(db, _source(db, rel), rel, docs, note)
+                _stored(db, rel, docs, (None if left else mtime, size), counts, note)
             db.commit()
+
+
+def _stored(db, rel, docs, stat, counts, note):
+    """Store a file's documents and its (mtime, size), in a savepoint of the batch's transaction: if the store refuses
+    them, as text SQLite can't hold, only this file is left out, said, and read again by the next run."""
+    if not db.in_transaction:
+        db.execute("BEGIN")  # so that releasing the savepoint commits nothing
+    db.execute("SAVEPOINT file")
+    before = counts.copy()
+    try:
+        sid = _source(db, rel, make=True)
+        _store(db, sid, rel, docs, counts, note)
+        db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (*stat, sid))
+    except (ValueError, RecursionError, sqlite3.DataError, sqlite3.IntegrityError) as refused:  # Recursion: 3.11's JSON
+        db.execute("ROLLBACK TO file")
+        counts.clear()
+        counts.update(before)  # Counter.update adds: onto nothing, as they were
+        counts["unreadable"] += 1
+        note(f"{rel}: skipped ({refused})")
+    db.execute("RELEASE file")

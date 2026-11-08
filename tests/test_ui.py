@@ -150,9 +150,8 @@ def test_a_field_whose_values_all_differ_is_no_facet(embedded):
     for n in range(ui.FACET_VALUES + 1):
         write(root / "refs" / f"{n}.md", f"---\nref: R-{n}\nkind: memo\n---\n# Memo {n}\n")
     indexing.index(catalog)
-    side = re.search(r'<nav class="side".*?</nav>', page(Index(catalog)).get("/ui/", params={"c": "notes"}).text, re.S)[
-        0
-    ]
+    listed = page(Index(catalog)).get("/ui/", params={"c": "notes"}).text
+    side = re.search(r'<nav class="side".*?</nav>', listed, re.S)[0]
     assert "<h2>kind</h2>" in side
     assert "<h2>ref</h2>" not in side
 
@@ -187,9 +186,11 @@ def test_folders_with_brackets_in_their_names(embedded):
     assert ids(browser.get(html.unescape(folder[1]))) == ["notes/drafts [old]/a.md"]
 
 
-@pytest.mark.parametrize("k", ["²", "-3", "0", "many", "1e3", ""])
+@pytest.mark.parametrize(
+    "k", ["²", "-3", "0", "many", "1e3", "", pytest.param("9" * 5000, id="more digits than int() reads")]
+)
 def test_odd_page_sizes_show_a_page(browser, k):
-    response = browser.get("/ui/", params={"c": "notes", "k": k})
+    response = browser.get("/ui/", params={"c": "notes", "k": k, "doc": "notes/rl.md", "at": k})
     assert response.status_code == 200
     assert len(ids(response)) == 3
 
@@ -436,6 +437,16 @@ def test_a_pdf_opens_in_the_browsers_viewer(embedded):
 def test_the_ui_answers_local_hosts_only(browser):
     # A web page can reach a local server under its own domain (DNS rebinding) and read the documents through it.
     assert browser.get("/ui/", headers={"Host": "attacker.example:8765"}).status_code == 400
+    assert browser.get("/ui/", headers={"Host": "localhost:8765"}).status_code == 200
+
+
+def test_a_server_on_the_ipv6_loopback_answers_only_local_hosts(embedded):
+    # As on 127.0.0.1: a web page reaching it under its own domain must not read the documents.
+    index = Index(embedded[0])
+    app = server.http_app(server.build(index)[0], index, "::1")
+    browser = Client(app, base_url="http://[::1]:8765")
+    assert browser.get("/ui/", headers={"Host": "attacker.example:8765"}).status_code == 400
+    assert browser.get("/ui/", headers={"Host": "[::1]:8765"}).status_code == 200
     assert browser.get("/ui/", headers={"Host": "localhost:8765"}).status_code == 200
 
 

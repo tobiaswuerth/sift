@@ -195,34 +195,42 @@ class Scans:
         return self._engine
 
     def unavailable(self):
-        """Why scans can't be read here, or None if they can."""
+        """Why scans can't be read here, and whether they may be on another try; None if they can be."""
         chosen = setting()
         if chosen == "off":
-            return "SIFT_OCR is off"
+            return "SIFT_OCR is off", False
         if chosen == "auto" and not self.engine.on_gpu():
-            return "sift reads scans on a GPU, and this machine has none; SIFT_OCR=on reads them on the CPU, slowly"
+            if self.engine.accelerator.found != "cpu":  # a GPU, but other programs hold its memory
+                return "too little of the GPU's memory is free now; the next `sift index` tries again", True
+            return (
+                "sift reads scans on a GPU, and this machine has none; SIFT_OCR=on reads them on the CPU, slowly",
+                False,
+            )
         return None
 
     def read(self, doc):
-        """A scan's document with the text the OCR model reads in its pages, and what to tell the user; or None, and
-        why it couldn't be read."""
+        """A scan's document with the text the OCR model reads in its pages, and what to tell the user; or None, why
+        it couldn't be read, and whether another try may read it. The third value is False for a document read."""
         from . import readers
 
-        if why := self.unavailable():
-            return None, f"skipped (no text in it: a scan; {why})"
+        if unavailable := self.unavailable():
+            why, again = unavailable
+            return None, f"skipped (no text in it: a scan; {why})", again
         start = time.perf_counter()
         try:
             images, count = pages(doc.scan)
             text = "\n\n".join(t.strip() for t in self.engine.read(images) if t.strip())
         except Exception as error:  # a broken PDF, or the GPU: one scan's trouble mustn't stop indexing the others
-            return None, f"skipped (a scan, and OCR failed: {error})"
+            from .accelerator import out_of_memory  # PyTorch, loaded for OCR anyway
+
+            return None, f"skipped (a scan, and OCR failed: {error})", out_of_memory(error)  # tried again if so
         if not text:
-            return None, "skipped (a scan, and OCR found no text in it)"
+            return None, "skipped (a scan, and OCR found no text in it)", False
         read = console.count(count, "page") if len(images) == count else f"its first {len(images)} of {count} pages"
         said = f"a scan, read with OCR ({read} in {console.duration(time.perf_counter() - start)})"
         title = doc.title if doc.meta.get("title") else readers.parse(text, doc.title)[0]  # its property, else heading
         meta = doc.meta | {"ocr": MODEL}
-        return doc._replace(title=title, meta=meta, text=text, chunks=list(readers.chunk(text)), scan=None), said
+        return doc._replace(title=title, meta=meta, text=text, chunks=list(readers.chunk(text)), scan=None), said, False
 
 
 def _accelerator():

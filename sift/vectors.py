@@ -186,12 +186,30 @@ class Codes:
         if self._alive is not None:
             alive &= self._alive
         added = np.flatnonzero(alive[len(base) :])
-        added_bits = self._parts[1][added] if len(self._parts) > 1 else base[:0]
+        added_bits = np.concatenate(self._parts[1:])[added] if len(self._parts) > 1 else base[:0]
         return Codes(
             np.concatenate([self.ids[: len(base)], self.ids[len(base) :][added], ids]),
             None,
             _parts=[base, np.concatenate([added_bits, np.asarray(bits, np.uint8)])],
             _alive=np.concatenate([alive[: len(base)], np.ones(len(added) + len(ids), bool)]),
+        )
+
+    def appended(self, ids, bits):
+        """These codes, and those of the chunks `ids`, rows of `bits`, which none of them holds (written past the last
+        by `sift embed`): the codes loaded stay as they are, and the added ones form a part of their own, merged with
+        the part before once as large. Joined to all added before, a slab a minute for a day copied every code embedded
+        so far each time; merged so, a code is copied a few times."""
+        ids, bits = np.asarray(ids, np.int64), np.asarray(bits, np.uint8)
+        if bits.shape[1] != self.width:
+            raise ValueError(f"codes of {bits.shape[1]} bytes can't join codes of {self.width}: another model's")
+        parts = [*self._parts, bits]
+        while len(parts) > 2 and len(parts[-1]) >= len(parts[-2]):
+            parts[-2:] = [np.concatenate(parts[-2:])]
+        return Codes(
+            np.concatenate([self.ids, ids]),
+            None,
+            _parts=parts,
+            _alive=None if self._alive is None else np.concatenate([self._alive, np.ones(len(ids), bool)]),
         )
 
     def _keep(self, allowed, excluded):

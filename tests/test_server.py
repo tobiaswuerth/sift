@@ -496,6 +496,23 @@ def test_http_server_accepts_only_local_hosts(http_app):
         assert foreign.status_code == 403
 
 
+def test_a_store_that_refuses_to_open_is_a_tool_error(mcp, monkeypatch):
+    # A newer sift's store, opened by a server still running: SystemExit went through the tool, and the server.
+    from sift.catalog import Catalog
+
+    real = Catalog.store
+
+    def refused(self, collection):
+        raise SystemExit("notes.sqlite was made by a newer sift; upgrade sift to use it")
+
+    monkeypatch.setattr(Catalog, "store", refused)
+    result = call(mcp, "search", {"query": "brush"})
+    assert result.is_error
+    assert "made by a newer sift" in result.content[0].text
+    monkeypatch.setattr(Catalog, "store", real)
+    assert data(call(mcp, "search", {"query": "brush"}))  # the next call answers
+
+
 @pytest.mark.parametrize("tool", ["search", "vsearch", "query"])
 def test_search_tools_take_fields_compact_and_ranges(mcp, tool):
     args = {"query": "brush", "k": 1, "fields": ["year"], "compact": True, "filters": {"year": {">=": 2024}}}

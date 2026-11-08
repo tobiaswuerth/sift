@@ -75,7 +75,8 @@ class Catalog:
 
     def store(self, collection):
         """The store of a collection, or of the collection of that name, opened once, and anew where the collection
-        has moved meanwhile."""
+        has moved meanwhile. A store missing, damaged or of a newer sift is a LookupError, which commands of every
+        collection pass over."""
         collection = self.get(collection) if isinstance(collection, str) else collection
         held = self._stores.get(collection.id)
         if held and held[0] == collection.store:
@@ -88,13 +89,32 @@ class Catalog:
                 f"{collection.name}: its index is missing: {collection.store}; is its drive connected? "
                 f"`{console.command('sift', 'rm', collection.name)}` forgets the collection"
             ) from None
+        except (sqlite3.DatabaseError, SystemExit) as error:  # damaged, or a newer sift's: passed over as missing
+            if isinstance(error, sqlite3.OperationalError):  # locked, the disk full: not the store's own fault
+                raise
+            reason = error.code if isinstance(error, SystemExit) else f"{collection.store}: {error}"
+            raise LookupError(f"{collection.name}: its index can't be opened: {reason}") from None
         self._stores[collection.id] = (collection.store, db)
         return db
+
+    def opened(self, collection):
+        """The store of a collection, as `store` gives it, for commands of every collection: one that can't be opened
+        now, locked by another program or out of reach, is a LookupError too, which they pass over."""
+        try:
+            return self.store(collection)
+        except sqlite3.OperationalError as error:
+            raise LookupError(f"{collection.name}: its index can't be opened: {error}") from None
 
     def release(self, cid):
         """Close the store of the collection `cid`, if it is open."""
         if held := self._stores.pop(cid, None):
             held[1].close()
+
+    def release_gone(self):
+        """Close the stores of collections no longer in the catalog, as another sift removed them."""
+        there = {c.id for c in self.collections()}
+        for cid in self._stores.keys() - there:
+            self.release(cid)
 
     # --- changing the catalog --------------------------------------------------
 
@@ -147,13 +167,13 @@ class Catalog:
 
     def remove(self, name):
         """Remove a collection: its store is deleted, its files stay on disk. Returns the number of documents its
-        store held, or None if it was missing."""
+        store held, or None if it was missing or couldn't be opened (damaged, or a newer sift's)."""
         collection = self.get(name)
         try:
             db = self.store(collection)
             docs = store.counts(db)["docs"]
-        except LookupError as missing:
-            console.say(f"{missing}: only the catalog changes")
+        except LookupError as unusable:  # missing: only the catalog changes; damaged or a newer sift's: it goes too
+            console.say(f"{unusable}{'' if os.path.isfile(collection.store) else ': only the catalog changes'}")
             docs = None
         self.release(collection.id)
         self.db.execute("DELETE FROM collections WHERE id = ?", (collection.id,))

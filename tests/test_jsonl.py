@@ -161,6 +161,45 @@ def test_bad_lines_are_skipped_and_reported(tmp_path, home, capsys):
         assert reason in err
 
 
+def test_lines_sqlite_cant_store_or_python_cant_nest_stop_nothing(tmp_path, home, capsys, json_room):
+    # Exported chats hold an emoji's half alone ("\ud83d"), which SQLite refuses; a line nested a hundred thousand deep
+    # Python can't read. Either stopped `sift index`, for every collection after it too, on every run.
+    # SQLite stores JSON nested 1,000 deep at most: a line nested 1,100 deep stopped it all the same.
+    lines = [
+        '{"id": "1", "text": "a \\ud83d b"}',
+        "[" * 100_000 + "]" * 100_000,
+        json.dumps({"id": "3", "text": "kept"}),
+        '{"id": "4", "text": "x", "v": ' + "[" * 1100 + "1" + "]" * 1100 + "}",
+        '{"id": "5", "text": "near the limit", "v": ' + "[" * 998 + "1" + "]" * 998 + "}",
+    ]
+    write(tmp_path / "c" / "chat.jsonl", "\n".join(lines) + "\n")
+    write(tmp_path / "c" / "note.md", "# Note\n\nafter the chat\n")
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert dict(only(catalog).execute("SELECT path, text FROM docs")) == {
+        "chat/1": "a � b",
+        "chat/3": "kept",
+        "chat/5": "near the limit",
+        "note.md": "# Note\n\nafter the chat\n",
+    }
+    err = capsys.readouterr().err
+    assert "line 2: nested too deeply" in err
+    assert "line 4: nested too deeply" in err
+
+
+def test_numbers_too_large_for_a_float_are_kept_as_written(tmp_path, home):
+    # 1e999 read as infinity, which JSON can't hold: written back as Infinity, older SQLite refused the line's
+    # front matter, and stopped `sift index`.
+    write(tmp_path / "c" / "big.jsonl", '{"id": "1", "text": "big", "size": 1e999, "small": -1e-999, "n": 2.5}\n')
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    (meta,) = only(catalog).execute("SELECT meta FROM docs").fetchone()
+    assert json.loads(meta) == {"id": "1", "size": "1e999", "small": -0.0, "n": 2.5}
+    assert "Infinity" not in meta
+
+
 # --- incremental indexing: unchanged files and records cost nothing ----------------
 
 
