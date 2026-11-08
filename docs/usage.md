@@ -102,7 +102,9 @@ with the default reranker, close matches score about 2.5 to 4, and unrelated res
 
 ### Options
 
-Search commands return one result per document, with its best passage. They accept:
+Search commands return one result per document, with its best passage, and one per work: a paper that several
+collections hold under the same DOI (front-matter field `doi`) is the best ranked copy, which lists the others under
+`also`. They accept:
 
 | Option | Effect |
 |---|---|
@@ -115,6 +117,8 @@ Search commands return one result per document, with its best passage. They acce
 | `--all-passages` | Every matching passage, several per document |
 | `--sort=-created` | Order by a front-matter field instead of score; `-` for descending |
 | `--links-to`, `--linked-from` | Only documents linking to a note, or linked from it (see [Linked notes](#linked-notes)) |
+| `--adaptive` | Up to `k` results: those before the largest drop in score, and five more |
+| `--budget SECONDS` | `search` only: stop after about this long, once anything is found, with the best found so far, each marked `partial` |
 | `--json` | JSON output |
 
 ### Keyword syntax
@@ -332,3 +336,5 @@ sift bench questions.json
 
 A few dozen questions are enough to compare modes and to see whether a change helps your documents. Grades are
 optional: 2 for the answer, 1 for a useful one, and 0, as in TREC's judgements, for one read and found irrelevant.
+A document counts as found when a hit is it or lists it under `also`, as a copy of the same paper; copies of one paper
+found as one hit count as one, with the best grade of them.

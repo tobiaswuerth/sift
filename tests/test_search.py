@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from sift import embed, indexing, postings, search, store, topk
+from sift import embed, indexing, order, postings, search, store, topk, vectors
 from sift.catalog import Catalog
 from sift.search import Index, _any_word
 
@@ -76,6 +76,120 @@ def test_keyword_search_from_the_postings_finds_what_fts5_finds(prose, tmp_path,
     fast = scored(Index(catalog).search(query, **options))
     through_fts5(catalog)
     agree(fast, scored(Index(catalog).search(query, **options)))
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_keyword_search_out_of_time_marks_its_hits_partial(prose, monkeypatch):
+    # A budget bounds a search of common words over millions of chunks: the best found so far, and said so.
+    monkeypatch.setattr(topk, "FIRST_BATCH", 1)
+    catalog, _ = prose
+    postings.build(catalog.store("prose"), catalog.get("prose").store)  # in ranges of a few chunks
+    index = Index(catalog)
+    hits = index.search("w0 OR w1 OR w2", k=50, budget=1e-9)
+    assert hits
+    assert all(h["partial"] for h in hits)
+    exact = index.search("w0 OR w1 OR w2", k=50)
+    assert not any("partial" in h for h in exact)
+    assert index.search("w0 OR w1 OR w2", k=50, budget=60) == exact
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query", "similar"])
+def test_adaptive_keeps_the_hits_before_the_largest_drop_and_a_few_more(prose, fake_models, monkeypatch, mode):
+    # Adaptive-k (2506.08479): an agent asks for up to k, and reads the few that stand out, not k.
+    catalog, _ = prose
+    embed.embed_pending(catalog)
+    monkeypatch.setattr(search, "ADAPTIVE_BUFFER", 1)
+    index, subject = Index(catalog), "prose/n001.md" if mode == "similar" else "w1 w2 w3"
+    every = getattr(index, mode)(subject, k=20)
+    scores = np.array([h["score"] for h in every])
+    gaps = scores[:-1] - scores[1:]
+    cut = int(np.argmax(gaps[: int(np.ceil(0.9 * len(gaps)))])) + 2  # the hits before the gap, and one more
+    assert getattr(index, mode)(subject, k=20, adaptive=True) == every[:cut]
+
+
+def test_adaptive_leaves_few_hits_as_they_are(prose):
+    index = Index(prose[0])
+    assert index.search("w1", k=2, adaptive=True) == index.search("w1", k=2)
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_keyword_search_reads_the_postings_as_they_were_when_it_began(prose, fake_models, monkeypatch):
+    # Another sift built them anew, in another order, while a search read them: it read the old places through the new
+    # order, and found other chunks, with the old scores; or found the tables emptied, and failed.
+    catalog, _ = prose
+    embed.embed_pending(catalog)
+    db, path, cid = catalog.store("prose"), catalog.get("prose").store, catalog.get("prose").id
+    postings.build(db, path)
+    exact = Index(catalog).search("w5 OR w6", k=10)
+    index = Index(catalog)
+    index.search("w1", k=10)  # its reader holds what it read of the postings as they are
+    other, real, built = store.connect(path, cid), postings.Reader.term, []
+
+    def meanwhile(reader, term):
+        if not built:  # as the search starts reading
+            built.append(1)
+            monkeypatch.setattr(order, "LEVELS", (3,))  # another order
+            postings.build(other, path)
+        return real(reader, term)
+
+    monkeypatch.setattr(store, "empty_log", lambda db: None)  # which waits for the readers
+    monkeypatch.setattr(postings.Reader, "term", meanwhile)
+    try:
+        assert index.search("w5 OR w6", k=10) == exact
+        assert built
+        assert index.search("w5 OR w6", k=10) == exact  # and the next, in the new order
+    finally:
+        other.close()
+
+
+@pytest.fixture
+def copies(tmp_path, home):
+    """Twelve notes of the same two words, the two best copies of one work (the same DOI): the best 3 documents are
+    2 works, so a search for 3 asks again, for 6."""
+    root = tmp_path / "copies"
+    for i in range(12):
+        doi = "10.1000/same" if i < 2 else f"10.1000/{i}"
+        words = "attention transformer " * (2 if i < 2 else 1)
+        write(root / f"n{i:02}.md", f'---\ndoi: "{doi}"\n---\n# N{i}\n\n{words}\n')
+    catalog = Catalog(home)
+    catalog.add(root, "copies")
+    indexing.index(catalog)
+    return catalog
+
+
+def asks(monkeypatch):
+    """The k of each search of the postings, as they are made."""
+    asked, real = [], topk.search
+    monkeypatch.setattr(topk, "search", lambda *args, **kwargs: asked.append(args[2]) or real(*args, **kwargs))
+    return asked
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_keyword_search_out_of_time_asks_no_more(copies, monkeypatch):
+    # Copies of a work left fewer than k hits, so the search asked for more: out of time, that second ask scored a
+    # range per store, and its hits took the place of the first ask's.
+    monkeypatch.setattr(topk, "FIRST_BATCH", 1)
+    asked = asks(monkeypatch)
+    hits = Index(copies).search("attention transformer", k=3, budget=1e-9)
+    assert hits
+    assert all(h["partial"] for h in hits)
+    assert asked == [3]
+
+
+def test_a_keyword_search_whose_time_ran_out_after_its_first_ask_asks_no_more(copies, monkeypatch):
+    # Its first ask done in time, the second began out of it, and took as long as it needed to find any.
+    asked = asks(monkeypatch)
+    monkeypatch.setattr(topk.Deadline, "over", lambda deadline: bool(asked))
+    hits = Index(copies).search("attention transformer", k=3, budget=60)
+    assert len(hits) == 2  # fewer than k: the copies are one work
+    assert all(h["partial"] for h in hits)
+    assert asked == [3]
+
+
+@pytest.mark.parametrize("budget", [0, -1, "1", True, float("nan")])
+def test_a_budget_is_a_positive_number_of_seconds(prose, budget):
+    with pytest.raises(ValueError, match="budget"):
+        Index(prose[0]).search("w1", budget=budget)
 
 
 def test_hybrid_candidates_come_from_the_postings(prose, fake_models, monkeypatch):
@@ -277,6 +391,64 @@ def test_vsearch(embedded):
     assert ids(index.vsearch("anything", filters={"categories": "cs.RO"})) == ["notes/robots/brush.md"]
     assert index.vsearch("anything", filters={"categories": "none"}) == []
     assert len(index.vsearch("anything", k=100)) == 3
+
+
+@pytest.mark.parametrize(
+    "options, lists",
+    [
+        ({"path": "n*"}, 0),  # most chunks: the nearest checked, none listed
+        ({"filters": {"title": {"not": "nothing"}}}, 0),
+        ({"path": "n00[0-3]*"}, 1),  # a few: listed, as checking candidates would find too few
+        ({"filters": {"title": "nothing"}}, 1),
+    ],
+)
+def test_a_filtered_vsearch_finds_the_same_checking_candidates_or_listing(
+    prose, tmp_path, fake_models, monkeypatch, options, lists
+):
+    # Listing the chunks a filter lets through read every document: seconds over millions, to find the few nearest.
+    catalog, _ = prose
+    write_prose(tmp_path / "more", 8, notes=40)
+    catalog.add(tmp_path / "more", "more")
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    monkeypatch.setattr(vectors, "RESCORE", 4)  # candidates of a large collection: few, as these are a few in millions
+    monkeypatch.setattr(vectors, "SHORTLIST", 1)
+    listed, real = [], search._Filter.listed
+    monkeypatch.setattr(search._Filter, "listed", lambda self: listed.append(1) or real(self))
+    checked = ids(Index(catalog).vsearch("w1 w2 w3 w4", k=4, **options))
+    assert len(listed) == lists
+    monkeypatch.setattr(vectors, "SCAN_SHARE", 0.0)  # always listed
+    assert ids(Index(catalog).vsearch("w1 w2 w3 w4", k=4, **options)) == checked
+    assert bool(checked) == (options != {"filters": {"title": "nothing"}})
+
+
+def test_a_filter_remembers_what_it_was_asked(prose, monkeypatch):
+    # A search asks again about the candidates it asked about before, as when it looks further for more documents:
+    # the stores are asked about each chunk once.
+    catalog, _ = prose
+    db = catalog.store("prose")
+    every = [c for (c,) in db.execute("SELECT id FROM chunks ORDER BY id")]
+    passing = {
+        c for (c,) in db.execute("SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.path GLOB 'n0*'")
+    }
+    allowed = search._Filter(catalog, [catalog.get("prose")], "d.path GLOB ?", ["n0*"])
+    looked_up, real = [], allowed.passes
+    monkeypatch.setattr(allowed, "passes", lambda ids: looked_up.extend(ids.tolist()) or real(ids))
+    for asked in (every[40:0:-3], every[:60], every[:60], every[::-1]):
+        assert allowed.check(np.array(asked)).tolist() == [c in passing for c in asked]
+    assert sorted(looked_up) == every  # each once
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_filtered_keyword_search_keeps_nothing_it_asked(prose, monkeypatch):
+    # It never asks about a chunk twice, while remembering sorted all it had asked anew on every range scored: over
+    # millions of chunks, more work with every batch.
+    catalog, _ = prose
+    postings.build(catalog.store("prose"), catalog.get("prose").store)
+    remembered = []
+    monkeypatch.setattr(search._Filter, "check", lambda self, ids: remembered.append(ids))
+    assert Index(catalog).search("w1 OR w2", k=5, path="n0*")
+    assert remembered == []
 
 
 def test_broken_vectors_do_not_hide_the_others(embedded):
@@ -956,6 +1128,110 @@ def test_fallback_keeps_the_filters(corpus):
     assert Index(corpus[0]).search("reward pigment", filters={"year": 2024}) == Index(corpus[0]).search(
         "pigment", filters={"year": 2024}
     )
+
+
+# --- one hit per work ------------------------------------------------------------
+# PubMed, OpenAlex, arXiv and bioRxiv hold many of the same papers: each copy took a place in the results.
+
+
+@pytest.fixture
+def works(tmp_path, home, fake_models):
+    """Two collections holding the same paper, its DOI written as each source writes it, beside documents without a
+    DOI or with one that is no DOI."""
+    a, b, best = tmp_path / "a", tmp_path / "b", "attention transformer attention transformer"  # the copies first
+    write(a / "attention.md", f'---\ndoi: "10.48550/arXiv.1706.03762"\n---\n# Attention\n\n{best}\n')
+    write(a / "other.md", '---\ndoi: "10.1000/other"\n---\n# Other\n\nattention transformer elsewhere\n')
+    write(a / "nodoi.md", "# No DOI\n\nattention transformer without an identifier\n")
+    write(b / "attention.md", f'---\ndoi: "https://doi.org/10.48550/ARXIV.1706.03762"\n---\n# Attention\n\n{best}\n')
+    for name in ("junk1", "junk2"):
+        write(b / f"{name}.md", f'---\ndoi: "n/a"\n---\n# {name}\n\nattention transformer {name}\n')
+    catalog = Catalog(home)
+    catalog.add(a, "a")
+    catalog.add(b, "b")
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    return Index(catalog)
+
+
+COPIES = {"a/attention.md", "b/attention.md"}
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_a_work_in_several_collections_is_one_hit(works, mode):
+    hits = getattr(works, mode)("attention transformer", k=10)
+    (copy,) = [h for h in hits if h["id"] in COPIES]  # the better ranked, the other under `also`
+    assert copy["also"] == list(COPIES - {copy["id"]})
+    assert {"a/other.md", "a/nodoi.md", "b/junk1.md", "b/junk2.md"} <= {h["id"] for h in hits}  # no DOI, or none
+    assert all("also" not in h for h in hits if h is not copy)
+
+
+def test_k_works_after_collapsing(works):
+    hits = works.search("attention transformer", k=2)
+    assert len(hits) == 2
+    assert len(COPIES & {h["id"] for h in hits}) == 1
+
+
+def test_documents_like_one_are_one_hit_per_work(works):
+    hits = works.similar("a/other.md", k=10)
+    assert len(COPIES & {h["id"] for h in hits}) == 1
+
+
+@pytest.mark.parametrize("mode, subject", [("vsearch", "attention transformer"), ("similar", "a/nodoi.md")])
+def test_a_search_asking_again_keeps_its_filter(works, monkeypatch, mode, subject):
+    # Asking again for more works, as copies left fewer, it made its filter anew, which checked every chunk again.
+    made, real = [], search._Filter.__init__
+    monkeypatch.setattr(search._Filter, "__init__", lambda self, *args: made.append(1) or real(self, *args))
+    asked, top = [], search.top
+    monkeypatch.setattr(search, "top", lambda *args: asked.append(args[2]) or top(*args))
+    assert getattr(works, mode)(subject, k=4, path="*")
+    assert len(asked) > 1
+    assert made == [1]
+
+
+def test_documents_like_a_paper_leave_out_its_copies(works):
+    # Its copy in another collection is no other paper like it, though closest of all.
+    hits = works.similar("a/attention.md", k=10)
+    assert not COPIES & {h["id"] for h in hits}
+    assert hits
+
+
+def test_passages_like_a_paper_are_k_without_its_copies(tmp_path, home, fake_models):
+    # The passages of its copy, the nearest, were left out of the k found: fewer than k came back.
+    sections = "".join(f"## Part {i}\n\n{'attention transformer layers ' * 150}\n\n" for i in range(3))
+    for folder in ("a", "b"):
+        write(tmp_path / folder / "paper.md", f'---\ndoi: "10.1000/paper"\n---\n# Paper\n\n{sections}')
+    for i in range(8):
+        write(tmp_path / "b" / f"other{i}.md", f"# Other {i}\n\nattention transformer layers, and {i}\n")
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "a", "a")
+    catalog.add(tmp_path / "b", "b")
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    hits = Index(catalog).similar("a/paper.md", k=5, all_passages=True)
+    assert len(hits) == 5
+    assert "b/paper.md" not in {h["id"] for h in hits}
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "10.48550/arXiv.1706.03762",
+        "https://doi.org/10.48550/ARXIV.1706.03762",
+        "https://www.doi.org/10.48550/arxiv.1706.03762",
+        "http://dx.doi.org/10.48550/arxiv.1706.03762",
+        "doi:10.48550/arxiv.1706.03762",
+        "doi: 10.48550/arxiv.1706.03762",
+        " DOI: 10.48550/arXiv.1706.03762 ",
+    ],
+)
+def test_a_doi_as_sources_write_it(written):
+    assert search._doi(json.dumps({"doi": written})) == "10.48550/arxiv.1706.03762"
+
+
+def test_every_passage_keeps_every_copy(works):
+    hits = works.search("attention transformer", k=10, all_passages=True)
+    assert {h["id"] for h in hits} >= COPIES
+    assert all("also" not in h for h in hits)
 
 
 # --- reading part of a document ------------------------------------------------

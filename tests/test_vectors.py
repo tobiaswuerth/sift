@@ -97,6 +97,93 @@ def test_allowed_chunks_far_from_the_query_are_still_found(monkeypatch):
     assert sorted(chunks(top(index, exact, query, 10, allowed=np.array(farthest)))) == sorted(farthest)
 
 
+def test_the_float_query_picks_the_candidates_scored_exactly(monkeypatch):
+    # The query's own floats against the candidates' sign bits rank them better than Hamming distance: over 3.2M arXiv
+    # vectors, 1,000 of the 10,000 nearest scored exactly found more of exact search's top 10 than 4,000 by Hamming.
+    monkeypatch.setattr(vectors, "RESCORE", 20)
+    ids, matrix, exact, index = random_index(n=5000, dim=128)
+    queries = unit(np.random.default_rng(9).standard_normal((40, 128)))
+
+    def recall():
+        return np.mean(
+            [len(set(chunks(top(index, exact, q, 10))) & set(exact_top(ids, matrix, q, 10))) for q in queries]
+        )
+
+    monkeypatch.setattr(vectors, "SHORTLIST", 1)  # Hamming distance alone
+    by_hamming = recall()
+    monkeypatch.setattr(vectors, "SHORTLIST", 10)
+    exact.asked.clear()
+    assert recall() > by_hamming + 0.5
+    assert set(exact.asked) == {20}  # still only these scored exactly
+
+
+def alike(got, expected):
+    """The same chunks with the same cosines, to rounding: other candidates, another product of matrices."""
+    assert chunks(got) == chunks(expected)
+    assert [score for _, score in got] == pytest.approx([score for _, score in expected], abs=1e-6)
+
+
+class Allowed(vectors.Filter):
+    """A filter letting `ids` through; counts the chunks it checked and how often it listed them all."""
+
+    def __init__(self, ids):
+        self.ids, self.checked, self.lists = set(np.asarray(ids).tolist()), 0, 0
+
+    def check(self, ids):
+        self.checked += len(ids)
+        return np.array([i in self.ids for i in np.asarray(ids).tolist()], bool)
+
+    def listed(self):
+        self.lists += 1
+        return np.array(sorted(self.ids), np.int64)
+
+
+def test_a_filter_letting_many_through_checks_the_nearest_candidates_alone(monkeypatch):
+    # Listing the chunks a filter lets through reads every document of the store, seconds over millions: checking the
+    # nearest few thousand candidates one by one finds the same.
+    monkeypatch.setattr(vectors, "RESCORE", 5)  # k of 10: 100 candidates must pass
+    ids, _, exact, index = random_index(n=6000)
+    for query in unit(np.random.default_rng(7).standard_normal((10, 64))):
+        allowed = Allowed(ids[::3])
+        alike(top(index, exact, query, 10, allowed=allowed), top(index, exact, query, 10, allowed=ids[::3]))
+        assert allowed.lists == 0
+        assert allowed.checked < len(ids) / 5
+
+
+def test_a_filter_letting_few_through_lists_them(monkeypatch):
+    monkeypatch.setattr(vectors, "RESCORE", 10)
+    ids, matrix, exact, index = random_index(n=2000)
+    query = unit(np.ones((1, 64)))[0]
+    farthest = [int(ids[i]) for i in np.argsort(matrix.astype(np.float32) @ query)[:3]]
+    allowed = Allowed(farthest)
+    assert sorted(chunks(top(index, exact, query, 10, allowed=allowed))) == sorted(farthest)
+    assert allowed.lists == 1
+    assert allowed.checked <= vectors.SCAN_SHARE * len(ids)  # given up on before checking more than a listing costs
+
+
+def test_a_filter_over_several_collections_and_with_exclusions(monkeypatch):
+    monkeypatch.setattr(vectors, "RESCORE", 5)  # checked, not listed, as in test_a_filter_letting_many_through...
+    ids, matrix, exact, whole = random_index(n=6000)
+    parts = [Codes(ids[i::3], codes(matrix[i::3])) for i in range(3)]
+    for query in unit(np.random.default_rng(8).standard_normal((10, 64))):
+        expected = top(whole, exact, query, 10, allowed=ids[::4], excluded=ids[:40])
+        alike(top(parts, exact, query, 10, allowed=(allowed := Allowed(ids[::4])), excluded=ids[:40]), expected)
+        assert allowed.lists == 0
+
+
+def test_a_filter_letting_nothing_through():
+    *_, exact, index = random_index(n=50)
+    assert top(index, exact, unit(np.ones((1, 64)))[0], 5, allowed=Allowed([])) == []
+
+
+def test_a_filter_over_no_codes_lists_nothing():
+    # A collection not embedded yet: listing what the filter lets through read every document, to find nothing.
+    allowed, query = Allowed([1, 2]), unit(np.ones((1, 64)))[0]
+    assert top([Codes(np.empty(0, np.int64), codes(np.empty((0, 64))))], Exact([], []), query, 5, allowed=allowed) == []
+    assert top([], Exact([], []), query, 5, allowed=allowed) == []
+    assert allowed.lists == 0
+
+
 def test_top_of_more_than_there_are_and_of_none():
     ids, matrix, exact, index = random_index(n=7)
     query = unit(np.ones((1, 64)))[0]
@@ -212,7 +299,8 @@ def test_the_codes_of_several_collections_are_searched_as_one():
 
 
 def test_few_candidates_are_the_nearest_of_all_collections(monkeypatch):
-    # 4,000 candidates of all collections together, not of each: a collection far from the query gives none.
+    # The candidates are the nearest of all collections together, not of each: a collection far from the query gives
+    # none.
     monkeypatch.setattr(vectors, "RESCORE", 20)
     ids, matrix, exact, _ = random_index(n=400)
     query = unit(np.ones((1, 64)))[0]
@@ -223,12 +311,12 @@ def test_few_candidates_are_the_nearest_of_all_collections(monkeypatch):
     assert exact.asked == [20]
 
 
-def test_the_nearest_codes_of_one_collection():
-    *_, index = random_index(n=100)
-    query = unit(np.ones((1, 64)))[0]
-    found, distance = index.nearest(codes(query[None, :])[0], 10)
-    assert len(found) == len(distance) == 10
-    everything, all_distances = index.nearest(codes(query[None, :])[0], 1000)
-    assert len(everything) == 100
-    assert sorted(distance.tolist()) == sorted(all_distances.tolist())[:10]
-    assert index.nearest(codes(query[None, :])[0], 5, allowed=np.array([], np.int64))[0].tolist() == []
+def test_the_distances_of_one_collections_codes():
+    ids, matrix, _, index = random_index(n=100)
+    query = codes(unit(np.ones((1, 64))))[0]
+    expected = np.bitwise_count(codes(matrix) ^ query).sum(1)
+    assert index.distances(query).tolist() == expected.tolist()  # by id, as the codes hold them
+    left = index.distances(query, allowed=ids[:50], excluded=ids[:10])
+    assert (left[10:50] == expected[10:50]).all()
+    assert (left[:10] == vectors.FAR).all()
+    assert (left[50:] == vectors.FAR).all()

@@ -16,9 +16,10 @@ winner on a single dataset. To measure sift on your own documents, use
   worse on scientific text, and indexes 1.6 times as fast.
 - **Speed:** reranking takes about 0.3 seconds per query on an RTX 4090 and about 25 seconds on a CPU. Machines without
   a GPU should rerank through a [`sift worker`](worker.md).
-- **Vectors in memory:** `vsearch` keeps one bit per dimension in RAM and scores the 4,000 nearest exactly. Over 3.2
-  million arXiv abstracts it finds 99.6% of exact search's top 10, with an MRR of 0.9528 against 0.9530, in a
-  sixteenth of the memory.
+- **Vectors in memory:** `vsearch` keeps one bit per dimension in RAM, ranks the 10,000 nearest by Hamming distance
+  again by the query's own floats, and scores the best 1,000 exactly. Over 3.2 million arXiv abstracts it finds
+  99.75% of exact search's top 10, and its MRR of 0.9530, in a sixteenth of the memory
+  ([details](#vectors-in-memory)).
 - **Keyword search:** `search` ranks from postings of its own, scoring ranges of passages best bound first. Over 29.9
   million PubMed passages, a common word takes 7 ms instead of 1.3 seconds, a question 26 ms instead of 5.3 seconds
   (medians, the postings read before; 67 and 200 ms read anew), with FTS5's results, score for score, in about a
@@ -256,6 +257,15 @@ as by `sift serve`. Every query found the same documents as FTS5, score for scor
   8% less storage.
 - **Building** reads FTS5's vocabulary in worker processes, a range of terms each: 69 seconds for arXiv on 24, 13
   minutes for PubMed on 31 (beside a running `sift embed`), where "the" alone, read by one worker, takes minutes.
+- **Passages in topical order** (sift 1.11): numbered by clusters of their codes, a range's passages share their
+  words. In a prototype of the postings over arXiv, read warm, questions took 3.7 ms instead of 5.2 (median) and the
+  slowest 45 instead of 90, scoring a half to a twentieth as many ranges ("graph neural networks for molecular
+  property prediction": 197 instead of 3,821), with the same results. Single words took 0.7 ms instead of 0.3: a
+  word's best passages lie in more ranges. The blocks took 0.61 GB instead of 0.66, the order 13 MB more. Ordering
+  3.2 million codes takes about a minute.
+- **A time budget** ends a search from the postings early, with the best found so far: ranges are scored best bound
+  first, so the best results tend to come first ([Mackenzie et al. 2021](https://arxiv.org/abs/2104.08976)). Not
+  measured on these queries yet.
 
 ### Links between notes
 
@@ -302,6 +312,38 @@ and hit@10 are those of each paper's own first passage. "+ exact top N" scores t
 - **Hamming distance with 4,000 rescored** comes close to the float query's ranking (the query's values against the
   codes' signs) with 1,000. Hamming distance is 12 bit counts per code instead of 768 multiply-adds, and the 4,000
   vectors read from SQLite cost little next to a scan of millions.
+- **Both, one after the other** (sift 1.11): Hamming distance over all codes, the float query over the nearest N
+  (a table lookup per byte of a code: 3 ms for 10,000), exact scores for its best M. Reading the vectors is most of
+  a search's time: 25 ms for 4,000 from the arXiv index, warm, 7 ms for 1,000.
+
+| Hamming nearest N | Float query's best M, scored exactly | Recall@10 | MRR@10 | Hit@10 |
+|---|---|---|---|---|
+| 4,000 | (all 4,000, sift 1.10) | 0.9961 | 0.9530 | 0.9905 |
+| 1,000 | (all 1,000) | 0.9794 | 0.9530 | 0.9905 |
+| 10,000 | 400 | 0.9921 | 0.9530 | 0.9905 |
+| **10,000** | **1,000** | **0.9975** | **0.9530** | **0.9905** |
+| 10,000 | 2,000 | 0.9986 | 0.9530 | 0.9905 |
+| 20,000 | 1,000 | 0.9978 | 0.9530 | 0.9905 |
+| 40,000 | 1,000 | 0.9979 | 0.9530 | 0.9905 |
+
+- **Filters** on front matter: listing every passage a filter lets through reads every document. Over arXiv, a
+  category took 6.2 seconds warm (56 cold), whether it let 9% through (cs.LG) or 0.9% (cs.IR). Checking candidates
+  one by one costs 4 to 5 microseconds each warm, 90 cold, so sift checks the nearest first, until enough pass, and
+  lists only when checking would cost more: when it would check more than a fifth of the passages. Until 10,000
+  candidates passed, cs.LG checked 130,000 in 0.6 seconds, cs.CV (6%) 193,000 in 0.85; cs.IR gave up after 10,000
+  checks (0.02 to 0.08 seconds) and was listed.
+- **Adaptive k:** a search asked to adapt returns its hits up to the largest drop in score, among the first 90% of
+  the gaps, and five more ([Taguchi et al. 2025](https://arxiv.org/abs/2506.08479)). For the 2,000 titles, of exact
+  search's top 10, 20 or 50:
+
+| Hits kept after the largest drop | Hits returned, on average | The paper sought kept, when among them |
+|---|---|---|
+| 0 | 1.3 | 96.9 to 97.2% |
+| 2 | 3.3 | 98.5 to 98.9% |
+| **5** | **6.2 to 6.3** | **99.2 to 99.6%** |
+
+  Known items stand out: most queries had their largest drop after the first hit. Questions with many answers need
+  more, so sift keeps the paper's five.
 - **On a copy of a real index**, 145 GB with 3,261,593 vectors (arXiv abstracts and notes), on the i9-14900K while it
   was busy with other work: the upgrade from sift 1.6 added the codes in 65 seconds, `sift serve` loads them in 2.2
   seconds, and a search (Hamming scan and exact scores) takes 95 ms (median; 108 ms at the 90th percentile). Of 200

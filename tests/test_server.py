@@ -198,6 +198,7 @@ def test_instructions_tell_agents_what_is_indexed(mcp):
     # Agents read these when they connect: without the collections they can't tell when sift is worth asking.
     assert "): 3 documents" in mcp.instructions
     assert "before answering from memory" in mcp.instructions
+    assert "`adaptive: true`" in mcp.instructions  # fewer results to read, when a few stand out
 
 
 def test_instructions_name_the_front_matter_fields(mcp, embedded):
@@ -518,7 +519,8 @@ def test_search_tools_pass_every_option_on(embedded, monkeypatch, tool, first):
         "sort": "-year",
         "links_to": ["a"],
         "linked_from": ["b"],
-    }
+        "adaptive": True,
+    } | ({"budget": 0.5} if tool == "search" else {})  # only keyword search has a time budget
     call(server.build(index)[0], tool, {first: "brush", "k": 3} | options)
     assert calls == [(("brush", 3), options)]
 

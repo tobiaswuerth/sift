@@ -155,6 +155,25 @@ def test_search_commands(cli_corpus, capsys, command):
     assert [h["id"] for h in hits] == ["notes/robots/brush.md"]
 
 
+def test_search_command_names_the_other_copies_of_a_work(cli_corpus, tmp_path, capsys):
+    write(
+        tmp_path / "mirror" / "brush.md", '---\ndoi: "10.1000/brush"\n---\n# Brush stroke planning\n\nbrush strokes\n'
+    )
+    write(cli_corpus / "doi.md", '---\ndoi: "doi:10.1000/BRUSH"\n---\n# Brush stroke planning\n\nbrush strokes\n')
+    run(capsys, "add", str(tmp_path / "mirror"))
+    run(capsys, "index")
+    out = run(capsys, "search", "brush strokes", "--compact").out
+    assert out.count("Brush stroke planning\n") == 2  # one of the copies, and notes/robots/brush.md without a DOI
+    assert ("also: mirror/brush.md" in out) != ("also: notes/doi.md" in out)
+
+
+def test_a_search_out_of_time_says_so(cli_corpus, capsys, monkeypatch):
+    # JSON marks each hit "partial"; printed, the hits looked as complete as any.
+    hit = {"id": "notes/rl.md", "lines": "1-3", "title": "Reward shaping", "score": 1.0, "partial": True}
+    monkeypatch.setattr("sift.search.Index.search", lambda *args, **kwargs: [hit])
+    assert "out of time: the best found so far" in run(capsys, "search", "reward", "--budget", "0.1").err
+
+
 def test_search_command_fields_and_compact(cli_corpus, capsys):
     out = run(capsys, "search", "brush", "--fields", "year,categories").out
     assert 'year: 2024  categories: ["cs.RO", "cs.GR"]' in out
@@ -183,7 +202,10 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
         "b",
         "--linked-from",
         "c",
+        "--adaptive",
+        *(["--budget", "0.5"] if command == "search" else []),  # only keyword search has a time budget
     )
+    budget = {"budget": None} if command == "search" else {}
     assert calls == [
         (
             ("brush", 3),
@@ -197,7 +219,9 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
                 "sort": None,
                 "links_to": None,
                 "linked_from": None,
-            },
+                "adaptive": False,
+            }
+            | budget,
         ),
         (
             ("brush", 10),
@@ -211,9 +235,16 @@ def test_search_commands_pass_every_option_on(cli_corpus, capsys, monkeypatch, c
                 "sort": "-year",
                 "links_to": ["a", "b"],
                 "linked_from": ["c"],
-            },
+                "adaptive": True,
+            }
+            | ({"budget": 0.5} if command == "search" else {}),
         ),
     ]
+
+
+def test_only_keyword_search_takes_a_budget(cli_corpus, capsys):
+    with pytest.raises(SystemExit):
+        run(capsys, "vsearch", "brush", "--budget", "1")
 
 
 def test_similar_command(cli_corpus, capsys):

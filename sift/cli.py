@@ -66,10 +66,14 @@ def _print_hits(hits, as_json):
         console.say("no matches")
     for h in hits:
         print(f"{h['score']:>8.4f}  {h['id']}:{h['lines']}  {h['title']}")
+        if "also" in h:
+            print(" " * 10 + "also: " + ", ".join(h["also"]))
         if "fields" in h:
             print(" " * 10 + "  ".join(f"{k}: {_shown(v)}" for k, v in h["fields"].items()))
         if "text" in h:
             print(textwrap.indent(textwrap.shorten(h["text"], 300), " " * 10))
+    if any(h.get("partial") for h in hits):
+        console.say("out of time: the best found so far; better matches may be missing")
 
 
 def _print_links(found, as_json):
@@ -205,6 +209,18 @@ def main(argv=None):
             help="only documents linking to this note, by id or as links name it, e.g. 'Acme AG'; repeatable: any",
         )
         s.add_argument("--linked-from", action="append", metavar="NOTE", help="only documents this note links to")
+        s.add_argument(
+            "--adaptive",
+            action="store_true",
+            help="up to k results: those before the largest drop in score, and a few more",
+        )
+        if name == "search":
+            s.add_argument(
+                "--budget",
+                type=float,
+                metavar="SECONDS",
+                help="stop after this long, once anything is found: the best found so far, marked partial",
+            )
         s.add_argument("--json", action="store_true", help="print results as JSON")
     s = sub.add_parser("get", help="print a document by its id (collection/path)")
     s.add_argument("id")
@@ -354,6 +370,8 @@ def _run(a, catalog):
             sort=a.sort,
             links_to=a.links_to,
             linked_from=a.linked_from,
+            adaptive=a.adaptive,
+            **({"budget": a.budget} if a.cmd == "search" else {}),
         )
         _print_hits(hits, a.json)
     elif a.cmd == "get":

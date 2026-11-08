@@ -352,7 +352,7 @@ def test_counting_stopped_leaves_the_store_as_sift_1_8_left_it(embedded, monkeyp
 
 # --- the keyword postings' tables and changes -------------------------------------
 
-POSTINGS_TABLES = {"kw_segments", "kw_terms", "kw_blocks", "kw_lengths", "kw_masked", "kw_dirty"}
+POSTINGS_TABLES = {"kw_segments", "kw_terms", "kw_blocks", "kw_lengths", "kw_masked", "kw_dirty", "kw_order"}
 
 
 def tables(db):
@@ -395,6 +395,21 @@ def test_an_older_store_gets_the_postings_tables_unbuilt(corpus, left):
     assert store.get_meta(db, "kw_built") is None
 
 
+def test_a_store_of_sift_1_10_gets_the_order_of_its_postings(corpus):
+    # Layout 9 numbers the postings' chunks in an order of their own (see postings): a store of 1.10 gets its table,
+    # empty, which is the order the chunks were indexed in, so its postings stay as they are.
+    catalog, _ = corpus
+    db = catalog.store("notes")
+    db.execute("DROP TABLE kw_order")
+    db.execute("PRAGMA user_version = 8")
+    db.commit()
+    catalog.release(catalog.get("notes").id)
+    db = catalog.store("notes")
+    assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
+    assert "kw_order" in tables(db)
+    assert postings.ready(db)
+
+
 def test_a_store_upgraded_meanwhile_is_upgraded_once(corpus):
     # Two sifts open a store of 1.9 at once; the second finds the tables there once it has the store.
     db = corpus[0].store("notes")
@@ -408,7 +423,7 @@ def test_an_upgrade_stopped_leaves_the_store_as_sift_1_9_left_it(corpus, monkeyp
     as_sift_1_9_left_it(catalog.store("notes"))
     catalog.release(catalog.get("notes").id)
     real = store.POSTINGS
-    monkeypatch.setattr(store, "POSTINGS", real.replace("kw_dirty(", "kw_dirty(("))  # fails at the last table
+    monkeypatch.setattr(store, "POSTINGS", real.replace("kw_order(", "kw_order(("))  # fails at the last table
     with pytest.raises(sqlite3.OperationalError):
         catalog.store("notes")
     monkeypatch.setattr(store, "POSTINGS", real)

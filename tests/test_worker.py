@@ -337,6 +337,15 @@ def test_a_failing_worker_is_a_clear_error(corpus, fake_models, live, monkeypatc
         embed.embed_pending(corpus[0])
 
 
+def test_a_worker_error_cut_inside_a_character_is_still_a_clear_error(monkeypatch):
+    # Its first 200 bytes are shown: cut inside a character, as of a proxy's page, decoding them raised instead.
+    worker_remote = remote.Remote("https://t.p@pc:8766")
+    answer = types.SimpleNamespace(status=502)
+    monkeypatch.setattr(worker_remote, "_exchange", lambda *request: (answer, b"x" * 199 + "é".encode()))
+    with pytest.raises(remote.RemoteError, match=r"answered 502: x{199}"):
+        worker_remote.encode(["brush"])
+
+
 @pytest.mark.parametrize(
     "url", ["http://t.p@workstation:8766", "https://workstation:8766", "https://token@workstation:8766", "pc:8766"]
 )

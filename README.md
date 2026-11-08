@@ -94,11 +94,12 @@ servers, which can't reach your computer.
 | `mentions` | Documents that name a note without linking to it |
 | `reindex` | Read files again right after writing, changing or deleting them; the one tool that changes anything: sift's index, never a file |
 
-The search tools take `k`, `collection`, `path`, `filters`, `fields`, `compact`, `all_passages`, `sort`, `links_to`
-and `linked_from`. Every result carries `id` (`collection/path`), `title`, `lines`, `score` and the passage's `text`,
-so agents can cite their sources; `compact: true` leaves out the text, so an agent can survey many results and read
-the ones that matter. Every parameter is described in the tools' schemas, and the server tells agents on connecting
-which collections there are and which front-matter fields each has.
+The search tools take `k`, `collection`, `path`, `filters`, `fields`, `compact`, `all_passages`, `sort`, `links_to`,
+`linked_from` and `adaptive`, and `search` a time `budget`. Every result carries `id` (`collection/path`), `title`,
+`lines`, `score` and the passage's `text`, so agents can cite their sources; `compact: true` leaves out the text, so an
+agent can survey many results and read the ones that matter, and `adaptive: true` returns only those before the
+largest drop in score, and a few more. Every parameter is described in the tools' schemas, and the server tells agents
+on connecting which collections there are and which front-matter fields each has.
 
 ## Commands
 
@@ -121,7 +122,8 @@ which collections there are and which front-matter fields each has.
 | `sift bench QUESTIONS.json` | How well each search mode finds the answers you expect |
 
 Search commands take `-k`, `-c COLLECTION`, `--path GLOB`, `-f FIELD=VALUE` filters, `--fields`, `--compact`,
-`--all-passages`, `--sort=-FIELD`, `--links-to`, `--linked-from` and `--json`:
+`--all-passages`, `--sort=-FIELD`, `--links-to`, `--linked-from`, `--adaptive` and `--json`, and `sift search`
+`--budget SECONDS`:
 
 ```bash
 sift search '"notice period" AND (contract OR agreement)'
@@ -175,19 +177,21 @@ the index is split into a file per collection: stop every other sift first, and 
 takes; `sift move FOLDER` as the first command splits it straight into that folder, on another drive too. 1.9 counts
 each collection's rows once: about 10 seconds for 14 million vectors, longer from a cold disk. 1.10 adds keyword
 postings, which the next `sift index` builds: about a minute per 3 million passages on 24 cores; keyword search
-reads FTS5 until then. An older sift doesn't open an index so updated, so upgrade every sift that uses it. The
-[changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists every change.
+reads FTS5 until then. 1.11 numbers the passages of the postings in a topical order, by their vectors: the next
+`sift index` builds them anew once, about a minute more per 3 million embedded passages. An older sift doesn't open an
+index so updated, so upgrade every sift that uses it.
+The [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists every change.
 
 ## How it works
 
 Each collection's index is a SQLite file: documents, FTS5 keyword index and keyword postings, fp16 vectors and their
 one-bit codes. Keyword search ranks by BM25 from the postings, skipping the ranges of passages that can't reach its
 best results: milliseconds for a common word over 30 million passages, with FTS5's results. Semantic search compares a
-query's code with every passage's, kept in RAM (96 bytes each), and scores the 4,000 nearest exactly; it finds 99.6%
-of exact search's top 10 over 3.2 million abstracts in about 0.1 seconds, with no index to build. `query` reranks the
-best 40 keyword and semantic candidates on the GPU. Embedding runs in batches of
-similar length, sized to the GPU memory left by other programs, and gives the GPU back after 5 idle minutes. Details:
-[docs/architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md).
+query's code with every passage's, kept in RAM (96 bytes each), ranks the 10,000 nearest again by the query's own
+values, and scores the best 1,000 exactly; it finds 99.75% of exact search's top 10 over 3.2 million abstracts in
+about 0.1 seconds, with no index to build. `query` reranks the best 40 keyword and semantic candidates on the GPU.
+Embedding runs in batches of similar length, sized to the GPU memory left by other programs, and gives the GPU back
+after 5 idle minutes. Details: [docs/architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md).
 
 ## Scope
 

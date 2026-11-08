@@ -490,7 +490,7 @@ def prose(tmp_path, home):
 
 @pytest.fixture
 def small_lists(monkeypatch):
-    """Keyword postings long from 8 postings, in blocks of 4, ranges of 4 chunk ids: a small collection has them all."""
+    """Keyword postings long from 8 postings, in blocks of 4, ranges of 4 places: a small collection has them all."""
     from sift import postings
 
     monkeypatch.setattr(postings, "LONG", 8)

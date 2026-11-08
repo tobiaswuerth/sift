@@ -1,15 +1,17 @@
 """The best documents (or passages) for a keyword query, from the postings (see `postings`): BM25 as FTS5's bm25
 scores it, summed over the query's terms, with the statistics of all the stores searched together.
 
-Block-Max Pruning (Mallia et al. 2024): chunk ids fall into ranges (postings.RANGE_SHIFT bits); each term's best score
-in a range, weighted by its idf and summed over the query's terms, bounds the score of every chunk there. Ranges are
-scored best bound first, a batch at a time, until no range left can beat the k-th best found: what remains is never
-read. A query is an expression: ("term", text), ("and", [...]), ("or", [...]) or ("not", left, right), as FTS5 reads
-AND, OR and NOT. It holds per chunk by the terms the chunk holds; a chunk's score sums the terms that count in it, as
-FTS5 counts them: a term written twice counts twice, and one under an AND or NOT that fails in the chunk counts
-nothing, even where the chunk is found otherwise ("x OR (a AND b)" in a chunk with x and a: x alone)."""
+Block-Max Pruning (Mallia et al. 2024): chunks' places (see `postings`) fall into ranges (postings.RANGE_SHIFT bits);
+each term's best score in a range, weighted by its idf and summed over the query's terms, bounds the score of every
+chunk there. Ranges are scored best bound first, a batch at a time, until no range left can beat the k-th best found:
+what remains is never read. A query is an expression: ("term", text), ("and", [...]), ("or", [...]) or ("not", left,
+right), as FTS5 reads AND, OR and NOT. It holds per chunk by the terms the chunk holds; a chunk's score sums the terms
+that count in it, as FTS5 counts them: a term written twice counts twice, and one under an AND or NOT that fails in
+the chunk counts nothing, even where the chunk is found otherwise ("x OR (a AND b)" in a chunk with x and a: x
+alone)."""
 
 import math
+import time
 
 import numpy as np
 
@@ -90,10 +92,22 @@ class Best:
         return [(chunk, score) for score, chunk in best]
 
 
-def search(readers, query, k, by_document=True, allowed=None):
+class Deadline:
+    """When searches are to stop, `seconds` from now, and whether one stopped before it was done (`cut`): a search out
+    of time returns the best it found so far, every store's best ranges scored, once it found any (nothing found is
+    always the answer of the whole search)."""
+
+    def __init__(self, seconds):
+        self.at, self.cut = time.perf_counter() + seconds, False
+
+    def over(self):
+        return time.perf_counter() >= self.at  # monotonic() ticks every 16 ms on Windows
+
+
+def search(readers, query, k, by_document=True, allowed=None, deadline=None):
     """The best k documents for an expression (see the module), each by its best chunk, or the best k chunks:
     [(chunk id, score)], best first. `readers` are the stores' postings (postings.Reader); allowed(chunk ids), if
-    given, says which of those chunks may be found, as a boolean array (a filter)."""
+    given, says which of those chunks may be found, as a boolean array (a filter); a Deadline, when to stop."""
     chunks = sum(r.chunks for r in readers)
     best = Best(k, by_document)
     if not chunks:
@@ -105,15 +119,15 @@ def search(readers, query, k, by_document=True, allowed=None):
     df = {t: sum(p.df for held in lists for p in held[t]) for t in terms}
     weight = {t: idf(chunks, df[t]) for t in terms}
     for reader, held in zip(readers, lists):
-        _Store(reader, held, weight, named, average, query, best, allowed).search()
+        _Store(reader, held, weight, named, average, query, best, allowed, deadline).search()
     return best.ranked()
 
 
 class _Store:
     """The search in one store: its ranges bounded, then scored best first."""
 
-    def __init__(self, reader, lists, weight, named, average, query, best, allowed):
-        self.reader, self.weight, self.average = reader, weight, average
+    def __init__(self, reader, lists, weight, named, average, query, best, allowed, deadline):
+        self.reader, self.weight, self.average, self.deadline = reader, weight, average, deadline
         self.bounding = {t: w * named.count(t) for t, w in weight.items()}  # a term written twice counts twice
         self.query, self.best, self.allowed = query, best, allowed
         self.shift = postings.RANGE_SHIFT
@@ -123,10 +137,11 @@ class _Store:
         self.ranged = {t: [(p, p.ranges(), self._slack(p)) for p in parts if p.long] for t, parts in lists.items()}
 
     def _whole(self, part):
-        ids, tf = part.everything()
-        alive = self.reader.alive(part.segment, ids)
-        ids, tf = ids[alive], tf[alive]
-        return ids >> self.shift, ids, postings.term_scores(tf, self.reader.lengths(part.segment, ids), self.average)
+        places, tf = part.everything()
+        alive = self.reader.alive(part.segment, places)
+        places, tf = places[alive], tf[alive]
+        scores = postings.term_scores(tf, self.reader.lengths(part.segment, places), self.average)
+        return places >> self.shift, places, scores
 
     def _slack(self, part):
         chunks, tokens = self.reader.segments[part.segment]
@@ -150,6 +165,9 @@ class _Store:
             if len(group):
                 self._score(np.sort(group))
             batch = min(2 * batch, MOST_BATCH)
+            if self.deadline is not None and self.best.found and self.deadline.over():
+                self.deadline.cut |= bool((bound >= self.best.threshold).any())  # a range left might beat one found
+                return
 
     def _bounds(self):
         """(the first range id, then per range from it: the terms' bounds summed, weighted; where each term occurs)."""
@@ -177,21 +195,21 @@ class _Store:
         """Score every chunk of these ranges (ascending) that holds any term, and offer those the query finds to the
         best."""
         found = {t: list(self._in(t, group)) for t in self.whole}  # a group's ranges hold some term's postings
-        every = [ids for parts in found.values() for ids, _ in parts]
-        chunks, where = np.unique(np.concatenate(every), return_inverse=True)  # each posting's chunk among them
+        every = [places for parts in found.values() for places, _ in parts]
+        places, where = np.unique(np.concatenate(every), return_inverse=True)  # each posting's chunk among them
         scores, present, at = {}, {}, 0
         for t, parts in found.items():
-            scores[t] = np.zeros(len(chunks))
-            for ids, term_scores in parts:
-                scores[t][where[at : at + len(ids)]] = term_scores
-                at += len(ids)
+            scores[t] = np.zeros(len(places))
+            for held, term_scores in parts:
+                scores[t][where[at : at + len(held)]] = term_scores
+                at += len(held)
             present[t] = scores[t] > 0
         holds, terms = counted(self.query, present)
-        acc = np.zeros(len(chunks))
+        acc = np.zeros(len(places))
         for t, counts in terms:
             acc += np.where(counts, self.weight[t] * scores[t], 0.0)
         keep = np.flatnonzero(holds & (acc >= self.best.threshold))
-        chunks, acc = chunks[keep], acc[keep]
+        chunks, acc = self.reader.chunks_at(places[keep]), acc[keep]
         if self.allowed is not None and len(chunks):
             allowed = np.asarray(self.allowed(chunks), bool)
             chunks, acc = chunks[allowed], acc[allowed]
@@ -201,16 +219,16 @@ class _Store:
             self.best.offer(chunks[here], docs[here], acc[here])
 
     def _in(self, term, group):
-        """(chunk ids, term scores) of a term's live postings in these ranges, a part per segment."""
-        for rid, ids, scores in self.whole[term]:
+        """(places, term scores) of a term's live postings in these ranges, a part per segment."""
+        for rid, places, scores in self.whole[term]:
             take = postings.slices(np.searchsorted(rid, group), np.searchsorted(rid, group, side="right"))
-            yield ids[take], scores[take]
+            yield places[take], scores[take]
         for part, (rid, starts, ends, _), _ in self.ranged[term]:
             at = np.minimum(np.searchsorted(rid, group), len(rid) - 1)
             hit = rid[at] == group
             if not hit.any():
                 continue
-            ids, tf = part.postings(starts[at[hit]], ends[at[hit]])
-            alive = self.reader.alive(part.segment, ids)
-            ids, tf = ids[alive], tf[alive]
-            yield ids, postings.term_scores(tf, self.reader.lengths(part.segment, ids), self.average)
+            places, tf = part.postings(starts[at[hit]], ends[at[hit]])
+            alive = self.reader.alive(part.segment, places)
+            places, tf = places[alive], tf[alive]
+            yield places, postings.term_scores(tf, self.reader.lengths(part.segment, places), self.average)

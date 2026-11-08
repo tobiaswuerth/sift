@@ -39,6 +39,27 @@ def test_bench_measures_every_mode(embedded, cases):
         assert scores["ms"] >= 0
 
 
+class Collapsed:
+    """An index that finds the paper sought as the copy under `also` of a better ranked one."""
+
+    def search(self, query, k, **options):
+        return [{"id": "pubmed/x.md", "also": ["arxiv/x.md"]}, {"id": "arxiv/other.md"}]
+
+    vsearch = query = search
+
+
+def test_a_copy_of_the_paper_sought_counts(tmp_path):
+    # A paper several collections hold is one hit, the others under `also`: the copy the case names was found.
+    results = bench.run(Collapsed(), [("x", {"arxiv/x.md": 1})])
+    assert {mode: scores["MRR@10"] for mode, scores in results.items()} == dict.fromkeys(bench.MODES, 1.0)
+
+
+def test_copies_a_case_grades_are_one_paper_found(tmp_path):
+    # Graded each, the copies of one hit counted one found and one missed: Recall@10 0.5, though the paper was first.
+    results = bench.run(Collapsed(), [("x", {"arxiv/x.md": 1, "pubmed/x.md": 2})])
+    assert all(scores["nDCG@10"] == scores["Recall@10"] == scores["MRR@10"] == 1.0 for scores in results.values())
+
+
 def test_bench_takes_ids_as_get_does(embedded, cases):
     index = Index(embedded[0])
     assert [relevant for _, relevant in bench.load(cases, index)] == [{"notes/rl.md": 1}, {"notes/robots/brush.md": 2}]

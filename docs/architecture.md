@@ -31,9 +31,15 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   index's vectors reads all of them.
 - Keyword search ranks from postings of its own, read out of FTS5's index, which stays the reference (see below): per
   term, its chunks and how often it occurs in each, zlib-compressed. A long list comes in blocks of 4,096 postings,
-  after its ranges: for every 128 consecutive chunk ids holding the term, how many postings it has there and its best
-  score there, rounded up to a byte. Chunks' lengths come in blocks of 1,024 ids. They take about a third of FTS5's
+  after its ranges: for every 128 consecutive places holding the term, how many postings it has there and its best
+  score there, rounded up to a byte. Chunks' lengths come in blocks of 1,024 places. They take about a third of FTS5's
   index, which holds every word's positions.
+- The postings number chunks by their place in a topical order, once the chunks have vectors: clusters of clusters of
+  their codes (binary k-means by Hamming distance, 64 by 64), each next to the one closest to it, and a cluster's
+  chunks in the order of their ids. The chunks of a range then share their words, so its bounds are tight: over 3.2
+  million arXiv abstracts, questions scored a half to a twentieth as many ranges, the slowest in half the time, and
+  the postings took 8% less space. A table holds the chunk at each place; a chunk changed since takes the next free
+  place. `sift index` orders them anew once a fifth of the chunks got vectors since.
 - The postings follow FTS5 change by change: every chunk whose keyword entries change is marked in the same
   transaction, and `sift index` (or `reindex`) then adds a delta of those chunks, tokenized by FTS5 in a table of its
   own, and masks their old postings, as Lucene's segments do. Many deltas are merged into one; once 5% of the chunks
@@ -79,11 +85,17 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   represented by its best passage. Input that isn't valid FTS5 syntax is treated as exact phrases.
   - A query of words joined by AND, OR, NOT and parentheses (all of `query`'s, most of `search`'s) is answered from
     the postings by Block-Max Pruning ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): each term's best
-    score in a range of chunk ids, summed over the query's terms, bounds every chunk there, so ranges are scored best
+    score in a range of places, summed over the query's terms, bounds every chunk there, so ranges are scored best
     bound first until none left can beat the k-th best. FTS5 scores every match, about a microsecond each: "patients"
     matches 8 million PubMed passages and took 8 seconds, a question of a dozen words 15. Now most of a common word's
-    postings are never read. The results are FTS5's, score for score.
+    postings are never read. The results are FTS5's, score for score. A search reads the postings in one transaction,
+    as they were when it began, whatever another sift builds meanwhile.
   - Phrases, prefixes, NEAR and column filters are FTS5's to answer, as before.
+  - With a time budget, a search from the postings stops once it is spent and has found any, and returns the best found
+    so far, marked partial: ranges best bound first make that the anytime ranking of
+    [Mackenzie et al. 2021](https://arxiv.org/abs/2104.08976), every collection's best ranges scored. Out of time, it
+    looks no further down when copies left fewer than `k` works, and marks those partial too. Without, the results are
+    exact.
 - **Several collections:** searches ask each collection's index and merge the results, scored with the word counts of
   all of them, as one index would score them: a collection's own counts would take a word common in a small
   collection for a common word, and sink its pages. The postings add up the counts of all before scoring; through
@@ -91,12 +103,25 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   scores.
 - **`vsearch`:** every vector's code, its signs as one bit per dimension, waits in RAM: 96 bytes for 768 dimensions, a
   sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with
-  all of them by Hamming distance, on the CPU's cores, and the 4,000 nearest of all collections together are scored
-  exactly with their vectors from the index: about 0.1 seconds per search over 3.3 million passages. Over 3.2 million
-  arXiv abstracts this finds 99.6% of exact search's top 10, with an MRR of 0.9528 against 0.9530
+  all of them by Hamming distance, on the CPU's cores; the 10,000 nearest of all collections together, ties by id, are
+  ranked again by the query's own floats against their bits (a table lookup per byte), and the best 1,000 are scored
+  exactly with their vectors from the index. Over 3.2 million arXiv abstracts this finds 99.75% of exact search's top
+  10, and its known-item MRR, 0.9530; reading 1,000 vectors instead of 4,000 saves 18 ms warm
   ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#vectors-in-memory)). No index to
   build or tune, and no GPU. When the best passages come from a few documents, it looks further down until it has `k`
   documents.
+  - A filter on front matter is checked for the nearest candidates first, a batch at a time, until enough pass: listing
+    every chunk it lets through reads every document, 6 seconds over arXiv warm and 56 cold, while a check costs 4 to
+    90 microseconds. A filter that lets too few through for that, so that checking would cost more than a fifth of the
+    passages, is listed instead. Either way, the candidates are the nearest the filter lets through.
+- **Copies of a work:** a paper in several collections (arXiv and PubMed, say) is one hit, the best ranked, which
+  names the others under `also`: copies share a DOI, compared in any case and without a link's prefix. `search`,
+  `vsearch` and `similar` look further down until they have `k` works, and `similar` leaves out the document's own
+  copies; `query` keeps one hit per work of the candidates it reranks.
+- **Adaptive k:** asked for it, a search returns those of its `k` hits before the largest drop in score, among the
+  first 90% of the gaps between neighbours, and five more: Adaptive-k
+  ([Taguchi et al. 2025](https://arxiv.org/abs/2506.08479)). Over 2,000 arXiv titles, vsearch then returned 6 hits of
+  10 or 50 on average, with the paper sought in 99.2 to 99.6% of the cases it was among them.
 - **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are reranked together, in one GPU
   batch. The reranker reads each candidate's title, the front-matter values that share a word with the query (an
   author's name, an id; all of them would dilute the passage), and the passage.

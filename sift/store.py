@@ -18,9 +18,9 @@ from pathlib import Path
 
 from . import console, readers
 
-SCHEMA_VERSION = 8  # in SQLite's user_version; up to sift 1.7, one database held every collection (see `upgrade`)
+SCHEMA_VERSION = 9  # in SQLite's user_version; up to sift 1.7, one database held every collection (see `upgrade`)
 FIRST_LAYOUT = 6  # sift 1.8's, the first of a store per collection; its rows are counted once (see _count_rows)
-COUNTED_LAYOUT = 7  # sift 1.9's, which counts rows; 8 adds the keyword postings' tables (POSTINGS)
+COUNTED_LAYOUT = 7  # sift 1.9's, which counts rows; 8 adds the keyword postings' tables (POSTINGS), 9 their order
 TIMEOUT = 30  # seconds to wait for another sift's transaction
 WAL_LIMIT = 64 * 2**20  # bytes the write-ahead log shrinks back to once written into the store: SQLite keeps its size
 UPGRADE_WAIT = 3600  # seconds to wait while another sift counts a store's rows, once: minutes for a large one
@@ -85,9 +85,10 @@ COUNTS = (
 )
 CODES_BATCH = 100_000  # codes per batch as searches load them, and per transaction as vectors get them afterwards
 # Keyword search's own postings (see `postings`), built from FTS5's index, which stays the reference: per term and
-# segment its postings, long lists in blocks; chunks' lengths, in blocks of consecutive ids; the chunks whose postings
-# in older segments are void (masked). Once built (meta kw_built), every chunk whose FTS5 entries change is marked
-# dirty, in the same transaction, numbered by the change (meta kw_change), until the postings follow.
+# segment its postings, long lists in blocks; chunks' lengths, in blocks of consecutive places; the chunks whose
+# postings in older segments are void (masked); the chunk at each place, when the postings number chunks in an order
+# of their own (kw_order). Once built (meta kw_built), every chunk whose FTS5 entries change is marked dirty, in the
+# same transaction, numbered by the change (meta kw_change), until the postings follow.
 POSTINGS = """
 CREATE TABLE IF NOT EXISTS kw_segments(id INTEGER PRIMARY KEY, chunks INTEGER NOT NULL, tokens INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS kw_terms(term TEXT NOT NULL, segment INTEGER NOT NULL, df INTEGER NOT NULL, list INTEGER,
@@ -97,6 +98,7 @@ CREATE TABLE IF NOT EXISTS kw_lengths(segment INTEGER NOT NULL, block INTEGER NO
     PRIMARY KEY(segment, block)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS kw_masked(chunk INTEGER PRIMARY KEY, segment INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS kw_dirty(chunk INTEGER PRIMARY KEY, change INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS kw_order(block INTEGER PRIMARY KEY, data BLOB NOT NULL);
 """
 
 
@@ -268,8 +270,9 @@ def _count_rows(db, path):
 
 
 def _add_postings_tables(db):
-    """Add the keyword postings' tables to a store of sift 1.9 (layout 7 to 8), unbuilt: keyword search reads FTS5
-    until `sift index` builds them (see `postings`)."""
+    """Add the keyword postings' tables a store lacks: all of them to a store of sift 1.9 (layout 7), unbuilt, so that
+    keyword search reads FTS5 until `sift index` builds them (see `postings`); their order to one of 1.10 (layout 8),
+    empty, which keeps its postings' chunks in the order they were indexed."""
     db.execute("BEGIN IMMEDIATE")
     try:
         if db.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
@@ -285,6 +288,25 @@ def _add_postings_tables(db):
 def counts(db):
     """How many rows of each table in COUNTED the store holds, by table, as kept: no table is read."""
     return dict(db.execute("SELECT name, n FROM counts"))
+
+
+def read_codes(db):
+    """The codes of a store's vectors, by chunk id: (ids, rows of uint8), batch by batch; None if it has none. At most
+    as many as the vectors the store counts, which it keeps: counting the codes was a pass over millions before the one
+    that reads them, and codes added since the count wait for the next read."""
+    import numpy as np  # here, not at the top: the CLI starts with the standard library alone
+
+    n = counts(db)["vectors"]
+    ids, bits, row = np.empty(n, np.int64), None, 0
+    cursor = db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
+    while row < n and (batch := cursor.fetchmany(CODES_BATCH)):
+        batch = batch[: n - row]
+        if bits is None:
+            bits = np.empty((n, len(batch[0][1])), np.uint8)
+        rows = np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)
+        ids[row : row + len(batch)], bits[row : row + len(batch)] = [chunk for chunk, _ in batch], rows
+        row += len(batch)
+    return (ids[:row], bits[:row]) if row else None  # none, or all deleted meanwhile
 
 
 def add_codes(db):

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from sift import indexing, postings, topk
+from sift import embed, indexing, postings, store, topk
 from sift.catalog import Catalog
 
 from .conftest import PROSE_WORDS, write, write_prose
@@ -46,12 +46,12 @@ def brute(readers, query, k, by_document=True, allowed=None):
         for t in set(named):
             for part in reader.term(t):
                 df[t] += part.df
-                ids, tf = part.everything()
-                alive = reader.alive(part.segment, ids)
-                ids, tf = ids[alive], tf[alive]
-                lengths, docs = reader.lengths(part.segment, ids), reader.documents(ids)
+                places, tf = part.everything()
+                alive = reader.alive(part.segment, places)
+                places, tf = places[alive], tf[alive]
+                lengths, ids = reader.lengths(part.segment, places), reader.chunks_at(places)
                 term_scores = postings.term_scores(tf, lengths, average)  # as bm25 (see test_postings), to the bit
-                for chunk, s, doc in zip(ids.tolist(), term_scores.tolist(), docs.tolist()):
+                for chunk, s, doc in zip(ids.tolist(), term_scores.tolist(), reader.documents(ids).tolist()):
                     holding.setdefault(chunk, set()).add(t)
                     owner[chunk] = doc
                     score.setdefault(chunk, {})[t] = s
@@ -106,9 +106,13 @@ def reader(catalog, name="prose"):
     return postings.Reader(catalog.store(name))
 
 
-@pytest.fixture
-def built(prose):
+@pytest.fixture(params=["indexed", "topical"])
+def built(prose, request):
+    """The prose collection's postings, built with its chunks in the order indexed, or, embedded, in topical order."""
     catalog, _ = prose
+    if request.param == "topical":
+        request.getfixturevalue("fake_models")
+        embed.embed_pending(catalog)
     postings.build(catalog.store("prose"), catalog.get("prose").store)
     return catalog
 
@@ -178,6 +182,31 @@ def test_a_filter_is_kept_to(built):
     for _ in range(20):
         query, k = expression(rng), rng.choice([1, 10])
         same(topk.search(readers, query, k, allowed=allowed), brute(readers, query, k + 20, allowed=allowed), k, query)
+
+
+def test_with_time_to_spare_a_deadline_changes_nothing(built):
+    readers, query = [reader(built)], ("or", [("term", "w0"), ("term", "w1"), ("term", "w2")])
+    deadline = topk.Deadline(60)
+    assert topk.search(readers, query, 10, deadline=deadline) == topk.search(readers, query, 10)
+    assert not deadline.cut
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_out_of_time_a_search_returns_the_best_it_found_so_far(built, tmp_path, monkeypatch):
+    # Ranges are scored best bound first: what a search stopped early found is good, and each store has its best
+    # ranges scored, whichever comes first.
+    monkeypatch.setattr(topk, "FIRST_BATCH", 1)
+    write_prose(tmp_path / "more", 8, notes=60)
+    built.add(tmp_path / "more", "more")
+    indexing.index(built)
+    readers, query = [reader(built), reader(built, "more")], ("or", [("term", "w0"), ("term", "w1")])
+    deadline = topk.Deadline(0)
+    found = topk.search(readers, query, 200, by_document=False, deadline=deadline)
+    exact = dict(brute(readers, query, 10_000, by_document=False))
+    assert deadline.cut
+    assert 0 < len(found) < len(exact)
+    assert all(math.isclose(score, exact[chunk], rel_tol=1e-9) for chunk, score in found)  # scored exactly
+    assert {store.owner(chunk) for chunk, _ in found} == {store.owner(chunk) for chunk in exact}  # from both stores
 
 
 def test_a_term_in_no_chunk(built):
