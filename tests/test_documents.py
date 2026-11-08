@@ -390,13 +390,14 @@ def test_a_file_the_store_refuses_is_skipped_and_the_others_indexed(tmp_path, ho
     write(tmp_path / "c" / "a.md", "# A\n\nfine\n")
     write(tmp_path / "c" / "b.md", "# B\n\nrefused\n")
     write(tmp_path / "c" / "c.md", "# C\n\nraises\n")
+    write(tmp_path / "c" / "d.md", "# D\n\nrefused too\n")
     real = readers.load
 
     def load(path, fields=None):
         if path.endswith("c.md"):
             raise MemoryError("a record of gigabytes")
         found = real(path, fields)
-        if path.endswith("b.md"):
+        if path.endswith(("b.md", "d.md")):
             found[0][0] = found[0][0]._replace(title="B \udcf6")  # half a character, as a reader might leave
         return found
 
@@ -408,6 +409,7 @@ def test_a_file_the_store_refuses_is_skipped_and_the_others_indexed(tmp_path, ho
     err = capsys.readouterr().err
     assert "c: b.md: skipped (" in err
     assert "c: c.md: skipped (MemoryError: a record of gigabytes)" in err
+    assert "c: 4 files, 1 added, 0 changed, 0 removed, 3 unreadable" in err  # each counted once
     held = dict(catalog.store("c").execute("SELECT path, mtime IS NULL FROM sources"))
     assert held.get("b.md", 1)  # read again by the next index
     assert held.get("c.md", 1)

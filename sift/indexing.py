@@ -663,6 +663,7 @@ def _stored(db, rel, docs, stat, counts, note):
     except (ValueError, sqlite3.DataError, sqlite3.IntegrityError) as refused:
         db.execute("ROLLBACK TO file")
         counts.clear()
-        counts.update(before, unreadable=before["unreadable"] + 1)
+        counts.update(before)  # Counter.update adds: onto nothing, as they were
+        counts["unreadable"] += 1
         note(f"{rel}: skipped ({refused})")
     db.execute("RELEASE file")
