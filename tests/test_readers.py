@@ -8,8 +8,6 @@ import pytest
 
 from sift import readers
 
-from .conftest import JSON_NESTS_TO_SQLITES_LIMIT
-
 
 def pieces(text, first_line=1):
     """Chunks as (first line, last line, text): chunk() gives spans of the text."""
@@ -106,7 +104,7 @@ def test_a_note_of_front_matter_alone_is_its_front_matter():
     assert len(readers.note("---\na: 1\n---\nA body.\n", "Body.md").chunks) == 1  # the body alone, as before
 
 
-def test_front_matter_values_sqlite_cant_store_or_python_cant_nest():
+def test_front_matter_values_sqlite_cant_store_or_python_cant_nest(json_room):
     # A lone surrogate, "\ud800" in JSON, which SQLite refuses; lists nested deeper than Python recurses.
     deep = "[" * 5000 + "]" * 5000
     title, meta, _, _ = readers.parse(f'---\ntitle: "a \\ud800 b"\nx: {deep}\n---\n', "f")
@@ -121,8 +119,7 @@ def test_front_matter_values_sqlite_cant_store_or_python_cant_nest():
     # matter one more: still too deep, so as written.
     deep = "[" * 999 + "1" + "]" * 999
     _, meta, _, _ = readers.parse(f"---\ntags:\n  - {deep}\n  - fine\nk: [x, {deep}]\nok: [[1]]\n---\n", "f")
-    k = f"[x, {deep}]" if JSON_NESTS_TO_SQLITES_LIMIT else ["x", deep]  # else the item alone too deep for Python
-    assert meta == {"tags": [deep, "fine"], "k": k, "ok": [[1]]}
+    assert meta == {"tags": [deep, "fine"], "k": f"[x, {deep}]", "ok": [[1]]}
     assert readers._depth(meta) <= readers.JSON_DEPTH + 1  # what SQLite stores
 
 

@@ -307,8 +307,7 @@ def _locate(catalog, path):
         if rel == ".." or rel.startswith(("../", "/")):
             raise ValueError(f"{path!r} is outside the collection {name!r}")
     name, root = collection.name, collection.path
-    if not inside(root, os.path.normpath(os.path.join(root, *rel.split("/")))):  # "D:/x.md": Windows takes D:'s
-        raise ValueError(f"{path!r} is outside the collection {name!r}")
+    # "D:/x.md" is D:'s x.md, "x.md:s" a stream of x.md, ".. /x.md" the parent's x.md: whatever else Windows reads
     if WINDOWS and (other := next((p for p in rel.split("/") if ":" in p or p != p.rstrip(". ")), None)):
         raise ValueError(f"{name}/{rel}: Windows takes {other!r} for another name; give the file's name as it is")
     if not os.path.isdir(root):  # never take an unplugged drive for files deleted

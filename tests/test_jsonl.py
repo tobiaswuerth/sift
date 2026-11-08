@@ -8,7 +8,7 @@ from sift import embed, indexing, readers
 from sift.catalog import Catalog
 from sift.search import Index
 
-from .conftest import JSON_NESTS_TO_SQLITES_LIMIT, only, write
+from .conftest import only, write
 
 PAPERS = [
     {
@@ -161,7 +161,7 @@ def test_bad_lines_are_skipped_and_reported(tmp_path, home, capsys):
         assert reason in err
 
 
-def test_lines_sqlite_cant_store_or_python_cant_nest_stop_nothing(tmp_path, home, capsys):
+def test_lines_sqlite_cant_store_or_python_cant_nest_stop_nothing(tmp_path, home, capsys, json_room):
     # Exported chats hold an emoji's half alone ("\ud83d"), which SQLite refuses; a line nested a hundred thousand deep
     # Python can't read. Either stopped `sift index`, for every collection after it too, on every run.
     # SQLite stores JSON nested 1,000 deep at most: a line nested 1,100 deep stopped it all the same.
@@ -177,17 +177,15 @@ def test_lines_sqlite_cant_store_or_python_cant_nest_stop_nothing(tmp_path, home
     catalog = Catalog(home)
     catalog.add(tmp_path / "c", "c")
     indexing.index(catalog)
-    near = {"chat/5": "near the limit"} if JSON_NESTS_TO_SQLITES_LIMIT else {}  # else skipped like line 4
     assert dict(only(catalog).execute("SELECT path, text FROM docs")) == {
         "chat/1": "a � b",
         "chat/3": "kept",
-        **near,
+        "chat/5": "near the limit",
         "note.md": "# Note\n\nafter the chat\n",
     }
     err = capsys.readouterr().err
     assert "line 2: nested too deeply" in err
     assert "line 4: nested too deeply" in err
-    assert ("line 5: nested too deeply" in err) is not JSON_NESTS_TO_SQLITES_LIMIT
 
 
 def test_numbers_too_large_for_a_float_are_kept_as_written(tmp_path, home):

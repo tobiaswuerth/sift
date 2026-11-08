@@ -290,14 +290,14 @@ def test_reindex_refuses_what_sift_index_would_not_read(live, path, error):
         index.reindex(["vault/a.md", path])
 
 
-@pytest.mark.skipif(os.name != "nt", reason="a drive in a path, as Windows reads one")
-def test_reindex_refuses_a_path_on_another_drive(live):
+def test_reindex_refuses_a_path_on_another_drive(live, monkeypatch):
     # "vault/D:/README.md": joined to the vault's folder, Windows threw the folder away and read D:'s file, which
     # searches then served, and the UI too.
     index, vault = live
+    monkeypatch.setattr(indexing, "WINDOWS", True)
     drive = next(d for d in "CDEFGHIJ" if not str(vault).upper().startswith(d))
-    for path in (f"vault/{drive}:/README.md", f"vault/sub/{drive}:/x.md", f"vault/{drive}:x.md"):
-        with pytest.raises(ValueError, match="outside the collection"):
+    for path in (f"vault/{drive}:/README.md", f"vault/sub/{drive}:/x.md", f"vault/{drive}:x.md", "vault/.. /x.md"):
+        with pytest.raises(ValueError, match=r"Windows takes .* for another name"):
             index.reindex([path])
 
 
