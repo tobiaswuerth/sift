@@ -167,6 +167,24 @@ def test_chunk_breaks_unbroken_text():
     assert [len(c[2]) for c in chunks] == [readers.CHUNK_CHARS, readers.CHUNK_CHARS, 10]
 
 
+def test_chunk_breaks_a_long_line_in_time_linear_in_its_length():
+    # Each piece cut off copied the rest of the line: 16 MB on one line, a log or a dump, took 8 seconds, 100 MB about
+    # five minutes, holding up `sift index` or a server's reindex. Four times the text, four times the time.
+    import time
+
+    def took(n):
+        text, best = "y" * n, float("inf")
+        for _ in range(3):
+            start = time.perf_counter()
+            found = list(readers.chunk(text))
+            best = min(best, time.perf_counter() - start)
+        assert len(found) == -(-n // readers.CHUNK_CHARS)
+        assert (found[0][2], found[-1][2] + found[-1][3]) == (0, n)  # the whole line, in pieces
+        return best
+
+    assert took(8 << 20) < 8 * took(2 << 20)
+
+
 # --- files -------------------------------------------------------------------
 
 

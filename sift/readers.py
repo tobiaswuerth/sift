@@ -189,11 +189,13 @@ def chunk(text, first_line=1):
     """
     lines, pos = [], 0  # (line number, position, line)
     for n, line in enumerate(LINE.findall(text), first_line):
-        while len(line) > CHUNK_CHARS:  # break overlong lines at whitespace
-            cut = line.rfind(" ", 0, CHUNK_CHARS) + 1 or CHUNK_CHARS
-            lines.append((n, pos, line[:cut]))
-            pos, line = pos + cut, line[cut:]
-        lines.append((n, pos, line))
+        start = 0
+        while len(line) - start > CHUNK_CHARS:  # break overlong lines at whitespace, the rest of the line not copied
+            space = line.rfind(" ", start, start + CHUNK_CHARS)
+            end = space + 1 if space >= 0 else start + CHUNK_CHARS
+            lines.append((n, pos + start, line[start:end]))
+            start = end
+        lines.append((n, pos + start, line[start:]))
         pos += len(line)
 
     pieces, buf, size = [], [], 0
