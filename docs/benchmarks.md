@@ -198,7 +198,8 @@ their 6,000 titles (30 tokens); the mean of 2 runs, and for the titles the best 
 
 - **Grouping by tokens is what pays:** a batch is padded to its longest text, and characters tell tokens poorly.
   Grouped by characters, the passages were padded to 1.51 times their tokens; by tokens, to 1.04 times.
-- **Larger batches of short texts don't:** a batch of 140 already keeps the GPU busy, so 1,024 only adds padding.
+- **Larger batches of short texts don't:** a batch of 140 already gives the GPU all it can compute at once, so 1,024
+  only adds padding.
   sift therefore sizes one batch for the longest input the model takes, and uses it for every length.
 - **One CPU thread beside the GPU** made embedding 5% faster and freed most of the cores: PyTorch's other threads only
   waited busily after each batch.
@@ -253,8 +254,8 @@ as by `sift serve`. Every query found the same documents as FTS5, score for scor
 - **Ranges of 128 or 64 passages:** on PubMed, with the postings in memory, 128 answered single words in 2.2 ms against
   5.8 and questions in 16 against 23 (median), with the longest question slower (0.53 s against 0.24); 128 also takes
   8% less storage.
-- **Building** reads FTS5's vocabulary in worker processes, a range of terms each: 69 seconds for arXiv on 24, 18
-  minutes for PubMed, where "the" alone, read by one worker, takes minutes.
+- **Building** reads FTS5's vocabulary in worker processes, a range of terms each: 69 seconds for arXiv on 24, 13
+  minutes for PubMed on 31 (beside a running `sift embed`), where "the" alone, read by one worker, takes minutes.
 
 ### Links between notes
 

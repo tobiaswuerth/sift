@@ -239,7 +239,7 @@ def test_a_folder_that_cannot_be_listed_keeps_its_documents(corpus, monkeypatch,
     indexing.index(catalog)
     assert "robots/brush.md" in doc_ids(catalog)
     assert "notes: robots/ can't be read (Access is denied): 1 file in it kept as indexed" in capsys.readouterr().err
-    monkeypatch.undo()
+    monkeypatch.setattr(indexing.os, "scandir", real)  # not undo(): that would undo the fixtures' too, the home too
     shutil.rmtree(root / "robots")  # gone for good: its documents go
     indexing.index(catalog)
     assert "robots/brush.md" not in doc_ids(catalog)
