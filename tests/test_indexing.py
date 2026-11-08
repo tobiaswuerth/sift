@@ -110,11 +110,12 @@ def test_a_note_a_server_removed_meanwhile_leaves_no_documents_behind(corpus, mo
     # removed its documents, and searches found them for good.
     catalog, root = corpus
     write(root / "rl.md", "# Reward shaping\n\nWritten again.\n")
+    real = indexing._read_scans
     reindexed_meanwhile(monkeypatch, catalog, ["notes/rl.md"], then=(root / "rl.md").unlink)
     indexing.index(catalog)
     db = catalog.store("notes")
     assert orphans(db) == 0
-    monkeypatch.undo()
+    monkeypatch.setattr(indexing, "_read_scans", real)  # not undo(): that would undo the fixtures' too
     indexing.index(catalog)
     assert "rl.md" not in doc_ids(catalog)
 
