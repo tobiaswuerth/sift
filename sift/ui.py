@@ -60,7 +60,7 @@ class View:
 
     @classmethod
     def of(cls, params):
-        k, at, path = params.get("k", ""), params.get("at", ""), params.get("path", "").strip("/")
+        k, at, path = _count(params.get("k", "")), _count(params.get("at", "")), params.get("path", "").strip("/")
         return cls(
             q=params.get("q", "").strip(),
             mode=params.get("mode") if params.get("mode") in MODES else "search",
@@ -68,13 +68,13 @@ class View:
             path=path and path + "/",  # "2024", "/2024/": the folder 2024/
             f=tuple(params.getlist("f")),
             sort=params.get("sort", ""),
-            k=min(int(k), MOST) if re.fullmatch("[0-9]+", k) and int(k) > 0 else PAGE,
+            k=min(k, MOST) if k else PAGE,
             similar=params.get("similar", ""),
             to=params.get("to", ""),
             by=params.get("by", ""),
             doc=params.get("doc", ""),
             lines=params.get("lines", ""),
-            at=int(at) if re.fullmatch("[0-9]+", at) else 0,
+            at=at or 0,
         )
 
     def href(self, **changes):
@@ -102,6 +102,11 @@ class View:
         """This view with the filter key=value added, or removed if it is there; on the first page."""
         pair = f"{key}={value}"
         return self.href(f=tuple(p for p in self.f if p != pair) if pair in self.f else (*self.f, pair), k=PAGE)
+
+
+def _count(text):
+    """A count from the address, or None for anything else: one too long for int() to read, too."""
+    return int(text) if re.fullmatch("[0-9]{1,9}", text) else None
 
 
 def _forms(text):

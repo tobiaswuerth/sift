@@ -186,9 +186,11 @@ def test_folders_with_brackets_in_their_names(embedded):
     assert ids(browser.get(html.unescape(folder[1]))) == ["notes/drafts [old]/a.md"]
 
 
-@pytest.mark.parametrize("k", ["²", "-3", "0", "many", "1e3", ""])
+@pytest.mark.parametrize(
+    "k", ["²", "-3", "0", "many", "1e3", "", pytest.param("9" * 5000, id="more digits than int() reads")]
+)
 def test_odd_page_sizes_show_a_page(browser, k):
-    response = browser.get("/ui/", params={"c": "notes", "k": k})
+    response = browser.get("/ui/", params={"c": "notes", "k": k, "doc": "notes/rl.md", "at": k})
     assert response.status_code == 200
     assert len(ids(response)) == 3
 
