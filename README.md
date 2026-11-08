@@ -7,9 +7,10 @@
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/tobiaswuerth/sift)](https://github.com/tobiaswuerth/sift/blob/main/LICENSE)
 
-**Local search over your documents, for AI agents.** sift indexes folders of documents and notes, embeds them on your
-GPU, and serves keyword, semantic and hybrid search to Claude Code and other agents over MCP (Model Context Protocol).
-Everything runs on your own machines: no cloud services, no API keys.
+**Local search over your documents, for AI agents.** sift indexes folders of documents and notes (Markdown, Obsidian
+vaults, PDF, Office files, emails), embeds them on your GPU, and serves keyword, semantic and hybrid search to Claude
+Code, Cursor and other agents as an MCP (Model Context Protocol) server. Everything runs on your own machines: no cloud
+services, no API keys.
 
 ![sift ui: a keyword search over 3.2 million arXiv abstracts, filtered by category, with one paper open](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-search.png)
 
