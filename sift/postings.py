@@ -366,7 +366,7 @@ def _topical(db, ids, name):
     if not mine.any():
         return None
     console.say(f"{name}: ordering {console.count(int(mine.sum()), 'passage')} by topic, for the keyword postings ...")
-    ordered = order.topical(coded[mine], bits[mine])
+    ordered = order.topical(*((coded, bits) if mine.all() else (coded[mine], bits[mine])))  # all, as a rule: no copy
     return np.r_[ordered, ids[~np.isin(ids, ordered)]]
 
 

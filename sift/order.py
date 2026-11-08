@@ -4,9 +4,9 @@ a range mixes every topic: a question of a dozen common words bounded most range
 
 The order comes from the chunks' codes (see vectors), which the store keeps anyway: clusters of clusters (LEVELS), by
 binary k-means, Hamming distance and each cluster's bits by majority, trained on a sample; each cluster next to the
-one closest to it, and the chunks of a leaf in the order of their ids. Over 3.2 million arXiv abstracts,
-questions scored a half to a twentieth as many ranges, the slowest in half the time (docs/benchmarks.md), and the
-postings took 8% less space."""
+one closest to it, and the chunks of a leaf in the order of their ids. Over 3.2 million arXiv abstracts, questions
+scored a half to a twentieth as many ranges, the slowest in half the time (docs/benchmarks.md), and the postings took
+8% less space."""
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -32,7 +32,7 @@ def topical(ids, bits):
 def _cluster(words, rows, level, prefix, leaf, rng):
     """Number the leaves under the node of these rows, at this level, from prefix * LEVELS[level] on."""
     k = LEVELS[level]
-    centroids, assign = _kmeans(words[rows], k, rng)
+    centroids, assign = _kmeans(words if len(rows) == len(words) else words[rows], k, rng)  # all: no copy of them
     rank = np.empty(len(centroids), np.int64)
     rank[_chain(centroids)] = np.arange(len(centroids))
     for c in range(len(centroids)):

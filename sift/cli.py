@@ -72,6 +72,8 @@ def _print_hits(hits, as_json):
             print(" " * 10 + "  ".join(f"{k}: {_shown(v)}" for k, v in h["fields"].items()))
         if "text" in h:
             print(textwrap.indent(textwrap.shorten(h["text"], 300), " " * 10))
+    if any(h.get("partial") for h in hits):
+        console.say("out of time: the best found so far; better matches may be missing")
 
 
 def _print_links(found, as_json):

@@ -265,6 +265,18 @@ def test_postings_number_chunks_in_topical_order(ordered):
     assert live(db) == fts5(db)
 
 
+def test_codes_of_chunks_the_build_did_not_read_are_left_out(prose, fake_models, monkeypatch):
+    # A chunk added, and embedded, after the build read the lengths: its code is there, its postings aren't yet.
+    catalog, _ = prose
+    embed.embed_pending(catalog)
+    db = catalog.store("prose")
+    ids, real = chunk_ids(db), postings._lengths
+    monkeypatch.setattr(postings, "_lengths", lambda *args: tuple(part[:-1] for part in real(*args)))
+    postings.build(db, path_of(catalog))
+    places = np.arange(len(ids) - 1, dtype=np.int64) + ids[0]
+    assert sorted(postings.Reader(db).chunks_at(places).tolist()) == ids[:-1].tolist()
+
+
 def test_ordering_says_so(prose, fake_models, capsys):
     # Minutes over tens of millions of passages, between the build's other steps: without a word, it looked hung.
     catalog, _ = prose
