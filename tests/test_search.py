@@ -291,6 +291,13 @@ def test_a_column_filter_holds_when_nothing_matches(corpus, query):
     assert Index(corpus[0]).search(query) == []
 
 
+@pytest.mark.parametrize("depth", [300, 3000])
+def test_parentheses_nested_deeply_are_searched_as_words(corpus, depth):
+    # The parser recursed once per parenthesis: RecursionError, a traceback in the server's log and an error page in
+    # the UI, where any query FTS5 can't read is searched as its words.
+    assert ids(Index(corpus[0]).search("(" * depth + "reward" + ")" * depth)) == ["notes/rl.md"]
+
+
 def test_unusable_query_is_a_clear_error(corpus, monkeypatch):
     monkeypatch.setattr(search, "_phrases", lambda q: "(")
     with pytest.raises(ValueError, match="invalid search query"):

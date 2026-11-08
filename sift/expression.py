@@ -136,7 +136,7 @@ def parse(query):
     parser = _Parser(tokens)
     try:
         node = parser.any()
-    except (SyntaxError, IndexError):
+    except (SyntaxError, IndexError, RecursionError):  # RecursionError: parentheses nested hundreds deep
         return None
     return node if parser.peek() is None and node is not NOTHING else None
 
