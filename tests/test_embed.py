@@ -261,19 +261,22 @@ def test_embed_pending_skips_chunks_without_text(embedded, capsys):
     assert vector_count(catalog) == 3
 
 
-def test_counting_the_pending_chunks_reads_no_document(embedded, monkeypatch):
-    # Reading each pending chunk's document to count it took 190 s of a start on 15 million PubMed chunks, against
-    # 19 s without.
-    catalog, _ = embedded
+def test_embedding_starts_without_counting_or_reading_the_vectors(embedded):
+    # Counting the chunks without a vector took 9 minutes over 30 million PubMed chunks from a cold disk, and finding
+    # them read each one's page of vectors, the vectors themselves: 37 GB. The store keeps how many there are, and the
+    # codes, a sixteenth of the vectors' size, tell which.
+    catalog, root = embedded
+    write(root / "new.md", "# New\n\nA new note about pigments.\n")
+    indexing.index(catalog)
     statements = []
     catalog.store("notes").set_trace_callback(statements.append)
     try:
         embed.embed_pending(catalog)
     finally:
         catalog.store("notes").set_trace_callback(None)
-    counts = [s for s in statements if "count(*)" in s and "vectors" in s]
-    assert counts
-    assert not any("docs" in s for s in counts)
+    assert vector_count(catalog) == 4
+    assert not any("count(*)" in s for s in statements)
+    assert not any("FROM vectors" in s for s in statements)  # written, never read
 
 
 # --- the store read and written beside the model ----------------------------------

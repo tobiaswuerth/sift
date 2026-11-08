@@ -41,6 +41,9 @@ def scored(hits):
     return [(h["id"], h["lines"], round(h["score"], 6)) for h in hits]
 
 
+DASH = chr(0x2013)  # an en dash
+
+
 def agree(got, want):
     """The same hits, score for score; among hits of equal score any order (FTS5 keeps none), and at the last score,
     where the k-th place cuts a tie, any of them."""
@@ -63,11 +66,17 @@ def agree(got, want):
         ("w7 OR w8", {"collection": "more"}),
         ("absent", {}),
         ("w2 OR absent", {}),  # no chunk with all: any of them
+        ('"w1 w2"', {"k": 20}),  # a phrase
+        ('w3 "w2 w1" w0', {}),
+        ("w1-w2 w4", {}),  # no FTS5 syntax: as its words quoted, a phrase among them
+        ('"w5 w6" OR w40 OR "w7 w8"', {"k": 25}),
+        (f"w1 {DASH} w2", {}),  # a word of no token, left out
+        (f"(w3 AND {DASH}) OR w4", {}),
     ],
 )
 def test_keyword_search_from_the_postings_finds_what_fts5_finds(prose, tmp_path, query, options):
-    # The postings answer queries of terms, AND, OR and NOT once they are ready; FTS5 answers otherwise, as before,
-    # and finds the same, score for score.
+    # The postings answer queries of words and phrases, AND, OR and NOT once they are ready; FTS5 answers otherwise,
+    # as before, and finds the same, score for score.
     catalog, _ = prose
     write_prose(tmp_path / "more", 8, notes=40)
     catalog.add(tmp_path / "more", "more")
@@ -76,6 +85,15 @@ def test_keyword_search_from_the_postings_finds_what_fts5_finds(prose, tmp_path,
     fast = scored(Index(catalog).search(query, **options))
     through_fts5(catalog)
     agree(fast, scored(Index(catalog).search(query, **options)))
+
+
+def test_a_phrase_is_found_from_the_postings(prose, monkeypatch):
+    # Not by FTS5 with the whole query, which reads every posting of each of its words, a question's "of" and "the" too.
+    catalog, _ = prose
+    asked, real = [], topk.search
+    monkeypatch.setattr(topk, "search", lambda *args, **kwargs: asked.append(args[1]) or real(*args, **kwargs))
+    Index(catalog).search("w1-w2 w3", k=5)
+    assert asked[0] == ("and", [("phrase", ("w1", "w2")), ("term", "w3")])
 
 
 @pytest.mark.usefixtures("small_lists")

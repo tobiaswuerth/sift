@@ -263,6 +263,21 @@ as by `sift serve`. Every query found the same documents as FTS5, score for scor
   property prediction": 197 instead of 3,821), with the same results. Single words took 0.7 ms instead of 0.3: a
   word's best passages lie in more ranges. The blocks took 0.61 GB instead of 0.66, the order 13 MB more. Ordering
   3.2 million codes takes about a minute.
+- **Common words read only where they matter** (sift 1.11.1): with all words required, the rarest read first and the
+  next only where chunks holding all before it are left; with any of them, the words that together can't reach the
+  k-th best score ("the", "of") read only for the chunks within reach (MaxScore). Over arXiv, warm, with the same
+  results:
+
+  | Query | 1.11.0 | 1.11.1 |
+  |---|---|---|
+  | seven words, all required | 65 ms | 7 ms |
+  | questions of 10 to 14 words | 0.44 to 2.5 s | 34 to 81 ms |
+  | `query`'s keyword candidates (any of the words) | 22 to 230 ms | 9 to 62 ms |
+  | a question with a hyphenated word ("first-stage"), through FTS5 before | 8.7 s | 0.43 s |
+  | quoted phrases, through FTS5 before | 10 to 97 ms | 3 to 16 ms |
+
+  On the live index of six collections (46 million passages), the 14-word question had taken 13.5 s and the
+  hyphenated one over ten minutes.
 - **A time budget** ends a search from the postings early, with the best found so far: ranges are scored best bound
   first, so the best results tend to come first ([Mackenzie et al. 2021](https://arxiv.org/abs/2104.08976)). Not
   measured on these queries yet.
@@ -344,6 +359,11 @@ and hit@10 are those of each paper's own first passage. "+ exact top N" scores t
 
   Known items stand out: most queries had their largest drop after the first hit. Questions with many answers need
   more, so sift keeps the paper's five.
+- **Centering before the signs** (not adopted): codes of v − mean against q − mean find more of exact search's top
+  10 by Hamming distance alone, 0.9917 instead of 0.9794 among the 1,000 nearest. But ranking the nearest by the
+  query's floats against such bits loses it: the centered vectors are no longer of one length. The whole cascade
+  found 0.9788 instead of 0.9975; a correction per vector (as RaBitQ stores) might win back about 0.0015, against a
+  new format and new codes for every vector.
 - **On a copy of a real index**, 145 GB with 3,261,593 vectors (arXiv abstracts and notes), on the i9-14900K while it
   was busy with other work: the upgrade from sift 1.6 added the codes in 65 seconds, `sift serve` loads them in 2.2
   seconds, and a search (Hamming scan and exact scores) takes 95 ms (median; 108 ms at the 90th percentile). Of 200

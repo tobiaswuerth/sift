@@ -1,6 +1,8 @@
 """The best documents for a keyword query from the postings (sift.topk): exactly what scoring every posting finds, and
 what FTS5's bm25 finds, for random expressions of AND, OR and NOT, through changes, across stores, with filters."""
 
+import collections
+import itertools
 import math
 import random
 from pathlib import Path
@@ -10,6 +12,7 @@ import pytest
 
 from sift import embed, indexing, postings, store, topk
 from sift.catalog import Catalog
+from sift.expression import tokenize
 
 from .conftest import PROSE_WORDS, write, write_prose
 
@@ -30,13 +33,38 @@ def fts(node):
     """The expression as an FTS5 query."""
     if node[0] == "term":
         return f'"{node[1]}"'
+    if node[0] == "phrase":
+        return '"' + " ".join(node[1]) + '"'
     if node[0] == "not":
         return f"({fts(node[1])} NOT {fts(node[2])})"
     return "(" + f" {node[0].upper()} ".join(fts(child) for child in node[1]) + ")"
 
 
+def occurrences(tokens, phrase):
+    """How often the phrase (tokens) occurs in tokens, overlapping occurrences each."""
+    return sum(tuple(tokens[i : i + len(phrase)]) == phrase for i in range(len(tokens) - len(phrase) + 1))
+
+
+def postings_of(reader, leaf):
+    """(chunk ids, counts, lengths, df) of the live chunks holding a leaf, per segment: a term's from its postings, with
+    the df the segment keeps; a phrase's from the chunks' texts, with the number of chunks holding it."""
+    if isinstance(leaf, str):
+        for part in reader.term(leaf):
+            places, tf = part.everything()
+            alive = reader.alive(part.segment, places)
+            places, tf = places[alive], tf[alive]
+            yield reader.chunks_at(places), tf, reader.lengths(part.segment, places), part.df
+        return
+    rows = reader.db.execute("SELECT id, title, text, meta FROM chunk_text")
+    counts = {chunk: sum(occurrences(tokenize(c), leaf) for c in columns if c) for chunk, *columns in rows}
+    ids = np.array([chunk for chunk, n in counts.items() if n], np.int64)
+    sizes = postings.sizes(reader.db, ids)
+    yield ids, np.array([counts[c] for c in ids.tolist()]), np.array([sizes[c] for c in ids.tolist()]), len(ids)
+
+
 def brute(readers, query, k, by_document=True, allowed=None):
-    """Every live posting scored: the reference, written apart from topk."""
+    """Every live posting scored, and every phrase counted in every chunk's text: the reference, written apart from
+    topk."""
     named = topk.terms_of(query)
     chunks = sum(r.chunks for r in readers)
     average = sum(r.tokens for r in readers) / chunks
@@ -44,12 +72,8 @@ def brute(readers, query, k, by_document=True, allowed=None):
     df = dict.fromkeys(named, 0)
     for reader in readers:
         for t in set(named):
-            for part in reader.term(t):
-                df[t] += part.df
-                places, tf = part.everything()
-                alive = reader.alive(part.segment, places)
-                places, tf = places[alive], tf[alive]
-                lengths, ids = reader.lengths(part.segment, places), reader.chunks_at(places)
+            for ids, tf, lengths, n in postings_of(reader, t):
+                df[t] += n
                 term_scores = postings.term_scores(tf, lengths, average)  # as bm25 (see test_postings), to the bit
                 for chunk, s, doc in zip(ids.tolist(), term_scores.tolist(), reader.documents(ids).tolist()):
                     holding.setdefault(chunk, set()).add(t)
@@ -58,8 +82,8 @@ def brute(readers, query, k, by_document=True, allowed=None):
     weight = {t: max(math.log((chunks - df[t] + 0.5) / (df[t] + 0.5)), 1e-6) for t in set(named)}
 
     def counts(node, held):
-        """(whether it holds, the terms that count): FTS5 clears the terms of an AND or NOT that fails."""
-        if node[0] == "term":
+        """(whether it holds, the leaves that count): those of an AND or NOT that fails count nothing."""
+        if node[0] in topk.LEAVES:
             return node[1] in held, [node[1]] if node[1] in held else []
         if node[0] == "not":
             left, terms = counts(node[1], held)
@@ -142,6 +166,85 @@ def test_finds_what_fts5_finds(built, seed):
         same(topk.search([reader(built)], query, k), more, k, query)
 
 
+def phrased(rng, pairs, depth=0, deepest=2):
+    """A random expression of terms and phrases (of `pairs`, tuples of tokens), AND, OR and NOT."""
+    if depth >= deepest or rng.random() < 0.35:
+        return ("phrase", rng.choice(pairs)) if rng.random() < 0.5 else ("term", rng.choice(TERMS))
+    kind = rng.choice(["and", "or", "or", "not"])
+    if kind == "not":
+        return ("not", phrased(rng, pairs, depth + 1, deepest), phrased(rng, pairs, depth + 1, deepest))
+    return (kind, [phrased(rng, pairs, depth + 1, deepest) for _ in range(rng.randint(2, 3))])
+
+
+def adjacent(db):
+    """Pairs of tokens one after the other in the collection's chunks: phrases it holds."""
+    texts = [t for (t,) in db.execute("SELECT text FROM chunk_text ORDER BY id LIMIT 30")]
+    return sorted({pair for text in texts for pair in itertools.pairwise(tokenize(text))})
+
+
+def phrases(db):
+    """Phrases the collection holds: pairs of tokens, and phrases that can overlap themselves ("a a", "a b a"), each
+    occurrence of which FTS5 counts."""
+    texts = [tokenize(t) for (t,) in db.execute("SELECT text FROM chunk_text ORDER BY id")]
+    overlapping = {w[:3] for t in texts for w in zip(t, t[1:], t[2:]) if w[0] == w[2]}
+    overlapping |= {pair for t in texts for pair in itertools.pairwise(t) if pair[0] == pair[1]}
+    return adjacent(db) + sorted(overlapping)[:6]
+
+
+@pytest.mark.usefixtures("small_lists")
+@pytest.mark.parametrize("seed", range(4))
+def test_phrases_find_what_counting_every_phrase_finds(built, seed):
+    # Nested deeper, where FTS5's own scan counts a phrase by where its reader stands, and may miss it.
+    rng, readers = random.Random(300 + seed), [reader(built)]
+    pairs = phrases(built.store("prose"))
+    assert any(p[0] == p[-1] for p in pairs)
+    for _ in range(25):
+        query, k, by_document = phrased(rng, pairs, deepest=3), rng.choice([1, 3, 10, 50]), rng.random() < 0.7
+        allowed = (lambda chunks: chunks % 3 > 0) if rng.random() < 0.3 else None
+        want = brute(readers, query, k + 20, by_document, allowed)
+        same(topk.search(readers, query, k, by_document, allowed), want, k, query)
+
+
+@pytest.mark.usefixtures("small_lists")
+@pytest.mark.parametrize("seed", range(4))
+def test_phrases_find_what_fts5_finds(built, seed):
+    # A phrase, or a hyphenated word, went to FTS5 with the whole query, which read every posting of its other words:
+    # over ten minutes for a question over 30 million PubMed passages. The postings bound it by its tokens, and FTS5
+    # checks it in the chunks they leave.
+    rng, db = random.Random(200 + seed), built.store("prose")
+    pairs = adjacent(db)
+    sql = """WITH p AS MATERIALIZED (SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
+             JOIN chunks c ON c.id = fts.rowid WHERE fts MATCH ?)
+             SELECT passage, max(score) FROM p GROUP BY doc ORDER BY 2 DESC, 1 LIMIT ?"""
+    queries = [("phrase", pairs[0]), ("and", [("phrase", pairs[1]), ("term", "w1")])]
+    queries += [("or", [("phrase", pairs[2]), ("term", "w2"), ("term", "w0")])]
+    queries += [phrased(rng, pairs) for _ in range(20)]
+    for query in queries:
+        k = rng.choice([1, 5, 20])
+        more = [tuple(r) for r in db.execute(sql, (fts(query), k + 20))]
+        same(topk.search([reader(built)], query, k), more, k, query)
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_common_phrase_among_rarer_words_is_counted_only_where_they_bring_a_chunk_near(built, monkeypatch):
+    # In an OR, a phrase all of whose words are common can't bring a chunk to the k-th best score alone (MaxScore).
+    monkeypatch.setattr(topk, "FIRST_BATCH", 1)  # the k-th best score rises before the last range
+    db = built.store("prose")
+    texts = [t for (t,) in db.execute("SELECT text FROM chunk_text")]
+    common = collections.Counter(p for text in texts for p in itertools.pairwise(tokenize(text))).most_common(1)[0][0]
+    query = ("or", [("phrase", common), ("term", "w25"), ("term", "w27"), ("term", "muller")])
+    sql = """WITH p AS MATERIALIZED (SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
+             JOIN chunks c ON c.id = fts.rowid WHERE fts MATCH ?)
+             SELECT passage, max(score) FROM p GROUP BY doc ORDER BY 2 DESC, 1 LIMIT ?"""
+    held, asked = reader(built), []
+    real = topk._Store._holds
+    monkeypatch.setattr(
+        topk._Store, "_holds", lambda store, phrase, places: asked.append(len(places)) or real(store, phrase, places)
+    )
+    same(topk.search([held], query, 2), [tuple(r) for r in db.execute(sql, (fts(query), 22))], 2, query)
+    assert asked  # looked up as a lazy leaf too
+
+
 @pytest.mark.usefixtures("small_lists")
 def test_through_changes_and_deltas(built, monkeypatch):
     monkeypatch.setattr(postings, "SMALL", 0)
@@ -154,8 +257,9 @@ def test_through_changes_and_deltas(built, monkeypatch):
         postings.update(built.store("prose"), built.get("prose").store)
         readers = [reader(built)]
         assert len(readers[0].segments) == round_ + 2
+        pairs = phrases(built.store("prose"))
         for _ in range(15):
-            query, k = expression(rng), rng.choice([1, 10, 40])
+            query, k = phrased(rng, pairs) if rng.random() < 0.5 else expression(rng), rng.choice([1, 10, 40])
             same(topk.search(readers, query, k), brute(readers, query, k + 20), k, query)
 
 
@@ -166,9 +270,9 @@ def test_across_stores_with_their_statistics_as_one(built, tmp_path):
     indexing.index(built)
     postings.build(built.store("more"), built.get("more").store)
     readers = [reader(built), reader(built, "more")]
-    rng = random.Random(4)
+    rng, pairs = random.Random(4), phrases(built.store("prose"))
     for _ in range(20):
-        query, k = expression(rng), rng.choice([1, 10, 30])
+        query, k = phrased(rng, pairs) if rng.random() < 0.5 else expression(rng), rng.choice([1, 10, 30])
         same(topk.search(readers, query, k), brute(readers, query, k + 20), k, query)
 
 
@@ -260,6 +364,76 @@ def test_terms_in_ranges_apart(tmp_path, home, monkeypatch):
     same(topk.search(readers, query, 100), brute(readers, query, 120), 100, query)
     (beta,) = readers[0].term("beta")
     assert [g for g in groups if not set(g) & set(beta.ranges()[0].tolist())]  # a group of alpha's ranges alone
+
+
+def in_ranges(tmp_path, home, groups):
+    """A collection of a note per text, each note one chunk, numbered in the order given: each group a range of
+    places (small_lists: 4 a range), filled up with notes of "filler". Its postings built anew: (catalog, reads), the
+    ranges each term was read in (see _Store._in), counted once the reading is counted (`count`)."""
+    root, catalog = tmp_path / "ranged", Catalog(home)
+    root.mkdir()
+    catalog.add(root, "ranged")
+    texts = ["filler"] * 3  # chunk ids start one past the collection's first, a multiple of 4: 3 places in range 0
+    for group in groups:
+        texts += [*group, *["filler"] * (4 - len(group))]
+    for n, text in enumerate(texts):  # a note at a time: its chunk takes the next id, whatever order folders list in
+        write(root / f"n{n:04}.md", f"{text}\n")
+        indexing.index(catalog)
+    postings.build(catalog.store("ranged"), catalog.get("ranged").store)
+    return catalog
+
+
+def counting_reads(monkeypatch):
+    """How many ranges each term is read in, by _Store._in, from now on."""
+    read, real = collections.Counter(), topk._Store._in
+
+    def counted(store, term, group):
+        read[term] += len(group)
+        return real(store, term, group)
+
+    monkeypatch.setattr(topk._Store, "_in", counted)
+    return read
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_all_of_some_words_reads_each_only_where_chunks_with_all_rarer_ones_are_left(tmp_path, home, monkeypatch):
+    # A question's words, all required, that no chunk holds together: nothing found, nothing pruned, and every word,
+    # "the" and "of" too, read and scored in every range they all occur in: 1.2 s over 3.2M arXiv abstracts.
+    catalog = in_ranges(tmp_path, home, [["alpha beta gamma", "alpha beta delta", "alpha beta"]] * 10)
+    readers, read = [reader(catalog, "ranged")], counting_reads(monkeypatch)
+    query = ("and", [("term", "alpha"), ("term", "beta"), ("term", "gamma"), ("term", "delta")])
+    assert topk.search(readers, query, 10) == brute(readers, query, 10) == []
+    assert read["gamma"] == 10  # every range holds all four, in different chunks
+    assert read["alpha"] == read["beta"] == 0  # no chunk was left with the rarer ones
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_word_in_every_chunk_is_read_only_where_the_others_bring_a_chunk_near(tmp_path, home, monkeypatch):
+    # "of", "in", "the": in an OR of a question's words, they were read and scored in every range scored, and made a
+    # question ten times as slow, though all together they can't bring a chunk to the k-th best score. Here the best
+    # chunk holds apple and banana; the other ranges' bounds add up an apple's and a banana's in different chunks.
+    monkeypatch.setattr(topk, "FIRST_BATCH", 1)  # a range at a time: the best is found first, from the highest bound
+    best = ["apple banana stop", "apple apple apple stop"]  # a range bounded higher by the second
+    others = [["apple stop filler", "banana stop filler"]] * 8
+    catalog = in_ranges(tmp_path, home, [best, *others])
+    readers, read = [reader(catalog, "ranged")], counting_reads(monkeypatch)
+    query = ("or", [("term", "stop"), ("term", "apple"), ("term", "banana")])
+    same(topk.search(readers, query, 1), brute(readers, query, 21), 1, query)
+    assert read["stop"] < read["apple"] / 2
+
+
+def test_ranges_only_lazy_terms_are_in_offer_nothing(built):
+    # Bounded with a segment's average length (several stores, deltas), ranges of lazy terms alone can seem to reach
+    # the k-th best score; none of their chunks can.
+    held, query = reader(built), ("or", [("term", "w0"), ("term", "w1")])
+    named = topk.terms_of(query)
+    lists = {t: held.term(t) for t in dict.fromkeys(named)}
+    weight = {t: topk.idf(held.chunks, sum(p.df for p in lists[t])) for t in lists}
+    best = topk.Best(3)
+    store = topk._Store(held, lists, weight, named, held.tokens / held.chunks, query, best, None, None)
+    best.threshold = 1e9  # out of reach of both
+    store._score(np.arange(1 << 20))
+    assert best.found == {}
 
 
 @pytest.mark.usefixtures("small_lists")

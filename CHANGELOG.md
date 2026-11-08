@@ -5,6 +5,42 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-11-08
+
+Keyword questions and phrases in milliseconds, a quicker vsearch over many collections, and `sift embed` starting at
+once.
+
+### Changed
+
+- Keyword search reads a query's common words only where they can matter, with the same results, score for score:
+  - All words required, as every search of several words first tries: the rarest word is read first, and each next
+    one only where chunks holding all before it are left. A question no chunk held all words of was read in full,
+    "the" and "of" too, with nothing found and so nothing pruned.
+  - Any of them, as the fallback when no chunk holds all, and the keyword candidates of `query`: the words that
+    together can't bring a chunk to the k-th best score, "the" and "of", are read only for the chunks the others
+    bring within reach (MaxScore).
+
+  Over 3.2 million arXiv abstracts, questions of 10 to 14 words took 34 to 81 ms instead of 0.44 to 2.5 s, seven
+  required words 7 ms instead of 65.
+- Phrases are found from the postings too: `"retrieval augmented"`, and words FTS5 can't read as written, which sift
+  searches as phrases, such as "first-stage" or "COVID-19". A phrase is bounded by its words and checked by FTS5 in
+  the chunks within reach. Such a query went to FTS5 whole, which read every posting of each of its words: over ten
+  minutes for a question over 30 million PubMed passages; over arXiv, 0.43 s instead of 8.7. The scores are FTS5's,
+  but that in a nested query a phrase counts in every passage that holds it, where FTS5 missed it now and then.
+- A query with a word of no token, such as the dash in "Deep learning – a review", is answered from the postings too,
+  instead of by FTS5 whole: the word is left out, as FTS5 leaves it out.
+- `vsearch` counts its codes at each distance in the threads that compare them, which reuse their buffers, and picks
+  the nearest in threads too: over 46 million synthetic codes, 0.3 seconds instead of 0.6, the same results.
+- `sift embed` starts at once: how many passages wait comes from the counts the index keeps, and which ones from the
+  vectors' codes, a sixteenth of the vectors' size. Over 30 million PubMed passages the count took 9 minutes from a
+  cold disk.
+
+### Fixed
+
+- A keyword query of several collections that FTS5 answers counted a phrase that overlaps itself, "w1 w1" in "w1 w1
+  w1", once instead of twice, as one index's bm25 counts it; and a phrase too often in a passage that holds the
+  control character U+0001, as a PDF or a mail may.
+
 ## [1.11.0] - 2026-11-08
 
 Keyword postings in topical order, quicker filtered and exact semantic search, one hit per paper, and fewer results
@@ -691,7 +727,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.11.1...HEAD
+[1.11.1]: https://github.com/tobiaswuerth/sift/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/tobiaswuerth/sift/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/tobiaswuerth/sift/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/tobiaswuerth/sift/compare/v1.9.0...v1.10.0

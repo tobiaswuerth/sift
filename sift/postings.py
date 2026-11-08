@@ -42,7 +42,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import console, order, store
+from . import console, expression, order, store
 
 RANGE_SHIFT = 7  # a range is 128 consecutive places: on PubMed, quicker and smaller than 64 (benchmarks.md); at
 # most 8, as a range's postings are counted in a byte
@@ -208,6 +208,63 @@ def _postings(rows):
             parts.append(chunks[start:end])
     if term is not None:
         yield term, *_counted(np.concatenate(parts))
+
+
+MARK = "\x01"  # what highlight() puts before each phrase it finds, to count them; texts may hold it too
+
+
+def phrase_query(tokens):
+    """A phrase of tokens as an FTS5 query: tokens are letters and digits, so no quote is in one."""
+    return '"' + " ".join(tokens) + '"'
+
+
+def matches(db, match, chunks):
+    """How often an FTS5 query of one phrase (quoted, or a prefix: w*) occurs in each of these chunks (ids), all
+    columns, as FTS5's bm25 counts it: {chunk: count}, of the chunks it is in. A mark each by highlight(), FTS5 seeking
+    each chunk in the phrase's lists, beyond the marks the column holds itself; but highlight() merges occurrences that
+    overlap ("a a" twice in "a a a", marked once), so a phrase that can overlap itself is counted in the chunks' own
+    tokens."""
+    ids = json.dumps([int(c) for c in chunks])
+    if (phrase := _quoted(match)) and _overlapping(phrase):
+        sql = "SELECT id, title, text, meta FROM chunk_text WHERE id IN (SELECT value FROM json_each(?))"
+        counts = {
+            c: sum(_occurrences(expression.tokens(t), phrase) for t in texts if t)
+            for c, *texts in db.execute(sql, (ids,))
+        }
+        return {c: n for c, n in counts.items() if n}
+    columns = ("title", "text", "meta")  # as FTS5 numbers them
+    marked = ", ".join(f"highlight(fts, {n}, '{MARK}', ''), {column}" for n, column in enumerate(columns))
+    sql = f"SELECT rowid, {marked} FROM fts WHERE fts MATCH ? AND rowid IN (SELECT value FROM json_each(?))"
+    return {row[0]: _marks(row[1::2]) - _marks(row[2::2]) for row in db.execute(sql, (match, ids))}
+
+
+def _marks(texts):
+    return sum(text.count(MARK) for text in texts if text)
+
+
+def _quoted(match):
+    """The tokens of a phrase query that is a quoted phrase, or None (a prefix, w*, or "w" *)."""
+    match = match.strip()
+    if match.endswith("*"):
+        return None
+    return expression.tokenize(match[1:-1].replace('""', '"') if match.startswith('"') else match)
+
+
+def sizes(db, chunks):
+    """The lengths in tokens, all columns, of these chunks (ids), as FTS5 has them: {chunk: length}."""
+    sql = "SELECT id, sz FROM fts_docsize WHERE id IN (SELECT value FROM json_each(?))"
+    return {i: int(varints(sz)[0].sum()) for i, sz in db.execute(sql, (json.dumps([int(c) for c in chunks]),))}
+
+
+def _overlapping(phrase):
+    """Whether two occurrences of the phrase can overlap: an end of it is also its start ("a a", "a b a")."""
+    return any(phrase[:n] == phrase[-n:] for n in range(1, len(phrase)))
+
+
+def _occurrences(tokens, phrase):
+    """How often the phrase (tokens) occurs in a text's tokens, one after the other, overlapping occurrences each."""
+    n = len(phrase)
+    return sum(tokens[i : i + n] == phrase for i in range(len(tokens) - n + 1))
 
 
 def _counted(chunks):
@@ -680,6 +737,8 @@ class _Cache:
 
 BLOCK_CACHE = 512 << 20  # bytes of decoded blocks kept: a long question over PubMed reads about 150 MB of them
 _BLOCKS = _Cache(BLOCK_CACHE)  # shared by every reader: one budget for the process
+PHRASE_CACHE = 256 << 20  # bytes of the chunks of phrases kept: a common phrase over 30 million chunks takes 80 MB
+_PHRASES = _Cache(PHRASE_CACHE)
 _readers = itertools.count()
 
 
@@ -728,6 +787,32 @@ class Reader:
 
     def _blob(self, rowid):
         return self.db.execute("SELECT data FROM kw_blocks WHERE id = ?", (rowid,)).fetchone()[0]
+
+    def phrase_chunks(self, phrase):
+        """The chunks that hold the phrase (a tuple of tokens), ascending, as FTS5 finds them, which has the positions
+        the postings leave out: found once for these postings, while the cache all readers share keeps them."""
+        return _PHRASES.get((self._me, phrase), lambda: (self._holding(phrase),))[0]
+
+    def _holding(self, phrase):
+        rows = self.db.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rowid", (phrase_query(phrase),))
+        return np.fromiter((chunk for (chunk,) in rows), np.int64)
+
+    def phrase_df(self, phrase):
+        """How many chunks hold the phrase, as FTS5's bm25 counts them."""
+        return len(self.phrase_chunks(phrase))
+
+    def phrase_counts(self, phrase, chunks):
+        """How often the phrase occurs in each of these chunks (ids), all columns, and their lengths in tokens:
+        (counts, lengths), 0 for a chunk it isn't in. As FTS5's bm25 counts them, overlapping occurrences each (see
+        `matches`)."""
+        ids, holding = np.asarray(chunks, np.int64), self.phrase_chunks(phrase)
+        at = np.minimum(np.searchsorted(holding, ids), max(len(holding) - 1, 0))
+        members = (ids[holding[at] == ids] if len(holding) else ids[:0]).tolist()
+        if not members:
+            return np.zeros(len(ids), np.int64), np.zeros(len(ids), np.int64)
+        counts, length = matches(self.db, phrase_query(phrase), members), sizes(self.db, members)
+        found = np.fromiter((counts.get(c, 0) for c in ids.tolist()), np.int64, len(ids))
+        return found, np.fromiter((length.get(c, 0) for c in ids.tolist()), np.int64, len(ids))
 
     def lengths(self, segment, places):
         """The lengths of the chunks at these places, as the segment holds them."""

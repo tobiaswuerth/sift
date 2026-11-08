@@ -6,14 +6,17 @@ exactly found 99.75% of exact search's top 10 and its known-item MRR, 0.9530 (do
 """
 
 import os
+import threading
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
+from functools import cache
 
 import numpy as np
 
 RESCORE = 1000  # candidates scored exactly, at least: reading their vectors is most of a search's time
 SHORTLIST = 10  # times as many, the nearest by Hamming distance, ranked by the query's floats against their bits
-BLOCK = 1 << 15  # codes per thread at a time: their XOR, 3 MB at 768 dimensions, stays in the cache
+BLOCK = 1 << 14  # codes per thread at a time: their XOR, 1.5 MB at 768 dimensions, stays in the cache (46M codes:
+# 187 ms against 226 ms with twice as many, 259 ms with half)
 THREADS = min(16, os.cpu_count() or 1)
 FAR = np.iinfo(np.uint16).max  # the distance of a code left out
 SCAN_SHARE = 0.2  # of the codes searched: checking more candidates against a filter costs more than listing all it
@@ -73,10 +76,17 @@ def top(held, query, k, exact, allowed=None, excluded=None):
 def _nearest(held, bits, want, allowed, excluded):
     """The `want` nearest codes of all collections, ties by id, of those `allowed` (ids; None for all) but those
     `excluded`, as _between gives them."""
-    distances = [c.distances(bits, allowed, excluded) for c in held]
-    within = _within(distances)
+    distances, within = _measured(held, bits, allowed, excluded)
     high = int(np.searchsorted(within, min(want, within[-1])))  # the codes up to this distance are enough, or all
     return _first(_between(held, distances, 0, high), want)
+
+
+def _measured(held, bits, allowed=None, excluded=None):
+    """Each collection's distances to the query's code (see Codes.measure), and how many codes of all collections
+    are within each distance (those left out not counted)."""
+    measured = [c.measure(bits, allowed, excluded) for c in held]
+    counts = sum((counts for _, counts in measured), np.zeros(8 * len(bits) + 1, np.int64))
+    return [distances for distances, _ in measured], np.cumsum(counts)
 
 
 def _checked(held, bits, want, allowed, excluded):
@@ -84,8 +94,7 @@ def _checked(held, bits, want, allowed, excluded):
     `excluded`, as _between gives them: the nearest checked first, all codes at a distance together, more each time,
     as many as would be enough at the rate let through so far. None once that would check more than SCAN_SHARE of the
     codes."""
-    distances = [c.distances(bits, excluded=excluded) for c in held]
-    within = _within(distances)
+    distances, within = _measured(held, bits, excluded=excluded)
     passed, found, low, n = [], 0, 0, want  # codes from distance `low` on are unchecked
     while n <= SCAN_SHARE * within[-1]:
         high = int(np.searchsorted(within, n))  # the codes up to this distance are at least n
@@ -99,16 +108,10 @@ def _checked(held, bits, want, allowed, excluded):
     return None
 
 
-def _within(distances):
-    """How many codes are within each distance, by distance, of all collections: those left out (FAR) not counted."""
-    held = sum((np.bincount(d, minlength=FAR + 1)[:FAR] for d in distances), np.zeros(FAR, np.int64))
-    return np.cumsum(held)
-
-
 def _between(held, distances, low, high):
     """The codes of all collections at distances from low to high: (their ids, distances, which of `held` holds each,
     and where in it)."""
-    rows = [np.flatnonzero((d >= low) & (d <= high)) for d in distances]
+    rows = [c.between(d, low, high) for c, d in zip(held, distances)]
     return (
         np.concatenate([np.empty(0, np.int64), *(c.ids[r] for c, r in zip(held, rows))]),
         np.concatenate([np.empty(0, np.uint16), *(d[r] for d, r in zip(distances, rows))]),
@@ -202,11 +205,12 @@ class Codes:
             keep = outside if keep is None else keep & outside
         return keep
 
-    def distances(self, query_bits, allowed=None, excluded=None):
-        """The Hamming distance of every code to the query's, by `ids`: FAR for those that don't count, those not
-        `allowed` (ids; None for all) and those `excluded`; in blocks, each in a thread (NumPy lets go of the GIL)."""
-        keep = self._keep(allowed, excluded)
-        word = query_bits.view(np.uint64)
+    def measure(self, query_bits, allowed=None, excluded=None):
+        """The Hamming distance of every code to the query's, by `ids`, FAR for those that don't count (those not
+        `allowed`, ids or None for all, and those `excluded`); and how many codes that count are at each distance,
+        from 0 to every bit. In blocks, each in a thread, which counts its own (NumPy lets go of the GIL): counted over
+        all codes at once afterwards, by one thread, that took half of a search over 46 million codes."""
+        keep, word, top = self._keep(allowed, excluded), query_bits.view(np.uint64), 8 * len(query_bits)
         out, starts, at = np.empty(len(self.ids), np.uint16), [], 0
         for part in self._parts:
             words = part.view(np.uint64)
@@ -216,14 +220,48 @@ class Codes:
         def block(item):
             words, at, start = item
             rows = words[start : start + BLOCK]
-            np.sum(np.bitwise_count(rows ^ word), axis=1, dtype=np.uint16, out=out[at + start : at + start + len(rows)])
+            here = out[at + start : at + start + len(rows)]
+            xor, count = _buffers(len(rows), words.shape[1])
+            np.bitwise_xor(rows, word, out=xor)
+            np.bitwise_count(xor, out=count)
+            np.sum(count, axis=1, dtype=np.uint16, out=here)
+            if keep is not None:
+                here[~keep[at + start : at + start + len(rows)]] = FAR
+            return np.bincount(np.minimum(here, top + 1), minlength=top + 2)[: top + 1]  # FAR past every bit
 
-        if len(starts) > 1:
-            with ThreadPoolExecutor(THREADS) as pool:
-                list(pool.map(block, starts))
-        else:
-            for item in starts:
-                block(item)
-        if keep is not None:
-            out[~keep] = FAR
-        return out
+        return out, sum(_threaded(block, starts), np.zeros(top + 1, np.int64))
+
+    def between(self, distances, low, high):
+        """Where in `ids` the codes at distances (as measure gives them) from low to high are, ascending; in blocks,
+        each in a thread."""
+        step = max(BLOCK, -(-len(distances) // (4 * THREADS)))
+
+        def block(start):
+            part = distances[start : start + step]
+            return start + np.flatnonzero((part >= low) & (part <= high) if low else part <= high)
+
+        return np.concatenate([np.empty(0, np.int64), *_threaded(block, range(0, len(distances), step))])
+
+
+_scratch = threading.local()
+
+
+def _buffers(rows, words):
+    """This thread's arrays for a block's XOR and bit counts, `rows` codes of `words` 64-bit words, made once: made
+    anew for every block, large arrays came from the OS each time, which halved the speed of a scan."""
+    shape = (BLOCK, words)
+    if getattr(_scratch, "shape", None) != shape:
+        _scratch.xor, _scratch.count, _scratch.shape = np.empty(shape, np.uint64), np.empty(shape, np.uint8), shape
+    return _scratch.xor[:rows], _scratch.count[:rows]
+
+
+@cache
+def _pool():
+    """The threads blocks of codes are measured in, kept for every search."""
+    return ThreadPoolExecutor(THREADS, thread_name_prefix="sift-codes")
+
+
+def _threaded(work, items):
+    """work(item) of each item, in order: in the threads of _pool if there are several."""
+    items = list(items)
+    return list(_pool().map(work, items)) if len(items) > 1 else [work(item) for item in items]
