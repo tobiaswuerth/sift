@@ -69,7 +69,7 @@ fixture.
 ## Releasing
 
 1. In a pull request, set the version in `sift/__init__.py` and move the "Unreleased" changes in `CHANGELOG.md` under
-   that version. CI checks that the changelog has a section for it.
+   that version, with its compare link at the bottom. CI checks that the changelog has a section for it.
 2. Merge it. That's all: once CI has passed on the merge commit, the release workflow sees a version without a tag and
    publishes that commit.
    - It builds the package and publishes it to PyPI through trusted publishing (no tokens). The `pypi` environment
