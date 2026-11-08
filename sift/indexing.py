@@ -660,7 +660,7 @@ def _stored(db, rel, docs, stat, counts, note):
         sid = _source(db, rel, make=True)
         _store(db, sid, rel, docs, counts, note)
         db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (*stat, sid))
-    except (ValueError, sqlite3.DataError, sqlite3.IntegrityError) as refused:
+    except (ValueError, RecursionError, sqlite3.DataError, sqlite3.IntegrityError) as refused:  # Recursion: 3.11's JSON
         db.execute("ROLLBACK TO file")
         counts.clear()
         counts.update(before)  # Counter.update adds: onto nothing, as they were

@@ -415,6 +415,26 @@ def test_a_file_the_store_refuses_is_skipped_and_the_others_indexed(tmp_path, ho
     assert held.get("c.md", 1)
 
 
+def test_a_file_nested_too_deeply_to_store_is_skipped(tmp_path, home, monkeypatch, capsys):
+    # On Python 3.11, json.dumps of front matter a reader could still read may run out of stack: RecursionError,
+    # which stopped `sift index` for every collection.
+    write(tmp_path / "c" / "a.md", "# A\n")
+    write(tmp_path / "c" / "deep.md", "# Deep\n")
+    real = indexing._insert
+
+    def insert(db, sid, path, doc):
+        if path == "deep.md":
+            raise RecursionError("maximum recursion depth exceeded while encoding a JSON object")
+        return real(db, sid, path, doc)
+
+    monkeypatch.setattr(indexing, "_insert", insert)
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert [p for (p,) in catalog.store("c").execute("SELECT path FROM docs")] == ["a.md"]
+    assert "c: deep.md: skipped (maximum recursion depth" in capsys.readouterr().err
+
+
 def test_an_email_in_an_unknown_charset_still_reads(tmp_path):
     path = tmp_path / "x.eml"
     path.write_bytes(

@@ -1179,7 +1179,8 @@ class Index:
         sql = f"SELECT path FROM docs WHERE path > ?{within} AND instr(substr(path, ?), '/') ORDER BY path LIMIT 1"
         while row := db.execute(sql, (after, *bound, len(path) + 1)).fetchone():
             name = row[0][len(path) :].partition("/")[0]
-            found.append(name)
+            if name:  # a record whose id starts with "/" lies in a folder of no name, which nothing could open
+                found.append(name)
             after = path + name + "0"  # past the folder: whatever starts with `name/` sorts before
         return sorted(found)
 

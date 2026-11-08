@@ -1757,6 +1757,15 @@ def test_folders_whose_names_start_with_the_last_character_there_is(corpus):
     assert Index(catalog).folders("notes", "a/") == ["b"]
 
 
+def test_a_record_whose_id_starts_with_a_slash_makes_no_folder_without_a_name(corpus):
+    catalog, root = corpus
+    write(root / "r.jsonl", '{"id": "/lead", "text": "a record"}\n')
+    indexing.index(catalog)
+    index = Index(catalog)
+    assert "r" in index.folders("notes")
+    assert index.folders("notes", "r/") == []  # not [""], which the UI couldn't open
+
+
 def test_the_file_a_document_came_from(corpus, tmp_path):
     catalog, root = corpus
     write(tmp_path / "qa" / "faq.jsonl", '{"id": "q1", "text": "a record"}\n')
