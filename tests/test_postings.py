@@ -2,10 +2,12 @@
 in step with it through changes (deltas, masks, rebuilds), and read back for searches."""
 
 import itertools
+import math
 import random
 import sqlite3
+import time
 import tracemalloc
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -389,15 +391,83 @@ def test_vectors_without_codes_order_nothing_and_build_once(prose):
     assert postings.Reader.state(db) == state
 
 
-def test_chunk_ids_too_far_from_the_first_are_refused_not_wrapped(prose, fake_models, monkeypatch):
-    # The order keeps each chunk as its id from the collection's first, in 32 bits; ids are never handed out twice, so
-    # a collection read anew often enough passes that: wrapped, its keyword searches would find other chunks.
-    catalog, _ = prose
-    embed.embed_pending(catalog)
+def far(monkeypatch):
+    """Have the chunk ids handed out pass 2**32 from the collection's first, as ids are never handed out twice."""
     real = postings._first
     monkeypatch.setattr(postings, "_first", lambda db: real(db) - (1 << 32))
-    with pytest.raises(ValueError, match="2\\*\\*32"):
-        postings.build(catalog.store("prose"), path_of(catalog))
+
+
+def test_chunk_ids_too_far_from_the_first_are_refused_not_wrapped():
+    # The order keeps each chunk as its id from the collection's first, in 32 bits: wrapped, keyword searches would
+    # find other chunks.
+    with closing(order_table()) as db, pytest.raises(ValueError, match="2\\*\\*32"):
+        postings._write_order(db, 1, np.array([1 << 32]), 0)
+
+
+def test_chunk_ids_too_far_for_an_order_keep_the_chunks_order(prose, fake_models, monkeypatch, capsys):
+    # The build refused them after deleting the postings: every `sift index` failed again, and searches read FTS5.
+    catalog, _ = prose
+    embed.embed_pending(catalog)
+    far(monkeypatch)
+    db = catalog.store("prose")
+    postings.build(db, path_of(catalog), "prose")
+    assert store.get_meta(db, "kw_built").isdigit()
+    assert "prose: too many chunk ids for a topical order" in capsys.readouterr().err
+    assert live(db) == fts5(db)
+    state = postings.Reader.state(db)
+    postings.update(db, path_of(catalog))  # tried once
+    assert postings.Reader.state(db) == state
+
+
+def test_ordered_postings_whose_ids_grew_too_far_are_built_anew_in_the_chunks_order(ordered, monkeypatch):
+    # A delta can't place chunks past 2**32 in the order: a reindex leaves them to `sift index`, which builds anew.
+    catalog, root = ordered
+    db = catalog.store("prose")
+    far(monkeypatch)
+    write(root / "n000.md", "# Changed\n\nw1 w2\n")
+    indexing.reindex(catalog, ["prose/n000.md"])
+    assert not postings.ready(db)  # searches read FTS5 meanwhile
+    indexing.index(catalog)
+    assert store.get_meta(db, "kw_built").isdigit()
+    assert postings.ready(db)
+    assert live(db) == fts5(db)
+
+
+def order_table():
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE kw_order(block INTEGER PRIMARY KEY, data BLOB NOT NULL)")
+    return db
+
+
+def test_the_order_reads_back_at_any_places():
+    first = 5 << 40
+    chunks = first + 1 + np.random.default_rng(0).permutation(5000)
+    places = first + 1 + np.random.default_rng(1).permutation(5000)
+    with closing(order_table()) as db:
+        postings._write_order(db, first + 1, chunks[:3000], first)
+        postings._write_order(db, first + 3001, chunks[3000:], first)  # into the block the first left half full
+        postings._write_order(db, first + 5001, chunks[:0], first)
+        assert postings._chunks_at(db, places, first).tolist() == chunks[places - first - 1].tolist()
+        assert postings._chunks_at(db, places[:0], first).tolist() == []
+
+
+def test_the_order_is_written_and_read_in_time_linear_in_its_chunks():
+    # Each block of places masked the whole order: 12 minutes for PubMed's 29.9 million chunks, in the build's write
+    # transaction, past which a `sift embed` beside it failed on the lock. Four times the chunks, four times the time.
+    first = 5 << 40
+
+    def took(n):
+        chunks, places = first + 1 + np.random.default_rng(0).permutation(n), first + 1 + np.arange(n)
+        best = math.inf
+        for _ in range(3):
+            db, start = order_table(), time.perf_counter()
+            postings._write_order(db, first + 1, chunks, first)
+            postings._chunks_at(db, places, first)
+            best = min(best, time.perf_counter() - start)
+            db.close()
+        return best
+
+    assert took(1_000_000) < 8 * took(250_000)
 
 
 def test_a_build_anew_is_a_new_state_for_readers(prose):

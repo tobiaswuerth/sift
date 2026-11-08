@@ -71,14 +71,22 @@ def run(index, cases, **options):
     for mode in MODES:
         scores, start = [], time.perf_counter()
         for query, relevant in cases:
-            ranked = [_found(hit, relevant) for hit in getattr(index, mode)(query, K, compact=True, **options)]
-            scores.append((ndcg(ranked, relevant), reciprocal_rank(ranked, relevant), recall(ranked, relevant)))
+            ranked, graded = _found(getattr(index, mode)(query, K, compact=True, **options), relevant)
+            scores.append((ndcg(ranked, graded), reciprocal_rank(ranked, graded), recall(ranked, graded)))
         elapsed = time.perf_counter() - start
         means = [sum(s[i] for s in scores) / len(scores) for i in range(3)]
         results[mode] = dict(zip(("nDCG@10", "MRR@10", "Recall@10"), means)) | {"ms": 1000 * elapsed / len(cases)}
     return results
 
 
-def _found(hit, relevant):
-    """The hit's id, or of its copies in other collections (`also`) the one the case grades best."""
-    return max([hit["id"], *hit.get("also", ())], key=lambda id: relevant.get(id, 0))
+def _found(hits, relevant):
+    """The ids the hits stand for, and the case's grades as they count: a hit is the one of it and its copies in other
+    collections (`also`), the same paper, that the case grades best, and takes the best grade of them all."""
+    relevant, ranked = dict(relevant), []
+    for hit in hits:
+        copies = [hit["id"], *hit.get("also", ())]
+        best = max(copies, key=lambda id: relevant.get(id, 0))
+        if graded := [relevant.pop(id) for id in copies if id in relevant]:
+            relevant[best] = max(graded)
+        ranked.append(best)
+    return ranked, relevant

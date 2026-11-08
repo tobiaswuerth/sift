@@ -135,16 +135,19 @@ def quantized(scores):
 def encode_lengths(ids, lengths):
     """{block: data} of values by id (ids ascending), chunks' lengths by place, or the order's chunks by place: per
     block of 2**LENGTHS_SHIFT consecutive ids, the value of each, 0 for an id without one."""
-    if not len(ids):
-        return {}
-    blocks = ids >> LENGTHS_SHIFT
-    cuts = np.r_[0, np.flatnonzero(np.diff(blocks)) + 1, len(ids)]
     encoded = {}
-    for start, end in itertools.pairwise(cuts.tolist()):
+    for block, start, end in _runs(ids >> LENGTHS_SHIFT):
         dense = np.zeros(1 << LENGTHS_SHIFT, np.uint32)
         dense[ids[start:end] & ((1 << LENGTHS_SHIFT) - 1)] = lengths[start:end]
-        encoded[int(blocks[start])] = zlib.compress(dense.tobytes(), LEVEL)
+        encoded[block] = zlib.compress(dense.tobytes(), LEVEL)
     return encoded
+
+
+def _runs(blocks):
+    """(block, start, end) of each run of one block in `blocks` (ascending): a slice each, so that a block's work is
+    its own, not a pass over all of them."""
+    cuts = np.r_[0, np.flatnonzero(np.diff(blocks)) + 1, len(blocks)] if len(blocks) else np.zeros(1, np.int64)
+    return [(int(blocks[start]), start, end) for start, end in itertools.pairwise(cuts.tolist())]
 
 
 def decode_lengths(data):
@@ -368,9 +371,19 @@ def _topical(db, ids, name):
     mine = np.isin(coded, ids)
     if not mine.any():
         return None
+    if _too_far(db):
+        console.say(f"{name}: too many chunk ids for a topical order; the keyword postings keep the chunks' order")
+        return None
     console.say(f"{name}: ordering {console.count(int(mine.sum()), 'passage')} by topic, for the keyword postings ...")
     ordered = order.topical(*((coded, bits) if mine.all() else (coded[mine], bits[mine])))  # all, as a rule: no copy
     return np.r_[ordered, ids[~np.isin(ids, ordered)]]
+
+
+def _too_far(db):
+    """Whether the collection handed out chunk ids 2**32 or more past its first, which the order can't hold (see
+    _write_order): ids are never handed out twice, so a collection read anew often enough gets there."""
+    row = db.execute("SELECT seq FROM sqlite_sequence WHERE name = 'chunks'").fetchone()
+    return row is not None and row[0] - _first(db) >= 1 << 32
 
 
 def _codes(db):
@@ -394,12 +407,10 @@ def _write_order(db, start, chunks, first):
             "chunk ids more than 2**32 past the collection's first: too many for keyword postings in order"
         )
     places = start + np.arange(len(chunks))
-    blocks = places >> LENGTHS_SHIFT
-    for block in np.unique(blocks).tolist():
+    for block, lo, hi in _runs(places >> LENGTHS_SHIFT):
         row = db.execute("SELECT data FROM kw_order WHERE block = ?", (block,)).fetchone()
         dense = decode_lengths(row[0]) if row else np.zeros(1 << LENGTHS_SHIFT, np.int64)
-        mine = blocks == block
-        dense[places[mine] & ((1 << LENGTHS_SHIFT) - 1)] = local[mine]
+        dense[places[lo:hi] & ((1 << LENGTHS_SHIFT) - 1)] = local[lo:hi]
         data = zlib.compress(dense.astype(np.uint32).tobytes(), LEVEL)
         db.execute("INSERT OR REPLACE INTO kw_order(block, data) VALUES(?, ?)", (block, data))
 
@@ -407,11 +418,11 @@ def _write_order(db, start, chunks, first):
 def _chunks_at(db, places, first):
     """The chunks at these places, from kw_order (see _write_order)."""
     places = np.asarray(places, np.int64)
-    chunks, blocks = np.empty(len(places), np.int64), places >> LENGTHS_SHIFT
-    for block in np.unique(blocks).tolist():
+    by_place = np.argsort(places, kind="stable")
+    ordered, chunks = places[by_place], np.empty(len(places), np.int64)
+    for block, lo, hi in _runs(ordered >> LENGTHS_SHIFT):
         dense = decode_lengths(db.execute("SELECT data FROM kw_order WHERE block = ?", (block,)).fetchone()[0])
-        mine = blocks == block
-        chunks[mine] = dense[places[mine] & ((1 << LENGTHS_SHIFT) - 1)] + first
+        chunks[by_place[lo:hi]] = dense[ordered[lo:hi] & ((1 << LENGTHS_SHIFT) - 1)] + first
     return chunks
 
 
@@ -494,6 +505,8 @@ def update(db, path, name="", workers=0, rebuild=True):
         elif not built(db) or (rebuild and _unordered(db)):
             if rebuild:
                 _build(db, path, name, workers)
+        elif _ordered(db) and _too_far(db):
+            pass  # a delta can't place the chunks in the order: `sift index` builds anew (_unordered)
         elif dirty := behind(db):
             chunks = store.counts(db)["chunks"]
             segments = db.execute("SELECT count(*) FROM kw_segments").fetchone()[0]
@@ -506,8 +519,10 @@ def update(db, path, name="", workers=0, rebuild=True):
 
 def _unordered(db):
     """Whether the postings are to be ordered anew: chunks that got codes since they were ordered (see `order`) are
-    more than ORDER_SHARE of all, or a sift 1.10 built them anew, in the chunks' order, over one."""
-    if store.get_meta(db, "kw_order") is not None and not _ordered(db):
+    more than ORDER_SHARE of all, or a sift 1.10 built them anew, in the chunks' order, over one, or chunk ids grew
+    too far for the order (then in the chunks' order: see _topical)."""
+    stale = _too_far(db) if _ordered(db) else store.get_meta(db, "kw_order") is not None  # an order to replace
+    if stale:
         return True
     counts = store.counts(db)
     return counts["vectors"] - int(store.get_meta(db, "kw_ordered", 0)) > ORDER_SHARE * counts["chunks"]
@@ -516,8 +531,8 @@ def _unordered(db):
 def _delta(db, merge=False):
     """Add a segment of the chunks changed since the postings were updated, tokenized as FTS5 tokenizes them, and mask
     their postings in the segments before. To `merge` the deltas, the chunks of those before go into it too, and it
-    takes their place, after the base. In postings in topical order, a chunk without a place in a delta before takes
-    the next free one (no other sift changes the postings meanwhile: see `_alone`); a merge's keep theirs."""
+    takes their place, after the base. In postings in topical order, each chunk of a delta takes the next free place,
+    its place before masked (no other sift changes the postings meanwhile: see `_alone`); a merge's keep theirs."""
     change = int(store.get_meta(db, "kw_change", 0))
     dirty = [c for (c,) in db.execute("SELECT chunk FROM kw_dirty WHERE change <= ?", (change,))]
     kept = _delta_places(db) if merge else {}  # the deltas' chunks keep their places: the deltas go
