@@ -852,9 +852,9 @@ def test_get_serves_indexed_documents_only(corpus):
 
 def test_get_reads_utf16_documents(corpus):
     catalog, root = corpus
-    (root / "utf16.txt").write_bytes("\ufeff# HÃ©llo\r\nworld\r\n".encode("utf-16-le"))
+    (root / "utf16.txt").write_bytes("\ufeff# Héllo\r\nworld\r\n".encode("utf-16-le"))
     indexing.index(catalog)
-    assert Index(catalog).get("notes/utf16.txt") == "# HÃ©llo\nworld\n"
+    assert Index(catalog).get("notes/utf16.txt") == "# Héllo\nworld\n"
 
 
 def test_get_returns_lines_as_indexed(corpus):
