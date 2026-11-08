@@ -301,6 +301,18 @@ def test_reindex_refuses_a_path_on_another_drive(live):
             index.reindex([path])
 
 
+def test_reindex_refuses_names_windows_reads_as_others(live, monkeypatch):
+    # "C:x.md" is x.md in the folder the drive stands in, "sub./x.md" is sub/x.md: indexed under such a name, a file
+    # was there twice, and found twice, until the next `sift index`.
+    index, vault = live
+    monkeypatch.setattr(indexing, "WINDOWS", True)
+    write(vault / "sub" / "x.md", "x")
+    drive = str(vault)[0] if os.name == "nt" else "C"
+    for path in (f"vault/{drive}:x.md", "vault/sub./x.md", "vault/sub /x.md", "vault/sub/x.md:hidden", "vault/x.md."):
+        with pytest.raises(ValueError, match="Windows takes"):
+            index.reindex([path])
+
+
 def test_reindex_refuses_what_siftignore_leaves_out(live):
     index, vault = live
     write(vault / ".siftignore", "Private/\n*.tmp.md\n")

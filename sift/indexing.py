@@ -28,6 +28,7 @@ BATCH_BYTES = 256 << 20  # and at most this much file content, for big JSON Line
 FILES_PER_WORKER = 1000  # a worker process only pays off for at least this many files
 BYTES_PER_WORKER = 32 << 20  # or this much content
 PROGRESS_LINES = 200  # at most this many progress updates per collection: printing is slow on Windows consoles
+WINDOWS = os.name == "nt"  # where "C:x.md", "sub./x.md" and "x.md:stream" name other files, or none
 
 
 def _cpus():
@@ -297,6 +298,8 @@ def _locate(catalog, path):
     name, root = collection.name, collection.path
     if not _inside(root, os.path.normpath(os.path.join(root, *rel.split("/")))):  # "D:/x.md": Windows takes D:'s
         raise ValueError(f"{path!r} is outside the collection {name!r}")
+    if WINDOWS and (other := next((p for p in rel.split("/") if ":" in p or p != p.rstrip(". ")), None)):
+        raise ValueError(f"{name}/{rel}: Windows takes {other!r} for another name; give the file's name as it is")
     if not os.path.isdir(root):  # never take an unplugged drive for files deleted
         raise ValueError(f"{name}: folder not found: {root}")
     parts = _spelled(root, rel.split("/"))
