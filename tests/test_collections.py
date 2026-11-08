@@ -229,6 +229,29 @@ def test_a_store_that_cant_be_opened_is_passed_over_and_said(three, tmp_path, ca
         index.search("robot", collection="diary")
 
 
+def test_a_store_that_fails_to_open_is_passed_over_and_said(three, tmp_path, capsys, monkeypatch):
+    # Locked by another program, a backup or a virus scanner, or out of reach: "disk I/O error" on opening one store
+    # failed every search of all collections, the status, a server's start, and `sift index` and `sift embed`.
+    stored, real = three.get("diary").store, store.connect
+    three.release(three.get("diary").id)
+
+    def connect(path, cid, create=False):
+        if str(path) == stored:
+            raise sqlite3.OperationalError("disk I/O error")
+        return real(path, cid, create)
+
+    monkeypatch.setattr(store, "connect", connect)
+    write(tmp_path / "papers" / "new.md", "# New\n\nA new robot paper.\n")
+    indexing.index(three)
+    embed.embed_pending(three)
+    index = Index(three)
+    assert sorted(ids(index.search("robot"))) == ["papers/new.md", "papers/robots.md", "recipes/soup.md"]
+    (diary,) = [c for c in index.status()["collections"] if c["name"] == "diary"]
+    assert diary["error"] == "diary: its index can't be opened: disk I/O error"
+    assert "- diary (" not in _collections(Index(three))
+    assert "diary: its index can't be opened: disk I/O error" in capsys.readouterr().err
+
+
 def test_documents_of_a_collection_removed_meanwhile_are_left_out(three):
     index = Index(three)
     ranked = index._keyword("robot", 10, index.active().values(), "1", [])

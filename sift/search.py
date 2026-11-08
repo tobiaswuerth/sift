@@ -513,8 +513,8 @@ class Index:
                 self._warn(f"{c.name}: its index is missing: {c.store}; searches pass it over")
             else:
                 try:
-                    self.catalog.store(c)
-                except LookupError as unusable:  # damaged, or a newer sift's
+                    self.catalog.opened(c)
+                except LookupError as unusable:  # damaged, a newer sift's, locked or out of reach
                     self._warn(f"{unusable}; searches pass it over")
                 else:
                     found[c.id] = c
@@ -1414,8 +1414,8 @@ class Index:
             entry["size"] = _size(c.store)
             if c.active:
                 try:
-                    db = self.catalog.store(c)
-                except LookupError as unusable:  # damaged, or a newer sift's
+                    db = self.catalog.opened(c)
+                except LookupError as unusable:  # damaged, a newer sift's, locked or out of reach
                     collections.append(entry | {"error": str(unusable)})
                     continue
                 counted = store.counts(db)

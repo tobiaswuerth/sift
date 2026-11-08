@@ -539,7 +539,7 @@ def index(catalog, names=None):
             console.say(f"{c.name}: skipped, as its {SIFTIGNORE} can't be read: {error}")
             continue
         try:
-            db = catalog.store(c)
+            db = catalog.opened(c)
         except LookupError as missing:
             console.say(f"{missing}; skipped")
             continue

@@ -212,7 +212,7 @@ def _stores(catalog, collections, named):
     `named`, which makes it an error."""
     for c in collections:
         try:
-            yield c, catalog.store(c)
+            yield c, catalog.opened(c)
         except LookupError as missing:
             if named:
                 raise
