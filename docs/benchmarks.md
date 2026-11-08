@@ -277,7 +277,11 @@ as by `sift serve`. Every query found the same documents as FTS5, score for scor
   | quoted phrases, through FTS5 before | 10 to 97 ms | 3 to 16 ms |
 
   On the live index of six collections (46 million passages), the 14-word question had taken 13.5 s and the
-  hyphenated one over ten minutes.
+  hyphenated one over ten minutes; with 1.11.1, 0.97 s and 8.7 s at first, 0.32 s and 2.2 s asked again.
+- **A phrase counted once per passage** (sift 1.11.2), kept with the passages that hold it: of a hyphenated question's
+  2.2 s, 62% had been FTS5 counting the phrase in the same passages again. Over arXiv, warm, with the same results:
+  the hyphenated question 93 ms instead of 429, "in this paper we propose" 131 ms instead of 2.6 s, other phrases 1
+  to 7 ms instead of 3 to 14. A new question's first call costs what it did.
 - **A time budget** ends a search from the postings early, with the best found so far: ranges are scored best bound
   first, so the best results tend to come first ([Mackenzie et al. 2021](https://arxiv.org/abs/2104.08976)). Not
   measured on these queries yet.
@@ -364,6 +368,20 @@ and hit@10 are those of each paper's own first passage. "+ exact top N" scores t
   query's floats against such bits loses it: the centered vectors are no longer of one length. The whole cascade
   found 0.9788 instead of 0.9975; a correction per vector (as RaBitQ stores) might win back about 0.0015, against a
   new format and new codes for every vector.
+- **Scanning the nearest clusters only** (not adopted): the codes grouped by sift's own clustering of them (the
+  postings' topical order, 4,096 leaves), and only the leaves nearest the query scanned, as an inverted file does.
+  Over the 2,000 titles, of exact search's top 10, with the cascade among the codes scanned:
+
+  | Codes scanned | Leaves by Hamming distance | Leaves by the query's floats against their bits |
+  |---|---|---|
+  | 10% | 0.9822 | 0.9882 |
+  | 20% | 0.9928 | 0.9952 |
+  | 30% | 0.9957 | 0.9966 |
+  | all (sift) | 0.9975 | 0.9975 |
+
+  A third of the codes would save about 0.3 s of a search over 46 million passages, at a loss of recall, and need
+  clusters kept in the index, the codes embedded since apart, and filters checked otherwise. An exact variant can't
+  prune: in 768 bits, a cluster's radius is about as large as the distances it would bound.
 - **On a copy of a real index**, 145 GB with 3,261,593 vectors (arXiv abstracts and notes), on the i9-14900K while it
   was busy with other work: the upgrade from sift 1.6 added the codes in 65 seconds, `sift serve` loads them in 2.2
   seconds, and a search (Hamming scan and exact scores) takes 95 ms (median; 108 ms at the 90th percentile). Of 200

@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.11.2] - 2026-11-08
+
+No search held up while `sift embed` runs beside the server, and phrases asked again in a tenth of the time.
+
 ### Changed
 
 - A phrase is counted in each passage once for the keyword postings as they stand, and kept with the passages that
@@ -742,7 +746,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.11.1...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.11.2...HEAD
+[1.11.2]: https://github.com/tobiaswuerth/sift/compare/v1.11.1...v1.11.2
 [1.11.1]: https://github.com/tobiaswuerth/sift/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/tobiaswuerth/sift/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/tobiaswuerth/sift/compare/v1.10.0...v1.10.1
