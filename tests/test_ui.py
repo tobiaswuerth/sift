@@ -150,9 +150,8 @@ def test_a_field_whose_values_all_differ_is_no_facet(embedded):
     for n in range(ui.FACET_VALUES + 1):
         write(root / "refs" / f"{n}.md", f"---\nref: R-{n}\nkind: memo\n---\n# Memo {n}\n")
     indexing.index(catalog)
-    side = re.search(r'<nav class="side".*?</nav>', page(Index(catalog)).get("/ui/", params={"c": "notes"}).text, re.S)[
-        0
-    ]
+    listed = page(Index(catalog)).get("/ui/", params={"c": "notes"}).text
+    side = re.search(r'<nav class="side".*?</nav>', listed, re.S)[0]
     assert "<h2>kind</h2>" in side
     assert "<h2>ref</h2>" not in side
 
