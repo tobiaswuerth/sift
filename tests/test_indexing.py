@@ -73,6 +73,52 @@ def test_walk_follows_no_junction(notes, tmp_path):
     assert found == ["plain.txt", "rl.md", "robots/brush.md"]
 
 
+def orphans(db):
+    return db.execute("SELECT count(*) FROM docs WHERE source NOT IN (SELECT id FROM sources)").fetchone()[0]
+
+
+def reindexed_meanwhile(monkeypatch, catalog, paths, then=lambda: None):
+    """Have another sift, a server, run then() and reindex `paths` while `sift index` reads its first file."""
+    real, done = indexing._read_scans, []
+
+    def meanwhile(*args, **kwargs):
+        if not done:
+            done.append(1)
+            then()
+            other = Catalog(catalog.home)
+            indexing.reindex(other, paths)
+            other.close()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(indexing, "_read_scans", meanwhile)
+
+
+def test_a_note_a_server_reindexed_meanwhile_is_indexed_once(corpus, monkeypatch):
+    # An agent wrote a note and reindexed it while `sift index` read the folder: its source, new when scanned, was
+    # there by the time `sift index` stored it, which then failed for this collection and every one after it.
+    catalog, root = corpus
+    write(root / "new.md", "# New\n\nWritten by an agent.\n")
+    reindexed_meanwhile(monkeypatch, catalog, ["notes/new.md"])
+    indexing.index(catalog)
+    db = catalog.store("notes")
+    assert db.execute("SELECT count(*) FROM docs WHERE path = 'new.md'").fetchone() == (1,)
+    assert orphans(db) == 0
+
+
+def test_a_note_a_server_removed_meanwhile_leaves_no_documents_behind(corpus, monkeypatch):
+    # Deleted and reindexed while `sift index` read it, a note was stored under its source gone: no later `sift index`
+    # removed its documents, and searches found them for good.
+    catalog, root = corpus
+    write(root / "rl.md", "# Reward shaping\n\nWritten again.\n")
+    reindexed_meanwhile(monkeypatch, catalog, ["notes/rl.md"], then=(root / "rl.md").unlink)
+    indexing.index(catalog)
+    db = catalog.store("notes")
+    assert orphans(db) == 0
+    monkeypatch.undo()
+    indexing.index(catalog)
+    assert "rl.md" not in doc_ids(catalog)
+
+
 def test_a_folder_gone_meanwhile_is_no_junction(tmp_path):
     # Listed, then deleted before it is looked at: nothing to follow, and nothing to fail on.
     assert indexing._junction(str(tmp_path / "gone")) is False

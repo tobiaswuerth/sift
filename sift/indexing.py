@@ -410,8 +410,7 @@ def _reindex_read(db, root, fields, rel, scans):
     if read is None:
         return info, None, False
     docs, problems = read
-    known = db.execute("SELECT id FROM sources WHERE path = ?", (rel,)).fetchone()
-    docs, left = _read_scans(db, known and known[0], rel, docs, problems.append, now=scans)
+    docs, left = _read_scans(db, _source(db, rel), rel, docs, problems.append, now=scans)
     return info, (docs, problems), left
 
 
@@ -420,8 +419,7 @@ def _reindex_file(db, name, rel, info, read, left):
     index` would: ({"id", "status"}, its documents' row ids, the chunks removed). A chunk removed is every chunk of a
     document replaced or removed. A file with a scan `left` is read again by the next `sift index`."""
     entry = {"id": f"{name}/{rel}"}
-    known = db.execute("SELECT id FROM sources WHERE path = ?", (rel,)).fetchone()
-    sid = known and known[0]
+    sid = _source(db, rel)
     sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
     chunks = db.execute(sql, (sid,)).fetchall()
     if info is None:
@@ -432,8 +430,7 @@ def _reindex_file(db, name, rel, info, read, left):
     if read is None:
         return entry | {"status": "unreadable"}, [], []
     docs, problems = read
-    if sid is None:
-        sid = db.execute("INSERT INTO sources(path) VALUES(?)", (rel,)).lastrowid
+    sid = _source(db, rel, make=True)
     had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
     unchanged = _store(db, sid, rel, docs, counts, problems.append)
     mtime = None if left else info.st_mtime_ns  # no time: `sift index` takes it for changed
@@ -447,6 +444,15 @@ def _reindex_file(db, name, rel, info, read, left):
         status = "changed" if had else "added"
     note = {"note": "; ".join(problems)} if problems else {}
     return entry | {"status": status} | note, now, [chunk for doc, chunk in chunks if doc not in unchanged]
+
+
+def _source(db, rel, make=False):
+    """The id of the file `rel` as the store holds it now, made if `make`; None if there is none. Not as scanned: a
+    server's `reindex` may have added the file or dropped it since."""
+    if make:
+        db.execute("INSERT OR IGNORE INTO sources(path) VALUES(?)", (rel,))
+    row = db.execute("SELECT id FROM sources WHERE path = ?", (rel,)).fetchone()
+    return row and row[0]
 
 
 def _drop_source(db, sid):
@@ -542,7 +548,7 @@ def _index_collection(db, name, root, fields, ignore):
         counts["removed"] += _drop_source(db, known[rel][0])
     if todo:
         with console.Progress(len(todo), "files", prefix=f"{name}: ") as progress:
-            _read_and_store(db, name, fields, known, todo, counts, progress)
+            _read_and_store(db, name, fields, todo, counts, progress)
     db.commit()
     unreadable = f", {counts['unreadable']} unreadable" if counts["unreadable"] else ""
     console.say(
@@ -585,7 +591,7 @@ def _scan(root, known, ignore):
     return todo, seen, unlisted
 
 
-def _read_and_store(db, name, fields, known, todo, counts, progress):
+def _read_and_store(db, name, fields, todo, counts, progress):
     """Read the files to do, in worker processes when it pays off, and store their documents batch by batch."""
     batches = _batches(todo)
     n = workers(len(todo), sum(item[3] for item in todo))  # parsing is CPU-bound: processes, not threads
@@ -611,12 +617,8 @@ def _read_and_store(db, name, fields, known, todo, counts, progress):
                 for problem in problems:
                     progress.note(f"{name}: {rel}: {problem}")
                 note = lambda text: progress.note(f"{name}: {text}")  # noqa: E731
-                docs, _ = _read_scans(db, known[rel][0] if rel in known else None, rel, docs, note)
-                sid = (
-                    known[rel][0]
-                    if rel in known
-                    else db.execute("INSERT INTO sources(path) VALUES(?)", (rel,)).lastrowid
-                )
+                docs, _ = _read_scans(db, _source(db, rel), rel, docs, note)
+                sid = _source(db, rel, make=True)
                 _store(db, sid, rel, docs, counts, note)
                 db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (mtime, size, sid))
             db.commit()
