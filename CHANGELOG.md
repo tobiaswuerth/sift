@@ -26,6 +26,8 @@ Embedding with the GPU busy all the time, and no write-ahead log left at the siz
 - A collection's write-ahead log shrinks back to 64 MB once written into its index. SQLite keeps it as large as it
   grew while any sift has the index open: after `sift index` built the keyword postings beside a running `sift embed`,
   PubMed's held 11.6 GB. A postings build now empties it when done.
+- A keyword search failed with a `KeyError` when another sift, a `sift index` beside the server, deleted a passage
+  it had found before it looked up its document. Such a passage is left out.
 
 ## [1.10.0] - 2026-11-07
 

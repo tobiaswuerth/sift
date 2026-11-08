@@ -196,7 +196,9 @@ class _Store:
             allowed = np.asarray(self.allowed(chunks), bool)
             chunks, acc = chunks[allowed], acc[allowed]
         if len(chunks):
-            self.best.offer(chunks, self.reader.documents(chunks), acc)
+            docs = self.reader.documents(chunks)
+            here = docs >= 0  # not deleted meanwhile
+            self.best.offer(chunks[here], docs[here], acc[here])
 
     def _in(self, term, group):
         """(chunk ids, term scores) of a term's live postings in these ranges, a part per segment."""

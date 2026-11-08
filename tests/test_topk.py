@@ -189,6 +189,19 @@ def test_a_term_in_no_chunk(built):
     )
 
 
+def test_a_chunk_deleted_while_searching_is_not_found(built):
+    # Another sift deleted it after the postings were read, before its document was looked up: a KeyError, which
+    # reached the agent.
+    readers = [reader(built)]
+    (victim, _), *_ = topk.search(readers, ("term", "w1"), 5)
+    db = built.store("prose")
+    db.execute("DELETE FROM chunks WHERE id = ?", (victim,))
+    db.commit()
+    found = topk.search(readers, ("term", "w1"), 5)
+    assert len(found) == 5
+    assert victim not in [chunk for chunk, _ in found]
+
+
 def test_no_chunks_find_nothing(tmp_path, home):
     catalog = Catalog(home)
     (tmp_path / "empty").mkdir()
