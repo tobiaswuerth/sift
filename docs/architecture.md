@@ -118,7 +118,7 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 - **Adaptive k:** asked for it, a search returns those of its `k` hits before the largest drop in score, among the
   first 90% of the gaps between neighbours, and five more: Adaptive-k
   ([Taguchi et al. 2025](https://arxiv.org/abs/2506.08479)). Over 2,000 arXiv titles, vsearch then returned 6 hits of
-  10 or 50 on average, with the paper sought in 99.6% of the cases it was among them.
+  10 or 50 on average, with the paper sought in 99.2 to 99.6% of the cases it was among them.
 - **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are reranked together, in one GPU
   batch. The reranker reads each candidate's title, the front-matter values that share a word with the query (an
   author's name, an id; all of them would dilute the passage), and the passage.

@@ -318,7 +318,7 @@ def _build(db, path, name, workers):
         db.rollback()
         raise
     ids, lengths = _lengths(db, "fts_docsize")
-    first, sequence = _first(db), _topical(db, ids)
+    first, sequence = _first(db), _topical(db, ids, name)
     places = ids if sequence is None else _places_of(ids, sequence, first)
     average = lengths.sum() / len(ids) if len(ids) else 1.0
     parallel = workers > 1 and len(ids) >= PARALLEL
@@ -358,13 +358,14 @@ def _first(db):
     return store.first_id(int(store.get_meta(db, "collection")))
 
 
-def _topical(db, ids):
+def _topical(db, ids, name):
     """The chunks `ids` (ascending) in topical order by their codes (see `order`), those without a code after the
     others, in the order of their ids; None if none of them has a code."""
     coded, bits = _codes(db)
     mine = np.isin(coded, ids)
     if not mine.any():
         return None
+    console.say(f"{name}: ordering {console.count(int(mine.sum()), 'passage')} by topic, for the keyword postings ...")
     ordered = order.topical(coded[mine], bits[mine])
     return np.r_[ordered, ids[~np.isin(ids, ordered)]]
 

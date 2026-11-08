@@ -173,7 +173,7 @@ def line_span(lines):
 
 ADAPTIVE_SHARE = 0.9  # of the gaps between neighbouring scores, the first, where the largest is looked for
 ADAPTIVE_BUFFER = 5  # hits kept after the largest gap, as the paper keeps: of 10 or 50 vsearch hits for 2,000 arXiv
-# titles, 6 on average, with the paper sought in 99.6% of the cases it was among them (docs/benchmarks.md)
+# titles, 6 on average, with the paper sought in 99.2 to 99.6% of the cases it was among them (benchmarks.md)
 
 
 def _adaptive(hits):

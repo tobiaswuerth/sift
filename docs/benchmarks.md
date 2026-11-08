@@ -329,15 +329,16 @@ and hit@10 are those of each paper's own first passage. "+ exact top N" scores t
 - **Filters** on front matter: listing every passage a filter lets through reads every document. Over arXiv, a
   category took 6.2 seconds warm (56 cold), whether it let 9% through (cs.LG) or 0.9% (cs.IR). Checking candidates
   one by one costs 4 to 5 microseconds each warm, 90 cold, so sift checks the nearest first, until enough pass, and
-  lists only when checking would cost more: when it would check more than a fifth of the passages. For cs.LG that is
-  about 0.3 seconds instead of 6.
+  lists only when checking would cost more: when it would check more than a fifth of the passages. Until 10,000
+  candidates passed, cs.LG checked 130,000 in 0.6 seconds, cs.CV (6%) 193,000 in 0.85; cs.IR gave up after 10,000
+  checks (0.02 to 0.08 seconds) and was listed.
 - **Adaptive k:** a search asked to adapt returns its hits up to the largest drop in score, among the first 90% of
   the gaps, and five more ([Taguchi et al. 2025](https://arxiv.org/abs/2506.08479)). For the 2,000 titles, of exact
   search's top 10, 20 or 50:
 
 | Hits kept after the largest drop | Hits returned, on average | The paper sought kept, when among them |
 |---|---|---|
-| 0 | 1.3 | 97.1 to 97.2% |
+| 0 | 1.3 | 96.9 to 97.2% |
 | 2 | 3.3 | 98.5 to 98.9% |
 | **5** | **6.2 to 6.3** | **99.2 to 99.6%** |
 

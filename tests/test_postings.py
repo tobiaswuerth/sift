@@ -265,6 +265,16 @@ def test_postings_number_chunks_in_topical_order(ordered):
     assert live(db) == fts5(db)
 
 
+def test_ordering_says_so(prose, fake_models, capsys):
+    # Minutes over tens of millions of passages, between the build's other steps: without a word, it looked hung.
+    catalog, _ = prose
+    embed.embed_pending(catalog)
+    capsys.readouterr()
+    db = catalog.store("prose")
+    postings.build(db, path_of(catalog), "prose")
+    assert f"prose: ordering {len(chunk_ids(db))} passages by topic" in capsys.readouterr().err
+
+
 def test_a_collection_without_codes_keeps_its_chunks_order(prose):
     catalog, _ = prose
     db = catalog.store("prose")

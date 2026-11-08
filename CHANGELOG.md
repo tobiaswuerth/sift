@@ -17,7 +17,7 @@ for agents when few stand out.
   prefix. Searches look further down until they have `k` papers; `all_passages` keeps every copy.
 - `adaptive` (`--adaptive`) for every search: up to `k` hits, those before the largest drop in score and five more
   (Adaptive-k, Taguchi et al. 2025). Over 2,000 arXiv titles, vsearch returned 6 of 10 or 50 on average, and kept the
-  paper sought in 99.6% of the cases it was among them.
+  paper sought in 99.2 to 99.6% of the cases it was among them.
 - `budget` (`--budget SECONDS`) for keyword search: once spent, and anything found, a search from the postings stops
   and returns the best found so far, each hit marked `"partial": true`. Without it, results stay exact.
 
@@ -33,8 +33,9 @@ for agents when few stand out.
   search's top 10 instead of 99.6%, and reads a quarter of the vectors (7 ms instead of 25, warm). Candidates the same
   distance away are taken by id, so the result no longer depends on how codes are split among collections.
 - A filtered `vsearch`, `query` or `similar` checks the nearest candidates against the filter, a batch at a time,
-  instead of listing every passage it lets through, which read every document: a category filter over arXiv took
-  about 0.3 seconds instead of 6 warm (56 cold). A filter that lets too few through for that is listed, as before.
+  instead of listing every passage it lets through, which read every document: a category filter over arXiv that
+  lets 9% through took 0.6 seconds instead of 6 warm (56 cold). A filter that lets too few through for that, 1% say,
+  is listed, as before.
 
 ## [1.10.1] - 2026-11-08
 
