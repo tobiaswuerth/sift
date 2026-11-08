@@ -313,6 +313,35 @@ def test_reindex_refuses_names_windows_reads_as_others(live, monkeypatch):
             index.reindex([path])
 
 
+def test_reindex_refuses_another_name_of_a_file_or_folder(live, monkeypatch):
+    # Windows answers to a short name, PRIVAT~1, as to the folder's own: one .siftignore left out, or a hidden one,
+    # was read through it, and a file indexed under its short name was there twice.
+    index, vault = live
+    write(vault / ".hidden" / "x.md", "x")
+    write(vault / "Private notes" / "x.md", "x")
+    real = indexing.os.path.lexists
+    monkeypatch.setattr(indexing.os.path, "lexists", lambda path: "~1" in str(path) or real(path))  # as Windows does
+    for path in ("vault/HIDDEN~1/x.md", "vault/PRIVAT~1/x.md", "vault/Private notes/X~1.MD"):
+        with pytest.raises(ValueError, match="another name"):
+            index.reindex([path])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="short names are Windows'")
+def test_reindex_refuses_a_windows_short_name(live, tmp_path):
+    import ctypes
+
+    index, vault = live
+    write(vault / ".siftignore", "Private notes/\n")
+    write(vault / "Private notes" / "secret.md", "x")
+    buffer = ctypes.create_unicode_buffer(1024)
+    ctypes.windll.kernel32.GetShortPathNameW(str(vault / "Private notes"), buffer, 1024)
+    short = os.path.basename(buffer.value)
+    if short == "Private notes":
+        pytest.skip("this drive makes no short names")
+    with pytest.raises(ValueError, match="another name"):
+        index.reindex([f"vault/{short}/secret.md"])
+
+
 def test_reindex_refuses_what_siftignore_leaves_out(live):
     index, vault = live
     write(vault / ".siftignore", "Private/\n*.tmp.md\n")

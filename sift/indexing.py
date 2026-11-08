@@ -302,7 +302,10 @@ def _locate(catalog, path):
         raise ValueError(f"{name}/{rel}: Windows takes {other!r} for another name; give the file's name as it is")
     if not os.path.isdir(root):  # never take an unplugged drive for files deleted
         raise ValueError(f"{name}: folder not found: {root}")
-    parts = _spelled(root, rel.split("/"))
+    try:
+        parts = _spelled(root, rel.split("/"))
+    except ValueError as aliased:
+        raise ValueError(f"{name}/{rel}: {aliased}") from None
     for part in parts[:-1]:
         if part.startswith(".") or part in SKIP_DIRS:
             raise ValueError(f"{name}/{rel}: sift indexes no files in {part}/")
@@ -372,7 +375,8 @@ def _nowhere(path, full, collections):
 
 def _spelled(root, parts):
     """A path's parts as the file system spells them: on Windows and macOS a path names a file in any case or Unicode
-    form, which indexed so would be the file a second time. Parts that don't exist stay as given."""
+    form, which indexed so would be the file a second time. Parts that don't exist stay as given; one that exists
+    under no such name, a Windows short name (PRIVAT~1), is an error: through it, a folder left out was read."""
     folder, spelled = root, []
     for i, part in enumerate(parts):
         try:
@@ -381,7 +385,10 @@ def _spelled(root, parts):
             return spelled + parts[i:]
         if part not in names:
             same = [n for n in names if readers.fold(n) == readers.fold(part)]
-            part = same[0] if len(same) == 1 else part
+            if len(same) == 1:
+                part = same[0]
+            elif os.path.lexists(os.path.join(folder, part)):
+                raise ValueError(f"{part!r} is another name of a file or folder there; give its name as it is")
         spelled.append(part)
         folder = os.path.join(folder, part)
     return spelled
