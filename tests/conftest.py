@@ -14,6 +14,10 @@ from sift.catalog import Catalog
 
 DIM = 64
 
+# Python 3.11's json counts its nesting against the recursion limit (1,000), which the calls around it share: JSON
+# nested nearly as deeply as SQLite stores is deeper than Python recurses there. 3.12 gave C code a limit of its own.
+JSON_NESTS_TO_SQLITES_LIMIT = sys.version_info >= (3, 12)
+
 
 def words(text):
     return re.findall(r"\w+", text.lower())

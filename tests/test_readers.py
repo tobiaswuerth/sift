@@ -8,6 +8,8 @@ import pytest
 
 from sift import readers
 
+from .conftest import JSON_NESTS_TO_SQLITES_LIMIT
+
 
 def pieces(text, first_line=1):
     """Chunks as (first line, last line, text): chunk() gives spans of the text."""
@@ -119,7 +121,8 @@ def test_front_matter_values_sqlite_cant_store_or_python_cant_nest():
     # matter one more: still too deep, so as written.
     deep = "[" * 999 + "1" + "]" * 999
     _, meta, _, _ = readers.parse(f"---\ntags:\n  - {deep}\n  - fine\nk: [x, {deep}]\nok: [[1]]\n---\n", "f")
-    assert meta == {"tags": [deep, "fine"], "k": f"[x, {deep}]", "ok": [[1]]}
+    k = f"[x, {deep}]" if JSON_NESTS_TO_SQLITES_LIMIT else ["x", deep]  # else the item alone too deep for Python
+    assert meta == {"tags": [deep, "fine"], "k": k, "ok": [[1]]}
     assert readers._depth(meta) <= readers.JSON_DEPTH + 1  # what SQLite stores
 
 

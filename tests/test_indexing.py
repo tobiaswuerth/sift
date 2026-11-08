@@ -157,6 +157,18 @@ def test_retitling_holds_the_write_lock_a_batch_at_a_time(corpus, monkeypatch):
     assert all(free)
 
 
+def test_junctions_are_told_apart_where_python_knows_no_reparse_tags(notes, monkeypatch):
+    # stat.IO_REPARSE_TAG_MOUNT_POINT is Windows' alone: elsewhere, asking for it failed every walk of every folder.
+    import stat
+
+    if hasattr(stat, "IO_REPARSE_TAG_MOUNT_POINT"):
+        assert indexing.MOUNT_POINT == stat.IO_REPARSE_TAG_MOUNT_POINT
+    monkeypatch.delattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", raising=False)
+    found = sorted(os.path.relpath(p, notes).replace(os.sep, "/") for p, _, _ in indexing.walk(str(notes)))
+    assert found == ["plain.txt", "rl.md", "robots/brush.md"]
+    assert not indexing._linked(str(notes / "robots"))
+
+
 def test_a_folder_gone_meanwhile_is_no_junction(tmp_path):
     # Listed, then deleted before it is looked at: nothing to follow, and nothing to fail on.
     assert indexing._junction(str(tmp_path / "gone")) is False

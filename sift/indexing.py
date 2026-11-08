@@ -354,13 +354,16 @@ def _linked(path):
     return os.path.islink(path) or _junction(path)
 
 
+MOUNT_POINT = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT, a junction's; module stat names it on Windows alone
+
+
 def _junction(path, entry=None):
     """Whether a folder (its path, or the DirEntry of it) is a Windows junction; nothing elsewhere is."""
     try:
         found = entry.stat(follow_symlinks=False) if entry is not None else os.lstat(path)
     except OSError:
         return False
-    return getattr(found, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
+    return getattr(found, "st_reparse_tag", 0) == MOUNT_POINT
 
 
 NEAREST_SHOWN = 5  # collections an error about a file in none names, the nearest first
