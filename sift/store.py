@@ -290,6 +290,25 @@ def counts(db):
     return dict(db.execute("SELECT name, n FROM counts"))
 
 
+def read_codes(db):
+    """The codes of a store's vectors, by chunk id: (ids, rows of uint8), batch by batch; None if it has none. At most
+    as many as the vectors the store counts, which it keeps: counting the codes was a pass over millions before the one
+    that reads them, and codes added since the count wait for the next read."""
+    import numpy as np  # here, not at the top: the CLI starts with the standard library alone
+
+    n = counts(db)["vectors"]
+    ids, bits, row = np.empty(n, np.int64), None, 0
+    cursor = db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
+    while row < n and (batch := cursor.fetchmany(CODES_BATCH)):
+        batch = batch[: n - row]
+        if bits is None:
+            bits = np.empty((n, len(batch[0][1])), np.uint8)
+        rows = np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)
+        ids[row : row + len(batch)], bits[row : row + len(batch)] = [chunk for chunk, _ in batch], rows
+        row += len(batch)
+    return (ids[:row], bits[:row]) if row else None  # none, or all deleted meanwhile
+
+
 def add_codes(db):
     """Add the codes of the vectors that have none, computed from the vectors: nothing is embedded again. A batch per
     transaction, so that this goes on where it stopped, and another sift waits a batch at most. Vectors of another

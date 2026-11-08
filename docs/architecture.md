@@ -38,9 +38,8 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   their codes (binary k-means by Hamming distance, 64 by 64), each next to the one closest to it, and a cluster's
   chunks in the order of their ids. The chunks of a range then share their words, so its bounds are tight: over 3.2
   million arXiv abstracts, questions scored a half to a twentieth as many ranges, the slowest in half the time, and
-  the postings took 8% less space. A table
-  holds the chunk at each place; a chunk changed since takes the next free place. `sift index` orders them anew once a
-  fifth of the chunks got vectors since.
+  the postings took 8% less space. A table holds the chunk at each place; a chunk changed since takes the next free
+  place. `sift index` orders them anew once a fifth of the chunks got vectors since.
 - The postings follow FTS5 change by change: every chunk whose keyword entries change is marked in the same
   transaction, and `sift index` (or `reindex`) then adds a delta of those chunks, tokenized by FTS5 in a table of its
   own, and masks their old postings, as Lucene's segments do. Many deltas are merged into one; once 5% of the chunks

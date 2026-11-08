@@ -342,19 +342,9 @@ def _by_value(rows, descending):
 
 
 def _codes(db):
-    """The codes of a store's vectors, batch by batch; None if it has none. At most as many as the vectors the store
-    counts, which it keeps: counting the codes was a pass over millions before the one that loads them."""
-    n = store.counts(db)["vectors"]
-    ids, bits, row = np.empty(n, np.int64), None, 0
-    cursor = db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
-    while row < n and (batch := cursor.fetchmany(store.CODES_BATCH)):
-        batch = batch[: n - row]  # codes added since the count wait for the next load
-        if bits is None:
-            bits = np.empty((n, len(batch[0][1])), np.uint8)
-        rows = np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)
-        ids[row : row + len(batch)], bits[row : row + len(batch)] = [chunk for chunk, _ in batch], rows
-        row += len(batch)
-    return Codes(ids[:row], bits[:row]) if row else None  # none, or all deleted meanwhile
+    """The codes of a store's vectors (see store.read_codes) to search; None if it has none."""
+    found = store.read_codes(db)
+    return Codes(*found) if found else None
 
 
 def _size(path):

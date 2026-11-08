@@ -370,13 +370,8 @@ def _topical(db, ids):
 
 
 def _codes(db):
-    """(chunk ids, codes as rows of uint8) of the chunks with codes, read store.CODES_BATCH at a time."""
-    ids, bits = [np.zeros(0, np.int64)], []
-    rows = db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
-    for batch in iter(lambda: rows.fetchmany(store.CODES_BATCH), []):
-        ids.append(np.fromiter((row[0] for row in batch), np.int64, len(batch)))
-        bits.append(np.frombuffer(b"".join(row[1] for row in batch), np.uint8).reshape(len(batch), -1))
-    return np.concatenate(ids), np.concatenate(bits) if bits else np.zeros((0, 1), np.uint8)
+    """(chunk ids, codes as rows of uint8) of the chunks with codes (see store.read_codes)."""
+    return store.read_codes(db) or (np.zeros(0, np.int64), np.zeros((0, 8), np.uint8))
 
 
 def _places_of(ids, sequence, first):
@@ -389,13 +384,18 @@ def _places_of(ids, sequence, first):
 def _write_order(db, start, chunks, first):
     """Record the chunks at the places from `start` on, in kw_order's blocks (see encode_lengths), as chunk ids from
     `first`: a block written before, as the last one is when chunks take the next free places, keeps what it held."""
+    local = np.asarray(chunks, np.int64) - first
+    if len(local) and local.max() >= 1 << 32:
+        raise ValueError(
+            "chunk ids more than 2**32 past the collection's first: too many for keyword postings in order"
+        )
     places = start + np.arange(len(chunks))
     blocks = places >> LENGTHS_SHIFT
     for block in np.unique(blocks).tolist():
         row = db.execute("SELECT data FROM kw_order WHERE block = ?", (block,)).fetchone()
         dense = decode_lengths(row[0]) if row else np.zeros(1 << LENGTHS_SHIFT, np.int64)
         mine = blocks == block
-        dense[places[mine] & ((1 << LENGTHS_SHIFT) - 1)] = np.asarray(chunks)[mine] - first
+        dense[places[mine] & ((1 << LENGTHS_SHIFT) - 1)] = local[mine]
         data = zlib.compress(dense.astype(np.uint32).tobytes(), LEVEL)
         db.execute("INSERT OR REPLACE INTO kw_order(block, data) VALUES(?, ?)", (block, data))
 

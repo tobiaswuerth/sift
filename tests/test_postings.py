@@ -300,6 +300,17 @@ def test_vectors_without_codes_order_nothing_and_build_once(prose):
     assert postings.Reader.state(db) == state
 
 
+def test_chunk_ids_too_far_from_the_first_are_refused_not_wrapped(prose, fake_models, monkeypatch):
+    # The order keeps each chunk as its id from the collection's first, in 32 bits; ids are never handed out twice, so
+    # a collection read anew often enough passes that: wrapped, its keyword searches would find other chunks.
+    catalog, _ = prose
+    embed.embed_pending(catalog)
+    real = postings._first
+    monkeypatch.setattr(postings, "_first", lambda db: real(db) - (1 << 32))
+    with pytest.raises(ValueError, match="2\\*\\*32"):
+        postings.build(catalog.store("prose"), path_of(catalog))
+
+
 def test_a_build_anew_is_a_new_state_for_readers(prose):
     # A server keeps a store's reader for its state: a build that changes no chunk, as one in a new order, must
     # still make another.
