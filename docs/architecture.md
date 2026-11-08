@@ -115,8 +115,9 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   all of them by Hamming distance, on the CPU's cores, each counting its codes at each distance; the counts summed
   tell how near the nearest lie, and the cores pick the codes that near (46 million codes: 0.3 s). The 10,000
   nearest of all collections together, ties by id, are ranked again by the query's own floats against their bits (a
-  table lookup per byte), and the best 1,000 are scored exactly with their vectors from the index. Over 3.2 million arXiv abstracts this finds 99.75% of exact search's top
-  10, and its known-item MRR, 0.9530; reading 1,000 vectors instead of 4,000 saves 18 ms warm
+  table lookup per byte), and the best 1,000 are scored exactly with their vectors from the index. Over 3.2 million
+  arXiv abstracts this finds 99.75% of exact search's top 10, and its known-item MRR, 0.9530; reading 1,000 vectors
+  instead of 4,000 saves 18 ms warm
   ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#vectors-in-memory)). No index to
   build or tune, and no GPU. When the best passages come from a few documents, it looks further down until it has `k`
   documents.
