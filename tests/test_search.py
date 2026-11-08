@@ -41,6 +41,9 @@ def scored(hits):
     return [(h["id"], h["lines"], round(h["score"], 6)) for h in hits]
 
 
+DASH = chr(0x2013)  # an en dash
+
+
 def agree(got, want):
     """The same hits, score for score; among hits of equal score any order (FTS5 keeps none), and at the last score,
     where the k-th place cuts a tie, any of them."""
@@ -67,6 +70,8 @@ def agree(got, want):
         ('w3 "w2 w1" w0', {}),
         ("w1-w2 w4", {}),  # no FTS5 syntax: as its words quoted, a phrase among them
         ('"w5 w6" OR w40 OR "w7 w8"', {"k": 25}),
+        (f"w1 {DASH} w2", {}),  # a word of no token, left out
+        (f"(w3 AND {DASH}) OR w4", {}),
     ],
 )
 def test_keyword_search_from_the_postings_finds_what_fts5_finds(prose, tmp_path, query, options):

@@ -1,7 +1,8 @@
 """Keyword queries as FTS5 reads them, for the postings to answer (see `topk`): terms joined by AND, OR, NOT and
 parentheses, and words side by side, which FTS5 joins before anything else ("a NOT b c" is "a NOT (b c)"; then NOT,
 AND, OR). Each word is tokenized by FTS5 itself, as the index was: into one term, or into a phrase of several
-tokens, one after the other ("first-stage" quoted, `a_b`), which FTS5 checks for the chunks the postings find.
+tokens, one after the other ("first-stage" quoted, `a_b`), which FTS5 checks for the chunks the postings find; a word
+of no token (an en dash) matches nothing, as in FTS5: it drops out of words side by side and of OR, and empties an AND.
 
 What else FTS5 reads (prefixes, NEAR, columns, initial tokens) is left to FTS5, and so is a query FTS5 would reject,
 so that its error is FTS5's: parse() returns None for those, and rejected() tells the second kind."""
@@ -73,24 +74,26 @@ class _Parser:
         self.at += 1
         return self.tokens[self.at - 1]
 
-    def either(self, operator, part, kind):
-        parts = [part()]
+    def parts(self, operator, part):
+        found = [part()]
         while self.peek() == operator:
             self.take()
-            parts.append(part())
-        return parts[0] if len(parts) == 1 else (kind, parts)
+            found.append(part())
+        return found
 
     def any(self):
-        return self.either("OR", self.all, "or")
+        return _joined("or", [part for part in self.parts("OR", self.all) if part is not NOTHING])
 
     def all(self):
-        return self.either("AND", self.but, "and")
+        parts = self.parts("AND", self.but)
+        return NOTHING if NOTHING in parts else _joined("and", parts)
 
     def but(self):
         node = self.primary()
         while self.peek() == "NOT":
             self.take()
-            node = ("not", node, self.primary())
+            right = self.primary()
+            node = node if NOTHING in (node, right) else ("not", node, right)
         return node
 
     def primary(self):
@@ -105,32 +108,37 @@ class _Parser:
             words.append(_term(self.take()[1]))
         if not words:
             raise SyntaxError
-        return words[0] if len(words) == 1 else ("and", words)
+        return _joined("and", [word for word in words if word is not NOTHING])
 
 
-class _Empty(Exception):
-    """A word of no token, which FTS5 reads as it reads it."""
+NOTHING = ("nothing",)  # what matches no chunk: a word of no token (an en dash), as FTS5 reads it, and an AND with one
+
+
+def _joined(kind, parts):
+    """Parts joined by AND or OR; NOTHING for none."""
+    return NOTHING if not parts else parts[0] if len(parts) == 1 else (kind, parts)
 
 
 def _term(word):
-    """A word as FTS5 reads it: a term, or a phrase of its tokens."""
+    """A word as FTS5 reads it: a term, a phrase of its tokens, or NOTHING for a word of no token."""
     tokens = tokenize(word)
     if not tokens:
-        raise _Empty
+        return NOTHING
     return ("term", tokens[0]) if len(tokens) == 1 else ("phrase", tokens)
 
 
 def parse(query):
-    """The query as an expression of terms (see `topk`), or None if FTS5 is to read it."""
+    """The query as an expression of terms (see `topk`), or None if FTS5 is to read it: also a query that matches
+    nothing, which FTS5 knows at once."""
     tokens = _lexed(query)
     if not tokens:
         return None
     parser = _Parser(tokens)
     try:
         node = parser.any()
-    except (SyntaxError, IndexError, _Empty):
+    except (SyntaxError, IndexError):
         return None
-    return node if parser.peek() is None else None
+    return node if parser.peek() is None and node is not NOTHING else None
 
 
 def rejected(query):

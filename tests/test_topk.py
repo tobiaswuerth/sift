@@ -40,8 +40,31 @@ def fts(node):
     return "(" + f" {node[0].upper()} ".join(fts(child) for child in node[1]) + ")"
 
 
+def occurrences(tokens, phrase):
+    """How often the phrase (tokens) occurs in tokens, overlapping occurrences each."""
+    return sum(tuple(tokens[i : i + len(phrase)]) == phrase for i in range(len(tokens) - len(phrase) + 1))
+
+
+def postings_of(reader, leaf):
+    """(chunk ids, counts, lengths, df) of the live chunks holding a leaf, per segment: a term's from its postings, with
+    the df the segment keeps; a phrase's from the chunks' texts, with the number of chunks holding it."""
+    if isinstance(leaf, str):
+        for part in reader.term(leaf):
+            places, tf = part.everything()
+            alive = reader.alive(part.segment, places)
+            places, tf = places[alive], tf[alive]
+            yield reader.chunks_at(places), tf, reader.lengths(part.segment, places), part.df
+        return
+    rows = reader.db.execute("SELECT id, title, text, meta FROM chunk_text")
+    counts = {chunk: sum(occurrences(tokenize(c), leaf) for c in columns if c) for chunk, *columns in rows}
+    ids = np.array([chunk for chunk, n in counts.items() if n], np.int64)
+    sizes = postings.sizes(reader.db, ids)
+    yield ids, np.array([counts[c] for c in ids.tolist()]), np.array([sizes[c] for c in ids.tolist()]), len(ids)
+
+
 def brute(readers, query, k, by_document=True, allowed=None):
-    """Every live posting scored: the reference, written apart from topk."""
+    """Every live posting scored, and every phrase counted in every chunk's text: the reference, written apart from
+    topk."""
     named = topk.terms_of(query)
     chunks = sum(r.chunks for r in readers)
     average = sum(r.tokens for r in readers) / chunks
@@ -49,12 +72,8 @@ def brute(readers, query, k, by_document=True, allowed=None):
     df = dict.fromkeys(named, 0)
     for reader in readers:
         for t in set(named):
-            for part in reader.term(t):
-                df[t] += part.df
-                places, tf = part.everything()
-                alive = reader.alive(part.segment, places)
-                places, tf = places[alive], tf[alive]
-                lengths, ids = reader.lengths(part.segment, places), reader.chunks_at(places)
+            for ids, tf, lengths, n in postings_of(reader, t):
+                df[t] += n
                 term_scores = postings.term_scores(tf, lengths, average)  # as bm25 (see test_postings), to the bit
                 for chunk, s, doc in zip(ids.tolist(), term_scores.tolist(), reader.documents(ids).tolist()):
                     holding.setdefault(chunk, set()).add(t)
@@ -63,8 +82,8 @@ def brute(readers, query, k, by_document=True, allowed=None):
     weight = {t: max(math.log((chunks - df[t] + 0.5) / (df[t] + 0.5)), 1e-6) for t in set(named)}
 
     def counts(node, held):
-        """(whether it holds, the terms that count): FTS5 clears the terms of an AND or NOT that fails."""
-        if node[0] == "term":
+        """(whether it holds, the leaves that count): those of an AND or NOT that fails count nothing."""
+        if node[0] in topk.LEAVES:
             return node[1] in held, [node[1]] if node[1] in held else []
         if node[0] == "not":
             left, terms = counts(node[1], held)
@@ -147,20 +166,43 @@ def test_finds_what_fts5_finds(built, seed):
         same(topk.search([reader(built)], query, k), more, k, query)
 
 
-def phrased(rng, pairs, depth=0):
-    """A random expression of terms and phrases (pairs of tokens), AND, OR and NOT."""
-    if depth >= 2 or rng.random() < 0.35:
+def phrased(rng, pairs, depth=0, deepest=2):
+    """A random expression of terms and phrases (of `pairs`, tuples of tokens), AND, OR and NOT."""
+    if depth >= deepest or rng.random() < 0.35:
         return ("phrase", rng.choice(pairs)) if rng.random() < 0.5 else ("term", rng.choice(TERMS))
     kind = rng.choice(["and", "or", "or", "not"])
     if kind == "not":
-        return ("not", phrased(rng, pairs, depth + 1), phrased(rng, pairs, depth + 1))
-    return (kind, [phrased(rng, pairs, depth + 1) for _ in range(rng.randint(2, 3))])
+        return ("not", phrased(rng, pairs, depth + 1, deepest), phrased(rng, pairs, depth + 1, deepest))
+    return (kind, [phrased(rng, pairs, depth + 1, deepest) for _ in range(rng.randint(2, 3))])
 
 
 def adjacent(db):
     """Pairs of tokens one after the other in the collection's chunks: phrases it holds."""
     texts = [t for (t,) in db.execute("SELECT text FROM chunk_text ORDER BY id LIMIT 30")]
     return sorted({pair for text in texts for pair in itertools.pairwise(tokenize(text))})
+
+
+def phrases(db):
+    """Phrases the collection holds: pairs of tokens, and phrases that can overlap themselves ("a a", "a b a"), each
+    occurrence of which FTS5 counts."""
+    texts = [tokenize(t) for (t,) in db.execute("SELECT text FROM chunk_text ORDER BY id")]
+    overlapping = {w[:3] for t in texts for w in zip(t, t[1:], t[2:]) if w[0] == w[2]}
+    overlapping |= {pair for t in texts for pair in itertools.pairwise(t) if pair[0] == pair[1]}
+    return adjacent(db) + sorted(overlapping)[:6]
+
+
+@pytest.mark.usefixtures("small_lists")
+@pytest.mark.parametrize("seed", range(4))
+def test_phrases_find_what_counting_every_phrase_finds(built, seed):
+    # Nested deeper, where FTS5's own scan counts a phrase by where its reader stands, and may miss it.
+    rng, readers = random.Random(300 + seed), [reader(built)]
+    pairs = phrases(built.store("prose"))
+    assert any(p[0] == p[-1] for p in pairs)
+    for _ in range(25):
+        query, k, by_document = phrased(rng, pairs, deepest=3), rng.choice([1, 3, 10, 50]), rng.random() < 0.7
+        allowed = (lambda chunks: chunks % 3 > 0) if rng.random() < 0.3 else None
+        want = brute(readers, query, k + 20, by_document, allowed)
+        same(topk.search(readers, query, k, by_document, allowed), want, k, query)
 
 
 @pytest.mark.usefixtures("small_lists")
@@ -215,8 +257,9 @@ def test_through_changes_and_deltas(built, monkeypatch):
         postings.update(built.store("prose"), built.get("prose").store)
         readers = [reader(built)]
         assert len(readers[0].segments) == round_ + 2
+        pairs = phrases(built.store("prose"))
         for _ in range(15):
-            query, k = expression(rng), rng.choice([1, 10, 40])
+            query, k = phrased(rng, pairs) if rng.random() < 0.5 else expression(rng), rng.choice([1, 10, 40])
             same(topk.search(readers, query, k), brute(readers, query, k + 20), k, query)
 
 
@@ -227,9 +270,9 @@ def test_across_stores_with_their_statistics_as_one(built, tmp_path):
     indexing.index(built)
     postings.build(built.store("more"), built.get("more").store)
     readers = [reader(built), reader(built, "more")]
-    rng = random.Random(4)
+    rng, pairs = random.Random(4), phrases(built.store("prose"))
     for _ in range(20):
-        query, k = expression(rng), rng.choice([1, 10, 30])
+        query, k = phrased(rng, pairs) if rng.random() < 0.5 else expression(rng), rng.choice([1, 10, 30])
         same(topk.search(readers, query, k), brute(readers, query, k + 20), k, query)
 
 

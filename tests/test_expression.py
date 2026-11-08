@@ -16,6 +16,9 @@ def t(term):
     return ("term", term)
 
 
+D = chr(0x2013)  # an en dash: a word of no token
+
+
 @pytest.mark.parametrize(
     "query, parsed",
     [
@@ -37,6 +40,18 @@ def t(term):
         ('"retrieval augmented"', ("phrase", ("retrieval", "augmented"))),  # its tokens, one after the other
         ("a_b", ("phrase", ("a", "b"))),  # a bareword of two tokens is a phrase too
         ('w1 "First Stage"', ("and", [t("w1"), ("phrase", ("first", "stage"))])),
+        # A word of no token, as a dash between words: FTS5 leaves it out among words side by side and in OR, and
+        # "a NOT D" is a. That sent a title such as "Deep learning D a review" to FTS5 whole, which read every posting.
+        (f"Deep learning {D} a review", ("and", [t("deep"), t("learning"), t("a"), t("review")])),
+        (f'"deep" "{D}" "learning"', ("and", [t("deep"), t("learning")])),
+        ('a ""', t("a")),
+        (f"a OR {D}", t("a")),
+        (f"{D} OR a", t("a")),
+        (f"a NOT {D}", t("a")),
+        (f"a NOT ({D} {D})", t("a")),
+        (f"a AND ({D} OR b)", ("and", [t("a"), t("b")])),
+        (f"({D} AND a) OR b", t("b")),
+        (f"a {D} AND b", ("and", [t("a"), t("b")])),
     ],
 )
 def test_parses_as_fts5_does(query, parsed):
@@ -63,6 +78,11 @@ def test_parses_as_fts5_does(query, parsed):
         "(a (b))",
         'a "b',
         "",
+        D,  # words of no token alone, or in an AND, match nothing: FTS5 says so at once
+        f"{D} {D}",
+        f"a AND {D}",
+        f"{D} NOT a",
+        f"a AND ({D} {D})",
     ],
 )
 def test_leaves_to_fts5_what_it_doesnt_read(query):
@@ -92,9 +112,10 @@ ROWS = [" ".join(c) for n in range(1, 4) for c in itertools.combinations(["a", "
 
 
 def random_query(rng, depth=0):
-    """A query string FTS5 reads, mostly: terms, AND, OR, NOT, parentheses, words side by side, quotes."""
+    """A query string FTS5 reads, mostly: terms, AND, OR, NOT, parentheses, words side by side, quotes, and words of
+    no token."""
     if depth > 2 or rng.random() < 0.3:
-        words = [rng.choice("abcdefx") for _ in range(rng.choice([1, 1, 2]))]
+        words = [rng.choice("abcdefx" + D) for _ in range(rng.choice([1, 1, 2]))]
         return " ".join(f'"{w}"' if rng.random() < 0.3 else w for w in words)
     left, right = random_query(rng, depth + 1), random_query(rng, depth + 1)
     if rng.random() < 0.3:

@@ -531,6 +531,43 @@ def test_a_phrase_is_counted_as_fts5s_bm25_counts_it(tmp_path, home):
     assert postings.matches(db, "w*", ids) == {ids[0]: 4, ids[1]: 2, ids[2]: 3}  # a prefix: each word it begins
 
 
+def test_highlights_mark_already_in_a_text_counts_for_nothing(tmp_path, home):
+    # Control characters come with PDFs and mails; highlight()'s mark among them counted as phrases found.
+    root, catalog = tmp_path / "marked", Catalog(home)
+    write(root / "a.md", f"# Marked {postings.MARK}\n\nw1 w2 {postings.MARK * 3} w3 w1 w2\n")
+    catalog.add(root, "marked")
+    indexing.index(catalog)
+    db = catalog.store("marked")
+    (chunk,) = [c for (c,) in db.execute("SELECT id FROM chunks")]
+    assert postings.matches(db, '"w1 w2"', [chunk]) == {chunk: 2}
+    assert postings.matches(db, "w*", [chunk]) == {chunk: 5}
+    assert postings.Reader(db).phrase_counts(("w1", "w2"), [chunk])[0].tolist() == [2]
+
+
+def test_the_chunks_of_phrases_are_kept_to_a_budget_of_bytes(tmp_path, home, monkeypatch):
+    # A server asked ever new phrases kept the chunks of each for as long as the postings stood: 80 MB for a common
+    # phrase over 30 million chunks.
+    root, catalog = tmp_path / "phrases", Catalog(home)
+    for i in range(6):
+        write(root / f"n{i}.md", f"# Note\n\nw1 w2 w{i + 3}\n")
+    catalog.add(root, "phrases")
+    indexing.index(catalog)
+    db = catalog.store("phrases")
+    budget = 8 * 8  # chunk ids: the six of "w1 w2" and one each of two other phrases
+    monkeypatch.setattr(postings, "_PHRASES", postings._Cache(budget))
+    reader, asked = postings.Reader(db), []
+    db.set_trace_callback(lambda sql: "MATCH" in sql and asked.append(sql))
+    try:
+        for phrase in [("w1", "w2"), ("w2", "w3"), ("w1", "w2"), ("w2", "w4"), ("w2", "w5"), ("w2", "w6")]:
+            assert len(reader.phrase_chunks(phrase)) == (6 if phrase == ("w1", "w2") else 1)
+        assert postings._PHRASES.size <= budget
+        assert len(asked) == 5  # ("w1", "w2") once while it was kept
+        reader.phrase_chunks(("w1", "w2"))
+        assert len(asked) == 6  # let go since, and found again
+    finally:
+        db.set_trace_callback(None)
+
+
 def test_the_parts_of_a_build_cover_every_term_once():
     shards = postings._shards()
     assert shards[0][0] == ""

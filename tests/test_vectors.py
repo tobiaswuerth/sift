@@ -337,8 +337,8 @@ def test_the_distances_of_one_collections_codes():
     ids, matrix, _, index = random_index(n=100)
     query = codes(unit(np.ones((1, 64))))[0]
     expected = np.bitwise_count(codes(matrix) ^ query).sum(1)
-    assert index.distances(query).tolist() == expected.tolist()  # by id, as the codes hold them
-    left = index.distances(query, allowed=ids[:50], excluded=ids[:10])
+    assert index.measure(query)[0].tolist() == expected.tolist()  # by id, as the codes hold them
+    left = index.measure(query, allowed=ids[:50], excluded=ids[:10])[0]
     assert (left[10:50] == expected[10:50]).all()
     assert (left[:10] == vectors.FAR).all()
     assert (left[50:] == vectors.FAR).all()

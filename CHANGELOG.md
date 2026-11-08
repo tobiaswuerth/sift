@@ -25,9 +25,12 @@ once.
 - Phrases are found from the postings too: `"retrieval augmented"`, and words FTS5 can't read as written, which sift
   searches as phrases, such as "first-stage" or "COVID-19". A phrase is bounded by its words and checked by FTS5 in
   the chunks within reach. Such a query went to FTS5 whole, which read every posting of each of its words: over ten
-  minutes for a question over 30 million PubMed passages; over arXiv, 0.43 s instead of 8.7.
-- `vsearch` counts and selects its candidates in the threads that compare the codes, which reuse their buffers: over
-  46 million synthetic codes, 0.3 seconds instead of 0.6, the same results.
+  minutes for a question over 30 million PubMed passages; over arXiv, 0.43 s instead of 8.7. The scores are FTS5's,
+  but that in a nested query a phrase counts in every passage that holds it, where FTS5 missed it now and then.
+- A query with a word of no token, such as the dash in "Deep learning – a review", is answered from the postings too,
+  instead of by FTS5 whole: the word is left out, as FTS5 leaves it out.
+- `vsearch` counts its codes at each distance in the threads that compare them, which reuse their buffers, and picks
+  the nearest in threads too: over 46 million synthetic codes, 0.3 seconds instead of 0.6, the same results.
 - `sift embed` starts at once: how many passages wait comes from the counts the index keeps, and which ones from the
   vectors' codes, a sixteenth of the vectors' size. Over 30 million PubMed passages the count took 9 minutes from a
   cold disk.
@@ -35,7 +38,8 @@ once.
 ### Fixed
 
 - A keyword query of several collections that FTS5 answers counted a phrase that overlaps itself, "w1 w1" in "w1 w1
-  w1", once instead of twice, as one index's bm25 counts it.
+  w1", once instead of twice, as one index's bm25 counts it; and a phrase too often in a passage that holds the
+  control character U+0001, as a PDF or a mail may.
 
 ## [1.11.0] - 2026-11-08
 

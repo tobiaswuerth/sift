@@ -88,7 +88,8 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
     score in a range of places, summed over the query's terms, bounds every chunk there, so ranges are scored best
     bound first until none left can beat the k-th best. FTS5 scores every match, about a microsecond each: "patients"
     matches 8 million PubMed passages and took 8 seconds, a question of a dozen words 15. Now most of a common word's
-    postings are never read. The results are FTS5's, score for score. A search reads the postings in one transaction,
+    postings are never read. The results are FTS5's, score for score, but where FTS5 counts a word or phrase by where
+    its readers happen to stand, in nested queries alone (see `topk`). A search reads the postings in one transaction,
     as they were when it began, whatever another sift builds meanwhile.
   - A query's common words are read only where they can matter. With all words required, the rarest is read first,
     and each next one only where chunks holding all before it are left; with any of them, the words that together
@@ -96,7 +97,8 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
     (MaxScore). A question of 14 words over 3.2 million arXiv abstracts: 81 ms instead of 2.5 s.
   - A phrase, quoted or a word FTS5 can't read as written ("first-stage"), is bounded by its words, at most as often
     in a chunk as the rarest of them, and FTS5, which has the positions, finds the chunks that hold it, once for the
-    postings as they stand, and counts it in those within reach.
+    postings as they stand (kept up to 256 MB), and counts it in those within reach. A word of no token, such as a dash
+    between words, matches nothing, as in FTS5: words side by side and OR leave it out.
   - Prefixes, NEAR and column filters are FTS5's to answer, as before.
   - With a time budget, a search from the postings stops once it is spent and has found any, and returns the best found
     so far, marked partial: ranges best bound first make that the anytime ranking of
@@ -110,8 +112,8 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   scores.
 - **`vsearch`:** every vector's code, its signs as one bit per dimension, waits in RAM: 96 bytes for 768 dimensions, a
   sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with
-  all of them by Hamming distance, on the CPU's cores, each counting its codes at each distance and picking the
-  nearest of its own (46 million codes: 0.3 s); the 10,000 nearest of all collections together, ties by id, are
+  all of them by Hamming distance, on the CPU's cores, each counting its codes at each distance; the counts summed
+  tell how near the nearest lie, and the cores pick the codes that near (46 million codes: 0.3 s); the 10,000 nearest of all collections together, ties by id, are
   ranked again by the query's own floats against their bits (a table lookup per byte), and the best 1,000 are scored
   exactly with their vectors from the index. Over 3.2 million arXiv abstracts this finds 99.75% of exact search's top
   10, and its known-item MRR, 0.9530; reading 1,000 vectors instead of 4,000 saves 18 ms warm

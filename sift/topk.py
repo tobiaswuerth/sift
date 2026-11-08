@@ -6,10 +6,12 @@ each term's best score in a range, weighted by its idf and summed over the query
 chunk there. Ranges are scored best bound first, a batch at a time, until no range left can beat the k-th best found:
 what remains is never read. A query is an expression: ("term", text), ("phrase", tokens), ("and", [...]), ("or",
 [...]) or ("not", left, right), as FTS5 reads AND, OR and NOT. It holds per chunk by the terms and phrases (its leaves)
-the chunk holds; a chunk's score sums the leaves that count in it, as FTS5 counts them: a leaf written twice counts
-twice, and one under an AND or NOT that fails in the chunk counts nothing, even where the chunk is found otherwise
-("x OR (a AND b)" in a chunk with x and a: x alone). A phrase is bounded by its tokens, which the postings hold, and
-counted by FTS5, which has their positions, in the chunks the bounds leave."""
+the chunk holds; a chunk's score sums the leaves that count in it: a leaf written twice counts twice, and one under an
+AND or NOT that fails in the chunk counts nothing, even where the chunk is found otherwise ("x OR (a AND b)" in a chunk
+with x and a: x alone). That is FTS5's bm25, score for score, but where FTS5 counts by where its readers happen to
+stand in their lists, in nested queries alone: it may count the right side of a NOT that fails ("x OR (a NOT b)" in a
+chunk with x and b), and miss a phrase in an OR that holds. A phrase is bounded by its tokens, which the postings hold,
+and counted with FTS5, which has their positions, in the chunks the bounds leave."""
 
 import math
 import time
@@ -47,8 +49,8 @@ def tokens_of(leaf):
 
 def counted(node, present):
     """Where an expression holds, given where each of its leaves is present (boolean arrays by leaf), and where each of
-    its leaves counts, as FTS5 counts them after it checks a row (fts5ExprCheckPoslists): [(leaf, where)], a leaf as
-    often as it occurs."""
+    its leaves counts, where it is present and no AND or NOT above it fails: [(leaf, where)], a leaf as often as it
+    occurs."""
     kind = node[0]
     if kind in LEAVES:
         return present[node[1]], [(node[1], present[node[1]])]

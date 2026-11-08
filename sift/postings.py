@@ -210,7 +210,7 @@ def _postings(rows):
         yield term, *_counted(np.concatenate(parts))
 
 
-MARK = "\x01"  # what highlight() puts before each phrase it finds, to count them
+MARK = "\x01"  # what highlight() puts before each phrase it finds, to count them; texts may hold it too
 
 
 def phrase_query(tokens):
@@ -221,8 +221,9 @@ def phrase_query(tokens):
 def matches(db, match, chunks):
     """How often an FTS5 query of one phrase (quoted, or a prefix: w*) occurs in each of these chunks (ids), all
     columns, as FTS5's bm25 counts it: {chunk: count}, of the chunks it is in. A mark each by highlight(), FTS5 seeking
-    each chunk in the phrase's lists; but highlight() merges occurrences that overlap ("a a" twice in "a a a", marked
-    once), so a phrase that can overlap itself is counted in the chunks' own tokens."""
+    each chunk in the phrase's lists, beyond the marks the column holds itself; but highlight() merges occurrences that
+    overlap ("a a" twice in "a a a", marked once), so a phrase that can overlap itself is counted in the chunks' own
+    tokens."""
     ids = json.dumps([int(c) for c in chunks])
     if (phrase := _quoted(match)) and _overlapping(phrase):
         sql = "SELECT id, title, text, meta FROM chunk_text WHERE id IN (SELECT value FROM json_each(?))"
@@ -231,9 +232,14 @@ def matches(db, match, chunks):
             for c, *texts in db.execute(sql, (ids,))
         }
         return {c: n for c, n in counts.items() if n}
-    marked = ", ".join(f"highlight(fts, {column}, '{MARK}', '')" for column in range(3))
+    columns = ("title", "text", "meta")  # as FTS5 numbers them
+    marked = ", ".join(f"highlight(fts, {n}, '{MARK}', ''), {column}" for n, column in enumerate(columns))
     sql = f"SELECT rowid, {marked} FROM fts WHERE fts MATCH ? AND rowid IN (SELECT value FROM json_each(?))"
-    return {row[0]: sum(text.count(MARK) for text in row[1:] if text) for row in db.execute(sql, (match, ids))}
+    return {row[0]: _marks(row[1::2]) - _marks(row[2::2]) for row in db.execute(sql, (match, ids))}
+
+
+def _marks(texts):
+    return sum(text.count(MARK) for text in texts if text)
 
 
 def _quoted(match):
@@ -731,6 +737,8 @@ class _Cache:
 
 BLOCK_CACHE = 512 << 20  # bytes of decoded blocks kept: a long question over PubMed reads about 150 MB of them
 _BLOCKS = _Cache(BLOCK_CACHE)  # shared by every reader: one budget for the process
+PHRASE_CACHE = 256 << 20  # bytes of the chunks of phrases kept: a common phrase over 30 million chunks takes 80 MB
+_PHRASES = _Cache(PHRASE_CACHE)
 _readers = itertools.count()
 
 
@@ -747,7 +755,6 @@ class Reader:
         self.ranges = lru_cache(maxsize=1024)(self._ranges)
         self._me = next(_readers)
         self._dense = {}  # what is read in blocks of places: (first block, values read so far, blocks read) by table
-        self._phrases = {}  # phrase: the chunks that hold it
         self._first = _first(db) if _ordered(db) else None  # None: places are ids
 
     def block(self, key, n):
@@ -783,11 +790,12 @@ class Reader:
 
     def phrase_chunks(self, phrase):
         """The chunks that hold the phrase (a tuple of tokens), ascending, as FTS5 finds them, which has the positions
-        the postings leave out: found once for these postings."""
-        if phrase not in self._phrases:
-            rows = self.db.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rowid", (phrase_query(phrase),))
-            self._phrases[phrase] = np.fromiter((chunk for (chunk,) in rows), np.int64)
-        return self._phrases[phrase]
+        the postings leave out: found once for these postings, while the cache all readers share keeps them."""
+        return _PHRASES.get((self._me, phrase), lambda: (self._holding(phrase),))[0]
+
+    def _holding(self, phrase):
+        rows = self.db.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rowid", (phrase_query(phrase),))
+        return np.fromiter((chunk for (chunk,) in rows), np.int64)
 
     def phrase_df(self, phrase):
         """How many chunks hold the phrase, as FTS5's bm25 counts them."""
@@ -795,8 +803,8 @@ class Reader:
 
     def phrase_counts(self, phrase, chunks):
         """How often the phrase occurs in each of these chunks (ids), all columns, and their lengths in tokens:
-        (counts, lengths), 0 for a chunk it isn't in. From the chunks' own tokens, overlapping occurrences each, as
-        FTS5's bm25 counts them ("a a" twice in "a a a"), which highlight(), merging them, doesn't tell."""
+        (counts, lengths), 0 for a chunk it isn't in. As FTS5's bm25 counts them, overlapping occurrences each (see
+        `matches`)."""
         ids, holding = np.asarray(chunks, np.int64), self.phrase_chunks(phrase)
         at = np.minimum(np.searchsorted(holding, ids), max(len(holding) - 1, 0))
         members = (ids[holding[at] == ids] if len(holding) else ids[:0]).tolist()

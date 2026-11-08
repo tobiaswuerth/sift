@@ -205,10 +205,6 @@ class Codes:
             keep = outside if keep is None else keep & outside
         return keep
 
-    def distances(self, query_bits, allowed=None, excluded=None):
-        """The Hamming distance of every code to the query's, by `ids` (see measure)."""
-        return self.measure(query_bits, allowed, excluded)[0]
-
     def measure(self, query_bits, allowed=None, excluded=None):
         """The Hamming distance of every code to the query's, by `ids`, FAR for those that don't count (those not
         `allowed`, ids or None for all, and those `excluded`); and how many codes that count are at each distance,
