@@ -504,6 +504,60 @@ def test_delete_marks_vectors_changed(corpus):
     assert store.get_meta(db, "version") != before
 
 
+def epoch(db):
+    return store.get_meta(db, "codes_epoch")
+
+
+def test_codes_appended_past_the_last_keep_their_epoch(embedded):
+    # A running server reads only the codes past the last it holds, as long as this stays: `sift embed` writes its
+    # slabs in the order of the chunks, each past the codes before.
+    db = embedded[0].store("notes")
+    last, before = db.execute("SELECT max(chunk) FROM codes").fetchone()[0], epoch(db)
+    vector = np.ones((1, 64), np.float16)
+    store.put_vectors(db, [last + 1], vector)
+    assert epoch(db) == before
+    store.put_vectors(db, [last + 1], -vector)  # embedded again: a code it holds changes
+    assert epoch(db) != before
+    again = epoch(db)
+    store.put_vectors(db, [last - 1], vector)  # one before the last
+    assert epoch(db) != again
+
+
+@pytest.mark.parametrize("dropped", [True, False])
+def test_vectors_dropped_change_the_epoch(embedded, dropped):
+    catalog, root = embedded
+    db = catalog.store("notes")
+    before = epoch(db)
+    if dropped:
+        store.delete_docs(db, [doc_ids(db)["rl.md"]])
+    else:
+        write(root / "new.md", "# New\n\nNot embedded yet.\n")
+        indexing.index(catalog)
+        store.delete_docs(db, [doc_ids(db)["new.md"]])  # it had no vector: no code changes
+    assert (epoch(db) != before) == dropped
+
+
+def test_every_deletion_of_vectors_goes_through_the_store():
+    # One place keeps the epoch: a deletion elsewhere would leave a running server holding codes of vectors gone.
+    found = [
+        f"{path.name}:{n}"
+        for path in sorted(Path(store.__file__).parent.glob("*.py"))
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "DELETE FROM vectors" in line
+    ]
+    assert len(found) == 1
+    assert found[0].startswith("store.py:")
+
+
+def test_codes_are_read_past_a_chunk(embedded):
+    db = embedded[0].store("notes")
+    ids, bits = store.read_codes(db)
+    tail_ids, tail_bits = store.read_codes(db, after=int(ids[0]))
+    assert (tail_ids.tolist(), tail_bits.tolist()) == (ids[1:].tolist(), bits[1:].tolist())
+    assert store.read_codes(db, after=int(ids[-1])) is None
+    assert store.read_codes(db, after=int(ids[0]), most=1)[0].tolist() == ids[1:2].tolist()
+
+
 def test_touch_changes_version_within_one_clock_tick(corpus, monkeypatch):
     db = corpus[0].store("notes")
     monkeypatch.setattr(time, "time_ns", lambda: 1)  # before Python 3.13 the Windows clock ticks every 15.6 ms

@@ -97,8 +97,9 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
     (MaxScore). A question of 14 words over 3.2 million arXiv abstracts: 81 ms instead of 2.5 s.
   - A phrase, quoted or a word FTS5 can't read as written ("first-stage"), is bounded by its words, at most as often
     in a chunk as the rarest of them, and FTS5, which has the positions, finds the chunks that hold it, once for the
-    postings as they stand (kept up to 256 MB), and counts it in those within reach. A word of no token, such as a dash
-    between words, matches nothing, as in FTS5: words side by side and OR leave it out.
+    postings as they stand, and counts it in those within reach, each once, kept with them (up to 256 MB in all): asked
+    again, a phrase is no FTS5 work. A word of no token, such as a dash between words, matches nothing, as in FTS5:
+    words side by side and OR leave it out.
   - Prefixes, NEAR and column filters are FTS5's to answer, as before.
   - With a time budget, a search from the postings stops once it is spent and has found any, and returns the best found
     so far, marked partial: ranges best bound first make that the anytime ranking of
@@ -121,6 +122,11 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#vectors-in-memory)). No index to
   build or tune, and no GPU. When the best passages come from a few documents, it looks further down until it has `k`
   documents.
+  - A server follows each collection's changes without stalling a search: the codes written past the last it holds,
+    as `sift embed` writes them slab by slab, are read alone. Any other change to the vectors (deleted, or embedded
+    again) gives the store's codes a new epoch, and the server reads them all again in a thread of its own, while
+    searches go on with those held and the vectors as the store holds them. Every deletion of vectors goes through
+    one function of the store, which keeps the epoch.
   - A filter on front matter is checked for the nearest candidates first, a batch at a time, until enough pass: listing
     every chunk it lets through reads every document, 6 seconds over arXiv warm and 56 cold, while a check costs 4 to
     90 microseconds. A filter that lets too few through for that, so that checking would cost more than a fifth of the

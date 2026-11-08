@@ -194,6 +194,18 @@ class Codes:
             _alive=np.concatenate([alive[: len(base)], np.ones(len(added) + len(ids), bool)]),
         )
 
+    def appended(self, ids, bits):
+        """These codes, and those of the chunks `ids`, rows of `bits`, which none of them holds (written past the last
+        by `sift embed`): the codes loaded stay as they are, the added ones join the part patches add to."""
+        ids, base = np.asarray(ids, np.int64), self._parts[0]
+        added = self._parts[1] if len(self._parts) > 1 else base[:0]
+        return Codes(
+            np.concatenate([self.ids, ids]),
+            None,
+            _parts=[base, np.concatenate([added, np.asarray(bits, np.uint8)])],
+            _alive=None if self._alive is None else np.concatenate([self._alive, np.ones(len(ids), bool)]),
+        )
+
     def _keep(self, allowed, excluded):
         """Which of `ids` may be found, or None for all."""
         keep = self._alive

@@ -2,6 +2,8 @@
 browsing by folder."""
 
 import json
+import sqlite3
+import threading
 
 import numpy as np
 import pytest
@@ -489,6 +491,147 @@ def test_vsearch_reloads_after_index_changes(embedded):
     (root / "rl.md").unlink()
     indexing.index(catalog)  # deletes rl.md and its vector; the codes in memory must not serve it
     assert "notes/rl.md" not in ids(index.vsearch("reward shaping"))
+
+
+def held_codes(index):
+    """The codes an index holds of every collection, (chunk ids, codes as bytes), as a fresh load would give them."""
+    found = []
+    for cid in sorted(index.vectors):
+        ids, bits = index.vectors[cid][1].live()
+        found += zip(ids.tolist(), (row.tobytes() for row in bits))
+    return found
+
+
+def fresh_codes(catalog):
+    fresh = Index(catalog)
+    fresh.load()
+    return held_codes(fresh)
+
+
+def reading_codes(monkeypatch):
+    """The `after` of each store.read_codes call from now on, and the thread that made it."""
+    calls, real = [], store.read_codes
+
+    def recorded(db, after=None, most=None):
+        calls.append((after, threading.current_thread()))
+        return real(db, after, most)
+
+    monkeypatch.setattr(store, "read_codes", recorded)
+    return calls
+
+
+def test_codes_embedded_meanwhile_are_read_alone(embedded, fake_models, monkeypatch):
+    # `sift embed` beside a server commits a slab a minute; each made the next search read every code of the
+    # collection anew: 18 seconds for PubMed's 29 million, once a minute while it embedded.
+    catalog, root = embedded
+    index = Index(catalog)
+    index.vsearch("anything")
+    for n in range(2):
+        write(root / f"new{n}.md", f"# Pigments {n}\n\npigment mixing on canvas, note {n}\n")
+        indexing.index(catalog)
+        embed.embed_pending(catalog)
+        with monkeypatch.context() as patched:
+            calls = reading_codes(patched)
+            assert ids(index.vsearch(f"Pigments {n} pigment mixing on canvas", k=1)) == [f"notes/new{n}.md"]
+        assert calls
+        assert all(after is not None for after, _ in calls)  # the codes past those held, alone
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+@pytest.mark.parametrize("by", ["sift index", "an older sift"])
+def test_codes_changed_otherwise_are_read_anew_beside_the_searches(embedded, monkeypatch, by):
+    # A vector deleted or replaced: all codes are read again, in a thread of their own, while searches go on with
+    # those held; then the codes read take their place. An older sift doesn't mark such a change: the count tells.
+    catalog, root = embedded
+    index = Index(catalog)
+    assert ids(index.vsearch("reward shaping", k=1)) == ["notes/rl.md"]
+    if by == "sift index":
+        (root / "rl.md").unlink()
+        indexing.index(catalog)
+    else:
+        db = catalog.store("notes")
+        db.execute("DELETE FROM vectors WHERE chunk = (SELECT min(chunk) FROM vectors)")
+        store.touch(db)
+        db.commit()
+    real, reading, release, readers = store.read_codes, threading.Event(), threading.Event(), []
+
+    def slow(db, after=None, most=None):
+        if after is None:  # all of them: as long as PubMed's 29 million take
+            readers.append(threading.current_thread())
+            reading.set()
+            assert release.wait(10)
+        return real(db, after, most)
+
+    monkeypatch.setattr(store, "read_codes", slow)
+    found = ids(index.vsearch("reward shaping", k=3))  # answered with the codes held, while they are read
+    assert reading.wait(10)
+    assert len(found) == 2  # the vector gone is never found: the vectors scored are those the store holds
+    assert ids(index.vsearch("reward shaping", k=3)) == found  # and again: one read at a time
+    assert len(readers) == 1
+    assert readers[0] is not threading.current_thread()
+    release.set()
+    index.settle(timeout=10)
+    index.vsearch("reward shaping", k=3)  # takes them up
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+def test_codes_that_could_not_be_read_anew_are_read_again(embedded, monkeypatch, capsys):
+    # A store moved or a disk that failed meanwhile: searches go on with the codes held, and read them again.
+    catalog, root = embedded
+    index = Index(catalog)
+    index.vsearch("anything")
+    (root / "rl.md").unlink()
+    indexing.index(catalog)
+    real, failed = search._read_anew, []
+
+    def failing(path):
+        failed.append(path)
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(search, "_read_anew", failing)
+    index.vsearch("anything")
+    index.settle(timeout=10)
+    assert len(index.vsearch("anything")) == 2  # with the codes held, and their vectors as the store holds them
+    assert "could not be read again: disk I/O error" in capsys.readouterr().err
+    monkeypatch.setattr(search, "_read_anew", real)
+    index.settle(timeout=10)  # the try the last search began
+    index.vsearch("anything")  # tries again
+    index.settle(timeout=10)
+    index.vsearch("anything")
+    assert failed
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+def test_codes_read_anew_of_a_collection_deactivated_meanwhile_are_let_go(embedded, monkeypatch):
+    catalog, root = embedded
+    index = Index(catalog)
+    index.vsearch("anything")
+    (root / "rl.md").unlink()
+    indexing.index(catalog)
+    release, real = threading.Event(), search._read_anew
+    monkeypatch.setattr(search, "_read_anew", lambda path: release.wait(10) and real(path))
+    index.vsearch("anything")  # reading begins
+    catalog.set_active(["notes"], False)
+    with pytest.raises(LookupError, match="no collection is active"):
+        index.load()
+    release.set()
+    catalog.set_active(["notes"], True)
+    index.vsearch("anything")
+    assert held_codes(index) == fresh_codes(catalog)
+
+
+def test_codes_read_anew_that_are_none_are_read_at_once(embedded, monkeypatch):
+    # Read anew, a store had no codes (its vectors all of another length, say): the next search reads them itself.
+    catalog, root = embedded
+    index = Index(catalog)
+    index.vsearch("anything")
+    (root / "rl.md").unlink()
+    indexing.index(catalog)
+    monkeypatch.setattr(search, "_read_anew", lambda path: None)
+    index.vsearch("anything")
+    index.settle(timeout=10)
+    assert len(index.vsearch("anything")) == 2
+    assert held_codes(index) == fresh_codes(catalog)
 
 
 def test_codes_load_in_batches(embedded, monkeypatch):

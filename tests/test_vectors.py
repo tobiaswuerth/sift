@@ -286,6 +286,21 @@ def test_codes_patched_many_times_hold_what_a_fresh_load_would():
         assert len(index._parts) <= 2
 
 
+def test_codes_appended_hold_what_a_fresh_load_would():
+    # The codes `sift embed` wrote since a server loaded them, past the last it holds: added, the others as they were.
+    ids, matrix, exact, whole = random_index(n=300)
+    bits = codes(matrix)
+    held = Codes(ids[:100], bits[:100]).patched(removed=ids[:3], ids=[], bits=bits[:0])
+    for start, end in ((100, 180), (180, 181), (181, 300)):
+        held = held.appended(ids[start:end], bits[start:end])
+    live_ids, live_bits = held.live()
+    assert live_ids.tolist() == ids[3:].tolist()
+    assert (live_bits == bits[3:]).all()
+    assert len(held._parts) <= 2
+    query = unit(np.ones((1, 64)))[0]
+    assert top(held, exact, query, 10) == top(whole, exact, query, 10, excluded=ids[:3])
+
+
 # --- the codes of several collections ------------------------------------------
 
 

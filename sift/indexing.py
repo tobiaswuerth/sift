@@ -224,11 +224,11 @@ def _reread(db, files, fields):
     sql = """SELECT c.id, c.doc, c.seq, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
              WHERE c.doc IN (SELECT value FROM json_each(?)) AND c.seq > 0"""
     stale = [
-        (chunk,)
+        chunk
         for chunk, doc, seq, text in db.execute(sql, (json.dumps(list(changed)),))
         if embed.text_of(seq, changed[doc][0], text) != embed.text_of(seq, changed[doc][1], text)
     ]
-    dropped = db.executemany("DELETE FROM vectors WHERE chunk = ?", stale).rowcount
+    dropped = store.drop_vectors(db, "chunk IN (SELECT value FROM json_each(?))", (json.dumps(stale),))
     if dropped:
         store.touch(db)
     return len(changed), dropped

@@ -6,6 +6,7 @@ The models run on the main thread, as PyTorch needs, and never wait for the stor
 sorts them by length, another writes their vectors, both with the store's one connection, in turn."""
 
 import collections
+import json
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -219,7 +220,7 @@ def _stores(catalog, collections, named):
 
 
 def _forget_vectors(db):
-    db.execute("DELETE FROM vectors")
+    store.drop_vectors(db, "1")
     db.execute("DELETE FROM meta WHERE key IN ('model', 'dim', 'kw_ordered')")  # kw_ordered: see postings._unordered
     store.touch(db)
     db.commit()
@@ -244,7 +245,7 @@ def _drop_broken_vectors(db):
             vectors = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), -1)
             broken += [rows[i][0] for i in np.flatnonzero(~np.isfinite(vectors).all(axis=1))]
         if broken:
-            db.executemany("DELETE FROM vectors WHERE chunk = ?", [(chunk,) for chunk in broken])
+            store.drop_vectors(db, "chunk IN (SELECT value FROM json_each(?))", (json.dumps(broken),))
             store.touch(db)
             console.say(f"{console.count(len(broken), 'broken vector')} dropped, to be embedded again")
     store.set_meta(db, "vectors_checked", 1)

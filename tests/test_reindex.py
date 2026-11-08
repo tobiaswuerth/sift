@@ -160,17 +160,24 @@ def test_codes_in_memory_match_a_fresh_load_through_many_changes(live):
         assert held == loaded, f"step {step}"
 
 
-def test_codes_changed_elsewhere_are_loaded_anew(live, monkeypatch):
-    # Another process changed the index meanwhile: patching the codes in memory would miss its changes.
+@pytest.mark.parametrize("change", ["touched", "a vector dropped"])
+def test_codes_changed_elsewhere_are_loaded_anew(live, change):
+    # Another process changed the index meanwhile: patching the codes in memory would miss its changes. What the
+    # server holds afterwards must be what it would load anew, whatever the change.
     index, vault = live
-    store.touch(index.catalog.store("vault"))
-    index.catalog.store("vault").commit()
+    db = index.catalog.store("vault")
+    if change == "a vector dropped":
+        store.delete_docs(db, [db.execute("SELECT id FROM docs WHERE path LIKE '%Acme AG.md'").fetchone()[0]])
+    store.touch(db)
+    db.commit()
     write(vault / "a.md", "Alpha note.\n")
     index.reindex(["vault/a.md"])
-    loads, real = [], search.Codes
-    monkeypatch.setattr(search, "Codes", lambda *args: loads.append(1) or real(*args))
     assert ids(index.vsearch("alpha note", k=1)) == ["vault/a.md"]
-    assert loads == [1]
+    index.settle(timeout=10)
+    index.vsearch("alpha note", k=1)
+    (held_ids, held), (loaded_ids, loaded) = held_and_loaded(index)
+    assert held_ids == loaded_ids
+    assert held == loaded
 
 
 def test_a_json_lines_file(live):

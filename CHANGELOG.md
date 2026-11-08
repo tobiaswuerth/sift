@@ -5,6 +5,21 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A phrase is counted in each passage once for the keyword postings as they stand, and kept with the passages that
+  hold it: asked again, or in another question, it is FTS5's work no more. Over 3.2 million arXiv abstracts, a
+  question with a hyphenated word took 93 ms instead of 429 warm, a common phrase ("in this paper we propose") 131 ms
+  instead of 2.6 s; the same results, score for score.
+
+### Fixed
+
+- `sift serve` no longer stalls while `sift embed` writes beside it. Each slab `sift embed` committed made the next
+  `vsearch`, `query` or `similar` read every code of the collection again: 18 seconds for PubMed's 29 million, about
+  once a minute while it embedded. The codes written past the last the server holds are read alone; after any other
+  change to a collection's vectors (deleted, or embedded again), all its codes are read again in a thread of their own,
+  while searches go on with those held, a passage just embedded among them.
+
 ## [1.11.1] - 2026-11-08
 
 Keyword questions and phrases in milliseconds, a quicker vsearch over many collections, and `sift embed` starting at
