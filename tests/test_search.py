@@ -345,10 +345,11 @@ def test_vsearch_after_interrupted_reset_asks_for_embedding(embedded, fake_model
     index = Index(catalog)
     index.vsearch("reward")  # codes in memory
 
-    def interrupted(texts, query=False):
+    def interrupted(batches, query=False):
         raise KeyboardInterrupt
+        yield  # a generator, as encode_batches is
 
-    monkeypatch.setattr(fake_models, "encode", interrupted)
+    monkeypatch.setattr(fake_models, "encode_batches", interrupted)
     with pytest.raises(KeyboardInterrupt):
         embed.embed_pending(catalog, reset=True)
     with pytest.raises(LookupError, match="sift embed"):
@@ -942,7 +943,7 @@ def test_similar_to_an_unknown_document(embedded):
 )
 def test_search_falls_back_to_any_term(corpus, query, expected):
     # Every term is required, so one word too many returned nothing at all. With no document holding all
-    # terms, those holding any of them are better than nothing; BM25 ranks those with more of them first.
+    # terms, those holding any of them are better than nothing; BM25 favours those with more of them.
     assert sorted(ids(Index(corpus[0]).search(query))) == expected
 
 

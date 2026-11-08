@@ -53,14 +53,10 @@ def test_the_worker_embeds_texts_as_this_machine_would(client, fake_models, caps
     assert "2 texts embedded, 0 queries reranked (last for testclient)" in capsys.readouterr().err  # it shows it works
 
 
-def test_the_worker_embeds_queries_as_queries(client, monkeypatch):
-    seen = []
-    real = FakeSentenceTransformer.encode_query
-    monkeypatch.setattr(
-        FakeSentenceTransformer, "encode_query", lambda self, t, **kw: seen.extend(t) or real(self, t, **kw)
-    )
+def test_the_worker_embeds_queries_as_queries(client, fake_models, monkeypatch):
+    monkeypatch.setattr(FakeSentenceTransformer, "prompts", {"query": "q: ", "document": "d: "})
     post(client, "/embed", {"texts": ["how do robots paint"], "query": True})
-    assert seen == ["how do robots paint"]
+    assert fake_models.embedder().embedded[-1] == ["q: how do robots paint"]
 
 
 def test_the_worker_reranks_as_this_machine_would(client, fake_models):

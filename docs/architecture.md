@@ -21,7 +21,9 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 
 - A SQLite database in WAL mode per collection holds its documents' text, metadata, the FTS5 keyword index and the
   keyword postings, the vectors (fp16) and their codes (one bit per dimension); a small one, the catalog, lists the
-  collections.
+  collections. Its write-ahead log shrinks back to 64 MB once written into the database, and a postings build, which
+  writes through it while its own workers read, empties it at the end: SQLite keeps the log as large as it grew for
+  as long as any connection is open.
 - The text is stored once: chunks are spans of it, and the keyword index reads it through a view.
 - The row ids of a collection start at its id times 2^40, so the results of several collections merge as they are.
 - Each index keeps the number of its documents, chunks and vectors, counted by triggers in the transaction of each
@@ -48,6 +50,11 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   EmbeddingGemma overflows now and then into broken (NaN) vectors. Vectors are stored in fp16, and broken ones are
   never stored.
 - Each slab of 20,000 chunks is committed, so progress is never lost.
+- `sift embed` keeps the GPU busy (99% of the time on PubMed). It reads the next slabs and sorts them by length in a
+  thread of its own, and writes the vectors in another, the two taking the collection's connection in turn; it counts
+  the tokens with a copy of the model's tokenizer, outside PyTorch. The main thread runs the model, through the public
+  steps of Sentence Transformers' `encode_document`: each batch is tokenized while the GPU embeds the one before.
+  PyTorch stays on the main thread, as it must: it crashes in others on Python 3.15.
 - Beside an NVIDIA GPU, PyTorch keeps one CPU thread: the GPU does the work, and a thread per core only waited busily
   after each batch. On the CPU it keeps a thread per core.
 
@@ -57,8 +64,9 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   minus headroom (10% of the GPU, at least 1 GB), asking NVML as well as CUDA, since on Windows CUDA counts memory
   held by other programs as free.
 - It then measures how much memory texts of the longest input the model takes need at growing batch sizes, and uses
-  the largest batch that fills 90% of that budget: no text needs more, whatever the model. If a batch still doesn't
-  fit, it is halved. With less than 2 GB to spare, sift uses the CPU instead.
+  the largest batch that fills 90% of that budget: no text needs more, whatever the model. It counts what PyTorch
+  reserves, as its cap does: the tensors and the allocator's rounding, about a fifth more for EmbeddingGemma. If a
+  batch still doesn't fit, it is halved. With less than 2 GB to spare, sift uses the CPU instead.
 - The models wait in RAM and move to the GPU when a search needs them. After 5 minutes without GPU use, `sift serve`
   moves them back to RAM and hands the memory back; only CUDA's own context (about 0.3 GB) stays. The first search
   afterwards takes about a second longer; if other programs have taken the memory meanwhile, sift stays on the CPU
@@ -78,8 +86,9 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   - Phrases, prefixes, NEAR and column filters are FTS5's to answer, as before.
 - **Several collections:** searches ask each collection's index and merge the results, scored with the word counts of
   all of them, as one index would score them: a collection's own counts would take a word common in a small
-  collection for a common word, and sink its pages. Through FTS5, each collection's best hits are scored again so; a
-  query with NEAR or a column filter keeps each collection's scores.
+  collection for a common word, and sink its pages. The postings add up the counts of all before scoring; through
+  FTS5, each collection's best hits are scored again so; a query with NEAR or a column filter keeps each collection's
+  scores.
 - **`vsearch`:** every vector's code, its signs as one bit per dimension, waits in RAM: 96 bytes for 768 dimensions, a
   sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with
   all of them by Hamming distance, on the CPU's cores, and the 4,000 nearest of all collections together are scored

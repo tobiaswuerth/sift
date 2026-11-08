@@ -5,6 +5,30 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-11-08
+
+Embedding with the GPU busy all the time, and no write-ahead log left at the size of a build.
+
+### Changed
+
+- `sift embed` keeps the GPU busy. It read and sorted each slab of 20,000 passages, tokenized each batch and wrote
+  the vectors while the GPU waited: about 12 seconds in every 75, and a moment before every batch. Now a thread reads
+  and sorts the next slabs, another writes, and each batch is tokenized while the GPU embeds the one before; PyTorch
+  stays on the main thread. On an RTX 4090, 40,000 PubMed passages went from 382 to 472 per second, the GPU from 83%
+  to 99% busy, the vectors the same, bit for bit.
+
+### Fixed
+
+- `sift embed` sized its batches to the memory their tensors take, but PyTorch's cap counts what its allocator
+  reserves, about a fifth more. The first batch of passages of the longest input ran out of memory, and every batch
+  after it was halved: from 140 to 70 on an RTX 4090. Batches are now sized to what is reserved, 112 to 116 there,
+  and fit.
+- A collection's write-ahead log shrinks back to 64 MB once written into its index. SQLite keeps it as large as it
+  grew while any sift has the index open: after `sift index` built the keyword postings beside a running `sift embed`,
+  PubMed's held 11.6 GB. A postings build now empties it when done.
+- A keyword search failed with a `KeyError` when another sift, a `sift index` beside the server, deleted a passage
+  it had found before it looked up its document. Such a passage is left out.
+
 ## [1.10.0] - 2026-11-07
 
 Keyword search in milliseconds over tens of millions of passages, and a server that stops what agents give up on.
@@ -627,7 +651,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/tobiaswuerth/sift/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/tobiaswuerth/sift/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/tobiaswuerth/sift/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/tobiaswuerth/sift/compare/v1.7.0...v1.8.0

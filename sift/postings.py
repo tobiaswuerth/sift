@@ -334,6 +334,7 @@ def _build(db, path, name, workers):
     except BaseException:
         db.rollback()
         raise
+    store.empty_log(db)  # it holds the postings, written while the build's readers held it
 
 
 PROGRESS_LINES = 200  # updates of a build's progress at most: printing is slow on Windows consoles
@@ -616,13 +617,13 @@ class Reader:
         return held[ids - (first << LENGTHS_SHIFT)]
 
     def documents(self, ids):
-        """The documents of these chunks, by id."""
+        """The documents of these chunks, by id; -1 for a chunk another sift deleted since the postings were read."""
         owner = dict(
             self.db.execute(
                 "SELECT id, doc FROM chunks WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(ids.tolist()),)
             )
         )
-        return np.fromiter((owner[i] for i in ids.tolist()), np.int64, len(ids))
+        return np.fromiter((owner.get(i, -1) for i in ids.tolist()), np.int64, len(ids))
 
     def alive(self, segment, ids):
         """Which of these postings of the segment count: those of chunks not masked since it was built."""

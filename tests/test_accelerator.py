@@ -233,6 +233,18 @@ def test_calibration_fills_the_budget(make, gpu_memory, capsys):
     assert cuda.batch_size == 294
 
 
+def test_calibration_counts_the_memory_the_cap_counts(make, gpu_memory):
+    # The cap counts what PyTorch reserves, its allocator's rounding included, not only what a batch's tensors take:
+    # calibrated on the tensors, 140 texts of 1024 tokens took 18.0 GiB of a 20.1 GiB cap and ran out at the first
+    # batch of full length, halving every batch to 70 for the rest of the run.
+    gpu_memory.rounding = 0.2
+    cuda = make("cuda")
+    size = cuda.calibrate(gpu_memory.run)
+    assert size == 1 + int((0.9 * 17.6 - 1 - 0.15 * 1.2) / (0.05 * 1.2)) == 245
+    cuda.run(batches_of(gpu_memory), ["x"] * 600)
+    assert cuda.batch_size == 245  # no out-of-memory, no halving
+
+
 def test_calibration_stops_at_the_first_out_of_memory(make, gpu_memory):
     gpu_memory.oom_from = 16  # fails earlier than the linear model predicts
     assert make("cuda").calibrate(gpu_memory.run) == 15  # never a size that already failed

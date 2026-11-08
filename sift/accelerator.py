@@ -41,6 +41,11 @@ def detect():
         return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
+def out_of_memory(error):
+    """Whether a RuntimeError says the GPU ran out of memory: CUDA raises OutOfMemoryError, MPS a plain one."""
+    return isinstance(error, torch.cuda.OutOfMemoryError) or "MPS backend out of memory" in str(error)
+
+
 def cuda_pytorch_command(platform=sys.platform):
     """How to replace a CPU-only PyTorch with the CUDA build. Windows wheels bundle their CUDA libraries, so
     torch's other dependencies can stay; Linux wheels depend on nvidia-* packages, which must come along."""
@@ -159,9 +164,8 @@ class Accelerator:
         while True:
             try:
                 return fn(items, self.batch_size)
-            except RuntimeError as e:  # CUDA raises OutOfMemoryError, a RuntimeError; MPS a plain RuntimeError
-                out_of_memory = isinstance(e, torch.cuda.OutOfMemoryError) or "MPS backend out of memory" in str(e)
-                if self.batch_size == 1 or not out_of_memory:
+            except RuntimeError as e:
+                if self.batch_size == 1 or not out_of_memory(e):
                     raise
                 self._empty_cache()
                 self.batch_size //= 2
@@ -172,19 +176,22 @@ class Accelerator:
         texts as long as any to come: of the longest input the model takes, so that the batch fits every text.
 
         Batches of 1, 2, 4, ... run until one uses half of the budget. Memory grows linearly with the batch size,
-        so the last measurement predicts the size that fills FILL of the budget. A size that ran out of memory is
-        never chosen. Off CUDA, and on a GPU given up, the batch size stays as it is.
+        so the last measurement predicts the size that fills FILL of the budget. What counts is what PyTorch
+        reserves, as its cap counts it: the tensors and its allocator's rounding, about a fifth more. A size that ran
+        out of memory is never chosen. Off CUDA, and on a GPU given up, the batch size stays as it is.
         """
         budget = self.budget()
         if budget is None or self.kind != "cuda":
             return self.batch_size
-        base = self.memory.memory_allocated(self.device)
+        self._empty_cache()
+        base = self.memory.memory_reserved(self.device)
         target = FILL * budget - base
 
         def cost(n):
+            self._empty_cache()  # what an earlier batch left cached would hide what this one needs
             self.memory.reset_peak_memory_stats(self.device)
             run(n)
-            return self.memory.max_memory_allocated(self.device) - base
+            return self.memory.max_memory_reserved(self.device) - base
 
         one = used = cost(1)
         n, failed = 1, MAX_BATCH + 1

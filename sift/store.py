@@ -22,6 +22,7 @@ SCHEMA_VERSION = 8  # in SQLite's user_version; up to sift 1.7, one database hel
 FIRST_LAYOUT = 6  # sift 1.8's, the first of a store per collection; its rows are counted once (see _count_rows)
 COUNTED_LAYOUT = 7  # sift 1.9's, which counts rows; 8 adds the keyword postings' tables (POSTINGS)
 TIMEOUT = 30  # seconds to wait for another sift's transaction
+WAL_LIMIT = 64 * 2**20  # bytes the write-ahead log shrinks back to once written into the store: SQLite keeps its size
 UPGRADE_WAIT = 3600  # seconds to wait while another sift counts a store's rows, once: minutes for a large one
 # While set, every statement on every database stops with "interrupted": a server sets it for a call its client
 # cancelled (see `jobs`). SQLite looks every ABORT_STEPS instructions, about a millisecond.
@@ -132,6 +133,7 @@ def database(path, create=False) -> sqlite3.Connection:
         db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True, timeout=TIMEOUT, check_same_thread=False)
     try:
         db.execute("PRAGMA journal_mode=WAL")
+        db.execute(f"PRAGMA journal_size_limit={WAL_LIMIT}")
         db.execute("PRAGMA synchronous=NORMAL")
         db.execute("PRAGMA cache_size=-262144")  # 256 MB
         db.set_progress_handler(ABORT.is_set, ABORT_STEPS)
@@ -335,6 +337,13 @@ def get_meta(db, key, default=None):
 
 def set_meta(db, key, value):
     db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)", (key, str(value)))
+
+
+def empty_log(db):
+    """Write the write-ahead log into the store and empty it, after a change that grew it while readers held it (a
+    postings build): it would keep its size while any other sift has the store open. Waits for those readers, at most
+    TIMEOUT; still held then, it shrinks at a later change (WAL_LIMIT)."""
+    db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
 def touch(db):

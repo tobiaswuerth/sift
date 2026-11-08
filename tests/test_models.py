@@ -32,7 +32,7 @@ def test_both_kinds_offer_the_same_interface(make_local, make):
     # Looked up statically: asking a Remote for its name asks the worker.
     models = make(make_local)
     assert [m for m in MEMBERS if inspect.getattr_static(models, m, None) is None] == []
-    assert len(MEMBERS) == 9
+    assert len(MEMBERS) == 10
 
 
 def test_a_worker_manages_its_own_gpu():

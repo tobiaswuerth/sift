@@ -16,6 +16,7 @@ dependencies = [
     "torch>=2.4",
     "sentence-transformers>=6.1",  # the module layout embeddinggemma-2 is saved in
     "transformers>=5.18",  # the first release with embeddinggemma-2
+    "tokenizers>=0.20",  # counts tokens with a copy of the model's, outside PyTorch; transformers brings it too
     "pillow>=10",  # embeddinggemma-2 handles images and video too, so transformers needs Pillow
     "torchvision",  # and torchvision even for text; it must match torch, so install them together
     "mcp>=2.0",

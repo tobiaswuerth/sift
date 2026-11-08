@@ -23,6 +23,8 @@ winner on a single dataset. To measure sift on your own documents, use
   million PubMed passages, a common word takes 7 ms instead of 1.3 seconds, a question 26 ms instead of 5.3 seconds
   (medians, the postings read before; 67 and 200 ms read anew), with FTS5's results, score for score, in about a
   third of FTS5's storage ([details](#keyword-search)).
+- **Embedding:** `sift embed` keeps the GPU 99% busy: 472 PubMed passages per second on an RTX 4090, against 382 for
+  sift 1.10.0, the vectors the same ([details](#keeping-the-gpu-busy)).
 
 ## Datasets
 
@@ -196,10 +198,30 @@ their 6,000 titles (30 tokens); the mean of 2 runs, and for the titles the best 
 
 - **Grouping by tokens is what pays:** a batch is padded to its longest text, and characters tell tokens poorly.
   Grouped by characters, the passages were padded to 1.51 times their tokens; by tokens, to 1.04 times.
-- **Larger batches of short texts don't:** a batch of 140 already keeps the GPU busy, so 1,024 only adds padding.
+- **Larger batches of short texts don't:** a batch of 140 already gives the GPU all it can compute at once, so 1,024
+  only adds padding.
   sift therefore sizes one batch for the longest input the model takes, and uses it for every length.
 - **One CPU thread beside the GPU** made embedding 5% faster and freed most of the cores: PyTorch's other threads only
   waited busily after each batch.
+
+### Keeping the GPU busy
+
+`sift embed` on the RTX 4090 with EmbeddingGemma-2, over 40,114 PubMed passages (the first 40,000 records of a source
+file), from no vectors; the GPU sampled every 100 ms, past loading and calibration:
+
+| | Passages per second | GPU busy |
+|---|---|---|
+| sift 1.10.0 | 382 | 83% |
+| sift 1.10.1 | **472** | 99% |
+
+- **Where the time went,** profiling a running 1.10.0 over PubMed: the model 72%; tokenizing each slab's 20,000
+  texts to sort them by length 12%, the GPU idle (12 seconds every 75); tokenizing each batch 11%, idle again;
+  reading and writing the index 2%. Now a thread reads and sorts the next slabs, another writes, and each batch is
+  tokenized while the GPU embeds the one before. The vectors are the same, bit for bit.
+- **Batch size:** calibration measured the memory the tensors take, but PyTorch's cap counts what its allocator
+  reserves, about a fifth more. 140 texts of 1,024 tokens take 18.0 of a 20.1 GB cap, and ran out of memory at the
+  first batch of full length, so every run on PubMed went on at 70. Counted as reserved, calibration picks 112 to 116,
+  which fit; 112 embeds the passages above as fast as 140 did (they are at most 930 tokens, where 140 fits).
 
 ### Keyword search
 
@@ -224,14 +246,16 @@ as by `sift serve`. Every query found the same documents as FTS5, score for scor
   few hundred postings.
 - **The slowest question** took 16 seconds in FTS5, 2.7 seconds cold and 1.1 warm from the postings: a dozen common
   words bound most ranges high, so pruning skips less. Smaller ranges would bound them tighter, at more storage.
-- **All words of a few rare ones** remain FTS5's strength, read cold: it intersects the lists as it reads them.
+- **All words of a few rare ones** are the one kind FTS5 answered faster, against the postings read cold (30 ms
+  against 86 on PubMed): it intersects the lists as it reads them. Read before, the postings take 7 ms. sift answers
+  them from the postings too.
 - **Storage:** 0.94 GB for arXiv's 431 million postings against 2.71 GB of FTS5's index, which holds every word's
   positions: 2.2 bytes per posting. 12.2 GB for PubMed.
 - **Ranges of 128 or 64 passages:** on PubMed, with the postings in memory, 128 answered single words in 2.2 ms against
   5.8 and questions in 16 against 23 (median), with the longest question slower (0.53 s against 0.24); 128 also takes
   8% less storage.
-- **Building** reads FTS5's vocabulary in worker processes, a range of terms each: 69 seconds for arXiv on 24, 18
-  minutes for PubMed, where "the" alone, read by one worker, takes minutes.
+- **Building** reads FTS5's vocabulary in worker processes, a range of terms each: 69 seconds for arXiv on 24, 13
+  minutes for PubMed on 31 (beside a running `sift embed`), where "the" alone, read by one worker, takes minutes.
 
 ### Links between notes
 

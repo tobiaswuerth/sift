@@ -3,6 +3,7 @@ vectors' version, and holding it alone."""
 
 import sqlite3
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -191,10 +192,11 @@ def test_codes_go_with_their_vectors(embedded):
 def test_codes_go_with_a_reset(embedded, fake_models, monkeypatch):
     catalog, _ = embedded
 
-    def interrupted(texts, query=False):
+    def interrupted(batches, query=False):
         raise KeyboardInterrupt
+        yield  # a generator, as encode_batches is
 
-    monkeypatch.setattr(fake_models, "encode", interrupted)
+    monkeypatch.setattr(fake_models, "encode_batches", interrupted)
     with pytest.raises(KeyboardInterrupt):
         embed.embed_pending(catalog, reset=True)
     assert catalog.store("notes").execute("SELECT count(*) FROM codes").fetchone() == (0,)
@@ -494,6 +496,35 @@ def test_touch_changes_version_within_one_clock_tick(corpus, monkeypatch):
     before = store.get_meta(db, "version")
     store.touch(db)
     assert store.get_meta(db, "version") != before
+
+
+# --- the write-ahead log ---------------------------------------------------------
+
+
+def wal_size(path):
+    log = Path(f"{path}-wal")
+    return log.stat().st_size if log.exists() else 0
+
+
+def test_a_write_ahead_log_grown_while_read_shrinks_back(tmp_path, monkeypatch):
+    # A reader's snapshot keeps every write after it in the log (a build's workers read for minutes): once it ends,
+    # the log goes back to its limit, though other connections keep the store open.
+    monkeypatch.setattr(store, "WAL_LIMIT", 64 * 1024)
+    path = tmp_path / "a.sqlite"
+    db = store.connect(path, 1, create=True)
+    reader = store.connect(path, 1)
+    reader.execute("BEGIN")
+    reader.execute("SELECT count(*) FROM meta").fetchone()
+    for i in range(30):
+        store.set_meta(db, f"k{i}", "x" * 200_000)
+        db.commit()
+    assert wal_size(path) > 5_000_000  # past SQLite's checkpoint of 1000 pages, which can't empty it while read
+    reader.rollback()
+    for i in range(3):
+        store.set_meta(db, "after", i)
+        db.commit()
+    assert wal_size(path) <= store.WAL_LIMIT
+    reader.close()
 
 
 # --- holding a store alone -----------------------------------------------------

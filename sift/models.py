@@ -23,13 +23,17 @@ class Models(Protocol):
 
     def lengths(self, texts) -> list:
         """How long each text is to the embedding model, to batch texts of similar length: a batch is padded to its
-        longest."""
+        longest. Runs in any thread, beside the others."""
 
     def prepare(self) -> None:
-        """Size batches to the memory where the models run, if that matters there."""
+        """Get ready to embed: size batches to the memory where the models run, if that matters there."""
 
     def encode(self, texts, query=False):
         """Normalised fp16 embeddings, one row per text."""
+
+    def encode_batches(self, batches, query=False):
+        """The embeddings of each batch of texts (an iterable), in order, as an iterator: the next batch prepared while
+        the one before is embedded. Iterate it on the thread that may run the models."""
 
     def rerank(self, query, texts):
         """Scores of (query, text) pairs, higher for better matches."""

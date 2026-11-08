@@ -28,6 +28,20 @@ def fake_vector(text):
     return v / (np.linalg.norm(v) or 1)
 
 
+def fake_tokenizer():
+    """A tokenizer of the `tokenizers` library, as fast tokenizers hold one: a token per word, unknown words all, and
+    two special ones around them; padded as Sentence Transformers leaves the model's after a batch."""
+    from tokenizers import Tokenizer, models, pre_tokenizers, processors
+
+    tokenizer = Tokenizer(models.WordLevel({"[UNK]": 0, "[CLS]": 1, "[SEP]": 2, "[PAD]": 3}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
+    tokenizer.post_processor = processors.TemplateProcessing(
+        single="[CLS] $A [SEP]", special_tokens=[("[CLS]", 1), ("[SEP]", 2)]
+    )
+    tokenizer.enable_padding(pad_id=3, pad_token="[PAD]", length=4096)
+    return tokenizer
+
+
 def fake_score(query, text):
     """The fake reranker's raw score: the share of the query's words the text holds."""
     asked = set(words(query))
@@ -39,23 +53,56 @@ class FakeSentenceTransformer:
     gpu = "cuda"  # whose out-of-memory error to raise: "cuda" or "mps"
     gpu_memory = None  # a FakeGpuMemory, consulted when the model runs on CUDA
     saved_in = "bfloat16"  # the checkpoint's dtype, which the model loads in unless it is given one, as embeddinggemma
+    prompts, default_prompt_name = {}, None  # embeddinggemma's: {"query": "task: search result | query: ", ...}
 
     def __init__(self, name, device=None, model_kwargs=None):
         self.name, self.device, self.max_seq_length = name, device, None
         self.dtype = str((model_kwargs or {}).get("dtype", self.saved_in)).removeprefix("torch.")
+        self.training, self.texts, self.embedded = True, [], []  # in training mode until eval(), as nn.Module
 
-    def preprocess(self, inputs):
+    def eval(self):
+        self.training = False
+        return self
+
+    @property
+    def tokenizer(self):
+        """A Hugging Face fast tokenizer, as Transformers wraps one: a token per word, and two special ones."""
+        return types.SimpleNamespace(backend_tokenizer=fake_tokenizer())
+
+    def preprocess(self, inputs, prompt=None, task=None):
         """Tokens as Sentence Transformers gives them, padded: one per word and two special ones, at most
-        max_seq_length. Nothing for no inputs, as Sentence Transformers."""
+        max_seq_length, the prompt's first. Nothing for no inputs, as Sentence Transformers. The first token stands
+        for the text, prompt and task included, for the model to embed (__call__)."""
         import torch
 
         if not inputs:
             return {}
-        lengths = [min(len(t.split()) + 2, self.max_seq_length) for t in inputs]
-        mask = torch.zeros((len(inputs), max(lengths)), dtype=torch.long)
-        for i, n in enumerate(lengths):
+        texts = [(prompt or "") + t for t in inputs]
+        lengths = [min(len(t.split()) + 2, self.max_seq_length) for t in texts]
+        mask = torch.zeros((len(texts), max(lengths)), dtype=torch.long)
+        ids = mask.clone()
+        for i, (text, n) in enumerate(zip(texts, lengths)):
             mask[i, :n] = 1
-        return {"input_ids": mask.clone(), "attention_mask": mask}
+            ids[i, 0] = len(self.texts)
+            self.texts.append((text, task))
+        return {"input_ids": ids, "attention_mask": mask}
+
+    def __call__(self, features, task=None):
+        """The forward pass: a vector per row of tokens, under the name Sentence Transformers gives it. Runs out of
+        memory as a GPU would."""
+        import torch
+
+        n = len(features["input_ids"])
+        if str(self.device).startswith("cuda") and self.gpu_memory:
+            self.gpu_memory.run(n)
+        if n > self.max_batch and self.gpu == "mps":  # MPS raises a plain RuntimeError
+            raise RuntimeError("MPS backend out of memory (MPS allocated: 17.00 GB, other allocations: 0 bytes)")
+        if n > self.max_batch:
+            raise torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
+        rows = [self.texts[i] for i in features["input_ids"][:, 0].tolist()]
+        assert all(t == task for _, t in rows), "embedded for the task it was tokenized for"
+        self.embedded.append([text for text, _ in rows])
+        return {"sentence_embedding": torch.tensor(np.stack([fake_vector(text) for text, _ in rows]))}
 
     def to(self, target):
         """A device or a dtype, as nn.Module.to takes them."""
@@ -66,23 +113,6 @@ class FakeSentenceTransformer:
         else:
             self.device = str(target)
         return self
-
-    def encode_document(
-        self, texts, batch_size, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=None
-    ):
-        import torch
-
-        assert show_progress_bar is False, "sift must not draw progress bars (the server's log is no terminal)"
-        if str(self.device).startswith("cuda") and self.gpu_memory:
-            for i in range(0, len(texts), batch_size):
-                self.gpu_memory.run(len(texts[i : i + batch_size]))
-        if batch_size > self.max_batch and self.gpu == "mps":  # MPS raises a plain RuntimeError
-            raise RuntimeError("MPS backend out of memory (MPS allocated: 17.00 GB, other allocations: 0 bytes)")
-        if batch_size > self.max_batch:
-            raise torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
-        return np.stack([fake_vector(t) for t in texts])
-
-    encode_query = encode_document
 
 
 class FakeCrossEncoder:
@@ -177,11 +207,13 @@ class FakeGpuMemory:
 
     weights, fixed, per_text = 1 * GiB, 0.1 * GiB, 0.05 * GiB
     oom_from = None  # batch size from which to fail anyway, like fragmented memory
+    rounding = 0.0  # what PyTorch's allocator reserves on top of a batch's tensors, as a share of them
 
     def __init__(self):
         self.free, self.total, self.budgets, self.batches = 20 * GiB, 24 * GiB, [], []
         self.used = None  # set it to make NVML disagree with CUDA, as it does on Windows
-        self.peak, self.emptied = self.weights, 0
+        self.peak = self.peak_reserved = self.reserved = self.weights
+        self.emptied = 0
 
     def mem_get_info(self, device=None):
         return self.free, self.total
@@ -204,22 +236,32 @@ class FakeGpuMemory:
     def max_memory_allocated(self, device=None):
         return self.peak
 
+    def memory_reserved(self, device=None):
+        return self.reserved
+
+    def max_memory_reserved(self, device=None):
+        return self.peak_reserved
+
     def reset_peak_memory_stats(self, device=None):
-        self.peak = self.weights
+        self.peak, self.peak_reserved = self.weights, self.reserved
 
     def empty_cache(self):
         self.emptied += 1
+        self.reserved = self.weights
 
     def run(self, n):
-        """A batch of n texts on the GPU; out of memory past the budget, like PyTorch."""
+        """A batch of n texts on the GPU; out of memory once what PyTorch reserves passes the budget, as its cap
+        counts it."""
         import torch
 
-        need = self.weights + self.fixed + n * self.per_text
+        tensors = self.fixed + n * self.per_text
+        need, reserve = self.weights + tensors, self.weights + tensors * (1 + self.rounding)
         limit = self.budgets[-1][0] * self.total if self.budgets else self.free
         self.batches.append(n)
-        if need > limit or (self.oom_from and n >= self.oom_from):
+        if reserve > limit or (self.oom_from and n >= self.oom_from):
             raise torch.cuda.OutOfMemoryError(f"CUDA out of memory. Tried to allocate {need / GiB:.2f} GiB")
-        self.peak = max(self.peak, need)
+        self.peak, self.reserved = max(self.peak, need), max(self.reserved, reserve)
+        self.peak_reserved = max(self.peak_reserved, reserve)
 
 
 @pytest.fixture
@@ -293,7 +335,10 @@ def make_local(monkeypatch, gpu_memory, clock):
 
     module = types.ModuleType("sentence_transformers")
     module.SentenceTransformer, module.CrossEncoder = FakeSentenceTransformer, FakeCrossEncoder
+    util = types.ModuleType("sentence_transformers.util")
+    util.batch_to_device = lambda features, device: features  # the fakes' tensors stay where they are
     monkeypatch.setitem(sys.modules, "sentence_transformers", module)
+    monkeypatch.setitem(sys.modules, "sentence_transformers.util", util)
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda *a, **k: True)  # a GPU of this decade
 
     def make(device="cpu", accelerator=Accelerator):
