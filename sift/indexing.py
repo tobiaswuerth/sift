@@ -286,10 +286,10 @@ def _locate(catalog, path):
     given = os.path.expanduser(path)
     if os.path.isabs(given):
         full = os.path.normpath(given)
-        inside = [c for c in collections if _inside(c.path, full)]
-        if not inside:
+        holding = [c for c in collections if inside(c.path, full)]
+        if not holding:
             raise ValueError(_nowhere(path, full, collections))
-        collection, rel = inside[0], os.path.relpath(full, inside[0].path).replace(os.sep, "/")
+        collection, rel = holding[0], os.path.relpath(full, holding[0].path).replace(os.sep, "/")
     else:
         name, _, rel = path.replace("\\", "/").partition("/")
         collection, rel = catalog.get(name), posixpath.normpath(rel) if rel else ""
@@ -298,7 +298,7 @@ def _locate(catalog, path):
         if rel == ".." or rel.startswith(("../", "/")):
             raise ValueError(f"{path!r} is outside the collection {name!r}")
     name, root = collection.name, collection.path
-    if not _inside(root, os.path.normpath(os.path.join(root, *rel.split("/")))):  # "D:/x.md": Windows takes D:'s
+    if not inside(root, os.path.normpath(os.path.join(root, *rel.split("/")))):  # "D:/x.md": Windows takes D:'s
         raise ValueError(f"{path!r} is outside the collection {name!r}")
     if WINDOWS and (other := next((p for p in rel.split("/") if ":" in p or p != p.rstrip(". ")), None)):
         raise ValueError(f"{name}/{rel}: Windows takes {other!r} for another name; give the file's name as it is")
@@ -335,7 +335,7 @@ def _locate(catalog, path):
     return collection, rel
 
 
-def _inside(root, full):
+def inside(root, full):
     """Whether the normalised path `full` lies in the folder `root`, in the file system's case."""
     return os.path.normcase(full).startswith(os.path.normcase(os.path.join(root, "")))
 

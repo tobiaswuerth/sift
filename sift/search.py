@@ -1185,12 +1185,13 @@ class Index:
 
     def file(self, id):
         """The file a document was read from, by its id as for `get`; None for a JSON Lines record, which is a part
-        of its file."""
+        of its file, and for a file outside the collection's folder, as an older sift's reindex stored "D:/x.md"."""
         doc = self._find(id)[0]
         collection = self._owner(doc)
         sql = "SELECT s.path, d.path FROM docs d JOIN sources s ON s.id = d.source WHERE d.id = ?"
         source, path = self.catalog.store(collection).execute(sql, (doc,)).fetchone()
-        return Path(collection.path) / source if source == path else None
+        full = os.path.normpath(os.path.join(collection.path, *source.split("/")))
+        return Path(full) if source == path and indexing.inside(collection.path, full) else None
 
     # --- links between notes (see `links`) -----------------------------------
 

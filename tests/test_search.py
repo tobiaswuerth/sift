@@ -1740,6 +1740,14 @@ def test_the_file_a_document_came_from(corpus, tmp_path):
     index = Index(catalog)
     assert index.file("notes/brush.md") == root / "robots" / "brush.md"  # ids as for get
     assert index.file("qa/faq/q1") is None  # a record is a part of its file, not one of its own
+    # A source an older sift stored outside the collection, as its reindex did of "notes/D:/x.md": no file to serve.
+    db = catalog.store("notes")
+    for outside in ("../outside.md", "D:/outside.md", "C:outside.md"):
+        sid = db.execute("INSERT INTO sources(path) VALUES(?)", (outside,)).lastrowid
+        db.execute("INSERT INTO docs(source, path, title, meta, text) VALUES(?, ?, 'x', '{}', 'x')", (sid, outside))
+        db.commit()
+        found = index.file(f"notes/{outside}")  # elsewhere than on Windows, a drive is a name like any
+        assert found is None or found.resolve().is_relative_to(root.resolve()), outside
 
 
 def test_get_by_a_file_name_many_documents_have(corpus):
