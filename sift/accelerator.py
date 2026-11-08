@@ -83,6 +83,7 @@ class Accelerator:
 
     def __init__(self, device=None, memory=torch.cuda, clock=monotonic):
         self.device = device or detect()
+        self.found = self.device  # the device found: `device` falls back to the CPU if too little memory is free
         self.memory, self.clock = memory, clock
         self.batch_size = BATCH_SIZE
         self._budget = _UNSET  # asked once, on first use

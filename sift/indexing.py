@@ -99,7 +99,8 @@ def _read_scans(db, sid, rel, docs, note, now=True):
     """A file's documents with the scans among them read by OCR, those new or changed since the file `sid` was
     indexed (see `ocr`); a scan that can't be read is left out, and noted, as is one read. Reading a scan takes a
     while, so what is written is committed first: no other writer, such as the server's `reindex`, waits for it.
-    Unless `now`, a scan to read is left out for `sift index`. Returns the documents, and whether a scan was left."""
+    Unless `now`, a scan to read is left out for `sift index`. Returns the documents, and whether a scan was left,
+    for now or for a try that may read it (its GPU busy, OCR failing): its file is read again by the next index."""
     known = dict(db.execute("SELECT path, hash FROM docs WHERE source = ?", (sid,))) if sid else {}
     read, left = [], False
     for doc in docs:
@@ -111,9 +112,10 @@ def _read_scans(db, sid, rel, docs, note, now=True):
                 continue
             if db.in_transaction:
                 db.commit()
-            doc, said = ocr.default().read(doc)
+            doc, said, again = ocr.default().read(doc)
             note(f"{path}: {said}")
             if doc is None:
+                left |= again
                 continue
         read.append(doc)
     return read, left
@@ -629,8 +631,8 @@ def _read_and_store(db, name, fields, todo, counts, progress):
                 for problem in problems:
                     progress.note(f"{name}: {rel}: {problem}")
                 note = lambda text: progress.note(f"{name}: {text}")  # noqa: E731
-                docs, _ = _read_scans(db, _source(db, rel), rel, docs, note)
+                docs, left = _read_scans(db, _source(db, rel), rel, docs, note)
                 sid = _source(db, rel, make=True)
                 _store(db, sid, rel, docs, counts, note)
-                db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (mtime, size, sid))
+                db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (None if left else mtime, size, sid))
             db.commit()
