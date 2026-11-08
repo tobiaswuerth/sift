@@ -145,7 +145,8 @@ class Remote:
         if response.status == 401:
             raise RemoteError(f"embedding remote {self.address} refused the key; copy it again from `sift worker`")
         if response.status != 200:
-            raise RemoteError(f"embedding remote {self.address} answered {response.status}: {data[:200].decode()}")
+            shown = data[:200].decode(errors="replace")  # cut inside a character, maybe
+            raise RemoteError(f"embedding remote {self.address} answered {response.status}: {shown}")
         return data
 
     def _exchange(self, *request):
