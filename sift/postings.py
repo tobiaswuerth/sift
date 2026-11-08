@@ -507,8 +507,8 @@ def _unordered(db):
 def _delta(db, merge=False):
     """Add a segment of the chunks changed since the postings were updated, tokenized as FTS5 tokenizes them, and mask
     their postings in the segments before. To `merge` the deltas, the chunks of those before go into it too, and it
-    takes their place, after the base. In postings in topical order, the delta's chunks take the next free places
-    (no other sift changes the postings meanwhile: see `_alone`)."""
+    takes their place, after the base. In postings in topical order, a chunk without a place in a delta before takes
+    the next free one (no other sift changes the postings meanwhile: see `_alone`); a merge's keep theirs."""
     change = int(store.get_meta(db, "kw_change", 0))
     dirty = [c for (c,) in db.execute("SELECT chunk FROM kw_dirty WHERE change <= ?", (change,))]
     kept = _delta_places(db) if merge else {}  # the deltas' chunks keep their places: the deltas go
