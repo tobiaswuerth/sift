@@ -22,9 +22,10 @@ index; PDFs are left to the browser's viewer, which runs none of their scripts a
 
 sift never writes to the indexed files. One MCP tool changes anything, `reindex`, and only sift's index: it reads the
 files it is given again, and only files that `sift index` would read too, inside a registered collection, outside
-hidden and linked folders.
+hidden and linked folders (symbolic links, and junctions on Windows).
 
 `sift worker` admits only requests with its token, over HTTPS with a certificate whose fingerprint the key carries.
+It shows the key on the terminal alone, never in its log.
 
 sift downloads its models from Hugging Face on first use: the embedding model, the reranker and, for scans, the OCR
 model. It loads their weights with transformers' own classes and runs no code that comes with a model. Scanned PDFs

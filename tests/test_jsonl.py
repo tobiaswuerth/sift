@@ -161,6 +161,27 @@ def test_bad_lines_are_skipped_and_reported(tmp_path, home, capsys):
         assert reason in err
 
 
+def test_lines_sqlite_cant_store_or_python_cant_nest_stop_nothing(tmp_path, home, capsys):
+    # Exported chats hold an emoji's half alone ("\ud83d"), which SQLite refuses; a line nested a hundred thousand deep
+    # Python can't read. Either stopped `sift index`, for every collection after it too, on every run.
+    lines = [
+        '{"id": "1", "text": "a \\ud83d b"}',
+        "[" * 100_000 + "]" * 100_000,
+        json.dumps({"id": "3", "text": "kept"}),
+    ]
+    write(tmp_path / "c" / "chat.jsonl", "\n".join(lines) + "\n")
+    write(tmp_path / "c" / "note.md", "# Note\n\nafter the chat\n")
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert dict(only(catalog).execute("SELECT path, text FROM docs")) == {
+        "chat/1": "a � b",
+        "chat/3": "kept",
+        "note.md": "# Note\n\nafter the chat\n",
+    }
+    assert "line 2: nested too deeply" in capsys.readouterr().err
+
+
 # --- incremental indexing: unchanged files and records cost nothing ----------------
 
 

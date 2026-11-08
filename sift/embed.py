@@ -272,10 +272,15 @@ def encode(models, texts):
 
 
 def _store_vectors(db, chunks, vectors, model):
-    """Store the intact vectors and commit. A NaN vector, an overflow inside the model, stays out, so its chunk
-    stays pending. Returns how many stayed out."""
+    """Store the intact vectors of the chunks still there, and commit. A NaN vector, an overflow inside the model,
+    stays out, so its chunk stays pending; so does the vector of a chunk another sift deleted meanwhile, which would
+    count as the vector of the chunk that took its place. Returns how many the model broke."""
     intact = np.isfinite(vectors).all(axis=1)
-    store.put_vectors(db, [chunk for chunk, ok in zip(chunks, intact) if ok], vectors[intact])
+    db.execute("BEGIN IMMEDIATE")  # what is still there, as it is written
+    sql = "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))"
+    there = {c for (c,) in db.execute(sql, (json.dumps([int(c) for c in chunks]),))}
+    keep = intact & np.fromiter((c in there for c in chunks), bool, len(chunks))
+    store.put_vectors(db, [chunk for chunk, ok in zip(chunks, keep) if ok], vectors[keep])
     store.set_meta(db, "model", model)
     store.set_meta(db, "dim", vectors.shape[1])
     store.touch(db)  # tells a running server the codes changed

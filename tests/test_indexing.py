@@ -60,6 +60,25 @@ def test_a_file_named_like_an_extension_has_none(corpus, capsys):
     assert ".notes.md" in doc_ids(catalog)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")
+def test_walk_follows_no_junction(notes, tmp_path):
+    # A junction to the collection's own folder made every file come again, 64 times; one to elsewhere took in files
+    # of no collection.
+    import _winapi
+
+    write(tmp_path / "elsewhere" / "outside.md", "# Outside\n")
+    _winapi.CreateJunction(str(notes), str(notes / "loop"))
+    _winapi.CreateJunction(str(tmp_path / "elsewhere"), str(notes / "away"))
+    found = sorted(os.path.relpath(p, notes).replace(os.sep, "/") for p, _, _ in indexing.walk(str(notes)))
+    assert found == ["plain.txt", "rl.md", "robots/brush.md"]
+
+
+def test_a_folder_gone_meanwhile_is_no_junction(tmp_path):
+    # Listed, then deleted before it is looked at: nothing to follow, and nothing to fail on.
+    assert indexing._junction(str(tmp_path / "gone")) is False
+    assert not indexing._linked(str(tmp_path / "gone"))
+
+
 def test_walk_leaves_out_what_siftignore_names(notes):
     write(notes / ".siftignore", "plain.txt\nrobots/\n")
     write(notes / "robots" / "deep" / "x.md", "# Inside a folder left out\n")

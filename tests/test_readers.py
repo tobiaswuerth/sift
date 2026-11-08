@@ -104,6 +104,16 @@ def test_a_note_of_front_matter_alone_is_its_front_matter():
     assert len(readers.note("---\na: 1\n---\nA body.\n", "Body.md").chunks) == 1  # the body alone, as before
 
 
+def test_front_matter_values_sqlite_cant_store_or_python_cant_nest():
+    # A lone surrogate, "\ud800" in JSON, which SQLite refuses; lists nested deeper than Python recurses.
+    deep = "[" * 5000 + "]" * 5000
+    title, meta, _, _ = readers.parse(f'---\ntitle: "a \\ud800 b"\nx: {deep}\n---\n', "f")
+    assert (title, meta["x"]) == ("a � b", deep)
+    _, meta, _, _ = readers.parse('---\ntags: ["\\udc00", {"k\\ud800": ["v\\ud83d"]}, 1]\n---\n', "f")
+    assert meta["tags"] == ["�", {"k�": ["v�"]}, 1]  # in lists and objects too
+    assert readers.parse('---\nemoji: "\\ud83d\\ude00"\n---\n', "f")[1] == {"emoji": "\U0001f600"}  # a pair is one
+
+
 def test_parse_without_closing_front_matter_is_plain_text():
     title, meta, body, _ = readers.parse("---\ntitle: x\nno end\n", "file")
     assert (title, meta) == ("file", {})

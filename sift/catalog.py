@@ -96,6 +96,12 @@ class Catalog:
         if held := self._stores.pop(cid, None):
             held[1].close()
 
+    def release_gone(self):
+        """Close the stores of collections no longer in the catalog, as another sift removed them."""
+        there = {c.id for c in self.collections()}
+        for cid in self._stores.keys() - there:
+            self.release(cid)
+
     # --- changing the catalog --------------------------------------------------
 
     def add(self, path, name=None, fields=None, nested=False, into=None):

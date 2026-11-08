@@ -439,6 +439,16 @@ def test_the_ui_answers_local_hosts_only(browser):
     assert browser.get("/ui/", headers={"Host": "localhost:8765"}).status_code == 200
 
 
+def test_a_server_on_the_ipv6_loopback_answers_only_local_hosts(embedded):
+    # As on 127.0.0.1: a web page reaching it under its own domain must not read the documents.
+    index = Index(embedded[0])
+    app = server.http_app(server.build(index)[0], index, "::1")
+    browser = Client(app, base_url="http://[::1]:8765")
+    assert browser.get("/ui/", headers={"Host": "attacker.example:8765"}).status_code == 400
+    assert browser.get("/ui/", headers={"Host": "[::1]:8765"}).status_code == 200
+    assert browser.get("/ui/", headers={"Host": "localhost:8765"}).status_code == 200
+
+
 def test_a_server_for_other_machines_answers_any_host(embedded):
     index = Index(embedded[0])
     app = server.http_app(server.build(index)[0], index, "0.0.0.0")

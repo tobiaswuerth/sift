@@ -795,6 +795,24 @@ def test_the_servers_own_reindex_while_all_codes_are_read(embedded, monkeypatch)
     assert held_codes(index) == fresh_codes(catalog)
 
 
+def test_a_collection_removed_meanwhile_is_let_go(embedded, tmp_path):
+    # `sift rm` by another sift: the server kept the store open, its file's space taken until it stopped, and the
+    # postings of a collection deactivated or removed stayed in its memory.
+    catalog, _ = embedded
+    write(tmp_path / "more" / "a.md", "# More\n\nanother collection's note\n")
+    catalog.add(tmp_path / "more", "more")
+    indexing.index(catalog)
+    index = Index(catalog)
+    index.search("note")
+    gone = catalog.get("more").id
+    other = Catalog(catalog.home)
+    other.remove("more")
+    other.close()
+    index.search("note")
+    assert gone not in index._postings
+    assert gone not in index.catalog._stores
+
+
 def test_codes_load_in_batches(embedded, monkeypatch):
     # Millions of codes load a batch at a time, not as one list of rows.
     monkeypatch.setattr(store, "CODES_BATCH", 2)
@@ -1146,6 +1164,16 @@ def test_the_status_of_an_empty_collection(tmp_path, home):
 
 
 # --- edge cases ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode, subject", [("vsearch", "reward"), ("query", "reward"), ("similar", "notes/rl.md")])
+def test_a_semantic_search_reads_at_most_so_many_vectors(embedded, monkeypatch, mode, subject):
+    # vsearch(k=10**8) over MCP read every vector of every collection, 45 GB for PubMed's alone.
+    asked, real = [], search.top
+    monkeypatch.setattr(search, "top", lambda held, query, k, *rest: asked.append(k) or real(held, query, k, *rest))
+    getattr(Index(embedded[0]), mode)(subject, k=10**8)
+    assert asked
+    assert max(asked) <= search.SEMANTIC_K
 
 
 @pytest.mark.parametrize("mode", ["search", "vsearch", "query"])

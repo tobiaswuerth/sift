@@ -18,11 +18,11 @@ _held = False  # whether progress lines hold the collector off, so that it runs 
 _collections = 0  # made since they did
 
 
-def say(*parts):
+def say(*parts, logged=None):
     """A message; while a progress line is drawn, on a line of its own above it, as a Progress's note. Into the
-    command's log too, if it keeps one."""
+    command's log too, if it keeps one: as `logged` says it, if given, for a message that holds a secret."""
     text = " ".join(map(str, parts))
-    logs.said.info(text)
+    logs.said.info(text if logged is None else logged)
     if _drawn is not None:
         _drawn.note(text)
     else:

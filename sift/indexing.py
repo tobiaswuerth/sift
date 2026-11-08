@@ -283,9 +283,7 @@ def _locate(catalog, path):
     given = os.path.expanduser(path)
     if os.path.isabs(given):
         full = os.path.normpath(given)
-        inside = [
-            c for c in collections if os.path.normcase(full).startswith(os.path.normcase(os.path.join(c.path, "")))
-        ]
+        inside = [c for c in collections if _inside(c.path, full)]
         if not inside:
             raise ValueError(_nowhere(path, full, collections))
         collection, rel = inside[0], os.path.relpath(full, inside[0].path).replace(os.sep, "/")
@@ -297,6 +295,8 @@ def _locate(catalog, path):
         if rel == ".." or rel.startswith(("../", "/")):
             raise ValueError(f"{path!r} is outside the collection {name!r}")
     name, root = collection.name, collection.path
+    if not _inside(root, os.path.normpath(os.path.join(root, *rel.split("/")))):  # "D:/x.md": Windows takes D:'s
+        raise ValueError(f"{path!r} is outside the collection {name!r}")
     if not os.path.isdir(root):  # never take an unplugged drive for files deleted
         raise ValueError(f"{name}: folder not found: {root}")
     parts = _spelled(root, rel.split("/"))
@@ -313,7 +313,7 @@ def _locate(catalog, path):
     if ext not in readers.READERS:
         raise ValueError(f"{name}/{rel}: sift doesn't index {f'{ext} files' if ext else 'files without an extension'}")
     for i in range(1, len(parts)):
-        if os.path.islink(os.path.join(root, *parts[:i])):
+        if _linked(os.path.join(root, *parts[:i])):
             raise ValueError(
                 f"{name}/{rel}: {parts[i - 1]}/ is linked from elsewhere, and `sift index` doesn't follow it"
             )
@@ -325,6 +325,25 @@ def _locate(catalog, path):
     if not os.path.lexists(os.path.join(root, *parts)):  # gone: the file as indexed, in whatever spelling
         rel = next(iter(_indexed_as(catalog.store(collection), rel)), rel)
     return collection, rel
+
+
+def _inside(root, full):
+    """Whether the normalised path `full` lies in the folder `root`, in the file system's case."""
+    return os.path.normcase(full).startswith(os.path.normcase(os.path.join(root, "")))
+
+
+def _linked(path):
+    """Whether a folder leads elsewhere: a symbolic link, or on Windows a junction, which any user may make."""
+    return os.path.islink(path) or _junction(path)
+
+
+def _junction(path, entry=None):
+    """Whether a folder (its path, or the DirEntry of it) is a Windows junction; nothing elsewhere is."""
+    try:
+        found = entry.stat(follow_symlinks=False) if entry is not None else os.lstat(path)
+    except OSError:
+        return False
+    return getattr(found, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
 
 
 NEAREST_SHOWN = 5  # collections an error about a file in none names, the nearest first
@@ -466,6 +485,7 @@ def walk(root, ignore=None, unlisted=None):
                             not e.name.startswith(".")
                             and e.name not in SKIP_DIRS
                             and not (ignore and ignore(rel + e.name, True))
+                            and not _junction(e.path, e)
                         ):
                             stack.append((e.path, rel + e.name + "/"))
                     elif readers.extension(e.name) in readers.READERS and not (ignore and ignore(rel + e.name)):

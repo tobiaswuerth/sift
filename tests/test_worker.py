@@ -421,6 +421,22 @@ def test_worker_serves_https_with_its_key_on_all_interfaces(home, fake_models, s
     assert f"SIFT_EMBED_REMOTE=https://{found.key}@" in capsys.readouterr().err  # what to set on the other machine
 
 
+def test_the_workers_key_stays_out_of_its_log(home, fake_models, started, monkeypatch, capsys):
+    # The key lets any machine use the worker; its log is kept for good, readable as any file there.
+    from datetime import datetime
+
+    from sift import logs
+
+    monkeypatch.setattr(fake_models, "prepare", lambda: None)
+    with logs.kept("worker", datetime(2026, 11, 8, 18, 0, 0)) as path:
+        worker.serve(models=fake_models)
+    found = worker.credentials()
+    assert f"SIFT_EMBED_REMOTE=https://{found.key}@" in capsys.readouterr().err  # on the terminal, to copy
+    logged = path.read_text(encoding="utf-8")
+    assert found.token not in logged
+    assert "SIFT_EMBED_REMOTE=https://<key>@" in logged
+
+
 def test_a_worker_on_windows_serves_on_a_selector_loop(home, fake_models, monkeypatch):
     # As `sift serve`: the proactor loop stops accepting for good after one failed accept.
     import asyncio

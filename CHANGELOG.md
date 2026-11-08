@@ -23,6 +23,27 @@ No search held up while `sift embed` runs beside the server, and phrases asked a
   once a minute while it embedded. The codes written past the last the server holds are read alone; after any other
   change to a collection's vectors (deleted, or embedded again), all its codes are read again in a thread of their own,
   while searches go on with those held, the passages embedded past them among them.
+- One file with an emoji's half alone (`"\ud83d"` in JSON, as exported chats hold) or JSON nested deeper than Python
+  reads no longer stops `sift index`, for every collection after it too, on every run: the half reads as U+FFFD, and
+  a line nested too deeply is skipped and said.
+- `sift embed` beside `sift index` no longer stores the vector of a passage deleted meanwhile: it counted as embedded,
+  and the passage that took its place was never embedded.
+- A collection's store that refuses to open in a running server, as one a newer sift updated, fails the call that
+  opens it, not the server.
+- `vsearch`, `query` and `similar` return at most 10,000 hits: an agent asking for 10^8 had every vector of every
+  collection read.
+- A running server lets go of a collection removed or deactivated meanwhile: its store, whose disk space `sift rm`
+  frees only once closed, and its keyword postings.
+
+### Security
+
+- `reindex` (and `sift index --files`) of an id such as `notes/D:/file.md` read that file on another drive into the
+  collection on Windows, from where searches returned it and the UI served it. Paths stay within their collection.
+- Windows junctions in a collection's folder are passed over, as links are: one to elsewhere took in files of no
+  collection, one to the folder itself every file again.
+- `sift worker` no longer writes its key into its log, kept for good; it shows it on the terminal alone.
+- `sift serve --host ::1` answers only requests that name a local host, as on 127.0.0.1: a web page reaching it
+  under its own domain could read the documents through the UI.
 
 ## [1.11.1] - 2026-11-08
 

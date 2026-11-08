@@ -108,7 +108,7 @@ collections hold under the same DOI (front-matter field `doi`) is the best ranke
 
 | Option | Effect |
 |---|---|
-| `-k N` | Number of results |
+| `-k N` | Number of results; `vsearch`, `query` and `similar` return at most 10,000 |
 | `-c NAME` | Only this collection |
 | `--path GLOB` | Only paths within the collection that match, e.g. `"2024/*"` |
 | `-f FIELD=VALUE` | Front-matter filter, repeatable (see [below](#front-matter-and-filters)) |

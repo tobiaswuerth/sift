@@ -290,6 +290,17 @@ def test_reindex_refuses_what_sift_index_would_not_read(live, path, error):
         index.reindex(["vault/a.md", path])
 
 
+@pytest.mark.skipif(os.name != "nt", reason="a drive in a path, as Windows reads one")
+def test_reindex_refuses_a_path_on_another_drive(live):
+    # "vault/D:/README.md": joined to the vault's folder, Windows threw the folder away and read D:'s file, which
+    # searches then served, and the UI too.
+    index, vault = live
+    drive = next(d for d in "CDEFGHIJ" if not str(vault).upper().startswith(d))
+    for path in (f"vault/{drive}:/README.md", f"vault/sub/{drive}:/x.md", f"vault/{drive}:x.md"):
+        with pytest.raises(ValueError, match="outside the collection"):
+            index.reindex([path])
+
+
 def test_reindex_refuses_what_siftignore_leaves_out(live):
     index, vault = live
     write(vault / ".siftignore", "Private/\n*.tmp.md\n")
@@ -379,6 +390,18 @@ def test_reindex_refuses_files_behind_a_linked_folder(live, tmp_path, monkeypatc
         monkeypatch.setattr(indexing.os.path, "islink", lambda path: path.endswith("linked"))
     with pytest.raises(ValueError, match="linked/ is linked from elsewhere"):
         index.reindex(["vault/linked/a.md"])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")
+def test_reindex_refuses_files_behind_a_junction(live, tmp_path):
+    # A junction leads elsewhere as a link does, and every user may make one.
+    import _winapi
+
+    index, vault = live
+    write(tmp_path / "secret" / "a.md", "x")
+    _winapi.CreateJunction(str(tmp_path / "secret"), str(vault / "joined"))
+    with pytest.raises(ValueError, match="joined/ is linked from elsewhere"):
+        index.reindex(["vault/joined/a.md"])
 
 
 def test_reindex_refuses_a_collection_whose_folder_is_gone(live):

@@ -73,6 +73,10 @@ def _call(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except (LookupError, ValueError, ConnectionError, sqlite3.Error, jobs.Cancelled) as e:  # ConnectionError: the
         raise ToolError(str(e)) from None  # embedding remote; sqlite3.Error and Cancelled: a call cancelled, too
+    except (
+        SystemExit
+    ) as e:  # a store that refuses to open, as one a newer sift made: the call's to fail, not the server
+        raise ToolError(str(e.code)) from None
     except Exception as e:
         log.exception("tool failed")
         raise ToolError(f"{type(e).__name__}: {e}") from None
@@ -93,7 +97,7 @@ Note = Annotated[
         'Müller", if one note answers to it.'
     ),
 ]
-K = Annotated[int, Field(description="Number of results.")]
+K = Annotated[int, Field(description="Number of results; vsearch, query and similar return at most 10,000.")]
 Collection = Annotated[str | None, Field(description="Search only this collection.")]
 PathGlob = Annotated[
     str | None, Field(description='Only documents whose path in the collection matches this glob, e.g. "2024/*".')

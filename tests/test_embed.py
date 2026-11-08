@@ -231,6 +231,25 @@ def test_embed_pending_survives_concurrent_writer(corpus, fake_models, monkeypat
     other.close()
 
 
+def test_vectors_of_chunks_deleted_meanwhile_are_not_stored(corpus, fake_models, monkeypatch):
+    # `sift index` beside `sift embed` rewrote a note while its slab was on the GPU: the vector of the chunk gone was
+    # stored all the same, so the count of vectors matched that of chunks, and the new chunk was never embedded.
+    catalog, _ = corpus
+    other = store.connect(catalog.get("notes").store, catalog.get("notes").id)  # another sift's connection
+    (doc,) = other.execute("SELECT id FROM docs WHERE path = 'rl.md'").fetchone()
+
+    def meanwhile(texts):
+        store.delete_docs(other, [doc])
+        other.commit()
+
+    watching(fake_models, monkeypatch, meanwhile)
+    embed.embed_pending(catalog)
+    other.close()
+    db = catalog.store("notes")
+    assert db.execute("SELECT count(*) FROM vectors WHERE chunk NOT IN (SELECT id FROM chunks)").fetchone() == (0,)
+    assert store.counts(db)["vectors"] == vector_count(catalog) == 2
+
+
 def test_embed_refuses_mixing_models(embedded, fake_models):
     catalog, _ = embedded
     store.set_meta(catalog.store("notes"), "model", "another/model")

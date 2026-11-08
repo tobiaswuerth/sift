@@ -163,7 +163,11 @@ def serve(host="0.0.0.0", port=8766, models=None):
     application = app(found.token, models)
     models.prepare()  # batches sized to this GPU
     console.say(f"sift worker on https://{host}:{port}, embedding and reranking on {models.address}")
-    console.say(f"on other machines, set SIFT_EMBED_REMOTE=https://{found.key}@{socket.gethostname()}:{port}")
+    at = f"@{socket.gethostname()}:{port}"
+    console.say(
+        f"on other machines, set SIFT_EMBED_REMOTE=https://{found.key}{at}",
+        logged=f"on other machines, set SIFT_EMBED_REMOTE=https://<key>{at} (the key on the terminal alone)",
+    )
     console.say("keep that key private: it lets a machine use this worker")
     try:
         anyio.run(_serve, application, host, port, found, models, backend_options=loop_options())

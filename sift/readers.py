@@ -37,14 +37,40 @@ WIKILINK_VALUE = re.compile(r"\[\[[^\[\]\n]*\]\]")
 TITLE_FROM = ("heading", "name")  # where a Markdown or text file's title comes from, after its `title:` field
 
 
+SURROGATE = re.compile(r"\\u[dD][89a-fA-F]")  # JSON's escape of a surrogate, "\ud83d", half an emoji: alone, a string
+LONE = re.compile("[\ud800-\udfff]")  # holding it can't be stored (SQLite takes UTF-8 only)
+
+
+def _json(text):
+    """JSON as sift keeps it: NaN and Infinity as strings, which SQLite's JSON rejects, and a surrogate alone as
+    U+FFFD (a pair Python joins itself). Raises ValueError, and RecursionError for JSON nested deeper than Python
+    recurses."""
+    value = json.loads(text, parse_constant=str)
+    return _whole(value) if SURROGATE.search(text) else value
+
+
+def _whole(value):
+    """A JSON value with every surrogate alone in its strings as U+FFFD."""
+    if isinstance(value, str):
+        return LONE.sub("�", value)
+    if isinstance(value, list):
+        return [_whole(item) for item in value]
+    if isinstance(value, dict):
+        return {_whole(key): _whole(item) for key, item in value.items()}
+    return value
+
+
 def _value(text):
     """A front-matter value: JSON if it parses (lists, numbers, quoted strings), else a YAML flow list of unquoted
-    items, else plain text."""
+    items, else plain text; as written, if nested deeper than Python recurses."""
     try:
-        return json.loads(text, parse_constant=str)  # NaN/Infinity stay strings: SQLite's JSON rejects them
-    except ValueError:
-        items = _flow_list(text)
-        return text.strip("'\"") if items is None else items
+        try:
+            return _json(text)
+        except ValueError:
+            items = _flow_list(text)
+            return text.strip("'\"") if items is None else items
+    except RecursionError:
+        return text
 
 
 def _flow_list(text):
@@ -339,9 +365,12 @@ def _records(raw, name, fields):
         if not line:
             continue
         try:
-            obj = json.loads(line, parse_constant=str)  # NaN/Infinity stay strings: SQLite's JSON rejects them
+            obj = _json(line)
         except ValueError:
             problems.append(f"line {n}: not JSON")
+            continue
+        except RecursionError:
+            problems.append(f"line {n}: nested too deeply")
             continue
         if not isinstance(obj, dict):
             problems.append(f"line {n}: not an object")
