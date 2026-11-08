@@ -253,7 +253,7 @@ def build(index=None):
         adaptive: Adaptive = False,
     ) -> list[dict]:
         """Documents closest in meaning to a document, e.g. more papers like one found; the document itself is left
-        out (cosine similarity, -1 to 1)."""
+        out, and so are its copies in other collections (cosine similarity, -1 to 1)."""
         return await _search(index.similar, id, k, locals())
 
     @mcp.tool(annotations=READ_ONLY)

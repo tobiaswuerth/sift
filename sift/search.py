@@ -959,7 +959,7 @@ class Index:
         adaptive=False,
     ):
         """Documents closest in meaning to the document `id` (as for `get`), by cosine similarity with the mean of its
-        passages' vectors; the document itself is left out."""
+        passages' vectors; the document itself is left out, and so are its copies, documents with its DOI."""
         k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
         doc, _, _, meta, _ = self._find(id)
