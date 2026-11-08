@@ -504,15 +504,20 @@ class Index:
     # --- which collections and documents a search may find -----------------------
 
     def active(self):
-        """The active collections whose stores are there, by id; the codes of others are let go."""
+        """The active collections whose stores open, by id; the codes of others are let go."""
         found = {}
         for c in self.catalog.collections():
             if not c.active:
                 self.catalog.release(c.id)
-            elif os.path.isfile(c.store):
-                found[c.id] = c
-            else:
+            elif not os.path.isfile(c.store):
                 self._warn(f"{c.name}: its index is missing: {c.store}; searches pass it over")
+            else:
+                try:
+                    self.catalog.store(c)
+                except LookupError as unusable:  # damaged, or a newer sift's
+                    self._warn(f"{unusable}; searches pass it over")
+                else:
+                    found[c.id] = c
         for held in (self.vectors, self._reading, self._postings):
             for cid in held.keys() - found.keys():
                 del held[cid]
@@ -1407,7 +1412,11 @@ class Index:
                 continue
             entry["size"] = _size(c.store)
             if c.active:
-                db = self.catalog.store(c)
+                try:
+                    db = self.catalog.store(c)
+                except LookupError as unusable:  # damaged, or a newer sift's
+                    collections.append(entry | {"error": str(unusable)})
+                    continue
                 counted = store.counts(db)
                 linked, unresolved = self.link_counts(c)
                 entry |= {"docs": counted["docs"], "chunks": counted["chunks"], "embedded": counted["vectors"]}

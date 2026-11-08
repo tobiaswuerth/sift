@@ -75,7 +75,8 @@ class Catalog:
 
     def store(self, collection):
         """The store of a collection, or of the collection of that name, opened once, and anew where the collection
-        has moved meanwhile."""
+        has moved meanwhile. A store missing, damaged or of a newer sift is a LookupError, which commands of every
+        collection pass over."""
         collection = self.get(collection) if isinstance(collection, str) else collection
         held = self._stores.get(collection.id)
         if held and held[0] == collection.store:
@@ -88,6 +89,11 @@ class Catalog:
                 f"{collection.name}: its index is missing: {collection.store}; is its drive connected? "
                 f"`{console.command('sift', 'rm', collection.name)}` forgets the collection"
             ) from None
+        except (sqlite3.DatabaseError, SystemExit) as error:  # damaged, or a newer sift's: passed over as missing
+            if isinstance(error, sqlite3.OperationalError):  # locked, the disk full: not the store's own fault
+                raise
+            reason = error.code if isinstance(error, SystemExit) else f"{collection.store}: {error}"
+            raise LookupError(f"{collection.name}: its index can't be opened: {reason}") from None
         self._stores[collection.id] = (collection.store, db)
         return db
 

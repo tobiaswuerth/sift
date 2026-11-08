@@ -23,9 +23,21 @@ No search held up while `sift embed` runs beside the server, and phrases asked a
   once a minute while it embedded. The codes written past the last the server holds are read alone; after any other
   change to a collection's vectors (deleted, or embedded again), all its codes are read again in a thread of their own,
   while searches go on with those held, the passages embedded past them among them.
-- One file with an emoji's half alone (`"\ud83d"` in JSON, as exported chats hold) or JSON nested deeper than Python
-  reads no longer stops `sift index`, for every collection after it too, on every run: the half reads as U+FFFD, and
-  a line nested too deeply is skipped and said.
+- One file with an emoji's half alone (`"\ud83d"` in JSON, as exported chats hold), JSON nested deeper than SQLite
+  stores (1,000) or Python reads, or a number too large for a float (`1e999`) no longer stops `sift index`, for every
+  collection after it too, on every run: the half reads as U+FFFD, the number as written, and a line nested too deeply
+  is skipped and said, a front-matter value so nested kept as written.
+- `sift index` beside a server's `reindex` of the same folder: a note an agent wrote and reindexed meanwhile stopped
+  it (`UNIQUE constraint failed`), for every collection after it too, and one deleted and reindexed meanwhile left
+  its documents in the index for good.
+- A collection whose index can't be opened, damaged or updated by a newer sift, is passed over by searches,
+  `sift index`, `sift embed` and `sift serve`, and said, as a missing one is; `status` gives the reason as `error`. It
+  stopped all of them, and the status that would have said why.
+- A line of millions of characters, a log or a dump, is cut into passages in time linear in its length: 16 MB took
+  8 seconds, 100 MB about five minutes.
+- `reindex` refuses names Windows reads as another file's, `C:x.md`, `sub./x.md` or `x.md:stream`: such a file was
+  indexed and found twice until the next `sift index`.
+- `sift ui` answered an address with a count of thousands of digits with a server error.
 - `sift embed` beside `sift index` no longer stores the vector of a passage deleted meanwhile: it counted as embedded,
   and the passage that took its place was never embedded.
 - A collection's store that refuses to open in a running server, as one a newer sift updated, fails the call that

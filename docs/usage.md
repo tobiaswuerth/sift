@@ -40,7 +40,8 @@ may have the index open meanwhile: stop `sift serve`, and any `sift index` or `s
 Beside an index lies an empty `NAME.sqlite.postings-lock`, which a sift locks while it updates the keyword postings,
 so that two never do at once; `sift move` and `sift rm` take it with the index.
 A collection whose index is missing, on a drive that isn't connected, is passed over by searches and said so on the
-server's console; `sift status` marks it `"missing": true`. sift never makes such an index anew.
+server's console; `sift status` marks it `"missing": true`. sift never makes such an index anew. So is one whose index
+can't be opened, damaged or updated by a newer sift; `sift status` gives the reason as `"error"`.
 
 ### Active and inactive collections
 

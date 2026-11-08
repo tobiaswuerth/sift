@@ -2,6 +2,8 @@
 
 import json
 import os
+import sqlite3
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -194,6 +196,37 @@ def test_a_missing_store_is_passed_over_and_said(three, capsys):
     assert not os.path.exists(stored)  # never made anew
     os.replace(stored + ".away", stored)
     assert "diary/monday.md" in ids(index.search("robot"))
+
+
+def unusable(path, how):
+    """Make the store at `path` one sift can't open: damaged, or updated by a newer sift."""
+    if how == "damaged":
+        Path(path).write_bytes(b"not a database, " * 1000)
+        return
+    db = sqlite3.connect(path)
+    db.execute(f"PRAGMA user_version = {store.SCHEMA_VERSION + 1}")
+    db.close()
+
+
+@pytest.mark.parametrize("how, said", [("damaged", "file is not a database"), ("newer", "made by a newer sift")])
+def test_a_store_that_cant_be_opened_is_passed_over_and_said(three, tmp_path, capsys, how, said):
+    # Damaged, or updated by a newer sift, one store stopped `sift index` and `sift embed` at it, kept `sift serve`
+    # from starting, and failed every search of all collections and the status, which would have said why.
+    stored = three.get("diary").store
+    three.release(three.get("diary").id)
+    unusable(stored, how)
+    write(tmp_path / "papers" / "new.md", "# New\n\nA new robot paper.\n")
+    indexing.index(three)  # diary comes first: the others after it are indexed
+    embed.embed_pending(three)
+    index = Index(three)
+    assert sorted(ids(index.search("robot"))) == ["papers/new.md", "papers/robots.md", "recipes/soup.md"]
+    assert ids(index.vsearch("a new robot paper", k=1)) == ["papers/new.md"]
+    (diary,) = [c for c in index.status()["collections"] if c["name"] == "diary"]
+    assert said in diary["error"]
+    assert "- diary (" not in _collections(Index(three))  # what a server tells agents
+    assert said in capsys.readouterr().err
+    with pytest.raises(LookupError, match=said):
+        index.search("robot", collection="diary")
 
 
 def test_documents_of_a_collection_removed_meanwhile_are_left_out(three):
