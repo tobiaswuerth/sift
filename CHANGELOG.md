@@ -691,7 +691,8 @@ First release.
   them what went wrong.
 - A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/tobiaswuerth/sift/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/tobiaswuerth/sift/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/tobiaswuerth/sift/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/tobiaswuerth/sift/compare/v1.8.0...v1.9.0
