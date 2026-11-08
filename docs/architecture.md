@@ -95,8 +95,8 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
     can't bring a chunk to the k-th best score ("the", "of") only for the chunks the others bring within reach
     (MaxScore). A question of 14 words over 3.2 million arXiv abstracts: 81 ms instead of 2.5 s.
   - A phrase, quoted or a word FTS5 can't read as written ("first-stage"), is bounded by its words, at most as often
-    in a chunk as the rarest of them, and FTS5, which has the positions, finds the chunks that hold it once per
-    search and counts it in those within reach.
+    in a chunk as the rarest of them, and FTS5, which has the positions, finds the chunks that hold it, once for the
+    postings as they stand, and counts it in those within reach.
   - Prefixes, NEAR and column filters are FTS5's to answer, as before.
   - With a time budget, a search from the postings stops once it is spent and has found any, and returns the best found
     so far, marked partial: ranges best bound first make that the anytime ranking of
