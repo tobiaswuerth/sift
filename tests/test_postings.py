@@ -509,6 +509,28 @@ def test_ordered_deltas_grown_too_many_are_merged(ordered, monkeypatch):
     assert db.execute("SELECT count(*) FROM kw_segments").fetchone()[0] <= 2
 
 
+def test_a_phrase_is_counted_as_fts5s_bm25_counts_it(tmp_path, home):
+    # Overlapping occurrences each: "a a" is twice in "a a a", where highlight() marks it once.
+    root, catalog = tmp_path / "phrases", Catalog(home)
+    write(root / "a.md", "# Repeat\n\nw1 w1 w1 w2\n")
+    write(root / "b.md", "# Once\n\nw1 w1\n")
+    write(root / "c.md", "# None\n\nw1 w2 w1\n")
+    catalog.add(root, "phrases")
+    indexing.index(catalog)
+    db = catalog.store("phrases")
+    reader = postings.Reader(db)
+    chunks = dict(db.execute("SELECT d.path, c.id FROM chunks c JOIN docs d ON d.id = c.doc"))
+    ids = [chunks["a.md"], chunks["b.md"], chunks["c.md"]]
+    counts, sizes = reader.phrase_counts(("w1", "w1"), ids)
+    assert counts.tolist() == [2, 1, 0]
+    assert sizes.tolist() == [lengths(db)[ids[0]], lengths(db)[ids[1]], 0]  # 0 where it isn't: no score
+    assert reader.phrase_df(("w1", "w1")) == 2
+    # as FTS5's queries of several collections score their phrases (search._as_one)
+    assert postings.matches(db, '"w1 w1"', ids) == {ids[0]: 2, ids[1]: 1}
+    assert postings.matches(db, '"w1 w2"', ids) == {ids[0]: 1, ids[2]: 1}
+    assert postings.matches(db, "w*", ids) == {ids[0]: 4, ids[1]: 2, ids[2]: 3}  # a prefix: each word it begins
+
+
 def test_the_parts_of_a_build_cover_every_term_once():
     shards = postings._shards()
     assert shards[0][0] == ""

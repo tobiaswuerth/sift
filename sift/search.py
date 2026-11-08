@@ -219,7 +219,6 @@ def _any_term(query):
 QUOTED = r'"(?:[^"]|"")*"'
 PHRASE = re.compile(rf"(?:{QUOTED}|[^\s()\"*]+)(?:\s*\*)?")  # a quoted phrase or a bare word, prefix or not
 PLACED = re.compile(r"NEAR\s*\(|[{}+^:]")  # operators that join phrases or tie them to columns or places
-MARK = "\x01"  # what highlight() puts before each phrase it finds, to count them
 MORE_CANDIDATES = 20  # each collection gives this many more of its best, or as many again, to be scored again
 
 
@@ -627,7 +626,10 @@ class Index:
         the query places its phrases (NEAR, column filters)."""
         if not match.strip():
             return []
-        if (query := expression.parse(match)) is not None:
+        query = expression.parse(match)
+        if query is None and expression.rejected(match):
+            query = expression.parse(_phrases(match))  # as FTS5 below reads it: its words as phrases
+        if query is not None:
             with _snapshot(self.catalog.store(c) for c in scope):  # postings rebuilt meanwhile are another state's
                 if (held := self._ready(scope)) is not None:
                     allowed = _Filter(self.catalog, scope, where, args).passes if args else None
@@ -690,17 +692,13 @@ class Index:
         idf = [math.log((rows - n + 0.5) / (n + 0.5)) for n in holding]
         idf = [value if value > 0 else 1e-6 for value in idf]  # as FTS5 takes them
         average = tokens / rows if rows else 1.0
-        highlighted = ", ".join(f"highlight(fts, {column}, '{MARK}', '')" for column in range(3))
-        hits = f"SELECT rowid, {highlighted} FROM fts WHERE fts MATCH ? AND rowid IN (SELECT value FROM json_each(?))"
         scored = {}
         for c, passages in found.items():
-            db, ids = self.catalog.store(c), json.dumps([passage for passage, _, _ in passages])
-            sizes = "SELECT id, sz FROM fts_docsize WHERE id IN (SELECT value FROM json_each(?))"
-            size = {i: int(postings.varints(sz)[0].sum()) for i, sz in db.execute(sizes, (ids,))}
+            db, ids = self.catalog.store(c), [passage for passage, _, _ in passages]
+            size = postings.sizes(db, ids)
             score = dict.fromkeys(size, 0.0)
             for weight, phrase in zip(idf, phrases):
-                for passage, *columns in db.execute(hits, (phrase, ids)):
-                    n = sum(text.count(MARK) for text in columns if text)
+                for passage, n in postings.matches(db, phrase, ids).items():
                     score[passage] += weight * float(postings.term_scores(n, size[passage], average))
             scored[c] = [(passage, doc, score.get(passage, 0.0)) for passage, doc, _ in passages]
         return scored

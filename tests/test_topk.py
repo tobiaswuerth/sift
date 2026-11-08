@@ -2,6 +2,7 @@
 what FTS5's bm25 finds, for random expressions of AND, OR and NOT, through changes, across stores, with filters."""
 
 import collections
+import itertools
 import math
 import random
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 
 from sift import embed, indexing, postings, store, topk
 from sift.catalog import Catalog
+from sift.expression import tokenize
 
 from .conftest import PROSE_WORDS, write, write_prose
 
@@ -31,6 +33,8 @@ def fts(node):
     """The expression as an FTS5 query."""
     if node[0] == "term":
         return f'"{node[1]}"'
+    if node[0] == "phrase":
+        return '"' + " ".join(node[1]) + '"'
     if node[0] == "not":
         return f"({fts(node[1])} NOT {fts(node[2])})"
     return "(" + f" {node[0].upper()} ".join(fts(child) for child in node[1]) + ")"
@@ -141,6 +145,62 @@ def test_finds_what_fts5_finds(built, seed):
         query, k = expression(rng), rng.choice([1, 5, 20])
         more = [tuple(r) for r in db.execute(sql, (fts(query), k + 20))]
         same(topk.search([reader(built)], query, k), more, k, query)
+
+
+def phrased(rng, pairs, depth=0):
+    """A random expression of terms and phrases (pairs of tokens), AND, OR and NOT."""
+    if depth >= 2 or rng.random() < 0.35:
+        return ("phrase", rng.choice(pairs)) if rng.random() < 0.5 else ("term", rng.choice(TERMS))
+    kind = rng.choice(["and", "or", "or", "not"])
+    if kind == "not":
+        return ("not", phrased(rng, pairs, depth + 1), phrased(rng, pairs, depth + 1))
+    return (kind, [phrased(rng, pairs, depth + 1) for _ in range(rng.randint(2, 3))])
+
+
+def adjacent(db):
+    """Pairs of tokens one after the other in the collection's chunks: phrases it holds."""
+    texts = [t for (t,) in db.execute("SELECT text FROM chunk_text ORDER BY id LIMIT 30")]
+    return sorted({pair for text in texts for pair in itertools.pairwise(tokenize(text))})
+
+
+@pytest.mark.usefixtures("small_lists")
+@pytest.mark.parametrize("seed", range(4))
+def test_phrases_find_what_fts5_finds(built, seed):
+    # A phrase, or a hyphenated word, went to FTS5 with the whole query, which read every posting of its other words:
+    # over ten minutes for a question over 30 million PubMed passages. The postings bound it by its tokens, and FTS5
+    # checks it in the chunks they leave.
+    rng, db = random.Random(200 + seed), built.store("prose")
+    pairs = adjacent(db)
+    sql = """WITH p AS MATERIALIZED (SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
+             JOIN chunks c ON c.id = fts.rowid WHERE fts MATCH ?)
+             SELECT passage, max(score) FROM p GROUP BY doc ORDER BY 2 DESC, 1 LIMIT ?"""
+    queries = [("phrase", pairs[0]), ("and", [("phrase", pairs[1]), ("term", "w1")])]
+    queries += [("or", [("phrase", pairs[2]), ("term", "w2"), ("term", "w0")])]
+    queries += [phrased(rng, pairs) for _ in range(20)]
+    for query in queries:
+        k = rng.choice([1, 5, 20])
+        more = [tuple(r) for r in db.execute(sql, (fts(query), k + 20))]
+        same(topk.search([reader(built)], query, k), more, k, query)
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_common_phrase_among_rarer_words_is_counted_only_where_they_bring_a_chunk_near(built, monkeypatch):
+    # In an OR, a phrase all of whose words are common can't bring a chunk to the k-th best score alone (MaxScore).
+    monkeypatch.setattr(topk, "FIRST_BATCH", 1)  # the k-th best score rises before the last range
+    db = built.store("prose")
+    texts = [t for (t,) in db.execute("SELECT text FROM chunk_text")]
+    common = collections.Counter(p for text in texts for p in itertools.pairwise(tokenize(text))).most_common(1)[0][0]
+    query = ("or", [("phrase", common), ("term", "w25"), ("term", "w27"), ("term", "muller")])
+    sql = """WITH p AS MATERIALIZED (SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
+             JOIN chunks c ON c.id = fts.rowid WHERE fts MATCH ?)
+             SELECT passage, max(score) FROM p GROUP BY doc ORDER BY 2 DESC, 1 LIMIT ?"""
+    held, asked = reader(built), []
+    real = topk._Store._holds
+    monkeypatch.setattr(
+        topk._Store, "_holds", lambda store, phrase, places: asked.append(len(places)) or real(store, phrase, places)
+    )
+    same(topk.search([held], query, 2), [tuple(r) for r in db.execute(sql, (fts(query), 22))], 2, query)
+    assert asked  # looked up as a lazy leaf too
 
 
 @pytest.mark.usefixtures("small_lists")

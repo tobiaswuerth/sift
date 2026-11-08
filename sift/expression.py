@@ -1,9 +1,10 @@
 """Keyword queries as FTS5 reads them, for the postings to answer (see `topk`): terms joined by AND, OR, NOT and
 parentheses, and words side by side, which FTS5 joins before anything else ("a NOT b c" is "a NOT (b c)"; then NOT,
-AND, OR). Each word is tokenized by FTS5 itself, as the index was, into one term.
+AND, OR). Each word is tokenized by FTS5 itself, as the index was: into one term, or into a phrase of several
+tokens, one after the other ("first-stage" quoted, `a_b`), which FTS5 checks for the chunks the postings find.
 
-What else FTS5 reads (phrases of several tokens, prefixes, NEAR, columns, initial tokens) is left to FTS5, and so is a
-query FTS5 would reject, so that its error is FTS5's: parse() returns None for those."""
+What else FTS5 reads (prefixes, NEAR, columns, initial tokens) is left to FTS5, and so is a query FTS5 would reject,
+so that its error is FTS5's: parse() returns None for those, and rejected() tells the second kind."""
 
 import sqlite3
 import threading
@@ -107,15 +108,16 @@ class _Parser:
         return words[0] if len(words) == 1 else ("and", words)
 
 
-class _Phrase(Exception):
-    """A word of no token, or of several: a phrase, FTS5's to read."""
+class _Empty(Exception):
+    """A word of no token, which FTS5 reads as it reads it."""
 
 
 def _term(word):
+    """A word as FTS5 reads it: a term, or a phrase of its tokens."""
     tokens = tokenize(word)
-    if len(tokens) != 1:
-        raise _Phrase
-    return ("term", tokens[0])
+    if not tokens:
+        raise _Empty
+    return ("term", tokens[0]) if len(tokens) == 1 else ("phrase", tokens)
 
 
 def parse(query):
@@ -126,9 +128,15 @@ def parse(query):
     parser = _Parser(tokens)
     try:
         node = parser.any()
-    except (SyntaxError, IndexError, _Phrase):
+    except (SyntaxError, IndexError, _Empty):
         return None
     return node if parser.peek() is None else None
+
+
+def rejected(query):
+    """Whether FTS5 rejects the query, its syntax or a column it names: it never reads such a query as written."""
+    tokens("")  # the tokenizer, made on first use
+    return _tokenizer.rejects(query)
 
 
 class _Tokenizer:
@@ -138,6 +146,7 @@ class _Tokenizer:
         self.db = sqlite3.connect(":memory:", check_same_thread=False, isolation_level=None)
         self.db.execute(f"CREATE VIRTUAL TABLE words USING fts5(word, tokenize='{store.TOKENIZER}')")
         self.db.execute("CREATE VIRTUAL TABLE tokens USING fts5vocab(words, instance)")
+        self.db.execute(f"CREATE VIRTUAL TABLE queries USING fts5(title, text, meta, tokenize='{store.TOKENIZER}')")
         self.lock = threading.Lock()
 
     def __call__(self, text):
@@ -148,14 +157,28 @@ class _Tokenizer:
             finally:
                 self.db.execute("DELETE FROM words")
 
+    def rejects(self, query):
+        """Whether FTS5 rejects the query, as asked of an empty table of the keyword index's columns."""
+        with self.lock:
+            try:
+                self.db.execute("SELECT 1 FROM queries WHERE queries MATCH ?", (query,)).fetchall()
+            except sqlite3.OperationalError:
+                return True
+            return False
+
 
 _tokenizer = None
 
 
-@lru_cache(maxsize=4096)
-def tokenize(text):
+def tokens(text):
     """The tokens FTS5 makes of a text, in order."""
     global _tokenizer
     if _tokenizer is None:
         _tokenizer = _Tokenizer()
     return tuple(_tokenizer(text))
+
+
+@lru_cache(maxsize=4096)
+def tokenize(text):
+    """The tokens FTS5 makes of a text, in order, remembered: a query's words come again and again."""
+    return tokens(text)

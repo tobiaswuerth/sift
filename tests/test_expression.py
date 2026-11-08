@@ -34,6 +34,9 @@ def t(term):
         ("日本語", t("日本語")),
         ('  "a"\t\nb\r', ("and", [t("a"), t("b")])),
         ('"a"""', t("a")),  # "" in quotes is a quote: a", one token
+        ('"retrieval augmented"', ("phrase", ("retrieval", "augmented"))),  # its tokens, one after the other
+        ("a_b", ("phrase", ("a", "b"))),  # a bareword of two tokens is a phrase too
+        ('w1 "First Stage"', ("and", [t("w1"), ("phrase", ("first", "stage"))])),
     ],
 )
 def test_parses_as_fts5_does(query, parsed):
@@ -43,8 +46,6 @@ def test_parses_as_fts5_does(query, parsed):
 @pytest.mark.parametrize(
     "query",
     [
-        '"retrieval augmented"',  # a phrase
-        "a_b",  # a phrase too: two tokens
         "e-mail",
         "pigm*",
         "NEAR(a b)",
@@ -66,6 +67,25 @@ def test_parses_as_fts5_does(query, parsed):
 )
 def test_leaves_to_fts5_what_it_doesnt_read(query):
     assert expression.parse(query) is None
+
+
+@pytest.mark.parametrize(
+    "query, rejected",
+    [
+        ("first-stage retrieval", True),
+        ("2301.09728", True),
+        ("a AND", True),
+        ("(a", True),
+        ("title: a", False),
+        ("NEAR(a b)", False),
+        ("pigm*", False),
+        ('"a b" c', False),
+        ("a", False),
+    ],
+)
+def test_what_fts5_rejects(query, rejected):
+    # A query FTS5 never reads as written: sift searches its words as exact phrases instead (see search._phrases).
+    assert expression.rejected(query) == rejected
 
 
 ROWS = [" ".join(c) for n in range(1, 4) for c in itertools.combinations(["a", "b", "c", "d", "e"], n)]
