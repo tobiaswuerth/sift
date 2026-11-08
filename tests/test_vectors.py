@@ -311,6 +311,28 @@ def test_few_candidates_are_the_nearest_of_all_collections(monkeypatch):
     assert exact.asked == [20]
 
 
+def test_a_scan_counts_the_codes_at_each_distance(monkeypatch):
+    # Counted over all codes at once, by one thread, after the scan: half of a search over 46 million codes.
+    monkeypatch.setattr(vectors, "BLOCK", 7)  # many blocks, each counted in its thread
+    ids, matrix, _, index = random_index(n=100)
+    query = codes(unit(np.ones((1, 64))))[0]
+    expected = np.bitwise_count(codes(matrix) ^ query).sum(1)
+    distances, counts = index.measure(query, excluded=ids[:10])
+    assert counts.tolist() == np.bincount(expected[10:], minlength=8 * index.width + 1).tolist()  # those left out: none
+    assert distances[10:].tolist() == expected[10:].tolist()
+    assert (distances[:10] == vectors.FAR).all()
+
+
+def test_the_codes_between_two_distances(monkeypatch):
+    monkeypatch.setattr(vectors, "BLOCK", 7)
+    ids, matrix, _, index = random_index(n=100)
+    patched = index.patched(removed=ids[:5], ids=[5000, 5010], bits=codes(matrix[:2]))  # in two parts
+    distances, _ = patched.measure(codes(unit(np.ones((1, 64))))[0])
+    for low, high in ((0, 30), (25, 33), (40, 20), (0, 64)):
+        expected = np.flatnonzero((distances >= low) & (distances <= high))
+        assert patched.between(distances, low, high).tolist() == expected.tolist()
+
+
 def test_the_distances_of_one_collections_codes():
     ids, matrix, _, index = random_index(n=100)
     query = codes(unit(np.ones((1, 64))))[0]
