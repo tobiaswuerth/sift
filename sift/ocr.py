@@ -221,7 +221,9 @@ class Scans:
             images, count = pages(doc.scan)
             text = "\n\n".join(t.strip() for t in self.engine.read(images) if t.strip())
         except Exception as error:  # a broken PDF, or the GPU: one scan's trouble mustn't stop indexing the others
-            return None, f"skipped (a scan, and OCR failed: {error})", True
+            from .accelerator import out_of_memory  # PyTorch, loaded for OCR anyway
+
+            return None, f"skipped (a scan, and OCR failed: {error})", out_of_memory(error)  # tried again if so
         if not text:
             return None, "skipped (a scan, and OCR found no text in it)", False
         read = console.count(count, "page") if len(images) == count else f"its first {len(images)} of {count} pages"

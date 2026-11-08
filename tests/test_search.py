@@ -8,7 +8,7 @@ import threading
 import numpy as np
 import pytest
 
-from sift import embed, indexing, order, postings, search, store, topk, vectors
+from sift import embed, expression, indexing, order, postings, search, store, topk, vectors
 from sift.catalog import Catalog
 from sift.search import Index, _any_word
 
@@ -296,6 +296,14 @@ def test_parentheses_nested_deeply_are_searched_as_words(corpus, depth):
     # The parser recursed once per parenthesis: RecursionError, a traceback in the server's log and an error page in
     # the UI, where any query FTS5 can't read is searched as its words.
     assert ids(Index(corpus[0]).search("(" * depth + "reward" + ")" * depth)) == ["notes/rl.md"]
+
+
+def test_a_long_chain_of_nots_is_left_to_fts5(corpus):
+    # Each NOT nests one level deeper, and scoring recursed once per level: RecursionError, past FTS5's own limit of
+    # 256 levels, which says what is wrong.
+    query = "reward" + " NOT w" * 1200
+    assert expression.parse(query) is None
+    assert Index(corpus[0]).search(query) == []  # what FTS5 can't read: its words, as phrases
 
 
 def test_unusable_query_is_a_clear_error(corpus, monkeypatch):
@@ -1730,6 +1738,23 @@ def test_the_folders_of_a_folder_of_many_documents_take_a_query_each(corpus):
     finally:
         db.set_trace_callback(None)
     assert len(asked) == 3  # one for each folder, and one that finds no more
+
+
+def test_folders_whose_names_start_with_the_last_character_there_is(corpus):
+    # The jump past a folder went to `folder/` and the last character: an entry starting with that character came back
+    # on every jump, and the server's one worker thread looped for good.
+    catalog, _ = corpus
+    db = catalog.store("notes")
+    source = db.execute("SELECT min(id) FROM sources").fetchone()[0]
+    for path in ("a/\U0010ffffx.md", "\U0010ffffz/y.md", "a/b/c.md"):
+        db.execute("INSERT INTO docs(source, path, title, meta, text) VALUES(?, ?, 'x', '{}', 'x')", (source, path))
+    db.commit()
+    found = []
+    thread = threading.Thread(target=lambda: found.append(Index(catalog).folders("notes")), daemon=True)
+    thread.start()
+    thread.join(timeout=10)
+    assert found == [["a", "robots", "\U0010ffffz"]]
+    assert Index(catalog).folders("notes", "a/") == ["b"]
 
 
 def test_the_file_a_document_came_from(corpus, tmp_path):

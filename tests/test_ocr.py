@@ -276,6 +276,18 @@ def test_a_scan_ocr_could_not_read_for_now_is_read_by_the_next_index(tmp_path, h
     assert [p for (p,) in only(catalog).execute("SELECT path FROM docs")] == ["a.pdf"]
 
 
+def test_a_scan_ocr_always_fails_on_is_not_read_again_on_every_index(tmp_path, home, scans, monkeypatch):
+    # Every failure was taken for one of the moment: each run loaded the model again, 2 GB, and read the pages again.
+    def failing(images):
+        raise ValueError("the model can't take this page")
+
+    monkeypatch.setattr(scans.engine, "read", failing)
+    scan(tmp_path / "docs" / "a.pdf")
+    catalog = Catalog(home)
+    assert indexed(catalog, tmp_path / "docs") == {}
+    assert only(catalog).execute("SELECT mtime IS NOT NULL FROM sources").fetchone() == (1,)
+
+
 def test_a_scan_with_ocr_off_is_not_read_again_on_every_index(tmp_path, home, scans, configure):
     # Its file read on every run, to be skipped again, would cost every `sift index` a read of each scan.
     configure(ocr="off")

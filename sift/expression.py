@@ -138,7 +138,23 @@ def parse(query):
         node = parser.any()
     except (SyntaxError, IndexError, RecursionError):  # RecursionError: parentheses nested hundreds deep
         return None
-    return node if parser.peek() is None and node is not NOTHING else None
+    return node if parser.peek() is None and node is not NOTHING and _depth(node) <= MOST_DEPTH else None
+
+
+MOST_DEPTH = 256  # how deeply FTS5 lets a query nest: deeper, it says so itself
+
+
+def _depth(node):
+    """How deeply an expression nests: 1 for a term or phrase alone. A chain of NOTs nests one level each."""
+    deepest, todo = 0, [(node, 1)]
+    while todo:
+        item, depth = todo.pop()
+        deepest = max(deepest, depth)
+        if item[0] == "not":
+            todo += [(item[1], depth + 1), (item[2], depth + 1)]
+        elif item[0] in ("and", "or"):
+            todo += [(child, depth + 1) for child in item[1]]
+    return deepest
 
 
 def rejected(query):

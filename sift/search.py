@@ -34,7 +34,6 @@ SQLITE_INT = 2**63  # SQLite integers are 64-bit
 OPERATORS = ("=", "<", "<=", ">", ">=", "not")
 FIELD_SAMPLE = 1000  # documents per collection whose front matter tells which fields exist
 START = 600  # characters of a document's start that `browse` shows, as its passage
-LAST = "\U0010ffff"  # the last character there is: every path starting with p sorts between p and p + LAST
 
 
 def _condition(key, op, value):
@@ -1176,11 +1175,12 @@ class Index:
         folders costs as little as an empty one; documents lying in `path` itself are passed over within a query."""
         path = path.strip("/") + "/" if path.strip("/") else ""  # "2024", "/2024/": the folder 2024/
         db, found, after = self._readable(self.catalog.get(collection)), [], path
-        sql = "SELECT path FROM docs WHERE path > ? AND path < ? AND instr(substr(path, ?), '/') ORDER BY path LIMIT 1"
-        while row := db.execute(sql, (after, path + LAST, len(path) + 1)).fetchone():
+        within, bound = (" AND path < ?", [path[:-1] + "0"]) if path else ("", [])  # "0" follows "/"
+        sql = f"SELECT path FROM docs WHERE path > ?{within} AND instr(substr(path, ?), '/') ORDER BY path LIMIT 1"
+        while row := db.execute(sql, (after, *bound, len(path) + 1)).fetchone():
             name = row[0][len(path) :].partition("/")[0]
             found.append(name)
-            after = path + name + "/" + LAST  # past the folder
+            after = path + name + "0"  # past the folder: whatever starts with `name/` sorts before
         return sorted(found)
 
     def file(self, id):
