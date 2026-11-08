@@ -160,8 +160,7 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 Links are read with each Markdown note, as written, with the front-matter field and line of each, and stored with the
 names each file answers to: its file name and aliases. They resolve when asked, by those names, through an index on
 each, so the backlinks of a note linked by 6,000 others take 16 ms
-([timings](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#links-between-notes)). `reindex` patches
-a running server's codes in memory rather than loading millions again.
+([timings](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#links-between-notes)).
 
 ## Server and UI
 

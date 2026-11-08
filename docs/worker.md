@@ -48,7 +48,8 @@ token, kept in `~/.sift/worker` (readable by you only), and the key it prints ho
 certificate's fingerprint. sift checks the worker's certificate against that fingerprint before it sends anything, so
 no other machine can pose as the worker, and the worker answers only requests that carry the token.
 
-Keep the key private, like a password; sift never shows it in its output. To make a new key, delete `~/.sift/worker`
-and restart the worker; machines with the old key are then refused.
+Keep the key private, like a password. The worker shows it on its terminal when it starts, to copy, and nowhere else:
+not in its log, and sift never in an error message. To make a new key, delete `~/.sift/worker` and restart the
+worker; machines with the old key are then refused.
 
 The protocol is described in [architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md#worker-protocol).

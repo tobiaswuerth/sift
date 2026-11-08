@@ -85,8 +85,9 @@ say, with the time of each line, to a log of their own, such as `logs/serve-2026
 and how the command ended if it failed. Every log is kept.
 
 Every command may run while `sift serve` does: they share the collections' indexes, each of which takes one write at a
-time (the next waits up to 30 seconds), and the server finds what a command wrote with its next search, reloading the
-vectors' codes of a collection when they changed.
+time (the next waits up to 30 seconds), and the server finds what a command wrote with its next search. Of the
+vectors' codes, it reads only those `sift embed` added; after other changes to a collection's vectors it reads all of
+them again in the background, while searches go on with those it holds.
 
 ## Searching
 
@@ -98,7 +99,9 @@ vectors' codes of a collection when they changed.
 | `similar` | Documents like a given one, by its id | cosine, -1 to 1 |
 
 Scores rank the results of one search, each kind on a scale of its own. `query`'s scores also compare across queries:
-with the default reranker, close matches score about 2.5 to 4, and unrelated results below 2.
+with the default reranker, close matches score about 2.5 to 4, and unrelated results below 2. How fast and how
+well each finds, on one workstation and per kind of question:
+[reference values](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#reference-values).
 
 ### Options
 

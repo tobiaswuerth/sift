@@ -172,15 +172,30 @@ session starts, and a running session misses new ones. Machines that embed throu
 version as the worker.
 
 The index and the vectors carry over. When a release changes how the index is laid out, its first command updates it,
-once, and says so, from what the index holds: no file is read again and nothing is embedded again. From 1.7 or older,
-the index is split into a file per collection: stop every other sift first, and have as much free space as the index
-takes; `sift move FOLDER` as the first command splits it straight into that folder, on another drive too. 1.9 counts
-each collection's rows once: about 10 seconds for 14 million vectors, longer from a cold disk. 1.10 adds keyword
-postings, which the next `sift index` builds: about a minute per 3 million passages on 24 cores; keyword search
-reads FTS5 until then. 1.11 numbers the passages of the postings in a topical order, by their vectors: the next
-`sift index` builds them anew once, about a minute more per 3 million embedded passages. An older sift doesn't open an
-index so updated, so upgrade every sift that uses it.
-The [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) lists every change.
+once, and says so, from what the index holds: no file is read again and nothing is embedded again, and an older sift
+no longer opens it, so upgrade every sift that uses the index. From 1.7 or older, the index is split into a file per
+collection: stop every other sift first, and have as much free space as the index takes (`sift move FOLDER` as the
+first command splits it straight into that folder, on another drive too). The
+[changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) says what each release's update takes, such
+as the next `sift index` building the keyword postings anew.
+
+## How fast, how good
+
+On one workstation (Core i9-14900K, RTX 4090), over an index of 45.7 million passages (arXiv, PubMed, OpenAlex and
+more), searched warm through `sift serve`:
+
+| Use case | Mode | Time |
+|---|---|---|
+| A name, an id, a term | `search` | 10 to 50 ms |
+| A question, by its keywords | `search` | 0.2 s |
+| By meaning | `vsearch` | 0.6 s (0.1 s over 3.2 million) |
+| A question for RAG, reranked on the GPU | `query` | 0.6 s (0.3 s over 3.2 million) |
+| More documents like one | `similar` | 0.7 s |
+
+`query` scores nDCG@10 0.81 on scientific claims (SciFact), 0.69 on long German documents and 0.99 on German
+questions, and ranks a known paper among 3.2 million at MRR@10 0.93. `vsearch` finds 99.75% of exact search's top 10
+in a sixteenth of the memory. `sift embed` embeds 370 to 520 passages a second on the RTX 4090. Every figure, and how
+it was measured: [benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#reference-values).
 
 ## How it works
 
