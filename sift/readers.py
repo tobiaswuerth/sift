@@ -454,7 +454,12 @@ def _xberg(raw, name):
         # for zip bombs. Its caps on unpacked size, 100 MB a file and 500 MB in all, still stop those.
         security_limits=SecurityLimits(max_compression_ratio=10_000),
     )
-    result = _finished(lambda: xberg.extract(xberg.ExtractInput(kind="bytes", bytes=raw, filename=name), config))
+    try:
+        result = _finished(lambda: xberg.extract(xberg.ExtractInput(kind="bytes", bytes=raw, filename=name), config))
+    except (Exception, KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as panic:  # a panic in Xberg's Rust: pyo3's PanicException is no Exception
+        raise RuntimeError(f"Xberg failed: {panic}") from None
     (doc,) = result.results  # one per input
     return doc
 

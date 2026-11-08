@@ -170,6 +170,19 @@ def test_a_real_zip_bomb_is_still_skipped(tmp_path):
     assert "exceeds limit" in problem
 
 
+def test_a_panic_in_the_converter_skips_the_document(monkeypatch):
+    # Xberg's Rust panics reach Python as pyo3's PanicException, which is no Exception: one would have gone through
+    # every `except Exception`, and stopped `sift index` for every collection after it.
+    class PanicException(BaseException):
+        pass
+
+    def panicking(make):
+        raise PanicException("index out of bounds")
+
+    monkeypatch.setattr(readers, "_finished", panicking)
+    assert readers.load(sample(".pdf")) == ([], ["skipped (Xberg failed: index out of bounds)"])
+
+
 def test_a_pdf_without_text_is_passed_on_as_a_scan():
     # Readers run in worker processes: the process that writes the index reads the scan with OCR (see test_ocr).
     (doc,), problems = readers.load(SAMPLES / "blank.pdf")
