@@ -204,10 +204,15 @@ def test_long_lists_have_ranges_that_bound_their_scores(prose):
         assert np.array_equal(got_tf, tf[want])
 
 
-def test_a_build_in_worker_processes_is_the_same(prose, monkeypatch):
+@pytest.mark.parametrize("topical", [False, True])
+def test_a_build_in_worker_processes_is_the_same(prose, monkeypatch, request, topical):
     catalog, _ = prose
     db = catalog.store("prose")
+    if topical:  # the workers number the chunks by their places
+        request.getfixturevalue("fake_models")
+        embed.embed_pending(catalog)
     postings.build(db, path_of(catalog))
+    assert bool(db.execute("SELECT count(*) FROM kw_order").fetchone()[0]) == topical
     serial = sorted(db.execute("SELECT term, segment, df, data FROM kw_terms WHERE list IS NULL"))
     monkeypatch.setattr(postings, "PARALLEL", 0)
     monkeypatch.setattr(postings, "_shards", lambda: [("", "m"), ("m", "w3"), ("w3", "{"), ("{", None)])  # a few

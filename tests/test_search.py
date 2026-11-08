@@ -358,11 +358,23 @@ def test_a_filter_remembers_what_it_was_asked(prose, monkeypatch):
         c for (c,) in db.execute("SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.path GLOB 'n0*'")
     }
     allowed = search._Filter(catalog, [catalog.get("prose")], "d.path GLOB ?", ["n0*"])
-    looked_up, real = [], allowed._lookup
-    monkeypatch.setattr(allowed, "_lookup", lambda ids: looked_up.extend(ids.tolist()) or real(ids))
+    looked_up, real = [], allowed.passes
+    monkeypatch.setattr(allowed, "passes", lambda ids: looked_up.extend(ids.tolist()) or real(ids))
     for asked in (every[40:0:-3], every[:60], every[:60], every[::-1]):
         assert allowed.check(np.array(asked)).tolist() == [c in passing for c in asked]
     assert sorted(looked_up) == every  # each once
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_a_filtered_keyword_search_keeps_nothing_it_asked(prose, monkeypatch):
+    # It never asks about a chunk twice, while remembering sorted all it had asked anew on every range scored: over
+    # millions of chunks, more work with every batch.
+    catalog, _ = prose
+    postings.build(catalog.store("prose"), catalog.get("prose").store)
+    remembered = []
+    monkeypatch.setattr(search._Filter, "check", lambda self, ids: remembered.append(ids))
+    assert Index(catalog).search("w1 OR w2", k=5, path="n0*")
+    assert remembered == []
 
 
 def test_broken_vectors_do_not_hide_the_others(embedded):

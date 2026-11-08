@@ -423,7 +423,7 @@ def test_an_upgrade_stopped_leaves_the_store_as_sift_1_9_left_it(corpus, monkeyp
     as_sift_1_9_left_it(catalog.store("notes"))
     catalog.release(catalog.get("notes").id)
     real = store.POSTINGS
-    monkeypatch.setattr(store, "POSTINGS", real.replace("kw_dirty(", "kw_dirty(("))  # fails at the last table
+    monkeypatch.setattr(store, "POSTINGS", real.replace("kw_order(", "kw_order(("))  # fails at the last table
     with pytest.raises(sqlite3.OperationalError):
         catalog.store("notes")
     monkeypatch.setattr(store, "POSTINGS", real)

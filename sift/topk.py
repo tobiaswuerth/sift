@@ -137,10 +137,11 @@ class _Store:
         self.ranged = {t: [(p, p.ranges(), self._slack(p)) for p in parts if p.long] for t, parts in lists.items()}
 
     def _whole(self, part):
-        ids, tf = part.everything()
-        alive = self.reader.alive(part.segment, ids)
-        ids, tf = ids[alive], tf[alive]
-        return ids >> self.shift, ids, postings.term_scores(tf, self.reader.lengths(part.segment, ids), self.average)
+        places, tf = part.everything()
+        alive = self.reader.alive(part.segment, places)
+        places, tf = places[alive], tf[alive]
+        scores = postings.term_scores(tf, self.reader.lengths(part.segment, places), self.average)
+        return places >> self.shift, places, scores
 
     def _slack(self, part):
         chunks, tokens = self.reader.segments[part.segment]
@@ -199,9 +200,9 @@ class _Store:
         scores, present, at = {}, {}, 0
         for t, parts in found.items():
             scores[t] = np.zeros(len(places))
-            for ids, term_scores in parts:
-                scores[t][where[at : at + len(ids)]] = term_scores
-                at += len(ids)
+            for held, term_scores in parts:
+                scores[t][where[at : at + len(held)]] = term_scores
+                at += len(held)
             present[t] = scores[t] > 0
         holds, terms = counted(self.query, present)
         acc = np.zeros(len(places))
@@ -219,15 +220,15 @@ class _Store:
 
     def _in(self, term, group):
         """(places, term scores) of a term's live postings in these ranges, a part per segment."""
-        for rid, ids, scores in self.whole[term]:
+        for rid, places, scores in self.whole[term]:
             take = postings.slices(np.searchsorted(rid, group), np.searchsorted(rid, group, side="right"))
-            yield ids[take], scores[take]
+            yield places[take], scores[take]
         for part, (rid, starts, ends, _), _ in self.ranged[term]:
             at = np.minimum(np.searchsorted(rid, group), len(rid) - 1)
             hit = rid[at] == group
             if not hit.any():
                 continue
-            ids, tf = part.postings(starts[at[hit]], ends[at[hit]])
-            alive = self.reader.alive(part.segment, ids)
-            ids, tf = ids[alive], tf[alive]
-            yield ids, postings.term_scores(tf, self.reader.lengths(part.segment, ids), self.average)
+            places, tf = part.postings(starts[at[hit]], ends[at[hit]])
+            alive = self.reader.alive(part.segment, places)
+            places, tf = places[alive], tf[alive]
+            yield places, postings.term_scores(tf, self.reader.lengths(part.segment, places), self.average)

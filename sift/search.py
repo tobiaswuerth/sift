@@ -115,7 +115,7 @@ def _by_field(hits, sort):
 
 def _present(hits, fields, compact, sort):
     """Hits as returned: ordered by `sort` if given, with the front-matter `fields` asked for, without text if
-    compact, and the other copies of the same work under "also"."""
+    compact, the other copies of the same work under "also", and "partial" if found by a search out of time."""
     out = []
     for hit in _by_field(hits, sort) if sort else hits:
         shown = {key: hit[key] for key in ("id", "title", "lines", "score")}
@@ -373,7 +373,8 @@ def _postings_state(db):
 
 class _Filter(Filter):
     """Which chunks of the collections of `scope` a search may find: those of the documents (`d`) that `where`, with
-    `args`, lets through. What it was asked is remembered, as a search goes on asking."""
+    `args`, lets through. What `check` was asked is remembered, as a semantic search asks again when it looks further;
+    `passes` asks the stores each time, for a keyword search, which never asks twice."""
 
     CHUNKS = "SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE "
 
@@ -387,11 +388,11 @@ class _Filter(Filter):
         if len(new := np.setdiff1d(ids, self.seen)):
             seen = np.concatenate([self.seen, new])
             order = np.argsort(seen, kind="stable")
-            self.seen, self.passed = seen[order], np.concatenate([self.passed, self._lookup(new)])[order]
+            self.seen, self.passed = seen[order], np.concatenate([self.passed, self.passes(new)])[order]
         return self.passed[np.searchsorted(self.seen, ids)]
 
-    def _lookup(self, ids):
-        """Which of these chunks (ascending, each once, of the collections of the scope) pass, as their stores tell."""
+    def passes(self, ids):
+        """Which of these chunks, of the collections of the scope, pass, as their stores tell."""
         sql = f"{self.CHUNKS}c.id IN (SELECT value FROM json_each(?)) AND {self.where}"
         owners, passed = ids >> store.SHIFT, []
         for cid in np.unique(owners).tolist():
@@ -621,7 +622,7 @@ class Index:
         if not match.strip():
             return []
         if (query := expression.parse(match)) is not None and (held := self._ready(scope)) is not None:
-            allowed = _Filter(self.catalog, scope, where, args).check if args else None
+            allowed = _Filter(self.catalog, scope, where, args).passes if args else None
             return topk.search(held, query, k, by_document=not all_passages, allowed=allowed, deadline=deadline)
         passages = f"""SELECT fts.rowid passage, c.doc doc, -bm25(fts) score FROM fts
                        JOIN chunks c ON c.id = fts.rowid JOIN docs d ON d.id = c.doc WHERE fts MATCH ? AND {where}"""
