@@ -50,11 +50,11 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   EmbeddingGemma overflows now and then into broken (NaN) vectors. Vectors are stored in fp16, and broken ones are
   never stored.
 - Each slab of 20,000 chunks is committed, so progress is never lost.
-- The GPU never waits for the CPU. `sift embed` reads the next slabs and sorts them by length in a thread of its own,
-  and writes the vectors in another, the two taking the collection's connection in turn; it counts the tokens with a
-  copy of the model's tokenizer, outside PyTorch. The main thread runs the model, through the public steps of
-  Sentence Transformers' `encode_document`: each batch is tokenized while the GPU embeds the one before. PyTorch
-  stays on the main thread, as it must: it crashes in others on Python 3.15.
+- `sift embed` keeps the GPU busy (99% of the time on PubMed). It reads the next slabs and sorts them by length in a
+  thread of its own, and writes the vectors in another, the two taking the collection's connection in turn; it counts
+  the tokens with a copy of the model's tokenizer, outside PyTorch. The main thread runs the model, through the public
+  steps of Sentence Transformers' `encode_document`: each batch is tokenized while the GPU embeds the one before.
+  PyTorch stays on the main thread, as it must: it crashes in others on Python 3.15.
 - Beside an NVIDIA GPU, PyTorch keeps one CPU thread: the GPU does the work, and a thread per core only waited busily
   after each batch. On the CPU it keeps a thread per core.
 

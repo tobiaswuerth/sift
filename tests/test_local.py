@@ -161,7 +161,7 @@ def test_the_next_batch_is_tokenized_while_the_gpu_embeds_one(make_local):
     batches = iter([["brush strokes"], ["pigments on canvas"], ["reward shaping"]])
     vectors = models.encode_batches(batches)
     first = next(vectors)
-    assert [text for text, *_ in model.texts] == ["brush strokes", "pigments on canvas"]  # the second tokenized
+    assert [text for text, _ in model.texts] == ["brush strokes", "pigments on canvas"]  # the second tokenized
     assert model.embedded == [["brush strokes"]]  # before the vectors of the first were collected
     assert first.tolist() == models.encode(["brush strokes"]).tolist()
     assert [v.tolist() for v in vectors] == [
@@ -213,6 +213,7 @@ def test_the_models_load_once_when_threads_ask_at_once(make_local, monkeypatch):
 
     monkeypatch.setattr(local, "_embedder", slow)
     models = make_local()
+    models.accelerator.budget()  # settles PyTorch's threads here: PyTorch crashes in other threads on Python 3.15
     threads = [threading.Thread(target=models.embedder) for _ in range(2)]
     for thread in threads:
         thread.start()
