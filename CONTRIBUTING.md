@@ -26,18 +26,24 @@ pre-commit install
 | `ignore.py` | `.siftignore`: the gitignore patterns of files and folders a collection leaves out, matched in linear time |
 | `links.py` | Links between notes in the index: the names files answer to, resolving links when asked, backlinks |
 | `search.py` | Keyword, semantic and hybrid search over the index, documents like a document, `get`, and links, mentions and `reindex` |
+| `expression.py` | Keyword queries of terms, AND, OR, NOT and parentheses, as FTS5 reads them, for the postings to answer |
+| `postings.py` | Keyword search's own postings, read out of FTS5's index, in a topical order of the chunks; deltas, merges and rebuilds as FTS5 changes |
+| `order.py` | The topical order of a collection's chunks in its postings, by binary k-means of their codes |
+| `topk.py` | The best documents for a keyword query from the postings, by Block-Max Pruning, until a deadline if given |
 | `bench.py` | `sift bench`: nDCG@10, MRR@10 and Recall@10 of each search mode on questions with known answers |
 | `embed.py` | `sift embed`: embedding every chunk without a vector, with progress |
 | `models.py` | The `Models` interface, and `default()`: the models this process uses |
 | `local.py` | `Local`: the embedding model and reranker of this machine |
 | `remote.py` | `Remote`: a `sift worker` on another machine, used like `Local` |
 | `accelerator.py` | `Accelerator`: the device, its memory budget, batch sizes, and what is on the GPU when |
-| `vectors.py` | The vectors' codes in RAM, one bit per dimension: candidates by Hamming distance, scored exactly |
+| `vectors.py` | The vectors' codes in RAM, one bit per dimension: candidates by Hamming distance, ranked again by the query's floats, scored exactly; filters checked nearest first |
 | `server.py` | `sift serve`: the MCP server, and the UI under /ui |
+| `jobs.py` | A server's calls off its event loop, one at a time, stopped when cancelled; the models on the main thread |
 | `ui.py` | `sift ui`: the views of the browser UI; `web/` holds its templates, styles and script, and htmx 2.0.11 (0BSD) as its release ships it |
 | `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |
 | `settings.py` | The five optional environment variables, read once (`settings.current()`) |
 | `console.py` | What sift tells the user, on stderr: messages, plurals, commands to paste, and one progress bar for every long step |
+| `logs.py` | A log of its own for each command that changes the index or serves it |
 
 Search and embedding never ask where the models run: they take a `Models` object, `Local` or `Remote`. Only
 `accelerator.py` imports PyTorch at the top, so a machine that searches through a worker never loads it. No module
