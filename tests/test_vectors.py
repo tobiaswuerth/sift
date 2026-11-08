@@ -299,7 +299,8 @@ def test_the_codes_of_several_collections_are_searched_as_one():
 
 
 def test_few_candidates_are_the_nearest_of_all_collections(monkeypatch):
-    # 4,000 candidates of all collections together, not of each: a collection far from the query gives none.
+    # The candidates are the nearest of all collections together, not of each: a collection far from the query gives
+    # none.
     monkeypatch.setattr(vectors, "RESCORE", 20)
     ids, matrix, exact, _ = random_index(n=400)
     query = unit(np.ones((1, 64)))[0]

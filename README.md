@@ -98,8 +98,8 @@ The search tools take `k`, `collection`, `path`, `filters`, `fields`, `compact`,
 `linked_from` and `adaptive`, and `search` a time `budget`. Every result carries `id` (`collection/path`), `title`,
 `lines`, `score` and the passage's `text`, so agents can cite their sources; `compact: true` leaves out the text, so an
 agent can survey many results and read the ones that matter, and `adaptive: true` returns only those before the
-largest drop in score, and a few more. Every parameter is described in the tools' schemas, and the server tells agents on connecting
-which collections there are and which front-matter fields each has.
+largest drop in score, and a few more. Every parameter is described in the tools' schemas, and the server tells agents
+on connecting which collections there are and which front-matter fields each has.
 
 ## Commands
 
