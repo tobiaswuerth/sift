@@ -198,6 +198,7 @@ def test_instructions_tell_agents_what_is_indexed(mcp):
     # Agents read these when they connect: without the collections they can't tell when sift is worth asking.
     assert "): 3 documents" in mcp.instructions
     assert "before answering from memory" in mcp.instructions
+    assert "`adaptive: true`" in mcp.instructions  # fewer results to read, when a few stand out
 
 
 def test_instructions_name_the_front_matter_fields(mcp, embedded):

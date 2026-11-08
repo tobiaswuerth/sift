@@ -38,7 +38,9 @@ Results carry `id` (collection/path), `lines`, `title`, `score` and the passage'
 one call; each tool has its own scale, so don't compare them across tools. All search tools take `collection`, a
 `path` glob, `filters` on front-matter fields, `fields` to show, and `links_to` and `linked_from` to keep to a note's
 links; with `compact: true` results leave out the text: survey many results compactly, then read the ones that
-matter."""
+matter. With `adaptive: true`, a search returns only the results before the largest drop in score, and a few more: ask
+for more, e.g. k=30, and read fewer. A paper that several collections hold is one result, which names the other copies
+under `also`."""
 
 
 def _collections(index):
