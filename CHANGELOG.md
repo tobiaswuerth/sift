@@ -30,8 +30,8 @@ No search held up while `sift embed` runs beside the server, and phrases asked a
   and the passage that took its place was never embedded.
 - A collection's store that refuses to open in a running server, as one a newer sift updated, fails the call that
   opens it, not the server.
-- `vsearch`, `query` and `similar` return at most 10,000 hits: an agent asking for 10^8 had every vector of every
-  collection read.
+- Searches return at most 10,000 hits: an agent asking `vsearch` for 10^8 had every vector of every collection
+  read, and `search` every posting of its words scored.
 - A running server lets go of a collection removed or deactivated meanwhile: its store, whose disk space `sift rm`
   frees only once closed, and its keyword postings.
 

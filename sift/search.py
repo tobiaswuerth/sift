@@ -177,7 +177,8 @@ def line_span(lines):
     return int(m[1]), int(m[2] or m[1])
 
 
-SEMANTIC_K = 10_000  # hits vsearch, query and similar return at most: k=10**8 read every vector of every collection
+MOST_HITS = 10_000  # hits a search returns at most: vsearch(k=10**8) read every vector of every collection, and
+# search(k=10**8) scored every posting of its words
 ADAPTIVE_SHARE = 0.9  # of the gaps between neighbouring scores, the first, where the largest is looked for
 ADAPTIVE_BUFFER = 5  # hits kept after the largest gap, as the paper keeps: of 10 or 50 vsearch hits for 2,000 arXiv
 # titles, 6 on average, with the paper sought in 99.2 to 99.6% of the cases it was among them (benchmarks.md)
@@ -199,7 +200,7 @@ def _check_budget(budget):
     return budget
 
 
-def _check_k(k, most=SQLITE_INT - 1):
+def _check_k(k, most=MOST_HITS):
     """k as asked, at most `most`."""
     if not isinstance(k, int) or k < 1:
         raise ValueError(f"k must be a positive integer, got {k!r}")
@@ -966,7 +967,7 @@ class Index:
         adaptive=False,
     ):
         """Semantic search: the passages nearest the query's embedding, by cosine similarity (see `vectors`)."""
-        k, (scope, where, args) = _check_k(k, SEMANTIC_K), self._where(collection, path, filters, links_to, linked_from)
+        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
         if not query.strip():  # the embedding of nothing is close to arbitrary chunks
             return []
@@ -996,9 +997,9 @@ class Index:
         reciprocal rank, made results worse (MRR@10 0.69 to 0.64 on a known-item test over 3.2 million arXiv
         abstracts); the blend made them better on six of the seven sets in docs/benchmarks.md, and cost a little on
         those arXiv known items (0.937 to 0.929)."""
-        k, (scope, where, args) = _check_k(k, SEMANTIC_K), self._where(collection, path, filters, links_to, linked_from)
+        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
-        candidates = min(max(candidates, k), SEMANTIC_K)
+        candidates = min(max(candidates, k), MOST_HITS)
         keyword = self._keyword(_any_word(query), candidates, scope, where, args, all_passages)
         vector = self._vector(query) if query.strip() else None  # for the semantic candidates and every cosine
         allowed = self._filter(scope, where, args)
@@ -1053,7 +1054,7 @@ class Index:
     ):
         """Documents closest in meaning to the document `id` (as for `get`), by cosine similarity with the mean of its
         passages' vectors; the document itself is left out, and so are its copies, documents with its DOI."""
-        k, (scope, where, args) = _check_k(k, SEMANTIC_K), self._where(collection, path, filters, links_to, linked_from)
+        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = _check_fields(fields), _check_sort(sort)
         doc, _, _, meta, _ = self._find(id)
         self.load()

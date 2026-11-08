@@ -95,7 +95,7 @@ Note = Annotated[
         'Müller", if one note answers to it.'
     ),
 ]
-K = Annotated[int, Field(description="Number of results; vsearch, query and similar return at most 10,000.")]
+K = Annotated[int, Field(description="Number of results, at most 10,000.")]
 Collection = Annotated[str | None, Field(description="Search only this collection.")]
 PathGlob = Annotated[
     str | None, Field(description='Only documents whose path in the collection matches this glob, e.g. "2024/*".')

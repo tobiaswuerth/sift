@@ -1171,7 +1171,17 @@ def test_a_semantic_search_reads_at_most_so_many_vectors(embedded, monkeypatch, 
     monkeypatch.setattr(search, "top", lambda held, query, k, *rest: asked.append(k) or real(held, query, k, *rest))
     getattr(Index(embedded[0]), mode)(subject, k=10**8)
     assert asked
-    assert max(asked) <= search.SEMANTIC_K
+    assert max(asked) <= search.MOST_HITS
+
+
+@pytest.mark.parametrize("mode, subject", [("search", "reward OR brush"), ("mentions", "notes/robots/brush.md")])
+def test_a_keyword_search_scores_at_most_so_many_hits(corpus, monkeypatch, mode, subject):
+    # search(k=10**8) pruned nothing: every posting of its words was scored, every document found looked up, and all
+    # of them sent back, while the server answered no other call.
+    asked = asks(monkeypatch)
+    getattr(Index(corpus[0]), mode)(subject, k=10**8)
+    assert asked
+    assert max(asked) <= search.MOST_HITS
 
 
 @pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
