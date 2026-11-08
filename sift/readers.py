@@ -528,7 +528,8 @@ def _mail_headers(msg):
     for key in ("message-id", "in-reply-to"):
         if value := str(msg.get(key) or "").strip():
             meta[key.replace("-", "_")] = value
-    return meta, shown
+    # Raw 8-bit bytes in a header, as old clients and spam write them, come as halves of characters: as U+FFFD
+    return _whole(meta), [LONE.sub("�", line) for line in shown]
 
 
 def _mail_text(msg, fields):

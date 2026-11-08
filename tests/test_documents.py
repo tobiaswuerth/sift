@@ -364,6 +364,55 @@ def test_mail_dates_sort_as_time_whatever_the_zone(tmp_path):
     assert dates == ["2026-10-14T07:30:00+00:00", "2026-10-14T08:00:00+00:00", "2026-10-14T08:00:00"]
 
 
+def test_raw_8_bit_addresses_read_without_halves_of_characters(tmp_path, home):
+    # Old mail clients and spam write addresses in raw 8-bit bytes: Python keeps each such byte as half a character
+    # (a lone surrogate), which SQLite refuses. One such mail stopped `sift index`, for every collection after it, on
+    # every run.
+    (tmp_path / "mail").mkdir()
+    (tmp_path / "mail" / "old.eml").write_bytes(
+        b"From: J\xf6rg <j\xf6rg@example.com>\r\nTo: Ann <ann@example.com>, B\xe4r <b\xe4r@example.com>\r\n"
+        b"Cc: c\xfc@example.com\r\nSubject: Hello\r\n\r\nPlain words.\r\n"
+    )
+    write(tmp_path / "notes" / "after.md", "# After\n\nindexed after the mail\n")
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "mail", "mail")
+    catalog.add(tmp_path / "notes", "notes")
+    indexing.index(catalog)
+    meta = json.loads(catalog.store("mail").execute("SELECT meta FROM docs").fetchone()[0])
+    assert meta["from"] == "j\ufffdrg@example.com"
+    assert meta["to"] == ["ann@example.com", "b\ufffdr@example.com"]
+    assert [h["id"] for h in Index(catalog).search("indexed after")] == ["notes/after.md"]
+
+
+def test_a_file_the_store_refuses_is_skipped_and_the_others_indexed(tmp_path, home, monkeypatch, capsys):
+    # Whatever else a reader leaves in a document that SQLite won't store, or a reader raises, stops no more than
+    # that file: it is said, and read again by the next index.
+    write(tmp_path / "c" / "a.md", "# A\n\nfine\n")
+    write(tmp_path / "c" / "b.md", "# B\n\nrefused\n")
+    write(tmp_path / "c" / "c.md", "# C\n\nraises\n")
+    real = readers.load
+
+    def load(path, fields=None):
+        if path.endswith("c.md"):
+            raise MemoryError("a record of gigabytes")
+        found = real(path, fields)
+        if path.endswith("b.md"):
+            found[0][0] = found[0][0]._replace(title="B \udcf6")  # half a character, as a reader might leave
+        return found
+
+    monkeypatch.setattr(readers, "load", load)
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert [p for (p,) in catalog.store("c").execute("SELECT path FROM docs")] == ["a.md"]
+    err = capsys.readouterr().err
+    assert "c: b.md: skipped (" in err
+    assert "c: c.md: skipped (MemoryError: a record of gigabytes)" in err
+    held = dict(catalog.store("c").execute("SELECT path, mtime IS NULL FROM sources"))
+    assert held.get("b.md", 1)  # read again by the next index
+    assert held.get("c.md", 1)
+
+
 def test_an_email_in_an_unknown_charset_still_reads(tmp_path):
     path = tmp_path / "x.eml"
     path.write_bytes(

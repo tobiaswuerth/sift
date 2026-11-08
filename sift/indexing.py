@@ -65,8 +65,17 @@ def _read(pool, workers, fields, batch):
     """Load a batch of files: pool.map starts all of them at once, builtin map reads one at a time."""
     paths = [item[0] for item in batch]
     if pool:
-        return pool.map(readers.load, paths, repeat(fields), chunksize=max(1, min(64, len(paths) // (4 * workers))))
-    return map(readers.load, paths, repeat(fields))
+        return pool.map(_loaded, paths, repeat(fields), chunksize=max(1, min(64, len(paths) // (4 * workers))))
+    return map(_loaded, paths, repeat(fields))
+
+
+def _loaded(path, fields):
+    """What readers.load reads of a file, or the error a reader raised (runs in worker processes): one file's
+    trouble, a record of gigabytes, a reader's bug, mustn't stop the others, nor every later run."""
+    try:
+        return readers.load(path, fields)
+    except Exception as error:
+        return error
 
 
 def _insert(db, sid, path, doc):
@@ -623,16 +632,37 @@ def _read_and_store(db, name, fields, todo, counts, progress):
                 done += 1
                 if done % step == 0 or done == len(todo):
                     progress.update(done)
+                note = lambda text: progress.note(f"{name}: {text}")  # noqa: E731
                 if res is None:  # unreadable now; retried on the next run
                     progress.note(f"unreadable, skipped: {path}")
+                    counts["unreadable"] += 1
+                    continue
+                if isinstance(res, Exception):  # a reader failed: said, and read again by the next run
+                    note(f"{rel}: skipped ({type(res).__name__}: {res})")
                     counts["unreadable"] += 1
                     continue
                 docs, problems = res
                 for problem in problems:
                     progress.note(f"{name}: {rel}: {problem}")
-                note = lambda text: progress.note(f"{name}: {text}")  # noqa: E731
                 docs, left = _read_scans(db, _source(db, rel), rel, docs, note)
-                sid = _source(db, rel, make=True)
-                _store(db, sid, rel, docs, counts, note)
-                db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (None if left else mtime, size, sid))
+                _stored(db, rel, docs, (None if left else mtime, size), counts, note)
             db.commit()
+
+
+def _stored(db, rel, docs, stat, counts, note):
+    """Store a file's documents and its (mtime, size), in a savepoint of the batch's transaction: if the store refuses
+    them, as text SQLite can't hold, only this file is left out, said, and read again by the next run."""
+    if not db.in_transaction:
+        db.execute("BEGIN")  # so that releasing the savepoint commits nothing
+    db.execute("SAVEPOINT file")
+    before = counts.copy()
+    try:
+        sid = _source(db, rel, make=True)
+        _store(db, sid, rel, docs, counts, note)
+        db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (*stat, sid))
+    except (ValueError, sqlite3.DataError, sqlite3.IntegrityError) as refused:
+        db.execute("ROLLBACK TO file")
+        counts.clear()
+        counts.update(before, unreadable=before["unreadable"] + 1)
+        note(f"{rel}: skipped ({refused})")
+    db.execute("RELEASE file")
