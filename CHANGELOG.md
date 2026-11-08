@@ -38,7 +38,8 @@ No search held up while `sift embed` runs beside the server, and phrases asked a
 ### Security
 
 - `reindex` (and `sift index --files`) of an id such as `notes/D:/file.md` read that file on another drive into the
-  collection on Windows, from where searches returned it and the UI served it. Paths stay within their collection.
+  collection on Windows, from where searches returned it and the UI served it. Paths named so stay within their
+  collection.
 - Windows junctions in a collection's folder are passed over, as links are: one to elsewhere took in files of no
   collection, one to the folder itself every file again.
 - `sift worker` no longer writes its key into its log, kept for good; it shows it on the terminal alone.

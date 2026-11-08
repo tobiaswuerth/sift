@@ -22,7 +22,8 @@ index; PDFs are left to the browser's viewer, which runs none of their scripts a
 
 sift never writes to the indexed files. One MCP tool changes anything, `reindex`, and only sift's index: it reads the
 files it is given again, and only files that `sift index` would read too, inside a registered collection, outside
-hidden and linked folders (symbolic links, and junctions on Windows).
+hidden and linked folders (symbolic links, and junctions on Windows). A linked file in a collection's folder is read
+as the file it points to, wherever that lies, by `sift index` as by `reindex`.
 
 `sift worker` admits only requests with its token, over HTTPS with a certificate whose fingerprint the key carries.
 It shows the key on the terminal alone, never in its log.

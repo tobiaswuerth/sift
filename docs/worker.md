@@ -8,7 +8,7 @@ that uses it keeps the index and the files.
 1. On the machine with the GPU, start the worker:
 
    ```bash
-   sift worker            # listens on port 8766 and prints the address to use, with its key
+   sift worker            # listens on port 8766 (--port N for another) and prints the address to use, with its key
    ```
 
    It prints a line such as `SIFT_EMBED_REMOTE=https://<key>@workstation:8766`.
@@ -38,18 +38,19 @@ that uses it keeps the index and the files.
 - The worker only computes: it sees the texts it embeds and reranks, but no index and no files. It sizes its batches
   to its GPU and gives the GPU back after 5 idle minutes, like `sift serve`.
 - Both machines need the same major version of sift; sift refuses a worker of another one, and says which runs where.
-- The worker's `SIFT_EMBED_MODEL` decides the model, and sift refuses a worker whose model differs from the one the
-  index was embedded with.
+- The worker's `SIFT_EMBED_MODEL` decides the model. `sift embed` and `reindex` refuse a worker whose model differs
+  from the one the index was embedded with; searches pass over a collection whose vectors have another length, but
+  don't check the model itself, so keep the worker's model the index's.
 
 ## Security
 
 The texts travel encrypted, over HTTPS. On its first start the worker makes a certificate of its own and an access
-token, kept in `~/.sift/worker` (readable by you only), and the key it prints holds both: the token, and the
-certificate's fingerprint. sift checks the worker's certificate against that fingerprint before it sends anything, so
-no other machine can pose as the worker, and the worker answers only requests that carry the token.
+token, kept in `worker` under `SIFT_HOME` (`~/.sift/worker`, readable by you only), and the key it prints holds both:
+the token, and the certificate's fingerprint. sift checks the worker's certificate against that fingerprint before it
+sends anything, so no other machine can pose as the worker, and the worker answers only requests that carry the token.
 
 Keep the key private, like a password. The worker shows it on its terminal when it starts, to copy, and nowhere else:
-not in its log, and sift never in an error message. To make a new key, delete `~/.sift/worker` and restart the
+not in its log, and sift never in an error message. To make a new key, delete that `worker` folder and restart the
 worker; machines with the old key are then refused.
 
 The protocol is described in [architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md#worker-protocol).

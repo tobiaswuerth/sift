@@ -87,7 +87,7 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
     the postings by Block-Max Pruning ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): each term's best
     score in a range of places, summed over the query's terms, bounds every chunk there, so ranges are scored best
     bound first until none left can beat the k-th best. FTS5 scores every match, about a microsecond each: "patients"
-    matches 8 million PubMed passages and took 8 seconds, a question of a dozen words 15. Now most of a common word's
+    matches 8 million PubMed passages and took 8 seconds, a question of a dozen words 16. Now most of a common word's
     postings are never read. The results are FTS5's, score for score, but where FTS5 counts a word or phrase by where
     its readers happen to stand, in nested queries alone (see `topk`). A search reads the postings in one transaction,
     as they were when it began, whatever another sift builds meanwhile.
@@ -115,7 +115,7 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 - **`vsearch`:** every vector's code, its signs as one bit per dimension, waits in RAM: 96 bytes for 768 dimensions, a
   sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with
   all of them by Hamming distance, on the CPU's cores, each counting its codes at each distance; the counts summed
-  tell how near the nearest lie, and the cores pick the codes that near (46 million codes: 0.3 s). The 10,000
+  tell how near the nearest lie, and the cores pick the codes that near (46 million codes: 0.2 to 0.5 s). The 10,000
   nearest of all collections together, ties by id, are ranked again by the query's own floats against their bits (a
   table lookup per byte), and the best 1,000 are scored exactly with their vectors from the index. Over 3.2 million
   arXiv abstracts this finds 99.75% of exact search's top 10, and its known-item MRR, 0.9530; reading 1,000 vectors

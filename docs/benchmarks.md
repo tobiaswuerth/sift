@@ -21,7 +21,7 @@ measure sift on your own documents, use [`sift bench`](usage.md#measuring-search
   99.75% of exact search's top 10, and its MRR of 0.9530, in a sixteenth of the memory
   ([details](#vectors-in-memory)).
 - **Keyword search:** `search` ranks from postings of its own, scoring ranges of passages best bound first. Over 29.9
-  million PubMed passages, a common word takes 7 ms instead of 1.3 seconds, a question 26 ms instead of 5.3 seconds
+  million PubMed passages, a single word takes 7 ms instead of 1.3 seconds, a question 26 ms instead of 5.3 seconds
   (medians, the postings read before; 67 and 200 ms read anew), with FTS5's results, score for score, in about a
   third of FTS5's storage ([details](#keyword-search)).
 - **Embedding:** `sift embed` keeps the GPU 99% busy: 472 PubMed passages per second on an RTX 4090, against 382 for
@@ -42,7 +42,7 @@ postings and vectors it reads are in memory by then), including the MCP round tr
 | A common word ("patients") | `search`, one word | 332 / 17 ms | |
 | A few words, all required | `search` | 66–122 / 31–46 ms | 2–7 ms |
 | A question of 15 words, by keywords | `search` | 594 / 223 ms | 34–81 ms |
-| A quoted phrase | `search` | 1.9 / 0.6–1.0 s | 4–131 ms (1.11.2) |
+| A quoted phrase | `search` | 1.9 / 0.6–1.0 s | 1–131 ms (1.11.2) |
 | A question with a hyphenated word ("first-stage") | `search` | 2.8 / 1.6 s | 93 ms (1.11.2) |
 | By meaning | `vsearch` | 635 / 613 ms | 94 ms |
 | By meaning, filtered (a small collection, by year) | `vsearch` | 343 / 189 ms | |
@@ -56,8 +56,8 @@ postings and vectors it reads are in memory by then), including the MCP round tr
 - **Memory:** the vectors' codes take 96 bytes a passage in RAM, 4.4 GB for the 45.7 million; the keyword postings a
   third of FTS5's index on disk.
 - **Building:** `sift embed` embeds 370 to 520 PubMed passages a second (EmbeddingGemma-2); `sift index` builds the
-  keyword postings of arXiv in 69 seconds and of PubMed in 13 to 15 minutes on 31 processes, and orders 3.2 million
-  passages by topic in about a minute; over unchanged folders it takes a moment (0.1 s for 2,364 files).
+  keyword postings of arXiv in 69 seconds on 24 processes and of PubMed in 13 to 15 minutes on 31, and orders 3.2
+  million passages by topic in about a minute; over unchanged folders it takes a moment (0.1 s for 2,364 files).
 
 How well each mode finds what is sought, by kind of question (nDCG@10, or MRR@10 for the known items; the details
 below):
@@ -326,7 +326,8 @@ as by `sift serve`. Every query found the same documents as FTS5, score for scor
   | quoted phrases, through FTS5 before | 10 to 97 ms | 3 to 16 ms |
 
   On the live index of six collections (46 million passages), the 14-word question had taken 13.5 s and the
-  hyphenated one over ten minutes; with 1.11.1, 0.97 s and 8.7 s at first, 0.32 s and 2.2 s asked again.
+  hyphenated one over ten minutes; with 1.11.1, before its postings were built anew in topical order, 0.97 s and 8.7 s
+  at first, 0.32 s and 2.2 s asked again (since: [reference values](#reference-values)).
 - **A phrase counted once per passage** (sift 1.11.2), kept with the passages that hold it: of a hyphenated question's
   2.2 s, 62% had been FTS5 counting the phrase in the same passages again. Over arXiv, warm, six queries with phrases
   measured before and after, with the same results: the hyphenated question 93 ms instead of 429, "in this paper we
