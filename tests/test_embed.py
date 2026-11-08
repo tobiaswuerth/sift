@@ -1,6 +1,8 @@
 """`sift embed`: embedding every chunk without a vector, slab by slab, with progress. The models are fakes."""
 
+import sqlite3
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -58,19 +60,29 @@ def test_embed_an_unknown_collection_names_those_there_are(two_collections, fake
     assert pending(two_collections) == {"notes": 3, "other": 1}  # nothing embedded before the error
 
 
+def watching(models, monkeypatch, then):
+    """Make models.encode_batches call then(texts) on each batch before it embeds it."""
+    real = models.encode_batches
+
+    def encode_batches(batches, query=False):
+        return real((then(texts) or texts for texts in batches), query)
+
+    monkeypatch.setattr(models, "encode_batches", encode_batches)
+
+
 def test_embed_pending_calibrates_once_before_embedding(corpus, fake_models, monkeypatch):
     # With the longest input the model takes (see test_local): sorting every pending chunk by length to find the
     # longest took minutes on a large index, before the first vector.
-    calls, real = [], fake_models.encode
-    monkeypatch.setattr(fake_models, "prepare", lambda: calls.append("prepare"))
-    monkeypatch.setattr(fake_models, "encode", lambda texts, query=False: calls.append("encode") or real(texts))
+    calls, real = [], fake_models.prepare
+    monkeypatch.setattr(fake_models, "prepare", lambda: calls.append("prepare") or real())
+    watching(fake_models, monkeypatch, lambda texts: calls.append("encode"))
     embed.embed_pending(corpus[0])
     assert calls == ["prepare", "encode"]
 
 
 class Ones:
     """The least a set of models needs to offer embed_pending: a name, a place, a batch size, lengths, prepare and
-    encode."""
+    encode_batches."""
 
     name, address, batch = "ones/v1", "nowhere", 2
 
@@ -82,6 +94,9 @@ class Ones:
 
     def encode(self, texts, query=False):
         return np.ones((len(texts), 4), np.float16)
+
+    def encode_batches(self, batches, query=False):
+        return (self.encode(texts, query) for texts in batches)
 
 
 class Tokens(Ones):
@@ -130,7 +145,7 @@ def test_vectors_the_model_broke_are_not_stored(corpus, fake_models, monkeypatch
         vectors[[i for i, t in enumerate(texts) if "Reward" in t]] = np.nan  # an overflow inside the model
         return vectors
 
-    monkeypatch.setattr(fake_models, "encode", breaking)
+    monkeypatch.setattr(fake_models, "encode_batches", lambda batches, query=False: map(breaking, batches))
     embed.embed_pending(corpus[0])
     assert vector_count(corpus[0]) == 2  # the third stays pending, for another try
     assert "1 chunk could not be embedded" in capsys.readouterr().err
@@ -193,8 +208,7 @@ def test_embed_pending_in_slabs_with_title_on_later_chunks(corpus, fake_models, 
     write(root / "long.md", "# Long\n" + "word " * 1000 + "\n" * 2 + "more " * 1000 + "\n")
     indexing.index(catalog)
     seen = []
-    real = fake_models.encode
-    monkeypatch.setattr(fake_models, "encode", lambda texts, query=False: seen.extend(texts) or real(texts))
+    watching(fake_models, monkeypatch, seen.extend)
     monkeypatch.setattr(embed, "SLAB", 2)
     embed.embed_pending(catalog)
     assert vector_count(catalog) == catalog.store("notes").execute("SELECT count(*) FROM chunks").fetchone()[0]
@@ -205,16 +219,16 @@ def test_embed_pending_in_slabs_with_title_on_later_chunks(corpus, fake_models, 
 
 def test_embed_pending_survives_concurrent_writer(corpus, fake_models, monkeypatch):
     catalog, _ = corpus
-    real = fake_models.encode
+    other = store.connect(catalog.get("notes").store, catalog.get("notes").id)  # another sift's connection
 
-    def racing(texts, query=False):  # another process embeds the first chunk meanwhile
-        vecs = real(texts)
-        catalog.store("notes").execute("INSERT INTO vectors(chunk, vec) SELECT min(id), x'00' FROM chunks")
-        return vecs
+    def racing(texts):  # it embeds the first chunk meanwhile
+        other.execute("INSERT INTO vectors(chunk, vec) SELECT min(id), x'00' FROM chunks")
+        other.commit()
 
-    monkeypatch.setattr(fake_models, "encode", racing)
+    watching(fake_models, monkeypatch, racing)
     embed.embed_pending(catalog)
     assert vector_count(catalog) == 3
+    other.close()
 
 
 def test_embed_refuses_mixing_models(embedded, fake_models):
@@ -262,20 +276,135 @@ def test_counting_the_pending_chunks_reads_no_document(embedded, monkeypatch):
     assert not any("docs" in s for s in counts)
 
 
+# --- the store read and written beside the model ----------------------------------
+# The GPU waited 12 s in every 75 while the next slab was read and sorted by length, and the vectors written.
+
+
+def embed_threads():
+    return [t for t in threading.enumerate() if t.name.startswith("sift-embed")]
+
+
+def until(condition, seconds=5):
+    """Whether condition() comes true within `seconds`."""
+    deadline = time.monotonic() + seconds
+    while not condition():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
+def test_the_store_is_read_and_written_off_the_models_thread(corpus, fake_models, monkeypatch):
+    threads, lengths, put_vectors = {}, fake_models.lengths, store.put_vectors
+
+    def seen(name, then):
+        def recorded(*args):
+            threads.setdefault(name, threading.current_thread())
+            return then(*args)
+
+        return recorded
+
+    monkeypatch.setattr(fake_models, "lengths", seen("read", lengths))
+    monkeypatch.setattr(store, "put_vectors", seen("write", put_vectors))
+    watching(fake_models, monkeypatch, seen("embed", lambda texts: None))
+    embed.embed_pending(corpus[0])
+    assert threads["embed"] is threading.main_thread()  # where PyTorch must run
+    assert threading.main_thread() not in (threads["read"], threads["write"])
+    assert vector_count(corpus[0]) == 3
+    assert embed_threads() == []
+
+
+def test_the_next_slab_is_read_while_the_model_embeds(corpus, fake_models, monkeypatch):
+    monkeypatch.setattr(embed, "SLAB", 1)  # a slab per chunk: 3
+    read, lengths, ahead = [], fake_models.lengths, []
+    monkeypatch.setattr(fake_models, "lengths", lambda texts: read.append(texts) or lengths(texts))
+    watching(fake_models, monkeypatch, lambda texts: ahead.append(until(lambda: len(read) >= min(len(ahead) + 2, 3))))
+    embed.embed_pending(corpus[0])
+    assert ahead == [True, True, True]  # the slab after each read before the model had its batch
+    assert vector_count(corpus[0]) == 3
+
+
+def test_an_error_reading_stops_embedding(corpus, fake_models, monkeypatch):
+    monkeypatch.setattr(embed, "SLAB", 1)
+    lengths, read = fake_models.lengths, []
+
+    def failing(texts):
+        read.append(texts)
+        if len(read) == 3:
+            raise sqlite3.OperationalError("disk I/O error")
+        return lengths(texts)
+
+    monkeypatch.setattr(fake_models, "lengths", failing)
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        embed.embed_pending(corpus[0])
+    assert vector_count(corpus[0]) == 1  # the first slab's; the one on the GPU then is embedded next time
+    assert embed_threads() == []
+
+
+def test_an_error_embedding_stops_the_reading(corpus, fake_models, monkeypatch):
+    monkeypatch.setattr(embed, "SLAB", 1)
+    monkeypatch.setattr(embed, "AHEAD", 1)
+    read, lengths = [], fake_models.lengths
+    monkeypatch.setattr(fake_models, "lengths", lambda texts: read.append(texts) or lengths(texts))
+
+    def failing(texts):
+        assert until(lambda: len(read) == 3)  # the second slab waits in the queue, the third to get in
+        time.sleep(0.3)
+        raise RuntimeError("CUDA error: an illegal memory access was encountered")
+
+    watching(fake_models, monkeypatch, failing)
+    with pytest.raises(RuntimeError, match="illegal memory access"):
+        embed.embed_pending(corpus[0])
+    assert embed_threads() == []
+
+
+def test_an_error_writing_stops_embedding_and_leaves_none_of_the_slab(corpus, fake_models, monkeypatch):
+    # Left in the open transaction, the vectors written before the error went in with the next slab, codes or not.
+    put_vectors = store.put_vectors
+
+    def failing(db, chunks, matrix):
+        put_vectors(db, chunks[:1], matrix[:1])
+        raise sqlite3.OperationalError("database or disk is full")
+
+    monkeypatch.setattr(store, "put_vectors", failing)
+    with pytest.raises(sqlite3.OperationalError, match="disk is full"):
+        embed.embed_pending(corpus[0])
+    assert vector_count(corpus[0]) == 0
+    assert embed_threads() == []
+
+
+def test_embedding_stopped_keeps_the_slabs_embedded_and_resumes(corpus, fake_models, monkeypatch):
+    monkeypatch.setattr(embed, "SLAB", 1)
+    batches = []
+
+    def stop(texts):
+        batches.append(texts)
+        if len(batches) == 3:
+            raise KeyboardInterrupt  # Ctrl+C, once
+
+    watching(fake_models, monkeypatch, stop)
+    with pytest.raises(KeyboardInterrupt):
+        embed.embed_pending(corpus[0])
+    assert vector_count(corpus[0]) == 1  # the slab before the one on the GPU then
+    assert embed_threads() == []
+    embed.embed_pending(corpus[0])
+    assert vector_count(corpus[0]) == 3
+
+
 # --- what the user sees ---------------------------------------------------------
 
 
 def slow_batches(monkeypatch, clock, seconds, then=None):
     """Make every batch take `seconds` on the fake clock, and run then() while it runs."""
-    real = FakeSentenceTransformer.encode_document
+    real = FakeSentenceTransformer.__call__
 
-    def encode_document(self, texts, *args, **kwargs):
+    def forward(self, features, task=None):
         clock.advance(seconds)
         if then:
             then()
-        return real(self, texts, *args, **kwargs)
+        return real(self, features, task)
 
-    monkeypatch.setattr(FakeSentenceTransformer, "encode_document", encode_document)
+    monkeypatch.setattr(FakeSentenceTransformer, "__call__", forward)
 
 
 def test_embed_says_what_it_embeds_before_loading_the_model(corpus, fake_models, monkeypatch, capsys):

@@ -6,6 +6,7 @@ import random
 import sqlite3
 import tracemalloc
 from contextlib import contextmanager
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -214,6 +215,20 @@ def test_a_build_in_worker_processes_is_the_same(prose, monkeypatch):
     postings.build(db, path_of(catalog), workers=2)
     assert sorted(db.execute("SELECT term, segment, df, data FROM kw_terms WHERE list IS NULL")) == serial
     assert live(db) == fts5(db)
+
+
+def test_a_build_leaves_no_write_ahead_log_behind(prose):
+    # A build writes the postings through the log while its own readers hold it: as large as the postings, it would
+    # stay so as long as another sift (a server) has the store open.
+    catalog, _ = prose
+    server = catalog.store("prose")
+    server.execute("SELECT count(*) FROM chunks").fetchone()
+    path = path_of(catalog)
+    db = store.connect(path, catalog.get("prose").id)
+    postings.build(db, path)
+    assert Path(f"{path}-wal").stat().st_size == 0
+    assert postings.ready(server)
+    db.close()
 
 
 def test_the_parts_of_a_build_cover_every_term_once():

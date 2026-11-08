@@ -1,14 +1,22 @@
-"""The models of this machine: an embedding model and a reranker, run with PyTorch on the accelerator's device."""
+"""The models of this machine: an embedding model and a reranker, run with PyTorch on the accelerator's device.
+
+Texts are embedded as Sentence Transformers' encode_document and encode_query embed them, through the same public
+steps (the model's prompts, preprocess, its forward pass), split so that the next batch is tokenized while the GPU
+embeds the one before (encode_batches)."""
 
 import logging
+import threading
 
 import numpy as np
 
-from . import settings
+from . import accelerator, settings
 from .accelerator import Accelerator
 
 MAX_TOKENS = 1024
-LENGTHS_AT_ONCE = 1000  # texts tokenized at a time to count their tokens: padded, their ids and mask take 16 MB
+LENGTHS_AT_ONCE = 1000  # texts tokenized at a time to count their tokens
+PROMPTS = {False: ("document", "passage", "corpus"), True: ("query",)}  # as encode_document and encode_query pick
+TASKS = {False: "document", True: "query"}  # what Sentence Transformers routes texts by, in models that route
+_UNSET = object()
 
 # The MCP server logs at INFO, where loading a model logs every HTTP request to Hugging Face: through httpx, or
 # httpx2, which huggingface_hub 2 uses.
@@ -37,7 +45,7 @@ def _embedder(name, dtype):
     _quietly()
     model = SentenceTransformer(name, device="cpu", model_kwargs=_in(dtype))  # into RAM; to the GPU when used
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)
-    return model
+    return model.eval()  # as encode() sets it: in training mode, dropout would change every vector at random
 
 
 def _reranker(name, dtype):
@@ -57,6 +65,8 @@ class Local:
         self.accelerator = accelerator or Accelerator()
         self.name, self.reranker_name = settings.current().embed_model, settings.current().rerank_model
         self._loaded, self._dtype = {}, None  # model by kind, all in this precision
+        self._lock = threading.RLock()  # loading, which threads may ask for at once
+        self._counter = _UNSET  # a tokenizer of the embedding model's own, to count tokens with (see lengths)
 
     @property
     def address(self):
@@ -75,13 +85,14 @@ class Local:
         return self._model(_reranker, self.reranker_name)
 
     def _model(self, load, name):
-        self.accelerator.budget()  # caps the GPU memory, or falls back to the CPU, before anything loads
-        dtype = self.accelerator.half_precision
-        if dtype != self._dtype:  # a device of another precision: load again
-            self._loaded, self._dtype = {}, dtype
-        if name not in self._loaded:
-            self._loaded[name] = load(name, dtype)
-        return self._loaded[name]
+        with self._lock:
+            self.accelerator.budget()  # caps the GPU memory, or falls back to the CPU, before anything loads
+            dtype = self.accelerator.half_precision
+            if dtype != self._dtype:  # a device of another precision: load again
+                self._loaded, self._dtype = {}, dtype
+            if name not in self._loaded:
+                self._loaded[name] = load(name, dtype)
+            return self._loaded[name]
 
     def _ready(self, get):
         """The model get() returns, on the GPU while in use. The accelerator looks at the GPU first: it may have
@@ -98,34 +109,50 @@ class Local:
 
     def lengths(self, texts):
         """The tokens of each text, cut at the longest input the model takes, without the prompt it puts before every
-        text alike; counted LENGTHS_AT_ONCE at a time, as they come padded. For a model whose tokens come with no
-        attention mask to count them by, such as a static embedding model, characters: they only group texts."""
-        model, found = self.embedder(), []
+        text alike, counted LENGTHS_AT_ONCE at a time. With a tokenizer of its own and no PyTorch, so it runs in any
+        thread (PyTorch crashes in other threads than the main one on Python 3.15), and the model's tokenizer, which
+        Sentence Transformers sets to pad each batch, is never shared. For a model without a Hugging Face fast
+        tokenizer, such as a static embedding model, characters: they only group texts."""
+        counter = self._counting()
+        if counter is None:
+            return [len(text) for text in texts]
+        found = []
         for start in range(0, len(texts), LENGTHS_AT_ONCE):
-            part = texts[start : start + LENGTHS_AT_ONCE]
-            mask = model.preprocess(part).get("attention_mask")
-            found += [len(text) for text in part] if mask is None else mask.sum(dim=1).tolist()
+            found += [len(tokens) for tokens in counter.encode_batch(texts[start : start + LENGTHS_AT_ONCE])]
         return found
 
+    def _counting(self):
+        """The tokenizer lengths() counts with, made on first use: its first call loads the model, so it belongs on
+        the models' thread (prepare does it)."""
+        with self._lock:
+            if self._counter is _UNSET:
+                model = self.embedder()
+                backend = getattr(model.tokenizer, "backend_tokenizer", None)
+                self._counter = None if backend is None else _counter_of(backend, model.max_seq_length)
+            return self._counter
+
     def prepare(self):
-        """Size the batches to the GPU's memory, with texts of the longest input the model takes: a batch that fits
-        them fits any text, whatever the model."""
+        """Get ready to embed: the tokenizer that counts tokens (lengths), and on CUDA, batches sized to the GPU's
+        memory with texts of the longest input the model takes: a batch that fits them fits any text, whatever the
+        model."""
+        self._counting()
         if self.accelerator.kind != "cuda":
             return
-        model = self._ready(self.embedder)
-        sample = "x " * (4 * model.max_seq_length)  # truncated to the longest input
-        self.accelerator.calibrate(lambda n: model.encode_document([sample] * n, batch_size=n, show_progress_bar=False))
+        steps = _Steps(self._ready(self.embedder), query=False)
+        longest = "x " * (4 * steps.model.max_seq_length)  # truncated to the longest input
+        self.accelerator.calibrate(lambda n: steps.collect(steps.launch(steps.tokenize([longest] * n))))
 
     def encode(self, texts, query=False):
-        """Normalised fp16 embeddings, one row per text. Sentence Transformers sorts by length to minimise padding."""
-        model = self._ready(self.embedder)
-        fn = model.encode_query if query else model.encode_document
-        return self.accelerator.run(
-            lambda t, size: fn(
-                t, batch_size=size, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False
-            ),
-            texts,
-        ).astype(np.float16)
+        """Normalised fp16 embeddings, one row per text, in batches of the accelerator's size."""
+        steps = _Steps(self._ready(self.embedder), query)
+        return self.accelerator.run(lambda t, size: _stacked(_pipelined(steps, _parts(t, size))), texts)
+
+    def encode_batches(self, batches, query=False):
+        """The embeddings of each batch of texts, in order: each batch tokenized while the GPU embeds the one before.
+        Iterate it on the models' thread. A batch the GPU has no memory for is embedded by encode(), which embeds it
+        in parts; so is one larger than the batch size, since halved."""
+        steps = _Steps(self._ready(self.embedder), query)
+        return _pipelined(steps, batches, lambda texts: self.encode(texts, query), lambda: self.batch)
 
     def rerank(self, query, texts):
         """Raw scores (logits) of (query, text) pairs, higher for better matches, whatever activation the model's
@@ -143,3 +170,70 @@ class Local:
     def release_idle(self):
         """Move the models back to RAM if the GPU has been idle long enough. Returns whether it did."""
         return self.accelerator.release_idle()
+
+
+class _Steps:
+    """A batch's way through an embedding model, as Sentence Transformers' encode_document (encode_query) takes it,
+    in three steps: tokenize it on the CPU, launch the forward pass (the GPU runs it while the CPU goes on), collect
+    the vectors (waiting for the GPU)."""
+
+    def __init__(self, model, query):
+        self.model, self.task = model, TASKS[query]
+        name = next((name for name in PROMPTS[query] if name in model.prompts), model.default_prompt_name)
+        self.prompt = model.prompts.get(name) if name else None
+
+    def tokenize(self, texts):
+        return self.model.preprocess(texts, prompt=self.prompt, task=self.task)
+
+    def launch(self, features):
+        import torch
+        from sentence_transformers.util import batch_to_device
+
+        with torch.inference_mode():
+            vectors = self.model(batch_to_device(features, self.model.device), task=self.task)["sentence_embedding"]
+            return torch.nn.functional.normalize(vectors, p=2, dim=1)
+
+    @staticmethod
+    def collect(launched):
+        """Normalised fp16 rows, in an array of their own: freed in any thread, it frees no PyTorch tensor."""
+        return launched.float().cpu().numpy().astype(np.float16)
+
+
+def _pipelined(steps, batches, again=None, size=None):
+    """The vectors of each batch, in order, each tokenized while the GPU runs the one before. With again(texts), a
+    batch the GPU has no memory for, or of more texts than size(), is embedded by it instead."""
+    launched = None
+    for texts in batches:
+        features = steps.tokenize(texts) if again is None or len(texts) <= size() else None
+        if launched is not None:
+            yield steps.collect(launched)
+            launched = None
+        if features is not None:
+            try:
+                launched = steps.launch(features)
+                continue
+            except RuntimeError as error:
+                if again is None or not accelerator.out_of_memory(error):
+                    raise
+        yield again(texts)
+    if launched is not None:
+        yield steps.collect(launched)
+
+
+def _parts(texts, size):
+    return (texts[start : start + size] for start in range(0, len(texts), size))
+
+
+def _stacked(arrays):
+    arrays = list(arrays)
+    return np.concatenate(arrays) if arrays else np.empty((0, 0), np.float16)
+
+
+def _counter_of(backend, longest):
+    """A copy of a fast tokenizer's (a `tokenizers.Tokenizer`), unpadded and cut at `longest` tokens, to count with."""
+    from tokenizers import Tokenizer
+
+    counter = Tokenizer.from_str(backend.to_str())
+    counter.no_padding()
+    counter.enable_truncation(longest)
+    return counter

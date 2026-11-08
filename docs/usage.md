@@ -120,7 +120,8 @@ Search commands return one result per document, with its best passage. They acce
 ### Keyword syntax
 
 `search` requires every term. If no passage has them all and the query has no operators (`AND`, `OR`, `NOT`,
-`NEAR`), it returns the passages that have any of them, those with more terms first. Operators are written in
+`NEAR`), it returns the passages that have any of them, ranked by BM25, which favours those with more of them and
+with rarer ones. Operators are written in
 capitals, and parentheses group: `'"notice period" AND (contract OR agreement)'`. `"phrases"` and `prefix*` work as in
 SQLite FTS5. A query with operators is taken as it is; when it finds nothing, drop terms. Input that isn't valid FTS5
 syntax is searched as exact phrases.

@@ -115,6 +115,10 @@ class Remote:
         raw = self._request("/embed", {"texts": texts, "query": query})
         return np.frombuffer(raw, np.float16).reshape(len(texts), self.info["dim"])
 
+    def encode_batches(self, batches, query=False):
+        """The worker's embeddings of each batch, in order, a request each."""
+        return (self.encode(texts, query) for texts in batches)
+
     def rerank(self, query, texts):
         """The worker's scores of (query, text) pairs."""
         import numpy as np

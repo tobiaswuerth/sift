@@ -23,6 +23,8 @@ winner on a single dataset. To measure sift on your own documents, use
   million PubMed passages, a common word takes 7 ms instead of 1.3 seconds, a question 26 ms instead of 5.3 seconds
   (medians, the postings read before; 67 and 200 ms read anew), with FTS5's results, score for score, in about a
   third of FTS5's storage ([details](#keyword-search)).
+- **Embedding:** `sift embed` keeps the GPU 99% busy: 472 PubMed passages per second on an RTX 4090, against 382 for
+  sift 1.10.0, the vectors the same ([details](#keeping-the-gpu-busy)).
 
 ## Datasets
 
@@ -201,6 +203,25 @@ their 6,000 titles (30 tokens); the mean of 2 runs, and for the titles the best 
 - **One CPU thread beside the GPU** made embedding 5% faster and freed most of the cores: PyTorch's other threads only
   waited busily after each batch.
 
+### Keeping the GPU busy
+
+`sift embed` on the RTX 4090 with EmbeddingGemma-2, over 40,114 PubMed passages (the first 40,000 records of a source
+file), from no vectors; the GPU sampled every 100 ms, past loading and calibration:
+
+| | Passages per second | GPU busy |
+|---|---|---|
+| sift 1.10.0 | 382 | 83% |
+| sift 1.10.1 | **472** | 99% |
+
+- **Where the time went,** profiling a running 1.10.0 over PubMed: the model 72%; tokenizing each slab's 20,000
+  texts to sort them by length 12%, the GPU idle (12 seconds every 75); tokenizing each batch 11%, idle again;
+  reading and writing the index 2%. Now a thread reads and sorts the next slabs, another writes, and each batch is
+  tokenized while the GPU embeds the one before. The vectors are the same, bit for bit.
+- **Batch size:** calibration measured the memory the tensors take, but PyTorch's cap counts what its allocator
+  reserves, about a fifth more. 140 texts of 1,024 tokens take 18.0 of a 20.1 GB cap, and ran out of memory at the
+  first batch of full length, so every run on PubMed went on at 70. Counted as reserved, calibration picks 112 to 116,
+  which fit; 112 embeds the passages above as fast as 140 did (they are at most 930 tokens, where 140 fits).
+
 ### Keyword search
 
 63 queries: 18 single words (from "crispr" to "the"), 20 of all their words ("graph neural network", ids), and 25
@@ -224,7 +245,9 @@ as by `sift serve`. Every query found the same documents as FTS5, score for scor
   few hundred postings.
 - **The slowest question** took 16 seconds in FTS5, 2.7 seconds cold and 1.1 warm from the postings: a dozen common
   words bound most ranges high, so pruning skips less. Smaller ranges would bound them tighter, at more storage.
-- **All words of a few rare ones** remain FTS5's strength, read cold: it intersects the lists as it reads them.
+- **All words of a few rare ones** are the one kind FTS5 answered faster, against the postings read cold (30 ms
+  against 86 on PubMed): it intersects the lists as it reads them. Read before, the postings take 7 ms. sift answers
+  them from the postings too.
 - **Storage:** 0.94 GB for arXiv's 431 million postings against 2.71 GB of FTS5's index, which holds every word's
   positions: 2.2 bytes per posting. 12.2 GB for PubMed.
 - **Ranges of 128 or 64 passages:** on PubMed, with the postings in memory, 128 answered single words in 2.2 ms against

@@ -345,10 +345,11 @@ def test_vsearch_after_interrupted_reset_asks_for_embedding(embedded, fake_model
     index = Index(catalog)
     index.vsearch("reward")  # codes in memory
 
-    def interrupted(texts, query=False):
+    def interrupted(batches, query=False):
         raise KeyboardInterrupt
+        yield  # a generator, as encode_batches is
 
-    monkeypatch.setattr(fake_models, "encode", interrupted)
+    monkeypatch.setattr(fake_models, "encode_batches", interrupted)
     with pytest.raises(KeyboardInterrupt):
         embed.embed_pending(catalog, reset=True)
     with pytest.raises(LookupError, match="sift embed"):

@@ -334,6 +334,7 @@ def _build(db, path, name, workers):
     except BaseException:
         db.rollback()
         raise
+    store.empty_log(db)  # it holds the postings, written while the build's readers held it
 
 
 PROGRESS_LINES = 200  # updates of a build's progress at most: printing is slow on Windows consoles
