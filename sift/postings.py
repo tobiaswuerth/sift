@@ -18,7 +18,8 @@ can't reach its best results (Block-Max Pruning, Mallia et al. 2024), at about a
   same as FTS5's until something changes, and the same again after the next rebuild.
 - Postings number chunks by their place in a topical order (see `order`), when the chunks have codes: then the
   chunks of a range share their words, its bounds are tight, and their gaps are small. kw_order holds the chunk at
-  each place; without it, a chunk's place is its id. A chunk that changes after a build takes the next free place.
+  each place, where kw_built says so (ORDERED); elsewhere a chunk's place is its id. A chunk that changes after a
+  build takes the next free place.
 
 Updates follow FTS5: store.keywords marks every chunk whose entries change dirty, numbered by the change. `update`
 adds a delta of those chunks, or builds anew once deltas would grow large; a search over a store with dirty chunks
