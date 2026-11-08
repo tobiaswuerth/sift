@@ -277,7 +277,8 @@ def build(index=None):
     async def status() -> dict:
         """Collections with their folders (`path`), whether they are `active` (searched), their index files (`store`)
         and sizes; of active ones the counts of documents, chunks and those `embedded`, whether keyword search is
-        quick (`keywords`: "ready"), their front-matter `fields`, and their links; and the embedding model."""
+        quick (`keywords`: "ready"), their front-matter `fields`, and their links, or why their index can't be opened
+        (`error`); and the embedding model."""
         return await _run(index.status)
 
     @mcp.tool(annotations=READ_ONLY)

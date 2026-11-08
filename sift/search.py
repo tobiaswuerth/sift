@@ -1403,7 +1403,8 @@ class Index:
     def status(self):
         """The catalog, the model the active collections are embedded with, and every collection: its folder, whether
         it is active, its store and the bytes it takes, or that it is missing; and of an active one, its documents,
-        chunks, those embedded, how its keyword postings stand, front-matter fields and links."""
+        chunks, those embedded, how its keyword postings stand, front-matter fields and links, or why its store can't
+        be opened."""
         collections, models = [], set()
         for c in self.catalog.collections():
             entry = {"name": c.name, "path": c.path, "active": c.active, "store": c.store}
