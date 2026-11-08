@@ -421,9 +421,8 @@ def test_a_changed_front_matter_value_is_no_longer_found(paper, corpus):
     indexing.index(catalog)
     assert paper.search("Vaswani") == []
     assert ids(paper.search("Someone")) == ["notes/paper.md"]
-    catalog.store("notes").execute(
-        "INSERT INTO fts(fts) VALUES('integrity-check')"
-    )  # raises if deleting missed what inserting added
+    # raises if deleting missed what inserting added
+    catalog.store("notes").execute("INSERT INTO fts(fts) VALUES('integrity-check')")
 
 
 # --- semantic and hybrid search ----------------------------------------------
@@ -890,9 +889,8 @@ def test_query_scores_are_the_rerankers_raw_scores_when_the_cosines_agree(embedd
     # 0.9999, and an off-topic query's best still 0.98. The raw scores tell strong hits from weak ones; the cosine
     # shifts them only where the candidates differ in meaning.
     catalog = embedded[0]
-    catalog.store("notes").execute(
-        "UPDATE vectors SET vec = ?", (np.ones(64, np.float16).tobytes(),)
-    )  # every cosine the same
+    # every cosine the same
+    catalog.store("notes").execute("UPDATE vectors SET vec = ?", (np.ones(64, np.float16).tobytes(),))
     catalog.store("notes").commit()
     hits = Index(catalog, models=Constant()).query("anything")
     assert [h["score"] for h in hits] == [2.0, 1.0, 0.0]

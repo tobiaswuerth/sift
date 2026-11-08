@@ -370,9 +370,8 @@ def test_scans_an_older_sift_skipped_are_read_again_once(tmp_path, home, scans, 
     catalog.close()
     configure(ocr="auto")
     catalog = Catalog(home)
-    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (
-        2,
-    )  # the PDF and the mail
+    # the PDF and the mail
+    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (2,)
     indexing.index(catalog)
     assert sorted(p for (p,) in only(catalog).execute("SELECT path FROM docs")) == [
         "a.pdf",
@@ -404,6 +403,5 @@ def test_an_interrupted_marking_leaves_the_index_as_it_was(tmp_path, home, monke
     monkeypatch.setattr(store, "set_meta", lambda *args: (_ for _ in ()).throw(KeyboardInterrupt))
     with pytest.raises(KeyboardInterrupt):
         store._read_again(only(catalog), "scans_read", (".pdf",))
-    assert only(catalog).execute("SELECT mtime FROM sources").fetchone() == (
-        1,
-    )  # rolled back: tried again on the next start
+    # rolled back: tried again on the next start
+    assert only(catalog).execute("SELECT mtime FROM sources").fetchone() == (1,)

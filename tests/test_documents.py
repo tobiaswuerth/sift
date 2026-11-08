@@ -243,9 +243,8 @@ def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home, mon
     only(catalog).commit()
     catalog.close()
     catalog = Catalog(home)
-    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (
-        2,
-    )  # the file and the mail
+    # the file and the mail
+    assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (2,)
     indexing.index(catalog)
     assert sorted(p for (p,) in only(catalog).execute("SELECT path FROM docs")) == [
         "mail.eml",

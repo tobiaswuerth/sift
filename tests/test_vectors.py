@@ -242,10 +242,8 @@ def test_patched_codes_find_new_vectors_and_forget_removed():
     patched = index.patched(removed=[best], ids=[2000], bits=codes(new))
     assert chunks(top(patched, exact, query, 2))[0] == 2000
     assert best not in chunks(top(patched, exact, query, 100))
-    assert (len(index), 2000 in chunks(top(index, exact, query, 100))) == (
-        100,
-        False,
-    )  # the codes patched from stay as were
+    # the codes patched from stay as they were
+    assert (len(index), 2000 in chunks(top(index, exact, query, 100))) == (100, False)
 
 
 def test_a_chunk_patched_in_again_is_its_new_vector_only():

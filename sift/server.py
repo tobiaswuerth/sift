@@ -73,9 +73,7 @@ def _call(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except (LookupError, ValueError, ConnectionError, sqlite3.Error, jobs.Cancelled) as e:  # ConnectionError: the
         raise ToolError(str(e)) from None  # embedding remote; sqlite3.Error and Cancelled: a call cancelled, too
-    except (
-        SystemExit
-    ) as e:  # a store that refuses to open, as one a newer sift made: the call's to fail, not the server
+    except SystemExit as e:  # a store that refuses to open, as a newer sift's: the call fails, not the server
         raise ToolError(str(e.code)) from None
     except Exception as e:
         log.exception("tool failed")
