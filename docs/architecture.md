@@ -165,6 +165,11 @@ each, so the backlinks of a note linked by 6,000 others take 16 ms
 ## Server and UI
 
 - `sift serve` loads the models and the codes once and keeps them in memory, for any number of agents.
+- It keeps the embeddings of the last 256 questions and the results of the last 32 searches. Kept results count only
+  while what they read is as it was: the catalog and each active store as SQLite counts their changes, those other
+  connections commit (`PRAGMA data_version`) and the rows the server's own connection changed (`total_changes`, as its
+  `reindex` does), and the codes it holds. A search within a time budget is never kept, as what it finds depends on the
+  time it had.
 - Calls run one at a time on a worker thread, so the event loop stays free to answer, to accept connections and to
   hear that a client cancelled a call or went away. A cancelled call stops: its SQLite statements end within about a
   millisecond, through a progress handler on every connection, and it runs the models no more. `reindex` runs to its

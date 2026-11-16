@@ -4,6 +4,7 @@ and documents like one.
 The models embed queries and rerank, wherever they run (see `models`). Through a worker, PyTorch never loads: a search
 starts in a fraction of a second, even on a light notebook."""
 
+import copy
 import json
 import math
 import os
@@ -11,9 +12,10 @@ import posixpath
 import re
 import sqlite3
 import threading
+from collections import OrderedDict
 from concurrent.futures import Future, wait
 from contextlib import contextmanager
-from functools import partial
+from functools import partial, wraps
 from operator import itemgetter
 from pathlib import Path
 from typing import NamedTuple
@@ -34,6 +36,36 @@ SQLITE_INT = 2**63  # SQLite integers are 64-bit
 OPERATORS = ("=", "<", "<=", ">", ">=", "not")
 FIELD_SAMPLE = 1000  # documents per collection whose front matter tells which fields exist
 START = 600  # characters of a document's start that `browse` shows, as its passage
+QUERY_VECTORS = 256  # questions whose embeddings an index keeps, 3 KB each: an agent asks one again, with other options
+RESULTS = 32  # searches whose results an index keeps, while what they read stays as it was
+
+
+def _changes(db):
+    """How SQLite counts a database's changes through a connection: those other connections committed, and the rows
+    the connection changed itself."""
+    return db.execute("PRAGMA data_version").fetchone()[0], db.total_changes
+
+
+def _remembered(method):
+    """A search whose results the index keeps, the last RESULTS of them, as long as what it reads stays as it was
+    (Index._state): an agent asking again, or the UI showing a page again, gets them without reading the stores."""
+
+    @wraps(method)
+    def remembered(self, *args, **kwargs):
+        if kwargs.get("budget") is not None:  # what a search finds in time depends on the time it had
+            return method(self, *args, **kwargs)
+        key, state = json.dumps([method.__name__, args, kwargs], sort_keys=True, default=str), self._state()
+        if (kept := self._results.get(key)) is not None and kept[0] == state:
+            self._results.move_to_end(key)
+            return copy.deepcopy(kept[1])
+        hits = method(self, *args, **kwargs)
+        if not self._reading and self._state() == state:  # not with codes being read anew: they take over later
+            self._results[key] = (state, copy.deepcopy(hits))
+            while len(self._results) > RESULTS:
+                self._results.popitem(last=False)
+        return hits
+
+    return remembered
 
 
 def _condition(key, op, value):
@@ -480,6 +512,8 @@ class Index:
         self._reading = {}  # collection id: the Future of its codes read anew, in a thread of their own
         self._postings = {}  # collection id: (the state of its keyword postings, their postings.Reader)
         self._said = set()  # warnings given, each once
+        self._query_vectors = OrderedDict()  # question: its embedding, the last QUERY_VECTORS asked
+        self._results = OrderedDict()  # a search and its options: (the state it read, its results), see _remembered
 
     @property
     def models(self):
@@ -494,6 +528,14 @@ class Index:
         self._wrap = wrap
         if self._models is not None:
             self._models = wrap(self._models)
+
+    def _state(self):
+        """What searches read, as a value that changes with it: the catalog and each active store as SQLite counts
+        their changes, those other connections commit (data_version) and those of the connection itself (total_changes,
+        as the server's own `reindex` makes them), and the codes held."""
+        stores = tuple((c.id, c.store, *_changes(self.catalog.store(c))) for c in self.active().values())
+        held = tuple((cid, h.version, h.epoch, h.count, h.last) for cid, h in self.vectors.items())
+        return _changes(self.catalog.db), stores, held
 
     def _warn(self, text):
         if text not in self._said:
@@ -827,9 +869,16 @@ class Index:
         return np.array([chunk for chunk, _ in rows], np.int64), matrix
 
     def _vector(self, query):
-        """The query's vector, with the codes loaded to search with it."""
+        """The query's vector, with the codes loaded to search with it; kept for the next QUERY_VECTORS questions."""
         self.load()
-        return self.models.encode([query], query=True)[0].astype(np.float32)
+        if (vector := self._query_vectors.get(query)) is None:
+            vector = self.models.encode([query], query=True)[0].astype(np.float32)
+            vector.setflags(write=False)  # shared by every search asking it again
+            self._query_vectors[query] = vector
+        self._query_vectors.move_to_end(query)
+        while len(self._query_vectors) > QUERY_VECTORS:
+            self._query_vectors.popitem(last=False)
+        return vector
 
     def _filter(self, scope, where, args):
         """A search's filter of the chunks `where` allows, or None for all: one per search, as it remembers what it was
@@ -911,6 +960,7 @@ class Index:
     # `adaptive`, k is the most hits returned: those before the largest drop in score, and a few more (see _adaptive).
     # Without a `collection`, a search covers every active one.
 
+    @_remembered
     def search(
         self,
         query,
@@ -954,6 +1004,7 @@ class Index:
             hit["partial"] = True
         return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
+    @_remembered
     def vsearch(
         self,
         query,
@@ -979,6 +1030,7 @@ class Index:
         hits = self._works(lambda n: self._nearest(vector, n, scope, allowed, all_passages), k, all_passages)
         return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
+    @_remembered
     def query(
         self,
         query,
@@ -1052,6 +1104,7 @@ class Index:
                 found.append({"id": id, "error": str(error)})
         return found
 
+    @_remembered
     def similar(
         self,
         id,

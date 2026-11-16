@@ -1791,3 +1791,65 @@ def test_get_by_a_file_name_many_documents_have(corpus):
     indexing.index(catalog)
     with pytest.raises(LookupError, match=r"notes/e/same\.md, \.\.\.; give the whole id"):
         Index(catalog).get("notes/same.md")
+
+
+# --- what a search asked again reuses ------------------------------------------------
+
+
+def statements(index, catalog):
+    """The SQL statements each search runs on the store, but those asking whether it changed."""
+    ran = []
+    catalog.store("notes").set_trace_callback(lambda sql: "data_version" not in sql and ran.append(sql))
+    return ran
+
+
+def test_a_question_asked_again_is_not_embedded_again(embedded, monkeypatch):
+    # An agent asks the same question again, with another k or filter: the query's embedding took 51 ms each time.
+    index = Index(embedded[0])
+    real, asked = index.models.encode, []
+    monkeypatch.setattr(index.models, "encode", lambda texts, query=False: asked.append(texts) or real(texts, query))
+    monkeypatch.setattr(search, "QUERY_VECTORS", 2)
+    for k, query in enumerate(("brush strokes", "brush strokes", "reward", "paint", "brush strokes"), 1):
+        index.vsearch(query, k=k)  # each another search: its results aren't kept from before
+    assert asked == [["brush strokes"], ["reward"], ["paint"], ["brush strokes"]]  # the oldest let go past two
+
+
+def test_a_search_asked_again_is_answered_from_memory_until_a_store_changes(embedded, home):
+    catalog, root = embedded
+    index = Index(catalog)
+    for method in (index.search, index.vsearch, index.query):
+        method("brush", k=3)  # the first semantic search loads the codes, a change of what it reads: not kept
+        first = method("brush", k=3)
+        ran = statements(index, catalog)
+        assert method("brush", k=3) == first
+        assert ran == []  # read nothing from the store
+        catalog.store("notes").set_trace_callback(None)
+    write(root / "brushes.md", "# Brushes\n\nbrush brush brush, the brush of brushes\n")
+    indexing.index(Catalog(home))  # another sift, as `sift index` beside the server
+    assert ids(index.search("brush", k=1)) == ["notes/brushes.md"]
+
+
+def test_results_follow_the_servers_own_reindex(embedded):
+    catalog, root = embedded
+    index = Index(catalog)
+    assert ids(index.search("pigments")) == []
+    write(root / "pigments.md", "# Pigments\n\npigments on canvas\n")
+    index.reindex(["notes/pigments.md"])  # through the same connection: SQLite counts no change of another
+    assert ids(index.search("pigments")) == ["notes/pigments.md"]
+    assert ids(index.vsearch("Pigments pigments on canvas", k=1)) == ["notes/pigments.md"]
+
+
+def test_results_found_out_of_time_are_never_kept(embedded, monkeypatch):
+    index = Index(embedded[0])
+    index.search("brush", budget=10.0)
+    assert not index._results  # an answer within a budget depends on the time it had
+    index.search("brush")
+    assert len(index._results) == 1
+
+
+def test_results_kept_are_copies(embedded):
+    index = Index(embedded[0])
+    index.search("brush")
+    hits = index.search("brush")
+    hits[0]["id"] = "changed"
+    assert index.search("brush")[0]["id"] != "changed"

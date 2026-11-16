@@ -12,6 +12,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
   with its error, the others still come; texts past 100,000 characters in all are left out, each saying why.
   `sift get` takes several ids too, each headed as `head` heads files.
 
+### Changed
+
+- A server keeps the embeddings of the last 256 questions (3 KB each) and the results of the last 32 searches: an
+  agent asking a question again with another `k` or filter skips the embedding (51 ms on an RTX 4090), and the same
+  search asked again reads nothing. Kept results count as long as nothing they read has changed: any change to the
+  catalog or a store, by another sift (as SQLite counts them) or by the server's own `reindex`, and any change to the
+  codes in memory, lets them go. A search within a time budget is never kept.
+
 ## [1.11.2] - 2026-11-08
 
 No search held up while `sift embed` runs beside the server, and phrases asked again two to twenty times as fast.
