@@ -231,6 +231,29 @@ The embedding models embedded 2,000 passages (half SciFact, half MLDR) and 100 q
   `search` and `vsearch`, which need no reranker.
 - **Query embedding is minor next to reranking:** 51 ms against 284 ms.
 
+### Reranking in batches of similar length
+
+A question's 80 candidates were reranked in one batch, padded to the longest. Over the benchmark pools, as the
+reranker's tokenizer counts them, that is this much work against none padded (tokens / counting attention's square):
+
+| Pool | One batch of 80 | Batches of 16, sorted by length | Batches of 10 |
+|---|---|---|---|
+| arXiv known items | 1.71 / 2.74 | 1.14 / 1.32 | 1.08 / 1.18 |
+| FiQA | 3.53 / 8.40 | 1.42 / 2.25 | 1.24 / 1.69 |
+| GermanQuAD | 1.89 / 3.00 | 1.18 / 1.36 | 1.11 / 1.21 |
+| LitSearch | 2.43 / 5.47 | 1.29 / 1.89 | 1.17 / 1.51 |
+
+On the RTX 4090 (sharing it with another program), 10 questions each from the arXiv and FiQA pools, ms a question:
+331 in one batch (sift 1.11), 213 in batches of 32, **180 in 16**, 259 in 8; the scores moved by at most 0.08,
+bfloat16's rounding. Sentence Transformers sorts the pairs by length before it batches them, so sift 1.12 reranks in
+batches of 16.
+
+- **Fewer candidates when the lists agree** (not adopted): simulated from the stored scores of these pools, with
+  sift's blend. Reranking 20 keyword and 20 semantic candidates instead of 40 each cost the arXiv known items 5 points
+  of nDCG@10 (0.934 to 0.884) and FiQA 2. Doing so only when 5 of the top 20 of both lists agree reranked 65 to 85% of
+  the candidates and cost arXiv 0.7 points and FiQA 0.5; when 10 agree, nothing, but it reranked 90 to 98%. Batching
+  by length already took most of the time.
+
 ### Batching
 
 `sift embed` on the RTX 4090 with EmbeddingGemma-2, over 6,000 PubMed abstract passages (339 tokens on average) and
@@ -301,6 +324,10 @@ as by `sift serve`. Every query found the same documents as FTS5, score for scor
   them from the postings too.
 - **Storage:** 0.94 GB for arXiv's 431 million postings against 2.71 GB of FTS5's index, which holds every word's
   positions: 2.2 bytes per posting. 12.2 GB for PubMed.
+- **zstd instead of zlib for the blocks** (not adopted): over blocks of 4,096 postings of several densities, zstd
+  decoded in 43 to 54 us a block against zlib's 40 to 76, at about the same size (3.2 to 8.4 KB); only writing was 8 to
+  17 times as fast, about a tenth of a build. Not worth a store older sifts can't read. (Measured with the machine
+  busy with other work.)
 - **Ranges of 128 or 64 passages:** on PubMed, with the postings in memory, 128 answered single words in 2.2 ms against
   5.8 and questions in 16 against 23 (median), with the longest question slower (0.53 s against 0.24); 128 also takes
   8% less storage.
@@ -439,6 +466,20 @@ and hit@10 are those of each paper's own first passage. "+ exact top N" scores t
   was busy with other work: the upgrade from sift 1.6 added the codes in 65 seconds, `sift serve` loads them in 2.2
   seconds, and a search (Hamming scan and exact scores) takes 95 ms (median; 108 ms at the 90th percentile). Of 200
   of the title queries, it found 99.4% of exact search's top 10.
+- **The scan compiled** (sift 1.12): NumPy scanned the codes in three passes, writing and reading two arrays as large
+  as the codes between them, at 10 GB/s. Compiled by Numba, each code is read once and its distance counted where it
+  is read. Over the arXiv codes four times over (12.9 million, 1.2 GB), one process, alternating, the machine at 80%
+  load from other work: 133 ms (median 164) with NumPy, 43 (56) compiled, the same distances. Scanning a query in
+  Numba's threads took 36 ms, in sift's own threads 49; four queries in one pass took 35 ms, 9 a query. Loading Numba
+  and the compiled scan takes about 1.6 s once per process, so collections under a million passages keep NumPy's scan.
+- **int8 vectors for the exact scores** (not adopted): the 1,000 candidates scored with int8 vectors instead of fp16,
+  over 500 of the title queries, in sift's own search: recall@10 0.9618 with a scale per vector, 0.9742 with a scale
+  per dimension, against 0.9958; MRR@10 unchanged (0.9434 to 0.9439 against 0.9438). Half the vectors' storage, for
+  three points of recall.
+- **A first scan of the first 256 dimensions' bits** (not adopted): it keeps the P nearest, which the search then
+  searches as before. Over the same 500 queries, recall@10 0.9938 keeping 100,000, 0.9954 keeping 300,000, against
+  0.9958. It would read a third of the codes, but needs them apart in memory (1.5 GB more at 46 million), and how many
+  to keep at 46 million is unmeasured; the compiled scan took most of its gain.
 
 ## Query expansion by the agent
 
