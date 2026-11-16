@@ -1847,6 +1847,14 @@ def test_results_found_out_of_time_are_never_kept(embedded, monkeypatch):
     assert len(index._results) == 1
 
 
+def test_only_the_latest_results_are_kept(embedded, monkeypatch):
+    monkeypatch.setattr(search, "RESULTS", 2)
+    index = Index(embedded[0])
+    for query in ("brush", "reward", "colour", "reward"):
+        index.search(query)
+    assert [json.loads(key)[1][0] for key in index._results] == ["colour", "reward"]  # the latest asked last
+
+
 def test_results_kept_are_copies(embedded):
     index = Index(embedded[0])
     index.search("brush")

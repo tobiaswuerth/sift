@@ -57,7 +57,9 @@ fixture.
 - **Tests first.** Write a test that fails, then make it pass. Every bug fix comes with a regression test that
   reproduces the bug.
 - **Full coverage.** `pytest --cov` requires 100% line and branch coverage. The tests fake the models and GPU memory,
-  so they run anywhere, without a GPU or downloads.
+  so they run anywhere, without a GPU or downloads. They are independent of each other, so `pytest -n 6` (or `-n
+  auto`, as CI runs them) runs them in processes of their own: 33 seconds instead of 144 on six. A few tests alone
+  run quicker without: each process takes a few seconds to start.
 - **Quality gates.** pre-commit runs on every commit and again in CI: ruff (lint and format), whitespace and line
   endings, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schema checks, actionlint and codespell.
 - **Pull requests.** `main` is protected: changes arrive through pull requests, which are squash-merged once every CI

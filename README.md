@@ -235,6 +235,7 @@ cd sift
 uv venv && uv pip install --torch-backend auto -e ".[dev]"   # or with pip: pip install -r requirements.txt -e ".[dev]"
 pre-commit install      # lint, format and config checks on every commit
 pytest --cov            # 100% line and branch coverage is required
+pytest -n 6             # in six processes: about half a minute instead of two and a half
 ```
 
 The tests replace the models with small deterministic fakes, so they need no GPU and no downloads; everything else,

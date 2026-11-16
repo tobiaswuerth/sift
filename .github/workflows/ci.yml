@@ -42,7 +42,7 @@ jobs:
           activate-environment: true
           enable-cache: true
       - run: uv pip install --torch-backend cpu -e ".[dev]"
-      - run: pytest -q --cov
+      - run: pytest -q --cov -n auto  # in a process per core: a quarter of the time on four
 
   package:
     # Builds the package and checks it as PyPI and users will see it.
