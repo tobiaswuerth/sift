@@ -1040,6 +1040,18 @@ class Index:
             text = "".join(every[span[0] - 1 : span[1]])
         return document | {"text": text}
 
+    def documents(self, asked, fields=None):
+        """Several documents, each (id, lines) of `asked` as `document` gives it, in order; one that can't be read is
+        {"id", "error"}, and the others still come."""
+        _check_fields(fields)
+        found = []
+        for id, lines in asked:
+            try:
+                found.append(self.document(id, lines, fields))
+            except (LookupError, ValueError) as error:
+                found.append({"id": id, "error": str(error)})
+        return found
+
     def similar(
         self,
         id,

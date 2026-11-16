@@ -558,6 +558,38 @@ def test_get_with_fields_returns_the_document_with_them(mcp):
     }
 
 
+def test_get_takes_several_documents_at_once(mcp):
+    # An agent reading the hits of a search spent a call, and a turn of its own, on each.
+    documents = data(
+        call(
+            mcp,
+            "get",
+            {"id": [{"id": "notes/rl.md", "lines": "1"}, "notes/brush.md", "missing/x.md"], "fields": ["year"]},
+        )
+    )
+    assert documents[0] == {"id": "notes/rl.md", "title": "Reward shaping", "fields": {}, "text": "# Reward shaping\n"}
+    assert (documents[1]["id"], documents[1]["fields"]) == ("notes/robots/brush.md", {"year": 2024})
+    assert documents[1]["text"].startswith("---\ntitle:")
+    assert documents[2] == {"id": "missing/x.md", "error": "unknown document 'missing/x.md'"}  # the others still come
+
+
+def test_a_batch_leaves_out_texts_past_its_budget(mcp, monkeypatch):
+    monkeypatch.setattr(server, "BATCH_TEXT", 30)
+    asked = [{"id": "notes/rl.md", "lines": 1}, "notes/rl.md", {"id": "notes/brush.md", "lines": "1"}]
+    documents = data(call(mcp, "get", {"id": asked}))
+    assert [d.get("text") for d in documents] == ["# Reward shaping\n", None, "---\n"]  # 17 and 4 of 30 characters
+    assert "30 characters" in documents[1]["omitted"]
+    assert "lines" in documents[1]["omitted"]
+    assert set(documents[1]) == {"id", "title", "omitted"}
+
+
+@pytest.mark.parametrize("ids, reason", [([], "at least one"), (["notes/rl.md"] * 101, "at most 100")])
+def test_a_batch_names_what_it_takes(mcp, ids, reason):
+    result = call(mcp, "get", {"id": ids})
+    assert result.is_error
+    assert reason in result.content[0].text
+
+
 def test_unexpected_errors_reach_the_agent_too(embedded, monkeypatch, caplog):
     # A bug is still an error the agent should see: "Error executing tool search" alone says nothing.
     index = Index(embedded[0])

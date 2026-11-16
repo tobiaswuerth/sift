@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `get` takes several documents at once, up to 100, each an id or `{"id", "lines"}`, e.g. the results that matter:
+  one call instead of one per document, and an agent's turn instead of several. One that can't be read comes back
+  with its error, the others still come; texts past 100,000 characters in all are left out, each saying why.
+  `sift get` takes several ids too, each headed as `head` heads files.
+
 ## [1.11.2] - 2026-11-08
 
 No search held up while `sift embed` runs beside the server, and phrases asked again two to twenty times as fast.

@@ -58,6 +58,29 @@ def _shown(value):
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
+def _print_document(document):
+    """A document as `sift get` prints it: its fields, if asked for, then its text."""
+    for key, value in document.get("fields", {}).items():
+        print(f"{key}: {_shown(value)}")
+    if "fields" in document:
+        print()
+    text = document["text"]
+    sys.stdout.write(text if text.endswith("\n") or not text else text + "\n")  # JSON records end without one
+
+
+def _print_documents(documents):
+    """Several documents, each headed by its id as `head` heads files; those that can't be read said, and then an
+    error."""
+    for n, document in enumerate(d for d in documents if "error" not in d):
+        print(f"{chr(10) if n else ''}==> {document['id']} <==")
+        _print_document(document)
+    failed = [d for d in documents if "error" in d]
+    for document in failed:
+        print(f"sift: {document['id']}: {document['error']}", file=sys.stderr)
+    if failed:
+        raise SystemExit(f"{len(failed)} of {len(documents)} documents can't be read")
+
+
 def _print_hits(hits, as_json):
     if as_json:
         print(json.dumps(hits, ensure_ascii=False, indent=2))
@@ -222,8 +245,8 @@ def main(argv=None):
                 help="stop after this long, once anything is found: the best found so far, marked partial",
             )
         s.add_argument("--json", action="store_true", help="print results as JSON")
-    s = sub.add_parser("get", help="print a document by its id (collection/path)")
-    s.add_argument("id")
+    s = sub.add_parser("get", help="print documents by their ids (collection/path)")
+    s.add_argument("id", nargs="+")
     s.add_argument("--lines", help='only these lines, e.g. "17-26"')
     s.add_argument("--fields", help='front-matter fields to show first, comma-separated (e.g. "url,created"; "*": all)')
     s = sub.add_parser(
@@ -377,13 +400,11 @@ def _run(a, catalog):
     elif a.cmd == "get":
         from .search import Index
 
-        document = Index(catalog).document(a.id, a.lines, _fields(a.fields))
-        for key, value in document.get("fields", {}).items():
-            print(f"{key}: {_shown(value)}")
-        if "fields" in document:
-            print()
-        text = document["text"]
-        sys.stdout.write(text if text.endswith("\n") or not text else text + "\n")  # JSON records end without one
+        index, fields = Index(catalog), _fields(a.fields)
+        if len(a.id) == 1:
+            _print_document(index.document(a.id[0], a.lines, fields))
+        else:
+            _print_documents(index.documents([(id, a.lines) for id in a.id], fields))
     elif a.cmd == "bench":
         from . import bench
         from .search import Index

@@ -144,9 +144,12 @@ Keyword search covers the front matter too, so an author's name or an id finds i
 sift get handbook/hr/leave.md                           # the whole document
 sift get handbook/hr/leave.md --lines 14-23             # only some lines, e.g. those of a search hit
 sift get handbook/hr/leave.md --fields owner,modified   # front-matter fields first, then the text
+sift get handbook/hr/leave.md handbook/hr/travel.md     # several, each headed by its id
 ```
 
 An id is `collection/path`. It may leave out folders if the file name is unique, or be the file's absolute path.
+Through MCP, `get` takes up to 100 documents at once, each an id or `{"id": ..., "lines": "14-23"}`; texts past
+100,000 characters in all are left out, each saying so, to be read alone or by lines.
 
 ## Front matter and filters
 

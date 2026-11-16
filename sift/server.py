@@ -11,7 +11,7 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from . import console, jobs, logs, store
 from . import models as _models
@@ -29,7 +29,7 @@ and cite what you find; say so when nothing relevant turns up.
 - `search`: exact keyword search (BM25). Best for names, identifiers, exact terms and "quoted phrases".
 - `vsearch`: semantic search. Best when the wording of the answer is unknown.
 - `similar`: documents like a given one, e.g. more papers like one found.
-- `get`: a document, or some of its lines, such as a result's.
+- `get`: a document, or some of its lines, such as a result's; or several at once, e.g. the results that matter.
 - `links`: the links of a note ([[wikilinks]], embeds, Markdown links): those it holds, and those into it (backlinks).
 - `unresolved`: link targets no note answers to yet: the notes a collection lacks.
 - `mentions`: documents that name a note without linking to it.
@@ -88,6 +88,30 @@ Id = Annotated[
         'out if the file name is unique: "papers/attention.md". Or the file\'s absolute path.'
     ),
 ]
+Lines = Annotated[
+    str | int | None,
+    Field(description='Only these lines, e.g. a result\'s "17-26", or one line number; all if left out.'),
+]
+
+
+class Part(BaseModel):
+    """A document of several asked at once, and the lines of it wanted."""
+
+    id: Id
+    lines: Lines = None
+
+
+Ids = Annotated[
+    Id | list[Id | Part],
+    Field(
+        description='A document\'s id from a search result, e.g. "papers/2024/attention.md"; folders may be left '
+        'out if the file name is unique: "papers/attention.md". Or the file\'s absolute path. Or several at once, '
+        'each an id or {"id", "lines"}, e.g. the results that matter: [{"id": "papers/a.md", "lines": "17-26"}, '
+        '"papers/b.md"].'
+    ),
+]
+BATCH_IDS = 100  # documents one `get` takes
+BATCH_TEXT = 100_000  # characters of text one `get` of several documents returns, about 25,000 tokens
 Note = Annotated[
     str,
     Field(
@@ -205,6 +229,26 @@ async def _search(method, subject, k, arguments):
     return await _run(method, subject, k, **{key: arguments[key] for key in OPTIONS if key in arguments})
 
 
+def _batch(index, asked, lines, fields):
+    """The documents of one `get` that names several, their texts up to BATCH_TEXT characters in all."""
+    if not asked:
+        raise ValueError("get takes at least one id")
+    if len(asked) > BATCH_IDS:
+        raise ValueError(f"get takes at most {BATCH_IDS} ids at once, got {len(asked)}: ask for the rest in another")
+    wanted = [(part, lines) if isinstance(part, str) else (part.id, part.lines) for part in asked]
+    documents, used = index.documents(wanted, fields), 0
+    for document in documents:
+        size = len(document.get("text", ""))
+        if used + size > BATCH_TEXT:
+            del document["text"]
+            document["omitted"] = (
+                f"with it, this batch's text would pass {BATCH_TEXT:,} characters: get it alone, or some of its lines"
+            )
+        else:
+            used += size
+    return documents
+
+
 def build(index=None):
     # Tools run one at a time on a worker thread (see `jobs`), which serialises GPU and SQLite work and leaves the
     # event loop free; the models run on the main thread, which holds the loop.
@@ -259,16 +303,13 @@ def build(index=None):
         return await _search(index.similar, id, k, locals())
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get(
-        id: Id,
-        lines: Annotated[
-            str | int | None,
-            Field(description='Only these lines, e.g. a result\'s "17-26", or one line number; all if left out.'),
-        ] = None,
-        fields: Fields = None,
-    ) -> str | dict:
+    async def get(id: Ids, lines: Lines = None, fields: Fields = None) -> str | dict | list[dict]:
         """Text of a document, as indexed: all of it, or some of its lines. With `fields`, the document as
-        {id, title, fields, text}."""
+        {id, title, fields, text}. Several documents at once (up to 100) come as a list of such, `lines` applying to
+        those asked by id alone; one that can't be read as {id, error}. Texts past 100,000 characters in all are left
+        out, each with the reason (`omitted`): get those alone or by lines."""
+        if isinstance(id, list):
+            return await _run(_batch, index, id, lines, fields)
         if fields:
             return await _run(index.document, id, lines, fields)
         return await _run(index.get, id, lines)

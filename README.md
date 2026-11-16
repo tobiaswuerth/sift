@@ -88,7 +88,7 @@ servers, which can't reach your computer.
 | `vsearch` | Semantic search |
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder |
 | `similar` | Documents like a given one |
-| `get` | A document's text by its id, all of it or only some `lines`, with front-matter `fields` if asked |
+| `get` | A document's text by its id, all of it or only some `lines`, with front-matter `fields` if asked; or up to 100 at once |
 | `status` | The collections: folders, counts, front-matter fields, links |
 | `links` | A note's links, each with where it leads, and the notes linking to it |
 | `unresolved` | Link targets no note answers to yet |
@@ -111,7 +111,7 @@ on connecting which collections there are and which front-matter fields each has
 | `sift embed [NAME ...]` | Embed every passage without a vector, of every active collection or those named |
 | `sift search`, `vsearch`, `query` `TEXT` | Keyword, semantic and hybrid search |
 | `sift similar ID` | Documents like this one |
-| `sift get ID [--lines 14-23] [--fields a,b]` | A document, or some of its lines |
+| `sift get ID [ID ...] [--lines 14-23] [--fields a,b]` | Documents, or some of their lines |
 | `sift links`, `unresolved`, `mentions` | Linked notes |
 | `sift status` | Collections: folders, active or not, index files, sizes and counts, as JSON |
 | `sift activate`, `deactivate NAME ...` | Take collections into searches, or leave them out |
