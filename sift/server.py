@@ -487,10 +487,7 @@ def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
     models = models or _models.default()
     mcp, index = build(Index(models=models))
     console.say("loading the models and the vectors' codes into RAM ...")  # the models move to the GPU when used
-    try:
-        vectors.compile_scan()  # a second, once: then a large collection's codes are scanned three times as fast
-    except (ImportError, OSError, RuntimeError) as e:  # Numba missing or broken, no folder to keep its code in
-        console.say(f"warning: the compiled scan of the codes isn't available ({e}); NumPy's scans them")
+    vectors.compile_scan()  # a second, once: then a large collection's codes are scanned three times as fast
     for step in (models.load, index.load):
         try:
             step()

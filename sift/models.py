@@ -17,6 +17,7 @@ class Models(Protocol):
     name: str  # the embedding model, as the index records it
     address: str  # where the models compute, to show: a device or a worker's address
     batch: int  # texts per encode() call: small enough to fit, large enough to be quick
+    main_thread: bool  # whether a server calls them on its main thread: PyTorch crashes in others on Python 3.15
 
     def load(self) -> None:
         """Get ready now, so the first request is quick."""

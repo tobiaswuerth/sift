@@ -471,7 +471,9 @@ and hit@10 are those of each paper's own first passage. "+ exact top N" scores t
   is read. Over the arXiv codes four times over (12.9 million, 1.2 GB), one process, alternating, the machine at 80%
   load from other work: 133 ms (median 164) with NumPy, 43 (56) compiled, the same distances. Scanning a query in
   Numba's threads took 36 ms, in sift's own threads 49; four queries in one pass took 35 ms, 9 a query. Loading Numba
-  and the compiled scan takes about 1.6 s once per process, so collections under a million passages keep NumPy's scan.
+  and the compiled scan takes about 1.6 s once per process, so `sift serve` and `sift bench` load it as they start, a
+  single search from the command line keeps NumPy's scan, and so do collections under 65,536 passages, where it gains
+  less than a millisecond.
 - **int8 vectors for the exact scores** (not adopted): the 1,000 candidates scored with int8 vectors instead of fp16,
   over 500 of the title queries, in sift's own search: recall@10 0.9618 with a scale per vector, 0.9742 with a scale
   per dimension, against 0.9958; MRR@10 unchanged (0.9434 to 0.9439 against 0.9438). Half the vectors' storage, for

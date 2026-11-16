@@ -37,6 +37,7 @@ pre-commit install
 | `remote.py` | `Remote`: a `sift worker` on another machine, used like `Local` |
 | `accelerator.py` | `Accelerator`: the device, its memory budget, batch sizes, and what is on the GPU when |
 | `vectors.py` | The vectors' codes in RAM, one bit per dimension: candidates by Hamming distance, ranked again by the query's floats, scored exactly; filters checked nearest first |
+| `scan.py` | The Hamming scan of the codes compiled by Numba, in threads, for a server's large collections |
 | `server.py` | `sift serve`: the MCP server, and the UI under /ui |
 | `jobs.py` | A server's calls off its event loop, one at a time, stopped when cancelled; the models on the main thread |
 | `ui.py` | `sift ui`: the views of the browser UI; `web/` holds its templates, styles and script, and htmx 2.0.11 (0BSD) as its release ships it |
@@ -47,7 +48,7 @@ pre-commit install
 
 Search and embedding never ask where the models run: they take a `Models` object, `Local` or `Remote`. Only
 `accelerator.py` imports PyTorch at the top, so a machine that searches through a worker never loads it. No module
-reads the environment except `settings.py`. Results go to stdout from `cli.py` alone, and everything else sift says
+reads or sets the environment except `settings.py`. Results go to stdout from `cli.py` alone, and everything else sift says
 goes to stderr through `console.py`, so output can be piped. Tests build these objects around fakes (Sentence
 Transformers, GPU memory, the clock) instead of patching module state, and change settings with the `configure`
 fixture.

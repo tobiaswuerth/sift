@@ -2,6 +2,8 @@
 every collection searched, the best of them scored exactly with the vectors the stores hold."""
 
 import os
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -18,6 +20,7 @@ def scan_by(request, monkeypatch):
     compiled = request.param == "compiled"
     if compiled:
         vectors.compile_scan()
+        assert vectors._scan is not None, "the compiled scan didn't load"
     monkeypatch.setattr(vectors, "_scan", vectors._scan if compiled else None)
     monkeypatch.setattr(vectors, "COMPILED", 0)
 
@@ -423,8 +426,40 @@ def test_the_compiled_scan_checks_what_it_is_given():
             scan.measure(words, q, keep, out, vectors.FAR, 2)
 
 
-def test_the_compiled_code_is_kept_in_sift_home_unless_said_otherwise(monkeypatch, configure, tmp_path):
-    monkeypatch.delenv("NUMBA_CACHE_DIR", raising=False)
-    configure(home=tmp_path / "home")
+@pytest.mark.parametrize("scan_by", ["compiled"], indirect=True)
+def test_the_compiled_code_is_kept_in_sift_home(tmp_path):
+    # Beside the module, where an installation may not write, Numba refused to cache it, and every scan failed.
+    env = {k: v for k, v in os.environ.items() if k != "NUMBA_CACHE_DIR"} | {"SIFT_HOME": str(tmp_path / "home")}
+    code = "from sift import vectors; vectors.compile_scan(); import numba; print(numba.config.CACHE_DIR)"
+    found = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=300)
+    assert found.returncode == 0, found.stderr
+    assert found.stdout.strip() == str(tmp_path / "home" / "numba")
+    assert list((tmp_path / "home" / "numba").rglob("*.nbi"))
+
+
+@pytest.mark.parametrize("scan_by", ["numpy"], indirect=True)
+def test_a_compiled_scan_that_cant_load_is_said_and_numpy_scans(monkeypatch, capsys):
+    # A damaged kept code or an unwritable folder once stopped the server from starting at all.
+    from sift import scan
+
+    def broken(*args):
+        raise RuntimeError("cannot cache function '_scan': no locator available")
+
+    monkeypatch.setattr(scan, "measure", broken)
     vectors.compile_scan()
-    assert os.environ["NUMBA_CACHE_DIR"] == str(tmp_path / "home" / "numba")
+    assert "compiled scan of the codes isn't available (cannot cache" in capsys.readouterr().err
+    assert vectors._scan is None
+    _, matrix, _, index = random_index(n=50)
+    assert index.measure(codes(matrix[:1])[0])[0][0] == 0
+
+
+@pytest.mark.parametrize("scan_by", ["compiled"], indirect=True)
+def test_codes_fewer_than_compiled_keep_numpys_scan(monkeypatch):
+    monkeypatch.setattr(vectors, "COMPILED", 100)
+    used, numpy, compiled = [], vectors._numpy, vectors._compiled
+    monkeypatch.setattr(vectors, "_numpy", lambda *args: used.append("numpy") or numpy(*args))
+    monkeypatch.setattr(vectors, "_compiled", lambda *args: used.append("compiled") or compiled(*args))
+    for n in (50, 150):
+        _, matrix, _, index = random_index(n=n)
+        index.measure(codes(matrix[:1])[0])
+    assert used == ["numpy", "compiled"]

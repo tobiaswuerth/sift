@@ -82,9 +82,12 @@ def _insert(db, sid, path, doc):
     """Add a document, its chunks, its links and, if it is a whole file, its names, and return its id. Its keyword
     entries come with its file's (see _store)."""
     meta = json.dumps(doc.meta, ensure_ascii=False)
+    # SQLite's substr, which cuts the passages out of the text, stops at a NUL, and with it what is searched: U+FFFD
+    # instead, of the same length, so that the chunks' positions stay
+    title, text = (s.replace("\x00", "�") for s in (doc.title, doc.text))
     doc_id = db.execute(
         "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?)",
-        (sid, path, doc.digest, doc.title, meta, doc.text),
+        (sid, path, doc.digest, title, meta, text),
     ).lastrowid
     _add_chunks(db, doc_id, doc.chunks)
     if doc.links or not doc.key:  # a JSON Lines record has no name, and no links: millions of them cost nothing

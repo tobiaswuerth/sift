@@ -32,7 +32,7 @@ def test_both_kinds_offer_the_same_interface(make_local, make):
     # Looked up statically: asking a Remote for its name asks the worker.
     models = make(make_local)
     assert [m for m in MEMBERS if inspect.getattr_static(models, m, None) is None] == []
-    assert len(MEMBERS) == 10
+    assert len(MEMBERS) == 11
 
 
 def test_a_worker_manages_its_own_gpu():
@@ -40,6 +40,7 @@ def test_a_worker_manages_its_own_gpu():
     assert worker.release_idle() is False  # nothing on this machine to hand back
     worker.prepare()  # the worker sizes its batches itself: nothing asked of it here
     assert worker.lengths(["brush", "brush strokes"]) == [5, 13]  # characters: asking the worker would cost a request
+    assert worker.main_thread is False  # no PyTorch: a server asks it from the call's thread, its loop free meanwhile
 
 
 def test_choosing_the_models_loads_none_yet(monkeypatch, configure):

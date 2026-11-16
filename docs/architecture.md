@@ -118,9 +118,11 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   tell how near the nearest lie, and the cores pick the codes that near. `sift serve` scans them with compiled code
   ([Numba](https://numba.pydata.org)), each code read once and its distance counted where it is read: three times as
   fast as NumPy's three passes (12.9 million codes: 43 ms instead of 133). Loading Numba and the compiled code takes a
-  second or two, which the server pays as it starts; a single search from the command line keeps NumPy's scan. Numba
-  keeps the compiled code in `SIFT_HOME/numba` (or `NUMBA_CACHE_DIR`). A search reads the codes of the collections it
-  searches alone; the server reads every active collection's as it starts. The 10,000
+  second or two, which the server and `sift bench` pay as they start; a single search from the command line keeps
+  NumPy's scan, as do collections under 65,536 passages, and so does a server where Numba can't be loaded, saying so.
+  Numba keeps the compiled code in `SIFT_HOME/numba` (or `NUMBA_CACHE_DIR`). A search reads the codes of the
+  collections it searches alone; the server reads every active collection's as it starts, and lets go of a
+  collection's when it is made inactive. The 10,000
   nearest of all collections together, ties by id, are ranked again by the query's own floats against their bits (a
   table lookup per byte), and the best 1,000 are scored exactly with their vectors from the index. Over 3.2 million
   arXiv abstracts this finds 99.75% of exact search's top 10, and its known-item MRR, 0.9530; reading 1,000 vectors
@@ -175,11 +177,14 @@ each, so the backlinks of a note linked by 6,000 others take 16 ms
   while what they read is as it was: the catalog and the stores opened as SQLite counts their changes, those other
   connections commit (`PRAGMA data_version`) and the rows the server's own connection changed (`total_changes`, as its
   `reindex` does), and the codes it holds. A search within a time budget is never kept, as what it finds depends on the
-  time it had, nor one of more than 1,000 hits.
+  time it had, nor one of more than 1,000 hits, nor one that passed over a collection whose store couldn't be opened,
+  or while the codes of one it searched were still being read.
 - Calls run one at a time on a worker thread, so the event loop stays free to answer, to accept connections and to
   hear that a client cancelled a call or went away. A cancelled call stops: its SQLite statements end within about a
   millisecond, through a progress handler on every connection, and it runs the models no more. `reindex` runs to its
-  end. The models run on the main thread, which holds the loop: PyTorch crashes in worker threads on Python 3.15.
+  end. The models of this machine run on the main thread, which holds the loop: PyTorch crashes in worker threads on
+  Python 3.15. A worker's (`SIFT_EMBED_REMOTE`) are asked from the call's own thread, so the loop stays free while a
+  request waits.
 - The UI's pages are rendered on the server with Jinja2, whose panes [htmx](https://htmx.org) swaps in place: no build
   step and no Node, and the UI is tested with the rest. Its pages are made as the MCP tools' calls are run.
   Browsing a folder jumps through the index folder by folder, so it stays quick in collections of millions of

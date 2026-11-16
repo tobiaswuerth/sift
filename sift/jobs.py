@@ -2,8 +2,9 @@
 free to answer, to accept connections, and to hear that a client cancelled a call or went away. A cancelled call
 stops: its SQLite statements end at once (store.ABORT), and it calls the models no more. Writes run to their end.
 
-The models run on the main thread, which holds the loop, whoever calls them (OnMainThread): PyTorch crashes in worker
-threads on Python 3.15 (Windows, macOS)."""
+The models of this machine run on the main thread, which holds the loop, whoever calls them (OnMainThread): PyTorch
+crashes in worker threads on Python 3.15 (Windows, macOS). A worker's are asked from the calling thread, so that the
+loop stays free while a request waits for its answer."""
 
 import functools
 import logging
@@ -65,8 +66,9 @@ async def run(fn, *args, abortable=True, **kwargs):
 
 
 class OnMainThread:
-    """Models whose methods run on the main thread, wherever they are called: from a worker thread of `run`, through
-    the event loop. Called for a cancelled call, they raise Cancelled."""
+    """Models whose methods run on the main thread, wherever they are called, if they must (`main_thread`): from a
+    worker thread of `run`, through the event loop, which waits meanwhile. Others run where they are called. Called for
+    a cancelled call, they raise Cancelled."""
 
     def __init__(self, models):
         self._models = models._models if isinstance(models, OnMainThread) else models
@@ -80,7 +82,7 @@ class OnMainThread:
         def on_main_thread(*args, **kwargs):
             if store.ABORT.is_set():
                 raise Cancelled("the call was cancelled")
-            if threading.current_thread() is threading.main_thread():
+            if not self._models.main_thread or threading.current_thread() is threading.main_thread():
                 return value(*args, **kwargs)
             return anyio.from_thread.run_sync(functools.partial(value, *args, **kwargs))
 

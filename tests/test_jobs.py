@@ -153,7 +153,7 @@ def test_writes_run_to_their_end_when_cancelled(db):
 
 
 class Models:
-    name = "fake"
+    name, main_thread = "fake", True
 
     def __init__(self):
         self.threads = []
@@ -161,6 +161,43 @@ class Models:
     def encode(self, texts):
         self.threads.append(threading.current_thread())
         return len(texts)
+
+
+class Worker:
+    """Models on another machine, which answer once something on this one happens."""
+
+    name, main_thread = "worker", False
+
+    def __init__(self):
+        self.answered = threading.Event()
+
+    def encode(self, texts):
+        return self.answered.wait(5)
+
+
+def test_models_called_on_any_thread_leave_the_loop_free():
+    # A request to a worker held the event loop on the main thread: up to 10 minutes of a server answering nothing,
+    # not even a cancellation, when the worker's machine went to sleep.
+    models, answers = jobs.OnMainThread(Worker()), []
+
+    async def ask():
+        answers.append(await jobs.run(lambda: models.encode(["a"])))
+
+    async def main():
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.sleep(0.05)
+            models._models.answered.set()  # only while the loop is free
+
+    anyio.run(main)
+    assert answers == [True]  # not timed out
+
+
+def test_models_called_on_any_thread_still_stop_when_cancelled():
+    models = jobs.OnMainThread(Worker())
+    store.ABORT.set()
+    with pytest.raises(jobs.Cancelled):
+        models.encode(["a"])
 
 
 def test_the_models_run_on_the_main_thread_whoever_calls():

@@ -64,6 +64,8 @@ class Local:
     """The models of this machine. Each loads on first use, into RAM in the accelerator's half precision, and moves
     to the GPU while in use. If the accelerator falls back to the CPU, they load again, in float32."""
 
+    main_thread = True  # PyTorch
+
     def __init__(self, accelerator=None):
         self.accelerator = accelerator or Accelerator()
         self.name, self.reranker_name = settings.current().embed_model, settings.current().rerank_model

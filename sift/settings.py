@@ -31,3 +31,9 @@ class Settings:
 def current():
     """This process's settings, from its environment, read on first use."""
     return Settings.from_env()
+
+
+def keep_compiled_code():
+    """Numba keeps the code it compiles beside the module, where an installation may not write: in SIFT_HOME instead,
+    unless NUMBA_CACHE_DIR says where. Before Numba is imported, which reads it then."""
+    os.environ.setdefault("NUMBA_CACHE_DIR", str(current().home / "numba"))

@@ -53,6 +53,59 @@ def test_a_semantic_search_of_one_collection_reads_its_codes_alone(three):
     assert len(index.vectors) == 3
 
 
+def test_query_of_a_collection_not_embedded_yet_reranks_its_keyword_candidates(three, tmp_path):
+    write(tmp_path / "fresh" / "robot.md", "# Robot arm\n\nA robot arm, not embedded yet.\n")
+    three.add(tmp_path / "fresh", "fresh")
+    indexing.index(three)
+    index = Index(three)
+    assert ids(index.query("robot arm", collection="fresh")) == ["fresh/robot.md"]
+    with pytest.raises(LookupError, match="no embeddings yet in fresh, run `sift embed`"):
+        index.vsearch("robot arm", collection="fresh")
+
+
+def test_a_store_gone_while_open_fails_no_search(three, monkeypatch):
+    # A drive unplugged under an open store: asking it whether it changed failed every search, of any collection.
+    index, diary = Index(three), three.get("diary")
+    index.search("robot")
+    path, real = three._stores[diary.id]
+
+    class Unplugged:
+        total_changes = 0
+
+        def execute(self, *args):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        def close(self):
+            real.close()
+
+    three._stores[diary.id] = (path, Unplugged())
+    isfile = os.path.isfile
+    monkeypatch.setattr(os.path, "isfile", lambda p: p != diary.store and isfile(p))
+    assert sorted(ids(index.search("robot"))) == ["papers/robots.md", "recipes/soup.md"]
+    assert ids(index.search("robot", collection="papers")) == ["papers/robots.md"]
+
+
+def test_a_store_back_after_a_search_passed_it_over_is_searched_again(three):
+    # The search that passed it over was kept, and asked again once the store was back, came from memory without it.
+    stored = three.get("diary").store
+    three.release(three.get("diary").id)
+    os.replace(stored, stored + ".away")
+    index = Index(three)
+    assert "diary/monday.md" not in ids(index.search("robot"))
+    os.replace(stored + ".away", stored)
+    assert "diary/monday.md" in ids(index.search("robot"))
+
+
+def test_searches_of_one_collection_let_go_of_collections_deactivated_meanwhile(three, home):
+    # Only `collection` searches, and the codes of a collection another sift deactivated stayed, and its store open.
+    index, recipes = Index(three), three.get("recipes").id
+    index.vsearch("robot")
+    Catalog(home).set_active(["recipes"], False)
+    index.vsearch("robot", collection="papers")
+    assert recipes not in index.vectors
+    assert recipes not in [cid for cid, _, _ in three.open_stores()]
+
+
 def test_a_search_of_one_collection_touches_no_other(three, home, capsys):
     # Keeping results asked every active store whether it changed: each search of one collection opened every store
     # and warned again of one whose drive was unplugged.
@@ -382,8 +435,9 @@ def test_with_every_collection_inactive_a_search_says_how_to_activate_one(three)
     three.set_active(["diary", "papers", "recipes"], False)
     index = Index(three)
     assert index.search("robot") == []
-    with pytest.raises(LookupError, match="no collection is active: `sift activate NAME`"):
-        index.vsearch("robot")
+    for search in (index.vsearch, index.query):
+        with pytest.raises(LookupError, match="no collection is active: `sift activate NAME`"):
+            search("robot")
 
 
 def test_a_note_whose_collection_is_removed_meanwhile_is_a_clear_error(three, monkeypatch):

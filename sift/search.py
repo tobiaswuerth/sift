@@ -60,7 +60,7 @@ def _several(method):
         if wrong := [q for q in query if not isinstance(q, str) or not q.strip()]:
             raise ValueError(f"each query of several is a text, got {wrong[0]!r}")
         k = args[0] if args else kwargs.get("k", 10)
-        if isinstance(k, int) and k * len(query) > MOST_HITS:
+        if isinstance(k, int) and min(k, MOST_HITS) * len(query) > MOST_HITS:  # one asked for more gets MOST_HITS
             raise ValueError(
                 f"several queries return at most {MOST_HITS:,} hits in all; {len(query)} of k={k} would be "
                 f"{k * len(query):,}: ask fewer at a time, or a smaller k"
@@ -94,13 +94,16 @@ def _remembered(method):
             key = json.dumps([method.__name__, args, kwargs], sort_keys=True, default=str)
         except TypeError:  # filters of keys JSON can't sort: no key, and the search says what is wrong
             return method(self, *args, **kwargs)
+        self._settle()  # the codes read anew meanwhile are those the state holds
         state = self._state()
         if (kept := self._results.get(key)) is not None and kept[0] == state:
             self._results.move_to_end(key)
             return copy.deepcopy(kept[1])
+        self._passed.clear()
         hits = method(self, *args, **kwargs)
-        # not with codes being read anew: they take over later; nor results so large that keeping them costs more
-        if not self._reading and len(hits) <= KEPT_HITS and self._state() == state:
+        # Not with codes being read anew, which take over later; nor a collection passed over, whose store may come
+        # back unsaid; nor results so large that keeping them costs more.
+        if not (self._reading or self._passed) and len(hits) <= KEPT_HITS and self._state() == state:
             self._results[key] = (state, copy.deepcopy(hits))
             while len(self._results) > RESULTS:
                 self._results.popitem(last=False)
@@ -556,6 +559,7 @@ class Index:
         self._query_vectors = OrderedDict()  # question: its embedding, the last QUERY_VECTORS asked
         self._results = OrderedDict()  # a search and its options: (the state it read, its results), see _remembered
         self._asked = []  # the questions of the call of several being answered, embedded together (see _several)
+        self._passed = set()  # active collections a search passed over, their stores missing or unusable: not kept
 
     @property
     def models(self):
@@ -576,9 +580,14 @@ class Index:
         counts their changes, those other connections commit (data_version) and those of the connection itself
         (total_changes, as the server's own `reindex` makes them), and the codes held. A store not opened yet was read
         by no search kept, and a search that opens it changes this, so it isn't kept that time."""
-        stores = tuple((cid, path, *_changes(db)) for cid, path, db in self.catalog.open_stores())
+        stores = []
+        for cid, path, db in self.catalog.open_stores():
+            try:
+                stores.append((cid, path, *_changes(db)))
+            except sqlite3.Error:  # out of reach, as on a drive unplugged: equal to no state, so nothing kept or used
+                stores.append((cid, path, object()))
         held = tuple((cid, h.version, h.epoch, h.count, h.last) for cid, h in self.vectors.items())
-        return _changes(self.catalog.db), stores, held
+        return _changes(self.catalog.db), tuple(stores), held
 
     def forget(self):
         """Let go of the questions' embeddings and the searches' results kept: as `sift bench` times each mode."""
@@ -593,24 +602,26 @@ class Index:
     # --- which collections and documents a search may find -----------------------
 
     def active(self):
-        """The active collections whose stores open, by id; the codes of others are let go."""
+        """The active collections whose stores open, by id; what is held of others is let go (see _settle)."""
+        self._settle()
         found = {}
         for c in self.catalog.collections():
             if not c.active:
-                self.catalog.release(c.id)
-            elif not os.path.isfile(c.store):
+                continue
+            if not os.path.isfile(c.store):
+                self._passed.add(c.id)
                 self._warn(f"{c.name}: its index is missing: {c.store}; searches pass it over")
             else:
                 try:
                     self.catalog.opened(c)
                 except LookupError as unusable:  # damaged, a newer sift's, locked or out of reach
+                    self._passed.add(c.id)
                     self._warn(f"{unusable}; searches pass it over")
                 else:
                     found[c.id] = c
         for held in (self.vectors, self._reading, self._postings):
             for cid in held.keys() - found.keys():
                 del held[cid]
-        self.catalog.release_gone()  # a store `sift rm` deleted meanwhile: its space is freed once closed
         return found
 
     def _scope(self, collection):
@@ -845,23 +856,42 @@ class Index:
             scored[c] = [(passage, doc, score.get(passage, 0.0)) for passage, doc, _ in passages]
         return scored
 
-    def load(self, scope=None):
+    def load(self, scope=None, required=True):
         """Load the codes of the vectors (see `vectors`) of the collections of `scope`, those a search covers, or of
         every active one, as a server does when it starts: each store's batch by batch. Follow a store that changed
         since: the codes written past the last held are read alone, as `sift embed` writes them; after another change,
         all are read again in a thread of their own, while searches go on with those held, which the codes read then
-        replace."""
-        scope = list(self.active().values()) if scope is None else scope
+        replace. An error if none of them has codes, unless not `required`: `query` reranks its keyword candidates
+        then."""
+        if scope is None:
+            scope = list(self.active().values())
+        else:
+            self._settle()
         if not scope and self.catalog.collections():
             raise LookupError("no collection is active: `sift activate NAME` takes one back into searches")
         for c in scope:
             self._follow(c)
-        if not any(c.id in self.vectors for c in scope):
-            raise LookupError("no embeddings yet, run `sift embed`")
+        if required and not any(c.id in self.vectors for c in scope):
+            where = f" in {', '.join(c.name for c in scope)}" if scope else ""
+            raise LookupError(f"no embeddings yet{where}, run `sift embed`")
 
-    def _follow(self, collection):
-        """Bring the codes held of a collection up to its store (see load)."""
-        cid, db = collection.id, self.catalog.store(collection)
+    def _settle(self):
+        """Let go of what is held of collections no longer active, as another sift deactivated or removed them, and
+        close their stores (the space of a store `sift rm` deleted is freed once closed); and take the codes read anew
+        that are ready. Without opening every active store, as a search of one collection doesn't."""
+        collections = {c.id: c for c in self.catalog.collections() if c.active}
+        for held in (self.vectors, self._reading, self._postings):
+            for cid in held.keys() - collections.keys():
+                del held[cid]
+        for cid, _, _ in self.catalog.open_stores():
+            if cid not in collections:
+                self.catalog.release(cid)
+        for cid in [cid for cid, reading in self._reading.items() if reading.done()]:
+            self._take_read(collections[cid])
+
+    def _take_read(self, collection):
+        """Take the codes of a collection read anew, once they are."""
+        cid = collection.id
         if (reading := self._reading.get(cid)) is not None and reading.done():
             del self._reading[cid]
             try:
@@ -872,6 +902,11 @@ class Index:
                 self.vectors[cid] = found
                 if found is None:
                     self.vectors.pop(cid)
+
+    def _follow(self, collection):
+        """Bring the codes held of a collection up to its store (see load)."""
+        cid, db = collection.id, self.catalog.store(collection)
+        self._take_read(collection)
         held = self.vectors.get(cid)
         with _snapshot([db]):
             version = store.get_meta(db, "version")
@@ -917,11 +952,11 @@ class Index:
         matrix = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), dim)
         return np.array([chunk for chunk, _ in rows], np.int64), matrix
 
-    def _vector(self, query, scope):
-        """The query's vector, with the codes of the collections searched loaded: kept for the next QUERY_VECTORS
-        questions, and embedded together with the others of a call of several queries, the first time one is needed,
-        after the search checked what it was asked."""
-        self.load(scope)
+    def _vector(self, query, scope, required=True):
+        """The query's vector, with the codes of the collections searched loaded (see load): kept for the next
+        QUERY_VECTORS questions, and embedded together with the others of a call of several queries, the first time one
+        is needed, after the search checked what it was asked."""
+        self.load(scope, required)
         self._embed_questions([query, *self._asked])
         return self._query_vectors[query]
 
@@ -1117,7 +1152,7 @@ class Index:
         fields, sort = _check_fields(fields), _check_sort(sort)
         candidates = min(max(candidates, k), MOST_HITS)
         keyword = self._keyword(_any_word(query), candidates, scope, where, args, all_passages)
-        vector = self._vector(query, scope) if query.strip() else None  # for the semantic candidates and every cosine
+        vector = self._vector(query, scope, required=False) if query.strip() else None  # semantic candidates, cosines
         allowed = self._filter(scope, where, args)
         semantic = self._nearest(vector, candidates, scope, allowed, all_passages) if vector is not None else []
         hits = self._hits([(chunk, 0.0) for chunk in dict.fromkeys(chunk for chunk, _ in keyword + semantic)])

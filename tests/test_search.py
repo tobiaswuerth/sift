@@ -1905,6 +1905,7 @@ def test_several_queries_return_at_most_as_many_hits_as_one_search(embedded, ask
             index.search(["brush", "reward", "colour"], **asked)
     else:
         index.search(["brush", "reward", "colour"], 3_333)
+        index.search(["brush"], 20_000)  # capped at 10,000, as one search asked for more is
 
 
 def test_large_results_are_not_kept(embedded, monkeypatch):

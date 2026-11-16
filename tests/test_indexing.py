@@ -214,6 +214,21 @@ def test_index_picks_text_and_markdown_only(corpus):
     assert sorted(doc_ids(corpus[0])) == ["plain.txt", "rl.md", "robots/brush.md"]
 
 
+def test_a_nul_in_a_file_hides_nothing_after_it(corpus):
+    # SQLite's substr, which cuts the passages out of a document's text, stops at a NUL: the words after one, in a log
+    # padded with them or a note with a pasted control character, went into the keyword index and the embeddings empty.
+    catalog, root = corpus
+    (root / "padded.txt").write_bytes(b"before the padding\x00\x00\x00 wombat after it\n")
+    write(root / "pasted.md", "# Num\x00bers\n\nnumbat in the text\n")
+    indexing.index(catalog)
+    index = Index(catalog)
+    for word, path in (("wombat", "notes/padded.txt"), ("numbat", "notes/pasted.md")):
+        hits = index.search(word)
+        assert [hit["id"] for hit in hits] == [path]
+        assert word in hits[0]["text"]
+    assert index.document("notes/pasted.md", fields=["title"])["title"] == "Num\ufffdbers"
+
+
 def test_index_is_incremental(corpus, capsys):
     catalog, root = corpus
     ids = doc_ids(catalog)

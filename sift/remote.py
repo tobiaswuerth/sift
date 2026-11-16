@@ -69,6 +69,7 @@ class Remote:
     """A `sift worker`, used like the models of this machine (see `models.Models`)."""
 
     batch = BATCH
+    main_thread = False  # no PyTorch: a request that hangs holds the call waiting for it, not the server's event loop
 
     def __init__(self, url):
         parts = urllib.parse.urlsplit(url)

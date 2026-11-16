@@ -20,21 +20,30 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `sift serve` scans the vectors' codes three times as fast: compiled code reads each code once and counts its
   distance where it is read, where NumPy made three passes. Over 12.9 million arXiv codes, 43 ms instead of 133, the
   same distances. sift now depends on [Numba](https://numba.pydata.org), which has wheels for every platform and
-  Python sift supports. The server loads the compiled scan as it starts (a second or two, its code kept in
-  `SIFT_HOME/numba`); a single search from the command line keeps NumPy's, which costs it less.
+  Python sift supports. The server and `sift bench` load the compiled scan as they start (a second or two, its code
+  kept in `SIFT_HOME/numba`); a single search from the command line keeps NumPy's, which costs it less, and so does a
+  server that can't load Numba, saying so.
 - `query` reranks its candidates in batches of 16, which Sentence Transformers sorts by length: one batch of all 80
   was padded to the longest, 1.7 to 3.5 times their tokens. 180 ms a question on an RTX 4090 instead of 331.
 - A server keeps the embeddings of the last 256 questions (3 KB each) and the results of the last 32 searches: an
   agent asking a question again with another `k` or filter skips the embedding (51 ms on an RTX 4090), and the same
   search asked again reads nothing. Kept results count as long as nothing they read has changed: any change to the
   catalog or a store, by another sift (as SQLite counts them) or by the server's own `reindex`, and any change to the
-  codes in memory, lets them go. A search within a time budget is never kept, nor one of more than 1,000 hits.
+  codes in memory, lets them go. A search within a time budget is never kept, nor one of more than 1,000 hits, nor
+  one that passed over a collection whose store couldn't be opened.
 
 ### Fixed
 
 - A semantic search of one collection (`vsearch`, `query` or `similar` with `collection`, `-c` on the command line)
   read the codes of every active collection first: beside PubMed's, half a minute and 4 GB to search a few hundred
   notes. It reads those of the collections it searches.
+- A server that embeds through a worker (`SIFT_EMBED_REMOTE`) answered nothing while a request to the worker waited,
+  up to ten minutes if the worker's machine went to sleep: not even a cancellation. The request now waits on the call's
+  own thread.
+- A NUL character in a file (a log padded with them, a pasted control character) hid everything after it from
+  searches: SQLite's `substr`, which cuts the passages out of a document's text, stops there, so they were indexed
+  empty and embedded as their title alone. It is stored as U+FFFD. A file indexed before is read again when it
+  changes.
 
 ## [1.11.2] - 2026-11-08
 

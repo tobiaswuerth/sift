@@ -13,7 +13,7 @@ from functools import cache
 
 import numpy as np
 
-from . import settings
+from . import console, settings
 
 RESCORE = 1000  # candidates scored exactly, at least: reading their vectors is most of a search's time
 SHORTLIST = 10  # times as many, the nearest by Hamming distance, ranked by the query's floats against their bits
@@ -36,13 +36,16 @@ _scan = None  # the compiled scan, `scan`, once compile_scan loaded it
 def compile_scan():
     """Load the compiled scan of the codes (see `scan`), for collections of COMPILED codes or more: loading Numba and
     the compiled code takes a second or two, which a server pays once, as it starts; a single search from the command
-    line keeps NumPy's scan, which costs it less."""
+    line keeps NumPy's scan, which costs it less. One that can't be loaded is said, and NumPy's scan stays."""
     global _scan
-    # Numba keeps the compiled code beside the module, where an installation may not write: in SIFT_HOME instead
-    os.environ.setdefault("NUMBA_CACHE_DIR", str(settings.current().home / "numba"))
-    from . import scan
+    settings.keep_compiled_code()
+    try:
+        from . import scan
 
-    scan.measure(np.zeros((1, 1), np.uint64), np.zeros(1, np.uint64), _NONE, np.empty(1, np.uint16), FAR, 1)
+        scan.measure(np.zeros((1, 1), np.uint64), np.zeros(1, np.uint64), _NONE, np.empty(1, np.uint16), FAR, 1)
+    except Exception as error:  # Numba missing or broken, its kept code damaged, no folder to keep it in
+        console.say(f"warning: the compiled scan of the codes isn't available ({error}); NumPy's scans them")
+        return
     _scan = scan
 
 

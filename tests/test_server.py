@@ -383,11 +383,15 @@ def test_serve_loads_the_compiled_scan_up_front(embedded, transports, monkeypatc
 
 
 def test_serve_without_the_compiled_scan_says_so_and_scans_with_numpy(embedded, transports, monkeypatch, capsys):
-    def broken():
+    from sift import scan
+
+    def broken(*args):
         raise RuntimeError("cannot cache function '_scan': no locator available")
 
-    monkeypatch.setattr(vectors, "compile_scan", broken)
+    monkeypatch.setattr(vectors, "_scan", None)
+    monkeypatch.setattr(scan, "measure", broken)
     server.serve(stdio=True)
+    assert vectors._scan is None
     assert "the compiled scan of the codes isn't available (cannot cache" in capsys.readouterr().err
     assert transports.started
 

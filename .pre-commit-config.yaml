@@ -13,6 +13,7 @@ repos:
       - id: check-added-large-files
       - id: mixed-line-ending
         args: [--fix=lf]
+      - id: fix-byte-order-marker  # Windows PowerShell 5.1 writes UTF-8 with one
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.3
