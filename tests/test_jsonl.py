@@ -291,6 +291,16 @@ def test_a_record_named_like_a_file_is_skipped(tmp_path, home, capsys):
     catalog = Catalog(home)
     catalog.add(tmp_path / "c", "c")
     indexing.index(catalog)
-    assert only(catalog).execute("SELECT count(*) FROM docs WHERE path = 'a/b.md'").fetchone() == (1,)
+    assert only(catalog).execute("SELECT text FROM docs WHERE path = 'a/b.md'").fetchall() == [("# File\n",)]
     shown = [line.rsplit("\r", 1)[-1].rstrip() for line in capsys.readouterr().err.split("\n")]
-    assert "c: a/b.md: a document of this name exists already, skipped" in shown  # a line of its own
+    said = "c: a/b.md: a record or attachment of a.jsonl held this path; the file takes it, and it is left out"
+    assert said in shown  # a line of its own
+
+
+def test_a_record_whose_id_holds_a_nul_can_be_got(tmp_path, home):
+    # Its path held the NUL, at which SQLite's substr stops: `get` by its id, or its folder, found nothing.
+    write(tmp_path / "c" / "data.jsonl", json.dumps({"id": "a\x00b", "text": "record"}) + "\n")
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert Index(catalog).get("c/data/a\ufffdb") == "record"

@@ -8,6 +8,7 @@ stays free while a request waits for its answer, and a cancelled call stops wait
 
 import functools
 import logging
+import queue
 import threading
 from concurrent.futures import Future, wait
 
@@ -94,20 +95,47 @@ class OnMainThread:
         return on_main_thread
 
 
+class _Requests:
+    """A worker's requests, made one after another in a thread of their own: one cancelled before its turn is never
+    made. A daemon, so that a request left waiting holds up no exit."""
+
+    def __init__(self):
+        self._queue, self._lock, self._thread = queue.SimpleQueue(), threading.Lock(), None
+
+    def submit(self, call):
+        """call(), in its turn: a Future of its answer."""
+        answer = Future()
+        with self._lock:
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._serve, name="sift-worker-requests", daemon=True)
+                self._thread.start()
+        self._queue.put((answer, call))
+        return answer
+
+    def _serve(self):
+        while True:
+            answer, call = self._queue.get()
+            if not answer.set_running_or_notify_cancel():  # cancelled before its turn
+                continue
+            if store.ABORT.is_set():  # its call was cancelled, and hasn't looked yet: the next call clears it first
+                answer.set_exception(Cancelled("the call was cancelled"))
+                continue
+            try:
+                answer.set_result(call())
+            except BaseException as error:  # handed to the caller, if it still waits
+                answer.set_exception(error)
+
+
+_requests = _Requests()
+
+
 def _abortable(call):
-    """call() in a thread of its own, its answer awaited until the call it belongs to is cancelled: then Cancelled at
-    once, and the answer, when it comes, dropped. A worker's request can wait minutes for one (remote.TIMEOUT), and
-    meanwhile the server takes no other call."""
-    answer = Future()
-
-    def ask():
-        try:
-            answer.set_result(call())
-        except BaseException as error:  # handed to the caller, if it still waits
-            answer.set_exception(error)
-
-    threading.Thread(target=ask, name="sift-worker-request", daemon=True).start()
+    """call() as a worker's request (see _Requests), its answer awaited until the call it belongs to is cancelled:
+    then Cancelled at once, and the request dropped if not made yet, its answer if it was. A worker's request can wait
+    minutes for one (remote.TIMEOUT), and meanwhile the server takes no other call."""
+    answer = _requests.submit(call)
     while not wait([answer], ABORT_CHECK).done:
         if store.ABORT.is_set():
-            raise Cancelled("the call was cancelled; its request to the worker ends by itself")
+            answer.cancel()
+            raise Cancelled("the call was cancelled; a request to the worker on its way ends by itself")
     return answer.result()

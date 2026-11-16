@@ -42,10 +42,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   notes. It reads those of the collections it searches.
 - A server that embeds through a worker (`SIFT_EMBED_REMOTE`) answered nothing while a request to the worker waited,
   up to ten minutes if the worker's machine went to sleep: not even a cancellation, and no other call after it. The
-  request now waits in a thread of its own, and a cancelled call stops waiting for it.
+  requests now wait in a thread of their own, one at a time: a cancelled call stops waiting for its request, and one
+  not sent yet never is.
 - A file whose path a JSON Lines record or a mail's attachment had taken (`data.jsonl` with a record `a.md`, beside
-  `data/a.md`) was skipped, and never read again, even once the record was gone. It is read again by each `sift index`
-  until it can be stored.
+  `data/a.md`) was skipped, and never read again, even once the record was gone. The file takes the path, whichever
+  was read first, and the record or attachment is left out, said once.
 - What `sift index` said of a file under its progress line (a file skipped, a line of JSON Lines left out, a scan read)
   wasn't in its log.
 - A value of front matter written as a JSON string ended at U+2028, U+2029 or NEL, which JSON leaves unescaped.
@@ -53,11 +54,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
   every run. A file with a UTF-32 byte order mark was read as UTF-16, a NUL after every character.
 - `get` of several documents failed for all of them when one's store was out of reach; it comes back with its error.
 - With the GPU hidden on purpose (`CUDA_VISIBLE_DEVICES=-1`, to keep sift on the CPU), sift said to update the NVIDIA
-  driver; it says the GPU is hidden.
+  driver; it names the variable.
+- One store damaged (a table a failing disk broke, though the store opens) stopped `sift index`, `status` and the
+  server's start for every collection, with a message that named neither the collection nor what to do. It is passed
+  over, and said, with how to forget it.
+- Ctrl+C, or any other error, while the keyword postings were built in the process itself came out on Windows as a
+  file it couldn't delete, which stayed in the temporary folder. A build there needs no file.
+- A record or an attachment whose id held a NUL couldn't be got by it; `.siftignore` ended patterns at U+2028, form
+  feeds and NEL, as git doesn't.
 - A NUL character in a file (a log padded with them, a pasted control character) hid everything after it from
   searches: SQLite's `substr`, which cuts the passages out of a document's text, stops there, so they were indexed
-  empty and embedded as their title alone. It is stored as U+FFFD. A file indexed before is read again when it
-  changes.
+  empty and embedded as their title alone. It is stored as U+FFFD. A document indexed before keeps the cut until its
+  text changes.
 
 ## [1.11.2] - 2026-11-08
 

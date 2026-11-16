@@ -386,7 +386,7 @@ def test_explains_an_unused_nvidia_gpu(make, nvml, monkeypatch, configure, capsy
     assert hint in err
 
 
-@pytest.mark.parametrize("gpus", ["-1", "", " -1,0"])
+@pytest.mark.parametrize("gpus", ["-1", "", " -1,0", "NoDevFiles", "7"])
 def test_a_gpu_hidden_on_purpose_is_no_driver_to_update(make, nvml, monkeypatch, configure, capsys, gpus):
     # CUDA_VISIBLE_DEVICES=-1 keeps a program on the CPU; NVML still sees the GPU, and sift said to update the driver.
     import torch
@@ -395,7 +395,7 @@ def test_a_gpu_hidden_on_purpose_is_no_driver_to_update(make, nvml, monkeypatch,
     monkeypatch.setattr(torch.version, "cuda", "12.8")
     make("cpu").budget()
     err = capsys.readouterr().err
-    assert f"the NVIDIA GPU is hidden (CUDA_VISIBLE_DEVICES={gpus}), so sift runs on the CPU" in err
+    assert f"PyTorch sees no NVIDIA GPU with CUDA_VISIBLE_DEVICES={gpus}, so sift runs on the CPU" in err
     assert "driver" not in err
 
 

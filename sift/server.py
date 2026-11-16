@@ -50,15 +50,23 @@ def _collections(index):
         return "No collections are active." if index.catalog.collections() else "No collections are indexed yet."
     lines = []
     for c in active:
-        n = store.counts(index.catalog.store(c))["docs"]
-        line = f"- {c.name} ({c.path}): {n:,} document{'' if n == 1 else 's'}"
-        if fields := index.fields(c):
-            line += "; front matter: " + ", ".join(fields)
-        linked, broken = index.link_counts(c)
-        if linked:
-            line += f"; {console.count(linked, 'link')}, {broken:,} unresolved"
-        lines.append(line)
+        try:
+            lines.append(_collection_line(index, c))
+        except sqlite3.DatabaseError as error:  # one store damaged keeps no server from starting
+            lines.append(f"- {c.name} ({c.path}): {store.damage(c.name, error)}")
     return "Indexed collections:\n" + "\n".join(lines)
+
+
+def _collection_line(index, c):
+    """A collection as the server's instructions name it: its folder, size, front-matter fields and links."""
+    n = store.counts(index.catalog.store(c))["docs"]
+    line = f"- {c.name} ({c.path}): {n:,} document{'' if n == 1 else 's'}"
+    if fields := index.fields(c):
+        line += "; front matter: " + ", ".join(fields)
+    linked, broken = index.link_counts(c)
+    if linked:
+        line += f"; {console.count(linked, 'link')}, {broken:,} unresolved"
+    return line
 
 
 async def _run(fn, *args, abortable=True, **kwargs):

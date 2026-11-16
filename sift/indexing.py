@@ -107,8 +107,9 @@ def _add_chunks(db, doc_id, chunks):
 
 
 def _path(rel, doc):
-    """A document's path in its collection: its file's, or for a record or an attachment, one below it."""
-    return f"{rel.rsplit('.', 1)[0]}/{doc.key}" if doc.key else rel
+    """A document's path in its collection: its file's, or for a record or an attachment, one below it, its key as the
+    store keeps text (a JSON Lines id or a mail's attachment name may hold a NUL)."""
+    return f"{rel.rsplit('.', 1)[0]}/{_storable(doc.key)}" if doc.key else rel
 
 
 def _read_scans(db, sid, rel, docs, note, now=True):
@@ -138,12 +139,10 @@ def _read_scans(db, sid, rel, docs, note, now=True):
 
 
 def _store(db, sid, rel, docs, counts, note):
-    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included. Returns
-    their row ids, and whether every document was stored: one whose path another file's document holds (a record's or
-    an attachment's, below a file of that name) is skipped, and note(text) tells the user; its file is read again by
-    the next run, which stores it once the other has gone."""
+    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
+    row ids are returned. note(text) tells the user of a document left out, as `_take_path` decides."""
     existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
-    kept, added, unchanged, complete = set(), [], set(), True
+    kept, added, unchanged = set(), [], set()
     for doc in docs:
         path = _path(rel, doc)
         kept.add(path)
@@ -155,16 +154,33 @@ def _store(db, sid, rel, docs, counts, note):
             store.delete_docs(db, [old[0]])
         try:
             added.append(_insert(db, sid, path, doc))
-        except sqlite3.IntegrityError:  # another file of the collection has a document of that name
-            note(f"{path}: a document of this name exists already, skipped")
-            complete = False
-            continue
+        except sqlite3.IntegrityError:  # another file's document holds the path
+            if not _take_path(db, rel, path, doc, counts, note):
+                continue
+            added.append(_insert(db, sid, path, doc))
         counts["changed" if old else "added"] += 1
     store.keywords(db, added)
     gone = [i for p, (i, _) in existing.items() if p not in kept]
     store.delete_docs(db, gone)
     counts["removed"] += len(gone)
-    return unchanged, complete
+    return unchanged
+
+
+def _take_path(db, rel, path, doc, counts, note):
+    """Whether the document `doc` of the file `rel` may take the path another file's document holds: a record or an
+    attachment is a document below its file's name (`data.jsonl` holds `data/a.md`), as a real file may be. The file
+    takes the path, and the record or attachment is left out, said once: whichever was read first, the file is found,
+    and neither is read again by every run."""
+    holder = db.execute("SELECT d.id, s.path FROM docs d JOIN sources s ON s.id = d.source WHERE d.path = ?", (path,))
+    if (held := holder.fetchone()) is None:  # not the path the store refused
+        raise sqlite3.IntegrityError(f"{rel}: {path}: the index refused the document")
+    if doc.key:
+        note(f"{path}: a record or attachment of {rel}, left out: {held[1]} holds this path")
+        return False
+    note(f"{path}: a record or attachment of {held[1]} held this path; the file takes it, and it is left out")
+    store.delete_docs(db, [held[0]])
+    counts["removed"] += 1
+    return True
 
 
 REFRESH_BATCH = 1000  # files read again from the index at a time
@@ -465,8 +481,8 @@ def _reindex_file(db, name, rel, info, read, left):
     docs, problems = read
     sid = _source(db, rel, make=True)
     had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
-    unchanged, complete = _store(db, sid, rel, docs, counts, problems.append)
-    mtime = info.st_mtime_ns if complete and not left else None  # no time: `sift index` takes it for changed
+    unchanged = _store(db, sid, rel, docs, counts, problems.append)
+    mtime = None if left else info.st_mtime_ns  # no time: `sift index` takes it for changed
     db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (mtime, info.st_size, sid))
     now = [d for (d,) in db.execute("SELECT id FROM docs WHERE source = ?", (sid,))]
     if not now and problems:
@@ -564,8 +580,12 @@ def index(catalog, names=None):
         except LookupError as missing:
             console.say(f"{missing}; skipped")
             continue
-        _index_collection(db, c.name, c.path, c.choices, ignore)
-        postings.update(db, c.store, c.name, _cpus() - 1)
+        try:
+            _index_collection(db, c.name, c.path, c.choices, ignore)
+            postings.update(db, c.store, c.name, _cpus() - 1)
+        except sqlite3.DatabaseError as error:  # one store damaged stops no other collection
+            db.rollback()
+            console.say(f"{store.damage(c.name, error)}; skipped")
 
 
 def _index_collection(db, name, root, fields, ignore):
@@ -670,9 +690,8 @@ def _stored(db, rel, docs, stat, counts, note):
     before = counts.copy()
     try:
         sid = _source(db, rel, make=True)
-        _, complete = _store(db, sid, rel, docs, counts, note)
-        mtime, size = stat
-        db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (mtime if complete else None, size, sid))
+        _store(db, sid, rel, docs, counts, note)
+        db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (*stat, sid))
     except (ValueError, RecursionError, sqlite3.DataError, sqlite3.IntegrityError) as refused:  # Recursion: 3.11's JSON
         db.execute("ROLLBACK TO file")
         counts.clear()

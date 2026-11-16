@@ -225,7 +225,9 @@ chosen when adding the collection:
 sift add ~/qa --id key --title question --text question,answer
 ```
 
-Lines that aren't JSON objects, have no text or repeat an id are skipped and reported.
+Lines that aren't JSON objects, have no text or repeat an id are skipped and reported. A record's path is its id
+below the file's name (`data.jsonl`'s record `a.md` is `data/a.md`), as a mail's attachment is below the mail's;
+where a file of the collection has that path, the file keeps it, and the record is left out, said.
 
 ### Documents and scans
 

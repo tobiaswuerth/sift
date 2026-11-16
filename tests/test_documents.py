@@ -398,7 +398,9 @@ def test_a_file_the_store_refuses_is_skipped_and_the_others_indexed(tmp_path, ho
             raise MemoryError("a record of gigabytes")
         found = real(path, fields)
         if path.endswith(("b.md", "d.md")):
-            found[0][0] = found[0][0]._replace(key="B \udcf6")  # a name with half a character, as a reader might leave
+            circular = {}
+            circular["itself"] = circular  # nothing the store can keep, as a reader might leave
+            found[0][0] = found[0][0]._replace(meta=circular)
         return found
 
     monkeypatch.setattr(readers, "load", load)

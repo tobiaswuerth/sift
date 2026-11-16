@@ -642,3 +642,16 @@ def test_a_store_another_sift_has_open_is_not_held(home, notes):
         store.alone(catalog.get("notes").store, "notes"),
     ):
         pass
+
+
+def test_only_damage_counts_as_a_damaged_store(tmp_path):
+    # A store locked by another program, or a disk full, is no reason to tell the user to forget the collection.
+    damaged = tmp_path / "damaged.sqlite"
+    damaged.write_bytes(b"not a database, but sixteen bytes and more")
+    with pytest.raises(sqlite3.DatabaseError) as found:
+        sqlite3.connect(damaged).execute("SELECT * FROM sqlite_master").fetchall()
+    assert store.damage("notes", found.value).startswith("notes: its index is damaged (file is not a database)")
+    locked = sqlite3.OperationalError("database is locked")
+    locked.sqlite_errorcode = sqlite3.SQLITE_BUSY
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        store.damage("notes", locked)

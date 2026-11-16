@@ -1,10 +1,8 @@
 """Reading files into documents: front matter, titles, chunks with their lines, encodings. Each kind of file has a
 reader (see test_documents.py for the contract they all keep, and test_jsonl.py for JSON Lines)."""
 
-import ast
 import json
 import random
-from pathlib import Path
 
 import pytest
 
@@ -462,10 +460,3 @@ def test_random_json_strings_in_front_matter_read_back_as_written():
     for _ in range(500):
         value = "".join(rng.choice(alphabet) for _ in range(rng.randrange(30)))
         assert readers.parse(f"---\nkey: {json.dumps(value)}\n---\n", "f")[1] == {"key": value}, repr(value)
-
-
-def test_the_readers_end_lines_at_newlines_alone():
-    # str.splitlines also ends a line at U+2028, U+2029, NEL and five control characters: it shifted line numbers once,
-    # and later cut front-matter values that JSON had written with them.
-    source = ast.parse(Path(readers.__file__).read_text(encoding="utf-8"))
-    assert not [n.lineno for n in ast.walk(source) if isinstance(n, ast.Attribute) and n.attr == "splitlines"]

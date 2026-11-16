@@ -151,6 +151,18 @@ def read_only(path) -> sqlite3.Connection:
     return sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True, timeout=TIMEOUT)
 
 
+DAMAGED = (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
+
+
+def damage(name, error):
+    """What to say of the collection `name` whose store SQLite found damaged as it read it, as a failing disk leaves
+    one, and what to do. Any other error of SQLite's (locked, full, misused) is raised again: not the store's fault."""
+    if (getattr(error, "sqlite_errorcode", 0) & 0xFF) not in DAMAGED:
+        raise error
+    forget = console.command("sift", "rm", name)
+    return f"{name}: its index is damaged ({error}): `{forget}` forgets it; then add its folder and index it again"
+
+
 def connect(path, cid, create=False) -> sqlite3.Connection:
     """The store of the collection `cid` at `path`; with `create`, a new one, made there."""
     db = database(path, create)

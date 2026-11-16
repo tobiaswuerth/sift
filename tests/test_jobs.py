@@ -213,6 +213,43 @@ def test_a_call_cancelled_while_a_worker_is_asked_holds_up_no_other():
         worker.answered.set()  # the request left behind ends
 
 
+def test_requests_of_calls_cancelled_before_they_were_sent_never_are():
+    # Each waited in a thread of its own for the one before, then went to the worker anyway: the next call waited for
+    # all of them, and the worker's GPU computed answers no one read.
+    sent, answer = [], threading.Event()
+
+    class Slow:
+        name, main_thread = "worker", False
+
+        def encode(self, texts):
+            sent.append(texts[0])
+            answer.wait(5)
+            return texts[0]
+
+    models = jobs.OnMainThread(Slow())
+
+    async def main():
+        for text in "abc":
+            with anyio.move_on_after(0.05):
+                await jobs.run(lambda text=text: models.encode([text]))
+        answer.set()
+        with anyio.fail_after(2):
+            return await jobs.run(lambda: models.encode(["d"]))
+
+    assert anyio.run(main) == "d"
+    assert sent == ["a", "d"]  # a was on its way; b and c never left
+
+
+def test_a_request_of_a_call_cancelled_before_it_looked_is_not_made():
+    # Cancelled while the request before was on its way, the call looks for it only now and then: not in time to drop
+    # its own request, which the worker would have computed for no one.
+    made = []
+    store.ABORT.set()
+    with pytest.raises(jobs.Cancelled):
+        jobs._Requests().submit(lambda: made.append("a")).result(timeout=5)
+    assert made == []
+
+
 def test_a_workers_answer_and_error_come_back_from_its_thread():
     class Answering:
         name, main_thread = "worker", False

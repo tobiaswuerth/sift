@@ -64,6 +64,41 @@ def test_query_of_a_collection_not_embedded_yet_reranks_its_keyword_candidates(t
         index.vsearch("robot arm", collection="fresh")
 
 
+def damage(path, table):
+    """Overwrite the first page of a table and its indexes in a store, as a failing disk might: the store opens,
+    reading the table fails."""
+    db = sqlite3.connect(path)
+    db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    pages = [p for (p,) in db.execute("SELECT rootpage FROM sqlite_master WHERE tbl_name = ? AND rootpage", (table,))]
+    size = db.execute("PRAGMA page_size").fetchone()[0]
+    db.close()
+    with open(path, "r+b") as f:
+        for page in pages:
+            f.seek((page - 1) * size)
+            f.write(b"\xff" * size)
+
+
+def test_a_damaged_store_stops_no_other_collection(three, tmp_path, capsys):
+    # A table of one store damaged: `sift index`, `status` and the server's start failed for every collection, with a
+    # message that named neither the collection nor what to do.
+    papers = three.get("papers")
+    three.release(papers.id)
+    damage(papers.store, "links")
+    write(tmp_path / "papers" / "new.md", "# New\n\nA new paper, after [[rl]].\n")  # its link is stored
+    write(tmp_path / "recipes" / "stew.md", "# Stew\n\nA stew of lentils.\n")
+    indexing.index(three)
+    said = capsys.readouterr().err
+    assert "papers: its index is damaged (database disk image is malformed)" in said
+    assert "`sift rm papers`" in said
+    assert ids(Index(three).search("lentils")) == ["recipes/stew.md"]
+    index = Index(three)
+    entry = next(e for e in index.status()["collections"] if e["name"] == "papers")
+    assert "its index is damaged" in entry["error"]
+    started = _collections(index)
+    assert f"- papers ({papers.path}): papers: its index is damaged" in started
+    assert f"- recipes ({three.get('recipes').path}): 3 documents" in started
+
+
 class Unplugged:
     """An open store whose drive went away."""
 
@@ -92,6 +127,23 @@ def test_a_store_gone_during_a_search_fails_it_not(three, monkeypatch):
     monkeypatch.setattr(index, "_keyword", unplugging)
     assert ids(index.search("robot", collection="papers")) == ["papers/robots.md"]
     assert not [key for key in index._results if '"collection": "papers"' in key]  # what it read was in doubt
+
+
+def test_a_store_back_after_being_out_of_reach_keeps_no_result_from_before(three, home, tmp_path):
+    # Closed while out of reach, and opened anew, its connection counted from where the old one began: the results
+    # kept before it went, without what was indexed meanwhile, counted as current.
+    served = Catalog(home)  # a server's, which writes nothing itself
+    index, recipes = Index(served), served.get("recipes")
+    index.search("robot")  # both kept
+    index.search("soup OR stew")
+    assert list(served._stores)[-1] == recipes.id  # opened last, so opened anew it takes the same place
+    path, real = served._stores[recipes.id]
+    served._stores[recipes.id] = (path, Unplugged(real))
+    index.search("robot", collection="papers")  # lets go of the store out of reach
+    write(tmp_path / "recipes" / "stew.md", "# Stew\n\nA stew a robot could cook.\n")
+    indexing.index(three, ["recipes"])  # meanwhile, by another sift
+    index.search("robot")  # opens it anew
+    assert "recipes/stew.md" in ids(index.search("soup OR stew"))
 
 
 def test_a_store_gone_while_open_fails_no_search(three, monkeypatch):

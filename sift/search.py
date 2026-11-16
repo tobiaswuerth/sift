@@ -896,6 +896,8 @@ class Index:
         for cid, _, db in self.catalog.open_stores():
             if cid not in collections or not _reachable(db):  # one out of reach is opened again once it is back
                 self.catalog.release(cid)
+                # A store opened anew counts its changes afresh, as the one before began: no state tells them apart
+                self._results.clear()
         for cid in [cid for cid, reading in self._reading.items() if reading.done()]:
             self._take_read(collections[cid])
 
@@ -1600,13 +1602,17 @@ class Index:
                 except LookupError as unusable:  # damaged, a newer sift's, locked or out of reach
                     collections.append(entry | {"error": str(unusable)})
                     continue
-                counted = store.counts(db)
-                linked, unresolved = self.link_counts(c)
-                entry |= {"docs": counted["docs"], "chunks": counted["chunks"], "embedded": counted["vectors"]}
-                entry["keywords"] = _postings_state(db)
-                entry["fields"] = self.fields(c)
-                entry |= {"links": linked, "unresolved": unresolved}
-                models.add(store.get_meta(db, "model"))
+                try:
+                    counted = store.counts(db)
+                    linked, unresolved = self.link_counts(c)
+                    entry |= {"docs": counted["docs"], "chunks": counted["chunks"], "embedded": counted["vectors"]}
+                    entry["keywords"] = _postings_state(db)
+                    entry["fields"] = self.fields(c)
+                    entry |= {"links": linked, "unresolved": unresolved}
+                    models.add(store.get_meta(db, "model"))
+                except sqlite3.DatabaseError as error:  # damaged where it opened fine: said, the others still come
+                    entry = {k: entry[k] for k in ("name", "path", "active", "store", "size")}
+                    entry["error"] = store.damage(c.name, error)
             collections.append(entry)
         return {
             "index": str(self.catalog.path),

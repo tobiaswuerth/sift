@@ -67,3 +67,15 @@ def test_sources_write_invisible_characters_as_escapes():
         if INVISIBLE & set(line)
     }
     assert found == set(), r"write them as escapes, such as \ufffd"
+
+
+def test_only_newlines_end_lines():
+    # str.splitlines also ends a line at U+2028, U+2029, NEL and five control characters: it shifted search hits' line
+    # numbers, cut front-matter values that JSON had written with them, and split .siftignore patterns in two.
+    found = {
+        f"{path.name}:{node.lineno}"
+        for path in (ROOT / "sift").glob("*.py")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Attribute) and node.attr == "splitlines"
+    }
+    assert found == set(), 'split on "\n" (see readers.LINE): only it ends a line, as in editors and git'

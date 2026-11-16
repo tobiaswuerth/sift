@@ -229,17 +229,37 @@ def test_a_nul_in_a_file_hides_nothing_after_it(corpus):
     assert index.document("notes/pasted.md", fields=["title"])["title"] == "Num\ufffdbers"
 
 
-def test_a_file_whose_path_a_record_took_is_read_once_the_record_goes(corpus, capsys):
+@pytest.mark.parametrize("record_first", [True, False])
+def test_a_file_takes_its_path_from_a_record_and_nothing_is_read_again(corpus, capsys, record_first):
     # A JSON Lines record (or a mail's attachment) is a document below its file's path, read before the folder of that
-    # name: the real file of the same path was skipped, yet its time recorded, so it was never read again.
+    # name: the real file of the same path was skipped, yet its time recorded, so it was never read again; then read
+    # again by every run, a PDF converted and a scan read anew each time.
     catalog, root = corpus
-    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
     write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    if not record_first:  # the file indexed first, the record added later
+        indexing.index(catalog)
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')  # else read first, in one run
     indexing.index(catalog)
-    assert "data/a.md: a document of this name exists already, skipped" in capsys.readouterr().err
-    (root / "data.jsonl").unlink()
+    said = capsys.readouterr().err
+    assert "data/a.md: a record or attachment of data.jsonl" in said
+    assert said.count("left out") == 1
+    found = Index(catalog)
+    assert [hit["id"] for hit in found.search("giraffe")] == ["notes/data/a.md"]
+    assert found.search("zebra") == []  # left out
     indexing.index(catalog)
-    assert [hit["id"] for hit in Index(catalog).search("giraffe")] == ["notes/data/a.md"]
+    assert "0 added, 0 changed, 0 removed" in capsys.readouterr().err  # neither file read again
+
+
+def test_a_document_the_index_refuses_for_another_reason_than_its_path_skips_its_file(corpus, monkeypatch, capsys):
+    catalog, root = corpus
+    write(root / "new.md", "# New\n")
+
+    def refuse(*args):
+        raise sqlite3.IntegrityError("CHECK constraint failed")
+
+    monkeypatch.setattr(indexing, "_insert", refuse)
+    indexing.index(catalog)
+    assert "notes: new.md: skipped (new.md: new.md: the index refused the document)" in capsys.readouterr().err
 
 
 def test_index_is_incremental(corpus, capsys):

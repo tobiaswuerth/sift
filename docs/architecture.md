@@ -184,9 +184,11 @@ each, so the backlinks of a note linked by 6,000 others take 16 ms
   hear that a client cancelled a call or went away. A cancelled call stops: its SQLite statements end within about a
   millisecond, through a progress handler on every connection, and it runs the models no more. `reindex` runs to its
   end. The models of this machine run on the main thread, which holds the loop: PyTorch crashes in worker threads on
-  Python 3.15. A worker's (`SIFT_EMBED_REMOTE`) are asked in a thread of their own: the loop stays free while a
-  request waits, and a cancelled call stops waiting for its answer, which then ends by itself; the next call needing
-  the worker waits for it.
+  Python 3.15. A worker's (`SIFT_EMBED_REMOTE`) are asked in a thread of their own, one request at a time: the loop
+  stays free while a request waits, and a cancelled call stops waiting for its answer, which then ends by itself; a
+  request of a cancelled call not sent yet never is, and the next call needing the worker waits for the one on its way.
+- A collection whose store is damaged (SQLite finds it so as it reads it) is passed over by `sift index`, `status`
+  and the server's start, and said, with how to forget it: the others go on.
 - The UI's pages are rendered on the server with Jinja2, whose panes [htmx](https://htmx.org) swaps in place: no build
   step and no Node, and the UI is tested with the rest. Its pages are made as the MCP tools' calls are run.
   Browsing a folder jumps through the index folder by folder, so it stays quick in collections of millions of

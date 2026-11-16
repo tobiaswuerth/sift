@@ -143,7 +143,7 @@ def _guard(processor, prompt):
 def looping(text):
     """Whether a page's text ends in a loop: the same line LOOP_LINES times running, or a pattern of at most
     LOOP_PERIOD characters repeated for LOOP_CHARS."""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
     if len(lines) >= LOOP_LINES and len(set(lines[-LOOP_LINES:])) == 1:
         return True
     return _repeated_tail(text) is not None
