@@ -14,7 +14,7 @@ import pytest
 from mcp import Client
 from mcp.server.mcpserver import MCPServer
 
-from sift import indexing, remote, server
+from sift import indexing, remote, server, vectors
 from sift.catalog import Catalog
 from sift.search import Index
 
@@ -375,6 +375,23 @@ def test_serve_loads_everything_then_runs(embedded, transports, stdio, expected)
     assert expected[1].items() <= kwargs.items()
 
 
+def test_serve_loads_the_compiled_scan_up_front(embedded, transports, monkeypatch):
+    # Loading Numba costs a second: a server pays it as it starts, a single search from the command line not at all.
+    monkeypatch.setattr(vectors, "_scan", None)
+    server.serve(stdio=True)
+    assert vectors._scan is not None
+
+
+def test_serve_without_the_compiled_scan_says_so_and_scans_with_numpy(embedded, transports, monkeypatch, capsys):
+    def broken():
+        raise RuntimeError("cannot cache function '_scan': no locator available")
+
+    monkeypatch.setattr(vectors, "compile_scan", broken)
+    server.serve(stdio=True)
+    assert "the compiled scan of the codes isn't available (cannot cache" in capsys.readouterr().err
+    assert transports.started
+
+
 def test_serve_releases_the_gpu_when_idle(embedded, fake_models, transports, monkeypatch):
     checks = []
     monkeypatch.setattr(server, "IDLE_CHECK_SECONDS", 0)
@@ -591,10 +608,19 @@ def test_a_batch_names_what_it_takes(mcp, ids, reason):
 
 
 @pytest.mark.parametrize("tool", ["search", "vsearch", "query"])
-def test_search_tools_take_several_queries(mcp, tool):
-    both = data(call(mcp, tool, {"query": ["brush strokes", "reward shaping"], "k": 1, "compact": True}))
-    alone = [data(call(mcp, tool, {"query": q, "k": 1, "compact": True})) for q in ("brush strokes", "reward shaping")]
-    assert both == alone
+def test_search_tools_take_several_queries(embedded, tool):
+    asked = ["brush strokes", "reward shaping"]
+    both = data(call(server.build(Index(embedded[0]))[0], tool, {"query": asked, "k": 1, "compact": True}))
+    alone = [
+        data(call(server.build(Index(embedded[0]))[0], tool, {"query": q, "k": 1, "compact": True})) for q in asked
+    ]
+    assert both == alone  # each asked of a server of its own: nothing kept from the others
+
+
+def test_a_document_of_several_takes_only_id_and_lines(mcp):
+    result = call(mcp, "get", {"id": [{"id": "notes/rl.md", "line": "1"}]})  # "line" for "lines"
+    assert result.is_error
+    assert "line" in result.content[0].text
 
 
 def test_unexpected_errors_reach_the_agent_too(embedded, monkeypatch, caplog):

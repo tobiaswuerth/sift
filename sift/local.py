@@ -165,9 +165,10 @@ class Local:
         model, raw = self._ready(self.reranker), torch.nn.Identity()
         return self.accelerator.run(
             lambda t, size: model.predict(
-                [(query, x) for x in t], batch_size=min(size, RERANK_BATCH), show_progress_bar=False, activation_fn=raw
+                [(query, x) for x in t], batch_size=size, show_progress_bar=False, activation_fn=raw
             ),
             texts,
+            most=RERANK_BATCH,
         )
 
     def release_idle(self):

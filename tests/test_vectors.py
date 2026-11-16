@@ -1,6 +1,7 @@
 """The stores' vectors in memory as one bit per dimension, its sign: candidates by Hamming distance, among the codes of
 every collection searched, the best of them scored exactly with the vectors the stores hold."""
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -12,8 +13,23 @@ from sift.vectors import Codes, codes
 
 @pytest.fixture(autouse=True, params=["numpy", "compiled"])
 def scan_by(request, monkeypatch):
-    """Each test with the codes scanned by NumPy, as a small collection's are, and compiled, as a large one's."""
-    monkeypatch.setattr(vectors, "COMPILED", 0 if request.param == "compiled" else 1 << 62)
+    """Each test with the codes scanned by NumPy, as a single search's and a small collection's are, and compiled, as
+    a server's of a large collection."""
+    compiled = request.param == "compiled"
+    if compiled:
+        vectors.compile_scan()
+    monkeypatch.setattr(vectors, "_scan", vectors._scan if compiled else None)
+    monkeypatch.setattr(vectors, "COMPILED", 0)
+
+
+def test_a_search_alone_keeps_numpys_scan(monkeypatch):
+    # Loading Numba costs a second, more than NumPy takes for millions of codes: only a server loads it, as it starts.
+    monkeypatch.setattr(vectors, "_scan", None)
+    scanned, real = [], vectors._numpy
+    monkeypatch.setattr(vectors, "_numpy", lambda *args: scanned.append(1) or real(*args))
+    _, matrix, _, index = random_index(n=50)
+    index.measure(codes(matrix[:1])[0])
+    assert scanned
 
 
 def unit(matrix):
@@ -391,3 +407,24 @@ def test_the_distances_of_one_collections_codes():
     assert (left[10:50] == expected[10:50]).all()
     assert (left[:10] == vectors.FAR).all()
     assert (left[50:] == vectors.FAR).all()
+
+
+def test_the_compiled_scan_checks_what_it_is_given():
+    # Compiled code checks no bounds: a mismatch would write past an array instead of failing.
+    from sift import scan
+
+    words, query = np.zeros((4, 2), np.uint64), np.zeros(2, np.uint64)
+    for out, keep, q in (
+        (np.empty(3, np.uint16), np.zeros(0, bool), query),
+        (np.empty(4, np.uint16), np.zeros(2, bool), query),
+        (np.empty(4, np.uint16), np.zeros(0, bool), np.zeros(3, np.uint64)),
+    ):
+        with pytest.raises(ValueError, match="checks no bounds"):
+            scan.measure(words, q, keep, out, vectors.FAR, 2)
+
+
+def test_the_compiled_code_is_kept_in_sift_home_unless_said_otherwise(monkeypatch, configure, tmp_path):
+    monkeypatch.delenv("NUMBA_CACHE_DIR", raising=False)
+    configure(home=tmp_path / "home")
+    vectors.compile_scan()
+    assert os.environ["NUMBA_CACHE_DIR"] == str(tmp_path / "home" / "numba")

@@ -13,22 +13,28 @@ and versions follow [Semantic Versioning](https://semver.org/).
   `sift get` takes several ids too, each headed as `head` heads files.
 - `search`, `vsearch` and `query` take several queries at once, a list of up to 20, and return a list of results for
   each, as if each were asked alone. The questions of `vsearch` and `query` are embedded together, in one pass of the
-  model.
+  model. All of them return at most 10,000 hits, as one search does, and share a time `budget`.
 
 ### Changed
 
-- `vsearch`, `query` and `similar` scan the codes of a collection of a million passages or more three times as fast:
-  compiled code reads each code once and counts its distance where it is read, where NumPy made three passes. Over
-  12.9 million arXiv codes, 43 ms instead of 133, the same distances. sift now depends on
-  [Numba](https://numba.pydata.org), which has wheels for every platform and Python sift supports; smaller collections
-  keep NumPy's scan, so that a single search from the command line doesn't wait for Numba to load.
+- `sift serve` scans the vectors' codes three times as fast: compiled code reads each code once and counts its
+  distance where it is read, where NumPy made three passes. Over 12.9 million arXiv codes, 43 ms instead of 133, the
+  same distances. sift now depends on [Numba](https://numba.pydata.org), which has wheels for every platform and
+  Python sift supports. The server loads the compiled scan as it starts (a second or two, its code kept in
+  `SIFT_HOME/numba`); a single search from the command line keeps NumPy's, which costs it less.
 - `query` reranks its candidates in batches of 16, which Sentence Transformers sorts by length: one batch of all 80
   was padded to the longest, 1.7 to 3.5 times their tokens. 180 ms a question on an RTX 4090 instead of 331.
 - A server keeps the embeddings of the last 256 questions (3 KB each) and the results of the last 32 searches: an
   agent asking a question again with another `k` or filter skips the embedding (51 ms on an RTX 4090), and the same
   search asked again reads nothing. Kept results count as long as nothing they read has changed: any change to the
   catalog or a store, by another sift (as SQLite counts them) or by the server's own `reindex`, and any change to the
-  codes in memory, lets them go. A search within a time budget is never kept.
+  codes in memory, lets them go. A search within a time budget is never kept, nor one of more than 1,000 hits.
+
+### Fixed
+
+- A semantic search of one collection (`vsearch`, `query` or `similar` with `collection`, `-c` on the command line)
+  read the codes of every active collection first: beside PubMed's, half a minute and 4 GB to search a few hundred
+  notes. It reads those of the collections it searches.
 
 ## [1.11.2] - 2026-11-08
 

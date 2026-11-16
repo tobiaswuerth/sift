@@ -38,6 +38,37 @@ def three(tmp_path, home, fake_models):
     return catalog
 
 
+def test_a_semantic_search_of_one_collection_reads_its_codes_alone(three):
+    # `sift vsearch -c notes` read the codes of every active collection: 30 seconds and 4 GB beside PubMed.
+    index, papers, recipes = Index(three), three.get("papers").id, three.get("recipes").id
+    index.vsearch("robot", collection="papers")
+    assert set(index.vectors) == {papers}
+    index.query("robot", collection="recipes")
+    assert set(index.vectors) == {papers, recipes}
+    index.similar("diary/monday.md", collection="papers")
+    assert set(index.vectors) == {papers, recipes}
+    index.vsearch(["robot", "soup"], collection="recipes")
+    assert set(index.vectors) == {papers, recipes}
+    index.vsearch("robot")
+    assert len(index.vectors) == 3
+
+
+def test_a_search_of_one_collection_touches_no_other(three, home, capsys):
+    # Keeping results asked every active store whether it changed: each search of one collection opened every store
+    # and warned again of one whose drive was unplugged.
+    stored = three.get("diary").store
+    three.release(three.get("diary").id)
+    os.replace(stored, stored + ".away")
+    try:
+        catalog = Catalog(home)
+        for _ in range(2):
+            Index(catalog).search("robot", collection="papers")
+        assert "diary" not in capsys.readouterr().err
+        assert list(catalog._stores) == [three.get("papers").id]
+    finally:
+        os.replace(stored + ".away", stored)
+
+
 def test_searches_cover_every_collection(three):
     index = Index(three)
     assert sorted(ids(index.search("robot"))) == ["diary/monday.md", "papers/robots.md", "recipes/soup.md"]

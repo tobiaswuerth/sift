@@ -39,6 +39,15 @@ def test_bench_measures_every_mode(embedded, cases):
         assert scores["ms"] >= 0
 
 
+def test_each_mode_is_timed_with_nothing_kept_from_the_others(embedded, cases, monkeypatch):
+    # vsearch embedded the questions, and query took them from the index's memory: timed 51 ms a question short.
+    index = Index(embedded[0])
+    real, asked = index.models.encode, []
+    monkeypatch.setattr(index.models, "encode", lambda texts, query=False: asked.append(texts) or real(texts, query))
+    bench.run(index, bench.load(cases, index))
+    assert len(asked) == 2 * len(CASES)  # each question embedded by vsearch, and again by query
+
+
 class Collapsed:
     """An index that finds the paper sought as the copy under `also` of a better ranked one."""
 
@@ -46,6 +55,9 @@ class Collapsed:
         return [{"id": "pubmed/x.md", "also": ["arxiv/x.md"]}, {"id": "arxiv/other.md"}]
 
     vsearch = query = search
+
+    def forget(self):
+        pass
 
 
 def test_a_copy_of_the_paper_sought_counts(tmp_path):

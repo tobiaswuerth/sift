@@ -1,7 +1,9 @@
 import functools
+import os
 import random
 import re
 import sys
+import tempfile
 import types
 import zlib
 
@@ -13,6 +15,9 @@ from sift.accelerator import Accelerator
 from sift.catalog import Catalog
 
 DIM = 64
+
+# The compiled scan's code, kept by Numba between runs: in a folder of the tests', never in the user's SIFT_HOME
+os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(tempfile.gettempdir(), "sift-tests-numba"))
 
 
 @pytest.fixture

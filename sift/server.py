@@ -11,9 +11,9 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from . import console, jobs, logs, store
+from . import console, jobs, logs, store, vectors
 from . import models as _models
 from .search import Index
 
@@ -97,6 +97,7 @@ Lines = Annotated[
 class Part(BaseModel):
     """A document of several asked at once, and the lines of it wanted."""
 
+    model_config = ConfigDict(extra="forbid")  # {"id", "line": ...} got the whole document, the misspelling unsaid
     id: Id
     lines: Lines = None
 
@@ -173,8 +174,9 @@ Adaptive = Annotated[
 Budget = Annotated[
     float | None,
     Field(
-        description="Seconds the search may take, roughly: once spent, and anything found, it returns the best found "
-        'so far, each marked "partial": better matches may be missing. Without, it finds the exact best.'
+        description="Seconds the search may take, roughly, shared by several queries: once spent, and anything found, "
+        'it returns the best found so far, each marked "partial": better matches may be missing. Without, it finds '
+        "the exact best."
     ),
 ]
 READ_ONLY = ToolAnnotations(read_only_hint=True)
@@ -485,6 +487,10 @@ def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
     models = models or _models.default()
     mcp, index = build(Index(models=models))
     console.say("loading the models and the vectors' codes into RAM ...")  # the models move to the GPU when used
+    try:
+        vectors.compile_scan()  # a second, once: then a large collection's codes are scanned three times as fast
+    except (ImportError, OSError, RuntimeError) as e:  # Numba missing or broken, no folder to keep its code in
+        console.say(f"warning: the compiled scan of the codes isn't available ({e}); NumPy's scans them")
     for step in (models.load, index.load):
         try:
             step()

@@ -13,13 +13,14 @@ from functools import cache
 
 import numpy as np
 
+from . import settings
+
 RESCORE = 1000  # candidates scored exactly, at least: reading their vectors is most of a search's time
 SHORTLIST = 10  # times as many, the nearest by Hamming distance, ranked by the query's floats against their bits
 BLOCK = 1 << 14  # codes per thread at a time: their XOR, 1.5 MB at 768 dimensions, stays in the cache (46M codes:
 # 187 ms against 226 ms with twice as many, 259 ms with half)
-COMPILED = 1 << 20  # codes of a collection from which they are scanned by compiled code (see `scan`): 3 times as fast
-# (12.9M arXiv codes: 43 ms against 133), but loading Numba and the compiled scan takes 1.6 s once per process, more
-# than NumPy takes for a million
+COMPILED = 1 << 16  # codes of a collection from which they are scanned by compiled code, once loaded (see
+# compile_scan): three times as fast as NumPy (12.9M arXiv codes: 43 ms against 133)
 THREADS = min(16, os.cpu_count() or 1)
 FAR = np.iinfo(np.uint16).max  # the distance of a code left out
 SCAN_SHARE = 0.2  # of the codes searched: checking more candidates against a filter costs more than listing all it
@@ -27,6 +28,22 @@ SCAN_SHARE = 0.2  # of the codes searched: checking more candidates against a fi
 MARGIN = 1.25  # candidates checked beyond those that, at the rate let through so far, would be enough
 _BITS = np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).astype(np.float32)  # each byte's bits
 _NONE = np.zeros(0, bool)  # no codes left out of a scan
+
+
+_scan = None  # the compiled scan, `scan`, once compile_scan loaded it
+
+
+def compile_scan():
+    """Load the compiled scan of the codes (see `scan`), for collections of COMPILED codes or more: loading Numba and
+    the compiled code takes a second or two, which a server pays once, as it starts; a single search from the command
+    line keeps NumPy's scan, which costs it less."""
+    global _scan
+    # Numba keeps the compiled code beside the module, where an installation may not write: in SIFT_HOME instead
+    os.environ.setdefault("NUMBA_CACHE_DIR", str(settings.current().home / "numba"))
+    from . import scan
+
+    scan.measure(np.zeros((1, 1), np.uint64), np.zeros(1, np.uint64), _NONE, np.empty(1, np.uint16), FAR, 1)
+    _scan = scan
 
 
 def codes(matrix):
@@ -233,7 +250,7 @@ class Codes:
         from 0 to every bit: each part of the codes in one pass (see `scan`)."""
         keep, word = self._keep(allowed, excluded), np.ascontiguousarray(query_bits).view(np.uint64)
         out, at, counts = np.empty(len(self.ids), np.uint16), 0, np.zeros(8 * len(query_bits) + 1, np.int64)
-        count = _compiled if len(self.ids) >= COMPILED else _numpy
+        count = _compiled if _scan is not None and len(self.ids) >= COMPILED else _numpy
         for part in self._parts:
             kept = None if keep is None else keep[at : at + len(part)]
             counts += count(part.view(np.uint64), word, kept, out[at : at + len(part)])
@@ -254,9 +271,7 @@ class Codes:
 
 def _compiled(words, word, keep, out):
     """A part's distances and how many codes are at each, in one pass of compiled code (see `scan`)."""
-    from . import scan  # Numba takes a second to load: only once codes are many
-
-    return scan.measure(words, word, _NONE if keep is None else keep, out, FAR, THREADS)
+    return _scan.measure(words, word, _NONE if keep is None else keep, out, FAR, THREADS)
 
 
 def _numpy(words, word, keep, out):

@@ -1824,9 +1824,15 @@ def test_a_search_asked_again_is_answered_from_memory_until_a_store_changes(embe
         assert method("brush", k=3) == first
         assert ran == []  # read nothing from the store
         catalog.store("notes").set_trace_callback(None)
+    # Each kind of change by another sift, and then the same search, which must not come from memory:
     write(root / "brushes.md", "# Brushes\n\nbrush brush brush, the brush of brushes\n")
-    indexing.index(Catalog(home))  # another sift, as `sift index` beside the server
-    assert ids(index.search("brush", k=1)) == ["notes/brushes.md"]
+    indexing.index(Catalog(home))  # `sift index` beside the server
+    assert ids(index.search("brush", k=3))[0] == "notes/brushes.md"
+    assert "notes/brushes.md" not in ids(index.vsearch("brush", k=3))  # not embedded yet
+    embed.embed_pending(Catalog(home))  # `sift embed`: the codes change
+    assert ids(index.vsearch("brush", k=3))[0] == "notes/brushes.md"
+    Catalog(home).set_active(["notes"], False)  # `sift deactivate notes`
+    assert index.search("brush", k=3) == []
 
 
 def test_results_follow_the_servers_own_reindex(embedded):
@@ -1868,10 +1874,9 @@ def test_results_kept_are_copies(embedded):
 
 @pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
 def test_several_queries_in_one_call_find_what_each_alone_finds(embedded, mode):
-    index = Index(embedded[0])
-    method = getattr(index, mode)
     asked = ["brush strokes", "reward shaping", "colour theory"]
-    assert method(asked, k=2) == [method(q, k=2) for q in asked]
+    together = getattr(Index(embedded[0]), mode)(asked, k=2)
+    assert together == [getattr(Index(embedded[0]), mode)(q, k=2) for q in asked]  # each in an index of its own
 
 
 def test_several_questions_are_embedded_together(embedded, monkeypatch):
@@ -1889,3 +1894,53 @@ def test_several_questions_are_embedded_together(embedded, monkeypatch):
 def test_several_queries_are_checked(embedded, queries, reason):
     with pytest.raises(ValueError, match=reason):
         Index(embedded[0]).search(queries)
+
+
+@pytest.mark.parametrize("asked", [{"k": 5_000}, {}])
+def test_several_queries_return_at_most_as_many_hits_as_one_search(embedded, asked):
+    # 20 queries of 10,000 hits each made one answer of 200,000, about 360 MB.
+    index = Index(embedded[0])
+    if asked:
+        with pytest.raises(ValueError, match="10,000 hits"):
+            index.search(["brush", "reward", "colour"], **asked)
+    else:
+        index.search(["brush", "reward", "colour"], 3_333)
+
+
+def test_large_results_are_not_kept(embedded, monkeypatch):
+    monkeypatch.setattr(search, "KEPT_HITS", 1)
+    index = Index(embedded[0])
+    index.search("brush", k=1)
+    index.search("brush OR reward", k=2)
+    assert len(index._results) == 1  # only the one of a single hit
+
+
+def test_several_queries_share_a_time_budget(embedded, monkeypatch):
+    # Each query took the whole budget: 20 queries with budget=5 could take 100 seconds.
+    budgets, real = [], topk.Deadline
+    monkeypatch.setattr(topk, "Deadline", lambda seconds: budgets.append(seconds) or real(seconds))
+    Index(embedded[0]).search(["brush", "reward"], budget=2.0)
+    assert budgets == [1.0, 1.0]
+
+
+def test_several_queries_are_checked_before_any_is_embedded(embedded, monkeypatch):
+    index = Index(embedded[0])
+    monkeypatch.setattr(index.models, "encode", lambda texts, query=False: pytest.fail("embedded before the check"))
+    with pytest.raises(LookupError, match="no collection named 'typo'"):
+        index.vsearch(["brush", "reward"], collection="typo")
+
+
+def test_a_bug_reading_one_of_several_documents_is_no_document_missing(embedded, monkeypatch):
+    # A KeyError is a LookupError too: a bug's came back as a document that can't be read.
+    index = Index(embedded[0])
+    monkeypatch.setattr(index, "document", lambda *args: {}["text"])
+    with pytest.raises(KeyError):
+        index.documents([("notes/rl.md", None)])
+
+
+def test_a_search_whose_options_make_no_key_is_answered_and_not_kept(embedded):
+    # Filters of an int and a str key can't be sorted into a key: the search itself says what is wrong.
+    index = Index(embedded[0])
+    with pytest.raises(ValueError, match="invalid filter field 1"):
+        index.search("brush", filters={"year": 2024, 1: "x"})
+    assert not index._results

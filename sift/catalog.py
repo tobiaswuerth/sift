@@ -105,6 +105,10 @@ class Catalog:
         except sqlite3.OperationalError as error:
             raise LookupError(f"{collection.name}: its index can't be opened: {error}") from None
 
+    def open_stores(self):
+        """The stores opened so far, as (collection id, its store's file, the store opened)."""
+        return [(cid, path, db) for cid, (path, db) in self._stores.items()]
+
     def release(self, cid):
         """Close the store of the collection `cid`, if it is open."""
         if held := self._stores.pop(cid, None):

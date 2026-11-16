@@ -26,7 +26,8 @@ once in each collection. `sift add --nested` adds it anyway.
 ### Where the indexes lie
 
 Each collection's index is a SQLite file of its own, `collections/NAME.sqlite` under `SIFT_HOME` (`~/.sift`), where
-the catalog `sift.db` lists them, beside the logs and the worker's key. A large index can go anywhere else:
+the catalog `sift.db` lists them, beside the logs, the worker's key and `numba`, the compiled scan `sift serve` keeps
+(made again when deleted). A large index can go anywhere else:
 
 ```bash
 sift add ~/archive --store D:/sift                  # a new collection's index in another folder

@@ -406,9 +406,10 @@ def _run(a, catalog):
         else:
             _print_documents(index.documents([(id, a.lines) for id in a.id], fields))
     elif a.cmd == "bench":
-        from . import bench
+        from . import bench, vectors
         from .search import Index
 
+        vectors.compile_scan()  # many searches: worth the second it takes, as for a server
         index = Index(catalog)
         results = bench.run(index, bench.load(a.file, index), collection=a.collection)
         print(f"{'mode':10}{'nDCG@10':>10}{'MRR@10':>10}{'Recall@10':>11}{'ms/query':>10}")

@@ -160,17 +160,22 @@ class Accelerator:
 
     # --- batches ---------------------------------------------------------------------
 
-    def run(self, fn, items):
-        """fn(items, batch_size), halving the batch size whenever the GPU runs out of memory."""
+    def run(self, fn, items, most=None):
+        """fn(items, batch_size), halving the batch size whenever the GPU runs out of memory. With `most`, at most that
+        many at a time, halved for this call alone: a rerank short of memory in batches of 16 says nothing of the
+        embedding's batches, which then went on at 8 for the life of the process."""
+        size = self.batch_size if most is None else min(most, self.batch_size)
         while True:
             try:
-                return fn(items, self.batch_size)
+                return fn(items, size)
             except RuntimeError as e:
-                if self.batch_size == 1 or not out_of_memory(e):
+                if size == 1 or not out_of_memory(e):
                     raise
                 self._empty_cache()
-                self.batch_size //= 2
-                console.say(f"\nout of GPU memory, batch size now {self.batch_size}")
+                size //= 2
+                if most is None:
+                    self.batch_size = size
+                console.say(f"\nout of GPU memory, batch size now {size}")
 
     def calibrate(self, run):
         """Measure the largest batch that fits the memory budget, and use it from now on. run(n) runs a batch of n

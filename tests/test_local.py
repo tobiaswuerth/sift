@@ -66,6 +66,25 @@ def test_candidates_are_reranked_in_batches_of_similar_length(fake_models, monke
     assert sizes == [local.RERANK_BATCH]
 
 
+def test_a_rerank_short_of_memory_halves_its_own_batches_alone(make_local, monkeypatch):
+    # Out of memory at 16 pairs, the rerank halved the size shared with embedding from 128 to 16 to no avail, and
+    # `sift embed` went on in batches of 8 for the life of the process.
+    import torch
+
+    models, sizes, real = make_local("cuda"), [], FakeCrossEncoder.predict
+
+    def predict(self, pairs, batch_size, **kw):
+        sizes.append(batch_size)
+        if batch_size > 4:
+            raise torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
+        return real(self, pairs, batch_size, **kw)
+
+    monkeypatch.setattr(FakeCrossEncoder, "predict", predict)
+    assert models.rerank("brush strokes", ["text"] * 20).shape == (20,)
+    assert sizes == [local.RERANK_BATCH, 8, 4]
+    assert models.batch == 128  # embedding's, as it was
+
+
 def test_loading_the_models_draws_no_progress_bars(fake_models):
     # Transformers drew a "Loading weights" bar for each model, into the log of `sift serve`, garbled on Windows.
     from transformers.utils import logging

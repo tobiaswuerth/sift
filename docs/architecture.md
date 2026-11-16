@@ -115,11 +115,12 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 - **`vsearch`:** every vector's code, its signs as one bit per dimension, waits in RAM: 96 bytes for 768 dimensions, a
   sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with
   all of them by Hamming distance, on the CPU's cores, each counting its codes at each distance; the counts summed
-  tell how near the nearest lie, and the cores pick the codes that near. A collection of a million passages or more
-  is scanned by compiled code ([Numba](https://numba.pydata.org)), each code read once and its distance counted where
-  it is read: three times as fast as NumPy's three passes (12.9 million codes: 43 ms instead of 133). Smaller ones keep
-  NumPy's scan, which is as quick there, so that a single search from the command line doesn't wait 1.6 s for Numba to
-  load. The 10,000
+  tell how near the nearest lie, and the cores pick the codes that near. `sift serve` scans them with compiled code
+  ([Numba](https://numba.pydata.org)), each code read once and its distance counted where it is read: three times as
+  fast as NumPy's three passes (12.9 million codes: 43 ms instead of 133). Loading Numba and the compiled code takes a
+  second or two, which the server pays as it starts; a single search from the command line keeps NumPy's scan. Numba
+  keeps the compiled code in `SIFT_HOME/numba` (or `NUMBA_CACHE_DIR`). A search reads the codes of the collections it
+  searches alone; the server reads every active collection's as it starts. The 10,000
   nearest of all collections together, ties by id, are ranked again by the query's own floats against their bits (a
   table lookup per byte), and the best 1,000 are scored exactly with their vectors from the index. Over 3.2 million
   arXiv abstracts this finds 99.75% of exact search's top 10, and its known-item MRR, 0.9530; reading 1,000 vectors
@@ -171,10 +172,10 @@ each, so the backlinks of a note linked by 6,000 others take 16 ms
 
 - `sift serve` loads the models and the codes once and keeps them in memory, for any number of agents.
 - It keeps the embeddings of the last 256 questions and the results of the last 32 searches. Kept results count only
-  while what they read is as it was: the catalog and each active store as SQLite counts their changes, those other
+  while what they read is as it was: the catalog and the stores opened as SQLite counts their changes, those other
   connections commit (`PRAGMA data_version`) and the rows the server's own connection changed (`total_changes`, as its
   `reindex` does), and the codes it holds. A search within a time budget is never kept, as what it finds depends on the
-  time it had.
+  time it had, nor one of more than 1,000 hits.
 - Calls run one at a time on a worker thread, so the event loop stays free to answer, to accept connections and to
   hear that a client cancelled a call or went away. A cancelled call stops: its SQLite statements end within about a
   millisecond, through a progress handler on every connection, and it runs the models no more. `reindex` runs to its
