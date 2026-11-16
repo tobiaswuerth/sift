@@ -96,7 +96,8 @@ servers, which can't reach your computer.
 | `reindex` | Read files again right after writing, changing or deleting them; the one tool that changes anything: sift's index, never a file |
 
 The search tools take `k`, `collection`, `path`, `filters`, `fields`, `compact`, `all_passages`, `sort`, `links_to`,
-`linked_from` and `adaptive`, and `search` a time `budget`. Every result carries `id` (`collection/path`), `title`,
+`linked_from` and `adaptive`, and `search` a time `budget`; `search`, `vsearch` and `query` take up to 20 queries at
+once, as `get` takes up to 100 ids, to save an agent calls and turns. Every result carries `id` (`collection/path`), `title`,
 `lines`, `score` and the passage's `text`, so agents can cite their sources; `compact: true` leaves out the text, so an
 agent can survey many results and read the ones that matter, and `adaptive: true` returns only those before the
 largest drop in score, and a few more. Every parameter is described in the tools' schemas, and the server tells agents

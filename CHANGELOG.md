@@ -11,6 +11,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   one call instead of one per document, and an agent's turn instead of several. One that can't be read comes back
   with its error, the others still come; texts past 100,000 characters in all are left out, each saying why.
   `sift get` takes several ids too, each headed as `head` heads files.
+- `search`, `vsearch` and `query` take several queries at once, a list of up to 20, and return a list of results for
+  each, as if each were asked alone. The questions of `vsearch` and `query` are embedded together, in one pass of the
+  model.
 
 ### Changed
 

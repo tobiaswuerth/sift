@@ -40,6 +40,34 @@ QUERY_VECTORS = 256  # questions whose embeddings an index keeps, 3 KB each: an 
 RESULTS = 32  # searches whose results an index keeps, while what they read stays as it was
 
 
+MOST_QUERIES = 20  # queries one search call takes
+
+
+def _several(embedded):
+    """A search that takes a list of queries too, and answers each as if asked alone, in order: one call, and one
+    turn of an agent, instead of several. The questions of a semantic search (`embedded`) are embedded together first,
+    in one pass of the model, about the time of one."""
+
+    def wrap(method):
+        @wraps(method)
+        def several(self, query, *args, **kwargs):
+            if not isinstance(query, list):
+                return method(self, query, *args, **kwargs)
+            if not query:
+                raise ValueError("a search takes at least one query")
+            if len(query) > MOST_QUERIES:
+                raise ValueError(f"a search takes at most {MOST_QUERIES} queries at once, got {len(query)}")
+            if wrong := [q for q in query if not isinstance(q, str) or not q.strip()]:
+                raise ValueError(f"each query of several is a text, got {wrong[0]!r}")
+            if embedded:
+                self._embed_questions(query)
+            return [method(self, q, *args, **kwargs) for q in query]
+
+        return several
+
+    return wrap
+
+
 def _changes(db):
     """How SQLite counts a database's changes through a connection: those other connections committed, and the rows
     the connection changed itself."""
@@ -870,15 +898,21 @@ class Index:
 
     def _vector(self, query):
         """The query's vector, with the codes loaded to search with it; kept for the next QUERY_VECTORS questions."""
+        self._embed_questions([query])
+        return self._query_vectors[query]
+
+    def _embed_questions(self, questions):
+        """Load the codes, and embed those of the questions not kept, together, keeping all of them as the latest."""
         self.load()
-        if (vector := self._query_vectors.get(query)) is None:
-            vector = self.models.encode([query], query=True)[0].astype(np.float32)
+        new = [q for q in dict.fromkeys(questions) if q not in self._query_vectors]
+        for question, vector in zip(new, self.models.encode(new, query=True) if new else ()):
+            vector = vector.astype(np.float32)
             vector.setflags(write=False)  # shared by every search asking it again
-            self._query_vectors[query] = vector
-        self._query_vectors.move_to_end(query)
+            self._query_vectors[question] = vector
+        for question in questions:
+            self._query_vectors.move_to_end(question)
         while len(self._query_vectors) > QUERY_VECTORS:
             self._query_vectors.popitem(last=False)
-        return vector
 
     def _filter(self, scope, where, args):
         """A search's filter of the chunks `where` allows, or None for all: one per search, as it remembers what it was
@@ -960,6 +994,7 @@ class Index:
     # `adaptive`, k is the most hits returned: those before the largest drop in score, and a few more (see _adaptive).
     # Without a `collection`, a search covers every active one.
 
+    @_several(embedded=False)
     @_remembered
     def search(
         self,
@@ -1004,6 +1039,7 @@ class Index:
             hit["partial"] = True
         return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
+    @_several(embedded=True)
     @_remembered
     def vsearch(
         self,
@@ -1030,6 +1066,7 @@ class Index:
         hits = self._works(lambda n: self._nearest(vector, n, scope, allowed, all_passages), k, all_passages)
         return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
 
+    @_several(embedded=True)
     @_remembered
     def query(
         self,

@@ -40,7 +40,7 @@ one call; each tool has its own scale, so don't compare them across tools. All s
 links; with `compact: true` results leave out the text: survey many results compactly, then read the ones that
 matter. With `adaptive: true`, a search returns only the results before the largest drop in score, and a few more: ask
 for more, e.g. k=30, and read fewer. A paper that several collections hold is one result, which names the other copies
-under `also`."""
+under `also`. To save calls, `search`, `vsearch` and `query` take a list of queries, and `get` a list of ids."""
 
 
 def _collections(index):
@@ -184,8 +184,10 @@ def _add_search(mcp, index, name, description, query_description):
     """Add the tool for the Index search called `name`: keyword search's takes a budget too."""
     method = getattr(index, name)
 
+    query_description += " Or several at once, a list of up to 20: a list of results for each, in order."
+
     async def tool(
-        query: Annotated[str, Field(description=query_description)],
+        query: Annotated[str | list[str], Field(description=query_description)],
         k: K = 10,
         collection: Collection = None,
         path: PathGlob = None,
@@ -197,11 +199,11 @@ def _add_search(mcp, index, name, description, query_description):
         links_to: LinksTo = None,
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
-    ) -> list[dict]:
+    ) -> list[dict] | list[list[dict]]:
         return await _search(method, query, k, locals())
 
     async def timed(
-        query: Annotated[str, Field(description=query_description)],
+        query: Annotated[str | list[str], Field(description=query_description)],
         k: K = 10,
         collection: Collection = None,
         path: PathGlob = None,
@@ -214,7 +216,7 @@ def _add_search(mcp, index, name, description, query_description):
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
         budget: Budget = None,
-    ) -> list[dict]:
+    ) -> list[dict] | list[list[dict]]:
         return await _search(method, query, k, locals())
 
     mcp.tool(name, description=description, annotations=READ_ONLY)(timed if name == "search" else tool)

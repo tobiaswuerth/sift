@@ -590,6 +590,13 @@ def test_a_batch_names_what_it_takes(mcp, ids, reason):
     assert reason in result.content[0].text
 
 
+@pytest.mark.parametrize("tool", ["search", "vsearch", "query"])
+def test_search_tools_take_several_queries(mcp, tool):
+    both = data(call(mcp, tool, {"query": ["brush strokes", "reward shaping"], "k": 1, "compact": True}))
+    alone = [data(call(mcp, tool, {"query": q, "k": 1, "compact": True})) for q in ("brush strokes", "reward shaping")]
+    assert both == alone
+
+
 def test_unexpected_errors_reach_the_agent_too(embedded, monkeypatch, caplog):
     # A bug is still an error the agent should see: "Error executing tool search" alone says nothing.
     index = Index(embedded[0])

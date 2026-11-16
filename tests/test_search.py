@@ -1853,3 +1853,31 @@ def test_results_kept_are_copies(embedded):
     hits = index.search("brush")
     hits[0]["id"] = "changed"
     assert index.search("brush")[0]["id"] != "changed"
+
+
+# --- several queries in one call -----------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_several_queries_in_one_call_find_what_each_alone_finds(embedded, mode):
+    index = Index(embedded[0])
+    method = getattr(index, mode)
+    asked = ["brush strokes", "reward shaping", "colour theory"]
+    assert method(asked, k=2) == [method(q, k=2) for q in asked]
+
+
+def test_several_questions_are_embedded_together(embedded, monkeypatch):
+    # One forward pass on the GPU for all of them, about the time of one.
+    index = Index(embedded[0])
+    real, batches = index.models.encode, []
+    monkeypatch.setattr(index.models, "encode", lambda texts, query=False: batches.append(texts) or real(texts, query))
+    index.vsearch(["brush strokes", "reward shaping", "brush strokes"], k=2)
+    assert batches == [["brush strokes", "reward shaping"]]
+
+
+@pytest.mark.parametrize(
+    "queries, reason", [([], "at least one"), (["a"] * 21, "at most 20"), (["a", 3], "text"), (["a", " "], "text")]
+)
+def test_several_queries_are_checked(embedded, queries, reason):
+    with pytest.raises(ValueError, match=reason):
+        Index(embedded[0]).search(queries)
