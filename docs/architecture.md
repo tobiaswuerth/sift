@@ -115,7 +115,11 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 - **`vsearch`:** every vector's code, its signs as one bit per dimension, waits in RAM: 96 bytes for 768 dimensions, a
   sixteenth of the vector, so 3.2 million passages take 0.3 GB and 40 million 4 GB. A query's code is compared with
   all of them by Hamming distance, on the CPU's cores, each counting its codes at each distance; the counts summed
-  tell how near the nearest lie, and the cores pick the codes that near (46 million codes: 0.2 to 0.5 s). The 10,000
+  tell how near the nearest lie, and the cores pick the codes that near. A collection of a million passages or more
+  is scanned by compiled code ([Numba](https://numba.pydata.org)), each code read once and its distance counted where
+  it is read: three times as fast as NumPy's three passes (12.9 million codes: 43 ms instead of 133). Smaller ones keep
+  NumPy's scan, which is as quick there, so that a single search from the command line doesn't wait 1.6 s for Numba to
+  load. The 10,000
   nearest of all collections together, ties by id, are ranked again by the query's own floats against their bits (a
   table lookup per byte), and the best 1,000 are scored exactly with their vectors from the index. Over 3.2 million
   arXiv abstracts this finds 99.75% of exact search's top 10, and its known-item MRR, 0.9530; reading 1,000 vectors

@@ -13,6 +13,7 @@ authors = [{ name = "Tobias Würth" }]
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.0",  # np.bitwise_count, which counts the bits of the codes
+    "numba>=0.68",  # the scan of the codes in one pass (sift/scan.py); wheels for every platform and Python sift takes
     "torch>=2.4",
     "sentence-transformers>=6.1",  # the module layout embeddinggemma-2 is saved in
     "transformers>=5.18",  # the first release with embeddinggemma-2
@@ -135,6 +136,7 @@ branch = true
 fail_under = 100
 show_missing = true
 skip_covered = true
+exclude_also = ["@njit", "@intrinsic"]  # compiled by Numba (sift/scan.py): Python never runs their bodies
 
 [tool.codespell]
 ignore-words-list = "pard,ue"  # an RTF control word, in tests/samples/make_samples.py; ü written as ue

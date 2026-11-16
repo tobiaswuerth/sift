@@ -17,6 +17,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `vsearch`, `query` and `similar` scan the codes of a collection of a million passages or more three times as fast:
+  compiled code reads each code once and counts its distance where it is read, where NumPy made three passes. Over
+  12.9 million arXiv codes, 43 ms instead of 133, the same distances. sift now depends on
+  [Numba](https://numba.pydata.org), which has wheels for every platform and Python sift supports; smaller collections
+  keep NumPy's scan, so that a single search from the command line doesn't wait for Numba to load.
 - A server keeps the embeddings of the last 256 questions (3 KB each) and the results of the last 32 searches: an
   agent asking a question again with another `k` or filter skips the embedding (51 ms on an RTX 4090), and the same
   search asked again reads nothing. Kept results count as long as nothing they read has changed: any change to the

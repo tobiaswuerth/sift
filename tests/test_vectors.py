@@ -1,11 +1,19 @@
 """The stores' vectors in memory as one bit per dimension, its sign: candidates by Hamming distance, among the codes of
 every collection searched, the best of them scored exactly with the vectors the stores hold."""
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import pytest
 
 from sift import vectors
 from sift.vectors import Codes, codes
+
+
+@pytest.fixture(autouse=True, params=["numpy", "compiled"])
+def scan_by(request, monkeypatch):
+    """Each test with the codes scanned by NumPy, as a small collection's are, and compiled, as a large one's."""
+    monkeypatch.setattr(vectors, "COMPILED", 0 if request.param == "compiled" else 1 << 62)
 
 
 def unit(matrix):
@@ -362,6 +370,16 @@ def test_the_codes_between_two_distances(monkeypatch):
     for low, high in ((0, 30), (25, 33), (40, 20), (0, 64)):
         expected = np.flatnonzero((distances >= low) & (distances <= high))
         assert patched.between(distances, low, high).tolist() == expected.tolist()
+
+
+def test_scans_from_several_threads_at_once_agree():
+    # The scan runs its own threads; the server's worker thread and a test's may ask at once.
+    _, matrix, _, index = random_index(n=3000)
+    queries = codes(unit(np.random.default_rng(5).standard_normal((8, 64))))
+    expected = [np.bitwise_count(codes(matrix) ^ q).sum(1).tolist() for q in queries]
+    with ThreadPoolExecutor(8) as pool:
+        found = list(pool.map(lambda q: index.measure(q)[0].tolist(), queries))
+    assert found == expected
 
 
 def test_the_distances_of_one_collections_codes():
