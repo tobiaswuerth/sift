@@ -291,9 +291,9 @@ def test_a_record_named_like_a_file_is_skipped(tmp_path, home, capsys):
     catalog = Catalog(home)
     catalog.add(tmp_path / "c", "c")
     indexing.index(catalog)
-    assert only(catalog).execute("SELECT text FROM docs WHERE path = 'a/b.md'").fetchall() == [("# File\n",)]
+    assert only(catalog).execute("SELECT text FROM docs WHERE path = 'a/b.md'").fetchall() == [("record",)]  # first
     shown = [line.rsplit("\r", 1)[-1].rstrip() for line in capsys.readouterr().err.split("\n")]
-    said = "c: a/b.md: a record or attachment of a.jsonl held this path; the file takes it, and it is left out"
+    said = "c: a/b.md: a document of a.jsonl has this path; this one of a/b.md is left out until it is free"
     assert said in shown  # a line of its own
 
 

@@ -11,6 +11,10 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 - Files are compared by modification time and size, so unchanged files cost nothing, and documents by content hash,
   so a changed JSON Lines file re-indexes only its changed records: by their ids, or by line numbers for records
   without, so that a line added or removed changes those of every record after it.
+- A record or an attachment is a document below its file's name (`data.jsonl`'s record `a.md` is `data/a.md`), a path
+  a real file may have too: the first keeps it. Every deletion of documents goes through one function of the store,
+  which marks the files that may wait for the paths it frees to be read again: the file of such a path, and those
+  named like a folder above it. One that waited for nothing is read in vain, once, and changes nothing.
 - Text files are read as UTF-8, or as UTF-16 or UTF-32 when they start with a byte order mark (Windows PowerShell
   5.1 writes UTF-16).
 - Each kind of file has a reader, chosen by extension, that turns it into documents; adding a format means adding a
@@ -188,7 +192,8 @@ each, so the backlinks of a note linked by 6,000 others take 16 ms
   stays free while a request waits, and a cancelled call stops waiting for its answer, which then ends by itself; a
   request of a cancelled call not sent yet never is, and the next call needing the worker waits for the one on its way.
 - A collection whose store is damaged (SQLite finds it so as it reads it) is passed over by `sift index`, `status`
-  and the server's start, and said, with how to forget it: the others go on.
+  and the server's start, and said, with how to forget it: the others go on. A search that reads its damaged tables
+  fails.
 - The UI's pages are rendered on the server with Jinja2, whose panes [htmx](https://htmx.org) swaps in place: no build
   step and no Node, and the UI is tested with the rest. Its pages are made as the MCP tools' calls are run.
   Browsing a folder jumps through the index folder by folder, so it stays quick in collections of millions of

@@ -45,8 +45,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   requests now wait in a thread of their own, one at a time: a cancelled call stops waiting for its request, and one
   not sent yet never is.
 - A file whose path a JSON Lines record or a mail's attachment had taken (`data.jsonl` with a record `a.md`, beside
-  `data/a.md`) was skipped, and never read again, even once the record was gone. The file takes the path, whichever
-  was read first, and the record or attachment is left out, said once.
+  `data/a.md`) was skipped, and never read again, even once the record was gone. The first keeps the path, the other
+  is left out, said once, and read again as soon as the path is free.
 - What `sift index` said of a file under its progress line (a file skipped, a line of JSON Lines left out, a scan read)
   wasn't in its log.
 - A value of front matter written as a JSON string ended at U+2028, U+2029 or NEL, which JSON leaves unescaped.
@@ -56,8 +56,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - With the GPU hidden on purpose (`CUDA_VISIBLE_DEVICES=-1`, to keep sift on the CPU), sift said to update the NVIDIA
   driver; it names the variable.
 - One store damaged (a table a failing disk broke, though the store opens) stopped `sift index`, `status` and the
-  server's start for every collection, with a message that named neither the collection nor what to do. It is passed
-  over, and said, with how to forget it.
+  server's start (as it loads the codes, too) for every collection, with a message that named neither the collection
+  nor what to do. It is passed over, and said, with how to forget it; a search that reads its damaged tables still
+  fails.
 - Ctrl+C, or any other error, while the keyword postings were built in the process itself came out on Windows as a
   file it couldn't delete, which stayed in the temporary folder. A build there needs no file.
 - A record or an attachment whose id held a NUL couldn't be got by it; `.siftignore` ended patterns at U+2028, form

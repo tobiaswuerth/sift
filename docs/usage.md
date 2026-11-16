@@ -227,7 +227,8 @@ sift add ~/qa --id key --title question --text question,answer
 
 Lines that aren't JSON objects, have no text or repeat an id are skipped and reported. A record's path is its id
 below the file's name (`data.jsonl`'s record `a.md` is `data/a.md`), as a mail's attachment is below the mail's;
-where a file of the collection has that path, the file keeps it, and the record is left out, said.
+where a file of the collection has that path too, the first indexed keeps it, and the other is left out, said, and
+read again once the path is free.
 
 ### Documents and scans
 

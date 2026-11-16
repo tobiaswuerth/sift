@@ -399,6 +399,16 @@ def test_a_gpu_hidden_on_purpose_is_no_driver_to_update(make, nvml, monkeypatch,
     assert "driver" not in err
 
 
+def test_a_pytorch_without_cuda_says_so_whatever_the_gpus_cuda_may_use(make, nvml, monkeypatch, configure, capsys):
+    # CUDA_VISIBLE_DEVICES=0, as on a machine of several GPUs, hid that this PyTorch can't use any.
+    import torch
+
+    configure(gpus="0")
+    monkeypatch.setattr(torch.version, "cuda", None)
+    make("cpu").budget()
+    assert "this PyTorch build has no CUDA support" in capsys.readouterr().err
+
+
 def test_no_hint_without_an_nvidia_gpu(make, nvml, capsys):
     nvml.gpus = 0
     make("cpu").budget()

@@ -230,24 +230,39 @@ def test_a_nul_in_a_file_hides_nothing_after_it(corpus):
 
 
 @pytest.mark.parametrize("record_first", [True, False])
-def test_a_file_takes_its_path_from_a_record_and_nothing_is_read_again(corpus, capsys, record_first):
-    # A JSON Lines record (or a mail's attachment) is a document below its file's path, read before the folder of that
-    # name: the real file of the same path was skipped, yet its time recorded, so it was never read again; then read
-    # again by every run, a PDF converted and a scan read anew each time.
+def test_a_document_left_out_for_its_path_gets_it_once_free(corpus, capsys, record_first):
+    # A JSON Lines record (or a mail's attachment) is a document below its file's name, a path a real file may have:
+    # the one left out was never read again, even once the path was free; then read again by every run, a PDF
+    # converted and a scan read anew each time; then a record left out for a file never came back.
     catalog, root = corpus
-    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    record, real = root / "data.jsonl", root / "data" / "a.md"
+    write(real, "# A\n\ngiraffe in the real file\n")
     if not record_first:  # the file indexed first, the record added later
         indexing.index(catalog)
-    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')  # else read first, in one run
+    write(record, '{"id": "a.md", "text": "zebra in the record"}\n')  # else read first, in one run
     indexing.index(catalog)
-    said = capsys.readouterr().err
-    assert "data/a.md: a record or attachment of data.jsonl" in said
-    assert said.count("left out") == 1
-    found = Index(catalog)
-    assert [hit["id"] for hit in found.search("giraffe")] == ["notes/data/a.md"]
-    assert found.search("zebra") == []  # left out
+    assert capsys.readouterr().err.count("left out until it is free") == 1
+    holder, waiting = (record, "giraffe") if record_first else (real, "zebra")
+    assert Index(catalog).search(waiting) == []
     indexing.index(catalog)
-    assert "0 added, 0 changed, 0 removed" in capsys.readouterr().err  # neither file read again
+    assert "0 added, 0 changed, 0 removed" in capsys.readouterr().err  # nothing read again meanwhile
+    holder.unlink()
+    indexing.index(catalog)
+    assert [hit["id"] for hit in Index(catalog).search(waiting)] == ["notes/data/a.md"]
+
+
+def test_a_note_beside_a_folder_of_its_name_stays_as_it_was_when_a_file_in_it_goes(corpus, capsys):
+    # Project.md and the folder Project/, as Obsidian keeps them: Project.md might have waited for the path freed, so
+    # it is read again, in vain, and changes nothing.
+    catalog, root = corpus
+    write(root / "Project.md", "# Project\n")
+    write(root / "Project" / "x.md", "# X\n")
+    indexing.index(catalog)
+    before = doc_ids(catalog)["Project.md"]
+    (root / "Project" / "x.md").unlink()
+    indexing.index(catalog)
+    assert "0 added, 0 changed, 1 removed" in capsys.readouterr().err
+    assert doc_ids(catalog)["Project.md"] == before
 
 
 def test_a_document_the_index_refuses_for_another_reason_than_its_path_skips_its_file(corpus, monkeypatch, capsys):

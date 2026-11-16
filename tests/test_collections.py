@@ -99,6 +99,18 @@ def test_a_damaged_store_stops_no_other_collection(three, tmp_path, capsys):
     assert f"- recipes ({three.get('recipes').path}): 3 documents" in started
 
 
+def test_a_damaged_store_stops_no_server_from_loading_the_others(three, capsys):
+    # Its codes damaged, loading them as the server starts failed: no server at all.
+    papers = three.get("papers")
+    three.release(papers.id)
+    damage(papers.store, "codes")
+    index = Index(three)
+    index.load()
+    assert "papers: its index is damaged" in capsys.readouterr().err
+    assert papers.id not in index.vectors
+    assert {r["id"].split("/")[0] for r in index.vsearch("soup", k=5)} <= {"recipes", "diary"}
+
+
 class Unplugged:
     """An open store whose drive went away."""
 

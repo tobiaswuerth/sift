@@ -453,10 +453,26 @@ def _mark_dirty(db, docs):
     )
 
 
+def _free(db, paths):
+    """Mark to be read again by the next `sift index` the files that may wait for these paths, as they free: a document
+    left out because another file's held its path (see indexing._left_out). That is the file of such a path, and those
+    whose records or attachments lie below their names, `data.jsonl`'s below `data/`, for each folder above it. A file
+    marked that waited for nothing is read in vain, once: its documents are unchanged, and scans aren't read again."""
+    stems = {path.rsplit("/", n)[0] for path in paths for n in range(1, path.count("/") + 1)}
+    db.executemany("UPDATE sources SET mtime = NULL WHERE path = ?", [(path,) for path in paths])
+    db.executemany(  # stem.<extension>: from "stem." up to "stem/", and no folder after the stem
+        "UPDATE sources SET mtime = NULL WHERE path > ? AND path < ? AND instr(substr(path, ?), '/') = 0",
+        [(f"{stem}.", f"{stem}/", len(stem) + 2) for stem in stems],
+    )
+
+
 def delete_docs(db, doc_ids):
+    """Delete documents, with all that is theirs; the files that may wait for their paths are read again (see
+    _free)."""
     for i in range(0, len(doc_ids), 500):
         batch = doc_ids[i : i + 500]
         marks = ",".join("?" * len(batch))
+        _free(db, [path for (path,) in db.execute(f"SELECT path FROM docs WHERE id IN ({marks})", batch)])
         chunk_ids = f"SELECT id FROM chunks WHERE doc IN ({marks})"
         keywords(db, batch, add=False)  # first, while their text is still there
         drop_vectors(db, f"chunk IN ({chunk_ids})", batch)

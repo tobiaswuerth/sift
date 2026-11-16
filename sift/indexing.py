@@ -3,6 +3,7 @@ time and size, documents by content hash; new and changed files are read in work
 the previous batch is written. `reindex` reads given files at once, for a note just written to be found.
 """
 
+import contextlib
 import json
 import multiprocessing
 import os
@@ -155,9 +156,8 @@ def _store(db, sid, rel, docs, counts, note):
         try:
             added.append(_insert(db, sid, path, doc))
         except sqlite3.IntegrityError:  # another file's document holds the path
-            if not _take_path(db, rel, path, doc, counts, note):
-                continue
-            added.append(_insert(db, sid, path, doc))
+            _left_out(db, rel, path, note)
+            continue
         counts["changed" if old else "added"] += 1
     store.keywords(db, added)
     gone = [i for p, (i, _) in existing.items() if p not in kept]
@@ -166,21 +166,14 @@ def _store(db, sid, rel, docs, counts, note):
     return unchanged
 
 
-def _take_path(db, rel, path, doc, counts, note):
-    """Whether the document `doc` of the file `rel` may take the path another file's document holds: a record or an
-    attachment is a document below its file's name (`data.jsonl` holds `data/a.md`), as a real file may be. The file
-    takes the path, and the record or attachment is left out, said once: whichever was read first, the file is found,
-    and neither is read again by every run."""
-    holder = db.execute("SELECT d.id, s.path FROM docs d JOIN sources s ON s.id = d.source WHERE d.path = ?", (path,))
-    if (held := holder.fetchone()) is None:  # not the path the store refused
+def _left_out(db, rel, path, note):
+    """Say that a document of the file `rel` is left out, as another file's holds its path: a record or an attachment
+    is a document below its file's name (`data.jsonl` holds `data/a.md`), as a real file may be. The first keeps the
+    path; once it is free, the file left out is read again (see store.delete_docs), and not before."""
+    sql = "SELECT s.path FROM docs d JOIN sources s ON s.id = d.source WHERE d.path = ?"
+    if (held := db.execute(sql, (path,)).fetchone()) is None:  # not the path the store refused
         raise sqlite3.IntegrityError(f"{rel}: {path}: the index refused the document")
-    if doc.key:
-        note(f"{path}: a record or attachment of {rel}, left out: {held[1]} holds this path")
-        return False
-    note(f"{path}: a record or attachment of {held[1]} held this path; the file takes it, and it is left out")
-    store.delete_docs(db, [held[0]])
-    counts["removed"] += 1
-    return True
+    note(f"{path}: a document of {held[0]} has this path; this one of {rel} is left out until it is free")
 
 
 REFRESH_BATCH = 1000  # files read again from the index at a time
@@ -600,6 +593,8 @@ def _index_collection(db, name, root, fields, ignore):
     for rel in known.keys() - seen - kept:
         counts["removed"] += _drop_source(db, known[rel][0])
     db.commit()  # before any file is read: other writers wait for none of it
+    if counts["removed"]:  # files that waited for a path these held are read now (see store._free)
+        todo += _freed(db, root, seen - {item[1] for item in todo})
     if todo:
         with console.Progress(len(todo), "files", prefix=f"{name}: ") as progress:
             _read_and_store(db, name, fields, todo, counts, progress)
@@ -609,6 +604,18 @@ def _index_collection(db, name, root, fields, ignore):
         f"{name}: {len(seen)} files, {counts['added']} added, {counts['changed']} changed, {counts['removed']} removed"
         f"{unreadable} ({time.perf_counter() - t0:.1f}s)"
     )
+
+
+def _freed(db, root, unchanged):
+    """The files to read of those seen `unchanged` whose times the documents dropped meanwhile cleared."""
+    freed = []
+    cleared = [rel for (rel,) in db.execute("SELECT path FROM sources WHERE mtime IS NULL") if rel in unchanged]
+    for rel in cleared:
+        path = os.path.join(root, *rel.split("/"))
+        with contextlib.suppress(OSError):  # gone meanwhile: the next index drops it
+            info = os.stat(path)
+            freed.append((path, rel, info.st_mtime_ns, info.st_size))
+    return freed
 
 
 def _kept(name, unseen, unlisted):

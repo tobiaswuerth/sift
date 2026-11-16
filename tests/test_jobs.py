@@ -250,6 +250,21 @@ def test_a_request_of_a_call_cancelled_before_it_looked_is_not_made():
     assert made == []
 
 
+def test_a_slow_workers_answer_is_awaited(monkeypatch):
+    # Many looks at whether the call was cancelled, none of them ending the wait.
+    monkeypatch.setattr(jobs, "ABORT_CHECK", 0.001)
+
+    class Slow:
+        name, main_thread = "worker", False
+
+        def encode(self, texts):
+            time.sleep(0.05)
+            return texts
+
+    models = jobs.OnMainThread(Slow())
+    assert anyio.run(jobs.run, lambda: models.encode(["a"])) == ["a"]
+
+
 def test_a_workers_answer_and_error_come_back_from_its_thread():
     class Answering:
         name, main_thread = "worker", False
