@@ -42,7 +42,7 @@ pre-commit install
 | `jobs.py` | A server's calls off its event loop, one at a time, stopped when cancelled; the models on the main thread |
 | `ui.py` | `sift ui`: the views of the browser UI; `web/` holds its templates, styles and script, and htmx 2.0.11 (0BSD) as its release ships it |
 | `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |
-| `settings.py` | The five optional environment variables, read once (`settings.current()`) |
+| `settings.py` | The five optional environment variables and CUDA_VISIBLE_DEVICES, read once (`settings.current()`), and Numba's folder |
 | `console.py` | What sift tells the user, on stderr: messages, plurals, commands to paste, and one progress bar for every long step |
 | `logs.py` | A log of its own for each command that changes the index or serves it |
 

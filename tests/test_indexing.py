@@ -229,6 +229,19 @@ def test_a_nul_in_a_file_hides_nothing_after_it(corpus):
     assert index.document("notes/pasted.md", fields=["title"])["title"] == "Num\ufffdbers"
 
 
+def test_a_file_whose_path_a_record_took_is_read_once_the_record_goes(corpus, capsys):
+    # A JSON Lines record (or a mail's attachment) is a document below its file's path, read before the folder of that
+    # name: the real file of the same path was skipped, yet its time recorded, so it was never read again.
+    catalog, root = corpus
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
+    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    indexing.index(catalog)
+    assert "data/a.md: a document of this name exists already, skipped" in capsys.readouterr().err
+    (root / "data.jsonl").unlink()
+    indexing.index(catalog)
+    assert [hit["id"] for hit in Index(catalog).search("giraffe")] == ["notes/data/a.md"]
+
+
 def test_index_is_incremental(corpus, capsys):
     catalog, root = corpus
     ids = doc_ids(catalog)
@@ -598,3 +611,22 @@ def test_batches_hold_at_most_so_many_files_and_bytes(monkeypatch):
     todo = [(f"f{i}", f"f{i}", 0, size) for i, size in enumerate([10, 10, 10, 10, 95, 200, 1])]
     assert [[t[0] for t in b] for b in indexing._batches(todo)] == [["f0", "f1", "f2"], ["f3"], ["f4"], ["f5"], ["f6"]]
     assert indexing._batches([]) == []
+
+
+MAIL = "From: a@example.com\nSubject: {subject}\nDate: {date}\nContent-Type: text/plain; charset={charset}\n\n{body}\n"
+
+
+@pytest.mark.parametrize(
+    "date, charset, body",
+    [
+        ("Fri, 31 Dec 9999 23:00:00 -0500", "utf-8", "wombat"),  # past 9999 in UTC: the date stays as written
+        ("Fri, 1 Mar 2024 10:00:00 +0100", "utf-7", "wombat +2D0- half an emoji"),  # UTF-7 can encode half of one
+    ],
+)
+def test_a_mail_python_reads_oddly_is_indexed(corpus, date, charset, body):
+    # Both were skipped, the second on every run: a date Python couldn't move to UTC, a half character SQLite can't
+    # store.
+    catalog, root = corpus
+    write(root / "odd.eml", MAIL.format(subject="Odd", date=date, charset=charset, body=body))
+    indexing.index(catalog)
+    assert [hit["id"] for hit in Index(catalog).search("wombat")] == ["notes/odd.eml"]

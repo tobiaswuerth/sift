@@ -13,7 +13,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   `sift get` takes several ids too, each headed as `head` heads files.
 - `search`, `vsearch` and `query` take several queries at once, a list of up to 20, and return a list of results for
   each, as if each were asked alone. The questions of `vsearch` and `query` are embedded together, in one pass of the
-  model. All of them return at most 10,000 hits, as one search does, and share a time `budget`.
+  model. All of them return at most 10,000 hits, as one search does; the queries of `search` share its time `budget`.
 
 ### Changed
 
@@ -30,7 +30,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   search asked again reads nothing. Kept results count as long as nothing they read has changed: any change to the
   catalog or a store, by another sift (as SQLite counts them) or by the server's own `reindex`, and any change to the
   codes in memory, lets them go. A search within a time budget is never kept, nor one of more than 1,000 hits, nor
-  one that passed over a collection whose store couldn't be opened.
+  one that passed over a collection whose store couldn't be opened. An open store out of reach (its drive gone) is
+  closed, and opened again once it is back.
+- `query` over collections not embedded yet embeds no question: there is nothing to compare it with, and the model
+  stays unloaded.
 
 ### Fixed
 
@@ -38,8 +41,19 @@ and versions follow [Semantic Versioning](https://semver.org/).
   read the codes of every active collection first: beside PubMed's, half a minute and 4 GB to search a few hundred
   notes. It reads those of the collections it searches.
 - A server that embeds through a worker (`SIFT_EMBED_REMOTE`) answered nothing while a request to the worker waited,
-  up to ten minutes if the worker's machine went to sleep: not even a cancellation. The request now waits on the call's
-  own thread.
+  up to ten minutes if the worker's machine went to sleep: not even a cancellation, and no other call after it. The
+  request now waits in a thread of its own, and a cancelled call stops waiting for it.
+- A file whose path a JSON Lines record or a mail's attachment had taken (`data.jsonl` with a record `a.md`, beside
+  `data/a.md`) was skipped, and never read again, even once the record was gone. It is read again by each `sift index`
+  until it can be stored.
+- What `sift index` said of a file under its progress line (a file skipped, a line of JSON Lines left out, a scan read)
+  wasn't in its log.
+- A value of front matter written as a JSON string ended at U+2028, U+2029 or NEL, which JSON leaves unescaped.
+- A mail dated in year 9999 with a time zone, and one in UTF-7 holding half a character, were skipped, the second on
+  every run. A file with a UTF-32 byte order mark was read as UTF-16, a NUL after every character.
+- `get` of several documents failed for all of them when one's store was out of reach; it comes back with its error.
+- With the GPU hidden on purpose (`CUDA_VISIBLE_DEVICES=-1`, to keep sift on the CPU), sift said to update the NVIDIA
+  driver; it says the GPU is hidden.
 - A NUL character in a file (a log padded with them, a pasted control character) hid everything after it from
   searches: SQLite's `substr`, which cuts the passages out of a document's text, stops there, so they were indexed
   empty and embedded as their title alone. It is stored as U+FFFD. A file indexed before is read again when it

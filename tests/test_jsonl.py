@@ -178,7 +178,7 @@ def test_lines_sqlite_cant_store_or_python_cant_nest_stop_nothing(tmp_path, home
     catalog.add(tmp_path / "c", "c")
     indexing.index(catalog)
     assert dict(only(catalog).execute("SELECT path, text FROM docs")) == {
-        "chat/1": "a � b",
+        "chat/1": "a \ufffd b",
         "chat/3": "kept",
         "chat/5": "near the limit",
         "note.md": "# Note\n\nafter the chat\n",

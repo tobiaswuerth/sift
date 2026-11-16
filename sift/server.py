@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import console, jobs, logs, store, vectors
 from . import models as _models
-from .search import Index
+from .search import Index, line_span
 
 log = logging.getLogger(__name__)
 
@@ -239,6 +239,8 @@ def _batch(index, asked, lines, fields):
         raise ValueError("get takes at least one id")
     if len(asked) > BATCH_IDS:
         raise ValueError(f"get takes at most {BATCH_IDS} ids at once, got {len(asked)}: ask for the rest in another")
+    if lines is not None:
+        line_span(lines)  # wrong, the lines of every document are: one error for the call
     wanted = [(part, lines) if isinstance(part, str) else (part.id, part.lines) for part in asked]
     documents, used = index.documents(wanted, fields), 0
     for document in documents:

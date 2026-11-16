@@ -193,6 +193,41 @@ def test_models_called_on_any_thread_leave_the_loop_free():
     assert answers == [True]  # not timed out
 
 
+def test_a_call_cancelled_while_a_worker_is_asked_holds_up_no_other():
+    # The request went on, and with it the server's one call at a time: up to ten minutes before the next call, even
+    # one that needs no models, though the client had cancelled.
+    worker = Worker()  # answers only once told to: not within this test
+    models = jobs.OnMainThread(worker)
+
+    async def main():
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(partial(jobs.run, lambda: models.encode(["a"])))
+            await anyio.sleep(0.05)
+            tasks.cancel_scope.cancel()
+        with anyio.fail_after(1):
+            return await jobs.run(lambda: "next")
+
+    try:
+        assert anyio.run(main) == "next"
+    finally:
+        worker.answered.set()  # the request left behind ends
+
+
+def test_a_workers_answer_and_error_come_back_from_its_thread():
+    class Answering:
+        name, main_thread = "worker", False
+
+        def encode(self, texts):
+            if not texts:
+                raise ConnectionError("embedding remote https://pc:8766 is unreachable")
+            return threading.current_thread()
+
+    models = jobs.OnMainThread(Answering())
+    assert anyio.run(jobs.run, lambda: models.encode(["a"])) is not threading.main_thread()
+    with pytest.raises(ConnectionError, match="unreachable"):
+        anyio.run(jobs.run, lambda: models.encode([]))
+
+
 def test_models_called_on_any_thread_still_stop_when_cancelled():
     models = jobs.OnMainThread(Worker())
     store.ABORT.set()

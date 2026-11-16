@@ -38,13 +38,16 @@ def compile_scan():
     the compiled code takes a second or two, which a server pays once, as it starts; a single search from the command
     line keeps NumPy's scan, which costs it less. One that can't be loaded is said, and NumPy's scan stays."""
     global _scan
-    settings.keep_compiled_code()
+    folder = settings.keep_compiled_code()
     try:
         from . import scan
 
         scan.measure(np.zeros((1, 1), np.uint64), np.zeros(1, np.uint64), _NONE, np.empty(1, np.uint16), FAR, 1)
     except Exception as error:  # Numba missing or broken, its kept code damaged, no folder to keep it in
-        console.say(f"warning: the compiled scan of the codes isn't available ({error}); NumPy's scans them")
+        console.say(
+            f"warning: the compiled scan of the codes isn't available ({error}); NumPy's scans them, a third as fast. "
+            f"Delete {folder} to compile it anew, or install sift again"
+        )
         return
     _scan = scan
 

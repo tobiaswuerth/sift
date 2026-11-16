@@ -59,8 +59,39 @@ def test_query_of_a_collection_not_embedded_yet_reranks_its_keyword_candidates(t
     indexing.index(three)
     index = Index(three)
     assert ids(index.query("robot arm", collection="fresh")) == ["fresh/robot.md"]
+    assert "robot arm" not in index._query_vectors  # nothing to compare it with: the embedding model stays unloaded
     with pytest.raises(LookupError, match="no embeddings yet in fresh, run `sift embed`"):
         index.vsearch("robot arm", collection="fresh")
+
+
+class Unplugged:
+    """An open store whose drive went away."""
+
+    total_changes = 0
+
+    def __init__(self, real):
+        self.real = real
+
+    def execute(self, *args):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    def close(self):
+        self.real.close()
+
+
+def test_a_store_gone_during_a_search_fails_it_not(three, monkeypatch):
+    index, diary = Index(three), three.get("diary")
+    index.search("robot")  # every store opened
+    path, real = three._stores[diary.id]
+    keyword = index._keyword
+
+    def unplugging(*args):
+        three._stores[diary.id] = (path, Unplugged(real))
+        return keyword(*args)
+
+    monkeypatch.setattr(index, "_keyword", unplugging)
+    assert ids(index.search("robot", collection="papers")) == ["papers/robots.md"]
+    assert not [key for key in index._results if '"collection": "papers"' in key]  # what it read was in doubt
 
 
 def test_a_store_gone_while_open_fails_no_search(three, monkeypatch):
@@ -68,21 +99,14 @@ def test_a_store_gone_while_open_fails_no_search(three, monkeypatch):
     index, diary = Index(three), three.get("diary")
     index.search("robot")
     path, real = three._stores[diary.id]
-
-    class Unplugged:
-        total_changes = 0
-
-        def execute(self, *args):
-            raise sqlite3.OperationalError("disk I/O error")
-
-        def close(self):
-            real.close()
-
-    three._stores[diary.id] = (path, Unplugged())
+    three._stores[diary.id] = (path, Unplugged(real))
     isfile = os.path.isfile
     monkeypatch.setattr(os.path, "isfile", lambda p: p != diary.store and isfile(p))
     assert sorted(ids(index.search("robot"))) == ["papers/robots.md", "recipes/soup.md"]
     assert ids(index.search("robot", collection="papers")) == ["papers/robots.md"]
+    # Nor did any search's results count as kept after it, as long as the store stayed open: it is let go
+    assert diary.id not in [cid for cid, _, _ in three.open_stores()]
+    assert [key for key in index._results if '"collection": "papers"' in key]
 
 
 def test_a_store_back_after_a_search_passed_it_over_is_searched_again(three):

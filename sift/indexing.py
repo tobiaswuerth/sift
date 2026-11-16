@@ -78,13 +78,17 @@ def _loaded(path, fields):
         return error
 
 
+def _storable(text):
+    """Text as the store keeps it: a NUL, at which SQLite's substr stops cutting passages out of the text, and with it
+    what is searched, and half a surrogate pair, as UTF-7 can encode, which SQLite's UTF-8 can't hold, as U+FFFD, of
+    the same length, so that the chunks' positions stay."""
+    return readers.LONE.sub("\ufffd", text.replace("\x00", "\ufffd"))
+
+
 def _insert(db, sid, path, doc):
     """Add a document, its chunks, its links and, if it is a whole file, its names, and return its id. Its keyword
     entries come with its file's (see _store)."""
-    meta = json.dumps(doc.meta, ensure_ascii=False)
-    # SQLite's substr, which cuts the passages out of the text, stops at a NUL, and with it what is searched: U+FFFD
-    # instead, of the same length, so that the chunks' positions stay
-    title, text = (s.replace("\x00", "�") for s in (doc.title, doc.text))
+    title, meta, text = map(_storable, (doc.title, json.dumps(doc.meta, ensure_ascii=False), doc.text))
     doc_id = db.execute(
         "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?)",
         (sid, path, doc.digest, title, meta, text),
@@ -134,10 +138,12 @@ def _read_scans(db, sid, rel, docs, note, now=True):
 
 
 def _store(db, sid, rel, docs, counts, note):
-    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
-    row ids are returned. note(text) tells the user of a document that had to be skipped."""
+    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included. Returns
+    their row ids, and whether every document was stored: one whose path another file's document holds (a record's or
+    an attachment's, below a file of that name) is skipped, and note(text) tells the user; its file is read again by
+    the next run, which stores it once the other has gone."""
     existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
-    kept, added, unchanged = set(), [], set()
+    kept, added, unchanged, complete = set(), [], set(), True
     for doc in docs:
         path = _path(rel, doc)
         kept.add(path)
@@ -151,13 +157,14 @@ def _store(db, sid, rel, docs, counts, note):
             added.append(_insert(db, sid, path, doc))
         except sqlite3.IntegrityError:  # another file of the collection has a document of that name
             note(f"{path}: a document of this name exists already, skipped")
+            complete = False
             continue
         counts["changed" if old else "added"] += 1
     store.keywords(db, added)
     gone = [i for p, (i, _) in existing.items() if p not in kept]
     store.delete_docs(db, gone)
     counts["removed"] += len(gone)
-    return unchanged
+    return unchanged, complete
 
 
 REFRESH_BATCH = 1000  # files read again from the index at a time
@@ -458,8 +465,8 @@ def _reindex_file(db, name, rel, info, read, left):
     docs, problems = read
     sid = _source(db, rel, make=True)
     had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
-    unchanged = _store(db, sid, rel, docs, counts, problems.append)
-    mtime = None if left else info.st_mtime_ns  # no time: `sift index` takes it for changed
+    unchanged, complete = _store(db, sid, rel, docs, counts, problems.append)
+    mtime = info.st_mtime_ns if complete and not left else None  # no time: `sift index` takes it for changed
     db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (mtime, info.st_size, sid))
     now = [d for (d,) in db.execute("SELECT id FROM docs WHERE source = ?", (sid,))]
     if not now and problems:
@@ -637,9 +644,9 @@ def _read_and_store(db, name, fields, todo, counts, progress):
                 done += 1
                 if done % step == 0 or done == len(todo):
                     progress.update(done)
-                note = lambda text: progress.note(f"{name}: {text}")  # noqa: E731
+                note = lambda text: console.say(f"{name}: {text}")  # noqa: E731
                 if res is None:  # unreadable now; retried on the next run
-                    progress.note(f"unreadable, skipped: {path}")
+                    console.say(f"unreadable, skipped: {path}")
                     counts["unreadable"] += 1
                     continue
                 if isinstance(res, Exception):  # a reader failed: said, and read again by the next run
@@ -648,7 +655,7 @@ def _read_and_store(db, name, fields, todo, counts, progress):
                     continue
                 docs, problems = res
                 for problem in problems:
-                    progress.note(f"{name}: {rel}: {problem}")
+                    note(f"{rel}: {problem}")
                 docs, left = _read_scans(db, _source(db, rel), rel, docs, note)
                 _stored(db, rel, docs, (None if left else mtime, size), counts, note)
             db.commit()
@@ -663,8 +670,9 @@ def _stored(db, rel, docs, stat, counts, note):
     before = counts.copy()
     try:
         sid = _source(db, rel, make=True)
-        _store(db, sid, rel, docs, counts, note)
-        db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (*stat, sid))
+        _, complete = _store(db, sid, rel, docs, counts, note)
+        mtime, size = stat
+        db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (mtime if complete else None, size, sid))
     except (ValueError, RecursionError, sqlite3.DataError, sqlite3.IntegrityError) as refused:  # Recursion: 3.11's JSON
         db.execute("ROLLBACK TO file")
         counts.clear()

@@ -3,12 +3,13 @@ free to answer, to accept connections, and to hear that a client cancelled a cal
 stops: its SQLite statements end at once (store.ABORT), and it calls the models no more. Writes run to their end.
 
 The models of this machine run on the main thread, which holds the loop, whoever calls them (OnMainThread): PyTorch
-crashes in worker threads on Python 3.15 (Windows, macOS). A worker's are asked from the calling thread, so that the
-loop stays free while a request waits for its answer."""
+crashes in worker threads on Python 3.15 (Windows, macOS). A worker's are asked in a thread of their own: the loop
+stays free while a request waits for its answer, and a cancelled call stops waiting."""
 
 import functools
 import logging
 import threading
+from concurrent.futures import Future, wait
 
 import anyio
 import anyio.from_thread
@@ -17,6 +18,7 @@ import anyio.to_thread
 from . import store
 
 log = logging.getLogger(__name__)
+ABORT_CHECK = 0.05  # seconds between looks at store.ABORT while a worker's answer is awaited
 
 
 class Cancelled(Exception):
@@ -67,8 +69,8 @@ async def run(fn, *args, abortable=True, **kwargs):
 
 class OnMainThread:
     """Models whose methods run on the main thread, wherever they are called, if they must (`main_thread`): from a
-    worker thread of `run`, through the event loop, which waits meanwhile. Others run where they are called. Called for
-    a cancelled call, they raise Cancelled."""
+    worker thread of `run`, through the event loop, which waits meanwhile. A worker's run in a thread of their own,
+    waited for until the call is cancelled (see _abortable). Called for a cancelled call, they raise Cancelled."""
 
     def __init__(self, models):
         self._models = models._models if isinstance(models, OnMainThread) else models
@@ -82,8 +84,30 @@ class OnMainThread:
         def on_main_thread(*args, **kwargs):
             if store.ABORT.is_set():
                 raise Cancelled("the call was cancelled")
-            if not self._models.main_thread or threading.current_thread() is threading.main_thread():
-                return value(*args, **kwargs)
-            return anyio.from_thread.run_sync(functools.partial(value, *args, **kwargs))
+            call = functools.partial(value, *args, **kwargs)
+            if not self._models.main_thread:
+                return _abortable(call)
+            if threading.current_thread() is threading.main_thread():
+                return call()
+            return anyio.from_thread.run_sync(call)
 
         return on_main_thread
+
+
+def _abortable(call):
+    """call() in a thread of its own, its answer awaited until the call it belongs to is cancelled: then Cancelled at
+    once, and the answer, when it comes, dropped. A worker's request can wait minutes for one (remote.TIMEOUT), and
+    meanwhile the server takes no other call."""
+    answer = Future()
+
+    def ask():
+        try:
+            answer.set_result(call())
+        except BaseException as error:  # handed to the caller, if it still waits
+            answer.set_exception(error)
+
+    threading.Thread(target=ask, name="sift-worker-request", daemon=True).start()
+    while not wait([answer], ABORT_CHECK).done:
+        if store.ABORT.is_set():
+            raise Cancelled("the call was cancelled; its request to the worker ends by itself")
+    return answer.result()

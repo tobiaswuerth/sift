@@ -604,9 +604,13 @@ def test_a_batch_leaves_out_texts_past_its_budget(mcp, monkeypatch):
     assert set(documents[1]) == {"id", "title", "omitted"}
 
 
-@pytest.mark.parametrize("ids, reason", [([], "at least one"), (["notes/rl.md"] * 101, "at most 100")])
-def test_a_batch_names_what_it_takes(mcp, ids, reason):
-    result = call(mcp, "get", {"id": ids})
+@pytest.mark.parametrize(
+    "ids, lines, reason",
+    [([], None, "at least one"), (["notes/rl.md"] * 101, None, "at most 100"), (["notes/rl.md"] * 2, "x", "lines")],
+)
+def test_a_batch_names_what_it_takes(mcp, ids, lines, reason):
+    # Lines shared by every document, and wrong, were one error each instead of one for the call.
+    result = call(mcp, "get", {"id": ids, "lines": lines})
     assert result.is_error
     assert reason in result.content[0].text
 

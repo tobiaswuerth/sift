@@ -447,7 +447,9 @@ def test_a_compiled_scan_that_cant_load_is_said_and_numpy_scans(monkeypatch, cap
 
     monkeypatch.setattr(scan, "measure", broken)
     vectors.compile_scan()
-    assert "compiled scan of the codes isn't available (cannot cache" in capsys.readouterr().err
+    said = capsys.readouterr().err
+    assert "compiled scan of the codes isn't available (cannot cache" in said
+    assert f"Delete {os.environ['NUMBA_CACHE_DIR']} to compile it anew" in said  # what to do about it
     assert vectors._scan is None
     _, matrix, _, index = random_index(n=50)
     assert index.measure(codes(matrix[:1])[0])[0][0] == 0

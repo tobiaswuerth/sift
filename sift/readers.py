@@ -80,7 +80,7 @@ def _depth(value):
 def _whole(value):
     """A JSON value with every surrogate alone in its strings as U+FFFD."""
     if isinstance(value, str):
-        return LONE.sub("�", value)
+        return LONE.sub("\ufffd", value)
     if isinstance(value, list):
         return [_whole(item) for item in value]
     if isinstance(value, dict):
@@ -130,7 +130,7 @@ def _flow_list(text):
 def _front_matter(block):
     """Flat `key: value` lines, and lists as `- item` lines below a key without a value, as Obsidian writes them."""
     meta, listing, written = {}, None, {}  # written: each value's text, or its `- item` lines' texts
-    for line in block.splitlines():
+    for line in block.split("\n"):  # only \n ends a line (LINE): JSON writes U+2028 in a string as it is
         if listing and (item := LIST_ITEM.match(line)):
             text = item.group(1).strip()
             meta[listing] = [*(meta[listing] or []), _value(text)]
@@ -233,8 +233,10 @@ def chunk(text, first_line=1):
 
 
 def decode(raw):
-    """A text file's content: UTF-16 after a UTF-16 byte order mark (Windows PowerShell 5.1 writes those),
-    otherwise UTF-8 with invalid bytes replaced."""
+    """A text file's content: UTF-16 or UTF-32 after their byte order marks (Windows PowerShell 5.1 writes UTF-16),
+    otherwise UTF-8 with invalid bytes replaced. UTF-32's little-endian mark starts as UTF-16's does."""
+    if raw[:4] in (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"):
+        return raw.decode("utf-32", "replace")
     return raw.decode("utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig", "replace")
 
 
@@ -521,15 +523,23 @@ def _mail_headers(msg):
             shown.append(f"{key.capitalize()}: {header}")
     if date := msg.get("date"):
         when = getattr(date, "datetime", None)  # None for a date that doesn't parse: then as written
-        if when and when.tzinfo:  # in UTC, so that dates sort as times do; one without a zone (-0000) as it is
-            when = when.astimezone(UTC)
+        if when and when.tzinfo:  # one without a zone (-0000) as it is
+            when = _in_utc(when)
         meta["date"] = when.isoformat() if when else str(date)
         shown.append(f"Date: {meta['date']}")
     for key in ("message-id", "in-reply-to"):
         if value := str(msg.get(key) or "").strip():
             meta[key.replace("-", "_")] = value
     # Raw 8-bit bytes in a header, as old clients and spam write them, come as halves of characters: as U+FFFD
-    return _whole(meta), [LONE.sub("�", line) for line in shown]
+    return _whole(meta), [LONE.sub("\ufffd", line) for line in shown]
+
+
+def _in_utc(when):
+    """A time in UTC, so that dates sort as times do; as it is if UTC would take it past year 9999, or before year 1."""
+    try:
+        return when.astimezone(UTC)
+    except OverflowError:
+        return when
 
 
 def _mail_text(msg, fields):

@@ -398,7 +398,7 @@ def test_a_file_the_store_refuses_is_skipped_and_the_others_indexed(tmp_path, ho
             raise MemoryError("a record of gigabytes")
         found = real(path, fields)
         if path.endswith(("b.md", "d.md")):
-            found[0][0] = found[0][0]._replace(title="B \udcf6")  # half a character, as a reader might leave
+            found[0][0] = found[0][0]._replace(key="B \udcf6")  # a name with half a character, as a reader might leave
         return found
 
     monkeypatch.setattr(readers, "load", load)
@@ -445,7 +445,7 @@ def test_an_email_in_an_unknown_charset_still_reads(tmp_path):
 
 
 def test_a_text_attachment_reads_in_the_charset_its_mail_declares(tmp_path):
-    # sift reads text files as UTF-8; a mail can say that an attachment is Latin-1, whose umlauts came out as "�".
+    # sift reads text files as UTF-8; a mail can say that an attachment is Latin-1, whose umlauts came out as "\ufffd".
     def attachment(name, charset, data):
         return (
             f"--b\r\nContent-Type: text/plain; charset={charset}\r\n"

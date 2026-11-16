@@ -1889,11 +1889,39 @@ def test_several_questions_are_embedded_together(embedded, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "queries, reason", [([], "at least one"), (["a"] * 21, "at most 20"), (["a", 3], "text"), (["a", " "], "text")]
+    "queries, reason",
+    [([], "at least one"), (["a"] * 21, "at most 20"), (["a", 3], "a text"), (["a", " "], "isn't blank")],
 )
 def test_several_queries_are_checked(embedded, queries, reason):
     with pytest.raises(ValueError, match=reason):
         Index(embedded[0]).search(queries)
+
+
+def test_a_wrong_budget_of_several_queries_is_said_as_asked(embedded):
+    # Shared out first, -2 for two queries was said to be -1.0.
+    with pytest.raises(ValueError, match=r"got -2$"):
+        Index(embedded[0]).search(["brush", "reward"], budget=-2)
+
+
+def test_one_of_several_documents_whose_store_is_out_of_reach_fails_alone(embedded, monkeypatch):
+    # A drive gone from under an open store failed every document of the batch.
+    index, real = Index(embedded[0]), Index.document
+
+    def document(self, id, lines=None, fields=None):
+        if id == "notes/rl.md":
+            raise sqlite3.OperationalError("disk I/O error")
+        return real(self, id, lines, fields)
+
+    monkeypatch.setattr(Index, "document", document)
+    found = index.documents([("notes/rl.md", None), ("notes/brush.md", None)])
+    assert found[0] == {"id": "notes/rl.md", "error": "its store can't be read (disk I/O error): is its drive there?"}
+    assert found[1]["id"] == "notes/robots/brush.md"
+    store.ABORT.set()  # a cancelled call stops instead
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            index.documents([("notes/rl.md", None)])
+    finally:
+        store.ABORT.clear()
 
 
 @pytest.mark.parametrize("asked", [{"k": 5_000}, {}])

@@ -9,9 +9,10 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 - Worker processes read and parse files in parallel while the previous batch is written; small updates skip the
   process start-up.
 - Files are compared by modification time and size, so unchanged files cost nothing, and documents by content hash,
-  so a changed JSON Lines file re-indexes only its changed records.
-- Text files are read as UTF-8, or as UTF-16 when they start with its byte order mark (Windows PowerShell 5.1 writes
-  those).
+  so a changed JSON Lines file re-indexes only its changed records: by their ids, or by line numbers for records
+  without, so that a line added or removed changes those of every record after it.
+- Text files are read as UTF-8, or as UTF-16 or UTF-32 when they start with a byte order mark (Windows PowerShell
+  5.1 writes UTF-16).
 - Each kind of file has a reader, chosen by extension, that turns it into documents; adding a format means adding a
   reader.
 - Markdown, including documents converted to it, is split into chunks of about 3,000 characters (about 750 tokens) on
@@ -183,8 +184,9 @@ each, so the backlinks of a note linked by 6,000 others take 16 ms
   hear that a client cancelled a call or went away. A cancelled call stops: its SQLite statements end within about a
   millisecond, through a progress handler on every connection, and it runs the models no more. `reindex` runs to its
   end. The models of this machine run on the main thread, which holds the loop: PyTorch crashes in worker threads on
-  Python 3.15. A worker's (`SIFT_EMBED_REMOTE`) are asked from the call's own thread, so the loop stays free while a
-  request waits.
+  Python 3.15. A worker's (`SIFT_EMBED_REMOTE`) are asked in a thread of their own: the loop stays free while a
+  request waits, and a cancelled call stops waiting for its answer, which then ends by itself; the next call needing
+  the worker waits for it.
 - The UI's pages are rendered on the server with Jinja2, whose panes [htmx](https://htmx.org) swaps in place: no build
   step and no Node, and the UI is tested with the rest. Its pages are made as the MCP tools' calls are run.
   Browsing a folder jumps through the index folder by folder, so it stays quick in collections of millions of

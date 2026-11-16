@@ -51,3 +51,19 @@ def _touches_environment(node):
     if isinstance(node, ast.ImportFrom) and node.module == "os":
         return bool({a.name for a in node.names} & ENVIRONMENT)  # from os import environ
     return False
+
+
+INVISIBLE = {"\x85", "\xa0", "\u200b", "\u2028", "\u2029", "\ufeff", "\ufffd"}
+
+
+def test_sources_write_invisible_characters_as_escapes():
+    # A U+FFFD or U+2028 written as itself looks like nothing, or like any other mark, in an editor and a diff: the
+    # tests that hold them can't be read, and one slipped into code unseen.
+    sources = [*(ROOT / "sift").glob("*.py"), *(ROOT / "tests").glob("*.py")]
+    found = {
+        f"{path.name}:{n}"
+        for path in sources
+        for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1)
+        if INVISIBLE & set(line)
+    }
+    assert found == set(), r"write them as escapes, such as \ufffd"

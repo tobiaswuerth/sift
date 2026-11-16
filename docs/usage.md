@@ -232,7 +232,8 @@ Lines that aren't JSON objects, have no text or repeat an id are skipped and rep
 Office documents, PDFs, e-books and web pages are converted to Markdown: headings stay headings, slides become
 sections and sheets become tables, and `get` returns that Markdown. The document's properties become metadata as far
 as the file has them: `title`, `authors`, `subject`, `keywords`, `language`, `created` and `modified`. The title is the
-document's own, else the first heading, else the file name.
+document's own, else the first heading, else the file name. Web pages keep none of their own: their title is their
+first heading, else the file name.
 
 **Scans**, PDFs without text of their own as scanners and phones make them, are read with OCR: their pages, as
 pictures at 200 dpi, by [LightOnOCR-2](https://huggingface.co/lightonai/LightOnOCR-2-1B), a model of one billion

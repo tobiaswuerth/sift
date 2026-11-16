@@ -58,14 +58,15 @@ def _several(method):
         if len(query) > MOST_QUERIES:
             raise ValueError(f"a search takes at most {MOST_QUERIES} queries at once, got {len(query)}")
         if wrong := [q for q in query if not isinstance(q, str) or not q.strip()]:
-            raise ValueError(f"each query of several is a text, got {wrong[0]!r}")
+            raise ValueError(f"each query of several is a text that isn't blank, got {wrong[0]!r}")
         k = args[0] if args else kwargs.get("k", 10)
         if isinstance(k, int) and min(k, MOST_HITS) * len(query) > MOST_HITS:  # one asked for more gets MOST_HITS
             raise ValueError(
                 f"several queries return at most {MOST_HITS:,} hits in all; {len(query)} of k={k} would be "
                 f"{k * len(query):,}: ask fewer at a time, or a smaller k"
             )
-        if isinstance(budget := kwargs.get("budget"), int | float) and not isinstance(budget, bool):
+        budget = kwargs.get("budget")
+        if isinstance(budget, int | float) and not isinstance(budget, bool) and budget > 0:  # else said as it was
             kwargs = kwargs | {"budget": budget / len(query)}
         self._asked = list(dict.fromkeys(query))
         try:
@@ -80,6 +81,15 @@ def _changes(db):
     """How SQLite counts a database's changes through a connection: those other connections committed, and the rows
     the connection changed itself."""
     return db.execute("PRAGMA data_version").fetchone()[0], db.total_changes
+
+
+def _reachable(db):
+    """Whether an open store still answers: not when its drive went away, or a network share dropped."""
+    try:
+        _changes(db)
+    except sqlite3.Error:
+        return False
+    return True
 
 
 def _remembered(method):
@@ -883,8 +893,8 @@ class Index:
         for held in (self.vectors, self._reading, self._postings):
             for cid in held.keys() - collections.keys():
                 del held[cid]
-        for cid, _, _ in self.catalog.open_stores():
-            if cid not in collections:
+        for cid, _, db in self.catalog.open_stores():
+            if cid not in collections or not _reachable(db):  # one out of reach is opened again once it is back
                 self.catalog.release(cid)
         for cid in [cid for cid, reading in self._reading.items() if reading.done()]:
             self._take_read(collections[cid])
@@ -957,6 +967,8 @@ class Index:
         QUERY_VECTORS questions, and embedded together with the others of a call of several queries, the first time one
         is needed, after the search checked what it was asked."""
         self.load(scope, required)
+        if not any(c.id in self.vectors for c in scope):  # for `query`: nothing embedded to compare it with
+            return None
         self._embed_questions([query, *self._asked])
         return self._query_vectors[query]
 
@@ -1036,7 +1048,9 @@ class Index:
 
     def _cosines(self, query, chunks):
         """The cosines of these chunks with the query's vector, exactly; one not embedded yet, or broken, gets the
-        others' mean, neither a bonus nor a penalty."""
+        others' mean, neither a bonus nor a penalty; all of them 0 without a vector (see _vector)."""
+        if query is None:
+            return np.zeros(len(chunks))
         found, rows = self._exact(np.array(chunks, np.int64), len(query))
         exact = dict(zip(found.tolist(), (rows.astype(np.float32) @ query).tolist()))
         cosine = np.array([exact.get(chunk, np.nan) for chunk in chunks], np.float64)
@@ -1199,6 +1213,10 @@ class Index:
                 raise
             except (LookupError, ValueError) as error:
                 found.append({"id": id, "error": str(error)})
+            except sqlite3.Error as error:  # its drive gone; but a cancelled call's statements end so too: it stops
+                if store.ABORT.is_set():
+                    raise
+                found.append({"id": id, "error": f"its store can't be read ({error}): is its drive there?"})
         return found
 
     @_remembered

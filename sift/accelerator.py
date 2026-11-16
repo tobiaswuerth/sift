@@ -13,7 +13,7 @@ from time import monotonic
 
 import torch
 
-from . import console
+from . import console, settings
 
 # Loading Sentence Transformers makes PyTorch log a harmless note about distributed training on Windows and macOS.
 logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
@@ -55,6 +55,13 @@ def cuda_pytorch_command(platform=sys.platform):
     )
 
 
+def _hides_every_gpu(gpus):
+    """Whether CUDA_VISIBLE_DEVICES leaves CUDA no GPU: empty, or its first entry negative, which CUDA stops at, as -1.
+    NVML sees them all regardless."""
+    first = gpus.split(",")[0].strip()
+    return not first or first.startswith("-")
+
+
 def _unused_nvidia_gpu():
     """Why an NVIDIA GPU sits unused, if there is one; None otherwise."""
     try:
@@ -65,6 +72,8 @@ def _unused_nvidia_gpu():
             return None
     except Exception:  # no NVML, no driver, no GPU
         return None
+    if (gpus := settings.current().gpus) is not None and _hides_every_gpu(gpus):  # on purpose, as for a CPU-only run
+        return f"the NVIDIA GPU is hidden (CUDA_VISIBLE_DEVICES={gpus}), so sift runs on the CPU"
     if torch.version.cuda is None:
         return (
             "found an NVIDIA GPU, but this PyTorch build has no CUDA support, so sift runs on the CPU (much slower). "
