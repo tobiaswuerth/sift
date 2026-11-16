@@ -146,9 +146,10 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   first 90% of the gaps between neighbours, and five more: Adaptive-k
   ([Taguchi et al. 2025](https://arxiv.org/abs/2506.08479)). Over 2,000 arXiv titles, vsearch then returned 6 hits of
   10 or 50 on average, with the paper sought in 99.2 to 99.6% of the cases it was among them.
-- **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are reranked together, in one GPU
-  batch. The reranker reads each candidate's title, the front-matter values that share a word with the query (an
-  author's name, an id; all of them would dilute the passage), and the passage.
+- **`query`:** the top 40 (or `k`, if larger) keyword and semantic candidates are reranked together, sorted by length
+  and in batches of 16: one batch of all 80 was padded to the longest, 1.7 to 3.5 times their tokens, and took 331 ms
+  a question on an RTX 4090 against 180. The reranker reads each candidate's title, the front-matter values that share
+  a word with the query (an author's name, an id; all of them would dilute the passage), and the passage.
   - A candidate's score is the reranker's, plus half its cosine with the query, measured in units of the reranker's
     spread over the candidates. One weight thus fits any reranker, and the scores keep the reranker's scale. A
     reranker alone ranked scientific claims worse than the embedding did. Candidates whose front matter the query

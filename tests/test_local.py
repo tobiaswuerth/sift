@@ -53,6 +53,19 @@ def test_rerank_gives_raw_scores_whatever_the_model_applies(fake_models, monkeyp
     assert fake_models.rerank("brush strokes", ["brush strokes"]).tolist() == pytest.approx([2 / 3])
 
 
+def test_candidates_are_reranked_in_batches_of_similar_length(fake_models, monkeypatch):
+    # One batch of all 80 candidates was padded to the longest: 1.7 to 3.5 times their tokens, 331 ms a question on
+    # the RTX 4090 against 180 ms in batches of 16, which Sentence Transformers sorts by length.
+    sizes, real = [], FakeCrossEncoder.predict
+    monkeypatch.setattr(
+        FakeCrossEncoder,
+        "predict",
+        lambda self, pairs, batch_size, **kw: sizes.append(batch_size) or real(self, pairs, batch_size, **kw),
+    )
+    fake_models.rerank("brush strokes", ["text"] * 80)
+    assert sizes == [local.RERANK_BATCH]
+
+
 def test_loading_the_models_draws_no_progress_bars(fake_models):
     # Transformers drew a "Loading weights" bar for each model, into the log of `sift serve`, garbled on Windows.
     from transformers.utils import logging
