@@ -19,7 +19,7 @@ LOOP_LINES = 10  # the same line this many times running: the model loops, as gr
 LOOP_CHARS, LOOP_PERIOD = 400, 60  # or this many characters of a pattern of at most this many repeated, in a line
 LOOP_STEP = 16  # tokens between looks for a loop while a page is read
 RETRY_PENALTY = 1.1  # the repetition penalty a page that looped is read again with: it got 5 to 10 times as far
-# Pages are read one at a time: on an RTX 4090, 26 s a page in 3 GB; 4 at once took 14 s a page but 7 GB, 8 at once
+# Pages are read one at a time: on a 24 GB GPU, 26 s a page in 3 GB; 4 at once took 14 s a page but 7 GB, 8 at once
 # 12 s and 20 GB, too much of a GPU other programs share.
 
 

@@ -55,7 +55,7 @@ def test_rerank_gives_raw_scores_whatever_the_model_applies(fake_models, monkeyp
 
 def test_candidates_are_reranked_in_batches_of_similar_length(fake_models, monkeypatch):
     # One batch of all 80 candidates was padded to the longest: 1.7 to 3.5 times their tokens, 331 ms a question on
-    # the RTX 4090 against 180 ms in batches of 16, which Sentence Transformers sorts by length.
+    # a GPU against 180 ms in batches of 16, which Sentence Transformers sorts by length.
     sizes, real = [], FakeCrossEncoder.predict
     monkeypatch.setattr(
         FakeCrossEncoder,

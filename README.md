@@ -7,46 +7,43 @@
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/tobiaswuerth/sift/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/tobiaswuerth/sift)](https://github.com/tobiaswuerth/sift/blob/main/LICENSE)
 
-**Local search over your documents, for AI agents.** sift indexes folders of documents and notes (Markdown, Obsidian
-vaults, PDF, Office files, emails), embeds them on your GPU, and serves keyword, semantic and hybrid search to Claude
-Code, Cursor and other agents as an MCP (Model Context Protocol) server. Everything runs on your own machines: no cloud
-services, no API keys.
+**Local search over your documents, for AI agents.** sift indexes folders of documents and notes, embeds them on your
+GPU, and serves keyword, semantic and hybrid search to Claude Code, Cursor and other agents as an MCP (Model Context
+Protocol) server. Everything runs on your own machines: no cloud services, no API keys.
 
 ![sift ui: a keyword search over 3.2 million arXiv abstracts, filtered by category, with one paper open](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-search.png)
 
-## Features
-
-- **Four kinds of search:** exact keywords (BM25), meaning (vectors), hybrid with cross-encoder reranking for RAG, and
+- **Four kinds of search:** keywords (BM25), meaning (vectors), hybrid with cross-encoder reranking for RAG, and
   documents like a given one.
-- **Your files as they are:** Markdown with front matter, text, PDF (scans too, by OCR), Word, PowerPoint, Excel,
-  OpenDocument, RTF, EPUB, HTML, saved emails and JSON Lines, indexed incrementally. sift never writes to them.
-- **Built for agents:** filters on front-matter fields, results that cite their source lines, and compact results that
-  save context. A note an agent just wrote is found by the next search.
-- **Linked notes:** in an Obsidian vault or any Markdown with `[[wikilinks]]`, the links and backlinks of a note, the
-  notes not written yet, and the documents that mention a note without linking it.
+- **Your files as they are:** Markdown with front matter, Obsidian vaults, text, PDF (scans too, by OCR), Word,
+  PowerPoint, Excel, OpenDocument, RTF, EPUB, HTML, emails and JSON Lines, indexed incrementally. sift never writes to
+  them.
+- **Built for agents:** front-matter filters, results citing their source lines, compact results, several queries or
+  documents per call; a note an agent just wrote is found by its next search.
+- **Linked notes:** the links and backlinks of `[[wikilinks]]`, notes not written yet, and unlinked mentions.
 - **A browser UI** to search, browse and read the index yourself.
-- **Measured, not guessed:** the default models and ranking were chosen on seven retrieval benchmarks
-  ([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md)).
-- **Runs on what you have:** NVIDIA or Apple GPUs, the CPU, or another machine's GPU, on Linux, macOS and Windows.
-  Tens of millions of passages fit on one machine, and keyword search answers over them in milliseconds.
+- **Runs on what you have:** NVIDIA or Apple GPUs, the CPU, or another machine's GPU, on Linux, macOS and Windows; tens
+  of millions of passages on one machine.
+
+sift retrieves; it doesn't generate answers, watch files (an agent calls `reindex` after writing), OCR images other
+than PDFs, or serve remote users with authentication.
 
 ## Install
 
-Requires Python 3.11 or newer. With [uv](https://docs.astral.sh/uv/):
+Python 3.11 or newer. With [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv tool install --torch-backend auto sift-rag   # installs the `sift` command
 ```
 
-Or run it without installing: `uvx --torch-backend auto sift-rag serve`. With pip, in a virtual environment:
-`pip install sift-rag`. On first use, sift downloads its two models from Hugging Face (about 2 GB).
+With pip, in a virtual environment: `pip install sift-rag`. The first use downloads two models from Hugging Face
+(about 2 GB).
 
-**GPU.** sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, which embeds slowly and
-reranks in about 25 seconds per query on 8 threads (0.3 seconds on an RTX 4090). On Linux and macOS, PyTorch from PyPI
-already uses the GPU. On Windows it doesn't: uv's `--torch-backend auto` picks the CUDA build that matches your
-driver, and with pip run `pip install --force-reinstall --no-deps torch torchvision --index-url
-https://download.pytorch.org/whl/cu128` afterwards. If an NVIDIA GPU sits unused, sift says so on start-up and prints
-the command that fixes it. A machine without a GPU can [borrow one](#another-machines-gpu).
+sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, where `query` takes about 25 seconds a
+question instead of 0.3. PyTorch from PyPI uses the GPU on Linux and macOS. On Windows, `--torch-backend auto` installs
+the CUDA build for your driver; with pip, run `pip install --force-reinstall --no-deps torch torchvision --index-url
+https://download.pytorch.org/whl/cu128` afterwards. If an NVIDIA GPU sits unused, sift says so and prints the fix. A
+machine without a GPU can [use another machine's](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md).
 
 ## Quick start
 
@@ -58,29 +55,23 @@ sift query "who approves travel expenses abroad"
 sift serve                             # MCP server on http://127.0.0.1:8765/mcp, and the UI under /ui
 ```
 
-`sift index` and `sift embed` are incremental: run them again after files change, and only what changed is processed.
-An interrupted `sift embed` goes on where it stopped.
+`sift index` and `sift embed` process only what changed since their last run; an interrupted `sift embed` continues
+where it stopped.
 
-## Connecting agents
+## Connect an agent
 
-1. Start the server and leave it running: `sift serve`.
-2. Register it with Claude Code, once, for all your projects:
+Leave `sift serve` running and register it with Claude Code once, for all projects:
 
-   ```bash
-   claude mcp add --scope user --transport http sift http://127.0.0.1:8765/mcp
-   ```
+```bash
+claude mcp add --scope user --transport http sift http://127.0.0.1:8765/mcp
+```
 
-   Keep `--scope user`: without it, sift is registered for the current folder only, and sessions started anywhere
-   else don't see it, including those in the Claude desktop app's Code tab. Such a registration is removed, in the
-   folder where it was made, with `claude mcp remove sift --scope local`.
-3. Start a new Claude Code session. `claude mcp list` shows sift as connected, and an agent asked for sift's status
-   lists your collections.
-
-One server serves any number of agents, with the models loaded once. Other MCP clients, such as Cursor, VS Code or
-Windsurf, connect the same way, to the streamable HTTP endpoint `http://127.0.0.1:8765/mcp`. To have every session
-start a server of its own instead, over stdio: `claude mcp add --scope user sift -- sift serve --stdio`. Connectors
-in claude.ai and in the Chat tab of the Claude apps can't use sift: claude.ai reaches connectors from Anthropic's
-servers, which can't reach your computer.
+New sessions then show sift in `claude mcp list`. Without `--scope user` sift is registered for the current folder
+only (undo there with `claude mcp remove sift --scope local`). Other MCP clients, such as Cursor, VS Code or
+Windsurf, connect to the same streamable HTTP endpoint; one server serves any number of agents with the models loaded
+once. For a server per session over stdio: `claude mcp add --scope user sift -- sift serve --stdio`. Connectors in
+claude.ai and the Claude apps' Chat tab can't use sift: they connect from Anthropic's servers, which can't reach your
+computer.
 
 | Tool | Purpose |
 |---|---|
@@ -88,103 +79,64 @@ servers, which can't reach your computer.
 | `vsearch` | Semantic search |
 | `query` | Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder |
 | `similar` | Documents like a given one |
-| `get` | A document's text by its id, all of it or only some `lines`, with front-matter `fields` if asked; or up to 100 at once |
+| `get` | Documents by id, whole or some `lines`, with front-matter `fields`; up to 100 at once |
 | `status` | The collections: folders, counts, front-matter fields, links |
-| `links` | A note's links, each with where it leads, and the notes linking to it |
+| `links` | A note's links and where they lead, and the notes linking to it |
 | `unresolved` | Link targets no note answers to yet |
-| `mentions` | Documents that name a note without linking to it |
-| `reindex` | Read files again right after writing, changing or deleting them; the one tool that changes anything: sift's index, never a file |
+| `mentions` | Documents naming a note without linking to it |
+| `reindex` | Read files again right after they were written or deleted; changes only sift's index, never a file |
 
-The search tools take `k`, `collection`, `path`, `filters`, `fields`, `compact`, `all_passages`, `sort`, `links_to`,
-`linked_from` and `adaptive`, and `search` a time `budget`; `search`, `vsearch` and `query` take up to 20 queries at
-once, as `get` takes up to 100 ids, to save an agent calls and turns. Every result carries `id` (`collection/path`), `title`,
-`lines`, `score` and the passage's `text`, so agents can cite their sources; `compact: true` leaves out the text, so an
-agent can survey many results and read the ones that matter, and `adaptive: true` returns only those before the
-largest drop in score, and a few more. Every parameter is described in the tools' schemas, and the server tells agents
-on connecting which collections there are and which front-matter fields each has.
+Every result carries `id` (`collection/path`), `title`, `lines`, `score` and the passage's `text`. The search tools
+take up to 20 queries per call, filters on front matter, paths and links, `compact` (no text), `adaptive` (only the
+results before the largest drop in score) and more; the tools' schemas describe every parameter, and the server tells
+agents which collections and front-matter fields exist.
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `sift add FOLDER [--name NAME]` | Register a folder as a collection, named after the folder by default (`--store PATH` puts its index elsewhere) |
-| `sift index [NAME ...] [--files PATH ...]` | Read new and changed files, of every active collection or those named; with `--files`, only those files, at once |
-| `sift embed [NAME ...]` | Embed every passage without a vector, of every active collection or those named |
+| `sift add FOLDER [--name NAME]` | Register a folder as a collection (`--store PATH` puts its index elsewhere) |
+| `sift index [NAME ...] [--files PATH ...]` | Read new and changed files, of every active collection or those named; `--files`: only these |
+| `sift embed [NAME ...]` | Embed every passage without a vector |
 | `sift search`, `vsearch`, `query` `TEXT` | Keyword, semantic and hybrid search |
 | `sift similar ID` | Documents like this one |
 | `sift get ID [ID ...] [--lines 14-23] [--fields a,b]` | Documents, or some of their lines |
 | `sift links`, `unresolved`, `mentions` | Linked notes |
-| `sift status` | Collections: folders, active or not, index files, sizes and counts, as JSON |
+| `sift status` | Collections, their index files, sizes and counts, as JSON |
 | `sift activate`, `deactivate NAME ...` | Take collections into searches, or leave them out |
 | `sift move [NAME ...] TO` | Move collections' indexes to another folder or drive |
-| `sift rm NAME` | Remove a collection and its index; its files stay on disk |
+| `sift rm NAME` | Remove a collection and its index; its files stay |
 | `sift ui` | Search, browse and read the index in your browser |
 | `sift serve [--stdio] [--host H] [--port N]` | The MCP server, and the UI under `/ui` (port 8765) |
 | `sift worker [--port N]` | Embed and rerank for other machines on this one's GPU (port 8766) |
-| `sift bench QUESTIONS.json [-c NAME]` | How well each search mode finds the answers you expect |
+| `sift bench QUESTIONS.json` | How well each search mode finds the answers you expect |
 
-Search commands take `-k`, `-c COLLECTION`, `--path GLOB`, `-f FIELD=VALUE` filters, `--fields`, `--compact`,
-`--all-passages`, `--sort=-FIELD`, `--links-to`, `--linked-from`, `--adaptive` and `--json`, and `sift search`
-`--budget SECONDS`:
+Search options, keyword syntax, filters, the formats sift reads, `.siftignore` and where indexes lie:
+[usage](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md).
 
 ```bash
 sift search '"notice period" AND (contract OR agreement)'
 sift query "per diem abroad" -f departments=finance -f "created>=2024-06"
-sift links vault/People/Hans.md --direction both
 ```
-
-Every command but `sift move` may run while `sift serve` does; the server finds what a command wrote with its next
-search. [docs/usage.md](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md) covers search syntax and scores,
-filters and front matter, every format sift reads, linked notes, `.siftignore`, the UI, `sift bench`, and where the
-indexes lie.
 
 ## Configuration
 
-None needed: sift picks the device, the GPU memory budget and the batch size itself. Five optional environment
-variables exist for special cases:
+None needed: sift picks the device, its GPU memory budget and batch sizes itself. Optional environment variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SIFT_HOME` | `~/.sift` | The catalog, the logs and the worker's key, and the collections' indexes unless moved |
-| `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model |
+| `SIFT_HOME` | `~/.sift` | The catalog, logs, the worker's key, and the indexes unless moved |
+| `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model; run `sift embed --reset` after a change |
 | `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
-| `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed and rerank on: the `https://<key>@workstation:8766` it prints |
+| `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed and rerank on: the `https://<key>@host:8766` it prints |
 | `SIFT_OCR` | `auto` | Where scans are read: `auto` on a GPU, `on` also on the CPU (slow), `off` never |
 
-After changing the embedding model, run `sift embed --reset`. For business documents,
-`Snowflake/snowflake-arctic-embed-l-v2.0` ties the default on average: better on financial questions and long German
-documents, worse on scientific claims, and 1.6 times as fast
-([benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md)).
+For business documents, `Snowflake/snowflake-arctic-embed-l-v2.0` ties the default embedding model on average: better
+on financial questions and long German documents, worse on scientific claims, 1.6 times as fast.
 
-## Another machine's GPU
+## Performance
 
-A machine without a GPU can embed and rerank on another one's. Run `sift worker` there; it prints a line such as
-`SIFT_EMBED_REMOTE=https://<key>@workstation:8766` to set on the machine without. The texts travel over HTTPS, the
-worker's certificate is pinned by the key, and the worker sees no index and no files. Setup, firewall and security:
-[docs/worker.md](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md).
-
-## Updating
-
-```bash
-uv tool upgrade sift-rag     # with pip: pip install -U sift-rag
-```
-
-Then restart `sift serve` and `sift worker`, and start new agent sessions: an MCP client reads sift's tools when a
-session starts, and a running session misses new ones. Machines that embed through a worker need the same major
-version as the worker.
-
-The index and the vectors carry over. When a release changes how the index is laid out, its first command updates it,
-once, and says so, from what the index holds: no file is read again and nothing is embedded again, and an older sift
-no longer opens it, so upgrade every sift that uses the index. From 1.7 or older, the index is split into a file per
-collection: stop every other sift first, and have as much free space as the index takes (`sift move FOLDER` as the
-first command splits it straight into that folder, on another drive too). The
-[changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) says what each release's update takes, such
-as the next `sift index` building the keyword postings anew.
-
-## How fast, how good
-
-On one workstation (Core i9-14900K, RTX 4090), over an index of 45.7 million passages (arXiv, PubMed, OpenAlex and
-more), searched warm through `sift serve`:
+Over 45.7 million passages of paper abstracts, warm, through `sift serve` on a desktop workstation with a GPU:
 
 | Use case | Mode | Time |
 |---|---|---|
@@ -192,56 +144,37 @@ more), searched warm through `sift serve`:
 | A question, by its keywords | `search` | 0.2 s |
 | By meaning | `vsearch` | 0.6 s (0.1 s over 3.2 million) |
 | A question for RAG, reranked on the GPU | `query` | 0.6 s (0.3 s over 3.2 million) |
-| More documents like one | `similar` | 0.7 s |
+| Documents like one | `similar` | 0.7 s |
 
 `query` scores nDCG@10 0.81 on scientific claims (SciFact), 0.69 on long German documents and 0.99 on German
-questions, and ranks a known paper among 3.2 million at MRR@10 0.93. `vsearch` finds 99.75% of exact search's top 10
-in a sixteenth of the memory. `sift embed` embeds 370 to 520 passages a second on the RTX 4090. Every figure, and how
-it was measured: [benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md#reference-values).
+questions, and ranks a known paper among 3.2 million at MRR@10 0.93. `sift embed` embeds 370 to 520 passages a second.
+Every figure and how it was measured: [benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md).
 
-## How it works
-
-Each collection's index is a SQLite file: documents, FTS5 keyword index and keyword postings, fp16 vectors and their
-one-bit codes. Keyword search ranks by BM25 from the postings, skipping the ranges of passages that can't reach its
-best results: milliseconds for a common word over 30 million passages, with FTS5's results. Semantic search compares a
-query's code with every passage's, kept in RAM (96 bytes each), ranks the 10,000 nearest again by the query's own
-values, and scores the best 1,000 exactly; it finds 99.75% of exact search's top 10 over 3.2 million abstracts in
-about 0.1 seconds, with no index to build. `query` reranks the best 40 keyword and 40 semantic candidates on the GPU.
-Embedding runs in batches of similar length, sized to the GPU memory left by other programs, and gives the GPU back
-after 5 idle minutes. Details: [docs/architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md).
-
-## Scope
-
-In scope: text, Markdown and JSON Lines files, PDF (scans too), office documents, e-books, web pages and saved emails;
-Linux, macOS and Windows; NVIDIA GPUs (CUDA) and Apple GPUs (MPS), otherwise the CPU; one user, any number of local
-agents.
-
-Out of scope for now: OCR of pictures that aren't PDFs; answer generation (sift retrieves, the agent writes);
-approximate nearest-neighbour indexes; live file watching (an agent calls `reindex` after writing); remote access and
-authentication; writing to your files.
-
-## Versioning
-
-sift follows [semantic versioning](https://semver.org/). Within a major version, such as 1.x, these stay compatible:
-the commands, their options and their JSON output; the MCP tools and their parameters; the settings; the index, which
-every later 1.x opens and updates on first use if it must; and the worker protocol, so every 1.x embeds through every
-1.x worker. sift's Python modules are its own and may change in any release.
-
-## Development
+## Updating
 
 ```bash
-git clone https://github.com/tobiaswuerth/sift
-cd sift
-uv venv && uv pip install --torch-backend auto -e ".[dev]"   # or with pip: pip install -r requirements.txt -e ".[dev]"
-pre-commit install      # lint, format and config checks on every commit
-pytest --cov            # 100% line and branch coverage is required
-pytest -n 6             # in six processes: about half a minute instead of two and a half
+uv tool upgrade sift-rag     # with pip: pip install -U sift-rag
 ```
 
-The tests replace the models with small deterministic fakes, so they need no GPU and no downloads; everything else,
-the MCP server included, runs for real. See
-[CONTRIBUTING.md](https://github.com/tobiaswuerth/sift/blob/main/CONTRIBUTING.md) for how changes and releases work.
+Then restart `sift serve` and `sift worker`, and start new agent sessions, which read sift's tools as they start.
 
-## License
+sift follows [semantic versioning](https://semver.org/): within a major version, the commands and their JSON output,
+the MCP tools, the settings, the index and the worker protocol stay compatible (sift's Python modules may change in any
+release). When a release changes the index's layout, its first command updates it once, without reading files or
+embedding again; older sifts then can't open it, so upgrade every sift sharing it. The
+[changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) says what each update takes; from 1.7 or
+older, read 1.8.0's entry first.
 
-[MIT](https://github.com/tobiaswuerth/sift/blob/main/LICENSE)
+## Documentation
+
+- [Usage](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md): collections, search options and syntax,
+  filters, the formats sift reads, linked notes, the UI, `sift bench`, where indexes and logs lie
+- [Another machine's GPU](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md): `sift worker`
+- [How sift works](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md): indexing, storage,
+  embedding and search, and why
+- [Benchmarks](https://github.com/tobiaswuerth/sift/blob/main/docs/benchmarks.md): reference timings and the
+  measurements behind the defaults
+- [Contributing](https://github.com/tobiaswuerth/sift/blob/main/docs/CONTRIBUTING.md),
+  [security](https://github.com/tobiaswuerth/sift/blob/main/docs/SECURITY.md),
+  [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md),
+  [license (MIT)](https://github.com/tobiaswuerth/sift/blob/main/LICENSE)

@@ -7,136 +7,81 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- `get` takes several documents at once, up to 100, each an id or `{"id", "lines"}`, e.g. the results that matter:
-  one call instead of one per document, and an agent's turn instead of several. One that can't be read comes back
-  with its error, the others still come; texts past 100,000 characters in all are left out, each saying why.
-  `sift get` takes several ids too, each headed as `head` heads files.
-- `search`, `vsearch` and `query` take several queries at once, a list of up to 20, and return a list of results for
-  each, as if each were asked alone. The questions of `vsearch` and `query` are embedded together, in one pass of the
-  model. All of them return at most 10,000 hits, as one search does; the queries of `search` share its time `budget`.
+- `get` takes up to 100 documents at once, each an id or `{"id", "lines"}`; an unreadable one comes back with its
+  error, and texts past 100,000 characters in all are left out, each saying why. `sift get` takes several ids too.
+- `search`, `vsearch` and `query` take a list of up to 20 queries and return a list of results; the queries of
+  `vsearch` and `query` are embedded in one pass, those of `search` share its `budget`.
 
 ### Changed
 
-- `sift serve` scans the vectors' codes three times as fast: compiled code reads each code once and counts its
-  distance where it is read, where NumPy made three passes. Over 12.9 million arXiv codes, 43 ms instead of 133, the
-  same distances. sift now depends on [Numba](https://numba.pydata.org), which has wheels for every platform and
-  Python sift supports. The server and `sift bench` load the compiled scan as they start (a second or two, its code
-  kept in `SIFT_HOME/numba`); a single search from the command line keeps NumPy's, which costs it less, and so does a
-  server that can't load Numba, saying so.
-- `query` reranks its candidates in batches of 16, which Sentence Transformers sorts by length: one batch of all 80
-  was padded to the longest, 1.7 to 3.5 times their tokens. 180 ms a question on an RTX 4090 instead of 331.
-- A server keeps the embeddings of the last 256 questions (3 KB each) and the results of the last 32 searches: an
-  agent asking a question again with another `k` or filter skips the embedding (51 ms on an RTX 4090), and the same
-  search asked again reads nothing. Kept results count as long as nothing they read has changed: any change to the
-  catalog or a store, by another sift (as SQLite counts them) or by the server's own `reindex`, and any change to the
-  codes in memory, lets them go. A search within a time budget is never kept, nor one of more than 1,000 hits, nor
-  one that passed over a collection whose store couldn't be opened. An open store out of reach (its drive gone) is
-  closed, and opened again once it is back.
-- `query` over collections not embedded yet embeds no question: there is nothing to compare it with, and the model
-  stays unloaded.
+- `sift serve` scans the vectors' codes three times as fast. sift now depends on [Numba](https://numba.pydata.org);
+  the server and `sift bench` load the compiled scan at start (a second or two, cached in `SIFT_HOME/numba`). A single
+  command-line search, or a server that can't load Numba (it says so), uses NumPy.
+- `query` reranks in batches of 16 sorted by length: 180 ms a question instead of 331.
+- A server keeps the embeddings of the last 256 questions and the results of the last 32 searches, so asking again
+  with another `k` or filter skips the embedding. Results are dropped when anything they read changes; searches with a
+  time budget, over 1,000 hits, or over an unreadable collection are never kept.
+- `query` over collections not embedded yet no longer loads the model.
+- The documentation: the README is the entry point, and the details are in `docs/` (usage, worker, architecture,
+  benchmarks, contributing, security), each fact in one place.
 
 ### Fixed
 
-- A semantic search of one collection (`vsearch`, `query` or `similar` with `collection`, `-c` on the command line)
-  read the codes of every active collection first: beside PubMed's, half a minute and 4 GB to search a few hundred
-  notes. It reads those of the collections it searches.
-- A server that embeds through a worker (`SIFT_EMBED_REMOTE`) answered nothing while a request to the worker waited,
-  up to ten minutes if the worker's machine went to sleep: not even a cancellation, and no other call after it. The
-  requests now wait in a thread of their own, one at a time: a cancelled call stops waiting for its request, and one
-  not sent yet never is.
-- A file whose path a JSON Lines record or a mail's attachment had taken (`data.jsonl` with a record `a.md`, beside
-  `data/a.md`) was skipped, and never read again, even once the record was gone. The first keeps the path; the other
-  is left out, said once, and its file read again as soon as the path is free: by the `sift index` that frees it, or
-  the next one after a server's `reindex` did. Upgraded, a store has what an older sift left out so read again once:
-  every file without documents, and the JSON Lines files and mails with a file below their names whose documents
-  there outnumber their own. Any other record or attachment it left out, as one whose path was freed before the
-  upgrade, comes back when its file changes. A store sift may only read is upgraded once it may write.
-- What `sift index` said of a file under its progress line (a file skipped, a line of JSON Lines left out, a scan read)
-  wasn't in its log.
-- A value of front matter written as a JSON string ended at U+2028, U+2029 or NEL, which JSON leaves unescaped.
-- A mail dated in year 9999 with a time zone, and one in UTF-7 holding half a character, were skipped, the second on
-  every run. A file with a UTF-32 byte order mark was read as UTF-16, a NUL after every character.
-- `get` of several documents failed for all of them when one's store was out of reach; it comes back with its error.
-- With the GPU hidden on purpose (`CUDA_VISIBLE_DEVICES=-1`, to keep sift on the CPU), sift said to update the NVIDIA
-  driver; it names the variable.
-- One store damaged (a table a failing disk broke, though the store opens) stopped `sift index`, `status` and the
-  server's start (as it loads the codes, too) for every collection, with a message that named neither the collection
-  nor what to do. It is passed over, and said, with how to forget it; a search that reads its damaged tables still
-  fails.
-- Ctrl+C, or any other error, while the keyword postings were built in the process itself came out on Windows as a
-  file it couldn't delete, which stayed in the temporary folder. A build there needs no file.
-- A record or an attachment whose id held a NUL couldn't be got by it; `.siftignore` ended patterns at U+2028, form
-  feeds and NEL, as git doesn't.
-- A NUL character in a file (a log padded with them, a pasted control character) hid everything after it from
-  searches: SQLite's `substr`, which cuts the passages out of a document's text, stops there, so they were indexed
-  empty and embedded as their title alone. It is stored as U+FFFD. A document indexed before keeps the cut until its
-  text changes.
+- A semantic search of one collection (`collection`, `-c`) read the codes of every active collection first (half a
+  minute and 4 GB beside a collection of 30 million passages); it reads only those it searches.
+- A server embedding through a worker (`SIFT_EMBED_REMOTE`) answered nothing while a request waited, up to ten minutes
+  if the worker's machine slept; cancelled calls now stop waiting.
+- A file whose path a JSON Lines record or mail attachment had taken (`data.jsonl` with a record `a.md`, beside
+  `data/a.md`) was skipped for good; it is now read as soon as the path is free. On upgrade, stores re-read once the
+  files without documents and the JSON Lines files and mails with a file below their names; other left-out records
+  come back when their file changes. A store sift may only read is upgraded once it may write.
+- `sift index` messages under its progress line are now in its log.
+- Front-matter JSON strings no longer end at U+2028, U+2029 or NEL; a NUL in a file no longer hides the text after it
+  (stored as U+FFFD; documents indexed before keep the cut until their text changes); `.siftignore` no longer ends
+  patterns at U+2028, form feeds or NEL; `get` works for ids holding a NUL.
+- A mail dated in year 9999 with a time zone, or in UTF-7 holding half a character, is no longer skipped; a UTF-32
+  file with a byte order mark is no longer read as UTF-16.
+- `get` of several documents no longer fails for all when one's store is out of reach.
+- With the GPU hidden on purpose (`CUDA_VISIBLE_DEVICES=-1`), sift no longer says to update the NVIDIA driver.
+- One damaged store (a table broken though the store opens) stopped `sift index`, `status` and the server's start for
+  every collection; it is passed over and said, with how to forget it. A search that reads its damaged tables fails.
+- Ctrl+C or an error while the keyword postings were built in-process left an undeletable temporary file on Windows.
 
 ## [1.11.2] - 2026-11-08
 
-No search held up while `sift embed` runs beside the server, and phrases asked again two to twenty times as fast.
+No search held up while `sift embed` runs beside the server, and repeated phrases two to twenty times as fast.
 
 ### Changed
 
-- A phrase is counted in each passage once for the keyword postings as they stand, and kept with the passages that
-  hold it: a question asked again, or another reaching the same passages, costs FTS5 nothing more for them. Over 3.2
-  million arXiv abstracts, warm, a question with a hyphenated word took 93 ms instead of 429, a common phrase ("in
-  this paper we propose") 131 ms instead of 2.6 s; the same results, score for score.
+- Phrases are counted once per passage and kept: a common phrase took 131 ms instead of 2.6 s, same results.
 
 ### Fixed
 
-- `sift serve` no longer stalls while `sift embed` writes beside it. Each slab `sift embed` committed made the next
-  `vsearch`, `query` or `similar` read every code of the collection again: 18 seconds for PubMed's 29 million, about
-  once a minute while it embedded. The codes written past the last the server holds are read alone; after any other
-  change to a collection's vectors (deleted, or embedded again), all its codes are read again in a thread of their own,
-  while searches go on with those held, the passages embedded past them among them.
-- One file with an emoji's half alone (`"\ud83d"` in JSON, as exported chats hold), JSON nested deeper than SQLite
-  stores (1,000) or Python reads, or a number too large for a float (`1e999`) no longer stops `sift index`, for every
-  collection after it too, on every run: the half reads as U+FFFD, the number as written, and a line nested too deeply
-  is skipped and said, a front-matter value so nested, alone or in a list, kept as written.
-- `sift index` beside a server's `reindex` of the same folder: a note an agent wrote and reindexed meanwhile stopped
-  it (`UNIQUE constraint failed`), for every collection after it too, and one deleted and reindexed meanwhile left
-  its documents in the index for good.
-- A collection whose index can't be opened, damaged, updated by a newer sift, locked by another program or out of
-  reach, is passed over by searches, `sift index`, `sift embed` and `sift serve`, and said, as a missing one is;
-  `status` gives the reason as `error`. It stopped all of them, and the status that would have said why.
-- `sift index` holds no write lock while it reads files: `sift embed` or a server's `reindex` beside it waited while
-  it read a batch of up to 5,000 files, and gave up after 30 seconds. `sift add --title-from` of a large collection
-  retitles it a batch at a time.
-- A scan OCR couldn't read for the moment, as another program held the GPU's memory or OCR ran out of it, is read
-  again by the next `sift index`: it waited for its file to change.
-- A saved mail with raw 8-bit bytes in its addresses, as old clients and spam write them, no longer stops
-  `sift index`, for every collection after it too, on every run: they read as U+FFFD. Whatever else a reader raises
-  for one file, or the index refuses of it, stops only that file, which is said and read again by the next run.
-- The UI's folders take a query each, not one per document lying in a folder: 200,000 took 1.6 seconds, on every
-  view, while every other call waited. A folder whose name starts with U+10FFFF made the server loop for good.
-- A keyword query of parentheses nested hundreds deep, or of a thousand NOTs, is searched as its words, not an error.
-- A panic in the document converter skips the document, as its other failures do.
-- A line of millions of characters, a log or a dump, is cut into passages in time linear in its length: 16 MB took
-  8 seconds, 100 MB about five minutes.
-- `sift ui` answered an address with a count of thousands of digits with a server error.
-- `sift embed` beside `sift index` no longer stores the vector of a passage deleted meanwhile: it counted as embedded,
-  and the passage that took its place was never embedded.
-- A collection's store that refuses to open in a running server, as one a newer sift updated, fails the call that
-  opens it, not the server.
-- Searches return at most 10,000 hits: an agent asking `vsearch` for 10^8 had every vector of every collection
-  read, and `search` every posting of its words scored.
-- A running server lets go of a collection removed or deactivated meanwhile: its store, whose disk space `sift rm`
-  frees only once closed, and its keyword postings.
+- `sift serve` no longer stalls while `sift embed` writes beside it; only new codes are read, other vector changes
+  reload in the background.
+- One bad file (lone emoji half in JSON, JSON nested past 1,000, a number like `1e999`, a mail with raw 8-bit
+  addresses, a converter panic) no longer stops `sift index` for every collection; that file is skipped or read
+  leniently, said, and retried by the next run.
+- `sift index` beside a server's `reindex` of the same folder no longer fails (`UNIQUE constraint failed`) or leaves
+  deleted documents in the index; it holds no write lock while reading files, so `sift embed` or `reindex` beside it
+  no longer gives up after 30 seconds.
+- A collection whose index can't be opened (damaged, newer sift, locked, out of reach) is passed over and said by
+  searches, `sift index`, `sift embed` and `sift serve`; `status` gives the reason as `error`. It stopped all of them.
+- A scan OCR couldn't read for the moment (GPU memory taken by another program) is read again by the next `sift
+  index`.
+- Smaller fixes: UI folders cost one query each and a U+10FFFF folder no longer hangs the server; deeply nested
+  keyword queries are searched as words; very long lines are cut in linear time; `sift embed` beside `sift index`
+  no longer skips embedding a replacement passage; searches return at most 10,000 hits; a running server releases a
+  removed or deactivated collection's store.
 
 ### Security
 
 - `reindex` (and `sift index --files`) of an id such as `notes/D:/file.md` read that file on another drive into the
-  collection on Windows, from where searches returned it and the UI served it. Paths named so stay within their
-  collection.
-- Windows junctions in a collection's folder are passed over, as links are: one to elsewhere took in files of no
-  collection, one to the folder itself every file again.
-- `sift worker` no longer writes its key into its log, kept for good; it shows it on the terminal alone.
-- `sift serve --host ::1` answers only requests that name a local host, as on 127.0.0.1: a web page reaching it
-  under its own domain could read the documents through the UI.
-- `reindex` refuses names Windows reads as another file's, `C:x.md`, `sub./x.md`, `x.md:stream` or a short name such
-  as `PRIVAT~1`: through a short name, a folder `.siftignore` leaves out, or a hidden one, was read, and a file was
-  indexed twice.
+  collection on Windows. Windows names that reach another file (`C:x.md`, `x.md:stream`, short names such as
+  `PRIVAT~1`, which also bypassed `.siftignore`) are refused, and junctions in a collection's folder are passed over.
+- `sift worker` no longer writes its key into its log.
+- `sift serve --host ::1` answers only requests that name a local host: a web page reaching it under its own domain
+  could read documents through the UI.
 - The UI serves no file outside its collection's folder, though an older sift's `reindex` may have stored one.
 
 ## [1.11.1] - 2026-11-08
@@ -146,34 +91,16 @@ once.
 
 ### Changed
 
-- Keyword search reads a query's common words only where they can matter, with the same results, score for score:
-  - All words required, as every search of several words first tries: the rarest word is read first, and each next
-    one only where chunks holding all before it are left. A question no chunk held all words of was read in full,
-    "the" and "of" too, with nothing found and so nothing pruned.
-  - Any of them, as the fallback when no chunk holds all, and the keyword candidates of `query`: the words that
-    together can't bring a chunk to the k-th best score, "the" and "of", are read only for the chunks the others
-    bring within reach (MaxScore).
-
-  Over 3.2 million arXiv abstracts, questions of 10 to 14 words took 34 to 81 ms instead of 0.44 to 2.5 s, seven
-  required words 7 ms instead of 65.
-- Phrases are found from the postings too: `"retrieval augmented"`, and words FTS5 can't read as written, which sift
-  searches as phrases, such as "first-stage" or "COVID-19". A phrase is bounded by its words and checked by FTS5 in
-  the chunks within reach. Such a query went to FTS5 whole, which read every posting of each of its words: over ten
-  minutes for a question over 30 million PubMed passages; over arXiv, 0.43 s instead of 8.7. The scores are FTS5's,
-  but that in a nested query a phrase counts in every passage that holds it, where FTS5 missed it now and then.
-- A query with a word of no token, such as the dash in "Deep learning – a review", is answered from the postings too,
-  instead of by FTS5 whole: the word is left out, as FTS5 leaves it out.
-- `vsearch` counts its codes at each distance in the threads that compare them, which reuse their buffers, and picks
-  the nearest in threads too: over 46 million synthetic codes, 0.3 seconds instead of 0.6, the same results.
-- `sift embed` starts at once: how many passages wait comes from the counts the index keeps, and which ones from the
-  vectors' codes, a sixteenth of the vectors' size. Over 30 million PubMed passages the count took 9 minutes from a
-  cold disk.
+- Keyword search reads a query's common words only where they can matter, with the same results: questions of 10 to
+  14 words took 34 to 81 ms instead of 0.44 to 2.5 s.
+- Phrases (`"retrieval augmented"`, "first-stage", "COVID-19") are answered from the postings too: 0.43 s instead of
+  8.7 over arXiv, and no longer over ten minutes over PubMed. In a nested query a phrase now counts in every passage
+  that holds it. A word of no token, such as a dash, is left out as FTS5 does.
+- `vsearch` over many collections takes half the time; `sift embed` starts at once.
 
 ### Fixed
 
-- A keyword query of several collections that FTS5 answers counted a phrase that overlaps itself, "w1 w1" in "w1 w1
-  w1", once instead of twice, as one index's bm25 counts it; and a phrase too often in a passage that holds the
-  control character U+0001, as a PDF or a mail may.
+- A keyword query of several collections miscounted a self-overlapping phrase and phrases in passages holding U+0001.
 
 ## [1.11.0] - 2026-11-08
 
@@ -182,62 +109,35 @@ for agents when few stand out.
 
 ### Added
 
-- A paper that several collections hold, arXiv and PubMed say, is one hit: the best ranked copy, which lists the
-  others under `also`. Copies share a DOI (front-matter field `doi`), compared in any case and without a link's
-  prefix. `search`, `vsearch` and `similar` look further down until they have `k` papers, and `query` keeps one hit
-  per paper of the candidates it reranks; `similar` leaves out the paper's own copies; `all_passages` keeps every
-  copy. `sift bench` counts the document sought as found when a hit lists it under `also`.
-- `adaptive` (`--adaptive`) for every search: up to `k` hits, those before the largest drop in score and five more
-  (Adaptive-k, Taguchi et al. 2025). Over 2,000 arXiv titles, vsearch returned 6 of 10 or 50 on average, and kept the
-  paper sought in 99.2 to 99.6% of the cases it was among them.
-- `budget` (`--budget SECONDS`) for keyword search: once spent, and anything found, a search from the postings stops
-  and returns the best found so far, each hit marked `"partial": true`. Without it, results stay exact.
+- A paper several collections hold (arXiv and PubMed, say) is one hit: the best ranked copy, listing the others under
+  `also`. Copies share a DOI (front-matter field `doi`). `all_passages` keeps every copy.
+- `adaptive` (`--adaptive`) for every search: up to `k` hits, those before the largest drop in score and five more.
+- `budget` (`--budget SECONDS`) for keyword search: once spent, it returns the best found so far, each hit marked
+  `"partial": true`. Without it, results stay exact.
 
 ### Changed
 
-- The keyword postings number passages in a topical order, clusters of their vectors' codes, so that a range of
-  postings holds passages that share their words and its bound is tight. Over arXiv, questions scored a half to a
-  twentieth as many ranges, the slowest took 45 ms instead of 90, with the same results, and the postings took 8% less
-  space; single words took 0.7 ms instead of 0.3. The index layout goes to 9 by itself; the next `sift index` builds a
-  collection's postings anew once it has vectors, and again once a fifth of its passages got vectors since. A sift
-  1.10 still running, which can't read the order, searches such a collection through FTS5.
-- `vsearch` ranks the 10,000 nearest codes again by the query's own values against their bits, and reads and scores
-  the best 1,000 exactly instead of the 4,000 nearest: over 3.2 million arXiv abstracts it finds 99.75% of exact
-  search's top 10 instead of 99.6%, and reads a quarter of the vectors (7 ms instead of 25, warm). Candidates the same
-  distance away are taken by id, so the result no longer depends on how codes are split among collections.
-- A filtered `vsearch`, `query` or `similar` checks the nearest candidates against the filter, a batch at a time,
-  instead of listing every passage it lets through, which read every document: a category filter over arXiv that
-  lets 9% through took 0.6 seconds instead of 6 warm (56 cold). A filter that lets too few through for that, 1% say,
-  is listed, as before.
+- The index layout goes to 9 by itself. The next `sift index` builds a collection's postings anew once it has
+  vectors, and again once a fifth of its passages got vectors since. A sift 1.10 still running searches such a
+  collection through FTS5.
+- `vsearch` finds 99.75% of exact search's top 10 instead of 99.6%, reading a quarter of the vectors; a filtered
+  `vsearch`, `query` or `similar` takes 0.6 seconds instead of 6 for a filter letting 9% through.
 
 ### Fixed
 
-- A keyword search reads the postings in one transaction, as they were when it began: another sift building them anew
-  meanwhile made it fail (as in 1.10), and, in a new order, find other passages than it scored.
+- A keyword search reads the postings in one transaction; another sift rebuilding them meanwhile made it fail.
 
 ## [1.10.1] - 2026-11-08
 
-Embedding with the GPU busy all the time, and no write-ahead log left at the size of a build.
-
 ### Changed
 
-- `sift embed` keeps the GPU busy. It read and sorted each slab of 20,000 passages, tokenized each batch and wrote
-  the vectors while the GPU waited: about 12 seconds in every 75, and a moment before every batch. Now a thread reads
-  and sorts the next slabs, another writes, and each batch is tokenized while the GPU embeds the one before; PyTorch
-  stays on the main thread. On an RTX 4090, 40,000 PubMed passages went from 382 to 472 per second, the GPU from 83%
-  to 99% busy, the vectors the same, bit for bit.
+- `sift embed` keeps the GPU busy: 472 passages a second instead of 382, with identical vectors.
 
 ### Fixed
 
-- `sift embed` sized its batches to the memory their tensors take, but PyTorch's cap counts what its allocator
-  reserves, about a fifth more. The first batch of passages of the longest input ran out of memory, and every batch
-  after it was halved: from 140 to 70 on an RTX 4090. Batches are now sized to what is reserved, 112 to 116 there,
-  and fit.
-- A collection's write-ahead log shrinks back to 64 MB once written into its index. SQLite keeps it as large as it
-  grew while any sift has the index open: after `sift index` built the keyword postings beside a running `sift embed`,
-  PubMed's held 11.6 GB. A postings build now empties it when done.
-- A keyword search failed with a `KeyError` when another sift, a `sift index` beside the server, deleted a passage
-  it had found before it looked up its document. Such a passage is left out.
+- `sift embed` sized batches past PyTorch's cap, so the first batch ran out of memory and later ones were halved.
+- A collection's write-ahead log shrinks back to 64 MB once written into the index.
+- A keyword search no longer fails when another sift deletes a passage it had found.
 
 ## [1.10.0] - 2026-11-07
 
@@ -245,30 +145,19 @@ Keyword search in milliseconds over tens of millions of passages, and a server t
 
 ### Changed
 
-- Keyword search ranks from postings of its own, read out of FTS5's index: `search`, and the keyword candidates of
-  `query`. FTS5 scored every passage holding a query's words, about a microsecond each, so a common word over tens of
-  millions of passages took seconds, and a question of a dozen words, which `query` turns into any of its words, took
-  up to 16. The postings keep each word's best score per range of 128 passages, and a search scores ranges best bound
-  first until none left can beat its k-th best (Block-Max Pruning): over 29.9 million PubMed passages, a common word
-  went from 1.3 seconds to 7 ms, a question from 5.3 seconds to 26 ms (medians, the postings read before; read anew,
-  67 and 200 ms). The results are FTS5's, score for score. Queries with phrases, prefixes, NEAR or column filters are
-  FTS5's to answer, as before.
-- The index's layout is version 8: each collection's index holds the postings, about a third of the size of FTS5's
-  index (12 GB for PubMed's 29.9 million passages). An index of 1.9 gets their tables on first use, at once, and
-  `sift index` builds them: 69 seconds for 3.2 million arXiv abstracts on 24 cores, 18 minutes for PubMed. Until then,
-  keyword search reads FTS5. An older sift doesn't open an index so updated.
-- The postings follow every change: `sift index` and `reindex` add the passages changed since, as a delta, and `sift
-  index` builds them anew once 5% of a collection has changed. A collection whose postings are behind (during a long
-  `sift index`, say) is searched through FTS5 meanwhile. `sift status` and the MCP `status` tool say how they stand,
-  as `"keywords"`: `"ready"`, `"not built"`, or how many chunks behind.
+- Keyword search (`search`, and the keyword candidates of `query`) ranks from postings of its own, with FTS5's
+  results, score for score: over 29.9 million PubMed passages a common word took 7 ms instead of 1.3 s, a question
+  26 ms instead of 5.3 s. Phrases, prefixes, NEAR and column filters are FTS5's to answer, as before.
+- The index layout is version 8. An index of 1.9 gets the postings' tables on first use, and `sift index` builds them
+  (18 minutes for PubMed); until then keyword search reads FTS5. They add a third of FTS5's index in size. An older
+  sift doesn't open an index so updated.
+- The postings follow every change; a collection whose postings are behind is searched through FTS5 meanwhile.
+  `sift status` and the MCP `status` tool show `"keywords"`: `"ready"`, `"not built"`, or how many chunks behind.
 
 ### Fixed
 
-- A call an agent gave up on, by its timeout or by cancelling, no longer runs on in `sift serve`: it stops within
-  about a millisecond, and the calls after it no longer wait for it. A slow keyword search had run on for minutes.
-- While a call runs, `sift serve` answers others: their connections, pings and cancellations. A slow search had kept
-  it from even accepting a client connecting anew. Calls still run one at a time, on a worker thread; the models run
-  on the main thread, as PyTorch needs.
+- A call an agent gave up on (timeout, cancel) no longer runs on in `sift serve`, and `sift serve` answers
+  connections, pings and cancellations while a call runs.
 
 ## [1.9.0] - 2026-11-07
 
@@ -276,29 +165,16 @@ Status in a moment on any index, embedding a third faster with the CPU left free
 
 ### Changed
 
-- `sift status`, the MCP `status` tool and a starting server no longer read every vector and document of a
-  collection: they take its counts as its index keeps them, and its front-matter fields from 1,000 documents looked up
-  by id. On an index of tens of millions of chunks, `sift status` read over a hundred gigabytes and took over ten
-  minutes. A server loads the vectors' codes in one pass over them, not two.
-- The index's layout is version 7: each collection's index keeps the number of its documents, chunks and vectors,
-  counted as they change, in the transaction of each change. An index of 1.8 counts its rows on first use, once, in a
-  pass over its tables; another sift opening it meanwhile waits. An older sift doesn't open an index so updated.
-- `sift embed` batches texts of similar length in tokens, not in characters. A batch is padded to its longest text,
-  and characters tell tokens poorly: PubMed abstracts were padded to 1.5 times their tokens. On an RTX 4090, embedding
-  PubMed abstracts went from 171 to 230 chunks per second, the vectors the same.
-- Beside an NVIDIA GPU, PyTorch keeps a single CPU thread. With a thread per core, its idle threads waited busily after
-  each batch: several cores busy computing nothing.
-- `sift embed` sizes its batches with texts of the longest input the model takes, which fit any text, whatever the
-  model. It no longer reads every pending chunk at the start to find the longest by characters: that took minutes on
-  a large index, and a chunk with fewer characters could have more tokens, so the first batch ran out of memory and
-  every batch was halved. Counting the pending chunks at the start reads no document either: on 15 million PubMed
-  chunks, 19 seconds instead of 190.
-- The browser UI reads each collection's document count as its index keeps it.
-- The README is a third as long: what sift does, installing, connecting agents, the commands and settings. The
-  details moved to [docs/usage.md](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md) (searching,
-  filters, formats, linked notes, the UI),
-  [docs/architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md) (how it works) and
-  [docs/worker.md](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md) (embedding on another machine).
+- `sift status`, the MCP `status` tool, the UI and a starting server read counts as the index keeps them instead of
+  reading every vector and document (`sift status` took over ten minutes over tens of millions of chunks).
+- The index layout is version 7. An index of 1.8 counts its rows on first use, once. An older sift doesn't open an
+  index so updated.
+- `sift embed` batches by length in tokens (171 to 230 chunks a second on PubMed abstracts, same vectors) and no
+  longer reads every pending chunk at the start. Beside an NVIDIA GPU, PyTorch keeps a single CPU thread.
+- The README is a third as long; details moved to
+  [docs/usage.md](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md),
+  [docs/architecture.md](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md) and
+  [docs/worker.md](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md).
 
 ## [1.8.0] - 2026-11-06
 
@@ -306,38 +182,25 @@ Each collection's index in a file of its own, wherever it fits, and collections 
 
 ### Added
 
-- `sift move [NAME ...] TO` moves the index of the collections named, or of every one, to another folder or drive, or
-  one collection's to a file name of your choice ending in `.sqlite`. On the same drive it is instant; to another
-  drive the index is copied through SQLite, then the old file deleted. It refuses while another sift has the index
-  open.
-- `sift add --store PATH` puts a new collection's index in another folder, or in a file of your choice.
-- `sift deactivate NAME ...` and `sift activate NAME ...`: an inactive collection is passed over by searches, its
-  vectors' codes leave a running server's memory with its next request, a server started afterwards doesn't name it
-  to agents, and `sift index` and `sift embed` skip it unless named. `reindex` still updates it.
-- `sift status` and the MCP `status` tool show each collection's `active`, its index file (`store`) and its `size` in
-  bytes, or `missing` when its file isn't there; an inactive collection's counts aren't read.
+- `sift move [NAME ...] TO` moves the index of the named collections, or every one, to another folder or drive, or
+  one collection's to a `.sqlite` file name. Instant on the same drive; refuses while another sift has it open.
+- `sift add --store PATH` puts a new collection's index in another folder or file.
+- `sift deactivate NAME ...` and `sift activate NAME ...`: an inactive collection is passed over by searches, leaves a
+  running server's memory, isn't named to agents, and is skipped by `sift index` and `sift embed` unless named.
+  `reindex` still updates it.
+- `sift status` and the MCP `status` tool show each collection's `active`, `store` file and `size`, or `missing`.
 
 ### Changed
 
-- Each collection's index is a SQLite file of its own, `collections/NAME.sqlite` under `SIFT_HOME` by default, and
-  `SIFT_HOME/sift.db` is a small catalog of them, beside the logs and the worker's key. Removing a collection deletes
-  its file at once; `sift index` of one collection and `sift embed` of another no longer wait for each other; a
-  changed collection reloads only its own codes in a running server.
-- The index's layout is version 6. An index of an earlier sift (0.3 on) splits itself on first use, once: it is read
-  once, each collection's keyword index is made anew, the collections side by side, and every table's rows are counted
-  before the catalog takes the old file's place. Nothing is read from the files or embedded again; it needs as much
-  free space as the index takes, and a split stopped half-way goes on where it stopped. `sift move FOLDER` as the
-  first command splits it straight into that folder. An older sift doesn't open an index so updated.
-- Searches ask each collection's index and merge the results, as one index ranked them: each collection's best
-  keyword hits are scored again with the word counts of all collections searched (FTS5's BM25 formula, from its own
-  counts), and semantic search scores the 4,000 nearest codes of all collections together. On an index of 1.7 split
-  by 1.8, `search`, `vsearch` and `query` returned what 1.7 returned, scores included. A query with NEAR or a column
-  filter keeps each collection's own keyword scores.
-- The ids of documents and chunks never repeat (AUTOINCREMENT), and start at their collection's id times 2^40.
-- A collection whose index file is missing, on a drive that isn't connected, is passed over by searches, `sift index`
-  and `sift embed`, with a warning, and never made anew, empty.
-- `sift rm` says it deleted the collection's index; an unknown collection is an error that lists those there are,
-  whatever the command.
+- Each collection's index is a SQLite file of its own, `collections/NAME.sqlite` under `SIFT_HOME`;
+  `SIFT_HOME/sift.db` is a small catalog. `sift rm` deletes the file at once; commands on different collections no
+  longer wait for each other.
+- The index layout is version 6. An index of an earlier sift (0.3 on) splits itself on first use, once: it needs as
+  much free space as the index takes, re-reads and re-embeds nothing, and resumes if stopped. `sift move FOLDER` as
+  the first command splits straight into that folder. An older sift doesn't open an index so updated.
+- Searches merge the collections' results as one index ranked them. A query with NEAR or a column filter keeps each
+  collection's own keyword scores.
+- A collection whose index file is missing (drive not connected) is passed over with a warning, never made anew.
 
 ## [1.7.0] - 2026-11-05
 
@@ -345,90 +208,60 @@ Semantic search over tens of millions of passages, in RAM and without a GPU.
 
 ### Added
 
-- `sift embed COLLECTION ...` embeds only the chunks of the collections named, a new one first, say, while the others
-  wait. Without names it embeds every collection, as before; so does `--reset`, which takes no names, since all
-  collections share one model.
+- `sift embed COLLECTION ...` embeds only the named collections. Without names, and with `--reset`, it embeds every
+  collection, as all share one model.
 
 ### Changed
 
-- `vsearch`, `query` and `similar` keep a code of each vector in memory, one bit per dimension, instead of the
-  vectors: a sixteenth of the memory, so 3.2 million passages take 0.3 GB of RAM instead of 4.9 GB on the GPU, and
-  40 million fit a desktop's RAM. The 4,000 nearest codes by Hamming distance are scored exactly with the vectors
-  the index holds. Over 3.2 million arXiv abstracts this finds 99.6% of exact search's top 10, with an MRR
-  of 0.9528 against 0.9530 ([benchmarks](docs/benchmarks.md#vectors-in-memory)).
-- Only the models use the GPU; searching compares codes on the CPU's cores, and takes about 0.1 seconds over 3.3
-  million passages.
-- The index's layout is version 5. An index of an earlier sift (0.3 on) updates itself on first use, once, from the
-  vectors it holds: nothing is embedded again. 3.3 million vectors take about a minute, and an update stopped half-way
-  goes on where it stopped. An older sift doesn't open an index so updated: upgrade every sift that uses it.
+- `vsearch`, `query` and `similar` keep one bit per vector dimension in memory, a sixteenth of the vectors: 3.2
+  million passages take 0.3 GB of RAM, and 40 million fit a desktop's RAM. They find 99.6% of exact search's top 10
+  ([benchmarks](docs/benchmarks.md#vectors-in-memory)). Only the models use the GPU.
+- The index layout is version 5. An index of an earlier sift (0.3 on) updates itself on first use, once, without
+  embedding again (about a minute for 3.3 million vectors). An older sift doesn't open an index so updated.
 - NumPy 2.0 or later is required.
-
-### Fixed
-
-- On a virtual Mac, PyTorch's warning that the GPU doesn't support Metal 2.0 no longer shows on every start; sift uses
-  the CPU there, as before.
 
 ## [1.6.0] - 2026-10-25
 
 ### Fixed
 
-- `sift index` keeps the documents of a folder it can't list for the moment (access denied, a network share that
-  doesn't answer) as indexed, and says so for each such folder; it took their files for deleted and dropped them with
-  their vectors, which then had to be read and embedded again. A folder that is gone is still dropped. So too a
-  file it can't stat, and a folder whose listing breaks off midway; `reindex` calls such a file `unreadable`, not
-  `removed`.
-- Two commands started in the same second, in two processes, each keep a log of their own: both could take the same
-  free name and write into one file.
+- `sift index` keeps the documents of a folder it can't list for the moment (access denied, a silent network share)
+  instead of dropping them with their vectors; `reindex` calls such a file `unreadable`, not `removed`.
 
 ## [1.5.0] - 2026-10-24
 
 ### Added
 
-- A document's absolute path is an id too: `get` (with `fields` too), `similar`, `links` and `mentions` take the path
-  of a file in a collection's folder, in any case where it names one file, as an agent that wrote the file or was
-  given its path has it.
+- A document's absolute path is an id too: `get`, `similar`, `links` and `mentions` take it.
 
 ### Fixed
 
-- `sift index` and `sift embed` crashed now and then on Python 3.15 (seen on macOS) while a progress line was drawn:
-  the garbage collector ran on the thread that redraws it and freed PyTorch's tensors there, which PyTorch doesn't
-  survive. While a progress line is drawn, the collector now runs on the working thread, at each update.
+- A crash of `sift index` and `sift embed` on Python 3.15 while a progress line was drawn.
 
 ## [1.4.1] - 2026-10-24
 
 ### Fixed
 
-- A long step's progress goes into the command's log once a minute: a first `sift index` of a large folder, scans
-  read with OCR, said nothing in its log between loading the model and its end, half an hour or more later.
+- A long step's progress goes into the command's log once a minute.
 
 ## [1.4.0] - 2026-10-23
 
 ### Added
 
-- A log per run: `sift add`, `rm`, `index`, `embed`, `serve` and `worker` each write what they say, with the time of
-  each line, to `SIFT_HOME/logs/<command>-<time>.log`: a progress line once, where it ended; the server's requests
-  and the records of the libraries it runs; and how the command ended if it failed. Every log is kept.
+- A log per run: `sift add`, `rm`, `index`, `embed`, `serve` and `worker` write what they say to
+  `SIFT_HOME/logs/<command>-<time>.log`. Every log is kept.
 
 ## [1.3.2] - 2026-10-23
 
 ### Fixed
 
-- On Windows, `sift serve` (and `sift worker`) could stop answering for good while it kept running: when one
-  client went away in the middle of being accepted (`WinError 64`), Windows' default event loop closed the
-  listening socket. It happened with 20 agents connecting at once. Both now serve HTTP on Python's selector loop,
-  which only logs such a failed accept; 6,400 connections reset mid-accept leave it answering.
+- On Windows, `sift serve` and `sift worker` could stop answering for good when a client went away mid-accept.
 
 ## [1.3.1] - 2026-10-23
 
 ### Fixed
 
-- The server's `reindex` skipped every PDF, office file, e-book and web page it was given, and every one attached to
-  a mail, with "asyncio.run() cannot be called from a running event loop": the converter runs in a coroutine of its
-  own, and the server's tools run on its event loop. They are read now; the files it skipped, and mails with one
-  attached, are read again by the next `sift index`, once.
-- Without a GPU, the models computed in the type their checkpoint is saved in, bfloat16 for embeddinggemma-2, which
-  is slow on CPUs, and Sentence Transformers warned about it; they load in float32 there, as intended.
-- With huggingface_hub 2, which uses httpx2, `sift serve` logged every request to Hugging Face again.
+- The server's `reindex` skipped every PDF, office file, e-book, web page and mail attachment; the next `sift index`
+  reads once what it had skipped. Without a GPU, models load in float32, not bfloat16.
 
 ## [1.3.0] - 2026-10-23
 
@@ -437,33 +270,25 @@ collection added inside another.
 
 ### Added
 
-- Scans: PDFs without text of their own are read with OCR, by LightOnOCR-2 (one billion parameters, Apache-2.0), on
-  the GPU the other models use, in about 3 GB: each page as Markdown, up to 50 pages a scan, once per scan new or
-  changed. A mail's attached scan too. Their metadata says `ocr`. On a machine without a GPU they are skipped and
-  reported, as before; `SIFT_OCR=on` reads them on the CPU, `SIFT_OCR=off` never. The first scan downloads the model
-  (2 GB). Scans an older sift skipped, and mails with a PDF attached, are read again by the next `sift index`, once.
-  The server's `reindex` leaves scans to `sift index`, so that no search waits for one. A page whose reading falls
-  into a loop, as greedy decoding does now and then on forms, is stopped there and read once more with a repetition
-  penalty, which got 5 to 10 times as far on the pages that looped.
+- Scans: PDFs without text of their own, and a mail's attached scans, are read with OCR by LightOnOCR-2 (Apache-2.0)
+  on the GPU the other models use, in about 3 GB; metadata says `ocr`. The first scan downloads the model (2 GB).
+  Without a GPU scans are skipped and reported; `SIFT_OCR=on` reads them on the CPU, `SIFT_OCR=off` never. The next
+  `sift index` reads once the scans and mails with a PDF an older sift skipped; the server's `reindex` leaves scans to
+  `sift index`.
 
 ### Changed
 
-- `sift add` refuses a folder inside a collection, or one that holds a collection, since the files of both were
-  indexed twice and found twice; `sift add --nested` adds it anyway.
+- `sift add` refuses a folder inside a collection or holding one; `sift add --nested` adds it anyway.
 
 ### Fixed
 
-- A mail whose HTML Xberg's converter fails on ("Internal panic: begin > end") keeps its words: its HTML is read as
-  plain text, and that is reported. Its text was lost before.
-- A message said while a progress line is drawn, such as the GPU memory sift takes, gets a line of its own instead of
-  running on after the progress line.
+- A mail whose HTML the converter fails on keeps its words: it is read as plain text, and that is reported.
 
 ## [1.2.1] - 2026-10-22
 
 ### Changed
 
-- The package's description and keywords on PyPI name what 1.1 and 1.2 added: Obsidian notes, backlinks and saved
-  emails. Nothing else changed.
+- The package's description and keywords on PyPI name what 1.1 and 1.2 added. Nothing else changed.
 
 ## [1.2.0] - 2026-10-22
 
@@ -472,31 +297,22 @@ errors that say what to do ([Leaving files out](docs/usage.md#leaving-files-out)
 
 ### Added
 
-- `.siftignore`: a collection's folder may name, in gitignore's syntax, the files and folders sift leaves out, as
-  apps keep their own files out and users their drafts, exports or binaries. `sift index` follows its changes, and
-  `reindex` refuses what it leaves out. Hidden folders, `node_modules` and `__pycache__` stay out as before. A
-  `.siftignore` sift can't read, as an offline OneDrive file, skips its collection, which keeps its documents.
-- Saved emails (`.eml`): one document per mail, titled by its subject, with its sender, recipients and date above
-  its text and as metadata for filters: the addresses bare, the date as ISO 8601 in UTC, so mails sort by time.
-  Each attachment sift reads is a document of its own, a text file in the charset its mail declares; so is a mail
-  attached to a mail, as one forwarded "as attachment", with its own attachments, three levels deep.
-- `sift status --json`, as the other commands take it; `status` prints JSON anyway.
+- `.siftignore`: a collection's folder may name, in gitignore's syntax, the files and folders sift leaves out.
+  Hidden folders, `node_modules` and `__pycache__` stay out as before.
+- Saved emails (`.eml`): one document per mail, titled by subject, with sender, recipients and date (ISO 8601, UTC)
+  above its text and as filterable metadata. Attachments sift reads, and mails attached to mails, are documents too.
+- `sift status --json`.
 
 ### Changed
 
-- The instructions agents read when they connect name each collection's folder, and the docs say that `status`
-  holds it as `path`: agents can tell which collection a file belongs to.
-- `reindex` of a file in no collection lists the collections and their folders, nearest first, and the `sift add`
-  that would cover it; an agent told only "is in no collection" tried other spellings of the path. A collection
-  name the index doesn't know, in `reindex` or a search, lists the names it does.
-- The README states as part of the format that a front-matter value is read as JSON first, so programs that write
-  front matter can write any value as JSON and rely on reading it back as written; tests hold it.
+- The instructions agents read name each collection's folder; `status` holds it as `path`.
+- `reindex` of a file in no collection lists the collections and the `sift add` that would cover it; an unknown
+  collection name lists the names there are.
+- A front-matter value is read as JSON first, so programs can write any value as JSON and read it back as written.
 
 ### Fixed
 
-- The `sift add` that `sift add` suggests for an Obsidian vault quotes a path with spaces, so it can be pasted.
-- A file named like an extension, such as `.md`, stopped `sift index` with `error: ''`. As `reindex` did already,
-  sift takes it for a name that starts with a dot and has no extension, and leaves it out.
+- A file named like an extension, such as `.md`, no longer stops `sift index`.
 
 ## [1.1.0] - 2026-10-22
 
@@ -505,239 +321,154 @@ Links between Markdown notes, for Obsidian vaults and any notes that link to eac
 
 ### Added
 
-- Links: sift reads the wikilinks, embeds and Markdown links of every Markdown note, in its text and its front matter,
-  and resolves them when asked, within the note's collection, as Obsidian does: by path, by name, preferring the
-  note's own folder, and by alias. So they follow notes as they come and go, without the linking notes being read
-  again.
-  - `links` (MCP tool and `sift links`): the links of a note, each with where it leads, `ambiguous` or `unresolved`;
-    the notes linking to it, with the lines that do; two steps away with `depth` 2; through one front-matter field.
-  - `unresolved` (MCP tool and `sift unresolved`): the link targets no note answers to yet, most linked first.
-  - `mentions` (MCP tool and `sift mentions`): the documents that name a note without linking to it.
-  - `links_to` and `linked_from` on `search`, `vsearch`, `query` and `similar` (`--links-to`, `--linked-from`): only
-    documents linking to these notes, or linked from them. A note is named by its id or as links name it.
-  - `status` counts each collection's links and how many are unresolved, and agents learn of both when they connect.
-  - `sift ui`: the reader leads to a note's backlinks and links.
-- `reindex` (MCP tool) and `sift index --files`: read the files given at once, or drop the documents of files that
-  are gone, so that the next search finds a note an agent just wrote. Over MCP it embeds the new passages too, and the
-  server takes up their vectors without loading the others again. It reads only files `sift index` would read.
-- `sift add --title-from name`: Markdown and text files take their file name as title, unless their front matter
-  sets one, as notes in an Obsidian vault are named. In a vault whose notes start with `## Summary`, every note was
-  titled "Summary". The same command changes a collection added before: it retitles the notes from the text the
-  index holds, without reading a file, and says which passages `sift embed` must embed again. `sift add` of an
-  Obsidian vault suggests it.
+- Links: sift reads the wikilinks, embeds and Markdown links of every Markdown note, and resolves them within the
+  collection as Obsidian does (path, name, alias).
+  - `links` (MCP tool and `sift links`): a note's links and backlinks; `depth` 2 for two steps.
+  - `unresolved` (MCP tool and `sift unresolved`): link targets no note answers to yet.
+  - `mentions` (MCP tool and `sift mentions`): documents that name a note without linking to it.
+  - `links_to` and `linked_from` on `search`, `vsearch`, `query` and `similar` (`--links-to`, `--linked-from`).
+  - `status` counts each collection's links and unresolved ones; `sift ui` leads to backlinks and links.
+- `reindex` (MCP tool) and `sift index --files`: read the given files at once, or drop the documents of files that
+  are gone, so the next search finds a note an agent just wrote. Over MCP it embeds the new passages too.
+- `sift add --title-from name`: Markdown and text files take their file name as title unless front matter sets one.
+  On a collection added before, it retitles from the index and says which passages `sift embed` must embed again.
 
 ### Changed
 
-- The index's layout is version 4. An index of sift 1.0 updates itself on first use, once, from what it holds: no
-  file is read and nothing is embedded again. 20,000 notes take about 3 seconds, 3.2 million JSON Lines records a
-  moment. sift 1.0 doesn't open an index so updated: upgrade every sift that uses it.
-- A filter value that is a wikilink, `{"org": "[[Acme AG]]"}`, also matches links to the same note written otherwise:
-  `[[acme ag|Acme]]`, `[[02_Organizations/Acme AG]]`, or by an alias. Other values compare exactly, as before.
-- A note of front matter alone, such as a contact's, has its front matter as its passage: no search found it before,
-  not even by its name. An index of sift 1.0 gets these passages when it updates; `sift embed` embeds them.
-- `sift ui`: a document's passage while browsing is the start of its first passage, which kept the closing `---` of
-  a note of front matter alone out.
+- The index layout is version 4. An index of 1.0 updates itself on first use, once (20,000 notes take about 3
+  seconds), without reading files or embedding again. sift 1.0 doesn't open an index so updated.
+- A filter value that is a wikilink, `{"org": "[[Acme AG]]"}`, also matches links to the same note written otherwise.
+- A note of front matter alone has its front matter as its passage, so searches find it; an index of 1.0 gets these
+  passages when it updates, and `sift embed` embeds them.
 
 ### Fixed
 
-- Front matter: a YAML list with unquoted items, `aliases: [Hans Mueller, H. Müller]`, was one string. It is a list
-  now; a single wikilink, `org: [[Acme AG]]`, stays the link it means.
-- `search`: when no passage held every term, the search for any of them dropped column filters such as `title:`,
-  and found the words anywhere.
+- A YAML list with unquoted items, `aliases: [Hans Mueller, H. Müller]`, was one string; it is a list now.
 
 ## [1.0.0] - 2026-10-21
 
 sift is stable: from now on, its commands, MCP tools, settings, index and worker protocol change incompatibly only
-with a new major version. [Versioning](README.md#versioning) lists what that covers.
+with a new major version. [Updating](https://github.com/tobiaswuerth/sift#updating) lists what that covers.
 
 ### Changed
 
-- `get` of lines past the end of a document, in the CLI and over MCP, is an error that says how many lines the
-  document has. It returned an empty text, which agents took for an empty passage.
+- `get` of lines past the end of a document is an error that says how many lines it has (it returned empty text).
 - A `sift worker` and the machines that use it must run the same major version (before 1.0: the same minor one).
-  sift refuses another worker and says which version runs where.
-- `sift add` refuses a folder that is a collection already: registered twice, its documents were found twice.
+- `sift add` refuses a folder that is a collection already.
 - `sift serve` on an address other than `127.0.0.1` or `localhost` warns that anyone who reaches it can read every
   indexed document.
-- `sift bench` takes grade 0 for a document read and found irrelevant, as TREC's judgements do.
-- The package declares every package sift imports itself: uvicorn, Starlette, AnyIO, Pydantic and MarkupSafe came
-  only through mcp and Jinja2.
-- `sift ui`: the facets that most results share come first; folders take a few lines instead of one each; a long
-  document shows 2,000 lines at a time; and on a narrow window the search box gets its own row, with the filters
-  above the results instead of hidden.
+- `sift bench` takes grade 0 for a document read and found irrelevant, as TREC does.
+- The package declares every package sift imports itself: uvicorn, Starlette, AnyIO, Pydantic and MarkupSafe.
 
 ### Fixed
 
-- Filters, sorting and `-f` took field names of letters, digits and `_` only, so fields such as `journal-ref` or
-  `date created` couldn't be used. Any name without a double quote works now.
-- On an IPv6 address, `sift ui` failed with "nonnumeric port", and `sift serve` printed addresses without the
-  brackets IPv6 needs in them.
-- A front-matter title that reads as a number, such as `title: 1984`, was passed over: the document took its first
-  heading or its file name as title instead.
-- `sift bench` split a single id given as text, not in a list, into letters, and failed with a division by zero on a
-  case whose grades were all 0. Both are now errors that say what a case needs.
-- `sift ui`:
-  - after *Similar* or another link that changes the search, the search box still showed the old query, and the
-    next change of mode brought it back; sorting a list of similar documents lost the list;
-  - filtering by a value such as `007` or `1.10` found nothing: the value was read as the number 7 or 1.1;
-  - yes/no fields, such as `draft: true`, weren't facets;
-  - a folder whose name holds `[` showed other folders' documents, and `?path=2024` without its slash showed a folder
-    named "" and the documents of `2024x/` too;
-  - the window title didn't follow the search;
-  - the mode buttons couldn't be reached by keyboard; ArrowDown on the sort menu jumped to the results, and Ctrl+J
-    and Ctrl+K were taken for `j` and `k`;
-  - browsing showed a Markdown document's front matter as its passage;
-  - a page that held all the results still offered *More*, and counted "30+" for 30;
-  - `?k=²` failed with a server error.
+- Filters, sorting and `-f` take any field name without a double quote; IPv6 addresses work in `sift ui` and `sift
+  serve`; a front-matter title such as `title: 1984` is no longer passed over; `sift bench` reports unusable cases as
+  errors; many `sift ui` view and keyboard bugs.
 
 ### Security
 
-- `sift ui` opened a collection's files in the UI's own origin, so a saved web page with scripts could read the
-  whole index through it. Files now open sandboxed, PDFs excepted (see [SECURITY.md](SECURITY.md)).
-- `sift ui` kept copies of the last pages it showed in the browser's local storage, the text of documents included;
-  going back now asks the server again. htmx no longer runs scripts or evaluates code in what it swaps in.
+- `sift ui` opened a collection's files in its own origin, so a saved web page with scripts could read the whole
+  index. Files now open sandboxed, PDFs excepted (see
+  [SECURITY.md](https://github.com/tobiaswuerth/sift/blob/main/docs/SECURITY.md)).
+- `sift ui` kept the last pages shown, document text included, in the browser's local storage; it no longer does.
+  htmx no longer runs scripts in what it swaps in.
 
 ## [0.10.0] - 2026-10-21
 
 ### Added
 
 - `sift ui`: the index in your browser, to search, browse and read the sources yourself. It opens the UI of the
-  `sift serve` on port 8765, or starts one, which then serves agents too. The page has three panes:
-  - collections and folders, and the front-matter values of the results with their counts, each a filter;
-  - the results of a keyword search as you type, or of a search by meaning or hybrid search, with the words found
-    marked;
-  - the document a result leads to, its passage marked, with its front matter, similar documents and its original
-    file.
-
-  Every view has its own address. On 3.2 million arXiv abstracts, a keyword search answers in 30 to 250 ms.
-- `sift serve` serves the UI under `/ui`, and its address alone leads there. Bound to a local address, it answers
-  only requests that name a local host, as MCP does.
+  `sift serve` on port 8765, or starts one, which then serves agents too.
+- `sift serve` serves the UI under `/ui`. Bound to a local address, it answers only requests that name a local host.
 
 ## [0.9.1] - 2026-10-21
 
 ### Fixed
 
-- Embedding and searching through a `sift worker` waited 21 seconds before each request of 256 texts when the
-  worker's name resolved to an IPv6 address first, as Windows machine names often do. The worker listens on IPv4,
-  and Windows Firewall drops the IPv6 attempt instead of refusing it. sift now connects over IPv4 when the name has
-  an IPv4 address, and keeps one connection open for all requests instead of opening one per request. On one
-  notebook, embedding had slowed to about 9 chunks per second.
+- Embedding and searching through a `sift worker` waited 21 seconds per request when the worker's name resolved to an
+  IPv6 address first; sift now connects over IPv4 when it can and keeps one connection open.
 
 ## [0.9.0] - 2026-10-21
 
 ### Added
 
-- `sift bench FILE`: how well each search mode finds the documents a set of questions should find, on your own
-  index (nDCG@10, MRR@10, Recall@10 and time per query), from a JSON list of questions and the ids of their answers.
+- `sift bench FILE`: how well each search mode finds the documents a set of questions should find, on your own index
+  (nDCG@10, MRR@10, Recall@10, time per query), from a JSON list of questions and the ids of their answers.
 
 ### Changed
 
-- `query` ranks better, across subjects and languages. The new default reranker is gte-reranker-modernbert-base, the
-  same size and speed as Ettin-150M, and each candidate's score now counts its closeness in meaning to the query as
-  well. A reranker alone ranked scientific claims worse than the embedding did. Over seven benchmarks (scientific,
-  medical, financial, German, literature search, arXiv known items), the mean went from 0.646 to 0.696; on long
-  German documents from 0.48 to 0.69; on SciFact from 0.76 to 0.81. The arXiv known items cost a little (MRR 0.936 to
-  0.929). Details in [docs/benchmarks.md](docs/benchmarks.md).
-- The first `query` after upgrading downloads the new reranker (about 600 MB). Indexes and vectors stay as they are;
-  nothing is re-embedded. `SIFT_RERANK_MODEL=cross-encoder/ettin-reranker-150m-v1` brings the old reranker back.
-- Scores keep the reranker's scale: close matches score about 2.5 to 4, and unrelated results below 2.
+- `query` ranks better across subjects and languages: the default reranker is gte-reranker-modernbert-base and each
+  candidate's score also counts its closeness in meaning to the query
+  ([benchmarks](docs/benchmarks.md)). The first `query` after upgrading downloads it (about 600 MB); indexes and
+  vectors stay. `SIFT_RERANK_MODEL=cross-encoder/ettin-reranker-150m-v1` brings the old reranker back.
+- Scores keep the reranker's scale: close matches score about 2.5 to 4, unrelated results below 2.
 
 ### Fixed
 
-- A reranker that reads fewer than 1024 tokens, such as MiniLM (512), failed on every long passage ("The size of
-  tensor a must match the size of tensor b"). sift now keeps the model's own limit and caps longer ones at 1024.
+- A reranker that reads fewer than 1024 tokens, such as MiniLM, no longer fails on long passages.
 
 ## [0.8.0] - 2026-10-20
 
 ### Added
 
-- Keyword search covers front-matter values, such as authors and ids, in `search` and in `query`: "Vaswani
-  transformer paper" finds "Attention Is All You Need", and an arXiv id finds its paper. `meta:` limits a term to
-  them.
-- `query`'s reranker reads the front-matter values a query names, such as an author's name or an id, with each
-  candidate's title and text. On 29 known-item queries over 3.2 million arXiv abstracts, `query` went from MRR@10
-  0.69 to 0.92 and Recall@10 0.72 to 0.97, with topical queries as good as before.
+- Keyword search covers front-matter values, such as authors and ids, in `search` and `query`: "Vaswani transformer
+  paper" finds "Attention Is All You Need". `meta:` limits a term to them. `query`'s reranker reads them too.
 
 ### Changed
 
-- The first command after upgrading rebuilds the keyword index of an existing index, once: 3½ minutes and 0.7 GB
-  more for 3.2 million arXiv abstracts. Documents and vectors stay. Older versions of sift can't open it afterwards.
-
-### Fixed
-
-- No "Loading weights" progress bars from transformers in the logs of `sift serve`, `sift worker` and `sift embed`;
-  on Windows consoles they came out garbled.
+- The first command after upgrading rebuilds the keyword index, once (3½ minutes and 0.7 GB more for 3.2 million
+  arXiv abstracts). Documents and vectors stay. Older versions of sift can't open it afterwards.
 
 ## [0.7.0] - 2026-10-20
 
 ### Added
 
-- `similar`: documents like a given one, by its id, e.g. more papers like one found (MCP tool, `sift similar ID`).
-  It runs no model: half a second over 3 million arXiv abstracts, with or without a GPU.
+- `similar`: documents like a given one, by id (MCP tool, `sift similar ID`). It runs no model.
 - Filters take a list for any of its values, `{"categories": ["cs.RO", "cs.CV"]}`, and `{"not": ...}` for none of
   them. On the command line: `-f KEY=VALUE` repeated, and `-f KEY!=VALUE`.
-- `sort` orders the results by a front-matter field instead of score, e.g. `"-created"` for the newest first
-  (`--sort=-created`).
-- `get` takes `fields`, and then returns the document with them as `{id, title, fields, text}`
-  (`sift get --fields url,created`). It takes a line number as well as a range.
-- `all_passages` (`--all-passages`) returns every matching passage, as searches did before (see Changed).
+- `sort` orders results by a front-matter field instead of score (`--sort=-created`).
+- `get` takes `fields` and returns `{id, title, fields, text}` (`sift get --fields url,created`), and a line number
+  as well as a range.
+- `all_passages` (`--all-passages`) returns every matching passage, as searches did before.
 - Every MCP tool parameter is described in the tool's schema, and the tools are marked read-only.
-- The README explains setting up MCP and updating, step by step.
-- `sift index` shows a progress bar, like `sift embed`.
 
 ### Changed
 
-- Searches return one result per document, with its best passage: the passages of one long document no longer fill
-  the results.
-- `query` scores are the reranker's raw scores whatever activation its configuration names, also from a worker.
-  With the default reranker, close matches score about 8 to 12, and unrelated results below 5.
-- Keyword search weighs a title like the text. Titles were weighted double on top of being indexed twice, so a paper
-  that only named a term in its title outranked an abstract about it.
-- An empty environment variable counts as unset; `SIFT_HOME=` meant the current folder.
+- Searches return one result per document, with its best passage.
+- `query` scores are the reranker's raw scores: with the default reranker, close matches score about 8 to 12,
+  unrelated results below 5.
+- Keyword search weighs a title like the text; an empty environment variable counts as unset.
 
 ### Fixed
 
-- A tool that failed for an unexpected reason told the agent only "Error executing tool"; the agent now gets the
-  error's type and message, and the server's log the traceback.
-- `get` ignored `fields` without a word: the MCP library drops arguments a tool doesn't take.
+- A tool failing unexpectedly now tells the agent the error's type and message; `get` honours `fields` over MCP.
 
 ## [0.6.0] - 2026-10-20
 
 ### Added
 
-- Through a worker, searches rerank there too, and the machine searching never loads PyTorch: on a notebook,
-  `vsearch` and `query` take about 0.3 s instead of 10 to 25 s. Both machines need 0.6.
-- `sift embed`, `vsearch`, `query`, `serve` and `worker` say at once that they started; `sift index` names the folder
-  it scans and counts files one by one. The README shows how to upgrade.
+- Through a worker, searches rerank there too and the searching machine never loads PyTorch: `vsearch` and `query`
+  take about 0.3 s instead of 10 to 25 s on a notebook. Both machines need 0.6.
 
 ### Changed
 
-- The models compute in bfloat16 on NVIDIA GPUs that have it, and in float32 elsewhere, Apple GPUs included, instead
-  of fp16.
+- The models compute in bfloat16 on NVIDIA GPUs that have it, and in float32 elsewhere, instead of fp16.
 
 ### Fixed
 
-- `vsearch` and `query` found fewer results, or none, when some vectors were broken. In fp16, EmbeddingGemma
-  overflows now and then into NaN vectors, and the search ranked NaN first, so a few broken vectors pushed every real
-  result out. NaN now ranks last, broken vectors are never stored, and the next `sift embed` drops those of older
-  indexes once and embeds their chunks again.
+- `vsearch` and `query` found fewer results, or none, when some vectors were NaN (fp16 overflow). Broken vectors are
+  never stored, and the next `sift embed` drops those of older indexes and embeds their chunks again.
 
 ## [0.5.1] - 2026-10-20
 
 ### Added
 
-- `sift worker` lends a machine's GPU to sift on other machines, and `SIFT_EMBED_REMOTE` points sift there:
-  `sift embed` sends its chunks to the worker without loading the model itself, and searches embed their queries
-  there too. The worker only computes, sees no index or files, and gives the GPU back when idle.
+- `sift worker` lends a machine's GPU to sift on other machines, and `SIFT_EMBED_REMOTE` points sift there: `sift
+  embed` and searches send their texts to the worker, which sees no index or files and gives the GPU back when idle.
 - The worker speaks HTTPS with a certificate of its own and answers only requests with its token. It prints the
-  address to set, `https://<key>@<machine>:8766`, whose key holds the token and the certificate's fingerprint:
-  sift checks the certificate before it sends anything, and never shows the key. The README shows how to let the
-  worker through the firewall. `cryptography` is a new dependency.
-
-### Changed
-
-- The instructions agents get from `sift serve`, and `sift --help`, speak of documents and notes instead of text
-  and Markdown files.
+  address to set, `https://<key>@<machine>:8766`, whose key holds the token and the certificate's fingerprint.
+  `cryptography` is a new dependency.
 
 ## [0.5.0] - 2026-10-20
 
@@ -747,12 +478,8 @@ Tagged but never published: its worker spoke plain HTTP, without a key. 0.5.1 re
 
 ### Fixed
 
-- Office files whose XML compresses better than 100:1, common in presentations and spreadsheets, were skipped as
-  a "potential ZIP bomb". sift now accepts up to 10,000:1, beyond anything deflate produces; Xberg's caps on
-  unpacked size (100 MB a file, 500 MB in all) still stop zip bombs.
-- `sift embed` showed nothing for a long time without a GPU: its first progress line came after eight batches of
-  the longest chunks. It now says what it embeds before loading the model, then shows a progress bar with the
-  chunks done, the speed and the time taken and left, updated after every batch and redrawn every second.
+- Office files whose XML compresses well, common in presentations and spreadsheets, were skipped as a "potential ZIP
+  bomb"; Xberg's caps on unpacked size still stop zip bombs. `sift embed` shows progress without a GPU.
 
 ## [0.4.0] - 2026-10-20
 
@@ -761,88 +488,52 @@ Tagged but never published: its worker spoke plain HTTP, without a key. 0.5.1 re
 - PDF, Word, PowerPoint and Excel files, OpenDocument text, presentations and spreadsheets, RTF, EPUB and HTML,
   converted to Markdown by [Xberg](https://github.com/xberg-io/xberg), a new dependency. Their properties (title,
   authors, dates, ...) become metadata. Damaged files and scans without text are skipped and reported.
-- Each kind of file has a reader, chosen by extension, so a new format needs only a new reader.
 
 ### Changed
 
 - The default reranker is `cross-encoder/ettin-reranker-150m-v1` (Apache-2.0), replacing
-  `Alibaba-NLP/gte-reranker-modernbert-base`: the same size and speed, better in Hugging Face's published comparison
-  (MTEB English retrieval and NanoBEIR, reranking six embedders' results, EmbeddingGemma's among them), and it
-  improves on the first-stage ranking of the scientific sets SciFact, NFCorpus and SCIDOCS. It downloads on first
-  use; nothing needs re-indexing or re-embedding. `SIFT_RERANK_MODEL=Alibaba-NLP/gte-reranker-modernbert-base` keeps
-  the old one.
-
-### Fixed
-
-- A chunk's line range no longer includes the blank lines around its text, such as the one after front matter.
-  Chunks already indexed keep their line numbers until their file changes.
+  `Alibaba-NLP/gte-reranker-modernbert-base`. It downloads on first use; nothing needs re-indexing or re-embedding.
+  `SIFT_RERANK_MODEL=Alibaba-NLP/gte-reranker-modernbert-base` keeps the old one.
 
 ## [0.3.0] - 2026-10-20
 
 ### Added
 
-- JSON Lines files (`.jsonl`, `.ndjson`): one document per line, with the id, title and text found by name (`id`,
+- JSON Lines files (`.jsonl`, `.ndjson`): one document per line, with id, title and text found by name (`id`,
   `title`, `text`, `abstract`, ...) and every other field as metadata. `sift add --id/--title/--text` chooses other
   fields. A changed file re-indexes only its changed records.
 
 ### Changed
 
-- **The index holds the documents' text** (once: chunks are spans of it), so `get` reads the index instead of the
-  file, and results and documents always agree. **Indexes made by sift 0.2 or older must be rebuilt**: delete
-  `sift.db` and run `sift add`, `sift index` and `sift embed` again. The layout now has a version, so later changes
-  can migrate.
+- **The index holds the documents' text**, so `get` reads the index instead of the file. **Indexes made by sift 0.2
+  or older must be rebuilt**: delete `sift.db` and run `sift add`, `sift index` and `sift embed` again.
 - The default embedding model is `google/embeddinggemma-2` (768 dimensions, Apache-2.0), replacing
-  `Qwen/Qwen3-Embedding-0.6B`. Run `sift embed --reset` to switch an existing index. It needs Pillow and
-  torchvision, now dependencies; with pip, install torchvision from the same index as torch.
+  `Qwen/Qwen3-Embedding-0.6B`. Run `sift embed --reset` to switch an existing index. It needs Pillow and torchvision,
+  now dependencies; with pip, install torchvision from the same index as torch.
 
 ## [0.2.0] - 2026-10-19
 
 ### Added
 
-- Search results can carry front-matter fields (`fields`, e.g. `["url", "created"]`, or `["*"]` for all) and leave
-  out the text (`compact`), so agents can survey many results cheaply. `--fields` and `--compact` on the CLI.
-- Range filters on front-matter fields, e.g. `{"created": {">=": "2024-06", "<": "2025"}}` or
-  `-f "created>=2024-06"`. Dates compare at the precision given.
-- `get` returns only some lines if asked, e.g. a hit's `"17-26"` (`--lines` on the CLI).
-- `get` finds a document by its file name if no other document in the collection has that name, e.g.
-  `arxiv/2603.29315.md` for `arxiv/2026/03/2603.29315.md`; otherwise it lists the matches.
+- Search results can carry front-matter fields (`fields`, e.g. `["url", "created"]`, or `["*"]`) and leave out the
+  text (`compact`). `--fields` and `--compact` on the CLI.
+- Range filters on front-matter fields, e.g. `{"created": {">=": "2024-06", "<": "2025"}}` or `-f "created>=2024-06"`.
+- `get` returns only some lines if asked (`--lines` on the CLI), and finds a document by its file name if no other
+  document in the collection has that name.
 - The server tells agents which front-matter fields each collection has; `status` lists them too.
 
 ### Changed
 
-- `sift serve` gives its GPU memory back when idle. Models and vectors load into RAM, move to the GPU when a
-  search needs them, and return to RAM after 5 minutes without GPU use. Once released, the memory is free
-  for other programs; the first search afterwards takes about a second longer. If other programs have taken the
-  memory meanwhile, sift stays on the CPU instead.
+- `sift serve` gives its GPU memory back when idle: after 5 minutes without GPU use models and vectors return to RAM,
+  leaving the memory free for other programs; the first search afterwards takes about a second longer.
 - `search` returns chunks with any of the query's terms when none has them all, unless the query uses operators.
-- `get` serves indexed documents only, never other files below a collection's folder, and returns `\n` line
-  endings, like search results.
-- Front matter lists can be written one `- item` per line, as Obsidian, Jekyll and Hugo do; comment lines are
-  skipped, and a key without a value means null.
-- Blank queries return nothing in every search mode, and `query` gathers at least `k` candidates per mode.
-- Index worker processes are spawned on every platform; forking a process that runs threads can deadlock.
+- `get` serves indexed documents only and returns `\n` line endings.
+- Front matter lists can be written one `- item` per line; blank queries return nothing in every search mode.
 
 ### Fixed
 
-- `sift serve` could hang on Ctrl+C, however often it was pressed: on shutdown, uvicorn waits for every
-  connection to close (Python 3.12+), and a client that left a request unfinished never closed its connection.
-  The server now waits at most 3 seconds for open requests, then stops.
-- `sift index` stalled for minutes on a heading followed by a long run of spaces.
-- Titles: "# Learning C#" lost its "#", a bare "#" line took the next paragraph as title, and comments in fenced
-  code blocks counted as headings.
-- Line numbers in search hits were off after form feeds and other characters that `str.splitlines` treats as line
-  ends.
-- UTF-16 files (Windows PowerShell 5.1 writes them with `>`) were indexed as text full of NUL characters.
-- Empty front matter (`---` twice) was indexed as text.
-- A file name with bytes that aren't UTF-8 (Linux) aborted `sift index`; such files are now skipped with a message.
-- A huge `k` or filter number crashed the search tools; `k` is capped, a filter number is a clear error.
-- Calibrating the batch size divided by zero when memory didn't grow with the batch.
-- `sift embed` crashed on chunks that had no text in the keyword index.
-- The embedding progress divided by zero when the clock hadn't advanced.
-- Ctrl+C on `sift serve` printed a traceback instead of stopping quietly; errors such as a port in use now print
-  one line.
-- Database errors reach MCP clients as messages, and the CLI reports an unusable `SIFT_HOME` instead of crashing.
-- `sift add ~/notes` works where the shell doesn't expand `~`.
+- Many crashes and indexing errors (Ctrl+C hangs of `sift serve`, titles with `#`, UTF-16 files, file names that
+  aren't UTF-8, a huge `k`, `sift add ~/notes`).
 
 ## [0.1.0] - 2026-10-18
 
@@ -852,14 +543,11 @@ First release.
 
 - `sift add`, `rm`, `index`, `embed`, `search`, `vsearch`, `query`, `get`, `status` and `serve`; also available as
   `sift-rag`, so `uvx sift-rag serve` works.
-- Incremental indexing of `.md`, `.markdown` and `.txt` files in parallel worker processes, with filterable YAML
-  front matter.
-- Embedding on NVIDIA GPUs (CUDA), Apple GPUs (MPS) or the CPU. sift caps its GPU memory below what other programs
-  leave free, calibrates the batch size by measurement, and reports progress.
+- Incremental indexing of `.md`, `.markdown` and `.txt` files with filterable YAML front matter.
+- Embedding on NVIDIA GPUs (CUDA), Apple GPUs (MPS) or the CPU; sift caps its GPU memory below what other programs
+  leave free.
 - Keyword search (SQLite FTS5, BM25), exact GPU vector search, and hybrid search with cross-encoder reranking.
-- An MCP server (streamable HTTP and stdio) whose instructions tell agents what is indexed, and whose errors tell
-  them what went wrong.
-- A start-up hint when an NVIDIA GPU can't be used, with the command that fixes it.
+- An MCP server (streamable HTTP and stdio) whose instructions tell agents what is indexed.
 
 [Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.11.2...HEAD
 [1.11.2]: https://github.com/tobiaswuerth/sift/compare/v1.11.1...v1.11.2

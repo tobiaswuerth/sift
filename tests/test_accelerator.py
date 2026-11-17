@@ -93,7 +93,7 @@ def test_budget_leaves_room_for_other_programs(make, gpu_memory, capsys):
 def test_budget_counts_memory_other_programs_hold(make, gpu_memory):
     # On Windows (WDDM), CUDA reports memory held by other programs as free, since the driver could page it out.
     # NVML, which nvidia-smi uses, does not; the smaller of the two decides.
-    gpu_memory.free, gpu_memory.used = 22.5 * GiB, 13.5 * GiB  # as measured on an RTX 4090 under Windows
+    gpu_memory.free, gpu_memory.used = 22.5 * GiB, 13.5 * GiB  # as measured on a 24 GB GPU under Windows
     make("cuda").budget()
     assert gpu_memory.budgets == [(pytest.approx((24 - 13.5 - 2.4) / 24), 0)]
 

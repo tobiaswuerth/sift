@@ -39,7 +39,8 @@ def three(tmp_path, home, fake_models):
 
 
 def test_a_semantic_search_of_one_collection_reads_its_codes_alone(three):
-    # `sift vsearch -c notes` read the codes of every active collection: 30 seconds and 4 GB beside PubMed.
+    # `sift vsearch -c notes` read the codes of every active collection: 30 seconds and 4 GB beside one of 30
+    # million passages.
     index, papers, recipes = Index(three), three.get("papers").id, three.get("recipes").id
     index.vsearch("robot", collection="papers")
     assert set(index.vectors) == {papers}

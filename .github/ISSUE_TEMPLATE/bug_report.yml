@@ -37,6 +37,6 @@ body:
     attributes:
       label: Environment
       description: Operating system, Python version, GPU, and how you installed sift (uv, pip).
-      placeholder: Windows 11, Python 3.12, RTX 4090, uv tool install
+      placeholder: Windows, Python 3.12, NVIDIA GPU, uv tool install
     validations:
       required: true

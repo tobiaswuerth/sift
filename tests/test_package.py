@@ -69,6 +69,31 @@ def test_sources_write_invisible_characters_as_escapes():
     assert found == set(), r"write them as escapes, such as \ufffd"
 
 
+MACHINE = re.compile(  # each written so that it doesn't match itself
+    r"\b(?:R[T]X|G[T]X|GeF[o]rce|Quadr[o]|Ra[d]eon|Ryz[e]n|Threadr[i]pper|X[e]on|EP[Y]C)\b|\bCore i[3579]\b"
+    r"|\bi[3579]-[0-9]{4,5}"
+)
+
+
+def test_published_text_names_no_machine():
+    # Timings named the GPU and CPU models of the machine they were measured on, and what else ran on it: facts of
+    # one setup, not of sift.
+    texts = [
+        *ROOT.glob("*.md"),
+        *(ROOT / "docs").glob("*.md"),
+        *(ROOT / ".github").rglob("*.*"),
+        *(ROOT / "sift").rglob("*.py"),
+        *(ROOT / "tests").glob("*.py"),
+    ]
+    found = {
+        f"{path.relative_to(ROOT)}:{n}"
+        for path in texts
+        for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1)
+        if MACHINE.search(line)
+    }
+    assert found == set(), "state hardware by kind (a GPU, 8 CPU threads), not by the model of the machine measured"
+
+
 def test_only_newlines_end_lines():
     # str.splitlines also ends a line at U+2028, U+2029, NEL and five control characters: it shifted search hits' line
     # numbers, cut front-matter values that JSON had written with them, and split .siftignore patterns in two.

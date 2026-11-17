@@ -14,8 +14,8 @@ from .accelerator import Accelerator
 
 MAX_TOKENS = 1024
 RERANK_BATCH = 16  # pairs per batch at most, which Sentence Transformers sorts by length first: one batch of a query's
-# 80 candidates was padded to the longest, 1.7 to 3.5 times their tokens; reranked in 16s, 180 ms a question on the
-# RTX 4090 against 331 (8: 259, 32: 213)
+# 80 candidates was padded to the longest, 1.7 to 3.5 times their tokens; reranked in 16s, 180 ms a question on a
+# GPU against 331 (8: 259, 32: 213)
 LENGTHS_AT_ONCE = 1000  # texts tokenized at a time to count their tokens
 PROMPTS = {False: ("document", "passage", "corpus"), True: ("query",)}  # as encode_document and encode_query pick
 TASKS = {False: "document", True: "query"}  # what Sentence Transformers routes texts by, in models that route
