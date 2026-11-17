@@ -12,9 +12,10 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   so a changed JSON Lines file re-indexes only its changed records: by their ids, or by line numbers for records
   without, so that a line added or removed changes those of every record after it.
 - A record or an attachment is a document below its file's name (`data.jsonl`'s record `a.md` is `data/a.md`), a path
-  a real file may have too: the first keeps it. Every deletion of documents goes through one function of the store,
-  which marks the files that may wait for the paths it frees to be read again: the file of such a path, and those
-  named like a folder above it. One that waited for nothing is read in vain, once, and changes nothing.
+  a real file may have too: the first keeps it, and the store records that the other waits for it (`waiting`, made
+  by the first such document; a file's rows go when it is stored anew or gone). Every deletion of documents goes
+  through one function of the store, which marks the files waiting for the paths it frees to be read again, by the
+  `sift index` running or the next.
 - Text files are read as UTF-8, or as UTF-16 or UTF-32 when they start with a byte order mark (Windows PowerShell
   5.1 writes UTF-16).
 - Each kind of file has a reader, chosen by extension, that turns it into documents; adding a format means adding a

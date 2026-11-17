@@ -251,18 +251,53 @@ def test_a_document_left_out_for_its_path_gets_it_once_free(corpus, capsys, reco
     assert [hit["id"] for hit in Index(catalog).search(waiting)] == ["notes/data/a.md"]
 
 
-def test_a_note_beside_a_folder_of_its_name_stays_as_it_was_when_a_file_in_it_goes(corpus, capsys):
-    # Project.md and the folder Project/, as Obsidian keeps them: Project.md might have waited for the path freed, so
-    # it is read again, in vain, and changes nothing.
+def test_a_holder_that_changes_frees_its_path_in_the_same_run(corpus):
+    catalog, root = corpus
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
+    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    indexing.index(catalog)  # the record first
+    write(root / "data.jsonl", '{"id": "b.md", "text": "zebra in another record"}\n')
+    indexing.index(catalog)
+    assert [hit["id"] for hit in Index(catalog).search("giraffe")] == ["notes/data/a.md"]
+
+
+def test_only_files_that_wait_for_a_path_are_read_again(corpus, monkeypatch):
+    # Every document deleted read again the files named like a folder above it: Project.md, beside Project/ as Obsidian
+    # keeps them, at every change in that folder; data.2025.jsonl, whole, at every change of data.jsonl.
     catalog, root = corpus
     write(root / "Project.md", "# Project\n")
-    write(root / "Project" / "x.md", "# X\n")
+    write(root / "Project" / "sub" / "x.md", "# X\n")
+    write(root / "Project" / "y.md", "# Y\n")
+    write(root / "data.jsonl", '{"id": "1", "text": "one"}\n')
+    write(root / "data.2025.jsonl", '{"id": "1", "text": "one of 2025"}\n')
     indexing.index(catalog)
-    before = doc_ids(catalog)["Project.md"]
-    (root / "Project" / "x.md").unlink()
+    read, real = [], indexing._loaded
+    monkeypatch.setattr(indexing, "_loaded", lambda path, fields: read.append(path) or real(path, fields))
+    write(root / "Project" / "sub" / "x.md", "# X\n\nchanged\n")
+    (root / "Project" / "y.md").unlink()
+    write(root / "data.jsonl", '{"id": "1", "text": "one, changed"}\n')
     indexing.index(catalog)
-    assert "0 added, 0 changed, 1 removed" in capsys.readouterr().err
-    assert doc_ids(catalog)["Project.md"] == before
+    assert sorted(os.path.relpath(p, root).replace(os.sep, "/") for p in read) == ["Project/sub/x.md", "data.jsonl"]
+
+
+def test_a_file_an_older_sift_left_out_for_its_path_is_read_again_once(corpus, home):
+    # sift 1.11 left it out for good: its time recorded, and nothing to say it waited.
+    catalog, root = corpus
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
+    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    indexing.index(catalog)
+    db = catalog.store("notes")
+    db.execute("DROP TABLE waiting")
+    mtime = (root / "data" / "a.md").stat().st_mtime_ns
+    db.execute("UPDATE sources SET mtime = ? WHERE path = 'data/a.md'", (mtime,))
+    db.execute("DELETE FROM meta WHERE key = 'paths_waited'")
+    db.commit()
+    (root / "data.jsonl").unlink()
+    catalog.close()
+    fresh = Catalog(home)  # opening the store upgrades it
+    indexing.index(fresh)
+    assert [hit["id"] for hit in Index(fresh).search("giraffe")] == ["notes/data/a.md"]
+    fresh.close()
 
 
 def test_a_document_the_index_refuses_for_another_reason_than_its_path_skips_its_file(corpus, monkeypatch, capsys):

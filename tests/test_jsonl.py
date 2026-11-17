@@ -284,7 +284,7 @@ def test_chunks_are_spans_of_the_stored_text(tmp_path, home):
         assert len(chunk) <= readers.CHUNK_CHARS
 
 
-def test_a_record_named_like_a_file_is_skipped(tmp_path, home, capsys):
+def test_a_record_and_a_file_of_one_path_the_first_read_keeps_it(tmp_path, home, capsys):
     # a.jsonl's record "b.md" and the file a/b.md would both be a/b.md: one of them must give way
     write(tmp_path / "c" / "a" / "b.md", "# File\n")
     write(tmp_path / "c" / "a.jsonl", json.dumps({"id": "b.md", "text": "record"}) + "\n")

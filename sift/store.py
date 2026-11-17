@@ -238,6 +238,7 @@ def alone(path, name):
 READ_AGAIN = {  # in the meta table, once the files of these kinds that an older sift skipped are to be read again
     "scans_read": (".pdf",),  # sift 1.2 and older read no scans
     "documents_read": readers.DOCUMENTS,  # the server of sift 1.3.0 and older skipped every document it reindexed
+    "paths_waited": tuple(readers.READERS),  # sift 1.11 left out for good a file whose path a record or attachment held
 }
 
 
@@ -453,26 +454,59 @@ def _mark_dirty(db, docs):
     )
 
 
+# The documents left out as another file's held their paths (a record or an attachment is a document below its file's
+# name, `data.jsonl`'s record `a.md` is `data/a.md`, as a real file may be): the path, and the file of the document
+# waiting, freed once the path is. Made by the first such document; a file's rows go when it is stored anew or gone.
+WAITING = """CREATE TABLE IF NOT EXISTS waiting(path TEXT NOT NULL, source INTEGER NOT NULL,
+    freed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(path, source))"""
+
+
+def wait(db, path, source):
+    """Record that a document of the file `source` waits for `path`, which another file's document holds."""
+    db.execute(WAITING)
+    db.execute("INSERT OR IGNORE INTO waiting(path, source) VALUES(?, ?)", (path, source))
+
+
+def stop_waiting(db, source):
+    """Forget what the documents of the file `source` waited for: it is being stored anew, and says so again if they
+    still wait, or it is gone."""
+    if _waits(db):
+        db.execute("DELETE FROM waiting WHERE source = ?", (source,))
+
+
+def freed(db):
+    """The paths of the files whose documents waited for a path freed since this was last asked (see _free)."""
+    if not _waits(db):
+        return []
+    sql = "SELECT DISTINCT s.path FROM waiting w JOIN sources s ON s.id = w.source WHERE w.freed"
+    if found := [path for (path,) in db.execute(sql)]:
+        db.execute("UPDATE waiting SET freed = 0 WHERE freed")  # written only then: a write waits for other writers
+    return found
+
+
+def _waits(db):
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'waiting'").fetchone() is not None
+
+
 def _free(db, paths):
-    """Mark to be read again by the next `sift index` the files that may wait for these paths, as they free: a document
-    left out because another file's held its path (see indexing._left_out). That is the file of such a path, and those
-    whose records or attachments lie below their names, `data.jsonl`'s below `data/`, for each folder above it. A file
-    marked that waited for nothing is read in vain, once: its documents are unchanged, and scans aren't read again."""
-    stems = {path.rsplit("/", n)[0] for path in paths for n in range(1, path.count("/") + 1)}
-    db.executemany("UPDATE sources SET mtime = NULL WHERE path = ?", [(path,) for path in paths])
-    db.executemany(  # stem.<extension>: from "stem." up to "stem/", and no folder after the stem
-        "UPDATE sources SET mtime = NULL WHERE path > ? AND path < ? AND instr(substr(path, ?), '/') = 0",
-        [(f"{stem}.", f"{stem}/", len(stem) + 2) for stem in stems],
-    )
+    """Mark the files waiting for these paths, freed (see wait), to be read again: their times cleared, for the next
+    `sift index`, and `freed` for one running."""
+    if paths and _waits(db):
+        marks = ",".join("?" * len(paths))
+        db.execute(f"UPDATE waiting SET freed = 1 WHERE path IN ({marks})", paths)
+        db.execute(
+            f"UPDATE sources SET mtime = NULL WHERE id IN (SELECT source FROM waiting WHERE path IN ({marks}))", paths
+        )
 
 
-def delete_docs(db, doc_ids):
-    """Delete documents, with all that is theirs; the files that may wait for their paths are read again (see
-    _free)."""
+def delete_docs(db, doc_ids, free=True):
+    """Delete documents, with all that is theirs; the files waiting for their paths are read again (see _free), unless
+    not `free`, as for a document replaced by its new version at once."""
     for i in range(0, len(doc_ids), 500):
         batch = doc_ids[i : i + 500]
         marks = ",".join("?" * len(batch))
-        _free(db, [path for (path,) in db.execute(f"SELECT path FROM docs WHERE id IN ({marks})", batch)])
+        if free:
+            _free(db, [path for (path,) in db.execute(f"SELECT path FROM docs WHERE id IN ({marks})", batch)])
         chunk_ids = f"SELECT id FROM chunks WHERE doc IN ({marks})"
         keywords(db, batch, add=False)  # first, while their text is still there
         drop_vectors(db, f"chunk IN ({chunk_ids})", batch)

@@ -109,6 +109,8 @@ def test_a_damaged_store_stops_no_server_from_loading_the_others(three, capsys):
     assert "papers: its index is damaged" in capsys.readouterr().err
     assert papers.id not in index.vectors
     assert {r["id"].split("/")[0] for r in index.vsearch("soup", k=5)} <= {"recipes", "diary"}
+    with pytest.raises(LookupError, match="papers: its index is damaged"):  # not "no embeddings yet, run sift embed"
+        index.vsearch("soup", collection="papers")
 
 
 class Unplugged:
@@ -156,6 +158,7 @@ def test_a_store_back_after_being_out_of_reach_keeps_no_result_from_before(three
     indexing.index(three, ["recipes"])  # meanwhile, by another sift
     index.search("robot")  # opens it anew
     assert "recipes/stew.md" in ids(index.search("soup OR stew"))
+    served.close()
 
 
 def test_a_store_gone_while_open_fails_no_search(three, monkeypatch):

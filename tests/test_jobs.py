@@ -251,14 +251,21 @@ def test_a_request_of_a_call_cancelled_before_it_looked_is_not_made():
 
 
 def test_a_slow_workers_answer_is_awaited(monkeypatch):
-    # Many looks at whether the call was cancelled, none of them ending the wait.
-    monkeypatch.setattr(jobs, "ABORT_CHECK", 0.001)
+    # A look at whether the call was cancelled, which doesn't end the wait: the answer comes only after it.
+    looked, real = threading.Event(), jobs.wait
+
+    def wait(futures, timeout):
+        done = real(futures, timeout)
+        looked.set()
+        return done
+
+    monkeypatch.setattr(jobs, "wait", wait)
 
     class Slow:
         name, main_thread = "worker", False
 
         def encode(self, texts):
-            time.sleep(0.05)
+            looked.wait(5)
             return texts
 
     models = jobs.OnMainThread(Slow())
@@ -306,3 +313,22 @@ def test_a_cancelled_call_runs_the_models_no_more():
 def test_models_are_wrapped_once():
     models = jobs.OnMainThread(Models())
     assert jobs.OnMainThread(models)._models is models._models
+
+
+def test_a_request_cancelled_before_its_turn_is_not_made():
+    made, running, answer = [], threading.Event(), threading.Event()
+    requests = jobs._Requests()
+
+    def first():
+        running.set()
+        answer.wait(5)
+        return "first"
+
+    on_its_way = requests.submit(first)
+    assert running.wait(5)
+    cancelled = requests.submit(lambda: made.append("cancelled"))
+    assert cancelled.cancel()
+    answer.set()
+    assert on_its_way.result(timeout=5) == "first"
+    assert requests.submit(lambda: "after").result(timeout=5) == "after"  # its turn came and went
+    assert made == []

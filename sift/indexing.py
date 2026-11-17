@@ -141,9 +141,10 @@ def _read_scans(db, sid, rel, docs, note, now=True):
 
 def _store(db, sid, rel, docs, counts, note):
     """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
-    row ids are returned. note(text) tells the user of a document left out, as `_take_path` decides."""
+    row ids are returned. note(text) tells the user of a document left out (see _left_out)."""
     existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
     kept, added, unchanged = set(), [], set()
+    store.stop_waiting(db, sid)  # what still waits is said again below
     for doc in docs:
         path = _path(rel, doc)
         kept.add(path)
@@ -152,11 +153,11 @@ def _store(db, sid, rel, docs, counts, note):
             unchanged.add(old[0])
             continue
         if old:
-            store.delete_docs(db, [old[0]])
+            store.delete_docs(db, [old[0]], free=False)  # its new version takes the path at once
         try:
             added.append(_insert(db, sid, path, doc))
         except sqlite3.IntegrityError:  # another file's document holds the path
-            _left_out(db, rel, path, note)
+            _left_out(db, sid, rel, path, note)
             continue
         counts["changed" if old else "added"] += 1
     store.keywords(db, added)
@@ -166,14 +167,15 @@ def _store(db, sid, rel, docs, counts, note):
     return unchanged
 
 
-def _left_out(db, rel, path, note):
-    """Say that a document of the file `rel` is left out, as another file's holds its path: a record or an attachment
-    is a document below its file's name (`data.jsonl` holds `data/a.md`), as a real file may be. The first keeps the
-    path; once it is free, the file left out is read again (see store.delete_docs), and not before."""
+def _left_out(db, sid, rel, path, note):
+    """Leave out a document of the file `rel` (`sid`) whose path another file's document holds: a record or an
+    attachment is a document below its file's name (`data.jsonl` holds `data/a.md`), as a real file may be. The first
+    keeps the path; the other waits for it (store.wait), and its file is read again once it is free, not before."""
     sql = "SELECT s.path FROM docs d JOIN sources s ON s.id = d.source WHERE d.path = ?"
     if (held := db.execute(sql, (path,)).fetchone()) is None:  # not the path the store refused
         raise sqlite3.IntegrityError(f"{rel}: {path}: the index refused the document")
     note(f"{path}: a document of {held[0]} has this path; this one of {rel} is left out until it is free")
+    store.wait(db, path, sid)
 
 
 REFRESH_BATCH = 1000  # files read again from the index at a time
@@ -499,6 +501,7 @@ def _source(db, rel, make=False):
 
 def _drop_source(db, sid):
     docs = [d for (d,) in db.execute("SELECT id FROM docs WHERE source=?", (sid,))]
+    store.stop_waiting(db, sid)
     store.delete_docs(db, docs)
     db.execute("DELETE FROM sources WHERE id=?", (sid,))
     return len(docs)
@@ -593,11 +596,11 @@ def _index_collection(db, name, root, fields, ignore):
     for rel in known.keys() - seen - kept:
         counts["removed"] += _drop_source(db, known[rel][0])
     db.commit()  # before any file is read: other writers wait for none of it
-    if counts["removed"]:  # files that waited for a path these held are read now (see store._free)
-        todo += _freed(db, root, seen - {item[1] for item in todo})
-    if todo:
+    todo += _freed(db, root, seen - {item[1] for item in todo})  # those that waited for a path these drops freed
+    while todo:
         with console.Progress(len(todo), "files", prefix=f"{name}: ") as progress:
             _read_and_store(db, name, fields, todo, counts, progress)
+        todo = _freed(db, root, seen)  # and for one freed as those were stored: each freed once, so this ends
     db.commit()
     unreadable = f", {counts['unreadable']} unreadable" if counts["unreadable"] else ""
     console.say(
@@ -606,11 +609,10 @@ def _index_collection(db, name, root, fields, ignore):
     )
 
 
-def _freed(db, root, unchanged):
-    """The files to read of those seen `unchanged` whose times the documents dropped meanwhile cleared."""
+def _freed(db, root, among):
+    """The files to read now, of those `among`, whose documents waited for a path freed meanwhile (see store.wait)."""
     freed = []
-    cleared = [rel for (rel,) in db.execute("SELECT path FROM sources WHERE mtime IS NULL") if rel in unchanged]
-    for rel in cleared:
+    for rel in [rel for rel in store.freed(db) if rel in among]:
         path = os.path.join(root, *rel.split("/"))
         with contextlib.suppress(OSError):  # gone meanwhile: the next index drops it
             info = os.stat(path)

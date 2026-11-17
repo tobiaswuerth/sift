@@ -45,8 +45,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   requests now wait in a thread of their own, one at a time: a cancelled call stops waiting for its request, and one
   not sent yet never is.
 - A file whose path a JSON Lines record or a mail's attachment had taken (`data.jsonl` with a record `a.md`, beside
-  `data/a.md`) was skipped, and never read again, even once the record was gone. The first keeps the path, the other
-  is left out, said once, and read again as soon as the path is free.
+  `data/a.md`) was skipped, and never read again, even once the record was gone. The first keeps the path; the other
+  is left out, said once, and its file read again as soon as the path is free, in the same `sift index` that frees
+  it. The files an older sift left out so are read again once, with the mails holding attachments.
 - What `sift index` said of a file under its progress line (a file skipped, a line of JSON Lines left out, a scan read)
   wasn't in its log.
 - A value of front matter written as a JSON string ended at U+2028, U+2029 or NEL, which JSON leaves unescaped.

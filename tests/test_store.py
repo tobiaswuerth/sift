@@ -648,8 +648,10 @@ def test_only_damage_counts_as_a_damaged_store(tmp_path):
     # A store locked by another program, or a disk full, is no reason to tell the user to forget the collection.
     damaged = tmp_path / "damaged.sqlite"
     damaged.write_bytes(b"not a database, but sixteen bytes and more")
+    db = sqlite3.connect(damaged)
     with pytest.raises(sqlite3.DatabaseError) as found:
-        sqlite3.connect(damaged).execute("SELECT * FROM sqlite_master").fetchall()
+        db.execute("SELECT * FROM sqlite_master").fetchall()
+    db.close()
     assert store.damage("notes", found.value).startswith("notes: its index is damaged (file is not a database)")
     locked = sqlite3.OperationalError("database is locked")
     locked.sqlite_errorcode = sqlite3.SQLITE_BUSY
