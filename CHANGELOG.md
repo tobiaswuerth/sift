@@ -48,9 +48,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   `data/a.md`) was skipped, and never read again, even once the record was gone. The first keeps the path; the other
   is left out, said once, and its file read again as soon as the path is free: by the `sift index` that frees it, or
   the next one after a server's `reindex` did. Upgraded, a store has what an older sift left out so read again once:
-  every file without documents, and the JSON Lines files and mails below whose names lie more documents than their
-  own (a record or attachment whose path was freed before the upgrade comes back when its file changes). A store
-  sift may only read is upgraded once it may write.
+  every file without documents, and the JSON Lines files and mails with a file below their names whose documents
+  there outnumber their own. Any other record or attachment it left out, as one whose path was freed before the
+  upgrade, comes back when its file changes. A store sift may only read is upgraded once it may write.
 - What `sift index` said of a file under its progress line (a file skipped, a line of JSON Lines left out, a scan read)
   wasn't in its log.
 - A value of front matter written as a JSON string ended at U+2028, U+2029 or NEL, which JSON leaves unescaped.

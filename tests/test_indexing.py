@@ -14,6 +14,7 @@ from sift.ignore import Ignore
 from sift.search import Index
 
 from .conftest import index_contents, keywords_agree, write
+from .test_documents import email_file
 
 
 def doc_ids(catalog):
@@ -346,6 +347,25 @@ def test_a_record_an_older_sift_left_out_of_a_file_that_kept_others_is_read_agai
     fresh.close()
 
 
+def test_an_attachment_an_older_sift_left_out_of_a_mail_that_kept_others_is_read_again_once(corpus, home):
+    # The mail's own document lies beside its name, its attachments below it, as the real file does.
+    catalog, root = corpus
+    write(root / "offer" / "contract.md", "# Contract\n\ngiraffe in the real file\n")
+    indexing.index(catalog)
+    attached = [
+        ("contract.md", b"# Contract\n\nzebra in the attachment\n", "text/markdown"),
+        ("notes.md", b"# Notes\n\nmore\n", "text/markdown"),
+    ]
+    email_file(root, name="offer.eml", subject="Offer", body="see the attachments", attachments=attached)
+    indexing.index(catalog)
+    assert Index(catalog).search("zebra") == []  # the file keeps the path
+    as_sift_1_11_left_it(catalog.store("notes"))
+    catalog.close()
+    fresh = Catalog(home)  # opening the store upgrades it
+    assert {p for (p,) in fresh.store("notes").execute("SELECT path FROM sources WHERE mtime IS NULL")} == {"offer.eml"}
+    fresh.close()
+
+
 def test_a_store_sift_may_only_read_opens_unmarked(corpus, home):
     # sift 1.11 opened it; the marking, which writes, failed, and with it every search of the collection.
     catalog, _ = corpus
@@ -354,6 +374,8 @@ def test_a_store_sift_may_only_read_opens_unmarked(corpus, home):
     catalog.close()
     os.chmod(path, stat.S_IREAD)
     try:
+        if os.access(path, os.W_OK):  # root may write it anyway: nothing here to try
+            pytest.skip("this user may write a read-only file")
         fresh = Catalog(home)
         assert [hit["id"] for hit in Index(fresh).search("brush")] == ["notes/robots/brush.md"]
         assert store.get_meta(fresh.store("notes"), "paths_waited") is None  # marked once sift may write
