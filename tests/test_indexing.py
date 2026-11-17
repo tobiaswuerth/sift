@@ -294,34 +294,29 @@ def test_only_files_that_wait_for_a_path_are_read_again(corpus, monkeypatch):
     assert sorted(os.path.relpath(p, root).replace(os.sep, "/") for p in read) == ["Project/sub/x.md", "data.jsonl"]
 
 
-@pytest.mark.parametrize("record_first", [True, False])
-def test_what_an_older_sift_left_out_for_its_path_is_read_again_once(corpus, home, monkeypatch, record_first):
-    # sift 1.11 left it out for good, its file's time recorded, and nothing to say it waited: the real file, or a
-    # record of a JSON Lines file that kept its others. Only those are read again, not every mail and empty file.
+@pytest.mark.parametrize("freed", [False, True])
+def test_a_file_an_older_sift_left_out_for_its_path_is_read_again_once(corpus, home, monkeypatch, freed):
+    # sift 1.11 left it out for good, its time recorded and nothing to say it waited: also once the path was free
+    # again, as when the record went before sift was upgraded. Read again once, with every file without documents.
     catalog, root = corpus
-    record, real = root / "data.jsonl", root / "data" / "a.md"
-    write(real, "# A\n\ngiraffe in the real file\n")
-    if not record_first:
-        indexing.index(catalog)
-    write(record, '{"id": "a.md", "text": "zebra in the record"}\n{"id": "b.md", "text": "another"}\n')
-    write(root / "bare.jsonl", '{"id": 1}\n')  # no text: no documents
-    indexing.index(catalog)
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
+    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    indexing.index(catalog)  # the record keeps the path
     db = catalog.store("notes")
-    db.execute("DROP TABLE waiting")
-    for path in (record, real):
-        mtime = path.stat().st_mtime_ns
-        db.execute("UPDATE sources SET mtime = ? WHERE path = ?", (mtime, path.relative_to(root).as_posix()))
+    db.execute("DROP TABLE waiting")  # as sift 1.11 left the store
     db.execute("DELETE FROM meta WHERE key = 'paths_waited'")
     db.commit()
-    holder, word = (record, "giraffe") if record_first else (real, "zebra")
-    holder.unlink()
+    write(root / "data.jsonl", '{"id": "b.md", "text": "another record"}\n')
+    if freed:
+        indexing.index(catalog)  # by sift 1.11: the path free, and nothing said of it
     catalog.close()
-    read, loaded = [], indexing._loaded
-    monkeypatch.setattr(indexing, "_loaded", lambda path, fields: read.append(path) or loaded(path, fields))
     fresh = Catalog(home)  # opening the store upgrades it
     indexing.index(fresh)
-    assert [hit["id"] for hit in Index(fresh).search(word)] == ["notes/data/a.md"]
-    assert [os.path.basename(p) for p in read] == ["a.md" if record_first else "data.jsonl"]  # not bare.jsonl
+    assert [hit["id"] for hit in Index(fresh).search("giraffe")] == ["notes/data/a.md"]
+    read, loaded = [], indexing._loaded
+    monkeypatch.setattr(indexing, "_loaded", lambda path, fields: read.append(path) or loaded(path, fields))
+    indexing.index(fresh)
+    assert read == []  # once
     fresh.close()
 
 

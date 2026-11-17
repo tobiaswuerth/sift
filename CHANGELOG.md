@@ -47,7 +47,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A file whose path a JSON Lines record or a mail's attachment had taken (`data.jsonl` with a record `a.md`, beside
   `data/a.md`) was skipped, and never read again, even once the record was gone. The first keeps the path; the other
   is left out, said once, and its file read again as soon as the path is free: by the `sift index` that frees it, or
-  the next one after a server's `reindex` did. What an older sift left out so is read again once.
+  the next one after a server's `reindex` did. Upgraded, a store has every file without documents read again once,
+  which a file an older sift left out so is; a record or an attachment it left out comes back when its file changes.
 - What `sift index` said of a file under its progress line (a file skipped, a line of JSON Lines left out, a scan read)
   wasn't in its log.
 - A value of front matter written as a JSON string ended at U+2028, U+2029 or NEL, which JSON leaves unescaped.

@@ -243,38 +243,31 @@ READ_AGAIN = {  # in the meta table, once the files of these kinds that an older
     "documents_read": readers.DOCUMENTS,  # the server of sift 1.3.0 and older skipped every document it reindexed
 }
 WAITED = "paths_waited"  # in the meta table, once what sift 1.11 left out for a taken path is to be read again
-HOLDERS = readers.JSONL + readers.EMAIL  # files whose records or attachments are documents below their names
 
 
 def _once(db, key, work):
-    """work(db), once per store, as the meta `key` records: in one transaction, which another sift starting at the same
-    time waits for, and then finds done."""
-    db.execute("BEGIN IMMEDIATE")
+    """work(db), once per store, as the meta `key` records: in one transaction, which another sift opening the store
+    meanwhile waits for, and then finds done."""
+    db.execute(f"PRAGMA busy_timeout = {UPGRADE_WAIT * 1000}")
     try:
-        if get_meta(db, key) is None:
-            work(db)
-            set_meta(db, key, 1)
-        db.commit()
-    except BaseException:
-        db.rollback()
-        raise
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if get_meta(db, key) is None:
+                work(db)
+                set_meta(db, key, 1)
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+    finally:
+        db.execute(f"PRAGMA busy_timeout = {TIMEOUT * 1000}")
 
 
 def _read_waited_again(db):
-    """Have the next `sift index` read again what sift 1.11 left out for good as another file's document held its path,
-    with nothing to say that it waits (see wait): a file without documents whose path another file's holds, and a JSON
-    Lines file or mail below whose name another file has documents."""
-    db.execute(  # a file left out whole
-        "UPDATE sources SET mtime = NULL WHERE id NOT IN (SELECT source FROM docs) AND path IN (SELECT path FROM docs)"
-    )
-    below = "SELECT 1 FROM docs WHERE path >= ? AND path < ? AND source != ? LIMIT 1"  # '0' follows '/'
-    holders = [
-        (sid, path) for sid, path in db.execute("SELECT id, path FROM sources") if path.lower().endswith(HOLDERS)
-    ]
-    for sid, path in holders:
-        stem = path.rsplit(".", 1)[0]
-        if db.execute(below, (f"{stem}/", f"{stem}0", sid)).fetchone():
-            db.execute("UPDATE sources SET mtime = NULL WHERE id = ?", (sid,))
+    """Have the next `sift index` read again every file without documents: sift 1.11 left out for good a file whose
+    path another file's document held (see wait), and nothing tells whether that has gone since. A pass over the index
+    of documents by file, not their texts."""
+    db.execute("UPDATE sources SET mtime = NULL WHERE NOT EXISTS (SELECT 1 FROM docs WHERE docs.source = sources.id)")
 
 
 def _read_again(db, kinds):
