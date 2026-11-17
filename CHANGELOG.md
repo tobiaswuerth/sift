@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-17
+
+Several documents or queries per call, the vectors scanned three times as fast by `sift serve`, and no file left out
+for good behind a record's path.
+
 ### Added
 
 - `get` takes up to 100 documents at once, each an id or `{"id", "lines"}`; an unreadable one comes back with its
@@ -549,7 +554,8 @@ First release.
 - Keyword search (SQLite FTS5, BM25), exact GPU vector search, and hybrid search with cross-encoder reranking.
 - An MCP server (streamable HTTP and stdio) whose instructions tell agents what is indexed.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.11.2...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/tobiaswuerth/sift/compare/v1.11.2...v1.12.0
 [1.11.2]: https://github.com/tobiaswuerth/sift/compare/v1.11.1...v1.11.2
 [1.11.1]: https://github.com/tobiaswuerth/sift/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/tobiaswuerth/sift/compare/v1.10.1...v1.11.0

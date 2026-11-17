@@ -27,8 +27,8 @@ def test_a_new_store_records_its_layout_and_collection(tmp_path):
     db = store.connect(tmp_path / "a.sqlite", 7, create=True)
     assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
     assert store.get_meta(db, "collection") == "7"
-    assert all(store.get_meta(db, key) == "1" for key in (*store.READ_AGAIN, store.WAITED))  # nothing an older sift
-    # skipped or left out
+    # nothing an older sift skipped or left out, to be read again
+    assert all(store.get_meta(db, key) == "1" for key in (*store.READ_AGAIN, store.WAITED))
 
 
 def test_a_collections_ids_start_at_its_own(corpus):
