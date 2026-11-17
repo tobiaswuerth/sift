@@ -147,6 +147,20 @@ def test_sift_index_holds_no_write_lock_while_it_reads_files(corpus, monkeypatch
     assert free == [True] * 3
 
 
+def test_sift_index_holds_no_write_lock_while_it_reads_a_file_freed_to_be_read(corpus, monkeypatch):
+    # Asking which files a freed path let through wrote, and held the lock while they, and the scan's, were read.
+    catalog, root = corpus
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
+    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    indexing.index(catalog)  # the record keeps the path, the file waits
+    write(root / "data.jsonl", '{"id": "b.md", "text": "zebra in another record"}\n')
+    write(root / "other.md", "# Other\n")
+    path, real, free = catalog.get("notes").store, readers.load, []
+    monkeypatch.setattr(readers, "load", lambda *args: free.append(lock_free(path)) or real(*args))
+    indexing.index(catalog)
+    assert free == [True] * 3  # data.jsonl and other.md, then data/a.md, freed by the first
+
+
 def test_retitling_holds_the_write_lock_a_batch_at_a_time(corpus, monkeypatch):
     catalog, _ = corpus
     monkeypatch.setattr(indexing, "REFRESH_BATCH", 1)
@@ -280,23 +294,34 @@ def test_only_files_that_wait_for_a_path_are_read_again(corpus, monkeypatch):
     assert sorted(os.path.relpath(p, root).replace(os.sep, "/") for p in read) == ["Project/sub/x.md", "data.jsonl"]
 
 
-def test_a_file_an_older_sift_left_out_for_its_path_is_read_again_once(corpus, home):
-    # sift 1.11 left it out for good: its time recorded, and nothing to say it waited.
+@pytest.mark.parametrize("record_first", [True, False])
+def test_what_an_older_sift_left_out_for_its_path_is_read_again_once(corpus, home, monkeypatch, record_first):
+    # sift 1.11 left it out for good, its file's time recorded, and nothing to say it waited: the real file, or a
+    # record of a JSON Lines file that kept its others. Only those are read again, not every mail and empty file.
     catalog, root = corpus
-    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
-    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    record, real = root / "data.jsonl", root / "data" / "a.md"
+    write(real, "# A\n\ngiraffe in the real file\n")
+    if not record_first:
+        indexing.index(catalog)
+    write(record, '{"id": "a.md", "text": "zebra in the record"}\n{"id": "b.md", "text": "another"}\n')
+    write(root / "bare.jsonl", '{"id": 1}\n')  # no text: no documents
     indexing.index(catalog)
     db = catalog.store("notes")
     db.execute("DROP TABLE waiting")
-    mtime = (root / "data" / "a.md").stat().st_mtime_ns
-    db.execute("UPDATE sources SET mtime = ? WHERE path = 'data/a.md'", (mtime,))
+    for path in (record, real):
+        mtime = path.stat().st_mtime_ns
+        db.execute("UPDATE sources SET mtime = ? WHERE path = ?", (mtime, path.relative_to(root).as_posix()))
     db.execute("DELETE FROM meta WHERE key = 'paths_waited'")
     db.commit()
-    (root / "data.jsonl").unlink()
+    holder, word = (record, "giraffe") if record_first else (real, "zebra")
+    holder.unlink()
     catalog.close()
+    read, loaded = [], indexing._loaded
+    monkeypatch.setattr(indexing, "_loaded", lambda path, fields: read.append(path) or loaded(path, fields))
     fresh = Catalog(home)  # opening the store upgrades it
     indexing.index(fresh)
-    assert [hit["id"] for hit in Index(fresh).search("giraffe")] == ["notes/data/a.md"]
+    assert [hit["id"] for hit in Index(fresh).search(word)] == ["notes/data/a.md"]
+    assert [os.path.basename(p) for p in read] == ["a.md" if record_first else "data.jsonl"]  # not bare.jsonl
     fresh.close()
 
 

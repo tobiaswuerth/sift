@@ -879,19 +879,19 @@ class Index:
             self._settle()
         if not scope and self.catalog.collections():
             raise LookupError("no collection is active: `sift activate NAME` takes one back into searches")
-        damaged = []
+        damaged = {}
         for c in scope:
             try:
                 self._follow(c)
             except sqlite3.DatabaseError as error:  # one store damaged keeps no server from starting
-                damaged.append(store.damage(c.name, error))
-                self._warn(f"{damaged[-1]}; semantic searches pass it over")
+                damaged[c.name] = store.damage(c.name, error)
+                self._warn(f"{damaged[c.name]}; semantic searches pass it over")
                 self._passed.add(c.id)
         if required and not any(c.id in self.vectors for c in scope):
-            if damaged:  # what to do about that, not about embeddings
-                raise LookupError("; ".join(damaged))
-            where = f" in {', '.join(c.name for c in scope)}" if scope else ""
-            raise LookupError(f"no embeddings yet{where}, run `sift embed`")
+            bare = [c.name for c in scope if c.name not in damaged]  # what to do about each: embed, or forget
+            where = f" in {', '.join(bare)}" if bare else ""
+            said = [f"no embeddings yet{where}, run `sift embed`"] if bare or not damaged else []
+            raise LookupError("; ".join(said + list(damaged.values())))
 
     def _settle(self):
         """Let go of what is held of collections no longer active, as another sift deactivated or removed them, and

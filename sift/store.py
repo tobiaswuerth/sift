@@ -14,6 +14,7 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 
 from . import console, readers
@@ -195,7 +196,9 @@ def _layout(db, path, cid, create):
         _add_postings_tables(db)
     for key, kinds in READ_AGAIN.items():
         if get_meta(db, key) is None:
-            _read_again(db, key, kinds)
+            _once(db, key, partial(_read_again, kinds=kinds))
+    if get_meta(db, WAITED) is None:
+        _once(db, WAITED, _read_waited_again)
 
 
 def make(db, cid, read=True):
@@ -208,7 +211,7 @@ def make(db, cid, read=True):
     first = first_id(cid)
     db.executemany("INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)", [("docs", first), ("chunks", first)])
     set_meta(db, "collection", cid)
-    for key in READ_AGAIN if read else ():
+    for key in (*READ_AGAIN, WAITED) if read else ():
         set_meta(db, key, 1)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -238,32 +241,55 @@ def alone(path, name):
 READ_AGAIN = {  # in the meta table, once the files of these kinds that an older sift skipped are to be read again
     "scans_read": (".pdf",),  # sift 1.2 and older read no scans
     "documents_read": readers.DOCUMENTS,  # the server of sift 1.3.0 and older skipped every document it reindexed
-    "paths_waited": tuple(readers.READERS),  # sift 1.11 left out for good a file whose path a record or attachment held
 }
+WAITED = "paths_waited"  # in the meta table, once what sift 1.11 left out for a taken path is to be read again
+HOLDERS = readers.JSONL + readers.EMAIL  # files whose records or attachments are documents below their names
 
 
-def _read_again(db, key, kinds):
-    """Have the next `sift index` read again the files of these kinds without documents, and the mails with one
-    attached; once, as the meta `key` records. Their unchanged documents stay, vectors included. In one transaction,
-    which another sift starting at the same time waits for, and then finds done."""
+def _once(db, key, work):
+    """work(db), once per store, as the meta `key` records: in one transaction, which another sift starting at the same
+    time waits for, and then finds done."""
     db.execute("BEGIN IMMEDIATE")
     try:
         if get_meta(db, key) is None:
-            db.execute(
-                """UPDATE sources SET mtime = NULL
-                   WHERE (id NOT IN (SELECT source FROM docs)
-                          AND EXISTS (SELECT 1 FROM json_each(:kinds) k WHERE lower(sources.path) LIKE '%' || k.value))
-                   OR (lower(sources.path) LIKE '%.eml' AND EXISTS (SELECT 1 FROM docs d,
-                       json_each(CASE WHEN json_type(d.meta, '$.attachments') = 'array'
-                                 THEN json_extract(d.meta, '$.attachments') END) a, json_each(:kinds) k
-                       WHERE d.source = sources.id AND lower(a.value) LIKE '%' || k.value))""",
-                {"kinds": json.dumps(kinds)},
-            )
+            work(db)
             set_meta(db, key, 1)
         db.commit()
     except BaseException:
         db.rollback()
         raise
+
+
+def _read_waited_again(db):
+    """Have the next `sift index` read again what sift 1.11 left out for good as another file's document held its path,
+    with nothing to say that it waits (see wait): a file without documents whose path another file's holds, and a JSON
+    Lines file or mail below whose name another file has documents."""
+    db.execute(  # a file left out whole
+        "UPDATE sources SET mtime = NULL WHERE id NOT IN (SELECT source FROM docs) AND path IN (SELECT path FROM docs)"
+    )
+    below = "SELECT 1 FROM docs WHERE path >= ? AND path < ? AND source != ? LIMIT 1"  # '0' follows '/'
+    holders = [
+        (sid, path) for sid, path in db.execute("SELECT id, path FROM sources") if path.lower().endswith(HOLDERS)
+    ]
+    for sid, path in holders:
+        stem = path.rsplit(".", 1)[0]
+        if db.execute(below, (f"{stem}/", f"{stem}0", sid)).fetchone():
+            db.execute("UPDATE sources SET mtime = NULL WHERE id = ?", (sid,))
+
+
+def _read_again(db, kinds):
+    """Have the next `sift index` read again the files of these kinds without documents, and the mails with one
+    attached. Their unchanged documents stay, vectors included."""
+    db.execute(
+        """UPDATE sources SET mtime = NULL
+           WHERE (id NOT IN (SELECT source FROM docs)
+                  AND EXISTS (SELECT 1 FROM json_each(:kinds) k WHERE lower(sources.path) LIKE '%' || k.value))
+           OR (lower(sources.path) LIKE '%.eml' AND EXISTS (SELECT 1 FROM docs d,
+               json_each(CASE WHEN json_type(d.meta, '$.attachments') = 'array'
+                         THEN json_extract(d.meta, '$.attachments') END) a, json_each(:kinds) k
+               WHERE d.source = sources.id AND lower(a.value) LIKE '%' || k.value))""",
+        {"kinds": json.dumps(kinds)},
+    )
 
 
 def _count_rows(db, path):
@@ -457,13 +483,17 @@ def _mark_dirty(db, docs):
 # The documents left out as another file's held their paths (a record or an attachment is a document below its file's
 # name, `data.jsonl`'s record `a.md` is `data/a.md`, as a real file may be): the path, and the file of the document
 # waiting, freed once the path is. Made by the first such document; a file's rows go when it is stored anew or gone.
-WAITING = """CREATE TABLE IF NOT EXISTS waiting(path TEXT NOT NULL, source INTEGER NOT NULL,
-    freed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(path, source))"""
+WAITING = (
+    """CREATE TABLE IF NOT EXISTS waiting(path TEXT NOT NULL, source INTEGER NOT NULL,
+        freed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(path, source))""",
+    "CREATE INDEX IF NOT EXISTS waiting_source ON waiting(source)",  # each file stored asks: else a scan of them all
+)
 
 
 def wait(db, path, source):
     """Record that a document of the file `source` waits for `path`, which another file's document holds."""
-    db.execute(WAITING)
+    for statement in WAITING:
+        db.execute(statement)
     db.execute("INSERT OR IGNORE INTO waiting(path, source) VALUES(?, ?)", (path, source))
 
 

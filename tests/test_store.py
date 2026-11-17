@@ -657,3 +657,12 @@ def test_only_damage_counts_as_a_damaged_store(tmp_path):
     locked.sqlite_errorcode = sqlite3.SQLITE_BUSY
     with pytest.raises(sqlite3.OperationalError, match="locked"):
         store.damage("notes", locked)
+
+
+def test_what_a_file_waits_for_is_found_by_its_file_without_a_scan(tmp_path):
+    # Every file stored asks: a scan of a million rows took 16 ms each.
+    db = store.connect(tmp_path / "s.sqlite", 1, create=True)
+    store.wait(db, "data/a.md", 7)
+    plan = " ".join(row[-1] for row in db.execute("EXPLAIN QUERY PLAN DELETE FROM waiting WHERE source = 7"))
+    db.close()
+    assert "USING INDEX waiting_source" in plan

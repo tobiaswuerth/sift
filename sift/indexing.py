@@ -598,6 +598,7 @@ def _index_collection(db, name, root, fields, ignore):
     db.commit()  # before any file is read: other writers wait for none of it
     todo += _freed(db, root, seen - {item[1] for item in todo})  # those that waited for a path these drops freed
     while todo:
+        db.commit()  # what `_freed` wrote: no lock held while the files are read
         with console.Progress(len(todo), "files", prefix=f"{name}: ") as progress:
             _read_and_store(db, name, fields, todo, counts, progress)
         todo = _freed(db, root, seen)  # and for one freed as those were stored: each freed once, so this ends

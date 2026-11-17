@@ -4,6 +4,7 @@ to a mail too. The model is faked here at the level of the transformers classes 
 import json
 import sys
 import types
+from functools import partial
 
 import pytest
 import torch
@@ -429,7 +430,8 @@ def test_scans_are_marked_to_be_read_again_once(corpus):
     catalog, _ = corpus
     only(catalog).execute("UPDATE sources SET mtime = 1")
     only(catalog).commit()
-    store._read_again(only(catalog), "scans_read", (".pdf",))  # what the second runs, after the first has finished
+    marking = partial(store._read_again, kinds=(".pdf",))
+    store._once(only(catalog), "scans_read", marking)  # what the second runs, after the first has finished
     assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (0,)
 
 
@@ -442,6 +444,6 @@ def test_an_interrupted_marking_leaves_the_index_as_it_was(tmp_path, home, monke
     only(catalog).commit()
     monkeypatch.setattr(store, "set_meta", lambda *args: (_ for _ in ()).throw(KeyboardInterrupt))
     with pytest.raises(KeyboardInterrupt):
-        store._read_again(only(catalog), "scans_read", (".pdf",))
+        store._once(only(catalog), "scans_read", partial(store._read_again, kinds=(".pdf",)))
     # rolled back: tried again on the next start
     assert only(catalog).execute("SELECT mtime FROM sources").fetchone() == (1,)

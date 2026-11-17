@@ -109,8 +109,21 @@ def test_a_damaged_store_stops_no_server_from_loading_the_others(three, capsys):
     assert "papers: its index is damaged" in capsys.readouterr().err
     assert papers.id not in index.vectors
     assert {r["id"].split("/")[0] for r in index.vsearch("soup", k=5)} <= {"recipes", "diary"}
-    with pytest.raises(LookupError, match="papers: its index is damaged"):  # not "no embeddings yet, run sift embed"
+    with pytest.raises(LookupError, match=r"^papers: its index is damaged"):  # not "no embeddings yet, run sift embed"
         index.vsearch("soup", collection="papers")
+
+
+def test_a_search_of_a_damaged_collection_and_one_not_embedded_says_what_to_do_of_each(three, tmp_path):
+    papers = three.get("papers")
+    three.release(papers.id)
+    damage(papers.store, "codes")
+    write(tmp_path / "fresh" / "a.md", "# A\n\nnot embedded yet\n")
+    three.add(tmp_path / "fresh", "fresh")
+    indexing.index(three, ["fresh"])
+    three.set_active(["recipes", "diary"], False)
+    with pytest.raises(LookupError) as said:
+        Index(three).vsearch("soup")
+    assert str(said.value).startswith("no embeddings yet in fresh, run `sift embed`; papers: its index is damaged")
 
 
 class Unplugged:

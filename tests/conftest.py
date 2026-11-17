@@ -18,6 +18,9 @@ DIM = 64
 
 # The compiled scan's code, kept by Numba between runs: in a folder of the tests', never in the user's SIFT_HOME
 os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(tempfile.gettempdir(), "sift-tests-numba"))
+# Numba imported once, before any test: first imported inside one, under its patches and with every warning an error,
+# it failed halfway (macOS, Python 3.15), and every later import found half a module, "no attribute 'core'"
+from sift import scan  # noqa: E402, F401
 
 
 @pytest.fixture
