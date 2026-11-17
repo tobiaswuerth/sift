@@ -246,9 +246,8 @@ WAITED = "paths_waited"  # in the meta table, once what sift 1.11 left out for a
 
 
 def _once(db, key, work):
-    """work(db), once per store, as the meta `key` records: in one transaction, which another sift opening the store
-    meanwhile waits for, and then finds done."""
-    db.execute(f"PRAGMA busy_timeout = {UPGRADE_WAIT * 1000}")
+    """work(db), once per store, as the meta `key` records: in one transaction, which another sift starting at the same
+    time waits for, and then finds done. Not in a store this sift may only read: once it may write."""
     try:
         db.execute("BEGIN IMMEDIATE")
         try:
@@ -259,15 +258,31 @@ def _once(db, key, work):
         except BaseException:
             db.rollback()
             raise
-    finally:
-        db.execute(f"PRAGMA busy_timeout = {TIMEOUT * 1000}")
+    except sqlite3.OperationalError as error:
+        if getattr(error, "sqlite_errorcode", 0) & 0xFF != sqlite3.SQLITE_READONLY:
+            raise
 
 
 def _read_waited_again(db):
-    """Have the next `sift index` read again every file without documents: sift 1.11 left out for good a file whose
-    path another file's document held (see wait), and nothing tells whether that has gone since. A pass over the index
-    of documents by file, not their texts."""
+    """Have the next `sift index` read again what sift 1.11 left out for good, as another file's document held its path,
+    with nothing to say that it waits (see wait). Every file without documents, as a file left out whole is, whether
+    or not its path is free by now; and a JSON Lines file or mail below whose name lie more documents than its own, as
+    when one of its records or attachments was left out for a file there. The indexes alone are read, not the texts."""
     db.execute("UPDATE sources SET mtime = NULL WHERE NOT EXISTS (SELECT 1 FROM docs WHERE docs.source = sources.id)")
+    kinds = json.dumps(readers.JSONL + readers.EMAIL)  # json_each has a column `path` of its own: sources.path
+    holders = db.execute(
+        "SELECT id, path FROM sources "
+        "WHERE EXISTS (SELECT 1 FROM json_each(?) k WHERE lower(sources.path) LIKE '%' || k.value)",
+        (kinds,),
+    ).fetchall()
+    for sid, path in holders:
+        below = (f"{path.rsplit('.', 1)[0]}/", f"{path.rsplit('.', 1)[0]}0")  # '0' follows '/'
+        if not db.execute("SELECT 1 FROM sources WHERE path >= ? AND path < ? LIMIT 1", below).fetchone():
+            continue  # no file below its name, for whom one of its documents might have been left out
+        found = db.execute("SELECT count(*) FROM docs WHERE path >= ? AND path < ?", below).fetchone()[0]
+        own = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0]
+        if found > own - path.lower().endswith(readers.EMAIL):  # a mail's own document lies beside, not below
+            db.execute("UPDATE sources SET mtime = NULL WHERE id = ?", (sid,))
 
 
 def _read_again(db, kinds):

@@ -4,6 +4,7 @@ step with the files, incrementally."""
 import os
 import shutil
 import sqlite3
+import stat
 
 import pytest
 
@@ -301,11 +302,9 @@ def test_a_file_an_older_sift_left_out_for_its_path_is_read_again_once(corpus, h
     catalog, root = corpus
     write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
     write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
-    indexing.index(catalog)  # the record keeps the path
-    db = catalog.store("notes")
-    db.execute("DROP TABLE waiting")  # as sift 1.11 left the store
-    db.execute("DELETE FROM meta WHERE key = 'paths_waited'")
-    db.commit()
+    indexing.index(catalog)
+    assert Index(catalog).search("giraffe") == []  # the record keeps the path
+    as_sift_1_11_left_it(catalog.store("notes"))
     write(root / "data.jsonl", '{"id": "b.md", "text": "another record"}\n')
     if freed:
         indexing.index(catalog)  # by sift 1.11: the path free, and nothing said of it
@@ -318,6 +317,49 @@ def test_a_file_an_older_sift_left_out_for_its_path_is_read_again_once(corpus, h
     indexing.index(fresh)
     assert read == []  # once
     fresh.close()
+
+
+def as_sift_1_11_left_it(db):
+    """A store as sift 1.11 left it: nothing to say what waits for a path, and not yet upgraded."""
+    db.execute("DROP TABLE IF EXISTS waiting")
+    db.execute("DELETE FROM meta WHERE key = 'paths_waited'")
+    db.commit()
+
+
+def test_a_record_an_older_sift_left_out_of_a_file_that_kept_others_is_read_again_once(corpus, home):
+    # Its file has documents, so it isn't among those without: but another file's lie below its name.
+    catalog, root = corpus
+    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    indexing.index(catalog)
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n{"id": "b.md", "text": "another"}\n')
+    write(root / "logs.jsonl", '{"id": "1", "text": "a log line"}\n')  # nothing below its name
+    indexing.index(catalog)
+    assert Index(catalog).search("zebra") == []  # the file keeps the path
+    as_sift_1_11_left_it(catalog.store("notes"))
+    catalog.close()
+    fresh = Catalog(home)  # opening the store upgrades it
+    marked = {p for (p,) in fresh.store("notes").execute("SELECT path FROM sources WHERE mtime IS NULL")}
+    assert marked == {"data.jsonl"}
+    (root / "data" / "a.md").unlink()
+    indexing.index(fresh)
+    assert [hit["id"] for hit in Index(fresh).search("zebra")] == ["notes/data/a.md"]
+    fresh.close()
+
+
+def test_a_store_sift_may_only_read_opens_unmarked(corpus, home):
+    # sift 1.11 opened it; the marking, which writes, failed, and with it every search of the collection.
+    catalog, _ = corpus
+    as_sift_1_11_left_it(catalog.store("notes"))
+    path = catalog.get("notes").store
+    catalog.close()
+    os.chmod(path, stat.S_IREAD)
+    try:
+        fresh = Catalog(home)
+        assert [hit["id"] for hit in Index(fresh).search("brush")] == ["notes/robots/brush.md"]
+        assert store.get_meta(fresh.store("notes"), "paths_waited") is None  # marked once sift may write
+        fresh.close()
+    finally:
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
 
 
 def test_a_document_the_index_refuses_for_another_reason_than_its_path_skips_its_file(corpus, monkeypatch, capsys):

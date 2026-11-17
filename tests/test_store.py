@@ -667,3 +667,15 @@ def test_what_a_file_waits_for_is_found_by_its_file_without_a_scan(tmp_path):
     plan = " ".join(row[-1] for row in db.execute("EXPLAIN QUERY PLAN DELETE FROM waiting WHERE source = 7"))
     db.close()
     assert "USING INDEX waiting_source" in plan
+
+
+def test_a_marking_once_that_fails_otherwise_than_on_a_store_sift_may_only_read_says_so(tmp_path):
+    db = store.connect(tmp_path / "s.sqlite", 1, create=True)
+
+    def failing(db):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        store._once(db, "some_marking", failing)
+    assert store.get_meta(db, "some_marking") is None  # tried again next time
+    db.close()
