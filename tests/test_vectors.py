@@ -1,11 +1,38 @@
 """The stores' vectors in memory as one bit per dimension, its sign: candidates by Hamming distance, among the codes of
 every collection searched, the best of them scored exactly with the vectors the stores hold."""
 
+import os
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import pytest
 
 from sift import vectors
 from sift.vectors import Codes, codes
+
+
+@pytest.fixture(autouse=True, params=["numpy", "compiled"])
+def scan_by(request, monkeypatch):
+    """Each test with the codes scanned by NumPy, as a single search's and a small collection's are, and compiled, as
+    a server's of a large collection."""
+    compiled = request.param == "compiled"
+    if compiled:
+        vectors.compile_scan()
+        assert vectors._scan is not None, "the compiled scan didn't load"
+    monkeypatch.setattr(vectors, "_scan", vectors._scan if compiled else None)
+    monkeypatch.setattr(vectors, "COMPILED", 0)
+
+
+def test_a_search_alone_keeps_numpys_scan(monkeypatch):
+    # Loading Numba costs a second, more than NumPy takes for millions of codes: only a server loads it, as it starts.
+    monkeypatch.setattr(vectors, "_scan", None)
+    scanned, real = [], vectors._numpy
+    monkeypatch.setattr(vectors, "_numpy", lambda *args: scanned.append(1) or real(*args))
+    _, matrix, _, index = random_index(n=50)
+    index.measure(codes(matrix[:1])[0])
+    assert scanned
 
 
 def unit(matrix):
@@ -364,6 +391,16 @@ def test_the_codes_between_two_distances(monkeypatch):
         assert patched.between(distances, low, high).tolist() == expected.tolist()
 
 
+def test_scans_from_several_threads_at_once_agree():
+    # The scan runs its own threads; the server's worker thread and a test's may ask at once.
+    _, matrix, _, index = random_index(n=3000)
+    queries = codes(unit(np.random.default_rng(5).standard_normal((8, 64))))
+    expected = [np.bitwise_count(codes(matrix) ^ q).sum(1).tolist() for q in queries]
+    with ThreadPoolExecutor(8) as pool:
+        found = list(pool.map(lambda q: index.measure(q)[0].tolist(), queries))
+    assert found == expected
+
+
 def test_the_distances_of_one_collections_codes():
     ids, matrix, _, index = random_index(n=100)
     query = codes(unit(np.ones((1, 64))))[0]
@@ -373,3 +410,58 @@ def test_the_distances_of_one_collections_codes():
     assert (left[10:50] == expected[10:50]).all()
     assert (left[:10] == vectors.FAR).all()
     assert (left[50:] == vectors.FAR).all()
+
+
+def test_the_compiled_scan_checks_what_it_is_given():
+    # Compiled code checks no bounds: a mismatch would write past an array instead of failing.
+    from sift import scan
+
+    words, query = np.zeros((4, 2), np.uint64), np.zeros(2, np.uint64)
+    for out, keep, q in (
+        (np.empty(3, np.uint16), np.zeros(0, bool), query),
+        (np.empty(4, np.uint16), np.zeros(2, bool), query),
+        (np.empty(4, np.uint16), np.zeros(0, bool), np.zeros(3, np.uint64)),
+    ):
+        with pytest.raises(ValueError, match="checks no bounds"):
+            scan.measure(words, q, keep, out, vectors.FAR, 2)
+
+
+@pytest.mark.parametrize("scan_by", ["compiled"], indirect=True)
+def test_the_compiled_code_is_kept_in_sift_home(tmp_path):
+    # Beside the module, where an installation may not write, Numba refused to cache it, and every scan failed.
+    env = {k: v for k, v in os.environ.items() if k != "NUMBA_CACHE_DIR"} | {"SIFT_HOME": str(tmp_path / "home")}
+    code = "from sift import vectors; vectors.compile_scan(); import numba; print(numba.config.CACHE_DIR)"
+    found = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=300)
+    assert found.returncode == 0, found.stderr
+    assert found.stdout.strip() == str(tmp_path / "home" / "numba")
+    assert list((tmp_path / "home" / "numba").rglob("*.nbi"))
+
+
+@pytest.mark.parametrize("scan_by", ["numpy"], indirect=True)
+def test_a_compiled_scan_that_cant_load_is_said_and_numpy_scans(monkeypatch, capsys):
+    # A damaged kept code or an unwritable folder once stopped the server from starting at all.
+    from sift import scan
+
+    def broken(*args):
+        raise RuntimeError("cannot cache function '_scan': no locator available")
+
+    monkeypatch.setattr(scan, "measure", broken)
+    vectors.compile_scan()
+    said = capsys.readouterr().err
+    assert "compiled scan of the codes isn't available (cannot cache" in said
+    assert f"Delete {os.environ['NUMBA_CACHE_DIR']} to compile it anew" in said  # what to do about it
+    assert vectors._scan is None
+    _, matrix, _, index = random_index(n=50)
+    assert index.measure(codes(matrix[:1])[0])[0][0] == 0
+
+
+@pytest.mark.parametrize("scan_by", ["compiled"], indirect=True)
+def test_codes_fewer_than_compiled_keep_numpys_scan(monkeypatch):
+    monkeypatch.setattr(vectors, "COMPILED", 100)
+    used, numpy, compiled = [], vectors._numpy, vectors._compiled
+    monkeypatch.setattr(vectors, "_numpy", lambda *args: used.append("numpy") or numpy(*args))
+    monkeypatch.setattr(vectors, "_compiled", lambda *args: used.append("compiled") or compiled(*args))
+    for n in (50, 150):
+        _, matrix, _, index = random_index(n=n)
+        index.measure(codes(matrix[:1])[0])
+    assert used == ["numpy", "compiled"]

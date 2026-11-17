@@ -11,11 +11,11 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from . import console, jobs, logs, store
+from . import console, jobs, logs, store, vectors
 from . import models as _models
-from .search import Index
+from .search import Index, line_span
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ and cite what you find; say so when nothing relevant turns up.
 - `search`: exact keyword search (BM25). Best for names, identifiers, exact terms and "quoted phrases".
 - `vsearch`: semantic search. Best when the wording of the answer is unknown.
 - `similar`: documents like a given one, e.g. more papers like one found.
-- `get`: a document, or some of its lines, such as a result's.
+- `get`: a document, or some of its lines, such as a result's; or several at once, e.g. the results that matter.
 - `links`: the links of a note ([[wikilinks]], embeds, Markdown links): those it holds, and those into it (backlinks).
 - `unresolved`: link targets no note answers to yet: the notes a collection lacks.
 - `mentions`: documents that name a note without linking to it.
@@ -40,7 +40,7 @@ one call; each tool has its own scale, so don't compare them across tools. All s
 links; with `compact: true` results leave out the text: survey many results compactly, then read the ones that
 matter. With `adaptive: true`, a search returns only the results before the largest drop in score, and a few more: ask
 for more, e.g. k=30, and read fewer. A paper that several collections hold is one result, which names the other copies
-under `also`."""
+under `also`. To save calls, `search`, `vsearch` and `query` take a list of queries, and `get` a list of ids."""
 
 
 def _collections(index):
@@ -50,15 +50,23 @@ def _collections(index):
         return "No collections are active." if index.catalog.collections() else "No collections are indexed yet."
     lines = []
     for c in active:
-        n = store.counts(index.catalog.store(c))["docs"]
-        line = f"- {c.name} ({c.path}): {n:,} document{'' if n == 1 else 's'}"
-        if fields := index.fields(c):
-            line += "; front matter: " + ", ".join(fields)
-        linked, broken = index.link_counts(c)
-        if linked:
-            line += f"; {console.count(linked, 'link')}, {broken:,} unresolved"
-        lines.append(line)
+        try:
+            lines.append(_collection_line(index, c))
+        except sqlite3.DatabaseError as error:  # one store damaged keeps no server from starting
+            lines.append(f"- {c.name} ({c.path}): {store.damage(c.name, error)}")
     return "Indexed collections:\n" + "\n".join(lines)
+
+
+def _collection_line(index, c):
+    """A collection as the server's instructions name it: its folder, size, front-matter fields and links."""
+    n = store.counts(index.catalog.store(c))["docs"]
+    line = f"- {c.name} ({c.path}): {n:,} document{'' if n == 1 else 's'}"
+    if fields := index.fields(c):
+        line += "; front matter: " + ", ".join(fields)
+    linked, broken = index.link_counts(c)
+    if linked:
+        line += f"; {console.count(linked, 'link')}, {broken:,} unresolved"
+    return line
 
 
 async def _run(fn, *args, abortable=True, **kwargs):
@@ -88,6 +96,31 @@ Id = Annotated[
         'out if the file name is unique: "papers/attention.md". Or the file\'s absolute path.'
     ),
 ]
+Lines = Annotated[
+    str | int | None,
+    Field(description='Only these lines, e.g. a result\'s "17-26", or one line number; all if left out.'),
+]
+
+
+class Part(BaseModel):
+    """A document of several asked at once, and the lines of it wanted."""
+
+    model_config = ConfigDict(extra="forbid")  # {"id", "line": ...} got the whole document, the misspelling unsaid
+    id: Id
+    lines: Lines = None
+
+
+Ids = Annotated[
+    Id | list[Id | Part],
+    Field(
+        description='A document\'s id from a search result, e.g. "papers/2024/attention.md"; folders may be left '
+        'out if the file name is unique: "papers/attention.md". Or the file\'s absolute path. Or several at once, '
+        'each an id or {"id", "lines"}, e.g. the results that matter: [{"id": "papers/a.md", "lines": "17-26"}, '
+        '"papers/b.md"].'
+    ),
+]
+BATCH_IDS = 100  # documents one `get` takes
+BATCH_TEXT = 100_000  # characters of text one `get` of several documents returns, about 25,000 tokens
 Note = Annotated[
     str,
     Field(
@@ -149,8 +182,9 @@ Adaptive = Annotated[
 Budget = Annotated[
     float | None,
     Field(
-        description="Seconds the search may take, roughly: once spent, and anything found, it returns the best found "
-        'so far, each marked "partial": better matches may be missing. Without, it finds the exact best.'
+        description="Seconds the search may take, roughly, shared by several queries: once spent, and anything found, "
+        'it returns the best found so far, each marked "partial": better matches may be missing. Without, it finds '
+        "the exact best."
     ),
 ]
 READ_ONLY = ToolAnnotations(read_only_hint=True)
@@ -160,8 +194,10 @@ def _add_search(mcp, index, name, description, query_description):
     """Add the tool for the Index search called `name`: keyword search's takes a budget too."""
     method = getattr(index, name)
 
+    query_description += " Or several at once, a list of up to 20: a list of results for each, in order."
+
     async def tool(
-        query: Annotated[str, Field(description=query_description)],
+        query: Annotated[str | list[str], Field(description=query_description)],
         k: K = 10,
         collection: Collection = None,
         path: PathGlob = None,
@@ -173,11 +209,11 @@ def _add_search(mcp, index, name, description, query_description):
         links_to: LinksTo = None,
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
-    ) -> list[dict]:
+    ) -> list[dict] | list[list[dict]]:
         return await _search(method, query, k, locals())
 
     async def timed(
-        query: Annotated[str, Field(description=query_description)],
+        query: Annotated[str | list[str], Field(description=query_description)],
         k: K = 10,
         collection: Collection = None,
         path: PathGlob = None,
@@ -190,7 +226,7 @@ def _add_search(mcp, index, name, description, query_description):
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
         budget: Budget = None,
-    ) -> list[dict]:
+    ) -> list[dict] | list[list[dict]]:
         return await _search(method, query, k, locals())
 
     mcp.tool(name, description=description, annotations=READ_ONLY)(timed if name == "search" else tool)
@@ -203,6 +239,28 @@ OPTIONS += ("adaptive", "budget")
 async def _search(method, subject, k, arguments):
     """Run a search tool's Index method with the options among the tool's `arguments`, by name."""
     return await _run(method, subject, k, **{key: arguments[key] for key in OPTIONS if key in arguments})
+
+
+def _batch(index, asked, lines, fields):
+    """The documents of one `get` that names several, their texts up to BATCH_TEXT characters in all."""
+    if not asked:
+        raise ValueError("get takes at least one id")
+    if len(asked) > BATCH_IDS:
+        raise ValueError(f"get takes at most {BATCH_IDS} ids at once, got {len(asked)}: ask for the rest in another")
+    if lines is not None:
+        line_span(lines)  # wrong, the lines of every document are: one error for the call
+    wanted = [(part, lines) if isinstance(part, str) else (part.id, part.lines) for part in asked]
+    documents, used = index.documents(wanted, fields), 0
+    for document in documents:
+        size = len(document.get("text", ""))
+        if used + size > BATCH_TEXT:
+            del document["text"]
+            document["omitted"] = (
+                f"with it, this batch's text would pass {BATCH_TEXT:,} characters: get it alone, or some of its lines"
+            )
+        else:
+            used += size
+    return documents
 
 
 def build(index=None):
@@ -259,16 +317,13 @@ def build(index=None):
         return await _search(index.similar, id, k, locals())
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get(
-        id: Id,
-        lines: Annotated[
-            str | int | None,
-            Field(description='Only these lines, e.g. a result\'s "17-26", or one line number; all if left out.'),
-        ] = None,
-        fields: Fields = None,
-    ) -> str | dict:
+    async def get(id: Ids, lines: Lines = None, fields: Fields = None) -> str | dict | list[dict]:
         """Text of a document, as indexed: all of it, or some of its lines. With `fields`, the document as
-        {id, title, fields, text}."""
+        {id, title, fields, text}. Several documents at once (up to 100) come as a list of such, `lines` applying to
+        those asked by id alone; one that can't be read as {id, error}. Texts past 100,000 characters in all are left
+        out, each with the reason (`omitted`): get those alone or by lines."""
+        if isinstance(id, list):
+            return await _run(_batch, index, id, lines, fields)
         if fields:
             return await _run(index.document, id, lines, fields)
         return await _run(index.get, id, lines)
@@ -442,6 +497,7 @@ def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
     models = models or _models.default()
     mcp, index = build(Index(models=models))
     console.say("loading the models and the vectors' codes into RAM ...")  # the models move to the GPU when used
+    vectors.compile_scan()  # a second, once: then a large collection's codes are scanned three times as fast
     for step in (models.load, index.load):
         try:
             step()

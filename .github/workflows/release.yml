@@ -1,7 +1,7 @@
 name: Release
 
 # Runs when CI has passed on a commit of main. When that commit's sift/__init__.py names a version without a tag, it
-# publishes that version to PyPI and makes a GitHub release, tagging that commit. See "Releasing" in CONTRIBUTING.md.
+# publishes that version to PyPI and makes a GitHub release, tagging that commit. See "Releasing" in docs/CONTRIBUTING.md.
 on:
   workflow_run:
     workflows: [CI]

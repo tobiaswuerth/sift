@@ -310,11 +310,15 @@ def _encoded(term, chunks, tf, held, average, ranged):
 
 
 def _shard(job):
-    """The encoded postings of the terms from `lo` up to `hi` (None: all after), read out of a store's FTS5 index."""
+    """`_terms` in a worker process, with the chunks from the file all workers map: one copy for all, the OS's."""
     path, lo, hi, chunks_file, average = job
+    return _terms(path, lo, hi, _Chunks(*np.load(chunks_file, mmap_mode="r")), average)
+
+
+def _terms(path, lo, hi, held, average):
+    """The encoded postings of the terms from `lo` up to `hi` (None: all after), read out of a store's FTS5 index."""
     db = store.read_only(path)
     try:
-        held = _Chunks(*np.load(chunks_file, mmap_mode="r"))  # one copy for all workers: the OS's
         db.execute("CREATE VIRTUAL TABLE temp.kw_vocabulary USING fts5vocab(main, fts, instance)")
         where, args = ("term >= ? AND term < ?", (lo, hi)) if hi is not None else ("term >= ?", (lo,))
         rows = db.execute(f"SELECT term, doc FROM temp.kw_vocabulary WHERE {where}", args)
@@ -380,19 +384,16 @@ def _build(db, path, name, workers):
     first, sequence = _first(db), _topical(db, ids, name)
     places = ids if sequence is None else _places_of(ids, sequence, first)
     average = lengths.sum() / len(ids) if len(ids) else 1.0
-    parallel = workers > 1 and len(ids) >= PARALLEL
-    jobs = _shards() if parallel else [("", None)]
     keys = itertools.count(1)
-    with tempfile.TemporaryDirectory() as folder:
-        chunks_file = Path(folder) / "chunks.npy"
-        np.save(chunks_file, np.stack([ids, places, lengths]))
-        work = [(str(path), lo, hi, str(chunks_file), average) for lo, hi in jobs]
-        if parallel:
+    if workers > 1 and len(ids) >= PARALLEL:
+        with tempfile.TemporaryDirectory() as folder:
+            chunks_file = Path(folder) / "chunks.npy"
+            np.save(chunks_file, np.stack([ids, places, lengths]))
+            work = [(str(path), lo, hi, str(chunks_file), average) for lo, hi in _shards()]
             _in_parallel(db, name, work, workers, keys)
-        else:
-            for encoded in map(_shard, work):
-                _write_terms(db, 1, encoded, keys)
-                db.commit()
+    else:  # no file: one this process maps can't be deleted on Windows while an error's traceback holds it
+        _write_terms(db, 1, _terms(str(path), "", None, _Chunks(ids, places, lengths), average), keys)
+        db.commit()
     db.execute("BEGIN IMMEDIATE")
     try:
         by_place = np.argsort(places, kind="stable")

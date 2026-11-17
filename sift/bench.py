@@ -69,6 +69,7 @@ def run(index, cases, **options):
     to every search, e.g. collection."""
     results = {}
     for mode in MODES:
+        index.forget()  # each mode embeds and searches as if first asked: vsearch's embeddings don't time query
         scores, start = [], time.perf_counter()
         for query, relevant in cases:
             ranked, graded = _found(getattr(index, mode)(query, K, compact=True, **options), relevant)

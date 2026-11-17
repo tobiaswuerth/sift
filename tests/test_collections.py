@@ -38,6 +38,195 @@ def three(tmp_path, home, fake_models):
     return catalog
 
 
+def test_a_semantic_search_of_one_collection_reads_its_codes_alone(three):
+    # `sift vsearch -c notes` read the codes of every active collection: 30 seconds and 4 GB beside one of 30
+    # million passages.
+    index, papers, recipes = Index(three), three.get("papers").id, three.get("recipes").id
+    index.vsearch("robot", collection="papers")
+    assert set(index.vectors) == {papers}
+    index.query("robot", collection="recipes")
+    assert set(index.vectors) == {papers, recipes}
+    index.similar("diary/monday.md", collection="papers")
+    assert set(index.vectors) == {papers, recipes}
+    index.vsearch(["robot", "soup"], collection="recipes")
+    assert set(index.vectors) == {papers, recipes}
+    index.vsearch("robot")
+    assert len(index.vectors) == 3
+
+
+def test_query_of_a_collection_not_embedded_yet_reranks_its_keyword_candidates(three, tmp_path):
+    write(tmp_path / "fresh" / "robot.md", "# Robot arm\n\nA robot arm, not embedded yet.\n")
+    three.add(tmp_path / "fresh", "fresh")
+    indexing.index(three)
+    index = Index(three)
+    assert ids(index.query("robot arm", collection="fresh")) == ["fresh/robot.md"]
+    assert "robot arm" not in index._query_vectors  # nothing to compare it with: the embedding model stays unloaded
+    with pytest.raises(LookupError, match="no embeddings yet in fresh, run `sift embed`"):
+        index.vsearch("robot arm", collection="fresh")
+
+
+def damage(path, table):
+    """Overwrite the first page of a table and its indexes in a store, as a failing disk might: the store opens,
+    reading the table fails."""
+    db = sqlite3.connect(path)
+    db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    pages = [p for (p,) in db.execute("SELECT rootpage FROM sqlite_master WHERE tbl_name = ? AND rootpage", (table,))]
+    size = db.execute("PRAGMA page_size").fetchone()[0]
+    db.close()
+    with open(path, "r+b") as f:
+        for page in pages:
+            f.seek((page - 1) * size)
+            f.write(b"\xff" * size)
+
+
+def test_a_damaged_store_stops_no_other_collection(three, tmp_path, capsys):
+    # A table of one store damaged: `sift index`, `status` and the server's start failed for every collection, with a
+    # message that named neither the collection nor what to do.
+    papers = three.get("papers")
+    three.release(papers.id)
+    damage(papers.store, "links")
+    write(tmp_path / "papers" / "new.md", "# New\n\nA new paper, after [[rl]].\n")  # its link is stored
+    write(tmp_path / "recipes" / "stew.md", "# Stew\n\nA stew of lentils.\n")
+    indexing.index(three)
+    said = capsys.readouterr().err
+    assert "papers: its index is damaged (database disk image is malformed)" in said
+    assert "`sift rm papers`" in said
+    assert ids(Index(three).search("lentils")) == ["recipes/stew.md"]
+    index = Index(three)
+    entry = next(e for e in index.status()["collections"] if e["name"] == "papers")
+    assert "its index is damaged" in entry["error"]
+    started = _collections(index)
+    assert f"- papers ({papers.path}): papers: its index is damaged" in started
+    assert f"- recipes ({three.get('recipes').path}): 3 documents" in started
+
+
+def test_a_damaged_store_stops_no_server_from_loading_the_others(three, capsys):
+    # Its codes damaged, loading them as the server starts failed: no server at all.
+    papers = three.get("papers")
+    three.release(papers.id)
+    damage(papers.store, "codes")
+    index = Index(three)
+    index.load()
+    assert "papers: its index is damaged" in capsys.readouterr().err
+    assert papers.id not in index.vectors
+    assert {r["id"].split("/")[0] for r in index.vsearch("soup", k=5)} <= {"recipes", "diary"}
+    with pytest.raises(LookupError, match=r"^papers: its index is damaged"):  # not "no embeddings yet, run sift embed"
+        index.vsearch("soup", collection="papers")
+
+
+def test_a_search_of_a_damaged_collection_and_one_not_embedded_says_what_to_do_of_each(three, tmp_path):
+    papers = three.get("papers")
+    three.release(papers.id)
+    damage(papers.store, "codes")
+    write(tmp_path / "fresh" / "a.md", "# A\n\nnot embedded yet\n")
+    three.add(tmp_path / "fresh", "fresh")
+    indexing.index(three, ["fresh"])
+    three.set_active(["recipes", "diary"], False)
+    with pytest.raises(LookupError) as said:
+        Index(three).vsearch("soup")
+    assert str(said.value).startswith("no embeddings yet in fresh, run `sift embed`; papers: its index is damaged")
+
+
+class Unplugged:
+    """An open store whose drive went away."""
+
+    total_changes = 0
+
+    def __init__(self, real):
+        self.real = real
+
+    def execute(self, *args):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    def close(self):
+        self.real.close()
+
+
+def test_a_store_gone_during_a_search_fails_it_not(three, monkeypatch):
+    index, diary = Index(three), three.get("diary")
+    index.search("robot")  # every store opened
+    path, real = three._stores[diary.id]
+    keyword = index._keyword
+
+    def unplugging(*args):
+        three._stores[diary.id] = (path, Unplugged(real))
+        return keyword(*args)
+
+    monkeypatch.setattr(index, "_keyword", unplugging)
+    assert ids(index.search("robot", collection="papers")) == ["papers/robots.md"]
+    assert not [key for key in index._results if '"collection": "papers"' in key]  # what it read was in doubt
+
+
+def test_a_store_back_after_being_out_of_reach_keeps_no_result_from_before(three, home, tmp_path):
+    # Closed while out of reach, and opened anew, its connection counted from where the old one began: the results
+    # kept before it went, without what was indexed meanwhile, counted as current.
+    served = Catalog(home)  # a server's, which writes nothing itself
+    index, recipes = Index(served), served.get("recipes")
+    index.search("robot")  # both kept
+    index.search("soup OR stew")
+    assert list(served._stores)[-1] == recipes.id  # opened last, so opened anew it takes the same place
+    path, real = served._stores[recipes.id]
+    served._stores[recipes.id] = (path, Unplugged(real))
+    index.search("robot", collection="papers")  # lets go of the store out of reach
+    write(tmp_path / "recipes" / "stew.md", "# Stew\n\nA stew a robot could cook.\n")
+    indexing.index(three, ["recipes"])  # meanwhile, by another sift
+    index.search("robot")  # opens it anew
+    assert "recipes/stew.md" in ids(index.search("soup OR stew"))
+    served.close()
+
+
+def test_a_store_gone_while_open_fails_no_search(three, monkeypatch):
+    # A drive unplugged under an open store: asking it whether it changed failed every search, of any collection.
+    index, diary = Index(three), three.get("diary")
+    index.search("robot")
+    path, real = three._stores[diary.id]
+    three._stores[diary.id] = (path, Unplugged(real))
+    isfile = os.path.isfile
+    monkeypatch.setattr(os.path, "isfile", lambda p: p != diary.store and isfile(p))
+    assert sorted(ids(index.search("robot"))) == ["papers/robots.md", "recipes/soup.md"]
+    assert ids(index.search("robot", collection="papers")) == ["papers/robots.md"]
+    # Nor did any search's results count as kept after it, as long as the store stayed open: it is let go
+    assert diary.id not in [cid for cid, _, _ in three.open_stores()]
+    assert [key for key in index._results if '"collection": "papers"' in key]
+
+
+def test_a_store_back_after_a_search_passed_it_over_is_searched_again(three):
+    # The search that passed it over was kept, and asked again once the store was back, came from memory without it.
+    stored = three.get("diary").store
+    three.release(three.get("diary").id)
+    os.replace(stored, stored + ".away")
+    index = Index(three)
+    assert "diary/monday.md" not in ids(index.search("robot"))
+    os.replace(stored + ".away", stored)
+    assert "diary/monday.md" in ids(index.search("robot"))
+
+
+def test_searches_of_one_collection_let_go_of_collections_deactivated_meanwhile(three, home):
+    # Only `collection` searches, and the codes of a collection another sift deactivated stayed, and its store open.
+    index, recipes = Index(three), three.get("recipes").id
+    index.vsearch("robot")
+    Catalog(home).set_active(["recipes"], False)
+    index.vsearch("robot", collection="papers")
+    assert recipes not in index.vectors
+    assert recipes not in [cid for cid, _, _ in three.open_stores()]
+
+
+def test_a_search_of_one_collection_touches_no_other(three, home, capsys):
+    # Keeping results asked every active store whether it changed: each search of one collection opened every store
+    # and warned again of one whose drive was unplugged.
+    stored = three.get("diary").store
+    three.release(three.get("diary").id)
+    os.replace(stored, stored + ".away")
+    try:
+        catalog = Catalog(home)
+        for _ in range(2):
+            Index(catalog).search("robot", collection="papers")
+        assert "diary" not in capsys.readouterr().err
+        assert list(catalog._stores) == [three.get("papers").id]
+    finally:
+        os.replace(stored + ".away", stored)
+
+
 def test_searches_cover_every_collection(three):
     index = Index(three)
     assert sorted(ids(index.search("robot"))) == ["diary/monday.md", "papers/robots.md", "recipes/soup.md"]
@@ -351,8 +540,9 @@ def test_with_every_collection_inactive_a_search_says_how_to_activate_one(three)
     three.set_active(["diary", "papers", "recipes"], False)
     index = Index(three)
     assert index.search("robot") == []
-    with pytest.raises(LookupError, match="no collection is active: `sift activate NAME`"):
-        index.vsearch("robot")
+    for search in (index.vsearch, index.query):
+        with pytest.raises(LookupError, match="no collection is active: `sift activate NAME`"):
+            search("robot")
 
 
 def test_a_note_whose_collection_is_removed_meanwhile_is_a_clear_error(three, monkeypatch):

@@ -307,6 +307,16 @@ def test_get_with_fields_command(cli_corpus, capsys):
     assert out == 'year: 2024\ncategories: ["cs.RO", "cs.GR"]\n\n# Brush stroke planning\n'
 
 
+def test_get_several_documents_command(cli_corpus, capsys):
+    out = run(capsys, "get", "notes/rl.md", "notes/brush.md", "--lines", "1").out
+    assert out == "==> notes/rl.md <==\n# Reward shaping\n\n==> notes/robots/brush.md <==\n---\n"
+    with pytest.raises(SystemExit, match="1 of 2 documents can't be read"):
+        run(capsys, "get", "missing/x.md", "notes/rl.md")
+    captured = capsys.readouterr()
+    assert "missing/x.md: unknown document 'missing/x.md'" in captured.err
+    assert captured.out.startswith("==> notes/rl.md <==\n# Reward shaping")  # the others still come
+
+
 def test_get_status_rm(cli_corpus, capsys):
     assert run(capsys, "get", "notes/rl.md").out.startswith("# Reward shaping")
     status = json.loads(run(capsys, "status").out)

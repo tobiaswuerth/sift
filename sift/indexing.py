@@ -3,6 +3,7 @@ time and size, documents by content hash; new and changed files are read in work
 the previous batch is written. `reindex` reads given files at once, for a note just written to be found.
 """
 
+import contextlib
 import json
 import multiprocessing
 import os
@@ -78,13 +79,20 @@ def _loaded(path, fields):
         return error
 
 
+def _storable(text):
+    """Text as the store keeps it: a NUL, at which SQLite's substr stops cutting passages out of the text, and with it
+    what is searched, and half a surrogate pair, as UTF-7 can encode, which SQLite's UTF-8 can't hold, as U+FFFD, of
+    the same length, so that the chunks' positions stay."""
+    return readers.LONE.sub("\ufffd", text.replace("\x00", "\ufffd"))
+
+
 def _insert(db, sid, path, doc):
     """Add a document, its chunks, its links and, if it is a whole file, its names, and return its id. Its keyword
     entries come with its file's (see _store)."""
-    meta = json.dumps(doc.meta, ensure_ascii=False)
+    title, meta, text = map(_storable, (doc.title, json.dumps(doc.meta, ensure_ascii=False), doc.text))
     doc_id = db.execute(
         "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?)",
-        (sid, path, doc.digest, doc.title, meta, doc.text),
+        (sid, path, doc.digest, title, meta, text),
     ).lastrowid
     _add_chunks(db, doc_id, doc.chunks)
     if doc.links or not doc.key:  # a JSON Lines record has no name, and no links: millions of them cost nothing
@@ -100,8 +108,9 @@ def _add_chunks(db, doc_id, chunks):
 
 
 def _path(rel, doc):
-    """A document's path in its collection: its file's, or for a record or an attachment, one below it."""
-    return f"{rel.rsplit('.', 1)[0]}/{doc.key}" if doc.key else rel
+    """A document's path in its collection: its file's, or for a record or an attachment, one below it, its key as the
+    store keeps text (a JSON Lines id or a mail's attachment name may hold a NUL)."""
+    return f"{rel.rsplit('.', 1)[0]}/{_storable(doc.key)}" if doc.key else rel
 
 
 def _read_scans(db, sid, rel, docs, note, now=True):
@@ -132,9 +141,10 @@ def _read_scans(db, sid, rel, docs, note, now=True):
 
 def _store(db, sid, rel, docs, counts, note):
     """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
-    row ids are returned. note(text) tells the user of a document that had to be skipped."""
+    row ids are returned. note(text) tells the user of a document left out (see _left_out)."""
     existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
     kept, added, unchanged = set(), [], set()
+    store.stop_waiting(db, sid)  # what still waits is said again below
     for doc in docs:
         path = _path(rel, doc)
         kept.add(path)
@@ -143,11 +153,11 @@ def _store(db, sid, rel, docs, counts, note):
             unchanged.add(old[0])
             continue
         if old:
-            store.delete_docs(db, [old[0]])
+            store.delete_docs(db, [old[0]], free=False)  # its new version takes the path at once
         try:
             added.append(_insert(db, sid, path, doc))
-        except sqlite3.IntegrityError:  # another file of the collection has a document of that name
-            note(f"{path}: a document of this name exists already, skipped")
+        except sqlite3.IntegrityError:  # another file's document holds the path
+            _left_out(db, sid, rel, path, note)
             continue
         counts["changed" if old else "added"] += 1
     store.keywords(db, added)
@@ -155,6 +165,17 @@ def _store(db, sid, rel, docs, counts, note):
     store.delete_docs(db, gone)
     counts["removed"] += len(gone)
     return unchanged
+
+
+def _left_out(db, sid, rel, path, note):
+    """Leave out a document of the file `rel` (`sid`) whose path another file's document holds: a record or an
+    attachment is a document below its file's name (`data.jsonl` holds `data/a.md`), as a real file may be. The first
+    keeps the path; the other waits for it (store.wait), and its file is read again once it is free, not before."""
+    sql = "SELECT s.path FROM docs d JOIN sources s ON s.id = d.source WHERE d.path = ?"
+    if (held := db.execute(sql, (path,)).fetchone()) is None:  # not the path the store refused
+        raise sqlite3.IntegrityError(f"{rel}: {path}: the index refused the document")
+    note(f"{path}: a document of {held[0]} has this path; this one of {rel} is left out until it is free")
+    store.wait(db, path, sid)
 
 
 REFRESH_BATCH = 1000  # files read again from the index at a time
@@ -480,6 +501,7 @@ def _source(db, rel, make=False):
 
 def _drop_source(db, sid):
     docs = [d for (d,) in db.execute("SELECT id FROM docs WHERE source=?", (sid,))]
+    store.stop_waiting(db, sid)
     store.delete_docs(db, docs)
     db.execute("DELETE FROM sources WHERE id=?", (sid,))
     return len(docs)
@@ -554,8 +576,12 @@ def index(catalog, names=None):
         except LookupError as missing:
             console.say(f"{missing}; skipped")
             continue
-        _index_collection(db, c.name, c.path, c.choices, ignore)
-        postings.update(db, c.store, c.name, _cpus() - 1)
+        try:
+            _index_collection(db, c.name, c.path, c.choices, ignore)
+            postings.update(db, c.store, c.name, _cpus() - 1)
+        except sqlite3.DatabaseError as error:  # one store damaged stops no other collection
+            db.rollback()
+            console.say(f"{store.damage(c.name, error)}; skipped")
 
 
 def _index_collection(db, name, root, fields, ignore):
@@ -570,15 +596,29 @@ def _index_collection(db, name, root, fields, ignore):
     for rel in known.keys() - seen - kept:
         counts["removed"] += _drop_source(db, known[rel][0])
     db.commit()  # before any file is read: other writers wait for none of it
-    if todo:
+    todo += _freed(db, root, seen - {item[1] for item in todo})  # those that waited for a path these drops freed
+    while todo:
+        db.commit()  # what `_freed` wrote: no lock held while the files are read
         with console.Progress(len(todo), "files", prefix=f"{name}: ") as progress:
             _read_and_store(db, name, fields, todo, counts, progress)
+        todo = _freed(db, root, seen)  # and for one freed as those were stored: each freed once, so this ends
     db.commit()
     unreadable = f", {counts['unreadable']} unreadable" if counts["unreadable"] else ""
     console.say(
         f"{name}: {len(seen)} files, {counts['added']} added, {counts['changed']} changed, {counts['removed']} removed"
         f"{unreadable} ({time.perf_counter() - t0:.1f}s)"
     )
+
+
+def _freed(db, root, among):
+    """The files to read now, of those `among`, whose documents waited for a path freed meanwhile (see store.wait)."""
+    freed = []
+    for rel in [rel for rel in store.freed(db) if rel in among]:
+        path = os.path.join(root, *rel.split("/"))
+        with contextlib.suppress(OSError):  # gone meanwhile: the next index drops it
+            info = os.stat(path)
+            freed.append((path, rel, info.st_mtime_ns, info.st_size))
+    return freed
 
 
 def _kept(name, unseen, unlisted):
@@ -634,9 +674,9 @@ def _read_and_store(db, name, fields, todo, counts, progress):
                 done += 1
                 if done % step == 0 or done == len(todo):
                     progress.update(done)
-                note = lambda text: progress.note(f"{name}: {text}")  # noqa: E731
+                note = lambda text: console.say(f"{name}: {text}")  # noqa: E731
                 if res is None:  # unreadable now; retried on the next run
-                    progress.note(f"unreadable, skipped: {path}")
+                    console.say(f"unreadable, skipped: {path}")
                     counts["unreadable"] += 1
                     continue
                 if isinstance(res, Exception):  # a reader failed: said, and read again by the next run
@@ -645,7 +685,7 @@ def _read_and_store(db, name, fields, todo, counts, progress):
                     continue
                 docs, problems = res
                 for problem in problems:
-                    progress.note(f"{name}: {rel}: {problem}")
+                    note(f"{rel}: {problem}")
                 docs, left = _read_scans(db, _source(db, rel), rel, docs, note)
                 _stored(db, rel, docs, (None if left else mtime, size), counts, note)
             db.commit()

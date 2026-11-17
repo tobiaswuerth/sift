@@ -153,7 +153,7 @@ def test_writes_run_to_their_end_when_cancelled(db):
 
 
 class Models:
-    name = "fake"
+    name, main_thread = "fake", True
 
     def __init__(self):
         self.threads = []
@@ -161,6 +161,137 @@ class Models:
     def encode(self, texts):
         self.threads.append(threading.current_thread())
         return len(texts)
+
+
+class Worker:
+    """Models on another machine, which answer once something on this one happens."""
+
+    name, main_thread = "worker", False
+
+    def __init__(self):
+        self.answered = threading.Event()
+
+    def encode(self, texts):
+        return self.answered.wait(5)
+
+
+def test_models_called_on_any_thread_leave_the_loop_free():
+    # A request to a worker held the event loop on the main thread: up to 10 minutes of a server answering nothing,
+    # not even a cancellation, when the worker's machine went to sleep.
+    models, answers = jobs.OnMainThread(Worker()), []
+
+    async def ask():
+        answers.append(await jobs.run(lambda: models.encode(["a"])))
+
+    async def main():
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.sleep(0.05)
+            models._models.answered.set()  # only while the loop is free
+
+    anyio.run(main)
+    assert answers == [True]  # not timed out
+
+
+def test_a_call_cancelled_while_a_worker_is_asked_holds_up_no_other():
+    # The request went on, and with it the server's one call at a time: up to ten minutes before the next call, even
+    # one that needs no models, though the client had cancelled.
+    worker = Worker()  # answers only once told to: not within this test
+    models = jobs.OnMainThread(worker)
+
+    async def main():
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(partial(jobs.run, lambda: models.encode(["a"])))
+            await anyio.sleep(0.05)
+            tasks.cancel_scope.cancel()
+        with anyio.fail_after(1):
+            return await jobs.run(lambda: "next")
+
+    try:
+        assert anyio.run(main) == "next"
+    finally:
+        worker.answered.set()  # the request left behind ends
+
+
+def test_requests_of_calls_cancelled_before_they_were_sent_never_are():
+    # Each waited in a thread of its own for the one before, then went to the worker anyway: the next call waited for
+    # all of them, and the worker's GPU computed answers no one read.
+    sent, answer = [], threading.Event()
+
+    class Slow:
+        name, main_thread = "worker", False
+
+        def encode(self, texts):
+            sent.append(texts[0])
+            answer.wait(5)
+            return texts[0]
+
+    models = jobs.OnMainThread(Slow())
+
+    async def main():
+        for text in "abc":
+            with anyio.move_on_after(0.05):
+                await jobs.run(lambda text=text: models.encode([text]))
+        answer.set()
+        with anyio.fail_after(2):
+            return await jobs.run(lambda: models.encode(["d"]))
+
+    assert anyio.run(main) == "d"
+    assert sent == ["a", "d"]  # a was on its way; b and c never left
+
+
+def test_a_request_of_a_call_cancelled_before_it_looked_is_not_made():
+    # Cancelled while the request before was on its way, the call looks for it only now and then: not in time to drop
+    # its own request, which the worker would have computed for no one.
+    made = []
+    store.ABORT.set()
+    with pytest.raises(jobs.Cancelled):
+        jobs._Requests().submit(lambda: made.append("a")).result(timeout=5)
+    assert made == []
+
+
+def test_a_slow_workers_answer_is_awaited(monkeypatch):
+    # A look at whether the call was cancelled, which doesn't end the wait: the answer comes only after it.
+    looked, real = threading.Event(), jobs.wait
+
+    def wait(futures, timeout):
+        done = real(futures, timeout)
+        looked.set()
+        return done
+
+    monkeypatch.setattr(jobs, "wait", wait)
+
+    class Slow:
+        name, main_thread = "worker", False
+
+        def encode(self, texts):
+            looked.wait(5)
+            return texts
+
+    models = jobs.OnMainThread(Slow())
+    assert anyio.run(jobs.run, lambda: models.encode(["a"])) == ["a"]
+
+
+def test_a_workers_answer_and_error_come_back_from_its_thread():
+    class Answering:
+        name, main_thread = "worker", False
+
+        def encode(self, texts):
+            if not texts:
+                raise ConnectionError("embedding remote https://pc:8766 is unreachable")
+            return threading.current_thread()
+
+    models = jobs.OnMainThread(Answering())
+    assert anyio.run(jobs.run, lambda: models.encode(["a"])) is not threading.main_thread()
+    with pytest.raises(ConnectionError, match="unreachable"):
+        anyio.run(jobs.run, lambda: models.encode([]))
+
+
+def test_models_called_on_any_thread_still_stop_when_cancelled():
+    models = jobs.OnMainThread(Worker())
+    store.ABORT.set()
+    with pytest.raises(jobs.Cancelled):
+        models.encode(["a"])
 
 
 def test_the_models_run_on_the_main_thread_whoever_calls():
@@ -182,3 +313,22 @@ def test_a_cancelled_call_runs_the_models_no_more():
 def test_models_are_wrapped_once():
     models = jobs.OnMainThread(Models())
     assert jobs.OnMainThread(models)._models is models._models
+
+
+def test_a_request_cancelled_before_its_turn_is_not_made():
+    made, running, answer = [], threading.Event(), threading.Event()
+    requests = jobs._Requests()
+
+    def first():
+        running.set()
+        answer.wait(5)
+        return "first"
+
+    on_its_way = requests.submit(first)
+    assert running.wait(5)
+    cancelled = requests.submit(lambda: made.append("cancelled"))
+    assert cancelled.cancel()
+    answer.set()
+    assert on_its_way.result(timeout=5) == "first"
+    assert requests.submit(lambda: "after").result(timeout=5) == "after"  # its turn came and went
+    assert made == []

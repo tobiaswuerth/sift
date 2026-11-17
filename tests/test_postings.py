@@ -928,3 +928,27 @@ def test_a_document_retitled_in_place_is_followed(prose, monkeypatch):
     postings.update(db, path_of(catalog))
     assert db.execute("SELECT count(*) FROM kw_segments").fetchone() == (2,)
     assert live(db) == fts5(db)
+
+
+def test_a_build_stopped_in_this_process_says_why(prose, monkeypatch):
+    # The chunks went to a file the build mapped into memory: stopped there, the mapping kept it open, Windows couldn't
+    # delete it, and the error deleting it replaced Ctrl+C's, or any other, and the file stayed behind.
+    catalog, _ = prose
+
+    def stopped(rows):
+        raise KeyboardInterrupt
+        yield
+
+    monkeypatch.setattr(postings, "_postings", stopped)
+    with pytest.raises(KeyboardInterrupt):
+        postings.build(catalog.store("prose"), path_of(catalog))
+
+
+def test_a_worker_process_reads_the_chunks_from_the_file_they_share(prose, tmp_path):
+    # As `_terms` in this process: the same postings from the file every worker maps.
+    db, path = prose[0].store("prose"), path_of(prose[0])
+    ids, lengths = postings._lengths(db, "fts_docsize")
+    chunks = tmp_path / "chunks.npy"
+    np.save(chunks, np.stack([ids, ids, lengths]))
+    held = postings._Chunks(ids, ids, lengths)
+    assert postings._shard((str(path), "", None, str(chunks), 1.0)) == postings._terms(str(path), "", None, held, 1.0)

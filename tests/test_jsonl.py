@@ -178,7 +178,7 @@ def test_lines_sqlite_cant_store_or_python_cant_nest_stop_nothing(tmp_path, home
     catalog.add(tmp_path / "c", "c")
     indexing.index(catalog)
     assert dict(only(catalog).execute("SELECT path, text FROM docs")) == {
-        "chat/1": "a � b",
+        "chat/1": "a \ufffd b",
         "chat/3": "kept",
         "chat/5": "near the limit",
         "note.md": "# Note\n\nafter the chat\n",
@@ -284,13 +284,23 @@ def test_chunks_are_spans_of_the_stored_text(tmp_path, home):
         assert len(chunk) <= readers.CHUNK_CHARS
 
 
-def test_a_record_named_like_a_file_is_skipped(tmp_path, home, capsys):
+def test_a_record_and_a_file_of_one_path_the_first_read_keeps_it(tmp_path, home, capsys):
     # a.jsonl's record "b.md" and the file a/b.md would both be a/b.md: one of them must give way
     write(tmp_path / "c" / "a" / "b.md", "# File\n")
     write(tmp_path / "c" / "a.jsonl", json.dumps({"id": "b.md", "text": "record"}) + "\n")
     catalog = Catalog(home)
     catalog.add(tmp_path / "c", "c")
     indexing.index(catalog)
-    assert only(catalog).execute("SELECT count(*) FROM docs WHERE path = 'a/b.md'").fetchone() == (1,)
+    assert only(catalog).execute("SELECT text FROM docs WHERE path = 'a/b.md'").fetchall() == [("record",)]  # first
     shown = [line.rsplit("\r", 1)[-1].rstrip() for line in capsys.readouterr().err.split("\n")]
-    assert "c: a/b.md: a document of this name exists already, skipped" in shown  # a line of its own
+    said = "c: a/b.md: a document of a.jsonl has this path; this one of a/b.md is left out until it is free"
+    assert said in shown  # a line of its own
+
+
+def test_a_record_whose_id_holds_a_nul_can_be_got(tmp_path, home):
+    # Its path held the NUL, at which SQLite's substr stops: `get` by its id, or its folder, found nothing.
+    write(tmp_path / "c" / "data.jsonl", json.dumps({"id": "a\x00b", "text": "record"}) + "\n")
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert Index(catalog).get("c/data/a\ufffdb") == "record"

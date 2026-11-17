@@ -14,6 +14,7 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 
 from . import console, readers
@@ -151,6 +152,18 @@ def read_only(path) -> sqlite3.Connection:
     return sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True, timeout=TIMEOUT)
 
 
+DAMAGED = (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
+
+
+def damage(name, error):
+    """What to say of the collection `name` whose store SQLite found damaged as it read it, as a failing disk leaves
+    one, and what to do. Any other error of SQLite's (locked, full, misused) is raised again: not the store's fault."""
+    if (getattr(error, "sqlite_errorcode", 0) & 0xFF) not in DAMAGED:
+        raise error
+    forget = console.command("sift", "rm", name)
+    return f"{name}: its index is damaged ({error}): `{forget}` forgets it; then add its folder and index it again"
+
+
 def connect(path, cid, create=False) -> sqlite3.Connection:
     """The store of the collection `cid` at `path`; with `create`, a new one, made there."""
     db = database(path, create)
@@ -183,7 +196,9 @@ def _layout(db, path, cid, create):
         _add_postings_tables(db)
     for key, kinds in READ_AGAIN.items():
         if get_meta(db, key) is None:
-            _read_again(db, key, kinds)
+            _once(db, key, partial(_read_again, kinds=kinds))
+    if get_meta(db, WAITED) is None:
+        _once(db, WAITED, _read_waited_again)
 
 
 def make(db, cid, read=True):
@@ -196,7 +211,7 @@ def make(db, cid, read=True):
     first = first_id(cid)
     db.executemany("INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)", [("docs", first), ("chunks", first)])
     set_meta(db, "collection", cid)
-    for key in READ_AGAIN if read else ():
+    for key in (*READ_AGAIN, WAITED) if read else ():
         set_meta(db, key, 1)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -227,30 +242,62 @@ READ_AGAIN = {  # in the meta table, once the files of these kinds that an older
     "scans_read": (".pdf",),  # sift 1.2 and older read no scans
     "documents_read": readers.DOCUMENTS,  # the server of sift 1.3.0 and older skipped every document it reindexed
 }
+WAITED = "paths_waited"  # in the meta table, once what sift 1.11 left out for a taken path is to be read again
 
 
-def _read_again(db, key, kinds):
-    """Have the next `sift index` read again the files of these kinds without documents, and the mails with one
-    attached; once, as the meta `key` records. Their unchanged documents stay, vectors included. In one transaction,
-    which another sift starting at the same time waits for, and then finds done."""
-    db.execute("BEGIN IMMEDIATE")
+def _once(db, key, work):
+    """work(db), once per store, as the meta `key` records: in one transaction, which another sift starting at the same
+    time waits for, and then finds done. Not in a store this sift may only read: once it may write."""
     try:
-        if get_meta(db, key) is None:
-            db.execute(
-                """UPDATE sources SET mtime = NULL
-                   WHERE (id NOT IN (SELECT source FROM docs)
-                          AND EXISTS (SELECT 1 FROM json_each(:kinds) k WHERE lower(sources.path) LIKE '%' || k.value))
-                   OR (lower(sources.path) LIKE '%.eml' AND EXISTS (SELECT 1 FROM docs d,
-                       json_each(CASE WHEN json_type(d.meta, '$.attachments') = 'array'
-                                 THEN json_extract(d.meta, '$.attachments') END) a, json_each(:kinds) k
-                       WHERE d.source = sources.id AND lower(a.value) LIKE '%' || k.value))""",
-                {"kinds": json.dumps(kinds)},
-            )
-            set_meta(db, key, 1)
-        db.commit()
-    except BaseException:
-        db.rollback()
-        raise
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if get_meta(db, key) is None:
+                work(db)
+                set_meta(db, key, 1)
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+    except sqlite3.OperationalError as error:
+        if getattr(error, "sqlite_errorcode", 0) & 0xFF != sqlite3.SQLITE_READONLY:
+            raise
+
+
+def _read_waited_again(db):
+    """Have the next `sift index` read again what sift 1.11 left out for good, as another file's document held its path,
+    with nothing to say that it waits (see wait). Every file without documents, as a file left out whole is, whether
+    or not its path is free by now; and a JSON Lines file or mail below whose name lie more documents than its own, as
+    when one of its records or attachments was left out for a file there. The indexes alone are read, not the texts."""
+    db.execute("UPDATE sources SET mtime = NULL WHERE NOT EXISTS (SELECT 1 FROM docs WHERE docs.source = sources.id)")
+    kinds = json.dumps(readers.JSONL + readers.EMAIL)  # json_each has a column `path` of its own: sources.path
+    holders = db.execute(
+        "SELECT id, path FROM sources "
+        "WHERE EXISTS (SELECT 1 FROM json_each(?) k WHERE lower(sources.path) LIKE '%' || k.value)",
+        (kinds,),
+    ).fetchall()
+    for sid, path in holders:
+        below = (f"{path.rsplit('.', 1)[0]}/", f"{path.rsplit('.', 1)[0]}0")  # '0' follows '/'
+        if not db.execute("SELECT 1 FROM sources WHERE path >= ? AND path < ? LIMIT 1", below).fetchone():
+            continue  # no file below its name, for whom one of its documents might have been left out
+        found = db.execute("SELECT count(*) FROM docs WHERE path >= ? AND path < ?", below).fetchone()[0]
+        own = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0]
+        if found > own - path.lower().endswith(readers.EMAIL):  # a mail's own document lies beside, not below
+            db.execute("UPDATE sources SET mtime = NULL WHERE id = ?", (sid,))
+
+
+def _read_again(db, kinds):
+    """Have the next `sift index` read again the files of these kinds without documents, and the mails with one
+    attached. Their unchanged documents stay, vectors included."""
+    db.execute(
+        """UPDATE sources SET mtime = NULL
+           WHERE (id NOT IN (SELECT source FROM docs)
+                  AND EXISTS (SELECT 1 FROM json_each(:kinds) k WHERE lower(sources.path) LIKE '%' || k.value))
+           OR (lower(sources.path) LIKE '%.eml' AND EXISTS (SELECT 1 FROM docs d,
+               json_each(CASE WHEN json_type(d.meta, '$.attachments') = 'array'
+                         THEN json_extract(d.meta, '$.attachments') END) a, json_each(:kinds) k
+               WHERE d.source = sources.id AND lower(a.value) LIKE '%' || k.value))""",
+        {"kinds": json.dumps(kinds)},
+    )
 
 
 def _count_rows(db, path):
@@ -441,10 +488,63 @@ def _mark_dirty(db, docs):
     )
 
 
-def delete_docs(db, doc_ids):
+# The documents left out as another file's held their paths (a record or an attachment is a document below its file's
+# name, `data.jsonl`'s record `a.md` is `data/a.md`, as a real file may be): the path, and the file of the document
+# waiting, freed once the path is. Made by the first such document; a file's rows go when it is stored anew or gone.
+WAITING = (
+    """CREATE TABLE IF NOT EXISTS waiting(path TEXT NOT NULL, source INTEGER NOT NULL,
+        freed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(path, source))""",
+    "CREATE INDEX IF NOT EXISTS waiting_source ON waiting(source)",  # each file stored asks: else a scan of them all
+)
+
+
+def wait(db, path, source):
+    """Record that a document of the file `source` waits for `path`, which another file's document holds."""
+    for statement in WAITING:
+        db.execute(statement)
+    db.execute("INSERT OR IGNORE INTO waiting(path, source) VALUES(?, ?)", (path, source))
+
+
+def stop_waiting(db, source):
+    """Forget what the documents of the file `source` waited for: it is being stored anew, and says so again if they
+    still wait, or it is gone."""
+    if _waits(db):
+        db.execute("DELETE FROM waiting WHERE source = ?", (source,))
+
+
+def freed(db):
+    """The paths of the files whose documents waited for a path freed since this was last asked (see _free)."""
+    if not _waits(db):
+        return []
+    sql = "SELECT DISTINCT s.path FROM waiting w JOIN sources s ON s.id = w.source WHERE w.freed"
+    if found := [path for (path,) in db.execute(sql)]:
+        db.execute("UPDATE waiting SET freed = 0 WHERE freed")  # written only then: a write waits for other writers
+    return found
+
+
+def _waits(db):
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'waiting'").fetchone() is not None
+
+
+def _free(db, paths):
+    """Mark the files waiting for these paths, freed (see wait), to be read again: their times cleared, for the next
+    `sift index`, and `freed` for one running."""
+    if paths and _waits(db):
+        marks = ",".join("?" * len(paths))
+        db.execute(f"UPDATE waiting SET freed = 1 WHERE path IN ({marks})", paths)
+        db.execute(
+            f"UPDATE sources SET mtime = NULL WHERE id IN (SELECT source FROM waiting WHERE path IN ({marks}))", paths
+        )
+
+
+def delete_docs(db, doc_ids, free=True):
+    """Delete documents, with all that is theirs; the files waiting for their paths are read again (see _free), unless
+    not `free`, as for a document replaced by its new version at once."""
     for i in range(0, len(doc_ids), 500):
         batch = doc_ids[i : i + 500]
         marks = ",".join("?" * len(batch))
+        if free:
+            _free(db, [path for (path,) in db.execute(f"SELECT path FROM docs WHERE id IN ({marks})", batch)])
         chunk_ids = f"SELECT id FROM chunks WHERE doc IN ({marks})"
         keywords(db, batch, add=False)  # first, while their text is still there
         drop_vectors(db, f"chunk IN ({chunk_ids})", batch)

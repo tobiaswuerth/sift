@@ -143,3 +143,13 @@ def test_a_pattern_of_many_stars_stays_fast():
 def test_many_patterns_stay_fast():
     ignore = Ignore([f"folder{i}/**/*.tmp" for i in range(200)] + ["*" * 10_000 + "x"])
     assert not ignore("a/" * 200 + "b.md")
+
+
+@pytest.mark.parametrize("separator", ["\u2028", "\x0c", "\x85"])
+def test_a_siftignore_ends_lines_at_newlines_alone_as_git_does(tmp_path, separator):
+    # str.splitlines ended a pattern at these too: half of it left out what the whole didn't name.
+    (tmp_path / ".siftignore").write_text(f"Notes{separator}draft/\r\n*.log\r\n", encoding="utf-8", newline="")
+    ignore = Ignore.of(tmp_path)
+    assert ignore.excludes(f"Notes{separator}draft/x.md")
+    assert not ignore.excludes("draft/x.md")
+    assert ignore.excludes("a.log")  # a line ending \r\n, as editors on Windows write them, ends at the \n

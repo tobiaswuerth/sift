@@ -27,7 +27,8 @@ def test_a_new_store_records_its_layout_and_collection(tmp_path):
     db = store.connect(tmp_path / "a.sqlite", 7, create=True)
     assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
     assert store.get_meta(db, "collection") == "7"
-    assert all(store.get_meta(db, key) == "1" for key in store.READ_AGAIN)  # nothing an older sift skipped
+    # nothing an older sift skipped or left out, to be read again
+    assert all(store.get_meta(db, key) == "1" for key in (*store.READ_AGAIN, store.WAITED))
 
 
 def test_a_collections_ids_start_at_its_own(corpus):
@@ -642,3 +643,39 @@ def test_a_store_another_sift_has_open_is_not_held(home, notes):
         store.alone(catalog.get("notes").store, "notes"),
     ):
         pass
+
+
+def test_only_damage_counts_as_a_damaged_store(tmp_path):
+    # A store locked by another program, or a disk full, is no reason to tell the user to forget the collection.
+    damaged = tmp_path / "damaged.sqlite"
+    damaged.write_bytes(b"not a database, but sixteen bytes and more")
+    db = sqlite3.connect(damaged)
+    with pytest.raises(sqlite3.DatabaseError) as found:
+        db.execute("SELECT * FROM sqlite_master").fetchall()
+    db.close()
+    assert store.damage("notes", found.value).startswith("notes: its index is damaged (file is not a database)")
+    locked = sqlite3.OperationalError("database is locked")
+    locked.sqlite_errorcode = sqlite3.SQLITE_BUSY
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        store.damage("notes", locked)
+
+
+def test_what_a_file_waits_for_is_found_by_its_file_without_a_scan(tmp_path):
+    # Every file stored asks: a scan of a million rows took 16 ms each.
+    db = store.connect(tmp_path / "s.sqlite", 1, create=True)
+    store.wait(db, "data/a.md", 7)
+    plan = " ".join(row[-1] for row in db.execute("EXPLAIN QUERY PLAN DELETE FROM waiting WHERE source = 7"))
+    db.close()
+    assert "USING INDEX waiting_source" in plan
+
+
+def test_a_marking_once_that_fails_otherwise_than_on_a_store_sift_may_only_read_says_so(tmp_path):
+    db = store.connect(tmp_path / "s.sqlite", 1, create=True)
+
+    def failing(db):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        store._once(db, "some_marking", failing)
+    assert store.get_meta(db, "some_marking") is None  # tried again next time
+    db.close()

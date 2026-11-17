@@ -13,6 +13,9 @@ from . import accelerator, settings
 from .accelerator import Accelerator
 
 MAX_TOKENS = 1024
+RERANK_BATCH = 16  # pairs per batch at most, which Sentence Transformers sorts by length first: one batch of a query's
+# 80 candidates was padded to the longest, 1.7 to 3.5 times their tokens; reranked in 16s, 180 ms a question on a
+# GPU against 331 (8: 259, 32: 213)
 LENGTHS_AT_ONCE = 1000  # texts tokenized at a time to count their tokens
 PROMPTS = {False: ("document", "passage", "corpus"), True: ("query",)}  # as encode_document and encode_query pick
 TASKS = {False: "document", True: "query"}  # what Sentence Transformers routes texts by, in models that route
@@ -60,6 +63,8 @@ def _reranker(name, dtype):
 class Local:
     """The models of this machine. Each loads on first use, into RAM in the accelerator's half precision, and moves
     to the GPU while in use. If the accelerator falls back to the CPU, they load again, in float32."""
+
+    main_thread = True  # PyTorch
 
     def __init__(self, accelerator=None):
         self.accelerator = accelerator or Accelerator()
@@ -165,6 +170,7 @@ class Local:
                 [(query, x) for x in t], batch_size=size, show_progress_bar=False, activation_fn=raw
             ),
             texts,
+            most=RERANK_BATCH,
         )
 
     def release_idle(self):

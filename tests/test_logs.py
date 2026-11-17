@@ -103,3 +103,12 @@ def test_commands_that_change_or_serve_the_index_keep_logs(notes, home, capsys):
     cli.main(["search", "anything"])
     found = sorted(p.name.split("-20")[0] for p in (home / "logs").glob("*.log"))
     assert found == ["add", "index"]
+
+
+def test_what_index_says_of_a_file_goes_into_its_log(notes, home, capsys):
+    # A file skipped, a line of JSON Lines left out: said on the screen, under the progress line, but not in the log.
+    (notes / "data.jsonl").write_text('{"text": "a record"}\nnot json\n', encoding="utf-8")
+    cli.main(["add", str(notes)])
+    cli.main(["index"])
+    (path,) = (home / "logs").glob("index-*.log")
+    assert [line for line in lines(path) if "data.jsonl: 1 line skipped (line 2: not JSON)" in line]

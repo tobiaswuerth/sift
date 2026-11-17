@@ -38,7 +38,8 @@ class Ignore:
         if not os.path.lexists(path):
             return cls([])
         with open(path, "rb") as file:
-            return cls(readers.decode(file.read()).splitlines())
+            text = readers.decode(file.read())
+        return cls(line.removesuffix("\r") for line in text.split("\n"))  # as git reads them: \n ends a line
 
     def __call__(self, path, folder=False):
         """Whether the pattern that last matches the file, or with `folder` the folder, at `path` leaves it out."""

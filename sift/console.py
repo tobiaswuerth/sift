@@ -24,7 +24,7 @@ def say(*parts, logged=None):
     text = " ".join(map(str, parts))
     logs.said.info(text if logged is None else logged)
     if _drawn is not None:
-        _drawn.note(text)
+        _drawn._note(text)
     else:
         print(text, file=sys.stderr, flush=True)
 
@@ -123,8 +123,9 @@ class Progress:
         _collect()
         self.draw()
 
-    def note(self, text):
-        """A message, on a line of its own where the progress line was; the progress continues below it."""
+    def _note(self, text):
+        """A message, on a line of its own where the progress line was; the progress continues below it. `say` says
+        it, which logs it too."""
         with self._lock:
             self._line.show(text)
             self._line.end()

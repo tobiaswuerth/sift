@@ -2,12 +2,15 @@
 free to answer, to accept connections, and to hear that a client cancelled a call or went away. A cancelled call
 stops: its SQLite statements end at once (store.ABORT), and it calls the models no more. Writes run to their end.
 
-The models run on the main thread, which holds the loop, whoever calls them (OnMainThread): PyTorch crashes in worker
-threads on Python 3.15 (Windows, macOS)."""
+The models of this machine run on the main thread, which holds the loop, whoever calls them (OnMainThread): PyTorch
+crashes in worker threads on Python 3.15 (Windows, macOS). A worker's are asked in a thread of their own: the loop
+stays free while a request waits for its answer, and a cancelled call stops waiting."""
 
 import functools
 import logging
+import queue
 import threading
+from concurrent.futures import Future, wait
 
 import anyio
 import anyio.from_thread
@@ -16,6 +19,7 @@ import anyio.to_thread
 from . import store
 
 log = logging.getLogger(__name__)
+ABORT_CHECK = 0.05  # seconds between looks at store.ABORT while a worker's answer is awaited
 
 
 class Cancelled(Exception):
@@ -65,8 +69,9 @@ async def run(fn, *args, abortable=True, **kwargs):
 
 
 class OnMainThread:
-    """Models whose methods run on the main thread, wherever they are called: from a worker thread of `run`, through
-    the event loop. Called for a cancelled call, they raise Cancelled."""
+    """Models whose methods run on the main thread, wherever they are called, if they must (`main_thread`): from a
+    worker thread of `run`, through the event loop, which waits meanwhile. A worker's run in a thread of their own,
+    waited for until the call is cancelled (see _abortable). Called for a cancelled call, they raise Cancelled."""
 
     def __init__(self, models):
         self._models = models._models if isinstance(models, OnMainThread) else models
@@ -80,8 +85,57 @@ class OnMainThread:
         def on_main_thread(*args, **kwargs):
             if store.ABORT.is_set():
                 raise Cancelled("the call was cancelled")
+            call = functools.partial(value, *args, **kwargs)
+            if not self._models.main_thread:
+                return _abortable(call)
             if threading.current_thread() is threading.main_thread():
-                return value(*args, **kwargs)
-            return anyio.from_thread.run_sync(functools.partial(value, *args, **kwargs))
+                return call()
+            return anyio.from_thread.run_sync(call)
 
         return on_main_thread
+
+
+class _Requests:
+    """A worker's requests, made one after another in a thread of their own: one cancelled before its turn is never
+    made. A daemon, so that a request left waiting holds up no exit."""
+
+    def __init__(self):
+        self._queue, self._lock, self._thread = queue.SimpleQueue(), threading.Lock(), None
+
+    def submit(self, call):
+        """call(), in its turn: a Future of its answer."""
+        answer = Future()
+        with self._lock:
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._serve, name="sift-worker-requests", daemon=True)
+                self._thread.start()
+        self._queue.put((answer, call))
+        return answer
+
+    def _serve(self):
+        while True:
+            answer, call = self._queue.get()
+            if not answer.set_running_or_notify_cancel():  # cancelled before its turn
+                continue
+            if store.ABORT.is_set():  # its call was cancelled, and hasn't looked yet: the next call clears it first
+                answer.set_exception(Cancelled("the call was cancelled"))
+                continue
+            try:
+                answer.set_result(call())
+            except BaseException as error:  # handed to the caller, if it still waits
+                answer.set_exception(error)
+
+
+_requests = _Requests()
+
+
+def _abortable(call):
+    """call() as a worker's request (see _Requests), its answer awaited until the call it belongs to is cancelled:
+    then Cancelled at once, and the request dropped if not made yet, its answer if it was. A worker's request can wait
+    minutes for one (remote.TIMEOUT), and meanwhile the server takes no other call."""
+    answer = _requests.submit(call)
+    while not wait([answer], ABORT_CHECK).done:
+        if store.ABORT.is_set():
+            answer.cancel()
+            raise Cancelled("the call was cancelled; a request to the worker on its way ends by itself")
+    return answer.result()

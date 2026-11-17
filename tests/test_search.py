@@ -1791,3 +1791,185 @@ def test_get_by_a_file_name_many_documents_have(corpus):
     indexing.index(catalog)
     with pytest.raises(LookupError, match=r"notes/e/same\.md, \.\.\.; give the whole id"):
         Index(catalog).get("notes/same.md")
+
+
+# --- what a search asked again reuses ------------------------------------------------
+
+
+def statements(index, catalog):
+    """The SQL statements each search runs on the store, but those asking whether it changed."""
+    ran = []
+    catalog.store("notes").set_trace_callback(lambda sql: "data_version" not in sql and ran.append(sql))
+    return ran
+
+
+def test_a_question_asked_again_is_not_embedded_again(embedded, monkeypatch):
+    # An agent asks the same question again, with another k or filter: the query's embedding took 51 ms each time.
+    index = Index(embedded[0])
+    real, asked = index.models.encode, []
+    monkeypatch.setattr(index.models, "encode", lambda texts, query=False: asked.append(texts) or real(texts, query))
+    monkeypatch.setattr(search, "QUERY_VECTORS", 2)
+    for k, query in enumerate(("brush strokes", "brush strokes", "reward", "paint", "brush strokes"), 1):
+        index.vsearch(query, k=k)  # each another search: its results aren't kept from before
+    assert asked == [["brush strokes"], ["reward"], ["paint"], ["brush strokes"]]  # the oldest let go past two
+
+
+def test_a_search_asked_again_is_answered_from_memory_until_a_store_changes(embedded, home):
+    catalog, root = embedded
+    index = Index(catalog)
+    for method in (index.search, index.vsearch, index.query):
+        method("brush", k=3)  # the first semantic search loads the codes, a change of what it reads: not kept
+        first = method("brush", k=3)
+        ran = statements(index, catalog)
+        assert method("brush", k=3) == first
+        assert ran == []  # read nothing from the store
+        catalog.store("notes").set_trace_callback(None)
+    # Each kind of change by another sift, and then the same search, which must not come from memory:
+    write(root / "brushes.md", "# Brushes\n\nbrush brush brush, the brush of brushes\n")
+    indexing.index(Catalog(home))  # `sift index` beside the server
+    assert ids(index.search("brush", k=3))[0] == "notes/brushes.md"
+    assert "notes/brushes.md" not in ids(index.vsearch("brush", k=3))  # not embedded yet
+    embed.embed_pending(Catalog(home))  # `sift embed`: the codes change
+    assert ids(index.vsearch("brush", k=3))[0] == "notes/brushes.md"
+    Catalog(home).set_active(["notes"], False)  # `sift deactivate notes`
+    assert index.search("brush", k=3) == []
+
+
+def test_results_follow_the_servers_own_reindex(embedded):
+    catalog, root = embedded
+    index = Index(catalog)
+    assert ids(index.search("pigments")) == []
+    write(root / "pigments.md", "# Pigments\n\npigments on canvas\n")
+    index.reindex(["notes/pigments.md"])  # through the same connection: SQLite counts no change of another
+    assert ids(index.search("pigments")) == ["notes/pigments.md"]
+    assert ids(index.vsearch("Pigments pigments on canvas", k=1)) == ["notes/pigments.md"]
+
+
+def test_results_found_out_of_time_are_never_kept(embedded, monkeypatch):
+    index = Index(embedded[0])
+    index.search("brush", budget=10.0)
+    assert not index._results  # an answer within a budget depends on the time it had
+    index.search("brush")
+    assert len(index._results) == 1
+
+
+def test_only_the_latest_results_are_kept(embedded, monkeypatch):
+    monkeypatch.setattr(search, "RESULTS", 2)
+    index = Index(embedded[0])
+    for query in ("brush", "reward", "colour", "reward"):
+        index.search(query)
+    assert [json.loads(key)[1][0] for key in index._results] == ["colour", "reward"]  # the latest asked last
+
+
+def test_results_kept_are_copies(embedded):
+    index = Index(embedded[0])
+    index.search("brush")
+    hits = index.search("brush")
+    hits[0]["id"] = "changed"
+    assert index.search("brush")[0]["id"] != "changed"
+
+
+# --- several queries in one call -----------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["search", "vsearch", "query"])
+def test_several_queries_in_one_call_find_what_each_alone_finds(embedded, mode):
+    asked = ["brush strokes", "reward shaping", "colour theory"]
+    together = getattr(Index(embedded[0]), mode)(asked, k=2)
+    assert together == [getattr(Index(embedded[0]), mode)(q, k=2) for q in asked]  # each in an index of its own
+
+
+def test_several_questions_are_embedded_together(embedded, monkeypatch):
+    # One forward pass on the GPU for all of them, about the time of one.
+    index = Index(embedded[0])
+    real, batches = index.models.encode, []
+    monkeypatch.setattr(index.models, "encode", lambda texts, query=False: batches.append(texts) or real(texts, query))
+    index.vsearch(["brush strokes", "reward shaping", "brush strokes"], k=2)
+    assert batches == [["brush strokes", "reward shaping"]]
+
+
+@pytest.mark.parametrize(
+    "queries, reason",
+    [([], "at least one"), (["a"] * 21, "at most 20"), (["a", 3], "a text"), (["a", " "], "isn't blank")],
+)
+def test_several_queries_are_checked(embedded, queries, reason):
+    with pytest.raises(ValueError, match=reason):
+        Index(embedded[0]).search(queries)
+
+
+def test_a_wrong_budget_of_several_queries_is_said_as_asked(embedded):
+    # Shared out first, -2 for two queries was said to be -1.0.
+    with pytest.raises(ValueError, match=r"got -2$"):
+        Index(embedded[0]).search(["brush", "reward"], budget=-2)
+
+
+def test_one_of_several_documents_whose_store_is_out_of_reach_fails_alone(embedded, monkeypatch):
+    # A drive gone from under an open store failed every document of the batch.
+    index, real = Index(embedded[0]), Index.document
+
+    def document(self, id, lines=None, fields=None):
+        if id == "notes/rl.md":
+            raise sqlite3.OperationalError("disk I/O error")
+        return real(self, id, lines, fields)
+
+    monkeypatch.setattr(Index, "document", document)
+    found = index.documents([("notes/rl.md", None), ("notes/brush.md", None)])
+    assert found[0] == {"id": "notes/rl.md", "error": "its store can't be read (disk I/O error): is its drive there?"}
+    assert found[1]["id"] == "notes/robots/brush.md"
+    store.ABORT.set()  # a cancelled call stops instead
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            index.documents([("notes/rl.md", None)])
+    finally:
+        store.ABORT.clear()
+
+
+@pytest.mark.parametrize("asked", [{"k": 5_000}, {}])
+def test_several_queries_return_at_most_as_many_hits_as_one_search(embedded, asked):
+    # 20 queries of 10,000 hits each made one answer of 200,000, about 360 MB.
+    index = Index(embedded[0])
+    if asked:
+        with pytest.raises(ValueError, match="10,000 hits"):
+            index.search(["brush", "reward", "colour"], **asked)
+    else:
+        index.search(["brush", "reward", "colour"], 3_333)
+        index.search(["brush"], 20_000)  # capped at 10,000, as one search asked for more is
+
+
+def test_large_results_are_not_kept(embedded, monkeypatch):
+    monkeypatch.setattr(search, "KEPT_HITS", 1)
+    index = Index(embedded[0])
+    index.search("brush", k=1)
+    index.search("brush OR reward", k=2)
+    assert len(index._results) == 1  # only the one of a single hit
+
+
+def test_several_queries_share_a_time_budget(embedded, monkeypatch):
+    # Each query took the whole budget: 20 queries with budget=5 could take 100 seconds.
+    budgets, real = [], topk.Deadline
+    monkeypatch.setattr(topk, "Deadline", lambda seconds: budgets.append(seconds) or real(seconds))
+    Index(embedded[0]).search(["brush", "reward"], budget=2.0)
+    assert budgets == [1.0, 1.0]
+
+
+def test_several_queries_are_checked_before_any_is_embedded(embedded, monkeypatch):
+    index = Index(embedded[0])
+    monkeypatch.setattr(index.models, "encode", lambda texts, query=False: pytest.fail("embedded before the check"))
+    with pytest.raises(LookupError, match="no collection named 'typo'"):
+        index.vsearch(["brush", "reward"], collection="typo")
+
+
+def test_a_bug_reading_one_of_several_documents_is_no_document_missing(embedded, monkeypatch):
+    # A KeyError is a LookupError too: a bug's came back as a document that can't be read.
+    index = Index(embedded[0])
+    monkeypatch.setattr(index, "document", lambda *args: {}["text"])
+    with pytest.raises(KeyError):
+        index.documents([("notes/rl.md", None)])
+
+
+def test_a_search_whose_options_make_no_key_is_answered_and_not_kept(embedded):
+    # Filters of an int and a str key can't be sorted into a key: the search itself says what is wrong.
+    index = Index(embedded[0])
+    with pytest.raises(ValueError, match="invalid filter field 1"):
+        index.search("brush", filters={"year": 2024, 1: "x"})
+    assert not index._results

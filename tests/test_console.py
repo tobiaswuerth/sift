@@ -92,7 +92,7 @@ def test_progress_carries_a_prefix(clock, capsys):
 def test_a_note_takes_the_progress_line_and_the_bar_continues_below(progress, capsys):
     with progress(2) as bar:
         bar.update(1)
-        bar.note("r.jsonl: 1 line skipped")
+        console.say("r.jsonl: 1 line skipped")
         bar.update(2)
     lines = capsys.readouterr().err.split("\n")
     assert lines[0].rsplit("\r", 1)[-1].startswith("r.jsonl: 1 line skipped")  # on its own line

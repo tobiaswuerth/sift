@@ -93,7 +93,7 @@ def test_budget_leaves_room_for_other_programs(make, gpu_memory, capsys):
 def test_budget_counts_memory_other_programs_hold(make, gpu_memory):
     # On Windows (WDDM), CUDA reports memory held by other programs as free, since the driver could page it out.
     # NVML, which nvidia-smi uses, does not; the smaller of the two decides.
-    gpu_memory.free, gpu_memory.used = 22.5 * GiB, 13.5 * GiB  # as measured on an RTX 4090 under Windows
+    gpu_memory.free, gpu_memory.used = 22.5 * GiB, 13.5 * GiB  # as measured on a 24 GB GPU under Windows
     make("cuda").budget()
     assert gpu_memory.budgets == [(pytest.approx((24 - 13.5 - 2.4) / 24), 0)]
 
@@ -373,9 +373,10 @@ def nvml(monkeypatch):
         ("12.8", "update the NVIDIA driver"),
     ],
 )
-def test_explains_an_unused_nvidia_gpu(make, nvml, monkeypatch, capsys, cuda_build, hint):
+def test_explains_an_unused_nvidia_gpu(make, nvml, monkeypatch, configure, capsys, cuda_build, hint):
     import torch
 
+    configure(gpus=None)
     monkeypatch.setattr(torch.version, "cuda", cuda_build)
     cpu = make("cpu")
     cpu.budget()
@@ -383,6 +384,29 @@ def test_explains_an_unused_nvidia_gpu(make, nvml, monkeypatch, capsys, cuda_bui
     err = capsys.readouterr().err
     assert err.count("found an NVIDIA GPU") == 1  # once, not per model
     assert hint in err
+
+
+@pytest.mark.parametrize("gpus", ["-1", "", " -1,0", "NoDevFiles", "7"])
+def test_a_gpu_hidden_on_purpose_is_no_driver_to_update(make, nvml, monkeypatch, configure, capsys, gpus):
+    # CUDA_VISIBLE_DEVICES=-1 keeps a program on the CPU; NVML still sees the GPU, and sift said to update the driver.
+    import torch
+
+    configure(gpus=gpus)
+    monkeypatch.setattr(torch.version, "cuda", "12.8")
+    make("cpu").budget()
+    err = capsys.readouterr().err
+    assert f"PyTorch sees no NVIDIA GPU with CUDA_VISIBLE_DEVICES={gpus}, so sift runs on the CPU" in err
+    assert "driver" not in err
+
+
+def test_a_pytorch_without_cuda_says_so_whatever_the_gpus_cuda_may_use(make, nvml, monkeypatch, configure, capsys):
+    # CUDA_VISIBLE_DEVICES=0, as on a machine of several GPUs, hid that this PyTorch can't use any.
+    import torch
+
+    configure(gpus="0")
+    monkeypatch.setattr(torch.version, "cuda", None)
+    make("cpu").budget()
+    assert "this PyTorch build has no CUDA support" in capsys.readouterr().err
 
 
 def test_no_hint_without_an_nvidia_gpu(make, nvml, capsys):

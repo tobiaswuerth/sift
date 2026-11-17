@@ -108,9 +108,9 @@ def test_front_matter_values_sqlite_cant_store_or_python_cant_nest(json_room):
     # A lone surrogate, "\ud800" in JSON, which SQLite refuses; lists nested deeper than Python recurses.
     deep = "[" * 5000 + "]" * 5000
     title, meta, _, _ = readers.parse(f'---\ntitle: "a \\ud800 b"\nx: {deep}\n---\n', "f")
-    assert (title, meta["x"]) == ("a � b", deep)
+    assert (title, meta["x"]) == ("a \ufffd b", deep)
     _, meta, _, _ = readers.parse('---\ntags: ["\\udc00", {"k\\ud800": ["v\\ud83d"]}, 1]\n---\n', "f")
-    assert meta["tags"] == ["�", {"k�": ["v�"]}, 1]  # in lists and objects too
+    assert meta["tags"] == ["\ufffd", {"k\ufffd": ["v\ufffd"]}, 1]  # in lists and objects too
     assert readers.parse('---\nemoji: "\\ud83d\\ude00"\n---\n', "f")[1] == {"emoji": "\U0001f600"}  # a pair is one
     nested = "[" * 1100 + "1" + "]" * 1100  # deeper than SQLite stores JSON (1,000), though Python reads it
     _, meta, _, _ = readers.parse(f"---\nx: {nested}\nsize: 1e400\n---\n", "f")
@@ -196,7 +196,7 @@ def test_chunk_breaks_a_long_line_in_time_linear_in_its_length():
 
 def test_load(tmp_path):
     path = tmp_path / "note.md"
-    path.write_bytes("﻿---\ntitle: BOM\n---\nbody \xe9\n".encode())  # a UTF-8 byte order mark first
+    path.write_bytes("\ufeff---\ntitle: BOM\n---\nbody \xe9\n".encode())  # a UTF-8 byte order mark first
     doc = loaded(path)
     assert (doc.key, doc.title, doc.meta, doc.chunks) == ("", "BOM", {"title": "BOM"}, [(4, 4, "body \xe9")])
     assert doc.text == "---\ntitle: BOM\n---\nbody \xe9\n"  # the whole file, as get returns it
@@ -255,8 +255,16 @@ def test_chunk_counts_lines_like_editors(separator):
     assert list(pieces(f"one\n{separator}two\nthree\n")) == [(1, 3, f"one\n{separator}two\nthree")]
 
 
-@pytest.mark.parametrize("bom, codec", [(b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be")])
-def test_load_reads_utf16_files(tmp_path, bom, codec):
+@pytest.mark.parametrize(
+    "bom, codec",
+    [
+        (b"\xff\xfe", "utf-16-le"),
+        (b"\xfe\xff", "utf-16-be"),
+        (b"\xff\xfe\x00\x00", "utf-32-le"),  # read as UTF-16, a NUL after every character
+        (b"\x00\x00\xfe\xff", "utf-32-be"),
+    ],
+)
+def test_load_reads_utf16_and_utf32_files(tmp_path, bom, codec):
     # Windows PowerShell 5.1 writes UTF-16 with `>` and Out-File; read as UTF-8, every other character was a NUL.
     path = tmp_path / "note.txt"
     path.write_bytes(bom + "# Héllo\r\nworld\r\n".encode(codec))
@@ -422,6 +430,9 @@ TRICKY = [
     '{"a": 1}',
     "Zürich ✓ 日本",
     "two\nlines",
+    "line\u2028separator",  # these three JSON writes as they are, and str.splitlines ends a line at
+    "next\x85line",
+    "para\u2029graph",
     "---",
     "",
     "123",

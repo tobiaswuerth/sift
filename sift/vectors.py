@@ -13,16 +13,43 @@ from functools import cache
 
 import numpy as np
 
+from . import console, settings
+
 RESCORE = 1000  # candidates scored exactly, at least: reading their vectors is most of a search's time
 SHORTLIST = 10  # times as many, the nearest by Hamming distance, ranked by the query's floats against their bits
 BLOCK = 1 << 14  # codes per thread at a time: their XOR, 1.5 MB at 768 dimensions, stays in the cache (46M codes:
 # 187 ms against 226 ms with twice as many, 259 ms with half)
+COMPILED = 1 << 16  # codes of a collection from which they are scanned by compiled code, once loaded (see
+# compile_scan): three times as fast as NumPy (12.9M arXiv codes: 43 ms against 133)
 THREADS = min(16, os.cpu_count() or 1)
 FAR = np.iinfo(np.uint16).max  # the distance of a code left out
 SCAN_SHARE = 0.2  # of the codes searched: checking more candidates against a filter costs more than listing all it
 # lets through (arXiv, 3.2M chunks: 4-5 us a check against 6.2 s a listing, warm; cold, 90 us against 56 s)
 MARGIN = 1.25  # candidates checked beyond those that, at the rate let through so far, would be enough
 _BITS = np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).astype(np.float32)  # each byte's bits
+_NONE = np.zeros(0, bool)  # no codes left out of a scan
+
+
+_scan = None  # the compiled scan, `scan`, once compile_scan loaded it
+
+
+def compile_scan():
+    """Load the compiled scan of the codes (see `scan`), for collections of COMPILED codes or more: loading Numba and
+    the compiled code takes a second or two, which a server pays once, as it starts; a single search from the command
+    line keeps NumPy's scan, which costs it less. One that can't be loaded is said, and NumPy's scan stays."""
+    global _scan
+    folder = settings.keep_compiled_code()
+    try:
+        from . import scan
+
+        scan.measure(np.zeros((1, 1), np.uint64), np.zeros(1, np.uint64), _NONE, np.empty(1, np.uint16), FAR, 1)
+    except Exception as error:  # Numba missing or broken, its kept code damaged, no folder to keep it in
+        console.say(
+            f"warning: the compiled scan of the codes isn't available ({error}); NumPy's scans them, a third as fast. "
+            f"Delete {folder} to compile it anew, or install sift again"
+        )
+        return
+    _scan = scan
 
 
 def codes(matrix):
@@ -226,28 +253,15 @@ class Codes:
     def measure(self, query_bits, allowed=None, excluded=None):
         """The Hamming distance of every code to the query's, by `ids`, FAR for those that don't count (those not
         `allowed`, ids or None for all, and those `excluded`); and how many codes that count are at each distance,
-        from 0 to every bit. In blocks, each in a thread, which counts its own (NumPy lets go of the GIL): counted over
-        all codes at once afterwards, by one thread, that took half of a search over 46 million codes."""
-        keep, word, top = self._keep(allowed, excluded), query_bits.view(np.uint64), 8 * len(query_bits)
-        out, starts, at = np.empty(len(self.ids), np.uint16), [], 0
+        from 0 to every bit: each part of the codes in one pass (see `scan`)."""
+        keep, word = self._keep(allowed, excluded), np.ascontiguousarray(query_bits).view(np.uint64)
+        out, at, counts = np.empty(len(self.ids), np.uint16), 0, np.zeros(8 * len(query_bits) + 1, np.int64)
+        count = _compiled if _scan is not None and len(self.ids) >= COMPILED else _numpy
         for part in self._parts:
-            words = part.view(np.uint64)
-            starts += [(words, at, start) for start in range(0, len(words), BLOCK)]
-            at += len(words)
-
-        def block(item):
-            words, at, start = item
-            rows = words[start : start + BLOCK]
-            here = out[at + start : at + start + len(rows)]
-            xor, count = _buffers(len(rows), words.shape[1])
-            np.bitwise_xor(rows, word, out=xor)
-            np.bitwise_count(xor, out=count)
-            np.sum(count, axis=1, dtype=np.uint16, out=here)
-            if keep is not None:
-                here[~keep[at + start : at + start + len(rows)]] = FAR
-            return np.bincount(np.minimum(here, top + 1), minlength=top + 2)[: top + 1]  # FAR past every bit
-
-        return out, sum(_threaded(block, starts), np.zeros(top + 1, np.int64))
+            kept = None if keep is None else keep[at : at + len(part)]
+            counts += count(part.view(np.uint64), word, kept, out[at : at + len(part)])
+            at += len(part)
+        return out, counts
 
     def between(self, distances, low, high):
         """Where in `ids` the codes at distances (as measure gives them) from low to high are, ascending; in blocks,
@@ -259,6 +273,29 @@ class Codes:
             return start + np.flatnonzero((part >= low) & (part <= high) if low else part <= high)
 
         return np.concatenate([np.empty(0, np.int64), *_threaded(block, range(0, len(distances), step))])
+
+
+def _compiled(words, word, keep, out):
+    """A part's distances and how many codes are at each, in one pass of compiled code (see `scan`)."""
+    return _scan.measure(words, word, _NONE if keep is None else keep, out, FAR, THREADS)
+
+
+def _numpy(words, word, keep, out):
+    """A part's distances and how many codes are at each, by NumPy: in blocks, each in a thread, which counts its own
+    (NumPy lets go of the GIL)."""
+    top = 64 * words.shape[1]
+
+    def block(start):
+        rows, here = words[start : start + BLOCK], out[start : start + BLOCK]
+        xor, count = _buffers(len(rows), words.shape[1])
+        np.bitwise_xor(rows, word, out=xor)
+        np.bitwise_count(xor, out=count)
+        np.sum(count, axis=1, dtype=np.uint16, out=here)
+        if keep is not None:
+            here[~keep[start : start + len(rows)]] = FAR
+        return np.bincount(np.minimum(here, top + 1), minlength=top + 2)[: top + 1]  # FAR past every bit
+
+    return sum(_threaded(block, range(0, len(words), BLOCK)), np.zeros(top + 1, np.int64))
 
 
 _scratch = threading.local()

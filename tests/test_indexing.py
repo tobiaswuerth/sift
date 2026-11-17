@@ -4,6 +4,7 @@ step with the files, incrementally."""
 import os
 import shutil
 import sqlite3
+import stat
 
 import pytest
 
@@ -13,6 +14,7 @@ from sift.ignore import Ignore
 from sift.search import Index
 
 from .conftest import index_contents, keywords_agree, write
+from .test_documents import email_file
 
 
 def doc_ids(catalog):
@@ -147,6 +149,20 @@ def test_sift_index_holds_no_write_lock_while_it_reads_files(corpus, monkeypatch
     assert free == [True] * 3
 
 
+def test_sift_index_holds_no_write_lock_while_it_reads_a_file_freed_to_be_read(corpus, monkeypatch):
+    # Asking which files a freed path let through wrote, and held the lock while they, and the scan's, were read.
+    catalog, root = corpus
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
+    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    indexing.index(catalog)  # the record keeps the path, the file waits
+    write(root / "data.jsonl", '{"id": "b.md", "text": "zebra in another record"}\n')
+    write(root / "other.md", "# Other\n")
+    path, real, free = catalog.get("notes").store, readers.load, []
+    monkeypatch.setattr(readers, "load", lambda *args: free.append(lock_free(path)) or real(*args))
+    indexing.index(catalog)
+    assert free == [True] * 3  # data.jsonl and other.md, then data/a.md, freed by the first
+
+
 def test_retitling_holds_the_write_lock_a_batch_at_a_time(corpus, monkeypatch):
     catalog, _ = corpus
     monkeypatch.setattr(indexing, "REFRESH_BATCH", 1)
@@ -212,6 +228,172 @@ def test_a_collection_whose_siftignore_cannot_be_read_is_skipped(corpus, tmp_pat
 
 def test_index_picks_text_and_markdown_only(corpus):
     assert sorted(doc_ids(corpus[0])) == ["plain.txt", "rl.md", "robots/brush.md"]
+
+
+def test_a_nul_in_a_file_hides_nothing_after_it(corpus):
+    # SQLite's substr, which cuts the passages out of a document's text, stops at a NUL: the words after one, in a log
+    # padded with them or a note with a pasted control character, went into the keyword index and the embeddings empty.
+    catalog, root = corpus
+    (root / "padded.txt").write_bytes(b"before the padding\x00\x00\x00 wombat after it\n")
+    write(root / "pasted.md", "# Num\x00bers\n\nnumbat in the text\n")
+    indexing.index(catalog)
+    index = Index(catalog)
+    for word, path in (("wombat", "notes/padded.txt"), ("numbat", "notes/pasted.md")):
+        hits = index.search(word)
+        assert [hit["id"] for hit in hits] == [path]
+        assert word in hits[0]["text"]
+    assert index.document("notes/pasted.md", fields=["title"])["title"] == "Num\ufffdbers"
+
+
+@pytest.mark.parametrize("record_first", [True, False])
+def test_a_document_left_out_for_its_path_gets_it_once_free(corpus, capsys, record_first):
+    # A JSON Lines record (or a mail's attachment) is a document below its file's name, a path a real file may have:
+    # the one left out was never read again, even once the path was free; then read again by every run, a PDF
+    # converted and a scan read anew each time; then a record left out for a file never came back.
+    catalog, root = corpus
+    record, real = root / "data.jsonl", root / "data" / "a.md"
+    write(real, "# A\n\ngiraffe in the real file\n")
+    if not record_first:  # the file indexed first, the record added later
+        indexing.index(catalog)
+    write(record, '{"id": "a.md", "text": "zebra in the record"}\n')  # else read first, in one run
+    indexing.index(catalog)
+    assert capsys.readouterr().err.count("left out until it is free") == 1
+    holder, waiting = (record, "giraffe") if record_first else (real, "zebra")
+    assert Index(catalog).search(waiting) == []
+    indexing.index(catalog)
+    assert "0 added, 0 changed, 0 removed" in capsys.readouterr().err  # nothing read again meanwhile
+    holder.unlink()
+    indexing.index(catalog)
+    assert [hit["id"] for hit in Index(catalog).search(waiting)] == ["notes/data/a.md"]
+
+
+def test_a_holder_that_changes_frees_its_path_in_the_same_run(corpus):
+    catalog, root = corpus
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
+    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    indexing.index(catalog)  # the record first
+    write(root / "data.jsonl", '{"id": "b.md", "text": "zebra in another record"}\n')
+    indexing.index(catalog)
+    assert [hit["id"] for hit in Index(catalog).search("giraffe")] == ["notes/data/a.md"]
+
+
+def test_only_files_that_wait_for_a_path_are_read_again(corpus, monkeypatch):
+    # Every document deleted read again the files named like a folder above it: Project.md, beside Project/ as Obsidian
+    # keeps them, at every change in that folder; data.2025.jsonl, whole, at every change of data.jsonl.
+    catalog, root = corpus
+    write(root / "Project.md", "# Project\n")
+    write(root / "Project" / "sub" / "x.md", "# X\n")
+    write(root / "Project" / "y.md", "# Y\n")
+    write(root / "data.jsonl", '{"id": "1", "text": "one"}\n')
+    write(root / "data.2025.jsonl", '{"id": "1", "text": "one of 2025"}\n')
+    indexing.index(catalog)
+    read, real = [], indexing._loaded
+    monkeypatch.setattr(indexing, "_loaded", lambda path, fields: read.append(path) or real(path, fields))
+    write(root / "Project" / "sub" / "x.md", "# X\n\nchanged\n")
+    (root / "Project" / "y.md").unlink()
+    write(root / "data.jsonl", '{"id": "1", "text": "one, changed"}\n')
+    indexing.index(catalog)
+    assert sorted(os.path.relpath(p, root).replace(os.sep, "/") for p in read) == ["Project/sub/x.md", "data.jsonl"]
+
+
+@pytest.mark.parametrize("freed", [False, True])
+def test_a_file_an_older_sift_left_out_for_its_path_is_read_again_once(corpus, home, monkeypatch, freed):
+    # sift 1.11 left it out for good, its time recorded and nothing to say it waited: also once the path was free
+    # again, as when the record went before sift was upgraded. Read again once, with every file without documents.
+    catalog, root = corpus
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n')
+    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    indexing.index(catalog)
+    assert Index(catalog).search("giraffe") == []  # the record keeps the path
+    as_sift_1_11_left_it(catalog.store("notes"))
+    write(root / "data.jsonl", '{"id": "b.md", "text": "another record"}\n')
+    if freed:
+        indexing.index(catalog)  # by sift 1.11: the path free, and nothing said of it
+    catalog.close()
+    fresh = Catalog(home)  # opening the store upgrades it
+    indexing.index(fresh)
+    assert [hit["id"] for hit in Index(fresh).search("giraffe")] == ["notes/data/a.md"]
+    read, loaded = [], indexing._loaded
+    monkeypatch.setattr(indexing, "_loaded", lambda path, fields: read.append(path) or loaded(path, fields))
+    indexing.index(fresh)
+    assert read == []  # once
+    fresh.close()
+
+
+def as_sift_1_11_left_it(db):
+    """A store as sift 1.11 left it: nothing to say what waits for a path, and not yet upgraded."""
+    db.execute("DROP TABLE IF EXISTS waiting")
+    db.execute("DELETE FROM meta WHERE key = 'paths_waited'")
+    db.commit()
+
+
+def test_a_record_an_older_sift_left_out_of_a_file_that_kept_others_is_read_again_once(corpus, home):
+    # Its file has documents, so it isn't among those without: but another file's lie below its name.
+    catalog, root = corpus
+    write(root / "data" / "a.md", "# A\n\ngiraffe in the real file\n")
+    indexing.index(catalog)
+    write(root / "data.jsonl", '{"id": "a.md", "text": "zebra in the record"}\n{"id": "b.md", "text": "another"}\n')
+    write(root / "logs.jsonl", '{"id": "1", "text": "a log line"}\n')  # nothing below its name
+    indexing.index(catalog)
+    assert Index(catalog).search("zebra") == []  # the file keeps the path
+    as_sift_1_11_left_it(catalog.store("notes"))
+    catalog.close()
+    fresh = Catalog(home)  # opening the store upgrades it
+    marked = {p for (p,) in fresh.store("notes").execute("SELECT path FROM sources WHERE mtime IS NULL")}
+    assert marked == {"data.jsonl"}
+    (root / "data" / "a.md").unlink()
+    indexing.index(fresh)
+    assert [hit["id"] for hit in Index(fresh).search("zebra")] == ["notes/data/a.md"]
+    fresh.close()
+
+
+def test_an_attachment_an_older_sift_left_out_of_a_mail_that_kept_others_is_read_again_once(corpus, home):
+    # The mail's own document lies beside its name, its attachments below it, as the real file does.
+    catalog, root = corpus
+    write(root / "offer" / "contract.md", "# Contract\n\ngiraffe in the real file\n")
+    indexing.index(catalog)
+    attached = [
+        ("contract.md", b"# Contract\n\nzebra in the attachment\n", "text/markdown"),
+        ("notes.md", b"# Notes\n\nmore\n", "text/markdown"),
+    ]
+    email_file(root, name="offer.eml", subject="Offer", body="see the attachments", attachments=attached)
+    indexing.index(catalog)
+    assert Index(catalog).search("zebra") == []  # the file keeps the path
+    as_sift_1_11_left_it(catalog.store("notes"))
+    catalog.close()
+    fresh = Catalog(home)  # opening the store upgrades it
+    assert {p for (p,) in fresh.store("notes").execute("SELECT path FROM sources WHERE mtime IS NULL")} == {"offer.eml"}
+    fresh.close()
+
+
+def test_a_store_sift_may_only_read_opens_unmarked(corpus, home):
+    # sift 1.11 opened it; the marking, which writes, failed, and with it every search of the collection.
+    catalog, _ = corpus
+    as_sift_1_11_left_it(catalog.store("notes"))
+    path = catalog.get("notes").store
+    catalog.close()
+    os.chmod(path, stat.S_IREAD)
+    try:
+        if os.access(path, os.W_OK):  # root may write it anyway: nothing here to try
+            pytest.skip("this user may write a read-only file")
+        fresh = Catalog(home)
+        assert [hit["id"] for hit in Index(fresh).search("brush")] == ["notes/robots/brush.md"]
+        assert store.get_meta(fresh.store("notes"), "paths_waited") is None  # marked once sift may write
+        fresh.close()
+    finally:
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_a_document_the_index_refuses_for_another_reason_than_its_path_skips_its_file(corpus, monkeypatch, capsys):
+    catalog, root = corpus
+    write(root / "new.md", "# New\n")
+
+    def refuse(*args):
+        raise sqlite3.IntegrityError("CHECK constraint failed")
+
+    monkeypatch.setattr(indexing, "_insert", refuse)
+    indexing.index(catalog)
+    assert "notes: new.md: skipped (new.md: new.md: the index refused the document)" in capsys.readouterr().err
 
 
 def test_index_is_incremental(corpus, capsys):
@@ -583,3 +765,22 @@ def test_batches_hold_at_most_so_many_files_and_bytes(monkeypatch):
     todo = [(f"f{i}", f"f{i}", 0, size) for i, size in enumerate([10, 10, 10, 10, 95, 200, 1])]
     assert [[t[0] for t in b] for b in indexing._batches(todo)] == [["f0", "f1", "f2"], ["f3"], ["f4"], ["f5"], ["f6"]]
     assert indexing._batches([]) == []
+
+
+MAIL = "From: a@example.com\nSubject: {subject}\nDate: {date}\nContent-Type: text/plain; charset={charset}\n\n{body}\n"
+
+
+@pytest.mark.parametrize(
+    "date, charset, body",
+    [
+        ("Fri, 31 Dec 9999 23:00:00 -0500", "utf-8", "wombat"),  # past 9999 in UTC: the date stays as written
+        ("Fri, 1 Mar 2024 10:00:00 +0100", "utf-7", "wombat +2D0- half an emoji"),  # UTF-7 can encode half of one
+    ],
+)
+def test_a_mail_python_reads_oddly_is_indexed(corpus, date, charset, body):
+    # Both were skipped, the second on every run: a date Python couldn't move to UTC, a half character SQLite can't
+    # store.
+    catalog, root = corpus
+    write(root / "odd.eml", MAIL.format(subject="Odd", date=date, charset=charset, body=body))
+    indexing.index(catalog)
+    assert [hit["id"] for hit in Index(catalog).search("wombat")] == ["notes/odd.eml"]
