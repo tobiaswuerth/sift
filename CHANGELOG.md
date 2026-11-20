@@ -67,6 +67,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A store that was locked or damaged, or a call cancelled, was said as "invalid search query".
 - A bug that is a `KeyError` or an `IndexError` came out as a bare message (`error: 'fields'`); it is reported as a
   bug now, with its type, and its traceback on the command line and in the server's log.
+- On Windows, an index on a network share, or on a drive mapped to one, was made and then never opened again ("unable
+  to open database file"): `SIFT_HOME` there, `sift add --store`, `sift move`. SQLite refused the address of a file on
+  another machine as sift wrote it.
 
 ## [1.12.0] - 2026-11-17
 

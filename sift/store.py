@@ -162,7 +162,7 @@ def database(path, create=False) -> sqlite3.Connection:
     elif not path.is_file():
         raise FileNotFoundError(f"not found: {path}")
     else:
-        db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True, timeout=TIMEOUT, check_same_thread=False)
+        db = sqlite3.connect(uri(path.resolve(), "rw"), uri=True, timeout=TIMEOUT, check_same_thread=False)
     try:
         db.execute("PRAGMA journal_mode=WAL")
         db.execute(f"PRAGMA journal_size_limit={WAL_LIMIT}")
@@ -178,7 +178,17 @@ def database(path, create=False) -> sqlite3.Connection:
 def read_only(path) -> sqlite3.Connection:
     """The database at `path`, to read only, through a connection of its own: no setting changes, and no call
     cancelled meanwhile (ABORT) stops what it reads."""
-    return sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True, timeout=TIMEOUT)
+    return sqlite3.connect(uri(Path(path).resolve(), "ro"), uri=True, timeout=TIMEOUT)
+
+
+def uri(path, mode):
+    r"""The URI SQLite opens the file at the absolute `path` by, to read and write it ("rw") or to read it only ("ro").
+    A Windows network path, \\nas\share\x, as file:////nas/share/x: SQLite refuses a URI that names a host, as
+    Path.as_uri writes it (file://nas/share/x), and a drive mapped to a share resolves to its network path."""
+    written = path.as_uri()
+    if not written.startswith("file:///"):
+        written = "file:////" + written.removeprefix("file://")
+    return f"{written}?mode={mode}"
 
 
 DAMAGED = (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
@@ -250,7 +260,7 @@ def alone(path, name):
     """The store at `path` of the collection `name`, held so that no other sift reads or writes it until this ends;
     its write-ahead log is written into it first, so that the file holds it all. An error if another sift has it
     open."""
-    db = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=rw", uri=True, timeout=1, isolation_level=None)
+    db = sqlite3.connect(uri(Path(path).resolve(), "rw"), uri=True, timeout=1, isolation_level=None)
     try:
         db.execute("PRAGMA locking_mode=EXCLUSIVE")
         try:
