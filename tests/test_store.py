@@ -526,7 +526,7 @@ def test_the_last_part_is_what_follows_the_last_slash():
     db = sqlite3.connect(":memory:")
     try:
         for path in paths:
-            last = db.execute(f"SELECT {store.LAST_PART.format('?1')}", (path,)).fetchone()
+            last = db.execute(f"SELECT {store.LAST_PART.format(':path')}", {"path": path}).fetchone()
             assert last == (path.rsplit("/", 1)[-1],), path
     finally:
         db.close()
