@@ -485,7 +485,7 @@ def test_an_environment_of_uv_s_without_pip_is_upgraded_by_hand(environment):
 
 
 def test_an_environment_uvx_made_is_upgraded_by_running_the_latest(tmp_path):
-    prefix = tmp_path / "uv" / "cache" / "archive-v0" / "LlpPUUeq7viLPQ4-"  # where `uvx sift-rag` keeps one
+    prefix = tmp_path / "uv" / "cache" / "archive-v0" / "0example0archive0"  # where `uvx sift-rag` keeps one
     (prefix / "Lib" / "site-packages" / "sift").mkdir(parents=True)
     (prefix / "pyvenv.cfg").write_text("uv = 0.13.9\nrelocatable = true\n", encoding="utf-8")
     command = update.upgrade_command(prefix, prefix / "Lib" / "site-packages" / "sift" / "update.py", pip=False)

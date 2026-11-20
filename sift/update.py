@@ -6,9 +6,11 @@ in a terminal, never `serve` or `worker`, nor with SIFT_UPDATE_CHECK=off or offl
 update. On yes it stops, and a process of its own (`finish`), on the base Python, waits until no sift of this
 installation runs any more, upgrades it as it was installed (uv tool, pipx or pip), logged in
 SIFT_HOME/logs/update-DATE.log, and leaves how it went for the next command to say. Waiting matters on Windows, where a
-running sift holds its installation's files: uv, replacing them under a running `sift serve`, failed halfway. An
+running sift holds its installation's files: uv, replacing them under a running `sift serve`, failed halfway. While
+the installer runs, update.json says so, and any command of the installation that starts then stops with one line. An
 update whose process is gone before it was done, as a restart of the machine ends it, is said and offered again. A
-new major version is only told of, with its changelog, as it may need care.
+new major version is only told of, with its changelog, as it may need care; so is a newer sift that sift can't
+install itself, with the command: in an environment without pip, or an installation the user may not write.
 
 update.json is this module's alone, written whole; deleting it only makes the next command check again."""
 
