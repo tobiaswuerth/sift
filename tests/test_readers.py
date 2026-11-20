@@ -3,6 +3,7 @@ reader (see test_documents.py for the contract they all keep, and test_jsonl.py 
 
 import json
 import random
+from types import SimpleNamespace
 
 import pytest
 
@@ -194,22 +195,29 @@ def test_chunk_breaks_unbroken_text():
     assert [len(c[2]) for c in chunks] == [readers.CHUNK_CHARS, readers.CHUNK_CHARS, 10]
 
 
-def test_chunk_breaks_a_long_line_in_time_linear_in_its_length():
+def test_chunk_breaks_a_long_line_in_time_linear_in_its_length(monkeypatch):
     # Each piece cut off copied the rest of the line: 16 MB on one line, a log or a dump, took 8 seconds, 100 MB about
-    # five minutes, holding up `sift index` or a server's reindex. Four times the text, four times the time.
-    import time
+    # five minutes, holding up `sift index` or a server's reindex. What takes the time is counted, not the time: beside
+    # the other tests' processes, four times the text once took 8.35 times as long.
+    copied, searched = [], []  # the characters each step copies out of the line, and those it searches for a space
 
-    def took(n):
-        text, best = "y" * n, float("inf")
-        for _ in range(3):
-            start = time.perf_counter()
-            found = list(readers.chunk(text))
-            best = min(best, time.perf_counter() - start)
-        assert len(found) == -(-n // readers.CHUNK_CHARS)
-        assert (found[0][2], found[-1][2] + found[-1][3]) == (0, n)  # the whole line, in pieces
-        return best
+    class Line(str):
+        def __getitem__(self, key):
+            part = Line(super().__getitem__(key))  # counting as well: the rest of a line, cut again
+            copied.append(len(part))
+            return part
 
-    assert took(8 << 20) < 8 * took(2 << 20)
+        def rfind(self, sub, start=None, end=None):
+            searched.append(len(range(*slice(start, end).indices(len(self)))))
+            return super().rfind(sub, start, end)
+
+    lines, n = readers.LINE.findall, 100 * readers.CHUNK_CHARS + 10
+    monkeypatch.setattr(readers, "LINE", SimpleNamespace(findall=lambda text: [Line(line) for line in lines(text)]))
+    found = list(readers.chunk("y" * n))
+    assert len(found) == -(-n // readers.CHUNK_CHARS)
+    assert (found[0][2], found[-1][2] + found[-1][3]) == (0, n)  # the whole line, in pieces
+    assert sum(copied) == n  # each character once, into its piece: not the rest of the line with every piece
+    assert sum(searched) <= n  # and looked at once at most, for a space to break at
 
 
 # --- files -------------------------------------------------------------------
