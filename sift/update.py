@@ -133,7 +133,7 @@ def offer(command: str, streams: Sequence[TextIO] | None = None) -> None:
     streams = streams or (sys.stdin, sys.stdout, sys.stderr)
     if command in QUIET or not settings.current().update_check:
         return
-    if not all(stream.isatty() for stream in streams):
+    if not all(stream is not None and stream.isatty() for stream in streams):  # None: pythonw has no streams
         return
     if pending and not _runs(pending["pid"]):
         state = _stopped(path, pending)

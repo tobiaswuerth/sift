@@ -394,17 +394,31 @@ def test_ctrl_c_exits_quietly(home, monkeypatch):
 def test_a_non_utf8_stream_is_switched_to_utf8(cli_corpus, monkeypatch, stream):
     # stderr too: what sift says names files and titles, and came out of a Windows pipe with its "ü" unreadable, beside
     # results in UTF-8.
-    class LegacyConsole(io.StringIO):
-        encoding = "cp1252"
-        reconfigured = None
-
-        def reconfigure(self, **kwargs):
-            self.reconfigured = kwargs
-
-    out = LegacyConsole()
-    monkeypatch.setattr(sys, stream, out)
+    legacy = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, stream, legacy)
     cli.main(["status"])
-    assert out.reconfigured == {"encoding": "utf-8"}
+    assert legacy.encoding == "utf-8"
+
+
+@pytest.mark.parametrize("stream, said", [("stdout", '"name": "notes"'), ("stderr", "added collection 'notes'")])
+def test_a_stream_that_encodes_nothing_is_left_as_it_is(notes, home, monkeypatch, stream, said):
+    # As contextlib.redirect_stdout(io.StringIO()) installs it, or a program that runs sift within itself: it takes
+    # text, so it has no encoding to switch and no reconfigure(), and every command ended in an AttributeError.
+    taken = io.StringIO()
+    monkeypatch.setattr(sys, stream, taken)
+    cli.main(["add", str(notes)])
+    cli.main(["status"])
+    assert said in taken.getvalue()
+
+
+def test_without_streams_a_command_runs(notes, home, monkeypatch, capsys):
+    # pythonw has none, nor has a Windows program without a console: stdin, stdout and stderr are None, which print()
+    # takes for nothing to say it to. Every command ended in an AttributeError.
+    with monkeypatch.context() as pythonw:
+        for stream in ("stdin", "stdout", "stderr"):
+            pythonw.setattr(sys, stream, None)
+        cli.main(["add", str(notes)])
+    assert [c["name"] for c in json.loads(run(capsys, "status").out)["collections"]] == ["notes"]
 
 
 class Gone(io.StringIO):

@@ -258,6 +258,7 @@ def test_a_first_command_asks_pypi(installed, home):
         ("worker", TERMINAL, True),
         ("status", (Pipe(), Terminal(), Terminal()), True),
         ("status", (Terminal(), Pipe(), Terminal()), True),
+        ("status", (None, None, None), True),  # as pythonw has them: asked for a terminal, a command ended there
         ("status", TERMINAL, False),
     ],
 )
