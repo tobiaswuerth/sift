@@ -290,7 +290,8 @@ def test_a_running_sift_holds_its_environment_s_python_and_launcher(tmp_path, mo
 
 
 @pytest.mark.parametrize(
-    "platform, apart", [("win32", {"creationflags": 0x208}), ("linux", {"start_new_session": True})]
+    "platform, apart",
+    [("win32", {"creationflags": 0x08000200}), ("linux", {"start_new_session": True})],  # Windows: a hidden console
 )
 def test_a_process_started_outlives_this_one_without_its_terminal(monkeypatch, platform, apart):
     started = []

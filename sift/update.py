@@ -30,7 +30,9 @@ WAIT = 7 * DAY  # seconds an update waits, at most, for the sifts of its install
 POLL = 1.0  # seconds between looks whether they stopped
 RUN = 30 * 60  # seconds the upgrade may take
 QUIET = ("serve", "worker")  # servers, often started by scripts and services: they never ask
-DETACHED = 0x00000008 | 0x00000200  # Windows' DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: no terminal, no Ctrl+C
+# Windows' CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: a console of its own, hidden, which the programs it runs share,
+# and no Ctrl+C. Detached from any console (DETACHED_PROCESS), each program it ran opened a window of its own.
+HIDDEN = 0x08000000 | 0x00000200
 SYNCHRONIZE, WAIT_TIMEOUT = 0x00100000, 0x00000102  # Windows: the right to wait for a process; "still running"
 
 
@@ -141,7 +143,7 @@ def start(args, platform=sys.platform):
     Returns the process, which no one need wait for."""
     root = str(Path(__file__).resolve().parents[1])
     code = "import sys; sys.path.insert(0, sys.argv[1]); from sift import update; update.main(sys.argv[2:])"
-    apart = {"creationflags": DETACHED} if platform == "win32" else {"start_new_session": True}
+    apart = {"creationflags": HIDDEN} if platform == "win32" else {"start_new_session": True}
     python = getattr(sys, "_base_executable", None) or sys.executable
     devnull = subprocess.DEVNULL
     command = [python, "-I", "-B", "-c", code, root, *args]
