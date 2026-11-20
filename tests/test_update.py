@@ -451,12 +451,17 @@ def test_sift_run_from_its_source_has_no_upgrade(environment, tmp_path):
 def test_a_running_sift_holds_its_environment_s_python_and_launcher(tmp_path, monkeypatch):
     launcher = tmp_path / "sift.exe"
     launcher.write_bytes(b"")
-    monkeypatch.setattr(sys, "argv", [str(launcher), "status"])
+    # As a launcher of pip's or uv's leaves sys.argv[0]: it cuts ".exe" off before sift starts, so the name as it is
+    # never ended in it, and a sift outside a virtual environment held nothing the update waited for.
+    monkeypatch.setattr(sys, "argv", [str(tmp_path / "sift"), "status"])
     monkeypatch.setattr(sys, "prefix", str(tmp_path / "env"))
     monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "python"))
     assert update.held_files() == [update.Path(sys.executable), launcher]
     monkeypatch.setattr(sys, "base_prefix", sys.prefix)  # no virtual environment
-    monkeypatch.setattr(sys, "argv", [str(tmp_path / "sift"), "status"])
+    assert update.held_files() == [launcher]
+    monkeypatch.setattr(sys, "argv", [str(launcher), "status"])  # a launcher that leaves its name whole
+    assert update.held_files() == [launcher]
+    monkeypatch.setattr(sys, "argv", [str(tmp_path / "sift" / "__main__.py"), "status"])  # python -m sift: none
     assert update.held_files() == []
 
 

@@ -163,10 +163,12 @@ def upgrade_command(prefix=None, package=None, which=shutil.which):
 
 def held_files():
     """The files a running sift of this installation holds open on Windows, which an upgrade replaces: its virtual
-    environment's Python, and the launcher it was started by."""
+    environment's Python, and the launcher it was started by, sift.exe, whose name pip's and uv's launchers leave in
+    sys.argv[0] without the ".exe"."""
     files = [Path(sys.executable)] if sys.prefix != sys.base_prefix else []
-    launcher = Path(sys.argv[0])
-    return files + ([launcher] if launcher.suffix.lower() == ".exe" and launcher.is_file() else [])
+    started = sys.argv[0]
+    launcher = Path(started if started.lower().endswith(".exe") else f"{started}.exe")
+    return files + ([launcher] if launcher.is_file() else [])
 
 
 def start(args, platform=sys.platform):
