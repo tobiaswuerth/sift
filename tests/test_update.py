@@ -425,14 +425,20 @@ def test_a_state_that_stays_refused_is_an_error_and_leaves_nothing_behind(home, 
 
 def test_commands_at_once_read_and_change_the_state_without_error(home):
     # On Windows a read and a replace at the same moment refuse each other: of 3,000 changes beside two readers,
-    # 2,591 failed, and 1,295 reads.
-    path, errors, done = home / "update.json", [], threading.Event()
+    # 2,591 failed, and 1,295 reads. Each round a change and two readers start at once; the readers read a few times
+    # and rest until the next, as commands do. Two that read without rest left the file free so seldom that a change
+    # on a slow machine was refused for the whole second it has, which no two commands do to each other.
+    path, errors, at_once = home / "update.json", [], threading.Barrier(3, timeout=60)
     update.change(path, checked=0.0)
 
     def reading():
-        while not done.is_set():
+        while True:
             try:
-                assert "checked" in update.read(path)
+                at_once.wait()
+                for _ in range(10):
+                    assert "checked" in update.read(path)
+            except threading.BrokenBarrierError:  # the test is over
+                return
             except Exception as error:  # handed to the test
                 errors.append(error)
 
@@ -441,9 +447,10 @@ def test_commands_at_once_read_and_change_the_state_without_error(home):
         reader.start()
     try:
         for n in range(100):
+            at_once.wait()
             update.change(path, checked=float(n))
     finally:
-        done.set()
+        at_once.abort()
         for reader in readers:
             reader.join()
     assert errors == []
