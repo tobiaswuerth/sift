@@ -124,11 +124,8 @@ def _path(rel, doc):
 
 
 SCANS_SKIPPED = "scans_skipped"  # in a store's meta table: the SIFT_OCR under which a scan was last left unread
-OCR_READS = {
-    "off": 0,
-    "auto": 1,
-    "on": 2,
-}  # how far each SIFT_OCR reads: on every scan auto does, auto every one off does
+# How far each SIFT_OCR reads: on, every scan auto reads; auto, every one off does
+OCR_READS = {"off": 0, "auto": 1, "on": 2}
 
 
 def _read_skipped_scans(db):
