@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 import sift
-from sift import __version__, cli, embed, models, remote, store, worker
+from sift import __version__, cli, embed, models, remote, search, store, worker
 from sift.search import Index
 
 from .conftest import Client, FakeSentenceTransformer, NumpyModels, fake_vector, nobody_listens
@@ -94,6 +94,27 @@ def test_the_models_run_on_the_main_thread(client, fake_models, monkeypatch, pat
 def test_the_worker_refuses_malformed_requests(client, path, content):
     response = client.post(path, content=content, headers={"Content-Type": "application/json"})
     assert response.status_code == 400
+
+
+def test_a_request_from_an_address_the_server_doesnt_know_is_served(fake_models, capsys):
+    # The status line named the client's address, which an ASGI server need not give: the request failed.
+    c = Client(worker.app(TOKEN, fake_models), headers={"Authorization": f"Bearer {TOKEN}"}, client=None)
+    assert post(c, "/embed", {"texts": ["a"]}).status_code == 200
+    assert "(last for an unknown address)" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("path, payload", [("/embed", {}), ("/rerank", {"query": "q"})])
+def test_the_worker_refuses_more_texts_than_a_sift_sends(client, monkeypatch, path, payload):
+    # A request of a million texts held the GPU, and the memory of its answer, for as long as it took.
+    monkeypatch.setattr(remote, "MOST_TEXTS", 3)
+    response = post(client, path, payload | {"texts": ["a"] * 4})
+    assert (response.status_code, response.text) == (413, "send at most 3 texts at a time, not 4")
+    assert post(client, path, payload | {"texts": ["a"] * 3}).status_code == 200
+
+
+def test_a_worker_takes_every_request_a_sift_makes():
+    # `query` reranks its keyword and its semantic candidates in one request, MOST_HITS of each at most.
+    assert max(2 * search.MOST_HITS, remote.BATCH) <= remote.MOST_TEXTS
 
 
 @pytest.mark.parametrize("authorization", [None, "Bearer wrong", f"Basic {TOKEN}", TOKEN])

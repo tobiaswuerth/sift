@@ -106,10 +106,15 @@ def app(token, models):
             if not hmac.compare_digest(request.headers.get("authorization", "").encode(), expected):
                 return PlainTextResponse("wrong key", status_code=401)
             response = await handler(request)
-            line.show(status.format(**done, host=request.client.host))
+            line.show(status.format(**done, host=request.client.host if request.client else "an unknown address"))
             return response
 
         return endpoint
+
+    def too_many(texts):
+        """The answer to a request of more texts than a sift sends at once (remote.MOST_TEXTS), which would hold the
+        GPU, and the memory of its answer, for as long as it took."""
+        return PlainTextResponse(f"send at most {remote.MOST_TEXTS:,} texts at a time, not {len(texts):,}", 413)
 
     @authorized
     async def info(request):
@@ -122,6 +127,8 @@ def app(token, models):
         body = await _json(request)
         if not _texts(texts := body.get("texts")):
             return PlainTextResponse('send {"texts": [...], "query": false}', status_code=400)
+        if len(texts) > remote.MOST_TEXTS:
+            return too_many(texts)
         vectors = models.encode(texts, bool(body.get("query")))
         done["texts"] += len(texts)
         return Response(vectors.tobytes(), media_type="application/octet-stream")
@@ -131,6 +138,8 @@ def app(token, models):
         body = await _json(request)
         if not (isinstance(query := body.get("query"), str) and _texts(texts := body.get("texts"))):
             return PlainTextResponse('send {"query": "...", "texts": [...]}', status_code=400)
+        if len(texts) > remote.MOST_TEXTS:
+            return too_many(texts)
         scores = models.rerank(query, texts)
         done["queries"] += 1
         return JSONResponse({"scores": [float(s) for s in scores]})

@@ -81,6 +81,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `reindex` and `sift index --files` failed the whole call, every file of it left as it was, when the index refused
   one file's text, as text over SQLite's limit of 1 GB. That file is "unreadable" now, with why, and stays as it was
   indexed; the others are read, as `sift index` reads them.
+- `sift worker` failed a request whose sender's address the server didn't give, and took any number of texts in one,
+  holding the GPU for as long as a request of millions took. It takes at most 20,000, twice what a `query` reranks.
 
 ## [1.12.0] - 2026-11-17
 
