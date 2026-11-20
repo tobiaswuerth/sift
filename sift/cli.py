@@ -293,6 +293,8 @@ def main(argv=None):
         _offer_update(a.cmd)
         with logs.kept(a.cmd, datetime.now()) if a.cmd in logs.LOGGED else contextlib.nullcontext():
             _command(a)
+    except (KeyError, IndexError):  # LookupErrors too, but a bug's: its traceback finds it, "error: 'fields'" doesn't
+        raise
     except (LookupError, ValueError, OSError, sqlite3.Error) as e:
         raise SystemExit(f"error: {e}") from None
     except KeyboardInterrupt:

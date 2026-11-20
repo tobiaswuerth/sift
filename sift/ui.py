@@ -42,6 +42,7 @@ PROBE_SECONDS = 5  # how long `sift ui` waits for a server on its port to answer
 # alone, without the page around it, on the way back to the address. Nor do the documents' texts belong in its cache.
 UNKEPT = {"Cache-Control": "no-store"}
 ERRORS = (LookupError, ValueError, ConnectionError, sqlite3.Error)  # what a view shows, as the MCP tools say it
+BUGS = (KeyError, IndexError)  # LookupErrors too, but never what sift says of a view: the server's error page, logged
 
 
 @dataclass(frozen=True)
@@ -247,6 +248,8 @@ def _explore(index, view, pattern):
         for note, label, name in ((view.to, "Linking to", "to"), (view.by, "Linked from", "by")):
             if note:
                 context["linking"].append((f"{label} {_title(index, note)}", view.href(**{name: ""}, k=PAGE)))
+    except BUGS:
+        raise
     except ERRORS as e:
         context["error"] = str(e)
     found = context["hits"]
@@ -301,6 +304,8 @@ def _reader(index, view, pattern):
         document = index.document(view.doc, fields=["*"])
         path = index.file(document["id"])
         into, out = index.link_count(document["id"])
+    except BUGS:
+        raise
     except ERRORS as e:
         return {"error": str(e)}
     listing = {"q": "", "similar": "", "c": "", "path": "", "f": (), "k": PAGE}  # all of them, wherever they are

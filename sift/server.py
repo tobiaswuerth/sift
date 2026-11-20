@@ -79,13 +79,20 @@ async def _run(fn, *args, abortable=True, **kwargs):
 def _call(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
+    except (KeyError, IndexError) as e:  # LookupErrors too, but a bug's, never what sift says of a call
+        raise _bug(e) from None
     except (LookupError, ValueError, ConnectionError, sqlite3.Error, jobs.Cancelled) as e:  # ConnectionError: the
         raise ToolError(str(e)) from None  # embedding remote; sqlite3.Error and Cancelled: a call cancelled, too
     except SystemExit as e:  # a store that refuses to open, as a newer sift's: the call fails, not the server
         raise ToolError(str(e.code)) from None
     except Exception as e:
-        log.exception("tool failed")
-        raise ToolError(f"{type(e).__name__}: {e}") from None
+        raise _bug(e) from None
+
+
+def _bug(error):
+    """What to tell the agent of an error that is a bug, being handled now: its type too, and its traceback logged."""
+    log.exception("tool failed")
+    return ToolError(f"{type(error).__name__}: {error}")
 
 
 # What agents see of each parameter: they read the tools' schemas, not sift's code.

@@ -631,6 +631,20 @@ def test_a_document_of_several_takes_only_id_and_lines(mcp):
     assert "line" in result.content[0].text
 
 
+@pytest.mark.parametrize("bug", [KeyError("fields"), IndexError("list index out of range")])
+def test_a_bug_that_is_a_lookup_error_is_logged_as_a_bug(embedded, monkeypatch, caplog, bug):
+    # Both are LookupErrors, as "unknown document ..." is: the agent got "'fields'", and the log nothing.
+    def broken(*args, **kwargs):
+        raise bug
+
+    index = Index(embedded[0])
+    monkeypatch.setattr(index, "search", broken)
+    result = call(server.build(index)[0], "search", {"query": "x"})
+    assert result.is_error
+    assert f"{type(bug).__name__}: " in result.content[0].text  # after the library's "Error executing tool search: "
+    assert "Traceback" in caplog.text
+
+
 def test_unexpected_errors_reach_the_agent_too(embedded, monkeypatch, caplog):
     # A bug is still an error the agent should see: "Error executing tool search" alone says nothing.
     index = Index(embedded[0])

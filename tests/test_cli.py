@@ -367,6 +367,18 @@ def test_database_errors_are_messages(home, monkeypatch):
         cli.main(["index"])
 
 
+@pytest.mark.parametrize("bug", [KeyError("fields"), IndexError("list index out of range")])
+def test_a_bug_is_no_message(home, monkeypatch, bug):
+    # Both are LookupErrors, as "no collection named ..." is: a bug came out as "error: 'fields'", with nothing to
+    # find it by.
+    def broken(*args):
+        raise bug
+
+    monkeypatch.setattr(indexing, "index", broken)
+    with pytest.raises(type(bug)):
+        cli.main(["index"])
+
+
 def test_ctrl_c_exits_quietly(home, monkeypatch):
     def interrupted(*args):
         raise KeyboardInterrupt

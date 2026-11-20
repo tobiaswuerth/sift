@@ -392,6 +392,18 @@ def test_errors_show_in_place(browser, params, message):
     assert re.search(r'<p class="error">[^<]*' + re.escape(html.escape(message, quote=True)), response.text)
 
 
+@pytest.mark.parametrize("params, broken", [({"q": "brush"}, "search"), ({"doc": BRUSH}, "document")])
+def test_a_bug_is_no_error_to_show_in_place(embedded, monkeypatch, params, broken):
+    # A KeyError is a LookupError, as "unknown document ..." is: the page showed "'fields'", and the log nothing.
+    def bug(*args, **kwargs):
+        raise KeyError("fields")
+
+    index = Index(embedded[0])
+    monkeypatch.setattr(index, broken, bug)
+    with pytest.raises(KeyError):  # which the server answers with its error page, and logs
+        page(index).get("/ui/", params=params)
+
+
 def test_searching_by_meaning_needs_embeddings(corpus, fake_models):
     response = page(Index(corpus[0])).get("/ui/", params={"q": "brush", "mode": "vsearch"})
     assert "no embeddings yet" in response.text
