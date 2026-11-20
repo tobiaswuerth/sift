@@ -176,8 +176,9 @@ AllPassages = Annotated[
 Sort = Annotated[
     str | None,
     Field(
-        description='Order the results by a front-matter field instead of by score, with "-" first for descending, '
-        'e.g. "-created" for the newest first; results without the field come last.'
+        description='Order the k results by a front-matter field instead of by score, with "-" first for descending, '
+        'e.g. "-created" for the newest first; results without the field come last. It orders the best k, not every '
+        'match: for the newest of all, filter on a range too, e.g. {"created": {">=": "2026"}}.'
     ),
 ]
 Adaptive = Annotated[

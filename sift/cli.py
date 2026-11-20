@@ -225,7 +225,8 @@ def main(argv=None):
         s.add_argument(
             "--sort",
             metavar="FIELD",
-            help="order by a front-matter field instead of score; --sort=-created: newest first",
+            help="order the k results by a front-matter field instead of score; --sort=-created: newest first. It "
+            "orders the best k, not every match: for the newest of all, filter on a range too",
         )
         s.add_argument(
             "--links-to",

@@ -1101,7 +1101,7 @@ class Index:
 
     # Every search returns the best passage of each document it finds, or with `all_passages` every passage, and
     # takes `fields`, front-matter fields to add to each hit (["*"] for all), `compact`, which leaves out the text,
-    # and `sort`, a front-matter field to order the hits by instead of score ("-created": newest first). With
+    # and `sort`, a front-matter field to order the k hits found by instead of score ("-created": newest first). With
     # `adaptive`, k is the most hits returned: those before the largest drop in score, and a few more (see _adaptive).
     # Without a `collection`, a search covers every active one.
 

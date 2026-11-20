@@ -111,7 +111,7 @@ The commands' options; the MCP tools take the same as parameters (`k`, `collecti
 | `--fields a,b` | Front-matter fields to show with each hit, or `*` for all |
 | `--compact` | Results without their text |
 | `--all-passages` | Every matching passage, several per document |
-| `--sort=-created` | Order by a front-matter field instead of score; `-` for descending |
+| `--sort=-created` | Order the `k` results by a front-matter field instead of score; `-` for descending. It orders the best `k`, not every match: for the newest of all, filter on a range too (`-f created>=2026`) |
 | `--links-to`, `--linked-from` | Only documents linking to a note, or linked from it ([Linked notes](#linked-notes)) |
 | `--adaptive` | Only the results before the largest drop in score, and five more, up to `k` |
 | `--budget SECONDS` | `search` only: stop after about this long, once anything is found, with the hits marked `partial` |
@@ -231,7 +231,7 @@ tables and columns in reading order; their metadata says `ocr`.
 ### Emails
 
 A `.eml` is a document titled by its subject, with `From`, `To`, `Cc` and `Date` above its plain text (else its HTML as
-Markdown). Its metadata: `from`, `to`, `cc` (bare addresses), `date` (ISO 8601, UTC), `message_id`, `in_reply_to`,
+Markdown). Its metadata: `from`, `to`, `cc` (bare addresses), `date` (ISO 8601, in UTC where the mail gives its time zone), `message_id`, `in_reply_to`,
 `attachments`.
 
 Each attachment sift can read is a document below the mail: `mail/2026/offer.eml` holds `mail/2026/offer/contract.pdf`.

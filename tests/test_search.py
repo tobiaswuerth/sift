@@ -1519,6 +1519,17 @@ def test_sort_in_every_mode(dated, mode):
     assert [day(h) for h in hits] == DAYS[1:][::-1]
 
 
+def test_sort_orders_the_k_best_not_every_match(corpus):
+    # As the docs say now: they read as if the newest of every match came first. A range filter finds those.
+    catalog, root = corpus
+    write(root / "s" / "old.md", "---\ncreated: 2001\n---\n# Old\nledger ledger ledger ledger\n")
+    write(root / "s" / "new.md", "---\ncreated: 2026\n---\n# New\nledger among many other words of a longer note\n")
+    indexing.index(catalog)
+    index = Index(catalog)
+    assert [day(h) for h in index.search("ledger", k=1, sort="-created")] == ["old"]
+    assert [day(h) for h in index.search("ledger", k=1, filters={"created": {">=": 2026}})] == ["new"]
+
+
 def test_sort_puts_numbers_before_text(corpus):
     catalog, root = corpus
     for name, rank in (("a", "2"), ("b", '"x"'), ("c", "10"), ("d", "null")):
