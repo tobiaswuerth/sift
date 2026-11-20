@@ -40,16 +40,22 @@ SYNCHRONIZE, WAIT_TIMEOUT = 0x00100000, 0x00000102  # Windows: the right to wait
 def offer(command, streams=None):
     """Before a command: say how an update went, offer a newer sift once per version, and start the day's check. Only
     in a terminal, never for QUIET commands, with SIFT_UPDATE_CHECK=off or offline, nor for a sift run from its
-    source, which git updates."""
+    source, which git updates. But any command of an installed sift, wherever it runs, stops while the installer
+    replaces sift's files (see _upgrading)."""
     upgrade = upgrade_command()
-    streams = streams or (sys.stdin, sys.stdout, sys.stderr)
-    if command in QUIET or not settings.current().update_check or upgrade is None:
-        return
-    if not all(stream.isatty() for stream in streams):
+    if upgrade is None:
         return
     path = state_path()
     state = read(path)
-    if (pending := state.get("pending")) and not _runs(pending["pid"]):
+    pending = state.get("pending")
+    if pending and _upgrading(pending):
+        raise SystemExit(f"sift is being updated to {pending['version']} right now: run this again in a moment")
+    streams = streams or (sys.stdin, sys.stdout, sys.stderr)
+    if command in QUIET or not settings.current().update_check:
+        return
+    if not all(stream.isatty() for stream in streams):
+        return
+    if pending and not _runs(pending["pid"]):
         state = _stopped(path, pending)
     if result := state.get("result"):
         console.say(_outcome(result))
@@ -64,6 +70,14 @@ def offer(command, streams=None):
     if time.time() - state.get("checked", 0) >= DAY:
         change(path, checked=time.time())  # first: commands started meanwhile start no check of their own
         start(["check", str(path)])
+
+
+def _upgrading(pending):
+    """Whether the installer replaces sift's files right now: the pending update says so (since when), its process
+    runs, and the time an upgrade may take isn't up, after which the process is another's that got its id. A command
+    started then ran on files half replaced, or held one the installer was about to replace; and `y` stopped the
+    command typed, so the next comes at once."""
+    return pending["upgrading"] and time.time() - pending["since"] < RUN and _runs(pending["pid"])
 
 
 def _stopped(path, pending):
@@ -111,10 +125,10 @@ def _schedule(path, latest, upgrade):
     """Start the process that updates sift once no sift of this installation runs, and stop this one. The update
     waits only once its process runs: one that can't be started leaves none waiting."""
     log = settings.current().home / "logs" / f"update-{datetime.now():%Y-%m-%d_%H%M%S}.log"
-    held = [str(f) for f in held_files()]
-    spec = {"version": latest, "command": upgrade, "pid": os.getpid(), "held": held, "log": str(log)}
+    held, since = [str(f) for f in held_files()], time.time()
+    spec = {"version": latest, "command": upgrade, "since": since, "pid": os.getpid(), "held": held, "log": str(log)}
     updating = start(["finish", json.dumps(spec)])
-    change(path, pending={"version": latest, "since": time.time(), "pid": updating.pid})
+    change(path, pending={"version": latest, "since": since, "pid": updating.pid, "upgrading": False})
     console.say(
         f"sift updates to {latest} as soon as no sift of this installation runs any more: this one stops now; stop "
         "any `sift serve` and `sift worker` too. The next command says how it went."
@@ -192,14 +206,21 @@ def check(path):
 
 def finish(spec, platform=sys.platform, kernel32=None):
     """Wait, at most WAIT, until the sift that asked has stopped, and on Windows every other of its installation too
-    (`held` files free); then run the upgrade, logged, and keep how it went for the next command to say."""
+    (`held` files free); then run the upgrade, logged, and keep how it went for the next command to say. Before it
+    upgrades, the state says so, which stops the commands started from then on (see offer); a sift started just
+    before runs, and is waited for too."""
     path, log = state_path(), Path(spec["log"])
     log.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.perf_counter() + WAIT
-    while _running(spec, platform, kernel32):
-        if time.perf_counter() >= deadline:
-            return _finished(path, spec, False, "a sift of this installation kept running for a week")
-        time.sleep(POLL)
+    deadline, waited = time.perf_counter() + WAIT, False
+    while not waited:
+        while _running(spec, platform, kernel32):
+            if time.perf_counter() >= deadline:
+                return _finished(path, spec, False, "a sift of this installation kept running for a week")
+            time.sleep(POLL)
+        _say_upgrading(path, spec, True)
+        waited = not _running(spec, platform, kernel32)
+        if not waited:
+            _say_upgrading(path, spec, False)
     with open(log, "w", encoding="utf-8") as out:
         out.write(f"{console.command(*spec['command'])}\n")
         out.flush()
@@ -212,6 +233,13 @@ def finish(spec, platform=sys.platform, kernel32=None):
         else:
             how = f"exit code {code}"
     _finished(path, spec, code == 0, how)
+
+
+def _say_upgrading(path, spec, now):
+    """Keep in the state whether this process upgrades sift `now`, since this moment, or waits still, as it has since
+    the update was agreed to."""
+    since = time.time() if now else spec["since"]
+    change(path, pending={"version": spec["version"], "since": since, "pid": os.getpid(), "upgrading": now})
 
 
 def _finished(path, spec, ok, how):
@@ -287,8 +315,9 @@ SHAPES = {  # what update.json holds, each entry of the type given, or a dict of
     "latest": str,  # its latest version then
     "failed": str,  # why it couldn't be asked, if it couldn't
     "asked": str,  # the latest version offered, once
-    # an update waiting for the sifts of its installation to stop, and the process that waits and then updates
-    "pending": {"version": str, "since": NUMBER, "pid": int},
+    # an update waiting, since then, for the sifts of its installation to stop, and the process that waits and then
+    # updates; or, once it does, `upgrading` since then
+    "pending": {"version": str, "since": NUMBER, "pid": int, "upgrading": bool},
     "result": {"version": str, "ok": bool, "log": str},  # how it went, for the next command to say
 }
 

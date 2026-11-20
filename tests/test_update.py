@@ -24,7 +24,8 @@ UPDATER = 4321  # the process `installed` starts to update
 def waiting(pid=None, **more):
     """An update that waits for the sifts of its installation to stop, its process `pid`: by default this one, which
     runs."""
-    return {"version": NEWER, "since": time.time(), "pid": os.getpid() if pid is None else pid} | more
+    pending = {"version": NEWER, "since": time.time(), "pid": os.getpid() if pid is None else pid, "upgrading": False}
+    return pending | more
 
 
 class Terminal:
@@ -102,7 +103,8 @@ def test_yes_starts_the_update_and_stops_the_command(installed, home, monkeypatc
     assert spec["command"] == [str(home / "uv"), "tool", "upgrade", "sift-rag"]
     assert spec["log"].startswith(str(home / "logs" / "update-"))
     pending = kept(home)["pending"]
-    assert (pending["version"], pending["pid"]) == (NEWER, UPDATER)
+    assert (pending["version"], pending["pid"], pending["upgrading"]) == (NEWER, UPDATER, False)
+    assert spec["since"] == pending["since"]
 
 
 def test_an_update_that_can_t_be_started_leaves_none_waiting(installed, home, monkeypatch):
@@ -122,6 +124,34 @@ def test_while_an_update_waits_it_is_said(installed, home, capsys):
     update.offer("status", TERMINAL)
     assert f"sift updates to {NEWER} once no sift of this installation runs" in capsys.readouterr().err
     assert installed == []  # nor checks meanwhile
+
+
+@pytest.mark.parametrize(
+    "command, streams, check",
+    [
+        ("status", TERMINAL, True),
+        ("serve", TERMINAL, True),
+        ("search", (Pipe(), Pipe(), Pipe()), True),
+        ("index", TERMINAL, False),
+    ],
+)
+def test_a_command_started_while_sift_is_upgraded_stops(installed, home, configure, command, streams, check):
+    # The installer replaces sift's files just then: a command running on them fails halfway, or makes the upgrade
+    # fail. And `y` stopped the command typed, so it is typed again at once.
+    configure(update_check=check)
+    keep(home, pending=waiting(upgrading=True))
+    with pytest.raises(SystemExit, match=f"sift is being updated to {NEWER} right now: run this again in a moment"):
+        update.offer(command, streams)
+    assert kept(home)["pending"]["upgrading"]
+
+
+def test_an_upgrade_whose_process_is_gone_stops_no_command(installed, home, monkeypatch, capsys):
+    keep(home, latest=NEWER, checked=time.time(), asked=NEWER, pending=waiting(NO_PROCESS, upgrading=True))
+    update.offer("serve", TERMINAL)  # nor says anything: a server asks nothing
+    assert capsys.readouterr().err == ""
+    answer(monkeypatch, "n\n")
+    update.offer("status", TERMINAL)
+    assert f"the update to {NEWER} stopped before it was done" in capsys.readouterr().err
 
 
 def test_an_update_whose_process_is_gone_is_offered_again(installed, home, monkeypatch, capsys):
@@ -369,6 +399,7 @@ def spec(home, tmp_path):
     return {
         "version": NEWER,
         "command": [sys.executable, "-c", "print('upgraded')"],
+        "since": 1_700_000_000.0,
         "pid": 1234,
         "held": [],
         "log": str(home / "logs" / "update-1.log"),
@@ -395,7 +426,7 @@ class Kernel:
 
 
 def test_the_update_waits_for_the_sift_that_asked_then_upgrades(spec, home, monkeypatch):
-    looks = iter([None, None, ProcessLookupError()])
+    looks = iter([None, None, ProcessLookupError(), ProcessLookupError()])  # the last: once more before it upgrades
 
     def kill(pid, signal):
         assert (pid, signal) == (1234, 0)  # only asks
@@ -409,6 +440,41 @@ def test_the_update_waits_for_the_sift_that_asked_then_upgrades(spec, home, monk
     command = console.command(*spec["command"])  # quoted for the shell of the OS it runs on
     assert log.splitlines() == [command, "upgraded", "exit code 0"]
     assert kept(home)["result"] == {"version": NEWER, "ok": True, "log": spec["log"]}
+
+
+def test_while_it_upgrades_the_state_says_so_with_its_process(spec, home, monkeypatch):
+    monkeypatch.setattr(update, "_running", lambda *args: False)
+    shown = "import json, sys; print(json.dumps(json.load(open(sys.argv[1], encoding='utf-8'))['pending']))"
+    spec["command"] = [sys.executable, "-c", shown, str(home / "update.json")]
+    update.finish(spec, platform="linux")
+    pending = json.loads((home / "logs" / "update-1.log").read_text(encoding="utf-8").splitlines()[1])
+    assert pending.pop("since") > time.time() - 60  # since it upgrades, not since it was agreed to
+    assert pending == {"version": NEWER, "pid": os.getpid(), "upgrading": True}
+    assert "pending" not in kept(home)
+
+
+def test_an_upgrade_past_its_time_stops_no_command(installed, home, capsys):
+    # The installer is stopped when its time is up: a process running after it has the id of the one that upgraded.
+    keep(home, pending=waiting(upgrading=True, since=time.time() - update.RUN - 1))
+    update.offer("serve", TERMINAL)
+    update.offer("status", TERMINAL)
+    assert f"sift updates to {NEWER} once no sift" in capsys.readouterr().err
+
+
+def test_a_sift_started_just_before_the_upgrade_is_waited_for_too(spec, home, monkeypatch):
+    # It started before the state said that sift upgrades, so it runs: the upgrade waits again, and says no more
+    # that it upgrades, or every command of the installation would stop meanwhile.
+    looks, states = iter([False, True, True, False, False]), []
+
+    def running(*args):
+        states.append(update.read(home / "update.json").get("pending", {}).get("upgrading"))
+        return next(looks)
+
+    monkeypatch.setattr(update, "_running", running)
+    monkeypatch.setattr(update, "POLL", 0)
+    update.finish(spec, platform="linux")
+    assert states == [None, True, False, False, True]
+    assert kept(home)["result"]["ok"]
 
 
 def test_a_process_of_another_user_counts_as_running(monkeypatch):
@@ -434,8 +500,8 @@ def test_on_windows_the_update_waits_for_every_sift_of_the_installation(spec, ho
     monkeypatch.setattr(update, "POLL", 0)
     kernel = Kernel(looks=1)  # the sift that asked stops after one look
     update.finish(spec, platform="win32", kernel32=kernel)
-    assert len(opened) == 3  # in use, in use, free
-    assert kernel.closed == kernel.opened == 4  # one look while it ran, three after
+    assert len(opened) == 4  # in use, in use, free, and free still once the state says that sift upgrades
+    assert kernel.closed == kernel.opened == 5  # one look while it ran, four after
     assert serve.read_bytes() == b"MZ"  # looked at, never written
     assert kept(home)["result"]["ok"]
 
