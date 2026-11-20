@@ -37,6 +37,7 @@ SNIPPET = 260  # characters of a passage shown in the results
 READER_LINES = 2000  # lines of a document the reader shows at once: a long log would make a page of megabytes
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 STARTUP_SECONDS = 600  # how long `sift ui` waits for the server it started: loading models and codes takes a while
+PROBE_SECONDS = 5  # how long `sift ui` waits for a server on its port to answer, before it takes it for busy
 # A page and its parts share an address, told apart by the request's headers: a browser that kept one showed a part
 # alone, without the page around it, on the way back to the address. Nor do the documents' texts belong in its cache.
 UNKEPT = {"Cache-Control": "no-store"}
@@ -418,14 +419,18 @@ def address(host, port):
 def open_in_browser(host="127.0.0.1", port=8765):
     """`sift ui`: open the UI of the `sift serve` on this port in the browser, starting the server if none runs."""
     url = address(host, port) + PREFIX
+    # Asked itself, not through a proxy set for the web, which knows no server of this machine.
+    directly = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        urllib.request.urlopen(url, timeout=5).close()
+        directly.open(url, timeout=PROBE_SECONDS).close()
     except urllib.error.HTTPError as e:
         e.close()  # it holds the answer open: a ResourceWarning on Python 3.14+ when left to the garbage collector
         raise SystemExit(
             f"error: what answers on port {port} is no sift with a UI: an older `sift serve`? Restart it with this "
             "version of sift, or choose another port with --port"
         ) from None
+    except TimeoutError:  # it listens and answers nobody: a sift whose models run, on the thread that answers
+        console.say(f"the server on port {port} is busy: its page loads once it answers")
     except OSError:  # nobody listens: serve here, and open the page once the server answers
         import threading
 

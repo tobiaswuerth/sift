@@ -555,6 +555,34 @@ def test_sift_ui_opens_the_server_that_runs(home, opened, monkeypatch):
     assert opened == [f"http://127.0.0.1:{port}/ui/"]
 
 
+def test_sift_ui_asks_the_server_itself_whatever_proxy_is_set(home, opened, monkeypatch):
+    # A proxy set for the web knows no server of this machine: asked through it, the server that runs looked like
+    # none, or like no sift, and `sift ui` started a second one on the port taken.
+    port, stop = answering(200)
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("http_proxy", "HTTP_PROXY"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")  # where nobody listens
+    monkeypatch.setattr(server, "serve", lambda *a, **kw: pytest.fail("started another server"))
+    try:
+        cli.main(["ui", "--port", str(port)])
+    finally:
+        stop()
+    assert opened == [f"http://127.0.0.1:{port}/ui/"]
+
+
+def test_sift_ui_opens_a_server_that_is_busy(home, opened, monkeypatch, capsys):
+    # A sift runs its models on the thread that answers: a long rerank, and it answers nobody for seconds. It listens
+    # all the same, so another can't be started on its port.
+    monkeypatch.setattr(ui, "PROBE_SECONDS", 0.2)
+    monkeypatch.setattr(server, "serve", lambda *a, **kw: pytest.fail("started another server"))
+    with socket.create_server(("127.0.0.1", 0)) as listening:  # takes connections, answers none
+        port = listening.getsockname()[1]
+        cli.main(["ui", "--port", str(port)])
+    assert opened == [f"http://127.0.0.1:{port}/ui/"]
+    assert f"the server on port {port} is busy: its page loads once it answers" in capsys.readouterr().err
+
+
 def test_sift_ui_starts_the_server_when_none_runs(home, opened, monkeypatch):
     port, started = free_port(), []
 
