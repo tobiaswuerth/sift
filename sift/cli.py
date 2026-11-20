@@ -290,13 +290,22 @@ def main(argv=None):
     if (sys.stdout.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
         sys.stdout.reconfigure(encoding="utf-8")
     try:
-        update.offer(a.cmd)  # in a terminal: a newer sift, how an update went
+        _offer_update(a.cmd)
         with logs.kept(a.cmd, datetime.now()) if a.cmd in logs.LOGGED else contextlib.nullcontext():
             _command(a)
     except (LookupError, ValueError, OSError, sqlite3.Error) as e:
         raise SystemExit(f"error: {e}") from None
     except KeyboardInterrupt:
         raise SystemExit(130) from None
+
+
+def _offer_update(command):
+    """In a terminal: a newer sift, and how an update went (see update.offer). Trouble with the update's own state, a
+    folder that may not be written, is said, and the command runs: it is what was asked, the update an offer."""
+    try:
+        update.offer(command)
+    except OSError as error:
+        console.say(f"sift couldn't look for an update: {error}")
 
 
 def _command(a):

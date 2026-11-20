@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 from types import SimpleNamespace
@@ -270,6 +271,27 @@ def test_the_command_line_offers_before_the_command(home, monkeypatch):
     assert offered == ["status"]
 
 
+def test_trouble_with_the_update_s_state_is_said_and_the_command_runs(home, monkeypatch, capsys):
+    # An update is an offer, the command what was asked: a state that can't be read or written stopped every command.
+    def offer(command):
+        raise PermissionError(13, "Access is denied", str(home / "update.json"))
+
+    monkeypatch.setattr(update, "offer", offer)
+    cli.main(["status"])
+    told = capsys.readouterr()
+    assert "sift couldn't look for an update: [Errno 13] Access is denied" in told.err
+    assert json.loads(told.out)["collections"] == []
+
+
+def test_a_command_stopped_for_an_upgrade_stays_stopped(home, monkeypatch):
+    def offer(command):
+        raise SystemExit("sift is being updated")
+
+    monkeypatch.setattr(update, "offer", offer)
+    with pytest.raises(SystemExit, match="sift is being updated"):
+        cli.main(["status"])
+
+
 # --- asking PyPI ----------------------------------------------------------------
 
 
@@ -317,6 +339,77 @@ def test_a_state_cut_short_counts_as_none(home):
     assert update.read(home / "update.json") == {}
     (home / "update.json").write_text("[]", encoding="utf-8")
     assert update.read(home / "update.json") == {}
+
+
+def refusing(real, times):
+    """`real`, refused `times` times first, as Windows refuses a file another process holds; and the refusals."""
+    refused = []
+
+    def refuse(*args, **kwargs):
+        if len(refused) < times:
+            refused.append(args)
+            raise PermissionError(13, "The process cannot access the file")
+        return real(*args, **kwargs)
+
+    return refuse, refused
+
+
+def test_a_state_another_process_reads_just_then_is_written_once_it_has(home, monkeypatch):
+    # Windows refuses to replace a file that another process has open, as a command reading the state has, for
+    # microseconds.
+    replace, refused = refusing(os.replace, times=2)
+    monkeypatch.setattr(update.os, "replace", replace)
+    update.change(home / "update.json", latest=NEWER)
+    assert len(refused) == 2
+    assert kept(home) == {"latest": NEWER}
+
+
+def test_a_state_another_process_replaces_just_then_is_read_once_it_has(home, monkeypatch):
+    keep(home, latest=NEWER)
+    read_text, refused = refusing(update.Path.read_text, times=2)
+    monkeypatch.setattr(update.Path, "read_text", read_text)
+    assert update.read(home / "update.json") == {"latest": NEWER}
+    assert len(refused) == 2
+
+
+def test_a_state_that_stays_refused_is_an_error_and_leaves_nothing_behind(home, monkeypatch):
+    # A folder that may not be written: tried for a moment, not for ever, and the file written beside the state goes.
+    keep(home, latest=NEWER)
+    replace, refused = refusing(os.replace, times=10**9)
+    monkeypatch.setattr(update.os, "replace", replace)
+    monkeypatch.setattr(update, "SHARING", 0.05)
+    with pytest.raises(PermissionError):
+        update.change(home / "update.json", asked=NEWER)
+    assert len(refused) > 1
+    assert [file.name for file in home.iterdir()] == ["update.json"]
+    assert kept(home) == {"latest": NEWER}
+
+
+def test_commands_at_once_read_and_change_the_state_without_error(home):
+    # On Windows a read and a replace at the same moment refuse each other: of 3,000 changes beside two readers,
+    # 2,591 failed, and 1,295 reads.
+    path, errors, done = home / "update.json", [], threading.Event()
+    update.change(path, checked=0.0)
+
+    def reading():
+        while not done.is_set():
+            try:
+                assert "checked" in update.read(path)
+            except Exception as error:  # handed to the test
+                errors.append(error)
+
+    readers = [threading.Thread(target=reading) for _ in range(2)]
+    for reader in readers:
+        reader.start()
+    try:
+        for n in range(100):
+            update.change(path, checked=float(n))
+    finally:
+        done.set()
+        for reader in readers:
+            reader.join()
+    assert errors == []
+    assert kept(home) == {"checked": 99.0}
 
 
 # --- how sift was installed ------------------------------------------------------

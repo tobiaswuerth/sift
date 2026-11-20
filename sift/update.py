@@ -30,6 +30,7 @@ TIMEOUT = 10  # seconds a check waits for PyPI
 WAIT = 7 * DAY  # seconds an update waits, at most, for the sifts of its installation to stop
 POLL = 1.0  # seconds between looks whether they stopped
 RUN = 30 * 60  # seconds the upgrade may take
+SHARING = 1.0  # seconds the state's file is tried again while another sift reads or replaces it (see _shared)
 QUIET = ("serve", "worker")  # servers, often started by scripts and services: they never ask
 # Windows' CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: a console of its own, hidden, which the programs it runs share,
 # and no Ctrl+C. Detached from any console (DETACHED_PROCESS), each program it ran opened a window of its own.
@@ -298,10 +299,24 @@ def state_path():
     return settings.current().home / "update.json"
 
 
+def _shared(action):
+    """action() on the state's file, tried again for SHARING seconds while it is refused: Windows refuses to replace a
+    file that another process has open, and to open one being replaced, as two sifts at once do to each other, each
+    for well under a millisecond. What is refused for longer is so for another reason, and an error."""
+    deadline = time.perf_counter() + SHARING
+    while True:
+        try:
+            return action()
+        except PermissionError:
+            if time.perf_counter() >= deadline:
+                raise
+            time.sleep(SHARING / 100)
+
+
 def read(path):
     """The state kept, of the entries in SHAPES that have their shape; {} if there is none or it was cut short."""
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
+        state = json.loads(_shared(lambda: path.read_text(encoding="utf-8")))
     except FileNotFoundError:
         return {}
     except ValueError:  # written by hand, or a disk that filled: the next write makes it whole
@@ -329,9 +344,14 @@ def _fits(value, shape):
 
 
 def change(path, **changes):
-    """Change the state kept, written whole, so that another process reads the old or the new; None removes a key."""
+    """Change the state kept, written whole, so that another process reads the old or the new; None removes a key.
+    It is written beside the state first (update.json.PID.part), which goes if it can't take the state's place."""
     state = read(path) | changes
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f"{path.name}.{os.getpid()}.part")
     part.write_text(json.dumps({k: v for k, v in state.items() if v is not None}), encoding="utf-8")
-    os.replace(part, path)
+    try:
+        _shared(lambda: os.replace(part, path))
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
