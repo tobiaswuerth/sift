@@ -190,8 +190,15 @@ def _facets(hits, view):
 
 
 def _collections(stores):
-    """The collections and their number of documents, as their stores keep it, by name, of [(collection, its store)]."""
-    return [(c.name, store.counts(db)["docs"]) for c, db in stores]
+    """The collections of [(collection, its store)], each as (name, its number of documents as its store keeps it,
+    None), or of a store found damaged (name, None, what is wrong and what to do)."""
+    listed = []
+    for c, db in stores:
+        try:
+            listed.append((c.name, store.counts(db)["docs"], None))
+        except sqlite3.DatabaseError as error:  # one store damaged keeps no page from showing the others
+            listed.append((c.name, None, store.damage(c.name, error)))
+    return listed
 
 
 def _crumbs(view):
