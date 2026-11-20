@@ -78,7 +78,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   a network share, was "in no collection" for `reindex`, `sift index --files` and `get`, and the `sift add` suggested
   was refused: a collection keeps its folder as it resolves. Such a path is resolved now where it isn't found as given.
 - A range on a number took text without a number for 0: `-f "year<2000"` found every note whose year was `unknown`,
-  empty, or a list inside a list. Text that starts with a number, as a date, still compares as that number.
+  empty, or a list inside a list. Text that starts with a number, as a date, still compares as that number. A range
+  given as text, `-f "created>2024"`, compared a list inside a list by its JSON, and found it.
 - A scan skipped as `SIFT_OCR` was off, or as there was no GPU, was read only once its PDF changed: setting
   `SIFT_OCR=on`, as the skip says, read none of them. The next `sift index` after `SIFT_OCR` is turned on, or from
   `off` to `auto`, reads them.

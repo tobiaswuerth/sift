@@ -138,12 +138,13 @@ def _condition(key, op, value):
         values = list(dict.fromkeys(form for one in values for form in _forms(one)))
         return f"value IN ({', '.join('?' * len(values))})", values
     if isinstance(value, str):  # at the precision given: "2024-12-31" is <= "2024", and not > "2024"
-        return f"substr(value, 1, ?) {op} ?", [len(value), value]
+        return f"type IN ('text', 'integer', 'real') AND substr(value, 1, ?) {op} ?", [len(value), value]
     return f"{NUMBER_FIRST} AND CAST(value AS REAL) {op} ?", [value]  # SQLite reads "2024-06-15" as 2024
 
 
 # The values a number compares with (`type` and `value` of json_each): numbers, yes and no as 1 and 0, and text that
-# starts with a number, as a date does with its year. SQLite casts other text, "unknown", to 0, and a list to text.
+# starts with a number, as a date does with its year. SQLite casts other text, "unknown", to 0, and a list to text;
+# text compares with text and numbers alone, not with a list's JSON.
 NUMBER_FIRST = (
     "(type IN ('integer', 'real', 'true', 'false') OR (type = 'text' AND (ltrim(value) GLOB '[0-9]*'"
     " OR ltrim(value) GLOB '[-+.][0-9]*' OR ltrim(value) GLOB '[-+].[0-9]*')))"

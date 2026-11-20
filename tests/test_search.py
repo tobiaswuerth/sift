@@ -1437,6 +1437,17 @@ def test_a_number_range_passes_over_text_without_a_number(corpus):
     assert sorted(h["id"].rsplit("/", 1)[1] for h in hits) == ["dated.md", "era.md", "spaced.md"]
 
 
+def test_a_text_range_passes_over_lists_inside_lists_and_yes_or_no(corpus):
+    # A range given as text compared the JSON text of a list inside a list, "[...]" after every digit: {">": "2024"}
+    # found it. Numbers and text compare at the precision given, as before.
+    catalog, root = corpus
+    for name, created in {"dated": '"2025-03"', "nested": '[["2025"]]', "flag": "true", "number": "2025"}.items():
+        write(root / "made" / f"{name}.md", f"---\ncreated: {created}\n---\n# {name}\nquay\n")
+    indexing.index(catalog)
+    hits = Index(catalog).search("quay", k=20, filters={"created": {">": "2024"}})
+    assert sorted(h["id"].rsplit("/", 1)[1] for h in hits) == ["dated.md", "number.md"]
+
+
 def test_range_on_a_list_needs_one_element_in_range(corpus):
     catalog, root = corpus
     write(root / "multi.md", "---\nyears: [2019, 2030]\n---\n# Multi\nbrush\n")
