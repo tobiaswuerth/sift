@@ -445,6 +445,33 @@ def test_reindex_refuses_files_behind_a_junction(live, tmp_path):
         index.reindex(["vault/joined/a.md"])
 
 
+def link(folder, to):
+    """Make `to` a folder that leads to `folder`: a symbolic link, or a junction where only administrators may make
+    those (Windows)."""
+    try:
+        os.symlink(folder, to, target_is_directory=True)
+    except OSError:
+        import _winapi
+
+        _winapi.CreateJunction(str(folder), str(to))
+
+
+def test_a_file_named_through_a_link_to_its_collection(live, tmp_path):
+    # A collection's folder is kept as it resolves: added through a link, a junction or a drive mapped to a network
+    # share (Z:, which resolves to \\nas\share), a file named by its path that way was in no collection, and the
+    # `sift add` the error suggested was refused, as that folder was the collection already.
+    index, vault = live
+    through = tmp_path / "through"
+    link(vault, through)
+    write(vault / "a.md", "Alpha note.\n")
+    assert index.reindex([str(through / "a.md")]) == [
+        {"id": "vault/a.md", "status": "added", "chunks": 1, "embedded": 1}
+    ]
+    assert index.get(str(through / "a.md")) == "Alpha note.\n"
+    (vault / "a.md").unlink()
+    assert index.reindex([str(through / "a.md")]) == [{"id": "vault/a.md", "status": "removed"}]
+
+
 def test_reindex_refuses_a_collection_whose_folder_is_gone(live):
     # An unplugged drive must not look like every file deleted.
     index, vault = live

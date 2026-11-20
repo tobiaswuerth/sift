@@ -414,10 +414,9 @@ def _locate(catalog, path):
     given = os.path.expanduser(path)
     if os.path.isabs(given):
         full = os.path.normpath(given)
-        holding = [c for c in collections if inside(c.path, full)]
-        if not holding:
+        if (held := holding(collections, full)) is None:
             raise ValueError(_nowhere(path, full, collections))
-        collection, rel = holding[0], os.path.relpath(full, holding[0].path).replace(os.sep, "/")
+        collection, rel = held
     else:
         name, _, rel = path.replace("\\", "/").partition("/")
         collection, rel = catalog.get(name), posixpath.normpath(rel) if rel else ""
@@ -465,6 +464,20 @@ def _locate(catalog, path):
 def inside(root, full):
     """Whether the normalised path `full` lies in the folder `root`, in the file system's case."""
     return os.path.normcase(full).startswith(os.path.normcase(os.path.join(root, "")))
+
+
+def holding(collections, full):
+    """The collection whose folder holds the normalised absolute path `full`, the nearest, and the path in it, with
+    `/`: (collection, rel), or None. As given, else with its folder resolved: a collection keeps its folder as it
+    resolves (`sift add`), so a file named through a link to it, a junction, or a drive mapped to a network share is in
+    it too. The file itself stays as named: a linked file is indexed at its link's path."""
+    nearest = sorted(collections, key=lambda c: -len(c.path))
+    resolved = os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full))
+    for path in dict.fromkeys((full, resolved)):
+        for c in nearest:
+            if inside(c.path, path):
+                return c, os.path.relpath(path, c.path).replace(os.sep, "/")
+    return None
 
 
 def _linked(path):

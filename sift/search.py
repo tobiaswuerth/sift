@@ -1291,18 +1291,13 @@ class Index:
 
     def _place(self, id):
         """The collection, and the path in it, that `id` names: "collection/path", or an absolute path in a
-        collection's folder, the nearest that holds it; (None, path) for a collection there isn't, (None, "") for an
-        absolute path in none."""
+        collection's folder, the nearest that holds it (see indexing.holding); (None, path) for a collection there
+        isn't, (None, "") for an absolute path in none."""
         collections = self.catalog.collections()
         if not os.path.isabs(id):
             name, _, rel = id.partition("/")
             return next((c for c in collections if c.name == name), None), rel
-        full = os.path.normpath(id)
-        for c in sorted(collections, key=lambda c: -len(c.path)):
-            root = os.path.normpath(c.path)
-            if os.path.normcase(full).startswith(os.path.normcase(os.path.join(root, ""))):
-                return c, os.path.relpath(full, root).replace(os.sep, "/")
-        return None, ""
+        return indexing.holding(collections, os.path.normpath(id)) or (None, "")
 
     def _rows(self, id):
         """The documents `id` may name (see `get`), at most six: (row id, path, title, meta, text) of each. For an id

@@ -70,6 +70,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - On Windows, an index on a network share, or on a drive mapped to one, was made and then never opened again ("unable
   to open database file"): `SIFT_HOME` there, `sift add --store`, `sift move`. SQLite refused the address of a file on
   another machine as sift wrote it.
+- A file named by its absolute path through the folder as it was added, a link or junction to it or a drive mapped to
+  a network share, was "in no collection" for `reindex`, `sift index --files` and `get`, and the `sift add` suggested
+  was refused: a collection keeps its folder as it resolves. Such a path is resolved now where it isn't found as given.
 
 ## [1.12.0] - 2026-11-17
 
