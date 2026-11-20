@@ -11,11 +11,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from sift import __version__, cli, update
+from sift import __version__, cli, console, update
 
 MAJOR, MINOR, PATCH = update._version(__version__)
 NEWER = f"{MAJOR}.{MINOR}.{PATCH + 1}"
 NEXT_MAJOR = f"{MAJOR + 1}.0.0"
+NO_PROCESS = 4_194_305  # above Linux's highest process id and macOS's, and odd, which none on Windows is
 
 
 class Terminal:
@@ -353,8 +354,8 @@ def test_the_update_waits_for_the_sift_that_asked_then_upgrades(spec, home, monk
     monkeypatch.setattr(update, "POLL", 0)
     update.finish(spec, platform="linux")
     log = (home / "logs" / "update-1.log").read_text(encoding="utf-8")
-    assert "print('upgraded')" in log.splitlines()[0]
-    assert log.splitlines()[1:] == ["upgraded", "exit code 0"]
+    command = console.command(*spec["command"])  # quoted for the shell of the OS it runs on
+    assert log.splitlines() == [command, "upgraded", "exit code 0"]
     assert kept(home)["result"] == {"version": NEWER, "ok": True, "log": spec["log"]}
 
 
@@ -403,6 +404,8 @@ def test_on_windows_its_kernel_is_asked(monkeypatch):
 def test_an_update_waits_a_week_at_most(spec, home, monkeypatch):
     monkeypatch.setattr(update, "_running", lambda *args: True)
     monkeypatch.setattr(update, "WAIT", 0)
+    monkeypatch.setattr(update.time, "perf_counter", lambda: 1000.0)  # a clock that reads the same twice
+    monkeypatch.setattr(update.time, "sleep", lambda seconds: pytest.fail("waited, though the week was up"))
     update.finish(spec, platform="linux")
     assert kept(home)["result"] == {"version": NEWER, "ok": False, "log": spec["log"]}
     assert "kept running for a week" in (home / "logs" / "update-1.log").read_text(encoding="utf-8")
@@ -426,9 +429,7 @@ def test_an_upgrade_that_fails_is_said(spec, home, monkeypatch, command, how):
 def test_the_process_that_updates_runs_on_its_own(spec, home, monkeypatch):
     # Started as sift starts it: on the base Python, isolated, reading sift's modules from where this one does.
     monkeypatch.setenv("SIFT_HOME", str(home))
-    asked = subprocess.Popen([sys.executable, "-c", "pass"])  # the sift that asked, stopped
-    asked.wait()
-    spec["pid"] = asked.pid
+    spec["pid"] = NO_PROCESS  # the sift that asked, stopped: not the id of one that ended, which may be given again
     updating = update.start(["finish", json.dumps(spec)])
     assert updating.wait(timeout=60) == 0
     assert kept(home)["result"]["ok"]

@@ -178,7 +178,7 @@ def finish(spec, platform=sys.platform, kernel32=None):
     log.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.perf_counter() + WAIT
     while _running(spec, platform, kernel32):
-        if time.perf_counter() > deadline:
+        if time.perf_counter() >= deadline:
             return _finished(path, spec, False, "a sift of this installation kept running for a week")
         time.sleep(POLL)
     with open(log, "w", encoding="utf-8") as out:
