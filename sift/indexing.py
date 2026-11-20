@@ -690,6 +690,7 @@ def index(catalog, names=None):
             continue
         try:
             _index_collection(db, c.name, c.path, c.choices, ignore)
+            store.list_basenames(db, c.name)
             postings.update(db, c.store, c.name, _cpus() - 1)
         except sqlite3.DatabaseError as error:  # one store damaged stops no other collection
             db.rollback()

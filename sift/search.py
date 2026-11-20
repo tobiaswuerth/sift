@@ -1305,7 +1305,9 @@ class Index:
         return None, ""
 
     def _rows(self, id):
-        """The documents `id` may name (see `get`), at most six: (row id, path, title, meta, text) of each."""
+        """The documents `id` may name (see `get`), at most six: (row id, path, title, meta, text) of each. For an id
+        that is no document's path, only the documents whose paths end in its last part are read, as the store lists
+        them (store.BASENAMES); every path of an older store, until `sift index` has listed them."""
         collection, rel = self._place(id)
         if collection is None:
             return []
@@ -1313,12 +1315,21 @@ class Index:
         rows = db.execute(sql + "path = ?", (rel,)).fetchall()
         if rows or not rel:
             return rows
+        listed = store.basenames_listed(db)  # CROSS JOIN: the documents of that last part first, then each one's path
+        among = "basenames b CROSS JOIN docs d ON d.id = b.doc WHERE b.name = ? AND " if listed else "docs d WHERE "
+        name = [rel.rsplit("/", 1)[-1]] if listed else []
+
+        def where(condition, *args):
+            """The documents among those whose path `condition` holds for, by path. Their ids first, found by their
+            paths alone: no text is read but of the documents returned."""
+            ids = f"SELECT d.id FROM {among}{condition}"
+            return db.execute(f"{sql}id IN ({ids}) ORDER BY path", (*name, *args)).fetchall()
+
         if os.path.isabs(id):  # in another case, as Windows and macOS name the same file, and `reindex` takes it
-            found = db.execute(sql + "lower(path) = lower(?)", (rel,)).fetchall()
-            same = [row for row in found if readers.fold(row[1]) == readers.fold(rel)]
+            same = [row for row in where("lower(d.path) = lower(?)", rel) if readers.fold(row[1]) == readers.fold(rel)]
             return same if len(same) == 1 else []
         # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
-        return db.execute(sql + "substr(path, -?) = ? ORDER BY path LIMIT 6", (len(rel) + 1, "/" + rel)).fetchall()
+        return where("substr(d.path, -?) = ? ORDER BY d.path LIMIT 6", len(rel) + 1, "/" + rel)
 
     def _note(self, id):
         """The document `id` names, as for `get`, or else the note `id` names as links name it, "Acme AG" or

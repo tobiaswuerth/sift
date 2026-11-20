@@ -78,7 +78,7 @@ def _print_documents(documents):
         _print_document(document)
     failed = [d for d in documents if "error" in d]
     for document in failed:
-        print(f"sift: {document['id']}: {document['error']}", file=sys.stderr)
+        console.say(f"sift: {document['id']}: {document['error']}")
     if failed:
         raise SystemExit(f"{len(failed)} of {len(documents)} documents can't be read")
 

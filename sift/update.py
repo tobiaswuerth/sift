@@ -117,7 +117,7 @@ class Spec(TypedDict):
 ENTRIES = get_type_hints(State)
 
 
-def offer(command: str, streams: Sequence[TextIO] | None = None) -> None:
+def offer(command: str, streams: Sequence[TextIO | None] | None = None) -> None:
     """Before a command: say how an update went, offer a newer sift once per version, and start the day's check. Only
     in a terminal, never for QUIET commands, with SIFT_UPDATE_CHECK=off or offline, nor for a sift run from its
     source, which git updates. But any command of an installed sift, wherever it runs, stops while the installer
@@ -217,7 +217,7 @@ def _writable(folder: str) -> bool:
 
 
 def _yes(question: str) -> bool:
-    print(question, end="", file=sys.stderr, flush=True)
+    console.write(question, end="")
     return sys.stdin.readline().strip().lower() in ("y", "yes")
 
 

@@ -1,5 +1,5 @@
-"""A collection's store: its layout, its ids, the vectors' codes, the counts of its rows, deleting documents, the
-vectors' version, and holding it alone."""
+"""A collection's store: its layout, its ids, the vectors' codes, the counts of its rows, the last parts of its
+documents' paths, deleting documents, the vectors' version, and holding it alone."""
 
 import json
 import random
@@ -7,6 +7,7 @@ import re
 import sqlite3
 import time
 import tracemalloc
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +17,7 @@ from sift import embed, indexing, postings, store, vectors
 from sift.catalog import Catalog
 from sift.search import Index
 
-from .conftest import keywords_agree, write
+from .conftest import as_sift_1_12_left_it, keywords_agree, write
 
 
 def doc_ids(db):
@@ -218,6 +219,7 @@ def held(db):
 
 def as_sift_1_8_left_it(db):
     """A store as sift 1.8 made it: layout 6, its rows not counted."""
+    as_sift_1_12_left_it(db)
     triggers = db.execute("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name != 'codes_go_with_vectors'")
     for (name,) in triggers.fetchall():
         db.execute(f"DROP TRIGGER {name}")
@@ -367,6 +369,7 @@ def tables(db):
 
 def as_sift_1_9_left_it(db):
     """A store as sift 1.9 made it: layout 7, no postings of its own."""
+    as_sift_1_12_left_it(db)
     for table in POSTINGS_TABLES:
         db.execute(f"DROP TABLE {table}")
     db.execute("DELETE FROM meta WHERE key IN ('kw_built', 'kw_change')")
@@ -396,9 +399,10 @@ def test_an_older_store_gets_the_postings_tables_unbuilt(corpus, left):
     catalog.release(catalog.get("notes").id)
     db = catalog.store("notes")
     assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
-    assert tables(db) >= POSTINGS_TABLES
+    assert tables(db) >= POSTINGS_TABLES | {"basenames"}
     assert store.counts(db) == held(db)
     assert store.get_meta(db, "kw_built") is None
+    assert not store.basenames_listed(db)
 
 
 def test_a_store_of_sift_1_10_gets_the_order_of_its_postings(corpus):
@@ -420,24 +424,28 @@ def test_a_store_upgraded_meanwhile_is_upgraded_once(corpus):
     # Two sifts open a store of 1.9 at once; the second finds the tables there once it has the store.
     db = corpus[0].store("notes")
     before = tables(db)
-    store._add_postings_tables(db)  # what the second runs, after the first has finished
+    store._add_tables(db)  # what the second runs, after the first has finished
     assert tables(db) == before
 
 
-def test_an_upgrade_stopped_leaves_the_store_as_sift_1_9_left_it(corpus, monkeypatch):
+@pytest.mark.parametrize(
+    "left, layout, lacking",
+    [(as_sift_1_9_left_it, 7, POSTINGS_TABLES | {"basenames"}), (as_sift_1_12_left_it, 9, {"basenames"})],
+)
+def test_an_upgrade_stopped_leaves_the_store_as_it_was(corpus, monkeypatch, left, layout, lacking):
     catalog, _ = corpus
-    as_sift_1_9_left_it(catalog.store("notes"))
+    left(catalog.store("notes"))
     catalog.release(catalog.get("notes").id)
-    real = store.POSTINGS
-    monkeypatch.setattr(store, "POSTINGS", real.replace("kw_order(", "kw_order(("))  # fails at the last table
+    real = store.BASENAMES
+    monkeypatch.setattr(store, "BASENAMES", (*real[:-1], "CREATE TRIGGER broken"))  # fails at the last statement
     with pytest.raises(sqlite3.OperationalError):
         catalog.store("notes")
-    monkeypatch.setattr(store, "POSTINGS", real)
+    monkeypatch.setattr(store, "BASENAMES", real)
     raw = sqlite3.connect(catalog.get("notes").store)
-    assert raw.execute("PRAGMA user_version").fetchone() == (7,)
-    assert not tables(raw) & POSTINGS_TABLES
+    assert raw.execute("PRAGMA user_version").fetchone() == (layout,)
+    assert not tables(raw) & lacking
     raw.close()
-    assert tables(catalog.store("notes")) >= POSTINGS_TABLES  # upgraded on the next start
+    assert tables(catalog.store("notes")) >= lacking  # upgraded on the next start
 
 
 def dirty(db):
@@ -496,6 +504,233 @@ def test_titles_read_again_mark_their_chunks(corpus):
     retitled = [path for path, title in db.execute("SELECT path, title FROM docs") if before[path] != title]
     assert retitled
     assert set(dirty(db)) == set().union(*(chunks_of(db, path) for path in retitled))
+
+
+# --- the last parts of the documents' paths ---------------------------------------
+
+
+def listed(db):
+    """What `basenames` holds: the last part of a path, and the path, of each row."""
+    return sorted(db.execute("SELECT b.name, d.path FROM basenames b LEFT JOIN docs d ON d.id = b.doc"))
+
+
+def last_parts(db):
+    """The last part of every document's path, and the path: what `basenames` is to hold."""
+    return sorted((path.rsplit("/", 1)[-1], path) for (path,) in db.execute("SELECT path FROM docs"))
+
+
+def test_the_last_part_is_what_follows_the_last_slash():
+    # SQLite computes it, in the triggers, whatever a path holds.
+    rng = random.Random(3)
+    letters = ["/", "/", "a", "B", ".", " ", "%", "_", "'", '"', "\\", "\t", "ä", "Ä", "é", "日"]
+    paths = ["", "/", "//", "a", "a/", "/a", "a/\U0001f600"]
+    paths += ["".join(rng.choices(letters, k=rng.randrange(1, 12))) for _ in range(500)]
+    db = sqlite3.connect(":memory:")
+    try:
+        for path in paths:
+            last = db.execute(f"SELECT {store.LAST_PART.format(':path')}", {"path": path}).fetchone()
+            assert last == (path.rsplit("/", 1)[-1],), path
+    finally:
+        db.close()
+
+
+def test_a_new_store_lists_the_last_part_of_every_path(corpus):
+    # A file's name or a record's id: what a document is looked up by when its id is shortened (search.Index._rows).
+    catalog, root = corpus
+    write(root / "data.jsonl", '{"id": "r/1", "text": "a record"}\n{"id": "end/", "text": "another"}\n')
+    indexing.index(catalog)
+    db = catalog.store("notes")
+    assert listed(db) == last_parts(db)
+    assert {("brush.md", "robots/brush.md"), ("1", "data/r/1"), ("", "data/end/")} <= set(listed(db))
+    assert store.basenames_listed(db)
+
+
+def move_document(catalog, root):
+    db = catalog.store("notes")
+    db.execute("UPDATE docs SET path = 'moved/Elsewhere.md' WHERE path = 'rl.md'")
+    db.commit()
+
+
+@pytest.mark.parametrize("change", [add_file, change_file, remove_file, delete_document, move_document])
+def test_a_store_keeps_the_last_parts_through_every_change(corpus, change):
+    # By triggers, in the transaction of the change: no document is without its row, and no row without its document.
+    catalog, root = corpus
+    change(catalog, root)
+    db = catalog.store("notes")
+    assert listed(db) == last_parts(db)
+    assert listed(db)
+
+
+def test_last_parts_go_back_with_a_change_undone(corpus):
+    db = corpus[0].store("notes")
+    before = listed(db)
+    store.delete_docs(db, list(doc_ids(db).values()))
+    assert listed(db) == []
+    db.rollback()
+    assert listed(db) == before == last_parts(db)
+
+
+@pytest.fixture
+def older(corpus):
+    """The corpus in a store as sift 1.12 left it, opened by this sift: (catalog, its folder)."""
+    catalog, root = corpus
+    as_sift_1_12_left_it(catalog.store("notes"))
+    catalog.release(catalog.get("notes").id)
+    return catalog, root
+
+
+def test_a_store_of_sift_1_12_gets_the_table_for_sift_index_to_fill(older, monkeypatch):
+    catalog, root = older
+    db = catalog.store("notes")
+    assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
+    assert listed(db) == []
+    assert not store.basenames_listed(db)
+    monkeypatch.setattr(store, "list_basenames", lambda *args: None)  # `sift index` has not listed them yet
+    add_file(catalog, root)
+    assert listed(db) == [("new.md", "new.md")]  # kept from now on, whoever writes
+
+
+def test_sift_index_lists_the_last_parts_of_an_older_store_once(older, capsys):
+    catalog, _ = older
+    capsys.readouterr()
+    indexing.index(catalog)
+    db = catalog.store("notes")
+    assert listed(db) == last_parts(db)
+    assert store.basenames_listed(db)
+    assert store.get_meta(db, "basenames_to") is None
+    assert "notes: listing the last part of each document's path, once" in capsys.readouterr().err
+    indexing.index(catalog)
+    assert "listing" not in capsys.readouterr().err
+
+
+def test_an_older_store_without_documents_is_listed_without_a_word(tmp_path, capsys):
+    db = store.connect(tmp_path / "a.sqlite", 1, create=True)
+    as_sift_1_12_left_it(db)
+    db.close()
+    db = store.connect(tmp_path / "a.sqlite", 1)
+    store.list_basenames(db, "a")
+    assert store.basenames_listed(db)
+    assert capsys.readouterr().err == ""
+
+
+def counted(monkeypatch, stop_after=None):
+    """The batches listed from now on, as each says how far it got; Ctrl-C stops the listing after `stop_after`."""
+    ran, batch = [], store._list_batch
+
+    def list_batch(db):
+        if len(ran) == stop_after:
+            raise KeyboardInterrupt
+        ran.append(batch(db))
+        return ran[-1]
+
+    monkeypatch.setattr(store, "_list_batch", list_batch)
+    return ran
+
+
+def test_listing_stopped_goes_on_where_it_stopped(older, monkeypatch):
+    # Tens of millions of documents take a while: each batch is a transaction of its own that records how far it got,
+    # so another sift waits one batch at most, and a listing stopped is not begun again.
+    catalog, root = older
+    db = catalog.store("notes")
+    monkeypatch.setattr(store, "BASENAMES_BATCH", 2)
+    with monkeypatch.context() as stopped:
+        counted(stopped, stop_after=1)
+        with pytest.raises(KeyboardInterrupt):
+            store.list_basenames(db, "notes")
+    assert listed(db) == [("plain.txt", "plain.txt"), ("rl.md", "rl.md")]  # the first two by path
+    assert not store.basenames_listed(db)
+    with monkeypatch.context() as meanwhile:  # another sift changes documents, before and after where it stopped
+        meanwhile.setattr(store, "list_basenames", lambda *args: None)
+        write(root / "a.md", "# Before\n")
+        write(root / "z.md", "# After\n")
+        (root / "rl.md").unlink()
+        indexing.index(catalog)
+    ran = counted(monkeypatch)
+    indexing.index(catalog)
+    assert ran == [4, None]  # robots/brush.md and z.md, then none left: not the first two again
+    assert listed(db) == last_parts(db)
+    assert store.basenames_listed(db)
+
+
+def test_a_batch_stopped_leaves_nothing_of_itself(older, monkeypatch):
+    # Its rows and how far it got are one transaction: whatever stops it, the next batch begins where the last ended.
+    catalog, _ = older
+    db = catalog.store("notes")
+    monkeypatch.setattr(store, "BASENAMES_BATCH", 2)
+    assert store._list_batch(db) == 2
+
+    def stopped(db, key, value):  # Ctrl-C between a batch's rows and the record of them
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "set_meta", stopped)
+        with pytest.raises(KeyboardInterrupt):
+            store._list_batch(db)
+    assert not db.in_transaction
+    assert listed(db) == [("plain.txt", "plain.txt"), ("rl.md", "rl.md")]
+    assert store.get_meta(db, "basenames_to") == '[2, "rl.md"]'
+    assert [store._list_batch(db), store._list_batch(db)] == [3, None]
+    assert listed(db) == last_parts(db)
+
+
+def test_two_sifts_listing_at_once_take_turns(older, monkeypatch):
+    catalog, _ = older
+    monkeypatch.setattr(store, "BASENAMES_BATCH", 1)
+    one, other = catalog.store("notes"), store.database(catalog.get("notes").store)
+    assert [store._list_batch(db) for db in (one, other, one, other, one)] == [1, 2, 3, None, None]  # each batch once
+    assert listed(one) == last_parts(one)
+    assert store.basenames_listed(one)
+    assert store.basenames_listed(other)
+
+
+def test_a_batch_another_sift_listed_meanwhile_is_left_to_it(older, monkeypatch):
+    # A batch is found before its transaction, so that the store is held no longer than writing it takes: the other
+    # sift may have listed it by then, and further.
+    catalog, _ = older
+    monkeypatch.setattr(store, "BASENAMES_BATCH", 1)
+    one, other = catalog.store("notes"), store.database(catalog.get("notes").store)
+
+    def meanwhile(sql):  # one has found its batch, and is about to begin its transaction
+        if sql.startswith("BEGIN"):
+            one.set_trace_callback(None)
+            assert [store._list_batch(other), store._list_batch(other)] == [1, 2]
+
+    one.set_trace_callback(meanwhile)
+    assert store._list_batch(one) == 2  # as far as the other got: on after it
+    assert listed(one) == [("plain.txt", "plain.txt"), ("rl.md", "rl.md")]
+    assert [store._list_batch(one), store._list_batch(one)] == [3, None]
+    assert listed(one) == last_parts(one)
+
+
+def test_documents_come_and_go_while_two_sifts_list(corpus, monkeypatch):
+    # However their transactions fall: in the end every document has its row, and no row is without its document.
+    catalog, _ = corpus
+    notes, db = catalog.get("notes"), catalog.store("notes")
+    add = "INSERT INTO docs(source, path, title, meta, text) SELECT min(id), ?, 'x', '{}', 'x' FROM sources"
+    db.executemany(add, [(f"bulk/{i:03}.md",) for i in range(200)])
+    db.commit()
+    as_sift_1_12_left_it(db)
+    catalog.release(notes.id)
+    monkeypatch.setattr(store, "BASENAMES_BATCH", 7)
+    listing, changing = [store.connect(notes.store, notes.id) for _ in range(2)], store.connect(notes.store, notes.id)
+
+    def lists(db):
+        while store._list_batch(db) is not None:
+            pass
+
+    def changes():
+        for i in range(0, 200, 4):
+            changing.execute(add, (f"{i % 7}/new/{i}.md",))
+            changing.execute("DELETE FROM docs WHERE path = ?", (f"bulk/{i:03}.md",))
+            changing.commit()
+
+    with ThreadPoolExecutor(3) as threads:
+        for work in [threads.submit(changes), *(threads.submit(lists, db) for db in listing)]:
+            work.result()
+    db = catalog.store("notes")
+    assert listed(db) == last_parts(db)
+    assert len(listed(db)) == 203
+    assert store.basenames_listed(db)
 
 
 # --- version -------------------------------------------------------------------

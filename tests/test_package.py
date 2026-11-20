@@ -183,6 +183,47 @@ def test_chunks_are_cut_from_their_text_in_one_place():
     assert [name for name, line in lines if "FROM chunk_text" in line] == ["store.py"], "ask store.fill"
 
 
+PRINTING = {("console.py", "write"), ("cli.py", "_print")}  # to the user, and the results
+
+
+def _prints(tree):
+    return {
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print"
+    }
+
+
+def test_only_the_console_and_the_results_print():
+    # print() takes a stream that is None for stdout. Under pythonw, which has no stderr, what three modules printed
+    # to stderr themselves went among the results: one function writes for the user, and knows of that.
+    elsewhere = set()
+    for path in (ROOT / "sift").glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        allowed = {
+            call
+            for function in ast.walk(tree)
+            if isinstance(function, ast.FunctionDef) and (path.name, function.name) in PRINTING
+            for call in _prints(function)
+        }
+        elsewhere |= {f"{path.name}:{call.lineno}" for call in _prints(tree) - allowed}
+    assert elsewhere == set(), "say it with console.say, or write it with console.write; results go through cli._print"
+
+
+def test_sql_placeholders_have_no_numbers():
+    # Python 3.12.0 to 3.12.3 take a placeholder with a number for a named one, and warn that binding it from a
+    # sequence becomes an error: a test that bound one failed on the one system whose Python was 3.12.3.
+    numbered = re.compile(r"\?[0-9]")
+    sources = [path for folder in ("sift", "tests", "scripts") for path in (ROOT / folder).glob("*.py")]
+    found = {
+        f"{path.name}:{node.lineno}"
+        for path in sources
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and numbered.search(node.value)
+    }
+    assert found == set(), "bind by name, as `:path` from a dict, or give each plain `?` its own value"
+
+
 def test_workflows_run_actions_by_commit():
     # A tag or a branch of an action can be moved to other code, and the release workflow publishes to PyPI: an
     # action is named by the commit reviewed, with its version beside it, which Dependabot keeps current.
