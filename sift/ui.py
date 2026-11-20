@@ -37,6 +37,9 @@ SNIPPET = 260  # characters of a passage shown in the results
 READER_LINES = 2000  # lines of a document the reader shows at once: a long log would make a page of megabytes
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 STARTUP_SECONDS = 600  # how long `sift ui` waits for the server it started: loading models and codes takes a while
+# A page and its parts share an address, told apart by the request's headers: a browser that kept one showed a part
+# alone, without the page around it, on the way back to the address. Nor do the documents' texts belong in its cache.
+UNKEPT = {"Cache-Control": "no-store"}
 ERRORS = (LookupError, ValueError, ConnectionError, sqlite3.Error)  # what a view shows, as the MCP tools say it
 
 
@@ -364,7 +367,7 @@ def app(index, host="127.0.0.1"):
     async def page(request):
         view = View.of(request.query_params)
         part = request.headers.get("hx-target") if "hx-history-restore-request" not in request.headers else None
-        return HTMLResponse(await jobs.run(render, view, part, request.headers))
+        return HTMLResponse(await jobs.run(render, view, part, request.headers), headers=UNKEPT)
 
     def located(id):
         try:

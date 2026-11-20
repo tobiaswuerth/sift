@@ -55,6 +55,17 @@ def test_pages_are_made_off_the_event_loop(embedded, monkeypatch):
     assert len(ran) == 2
 
 
+def test_no_browser_keeps_a_page_or_a_part_of_one(browser):
+    # A page and its parts have one address, told apart by a header of htmx's: a browser that keeps what it got shows
+    # a part alone, without the page around it, when it goes back to the address. And they hold the documents' text.
+    whole = browser.get("/ui/?q=brush")
+    part = browser.get("/ui/?q=brush", headers={"HX-Request": "true", "HX-Target": "explore"})
+    reader = browser.get("/ui/?doc=" + urllib.parse.quote(BRUSH), headers={"HX-Request": "true", "HX-Target": "reader"})
+    assert whole.text.lstrip().startswith("<!doctype html>")
+    assert part.text.lstrip().startswith('<div id="explore"')
+    assert [r.headers.get("cache-control") for r in (whole, part, reader)] == ["no-store"] * 3
+
+
 def test_the_page_shows_what_is_indexed(browser):
     response = browser.get("/ui/")
     assert response.status_code == 200
