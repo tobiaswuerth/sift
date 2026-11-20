@@ -454,7 +454,7 @@ def test_worker_serves_https_with_its_key_on_all_interfaces(home, fake_models, s
 
 
 def test_the_workers_key_stays_out_of_its_log(home, fake_models, started, monkeypatch, capsys):
-    # The key lets any machine use the worker; its log is kept for good, readable as any file there.
+    # The key lets any machine use the worker; its log is kept, readable as any file there.
     from datetime import datetime
 
     from sift import logs
