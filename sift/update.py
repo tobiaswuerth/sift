@@ -6,8 +6,9 @@ in a terminal, never `serve` or `worker`, nor with SIFT_UPDATE_CHECK=off or offl
 update. On yes it stops, and a process of its own (`finish`), on the base Python, waits until no sift of this
 installation runs any more, upgrades it as it was installed (uv tool, pipx or pip), logged in
 SIFT_HOME/logs/update-DATE.log, and leaves how it went for the next command to say. Waiting matters on Windows, where a
-running sift holds its installation's files: uv, replacing them under a running `sift serve`, failed halfway. A new
-major version is only told of, with its changelog, as it may need care.
+running sift holds its installation's files: uv, replacing them under a running `sift serve`, failed halfway. An
+update whose process is gone before it was done, as a restart of the machine ends it, is said and offered again. A
+new major version is only told of, with its changelog, as it may need care.
 
 update.json is this module's alone, written whole; deleting it only makes the next command check again."""
 
@@ -48,6 +49,8 @@ def offer(command, streams=None):
         return
     path = state_path()
     state = read(path)
+    if (pending := state.get("pending")) and not _runs(pending["pid"]):
+        state = _stopped(path, pending)
     if result := state.get("result"):
         console.say(_outcome(result))
         change(path, result=None)
@@ -55,12 +58,25 @@ def offer(command, streams=None):
         if time.time() - pending["since"] < WAIT + DAY:
             console.say(f"sift updates to {pending['version']} once no sift of this installation runs any more")
             return
-        change(path, pending=None)  # its process is long gone
+        change(path, pending=None)  # its process is long gone, and another has its id
     if _newer(state.get("latest")) and state.get("asked") != state["latest"]:
         _ask(path, state["latest"], upgrade)
     if time.time() - state.get("checked", 0) >= DAY:
         change(path, checked=time.time())  # first: commands started meanwhile start no check of their own
         start(["check", str(path)])
+
+
+def _stopped(path, pending):
+    """The state, once the process of a pending update is gone. It left how the update went as it ended; if it left
+    nothing, it was stopped before, as a restart of the machine stops it: said, and the update offered again."""
+    state = read(path)
+    if state.get("pending") != pending:
+        return state
+    console.say(
+        f"the update to {pending['version']} stopped before it was done: its process is gone, as after a restart"
+    )
+    change(path, pending=None, asked=None)
+    return {key: value for key, value in state.items() if key not in ("pending", "asked")}
 
 
 def _newer(latest):
@@ -92,12 +108,13 @@ def _yes(question):
 
 
 def _schedule(path, latest, upgrade):
-    """Start the process that updates sift once no sift of this installation runs, and stop this one."""
+    """Start the process that updates sift once no sift of this installation runs, and stop this one. The update
+    waits only once its process runs: one that can't be started leaves none waiting."""
     log = settings.current().home / "logs" / f"update-{datetime.now():%Y-%m-%d_%H%M%S}.log"
     held = [str(f) for f in held_files()]
-    change(path, pending={"version": latest, "since": time.time()})
     spec = {"version": latest, "command": upgrade, "pid": os.getpid(), "held": held, "log": str(log)}
-    start(["finish", json.dumps(spec)])
+    updating = start(["finish", json.dumps(spec)])
+    change(path, pending={"version": latest, "since": time.time(), "pid": updating.pid})
     console.say(
         f"sift updates to {latest} as soon as no sift of this installation runs any more: this one stops now; stop "
         "any `sift serve` and `sift worker` too. The next command says how it went."
@@ -204,9 +221,12 @@ def _finished(path, spec, ok, how):
 
 
 def _running(spec, platform, kernel32):
-    if platform != "win32":
-        return _alive(spec["pid"])
-    return _alive_on_windows(spec["pid"], kernel32) or any(map(_in_use, spec["held"]))
+    return _runs(spec["pid"], platform, kernel32) or (platform == "win32" and any(map(_in_use, spec["held"])))
+
+
+def _runs(pid, platform=sys.platform, kernel32=None):
+    """Whether a process runs."""
+    return _alive_on_windows(pid, kernel32) if platform == "win32" else _alive(pid)
 
 
 def _alive(pid):
@@ -267,7 +287,8 @@ SHAPES = {  # what update.json holds, each entry of the type given, or a dict of
     "latest": str,  # its latest version then
     "failed": str,  # why it couldn't be asked, if it couldn't
     "asked": str,  # the latest version offered, once
-    "pending": {"version": str, "since": NUMBER},  # an update waiting for the sifts of its installation to stop
+    # an update waiting for the sifts of its installation to stop, and the process that waits and then updates
+    "pending": {"version": str, "since": NUMBER, "pid": int},
     "result": {"version": str, "ok": bool, "log": str},  # how it went, for the next command to say
 }
 

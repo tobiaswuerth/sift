@@ -3,6 +3,7 @@ waits are fakes, but for one real run of the process that updates."""
 
 import io
 import json
+import os
 import subprocess
 import sys
 import time
@@ -17,6 +18,13 @@ MAJOR, MINOR, PATCH = update._version(__version__)
 NEWER = f"{MAJOR}.{MINOR}.{PATCH + 1}"
 NEXT_MAJOR = f"{MAJOR + 1}.0.0"
 NO_PROCESS = 4_194_305  # above Linux's highest process id and macOS's, and odd, which none on Windows is
+UPDATER = 4321  # the process `installed` starts to update
+
+
+def waiting(pid=None, **more):
+    """An update that waits for the sifts of its installation to stop, its process `pid`: by default this one, which
+    runs."""
+    return {"version": NEWER, "since": time.time(), "pid": os.getpid() if pid is None else pid} | more
 
 
 class Terminal:
@@ -46,7 +54,12 @@ def installed(monkeypatch, home):
     """This sift as uv installed it as a tool, uv on the PATH; the processes it would start, recorded."""
     started = []
     monkeypatch.setattr(update, "upgrade_command", lambda: [str(home / "uv"), "tool", "upgrade", "sift-rag"])
-    monkeypatch.setattr(update, "start", started.append)
+
+    def start(args):
+        started.append(args)
+        return SimpleNamespace(pid=UPDATER)
+
+    monkeypatch.setattr(update, "start", start)
     return started
 
 
@@ -88,19 +101,57 @@ def test_yes_starts_the_update_and_stops_the_command(installed, home, monkeypatc
     assert spec["version"] == NEWER
     assert spec["command"] == [str(home / "uv"), "tool", "upgrade", "sift-rag"]
     assert spec["log"].startswith(str(home / "logs" / "update-"))
-    assert kept(home)["pending"]["version"] == NEWER
+    pending = kept(home)["pending"]
+    assert (pending["version"], pending["pid"]) == (NEWER, UPDATER)
+
+
+def test_an_update_that_can_t_be_started_leaves_none_waiting(installed, home, monkeypatch):
+    def start(args):
+        raise OSError("no Python to run it")
+
+    monkeypatch.setattr(update, "start", start)
+    keep(home, latest=NEWER, checked=time.time())
+    answer(monkeypatch, "y\n")
+    with pytest.raises(OSError, match="no Python"):
+        update.offer("status", TERMINAL)
+    assert "pending" not in kept(home)  # else every command of the next week said that it waits
 
 
 def test_while_an_update_waits_it_is_said(installed, home, capsys):
-    keep(home, latest=NEWER, pending={"version": NEWER, "since": time.time()}, checked=0)
+    keep(home, latest=NEWER, pending=waiting(), checked=0)
     update.offer("status", TERMINAL)
     assert f"sift updates to {NEWER} once no sift of this installation runs" in capsys.readouterr().err
     assert installed == []  # nor checks meanwhile
 
 
+def test_an_update_whose_process_is_gone_is_offered_again(installed, home, monkeypatch, capsys):
+    # A restart of the machine ends the process that waits: nothing updated, and for a week nothing said so.
+    keep(home, latest=NEWER, checked=time.time(), asked=NEWER, pending=waiting(NO_PROCESS))
+    answer(monkeypatch, "n\n")
+    update.offer("status", TERMINAL)
+    said = capsys.readouterr().err
+    assert f"the update to {NEWER} stopped before it was done" in said
+    assert "Update now?" in said
+    assert "pending" not in kept(home)
+
+
+def test_an_update_that_ends_as_it_is_looked_at_says_how_it_went(installed, home, monkeypatch, capsys):
+    def ended(pid):  # between the reading of the state and the look at its process
+        keep(home, pending=None, result={"version": __version__, "ok": True, "log": "update.log"})
+        return False
+
+    monkeypatch.setattr(update, "_runs", ended)
+    keep(home, checked=time.time(), asked=__version__, pending=waiting() | {"version": __version__})
+    update.offer("status", TERMINAL)
+    said = capsys.readouterr().err
+    assert f"sift updated to {__version__}" in said
+    assert "stopped before" not in said
+
+
 def test_an_update_waiting_far_too_long_is_forgotten(installed, home, monkeypatch, capsys):
-    keep(home, latest=NEWER, checked=time.time(), pending={"version": NEWER, "since": time.time() - 9 * update.DAY})
-    answer(monkeypatch, "\n")  # its process is long gone: offered again
+    # Its process is long gone, and another has its id by now.
+    keep(home, latest=NEWER, checked=time.time(), pending=waiting(since=time.time() - 9 * update.DAY))
+    answer(monkeypatch, "\n")  # offered again
     update.offer("status", TERMINAL)
     assert "Update now?" in capsys.readouterr().err
     assert "pending" not in kept(home)
