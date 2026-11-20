@@ -106,6 +106,69 @@ def test_only_newlines_end_lines():
     assert found == set(), 'split on "\n" (see readers.LINE): only it ends a line, as in editors and git'
 
 
+NOT_YET_STRICT = {  # the modules the type checker doesn't read yet. It only shrinks: modules leave it, none joins it
+    "sift/__main__.py",
+    "sift/accelerator.py",
+    "sift/bench.py",
+    "sift/catalog.py",
+    "sift/cli.py",
+    "sift/embed.py",
+    "sift/indexing.py",
+    "sift/jobs.py",
+    "sift/links.py",
+    "sift/local.py",
+    "sift/models.py",
+    "sift/ocr.py",
+    "sift/order.py",
+    "sift/postings.py",
+    "sift/readers.py",
+    "sift/remote.py",
+    "sift/scan.py",
+    "sift/search.py",
+    "sift/server.py",
+    "sift/store.py",
+    "sift/topk.py",
+    "sift/ui.py",
+    "sift/upgrade.py",
+    "sift/vectors.py",
+    "sift/worker.py",
+}
+SILENCED = re.compile(r"#\s*(?:type:\s*ignore|pyright:)")
+
+
+def _pyright():
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["pyright"]
+
+
+def test_the_modules_checked_for_types_only_grow():
+    # The type checker came to code written without it, some modules at a time: those it checks ([tool.pyright] in
+    # pyproject.toml) are all but the ones still waiting, so a new module is checked from its start, and one checked
+    # stays so.
+    modules = {f"sift/{path.name}" for path in (ROOT / "sift").glob("*.py")}
+    assert modules >= NOT_YET_STRICT, "a module that is gone waits no more: take it out of NOT_YET_STRICT"
+    assert set(_pyright()["include"]) == modules - NOT_YET_STRICT, (
+        "list a new module under include in [tool.pyright]; one that became strict there, and no more in "
+        "NOT_YET_STRICT, which only shrinks"
+    )
+
+
+def test_nothing_silences_the_type_checker():
+    # Green by a rule switched off, or by a line the checker is told to pass over, says nothing: its settings are
+    # the strict ones and no more, for the oldest Python sift runs on, and no module talks it out of a finding.
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    settings = _pyright()
+    assert sorted(settings) == ["include", "pythonVersion", "typeCheckingMode"], "no rule is set apart from strict"
+    assert settings["typeCheckingMode"] == "strict"
+    assert project["requires-python"] == f">={settings['pythonVersion']}"
+    silenced = {
+        f"{path.name}:{n}"
+        for path in (ROOT / "sift").glob("*.py")
+        for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1)
+        if SILENCED.search(line)
+    }
+    assert silenced == set(), "fix what the checker finds; a rule silenced in one place needs the owner's yes first"
+
+
 def test_workflows_run_actions_by_commit():
     # A tag or a branch of an action can be moved to other code, and the release workflow publishes to PyPI: an
     # action is named by the commit reviewed, with its version beside it, which Dependabot keeps current.
