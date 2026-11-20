@@ -62,10 +62,20 @@ def _make_certificate(cert, private_key):
 
 
 def _write(path, data):
-    """Write a file only this user may read (on POSIX; on Windows the home folder's permissions do that)."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
+    """Write a file only this user may read (on POSIX; on Windows the home folder's permissions do that), whole or not
+    at all: a key cut short by a crash or a full disk would change the key other machines were given, unsaid. Through
+    PATH.part beside it, for a moment."""
+    part = path.with_name(f"{path.name}.part")
+    fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(part, path)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
 
 
 async def _json(request):

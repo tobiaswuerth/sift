@@ -66,7 +66,7 @@ Everything sift keeps lies under `SIFT_HOME` (`~/.sift`):
 | `logs/COMMAND-DATE.log` | What `add`, `rm`, `index`, `embed`, `serve` and `worker` said, timed, with errors | The latest 20 of each command kept; past 16 MB a log goes on in a new part, its last 3 kept as `.log.1` (the latest) to `.log.3`; delete freely |
 | `logs/update-DATE.log` | What an update you agreed to did | Kept; delete freely |
 | `update.json` | The latest version on PyPI, when it was asked, and an update waiting or done | Rewritten daily, through `update.json.PID.part` for a moment; delete freely |
-| `worker/` | `sift worker`'s certificate and token, readable by you only | Delete it to make a new key |
+| `worker/` | `sift worker`'s certificate and token, readable by you only | Made on its first start, each file through `FILE.part` for a moment; delete it to make a new key |
 | `numba/` | The compiled search code `sift serve` and `sift bench` keep | Made again when deleted |
 
 An index can lie anywhere else:

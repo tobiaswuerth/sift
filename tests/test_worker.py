@@ -137,6 +137,16 @@ def test_the_worker_makes_its_key_once_and_keeps_it(home):
     assert first.cert.parent == first.private_key.parent == home / "worker"
 
 
+def test_a_key_file_is_written_whole_or_not_at_all(tmp_path):
+    # Written in place, a key file cut short, by a crash or a full disk, changed the key other machines were given.
+    path = tmp_path / "token"
+    worker._write(path, b"the old key")
+    with pytest.raises(TypeError):
+        worker._write(path, "not bytes")  # fails as it writes
+    assert path.read_bytes() == b"the old key"
+    assert list(tmp_path.iterdir()) == [path]
+
+
 def test_another_home_makes_another_key(tmp_path, configure):
     configure(home=tmp_path / "a")
     a = worker.credentials()

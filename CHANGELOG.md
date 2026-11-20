@@ -87,6 +87,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   indexed; the others are read, as `sift index` reads them.
 - `sift worker` failed a request whose sender's address the server didn't give, and took any number of texts in one,
   holding the GPU for as long as a request of millions took. It takes at most 20,000, twice what a `query` reranks.
+- `sift worker` wrote its token and certificate in place: one cut short by a crash or a full disk changed the key other
+  machines were given, unsaid. Each is written whole or not at all now.
 - The docs said `sort` orders results by a field "instead of score", which read as the newest of every match first.
   It orders the best `k`; a range filter on the field finds the newest of all. They also said a mail's `date` is in
   UTC, which it is only where the mail gives its time zone.
