@@ -235,7 +235,7 @@ def _layout(db, path, cid, create):
         _add_tables(db)
     for key, kinds in READ_AGAIN.items():
         if get_meta(db, key) is None:
-            _once(db, key, partial(_read_again, kinds=kinds))
+            _once(db, key, partial(read_again, kinds=kinds))
     if get_meta(db, WAITED) is None:
         _once(db, WAITED, _read_waited_again)
 
@@ -324,9 +324,10 @@ def _read_waited_again(db):
             db.execute("UPDATE sources SET mtime = NULL WHERE id = ?", (sid,))
 
 
-def _read_again(db, kinds):
+def read_again(db, kinds):
     """Have the next `sift index` read again the files of these kinds without documents, and the mails with one
-    attached. Their unchanged documents stay, vectors included."""
+    attached: those an older sift skipped (READ_AGAIN), or scans left unread (indexing.SCANS_SKIPPED). Their
+    unchanged documents stay, vectors included."""
     db.execute(
         """UPDATE sources SET mtime = NULL
            WHERE (id NOT IN (SELECT source FROM docs)

@@ -224,7 +224,8 @@ tables and columns in reading order; their metadata says `ocr`.
 - On a desktop GPU, in about 3 GB: 15 to 30 seconds a page, up to a minute for a dense one; at most 50 pages a scan. The
   first scan downloads the model (2 GB).
 - Without a GPU, scans are skipped and reported; `SIFT_OCR=on` reads them on the CPU (minutes a page), `off` never.
-  A scan skipped because the GPU's memory was taken, or OCR ran out of it, is read again by the next `sift index`.
+  A scan skipped because the GPU's memory was taken, or OCR ran out of it, is read again by the next `sift index`;
+  so are those skipped before `SIFT_OCR` was turned on, or from `off` to `auto`.
 - `reindex` leaves scans to the next `sift index`, so searches don't wait; `sift index --files` reads them at once.
 
 ### Emails

@@ -123,6 +123,25 @@ def _path(rel, doc):
     return f"{rel.rsplit('.', 1)[0]}/{_storable(doc.key)}" if doc.key else rel
 
 
+SCANS_SKIPPED = "scans_skipped"  # in a store's meta table: the SIFT_OCR under which a scan was last left unread
+OCR_READS = {
+    "off": 0,
+    "auto": 1,
+    "on": 2,
+}  # how far each SIFT_OCR reads: on every scan auto does, auto every one off does
+
+
+def _read_skipped_scans(db):
+    """Have this index read the scans left unread under a SIFT_OCR that reads fewer than the one now (SCANS_SKIPPED),
+    as it was turned on, or from off to auto: the PDFs without documents, and the mails with one attached, once. A
+    skipped scan's file keeps its time, so that no later run reads it again only to skip it again."""
+    skipped = store.get_meta(db, SCANS_SKIPPED)
+    if skipped is not None and OCR_READS[ocr.setting()] > OCR_READS[skipped]:
+        store.read_again(db, (".pdf",))
+        db.execute("DELETE FROM meta WHERE key = ?", (SCANS_SKIPPED,))
+        db.commit()
+
+
 def _read_scans(db, sid, rel, docs, note, now=True):
     """A file's documents with the scans among them read by OCR, those new or changed since the file `sid` was
     indexed (see `ocr`); a scan that can't be read is left out, and noted, as is one read. Reading a scan takes a
@@ -144,6 +163,9 @@ def _read_scans(db, sid, rel, docs, note, now=True):
             note(f"{path}: {said}")
             if doc is None:
                 left |= again
+                if not again and ocr.default().unavailable() is not None:  # SIFT_OCR's doing, not the scan's
+                    store.set_meta(db, SCANS_SKIPPED, ocr.setting())
+                    db.commit()
                 continue
         read.append(doc)
     return read, left
@@ -714,6 +736,7 @@ def _index_collection(db, name, root, fields, ignore):
     """Bring one collection in sync: drop what is gone, read what is new or changed; its keyword postings follow
     after (see `postings`)."""
     t0 = time.perf_counter()
+    _read_skipped_scans(db)
     known = {p: (i, m, s) for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources")}
     console.say(f"{name}: scanning {root}")  # a large or cloud folder takes a while
     todo, seen, unlisted = _scan(root, known, ignore)
