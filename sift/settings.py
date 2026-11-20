@@ -4,9 +4,11 @@ CUDA_VISIBLE_DEVICES, Hugging Face's HF_HUB_OFFLINE (offline, sift asks PyPI for
 keeps the code it compiles (`keep_compiled_code`), which it reads from the environment."""
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
+from typing import Self
 
 
 @dataclass(frozen=True)
@@ -20,7 +22,7 @@ class Settings:
     update_check: bool = True  # SIFT_UPDATE_CHECK: off never asks PyPI for a newer sift (see `update`); nor offline
 
     @classmethod
-    def from_env(cls, environ=os.environ):
+    def from_env(cls, environ: Mapping[str, str] = os.environ) -> Self:
         """The settings an environment gives. An empty variable counts as unset."""
         return cls(
             home=Path(environ.get("SIFT_HOME") or Path.home() / ".sift"),
@@ -34,18 +36,18 @@ class Settings:
         )
 
 
-def _on(value):
+def _on(value: str) -> bool:
     """Whether a switch is on: 1, on, true or yes, in any case."""
     return value.strip().lower() in ("1", "on", "true", "yes")
 
 
 @cache
-def current():
+def current() -> Settings:
     """This process's settings, from its environment, read on first use."""
     return Settings.from_env()
 
 
-def keep_compiled_code():
+def keep_compiled_code() -> str:
     """Numba keeps the code it compiles beside the module, where an installation may not write: in SIFT_HOME instead,
     unless NUMBA_CACHE_DIR says where. Before Numba is imported, which reads it then. Returns the folder."""
     return os.environ.setdefault("NUMBA_CACHE_DIR", str(current().home / "numba"))
