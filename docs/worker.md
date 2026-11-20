@@ -32,7 +32,7 @@ the machine using it keeps the index and the files.
 ## What it does
 
 - `sift embed` sends the chunks to the worker, 256 at a time, and stores the vectors it returns. Searches embed their
-  queries and rerank there too, so the machine searching never loads PyTorch.
+  queries and rerank there too, so the machine that embeds, searches or serves through the worker never loads PyTorch.
 - The worker sees the texts it embeds and reranks, but no index and no files. It sizes its batches to its GPU and frees
   the GPU after 5 idle minutes, as `sift serve` does.
 - Both machines need the same major version of sift; sift refuses another and says which runs where.

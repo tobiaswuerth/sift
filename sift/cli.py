@@ -16,9 +16,8 @@ from pathlib import Path
 from . import __version__, console, logs, readers, settings, update
 from .catalog import SUFFIX, Catalog
 
-# The commands that load PyTorch, unless a worker does it for them; with SIFT_EMBED_REMOTE, THROUGH_WORKER do.
+# The commands that load PyTorch; with SIFT_EMBED_REMOTE, a worker does for all but `worker`, which computes itself.
 SLOW = ("embed", "vsearch", "query", "similar", "bench", "serve", "worker")
-THROUGH_WORKER = ("vsearch", "query", "similar", "bench")
 SEARCHES = ("search", "vsearch", "query", "similar")
 
 
@@ -347,7 +346,7 @@ def _offer_update(command):
 
 def _command(a):
     if a.cmd in SLOW:  # loading PyTorch alone can take long: say first that sift runs
-        loading = "" if settings.current().remote and a.cmd in THROUGH_WORKER else ", loading PyTorch"
+        loading = "" if settings.current().remote and a.cmd != "worker" else ", loading PyTorch"
         console.say(f"sift {a.cmd}: starting{loading} ...")
     if a.cmd == "worker":  # needs no index
         from .worker import serve

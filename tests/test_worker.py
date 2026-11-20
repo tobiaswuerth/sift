@@ -304,8 +304,9 @@ def test_a_worker_is_reached_over_ipv4_where_it_listens(live, ipv6_listener, mon
     assert not ready  # no connection waits there
 
 
-def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
+def test_embedding_searching_and_serving_through_a_worker_never_load_pytorch(tmp_path):
     # PyTorch takes seconds to load, more on a notebook; a machine whose worker embeds and reranks doesn't need it.
+    # `sift embed` and `sift serve` said they loaded it all the same.
     script = tmp_path / "search.py"
     script.write_text(
         textwrap.dedent(f"""
@@ -313,10 +314,11 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
             import sys
             os.environ["SIFT_EMBED_REMOTE"] = "https://t.p@worker:8766"
             import numpy as np
-            from sift import indexing, remote, store
+            from sift import embed, indexing, remote, server
             from sift.catalog import Catalog
             from sift.search import Index
 
+            remote.Remote.info = {{"model": "m", "dim": 4, "reranker": "r", "version": "1"}}
             remote.Remote.encode = lambda self, texts, query=False: np.full((len(texts), 4), 0.5, np.float16)
             remote.Remote.rerank = lambda self, query, texts: np.ones(len(texts), np.float32)
             notes = {str(tmp_path / "notes")!r}
@@ -325,12 +327,11 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
             catalog = Catalog({str(tmp_path / "home")!r})
             catalog.add(notes, "notes")
             indexing.index(catalog)
-            chunks = [chunk for (chunk,) in catalog.store("notes").execute("SELECT id FROM chunks")]
-            store.put_vectors(catalog.store("notes"), chunks, np.full((len(chunks), 4), 0.5, np.float16))
-            store.set_meta(catalog.store("notes"), "dim", 4)
-            catalog.store("notes").commit()
+            embed.embed_pending(catalog)
             index = Index(catalog)
             assert index.vsearch("robot") and index.query("robot")
+            server.build(index)
+            index.load()
             print("torch" in sys.modules)
         """),
         encoding="utf-8",
