@@ -473,6 +473,18 @@ def test_a_file_named_through_a_link_to_its_collection(live, tmp_path):
     assert index.reindex([str(through / "a.md")]) == [{"id": "vault/a.md", "status": "removed"}]
 
 
+def test_a_path_found_as_given_is_not_resolved(live, monkeypatch):
+    # Resolving asks the file system about every folder of the path, which a share that doesn't answer can take many
+    # seconds over: every `get` and `reindex` by absolute path did, though the path was found as given.
+    index, vault = live
+    hans = vault / "01_People" / "Hans Müller.md"
+    real, asked = os.path.realpath, []
+    monkeypatch.setattr(os.path, "realpath", lambda path, *a, **kw: asked.append(str(path)) or real(path, *a, **kw))
+    assert index.get(str(hans)).startswith("---")
+    assert index.reindex([str(hans)])[0]["status"] == "unchanged"
+    assert str(hans.parent) not in asked
+
+
 def test_reindex_refuses_a_collection_whose_folder_is_gone(live):
     # An unplugged drive must not look like every file deleted.
     index, vault = live

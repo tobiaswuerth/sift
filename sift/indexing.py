@@ -500,14 +500,16 @@ def holding(collections, full):
     """The collection whose folder holds the normalised absolute path `full`, the nearest, and the path in it, with
     `/`: (collection, rel), or None. As given, else with its folder resolved: a collection keeps its folder as it
     resolves (`sift add`), so a file named through a link to it, a junction, or a drive mapped to a network share is in
-    it too. The file itself stays as named: a linked file is indexed at its link's path."""
+    it too. Resolved only then: it asks the file system, which a share that doesn't answer takes long over. The file
+    itself stays as named: a linked file is indexed at its link's path."""
     nearest = sorted(collections, key=lambda c: -len(c.path))
-    resolved = os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full))
-    for path in dict.fromkeys((full, resolved)):
-        for c in nearest:
-            if inside(c.path, path):
-                return c, os.path.relpath(path, c.path).replace(os.sep, "/")
-    return None
+
+    def held(path):
+        return next(
+            ((c, os.path.relpath(path, c.path).replace(os.sep, "/")) for c in nearest if inside(c.path, path)), None
+        )
+
+    return held(full) or held(os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full)))
 
 
 def _linked(path):
