@@ -203,6 +203,24 @@ def test_without_its_installer_on_the_path_the_command_is_said(installed, home, 
     assert "run `uv tool upgrade sift-rag` to update" in capsys.readouterr().err
 
 
+def test_an_installation_that_isn_t_the_user_s_to_write_is_told_of(installed, home, monkeypatch, capsys):
+    # As one an administrator installed: its files can't be opened for writing, which is how a running sift's look,
+    # so the update waited a week for a sift to stop that never ran, and then failed.
+    monkeypatch.setattr(sys, "prefix", str(home / "of-an-administrator"))  # no folder to write in
+    keep(home, latest=NEWER, checked=time.time())
+    update.offer("status", TERMINAL)  # Terminal() fails if asked
+    said = capsys.readouterr().err
+    assert f"sift {NEWER} is out (this is {__version__}), but its installation isn't yours to write" in said
+    assert f"`{console.command(str(home / 'uv'), 'tool', 'upgrade', 'sift-rag')}`" in said
+    assert installed == []
+
+
+def test_a_folder_is_tried_for_whether_it_can_be_written(tmp_path):
+    assert update._writable(tmp_path)
+    assert list(tmp_path.iterdir()) == []  # what it tried with is gone
+    assert not update._writable(tmp_path / "missing")
+
+
 def test_without_a_command_to_upgrade_it_a_newer_sift_is_told_of(installed, home, monkeypatch, capsys):
     monkeypatch.setattr(update, "upgrade_command", list)
     keep(home, latest=NEWER, checked=time.time())

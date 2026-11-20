@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -116,8 +117,23 @@ def _ask(path, latest, upgrade):
         console.say(f"sift {latest} is out (this is {__version__}): update it with the installer it came by")
     elif not Path(upgrade[0]).is_absolute():  # uv or pipx isn't on the PATH, or the command is for the user to run
         console.say(f"sift {latest} is out (this is {__version__}): run `{console.command(*upgrade)}` to update")
+    elif not _writable(sys.prefix):  # an administrator's: its files look held (see _in_use), and the wait never ends
+        console.say(
+            f"sift {latest} is out (this is {__version__}), but its installation isn't yours to write: update it as "
+            f"who installed it, with `{console.command(*upgrade)}`"
+        )
     elif _yes(f"sift {latest} is out (this is {__version__}). Update now? [y/N] "):
         _schedule(path, latest, upgrade)
+
+
+def _writable(folder):
+    """Whether this user may write in a folder, as tried with a file made there and gone at once: what the system
+    tells without trying leaves out who may write (on Windows, os.access looks at the read-only mark alone)."""
+    try:
+        with tempfile.TemporaryFile(dir=folder):
+            return True
+    except OSError:
+        return False
 
 
 def _yes(question):
@@ -313,7 +329,8 @@ def _alive_on_windows(pid, kernel32=None):
 
 
 def _in_use(file):
-    """Whether a program file runs, on Windows: then it can't be opened for writing (nothing is written)."""
+    """Whether a program file runs, on Windows: then it can't be opened for writing (nothing is written). Nor can a
+    file this user may not write, which Python can't tell from it; such an installation is never updated (see _ask)."""
     try:
         open(file, "r+b").close()
     except FileNotFoundError:
