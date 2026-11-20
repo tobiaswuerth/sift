@@ -1,14 +1,19 @@
 """JSON Lines files: one document per line, with id, title and text found by name and the rest as metadata."""
 
+import io
 import json
+import random
+import re
+import sqlite3
+from pathlib import Path
 
 import pytest
 
-from sift import embed, indexing, readers
+from sift import embed, indexing, readers, store
 from sift.catalog import Catalog
 from sift.search import Index
 
-from .conftest import only, write
+from .conftest import index_contents, keywords_agree, only, prose_text, write
 
 PAPERS = [
     {
@@ -304,3 +309,375 @@ def test_a_record_whose_id_holds_a_nul_can_be_got(tmp_path, home):
     catalog.add(tmp_path / "c", "c")
     indexing.index(catalog)
     assert Index(catalog).get("c/data/a\ufffdb") == "record"
+
+
+def test_two_records_of_one_path_the_first_keeps_it(tmp_path, home, capsys):
+    # A NUL in an id is stored as U+FFFD: ids that differ only so are two records of one path. The second replaced
+    # the first when the two came in different batches of their file.
+    other = "a" + chr(0xFFFD) + "b"
+    write(tmp_path / "c" / "data.jsonl", jsonl([{"id": "a\x00b", "text": "first"}, {"id": other, "text": "second"}]))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert texts(catalog) == {f"data/{other}": "first"}
+    left = (
+        f"c: data/{other}: a document of data.jsonl has this path; this one of data.jsonl is left out until it is free"
+    )
+    assert left in said(capsys)
+
+
+@pytest.mark.parametrize("stored", [1, 7])
+def test_two_records_of_one_path_in_any_batches(tmp_path, home, monkeypatch, stored):
+    monkeypatch.setattr(indexing, "STORED", stored)
+    other = "a" + chr(0xFFFD) + "b"
+    write(tmp_path / "c" / "data.jsonl", jsonl([{"id": "a\x00b", "text": "first"}, {"id": other, "text": "second"}]))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert texts(catalog) == {f"data/{other}": "first"}
+
+
+# --- large files: read as they are stored -----------------------------------------
+
+
+@pytest.fixture
+def large(monkeypatch):
+    """Every JSON Lines file counts as large: read as it is stored, seven documents at a time."""
+    monkeypatch.setattr(readers, "STREAMED", 0)
+    monkeypatch.setattr(indexing, "STORED", 7)
+
+
+def numbered(n):
+    return jsonl({"id": i, "text": f"record {i}"} for i in range(n))
+
+
+def texts(catalog):
+    return dict(only(catalog).execute("SELECT path, text FROM docs"))
+
+
+def said(capsys):
+    """What sift said, line by line, each as it stood last."""
+    return [line.rsplit("\r", 1)[-1].rstrip() for line in capsys.readouterr().err.split("\n")]
+
+
+def test_a_large_file_is_read_no_further_than_it_is_stored(tmp_path, home, large, monkeypatch):
+    # Read whole, a file of 300,000 records, 69 MB, took 697 MB of memory: its bytes, its lines and every record's
+    # document at once, ten times the file. It is read a batch of records ahead of what is stored, whatever its size.
+    write(tmp_path / "c" / "big.jsonl", numbered(95))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    read, stored, ahead, record = [], [], [], readers._record
+    monkeypatch.setattr(readers, "_record", lambda *args: read.append(1) or record(*args))
+
+    def storing(statement):
+        if statement.startswith("INSERT INTO docs") and statement not in stored:  # said again as its trigger starts
+            ahead.append(len(read) - len(stored))
+            stored.append(statement)
+
+    catalog.store("c").set_trace_callback(storing)
+    try:
+        indexing.index(catalog)
+    finally:
+        catalog.store("c").set_trace_callback(None)
+    assert len(stored) == 95
+    assert max(ahead) <= 7
+
+
+def test_a_batch_of_long_records_ends_by_its_text(tmp_path, home, large, monkeypatch):
+    # Seven records of megabytes each are megabytes too many at once: a batch ends by the text it holds as well.
+    monkeypatch.setattr(indexing, "STORED_CHARS", 100)
+    write(tmp_path / "c" / "big.jsonl", jsonl({"id": i, "text": "word " * 30} for i in range(6)))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    batches, keywords = [], store.keywords
+    monkeypatch.setattr(
+        store, "keywords", lambda db, docs, **more: batches.append(len(docs)) or keywords(db, docs, **more)
+    )
+    indexing.index(catalog)
+    assert batches == [1] * 6
+
+
+def lines_of(rng, n):
+    """Lines as files hold them: records with ids and without, some ids twice, and lines that are no record."""
+    lines = []
+    for i in range(n):
+        if rng.random() < 0.15:
+            lines.append(rng.choice(["{not json", "[1, 2]", "", json.dumps({"id": i}), "   "]))
+            continue
+        record = {"title": f"Title {rng.randint(0, 20)}", "text": prose_text(rng, 30), "year": 2000 + i % 5}
+        if rng.random() < 0.8:
+            record["id"] = f"r{rng.randint(0, n)}"
+        lines.append(json.dumps(record, ensure_ascii=rng.random() < 0.5))
+    return lines
+
+
+@pytest.mark.parametrize(
+    "encoding, end", [("utf-8", "\n"), ("utf-8-sig", "\r\n"), ("utf-16", "\n"), ("utf-16-be", "\r\n"), ("utf-32", "\n")]
+)
+def test_a_large_file_is_indexed_as_one_read_whole(tmp_path, monkeypatch, capsys, encoding, end):
+    # The same documents, lines skipped and counts, to the character, when it is first indexed and when it changed.
+    rng, root = random.Random(8), tmp_path / "c"
+    root.mkdir()
+    whole, streamed = Catalog(tmp_path / "whole"), Catalog(tmp_path / "streamed")
+    for catalog in (whole, streamed):
+        catalog.add(root, "c")
+    monkeypatch.setattr(indexing, "STORED", 7)
+
+    def indexed(lines):
+        data = (end.join(lines) + end).encode(encoding)
+        mark = b"\xfe\xff" if encoding == "utf-16-be" else b""  # the mark Python writes for no byte order asked
+        torn = b'{"id": "torn", "text": "na\xefve \xff\xfe torn"}\n' if encoding == "utf-8" else b""  # not UTF-8
+        (root / "big.jsonl").write_bytes(mark + data + torn)
+        told = []
+        for catalog, past in ((whole, 10**9), (streamed, 0)):
+            monkeypatch.setattr(readers, "STREAMED", past)
+            capsys.readouterr()
+            indexing.index(catalog)
+            told.append(
+                sorted(
+                    re.sub(r" \(\d+\.\ds\)$", "", line) for line in said(capsys) if "skipped" in line or "added" in line
+                )
+            )
+            assert keywords_agree(catalog.store("c"))
+        assert told[0] == told[1]
+        assert index_contents(whole.store("c")) == index_contents(streamed.store("c"))
+        return told[0]
+
+    lines = lines_of(rng, 120)
+    first = indexed(lines)
+    assert any("lines skipped" in line for line in first)
+    changed = [line.replace("Title", "Changed") if rng.random() < 0.2 else line for line in lines if rng.random() > 0.2]
+    again = indexed(changed + lines_of(rng, 30))
+    assert any(re.search(r"[1-9]\d* added, [1-9]\d* changed, [1-9]\d* removed", line) for line in again)
+    whole.close()
+    streamed.close()
+
+
+def test_an_id_used_twice_in_a_large_file_keeps_its_first_record(tmp_path, home, large, capsys):
+    # A reader that holds no more than a batch can't know the ids before it: the store, which holds their paths, does.
+    file = tmp_path / "c" / "big.jsonl"
+    write(file, jsonl({"id": n % 10, "text": f"record {n}"} for n in range(25)))  # each id again past its batch
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert texts(catalog) == {f"big/{n}": f"record {n}" for n in range(10)}
+    twice = "; ".join(f"line {n + 1}: id {n % 10} used twice" for n in range(10, 15))
+    assert f"c: big.jsonl: 15 lines skipped ({twice}; ...)" in said(capsys)
+    before = doc_ids(catalog)
+    write(file, file.read_text(encoding="utf-8") + "\n")  # read again, with every first record as it is indexed
+    indexing.index(catalog)
+    assert doc_ids(catalog) == before
+    told = said(capsys)
+    assert f"c: big.jsonl: 15 lines skipped ({twice}; ...)" in told
+    assert any("0 added, 0 changed, 0 removed" in line for line in told)
+
+
+def test_records_gone_from_a_large_file_leave_the_index(tmp_path, home, large, capsys):
+    # No batch holds the records that are gone: they are the file's documents that none of its batches named.
+    file = tmp_path / "c" / "big.jsonl"
+    write(file, numbered(30))
+    write(tmp_path / "c" / "other.jsonl", numbered(3))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    before = doc_ids(catalog)
+    kept = [{"id": n, "text": f"record {n}"} for n in range(0, 30, 3)]
+    kept[4]["text"] = "changed"
+    write(file, jsonl([*kept, {"id": "new", "text": "new"}]))
+    capsys.readouterr()
+    indexing.index(catalog)
+    after = doc_ids(catalog)
+    assert sorted(after) == sorted(
+        [*(f"big/{n}" for n in range(0, 30, 3)), "big/new", *(f"other/{n}" for n in range(3))]
+    )
+    assert all(after[f"big/{n}"] == before[f"big/{n}"] for n in range(0, 30, 3) if n != 12)  # the same rows
+    assert texts(catalog)["big/12"] == "changed"
+    assert any("1 added, 1 changed, 20 removed" in line for line in said(capsys))
+    assert Index(catalog).search('"record 29"') == []  # gone from the keyword index too
+    assert [h["id"] for h in Index(catalog).search('"record 27"')] == ["c/big/27"]
+    assert only(catalog).execute("SELECT count(*) FROM temp.sift_staying").fetchone() == (0,)  # nothing left of the run
+
+
+def test_storing_a_large_file_again_scans_no_documents(tmp_path, home, large):
+    # Each batch's documents are found by their paths, and those gone by their file: found among all the file's, or
+    # all the collection's, a batch at a time, a file of millions of records would be read through a thousand times.
+    file = tmp_path / "c" / "big.jsonl"
+    write(file, numbered(30))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    write(file, numbered(20))
+    db, asked = catalog.store("c"), []
+    db.set_trace_callback(lambda statement: statement.startswith("SELECT") and asked.append(statement))
+    try:
+        indexing.index(catalog)
+    finally:
+        db.set_trace_callback(None)
+    found = [s for s in asked if "FROM docs WHERE path IN" in s or "FROM docs WHERE source = " in s]
+    assert len(found) >= 4  # the three batches, and the gone
+    for statement in found:
+        plan = " ".join(row[-1] for row in db.execute(f"EXPLAIN QUERY PLAN {statement}"))
+        assert "SEARCH docs USING" in plan
+        assert "SCAN docs" not in plan
+
+
+@pytest.mark.parametrize("n", [3, 15])  # in the file's first batch, and in a later one
+def test_a_record_of_a_large_file_waits_for_the_path_a_file_has(tmp_path, home, large, capsys, n):
+    root = tmp_path / "c"
+    write(root / "big" / f"r{n}.md", "# File\n")
+    catalog = Catalog(home)
+    catalog.add(root, "c")
+    indexing.index(catalog)
+    write(root / "big.jsonl", jsonl({"id": f"r{i}.md", "text": f"record {i}"} for i in range(20)))
+    indexing.index(catalog)
+    assert len(texts(catalog)) == 20
+    assert texts(catalog)[f"big/r{n}.md"] == "# File\n"
+    path = f"big/r{n}.md"
+    assert f"c: {path}: a document of {path} has this path; this one of big.jsonl is left out until it is free" in said(
+        capsys
+    )
+    (root / "big" / f"r{n}.md").unlink()
+    indexing.index(catalog)  # the path is free: its file is read again, in the same run
+    assert len(texts(catalog)) == 20
+    assert texts(catalog)[f"big/r{n}.md"] == f"record {n}"
+
+
+def test_a_file_of_a_few_records_grown_large_keeps_those_it_had(tmp_path, home, large, capsys):
+    # Its few documents are held as a small file's are, and its new ones looked up as a large file's: the old ones
+    # come in a late batch here, one of them twice.
+    file = tmp_path / "c" / "big.jsonl"
+    write(file, numbered(5))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    before = doc_ids(catalog)
+    grown = [{"id": i, "text": "changed" if i == 2 else f"record {i}"} for i in reversed(range(1, 20))]
+    write(file, jsonl([*grown, {"id": 3, "text": "again"}, {"id": 19, "text": "again"}]))
+    capsys.readouterr()
+    indexing.index(catalog)
+    after = doc_ids(catalog)
+    assert sorted(after) == sorted(f"big/{i}" for i in range(1, 20))
+    assert all(after[f"big/{i}"] == before[f"big/{i}"] for i in (1, 3, 4))  # the same rows
+    assert (texts(catalog)["big/2"], texts(catalog)["big/3"], texts(catalog)["big/19"]) == (
+        "changed",
+        "record 3",
+        "record 19",
+    )
+    told = said(capsys)
+    assert "c: big.jsonl: 2 lines skipped (line 20: id 3 used twice; line 21: id 19 used twice)" in told
+    assert any("15 added, 1 changed, 1 removed" in line for line in told)
+
+
+def test_a_large_file_emptied_leaves_the_index(tmp_path, home, large, capsys):
+    file = tmp_path / "c" / "big.jsonl"
+    write(file, numbered(30))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    write(file, "")
+    capsys.readouterr()
+    indexing.index(catalog)
+    assert texts(catalog) == {}
+    assert any("0 added, 0 changed, 30 removed" in line for line in said(capsys))
+
+
+def test_a_large_file_the_store_refuses_a_record_of_is_left_out_whole(tmp_path, home, large, monkeypatch, capsys):
+    # Stored in one transaction, as a small file is: no batch of it stays without the others.
+    root = tmp_path / "c"
+    write(root / "big.jsonl", numbered(20))
+    write(root / "note.md", "# Note\n")
+    catalog = Catalog(home)
+    catalog.add(root, "c")
+    insert = indexing._insert
+
+    def refusing(db, sid, path, doc):
+        if path == "big/15":
+            raise sqlite3.DataError("string or blob too big")
+        return insert(db, sid, path, doc)
+
+    monkeypatch.setattr(indexing, "_insert", refusing)
+    indexing.index(catalog)
+    assert sorted(texts(catalog)) == ["note.md"]
+    told = said(capsys)
+    assert "c: big.jsonl: skipped (string or blob too big)" in told
+    assert any("1 added, 0 changed, 0 removed, 1 unreadable" in line for line in told)
+    monkeypatch.setattr(indexing, "_insert", insert)
+    indexing.index(catalog)  # read again
+    assert len(texts(catalog)) == 21
+
+
+class Torn(io.BytesIO):
+    """A file that can be read for its first five hundred bytes, as on a share that stops answering."""
+
+    def read1(self, size=-1):
+        if self.tell() > 500:
+            raise OSError("the share is gone")
+        return super().read1(200)
+
+
+def test_a_large_file_that_cannot_be_read_to_its_end_is_left_out_whole(tmp_path, home, large, monkeypatch, capsys):
+    root = tmp_path / "c"
+    write(root / "big.jsonl", numbered(40))
+    catalog = Catalog(home)
+    catalog.add(root, "c")
+    monkeypatch.setattr(readers, "open", lambda path, mode: Torn(Path(path).read_bytes()), raising=False)
+    indexing.index(catalog)
+    assert texts(catalog) == {}
+    told = said(capsys)
+    assert "c: big.jsonl: skipped (OSError: the share is gone)" in told
+    assert any("0 added, 0 changed, 0 removed, 1 unreadable" in line for line in told)
+    monkeypatch.delattr(readers, "open")
+    indexing.index(catalog)  # read again
+    assert len(texts(catalog)) == 40
+
+
+def test_a_large_file_starts_no_worker_processes(tmp_path, home, pools, monkeypatch):
+    # Workers read files whole, and their documents come back whole: a file read as it is stored is read here, and
+    # counted, it started workers that had nothing to read.
+    monkeypatch.setattr(readers, "STREAMED", 1000)
+    monkeypatch.setattr(indexing, "BYTES_PER_WORKER", 100)
+    write(tmp_path / "c" / "big.jsonl", numbered(200))
+    write(tmp_path / "c" / "note.md", "# Note\n")
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    assert len(texts(catalog)) == 201
+    assert pools == []
+
+
+def test_reindex_reads_a_large_file_as_it_stores_it(tmp_path, home, large):
+    file = tmp_path / "c" / "big.jsonl"
+    write(file, numbered(30))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    before = doc_ids(catalog)
+    write(file, jsonl([{"id": 0, "text": "changed"}, *({"id": n, "text": f"record {n}"} for n in range(1, 20)), "x"]))
+    (entry, docs), *_ = indexing.reindex(catalog, ["c/big.jsonl"]).files
+    assert entry == {"id": "c/big.jsonl", "status": "changed", "note": "1 line skipped (line 21: not an object)"}
+    after = doc_ids(catalog)
+    assert sorted(docs) == sorted(after.values())
+    assert len(after) == 20
+    assert all(after[f"big/{n}"] == before[f"big/{n}"] for n in range(1, 20))
+    again = indexing.reindex(catalog, ["c/big.jsonl"])
+    assert again.files[0][0] == {"id": "c/big.jsonl", "status": "unchanged", "note": entry["note"]}
+    assert again.removed == []
+    chunks = dict(only(catalog).execute("SELECT d.path, c.id FROM chunks c JOIN docs d ON d.id = c.doc"))
+    write(file, numbered(5))
+    result = indexing.reindex(catalog, ["c/big.jsonl"])
+    assert sorted(result.removed) == sorted(chunks[f"big/{n}"] for n in (0, *range(5, 20)))  # changed, and gone
+
+
+def test_reindex_leaves_a_large_file_it_cannot_read_to_its_end_as_indexed(tmp_path, home, large, monkeypatch):
+    file = tmp_path / "c" / "big.jsonl"
+    write(file, numbered(10))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    before = doc_ids(catalog)
+    write(file, numbered(40))
+    monkeypatch.setattr(readers, "open", lambda path, mode: Torn(Path(path).read_bytes()), raising=False)
+    result = indexing.reindex(catalog, ["c/big.jsonl"])
+    assert result.files == [({"id": "c/big.jsonl", "status": "unreadable", "note": "OSError: the share is gone"}, [])]
+    assert result.removed == []
+    assert doc_ids(catalog) == before

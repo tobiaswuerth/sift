@@ -224,18 +224,37 @@ def matches(db, match, chunks):
     each chunk in the phrase's lists, beyond the marks the column holds itself; but highlight() merges occurrences that
     overlap ("a a" twice in "a a a", marked once), so a phrase that can overlap itself is counted in the chunks' own
     tokens."""
-    ids = json.dumps([int(c) for c in chunks])
+    ids = [int(c) for c in chunks]
     if (phrase := _quoted(match)) and _overlapping(phrase):
-        sql = "SELECT id, title, text, meta FROM chunk_text WHERE id IN (SELECT value FROM json_each(?))"
         counts = {
             c: sum(_occurrences(expression.tokens(t), phrase) for t in texts if t)
-            for c, *texts in db.execute(sql, (ids,))
+            for c, *texts in store.chunk_rows(db, chunks=ids)
         }
         return {c: n for c, n in counts.items() if n}
+    sql = "SELECT rowid FROM fts WHERE fts MATCH ? AND rowid IN (SELECT value FROM json_each(?))"
     columns = ("title", "text", "meta")  # as FTS5 numbers them
-    marked = ", ".join(f"highlight(fts, {n}, '{MARK}', ''), {column}" for n, column in enumerate(columns))
-    sql = f"SELECT rowid, {marked} FROM fts WHERE fts MATCH ? AND rowid IN (SELECT value FROM json_each(?))"
-    return {row[0]: _marks(row[1::2]) - _marks(row[2::2]) for row in db.execute(sql, (match, ids))}
+    marked = ", ".join(f"highlight(kw_tokens, {n}, '{MARK}', ''), {column}" for n, column in enumerate(columns))
+    with store.snapshot([db]):  # the chunks that hold it and their rows, as they are at one moment
+        holding = [c for (c,) in db.execute(sql, (match, json.dumps(ids)))]
+        if not holding:
+            return {}
+        with _apart(db, holding):
+            sql = f"SELECT rowid, {marked} FROM temp.kw_tokens WHERE kw_tokens MATCH ?"
+            return {row[0]: _marks(row[1::2]) - _marks(row[2::2]) for row in db.execute(sql, (match,))}
+
+
+@contextmanager
+def _apart(db, chunks):
+    """While this lasts, these chunks (ids) as they are now, in a keyword index of their own that holds their rows:
+    the FTS5 table temp.kw_tokens. Asked for a column, or to highlight one, the store's own index reads the chunk
+    through its view, which loads the document's whole text for each: 5 ms a chunk of an 8 MB file."""
+    with store.snapshot([db]):  # in a transaction: Python begins one before the rows are written, else left open
+        db.execute(f"CREATE VIRTUAL TABLE temp.kw_tokens USING fts5(title, text, meta, tokenize='{store.TOKENIZER}')")
+        try:
+            store.fill(db, "temp.kw_tokens", chunks=chunks)
+            yield
+        finally:
+            db.execute("DROP TABLE temp.kw_tokens")
 
 
 def _marks(texts):
@@ -648,24 +667,17 @@ def _tokenized(db, chunks, kept, start):
     """The postings of these chunks as they are now, tokenized by FTS5 in a table of their own: (encoded terms, chunk
     ids, their places, lengths, the chunks placed anew). Their places are their ids if `start` is None, else as
     _placed gives them. Chunks deleted meanwhile have none."""
-    db.execute(f"CREATE VIRTUAL TABLE temp.kw_tokens USING fts5(title, text, meta, tokenize='{store.TOKENIZER}')")
-    try:
-        db.execute(
-            "INSERT INTO temp.kw_tokens(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text "
-            "WHERE id IN (SELECT value FROM json_each(?))",
-            (json.dumps(chunks),),
-        )
+    with _apart(db, chunks):
         ids, lengths = _lengths(db, "temp.kw_tokens_docsize")
         places, new = (ids, ids[:0]) if start is None else _placed(ids, kept, start)
         average = lengths.sum() / len(ids) if len(ids) else 1.0
         db.execute("CREATE VIRTUAL TABLE temp.kw_tokens_vocabulary USING fts5vocab(temp, kw_tokens, instance)")
-        rows = db.execute("SELECT term, doc FROM temp.kw_tokens_vocabulary")
-        held = _Chunks(ids, places, lengths)
-        return [e for p in _postings(rows) if (e := _encoded(*p, held, average, False))], ids, places, lengths, new
-    finally:
-        db.commit()  # the temporary table's rows: it goes next
-        db.execute("DROP TABLE IF EXISTS temp.kw_tokens_vocabulary")
-        db.execute("DROP TABLE IF EXISTS temp.kw_tokens")
+        try:
+            rows = db.execute("SELECT term, doc FROM temp.kw_tokens_vocabulary")
+            held = _Chunks(ids, places, lengths)
+            return [e for p in _postings(rows) if (e := _encoded(*p, held, average, False))], ids, places, lengths, new
+        finally:
+            db.execute("DROP TABLE temp.kw_tokens_vocabulary")
 
 
 # --- reading -------------------------------------------------------------------

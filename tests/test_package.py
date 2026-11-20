@@ -169,6 +169,20 @@ def test_nothing_silences_the_type_checker():
     assert silenced == set(), "fix what the checker finds; a rule silenced in one place needs the owner's yes first"
 
 
+def test_chunks_are_cut_from_their_text_in_one_place():
+    # Eight statements cut each chunk out of its document's text with SQLite's substr, or read the view that does: it
+    # loads the whole text and walks to the position for every chunk, 20 s for the 3,310 chunks of an 8 MB file. The
+    # view keeps the cut, as what the keyword index holds, and the store reads it for short documents alone
+    # (store.fill); everything else cuts from a text read once.
+    lines = [
+        (path.name, line)
+        for path in (ROOT / "sift").glob("*.py")
+        for line in path.read_text(encoding="utf-8").split("\n")
+    ]
+    assert [name for name, line in lines if "c.pos + 1, c.len)" in line] == ["store.py"], "ask store.texts"
+    assert [name for name, line in lines if "FROM chunk_text" in line] == ["store.py"], "ask store.fill"
+
+
 PRINTING = {("console.py", "write"), ("cli.py", "_print")}  # to the user, and the results
 
 

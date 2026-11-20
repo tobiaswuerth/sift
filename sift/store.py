@@ -32,16 +32,23 @@ UPGRADE_WAIT = 3600  # seconds to wait while another sift counts a store's rows,
 ABORT = threading.Event()
 ABORT_STEPS = 100_000
 SHIFT = 40  # a collection's row ids start at its id << SHIFT: a trillion rows each, and millions of collections
-# The keyword index reads chunks through a view: each with its document's title, and its front-matter values but the
-# title, e.g. authors and ids, as `meta`. Inserting and deleting read it alike, so the two always agree.
+# The keyword index holds what a view reads of each chunk: its text, its document's title, and its front-matter values
+# but the title, e.g. authors and ids, as `meta`. Entries are added and deleted by the same rows (see `fill`), so the
+# two always agree: the view's, which for a document of many chunks are cut here instead (chunk_rows), the same.
 TOKENIZER = "unicode61 remove_diacritics 2"  # FTS5's, as the keyword postings tokenize too (see `postings`)
+META = "(SELECT group_concat(j.atom, ' ') FROM json_tree(d.meta) j WHERE j.atom IS NOT NULL AND j.fullkey != '$.title')"
 KEYWORD_INDEX = f"""
 CREATE VIEW IF NOT EXISTS chunk_text AS SELECT c.id AS id, d.title AS title, substr(d.text, c.pos + 1, c.len) AS text,
-    (SELECT group_concat(j.atom, ' ') FROM json_tree(d.meta) j WHERE j.atom IS NOT NULL AND j.fullkey != '$.title')
+    {META}
     AS meta FROM chunks c JOIN docs d ON d.id = c.doc;
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, text, meta, content='chunk_text', content_rowid='id',
     tokenize='{TOKENIZER}');
 """
+CUT = 10_000  # chunks cut out of their documents' texts at a time, by chunk_rows
+# The chunks from which a document's are cut by chunk_rows, not by the view: the view's substr loads the whole text and
+# walks to the position for each chunk, which past some 20 KB of text costs more than cutting it here, and for the
+# 32,795 chunks of an 80 MB file took 11 minutes. Below, the view's one statement is quicker by a tenth.
+LONG = 8
 # AUTOINCREMENT: ids grow from the collection's first (in sqlite_sequence), and are never handed out twice.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
@@ -524,6 +531,20 @@ def codes_changed(db):
     set_meta(db, "codes_epoch", uuid.uuid4().hex)
 
 
+@contextmanager
+def snapshot(dbs):
+    """While this lasts, each of these stores is read in one transaction: as it was at the first read, whatever other
+    sifts write meanwhile (WAL). A store in a transaction already stays in it."""
+    began = [db for db in dbs if not db.in_transaction]
+    for db in began:
+        db.execute("BEGIN")
+    try:
+        yield
+    finally:
+        for db in began:
+            db.commit()  # nothing written: it ends the reading
+
+
 def get_meta(db, key, default=None):
     row = db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
     return row[0] if row else default
@@ -546,18 +567,75 @@ def touch(db):
     set_meta(db, "version", uuid.uuid4().hex)
 
 
-def keywords(db, docs, add=True):
+def texts(db, spans):
+    """The texts of chunks, each given as (id, document, position, length): {id: text}, without those whose document
+    is gone. As the chunk_text view cuts them, but from a text read once per document: SQLite's substr loads the whole
+    text and walks to the position for every chunk it cuts, 6 ms for each of the 3,310 of an 8 MB file."""
+    return dict(_cut(db, spans))
+
+
+def _cut(db, spans, columns=""):
+    """(id, text, *`columns` of its document `d`, as SQL) of each chunk of `spans`, document by document."""
+    chunks = {}
+    for chunk, doc, pos, length in spans:
+        chunks.setdefault(doc, []).append((chunk, pos, length))
+    sql = f"SELECT d.id, d.text{columns} FROM docs d WHERE d.id IN (SELECT value FROM json_each(?))"
+    for doc, text, *rest in db.execute(sql, (json.dumps(list(chunks)),)):
+        end = text.find("\x00")  # where substr stops: sift 1.11 and older stored a text with its NULs
+        text = text if end < 0 else text[:end]
+        for chunk, pos, length in chunks[doc]:
+            yield (chunk, text[pos : pos + length], *rest)
+
+
+def _chunks(chunks, docs):
+    """Chunks `c` as a FROM clause, with its arguments: these `chunks` (ids), else the chunks of these `docs` (ids),
+    else every chunk."""
+    if chunks is not None:
+        return "chunks c JOIN json_each(?) j ON c.id = j.value", (json.dumps(chunks),)
+    if docs is not None:
+        return "chunks c JOIN json_each(?) j ON c.doc = j.value", (json.dumps(docs),)
+    return "chunks c", ()
+
+
+def chunk_rows(db, chunks=None, docs=None, where="1"):
+    """What the chunk_text view reads of chunks (see _chunks, and of those the ones `where` holds for), each as (id,
+    text, title, meta), by id. Cut as `texts` cuts them, CUT at a time as they are asked for: the rows of millions of
+    chunks pass through, none held."""
+    source, args = _chunks(chunks, docs)
+    sql = f"SELECT id, doc, pos, len FROM chunks WHERE id IN (SELECT c.id FROM {source} WHERE {where}) ORDER BY id"
+    spans = db.execute(sql, args)
+    while batch := spans.fetchmany(CUT):
+        yield from sorted(_cut(db, batch, f", d.title, {META}"))  # by id, as FTS5 writes them in one go
+
+
+def fill(db, table, chunks=None, docs=None, delete=False, count=None):
+    """Write what the chunk_text view reads of chunks (see _chunks) into the FTS5 table `table`, or with `delete` take
+    their entries out of it. The chunks of short documents in one statement, through the view, as one per document
+    took twice as long; those of documents of more than LONG chunks cut by chunk_rows. `count` is how many chunks
+    they are, where the caller knows: if the one statement wrote as many, no long document is looked for, a
+    statement saved for each of a collection's small files."""
+    source, args = _chunks(chunks, docs)
+    columns, first = (f"{table}, rowid", "'delete', ") if delete else ("rowid", "")
+    long = f"EXISTS (SELECT 1 FROM chunks k WHERE k.doc = c.doc LIMIT 1 OFFSET {LONG})"
+    wrote = db.execute(
+        f"INSERT INTO {table}({columns}, title, text, meta) SELECT {first}id, title, text, meta FROM chunk_text "
+        f"WHERE id IN (SELECT c.id FROM {source} WHERE NOT {long})",
+        args,
+    ).rowcount
+    if wrote != count:
+        rows = chunk_rows(db, chunks, docs, where=long)
+        db.executemany(f"INSERT INTO {table}({columns}, text, title, meta) VALUES({first}?, ?, ?, ?)", rows)
+
+
+def keywords(db, docs, add=True, count=None):
     """Add the keyword index's entries for the chunks of these documents, by id, or delete them, as the chunk_text
-    view reads them now. Delete them before a document's text, title or meta changes, and add them after: entries
-    that no longer match the view can't be deleted any more. One statement for all, as one per document took twice
-    as long. Once the postings are built, the chunks are marked dirty too, until the postings follow."""
-    columns, values = ("rowid", "id") if add else ("fts, rowid", "'delete', id")
-    db.execute(
-        f"INSERT INTO fts({columns}, title, text, meta) SELECT {values}, title, text, meta FROM chunk_text "
-        "WHERE id IN (SELECT c.id FROM chunks c JOIN json_each(?) j ON c.doc = j.value)",
-        (json.dumps(docs),),
-    )
-    if docs and get_meta(db, "kw_built") is not None:
+    view reads them now; `count` is how many chunks they have, if known (see fill). Delete them before a document's
+    text, title or meta changes, and add them after: entries that no longer match the view can't be deleted any
+    more. Once the postings are built, the chunks are marked dirty too, until the postings follow."""
+    if not docs:
+        return
+    fill(db, "fts", docs=docs, delete=not add, count=count)
+    if get_meta(db, "kw_built") is not None:
         _mark_dirty(db, docs)
 
 

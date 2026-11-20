@@ -9,6 +9,11 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   process start-up. Each kind of file has a reader, chosen by extension; adding a format means adding a reader.
 - Files are compared by modification time and size, so unchanged files cost nothing, and documents by content hash, so
   a changed JSON Lines file re-indexes only its changed records.
+- A JSON Lines file over 32 MB is read line by line as it is stored, in batches of 10,000 records (or 16 MB of text),
+  in the indexing process and in the file's one transaction: memory stays at a batch, whatever the file's size. Its
+  documents are looked up by their paths a batch at a time; those that stay as they are go into a temporary table, so
+  that at the end the file's other documents are the ones gone. An id used twice is found in the store, the first
+  record keeping the path. A file that can't be read to its end is left out whole, as before.
 - Markdown, and everything converted to it, is split into chunks of about 3,000 characters (about 750 tokens) on line
   boundaries, preferring headings, with a small overlap.
 - A JSON Lines record or an attachment is a document below its file's name, a path a real file may have too. The first
@@ -22,7 +27,11 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   keyword postings, the vectors (fp16) and their codes (one bit per dimension); a small catalog lists the collections.
   The write-ahead log is truncated to 64 MB after each checkpoint, since SQLite otherwise keeps it as large as it grew
   while any connection is open.
-- The text is stored once: chunks are spans of it, and FTS5 reads it through a view.
+- The text is stored once: chunks are spans of it, and a view cuts them out for FTS5. SQLite's `substr` loads the
+  whole text and walks to the position for every chunk it cuts, so sift reads the view only for documents of up to
+  eight chunks, all in one statement, and cuts the chunks of longer ones itself, from a text read once per document:
+  the keyword entries of an 80 MB file's 32,795 chunks take 3 s to write, against 11 minutes through the view.
+  Embedding, search results and phrase counts cut their chunks the same way; a test holds the two cuts equal.
 - A collection's row ids start at its id times 2^40, so results of several collections merge as they are.
 - Counts of documents, chunks and vectors are kept by triggers in each change's transaction, so `sift status` and a
   starting server read no table whole.
