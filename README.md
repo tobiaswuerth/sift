@@ -130,6 +130,7 @@ None needed: sift picks the device, its GPU memory budget and batch sizes itself
 | `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
 | `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed and rerank on: the `https://<key>@host:8766` it prints |
 | `SIFT_OCR` | `auto` | Where scans are read: `auto` on a GPU, `on` also on the CPU (slow), `off` never |
+| `SIFT_UPDATE_CHECK` | `on` | `off`: never ask PyPI for a newer sift (nor with `HF_HUB_OFFLINE=1`) |
 
 For business documents, `Snowflake/snowflake-arctic-embed-l-v2.0` ties the default embedding model on average: better
 on financial questions and long German documents, worse on scientific claims, 1.6 times as fast.
@@ -152,11 +153,15 @@ Every figure and how it was measured: [benchmarks](https://github.com/tobiaswuer
 
 ## Updating
 
+In a terminal, sift says when a newer version is out and updates itself if you answer `y`, once no sift of the
+installation runs any more. It asks PyPI at most once a day, in the background; `SIFT_UPDATE_CHECK=off` stops that.
+By hand, stop `sift serve` and `sift worker` first (on Windows a running sift holds the files an update replaces):
+
 ```bash
 uv tool upgrade sift-rag     # with pip: pip install -U sift-rag
 ```
 
-Then restart `sift serve` and `sift worker`, and start new agent sessions, which read sift's tools as they start.
+Then start them again, and new agent sessions, which read sift's tools as they start.
 
 sift follows [semantic versioning](https://semver.org/): within a major version, the commands and their JSON output,
 the MCP tools, the settings, the index and the worker protocol stay compatible (sift's Python modules may change in any

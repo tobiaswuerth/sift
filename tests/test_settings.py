@@ -37,6 +37,14 @@ def test_where_scans_are_read():
     assert Settings.from_env({"SIFT_OCR": " Off "}).ocr == "off"
 
 
+def test_asking_pypi_for_a_newer_sift_is_on_unless_switched_off_or_offline():
+    assert Settings.from_env({}).update_check
+    assert not Settings.from_env({"SIFT_UPDATE_CHECK": " Off "}).update_check
+    assert not Settings.from_env({"SIFT_UPDATE_CHECK": "0"}).update_check
+    assert not Settings.from_env({"HF_HUB_OFFLINE": "1"}).update_check
+    assert Settings.from_env({"SIFT_UPDATE_CHECK": "on", "HF_HUB_OFFLINE": "0"}).update_check
+
+
 def test_an_empty_variable_counts_as_unset():
     # SIFT_HOME= used to mean the current folder, and SIFT_EMBED_REMOTE= a worker without an address.
     assert Settings.from_env(dict.fromkeys(("SIFT_HOME", "SIFT_EMBED_REMOTE"), "")) == Settings.from_env({})

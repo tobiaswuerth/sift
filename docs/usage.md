@@ -64,6 +64,8 @@ Everything sift keeps lies under `SIFT_HOME` (`~/.sift`):
 | `collections/NAME.sqlite` | A collection's index, a SQLite file | Made by `sift add`, deleted by `sift rm`, moved by `sift move` |
 | `collections/NAME.sqlite.postings-lock` | Empty; locked while a sift updates the keyword postings | Moved and deleted with its index |
 | `logs/COMMAND-DATE.log` | What `add`, `rm`, `index`, `embed`, `serve` and `worker` said, timed, with errors | Kept; delete freely |
+| `logs/update-DATE.log` | What an update you agreed to did | Kept; delete freely |
+| `update.json` | The latest version on PyPI, when it was asked, and an update waiting or done | Rewritten daily; delete freely |
 | `worker/` | `sift worker`'s certificate and token, readable by you only | Delete it to make a new key |
 | `numba/` | The compiled search code `sift serve` and `sift bench` keep | Made again when deleted |
 

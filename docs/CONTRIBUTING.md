@@ -46,6 +46,7 @@ downloads; everything else, the MCP server included, runs for real.
 | `jobs.py` | A server's calls off its event loop, one at a time, stopped when cancelled; the models on the main thread |
 | `ui.py` | `sift ui`: the browser UI's views; `web/` holds its templates, styles, script and htmx 2.0.11 (0BSD) |
 | `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |
+| `update.py` | A newer sift on PyPI: asking once a day, offering it in a terminal, updating once no sift runs |
 | `settings.py` | The environment variables, read once (`settings.current()`) |
 | `console.py` | What sift tells the user on stderr: messages, plurals, commands to paste, one progress bar |
 | `logs.py` | A log for each command that changes the index or serves it |

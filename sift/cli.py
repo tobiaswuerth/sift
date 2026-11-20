@@ -11,7 +11,7 @@ import textwrap
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, console, logs, readers, settings
+from . import __version__, console, logs, readers, settings, update
 from .catalog import SUFFIX, Catalog
 
 # The commands that load PyTorch, unless a worker does it for them; with SIFT_EMBED_REMOTE, THROUGH_WORKER do.
@@ -290,6 +290,7 @@ def main(argv=None):
     if (sys.stdout.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
         sys.stdout.reconfigure(encoding="utf-8")
     try:
+        update.offer(a.cmd)  # in a terminal: a newer sift, how an update went
         with logs.kept(a.cmd, datetime.now()) if a.cmd in logs.LOGGED else contextlib.nullcontext():
             _command(a)
     except (LookupError, ValueError, OSError, sqlite3.Error) as e:
