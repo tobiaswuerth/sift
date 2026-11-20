@@ -49,6 +49,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
   ends the command quietly.
 - What sift says on stderr is UTF-8 now where it wasn't, as its results are: in a Windows pipe, file names and titles
   came out unreadable.
+- Every command ended in an `AttributeError` where stdout or stderr is no file, as within a program that set its own
+  (`contextlib.redirect_stdout(io.StringIO())`), or where there is none, as under `pythonw`. Such a stream is left as
+  it is now, and a command without streams runs and says nothing.
+- Without a stderr but with a stdout, as `pythonw -m sift search ... > results.txt` from a console has them, what sift
+  says went to stdout, among the results: "no matches", a progress line, "starting ..." before the JSON of `--json`.
+  It is said nowhere now; the command's log holds it as before.
 - A store that was locked or damaged, or a call cancelled, was said as "invalid search query".
 - A bug that is a `KeyError` or an `IndexError` came out as a bare message (`error: 'fields'`); it is reported as a
   bug now, with its type, and its traceback on the command line and in the server's log.

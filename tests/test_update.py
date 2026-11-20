@@ -258,6 +258,7 @@ def test_a_first_command_asks_pypi(installed, home):
         ("worker", TERMINAL, True),
         ("status", (Pipe(), Terminal(), Terminal()), True),
         ("status", (Terminal(), Pipe(), Terminal()), True),
+        ("status", (None, None, None), True),  # as pythonw has them: asked for a terminal, a command ended there
         ("status", TERMINAL, False),
     ],
 )
@@ -290,6 +291,16 @@ def test_how_an_update_went_is_said_once(installed, home, capsys, version, ok, s
     assert said in capsys.readouterr().err
     update.offer("status", TERMINAL)
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("version", ["9.9", f"{NEWER}rc1"])
+def test_how_an_update_to_a_version_sift_can_t_compare_went_is_said_once(installed, home, capsys, version):
+    # Not three numbers, as written by hand or by another sift: comparing it with this sift's was a TypeError, in
+    # every command, as the result stayed.
+    keep(home, checked=time.time(), result={"version": version, "ok": True, "log": "update.log"})
+    update.offer("status", TERMINAL)
+    assert f"sift updated to {version}; restart any `sift serve` and `sift worker`" in capsys.readouterr().err
+    assert "result" not in kept(home)
 
 
 def test_the_command_line_offers_before_the_command(home, monkeypatch):
@@ -415,14 +426,20 @@ def test_a_state_that_stays_refused_is_an_error_and_leaves_nothing_behind(home, 
 
 def test_commands_at_once_read_and_change_the_state_without_error(home):
     # On Windows a read and a replace at the same moment refuse each other: of 3,000 changes beside two readers,
-    # 2,591 failed, and 1,295 reads.
-    path, errors, done = home / "update.json", [], threading.Event()
+    # 2,591 failed, and 1,295 reads. Each round a change and two readers start at once; the readers read a few times
+    # and rest until the next, as commands do. Two that read without rest left the file free so seldom that a change
+    # on a slow machine was refused for the whole second it has, which no two commands do to each other.
+    path, errors, at_once = home / "update.json", [], threading.Barrier(3, timeout=60)
     update.change(path, checked=0.0)
 
     def reading():
-        while not done.is_set():
+        while True:
             try:
-                assert "checked" in update.read(path)
+                at_once.wait()
+                for _ in range(10):
+                    assert "checked" in update.read(path)
+            except threading.BrokenBarrierError:  # the test is over
+                return
             except Exception as error:  # handed to the test
                 errors.append(error)
 
@@ -431,9 +448,10 @@ def test_commands_at_once_read_and_change_the_state_without_error(home):
         reader.start()
     try:
         for n in range(100):
+            at_once.wait()
             update.change(path, checked=float(n))
     finally:
-        done.set()
+        at_once.abort()
         for reader in readers:
             reader.join()
     assert errors == []
@@ -669,7 +687,7 @@ def test_on_windows_its_kernel_is_asked(monkeypatch):
     import ctypes
 
     kernel = Kernel(looks=0)  # stopped
-    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(kernel32=kernel), raising=False)  # only Windows has it
+    monkeypatch.setattr(ctypes, "cdll", SimpleNamespace(kernel32=kernel))  # every system has it, Windows its kernel32
     assert not update._alive_on_windows(1234)
     assert kernel.closed == kernel.opened == 1
 

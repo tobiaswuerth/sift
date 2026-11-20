@@ -4,6 +4,9 @@ ended if it failed. Every log is kept."""
 
 import contextlib
 import logging
+from collections.abc import Generator
+from datetime import datetime
+from pathlib import Path
 
 from . import __version__, settings
 
@@ -11,10 +14,10 @@ LOGGED = ("add", "rm", "index", "embed", "serve", "worker")
 FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 said = logging.getLogger("sift.console")  # what console says, which it prints itself: never passed on, so that no
 said.propagate = False  # handler of the root logger prints it twice
-_handler = None  # the log file of this command, while there is one
+_handler: logging.FileHandler | None = None  # the log file of this command, while there is one
 
 
-def _claim(folder, stem):
+def _claim(folder: Path, stem: str) -> Path:
     """A new log file in `folder`, created at once: `stem`.log, or `stem`-2.log and so on if that is taken, so that two
     commands started in the same second, in two processes too, never write into one."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -29,7 +32,7 @@ def _claim(folder, stem):
 
 
 @contextlib.contextmanager
-def kept(name, now):
+def kept(name: str, now: datetime) -> Generator[Path]:
     """Log this command, `name`, to a new file while the block runs; yields its path."""
     global _handler
     path = _claim(settings.current().home / "logs", f"{name}-{now:%Y-%m-%d_%H%M%S}")
@@ -63,7 +66,7 @@ def kept(name, now):
         _handler = outer
 
 
-def attach(*names):
+def attach(*names: str) -> None:
     """Log these loggers too, which don't pass their records on (uvicorn's, once it has set them up)."""
     for name in names:
         if _handler and _handler not in logging.getLogger(name).handlers:

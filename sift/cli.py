@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import errno
+import io
 import json
 import os
 import re
@@ -77,7 +78,7 @@ def _print_documents(documents):
         _print_document(document)
     failed = [d for d in documents if "error" in d]
     for document in failed:
-        print(f"sift: {document['id']}: {document['error']}", file=sys.stderr)
+        console.say(f"sift: {document['id']}: {document['error']}")
     if failed:
         raise SystemExit(f"{len(failed)} of {len(documents)} documents can't be read")
 
@@ -289,7 +290,9 @@ def main(argv=None):
 
     a = p.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # what sift says names files and titles, as its results do
-        if (stream.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
+        # e.g. a Windows pipe: titles may be any script. A stream that is no TextIOWrapper has no encoding to switch:
+        # a host's takes text as it is (io.StringIO), and pythonw has none
+        if isinstance(stream, io.TextIOWrapper) and stream.encoding.lower() != "utf-8":
             stream.reconfigure(encoding="utf-8")
     try:
         _offer_update(a.cmd)

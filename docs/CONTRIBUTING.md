@@ -10,7 +10,7 @@ git clone https://github.com/tobiaswuerth/sift
 cd sift
 uv venv && uv pip install --torch-backend auto -e ".[dev]"   # or: pip install -r requirements.txt -e ".[dev]"
 pre-commit install      # lint, format and config checks on every commit
-python scripts/gate.py  # the gate: every hook, the tests with the coverage gate, and the smoke run
+python scripts/gate.py  # the gate: every hook, the types, the tests with the coverage gate, and the smoke run
 ```
 
 The tests replace the models, GPU memory and the clock with small deterministic fakes, so they need no GPU and no
@@ -64,16 +64,23 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 - **Tests first:** a test that fails, then the change that makes it pass; every bug fix comes with a regression test.
 - **Full coverage:** `pytest --cov` requires 100% line and branch coverage.
 - **The gate:** `python scripts/gate.py` runs every check a change must pass, and is green when all did: the
-  pre-commit hooks, the tests with the coverage gate, and the smoke run.
+  pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run.
+- **Types:** [pyright](https://github.com/microsoft/pyright) checks the modules listed under `[tool.pyright]` in
+  `pyproject.toml`, in its strict mode, for the oldest Python sift runs on, and as on Linux, macOS and Windows each,
+  whichever runs it: `pyright --pythonplatform Linux` (`Darwin`, `Windows`), in the activated environment. The list
+  only grows, a few modules a pull request, until it is all of `sift/`; a new module is on it from its start, and
+  `tests/test_package.py` names those still waiting. A module joins once pyright finds nothing in it: fully
+  annotated, and whatever it calls in a module still waiting annotated too. No finding is silenced, by a comment or
+  by a setting.
 - **Quality gates:** pre-commit runs on every commit and in CI: ruff (lint and format), whitespace, line endings, byte
   order marks, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schemas, actionlint and codespell.
   Workflows name their actions by commit, which a test holds them to.
 - **The smoke run:** `python scripts/smoke.py` runs every command as a user runs it, each in a process of its own, on
   a small folder of notes; with `--models` also what loads the models: `embed`, the semantic searches, `bench` and
   `sift serve` with its page and MCP endpoint. A new command or option gets a line there.
-- **Pull requests:** `main` is protected; pull requests are squash-merged once every check passes. CI runs the tests on
-  Linux (x86 and ARM), macOS and Windows for Python 3.11 to 3.15 and builds the package, on pull requests and again on
-  each merge commit.
+- **Pull requests:** `main` is protected; pull requests are squash-merged once every check passes. CI runs the hooks,
+  the type checker, the tests on Linux (x86 and ARM), macOS and Windows for Python 3.11 to 3.15, and builds the
+  package, on pull requests and again on each merge commit.
 - **Changelog:** user-visible changes go under "Unreleased" in [CHANGELOG.md](../CHANGELOG.md).
 - **Measurements** in docs state the hardware by kind (a GPU, 8 CPU threads), not by model, and leave out what else
   ran on the machine.

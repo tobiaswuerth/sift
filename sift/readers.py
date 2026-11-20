@@ -242,7 +242,7 @@ def chunk(text, first_line=1):
             yield first, first + stripped.count("\n"), start + lead, len(stripped)
 
 
-def decode(raw):
+def decode(raw: bytes) -> str:
     """A text file's content: UTF-16 or UTF-32 after their byte order marks (Windows PowerShell 5.1 writes UTF-16),
     otherwise UTF-8 with invalid bytes replaced. UTF-32's little-endian mark starts as UTF-16's does."""
     if raw[:4] in (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"):
@@ -334,7 +334,7 @@ Link = namedtuple("Link", "field line kind target key fragment shown")
 heading or block it points into (`fragment`) and the text it shows, and the target's `key`."""
 
 
-def fold(name):
+def fold(name: str) -> str:
     """A name as names compare: case-insensitively, and composed (macOS file names arrive decomposed)."""
     return unicodedata.normalize("NFC", unicodedata.normalize("NFC", name).casefold())
 
