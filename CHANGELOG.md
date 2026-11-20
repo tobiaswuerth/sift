@@ -17,6 +17,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A document named otherwise than by its whole id is looked up, where every path of its collection was read: a
+  shortened id (`papers/2603.29315.md` for `papers/2026/03/2603.29315.md`), a record's id alone, a mistyped id, or an
+  absolute path in another case, for `get`, `similar`, `links`, `mentions`, and the `links_to` and `linked_from` of
+  searches. Over 300,000 documents that took 16 to 32 ms, and 322 ms for an absolute path not indexed, which read every
+  document; it grew with the collection. Now 0.03 to 0.05 ms, whatever the collection holds.
+- The index layout is version 10: a store lists the last part of every document's path, a file's name or a record's
+  id, in 23 bytes a document; indexing 300,000 records took 38.5 s instead of 36.9. An index of 1.12 gets the list on
+  first use, empty, and the next `sift index` fills it, 3 million documents in 5 seconds; stopped, it goes on where
+  it stopped, and other sifts read and change the collection meanwhile. Until then such ids are searched for as
+  before. An older sift doesn't open an index so updated.
 - Updating by hand: stop `sift serve` and `sift worker` first. On Windows a running sift holds the files an update
   replaces: `uv tool upgrade` under a running server upgraded the packages but failed on `sift.exe`.
 - A filter's value matches whether a document writes it as a number or as text: `-f year=2024`, and `{"year": 2024}`

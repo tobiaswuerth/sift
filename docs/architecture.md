@@ -26,6 +26,14 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 - A collection's row ids start at its id times 2^40, so results of several collections merge as they are.
 - Counts of documents, chunks and vectors are kept by triggers in each change's transaction, so `sift status` and a
   starting server read no table whole.
+- A document is found by its path. One named otherwise, by a shortened id (`papers/a.md` for `papers/2024/a.md`), a
+  record's id alone or an absolute path in another case, is found by the last part of its path, which each store lists
+  for every document (table `basenames`, 23 bytes a document): only the documents sharing that part are read, where
+  every path was, 16 ms over 300,000 documents. Triggers keep the list in each change's transaction.
+- A store of sift 1.12 gets that table empty, and `sift index` fills it: 50,000 documents a transaction, in the order
+  of their paths, read from the index on the paths alone, each recording how far it got, so a listing stopped goes on
+  there. A batch is found before its transaction, which then holds the store for about 50 ms, and other sifts' changes
+  get their turn in between; 3 million documents take 5 seconds. Until a store is listed, such ids read every path.
 - A collection whose store is damaged is passed over by `sift index`, `sift status` and the server's start, with how to
   forget it; a search reading its damaged tables fails.
 - Searches and `get` never read the files, so results and documents agree until the next `sift index`.
