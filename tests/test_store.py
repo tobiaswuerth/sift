@@ -756,6 +756,40 @@ def test_a_document_with_a_nul_from_an_older_sift_goes_with_all_its_keyword_entr
     db.close()
 
 
+SHAPES = [  # front matter as files and records hold it: SQLite writes its values, in its order, not Python
+    {"title": "T", "ratio": 0.1, "big": 2**63 + 5, "neg": -(2**64), "exp": 1e300, "yes": True, "no": False},
+    {"authors": [{"name": "Ann", "ids": [1, 2.5, None]}, "Bo"], "deep": {"a": {"b": ["x", {"c": "y"}]}}},
+    {"nan": "NaN", "inf": "Infinity", "tiny": 5e-324, "zero": -0.0, "unicode": "Zürich 日本 \U0001f600 é"},
+    {"nul": "a\ufffdb", "empty": "", "list": [], "obj": {}, "num": "0042", "title": "kept out"},
+]
+
+
+def test_keyword_rows_of_long_documents_are_the_views_for_front_matter_of_every_shape(tmp_path, monkeypatch):
+    # An entry deleted with other values than it was added with damages FTS5's index without an error, and stores in
+    # use hold entries the view wrote: rows cut in Python must carry its title and meta to the character.
+    monkeypatch.setattr(store, "LONG", 0)  # every document long: its rows cut in Python
+    db = store.connect(tmp_path / "a.sqlite", 1, create=True)
+    for n, meta in enumerate(SHAPES):
+        text = f"alpha {n}\x00beta" if n == 3 else f"alpha {n} beta gamma"
+        row = (f"d{n}", meta.get("title", f"D{n}"), json.dumps(meta, ensure_ascii=n % 2 == 0), text)
+        doc = db.execute("INSERT INTO docs(source, path, hash, title, meta, text) VALUES(1, ?, '', ?, ?, ?)", row)
+        spans = [(doc.lastrowid, s, s * 3, 9) for s in range(3)]
+        db.executemany("INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?, ?, 1, 1, ?, ?)", spans)
+    view = db.execute("SELECT id, text, title, meta FROM chunk_text ORDER BY id").fetchall()
+    assert list(store.chunk_rows(db)) == view
+    db.execute("INSERT INTO fts(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text")  # as 1.12
+    docs = [doc for (doc,) in db.execute("SELECT id FROM docs")]
+    store.keywords(db, docs, add=False)  # deleted by rows cut in Python
+    db.execute("CREATE VIRTUAL TABLE temp.terms USING fts5vocab(main, fts, row)")
+    assert db.execute("SELECT * FROM temp.terms").fetchall() == []
+    store.keywords(db, docs)
+    assert keywords_agree(db)
+    store.delete_docs(db, docs)
+    assert db.execute("SELECT * FROM temp.terms").fetchall() == []
+    db.execute("INSERT INTO fts(fts) VALUES('integrity-check')")
+    db.close()
+
+
 @pytest.fixture
 def statements(monkeypatch):
     """Every statement sift runs on any store it opens, FTS5's own on its tables and its content among them."""
