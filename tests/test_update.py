@@ -292,6 +292,16 @@ def test_how_an_update_went_is_said_once(installed, home, capsys, version, ok, s
     assert capsys.readouterr().err == ""
 
 
+@pytest.mark.parametrize("version", ["9.9", f"{NEWER}rc1"])
+def test_how_an_update_to_a_version_sift_can_t_compare_went_is_said_once(installed, home, capsys, version):
+    # Not three numbers, as written by hand or by another sift: comparing it with this sift's was a TypeError, in
+    # every command, as the result stayed.
+    keep(home, checked=time.time(), result={"version": version, "ok": True, "log": "update.log"})
+    update.offer("status", TERMINAL)
+    assert f"sift updated to {version}; restart any `sift serve` and `sift worker`" in capsys.readouterr().err
+    assert "result" not in kept(home)
+
+
 def test_the_command_line_offers_before_the_command(home, monkeypatch):
     offered = []
     monkeypatch.setattr(update, "offer", offered.append)
@@ -669,7 +679,7 @@ def test_on_windows_its_kernel_is_asked(monkeypatch):
     import ctypes
 
     kernel = Kernel(looks=0)  # stopped
-    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(kernel32=kernel), raising=False)  # only Windows has it
+    monkeypatch.setattr(ctypes, "cdll", SimpleNamespace(kernel32=kernel))  # every system has it, Windows its kernel32
     assert not update._alive_on_windows(1234)
     assert kernel.closed == kernel.opened == 1
 
