@@ -312,6 +312,17 @@ def test_unusable_query_is_a_clear_error(corpus, monkeypatch):
         Index(corpus[0]).search("NEAR(")
 
 
+def test_a_store_s_trouble_is_not_a_bad_query(corpus):
+    # Whatever SQLite refused while it searched was said as "invalid search query", after the query was tried once
+    # more as phrases: a store locked or damaged, or a call cancelled, sent whoever asked to look at their query.
+    catalog, _ = corpus
+    db = catalog.store("notes")
+    db.execute("DROP TABLE fts")  # as damage leaves a store: FTS5 reads the query, and finds no index
+    db.commit()
+    with pytest.raises(sqlite3.OperationalError, match="no such table: fts"):
+        Index(catalog).search("bru*")
+
+
 @pytest.mark.parametrize("k", [0, -1, "3", 1.5])
 def test_k_must_be_positive_integer(corpus, k):
     with pytest.raises(ValueError, match="k must be"):

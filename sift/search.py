@@ -832,6 +832,8 @@ class Index:
             try:
                 found = {c: self.catalog.store(c).execute(query, [attempt, *args, each]).fetchall() for c in scope}
             except sqlite3.OperationalError as e:
+                if not expression.rejected(attempt):  # the store's trouble, or a call cancelled: not the query's
+                    raise
                 error = e
                 continue
             if phrases:
