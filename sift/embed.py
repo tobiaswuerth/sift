@@ -76,7 +76,8 @@ def _embed(models, stores, using, progress):
     are in. Returns (chunks done, chunks the model broke)."""
     turn = threading.Lock()  # the store's connection, which the reader and the writer take in turn
     on_gpu, done = collections.deque(), 0  # (slab, part) of each batch handed to the model, not yet back
-    with _Reader(models, stores, turn) as slabs, _Writer(turn, using) as writer:
+    tally = _Tally(stores)
+    with _Reader(models, stores, turn, tally) as slabs, _Writer(turn, using, tally) as writer:
 
         def batches():
             for slab in slabs:
@@ -89,8 +90,36 @@ def _embed(models, stores, using, progress):
             if slab.add(part, vectors):
                 writer.write(slab)
             done += len(part)
-            progress.update(done)
+            progress.update(done, tally.total)
     return done, writer.broken
+
+
+class _Tally:
+    """The chunks to embed in all, as embedding goes: those read so far, and those the stores' counts say are unread
+    still, so that chunks indexed or deleted meanwhile (`sift index` beside `sift embed`) count. The reader counts anew
+    after every slab it reads, the writer adds the vectors it stored, both under the stores' turn; the progress reads
+    `total` as it is. Never less than the chunks read: the counts miss a chunk read and deleted before its vector
+    is stored, until the reader moves on."""
+
+    def __init__(self, stores):
+        self.read, self.stored, self.reading = dict.fromkeys(stores, 0), dict.fromkeys(stores, 0), set(stores)
+        self.total = 0
+        self._count()
+
+    def took(self, db, rows):
+        """The reader read these rows of a store, none when it has read all."""
+        self.read[db] += len(rows)
+        if not rows:
+            self.reading.discard(db)
+        self._count()
+
+    def wrote(self, db, stored):
+        self.stored[db] += stored
+
+    def _count(self):
+        """A store's counts hold every chunk without a vector, those read and not stored yet too."""
+        unread = (max(_pending(db) - self.read[db] + self.stored[db], 0) for db in self.reading)
+        self.total = sum(self.read.values()) + sum(unread)
 
 
 class _Slab:
@@ -117,8 +146,8 @@ class _Reader:
     """A thread that reads the slabs still to embed, AHEAD at most, sorted by length; iterated, the slabs as they come.
     An error in the thread is raised where they're taken."""
 
-    def __init__(self, models, stores, turn):
-        self.models, self.stores, self.turn = models, stores, turn
+    def __init__(self, models, stores, turn, tally):
+        self.models, self.stores, self.turn, self.tally = models, stores, turn, tally
         self.slabs, self.stop = queue.Queue(AHEAD), threading.Event()
         self.thread = threading.Thread(target=self._read, name="sift-embed-read", daemon=True)
 
@@ -150,7 +179,9 @@ class _Reader:
 
     def _rows(self, db, last):
         with self.turn:
-            return db.execute(SLAB_SQL, (last, SLAB)).fetchall()
+            rows = db.execute(SLAB_SQL, (last, SLAB)).fetchall()
+            self.tally.took(db, rows)
+            return rows
 
     def _put(self, item):
         """Queue an item, unless embedding stops meanwhile."""
@@ -170,8 +201,8 @@ class _Writer:
     """A thread that writes the vectors of each slab handed to it, in order, and adds up the chunks the model broke.
     An error in it is raised at the next slab handed over, or at the end."""
 
-    def __init__(self, turn, model):
-        self.turn, self.model, self.broken, self._writes = turn, model, 0, []
+    def __init__(self, turn, model, tally):
+        self.turn, self.model, self.tally, self.broken, self._writes = turn, model, tally, 0, []
         self._pool = ThreadPoolExecutor(1, thread_name_prefix="sift-embed-write")
 
     def __enter__(self):
@@ -189,10 +220,12 @@ class _Writer:
     def _store(self, slab):
         with self.turn:
             try:
-                return _store_vectors(slab.db, slab.ids, slab.vectors, self.model)
+                stored, broken = _store_vectors(slab.db, slab.ids, slab.vectors, self.model)
             except BaseException:
                 slab.db.rollback()  # none of the slab, rather than part of it in the next slab's commit
                 raise
+            self.tally.wrote(slab.db, stored)
+            return broken
 
     def _settle(self, writes):
         for write in list(writes):
@@ -274,7 +307,8 @@ def encode(models, texts):
 def _store_vectors(db, chunks, vectors, model):
     """Store the intact vectors of the chunks still there, and commit. A NaN vector, an overflow inside the model,
     stays out, so its chunk stays pending; so does the vector of a chunk another sift deleted meanwhile, which would
-    count as the vector of the chunk that took its place. Returns how many the model broke."""
+    count as the vector of the chunk that took its place. Returns how many vectors it stored, and how many the model
+    broke."""
     intact = np.isfinite(vectors).all(axis=1)
     db.execute("BEGIN IMMEDIATE")  # what is still there, as it is written
     sql = "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))"
@@ -285,4 +319,4 @@ def _store_vectors(db, chunks, vectors, model):
     store.set_meta(db, "dim", vectors.shape[1])
     store.touch(db)  # tells a running server the codes changed
     db.commit()
-    return int((~intact).sum())
+    return int(keep.sum()), int((~intact).sum())

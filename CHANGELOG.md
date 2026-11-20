@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `sift embed` beside `sift index` embedded the chunks indexed meanwhile, but its total stayed as it began: the bar
+  went past 100% and the time left below zero. The total now follows the chunks indexed or deleted while it runs.
+
 ## [1.12.0] - 2026-11-17
 
 Several documents or queries per call, the vectors scanned three times as fast by `sift serve`, and no file left out
