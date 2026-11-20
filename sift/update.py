@@ -12,6 +12,7 @@ new major version is only told of, with its changelog, as it may need care.
 
 update.json is this module's alone, written whole; deleting it only makes the next command check again."""
 
+import importlib.util
 import json
 import os
 import shutil
@@ -107,11 +108,13 @@ def _version(text):
 
 def _ask(path, latest, upgrade):
     """Offer `latest`, once: a new major version is told of; one in this major updated to on yes, by the upgrade
-    command if it can be run, else said."""
+    command if it can be run, else said, if there is one."""
     change(path, asked=latest)
     if _version(latest)[0] > _version(__version__)[0]:
         console.say(f"sift {latest} is out, a new major version: read {CHANGELOG} before you update")
-    elif not Path(upgrade[0]).is_absolute():  # uv or pipx isn't on the PATH
+    elif not upgrade:
+        console.say(f"sift {latest} is out (this is {__version__}): update it with the installer it came by")
+    elif not Path(upgrade[0]).is_absolute():  # uv or pipx isn't on the PATH, or the command is for the user to run
         console.say(f"sift {latest} is out (this is {__version__}): run `{console.command(*upgrade)}` to update")
     elif _yes(f"sift {latest} is out (this is {__version__}). Update now? [y/N] "):
         _schedule(path, latest, upgrade)
@@ -147,10 +150,13 @@ def _outcome(result):
     return f"sift updated to {version}; restart any `sift serve` and `sift worker`"
 
 
-def upgrade_command(prefix=None, package=None, which=shutil.which):
+def upgrade_command(prefix=None, package=None, which=shutil.which, pip=None):
     """The command that upgrades this sift as it was installed: by uv as a tool (its environment holds uv's receipt),
-    by pipx, or by pip into its environment; its program as found on the PATH, or by name if it isn't. None for sift
-    run from its source."""
+    by pipx, or by pip into its environment; its program as found on the PATH, or by name if it isn't, and then only
+    said. An environment without pip (`pip`: looked up, if not given) is uv's as a rule, and its command only said, by
+    name: `uv pip` wants the environment chosen, and one `uvx` made, in uv's cache, is never upgraded, another is made
+    for a newer sift. [] if nothing tells how it was installed: a newer sift is told of, no more. None for sift run
+    from its source."""
     prefix, package = Path(prefix or sys.prefix).resolve(), Path(package or __file__).resolve().parent
     if not package.is_relative_to(prefix):
         return None
@@ -158,7 +164,24 @@ def upgrade_command(prefix=None, package=None, which=shutil.which):
         return [which("uv") or "uv", "tool", "upgrade", "sift-rag"]
     if "pipx" in prefix.parts and prefix.parent.name == "venvs":
         return [which("pipx") or "pipx", "upgrade", "sift-rag"]
-    return [sys.executable, "-m", "pip", "install", "--upgrade", "sift-rag"]
+    if pip is None:
+        pip = importlib.util.find_spec("pip") is not None
+    if pip:
+        return [sys.executable, "-m", "pip", "install", "--upgrade", "sift-rag"]
+    if not _made_by_uv(prefix):
+        return []
+    if prefix.parent.name.startswith("archive-v"):  # uv's cache
+        return ["uvx", "sift-rag@latest"]
+    return ["uv", "pip", "install", "--upgrade", "sift-rag"]
+
+
+def _made_by_uv(prefix):
+    """Whether uv made the virtual environment at `prefix`, as its pyvenv.cfg says ("uv = 0.13.9")."""
+    try:
+        lines = (prefix / "pyvenv.cfg").read_text(encoding="utf-8", errors="replace").split("\n")
+    except OSError:
+        return False
+    return any(line.partition("=")[0].strip() == "uv" for line in lines)
 
 
 def held_files():

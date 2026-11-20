@@ -1,6 +1,7 @@
 """`update`: telling of a newer sift, and updating to it on a yes. PyPI, the terminal, the processes started and the
 waits are fakes, but for one real run of the process that updates."""
 
+import importlib.util
 import io
 import json
 import os
@@ -200,6 +201,15 @@ def test_without_its_installer_on_the_path_the_command_is_said(installed, home, 
     keep(home, latest=NEWER, checked=time.time())
     update.offer("status", TERMINAL)
     assert "run `uv tool upgrade sift-rag` to update" in capsys.readouterr().err
+
+
+def test_without_a_command_to_upgrade_it_a_newer_sift_is_told_of(installed, home, monkeypatch, capsys):
+    monkeypatch.setattr(update, "upgrade_command", list)
+    keep(home, latest=NEWER, checked=time.time())
+    update.offer("status", TERMINAL)  # Terminal() fails if asked
+    said = capsys.readouterr().err
+    assert f"sift {NEWER} is out (this is {__version__}): update it with the installer it came by" in said
+    assert kept(home)["asked"] == NEWER
 
 
 @pytest.mark.parametrize("latest", [__version__, f"{MAJOR}.{MINOR}.{PATCH + 1}rc1", None])
@@ -439,8 +449,36 @@ def test_a_pipx_installation_is_upgraded_by_pipx(tmp_path):
 
 
 def test_another_environment_is_upgraded_by_pip(environment):
-    command = update.upgrade_command(*environment)
+    command = update.upgrade_command(*environment, pip=True)
     assert command == [sys.executable, "-m", "pip", "install", "--upgrade", "sift-rag"]
+
+
+def test_whether_an_environment_has_pip_is_looked_up(environment):
+    # uv's environments have none: `python -m pip` there ends in "No module named pip", and the update with it.
+    has_pip = importlib.util.find_spec("pip") is not None
+    assert (update.upgrade_command(*environment)[:3] == [sys.executable, "-m", "pip"]) == has_pip
+
+
+def test_an_environment_of_uv_s_without_pip_is_upgraded_by_hand(environment):
+    prefix, module = environment
+    (prefix / "pyvenv.cfg").write_text("home = /python\nuv = 0.13.9\nrelocatable = false\n", encoding="utf-8")
+    command = update.upgrade_command(prefix, module, which=lambda name: f"/bin/{name}", pip=False)
+    assert command == ["uv", "pip", "install", "--upgrade", "sift-rag"]  # by name: said, not run
+
+
+def test_an_environment_uvx_made_is_upgraded_by_running_the_latest(tmp_path):
+    prefix = tmp_path / "uv" / "cache" / "archive-v0" / "LlpPUUeq7viLPQ4-"  # where `uvx sift-rag` keeps one
+    (prefix / "Lib" / "site-packages" / "sift").mkdir(parents=True)
+    (prefix / "pyvenv.cfg").write_text("uv = 0.13.9\nrelocatable = true\n", encoding="utf-8")
+    command = update.upgrade_command(prefix, prefix / "Lib" / "site-packages" / "sift" / "update.py", pip=False)
+    assert command == ["uvx", "sift-rag@latest"]
+
+
+def test_an_environment_without_pip_that_isn_t_uv_s_has_no_command(environment):
+    prefix, module = environment
+    assert update.upgrade_command(prefix, module, pip=False) == []  # no pyvenv.cfg at all
+    (prefix / "pyvenv.cfg").write_text("home = /python\nversion = 3.12.10\n", encoding="utf-8")
+    assert update.upgrade_command(prefix, module, pip=False) == []
 
 
 def test_sift_run_from_its_source_has_no_upgrade(environment, tmp_path):
