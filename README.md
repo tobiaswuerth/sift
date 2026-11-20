@@ -154,8 +154,10 @@ Every figure and how it was measured: [benchmarks](https://github.com/tobiaswuer
 ## Updating
 
 In a terminal, sift says when a newer version is out and updates itself if you answer `y`, once no sift of the
-installation runs any more. It asks PyPI at most once a day, in the background; `SIFT_UPDATE_CHECK=off` stops that.
-By hand, stop `sift serve` and `sift worker` first (on Windows a running sift holds the files an update replaces):
+installation runs any more; while the installer runs, a command started says so and stops. It asks PyPI at most once
+a day, in the background; `SIFT_UPDATE_CHECK=off` stops that. Where it can't update itself (an environment without
+pip, as uv's are, or an installation you may not write), it says the command instead. By hand, stop `sift serve` and
+`sift worker` first (on Windows a running sift holds the files an update replaces):
 
 ```bash
 uv tool upgrade sift-rag     # with pip: pip install -U sift-rag

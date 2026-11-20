@@ -19,8 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3  # setup-uv has no major-version tags
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           python-version: "3.12"
       - run: uvx pre-commit run --all-files --show-diff-on-failure
@@ -35,8 +35,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20  # a hung install fails here instead of after GitHub's 6 hours
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3  # setup-uv has no major-version tags
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           python-version: ${{ matrix.python }}
           activate-environment: true
@@ -49,8 +49,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3  # setup-uv has no major-version tags
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           python-version: "3.12"
       - name: Check that the changelog has a section for the version

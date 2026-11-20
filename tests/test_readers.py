@@ -163,6 +163,27 @@ def test_chunk_prefers_headings_without_overlap():
     assert chunks[1][0] == chunks[0][1] + 1
 
 
+@pytest.mark.parametrize(
+    "line",
+    ["# a comment in code, not a heading", "#include <stdio.h>", "#tag as Obsidian writes it", "####### seven"],
+)
+def test_chunk_takes_no_line_for_a_heading_that_only_starts_with_a_hash(line):
+    # Every line starting with "#" counted as a heading: a comment in a fenced block, a C include or a tag cut a
+    # passage in two once it was half full, with no overlap between the halves.
+    filler = "".join(f"x{i} = {i}  # filler filler filler filler\n" for i in range(45))  # more than half a chunk
+    fenced = line.startswith("# a comment")
+    text = ("```python\n" if fenced else "") + filler + line + "\nthe rest\n" + ("```\n" if fenced else "")
+    assert len(filler) > readers.CHUNK_CHARS // 2  # where a heading ends a passage
+    assert len(text) < readers.CHUNK_CHARS  # all of it fits one
+    assert [c[2] for c in pieces(text)] == [text.strip()]
+
+
+def test_chunk_takes_a_fence_s_end_for_the_end_of_code():
+    code = "```\n" + "".join(f"x{i} = {i}  # filler filler filler filler\n" for i in range(45)) + "```\n"
+    chunks = list(pieces(code + "# After the code\nmore\n"))
+    assert [c[2].split("\n")[0] for c in chunks] == ["```", "# After the code"]
+
+
 def test_chunk_never_exceeds_limit_with_long_lines():
     text = "short line\n" * 20 + "y" * (readers.CHUNK_CHARS - 50) + "\n" + "z " * 3000
     assert all(len(c[2]) <= readers.CHUNK_CHARS for c in pieces(text))

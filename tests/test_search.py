@@ -312,6 +312,17 @@ def test_unusable_query_is_a_clear_error(corpus, monkeypatch):
         Index(corpus[0]).search("NEAR(")
 
 
+def test_a_store_s_trouble_is_not_a_bad_query(corpus):
+    # Whatever SQLite refused while it searched was said as "invalid search query", after the query was tried once
+    # more as phrases: a store locked or damaged, or a call cancelled, sent whoever asked to look at their query.
+    catalog, _ = corpus
+    db = catalog.store("notes")
+    db.execute("DROP TABLE fts")  # as damage leaves a store: FTS5 reads the query, and finds no index
+    db.commit()
+    with pytest.raises(sqlite3.OperationalError, match="no such table: fts"):
+        Index(catalog).search("bru*")
+
+
 @pytest.mark.parametrize("k", [0, -1, "3", 1.5])
 def test_k_must_be_positive_integer(corpus, k):
     with pytest.raises(ValueError, match="k must be"):
@@ -340,6 +351,29 @@ def test_filters(corpus):
 
 
 BRUSH, RL = "notes/robots/brush.md", "notes/rl.md"
+
+
+def test_a_filter_s_value_matches_as_text_and_as_the_number_it_reads_as(corpus):
+    # JSON Lines write a year as "2024" as often as front matter writes 2024: asked the one way, a filter found
+    # nothing of the other, and said nothing. Only the browser's page asked both ways.
+    catalog, root = corpus
+    write(
+        root / "papers.jsonl", '{"id": "a", "text": "brush strokes", "year": "2024", "share": "0.5", "open": "true"}\n'
+    )
+    write(root / "typed.md", "---\nyear: 2024\nshare: 0.5\nopen: true\ncode: 007\n---\n# Typed\nbrush\n")
+    indexing.index(catalog)
+    index, record, note = Index(catalog), "notes/papers/a", "notes/typed.md"
+    for year in (2024, "2024"):
+        assert set(ids(index.search("brush", filters={"year": year}))) == {BRUSH, record, note}
+        assert ids(index.search("brush", filters={"year": {"not": year}})) == []
+    for share in (0.5, "0.5"):
+        assert set(ids(index.search("brush", filters={"share": share}))) == {record, note}
+    for yes in (True, "true"):
+        assert set(ids(index.search("brush", filters={"open": yes}))) == {record, note}
+    assert ids(index.search("brush", filters={"open": "false"})) == []
+    assert ids(index.search("brush", filters={"code": "007"})) == [note]  # text in the front matter, and so asked
+    assert set(ids(index.search("brush", filters={"year": ["1999", "2024"], "share": 0.5}))) == {record, note}
+    assert index.search("brush", filters={"year": "9" * 30}) == []  # text alone: no number SQLite holds reads so
 
 
 def test_a_list_of_values_means_any_of_them(corpus):
@@ -1832,7 +1866,8 @@ def test_a_search_asked_again_is_answered_from_memory_until_a_store_changes(embe
     embed.embed_pending(Catalog(home))  # `sift embed`: the codes change
     assert ids(index.vsearch("brush", k=3))[0] == "notes/brushes.md"
     Catalog(home).set_active(["notes"], False)  # `sift deactivate notes`
-    assert index.search("brush", k=3) == []
+    with pytest.raises(LookupError, match="no collection is active"):  # said, since "no matches" told nobody
+        index.search("brush", k=3)
 
 
 def test_results_follow_the_servers_own_reindex(embedded):

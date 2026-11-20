@@ -55,6 +55,17 @@ def test_pages_are_made_off_the_event_loop(embedded, monkeypatch):
     assert len(ran) == 2
 
 
+def test_no_browser_keeps_a_page_or_a_part_of_one(browser):
+    # A page and its parts have one address, told apart by a header of htmx's: a browser that keeps what it got shows
+    # a part alone, without the page around it, when it goes back to the address. And they hold the documents' text.
+    whole = browser.get("/ui/?q=brush")
+    part = browser.get("/ui/?q=brush", headers={"HX-Request": "true", "HX-Target": "explore"})
+    reader = browser.get("/ui/?doc=" + urllib.parse.quote(BRUSH), headers={"HX-Request": "true", "HX-Target": "reader"})
+    assert whole.text.lstrip().startswith("<!doctype html>")
+    assert part.text.lstrip().startswith('<div id="explore"')
+    assert [r.headers.get("cache-control") for r in (whole, part, reader)] == ["no-store"] * 3
+
+
 def test_the_page_shows_what_is_indexed(browser):
     response = browser.get("/ui/")
     assert response.status_code == 200
@@ -381,6 +392,18 @@ def test_errors_show_in_place(browser, params, message):
     assert re.search(r'<p class="error">[^<]*' + re.escape(html.escape(message, quote=True)), response.text)
 
 
+@pytest.mark.parametrize("params, broken", [({"q": "brush"}, "search"), ({"doc": BRUSH}, "document")])
+def test_a_bug_is_no_error_to_show_in_place(embedded, monkeypatch, params, broken):
+    # A KeyError is a LookupError, as "unknown document ..." is: the page showed "'fields'", and the log nothing.
+    def bug(*args, **kwargs):
+        raise KeyError("fields")
+
+    index = Index(embedded[0])
+    monkeypatch.setattr(index, broken, bug)
+    with pytest.raises(KeyError):  # which the server answers with its error page, and logs
+        page(index).get("/ui/", params=params)
+
+
 def test_searching_by_meaning_needs_embeddings(corpus, fake_models):
     response = page(Index(corpus[0])).get("/ui/", params={"q": "brush", "mode": "vsearch"})
     assert "no embeddings yet" in response.text
@@ -542,6 +565,34 @@ def test_sift_ui_opens_the_server_that_runs(home, opened, monkeypatch):
     finally:
         stop()
     assert opened == [f"http://127.0.0.1:{port}/ui/"]
+
+
+def test_sift_ui_asks_the_server_itself_whatever_proxy_is_set(home, opened, monkeypatch):
+    # A proxy set for the web knows no server of this machine: asked through it, the server that runs looked like
+    # none, or like no sift, and `sift ui` started a second one on the port taken.
+    port, stop = answering(200)
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("http_proxy", "HTTP_PROXY"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")  # where nobody listens
+    monkeypatch.setattr(server, "serve", lambda *a, **kw: pytest.fail("started another server"))
+    try:
+        cli.main(["ui", "--port", str(port)])
+    finally:
+        stop()
+    assert opened == [f"http://127.0.0.1:{port}/ui/"]
+
+
+def test_sift_ui_opens_a_server_that_is_busy(home, opened, monkeypatch, capsys):
+    # A sift runs its models on the thread that answers: a long rerank, and it answers nobody for seconds. It listens
+    # all the same, so another can't be started on its port.
+    monkeypatch.setattr(ui, "PROBE_SECONDS", 0.2)
+    monkeypatch.setattr(server, "serve", lambda *a, **kw: pytest.fail("started another server"))
+    with socket.create_server(("127.0.0.1", 0)) as listening:  # takes connections, answers none
+        port = listening.getsockname()[1]
+        cli.main(["ui", "--port", str(port)])
+    assert opened == [f"http://127.0.0.1:{port}/ui/"]
+    assert f"the server on port {port} is busy: its page loads once it answers" in capsys.readouterr().err
 
 
 def test_sift_ui_starts_the_server_when_none_runs(home, opened, monkeypatch):

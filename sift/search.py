@@ -136,10 +136,27 @@ def _condition(key, op, value):
         if isinstance(one, int) and not -SQLITE_INT <= one < SQLITE_INT:
             raise ValueError(f"filter {key!r}: {one} is too large")
     if op in ("=", "not"):
+        values = list(dict.fromkeys(form for one in values for form in _forms(one)))
         return f"value IN ({', '.join('?' * len(values))})", values
     if isinstance(value, str):  # at the precision given: "2024-12-31" is <= "2024", and not > "2024"
         return f"substr(value, 1, ?) {op} ?", [len(value), value]
     return f"CAST(value AS REAL) {op} ?", [value]  # SQLite reads "2024-06-15" as 2024
+
+
+def _forms(value):
+    """A value to match, in each form front matter may hold it: as given, and a text as the number or the yes or no it
+    reads as, a number or a yes or no as the text that writes it. "2024" is a number in one document and text in
+    another, as JSON Lines write it, and nobody asking knows which; "007" stays text too, where it is an agent's
+    number."""
+    if isinstance(value, bool):
+        return [value, "true" if value else "false"]
+    if not isinstance(value, str):
+        return [value, json.dumps(value)]
+    if value in ("true", "false"):
+        return [value, value == "true"]
+    if re.fullmatch(r"-?[0-9]+", value) and -SQLITE_INT <= int(value) < SQLITE_INT:
+        return [value, int(value)]
+    return [value, float(value)] if re.fullmatch(r"-?[0-9]+\.[0-9]+", value) else [value]
 
 
 def _field(name, what="filter field"):
@@ -635,12 +652,26 @@ class Index:
         return found
 
     def _scope(self, collection):
-        """The collections a search covers: the one named, or every active one."""
+        """The collections a search covers: the one named, or every active one. None active, or none at all, is an
+        error that says what to do: "no matches" told nobody that nothing was searched. Those whose stores are
+        missing are active, and passed over as said (see active)."""
         if not collection:
-            return list(self.active().values())
+            found = list(self.active().values())
+            if not found and (nothing := self._nothing_active()):
+                raise LookupError(nothing)
+            return found
         c = self.catalog.get(collection)
         self._readable(c)
         return [c]
+
+    def _nothing_active(self):
+        """What to say when no collection is active, and to do about it; None if one is."""
+        collections = self.catalog.collections()
+        if any(c.active for c in collections):
+            return None
+        if collections:
+            return "no collection is active: `sift activate NAME` takes one back into searches"
+        return "no collection yet: `sift add FOLDER`, then `sift index`"
 
     def _readable(self, collection):
         """The store of a collection to read from; an error if the collection is inactive, or its store missing."""
@@ -815,6 +846,8 @@ class Index:
             try:
                 found = {c: self.catalog.store(c).execute(query, [attempt, *args, each]).fetchall() for c in scope}
             except sqlite3.OperationalError as e:
+                if not expression.rejected(attempt):  # the store's trouble, or a call cancelled: not the query's
+                    raise
                 error = e
                 continue
             if phrases:
@@ -877,8 +910,8 @@ class Index:
             scope = list(self.active().values())
         else:
             self._settle()
-        if not scope and self.catalog.collections():
-            raise LookupError("no collection is active: `sift activate NAME` takes one back into searches")
+        if not scope and self.catalog.collections() and (nothing := self._nothing_active()):
+            raise LookupError(nothing)
         damaged = {}
         for c in scope:
             try:

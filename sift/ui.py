@@ -37,7 +37,12 @@ SNIPPET = 260  # characters of a passage shown in the results
 READER_LINES = 2000  # lines of a document the reader shows at once: a long log would make a page of megabytes
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 STARTUP_SECONDS = 600  # how long `sift ui` waits for the server it started: loading models and codes takes a while
+PROBE_SECONDS = 5  # how long `sift ui` waits for a server on its port to answer, before it takes it for busy
+# A page and its parts share an address, told apart by the request's headers: a browser that kept one showed a part
+# alone, without the page around it, on the way back to the address. Nor do the documents' texts belong in its cache.
+UNKEPT = {"Cache-Control": "no-store"}
 ERRORS = (LookupError, ValueError, ConnectionError, sqlite3.Error)  # what a view shows, as the MCP tools say it
+BUGS = (KeyError, IndexError)  # LookupErrors too, but never what sift says of a view: the server's error page, logged
 
 
 @dataclass(frozen=True)
@@ -89,13 +94,14 @@ class View:
         return PREFIX + ("?" + urlencode(pairs) if pairs else "")
 
     def filters(self):
-        """The filters as searches take them: the values of one field stand for any of them."""
+        """The filters as searches take them: the values of one field stand for any of them, each in whatever form
+        the front matter holds it, a number or text."""
         found = {}
         for pair in self.f:
             key, equals, value = pair.partition("=")
             if not equals:
                 raise ValueError(f"filter {pair!r} must be field=value")
-            found.setdefault(key, []).extend(_forms(value))
+            found.setdefault(key, []).append(value)
         return found
 
     def filtered(self, key, value):
@@ -107,16 +113,6 @@ class View:
 def _count(text):
     """A count from the address, or None for anything else: one too long for int() to read, too."""
     return int(text) if re.fullmatch("[0-9]{1,9}", text) else None
-
-
-def _forms(text):
-    """A filter value from the address in each form the front matter may hold it: as text, and as the number or yes
-    or no it reads as. "2024" is a number in one document, "007" text in another."""
-    if re.fullmatch(r"-?[0-9]+", text):
-        return [text, int(text)]
-    if re.fullmatch(r"-?[0-9]+\.[0-9]+", text):
-        return [text, float(text)]
-    return [text, text == "true"] if text in ("true", "false") else [text]
 
 
 def _shown(value):
@@ -252,6 +248,8 @@ def _explore(index, view, pattern):
         for note, label, name in ((view.to, "Linking to", "to"), (view.by, "Linked from", "by")):
             if note:
                 context["linking"].append((f"{label} {_title(index, note)}", view.href(**{name: ""}, k=PAGE)))
+    except BUGS:
+        raise
     except ERRORS as e:
         context["error"] = str(e)
     found = context["hits"]
@@ -306,6 +304,8 @@ def _reader(index, view, pattern):
         document = index.document(view.doc, fields=["*"])
         path = index.file(document["id"])
         into, out = index.link_count(document["id"])
+    except BUGS:
+        raise
     except ERRORS as e:
         return {"error": str(e)}
     listing = {"q": "", "similar": "", "c": "", "path": "", "f": (), "k": PAGE}  # all of them, wherever they are
@@ -364,7 +364,7 @@ def app(index, host="127.0.0.1"):
     async def page(request):
         view = View.of(request.query_params)
         part = request.headers.get("hx-target") if "hx-history-restore-request" not in request.headers else None
-        return HTMLResponse(await jobs.run(render, view, part, request.headers))
+        return HTMLResponse(await jobs.run(render, view, part, request.headers), headers=UNKEPT)
 
     def located(id):
         try:
@@ -415,14 +415,18 @@ def address(host, port):
 def open_in_browser(host="127.0.0.1", port=8765):
     """`sift ui`: open the UI of the `sift serve` on this port in the browser, starting the server if none runs."""
     url = address(host, port) + PREFIX
+    # Asked itself, not through a proxy set for the web, which knows no server of this machine.
+    directly = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        urllib.request.urlopen(url, timeout=5).close()
+        directly.open(url, timeout=PROBE_SECONDS).close()
     except urllib.error.HTTPError as e:
         e.close()  # it holds the answer open: a ResourceWarning on Python 3.14+ when left to the garbage collector
         raise SystemExit(
             f"error: what answers on port {port} is no sift with a UI: an older `sift serve`? Restart it with this "
             "version of sift, or choose another port with --port"
         ) from None
+    except TimeoutError:  # it listens and answers nobody: a sift whose models run, on the thread that answers
+        console.say(f"the server on port {port} is busy: its page loads once it answers")
     except OSError:  # nobody listens: serve here, and open the page once the server answers
         import threading
 

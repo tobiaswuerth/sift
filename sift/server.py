@@ -79,13 +79,20 @@ async def _run(fn, *args, abortable=True, **kwargs):
 def _call(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
+    except (KeyError, IndexError) as e:  # LookupErrors too, but a bug's, never what sift says of a call
+        raise _bug(e) from None
     except (LookupError, ValueError, ConnectionError, sqlite3.Error, jobs.Cancelled) as e:  # ConnectionError: the
         raise ToolError(str(e)) from None  # embedding remote; sqlite3.Error and Cancelled: a call cancelled, too
     except SystemExit as e:  # a store that refuses to open, as a newer sift's: the call fails, not the server
         raise ToolError(str(e.code)) from None
     except Exception as e:
-        log.exception("tool failed")
-        raise ToolError(f"{type(e).__name__}: {e}") from None
+        raise _bug(e) from None
+
+
+def _bug(error):
+    """What to tell the agent of an error that is a bug, being handled now: its type too, and its traceback logged."""
+    log.exception("tool failed")
+    return ToolError(f"{type(error).__name__}: {error}")
 
 
 # What agents see of each parameter: they read the tools' schemas, not sift's code.
@@ -137,7 +144,8 @@ Filters = Annotated[
     dict[str, Any] | None,
     Field(
         description='Conditions on front-matter fields, all of which must hold: a value, e.g. {"categories": '
-        '"cs.RO"}, which a list field matches if it holds it; a list for any of its values, e.g. {"categories": '
+        '"cs.RO"}, which a list field matches if it holds it, and which matches as a number or as text, however the '
+        'document writes it (2024 and "2024"); a list for any of its values, e.g. {"categories": '
         '["cs.RO", "cs.CV"]}; {"not": a value or list} for none of them (documents without the field pass); or a '
         'range, e.g. {"created": {">=": "2024-06", "<": "2025"}}. Dates compare at the precision given, so '
         '{"<=": "2024"} includes all of 2024. A wikilink, e.g. {"org": "[[Acme AG]]"}, matches a link to that note '

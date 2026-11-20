@@ -2,6 +2,7 @@
 
 import argparse
 import contextlib
+import errno
 import json
 import os
 import re
@@ -61,18 +62,18 @@ def _shown(value):
 def _print_document(document):
     """A document as `sift get` prints it: its fields, if asked for, then its text."""
     for key, value in document.get("fields", {}).items():
-        print(f"{key}: {_shown(value)}")
+        _print(f"{key}: {_shown(value)}")
     if "fields" in document:
-        print()
+        _print()
     text = document["text"]
-    sys.stdout.write(text if text.endswith("\n") or not text else text + "\n")  # JSON records end without one
+    _print(text if text.endswith("\n") or not text else text + "\n", end="")  # JSON records end without one
 
 
 def _print_documents(documents):
     """Several documents, each headed by its id as `head` heads files; those that can't be read said, and then an
     error."""
     for n, document in enumerate(d for d in documents if "error" not in d):
-        print(f"{chr(10) if n else ''}==> {document['id']} <==")
+        _print(f"{chr(10) if n else ''}==> {document['id']} <==")
         _print_document(document)
     failed = [d for d in documents if "error" in d]
     for document in failed:
@@ -83,18 +84,18 @@ def _print_documents(documents):
 
 def _print_hits(hits, as_json):
     if as_json:
-        print(json.dumps(hits, ensure_ascii=False, indent=2))
+        _print(json.dumps(hits, ensure_ascii=False, indent=2))
         return
     if not hits:
         console.say("no matches")
     for h in hits:
-        print(f"{h['score']:>8.4f}  {h['id']}:{h['lines']}  {h['title']}")
+        _print(f"{h['score']:>8.4f}  {h['id']}:{h['lines']}  {h['title']}")
         if "also" in h:
-            print(" " * 10 + "also: " + ", ".join(h["also"]))
+            _print(" " * 10 + "also: " + ", ".join(h["also"]))
         if "fields" in h:
-            print(" " * 10 + "  ".join(f"{k}: {_shown(v)}" for k, v in h["fields"].items()))
+            _print(" " * 10 + "  ".join(f"{k}: {_shown(v)}" for k, v in h["fields"].items()))
         if "text" in h:
-            print(textwrap.indent(textwrap.shorten(h["text"], 300), " " * 10))
+            _print(textwrap.indent(textwrap.shorten(h["text"], 300), " " * 10))
     if any(h.get("partial") for h in hits):
         console.say("out of time: the best found so far; better matches may be missing")
 
@@ -102,19 +103,19 @@ def _print_hits(hits, as_json):
 def _print_links(found, as_json):
     """`sift links`: each link out with where it leads, and each document linking in with its lines."""
     if as_json:
-        print(json.dumps(found, ensure_ascii=False, indent=2))
+        _print(json.dumps(found, ensure_ascii=False, indent=2))
         return
     note = f"{found['title']} ({found['id']})"
     for way, heading in (("out", f"{note} links to"), ("in", f"Linking to {note}")):
         if way not in found:
             continue
-        print(f"{heading}:" if found[way] else f"{heading}: nothing")
+        _print(f"{heading}:" if found[way] else f"{heading}: nothing")
         for link in found[way]:
             through = f"  (through {link['through']})" if "through" in link else ""
             if way == "in":
-                print(f"  {link['id']}  {link['title']}{through}")
+                _print(f"  {link['id']}  {link['title']}{through}")
                 for line in link["links"]:
-                    print(f"{line['line']:>6}  {line['text']}")
+                    _print(f"{line['line']:>6}  {line['text']}")
                 continue
             written = (f"{link['field']}: " if "field" in link else "") + link["target"]
             written += f"#{link['fragment']}" if "fragment" in link else ""
@@ -122,19 +123,19 @@ def _print_links(found, as_json):
                 to = link["id"] + (" (alias)" if link["via"] == "alias" else "")
             else:
                 to = "ambiguous: " + ", ".join(link["ambiguous"]) if "ambiguous" in link else "unresolved"
-            print(f"{link['line']:>6}  {written}  ->  {to}{through}")
+            _print(f"{link['line']:>6}  {written}  ->  {to}{through}")
 
 
 def _print_unresolved(targets, as_json):
     """`sift unresolved`: each target with how many documents link it, and a few of them."""
     if as_json:
-        print(json.dumps(targets, ensure_ascii=False, indent=2))
+        _print(json.dumps(targets, ensure_ascii=False, indent=2))
         return
     if not targets:
         console.say("no unresolved links")
     for target in targets:
         more = ", ..." if target["docs"] > len(target["ids"]) else ""
-        print(f"{target['docs']:>6}  {target['target']}  {', '.join(target['ids'])}{more}")
+        _print(f"{target['docs']:>6}  {target['target']}  {', '.join(target['ids'])}{more}")
 
 
 def main(argv=None):
@@ -287,16 +288,57 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8766)
 
     a = p.parse_args(argv)
-    if (sys.stdout.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
-        sys.stdout.reconfigure(encoding="utf-8")
+    for stream in (sys.stdout, sys.stderr):  # what sift says names files and titles, as its results do
+        if (stream.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
+            stream.reconfigure(encoding="utf-8")
     try:
-        update.offer(a.cmd)  # in a terminal: a newer sift, how an update went
+        _offer_update(a.cmd)
         with logs.kept(a.cmd, datetime.now()) if a.cmd in logs.LOGGED else contextlib.nullcontext():
             _command(a)
+        _print(
+            end="", flush=True
+        )  # what stdout still holds, here: left to Python as it ends, a reader gone is an error
+    except _ReaderLeft:
+        raise SystemExit(_unread()) from None
+    except (KeyError, IndexError):  # LookupErrors too, but a bug's: its traceback finds it, "error: 'fields'" doesn't
+        raise
     except (LookupError, ValueError, OSError, sqlite3.Error) as e:
         raise SystemExit(f"error: {e}") from None
     except KeyboardInterrupt:
         raise SystemExit(130) from None
+
+
+class _ReaderLeft(Exception):
+    """Whoever read sift's results has left, as `head` does once it has its lines."""
+
+
+def _print(*parts, **options):
+    """print() results, which go to stdout from here alone. Refused as to a broken pipe, which Windows calls an
+    invalid argument, they have no reader any more (_ReaderLeft); refused otherwise, as by a full disk, it is an
+    error."""
+    try:
+        print(*parts, **options)
+    except OSError as error:
+        if error.errno not in (errno.EPIPE, errno.EINVAL):
+            raise
+        raise _ReaderLeft from None
+
+
+def _unread():
+    """Let go of the results nobody reads any more, which Python, ending, would try to write once more and report;
+    returns the exit code Python itself ends with on a broken pipe."""
+    with contextlib.suppress(OSError, ValueError):  # a stdout that is no file: nothing of it is left to Python
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    return 1
+
+
+def _offer_update(command):
+    """In a terminal: a newer sift, and how an update went (see update.offer). Trouble with the update's own state, a
+    folder that may not be written, is said, and the command runs: it is what was asked, the update an offer."""
+    try:
+        update.offer(command)
+    except OSError as error:
+        console.say(f"sift couldn't look for an update: {error}")
 
 
 def _command(a):
@@ -413,13 +455,13 @@ def _run(a, catalog):
         vectors.compile_scan()  # many searches: worth the second it takes, as for a server
         index = Index(catalog)
         results = bench.run(index, bench.load(a.file, index), collection=a.collection)
-        print(f"{'mode':10}{'nDCG@10':>10}{'MRR@10':>10}{'Recall@10':>11}{'ms/query':>10}")
+        _print(f"{'mode':10}{'nDCG@10':>10}{'MRR@10':>10}{'Recall@10':>11}{'ms/query':>10}")
         for mode, r in results.items():
-            print(f"{mode:10}{r['nDCG@10']:>10.3f}{r['MRR@10']:>10.3f}{r['Recall@10']:>11.3f}{r['ms']:>10.0f}")
+            _print(f"{mode:10}{r['nDCG@10']:>10.3f}{r['MRR@10']:>10.3f}{r['Recall@10']:>11.3f}{r['ms']:>10.0f}")
     elif a.cmd == "status":
         from .search import Index
 
-        print(json.dumps(Index(catalog).status(), indent=2))
+        _print(json.dumps(Index(catalog).status(), indent=2))
     elif a.cmd == "links":
         from .search import Index
 

@@ -10,7 +10,7 @@ git clone https://github.com/tobiaswuerth/sift
 cd sift
 uv venv && uv pip install --torch-backend auto -e ".[dev]"   # or: pip install -r requirements.txt -e ".[dev]"
 pre-commit install      # lint, format and config checks on every commit
-pytest --cov -n 6       # the tests, in six processes, with the coverage gate
+python scripts/gate.py  # the gate: every hook, the tests with the coverage gate, and the smoke run
 ```
 
 The tests replace the models, GPU memory and the clock with small deterministic fakes, so they need no GPU and no
@@ -63,8 +63,14 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 
 - **Tests first:** a test that fails, then the change that makes it pass; every bug fix comes with a regression test.
 - **Full coverage:** `pytest --cov` requires 100% line and branch coverage.
+- **The gate:** `python scripts/gate.py` runs every check a change must pass, and is green when all did: the
+  pre-commit hooks, the tests with the coverage gate, and the smoke run.
 - **Quality gates:** pre-commit runs on every commit and in CI: ruff (lint and format), whitespace, line endings, byte
   order marks, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schemas, actionlint and codespell.
+  Workflows name their actions by commit, which a test holds them to.
+- **The smoke run:** `python scripts/smoke.py` runs every command as a user runs it, each in a process of its own, on
+  a small folder of notes; with `--models` also what loads the models: `embed`, the semantic searches, `bench` and
+  `sift serve` with its page and MCP endpoint. A new command or option gets a line there.
 - **Pull requests:** `main` is protected; pull requests are squash-merged once every check passes. CI runs the tests on
   Linux (x86 and ARM), macOS and Windows for Python 3.11 to 3.15 and builds the package, on pull requests and again on
   each merge commit.
