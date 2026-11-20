@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import errno
+import io
 import json
 import os
 import re
@@ -289,7 +290,9 @@ def main(argv=None):
 
     a = p.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # what sift says names files and titles, as its results do
-        if (stream.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
+        # e.g. a Windows pipe: titles may be any script. A stream that is no TextIOWrapper has no encoding to switch:
+        # a host's takes text as it is (io.StringIO), and pythonw has none
+        if isinstance(stream, io.TextIOWrapper) and stream.encoding.lower() != "utf-8":
             stream.reconfigure(encoding="utf-8")
     try:
         _offer_update(a.cmd)
