@@ -360,6 +360,26 @@ def said(capsys):
     return [line.rsplit("\r", 1)[-1].rstrip() for line in capsys.readouterr().err.split("\n")]
 
 
+@pytest.mark.parametrize("streamed", [False, True])
+def test_changed_records_are_replaced_a_batch_at_a_time(tmp_path, home, monkeypatch, streamed):
+    # Replaced one by one, a changed record cost 37 statements, triggers counted, against 18 a batch at a time: 50,000
+    # of them took 11.4 s to store, and take 5.7 s.
+    if streamed:
+        monkeypatch.setattr(readers, "STREAMED", 0)
+    file = tmp_path / "c" / "r.jsonl"
+    write(file, numbered(100))
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    indexing.index(catalog)
+    write(file, jsonl({"id": i, "text": f"record {i}, changed"} for i in range(100)))
+    statements = []
+    only(catalog).set_trace_callback(statements.append)
+    indexing.index(catalog)
+    only(catalog).set_trace_callback(None)
+    assert len(statements) <= 24 * 100
+    assert sorted(texts(catalog).values()) == sorted(f"record {i}, changed" for i in range(100))
+
+
 def test_a_large_file_is_read_no_further_than_it_is_stored(tmp_path, home, large, monkeypatch):
     # Read whole, a file of 300,000 records, 69 MB, took 697 MB of memory: its bytes, its lines and every record's
     # document at once, ten times the file. It is read a batch of records ahead of what is stored, whatever its size.

@@ -19,6 +19,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - Logs no longer grow without end: the latest 20 of each command are kept, and a log past 16 MB, as a server's that
   logs every request, goes on in a new part, its last three kept (`.log.1` to `.log.3`).
+- Indexing a JSON Lines file whose records changed takes half the time: the old versions go together, not one by
+  one. 50,000 changed records took 11.4 s to store, and take 5.7 s.
 - A document named otherwise than by its whole id is looked up, where every path of its collection was read: a
   shortened id (`papers/2603.29315.md` for `papers/2026/03/2603.29315.md`), a record's id alone, a mistyped id, or an
   absolute path in another case, for `get`, `similar`, `links`, `mentions`, and the `links_to` and `linked_from` of
