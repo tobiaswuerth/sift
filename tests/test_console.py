@@ -48,6 +48,18 @@ def test_a_line_blanks_out_what_a_longer_one_left_behind(capsys):
     assert capsys.readouterr().err == "\ra longer line\rshort        \n"
 
 
+def test_without_stderr_nothing_is_said_least_of_all_on_stdout(monkeypatch, capsys):
+    # pythonw has no stderr, and print() takes a stream that is None for stdout: messages, a progress line and the
+    # question of an update went among the results.
+    monkeypatch.setattr(sys, "stderr", None)
+    console.say("hello")
+    console.write("Update now? [y/N] ", end="")
+    with console.Progress(2, "chunks") as progress:
+        progress.update(1)
+        console.say("a note")
+    assert capsys.readouterr().out == ""
+
+
 # --- progress ------------------------------------------------------------------------
 
 

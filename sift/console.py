@@ -1,6 +1,7 @@
 """What sift tells the user while it works. Everything goes to stderr, so stdout stays for results: messages (`say`),
 and one kind of progress line (`Progress`) for every long step, which redraws itself so the time keeps moving even
-while a single step takes minutes."""
+while a single step takes minutes. All of it through `write`, which alone prints: without a stderr nothing is told,
+and the command's log has it still."""
 
 import gc
 import shlex
@@ -27,7 +28,15 @@ def say(*parts: object, logged: str | None = None) -> None:
     if _drawn is not None:
         _drawn.note(text)
     else:
-        print(text, file=sys.stderr, flush=True)
+        write(text)
+
+
+def write(text: str = "", end: str = "\n") -> None:
+    """Text for the user as it is, on stderr: what a message and a progress line are made of, and a question, to be
+    answered on its line. Nowhere without a stderr, as under pythonw: print() takes a stream that is None for stdout,
+    where the results go."""
+    if sys.stderr is not None:
+        print(text, end=end, file=sys.stderr, flush=True)
 
 
 def count(n: int, noun: str) -> str:
@@ -65,11 +74,11 @@ class Line:
 
     def show(self, text: str) -> None:
         self._width = max(self._width, len(text))
-        print(f"\r{text:<{self._width}}", end="", file=sys.stderr, flush=True)
+        write(f"\r{text:<{self._width}}", end="")
 
     def end(self) -> None:
         """Move on to the next line; the next text starts afresh."""
-        print(file=sys.stderr, flush=True)
+        write()
         self._width = 0
 
 

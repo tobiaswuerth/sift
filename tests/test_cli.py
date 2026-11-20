@@ -421,6 +421,24 @@ def test_without_streams_a_command_runs(notes, home, monkeypatch, capsys):
     assert [c["name"] for c in json.loads(run(capsys, "status").out)["collections"]] == ["notes"]
 
 
+def test_without_stderr_what_sift_says_stays_out_of_its_results(cli_corpus, monkeypatch, capsys):
+    # pythonw started from a console with only its results sent to a file has a stdout and no stderr, and print()
+    # takes a stream that is None for stdout: "no matches" stood among the results, "starting ..." before the JSON.
+    monkeypatch.setattr(sys, "stderr", None)
+    assert run(capsys, "search", "quantum").out == ""
+    assert [hit["id"] for hit in json.loads(run(capsys, "vsearch", "brush", "-k", "1", "--json").out)]
+    with pytest.raises(SystemExit, match="1 of 2 documents can't be read"):
+        run(capsys, "get", "missing/x.md", "notes/rl.md", "--lines", "1")
+    assert capsys.readouterr().out == "==> notes/rl.md <==\n# Reward shaping\n"
+
+
+def test_without_stderr_a_command_s_log_still_holds_what_it_said(notes, home, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stderr", None)
+    assert run(capsys, "add", str(notes)).out == ""
+    [log] = (home / "logs").glob("add-*.log")
+    assert "added collection 'notes'" in log.read_text(encoding="utf-8")
+
+
 class Gone(io.StringIO):
     """A stdout whose reader left: it takes no more, as `error` tells; `kept` is the file it is, if it is one."""
 
