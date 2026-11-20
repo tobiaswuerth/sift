@@ -219,8 +219,8 @@ def _check_sort(sort):
 
 
 def _by_field(hits, sort):
-    """Hits ordered by the front-matter field `sort` names, descending with "-" first: numbers before text, and hits
-    without the field last, in their order."""
+    """Hits ordered by the front-matter field `sort` names, descending with "-" first: numbers before text, after it
+    descending, as SQLite orders them (see browse), and hits without the field last, in their order."""
     field = sort.removeprefix("-")
     valued = [(json.loads(hit["meta"]).get(field), hit) for hit in hits]
     have = [(value, hit) for value, hit in valued if value is not None]
@@ -451,8 +451,8 @@ def _lines_of(rows, text):
 
 def _by_value(rows, descending):
     """Rows of several stores, (collection, path, ..., value), each store's in SQLite's order by value and path,
-    merged in that order: numbers before text, ascending or descending, and rows without a value last; then by
-    collection and path."""
+    merged in that order: numbers before text ascending, text before numbers descending, and rows without a value
+    last; then by collection and path."""
     rows = sorted(rows, key=itemgetter(0, 1))
     valued = [row for row in rows if row[-1] is not None]
     valued.sort(key=lambda row: (0, row[-1]) if isinstance(row[-1], int | float) else (1, row[-1]), reverse=descending)

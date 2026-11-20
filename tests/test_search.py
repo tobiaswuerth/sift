@@ -1546,7 +1546,11 @@ def test_sort_puts_numbers_before_text(corpus):
     for name, rank in (("a", "2"), ("b", '"x"'), ("c", "10"), ("d", "null")):
         write(root / "ranked" / f"{name}.md", f"---\nrank: {rank}\n---\n# {name}\nranked\n")
     indexing.index(catalog)
-    assert [day(h) for h in Index(catalog).search("ranked", sort="rank")] == ["a", "c", "b", "d"]
+    index = Index(catalog)
+    assert [day(h) for h in index.search("ranked", sort="rank")] == ["a", "c", "b", "d"]
+    # descending, text before numbers, as SQLite orders them, and browse too; those without the field last
+    assert [day(h) for h in index.search("ranked", sort="-rank")] == ["b", "c", "a", "d"]
+    assert [day(h) for h in index.browse(path="ranked/*", sort="-rank")] == ["b", "c", "a", "d"]
 
 
 @pytest.mark.parametrize("sort", ["", "-", 'bad"key', 1, ["created"]])
