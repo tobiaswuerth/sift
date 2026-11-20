@@ -170,7 +170,7 @@ sift search invoice -f "created>=2024-06" -f "created<2025"      # a range
 - A value matches whether the document writes it as a number or as text: `-f year=2024` finds `year: 2024` and
   `"year": "2024"`, and `true` and `false` likewise.
 - Ranges take `>`, `>=`, `<`, `<=`. Dates compare at the precision given: `created<=2024` includes all of 2024; a number
-  compares with the number a date starts with.
+  compares with the number a date starts with, and passes over text that doesn't start with one (`year: unknown`).
 - Field names are as written in the front matter: `-f journal-ref=Nature`, `-f "date created>=2024"`.
 - Over MCP, `filters` maps each field to a value, a list (any of them), `{"not": ...}`, or ranges:
   `{"created": {">=": "2024-06", "<": "2025"}}`.

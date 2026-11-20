@@ -73,6 +73,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A file named by its absolute path through the folder as it was added, a link or junction to it or a drive mapped to
   a network share, was "in no collection" for `reindex`, `sift index --files` and `get`, and the `sift add` suggested
   was refused: a collection keeps its folder as it resolves. Such a path is resolved now where it isn't found as given.
+- A range on a number took text without a number for 0: `-f "year<2000"` found every note whose year was `unknown`,
+  empty, or a list inside a list. Text that starts with a number, as a date, still compares as that number.
 
 ## [1.12.0] - 2026-11-17
 

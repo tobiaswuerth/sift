@@ -1418,6 +1418,25 @@ def test_range_filters_on_numbers(corpus):
     assert ids(index.search("brush", filters={"year": {"<": "2025"}})) == ["notes/robots/brush.md"]  # given as text
 
 
+def test_a_number_range_passes_over_text_without_a_number(corpus):
+    # SQLite casts text without a number to 0: {"<": 2000} found every document whose year was "unknown", empty, or a
+    # list inside a list. Text that starts with a number still compares as it, as a date does with its year.
+    catalog, root = corpus
+    years = {
+        "dated": "1990",
+        "unknown": '"unknown"',
+        "empty": '""',
+        "nested": "[[1990]]",
+        "era": '"-50 BC"',
+        "spaced": '" 1985"',
+    }
+    for name, year in years.items():
+        write(root / "years" / f"{name}.md", f"---\nyear: {year}\n---\n# {name}\nharbour\n")
+    indexing.index(catalog)
+    hits = Index(catalog).search("harbour", k=20, filters={"year": {"<": 2000}})
+    assert sorted(h["id"].rsplit("/", 1)[1] for h in hits) == ["dated.md", "era.md", "spaced.md"]
+
+
 def test_range_on_a_list_needs_one_element_in_range(corpus):
     catalog, root = corpus
     write(root / "multi.md", "---\nyears: [2019, 2030]\n---\n# Multi\nbrush\n")
