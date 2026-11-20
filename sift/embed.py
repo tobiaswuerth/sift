@@ -31,6 +31,14 @@ vector of the store's length has. Looked up among the vectors, each lookup read 
 million PubMed chunks, against 2.5 GB of codes."""
 
 
+def passages(db, chosen, args=()):
+    """What is embedded of the chunks that `chosen` selects, a FROM clause over chunks `c` and their documents `d`,
+    with `args`: (id, seq, title, text) of each, as text_of takes the last three, in its order."""
+    rows = db.execute(f"SELECT c.id, c.seq, d.title, c.doc, c.pos, c.len FROM {chosen}", args).fetchall()
+    texts = store.texts(db, (row[:1] + row[3:] for row in rows))
+    return [(chunk, seq, title, texts[chunk]) for chunk, seq, title, *_ in rows if chunk in texts]
+
+
 def _pending(db):
     """How many chunks have no vector yet, from the counts the store keeps: counting them read every chunk and its
     vector, 9 minutes over 30 million from a cold disk. A chunk without a document counts; the slabs pass it over."""
@@ -178,8 +186,11 @@ class _Reader:
             self._put(error)
 
     def _rows(self, db, last):
-        with self.turn:
-            rows = db.execute(SLAB_SQL, (last, SLAB)).fetchall()
+        """The next slab of a store's chunks without a vector, after the chunk `last`. The chunks and their texts are
+        read as they are at one moment: a `sift index` deleting them in between would leave a slab of none, which
+        ends the store's."""
+        with self.turn, store.snapshot([db]):
+            rows = passages(db, f"{PENDING} AND c.id > ? ORDER BY c.id LIMIT ?", (last, SLAB))
             self.tally.took(db, rows)
             return rows
 
@@ -191,10 +202,6 @@ class _Reader:
                 return
             except queue.Full:
                 continue
-
-
-SLAB_SQL = f"""SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM {PENDING} AND c.id > ?
-               ORDER BY c.id LIMIT ?"""
 
 
 class _Writer:

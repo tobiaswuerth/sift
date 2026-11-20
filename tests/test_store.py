@@ -1,6 +1,8 @@
 """A collection's store: its layout, its ids, the vectors' codes, the counts of its rows, deleting documents, the
 vectors' version, and holding it alone."""
 
+import json
+import random
 import re
 import sqlite3
 import time
@@ -12,8 +14,9 @@ import pytest
 
 from sift import embed, indexing, postings, store, vectors
 from sift.catalog import Catalog
+from sift.search import Index
 
-from .conftest import write
+from .conftest import keywords_agree, write
 
 
 def doc_ids(db):
@@ -679,3 +682,156 @@ def test_a_marking_once_that_fails_otherwise_than_on_a_store_sift_may_only_read_
         store._once(db, "some_marking", failing)
     assert store.get_meta(db, "some_marking") is None  # tried again next time
     db.close()
+
+
+# --- the chunks' texts -----------------------------------------------------------
+
+
+def _made_up(rng, n):
+    """Text of what stores hold: accents composed and not, a character beyond the BMP, line ends, U+2028."""
+    letters = ["a", "b", "c", " ", " ", "\n", "\r\n", "\u00e9", "e\u0301", "\u65e5", "\U0001f600", "\u2028", "'"]
+    return "".join(rng.choice(letters) for _ in range(n))
+
+
+def test_chunks_are_cut_in_python_as_the_view_cuts_them(tmp_path, monkeypatch):
+    # The keyword index's entries are deleted by the values they were added with, and older sifts added them from the
+    # chunk_text view: rows cut from a text read once must be the view's, to the character. A NUL, at which SQLite's
+    # substr stops, is in the texts of stores written before sift 1.12.
+    monkeypatch.setattr(store, "CUT", 7)  # a document's chunks lie across the batches they are cut in
+    rng, db = random.Random(5), store.connect(tmp_path / "a.sqlite", 1, create=True)
+    for n in range(40):
+        text = _made_up(rng, rng.randint(0, 300))
+        if n % 4 == 0:
+            at = rng.randint(0, len(text))
+            text = f"{text[:at]}\x00{text[at:]}"
+        meta = {
+            "title": "left out",
+            "authors": ["Ann Lee", "Bo"],
+            "year": 2000 + n,
+            "none": None,
+            "in": {"id": f"x{n}"},
+        }
+        row = (f"d{n}", _made_up(rng, 5), json.dumps(meta if n % 3 else {}), text)
+        doc = db.execute(
+            "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(1, ?, '', ?, ?, ?)", row
+        ).lastrowid
+        spans = [(doc, seq, rng.randint(0, len(text) + 2), rng.randint(0, 80)) for seq in range(rng.randint(0, 5))]
+        db.executemany("INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?, ?, 1, 1, ?, ?)", spans)
+    db.execute("INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(999, 0, 1, 1, 0, 5)")  # no document
+    view = db.execute("SELECT id, text, title, meta FROM chunk_text ORDER BY id").fetchall()
+    assert len(view) > 60
+    assert list(store.chunk_rows(db)) == view
+    assert list(store.chunk_rows(db, chunks=[row[0] for row in view[::3]] * 2)) == view[::3]  # each named twice
+    odd = [doc for (doc,) in db.execute("SELECT id FROM docs WHERE id % 2")]
+    theirs = {chunk for (chunk,) in db.execute("SELECT id FROM chunks WHERE doc % 2")}
+    assert list(store.chunk_rows(db, docs=odd)) == [row for row in view if row[0] in theirs]
+    spans = db.execute("SELECT id, doc, pos, len FROM chunks").fetchall()
+    assert store.texts(db, spans) == {row[0]: row[1] for row in view}
+    monkeypatch.setattr(store, "LONG", 2)  # some documents' entries through the view, the others' cut in Python
+    store.fill(db, "fts")
+    assert keywords_agree(db)
+    store.fill(db, "fts", delete=True)
+    db.execute("CREATE VIRTUAL TABLE temp.terms USING fts5vocab(main, fts, row)")
+    assert db.execute("SELECT * FROM temp.terms").fetchall() == []
+    db.close()
+
+
+def test_a_document_with_a_nul_from_an_older_sift_goes_with_all_its_keyword_entries(tmp_path):
+    # Its entries were added as the view read them, each chunk up to the NUL: deleted by the whole chunk, the words
+    # after the NUL would be taken out of an index that never held them.
+    db = store.connect(tmp_path / "a.sqlite", 1, create=True)
+    text = "alpha beta\x00gamma delta"
+    doc = db.execute(
+        "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(1, 'a.md', '', 'A', '{}', ?)", (text,)
+    ).lastrowid
+    spans = [(doc, 0, 0, len(text)), (doc, 1, 6, 9), (doc, 2, 11, 5)]
+    db.executemany("INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?, ?, 1, 1, ?, ?)", spans)
+    db.execute("INSERT INTO fts(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text")  # as sift 1.11
+    assert db.execute("SELECT count(*) FROM fts WHERE fts MATCH 'beta'").fetchone() == (2,)
+    assert db.execute("SELECT count(*) FROM fts WHERE fts MATCH 'gamma'").fetchone() == (0,)
+    store.delete_docs(db, [doc])
+    db.execute("CREATE VIRTUAL TABLE temp.terms USING fts5vocab(main, fts, row)")
+    assert db.execute("SELECT * FROM temp.terms").fetchall() == []
+    db.execute("INSERT INTO fts(fts) VALUES('integrity-check')")
+    db.close()
+
+
+@pytest.fixture
+def statements(monkeypatch):
+    """Every statement sift runs on any store it opens, FTS5's own on its tables and its content among them."""
+    ran = []
+
+    def traced(opening):
+        def opened(*args, **kwargs):
+            db = opening(*args, **kwargs)
+            db.set_trace_callback(ran.append)
+            return db
+
+        return opened
+
+    for opener in ("database", "read_only"):
+        monkeypatch.setattr(store, opener, traced(getattr(store, opener)))
+    return ran
+
+
+def _lived(tmp_path, sections):
+    """A note of so many sections, a chunk each, indexed, embedded, searched, changed, retitled and removed."""
+    root, catalog = tmp_path / f"notes{sections}", Catalog(tmp_path / f"home{sections}")
+    note = "".join(f"## Section {s}\n\n{' '.join(f'w{s}x{i}' for i in range(250))}\n\n" for s in range(sections))
+    write(root / "long.md", note)
+    catalog.add(root, "long")
+    indexing.index(catalog)
+    assert store.counts(catalog.store("long"))["chunks"] == sections
+    embed.embed_pending(catalog)
+    index = Index(catalog)
+    assert len(index.search('"w1x1 w1x2"', all_passages=True)) == 1
+    assert len(index.search("w0x1 OR w1x1 OR w2x1", all_passages=True)) == 3
+    write(root / "long.md", note + "## One more\n\nw1x1 w1x2 again.\n")
+    assert index.reindex(["long/long.md"])[0]["embedded"] == sections + 1
+    assert len(index.search('"w1x1 w1x2"', all_passages=True)) == 2
+    assert indexing.retitle(catalog, "long", "name") == (1, sections)
+    (root / "long.md").unlink()
+    indexing.index(catalog)
+    assert store.counts(catalog.store("long"))["chunks"] == 0
+    catalog.close()
+
+
+def test_a_long_documents_text_is_read_once_however_many_chunks_it_has(tmp_path, fake_models, statements):
+    # SQLite's substr loads a document's whole text and walks to the position for every chunk it cuts. An 8 MB file's
+    # 3,310 chunks took 4 s to store with their keyword entries and 20 s to read back for embedding, 13 and 17 times
+    # what a 2 MB file took; an 80 MB file took 11 minutes to store. The one statement left that cuts in SQL, FTS5's
+    # own reads of its content counted, leaves long documents out, and a note of forty chunks has its text read as
+    # often as one of twelve.
+    read = []
+    for sections in (12, 40):
+        del statements[:]
+        _lived(tmp_path, sections)
+        cutting = [s for s in statements if ("chunk_text" in s or "c.pos + 1" in s) and "CREATE V" not in s]
+        assert cutting  # the view's definition and its table's aside: the store's statement for short documents
+        assert all("WHERE NOT EXISTS (SELECT 1 FROM chunks k WHERE k.doc = c.doc" in s for s in cutting)
+        read.append(sum("d.text" in s for s in statements))
+    assert read[0] == read[1] > 0
+
+
+def test_only_the_chunks_of_long_documents_are_cut_in_python(tmp_path, statements):
+    # Cut in Python, a row per chunk, the keyword entries of the 300,000 records of a JSON Lines file took a tenth
+    # longer to store than through the view's one statement: that is for documents of more than LONG chunks, whose
+    # text the view would load once per chunk.
+    root, catalog = tmp_path / "notes", Catalog(tmp_path / "home")
+    section = "## Section {}\n\n" + " ".join(f"w{i}" for i in range(400)) + "\n\n"
+    write(root / "long.md", "".join(section.format(n) for n in range(store.LONG + 1)))
+    for name in "abc":
+        write(root / f"{name}.md", "".join(section.format(n) for n in range(2)))
+    catalog.add(root, "notes")
+    indexing.index(catalog)
+    db = catalog.store("notes")
+    assert store.counts(db)["chunks"] == store.LONG + 1 + 3 * 2
+    assert sum(s.startswith("INSERT INTO fts(rowid, text, title, meta) VALUES") for s in statements) == store.LONG + 1
+    assert keywords_agree(db)
+    for path in root.iterdir():
+        path.unlink()
+    indexing.index(catalog)
+    assert sum("VALUES('delete'" in s for s in statements) == store.LONG + 1
+    db.execute("CREATE VIRTUAL TABLE temp.terms USING fts5vocab(main, fts, row)")
+    assert db.execute("SELECT * FROM temp.terms").fetchall() == []
+    catalog.close()

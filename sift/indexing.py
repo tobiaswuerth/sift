@@ -254,12 +254,13 @@ def _reread(db, files, fields):
     store.keywords(db, list(changed.keys() | fresh.keys()))
     if not changed:
         return 0, 0
-    sql = """SELECT c.id, c.doc, c.seq, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
-             WHERE c.doc IN (SELECT value FROM json_each(?)) AND c.seq > 0"""
+    sql = "SELECT id, doc, pos, len, seq FROM chunks WHERE doc IN (SELECT value FROM json_each(?)) AND seq > 0"
+    later = db.execute(sql, (json.dumps(list(changed)),)).fetchall()
+    texts = store.texts(db, (span for *span, _ in later))
     stale = [
         chunk
-        for chunk, doc, seq, text in db.execute(sql, (json.dumps(list(changed)),))
-        if embed.text_of(seq, changed[doc][0], text) != embed.text_of(seq, changed[doc][1], text)
+        for chunk, doc, _, _, seq in later
+        if embed.text_of(seq, changed[doc][0], texts[chunk]) != embed.text_of(seq, changed[doc][1], texts[chunk])
     ]
     dropped = store.drop_vectors(db, "chunk IN (SELECT value FROM json_each(?))", (json.dumps(stale),))
     if dropped:

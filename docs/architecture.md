@@ -22,7 +22,11 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   keyword postings, the vectors (fp16) and their codes (one bit per dimension); a small catalog lists the collections.
   The write-ahead log is truncated to 64 MB after each checkpoint, since SQLite otherwise keeps it as large as it grew
   while any connection is open.
-- The text is stored once: chunks are spans of it, and FTS5 reads it through a view.
+- The text is stored once: chunks are spans of it, and a view cuts them out for FTS5. SQLite's `substr` loads the
+  whole text and walks to the position for every chunk it cuts, so sift reads the view only for documents of up to
+  eight chunks, all in one statement, and cuts the chunks of longer ones itself, from a text read once per document:
+  the keyword entries of an 80 MB file's 32,795 chunks take 3 s to write, against 11 minutes through the view.
+  Embedding, search results and phrase counts cut their chunks the same way; a test holds the two cuts equal.
 - A collection's row ids start at its id times 2^40, so results of several collections merge as they are.
 - Counts of documents, chunks and vectors are kept by triggers in each change's transaction, so `sift status` and a
   starting server read no table whole.

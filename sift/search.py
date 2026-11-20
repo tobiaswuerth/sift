@@ -14,7 +14,6 @@ import sqlite3
 import threading
 from collections import OrderedDict
 from concurrent.futures import Future, wait
-from contextlib import contextmanager
 from functools import partial, wraps
 from operator import itemgetter
 from pathlib import Path
@@ -466,7 +465,7 @@ class _Held(NamedTuple):
 def _held(db):
     """The codes of a store's vectors (see store.read_codes) to search, read in one snapshot with what the store says
     of them; None if it has none."""
-    with _snapshot([db]):
+    with store.snapshot([db]):
         version, epoch, count = store.get_meta(db, "version"), store.get_meta(db, "codes_epoch"), store.counts(db)
         found = store.read_codes(db)
     return _Held(version, Codes(*found), epoch, count["vectors"], int(found[0][-1])) if found else None
@@ -507,20 +506,6 @@ def _postings_state(db):
         return "not built"
     behind = postings.behind(db)
     return f"{console.count(behind, 'chunk')} behind" if behind else "ready"
-
-
-@contextmanager
-def _snapshot(dbs):
-    """While this lasts, each of these stores is read in one transaction: as it was at the first read, whatever other
-    sifts write meanwhile (WAL). A store in a transaction already stays in it."""
-    began = [db for db in dbs if not db.in_transaction]
-    for db in began:
-        db.execute("BEGIN")
-    try:
-        yield
-    finally:
-        for db in began:
-            db.commit()  # nothing written: it ends the reading
 
 
 class _Filter(Filter):
@@ -824,7 +809,7 @@ class Index:
         if query is None and expression.rejected(match):
             query = expression.parse(_phrases(match))  # as FTS5 below reads it: its words as phrases
         if query is not None:
-            with _snapshot(self.catalog.store(c) for c in scope):  # postings rebuilt meanwhile are another state's
+            with store.snapshot(self.catalog.store(c) for c in scope):  # postings rebuilt meanwhile are another state's
                 if (held := self._ready(scope)) is not None:
                     allowed = _Filter(self.catalog, scope, where, args).passes if args else None
                     return topk.search(held, query, k, by_document=not all_passages, allowed=allowed, deadline=deadline)
@@ -961,7 +946,7 @@ class Index:
         cid, db = collection.id, self.catalog.store(collection)
         self._take_read(collection)
         held = self.vectors.get(cid)
-        with _snapshot([db]):
+        with store.snapshot([db]):
             version = store.get_meta(db, "version")
             if held is not None and version is not None and held.version == version:
                 return
@@ -1076,17 +1061,20 @@ class Index:
             n *= 2
 
     def _hits(self, ranked):
-        sql = """SELECT d.path, d.title, d.meta, c.line_start, c.line_end, substr(d.text, c.pos + 1, c.len)
-                 FROM chunks c JOIN docs d ON d.id = c.doc WHERE c.id = ?"""
-        known, hits = {c.id: c for c in self.catalog.collections()}, []
+        sql = """SELECT d.path, d.title, d.meta, c.line_start, c.line_end, c.id, c.doc, c.pos, c.len
+                 FROM chunks c JOIN docs d ON d.id = c.doc WHERE c.id IN (SELECT value FROM json_each(?))"""
+        found, hits = {}, []
+        for c, db, chunks in self._by_store(chunk for chunk, _ in ranked):
+            with store.snapshot([db]):  # the chunks and their texts as they are at one moment
+                rows = db.execute(sql, (json.dumps(chunks),)).fetchall()
+                texts = store.texts(db, (row[5:] for row in rows))  # each document's text read once
+            for *shown, chunk, _, _, _ in rows:
+                found[chunk] = (c.name, *shown, texts[chunk])
         for chunk, score in ranked:
-            c = known.get(store.owner(chunk))
-            row = c and self.catalog.store(c).execute(sql, (chunk,)).fetchone()
-            if not row:  # removed by a concurrent `sift index`
-                continue
-            path, title, meta, start, end, text = row
-            hit = {"id": f"{c.name}/{path}", "title": title, "lines": f"{start}-{end}", "score": round(score, 4)}
-            hits.append(hit | {"meta": meta, "text": text, "chunk": chunk})  # for _present, and `query`'s scores
+            if chunk in found:  # else removed by a concurrent `sift index`
+                name, path, title, meta, start, end, text = found[chunk]
+                hit = {"id": f"{name}/{path}", "title": title, "lines": f"{start}-{end}", "score": round(score, 4)}
+                hits.append(hit | {"meta": meta, "text": text, "chunk": chunk})  # for _present, and `query`'s scores
         return hits
 
     def _cosines(self, query, chunks):
@@ -1570,10 +1558,9 @@ class Index:
         model = store.get_meta(db, "model")
         if model is None:  # never embedded: keyword search alone, and no model to load
             return None
-        sql = """SELECT c.id, c.seq, d.title, substr(d.text, c.pos + 1, c.len) FROM chunks c JOIN docs d ON d.id = c.doc
-                 WHERE c.doc IN (SELECT value FROM json_each(?))
+        new = """chunks c JOIN docs d ON d.id = c.doc WHERE c.doc IN (SELECT value FROM json_each(?))
                  AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id) ORDER BY c.id"""
-        rows = db.execute(sql, (json.dumps(docs),)).fetchall()
+        rows = embed.passages(db, new, (json.dumps(docs),))
         if not rows:
             return None
         try:

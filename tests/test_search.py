@@ -1047,6 +1047,29 @@ def test_hits_skip_chunks_removed_meanwhile(corpus):
     assert Index(corpus[0])._hits([(10**9, 1.0)]) == []
 
 
+def test_a_hit_whose_document_goes_while_its_text_is_read_is_shown_as_found(embedded):
+    # A hit's chunk is found, then its document's text read, once for all its passages: a `sift index` deleting the
+    # document in between left a chunk without its text. Both are read as they are at one moment.
+    catalog, _ = embedded
+    index = Index(catalog)
+    other = store.connect(catalog.get("notes").store, catalog.get("notes").id)  # another sift's connection
+    (doc,) = other.execute("SELECT id FROM docs WHERE path = 'rl.md'").fetchone()
+
+    def meanwhile(statement):
+        if "d.text" in statement and other.execute("SELECT 1 FROM docs WHERE id = ?", (doc,)).fetchone():
+            store.delete_docs(other, [doc])
+            other.commit()
+
+    catalog.store("notes").set_trace_callback(meanwhile)
+    try:
+        hits = index.vsearch("reward shaping", k=3)
+    finally:
+        catalog.store("notes").set_trace_callback(None)
+        other.close()
+    assert ids(hits)[0] == "notes/rl.md"
+    assert "notes/rl.md" not in ids(index.vsearch("reward shaping", k=3))  # gone, for the next search
+
+
 def test_query(embedded):
     hits = Index(embedded[0]).query("how does a painting robot plan brush strokes", k=2)
     assert ids(hits)[0] == "notes/robots/brush.md"

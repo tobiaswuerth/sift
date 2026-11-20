@@ -488,6 +488,27 @@ def test_chunks_deleted_while_embedding_leave_the_total(six_chunks, fake_models,
     assert shown[-1] == (5, 5)
 
 
+def test_a_slab_whose_document_goes_while_it_is_read_ends_no_store(six_chunks, fake_models):
+    # A slab's chunks are found, then their documents' texts read, each once: a `sift index` deleting the document in
+    # between left a slab of none, at which the reader took the store for done and left its other chunks.
+    catalog, _ = six_chunks
+    other = store.connect(catalog.get("notes").store, catalog.get("notes").id)  # another sift's connection
+    (doc,) = other.execute("SELECT doc FROM chunks ORDER BY id LIMIT 1").fetchone()
+
+    def meanwhile(statement):
+        if "d.text" in statement and other.execute("SELECT 1 FROM docs WHERE id = ?", (doc,)).fetchone():
+            store.delete_docs(other, [doc])
+            other.commit()
+
+    catalog.store("notes").set_trace_callback(meanwhile)
+    try:
+        embed.embed_pending(catalog)
+    finally:
+        catalog.store("notes").set_trace_callback(None)
+        other.close()
+    assert vector_count(catalog) == 5  # every chunk but the one that went
+
+
 def test_embed_says_what_it_embeds_before_loading_the_model(corpus, fake_models, monkeypatch, capsys):
     # Loading a model can take a minute: say what's coming first.
     loaded, said = fake_models.embedder, []

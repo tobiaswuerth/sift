@@ -29,6 +29,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A large document took time by the square of its size: each of its passages was cut out of its whole text anew. An
+  80 MB text file, 32,795 passages, took 11 minutes to index and takes 16 s; an 8 MB file's passages took 20 s to
+  read for `sift embed` and take 0.01 s; 50 passages of it among a search's results took 0.3 s and take 7 ms; a
+  phrase is counted in 200 of them in 0.04 s, not 1.7 s. Documents of a few passages are stored as before, and
+  nothing in an index changes.
 - `sift embed` beside `sift index` embedded the chunks indexed meanwhile, but its total stayed as it began: the bar
   went past 100% and the time left below zero. The total now follows the chunks indexed or deleted while it runs.
 - `sift ui` asked for the server that runs through the proxy set for the web, which knows no server of this machine,

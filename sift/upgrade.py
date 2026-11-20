@@ -217,7 +217,7 @@ def _finish(part, file, cid, name, fields, layout, sent):
     try:
         db.executescript("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA cache_size=-524288;")
         db.executescript(store.SCHEMA + store.LINKS)  # the secondary indexes dropped for the copy
-        db.execute("INSERT INTO fts(rowid, title, text, meta) SELECT id, title, text, meta FROM chunk_text")
+        store.fill(db, "fts")
         db.commit()
         for table, n in sent.items():
             held = db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
