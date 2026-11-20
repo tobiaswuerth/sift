@@ -31,7 +31,8 @@ DAY = 24 * 3600  # seconds between checks
 TIMEOUT = 10  # seconds a check waits for PyPI
 WAIT = 7 * DAY  # seconds an update waits, at most, for the sifts of its installation to stop
 POLL = 1.0  # seconds between looks whether they stopped
-RUN = 30 * 60  # seconds the upgrade may take
+RUN = 3 * 3600  # seconds the upgrade may take: stopped, it leaves sift half upgraded, and a slow line takes long over
+# a newer PyTorch (2.5 GB: half an hour at 10 Mbit/s)
 SHARING = 1.0  # seconds the state's file is tried again while another sift reads or replaces it (see _shared)
 QUIET = ("serve", "worker")  # servers, often started by scripts and services: they never ask
 # Windows' CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: a console of its own, hidden, which the programs it runs share,

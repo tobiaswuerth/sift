@@ -699,6 +699,23 @@ def test_an_upgrade_that_fails_is_said(spec, home, monkeypatch, command, how):
     assert how in (home / "logs" / "update-1.log").read_text(encoding="utf-8")
 
 
+def test_an_installer_gets_hours_before_it_is_stopped(spec, home, monkeypatch):
+    # Stopped, it leaves the installation half upgraded. A newer PyTorch comes with a newer sift now and then, 2.5 GB
+    # of it: 33 minutes at 10 Mbit/s, which the half hour it had cut short.
+    given = {}
+
+    def run(command, **options):
+        given.update(options)
+        raise subprocess.TimeoutExpired(command, options["timeout"])
+
+    monkeypatch.setattr(update, "_running", lambda *args: False)
+    monkeypatch.setattr(subprocess, "run", run)
+    update.finish(spec, platform="linux")
+    assert given["timeout"] == update.RUN >= 3 * 3600
+    assert not kept(home)["result"]["ok"]
+    assert "TimeoutExpired" in (home / "logs" / "update-1.log").read_text(encoding="utf-8")
+
+
 def test_the_process_that_updates_runs_on_its_own(spec, home, monkeypatch):
     # Started as sift starts it: on the base Python, isolated, reading sift's modules from where this one does.
     monkeypatch.setenv("SIFT_HOME", str(home))
