@@ -152,18 +152,27 @@ def _front_matter(block):
     return meta
 
 
-def _prose(text, first_line=1):
-    """The lines of Markdown `text` outside fenced code blocks, with their numbers."""
-    fence = None
-    for n, line in enumerate(text.split("\n"), first_line):
+def _outside_code(lines):
+    """For each of these lines of Markdown, in order, whether it lies outside fenced code blocks; a fence's own lines
+    don't."""
+    outside, fence = [], None
+    for line in lines:
         if m := FENCE.match(line):
             mark = m.group(1)
             if not fence:
                 fence = mark
             elif mark[0] == fence[0] and len(mark) >= len(fence) and not line[m.end() :].strip():
                 fence = None
-        elif not fence:
-            yield n, line
+            outside.append(False)
+        else:
+            outside.append(not fence)
+    return outside
+
+
+def _prose(text, first_line=1):
+    """The lines of Markdown `text` outside fenced code blocks, with their numbers."""
+    lines = text.split("\n")
+    return ((n, line) for n, (line, outside) in enumerate(zip(lines, _outside_code(lines)), first_line) if outside)
 
 
 def _heading(text):
@@ -195,22 +204,23 @@ def parse(text, fallback_title, title_from="heading"):
 def chunk(text, first_line=1):
     """Split text into pieces of at most CHUNK_CHARS on line boundaries, preferring headings, with a small overlap.
 
-    Yields (first line, last line, position, length): each piece is text[position:position + length], stripped.
+    Yields (first line, last line, position, length): each piece is text[position:position + length], stripped. A
+    heading is a line that starts as one in Markdown (HEADING), outside fenced code: not any line starting with "#",
+    as a comment in code does, an include, or a tag.
     """
-    lines, pos = [], 0  # (line number, position, line)
-    for n, line in enumerate(LINE.findall(text), first_line):
-        start = 0
+    lines, pos, whole = [], 0, LINE.findall(text)  # (line number, position, line, whether it is a heading)
+    for n, (line, prose) in enumerate(zip(whole, _outside_code(whole)), first_line):
+        start, heading = 0, prose and HEADING.match(line) is not None
         while len(line) - start > CHUNK_CHARS:  # break overlong lines at whitespace, the rest of the line not copied
             space = line.rfind(" ", start, start + CHUNK_CHARS)
             end = space + 1 if space >= 0 else start + CHUNK_CHARS
-            lines.append((n, pos + start, line[start:end]))
+            lines.append((n, pos + start, line[start:end], heading and start == 0))
             start = end
-        lines.append((n, pos + start, line[start:]))
+        lines.append((n, pos + start, line[start:], heading and start == 0))
         pos += len(line)
 
     pieces, buf, size = [], [], 0
-    for n, at, line in lines:
-        heading = line.startswith("#")
+    for n, at, line, heading in lines:
         if buf and (size + len(line) > CHUNK_CHARS or (heading and size > CHUNK_CHARS // 2)):
             pieces.append(buf)
             buf, size = [], 0  # carry trailing lines over as overlap, unless a new section starts
