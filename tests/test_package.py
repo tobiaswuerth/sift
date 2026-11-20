@@ -45,6 +45,14 @@ def test_only_settings_touches_the_environment():
     assert touching == set(), "read and set environment variables in settings.py, and ask it"
 
 
+def test_the_readme_lists_every_variable_sift_heeds():
+    # settings.py counted six variables, its tests five: the README's table is where they are listed, all of them.
+    source = ast.parse((ROOT / "sift" / "settings.py").read_text(encoding="utf-8"))
+    heeded = {n.value for n in ast.walk(source) if isinstance(n, ast.Constant) and str(n.value).startswith("SIFT_")}
+    listed = set(re.findall(r"^\| `(SIFT_\w+)` \|", (ROOT / "README.md").read_text(encoding="utf-8"), re.MULTILINE))
+    assert heeded == listed, "list each SIFT_ variable settings.py reads in the README's table, and only those"
+
+
 def _touches_environment(node):
     if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "os":
         return node.attr in ENVIRONMENT  # os.environ, os.getenv(...)

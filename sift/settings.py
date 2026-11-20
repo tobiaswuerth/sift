@@ -1,7 +1,7 @@
-"""sift's settings: six optional environment variables, read once per process. None are needed; they are for
-special cases, and every module asks `current()` instead of reading the environment itself. Beside them CUDA's
-CUDA_VISIBLE_DEVICES, Hugging Face's HF_HUB_OFFLINE (offline, sift asks PyPI for no update either), and where Numba
-keeps the code it compiles (`keep_compiled_code`), which it reads from the environment."""
+"""sift's settings: the optional environment variables in the README's table, read once per process. None are
+needed; they are for special cases, and every module asks `current()` instead of reading the environment itself.
+Beside them CUDA's CUDA_VISIBLE_DEVICES, Hugging Face's HF_HUB_OFFLINE (offline, sift asks PyPI for no update
+either), and where Numba keeps the code it compiles (`keep_compiled_code`), which it reads from the environment."""
 
 import os
 from collections.abc import Mapping
