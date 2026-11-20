@@ -83,6 +83,13 @@ def test_progress_survives_a_clock_that_stands_still(progress, capsys):
     assert "] 100% 3/3 chunks, 0:00:00 elapsed" in capsys.readouterr().err
 
 
+def test_progress_takes_a_total_found_as_the_work_goes(progress, clock, capsys):
+    with progress(2) as bar:
+        clock.advance(10)
+        bar.update(1, 4)
+    assert "[#####               ]  25% 1/4 chunks, 0.1/s, 0:00:10 elapsed, 0:00:30 left" in capsys.readouterr().err
+
+
 def test_progress_carries_a_prefix(clock, capsys):
     with console.Progress(2, "files", prefix="notes: ") as bar:
         bar.update(1)

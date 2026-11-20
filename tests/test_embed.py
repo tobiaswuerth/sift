@@ -1,5 +1,6 @@
 """`sift embed`: embedding every chunk without a vector, slab by slab, with progress. The models are fakes."""
 
+import re
 import sqlite3
 import threading
 import time
@@ -8,6 +9,7 @@ import numpy as np
 import pytest
 
 from sift import embed, indexing, store
+from sift.catalog import Catalog
 
 from .conftest import FakeSentenceTransformer, fake_vector, write
 
@@ -427,6 +429,63 @@ def slow_batches(monkeypatch, clock, seconds, then=None):
         return real(self, features, task)
 
     monkeypatch.setattr(FakeSentenceTransformer, "__call__", forward)
+
+
+def shown_counts(err):
+    """The chunks done and in all, of every progress line drawn."""
+    return [(int(done), int(total)) for done, total in re.findall(r"(\d+)/(\d+) chunks", err)]
+
+
+@pytest.fixture
+def six_chunks(corpus, fake_models, monkeypatch):
+    """The notes with three more, read a chunk per slab, embedded a chunk per batch: the reader is still reading
+    when the first batch is embedded."""
+    catalog, root = corpus
+    for i in range(3):
+        write(root / f"extra{i}.md", f"# Extra {i}\n\nMore about {i}.\n")
+    indexing.index(catalog)
+    monkeypatch.setattr(embed, "SLAB", 1)
+    monkeypatch.setattr(fake_models.accelerator, "batch_size", 1)
+    return catalog, root
+
+
+def test_chunks_indexed_while_embedding_count_in_the_total(six_chunks, fake_models, home, monkeypatch, capsys):
+    # `sift index` beside `sift embed` added chunks, which embed took up too, but its total stayed as it began: the
+    # bar passed 100% and the time left went negative.
+    catalog, root = six_chunks
+    added = []
+
+    def meanwhile(texts):
+        if not added:
+            for i in range(2):
+                write(root / f"new{i}.md", f"# New {i}\n\nIndexed meanwhile {i}.\n")
+            added.append(indexing.index(Catalog(home)))  # another sift's
+
+    watching(fake_models, monkeypatch, meanwhile)
+    embed.embed_pending(catalog)
+    shown = shown_counts(capsys.readouterr().err)
+    assert pending(catalog) == {}
+    assert all(done <= total for done, total in shown), shown
+    assert shown[-1] == (8, 8)
+
+
+def test_chunks_deleted_while_embedding_leave_the_total(six_chunks, fake_models, monkeypatch, capsys):
+    # A chunk still to embed went meanwhile: the bar ended short of 100%, as if some were left.
+    catalog, _ = six_chunks
+    other = store.connect(catalog.get("notes").store, catalog.get("notes").id)  # another sift's connection
+    (doc,) = other.execute("SELECT doc FROM chunks ORDER BY id DESC LIMIT 1").fetchone()
+
+    def meanwhile(texts):
+        if other.execute("SELECT 1 FROM docs WHERE id = ?", (doc,)).fetchone():
+            store.delete_docs(other, [doc])
+            other.commit()
+
+    watching(fake_models, monkeypatch, meanwhile)
+    embed.embed_pending(catalog)
+    other.close()
+    shown = shown_counts(capsys.readouterr().err)
+    assert all(done <= total for done, total in shown), shown
+    assert shown[-1] == (5, 5)
 
 
 def test_embed_says_what_it_embeds_before_loading_the_model(corpus, fake_models, monkeypatch, capsys):

@@ -118,8 +118,9 @@ class Progress:
         """Seconds since the progress began."""
         return perf_counter() - self.start
 
-    def update(self, done):
-        self.done = done
+    def update(self, done, total=None):
+        """`done` units so far; and the `total`, if it changed as the work went on."""
+        self.done, self.total = done, self.total if total is None else total
         _collect()
         self.draw()
 
