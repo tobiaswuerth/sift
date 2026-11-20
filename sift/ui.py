@@ -93,13 +93,14 @@ class View:
         return PREFIX + ("?" + urlencode(pairs) if pairs else "")
 
     def filters(self):
-        """The filters as searches take them: the values of one field stand for any of them."""
+        """The filters as searches take them: the values of one field stand for any of them, each in whatever form
+        the front matter holds it, a number or text."""
         found = {}
         for pair in self.f:
             key, equals, value = pair.partition("=")
             if not equals:
                 raise ValueError(f"filter {pair!r} must be field=value")
-            found.setdefault(key, []).extend(_forms(value))
+            found.setdefault(key, []).append(value)
         return found
 
     def filtered(self, key, value):
@@ -111,16 +112,6 @@ class View:
 def _count(text):
     """A count from the address, or None for anything else: one too long for int() to read, too."""
     return int(text) if re.fullmatch("[0-9]{1,9}", text) else None
-
-
-def _forms(text):
-    """A filter value from the address in each form the front matter may hold it: as text, and as the number or yes
-    or no it reads as. "2024" is a number in one document, "007" text in another."""
-    if re.fullmatch(r"-?[0-9]+", text):
-        return [text, int(text)]
-    if re.fullmatch(r"-?[0-9]+\.[0-9]+", text):
-        return [text, float(text)]
-    return [text, text == "true"] if text in ("true", "false") else [text]
 
 
 def _shown(value):

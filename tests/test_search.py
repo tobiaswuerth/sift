@@ -342,6 +342,29 @@ def test_filters(corpus):
 BRUSH, RL = "notes/robots/brush.md", "notes/rl.md"
 
 
+def test_a_filter_s_value_matches_as_text_and_as_the_number_it_reads_as(corpus):
+    # JSON Lines write a year as "2024" as often as front matter writes 2024: asked the one way, a filter found
+    # nothing of the other, and said nothing. Only the browser's page asked both ways.
+    catalog, root = corpus
+    write(
+        root / "papers.jsonl", '{"id": "a", "text": "brush strokes", "year": "2024", "share": "0.5", "open": "true"}\n'
+    )
+    write(root / "typed.md", "---\nyear: 2024\nshare: 0.5\nopen: true\ncode: 007\n---\n# Typed\nbrush\n")
+    indexing.index(catalog)
+    index, record, note = Index(catalog), "notes/papers/a", "notes/typed.md"
+    for year in (2024, "2024"):
+        assert set(ids(index.search("brush", filters={"year": year}))) == {BRUSH, record, note}
+        assert ids(index.search("brush", filters={"year": {"not": year}})) == []
+    for share in (0.5, "0.5"):
+        assert set(ids(index.search("brush", filters={"share": share}))) == {record, note}
+    for yes in (True, "true"):
+        assert set(ids(index.search("brush", filters={"open": yes}))) == {record, note}
+    assert ids(index.search("brush", filters={"open": "false"})) == []
+    assert ids(index.search("brush", filters={"code": "007"})) == [note]  # text in the front matter, and so asked
+    assert set(ids(index.search("brush", filters={"year": ["1999", "2024"], "share": 0.5}))) == {record, note}
+    assert index.search("brush", filters={"year": "9" * 30}) == []  # text alone: no number SQLite holds reads so
+
+
 def test_a_list_of_values_means_any_of_them(corpus):
     index = Index(corpus[0])
     assert ids(index.search("brush OR reward", filters={"categories": ["cs.LG", "cs.GR"]})) == [BRUSH]

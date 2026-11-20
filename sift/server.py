@@ -137,7 +137,8 @@ Filters = Annotated[
     dict[str, Any] | None,
     Field(
         description='Conditions on front-matter fields, all of which must hold: a value, e.g. {"categories": '
-        '"cs.RO"}, which a list field matches if it holds it; a list for any of its values, e.g. {"categories": '
+        '"cs.RO"}, which a list field matches if it holds it, and which matches as a number or as text, however the '
+        'document writes it (2024 and "2024"); a list for any of its values, e.g. {"categories": '
         '["cs.RO", "cs.CV"]}; {"not": a value or list} for none of them (documents without the field pass); or a '
         'range, e.g. {"created": {">=": "2024-06", "<": "2025"}}. Dates compare at the precision given, so '
         '{"<=": "2024"} includes all of 2024. A wikilink, e.g. {"org": "[[Acme AG]]"}, matches a link to that note '
