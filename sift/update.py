@@ -174,14 +174,17 @@ def held_files():
 def start(args, platform=sys.platform):
     """Run `main(args)` in a process that outlives this one, with nothing of its terminal: on the base Python, which no
     upgrade replaces, and sift's modules read from where this one reads them (none compiled, which it would hold).
-    Returns the process, which no one need wait for."""
+    It runs at the root of that Python's drive, not in the folder the command was typed in: it may wait a week, on
+    Windows nobody could rename or delete that folder meanwhile, and an installer reads the settings of the project
+    it runs in. Returns the process, which no one need wait for."""
     root = str(Path(__file__).resolve().parents[1])
     code = "import sys; sys.path.insert(0, sys.argv[1]); from sift import update; update.main(sys.argv[2:])"
     apart = {"creationflags": HIDDEN} if platform == "win32" else {"start_new_session": True}
     python = getattr(sys, "_base_executable", None) or sys.executable
     devnull = subprocess.DEVNULL
     command = [python, "-I", "-B", "-c", code, root, *args]
-    return subprocess.Popen(command, stdin=devnull, stdout=devnull, stderr=devnull, **apart)
+    folder = Path(python).anchor
+    return subprocess.Popen(command, stdin=devnull, stdout=devnull, stderr=devnull, cwd=folder, **apart)
 
 
 def main(args):

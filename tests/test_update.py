@@ -479,7 +479,8 @@ def test_a_process_started_outlives_this_one_without_its_terminal(monkeypatch, p
     [(args, kwargs)] = started
     assert args[1:4] == ["-I", "-B", "-c"]
     assert args[-2:] == ["check", "update.json"]
-    assert kwargs == {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL} | apart
+    streams = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    assert kwargs == streams | apart | {"cwd": update.Path(args[0]).anchor}
 
 
 def test_main_runs_a_check_or_an_update(monkeypatch):
@@ -650,3 +651,18 @@ def test_the_process_that_updates_runs_on_its_own(spec, home, monkeypatch):
     assert updating.wait(timeout=60) == 0
     assert kept(home)["result"]["ok"]
     assert (home / "logs" / "update-1.log").read_text(encoding="utf-8").endswith("upgraded\nexit code 0\n")
+
+
+def test_the_process_that_updates_leaves_the_folder_the_command_was_typed_in(spec, home, tmp_path, monkeypatch):
+    # It waits up to a week: on Windows the folder it runs in can't be renamed or deleted meanwhile (WinError 32),
+    # and an installer run there reads the settings of whatever project the folder holds.
+    typed = tmp_path / "typed"
+    typed.mkdir()
+    monkeypatch.chdir(typed)
+    monkeypatch.setenv("SIFT_HOME", str(home))
+    spec["pid"] = NO_PROCESS
+    spec["command"] = [sys.executable, "-c", "import os; print(os.getcwd())"]
+    updating = update.start(["finish", json.dumps(spec)])
+    assert updating.wait(timeout=60) == 0
+    ran_in = update.Path((home / "logs" / "update-1.log").read_text(encoding="utf-8").splitlines()[1])
+    assert ran_in == update.Path(ran_in.anchor)  # the root of a drive, which nobody renames
