@@ -1,7 +1,7 @@
-"""sift's settings: five optional environment variables, read once per process. None are needed; they are for
+"""sift's settings: six optional environment variables, read once per process. None are needed; they are for
 special cases, and every module asks `current()` instead of reading the environment itself. Beside them CUDA's
-CUDA_VISIBLE_DEVICES, and where Numba keeps the code it compiles (`keep_compiled_code`), which it reads from the
-environment."""
+CUDA_VISIBLE_DEVICES, Hugging Face's HF_HUB_OFFLINE (offline, sift asks PyPI for no update either), and where Numba
+keeps the code it compiles (`keep_compiled_code`), which it reads from the environment."""
 
 import os
 from dataclasses import dataclass
@@ -17,6 +17,7 @@ class Settings:
     remote: str | None  # SIFT_EMBED_REMOTE: a `sift worker` to embed and rerank on, as it prints its address
     ocr: str = "auto"  # SIFT_OCR: where scans are read: auto (on a GPU), on (also on the CPU), off (see `ocr`)
     gpus: str | None = None  # CUDA_VISIBLE_DEVICES, CUDA's own, as CUDA reads it: "" or -1 hides every GPU
+    update_check: bool = True  # SIFT_UPDATE_CHECK: off never asks PyPI for a newer sift (see `update`); nor offline
 
     @classmethod
     def from_env(cls, environ=os.environ):
@@ -28,7 +29,14 @@ class Settings:
             remote=environ.get("SIFT_EMBED_REMOTE") or None,
             ocr=(environ.get("SIFT_OCR") or "auto").strip().lower(),
             gpus=environ.get("CUDA_VISIBLE_DEVICES"),
+            update_check=_on(environ.get("SIFT_UPDATE_CHECK") or "on")
+            and not _on(environ.get("HF_HUB_OFFLINE") or "0"),
         )
+
+
+def _on(value):
+    """Whether a switch is on: 1, on, true or yes, in any case."""
+    return value.strip().lower() in ("1", "on", "true", "yes")
 
 
 @cache

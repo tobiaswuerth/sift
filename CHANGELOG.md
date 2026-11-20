@@ -5,6 +5,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- In a terminal, sift says when a newer version is out and, on `y`, updates itself with the installer it came by (uv,
+  pipx or pip) once no sift of the installation runs any more; the next command says how it went. It asks PyPI once a
+  day, in the background; `SIFT_UPDATE_CHECK=off` or `HF_HUB_OFFLINE=1` stops it. Never for `serve`, `worker`, or
+  output to a pipe. A new major version is only told of, with its changelog.
+
+### Changed
+
+- Updating by hand: stop `sift serve` and `sift worker` first. On Windows a running sift holds the files an update
+  replaces: `uv tool upgrade` under a running server upgraded the packages but failed on `sift.exe`.
+
 ### Fixed
 
 - `sift embed` beside `sift index` embedded the chunks indexed meanwhile, but its total stayed as it began: the bar
