@@ -505,7 +505,8 @@ def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
     """Run the MCP server, with `models` (default: `models.default()`) loaded up front, so the first search is quick."""
     models = models or _models.default()
     mcp, index = build(Index(models=models))
-    console.say("loading the models and the vectors' codes into RAM ...")  # the models move to the GPU when used
+    # Local models load into RAM, and move to the GPU when used; a worker's are reached
+    console.say(f"getting the models on {models.address} ready and loading the vectors' codes into RAM ...")
     vectors.compile_scan()  # a second, once: then a large collection's codes are scanned three times as fast
     for step in (models.load, index.load):
         try:

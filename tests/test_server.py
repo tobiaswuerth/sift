@@ -411,7 +411,7 @@ def test_serve_warns_without_embeddings(corpus, fake_models, transports, capsys)
     assert "warning: no embeddings yet" in capsys.readouterr().err
 
 
-def test_serve_with_a_remote_loads_no_models(embedded, transports, fake_models, monkeypatch, configure):
+def test_serve_with_a_remote_loads_no_models(embedded, transports, fake_models, monkeypatch, configure, capsys):
     # The point of a remote: this machine may be too weak to run the models at all.
     configure(remote="https://t.p@workstation:8766")
     monkeypatch.setattr(remote.Remote, "load", lambda self: None)
@@ -419,6 +419,8 @@ def test_serve_with_a_remote_loads_no_models(embedded, transports, fake_models, 
     monkeypatch.setattr(fake_models, "reranker", lambda: pytest.fail("loaded the reranker here"))
     server.serve(stdio=True)
     assert transports.started
+    said = capsys.readouterr().err  # it said it loaded the models into RAM, where it reaches the worker
+    assert "getting the models on https://workstation:8766 ready and loading the vectors' codes" in said
 
 
 def test_serve_warns_when_the_remote_is_unreachable(embedded, transports, fake_models, capsys, configure):
