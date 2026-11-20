@@ -408,6 +408,17 @@ def only(catalog):
     return catalog.store(collection)
 
 
+def as_sift_1_12_left_it(db):
+    """A store as sift 1.12 made it: layout 9, the last parts of its documents' paths not listed."""
+    for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'docs'").fetchall():
+        if name.startswith("basenames"):
+            db.execute(f"DROP TRIGGER {name}")
+    db.execute("DROP TABLE IF EXISTS basenames")
+    db.execute("DELETE FROM meta WHERE key IN ('basenames', 'basenames_to')")
+    db.execute("PRAGMA user_version = 9")
+    db.commit()
+
+
 def index_contents(db):
     """Everything indexing produces, independent of row ids."""
     return sorted(

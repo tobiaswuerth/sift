@@ -1,6 +1,6 @@
-"""A collection's database, its store: its documents, chunks, keyword index (FTS5) and keyword postings, vectors and
-their codes, its notes' links, and the counts of its rows, in one SQLite file. The catalog (see `catalog`) lists the
-collections and where their stores lie.
+"""A collection's database, its store: its documents and the last parts of their paths, chunks, keyword index (FTS5)
+and keyword postings, vectors and their codes, its notes' links, and the counts of its rows, in one SQLite file. The
+catalog (see `catalog`) lists the collections and where their stores lie.
 
 A store holds the text of every document, so searching and reading never touch the files; they are read only when
 indexing (see `indexing`, and `readers` for the kinds of file).
@@ -19,9 +19,11 @@ from pathlib import Path
 
 from . import console, readers
 
-SCHEMA_VERSION = 9  # in SQLite's user_version; up to sift 1.7, one database held every collection (see `upgrade`)
+SCHEMA_VERSION = 10  # in SQLite's user_version; up to sift 1.7, one database held every collection (see `upgrade`)
 FIRST_LAYOUT = 6  # sift 1.8's, the first of a store per collection; its rows are counted once (see _count_rows)
-COUNTED_LAYOUT = 7  # sift 1.9's, which counts rows; 8 adds the keyword postings' tables (POSTINGS), 9 their order
+# sift 1.9's, which counts rows; 8 adds the keyword postings' tables (POSTINGS), 9 their order, and 10 the last parts
+# of the documents' paths (BASENAMES)
+COUNTED_LAYOUT = 7
 TIMEOUT = 30  # seconds to wait for another sift's transaction
 WAL_LIMIT = 64 * 2**20  # bytes the write-ahead log shrinks back to once written into the store: SQLite keeps its size
 UPGRADE_WAIT = 3600  # seconds to wait while another sift counts a store's rows, once: minutes for a large one
@@ -84,6 +86,26 @@ COUNTS = (
         for change, event, sign in (("added", "INSERT", "+"), ("removed", "DELETE", "-"))
     ),
 )
+# The last part of each document's path, a file's name or a record's id: what a document is looked up by when it is
+# named otherwise than by its path, e.g. by a shortened id (see search.Index._rows), where every path was read.
+# Compared without ASCII case, as an absolute path names its file in another case too. Triggers keep it, in the
+# transaction of each change, so that no document is without its row, whoever writes. A store of sift 1.12 or older
+# gets the table empty, and `sift index` lists its documents (list_basenames): until it has, meta LISTED is missing.
+LAST_PART = "substr({0}, length(rtrim({0}, replace({0}, '/', ''))) + 1)"  # of {0}: rtrim leaves it up to its last "/"
+BASENAMES = (
+    """CREATE TABLE IF NOT EXISTS basenames(name TEXT NOT NULL COLLATE NOCASE, doc INTEGER NOT NULL,
+        PRIMARY KEY(name, doc)) WITHOUT ROWID""",
+    f"""CREATE TRIGGER IF NOT EXISTS basenames_added AFTER INSERT ON docs
+        BEGIN INSERT INTO basenames(name, doc) VALUES({LAST_PART.format("NEW.path")}, NEW.id); END""",
+    f"""CREATE TRIGGER IF NOT EXISTS basenames_removed AFTER DELETE ON docs
+        BEGIN DELETE FROM basenames WHERE name = {LAST_PART.format("OLD.path")} AND doc = OLD.id; END""",
+    f"""CREATE TRIGGER IF NOT EXISTS basenames_moved AFTER UPDATE OF path ON docs
+        BEGIN DELETE FROM basenames WHERE name = {LAST_PART.format("OLD.path")} AND doc = OLD.id;
+        INSERT INTO basenames(name, doc) VALUES({LAST_PART.format("NEW.path")}, NEW.id); END""",
+)
+BASENAMES_BATCH = 50_000  # documents listed per transaction in an older store, which holds it for some 50 ms
+LISTED, LISTING = "basenames", "basenames_to"  # in the meta table: every document is listed; how far a listing got
+LISTING_START = '[0, ""]'  # no document listed yet, and the path every path follows: none is empty
 CODES_BATCH = 100_000  # codes per batch as searches load them, and per transaction as vectors get them afterwards
 # Keyword search's own postings (see `postings`), built from FTS5's index, which stays the reference: per term and
 # segment its postings, long lists in blocks; chunks' lengths, in blocks of consecutive places; the chunks whose
@@ -193,7 +215,7 @@ def _layout(db, path, cid, create):
     if version < COUNTED_LAYOUT:
         _count_rows(db, path)
     if version < SCHEMA_VERSION:
-        _add_postings_tables(db)
+        _add_tables(db)
     for key, kinds in READ_AGAIN.items():
         if get_meta(db, key) is None:
             _once(db, key, partial(_read_again, kinds=kinds))
@@ -204,13 +226,13 @@ def _layout(db, path, cid, create):
 def make(db, cid, read=True):
     """The tables of a new store of the collection `cid`, its ids starting at first_id(cid). Unless `read`, its files
     of the kinds an older sift skipped are still to be read again (READ_AGAIN)."""
-    db.executescript(
-        SCHEMA + KEYWORD_INDEX + LINKS + CODES + POSTINGS + "".join(f"{statement};\n" for statement in COUNTS)
-    )
+    kept_by_triggers = "".join(f"{statement};\n" for statement in (*COUNTS, *BASENAMES))
+    db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + CODES + POSTINGS + kept_by_triggers)
     db.executemany("INSERT INTO counts(name, n) VALUES(?, 0)", [(table,) for table in COUNTED])
     first = first_id(cid)
     db.executemany("INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)", [("docs", first), ("chunks", first)])
     set_meta(db, "collection", cid)
+    set_meta(db, LISTED, 1)  # its documents are listed as they come
     for key in (*READ_AGAIN, WAITED) if read else ():
         set_meta(db, key, 1)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -322,20 +344,82 @@ def _count_rows(db, path):
         db.execute(f"PRAGMA busy_timeout = {TIMEOUT * 1000}")
 
 
-def _add_postings_tables(db):
-    """Add the keyword postings' tables a store lacks: all of them to a store of sift 1.9 (layout 7), unbuilt, so that
-    keyword search reads FTS5 until `sift index` builds them (see `postings`); their order to one of 1.10 (layout 8),
-    empty, which keeps its postings' chunks in the order they were indexed."""
+def _add_tables(db):
+    """Add the tables a store lacks, in one transaction, which another sift opening the store meanwhile waits for, and
+    then finds done. The keyword postings': all of them to a store of sift 1.9 (layout 7), unbuilt, so that keyword
+    search reads FTS5 until `sift index` builds them (see `postings`); their order to one of 1.10 (layout 8), empty,
+    which keeps its postings' chunks in the order they were indexed. And to a store of 1.12 or older (layout 9), the
+    last parts of its documents' paths: empty, kept from now on, and for `sift index` to list (list_basenames)."""
     db.execute("BEGIN IMMEDIATE")
     try:
         if db.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
-            for statement in filter(str.strip, POSTINGS.split(";")):  # not executescript, which would commit first
+            # statement by statement: executescript would commit first
+            for statement in (*filter(str.strip, POSTINGS.split(";")), *BASENAMES):
                 db.execute(statement)
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         db.commit()
     except BaseException:
         db.rollback()
         raise
+
+
+def basenames_listed(db):
+    """Whether the store lists the last part of every document's path (see BASENAMES): one this sift made does, an
+    older one once `sift index` has listed them."""
+    return get_meta(db, LISTED) is not None
+
+
+def list_basenames(db, name=""):
+    """List the last part of every document's path in a store of sift 1.12 or older, the collection `name`'s, once: a
+    batch of documents per transaction, so that this goes on where it stopped, and another sift's change waits for
+    a batch, not for the store. Documents that come and go meanwhile are the triggers'."""
+    if basenames_listed(db):
+        return
+    before = json.loads(get_meta(db, LISTING, LISTING_START))[0]  # what a listing that was stopped has listed
+    left = max(counts(db)["docs"] - before, 0)
+    progress = console.Progress(left, "documents", prefix=f"{name}: ")  # its clock starts before the first batch
+    if (done := _list_batch(db)) is None:  # none to list: nothing to say
+        return
+    console.say(f"{name}: listing the last part of each document's path, once, to look up shortened ids by ...")
+    with progress:
+        while done is not None:
+            progress.update(done - before, max(done - before, left))
+            done = _list_batch(db)
+
+
+def _list_batch(db):
+    """List the next BASENAMES_BATCH documents in the order of their paths, and record how far this got. Returns how
+    many are listed by now; None once none was left, the store marked as listed, by this sift or another meanwhile.
+    The documents are read from the index on their paths alone, never with their texts. The batch is found before its
+    transaction, which then reads pages the drive has given: it holds the store only for as long as writing the batch
+    takes, and other sifts' changes get their turn between two batches."""
+    got_to = get_meta(db, LISTING, LISTING_START)
+    done, after = json.loads(got_to)
+    batch = "SELECT path FROM docs WHERE path > ? ORDER BY path LIMIT ?"
+    n, last = db.execute(f"SELECT count(*), max(path) FROM ({batch})", (after, BASENAMES_BATCH)).fetchone()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if basenames_listed(db):
+            done = None
+        elif (now := get_meta(db, LISTING, LISTING_START)) != got_to:  # another sift listed this batch: on after it
+            done = json.loads(now)[0]
+        elif n:  # as the documents are now: those gone meanwhile get no row, those that came have theirs
+            db.execute(
+                f"INSERT OR IGNORE INTO basenames(name, doc) SELECT {LAST_PART.format('path')}, id FROM docs "
+                "WHERE path > ? AND path <= ?",
+                (after, last),
+            )
+            done += n
+            set_meta(db, LISTING, json.dumps([done, last]))
+        else:
+            db.execute("DELETE FROM meta WHERE key = ?", (LISTING,))
+            set_meta(db, LISTED, 1)
+            done = None
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    return done
 
 
 def counts(db):

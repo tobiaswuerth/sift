@@ -22,7 +22,7 @@ downloads; everything else, the MCP server included, runs for real.
 |---|---|
 | `cli.py` | The `sift` command |
 | `catalog.py` | The catalog: collections, their folders, where their stores lie, which are active; adding, removing, moving |
-| `store.py` | A collection's store, its SQLite file: layout, ids, codes, deleting documents, holding it alone |
+| `store.py` | A collection's store, its SQLite file: layout, ids, codes, the last parts of paths, deleting documents, holding it alone |
 | `upgrade.py` | Splitting an index of sift 1.7 or older into a store per collection |
 | `readers.py` | Files into documents: a reader per kind of file, chunking, and the links of Markdown notes |
 | `indexing.py` | `sift index`: scanning folders, reading changed files in worker processes; `reindex` of given files |
