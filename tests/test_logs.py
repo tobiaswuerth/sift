@@ -72,7 +72,7 @@ def test_a_command_that_ends_well_logs_no_error(home):
     assert "ERROR" not in path.read_text(encoding="utf-8")
 
 
-def test_two_in_one_second_get_two_files_and_every_log_is_kept(home):
+def test_two_in_one_second_get_two_files(home):
     with logs.kept("index", NOW) as first, logs.kept("index", NOW) as second:
         logs.attach("uvicorn")
     assert (first.name, second.name) == ("index-2026-10-23_210509.log", "index-2026-10-23_210509-2.log")
@@ -83,6 +83,44 @@ def test_two_in_one_second_get_two_files_and_every_log_is_kept(home):
         pass
     assert len(list((home / "logs").glob("index-*.log"))) == len(older) + 3
     logs.attach("uvicorn")  # no command running: nothing to attach
+
+
+def test_the_latest_logs_of_each_command_are_kept(home, monkeypatch):
+    # Every log was kept: a machine indexing every hour gathered thousands.
+    monkeypatch.setattr(logs, "KEPT", 3)
+    folder = home / "logs"
+    folder.mkdir(parents=True)
+    older = [f"index-2026-10-0{day}_120000.log" for day in range(1, 6)]
+    for name in [*older, "index-2026-10-01_120000.log.1", "embed-2026-10-01_120000.log"]:
+        (folder / name).write_text("x", encoding="utf-8")
+    with logs.kept("index", NOW) as path:
+        pass
+    assert sorted(p.name for p in folder.iterdir()) == ["embed-2026-10-01_120000.log", *older[3:], path.name]
+
+
+def test_a_log_another_sift_still_writes_goes_once_it_can(home, monkeypatch):
+    monkeypatch.setattr(logs, "KEPT", 1)
+    old = home / "logs" / "serve-2026-10-01_120000.log"
+    old.parent.mkdir(parents=True)
+    with old.open("w", encoding="utf-8") as held:  # as a server running since writes it: Windows won't delete it
+        held.write("a server's log\n")
+        with logs.kept("serve", NOW):
+            pass
+    with logs.kept("serve", NOW):
+        pass
+    assert not old.exists()
+
+
+def test_a_long_log_goes_on_in_parts_the_oldest_deleted(home, monkeypatch, capsys):
+    # A server logs every request: running for weeks, its one file grew without end.
+    monkeypatch.setattr(logs, "MOST_BYTES", 200)
+    with logs.kept("serve", NOW) as path:
+        for n in range(40):
+            console.say(f"request {n:02} " + "x" * 50)
+    parts = sorted(p.name for p in path.parent.glob("serve-*"))
+    assert parts == [path.name, *(f"{path.name}.{n}" for n in range(1, logs.PARTS + 1))]
+    assert "request 39" in path.read_text(encoding="utf-8")  # the latest in the log itself
+    assert all(p.stat().st_size <= 200 for p in path.parent.glob("serve-*"))
 
 
 def test_a_log_file_is_claimed_at_once(home, monkeypatch):
