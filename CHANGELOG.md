@@ -78,6 +78,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A scan skipped as `SIFT_OCR` was off, or as there was no GPU, was read only once its PDF changed: setting
   `SIFT_OCR=on`, as the skip says, read none of them. The next `sift index` after `SIFT_OCR` is turned on, or from
   `off` to `auto`, reads them.
+- `reindex` and `sift index --files` failed the whole call, every file of it left as it was, when the index refused
+  one file's text, as text over SQLite's limit of 1 GB. That file is "unreadable" now, with why, and stays as it was
+  indexed; the others are read, as `sift index` reads them.
 
 ## [1.12.0] - 2026-11-17
 

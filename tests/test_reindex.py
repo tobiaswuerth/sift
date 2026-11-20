@@ -2,6 +2,7 @@
 running server follows without loading every code again."""
 
 import os
+import sqlite3
 
 import numpy as np
 import pytest
@@ -478,6 +479,27 @@ def test_reindex_refuses_a_collection_whose_folder_is_gone(live):
     vault.rename(vault.with_name("moved"))
     with pytest.raises(ValueError, match="vault: folder not found"):
         index.reindex(["vault/01_People/Hans Müller.md"])
+
+
+def test_a_file_the_store_refuses_stays_as_it_was_and_the_others_are_read(live, monkeypatch):
+    # `sift index` leaves such a file out alone; reindex rolled back every file of the call, and failed.
+    index, vault = live
+    hans = vault / "01_People" / "Hans Müller.md"
+    write(hans, hans.read_text(encoding="utf-8").replace("Zürich", "Winterthur"))
+    write(vault / "b.md", "Beta note.\n")
+    insert = indexing._insert
+
+    def refusing(db, sid, path, doc):
+        if path.endswith("Hans Müller.md"):
+            raise sqlite3.DataError("string or blob too big")
+        return insert(db, sid, path, doc)
+
+    monkeypatch.setattr(indexing, "_insert", refusing)
+    assert index.reindex([str(hans), "vault/b.md"]) == [
+        {"id": "vault/01_People/Hans Müller.md", "status": "unreadable", "note": "string or blob too big"},
+        {"id": "vault/b.md", "status": "added", "chunks": 1, "embedded": 1},
+    ]
+    assert "vault/01_People/Hans Müller.md" in ids(index.search("Zürich"))  # as it was indexed
 
 
 def test_reindex_refuses_names_sqlite_cannot_store(live):

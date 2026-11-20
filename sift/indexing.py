@@ -598,7 +598,8 @@ def _reindex_file(db, name, rel, info, read, left):
     """Bring one file's documents up to date with what `_reindex_read` found, or remove them if it is gone, as `sift
     index` would: ({"id", "status"}, its documents' row ids, the chunks removed). A chunk removed is every chunk of a
     document replaced or removed. A file with a scan `left` is read again by the next `sift index`. One that can't be
-    read to its end as it is stored stays as it is indexed, whole."""
+    read to its end as it is stored, or whose documents the store refuses (REFUSED), stays as it is indexed, whole,
+    "unreadable" with why: the call's other files are read, as `sift index` reads them."""
     entry = {"id": f"{name}/{rel}"}
     sid = _source(db, rel)
     sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
@@ -616,9 +617,9 @@ def _reindex_file(db, name, rel, info, read, left):
     had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
     try:
         _store(db, sid, rel, docs, counts, problems.append, twice)
-    except readers.Unread as unread:
+    except (*REFUSED, readers.Unread) as refused:
         db.execute("ROLLBACK TO file")
-        return entry | {"status": "unreadable", "note": str(unread)}, [], []
+        return entry | {"status": "unreadable", "note": str(refused)}, [], []
     finally:
         db.execute("RELEASE file")
     if twice:  # read as it was stored: what it skipped is known now
