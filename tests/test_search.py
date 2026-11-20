@@ -1,6 +1,8 @@
 """Searching the index: keyword, semantic and hybrid search, filters and sorting, documents like one, `get`, and
 browsing by folder."""
 
+import contextlib
+import itertools
 import json
 import sqlite3
 import threading
@@ -12,7 +14,7 @@ from sift import embed, expression, indexing, order, postings, search, store, to
 from sift.catalog import Catalog
 from sift.search import Index, _any_word
 
-from .conftest import write, write_prose
+from .conftest import as_sift_1_12_left_it, write, write_prose
 
 
 def ids(hits):
@@ -1078,9 +1080,25 @@ def test_get(corpus):
             index.get(bad)
 
 
-def test_get_by_the_file_s_absolute_path(corpus):
+@pytest.fixture(params=["new", "of sift 1.12", "of sift 1.12, listed"])
+def aged(request):
+    """Makes the store `notes` of a catalog one of each age, which answer alike: left as new; or as sift 1.12 left it
+    and this sift opens it, before `sift index` has listed the last parts of its documents' paths, and after."""
+
+    def age(catalog):
+        if request.param != "new":
+            as_sift_1_12_left_it(catalog.store("notes"))
+            catalog.release(catalog.get("notes").id)
+        if request.param.endswith("listed"):
+            store.list_basenames(catalog.store("notes"), "notes")
+
+    return age
+
+
+def test_get_by_the_file_s_absolute_path(corpus, aged):
     # An agent that has a file's path, as a tool reviewing emails has each email's, reads it without working out its id.
     catalog, root = corpus
+    aged(catalog)
     index = Index(catalog)
     assert index.get(str(root / "rl.md")) == index.get("notes/rl.md")
     assert index.document(str(root / "robots" / "brush.md"))["id"] == "notes/robots/brush.md"
@@ -1089,12 +1107,23 @@ def test_get_by_the_file_s_absolute_path(corpus):
             index.get(str(outside))
 
 
-def test_an_absolute_path_names_its_file_in_another_case_too(corpus):
+def test_an_absolute_path_names_its_file_in_another_case_too(corpus, aged):
     # As Windows and macOS name the file, and as `reindex` takes the path.
     catalog, root = corpus
+    write(root / "Twice.md", "# Twice\n")
+    indexing.index(catalog)
+    db = catalog.store("notes")  # a file system that tells the cases apart holds both
+    db.execute(
+        "INSERT INTO docs(source, path, title, meta, text) SELECT source, 'twice.md', 'x', '{}', 'x' FROM docs LIMIT 1"
+    )
+    db.commit()
+    aged(catalog)
     index = Index(catalog)
     assert index.get(str(root / "Robots" / "BRUSH.md")) == index.get("notes/robots/brush.md")
     assert index.links(str(root / "RL.md"))["id"] == index.links("notes/rl.md")["id"]
+    assert index.get(str(root / "Twice.md")) == "# Twice\n"  # as written, if there is such a file
+    with pytest.raises(LookupError, match="unknown document"):
+        index.get(str(root / "TWICE.md"))  # either of two
 
 
 def test_document_with_front_matter_fields(corpus):
@@ -1818,13 +1847,83 @@ def test_the_file_a_document_came_from(corpus, tmp_path):
         assert found is None or found.resolve().is_relative_to(root.resolve()), outside
 
 
-def test_get_by_a_file_name_many_documents_have(corpus):
+def test_get_by_a_file_name_many_documents_have(corpus, aged):
     catalog, root = corpus
     for folder in "abcdef":
         write(root / folder / "same.md", f"# {folder}\n")
     indexing.index(catalog)
-    with pytest.raises(LookupError, match=r"notes/e/same\.md, \.\.\.; give the whole id"):
+    aged(catalog)
+    listed = ", ".join(rf"notes/{folder}/same\.md" for folder in "abcde")  # the first five by path
+    with pytest.raises(LookupError, match=rf"'notes/same\.md' matches {listed}, \.\.\.; give the whole id"):
         Index(catalog).get("notes/same.md")
+
+
+def test_a_shortened_id_is_the_end_of_a_path(corpus, aged):
+    catalog, root = corpus
+    for path in ("a/b/c.md", "x/b/c.md", "a/bc.md"):
+        write(root / path, f"# {path}\n")
+    write(root / "data.jsonl", '{"id": "r/1", "text": "a record"}\n{"id": "end/", "text": "another"}\n')
+    indexing.index(catalog)
+    aged(catalog)
+    index = Index(catalog)
+    named = {"notes/bc.md": "a/bc.md", "notes/a/b/c.md": "a/b/c.md", "notes/1": "data/r/1", "notes/r/1": "data/r/1"}
+    assert {id: index.document(id)["id"] for id in named} == {id: f"notes/{path}" for id, path in named.items()}
+    assert index.get("notes/end/") == "another"  # the last part of its path is empty
+    for several in ("notes/c.md", "notes/b/c.md"):
+        with pytest.raises(LookupError, match=r"matches notes/a/b/c\.md, notes/x/b/c\.md; give the whole id"):
+            index.get(several)
+    for unknown in ("notes/C.md", "notes/BC.md", "notes/z/b/c.md", "notes/.md", "notes/data/1"):
+        with pytest.raises(LookupError, match="unknown document"):  # whole parts, in the case written
+            index.get(unknown)
+
+
+def instructions(db, work):
+    """How many instructions SQLite runs on `db` during work(): what grows with the rows it reads. Counted the second
+    time: the first, SQLite also compiles its statements, which runs some."""
+    work()
+    ran = itertools.count()
+    db.set_progress_handler(lambda: next(ran) * 0, 1)
+    try:
+        work()
+    finally:
+        db.set_progress_handler(store.ABORT.is_set, store.ABORT_STEPS)
+    return next(ran)
+
+
+@pytest.mark.parametrize("older", [False, True], ids=["new", "of sift 1.12, listed"])
+@pytest.mark.parametrize(
+    "id",
+    [
+        "notes/brush.md",
+        "notes/deep/c.md",
+        "notes/nothing.md",
+        "notes/x/brush.md",
+        "{root}/Robots/BRUSH.md",
+        "{root}/No.md",
+    ],
+)
+def test_a_document_not_named_by_its_path_is_looked_up_not_searched_for(corpus, id, older):
+    # A shortened id, a mistyped one, an absolute path in another case: each was answered by reading every path, 16 ms
+    # for 300,000 documents and more with every document, the last by reading every document. Only the documents whose
+    # paths end in the id's last part are read now, however many the collection holds.
+    catalog, root = corpus
+    write(root / "a" / "deep" / "c.md", "# Deep\n")
+    indexing.index(catalog)
+    if older:
+        as_sift_1_12_left_it(catalog.store("notes"))
+        catalog.release(catalog.get("notes").id)
+        indexing.index(catalog)
+
+    def asked():
+        index = Index(catalog)
+        with contextlib.suppress(LookupError):
+            index.get(id.format(root=root))
+
+    before = instructions(catalog.store("notes"), asked)
+    for i in range(60):
+        write(root / "more" / f"n{i}.md", f"# Note {i}\n")
+    indexing.index(catalog)
+    assert instructions(catalog.store("notes"), asked) == before
 
 
 # --- what a search asked again reuses ------------------------------------------------
