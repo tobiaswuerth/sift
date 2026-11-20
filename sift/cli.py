@@ -287,8 +287,9 @@ def main(argv=None):
     s.add_argument("--port", type=int, default=8766)
 
     a = p.parse_args(argv)
-    if (sys.stdout.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
-        sys.stdout.reconfigure(encoding="utf-8")
+    for stream in (sys.stdout, sys.stderr):  # what sift says names files and titles, as its results do
+        if (stream.encoding or "").lower() != "utf-8":  # e.g. a Windows pipe: titles may be any script
+            stream.reconfigure(encoding="utf-8")
     try:
         _offer_update(a.cmd)
         with logs.kept(a.cmd, datetime.now()) if a.cmd in logs.LOGGED else contextlib.nullcontext():

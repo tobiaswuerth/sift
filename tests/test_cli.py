@@ -389,7 +389,10 @@ def test_ctrl_c_exits_quietly(home, monkeypatch):
     assert exc.value.code == 130
 
 
-def test_non_utf8_stdout_is_switched_to_utf8(cli_corpus, monkeypatch):
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_a_non_utf8_stream_is_switched_to_utf8(cli_corpus, monkeypatch, stream):
+    # stderr too: what sift says names files and titles, and came out of a Windows pipe with its "ü" unreadable, beside
+    # results in UTF-8.
     class LegacyConsole(io.StringIO):
         encoding = "cp1252"
         reconfigured = None
@@ -398,7 +401,7 @@ def test_non_utf8_stdout_is_switched_to_utf8(cli_corpus, monkeypatch):
             self.reconfigured = kwargs
 
     out = LegacyConsole()
-    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, stream, out)
     cli.main(["status"])
     assert out.reconfigured == {"encoding": "utf-8"}
 
