@@ -10,17 +10,38 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - In a terminal, sift says when a newer version is out and, on `y`, updates itself with the installer it came by (uv,
   pipx or pip) once no sift of the installation runs any more; the next command says how it went. It asks PyPI once a
   day, in the background; `SIFT_UPDATE_CHECK=off` or `HF_HUB_OFFLINE=1` stops it. Never for `serve`, `worker`, or
-  output to a pipe. A new major version is only told of, with its changelog.
+  output to a pipe. A new major version is only told of, with its changelog. While the installer runs, a command
+  started stops and says so; an update that a restart of the machine ended is said and offered again. Where sift
+  can't update itself, it says the newer version and the command: in an environment without pip, as uv's are (`uv pip
+  install --upgrade sift-rag`, or `uvx sift-rag@latest`), and in an installation you may not write.
 
 ### Changed
 
 - Updating by hand: stop `sift serve` and `sift worker` first. On Windows a running sift holds the files an update
   replaces: `uv tool upgrade` under a running server upgraded the packages but failed on `sift.exe`.
+- A filter's value matches whether a document writes it as a number or as text: `-f year=2024`, and `{"year": 2024}`
+  over MCP, find `year: 2024` and `"year": "2024"` alike, and `true` and `false` likewise. Before, only the page in
+  the browser asked both ways.
+- A search without an active collection is an error that says what to do (`sift activate NAME`, or `sift add FOLDER`
+  where none is registered), on the command line, over MCP and on the page. A keyword search answered "no matches".
+- Passages end before a Markdown heading only, not before any line starting with `#`: a comment in a code block, a C
+  include or a tag cut a passage in two. Files already indexed keep their passages until they change.
 
 ### Fixed
 
 - `sift embed` beside `sift index` embedded the chunks indexed meanwhile, but its total stayed as it began: the bar
   went past 100% and the time left below zero. The total now follows the chunks indexed or deleted while it runs.
+- `sift ui` asked for the server that runs through the proxy set for the web, which knows no server of this machine,
+  and took a server busy for five seconds for none: it started a second one on the port taken.
+- A browser kept the page's parts, which share the page's address, and showed one alone on the way back to it. Pages
+  now forbid keeping them, which also keeps documents' texts out of the browser's cache.
+- `sift search ... | head -1` ended with "error: [Errno 22] Invalid argument" on Windows. A reader that leaves now
+  ends the command quietly.
+- What sift says on stderr is UTF-8 now where it wasn't, as its results are: in a Windows pipe, file names and titles
+  came out unreadable.
+- A store that was locked or damaged, or a call cancelled, was said as "invalid search query".
+- A bug that is a `KeyError` or an `IndexError` came out as a bare message (`error: 'fields'`); it is reported as a
+  bug now, with its type, and its traceback on the command line and in the server's log.
 
 ## [1.12.0] - 2026-11-17
 
