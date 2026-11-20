@@ -406,6 +406,75 @@ def test_a_non_utf8_stream_is_switched_to_utf8(cli_corpus, monkeypatch, stream):
     assert out.reconfigured == {"encoding": "utf-8"}
 
 
+class Gone(io.StringIO):
+    """A stdout whose reader left: it takes no more, as `error` tells; `kept` is the file it is, if it is one."""
+
+    encoding = "utf-8"
+
+    def __init__(self, error, kept=None):
+        super().__init__()
+        self.error, self.kept = error, kept
+
+    def write(self, text):
+        raise self.error
+
+    def flush(self):
+        raise self.error
+
+    def fileno(self):
+        if self.kept is None:
+            raise io.UnsupportedOperation("fileno")
+        return self.kept.fileno()
+
+
+BROKEN_PIPE = BrokenPipeError(32, "Broken pipe")  # as POSIX tells it
+INVALID_ARGUMENT = OSError(22, "Invalid argument")  # as Windows does
+
+
+@pytest.mark.parametrize("error", [BROKEN_PIPE, INVALID_ARGUMENT])
+def test_a_reader_that_left_ends_the_command_quietly(cli_corpus, monkeypatch, capsys, tmp_path, error):
+    # `sift search ... | head -1`: head has its line and leaves, and sift said "error: [Errno 22] Invalid argument".
+    with open(tmp_path / "stdout", "w", encoding="utf-8") as kept:
+        monkeypatch.setattr(sys, "stdout", Gone(error, kept))
+        with pytest.raises(SystemExit) as left:
+            cli.main(["search", "brush"])
+        assert left.value.code == 1  # as Python ends on a broken pipe, with nothing said
+    assert capsys.readouterr().err == ""
+
+
+def test_a_reader_that_left_a_stream_that_is_no_file_ends_it_quietly_too(cli_corpus, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdout", Gone(BROKEN_PIPE))
+    with pytest.raises(SystemExit) as left:
+        cli.main(["search", "brush"])
+    assert left.value.code == 1
+
+
+def test_an_invalid_argument_elsewhere_is_an_error(home, monkeypatch):
+    def refused(*args):
+        raise OSError(22, "Invalid argument")
+
+    monkeypatch.setattr(indexing, "index", refused)
+    with pytest.raises(SystemExit, match=r"error: .*Invalid argument"):
+        cli.main(["index"])
+
+
+def test_results_that_can_t_be_written_for_another_reason_are_an_error(cli_corpus, monkeypatch):
+    monkeypatch.setattr(sys, "stdout", Gone(OSError(28, "No space left on device")))  # results sent to a file
+    with pytest.raises(SystemExit, match=r"error: .*No space left on device"):
+        cli.main(["search", "brush"])
+
+
+def test_a_reader_leaving_is_found_before_python_ends(home, tmp_path):
+    # A short answer stays in the stream's buffer until Python ends, which then says it couldn't write it, with a
+    # traceback. Run for real: `sift status` into a pipe nobody reads.
+    environment = os.environ | {"SIFT_HOME": str(tmp_path / "home"), "SIFT_UPDATE_CHECK": "off"}
+    command = [sys.executable, "-m", "sift", "status"]
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment) as sift:
+        sift.stdout.close()  # the reader leaves before sift has said anything
+        said = sift.stderr.read().decode()
+    assert (sift.returncode, said) == (1, "")
+
+
 def test_serve(home, monkeypatch):
     calls = []
     monkeypatch.setattr("sift.server.serve", lambda *args: calls.append(args))
