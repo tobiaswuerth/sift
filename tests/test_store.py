@@ -73,6 +73,7 @@ def test_a_missing_store_is_not_made_anew(tmp_path):
         (PureWindowsPath(r"\\nas\share\sift\a.sqlite"), "file:////nas/share/sift/a.sqlite?mode=rw"),
         (PureWindowsPath(r"D:\sift\a b#.sqlite"), "file:///D:/sift/a%20b%23.sqlite?mode=rw"),
         (PurePosixPath("/home/me/a.sqlite"), "file:///home/me/a.sqlite?mode=rw"),
+        (PurePosixPath("/home/me/a:b ü?.sqlite"), "file:///home/me/a%3Ab%20%C3%BC%3F.sqlite?mode=rw"),
     ],
 )
 def test_a_store_is_opened_by_a_uri_sqlite_takes(path, uri):

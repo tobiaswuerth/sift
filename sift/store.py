@@ -16,6 +16,7 @@ import uuid
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
+from urllib.parse import quote
 
 from . import console, readers
 
@@ -184,11 +185,11 @@ def read_only(path) -> sqlite3.Connection:
 def uri(path, mode):
     r"""The URI SQLite opens the file at the absolute `path` by, to read and write it ("rw") or to read it only ("ro").
     A Windows network path, \\nas\share\x, as file:////nas/share/x: SQLite refuses a URI that names a host, as
-    Path.as_uri writes it (file://nas/share/x), and a drive mapped to a share resolves to its network path."""
-    written = path.as_uri()
-    if not written.startswith("file:///"):
-        written = "file:////" + written.removeprefix("file://")
-    return f"{written}?mode={mode}"
+    Path.as_uri writes it (file://nas/share/x), and a drive mapped to a share resolves to its network path. Written
+    here, not by as_uri, which Python 3.14 deprecates for a path of no system's own (PurePath)."""
+    written = path.as_posix()  # D:/x, //nas/share/x, /home/x
+    drive, rest = (written[:2], written[2:]) if written[1:2] == ":" else ("", written)
+    return f"file:{'///' if drive else '//'}{drive}{quote(rest)}?mode={mode}"
 
 
 DAMAGED = (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
