@@ -8,6 +8,7 @@ Readers run in worker processes while indexing, so they read from bytes and retu
 
 import asyncio
 import hashlib
+import io
 import json
 import math
 import posixpath
@@ -242,18 +243,32 @@ def chunk(text, first_line=1):
             yield first, first + stripped.count("\n"), start + lead, len(stripped)
 
 
+def _encoding(start: bytes) -> str:
+    """How a text file is encoded, by its first bytes: UTF-16 or UTF-32 after their byte order marks (Windows
+    PowerShell 5.1 writes UTF-16), otherwise UTF-8. UTF-32's little-endian mark starts as UTF-16's does."""
+    if start[:4] in (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"):
+        return "utf-32"
+    return "utf-16" if start[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
+
+
 def decode(raw: bytes) -> str:
-    """A text file's content: UTF-16 or UTF-32 after their byte order marks (Windows PowerShell 5.1 writes UTF-16),
-    otherwise UTF-8 with invalid bytes replaced. UTF-32's little-endian mark starts as UTF-16's does."""
-    if raw[:4] in (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"):
-        return raw.decode("utf-32", "replace")
-    return raw.decode("utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig", "replace")
+    """A text file's content, with invalid bytes replaced."""
+    return raw.decode(_encoding(raw), "replace")
 
 
-Doc = namedtuple("Doc", "key digest title meta text chunks links scan", defaults=((), None))
+def _lines(file):
+    """The lines of a text file open for its bytes, as decode() and a split at newlines give them, but each read only
+    when it is asked for."""
+    start = file.read(4)
+    file.seek(0)
+    return io.TextIOWrapper(file, _encoding(start), "replace", newline="\n")
+
+
+Doc = namedtuple("Doc", "key digest title meta text chunks links scan line", defaults=((), None, None))
 """A document read from a file: key is "" for a whole file, the record id for a JSON Lines record; chunks are
 (first line, last line, position, length) spans of text; links are the Links of a Markdown file; scan is the bytes of a
-PDF without text, for the process that writes the index to read with OCR (see `ocr`), else None."""
+PDF without text, for the process that writes the index to read with OCR (see `ocr`), else None; line is a JSON Lines
+record's in its file."""
 
 ID_FIELDS = ("id", "_id")
 TITLE_FIELDS = ("title", "name", "headline", "subject")
@@ -409,36 +424,96 @@ def _without_code(line):
     return "".join(pieces) + line[end:]
 
 
-def _records(raw, name, fields):
-    """A JSON Lines file: one document per line, and the lines skipped with their reason."""
-    docs, problems, seen = [], [], set()
-    for n, line in enumerate(decode(raw).split("\n"), 1):
+class _Skipped:
+    """The lines of a JSON Lines file that were skipped, each with its reason: how many, and the first five."""
+
+    def __init__(self):
+        self.count, self.first = 0, []
+
+    def add(self, line, why):
+        self.count += 1
+        self.first = sorted([*self.first, (line, why)])[:5]
+
+    def said(self):
+        """What to say of them, as a reader's problems: one sentence, or nothing."""
+        if not self.count:
+            return []
+        shown = "; ".join(f"line {line}: {why}" for line, why in self.first) + ("; ..." if self.count > 5 else "")
+        return [f"{console.count(self.count, 'line')} skipped ({shown})"]
+
+
+def _parsed(lines, fields, skipped):
+    """The documents of a JSON Lines file's lines, one per line, as they are asked for; a line without one goes to
+    `skipped`, with its reason."""
+    for n, line in enumerate(lines, 1):
         line = line.strip()
         if not line:
             continue
         try:
             obj = _json(line)
         except ValueError:
-            problems.append(f"line {n}: not JSON")
+            skipped.add(n, "not JSON")
             continue
         except RecursionError:
-            problems.append(f"line {n}: nested too deeply")
+            skipped.add(n, "nested too deeply")
             continue
         if not isinstance(obj, dict):
-            problems.append(f"line {n}: not an object")
+            skipped.add(n, "not an object")
             continue
         doc = _record(obj, n, fields)
         if doc is None:
-            problems.append(f"line {n}: no text")
-        elif doc.key in seen:
-            problems.append(f"line {n}: id {doc.key} used twice")
+            skipped.add(n, "no text")
+        else:
+            yield doc._replace(digest=_digest(line.encode()), line=n)
+
+
+def _records(raw, name, fields):
+    """A JSON Lines file: one document per line, and the lines skipped with their reason."""
+    docs, skipped, seen = [], _Skipped(), set()
+    for doc in _parsed(decode(raw).split("\n"), fields, skipped):
+        if doc.key in seen:
+            skipped.add(doc.line, f"id {doc.key} used twice")
         else:
             seen.add(doc.key)
-            docs.append(doc._replace(digest=_digest(line.encode())))
-    if problems:
-        shown = "; ".join(problems[:5]) + ("; ..." if len(problems) > 5 else "")
-        problems = [f"{console.count(len(problems), 'line')} skipped ({shown})"]
-    return docs, problems
+            docs.append(doc)
+    return docs, skipped.said()
+
+
+STREAMED = 32 << 20  # bytes past which a JSON Lines file is read as it is stored, not whole (see Records)
+
+
+def streamed(path, size):
+    """Whether a file of `size` bytes is read as it is stored (Records), not whole by `load`."""
+    return size > STREAMED and extension(Path(path).name) in JSONL  # the size first: asked of every file indexed
+
+
+class Unread(Exception):
+    """A file read as it is stored could not be read to its end: why, as "Error: what it said"."""
+
+
+class Records:
+    """The documents of a JSON Lines file, read line by line as they are asked for: read whole, a file of 300,000
+    records, 69 MB, took ten times its size in memory, all its lines and every record's document at once. An id used
+    twice is for whoever stores them to find, among the paths it stored, and to tell with `twice`: the ids of millions
+    of records are not held either. Any error of reading comes as Unread."""
+
+    def __init__(self, path, fields=None):
+        self.path, self.fields, self._skipped = path, fields or {}, _Skipped()
+
+    def __iter__(self):
+        try:
+            with open(self.path, "rb") as file, _lines(file) as lines:
+                yield from _parsed(lines, self.fields, self._skipped)
+        except Exception as error:
+            raise Unread(f"{type(error).__name__}: {error}") from error
+
+    def twice(self, doc):
+        self._skipped.add(doc.line, f"id {doc.key} used twice")
+
+    @property
+    def problems(self):
+        """The lines skipped with their reason, as `load` gives them: of those read and told of so far."""
+        return self._skipped.said()
 
 
 PROPERTIES = {  # the document properties sift keeps as metadata: Xberg's name, sift's name

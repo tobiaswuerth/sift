@@ -524,29 +524,34 @@ def chunk_rows(db, chunks=None, docs=None, where="1"):
         yield from sorted(_cut(db, batch, f", d.title, {META}"))  # by id, as FTS5 writes them in one go
 
 
-def fill(db, table, chunks=None, docs=None, delete=False):
+def fill(db, table, chunks=None, docs=None, delete=False, count=None):
     """Write what the chunk_text view reads of chunks (see _chunks) into the FTS5 table `table`, or with `delete` take
     their entries out of it. The chunks of short documents in one statement, through the view, as one per document
-    took twice as long; those of documents of more than LONG chunks cut by chunk_rows."""
+    took twice as long; those of documents of more than LONG chunks cut by chunk_rows. `count` is how many chunks
+    they are, where the caller knows: if the one statement wrote as many, no long document is looked for, a
+    statement saved for each of a collection's small files."""
     source, args = _chunks(chunks, docs)
     columns, first = (f"{table}, rowid", "'delete', ") if delete else ("rowid", "")
     long = f"EXISTS (SELECT 1 FROM chunks k WHERE k.doc = c.doc LIMIT 1 OFFSET {LONG})"
-    db.execute(
+    wrote = db.execute(
         f"INSERT INTO {table}({columns}, title, text, meta) SELECT {first}id, title, text, meta FROM chunk_text "
         f"WHERE id IN (SELECT c.id FROM {source} WHERE NOT {long})",
         args,
-    )
-    rows = chunk_rows(db, chunks, docs, where=long)
-    db.executemany(f"INSERT INTO {table}({columns}, text, title, meta) VALUES({first}?, ?, ?, ?)", rows)
+    ).rowcount
+    if wrote != count:
+        rows = chunk_rows(db, chunks, docs, where=long)
+        db.executemany(f"INSERT INTO {table}({columns}, text, title, meta) VALUES({first}?, ?, ?, ?)", rows)
 
 
-def keywords(db, docs, add=True):
+def keywords(db, docs, add=True, count=None):
     """Add the keyword index's entries for the chunks of these documents, by id, or delete them, as the chunk_text
-    view reads them now. Delete them before a document's text, title or meta changes, and add them after: entries
-    that no longer match the view can't be deleted any more. Once the postings are built, the chunks are marked dirty
-    too, until the postings follow."""
-    fill(db, "fts", docs=docs, delete=not add)
-    if docs and get_meta(db, "kw_built") is not None:
+    view reads them now; `count` is how many chunks they have, if known (see fill). Delete them before a document's
+    text, title or meta changes, and add them after: entries that no longer match the view can't be deleted any
+    more. Once the postings are built, the chunks are marked dirty too, until the postings follow."""
+    if not docs:
+        return
+    fill(db, "fts", docs=docs, delete=not add, count=count)
+    if get_meta(db, "kw_built") is not None:
         _mark_dirty(db, docs)
 
 

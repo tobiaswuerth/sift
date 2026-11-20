@@ -62,12 +62,22 @@ def _batches(todo):
     return [*batches, batch] if batch else batches
 
 
+def _whole(todo):
+    """The files to do that are read whole, each before it is stored, not as it is stored (readers.Records)."""
+    return [item for item in todo if not readers.streamed(item[0], item[3])]
+
+
 def _read(pool, workers, fields, batch):
-    """Load a batch of files: pool.map starts all of them at once, builtin map reads one at a time."""
-    paths = [item[0] for item in batch]
+    """Load a batch of files: pool.map starts all of them at once, builtin map reads one at a time. A file read as it
+    is stored comes as its Records, unread: here, as workers hand over what they read whole."""
+    paths = [item[0] for item in _whole(batch)]
     if pool:
-        return pool.map(_loaded, paths, repeat(fields), chunksize=max(1, min(64, len(paths) // (4 * workers))))
-    return map(_loaded, paths, repeat(fields))
+        loaded = pool.map(_loaded, paths, repeat(fields), chunksize=max(1, min(64, len(paths) // (4 * workers))))
+    else:
+        loaded = map(_loaded, paths, repeat(fields))
+    return (
+        readers.Records(path, fields) if readers.streamed(path, size) else next(loaded) for path, _, _, size in batch
+    )
 
 
 def _loaded(path, fields):
@@ -139,32 +149,119 @@ def _read_scans(db, sid, rel, docs, note, now=True):
     return read, left
 
 
-def _store(db, sid, rel, docs, counts, note):
-    """Bring one file's documents in the index up to date; unchanged ones (by hash) stay, vectors included, and their
-    row ids are returned. note(text) tells the user of a document left out (see _left_out)."""
-    existing = {p: (i, h) for i, p, h in db.execute("SELECT id, path, hash FROM docs WHERE source=?", (sid,))}
-    kept, added, unchanged = set(), [], set()
-    store.stop_waiting(db, sid)  # what still waits is said again below
+STORED = 10_000  # documents of a file stored at a time,
+STORED_CHARS = 16 << 20  # of this much text at most, or one document: what is in memory of a file read as it is stored
+DROPPED = 10_000  # documents a file no longer holds, deleted at a time
+
+
+def _batches_of(docs):
+    """A file's documents in the batches they are stored in: STORED of them, of STORED_CHARS of text or one alone."""
+    batch, size = [], 0
     for doc in docs:
-        path = _path(rel, doc)
-        kept.add(path)
-        old = existing.get(path)
-        if old and old[1] == doc.digest:
-            unchanged.add(old[0])
-            continue
-        if old:
-            store.delete_docs(db, [old[0]], free=False)  # its new version takes the path at once
-        try:
-            added.append(_insert(db, sid, path, doc))
-        except sqlite3.IntegrityError:  # another file's document holds the path
-            _left_out(db, sid, rel, path, note)
-            continue
-        counts["changed" if old else "added"] += 1
-    store.keywords(db, added)
-    gone = [i for p, (i, _) in existing.items() if p not in kept]
-    store.delete_docs(db, gone)
-    counts["removed"] += len(gone)
-    return unchanged
+        batch.append(doc)
+        size += len(doc.text)
+        if len(batch) >= STORED or size >= STORED_CHARS:
+            yield batch
+            batch, size = [], 0
+    if batch:
+        yield batch
+
+
+def _store(db, sid, rel, docs, counts, note, twice=None):
+    """Bring one file's documents in the index up to date, a batch at a time (see _batches_of), so that a file read
+    as it is stored is in memory a batch at a time. Unchanged ones (by hash) stay, vectors included; those the file
+    no longer holds go. note(text) tells the user of a document left out (see _left_out). A document whose path the
+    file gave before is left out, as the first keeps it: twice(doc) is told, if given, as a file read as it is stored
+    can't tell itself (readers.Records)."""
+    store.stop_waiting(db, sid)  # what still waits is said again below
+    indexed = _Indexed(db, sid)
+    for batch in _batches_of(docs):
+        paths = [_path(rel, doc) for doc in batch]
+        held, added, unchanged, given, chunks = indexed.at(paths), [], [], set(), 0
+        for path, doc in zip(paths, batch):
+            old = held.get(path)
+            if path in given or (old and old[2]):
+                if twice:
+                    twice(doc)
+                else:
+                    _left_out(db, sid, rel, path, note)
+                continue
+            given.add(path)
+            if old and old[1] == doc.digest:
+                unchanged.append(old[0])
+                continue
+            if old:
+                store.delete_docs(db, [old[0]], free=False)  # its new version takes the path at once
+            try:
+                added.append(_insert(db, sid, path, doc))
+            except sqlite3.IntegrityError:  # another file's document holds the path
+                _left_out(db, sid, rel, path, note)
+                continue
+            counts["changed" if old else "added"] += 1
+            chunks += len(doc.chunks)
+        store.keywords(db, added, count=chunks)
+        indexed.took(given, unchanged, added)
+    counts["removed"] += indexed.drop_the_gone()
+
+
+class _Indexed:
+    """One file's documents as the index holds them, while the file is stored anew: those at a batch's paths (at),
+    what a batch did with them (took), and at the end those the file no longer holds (drop_the_gone). STORED of them
+    at most are held here, which costs a small file one statement. A file of more has them found by their paths, a
+    batch at a time, not among all of its own, which every batch would read through; and those that stay as they are
+    are kept in a table of the connection's own, emptied at the end: of millions of records, too many to hold."""
+
+    STAYING = "CREATE TEMP TABLE IF NOT EXISTS sift_staying(doc INTEGER PRIMARY KEY)"
+
+    def __init__(self, db, sid):
+        self.db, self.sid = db, sid
+        rows = db.execute("SELECT path, id, hash FROM docs WHERE source = ? LIMIT ?", (sid, STORED + 1)).fetchall()
+        self.few = len(rows) <= STORED
+        self.old = {path: (doc, digest) for path, doc, digest in rows} if self.few else {}
+        self.given = set()  # of the few, the paths the file gave again
+        self.first = None  # the first document added: the file's from it on are this run's
+        self.staying = False  # whether any of the many stay
+
+    def at(self, paths):
+        """The file's documents at these paths, by path: (id, hash, whether the file gave the path before in this
+        run, so that its document stays as it is or was added)."""
+        held = {path: (*self.old[path], path in self.given) for path in paths if path in self.old}
+        if self.few and self.first is None:
+            return held  # the old ones are all here, and none is added yet: nothing to ask the store
+        marked = "id IN (SELECT doc FROM temp.sift_staying)" if self.staying else "0"
+        sql = f"SELECT path, id, hash, source, {marked} FROM docs WHERE path IN (SELECT value FROM json_each(?))"
+        for path, doc, digest, source, stays in self.db.execute(sql, (json.dumps(paths),)):
+            if source == self.sid and path not in held:
+                held[path] = (doc, digest, bool(stays) or (self.first is not None and doc >= self.first))
+        return held
+
+    def took(self, given, unchanged, added):
+        """A batch is stored: the paths it gave, the documents (ids) at them that stay as they are, those added."""
+        if self.first is None and added:
+            self.first = added[0]
+        if self.few:
+            self.given.update(path for path in given if path in self.old)
+        elif unchanged:
+            self.db.execute(self.STAYING)
+            self.db.executemany("INSERT INTO temp.sift_staying(doc) VALUES(?)", [(doc,) for doc in unchanged])
+            self.staying = True
+
+    def drop_the_gone(self):
+        """Delete the documents the file no longer holds: its old ones whose paths it didn't give again. Returns how
+        many."""
+        if self.few:
+            gone = [doc for path, (doc, _) in self.old.items() if path not in self.given]
+            store.delete_docs(self.db, gone)
+            return len(gone)
+        old, args = ("", [self.sid]) if self.first is None else (" AND id < ?", [self.sid, self.first])
+        left = " AND id NOT IN (SELECT doc FROM temp.sift_staying)" if self.staying else ""
+        sql, dropped = f"SELECT id FROM docs WHERE source = ?{old}{left} LIMIT {DROPPED}", 0
+        while gone := [doc for (doc,) in self.db.execute(sql, args)]:
+            store.delete_docs(self.db, gone)
+            dropped += len(gone)
+        if self.staying:
+            self.db.execute("DELETE FROM temp.sift_staying")
+        return dropped
 
 
 def _left_out(db, sid, rel, path, note):
@@ -441,7 +538,8 @@ def _indexed_as(db, rel):
 def _reindex_read(db, root, fields, rel, scans):
     """A file as `reindex` finds it, before anything is written: its stat, the error that kept it from being stat'ed
     (it is there but out of reach, and kept as indexed), or None if it is gone; its documents and problems as `sift
-    index` reads them, scans read if `scans`, None if it can't be read; and whether a scan was left for `sift index`."""
+    index` reads them, scans read if `scans`, its Records, unread, if it is read as it is stored, None if it can't be
+    read; and whether a scan was left for `sift index`."""
     path = os.path.join(root, *rel.split("/"))
     try:
         info = os.stat(path)  # through a link, as `sift index` reads it
@@ -451,6 +549,8 @@ def _reindex_read(db, root, fields, rel, scans):
         return error, None, False
     if info is None or not stat.S_ISREG(info.st_mode):
         return None, None, False
+    if readers.streamed(path, info.st_size):
+        return info, readers.Records(path, fields), False  # read as it is stored
     read = readers.load(path, fields)
     if read is None:
         return info, None, False
@@ -462,7 +562,8 @@ def _reindex_read(db, root, fields, rel, scans):
 def _reindex_file(db, name, rel, info, read, left):
     """Bring one file's documents up to date with what `_reindex_read` found, or remove them if it is gone, as `sift
     index` would: ({"id", "status"}, its documents' row ids, the chunks removed). A chunk removed is every chunk of a
-    document replaced or removed. A file with a scan `left` is read again by the next `sift index`."""
+    document replaced or removed. A file with a scan `left` is read again by the next `sift index`. One that can't be
+    read to its end as it is stored stays as it is indexed, whole."""
     entry = {"id": f"{name}/{rel}"}
     sid = _source(db, rel)
     sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
@@ -474,10 +575,19 @@ def _reindex_file(db, name, rel, info, read, left):
         return entry | {"status": "removed"}, [], [chunk for _, chunk in chunks]
     if read is None:
         return entry | {"status": "unreadable"}, [], []
-    docs, problems = read
+    docs, problems, twice = (read, [], read.twice) if isinstance(read, readers.Records) else (*read, None)
+    db.execute("SAVEPOINT file")
     sid = _source(db, rel, make=True)
     had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
-    unchanged = _store(db, sid, rel, docs, counts, problems.append)
+    try:
+        _store(db, sid, rel, docs, counts, problems.append, twice)
+    except readers.Unread as unread:
+        db.execute("ROLLBACK TO file")
+        return entry | {"status": "unreadable", "note": str(unread)}, [], []
+    finally:
+        db.execute("RELEASE file")
+    if twice:  # read as it was stored: what it skipped is known now
+        problems += read.problems
     mtime = None if left else info.st_mtime_ns  # no time: `sift index` takes it for changed
     db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (mtime, info.st_size, sid))
     now = [d for (d,) in db.execute("SELECT id FROM docs WHERE source = ?", (sid,))]
@@ -488,6 +598,7 @@ def _reindex_file(db, name, rel, info, read, left):
     else:
         status = "changed" if had else "added"
     note = {"note": "; ".join(problems)} if problems else {}
+    unchanged = set(now)  # a document replaced has a new id: ids are never handed out twice
     return entry | {"status": status} | note, now, [chunk for doc, chunk in chunks if doc not in unchanged]
 
 
@@ -658,8 +769,8 @@ def _scan(root, known, ignore):
 
 def _read_and_store(db, name, fields, todo, counts, progress):
     """Read the files to do, in worker processes when it pays off, and store their documents batch by batch."""
-    batches = _batches(todo)
-    n = workers(len(todo), sum(item[3] for item in todo))  # parsing is CPU-bound: processes, not threads
+    batches, whole = _batches(todo), _whole(todo)
+    n = workers(len(whole), sum(item[3] for item in whole))  # parsing is CPU-bound: processes, not threads
     # spawned everywhere, as on Windows and macOS: forking a process that has threads can deadlock
     spawn = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(n, mp_context=spawn) if n > 1 else nullcontext() as pool:
@@ -676,6 +787,11 @@ def _read_and_store(db, name, fields, todo, counts, progress):
                 if done % step == 0 or done == len(todo):
                     progress.update(done)
                 note = lambda text: console.say(f"{name}: {text}")  # noqa: E731
+                if isinstance(res, readers.Records):  # read as it is stored: what it skipped is known after
+                    if _stored(db, rel, res, (mtime, size), counts, note, res.twice):
+                        for problem in res.problems:
+                            note(f"{rel}: {problem}")
+                    continue
                 if res is None:  # unreadable now; retried on the next run
                     console.say(f"unreadable, skipped: {path}")
                     counts["unreadable"] += 1
@@ -692,21 +808,27 @@ def _read_and_store(db, name, fields, todo, counts, progress):
             db.commit()
 
 
-def _stored(db, rel, docs, stat, counts, note):
+REFUSED = (ValueError, RecursionError, sqlite3.DataError, sqlite3.IntegrityError)  # Recursion: Python 3.11's JSON
+
+
+def _stored(db, rel, docs, stat, counts, note, twice=None):
     """Store a file's documents and its (mtime, size), in a savepoint of the batch's transaction: if the store refuses
-    them, as text SQLite can't hold, only this file is left out, said, and read again by the next run."""
+    them, as text SQLite can't hold, or the file can't be read to its end as it is stored, only this file is left
+    out, whole, said, and read again by the next run. Returns whether it is stored."""
     if not db.in_transaction:
         db.execute("BEGIN")  # so that releasing the savepoint commits nothing
     db.execute("SAVEPOINT file")
-    before = counts.copy()
+    before, stored = counts.copy(), False
     try:
         sid = _source(db, rel, make=True)
-        _store(db, sid, rel, docs, counts, note)
+        _store(db, sid, rel, docs, counts, note, twice)
         db.execute("UPDATE sources SET mtime=?, size=? WHERE id=?", (*stat, sid))
-    except (ValueError, RecursionError, sqlite3.DataError, sqlite3.IntegrityError) as refused:  # Recursion: 3.11's JSON
+        stored = True
+    except (*REFUSED, readers.Unread) as refused:
         db.execute("ROLLBACK TO file")
         counts.clear()
         counts.update(before)  # Counter.update adds: onto nothing, as they were
         counts["unreadable"] += 1
         note(f"{rel}: skipped ({refused})")
     db.execute("RELEASE file")
+    return stored

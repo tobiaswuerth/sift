@@ -396,6 +396,25 @@ def test_a_document_the_index_refuses_for_another_reason_than_its_path_skips_its
     assert "notes: new.md: skipped (new.md: new.md: the index refused the document)" in capsys.readouterr().err
 
 
+def test_a_small_file_is_stored_with_no_statement_a_large_one_needs(corpus):
+    # What a file of millions of records needs, its documents looked up by their paths, those that stay kept in a
+    # table, those gone found by a query, and long documents' chunks looked for, cost each small file four statements
+    # more: 20,000 notes took a tenth longer to index, and a fifth when only their times had changed.
+    catalog, root = corpus
+    db, asked = catalog.store("notes"), []
+    write(root / "new.md", "# New\n\nA new note.\n")
+    os.utime(root / "rl.md", ns=(1_600_000_000 * 10**9,) * 2)  # read again, as it is indexed
+    db.set_trace_callback(asked.append)
+    try:
+        indexing.index(catalog)
+    finally:
+        db.set_trace_callback(None)
+    assert sum(s.startswith("SELECT path, id, hash FROM docs WHERE source = ") for s in asked) == 2  # once a file
+    assert sum(s.startswith("INSERT INTO fts(") for s in asked) == 1  # the new note's entries
+    for costly in ("FROM docs WHERE path IN", "sift_staying", "FROM chunks WHERE id IN"):
+        assert not [s for s in asked if costly in s], costly
+
+
 def test_index_is_incremental(corpus, capsys):
     catalog, root = corpus
     ids = doc_ids(catalog)

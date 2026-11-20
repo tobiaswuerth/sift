@@ -9,6 +9,11 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   process start-up. Each kind of file has a reader, chosen by extension; adding a format means adding a reader.
 - Files are compared by modification time and size, so unchanged files cost nothing, and documents by content hash, so
   a changed JSON Lines file re-indexes only its changed records.
+- A JSON Lines file over 32 MB is read line by line as it is stored, in batches of 10,000 records (or 16 MB of text),
+  in the indexing process and in the file's one transaction: memory stays at a batch, whatever the file's size. Its
+  documents are looked up by their paths a batch at a time; those that stay as they are go into a temporary table, so
+  that at the end the file's other documents are the ones gone. An id used twice is found in the store, the first
+  record keeping the path. A file that can't be read to its end is left out whole, as before.
 - Markdown, and everything converted to it, is split into chunks of about 3,000 characters (about 750 tokens) on line
   boundaries, preferring headings, with a small overlap.
 - A JSON Lines record or an attachment is a document below its file's name, a path a real file may have too. The first
