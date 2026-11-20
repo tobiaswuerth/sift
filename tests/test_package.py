@@ -104,3 +104,15 @@ def test_only_newlines_end_lines():
         if isinstance(node, ast.Attribute) and node.attr == "splitlines"
     }
     assert found == set(), 'split on "\n" (see readers.LINE): only it ends a line, as in editors and git'
+
+
+def test_workflows_run_actions_by_commit():
+    # A tag or a branch of an action can be moved to other code, and the release workflow publishes to PyPI: an
+    # action is named by the commit reviewed, with its version beside it, which Dependabot keeps current.
+    by_name = {
+        f"{path.name}:{n}"
+        for path in (ROOT / ".github" / "workflows").glob("*.yml")
+        for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1)
+        if "uses:" in line and not re.search(r"uses: [\w./-]+@[0-9a-f]{40}  # v\d+\.\d+\.\d+", line)
+    }
+    assert by_name == set(), "name the action by its commit: `uses: owner/action@<40 hex digits>  # v1.2.3`"
