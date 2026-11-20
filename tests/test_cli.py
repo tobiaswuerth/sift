@@ -348,7 +348,8 @@ def test_rm_reports_a_single_document(tmp_path, home, capsys):
         (["search", "x", "-c", "missing"], "error: no collection named 'missing'"),
         (["search", "x", "-k", "0"], "error: k must be"),
         (["get", "missing/x.md"], "error: unknown document"),
-        (["vsearch", "x"], "error: no embeddings yet"),
+        (["vsearch", "x"], "error: no collection yet: `sift add FOLDER`"),  # not "no embeddings yet": none to embed
+        (["search", "x"], "error: no collection yet: `sift add FOLDER`"),  # not "no matches": nothing was searched
         (["rm", "missing"], "no collection named 'missing'"),
     ],
 )

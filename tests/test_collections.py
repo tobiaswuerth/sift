@@ -539,10 +539,26 @@ def test_files_of_several_collections_are_reindexed_at_once(three, tmp_path):
 def test_with_every_collection_inactive_a_search_says_how_to_activate_one(three):
     three.set_active(["diary", "papers", "recipes"], False)
     index = Index(three)
-    assert index.search("robot") == []
-    for search in (index.vsearch, index.query):
+    # A keyword search too, which answered with no results: "no matches" told nobody that nothing was searched.
+    for search in (index.search, index.vsearch, index.query, index.browse, index.unresolved):
         with pytest.raises(LookupError, match="no collection is active: `sift activate NAME`"):
+            search(*(["robot"] if search not in (index.browse, index.unresolved) else []))
+
+
+def test_without_any_collection_a_search_says_how_to_add_one(home):
+    index = Index(Catalog(home))
+    for search in (index.search, index.vsearch, index.query):
+        with pytest.raises(LookupError, match="no collection yet: `sift add FOLDER`, then `sift index`"):
             search("robot")
+
+
+def test_a_search_passes_over_collections_whose_indexes_are_missing_without_error(three):
+    # They are active, and said to be passed over: the search of the others, here none, is no error.
+    for collection in three.collections():
+        three.release(collection.id)
+        for file in store.files(collection.store):
+            file.unlink(missing_ok=True)
+    assert Index(three).search("robot") == []
 
 
 def test_a_note_whose_collection_is_removed_meanwhile_is_a_clear_error(three, monkeypatch):

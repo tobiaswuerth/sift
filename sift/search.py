@@ -652,12 +652,26 @@ class Index:
         return found
 
     def _scope(self, collection):
-        """The collections a search covers: the one named, or every active one."""
+        """The collections a search covers: the one named, or every active one. None active, or none at all, is an
+        error that says what to do: "no matches" told nobody that nothing was searched. Those whose stores are
+        missing are active, and passed over as said (see active)."""
         if not collection:
-            return list(self.active().values())
+            found = list(self.active().values())
+            if not found and (nothing := self._nothing_active()):
+                raise LookupError(nothing)
+            return found
         c = self.catalog.get(collection)
         self._readable(c)
         return [c]
+
+    def _nothing_active(self):
+        """What to say when no collection is active, and to do about it; None if one is."""
+        collections = self.catalog.collections()
+        if any(c.active for c in collections):
+            return None
+        if collections:
+            return "no collection is active: `sift activate NAME` takes one back into searches"
+        return "no collection yet: `sift add FOLDER`, then `sift index`"
 
     def _readable(self, collection):
         """The store of a collection to read from; an error if the collection is inactive, or its store missing."""
@@ -896,8 +910,8 @@ class Index:
             scope = list(self.active().values())
         else:
             self._settle()
-        if not scope and self.catalog.collections():
-            raise LookupError("no collection is active: `sift activate NAME` takes one back into searches")
+        if not scope and self.catalog.collections() and (nothing := self._nothing_active()):
+            raise LookupError(nothing)
         damaged = {}
         for c in scope:
             try:

@@ -1866,7 +1866,8 @@ def test_a_search_asked_again_is_answered_from_memory_until_a_store_changes(embe
     embed.embed_pending(Catalog(home))  # `sift embed`: the codes change
     assert ids(index.vsearch("brush", k=3))[0] == "notes/brushes.md"
     Catalog(home).set_active(["notes"], False)  # `sift deactivate notes`
-    assert index.search("brush", k=3) == []
+    with pytest.raises(LookupError, match="no collection is active"):  # said, since "no matches" told nobody
+        index.search("brush", k=3)
 
 
 def test_results_follow_the_servers_own_reindex(embedded):
