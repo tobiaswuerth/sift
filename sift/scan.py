@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 
 PARTS = 64  # pieces of the codes the threads take in turn, each tallying its own distances
 _ONE_AT_A_TIME = threading.Lock()  # Numba's threads take one scan at a time (its workqueue layer takes no more)
+MOST_THREADS = numba.get_num_threads()  # Numba's, before any scan sets fewer: NUMBA_NUM_THREADS, or every CPU
 
 
 @intrinsic
@@ -45,7 +46,7 @@ def _scan(
                 continue
             distance = 0
             for k in range(width):
-                distance += _popcount(words[i, k] ^ query[k])
+                distance += _popcount(words[i, k] ^ query[k])  # pyright: ignore[reportCallIssue]  # numba gives typingctx
             out[i] = distance
             tallies[part, distance] += 1
 
@@ -67,6 +68,6 @@ def measure(
                          f"{keep.shape}: compiled code checks no bounds")  # fmt: skip
     tallies = np.zeros((PARTS, 64 * width + 1), np.int64)
     with _ONE_AT_A_TIME:
-        numba.set_num_threads(min(threads, numba.config.NUMBA_NUM_THREADS))
+        numba.set_num_threads(min(threads, MOST_THREADS))
         _scan(words, query, keep, far, out, tallies)
     return tallies.sum(axis=0)

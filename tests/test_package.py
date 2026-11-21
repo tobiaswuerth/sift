@@ -148,6 +148,14 @@ NOT_YET_STRICT = {  # the modules the type checker doesn't read yet. It only shr
     "sift/ui.py",
 }
 SILENCED = re.compile(r"#\s*(?:type:\s*ignore|pyright:)")
+# The findings silenced with the owner's yes, each for one rule in one place, saying why: the module, and its line.
+SILENCED_WITH_YES = {
+    # Numba's @intrinsic: compiled code calls it with the word alone, Numba passing its typing context first
+    (
+        "scan.py",
+        "distance += _popcount(words[i, k] ^ query[k])  # pyright: ignore[reportCallIssue]  # numba gives typingctx",
+    ),
+}
 
 
 def _pyright():
@@ -187,12 +195,14 @@ def test_nothing_silences_the_type_checker():
     assert sorted(settings) == ["include", "pythonVersion", "typeCheckingMode"], "no rule is set apart from strict"
     assert settings["typeCheckingMode"] == "strict"
     silenced = {
-        f"{path.name}:{n}"
+        (path.name, line.strip())
         for path in (ROOT / "sift").glob("*.py")
-        for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1)
+        for line in path.read_text(encoding="utf-8").split("\n")
         if SILENCED.search(line)
     }
-    assert silenced == set(), "fix what the checker finds; a rule silenced in one place needs the owner's yes first"
+    assert silenced == SILENCED_WITH_YES, (
+        "fix what the checker finds; a rule silenced in one place needs the owner's yes first, then SILENCED_WITH_YES"
+    )
 
 
 def test_chunks_are_cut_from_their_text_in_one_place():
