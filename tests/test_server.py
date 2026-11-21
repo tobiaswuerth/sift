@@ -15,7 +15,7 @@ import pytest
 from mcp import Client
 from mcp.server.mcpserver import MCPServer
 
-from sift import indexing, remote, server, vectors
+from sift import indexing, logs, remote, server, vectors
 from sift.catalog import Catalog
 from sift.hits import Options
 from sift.search import Index
@@ -771,6 +771,45 @@ def test_over_http_a_call_the_client_abandons_stops(embedded, fake_models, monke
 
     assert not anyio.run(main).is_error
     assert "interrupted" in str(stopped[0])
+
+
+def test_the_log_of_sift_serve_keeps_no_query(embedded, fake_models, monkeypatch, home):
+    # Every line of uvicorn's access log held the request's query: each UI search ("?q=..."), each document read
+    # ("?doc=...", "?id=..."), kept on disk in SIFT_HOME/logs for weeks. The path and the answer stay.
+    import urllib.request
+    from datetime import datetime
+
+    import uvicorn
+
+    servers, serve = [], uvicorn.Server.serve
+
+    async def recording(self, sockets=None):
+        servers.append(self)
+        await serve(self, sockets)
+
+    monkeypatch.setattr(uvicorn.Server, "serve", recording)
+    mcp, index = server.build(Index(embedded[0]))
+
+    async def main():
+        with anyio.fail_after(20):
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(server._serve, mcp, index, "127.0.0.1", 0, False, fake_models)
+                while not (servers and servers[0].started):
+                    await anyio.sleep(0.01)
+                port = servers[0].servers[0].sockets[0].getsockname()[1]
+                url = f"http://127.0.0.1:{port}/ui/?q=wombatsecret&doc=notes%2Frl.md"
+                await anyio.to_thread.run_sync(lambda: urllib.request.urlopen(url, timeout=10).close())
+                servers[0].should_exit = True
+
+    with logs.kept("serve", datetime(2026, 11, 21, 12, 0, 0)) as path:
+        anyio.run(main)
+    written = path.read_text(encoding="utf-8")
+    assert '"GET /ui/ HTTP/1.1" 200' in written
+    assert "wombatsecret" not in written
+    assert "rl.md" not in written
+    other = logging.makeLogRecord({"msg": "%s", "args": ("a line of another shape?x=1",)})
+    assert server._no_queries(other)
+    assert other.args == ("a line of another shape?x=1",)  # left as it is
 
 
 def test_http_shutdown_gives_up_on_unfinished_requests(embedded, fake_models, monkeypatch, capsys):

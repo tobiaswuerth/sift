@@ -495,6 +495,7 @@ async def serve_app(
         **options,
     )
     logging.getLogger("uvicorn.error").addFilter(_no_cancelled_requests)  # after Config, which sets up logging
+    logging.getLogger("uvicorn.access").addFilter(_no_queries)
     logs.attach("uvicorn", "uvicorn.access")
     await uvicorn.Server(config).serve()
 
@@ -506,6 +507,15 @@ def loop_options(stdio: bool = False) -> dict[str, Any]:
     if sys.platform == "win32" and not stdio:
         return {"loop_factory": asyncio.SelectorEventLoop}
     return {}
+
+
+def _no_queries(record: logging.LogRecord) -> bool:
+    """Leave the query out of a request's line in the access log, which is kept on disk: the UI's searches and the
+    documents read come in it ("?q=...", "?doc=..."). uvicorn hands over (client, method, path, version, status)."""
+    if isinstance(record.args, tuple) and len(record.args) == 5:
+        client, method, path, version, status = record.args
+        record.args = (client, method, str(path).partition("?")[0], version, status)
+    return True
 
 
 def _no_cancelled_requests(record: logging.LogRecord) -> bool:

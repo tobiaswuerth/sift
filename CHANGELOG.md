@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- The log of `sift serve` kept every request with its query, and with it every search made in the UI and every
+  document read there ("?q=...", "?doc=..."), on disk in SIFT_HOME/logs, up to 64 MB a log. Requests are logged
+  without their queries now. Logs written before keep theirs: delete them if they matter.
+
 ### Fixed
 
 - A note that opens with `---` and has another `---` line further down kept the lines between them out of every
