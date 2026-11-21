@@ -15,6 +15,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   text files, JSON Lines, and mail parts in a charset Python doesn't know; what is UTF-8 stays as it is. The next
   `sift index` reads again, once, every such file whose text holds a replacement character, a batch of documents at a
   time; `sift embed` then embeds the passages that changed.
+- A mail with an empty plain part beside its HTML, as some mail programs send, was indexed without its words: the
+  empty part was taken. Its HTML is read instead.
 
 ## [1.14.0] - 2026-11-21
 

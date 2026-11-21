@@ -705,21 +705,28 @@ def _in_utc(when: datetime) -> datetime:
 
 
 def _mail_text(msg: MIMEPart, fields: Fields) -> tuple[str, list[str]]:
-    """An email's text: its plain part, else its HTML part as Markdown, "" if it has none; and what went wrong."""
-    part = msg.get_body(preferencelist=("plain", "html"))
-    if part is None:
+    """An email's text: its plain part, else, if it has none or an empty one, as mail programs send beside the HTML,
+    its HTML part as Markdown; "" if it has neither; and what went wrong."""
+    plain = msg.get_body(preferencelist=("plain",))
+    if plain is not None and (text := _text_of(plain).replace("\r\n", "\n").strip()):
+        return text, []
+    html = msg.get_body(preferencelist=("html",))
+    if html is None:
         return "", []
-    try:
-        content = part.get_content()
-    except (LookupError, UnicodeError):  # a charset Python doesn't know: as UTF-8, with what doesn't decode replaced
-        content = decode(_payload(part))
-    if part.get_content_subtype() != "html":
-        return content.replace("\r\n", "\n").strip(), []
+    content = _text_of(html)
     try:
         text = _xberg(content.encode(), "mail.html").content.strip()
     except Exception as error:  # Xberg's converter panics on some HTML: the words are still worth having
         return _plain(content), [f"its HTML: read as plain text, as converting it failed ({error})"]
     return text, [] if text else ["its HTML: no text in it"]
+
+
+def _text_of(part: MIMEPart) -> str:
+    """A text part's content, in its charset; in one Python doesn't know, as a text file is read (see decode)."""
+    try:
+        return part.get_content()
+    except (LookupError, UnicodeError):
+        return decode(_payload(part))
 
 
 class _Words(HTMLParser):

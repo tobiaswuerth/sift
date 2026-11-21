@@ -321,6 +321,15 @@ def test_an_email_is_a_document_of_its_headers_and_text():
     assert "<h1>" not in doc.text  # its plain text, not the HTML beside it
 
 
+@pytest.mark.parametrize("plain", ["", " \n\n", "\r\n"])
+def test_a_mail_whose_plain_part_is_empty_reads_its_html(tmp_path, plain):
+    # Mail programs send an empty plain part beside the HTML one: the plain part was taken, and the mail's words lost.
+    path = email_file(tmp_path, body=plain, html="<p>Real content here, xyzzy.</p>", Subject="Offer")
+    (doc,), problems = readers.load(path)
+    assert "Real content here, xyzzy." in doc.text
+    assert problems == []
+
+
 def test_an_email_of_html_alone_reads_as_markdown(tmp_path):
     path = email_file(tmp_path, body=None, html="<h1>Offer</h1><p>Prices for <b>2027</b>.</p>", Subject="Offer")
     (doc,), _ = readers.load(path)
