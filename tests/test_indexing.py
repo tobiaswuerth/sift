@@ -479,7 +479,7 @@ def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):
     indexing.index(serial)
     assert pools == []
 
-    monkeypatch.setattr(indexing, "_cpus", lambda: 3)  # two workers, one CPU for writing
+    monkeypatch.setattr(indexing, "cpus", lambda: 3)  # two workers, one CPU for writing
     monkeypatch.setattr(indexing, "FILES_PER_WORKER", 1)
     monkeypatch.setattr(indexing, "WRITE_BATCH", 2)  # several batches in flight
     parallel = Catalog(tmp_path / "parallel")
@@ -516,7 +516,7 @@ def test_a_file_that_ends_its_reader_is_left_out_and_the_others_are_read(notes, 
     # A reader's native code that crashed took its worker process along. The pool said no more than that it was
     # broken: `sift index` ended in a traceback, and every later run met the same file in the same batch.
     write(notes / "poison.md", "# Poison\n")
-    monkeypatch.setattr(indexing, "_cpus", lambda: 3)  # two workers, one CPU for writing
+    monkeypatch.setattr(indexing, "cpus", lambda: 3)  # two workers, one CPU for writing
     monkeypatch.setattr(indexing, "FILES_PER_WORKER", 1)
     monkeypatch.setattr(indexing, "WRITE_BATCH", 2)  # several batches in flight, as one of them ends the pool
     monkeypatch.setattr(indexing, "_loaded", workers.ending)
@@ -593,7 +593,7 @@ def test_a_file_gets_more_time_the_larger_it_is():
 
 def test_small_updates_skip_worker_processes(corpus, monkeypatch, pools):
     catalog, root = corpus
-    monkeypatch.setattr(indexing, "_cpus", lambda: 64)
+    monkeypatch.setattr(indexing, "cpus", lambda: 64)
     write(root / "new.md", "# New\n")
     indexing.index(catalog)
     assert pools == []
@@ -611,19 +611,19 @@ def test_small_updates_skip_worker_processes(corpus, monkeypatch, pools):
     ],
 )
 def test_worker_count_adapts_to_machine_and_workload(monkeypatch, cpus, files, expected):
-    monkeypatch.setattr(indexing, "_cpus", lambda: cpus)
+    monkeypatch.setattr(indexing, "cpus", lambda: cpus)
     assert indexing.workers(files) == expected
 
 
 def test_cpus_respects_what_the_platform_allows(monkeypatch):
     monkeypatch.setattr(os, "process_cpu_count", lambda: 6, raising=False)  # Python 3.13+
-    assert indexing._cpus() == 6
+    assert indexing.cpus() == 6
     monkeypatch.delattr(os, "process_cpu_count")
     monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {0, 1, 2}, raising=False)  # Linux
-    assert indexing._cpus() == 3
+    assert indexing.cpus() == 3
     monkeypatch.delattr(os, "sched_getaffinity")
     monkeypatch.setattr(os, "cpu_count", lambda: None)  # unknown
-    assert indexing._cpus() == 1
+    assert indexing.cpus() == 1
 
 
 def test_index_selected_collections(corpus, tmp_path):
@@ -895,7 +895,7 @@ def test_retitling_an_unknown_collection(corpus):
 
 def test_a_few_big_files_still_get_workers(monkeypatch):
     # 424 JSON Lines files of arXiv are few files but gigabytes of records to parse
-    monkeypatch.setattr(indexing, "_cpus", lambda: 16)
+    monkeypatch.setattr(indexing, "cpus", lambda: 16)
     assert indexing.workers(424, 0) == 0
     assert indexing.workers(424, 5 << 30) == 15
     assert indexing.workers(2, 3 * indexing.BYTES_PER_WORKER) == 3

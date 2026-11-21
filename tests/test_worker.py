@@ -7,6 +7,7 @@ import os
 import re
 import select
 import socket
+import ssl
 import subprocess
 import sys
 import textwrap
@@ -356,6 +357,17 @@ def test_embedding_searching_and_serving_through_a_worker_never_load_pytorch(tmp
 def test_the_workers_certificate_is_checked_before_anything_is_sent(corpus, fake_models, live, configure):
     # A machine posing as the worker must get neither the token nor any text.
     configure(remote=f"https://{live.token}.{'A' * 43}@127.0.0.1:{live.port}")
+    with pytest.raises(ConnectionError, match="certificate"):
+        embed.embed_pending(corpus[0])
+    assert live.seen == []
+
+
+def test_a_worker_showing_no_certificate_is_refused_before_anything_is_sent(
+    corpus, fake_models, live, configure, monkeypatch
+):
+    # Python's TLS gives no certificate where the other side showed none; fingerprinting that ended in a TypeError.
+    configure(remote=live.url)
+    monkeypatch.setattr(ssl.SSLSocket, "getpeercert", lambda self, binary_form=False: None)
     with pytest.raises(ConnectionError, match="certificate"):
         embed.embed_pending(corpus[0])
     assert live.seen == []

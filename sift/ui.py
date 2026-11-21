@@ -22,6 +22,7 @@ from urllib.parse import urlencode, urlsplit
 from markupsafe import Markup, escape
 
 from . import console, jobs, readers, store
+from .filters import each
 from .hits import Hit, line_span
 from .queries import STOPWORDS
 
@@ -177,10 +178,6 @@ def _link(value: object) -> bool:
     return isinstance(value, str) and re.match(r"https?://\S+$", value) is not None
 
 
-def _values(value: Any | list[Any]) -> list[Any]:
-    return value if isinstance(value, list) else [value]
-
-
 def _facets(hits: Iterable[Hit], view: View) -> list[tuple[str, list[dict[str, Any]]]]:
     """For each front-matter field of the hits, its most common short values with their counts, as filters: first the
     fields whose values most hits share. A field whose values all differ, such as an id or a link, helps nobody
@@ -188,7 +185,7 @@ def _facets(hits: Iterable[Hit], view: View) -> list[tuple[str, list[dict[str, A
     counts: dict[str, Counter[Any]] = {}
     for hit in hits:
         for key, value in hit.get("fields", {}).items():
-            for one in map(_shown, _values(value)):
+            for one in map(_shown, each(value)):
                 if _short(one) and not _link(one):
                     counts.setdefault(key, Counter())[one] += 1
     facets: list[tuple[str, list[dict[str, Any]]]] = []
@@ -339,7 +336,7 @@ def _reader(index: "Index", view: View, pattern: re.Pattern[str] | None) -> Cont
     except ERRORS as e:
         return {"error": str(e)}
     listing = {"q": "", "similar": "", "c": "", "path": "", "f": (), "k": PAGE}  # all of them, wherever they are
-    fields_ = [(key, [_field(view, key, v) for v in _values(value)]) for key, value in document["fields"].items()]
+    fields_ = [(key, [_field(view, key, v) for v in each(value)]) for key, value in document["fields"].items()]
     text = document["text"]
     total = text.count("\n") + (not text.endswith("\n") and text != "")
     at = min(view.at or (max(1, span[0] - READER_LINES // 10) if span else 1), max(1, total))

@@ -141,24 +141,11 @@ def test_only_newlines_end_lines():
 
 NOT_YET_STRICT = {  # the modules the type checker doesn't read yet. It only shrinks: modules leave it, none joins it
     "sift/accelerator.py",
-    "sift/catalog.py",
-    "sift/cli.py",
-    "sift/embed.py",
-    "sift/indexing.py",
     "sift/local.py",
     "sift/ocr.py",
-    "sift/order.py",
-    "sift/postings.py",
-    "sift/readers.py",
     "sift/remote.py",
     "sift/scan.py",
-    "sift/search.py",
-    "sift/server.py",
-    "sift/store.py",
-    "sift/topk.py",
     "sift/ui.py",
-    "sift/upgrade.py",
-    "sift/vectors.py",
 }
 SILENCED = re.compile(r"#\s*(?:type:\s*ignore|pyright:)")
 
@@ -179,14 +166,26 @@ def test_the_modules_checked_for_types_only_grow():
     )
 
 
+def test_types_are_checked_for_the_python_whose_packages_they_read():
+    # Checked for 3.11 with the packages of 3.12, every NumPy call was an error: NumPy 2.5 needs 3.12, and its types
+    # name what only 3.12 has. pyright checks for the Python of CI's types job, whose packages it reads; that sift
+    # still runs on the oldest Python it claims, ruff's target and CI's tests there, at full coverage, hold.
+    toml = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    oldest = toml["project"]["requires-python"].removeprefix(">=")
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    types_job = ci.split("\n  types:\n", 1)[1].split("\n  test:\n", 1)[0]
+    assert f'python-version: "{_pyright()["pythonVersion"]}"' in types_job
+    assert toml["tool"]["ruff"]["target-version"] == "py" + oldest.replace(".", "")
+    assert f'python: ["{oldest}",' in ci
+    assert toml["tool"]["coverage"]["report"]["fail_under"] == 100
+
+
 def test_nothing_silences_the_type_checker():
     # Green by a rule switched off, or by a line the checker is told to pass over, says nothing: its settings are
-    # the strict ones and no more, for the oldest Python sift runs on, and no module talks it out of a finding.
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    # the strict ones and no more, and no module talks it out of a finding.
     settings = _pyright()
     assert sorted(settings) == ["include", "pythonVersion", "typeCheckingMode"], "no rule is set apart from strict"
     assert settings["typeCheckingMode"] == "strict"
-    assert project["requires-python"] == f">={settings['pythonVersion']}"
     silenced = {
         f"{path.name}:{n}"
         for path in (ROOT / "sift").glob("*.py")

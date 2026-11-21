@@ -306,7 +306,7 @@ class Codes:
         from 0 to every bit: each part of the codes in one pass (see `scan`)."""
         keep, word = self._keep(allowed, excluded), np.ascontiguousarray(query_bits).view(np.uint64)
         out, at, counts = np.empty(len(self.ids), np.uint16), 0, np.zeros(8 * len(query_bits) + 1, np.int64)
-        count: Measure = _compiled if _scan is not None and len(self.ids) >= COMPILED else _numpy
+        count = _compiled(_scan) if _scan is not None and len(self.ids) >= COMPILED else _numpy
         for part in self._parts:
             kept = None if keep is None else keep[at : at + len(part)]
             counts += count(part.view(np.uint64), word, kept, out[at : at + len(part)])
@@ -325,9 +325,13 @@ class Codes:
         return np.concatenate([np.empty(0, np.int64), *_threaded(block, range(0, len(distances), step))])
 
 
-def _compiled(words: NDArray[np.uint64], word: NDArray[np.uint64], keep: Mask | None, out: Distances) -> Ids:
-    """A part's distances and how many codes are at each, in one pass of compiled code (see `scan`)."""
-    return _scan.measure(words, word, _NONE if keep is None else keep, out, FAR, THREADS)
+def _compiled(scan: ModuleType) -> Measure:
+    """What measures a part's distances, and how many codes are at each, in one pass of `scan`'s compiled code."""
+
+    def count(words: NDArray[np.uint64], word: NDArray[np.uint64], keep: Mask | None, out: Distances) -> Ids:
+        return scan.measure(words, word, _NONE if keep is None else keep, out, FAR, THREADS)
+
+    return count
 
 
 def _numpy(words: NDArray[np.uint64], word: NDArray[np.uint64], keep: Mask | None, out: Distances) -> Ids:

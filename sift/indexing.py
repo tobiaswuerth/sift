@@ -18,7 +18,7 @@ from concurrent.futures.process import BrokenProcessPool
 from contextlib import nullcontext
 from itertools import takewhile
 from pathlib import Path
-from typing import Literal, NamedTuple, TypeVar, overload
+from typing import Literal, NamedTuple, TypeGuard, TypeVar, overload
 
 from . import console, embed, links, ocr, postings, readers, store
 from .ignore import NAME as SIFTIGNORE
@@ -34,7 +34,7 @@ BYTES_PER_WORKER = 32 << 20  # or this much content
 PROGRESS_LINES = 200  # at most this many progress updates per collection: printing is slow on Windows consoles
 WINDOWS = os.name == "nt"  # where "C:x.md", "sub./x.md" and "x.md:stream" name other files, or none
 
-Db = store.Connection
+Db = sqlite3.Connection
 Catalog = store.Catalog
 C = TypeVar("C", bound=store.Collection)
 
@@ -54,7 +54,7 @@ Info = (
 Entry = dict[str, str]  # {"id", "status"[, "note"]}
 
 
-def _cpus() -> int:
+def cpus() -> int:
     """CPUs this process may use, honouring affinity and container limits where the platform reports them."""
     process_cpu_count: Callable[[], int | None] | None = getattr(os, "process_cpu_count", None)  # Python 3.13+
     if process_cpu_count:
@@ -71,7 +71,7 @@ def workers(files: int, size: int = 0) -> int:
     One per CPU except the one the main process uses for writing, and at most one per FILES_PER_WORKER files or
     BYTES_PER_WORKER bytes, whichever allows more.
     """
-    return max(0, min(_cpus() - 1, max(files // FILES_PER_WORKER, size // BYTES_PER_WORKER)))
+    return max(0, min(cpus() - 1, max(files // FILES_PER_WORKER, size // BYTES_PER_WORKER)))
 
 
 def _batches(todo: Iterable[Item]) -> list[list[Item]]:
@@ -98,10 +98,10 @@ def _read(pool: "_Workers | None", fields: Fields, batch: list[Item]) -> Callabl
     what gives them, in the batch's order, when called: a file read as it is stored as its Records, unread, here, as
     workers hand over what they read whole."""
     whole = [(item[0], item[3]) for item in _whole(batch)]
-    started = pool.start(whole) if pool else None
+    running = (pool, pool.start(whole)) if pool else None
 
     def loaded() -> list[Loaded | readers.Records]:
-        read = iter(pool.results(started) if pool else _loaded_all(_loaded, [path for path, _ in whole], fields))
+        read = iter(running[0].results(running[1]) if running else _loaded_all(_loaded, [p for p, _ in whole], fields))
         streamed = readers.streamed
         return [readers.Records(path, fields) if streamed(path, size) else next(read) for path, _, _, size in batch]
 
@@ -222,10 +222,12 @@ def _insert(db: Db, sid: int, path: str, doc: readers.Doc) -> int:
     """Add a document, its chunks, its links and, if it is a whole file, its names, and return its id. Its keyword
     entries come with its file's (see _store)."""
     title, meta, text = map(_storable, (doc.title, json.dumps(doc.meta, ensure_ascii=False), doc.text))
-    doc_id = db.execute(
-        "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?)",
-        (sid, path, doc.digest, title, meta, text),
-    ).lastrowid
+    doc_id = store.inserted(
+        db.execute(
+            "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?)",
+            (sid, path, doc.digest, title, meta, text),
+        )
+    )
     _add_chunks(db, doc_id, doc.chunks)
     if doc.links or not doc.key:  # a JSON Lines record has no name, and no links: millions of them cost nothing
         links.save(db, [(doc_id, path, doc.meta, doc.links, not doc.key)])
@@ -516,7 +518,7 @@ def _reread(db: Db, files: Sequence[FileRow], fields: Fields) -> tuple[int, int]
         return 0, 0
     sql = "SELECT id, doc, pos, len, seq FROM chunks WHERE doc IN (SELECT value FROM json_each(?)) AND seq > 0"
     later = db.execute(sql, (json.dumps(list(changed)),)).fetchall()
-    texts = store.texts(db, (span for *span, _ in later))
+    texts = store.texts(db, ((chunk, doc, pos, length) for chunk, doc, pos, length, _ in later))
     stale = [
         chunk
         for chunk, doc, _, _, seq in later
@@ -534,7 +536,7 @@ class Reindexed(NamedTuple):
     the epoch of its codes after, how many vectors it counted after), read in the change's transaction, for a server to
     follow without loading every code again (see search.Index._patch)."""
 
-    files: list[tuple[Entry, list[int]] | None]
+    files: list[tuple[Entry, list[int]]]
     removed: list[int]
     versions: dict[int, tuple[str | None, str | None, str | None, int]]
 
@@ -546,7 +548,7 @@ def reindex(catalog: Catalog[C], paths: Sequence[str], scans: bool = True) -> Re
     "changed", "unchanged", "removed", "not found", "skipped" (no documents in it, with a "note" saying why) or
     "unreadable". In one transaction per collection. Without `scans`, scans to read with OCR are left for `sift
     index`, which reads their files again even if they don't change."""
-    if not isinstance(paths, list | tuple) or not all(isinstance(path, str) for path in paths):
+    if not _are_paths(paths):
         raise ValueError(f"paths must be a list of ids or absolute paths, got {paths!r}")
     if not paths:
         raise ValueError("paths needs at least one id or absolute path")
@@ -554,7 +556,7 @@ def reindex(catalog: Catalog[C], paths: Sequence[str], scans: bool = True) -> Re
         raise ValueError(f"at most {MOST_FILES:,} files at a time; `sift index` reads any number")
     files = list(dict.fromkeys(_locate(catalog, path) for path in paths))
     on_disk = [_reindex_read(catalog.store(c), c.path, c.choices, rel, scans) for c, rel in files]
-    found: list[tuple[Entry, list[int]] | None] = [None] * len(files)
+    found: dict[int, tuple[Entry, list[int]]] = {}  # by the file's place in `files`: a collection at a time
     removed: list[int] = []
     versions: dict[int, tuple[str | None, str | None, str | None, int]] = {}
     for collection in dict.fromkeys(c for c, _ in files):
@@ -573,7 +575,13 @@ def reindex(catalog: Catalog[C], paths: Sequence[str], scans: bool = True) -> Re
             db.rollback()
             raise
         postings.update(db, collection.store, collection.name, rebuild=False)  # quick: what changed, no more
-    return Reindexed(found, removed, versions)
+    return Reindexed([found[i] for i in range(len(files))], removed, versions)
+
+
+def _are_paths(paths: Sequence[object]) -> TypeGuard[list[str] | tuple[str, ...]]:
+    """Whether `paths` is a list of paths, as a caller that isn't type-checked may get wrong: one path, not in a list,
+    is a sequence of its characters."""
+    return isinstance(paths, list | tuple) and all(isinstance(path, str) for path in paths)
 
 
 def _locate(catalog: Catalog[C], path: str) -> tuple[C, str]:
@@ -763,11 +771,17 @@ def _reindex_file(
             return entry | {"status": "not found"}, [], []
         _drop_source(db, sid)
         return entry | {"status": "removed"}, [], [chunk for _, chunk in chunks]
-    if read is None:
+    if read is None or isinstance(info, OSError):  # an error kept it from being stat'ed: it can't be read either
         return entry | {"status": "unreadable"}, [], []
     if isinstance(read, Exception):  # its reader failed: said, as `sift index` says it, and the others are read
         return entry | {"status": "unreadable", "note": f"{type(read).__name__}: {read}"}, [], []
-    docs, problems, twice = (read, [], read.twice) if isinstance(read, readers.Records) else (*read, None)
+    problems: list[str]
+    docs: Iterable[readers.Doc]
+    if isinstance(read, readers.Records):  # read as it is stored, while it is written
+        records, docs, problems = read, read, []
+    else:
+        records, (docs, problems) = None, read
+    twice = records.twice if records else None
     db.execute("SAVEPOINT file")
     sid = _source(db, rel, make=True)
     had = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0]
@@ -779,8 +793,8 @@ def _reindex_file(
         return entry | {"status": "unreadable", "note": str(refused)}, [], []
     finally:
         db.execute("RELEASE file")
-    if twice:  # read as it was stored: what it skipped is known now
-        problems += read.problems
+    if records and twice:  # read as it was stored: what it skipped is known now
+        problems += records.problems
     mtime = None if left else info.st_mtime_ns  # no time: `sift index` takes it for changed
     db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (mtime, info.st_size, sid))
     now = [d for (d,) in db.execute("SELECT id FROM docs WHERE source = ?", (sid,))]
@@ -893,7 +907,7 @@ def index(catalog: Catalog[C], names: Sequence[str] | None = None) -> None:
         try:
             _index_collection(db, c.name, c.path, c.choices, ignore)
             store.list_basenames(db, c.name)
-            postings.update(db, c.store, c.name, _cpus() - 1)
+            postings.update(db, c.store, c.name, cpus() - 1)
         except sqlite3.DatabaseError as error:  # one store damaged stops no other collection
             db.rollback()
             console.say(f"{store.damage(c.name, error)}; skipped")

@@ -230,7 +230,7 @@ def test_a_damaged_document_is_reported_once_and_read_again_when_it_changes(libr
 
 def test_documents_are_converted_in_worker_processes(library, tmp_path, monkeypatch, pools):
     catalog, root = library
-    monkeypatch.setattr(indexing, "_cpus", lambda: 3)  # two workers, one CPU for writing
+    monkeypatch.setattr(indexing, "cpus", lambda: 3)  # two workers, one CPU for writing
     monkeypatch.setattr(indexing, "FILES_PER_WORKER", 1)
     parallel = Catalog(tmp_path / "parallel")
     parallel.add(root, "library")

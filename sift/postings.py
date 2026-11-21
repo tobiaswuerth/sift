@@ -184,10 +184,11 @@ def varints(blob: bytes) -> tuple[Ids, Ids]:
     if not len(raw):  # as FTS5's totals of an index that never held a row
         return np.zeros(0, np.int64), np.zeros(0, np.int64)
     last = (raw & 0x80) == 0
-    starts = np.flatnonzero(np.r_[True, last[:-1]])
-    which = np.cumsum(np.r_[True, last[:-1]]) - 1  # the number each byte belongs to
+    first = np.concatenate(([True], last[:-1]))  # where a number starts: after the last byte of the one before
+    starts = np.flatnonzero(first)
+    which = np.cumsum(first) - 1  # the number each byte belongs to
     place = np.arange(len(raw)) - starts[which]
-    size = np.diff(np.r_[starts, len(raw)])
+    size = np.diff(np.append(starts, len(raw)))
     weights = (raw & 0x7F).astype(np.float64) * np.exp2(7.0 * (size[which] - 1 - place))
     return np.bincount(which, weights=weights, minlength=len(starts)).astype(np.int64), starts
 
@@ -325,7 +326,7 @@ class _Chunks:
         if not len(self.ids):
             return np.zeros(len(chunks), np.int64), np.zeros(len(chunks), np.int64), np.zeros(len(chunks), bool)
         at = np.minimum(np.searchsorted(self.ids, chunks), len(self.ids) - 1)
-        return np.asarray(self.places[at]), np.asarray(self.lengths[at]), np.asarray(self.ids[at] == chunks)
+        return np.asarray(self.places[at]), np.asarray(self.lengths[at]), np.equal(self.ids[at], chunks)
 
 
 def _encoded(term: str, chunks: Ids, tf: Ids, held: _Chunks, average: float, ranged: bool) -> Encoded | None:
@@ -452,7 +453,7 @@ def _build(db: store.Connection, path: str | Path, name: str, workers: int) -> N
 
 def _first(db: sqlite3.Connection) -> int:
     """The id before the collection's first chunk: places count from it, as ids do."""
-    return store.first_id(int(store.get_meta(db, "collection")))
+    return store.first_id(store.collection_id(db))
 
 
 def _topical(db: sqlite3.Connection, ids: Ids, name: str) -> Ids | None:
@@ -630,8 +631,8 @@ def _delta(db: store.Connection, merge: bool = False) -> None:
     dirty = [c for (c,) in db.execute("SELECT chunk FROM kw_dirty WHERE change <= ?", (change,))]
     kept = _delta_places(db) if merge else {}  # the deltas' chunks keep their places: the deltas go
     taken = sorted(set(dirty) | set(kept)) if merge else dirty
-    used, first = store.get_meta(db, "kw_order") if _ordered(db) else None, _first(db)
-    start = None if used is None else first + 1 + int(used)
+    order, first = store.get_meta(db, "kw_order") if _ordered(db) else None, _first(db)
+    start = None if order is None else first + 1 + int(order)  # where the chunks placed anew go, if they are
     encoded, ids, places, lengths, new = _tokenized(db, taken, kept, start)
     db.execute("BEGIN IMMEDIATE")
     try:
@@ -646,9 +647,9 @@ def _delta(db: store.Connection, merge: bool = False) -> None:
         _write_terms(db, segment, encoded, itertools.count(first_key))
         by_place = np.argsort(places, kind="stable")
         _write_lengths(db, segment, places[by_place], lengths[by_place])
-        if used is not None:
+        if start is not None:
             _write_order(db, start, new, first)
-            store.set_meta(db, "kw_order", int(used) + len(new))
+            store.set_meta(db, "kw_order", start - first - 1 + len(new))
         db.execute(
             "INSERT INTO kw_segments(id, chunks, tokens) VALUES(?, ?, ?)", (segment, len(ids), int(lengths.sum()))
         )
@@ -705,21 +706,34 @@ def _tokenized(
 # --- reading -------------------------------------------------------------------
 
 
-class Term:
-    """A term's postings in one segment: `df` of them. A short list is read whole (everything); a long one by its
-    ranges, then the postings of some of them."""
+class _TermPart:
+    """A term's postings in one segment: `df` of them."""
 
-    def __init__(self, reader: "Reader", segment: int, df: int, key: int | None, data: bytes | None) -> None:
-        self.reader, self.segment, self.df, self.key, self.data = reader, segment, df, key, data
+    def __init__(self, reader: "Reader", segment: int, df: int) -> None:
+        self.reader, self.segment, self.df = reader, segment, df
 
-    @property
-    def long(self) -> bool:
-        return self.key is not None
+
+class Short(_TermPart):
+    """A short list, stored in its row of kw_terms, read whole."""
+
+    def __init__(self, reader: "Reader", segment: int, df: int, data: bytes) -> None:
+        super().__init__(reader, segment, df)
+        self.data = data
 
     def everything(self) -> tuple[Ids, Counts]:
         """(places, counts), all of them."""
-        if not self.long:
-            return decode_block(self.data)
+        return decode_block(self.data)
+
+
+class Long(_TermPart):
+    """A long list, stored in blocks under its key, with the ranges that say where its postings are."""
+
+    def __init__(self, reader: "Reader", segment: int, df: int, key: int) -> None:
+        super().__init__(reader, segment, df)
+        self.key = key
+
+    def everything(self) -> tuple[Ids, Counts]:
+        """(places, counts), all of them."""
         _, starts, ends, _ = self.ranges()
         return self.postings(starts[:1], ends[-1:])
 
@@ -740,6 +754,9 @@ class Term:
             at = idx[start:end] - n * BLOCK
             ids[start:end], tf[start:end] = held_ids[at], held_tf[at]
         return ids, tf
+
+
+Term = Short | Long  # a short list is read whole (everything); a long one by its ranges, then some postings
 
 
 def slices(starts: Ids, ends: Ids) -> Ids:
@@ -820,7 +837,10 @@ class Reader:
     def term(self, term: str) -> list[Term]:
         """The term's postings, a Term per segment that has any."""
         rows = self.db.execute("SELECT segment, df, list, data FROM kw_terms WHERE term = ?", (term,))
-        return [Term(self, *row) for row in rows]
+        return [
+            Short(self, segment, df, data) if key is None else Long(self, segment, df, key)
+            for segment, df, key, data in rows
+        ]
 
     def _ranges(self, key: int) -> Ranges:
         return decode_ranges(self._blob(key << 24))

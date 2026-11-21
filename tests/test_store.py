@@ -1121,3 +1121,21 @@ def test_only_the_chunks_of_long_documents_are_cut_in_python(tmp_path, statement
     db.execute("CREATE VIRTUAL TABLE temp.terms USING fts5vocab(main, fts, row)")
     assert [term for term, *_ in db.execute("SELECT * FROM temp.terms")] == ["stays"]
     catalog.close()
+
+
+def test_the_row_an_insert_made_is_its_rowid():
+    # The sqlite3 module types lastrowid optional: a cursor that has run no statement has none.
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE t (x)")
+    assert store.inserted(db.execute("INSERT INTO t VALUES (1)")) == 1
+    assert store.inserted(db.execute("INSERT INTO t VALUES (2)")) == 2
+    with pytest.raises(ValueError, match="made no row"):
+        store.inserted(db.cursor())
+
+
+def test_a_store_names_its_collection(tmp_path):
+    db = store.connect(tmp_path / "notes.sqlite", 7, create=True)
+    assert store.collection_id(db) == 7
+    db.execute("DELETE FROM meta WHERE key = 'collection'")
+    with pytest.raises(LookupError, match="names no collection"):  # it was int(None): a TypeError
+        store.collection_id(db)

@@ -113,8 +113,8 @@ def _embed(
 
         for vectors in models.encode_batches(batches()):
             slab, part = on_gpu.popleft()
-            if slab.add(part, vectors):
-                writer.write(slab)
+            if (full := slab.add(part, vectors)) is not None:
+                writer.write(slab, full)
             done += len(part)
             progress.update(done, tally.total)
     return done, writer.broken
@@ -158,13 +158,13 @@ class _Slab:
         self.vectors: Vectors | None = None
         self._left = len(texts)
 
-    def add(self, part: list[int], vectors: Vectors) -> bool:
-        """Take the vectors of a part; returns whether all are in."""
+    def add(self, part: list[int], vectors: Vectors) -> Vectors | None:
+        """Take the vectors of a part; returns the slab's vectors once all are in."""
         if self.vectors is None:
             self.vectors = np.empty((len(self.texts), vectors.shape[1]), np.float16)
         self.vectors[part] = vectors
         self._left -= len(part)
-        return not self._left
+        return None if self._left else self.vectors
 
 
 class _End(Enum):
@@ -248,14 +248,14 @@ class _Writer:
         if kind is None:
             self._settle(self._writes)
 
-    def write(self, slab: _Slab) -> None:
+    def write(self, slab: _Slab, vectors: Vectors) -> None:
         self._settle([w for w in self._writes if w.done()])
-        self._writes.append(self._pool.submit(self._store, slab))
+        self._writes.append(self._pool.submit(self._store, slab, vectors))
 
-    def _store(self, slab: _Slab) -> int:
+    def _store(self, slab: _Slab, vectors: Vectors) -> int:
         with self.turn:
             try:
-                stored, broken = _store_vectors(slab.db, slab.ids, slab.vectors, self.model)
+                stored, broken = _store_vectors(slab.db, slab.ids, vectors, self.model)
             except BaseException:
                 slab.db.rollback()  # none of the slab, rather than part of it in the next slab's commit
                 raise
@@ -329,15 +329,16 @@ def by_length(models: _models.Models, texts: list[str]) -> list[list[int]]:
     return [order[start : start + step] for start in range(0, len(order), step)]
 
 
-def encode(models: _models.Models, texts: list[str]) -> Vectors | None:
-    """Vectors for texts, embedded in batches of similar length (by_length), one call to the models each."""
+def encode(models: _models.Models, texts: list[str]) -> Vectors:
+    """Vectors for texts, embedded in batches of similar length (by_length), one call to the models each; for no
+    texts none, and no call."""
     vectors: Vectors | None = None
     for part in by_length(models, texts):
         out = models.encode([texts[i] for i in part])
         if vectors is None:
             vectors = np.empty((len(texts), out.shape[1]), np.float16)
         vectors[part] = out
-    return vectors
+    return np.empty((0, 0), np.float16) if vectors is None else vectors
 
 
 def _store_vectors(db: sqlite3.Connection, chunks: list[int], vectors: Vectors, model: str) -> tuple[int, int]:

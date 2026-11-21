@@ -368,7 +368,7 @@ def test_terms_in_ranges_apart(tmp_path, home, monkeypatch):
             write(root / f"n{i:03}.md", f"# n{i}\n\n{term} words {f'{term} ' * (i % 3)}\n")
         indexing.index(catalog)
     readers, groups = [reader(catalog, "apart")], []
-    assert all(t.long for term in ("alpha", "beta") for t in readers[0].term(term))
+    assert all(isinstance(t, postings.Long) for term in ("alpha", "beta") for t in readers[0].term(term))
     real = topk._Store._score
     monkeypatch.setattr(topk._Store, "_score", lambda self, group: groups.append(group.tolist()) or real(self, group))
     query = ("or", [("term", "alpha"), ("term", "beta")])

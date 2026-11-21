@@ -66,7 +66,8 @@ class _Connection(http.client.HTTPSConnection):
         found = socket.getaddrinfo(self.host, self.port, type=socket.SOCK_STREAM)
         address = min(found, key=lambda a: a[0] != socket.AF_INET)[4][:2]  # IPv4 if the name has one
         self.sock = self._tls.wrap_socket(socket.create_connection(address, self.timeout), server_hostname=self.host)
-        if fingerprint(self.sock.getpeercert(binary_form=True)) != self._pin:
+        der = self.sock.getpeercert(binary_form=True)  # None where the worker showed no certificate
+        if der is None or fingerprint(der) != self._pin:
             self.close()
             address = f"https://{self.host}:{self.port}"
             raise RemoteError(f"embedding remote {address} has another certificate than its key: not that worker")

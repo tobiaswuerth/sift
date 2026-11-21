@@ -26,7 +26,7 @@ from numpy.typing import NDArray
 from . import console, embed, expression, indexing, links, postings, queries, readers, store, topk
 from . import models as _models
 from .catalog import Catalog, Collection
-from .filters import comparison, json_path
+from .filters import comparison, conditions, each, json_path
 from .hits import (
     MOST_HITS,
     Hit,
@@ -85,8 +85,7 @@ def _target(spec: str) -> str:
 
 def _wikilinks(value: Any) -> list[str]:
     """The filter values among `value`, one or a list, that are wikilinks."""
-    values: list[Any] = value if isinstance(value, list) else [value]
-    return [v for v in values if isinstance(v, str) and readers.WIKILINK_VALUE.fullmatch(v.strip())]
+    return [v for v in each(value) if isinstance(v, str) and readers.WIKILINK_VALUE.fullmatch(v.strip())]
 
 
 def _ids(ids: Iterable[int]) -> str:
@@ -100,7 +99,7 @@ MORE_CANDIDATES = 20  # each collection gives this many more of its best, or as 
 def _totals(db: Db) -> tuple[int, int]:
     """The rows of a store's keyword index, and the tokens they hold in all: FTS5's record of them."""
     row = db.execute("SELECT block FROM fts_data WHERE id = 1").fetchone()
-    numbers = postings.varints(row[0])[0].tolist() if row else []
+    numbers: list[int] = postings.varints(row[0])[0].tolist() if row else []
     return (numbers[0], sum(numbers[1:])) if numbers else (0, 0)  # none: an index that never held a row
 
 
@@ -181,6 +180,14 @@ class _Held(NamedTuple):
     epoch: str | None = None
     stored: int | None = None
     last: int = -1
+
+
+def _appended_to(held: _Held | None, epoch: str | None, count: int) -> int | None:
+    """How many codes `held` counted as its store did, if the store has only added codes since, `count` now, in the
+    same `epoch`; None if they are to be read anew."""
+    if held is None or held.stored is None or held.epoch != epoch or count < held.stored:
+        return None
+    return held.stored
 
 
 def _held(db: Db) -> _Held | None:
@@ -503,20 +510,20 @@ class Index:
             field = json_path(key)
             if value == {}:
                 raise ValueError(f"filter {key!r} has no condition")
-            conditions: dict[str, Any] = value if isinstance(value, dict) else {"=": value}
-            some = [comparison(key, op, v) for op, v in conditions.items() if op != "not"]
+            given = conditions(value)
+            some = [comparison(key, op, v) for op, v in given.items() if op != "not"]
             if some:
                 condition = f"EXISTS (SELECT 1 FROM json_each(d.meta, ?) WHERE {' AND '.join(c for c, _ in some)})"
                 args += [field, *(arg for _, condition_args in some for arg in condition_args)]
-                if list(conditions) == ["="] and (linked := self._linking(key, conditions["="], scope, resolvers)):
+                if list(given) == ["="] and (linked := self._linking(key, given["="], scope, resolvers)):
                     condition = f"({condition} OR d.id IN (SELECT value FROM json_each(?)))"
                     args.append(_ids(linked))
                 sql.append(condition)
-            if "not" in conditions:
-                condition, condition_args = comparison(key, "not", conditions["not"])
+            if "not" in given:
+                condition, condition_args = comparison(key, "not", given["not"])
                 sql.append(f"NOT EXISTS (SELECT 1 FROM json_each(d.meta, ?) WHERE {condition})")
                 args += [field, *condition_args]
-                if linked := self._linking(key, conditions["not"], scope, resolvers):
+                if linked := self._linking(key, given["not"], scope, resolvers):
                     sql.append("d.id NOT IN (SELECT value FROM json_each(?))")
                     args.append(_ids(linked))
         allowed = self._linked(links_to, linked_from, scope, resolvers)
@@ -637,6 +644,7 @@ class Index:
         every = f"""WITH p AS MATERIALIZED ({passages}),
                     best AS (SELECT doc FROM p GROUP BY doc ORDER BY max(score) DESC LIMIT ?)
                     SELECT passage, doc, score FROM p WHERE doc IN (SELECT doc FROM best)"""
+        errors: list[sqlite3.OperationalError] = []
         for attempt in (match, queries.as_phrases(match)):
             phrases = queries.phrases_of(attempt) if len(scope) > 1 else None
             each = k if not phrases else k + max(k, MORE_CANDIDATES)  # a collection's best may rank otherwise
@@ -646,14 +654,14 @@ class Index:
             except sqlite3.OperationalError as e:
                 if not expression.rejected(attempt):  # the store's trouble, or a call cancelled: not the query's
                     raise
-                error = e
+                errors.append(e)
                 continue
             if phrases:
                 found = self._as_one(found, phrases)
             ranked = sorted((row for rows in found.values() for row in rows), key=lambda row: -row[2])
             ranked = ranked if all_passages else _first_of_each(ranked, itemgetter(1))
             return [(passage, score) for passage, _, score in ranked[:k]]
-        raise ValueError(f"invalid search query {match!r}: {error}")
+        raise ValueError(f"invalid search query {match!r}: {errors[-1]}")
 
     def _ready(self, scope: Scope) -> list[postings.Reader] | None:
         """The keyword postings of the collections of `scope`, one postings.Reader each, or None if any has none
@@ -753,9 +761,10 @@ class Index:
             except Exception as error:  # a disk that failed, no room for a second copy: read again for the next search
                 self._warn(f"{collection.name}: its vectors' codes could not be read again: {error}")
             else:
-                self.vectors[cid] = found
                 if found is None:
-                    self.vectors.pop(cid)
+                    self.vectors.pop(cid, None)
+                else:
+                    self.vectors[cid] = found
 
     def _follow(self, collection: Collection) -> None:
         """Bring the codes held of a collection up to its store (see load)."""
@@ -767,11 +776,11 @@ class Index:
             if held is not None and version is not None and held.version == version:
                 return
             count, epoch = store.counts(db)["vectors"], store.get_meta(db, "codes_epoch")
-            appended = held is not None and held.stored is not None and held.epoch == epoch and count >= held.stored
-            most = count - held.stored + 1 if appended else count
+            stored = _appended_to(held, epoch, count)
+            most = count - stored + 1 if stored is not None else count
             tail = store.read_codes(db, after=held.last, most=most) if held is not None and count else None
-        if tail and tail[1].shape[1] != held.codes.width:  # another model's codes, after a reset: all read anew
-            tail, appended = None, False
+        if tail and held is not None and tail[1].shape[1] != held.codes.width:  # another model's, after a reset
+            tail, stored = None, None  # all read anew
         if not count:  # no vectors at all, as after `sift embed --reset`: no search can find any
             self.vectors.pop(cid, None)
             self._reading.pop(cid, None)  # of the vectors gone
@@ -779,7 +788,7 @@ class Index:
             self._reading.pop(cid, None)  # older than what is read now
             if (found := _held(db)) is not None:
                 self.vectors[cid] = found
-        elif appended and len(tail[0] if tail else ()) == count - held.stored:
+        elif stored is not None and len(tail[0] if tail else ()) == count - stored:
             codes, last = (held.codes.appended(*tail), int(tail[0][-1])) if tail else (held.codes, held.last)
             self.vectors[cid] = _Held(version, codes, epoch, count, last)
         else:  # read anew; meanwhile the codes past the last held join them, so that a note just embedded is found
@@ -856,10 +865,12 @@ class Index:
         held: list[Codes] = []
         width = codes(query[None, :]).shape[1]
         for c in scope:
-            if c.id in self.vectors and (theirs := self.vectors[c.id][1]).width != width:
+            if (theirs := self.vectors.get(c.id)) is None:
+                continue
+            if theirs.codes.width != width:
                 self._warn(f"{c.name} was embedded with another model: `sift embed --reset` embeds it with this one")
-            elif c.id in self.vectors:
-                held.append(theirs)
+            else:
+                held.append(theirs.codes)
 
         def exact(ids: Ids) -> tuple[Ids, NDArray[np.float16]]:
             return self._exact(ids, len(query))
@@ -1129,11 +1140,11 @@ class Index:
     def _find(self, id: str) -> Doc:
         """The document `id` names (see `get`), as (row id, whole id, title, meta, text)."""
         collection, rows = self._place(id)[0], self._rows(id)
+        if collection is None or not rows:  # no collection: no rows
+            raise LookupError(f"unknown document {id!r}")
         if len(rows) > 1:
             matches = ", ".join(f"{collection.name}/{row[1]}" for row in rows[:5]) + (", ..." if len(rows) > 5 else "")
             raise LookupError(f"{id!r} matches {matches}; give the whole id")
-        if not rows:
-            raise LookupError(f"unknown document {id!r}")
         doc, path, title, meta, text = rows[0]
         return doc, f"{collection.name}/{path}", title, meta, text
 
@@ -1316,8 +1327,7 @@ class Index:
         meta = json.loads(meta)
         names = [posixpath.splitext(whole.rsplit("/", 1)[-1])[0], *links.aliases(meta)]
         for value in [meta.get("title"), *(meta.get(field) for field in also or [])]:
-            listed: list[Any] = value if isinstance(value, list) else [value]
-            names += [v for v in listed if isinstance(v, str)]
+            names += [v for v in each(value) if isinstance(v, str)]
         phrases: dict[str, str] = {}
         for name in names:
             for variant in (name, name.translate(UMLAUTS)):
@@ -1350,12 +1360,13 @@ class Index:
                  WHERE c.doc IN (SELECT value FROM json_each(?))"""
         results: list[dict[str, Any]] = []
         for entry, docs in done.files:
+            shown: dict[str, Any] = dict(entry)
             if entry["status"] in ("added", "changed", "unchanged"):
                 chunks, embedded = self._db(docs[0]).execute(sql, (json.dumps(docs),)).fetchone() if docs else (0, 0)
-                entry |= {"chunks": chunks, "embedded": embedded}
+                shown |= {"chunks": chunks, "embedded": embedded}
                 if note and embedded < chunks:
-                    entry["note"] = "; ".join(filter(None, [entry.get("note"), note]))
-            results.append(entry)
+                    shown["note"] = "; ".join(filter(None, [entry.get("note"), note]))
+            results.append(shown)
         return results
 
     def _embed_new(self, docs: Iterable[int]) -> str | None:

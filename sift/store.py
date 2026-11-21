@@ -209,6 +209,13 @@ def scratch(db: Connection) -> Generator[None]:
         db.scratch += db.total_changes - before
 
 
+def inserted(cursor: sqlite3.Cursor) -> int:
+    """The rowid of the row the INSERT `cursor` ran made."""
+    if cursor.lastrowid is None:
+        raise ValueError("the cursor made no row: it ran no INSERT")
+    return cursor.lastrowid
+
+
 def changes(db: Connection) -> tuple[int, int]:
     """How SQLite counts a database's changes through a connection: those other connections committed, and the rows
     the connection changed itself, but those in tables of its own (see scratch)."""
@@ -539,7 +546,7 @@ def read_codes(db: sqlite3.Connection, after: int | None = None, most: int | Non
         rows = np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)
         ids[row : row + len(batch)], bits[row : row + len(batch)] = [chunk for chunk, _ in batch], rows
         row += len(batch)
-    return (ids[:row], bits[:row]) if row else None  # none, or all deleted meanwhile
+    return None if bits is None else (ids[:row], bits[:row])  # none, or all deleted meanwhile
 
 
 def add_codes(db: sqlite3.Connection) -> None:
@@ -636,6 +643,14 @@ def get_meta(db: sqlite3.Connection, key: str, default: _D) -> str | _D: ...
 def get_meta(db: sqlite3.Connection, key: str, default: object = None) -> object:
     row = db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
     return row[0] if row else default
+
+
+def collection_id(db: sqlite3.Connection) -> int:
+    """The id of the collection whose store `db` is, as the catalog gave it when the store was made."""
+    cid = get_meta(db, "collection")
+    if cid is None:
+        raise LookupError("this index names no collection: it is damaged; remove its collection and index it again")
+    return int(cid)
 
 
 def set_meta(db: sqlite3.Connection, key: str, value: object) -> None:

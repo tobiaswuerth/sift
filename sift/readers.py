@@ -324,11 +324,12 @@ def _record(obj: dict[str, Any], line: int, fields: Fields) -> Doc | None:
     TEXT_FIELDS, else the longest string; the title one of TITLE_FIELDS; the id one of ID_FIELDS, else the line
     number. Every field but the text is metadata, as front matter is for Markdown."""
     id_key = fields.get("id") or next((k for k in ID_FIELDS if k in obj), None)
-    key = obj.get(id_key)
+    key = obj.get(id_key) if id_key else None
     key = str(line) if key is None or key == "" else str(key)
     title_key = fields.get("title") or next((k for k in TITLE_FIELDS if _as_text(obj.get(k))), None)
-    text_keys = fields.get("text") or [next((k for k in TEXT_FIELDS if _as_text(obj.get(k))), None)]
-    if text_keys == [None]:  # no known text field: the longest string is the text
+    known = next((k for k in TEXT_FIELDS if _as_text(obj.get(k))), None)
+    text_keys: list[str] = fields.get("text") or ([known] if known else [])
+    if not text_keys:  # no known text field: the longest string is the text
         strings = [(len(v), k) for k, v in obj.items() if k not in (id_key, title_key) and isinstance(v, str)]
         text_keys = [max(strings)[1]] if strings else []
     body = "\n\n".join(t for k in text_keys if (t := _as_text(obj.get(k))))
@@ -684,7 +685,7 @@ def _mail_text(msg: MIMEPart, fields: Fields) -> tuple[str, list[str]]:
     try:
         content = part.get_content()
     except (LookupError, UnicodeError):  # a charset Python doesn't know: as UTF-8, with what doesn't decode replaced
-        content = decode(part.get_payload(decode=True) or b"")
+        content = decode(_payload(part))
     if part.get_content_subtype() != "html":
         return content.replace("\r\n", "\n").strip(), []
     try:
@@ -770,14 +771,19 @@ def _content(part: MIMEPart, name: str) -> bytes:
     """An attachment's bytes: a mail attached as message/rfc822 as that mail's, a text file's as UTF-8."""
     if (mail := _attached_mail(part)) is not None:
         return mail.as_bytes()
-    raw = part.get_payload(decode=True) or b""
+    raw = _payload(part)
     return _as_utf8(raw, part.get_content_charset()) if extension(name) in TEXT else raw
+
+
+def _payload(part: MIMEPart) -> bytes:
+    """A part's bytes, its transfer encoding undone; none of a part that holds parts."""
+    raw = part.get_payload(decode=True)
+    return raw if isinstance(raw, bytes) else b""
 
 
 def _attached_mail(part: MIMEPart) -> MIMEPart | None:
     """The mail a message/rfc822 attachment holds, or None."""
-    payload = part.get_payload() if part.get_content_type() == "message/rfc822" else None
-    return payload[0] if isinstance(payload, list) and payload else None
+    return next(part.iter_parts(), None) if part.get_content_type() == "message/rfc822" else None
 
 
 def _within(key: str, inner: str) -> str:

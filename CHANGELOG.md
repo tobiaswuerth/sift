@@ -22,6 +22,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A worker that shows no certificate is refused as one showing another than its key names: "has another
+  certificate than its key", before anything is sent. It ended in a TypeError.
+- A collection's index that doesn't say which collection it is, as only damage leaves one, says so, and what to do,
+  when its keyword index is built or brought up to date: it ended in a TypeError.
 - `sift index` keeps what is indexed of a collection whose folder holds none of its files any more, and says so,
   with how to let it go (`sift rm NAME`). A drive not mounted leaves its folder there, empty, as does a folder being
   filled anew: every document went, and the vectors embedded for them.

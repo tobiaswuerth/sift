@@ -142,22 +142,35 @@ include = [
     "sift/__init__.py",
     "sift/__main__.py",
     "sift/bench.py",
+    "sift/catalog.py",
+    "sift/cli.py",
     "sift/console.py",
+    "sift/embed.py",
     "sift/expression.py",
     "sift/filters.py",
     "sift/hits.py",
     "sift/ignore.py",
+    "sift/indexing.py",
     "sift/jobs.py",
     "sift/links.py",
     "sift/logs.py",
     "sift/models.py",
+    "sift/order.py",
+    "sift/postings.py",
     "sift/queries.py",
+    "sift/readers.py",
+    "sift/search.py",
+    "sift/server.py",
     "sift/settings.py",
+    "sift/store.py",
+    "sift/topk.py",
     "sift/update.py",
+    "sift/upgrade.py",
+    "sift/vectors.py",
     "sift/worker.py",
 ]
 typeCheckingMode = "strict"
-pythonVersion = "3.11"  # the oldest sift runs on
+pythonVersion = "3.12"  # CI's types job's, whose packages pyright reads; the oldest sift runs on, ruff and the tests hold
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -3,11 +3,12 @@ reranker reads of a hit beside them, and how its scores blend with the cosines. 
 
 import json
 import re
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
+from .filters import each
 from .hits import Hit
 
 STOPWORDS = set(
@@ -57,11 +58,6 @@ def any_word(query: str) -> str:
     return " OR ".join(f'"{w}"' for w in dict.fromkeys(words(query)))
 
 
-def _each(value: Any) -> list[Any]:
-    """The values of a front-matter field: a list's, or the one."""
-    return cast("list[Any]", value) if isinstance(value, list) else [value]
-
-
 def named(hit: Hit, asked: set[str]) -> list[str]:
     """The front-matter values of a hit, but its title, that share a word with the query `asked` (a set of words):
     an author's name, an id."""
@@ -70,7 +66,7 @@ def named(hit: Hit, asked: set[str]) -> list[str]:
         str(value)
         for key, field in meta.items()
         if key != "title"
-        for value in _each(field)
+        for value in each(field)
         if asked & set(words(value))
     ]
 

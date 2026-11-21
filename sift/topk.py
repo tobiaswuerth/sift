@@ -27,7 +27,7 @@ from .vectors import Ids, Mask
 Leaf = str | tuple[str, ...]  # a term (text) or a phrase (tokens)
 Expr = tuple[Any, ...]  # (kind, ...) as expression.parse gives it, without "nothing", which it never hands over
 Hold = tuple[Ids, Ids, Scores]  # a short list's range ids, places, term scores
-Ranged = tuple[postings.Term, Ranges, float]  # a long list, its ranges, how far their bounds may fall short
+Ranged = tuple[postings.Long, Ranges, float]  # a long list, its ranges, how far their bounds may fall short
 Found = list[tuple[Ids, Scores]]  # (places, term scores) per segment
 
 FIRST_BATCH = 16  # ranges scored first, doubling each batch: the threshold rises before much is read
@@ -186,20 +186,21 @@ class _Store:
         # a short list (every delta's) read whole, its term scores exact; a long list's ranges, with how far their
         # bounds may fall short: computed with its segment's average length, and a term score grows with it
         self.whole: dict[str, list[Hold]] = {
-            t: [self._whole(p) for p in parts if not p.long] for t, parts in lists.items()
+            t: [self._whole(p) for p in parts if isinstance(p, postings.Short)] for t, parts in lists.items()
         }
         self.ranged: dict[str, list[Ranged]] = {
-            t: [(p, p.ranges(), self._slack(p)) for p in parts if p.long] for t, parts in lists.items()
+            t: [(p, p.ranges(), self._slack(p)) for p in parts if isinstance(p, postings.Long)]
+            for t, parts in lists.items()
         }
 
-    def _whole(self, part: postings.Term) -> Hold:
+    def _whole(self, part: postings.Short) -> Hold:
         places, tf = part.everything()
         alive = self.reader.alive(part.segment, places)
         places, tf = places[alive], tf[alive]
         scores = postings.term_scores(tf, self.reader.lengths(part.segment, places), self.average)
         return places >> self.shift, places, scores
 
-    def _slack(self, part: postings.Term) -> float:
+    def _slack(self, part: postings.Long) -> float:
         chunks, tokens = self.reader.segments[part.segment]
         return max(1.0, self.average * chunks / tokens) if tokens else 1.0
 

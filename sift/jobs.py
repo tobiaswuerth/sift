@@ -12,13 +12,16 @@ import queue
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, wait
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import anyio
 import anyio.from_thread
 import anyio.to_thread
 
 from . import store
+
+if TYPE_CHECKING:
+    from .models import Models
 
 T = TypeVar("T")
 
@@ -72,13 +75,13 @@ async def run(fn: Callable[..., T], *args: Any, abortable: bool = True, **kwargs
         raise
 
 
-class OnMainThread:
+class OnMainThread(Models if TYPE_CHECKING else object):  # every method of the models, through __getattr__
     """Models whose methods run on the main thread, wherever they are called, if they must (`main_thread`): from a
     worker thread of `run`, through the event loop, which waits meanwhile. A worker's run in a thread of their own,
     waited for until the call is cancelled (see _abortable). Called for a cancelled call, they raise Cancelled."""
 
-    def __init__(self, models: Any) -> None:
-        self._models = models._models if isinstance(models, OnMainThread) else models
+    def __init__(self, models: "Models") -> None:
+        self._models: Models = models._models if isinstance(models, OnMainThread) else models
 
     def __getattr__(self, name: str) -> Any:
         value = getattr(self._models, name)

@@ -206,10 +206,10 @@ def _finish_all(jobs: list[Job], chunks: int) -> None:
     if chunks > PARALLEL_CHUNKS and len(jobs) > 1:
         import multiprocessing
 
-        from .indexing import _cpus
+        from .indexing import cpus
 
         spawn = multiprocessing.get_context("spawn")  # as indexing: forking a process with threads can deadlock
-        with ProcessPoolExecutor(min(len(jobs), _cpus()), mp_context=spawn) as pool:
+        with ProcessPoolExecutor(min(len(jobs), cpus()), mp_context=spawn) as pool:
             for said in pool.map(_finish, *zip(*jobs)):
                 console.say(said)
     else:

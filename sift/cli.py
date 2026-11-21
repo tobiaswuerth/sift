@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from . import __version__, console, logs, readers, settings, update
 from .catalog import SUFFIX, Catalog
+from .filters import each
 
 if TYPE_CHECKING:
     from .hits import Hit
@@ -50,7 +51,7 @@ def _filters(pairs: Iterable[str]) -> dict[str, Any]:
         key, op, value = m[1].rstrip(), "not" if m[2] == "!=" else m[2], _value(m[3])
         conditions = out.setdefault(key, {})
         if op in ("=", "not") and op in conditions:
-            value = _listed(conditions[op]) + _listed(value)
+            value = each(conditions[op]) + each(value)
         conditions[op] = value
     return {key: c["="] if list(c) == ["="] else c for key, c in out.items()}
 
@@ -58,10 +59,6 @@ def _filters(pairs: Iterable[str]) -> dict[str, Any]:
 def _fields(text: str | None) -> list[str] | Literal[""] | None:
     """--fields url,created as a list of field names."""
     return text and [field.strip() for field in text.split(",")]
-
-
-def _listed(value: Any) -> list[Any]:
-    return value if isinstance(value, list) else [value]
 
 
 def _shown(value: Any) -> str:

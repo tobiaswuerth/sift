@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from . import readers
+from .filters import each
 
 AMBIGUOUS_SHOWN = 5  # candidates an ambiguous link names
 Candidate = tuple[int, str]  # a document's id and path
@@ -35,9 +36,7 @@ def aliases(meta: dict[str, Any]) -> list[str]:
     """A note's aliases, from its front matter: Obsidian's `aliases`, or the older `alias`; one or a list."""
     found: list[str] = []
     for field in ("aliases", "alias"):
-        value: str | list[Any] | None = meta.get(field)
-        listed = value if isinstance(value, list) else [value]
-        found += [a.strip() for a in listed if isinstance(a, str) and a.strip()]
+        found += [a.strip() for a in each(meta.get(field)) if isinstance(a, str) and a.strip()]
     return found
 
 

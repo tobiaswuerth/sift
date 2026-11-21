@@ -154,10 +154,12 @@ class Catalog:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             try:
-                cid = self.db.execute(
-                    "INSERT INTO collections(name, path, fields, store) VALUES(?, ?, ?, ?)",
-                    (name, str(path), stored, str(file)),
-                ).lastrowid
+                cid = store.inserted(
+                    self.db.execute(
+                        "INSERT INTO collections(name, path, fields, store) VALUES(?, ?, ?, ?)",
+                        (name, str(path), stored, str(file)),
+                    )
+                )
             except sqlite3.IntegrityError:
                 raise SystemExit(f"collection {name!r} already exists") from None
             taken = self.db.execute("SELECT count(*) FROM collections WHERE store = ?", (str(file),)).fetchone()[0] > 1
