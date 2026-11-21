@@ -51,6 +51,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   with a backslash inside matched nothing, and one with a double quote was refused: any name now filters and sorts.
   A filter of a list of some 16,000 values failed with "too many SQL variables"; its values now go to SQLite as one.
   A filter value that is no finite number (NaN, infinity) is a clear error.
+- `k: true` was taken for one result, as Python counts `True` as 1; it is refused as `k: "3"` is.
 
 ## [1.14.0] - 2026-11-21
 

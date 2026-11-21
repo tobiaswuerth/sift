@@ -337,7 +337,7 @@ def test_a_store_s_trouble_is_not_a_bad_query(corpus):
         Index(catalog).search("bru*")
 
 
-@pytest.mark.parametrize("k", [0, -1, "3", 1.5])
+@pytest.mark.parametrize("k", [0, -1, "3", 1.5, True])  # True is 1 to Python, and no count
 def test_k_must_be_positive_integer(corpus, k):
     with pytest.raises(ValueError, match="k must be"):
         Index(corpus[0]).search("reward", k=k)

@@ -61,7 +61,7 @@ class Options:
 
 def check_k(k: object, most: int = MOST_HITS) -> int:
     """k as asked, at most `most`."""
-    if not isinstance(k, int) or k < 1:
+    if not isinstance(k, int) or isinstance(k, bool) or k < 1:
         raise ValueError(f"k must be a positive integer, got {k!r}")
     return min(k, most)
 
