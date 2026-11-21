@@ -5,22 +5,44 @@ such a document (`Doc.scan`): the model runs in the process that writes the inde
 SIFT_OCR chooses where: auto (the default) on a GPU, on also on the CPU, where a page takes minutes, off never.
 """
 
+import importlib
 import time
 from collections.abc import Callable, Iterable
 from functools import cache
-from typing import TYPE_CHECKING, Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, Protocol
 
 from . import console, settings
 
 if TYPE_CHECKING:
     import torch
-    import transformers
     from PIL.Image import Image
 
     from .accelerator import Accelerator
     from .readers import Doc
 
-_Loaded = tuple["transformers.LightOnOcrForConditionalGeneration", "transformers.LightOnOcrProcessor"]
+
+# What sift uses of LightOnOCR-2 and its processor, typed by sift: transformers' own types name what isn't installed,
+# and its generate() can't be bound to its model class by the type checker. The real ones are reached through the
+# module (_transformers); a real read of a scan, and the tests' fakes, hold these to them.
+class _Model(Protocol):
+    def to(self, target: str, /) -> object: ...
+    def generate(self, **inputs: Any) -> "torch.Tensor": ...
+
+
+class _Processor(Protocol):
+    def apply_chat_template(self, conversation: list[dict[str, Any]], **options: Any) -> "dict[str, torch.Tensor]": ...
+    def decode(self, ids: "torch.Tensor", /, skip_special_tokens: bool) -> str: ...
+
+
+_Loaded = tuple[_Model, _Processor]
+_Stop = Callable[["torch.Tensor", Any], "torch.Tensor"]  # generate()'s stopping criteria: whether each row is done
+
+
+def _transformers() -> ModuleType:
+    """transformers, as a module: what sift reaches of it is typed by _Model and _Processor."""
+    return importlib.import_module("transformers")
+
 
 MODEL = "lightonai/LightOnOCR-2-1B"  # https://huggingface.co/lightonai/LightOnOCR-2-1B
 SETTINGS = ("auto", "on", "off")
@@ -49,7 +71,7 @@ def setting() -> str:
 def pages(raw: bytes, limit: int | None = None) -> tuple[list["Image"], int]:
     """The pictures of a PDF's first `limit` pages (PAGES by default), as the model reads them, and how many pages it
     has."""
-    import pypdfium2  # only reading scans needs it
+    import pypdfium2  # only reading scans needs it; typed by typings/pypdfium2
 
     pdf = pypdfium2.PdfDocument(raw)
     try:
@@ -67,8 +89,8 @@ def pages(raw: bytes, limit: int | None = None) -> tuple[list["Image"], int]:
 def _load(name: str, dtype: "torch.dtype | None") -> _Loaded:
     """LightOnOCR-2 and its processor, into RAM, in `dtype` (None: float32)."""
     import torch
-    import transformers
 
+    transformers = _transformers()
     transformers.logging.disable_progress_bar()  # no "Loading weights" bar: it fills the log of `sift serve`
     transformers.logging.set_verbosity_error()  # nor its note that the checkpoint's type, mistral3, isn't lighton_ocr
     model = transformers.LightOnOcrForConditionalGeneration.from_pretrained(name, dtype=dtype or torch.float32)
@@ -104,8 +126,8 @@ class Ocr:
 
     def _page(
         self,
-        model: "transformers.LightOnOcrForConditionalGeneration",
-        processor: "transformers.LightOnOcrProcessor",
+        model: _Model,
+        processor: _Processor,
         image: "Image",
     ) -> str:
         inputs = processor.apply_chat_template(
@@ -129,8 +151,8 @@ class Ocr:
 
     def _generate(
         self,
-        model: "transformers.LightOnOcrForConditionalGeneration",
-        processor: "transformers.LightOnOcrProcessor",
+        model: _Model,
+        processor: _Processor,
         inputs: "dict[str, torch.Tensor]",
         repetition_penalty: float | None = None,
     ) -> str:
@@ -149,21 +171,18 @@ class Ocr:
         return processor.decode(out[0, prompt:], skip_special_tokens=True)
 
 
-def _guard(processor: "transformers.LightOnOcrProcessor", prompt: int) -> "transformers.StoppingCriteriaList":
+def _guard(processor: _Processor, prompt: int) -> _Stop:
     """What stops generate() once a page's text loops, looking every LOOP_STEP tokens: on two pages of the first
-    twelve scans read, greedy decoding repeated a line until it ran out of tokens, two minutes a page."""
+    twelve scans read, greedy decoding repeated a line until it ran out of tokens, two minutes a page. A function, as
+    a StoppingCriteriaList takes any that answers as a StoppingCriteria does."""
     import torch
-    from transformers import StoppingCriteria, StoppingCriteriaList
 
-    class Loop(StoppingCriteria):
-        def __call__(
-            self, input_ids: torch.LongTensor, scores: tuple[torch.FloatTensor] | None, **kwargs: Any
-        ) -> torch.BoolTensor:
-            new = input_ids.shape[1] - prompt
-            stop = new % LOOP_STEP == 0 and looping(processor.decode(input_ids[0, prompt:], skip_special_tokens=True))
-            return torch.full((input_ids.shape[0],), stop, dtype=torch.bool, device=input_ids.device)
+    def loop(input_ids: torch.Tensor, scores: Any, **kwargs: Any) -> torch.Tensor:
+        new = input_ids.shape[1] - prompt
+        stop = new % LOOP_STEP == 0 and looping(processor.decode(input_ids[0, prompt:], skip_special_tokens=True))
+        return torch.full((input_ids.shape[0],), stop, dtype=torch.bool, device=input_ids.device)
 
-    return StoppingCriteriaList([Loop()])
+    return _transformers().StoppingCriteriaList([loop])
 
 
 def looping(text: str) -> bool:
@@ -235,7 +254,7 @@ class Scans:
             )
         return None
 
-    def read(self, doc: "Doc") -> tuple["Doc | None", str, bool]:
+    def read(self, doc: "Doc", scan: bytes) -> tuple["Doc | None", str, bool]:
         """A scan's document with the text the OCR model reads in its pages, and what to tell the user; or None, why
         it couldn't be read, and whether another try may read it. The third value is False for a document read."""
         from . import readers
@@ -245,7 +264,7 @@ class Scans:
             return None, f"skipped (no text in it: a scan; {why})", again
         start = time.perf_counter()
         try:
-            images, count = pages(doc.scan)
+            images, count = pages(scan)
             text = "\n\n".join(t.strip() for t in self.engine.read(images) if t.strip())
         except Exception as error:  # a broken PDF, or the GPU: one scan's trouble mustn't stop indexing the others
             from .accelerator import out_of_memory  # PyTorch, loaded for OCR anyway

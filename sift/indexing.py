@@ -283,7 +283,7 @@ def _read_scans(
                 continue
             if db.in_transaction:
                 db.commit()
-            doc, said, again = ocr.default().read(doc)
+            doc, said, again = ocr.default().read(doc, doc.scan)
             note(f"{path}: {said}")
             if doc is None:
                 left |= again
