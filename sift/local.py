@@ -271,10 +271,12 @@ def _pipelined(
             launched = None
         try:
             launched = steps.launch(features)
+            continue
         except RuntimeError as error:
             if fallback is None or not accelerator.out_of_memory(error):
                 raise
-            yield fallback[0](texts)
+        # after the `except`, whose traceback held the failed batch's tensors on the GPU while it lasted
+        yield fallback[0](texts)
     if launched is not None:
         yield steps.collect(launched)
 

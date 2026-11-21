@@ -1,6 +1,7 @@
 """The models of this machine: an embedding model and a reranker, loaded once per precision, on the GPU while in use.
 Sentence Transformers, GPU memory and the clock are fakes."""
 
+import sys
 import threading
 import time
 
@@ -208,6 +209,22 @@ def test_a_batch_out_of_memory_in_a_stream_is_embedded_in_smaller_parts(make_loc
     got = list(models.encode_batches(iter(batches)))
     assert [g.tolist() for g in got] == [models.encode(b).tolist() for b in batches]
     assert models.batch == 2  # halved, as it ran out of memory: the batches after it in parts of the smaller size
+
+
+def test_a_batch_out_of_memory_is_embedded_again_once_its_error_is_let_go(make_local, monkeypatch):
+    # Embedded again inside the `except`, the error's traceback held the failed batch's tensors on the GPU all the
+    # while: the parts ran short of memory too, and the batch size was halved for the rest of `sift embed`.
+    monkeypatch.setattr(FakeSentenceTransformer, "max_batch", 3)
+    models, handling = make_local("cuda"), []
+    encode = models.encode
+
+    def again(texts, query=False):
+        handling.append(sys.exc_info()[1])
+        return encode(texts, query)
+
+    monkeypatch.setattr(models, "encode", again)
+    list(models.encode_batches(iter([["a", "b", "c", "d"]])))
+    assert handling == [None]
 
 
 def test_a_batch_larger_than_the_gpu_takes_comes_in_its_turn(make_local):

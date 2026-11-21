@@ -207,11 +207,11 @@ class Accelerator:
             except RuntimeError as e:
                 if size == 1 or not out_of_memory(e):
                     raise
-                self._empty_cache()
-                size //= 2
-                if most is None:
-                    self.batch_size = size
-                console.say(f"\nout of GPU memory, batch size now {size}")
+            self._empty_cache()  # after the `except`, whose traceback held the failed batch's tensors while it lasted
+            size //= 2
+            if most is None:
+                self.batch_size = size
+            console.say(f"\nout of GPU memory, batch size now {size}")
 
     def calibrate(self, run: Callable[[int], object]) -> int:
         """Measure the largest batch that fits the memory budget, and use it from now on. run(n) runs a batch of n

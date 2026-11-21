@@ -40,6 +40,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The catalog was made a table at a time, its layout version last: a sift stopped in between, or a second one
   starting at that moment on a new SIFT_HOME (a server and a command, say), found tables without a version and asked
   for the catalog to be deleted as an older sift's. It is made in one transaction now.
+- When the GPU ran out of memory, `sift embed` embedded the batch again in smaller parts, and emptied PyTorch's cache,
+  while the error's traceback still held the failed batch's tensors: the parts could run short of memory as well, and
+  the batch size stayed halved for the rest of the run. Both now happen once the error is let go.
 
 ## [1.14.0] - 2026-11-21
 

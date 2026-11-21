@@ -197,6 +197,22 @@ def test_out_of_memory_halves_the_batch_size(make, gpu_memory, monkeypatch, caps
     assert "batch size now 16" in capsys.readouterr().err
 
 
+def test_the_cache_is_emptied_once_the_error_that_held_the_batch_is_let_go(make, gpu_memory, monkeypatch):
+    # Emptied inside the `except`, the error's traceback still held the failed batch's tensors: nothing to free.
+    import torch
+
+    handling = []
+    monkeypatch.setattr(gpu_memory, "empty_cache", lambda: handling.append(sys.exc_info()[1]))
+
+    def run(texts, size):
+        if size > 64:
+            raise torch.cuda.OutOfMemoryError("CUDA out of memory")
+        return size
+
+    assert make("cuda").run(run, ["a"]) == 64
+    assert handling == [None]
+
+
 def test_out_of_memory_at_batch_size_one_raises(make):
     import torch
 
