@@ -64,6 +64,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   a task of its own with its own ten minutes; up to 64 of them shared one task's time, and forty slow PDFs were taken
   for hung. When a file does end or hang its process, what the other workers had read by then is kept, not read
   again one file at a time.
+- The source package (sdist) on PyPI held tests that can't run from it, as they read the repository's docs, scripts
+  and workflows it doesn't hold. It holds sift and its metadata alone now.
 - The MCP tool `unresolved` failed with a bare `KeyError` when another sift deleted a linking note while it ran. It
   reads the targets and the notes linking them as the index was at one moment, as `links` does.
 - The catalog was made a table at a time, its layout version last: a sift stopped in between, or a second one

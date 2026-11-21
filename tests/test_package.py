@@ -3,8 +3,10 @@
 import ast
 import importlib
 import importlib.metadata
+import importlib.util
 import inspect
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -383,6 +385,37 @@ def test_the_package_is_built_by_tools_reviewed():
     pinned = (ROOT / ".github" / "requirements-build.txt").read_text(encoding="utf-8")
     assert re.search(r"^setuptools==\S+ \\$", pinned, re.MULTILINE)
     assert "--hash=sha256:" in pinned
+
+
+def test_the_sdist_holds_sift_and_its_metadata_alone():
+    # It held tests/, whose tests read docs/, scripts/ and the workflows, which it didn't: none ran from it. The
+    # package check refuses an sdist holding anything else.
+    spec = importlib.util.spec_from_file_location("package", ROOT / "scripts" / "package.py")
+    package = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(package)
+    top = "sift_rag-1.0"
+    names = [f"{top}/", f"{top}/PKG-INFO", f"{top}/sift/", f"{top}/sift/cli.py", f"{top}/tests/", f"{top}/tests/a.py"]
+    assert package.strays(names) == ["tests"]
+    assert package.strays([f"{top}/{name}" for name in package.SDIST]) == []
+
+
+def test_the_package_is_built_from_the_files_a_clone_holds(tmp_path):
+    # Built in the checkout, the sdist held whatever an earlier build had listed in its sift_rag.egg-info, which
+    # setuptools reads again: the check judged a package the release, building from a clone, never makes.
+    spec = importlib.util.spec_from_file_location("package", ROOT / "scripts" / "package.py")
+    package = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(package)
+    checkout, copy = tmp_path / "checkout", tmp_path / "copy"
+    subprocess.run(["git", "init", "--quiet", str(checkout)], check=True, timeout=60)
+    for name in (".gitignore", "sift/__init__.py", "sift/web/Übersicht.html", "gone.py", "new.py", "old.egg-info/a"):
+        (checkout / name).parent.mkdir(parents=True, exist_ok=True)
+        (checkout / name).write_text("*.egg-info/\n" if name == ".gitignore" else name, encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore", "sift", "gone.py"], cwd=checkout, check=True, timeout=60)
+    (checkout / "gone.py").unlink()
+    package.copy_checkout(checkout, copy)
+    copied = sorted(path.relative_to(copy).as_posix() for path in copy.rglob("*") if path.is_file())
+    assert copied == [".gitignore", "new.py", "sift/__init__.py", "sift/web/Übersicht.html"]
+    assert (copy / "sift" / "web" / "Übersicht.html").read_text(encoding="utf-8") == "sift/web/Übersicht.html"
 
 
 # The findings of zizmor silenced with the owner's yes, each for one audit on one line: the workflow, and the line.

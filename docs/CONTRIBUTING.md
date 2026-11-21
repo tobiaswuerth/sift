@@ -71,7 +71,8 @@ Rules the code keeps, several checked by `tests/test_package.py`:
   from whichever folder it runs, and first that its Python imports that checkout's sift and that git tracks or
   ignores every file there, since the hooks check only those git tracks. With uv on the PATH, it
   then builds and checks the package as CI's package job does (`scripts/package.py`: the changelog's section, the
-  build with its backend by hash, twine, the wheel in a clean environment), and runs the tests once more on the
+  build from the files a clone holds with its backend by hash, twine, what the sdist holds, the wheel in a clean
+  environment), and runs the tests once more on the
   newest Python CI tests on, where a Python warns of what an older one lets
   pass: in `.venv-newest`, an environment the gate makes, keeps up to date and owns (delete it at will). CI itself
   runs the oldest and the newest Python first, and every other system and Python once those pass.
