@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-11-21
+
+sift updates itself on a yes, looks up a shortened id instead of reading every path, and indexes long documents and
+large JSON Lines files in a fraction of the time and memory.
+
 ### Added
 
 - In a terminal, sift says when a newer version is out and, on `y`, updates itself with the installer it came by (uv,
@@ -653,7 +658,8 @@ First release.
 - Keyword search (SQLite FTS5, BM25), exact GPU vector search, and hybrid search with cross-encoder reranking.
 - An MCP server (streamable HTTP and stdio) whose instructions tell agents what is indexed.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/tobiaswuerth/sift/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/tobiaswuerth/sift/compare/v1.11.2...v1.12.0
 [1.11.2]: https://github.com/tobiaswuerth/sift/compare/v1.11.1...v1.11.2
 [1.11.1]: https://github.com/tobiaswuerth/sift/compare/v1.11.0...v1.11.1
