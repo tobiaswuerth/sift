@@ -36,6 +36,9 @@ CHUNK_CHARS, OVERLAP_CHARS = 3000, 300  # ~750 tokens, well inside the models' 1
 
 FRONT_MATTER = re.compile(r"\A---[ \t]*\r?\n(?:(.*?)\r?\n)??---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 LIST_ITEM = re.compile(r"[ \t]*-[ \t]+(.*)")
+# Lines of front matter that are neither `key: value` nor `- item`: a list item without a value, and the bracket that
+# closes a list or mapping written over several lines
+AT_THE_MARGIN = ("-", "]", "}", "],", "},")
 HEADING = re.compile(r" {0,3}#{1,6}[ \t]")  # how a Markdown (ATX) heading starts
 FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")  # how a fenced code block starts and ends
 LINE = re.compile(r"[^\n]*\n|[^\n]+")  # only \n ends a line, as in editors; str.splitlines knows eight more
@@ -209,15 +212,17 @@ def _heading(text: str) -> str | None:
 
 def _front_matter_block(text: str) -> re.Match[str] | None:
     """The front matter a note starts with: lines between two `---` lines, each of which a mapping could hold, a `key:
-    value`, a `- item`, an indented continuation, a comment or a blank. None for any other, such as a paragraph between
-    two thematic breaks, which is text to search."""
+    value`, a `- item`, an indented continuation, a comment, a blank, or what YAML allows at the margin besides
+    (AT_THE_MARGIN). None for any other, such as a paragraph between two thematic breaks, which is text to search."""
     m = FRONT_MATTER.match(text)
     return m if m and all(map(_in_mapping, (m.group(1) or "").split("\n"))) else None
 
 
 def _in_mapping(line: str) -> bool:
     key, colon, _ = line.partition(":")
-    return not line.strip() or line[0].isspace() or line[0] == "#" or bool(LIST_ITEM.match(line) or (colon and key))
+    if not line.strip() or line[0].isspace() or line[0] == "#" or line.rstrip() in AT_THE_MARGIN:
+        return True
+    return bool(LIST_ITEM.match(line) or (colon and key))
 
 
 def parse(text: str, fallback_title: str, title_from: str = "heading") -> tuple[str, dict[str, Any], str, int]:
@@ -288,6 +293,7 @@ def _ansi(error: UnicodeError) -> tuple[str, int]:
 
 
 codecs.register_error("sift.ansi", _ansi)
+LOOKED_AT = 1 << 20  # bytes of a file that `misread` looks at at a time
 
 
 def _encoding(start: bytes) -> tuple[str, str]:
@@ -302,6 +308,28 @@ def _encoding(start: bytes) -> tuple[str, str]:
 def decode(raw: bytes) -> str:
     """A text file's content (see _encoding)."""
     return raw.decode(*_encoding(raw))
+
+
+def misread(path: str | Path) -> bool:
+    """Whether sift 1.14 and older read the file at `path`, whose text they stored with U+FFFD in it, otherwise than
+    this sift does: a text file or JSON Lines that holds bytes that aren't UTF-8, which they replaced and this reads
+    as ANSI (see _encoding); a mail in any case, as its transfer encodings hide its parts' bytes. A file that can't be
+    looked at counts too: reading it again says what is wrong with it."""
+    if extension(Path(path).name) in EMAIL:
+        return True
+    try:
+        with open(path, "rb") as file:
+            start = file.read(4)
+            file.seek(0)
+            if _encoding(start)[1] != "sift.ansi":
+                return False
+            strict = codecs.getincrementaldecoder("utf-8")()
+            while block := file.read(LOOKED_AT):
+                strict.decode(block)
+            strict.decode(b"", final=True)
+    except (UnicodeDecodeError, OSError):
+        return True
+    return False
 
 
 def _lines(file: IO[bytes]) -> io.TextIOWrapper:
@@ -733,11 +761,13 @@ def _mail_text(msg: MIMEPart, fields: Fields) -> tuple[str, list[str]]:
 
 
 def _text_of(part: MIMEPart) -> str:
-    """A text part's content, in its charset; in one Python doesn't know, as a text file is read (see decode)."""
+    """A text part's content, in the charset its mail declares; where Python doesn't know that charset, or the bytes
+    aren't of it, as mail programs call 8-bit text us-ascii, as a text file is read (see decode)."""
+    raw = _payload(part)
     try:
-        return part.get_content()
+        return raw.decode(part.get_content_charset("ascii"))
     except (LookupError, UnicodeError):
-        return decode(_payload(part))
+        return decode(raw)
 
 
 class _Words(HTMLParser):
@@ -838,12 +868,13 @@ def _within(key: str, inner: str) -> str:
 
 def _as_utf8(raw: bytes, charset: str | None) -> bytes:
     """A text attachment as UTF-8, as sift reads text files: as it is if it is UTF-8 already, whatever its mail says
-    (mail clients call text us-ascii that isn't), else in the charset its mail declares, if Python knows it."""
+    (mail clients call text us-ascii that isn't), else in the charset its mail declares, if Python knows it and the
+    bytes are of it; else as it is, for a text file's reader to read what isn't UTF-8 as ANSI (see decode)."""
     if not charset or _utf8(raw):
         return raw
     try:
-        return raw.decode(charset, "replace").encode()
-    except LookupError:
+        return raw.decode(charset).encode()
+    except (LookupError, UnicodeError):
         return raw
 
 

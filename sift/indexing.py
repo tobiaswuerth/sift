@@ -134,6 +134,11 @@ def _patience(files: Iterable[tuple[str, int]]) -> float:
     return READ_SECONDS + sum(size for _, size in files) / READ_RATE
 
 
+def _no_end(patience: float) -> Stopped:
+    """A file whose reader was given `patience` seconds, and stopped."""
+    return Stopped(f"its reader came to no end in {console.duration(patience)}")
+
+
 def _pool(n: int) -> ProcessPoolExecutor:
     """`n` worker processes. Spawned everywhere, as on Windows and macOS: forking a process that has threads can
     deadlock."""
@@ -152,8 +157,9 @@ class _Workers:
     """Worker processes that read files, several to a task (see start), handed over in the order started. A reader's
     native code can end its process, or never come to an end: every task not done then goes with the pool, which
     tells no more than that it broke. Their files are read again one at a time, in a process of their own, so that
-    the one that ends or hangs it is known: it is left out, as Stopped, and the others are read. Files started in a
-    pool that those of another batch ended start again in the next one."""
+    the one that ends or hangs it is known: it is left out, as Stopped, and the others are read. One that hung in a
+    task of its own is known by then, and is given no time again. Files started in a pool that those of another batch
+    ended start again in the next one."""
 
     single: ProcessPoolExecutor | None
 
@@ -192,13 +198,16 @@ class _Workers:
         at = 0
         while at < len(started):
             files, future, pool = started[at]
+            patience = _patience(files)
             try:
-                read += future.result(timeout=_patience(files))
+                read += future.result(timeout=patience)
                 at += 1
-            except (BrokenProcessPool, CancelledError, TimeoutError):
+            except (BrokenProcessPool, CancelledError, TimeoutError) as ended:
                 if pool is self.pool:  # a file not read yet ended it, or hangs: which of them, each alone tells
                     _end(pool)
                     self.pool = _pool(self.n)
+                    if isinstance(ended, TimeoutError) and len(files) == 1:  # but one that had its time to itself
+                        read, at = [*read, _no_end(patience)], at + 1
                     return read + [loaded for task in started[at:] for loaded in self._kept(task)]
                 started[at:] = [self._task(self.pool, files) for files, _, _ in started[at:]]  # another batch's did
         return read
@@ -220,7 +229,7 @@ class _Workers:
             _end(self.single)
             self.single = None
             if isinstance(ended, TimeoutError):
-                return Stopped(f"its reader came to no end in {console.duration(patience)}")
+                return _no_end(patience)
             return Stopped("its reader ended the process it ran in")
 
 
@@ -955,7 +964,7 @@ def _index_collection(db: Db, name: str, root: str, fields: Fields, ignore: Igno
     after (see `postings`)."""
     t0 = time.perf_counter()
     _read_skipped_scans(db)
-    store.read_ansi_again(db, name)
+    store.read_ansi_again(db, name, lambda rel: readers.misread(os.path.join(root, *rel.split("/"))))
     known: dict[str, tuple[int, int, int]] = {
         p: (i, m, s) for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources")
     }

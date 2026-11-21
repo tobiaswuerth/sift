@@ -462,6 +462,22 @@ def test_an_email_in_an_unknown_charset_still_reads(tmp_path):
     assert "Plain Grüße." in doc.text
 
 
+@pytest.mark.parametrize("charset", ["us-ascii", "utf-8"])
+def test_mail_text_that_is_not_of_the_charset_it_declares_reads_as_ansi(tmp_path, charset):
+    # Mail programs call 8-bit text us-ascii, or UTF-8, that is neither: each such byte became a replacement
+    # character, in the mail's text and in a text file attached, and "Müller" was never found.
+    def part(disposition):
+        head = f"--b\r\nContent-Type: text/plain; charset={charset}\r\n{disposition}"
+        return head.encode() + b"Content-Transfer-Encoding: 8bit\r\n\r\nGr\xfc\xdfe von M\xfcller.\r\n"
+
+    head = b"Subject: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
+    attached = "Content-Disposition: attachment; filename=note.txt\r\n"
+    (tmp_path / "m.eml").write_bytes(head + part("") + part(attached) + b"--b--\r\n")
+    (mail, note), problems = readers.load(tmp_path / "m.eml")
+    assert mail.text.endswith("Grüße von Müller.")
+    assert (note.text, problems) == ("Grüße von Müller.", [])
+
+
 def test_a_text_attachment_reads_in_the_charset_its_mail_declares(tmp_path):
     # sift reads text files as UTF-8; a mail can say that an attachment is Latin-1, whose umlauts came out as "\ufffd".
     def attachment(name, charset, data):

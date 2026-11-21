@@ -48,9 +48,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   found them. Such lines are now the note's text; front matter is lines each of which could be part of it.
 - Text that isn't UTF-8, such as a note Notepad or Excel saved as "ANSI", had its accented letters indexed as "�", so
   a search for "Müller" never found it. Bytes that aren't UTF-8 are now read as Windows' ANSI code page (cp1252), in
-  text files, JSON Lines, and mail parts in a charset Python doesn't know; what is UTF-8 stays as it is. The next
-  `sift index` reads again, once, every such file whose text holds a replacement character, a batch of documents at a
-  time; `sift embed` then embeds the passages that changed.
+  text files, JSON Lines, and mail text that isn't of the charset its mail declares (8-bit text called us-ascii) or is
+  in one Python doesn't know; what is UTF-8 stays as it is. The next `sift index` looks once through each collection
+  for documents an older sift stored with a replacement character, and reads their files again where the bytes
+  aren't UTF-8, and such mails; `sift embed` then embeds the passages that changed. A file of UTF-8 that holds the
+  character itself is left as it is.
 - A mail with an empty plain part beside its HTML, as some mail programs send, was indexed without its words: the
   empty part was taken. Its HTML is read instead.
 - A line such as "```code```", code on its line alone, was taken for the start of a code block that never ended: the
@@ -70,7 +72,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   index` on every run, without naming it, or ended `sift serve`. They are now always read in a worker process, each in
   a task of its own with its own ten minutes; up to 64 of them shared one task's time, and forty slow PDFs were taken
   for hung. When a file does end or hang its process, what the other workers had read by then is kept, not read
-  again one file at a time.
+  again one file at a time, and a document that hangs is left out after its time, not given it a second time.
 - The source package (sdist) on PyPI held tests that can't run from it, as they read the repository's docs, scripts
   and workflows it doesn't hold. It holds sift and its metadata alone now.
 - The MCP tool `unresolved` failed with a bare `KeyError` when another sift deleted a linking note while it ran. It

@@ -299,6 +299,30 @@ def test_a_look_for_replacement_characters_stopped_goes_on_where_it_stopped(tmp_
     assert sorted(db.execute("SELECT path, text FROM docs")) == [(f"{n}.txt", f"{n} Müller\n") for n in "abc"]
 
 
+def test_a_file_of_utf8_with_a_replacement_character_of_its_own_is_left_as_it_is(tmp_path, home, capsys):
+    # Every document whose text held U+FFFD was taken for misread: a file of UTF-8 with the character itself in it, as
+    # corpora of millions of records hold some, was read again whole, and its documents embedded again, for the text
+    # they had. Only a file with bytes that aren't UTF-8 reads otherwise now.
+    root = tmp_path / "c"
+    root.mkdir()
+    (root / "own.txt").write_bytes("a letter lost before sift: �\n".encode())
+    (root / "ansi.txt").write_bytes("Müller\n".encode("cp1252"))
+    catalog = Catalog(home)
+    catalog.add(root, "c")
+    indexing.index(catalog)
+    db = only(catalog)
+    db.execute("UPDATE docs SET text = replace(text, 'ü', char(65533))")  # as sift 1.14 stored them
+    db.execute("DELETE FROM meta WHERE key = 'ansi_read'")
+    db.commit()
+    before = dict(db.execute("SELECT path, id FROM docs"))
+    capsys.readouterr()
+    indexing.index(catalog)
+    assert "2 files, 0 added, 1 changed, 0 removed" in capsys.readouterr().err
+    after = dict(db.execute("SELECT path, id FROM docs"))
+    assert (after["own.txt"], after["ansi.txt"] != before["ansi.txt"]) == (before["own.txt"], True)
+    assert dict(db.execute("SELECT path, text FROM docs"))["ansi.txt"] == "Müller\n"
+
+
 def test_an_older_store_without_documents_is_looked_through_without_a_word(tmp_path, home, capsys):
     (tmp_path / "c").mkdir()
     catalog = Catalog(home)
@@ -680,9 +704,11 @@ def test_files_read_by_native_code_get_a_task_each(tmp_path):
 def test_files_read_before_one_hung_are_kept_not_read_again(three_files, monkeypatch):
     # One file that hung had every task after it read again, one file at a time, those done already too: a batch of
     # thousands of files, read anew in one process.
+    # A file that hung in a task of its own, as every file read by native code has one, is known by then: it was given
+    # its time once more, alone, ten minutes and more for a PDF.
     _, hangs, fine = three_files
     monkeypatch.setattr(indexing, "_loaded", workers.hanging)
-    patience = iter([5, 0])  # time for the other worker to read `fine`; then none for the one that hangs, alone
+    patience = iter([5])  # time for the other worker to read `fine`; asked once, for the one that hangs
     monkeypatch.setattr(indexing, "_patience", lambda files: next(patience))
     alone, read_alone = [], indexing._Workers._alone
 
@@ -693,9 +719,26 @@ def test_files_read_before_one_hung_are_kept_not_read_again(three_files, monkeyp
     monkeypatch.setattr(indexing._Workers, "_alone", recorded)
     with indexing._Workers(2, {}) as reading:
         (stopped, (docs, _)) = reading.results(reading.start(sized(hangs, fine)))
-    assert isinstance(stopped, indexing.Stopped)
+    assert str(stopped) == "its reader came to no end in 0:00:05"
     assert [doc.title for doc in docs] == ["fine"]
-    assert alone == ["hangs.md"]
+    assert alone == []
+    assert no_process_left()
+
+
+def test_files_that_shared_a_task_with_one_that_hung_are_read_alone(tmp_path, monkeypatch):
+    # Text files share tasks: which file of a task had it come to no end, each alone tells.
+    files = [tmp_path / name for name in ("a.md", "b.md", "hangs.md", "c.md", "d.md", "e.md", "f.md", "g.md")]
+    for file in files:
+        write(file, f"# {file.stem}\n")
+    monkeypatch.setattr(indexing, "_loaded", workers.hanging)
+    monkeypatch.setattr(indexing, "_patience", lambda files: 0 if any("hangs" in path for path, _ in files) else 600)
+    with indexing._Workers(1, {}) as reading:
+        started = reading.start(sized(*files))
+        assert [len(task) for task, _, _ in started] == [2, 2, 2, 2]
+        read = reading.results(started)
+    stopped = [n for n, loaded in enumerate(read) if isinstance(loaded, indexing.Stopped)]
+    assert (stopped, str(read[2])) == ([2], "its reader came to no end in 0:00:00")
+    assert [loaded[0][0].title for n, loaded in enumerate(read) if n != 2] == ["a", "b", "c", "d", "e", "f", "g"]
     assert no_process_left()
 
 

@@ -441,46 +441,64 @@ ANSI_BATCH = 2_000  # documents whose texts a transaction looks through, some 10
 ANSI_KINDS = json.dumps(readers.TEXT + readers.JSONL + readers.EMAIL)  # the files readers.decode reads
 
 
-def read_ansi_again(db: sqlite3.Connection, name: str = "") -> None:
-    """Have this `sift index` read again, once, the text files, JSON Lines and mails whose text holds U+FFFD: sift
-    1.14 and older made it of every byte that wasn't UTF-8, which is now read as Windows' ANSI ("Müller"). A batch of
-    documents per transaction, each recording how far this got, so that a run stopped goes on there."""
+def read_ansi_again(db: sqlite3.Connection, name: str, misread: Callable[[str], bool]) -> None:
+    """Have this `sift index` read again, once, the files an older sift read otherwise than this one: sift 1.14 and
+    older made U+FFFD of every byte that wasn't UTF-8, which is now read as Windows' ANSI ("Müller"). Those are the
+    text files, JSON Lines and mails with a document whose text holds U+FFFD, of which `misread` says so, by the
+    file's path in the collection: a file of UTF-8 with the character itself in it reads as it did, and stays as it
+    is, its documents' vectors too. A batch of documents at a time, each recording how far this got, so that a run
+    stopped goes on there."""
     if get_meta(db, ANSI_READ) is not None:
         return
     if total := counts(db)["docs"]:
         console.say(f"{name}: looking, once, for text an older sift read with replacement characters, to read again")
+    verdicts: dict[int, bool] = {}  # what `misread` said of each file: a JSON Lines file's records lie in many batches
     with console.Progress(total, "documents", prefix=f"{name}: ") as progress:
         done = 0
-        while (n := _ansi_batch(db)) is not None:
+        while (n := _ansi_batch(db, misread, verdicts)) is not None:
             done += n
             progress.update(min(done, total), max(done, total))
 
 
-def _ansi_batch(db: sqlite3.Connection) -> int | None:
-    """Look through the next ANSI_BATCH documents (see read_ansi_again); how many, or None once none is left."""
+def _ansi_batch(db: sqlite3.Connection, misread: Callable[[str], bool], verdicts: dict[int, bool]) -> int | None:
+    """Look through the next ANSI_BATCH documents (see read_ansi_again): how many, or None once none is left. Their
+    files are looked at before the store is held, as reading a large one takes long: where another sift looked through
+    these documents meanwhile, they are left to it, and this one counts none."""
+    if get_meta(db, ANSI_READ) is not None:
+        return None
+    after = int(get_meta(db, ANSI_TO, 0))
+    n: int | None
+    n, last = db.execute(
+        "SELECT count(*), max(id) FROM (SELECT id FROM docs WHERE id > ? ORDER BY id LIMIT ?)", (after, ANSI_BATCH)
+    ).fetchone()
+    found = """SELECT d.id, d.source, s.path FROM docs d JOIN sources s ON s.id = d.source
+               WHERE d.id > ? AND d.id <= ? AND instr(d.text, char(65533))
+               AND EXISTS (SELECT 1 FROM json_each(?) k WHERE lower(s.path) LIKE '%' || k.value)"""
+    rows = db.execute(found, (after, last, ANSI_KINDS)).fetchall() if n else []
+    for _, source, path in rows:
+        if source not in verdicts:
+            verdicts[source] = misread(path)
+    docs = json.dumps([doc for doc, source, _ in rows if verdicts[source]])
+    sources = json.dumps(sorted({source for _, source, _ in rows if verdicts[source]}))
     db.execute("BEGIN IMMEDIATE")
     try:
-        after = int(get_meta(db, ANSI_TO, 0))
-        n, last = db.execute(
-            "SELECT count(*), max(id) FROM (SELECT id FROM docs WHERE id > ? ORDER BY id LIMIT ?)", (after, ANSI_BATCH)
-        ).fetchone()
-        if n:  # their files read again, and their documents taken for changed, though the bytes are as they were
-            found = """SELECT d.id, d.source FROM docs d JOIN sources s ON s.id = d.source
-                       WHERE d.id > ? AND d.id <= ? AND instr(d.text, char(65533))
-                       AND EXISTS (SELECT 1 FROM json_each(?) k WHERE lower(s.path) LIKE '%' || k.value)"""
-            rows = db.execute(found, (after, last, ANSI_KINDS)).fetchall()
-            docs, sources = json.dumps([d for d, _ in rows]), json.dumps(sorted({s for _, s in rows}))
+        if get_meta(db, ANSI_READ) is not None:  # another sift looked through all the rest
+            n = None
+        elif int(get_meta(db, ANSI_TO, 0)) != after:  # or through these
+            n = 0
+        elif n:  # their files read again, and their documents taken for changed, though the bytes are as they were
             db.execute("UPDATE docs SET hash = NULL WHERE id IN (SELECT value FROM json_each(?))", (docs,))
             db.execute("UPDATE sources SET mtime = NULL WHERE id IN (SELECT value FROM json_each(?))", (sources,))
             set_meta(db, ANSI_TO, last)
         else:
             db.execute("DELETE FROM meta WHERE key = ?", (ANSI_TO,))
             set_meta(db, ANSI_READ, 1)
+            n = None
         db.commit()
     except BaseException:
         db.rollback()
         raise
-    return n or None
+    return n
 
 
 def _count_rows(db: sqlite3.Connection, path: str | Path) -> None:

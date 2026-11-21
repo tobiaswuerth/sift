@@ -290,6 +290,36 @@ def test_a_file_freed_while_the_freed_are_taken_is_taken_too(tmp_path):
     db.close()
 
 
+def test_documents_another_sift_looked_through_meanwhile_are_left_to_it(tmp_path, monkeypatch):
+    # The look for text an older sift read with replacement characters reads files, which it does before it holds the
+    # store: another `sift index` may have looked through the same documents by then, and marked what is to be read.
+    monkeypatch.setattr(store, "ANSI_BATCH", 1)
+    db, other = store.connect(tmp_path / "s.sqlite", 1, create=True), store.connect(tmp_path / "s.sqlite", 1)
+    for n, name in enumerate(("a.txt", "b.txt"), 1):
+        db.execute("INSERT INTO sources(id, path, mtime, size) VALUES(?, ?, 1, 1)", (n, name))
+        db.execute(
+            "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?, ?, 'h', '', '{}', 'M�ller')", (n, name)
+        )
+    db.execute("DELETE FROM meta WHERE key = ?", (store.ANSI_READ,))
+    db.commit()
+    asked = []
+
+    def misread(path):  # this sift has found its documents, and looks at their files
+        asked.append(path)
+        if len(asked) == 1:
+            assert store._ansi_batch(other, lambda path: True, {}) == 1  # the other sift looks through them, now
+        return True
+
+    assert store._ansi_batch(db, misread, {}) == 0  # none of its own: left to the other
+    assert [store._ansi_batch(db, misread, {}), store._ansi_batch(db, misread, {})] == [1, None]
+    assert store._ansi_batch(other, misread, {}) is None  # the other finds it done
+    assert asked == ["a.txt", "b.txt"]
+    assert db.execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (2,)
+    assert store.get_meta(db, store.ANSI_READ) == "1"
+    other.close()
+    db.close()
+
+
 # --- counts --------------------------------------------------------------------
 
 

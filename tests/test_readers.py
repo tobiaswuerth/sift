@@ -158,6 +158,21 @@ def test_text_between_two_rules_that_isnt_front_matter_stays_searchable(text):
     assert any("xyzzy" in doc.text[p : p + n] for _, _, p, n in doc.chunks)
 
 
+@pytest.mark.parametrize(
+    "block, tags",
+    [
+        ("tags:\n-\n- a\n", ["a"]),  # a list item without a value
+        ("tags: [\n  a,\n  b\n]\n", "["),  # a list over several lines, which sift reads no further than its first
+        ("tags: {\n  a: 1\n}\n", "{"),
+    ],
+)
+def test_front_matter_stays_front_matter_with_lines_yaml_allows_at_the_margin(block, tags):
+    # A line that could be no part of a mapping makes the lines between two rules text: an item without a value, or
+    # the bracket closing a list written over several lines, did too, and the note lost its title and every field.
+    title, meta, body, _ = readers.parse(f"---\ntitle: T\n{block}---\nbody\n", "file")
+    assert (title, meta, body) == ("T", {"title": "T", "tags": tags}, "body\n")
+
+
 # --- chunking ----------------------------------------------------------------
 
 
@@ -338,6 +353,27 @@ def test_load_reads_what_isnt_utf8_as_windows_ansi(tmp_path):
     assert loaded(path).chunks == [(1, 3, "Grüezi Müller, 5 €\nnaïve ✓\nrésumé \ufffd")]
     with pytest.raises(UnicodeEncodeError):  # it reads, and writes nothing
         "é".encode("ascii", "sift.ansi")
+
+
+MISREAD = {  # a file's bytes, and whether sift 1.14 read them otherwise than this sift
+    "ansi.txt": ("Müller\n".encode("cp1252"), True),  # bytes that aren't UTF-8: replaced then, read as ANSI now
+    "late.jsonl": (b"x" * readers.LOOKED_AT + b'{"text": "M\xfcller"}\n', True),  # past the first block looked at
+    "own.txt": ("lost before sift: �, and Müller\n".encode(), False),  # UTF-8, the character its own
+    "marked.md": (b"\xef\xbb\xbfM\xc3\xbcller\n", False),  # UTF-8 after its byte order mark
+    "wide.txt": ("Müller �\n".encode("utf-16"), False),  # UTF-16, read as before
+    "mail.eml": (b"Subject: x\r\n\r\nplain\r\n", True),  # a mail's parts may be encoded: reading it again tells
+}
+
+
+@pytest.mark.parametrize("name", MISREAD)
+def test_a_file_an_older_sift_read_otherwise_is_told_by_its_bytes(tmp_path, name):
+    raw, otherwise = MISREAD[name]
+    (tmp_path / name).write_bytes(raw)
+    assert readers.misread(tmp_path / name) is otherwise
+
+
+def test_a_file_that_cant_be_looked_at_counts_as_read_otherwise(tmp_path):
+    assert readers.misread(tmp_path / "gone.txt") is True  # reading it again tells, and says what is wrong
 
 
 # --- links -------------------------------------------------------------------
