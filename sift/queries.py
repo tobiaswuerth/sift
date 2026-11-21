@@ -48,10 +48,13 @@ def phrases_of(match: str) -> list[str] | None:
 
 
 def words(text: object) -> list[str]:
-    """The meaningful words of a text: lowercase, without stopwords and single Latin letters ("a", the "s" of "it's"),
-    in order. A digit stays, and a word of one character in another script, as Chinese and Japanese write many."""
+    """The meaningful words of a text: lowercase, without stopwords, single Latin letters ("a", the "s" of "it's") and
+    underscores alone, where FTS5 parts words, in order. A digit stays, and a word of one character in another script,
+    as Chinese and Japanese write many."""
     found: list[str] = re.findall(r"\w+", str(text).lower())
-    return [w for w in found if w not in STOPWORDS and not (len(w) == 1 and w.isascii() and w.isalpha())]
+    return [
+        w for w in found if w not in STOPWORDS and w.strip("_") and not (len(w) == 1 and w.isascii() and w.isalpha())
+    ]
 
 
 def any_word(query: str) -> str:

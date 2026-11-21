@@ -1123,6 +1123,12 @@ def test_any_word_keeps_digits_and_single_characters_of_other_scripts():
     assert any_word("Python 3 in R, it's a 猫") == '"python" OR "3" OR "猫"'
 
 
+def test_underscores_alone_are_no_word():
+    # A regex's \w takes "_" for a letter, FTS5 for a break between words: a lone "_" was a word that matched nothing,
+    # and the UI marked every underscore of its results.
+    assert any_word("snake_case _ __") == '"snake_case"'
+
+
 # --- documents and status ----------------------------------------------------
 
 
