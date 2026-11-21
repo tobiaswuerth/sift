@@ -476,7 +476,6 @@ def test_the_release_starts_only_for_ci_of_this_repository_s_main():
 
 # Each repository of hooks in .pre-commit-config.yaml, and what docs/CONTRIBUTING.md calls what its hooks check.
 HOOKS_AS_CONTRIBUTING_NAMES_THEM = {
-    "local": "the `private` hook",
     "https://github.com/pre-commit/pre-commit-hooks": "whitespace, line endings, byte order marks, YAML/TOML checks",
     "https://github.com/astral-sh/ruff-pre-commit": "ruff (lint and format)",
     "https://github.com/abravalheri/validate-pyproject": "`validate-pyproject`",

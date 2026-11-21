@@ -91,10 +91,6 @@ Rules the code keeps, several checked by `tests/test_package.py`:
   actions by commit, which a test holds them to. Once a week, the Audit workflow checks the packages sift installs
   that day, and those of the lowest versions it names, against the advisories known for them (`pip-audit`); one
   against a lowest version is fixed by raising it. Dependabot proposes a new release once it is a week old.
-- **Nothing private:** the `private` hook refuses a commit whose files or message match a pattern of the maintainer's
-  own list, `~/.private-patterns` (or the file `PRIVATE_PATTERNS` names): regular expressions, one a line, in no
-  repository. Without that file, as in CI and for contributors, it checks nothing. `pre-commit install` sets up the
-  hook for the message too.
 - **The smoke run:** `python scripts/smoke.py` runs every command as a user runs it, each in a process of its own, on
   a small folder of notes; with `--models` also what loads the models: `embed`, the semantic searches, `bench` and
   `sift serve` with its page and MCP endpoint. A new command or option gets a line there.
