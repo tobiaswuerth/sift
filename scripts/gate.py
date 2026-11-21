@@ -3,8 +3,8 @@
 The pre-commit hooks (format, lint, the checks of pyproject.toml and the workflows, spelling), the types of the modules
 pyright checks, the tests in a process per core with the coverage gate and the rules tests/test_package.py keeps, and
 the smoke run of every command as a user runs it (scripts/smoke.py). The first check that fails ends it, and so does
-one that takes longer than its minutes: a test that hangs holds nobody for good. CI runs the hooks, the type checker
-and the tests the same way, the tests on every system and Python.
+one that takes longer than its minutes: a test that hangs holds nobody for good. CI runs the hooks, the type checker,
+the tests and the smoke run the same way, the tests and the smoke run on every system and Python.
 
 The types are checked as on each system sift runs on, whichever runs the gate: what only another system has, or
 lacks, is found here, not in CI. pyright reads the packages of the Python that runs the gate, which it is told: left

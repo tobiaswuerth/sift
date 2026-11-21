@@ -32,6 +32,15 @@ def test_every_package_sift_imports_is_a_dependency():
     assert undeclared == set()
 
 
+def test_requirements_txt_names_the_dependencies_pyproject_does():
+    # pip users install from requirements.txt, uv users from pyproject.toml: two lists of the same packages, and
+    # nothing held them equal. One ahead of the other installs a sift that fails at its first import.
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    lines = (ROOT / "requirements.txt").read_text(encoding="utf-8").split("\n")
+    listed = {line.strip() for line in lines if line.strip() and not line.startswith(("#", "--"))}
+    assert listed == set(project["dependencies"]), "name each dependency in both, with the same versions"
+
+
 def test_only_settings_touches_the_environment():
     # vectors.py once set NUMBA_CACHE_DIR itself: settings.py alone reads and sets the environment, so every variable
     # sift heeds is in one place.

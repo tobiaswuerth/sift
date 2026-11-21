@@ -103,5 +103,6 @@ def test_the_checks_are_those_ci_runs(gate):
     hooks, *types, tests, _ = (command[2:] for _, command, _ in gate.CHECKS)
     assert f"pre-commit {' '.join(hooks[1:])}" in workflow
     assert f"pytest {' '.join(tests[1:])}" in workflow
+    assert "run: python scripts/smoke.py" in workflow  # on every system: it ran on the one that ran the gate alone
     for command in types:
         assert f"run: {' '.join(command[:3])}\n" in workflow

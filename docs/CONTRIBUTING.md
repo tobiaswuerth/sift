@@ -79,8 +79,9 @@ Rules the code keeps, several checked by `tests/test_package.py`:
   a small folder of notes; with `--models` also what loads the models: `embed`, the semantic searches, `bench` and
   `sift serve` with its page and MCP endpoint. A new command or option gets a line there.
 - **Pull requests:** `main` is protected; pull requests are squash-merged once every check passes. CI runs the hooks,
-  the type checker, the tests on Linux (x86 and ARM), macOS and Windows for Python 3.11 to 3.15, and builds the
-  package, on pull requests and again on each merge commit.
+  the type checker, the tests and the smoke run on Linux (x86 and ARM), macOS and Windows for Python 3.11 to 3.15,
+  and builds the package, on pull requests and again on each merge commit. Its check `tests` passes when every job
+  of that matrix did.
 - **Changelog:** user-visible changes go under "Unreleased" in [CHANGELOG.md](../CHANGELOG.md).
 - **Measurements** in docs state the hardware by kind (a GPU, 8 CPU threads), not by model, and leave out what else
   ran on the machine.
