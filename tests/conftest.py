@@ -553,15 +553,35 @@ def write_notes(root):
     return root
 
 
-@pytest.fixture(autouse=True)
-def home(tmp_path, monkeypatch):
-    """Every test's SIFT_HOME, in a folder of its own, never the user's: for this process, whose settings are read
+# The variables sift heeds besides SIFT_HOME (settings.Settings.from_env), but CUDA's own, which hides a GPU from the
+# whole process: a test starts without them.
+HEEDED = (
+    "SIFT_EMBED_MODEL",
+    "SIFT_RERANK_MODEL",
+    "SIFT_EMBED_REMOTE",
+    "SIFT_OCR",
+    "SIFT_UPDATE_CHECK",
+    "HF_HUB_OFFLINE",
+)
+
+
+def own_environment(monkeypatch, home):
+    """SIFT_HOME at `home`, and none of the other variables sift heeds: for this process, whose settings are read
     again, and for those it starts."""
     from sift import settings
 
-    path = tmp_path / "home"
-    monkeypatch.setenv("SIFT_HOME", str(path))
+    monkeypatch.setenv("SIFT_HOME", str(home))
+    for name in HEEDED:
+        monkeypatch.delenv(name, raising=False)
     settings.current.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def home(tmp_path, monkeypatch):
+    """Every test's SIFT_HOME, in a folder of its own, never the user's, and sift's defaults for every other setting,
+    whatever the shell that runs the tests holds (see own_environment)."""
+    path = tmp_path / "home"
+    own_environment(monkeypatch, path)
     return path
 
 

@@ -61,9 +61,9 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 - Only `settings.py` reads or sets the environment.
 - Results go to stdout from `cli.py` alone; everything else goes to stderr through `console.py`, so output can be piped.
 - Tests build objects around fakes instead of patching module state, and change settings with the `configure` fixture.
-  Each test has a SIFT_HOME of its own, the `home` fixture's, which the processes it starts share, and sees every
-  folder listed last name first, on every system: file systems list in orders of their own, which no test may count
-  on.
+  Each test has a SIFT_HOME of its own, the `home` fixture's, which the processes it starts share, and sift's
+  defaults for every other setting, whatever the shell that runs it holds. It sees every folder listed last name
+  first, on every system: file systems list in orders of their own, which no test may count on.
 
 ## How changes are made
 
