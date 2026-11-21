@@ -52,6 +52,7 @@ PROBE_SECONDS = 5  # how long `sift ui` waits for a server on its port to answer
 # A page and its parts share an address, told apart by the request's headers: a browser that kept one showed a part
 # alone, without the page around it, on the way back to the address. Nor do the documents' texts belong in its cache.
 UNKEPT = {"Cache-Control": "no-store"}
+FRAMED_BY_NONE = {"Content-Security-Policy": "frame-ancestors 'none'"}  # no other site shows the UI in a frame
 ERRORS = (LookupError, ValueError, ConnectionError, sqlite3.Error)  # what a view shows, as the MCP tools say it
 BUGS = (KeyError, IndexError)  # LookupErrors too, but never what sift says of a view: the server's error page, logged
 
@@ -391,7 +392,7 @@ def app(index: "Index", host: str = "127.0.0.1") -> "ASGIApp":
     async def page(request: Request) -> HTMLResponse:
         view = View.of(request.query_params)
         part = request.headers.get("hx-target") if "hx-history-restore-request" not in request.headers else None
-        return HTMLResponse(await jobs.run(render, view, part, request.headers), headers=UNKEPT)
+        return HTMLResponse(await jobs.run(render, view, part, request.headers), headers=UNKEPT | FRAMED_BY_NONE)
 
     def located(id: str) -> Path | None:
         """The file of the document `id`, if it is there: looked for here, off the event loop, which a share that
@@ -415,8 +416,25 @@ def app(index: "Index", host: str = "127.0.0.1") -> "ASGIApp":
         return response
 
     routes = [Route("/", page), Route("/file", file), Mount("/static", StaticFiles(directory=WEB / "static"))]
-    ui = Starlette(routes=routes)
+    ui = _no_other_site(Starlette(routes=routes))
     return _local_only(ui) if host in LOCAL_HOSTS else ui
+
+
+def _no_other_site(app: "ASGIApp") -> "ASGIApp":
+    """`app`, refusing what another site's page has the browser ask: a search, which holds the server's one call at a
+    time and the GPU, or the UI in a frame. Browsers say who asks (Fetch Metadata); a link to the UI, followed, goes
+    on, as does a client that is no browser."""
+    from starlette.responses import PlainTextResponse
+
+    async def checked(scope: "Scope", receive: "Receive", send: "Send") -> None:
+        headers = dict(scope.get("headers", ()))
+        followed = headers.get(b"sec-fetch-mode") == b"navigate" and headers.get(b"sec-fetch-dest") == b"document"
+        if scope["type"] == "http" and headers.get(b"sec-fetch-site") == b"cross-site" and not followed:
+            await PlainTextResponse("refused: another site's page asked", status_code=403)(scope, receive, send)
+            return
+        await app(scope, receive, send)
+
+    return checked
 
 
 def _local_only(app: "ASGIApp") -> "ASGIApp":

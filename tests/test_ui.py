@@ -473,6 +473,29 @@ def test_the_ui_answers_local_hosts_only(browser):
     assert browser.get("/ui/", headers={"Host": "localhost:8765"}).status_code == 200
 
 
+@pytest.mark.parametrize(
+    "site, mode, dest, status",
+    [
+        ("cross-site", "no-cors", "image", 403),  # another site's page: <img src="http://127.0.0.1:8765/ui/?q=...">
+        ("cross-site", "cors", "empty", 403),  # its fetch()
+        ("cross-site", "navigate", "iframe", 403),  # the UI in its frame
+        ("cross-site", "navigate", "document", 200),  # a link to the UI, followed
+        ("same-origin", "cors", "empty", 200),  # the UI's own htmx
+        ("none", "navigate", "document", 200),  # the address typed
+        (None, None, None, 200),  # no browser: curl, an agent
+    ],
+)
+def test_the_ui_answers_no_other_site(browser, site, mode, dest, status):
+    # Any web page could have the browser ask the UI for a search, the reranker on the GPU and the server's one
+    # call at a time held for it, or show the UI in a frame of its own. Browsers say who asks (Fetch Metadata).
+    names = ("Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest")
+    headers = {name: value for name, value in zip(names, (site, mode, dest)) if value}
+    response = browser.get("/ui/", params={"q": "brush", "mode": "query"}, headers=headers)
+    assert response.status_code == status
+    if status == 200:
+        assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+
+
 def test_a_server_on_the_ipv6_loopback_answers_only_local_hosts(embedded):
     # As on 127.0.0.1: a web page reaching it under its own domain must not read the documents.
     index = Index(embedded[0])

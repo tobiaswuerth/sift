@@ -23,6 +23,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   agents that read it. A file linking to outside its collection's folder is now left out, and said, by `sift index`
   and the server's `reindex`; one indexed before is dropped by the next `sift index`. `sift add FOLDER
   --follow-links` reads them, as before, for a new collection or one added already.
+- Any web page could have the browser ask the UI of `sift serve` for searches, each holding the server's one call
+  at a time and the GPU, or show the UI in a frame of its own. The UI refuses what another site's page asks, as
+  browsers say by Fetch Metadata, and forbids frames; a link to it from elsewhere still opens it.
 
 ### Fixed
 

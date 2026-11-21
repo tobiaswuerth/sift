@@ -13,7 +13,8 @@ Expect a first reply within a week. Security fixes go into the latest release.
   authenticates; bound to another address, it warns. Bound locally, it answers only requests naming a local host, so a
   web page can't reach it under its own domain (DNS rebinding).
 - **The UI.** Files opened from it carry `Content-Security-Policy: sandbox`, so a saved web page in a collection can't
-  run scripts as the UI; PDFs go to the browser's viewer.
+  run scripts as the UI; PDFs go to the browser's viewer. It refuses what another site's page has the browser ask
+  (by Fetch Metadata), and no other site may show it in a frame; a link to it, followed, opens it.
 - **Your files.** sift never writes to them. One MCP tool changes anything, `reindex`, and only sift's index: it reads
   only files `sift index` would read, inside a registered collection, outside hidden and linked folders. A linked file
   is read only if it points into its collection's folder, unless the collection was added with `--follow-links`: a
