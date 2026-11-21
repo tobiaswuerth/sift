@@ -138,8 +138,17 @@ def _condition(key, op, value):
         values = list(dict.fromkeys(form for one in values for form in _forms(one)))
         return f"value IN ({', '.join('?' * len(values))})", values
     if isinstance(value, str):  # at the precision given: "2024-12-31" is <= "2024", and not > "2024"
-        return f"substr(value, 1, ?) {op} ?", [len(value), value]
-    return f"CAST(value AS REAL) {op} ?", [value]  # SQLite reads "2024-06-15" as 2024
+        return f"type IN ('text', 'integer', 'real') AND substr(value, 1, ?) {op} ?", [len(value), value]
+    return f"{NUMBER_FIRST} AND CAST(value AS REAL) {op} ?", [value]  # SQLite reads "2024-06-15" as 2024
+
+
+# The values a number compares with (`type` and `value` of json_each): numbers, yes and no as 1 and 0, and text that
+# starts with a number, as a date does with its year. SQLite casts other text, "unknown", to 0, and a list to text;
+# text compares with text and numbers alone, not with a list's JSON.
+NUMBER_FIRST = (
+    "(type IN ('integer', 'real', 'true', 'false') OR (type = 'text' AND (ltrim(value) GLOB '[0-9]*'"
+    " OR ltrim(value) GLOB '[-+.][0-9]*' OR ltrim(value) GLOB '[-+].[0-9]*')))"
+)
 
 
 def _forms(value):
@@ -210,8 +219,8 @@ def _check_sort(sort):
 
 
 def _by_field(hits, sort):
-    """Hits ordered by the front-matter field `sort` names, descending with "-" first: numbers before text, and hits
-    without the field last, in their order."""
+    """Hits ordered by the front-matter field `sort` names, descending with "-" first: numbers before text, after it
+    descending, as SQLite orders them (see browse), and hits without the field last, in their order."""
     field = sort.removeprefix("-")
     valued = [(json.loads(hit["meta"]).get(field), hit) for hit in hits]
     have = [(value, hit) for value, hit in valued if value is not None]
@@ -442,8 +451,8 @@ def _lines_of(rows, text):
 
 def _by_value(rows, descending):
     """Rows of several stores, (collection, path, ..., value), each store's in SQLite's order by value and path,
-    merged in that order: numbers before text, ascending or descending, and rows without a value last; then by
-    collection and path."""
+    merged in that order: numbers before text ascending, text before numbers descending, and rows without a value
+    last; then by collection and path."""
     rows = sorted(rows, key=itemgetter(0, 1))
     valued = [row for row in rows if row[-1] is not None]
     valued.sort(key=lambda row: (0, row[-1]) if isinstance(row[-1], int | float) else (1, row[-1]), reverse=descending)
@@ -1093,7 +1102,7 @@ class Index:
 
     # Every search returns the best passage of each document it finds, or with `all_passages` every passage, and
     # takes `fields`, front-matter fields to add to each hit (["*"] for all), `compact`, which leaves out the text,
-    # and `sort`, a front-matter field to order the hits by instead of score ("-created": newest first). With
+    # and `sort`, a front-matter field to order the k hits found by instead of score ("-created": newest first). With
     # `adaptive`, k is the most hits returned: those before the largest drop in score, and a few more (see _adaptive).
     # Without a `collection`, a search covers every active one.
 
@@ -1291,18 +1300,13 @@ class Index:
 
     def _place(self, id):
         """The collection, and the path in it, that `id` names: "collection/path", or an absolute path in a
-        collection's folder, the nearest that holds it; (None, path) for a collection there isn't, (None, "") for an
-        absolute path in none."""
+        collection's folder, the nearest that holds it (see indexing.holding); (None, path) for a collection there
+        isn't, (None, "") for an absolute path in none."""
         collections = self.catalog.collections()
         if not os.path.isabs(id):
             name, _, rel = id.partition("/")
             return next((c for c in collections if c.name == name), None), rel
-        full = os.path.normpath(id)
-        for c in sorted(collections, key=lambda c: -len(c.path)):
-            root = os.path.normpath(c.path)
-            if os.path.normcase(full).startswith(os.path.normcase(os.path.join(root, ""))):
-                return c, os.path.relpath(full, root).replace(os.sep, "/")
-        return None, ""
+        return indexing.holding(collections, os.path.normpath(id)) or (None, "")
 
     def _rows(self, id):
         """The documents `id` may name (see `get`), at most six: (row id, path, title, meta, text) of each. For an id

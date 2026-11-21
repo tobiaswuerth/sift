@@ -3,8 +3,8 @@
   <section>
     <h2>Collections</h2>
     <ul>
-      {% for name, n in collections %}
-      <li><a href="{{ view.href(c=name, path='', f=(), q='', similar='', to='', by='', k=PAGE) }}"{% if name == view.c %} class="on"{% endif %}>{{ name }} <span class="n">{{ n|num }}</span></a></li>
+      {% for name, n, damaged in collections %}
+      <li><a href="{{ view.href(c=name, path='', f=(), q='', similar='', to='', by='', k=PAGE) }}"{% if name == view.c %} class="on"{% endif %}{% if damaged %} title="{{ damaged }}"{% endif %}>{{ name }} <span class="n">{{ "damaged" if damaged else n|num }}</span></a></li>
       {% endfor %}
     </ul>
   </section>
@@ -42,8 +42,8 @@
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   {% if kind == "overview" %}
   <ul class="cards">
-    {% for name, n in collections %}
-    <li><a href="{{ view.href(c=name) }}"><strong>{{ name }}</strong><span>{{ n|num }} document{{ "" if n == 1 else "s" }}</span></a></li>
+    {% for name, n, damaged in collections %}
+    <li><a href="{{ view.href(c=name) }}"><strong>{{ name }}</strong><span>{% if damaged %}{{ damaged }}{% else %}{{ n|num }} document{{ "" if n == 1 else "s" }}{% endif %}</span></a></li>
     {% else %}
     <li class="empty">Nothing is indexed yet: <code>sift add FOLDER</code>, then <code>sift index</code>.</li>
     {% endfor %}

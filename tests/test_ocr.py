@@ -298,6 +298,45 @@ def test_a_scan_with_ocr_off_is_not_read_again_on_every_index(tmp_path, home, sc
     assert only(catalog).execute("SELECT mtime IS NOT NULL FROM sources").fetchone() == (1,)
 
 
+@pytest.mark.parametrize(
+    "skipped, gpu, then, read",
+    [
+        ("off", True, "auto", True),  # from off to auto, on a GPU
+        ("off", False, "on", True),
+        ("auto", False, "on", True),  # SIFT_OCR=on, as the skip says, without a GPU
+        ("auto", False, "off", False),  # reading fewer: nothing to read again
+    ],
+)
+def test_scans_skipped_under_a_setting_are_read_once_it_reads_more(
+    tmp_path, home, scans, configure, skipped, gpu, then, read
+):
+    # A scan skipped as SIFT_OCR was off, or as auto found no GPU, kept its file's time: SIFT_OCR set as the skip said
+    # read it only once the PDF changed.
+    configure(ocr=skipped)
+    scans.engine.accelerator = PretendGpu("cpu") if gpu else Accelerator("cpu")
+    scan(tmp_path / "docs" / "a.pdf")
+    catalog = Catalog(home)
+    assert indexed(catalog, tmp_path / "docs") == {}
+    configure(ocr=then)
+    indexing.index(catalog)
+    assert [p for (p,) in only(catalog).execute("SELECT path FROM docs")] == (["a.pdf"] if read else [])
+    assert scans.engine.processor.pages == read  # and once only
+    indexing.index(catalog)
+    assert scans.engine.processor.pages == read
+
+
+def test_a_scan_reindexed_with_ocr_off_is_read_by_the_index_once_it_is_on(tmp_path, home, scans, configure):
+    configure(ocr="off")
+    path = scan(tmp_path / "docs" / "a.pdf")
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "docs", "docs")
+    ((entry, _),) = indexing.reindex(catalog, [str(path)]).files
+    assert entry["status"] == "skipped"
+    configure(ocr="on")
+    indexing.index(catalog)
+    assert [p for (p,) in only(catalog).execute("SELECT path FROM docs")] == ["a.pdf"]
+
+
 def test_on_the_cpu_when_told(tmp_path, home, scans, configure):
     configure(ocr="on")
     scans.engine.accelerator = Accelerator("cpu")
@@ -430,7 +469,7 @@ def test_scans_are_marked_to_be_read_again_once(corpus):
     catalog, _ = corpus
     only(catalog).execute("UPDATE sources SET mtime = 1")
     only(catalog).commit()
-    marking = partial(store._read_again, kinds=(".pdf",))
+    marking = partial(store.read_again, kinds=(".pdf",))
     store._once(only(catalog), "scans_read", marking)  # what the second runs, after the first has finished
     assert only(catalog).execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (0,)
 
@@ -444,6 +483,6 @@ def test_an_interrupted_marking_leaves_the_index_as_it_was(tmp_path, home, monke
     only(catalog).commit()
     monkeypatch.setattr(store, "set_meta", lambda *args: (_ for _ in ()).throw(KeyboardInterrupt))
     with pytest.raises(KeyboardInterrupt):
-        store._once(only(catalog), "scans_read", partial(store._read_again, kinds=(".pdf",)))
+        store._once(only(catalog), "scans_read", partial(store.read_again, kinds=(".pdf",)))
     # rolled back: tried again on the next start
     assert only(catalog).execute("SELECT mtime FROM sources").fetchone() == (1,)

@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 import sift
-from sift import __version__, cli, embed, models, remote, store, worker
+from sift import __version__, cli, embed, models, remote, search, store, worker
 from sift.search import Index
 
 from .conftest import Client, FakeSentenceTransformer, NumpyModels, fake_vector, nobody_listens
@@ -96,6 +96,35 @@ def test_the_worker_refuses_malformed_requests(client, path, content):
     assert response.status_code == 400
 
 
+def test_a_request_from_an_address_the_server_doesnt_know_is_served(fake_models, capsys):
+    # The status line named the client's address, which an ASGI server need not give: the request failed.
+    c = Client(worker.app(TOKEN, fake_models), headers={"Authorization": f"Bearer {TOKEN}"}, client=None)
+    assert post(c, "/embed", {"texts": ["a"]}).status_code == 200
+    assert "(last for an unknown address)" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("path, payload", [("/embed", {}), ("/rerank", {"query": "q"})])
+def test_the_worker_refuses_more_texts_than_a_sift_sends(client, monkeypatch, path, payload):
+    # A request of a million texts held the GPU, and the memory of its answer, for as long as it took.
+    monkeypatch.setattr(remote, "MOST_TEXTS", 3)
+    response = post(client, path, payload | {"texts": ["a"] * 4})
+    assert (response.status_code, response.text) == (413, "send at most 3 texts at a time, not 4")
+    assert post(client, path, payload | {"texts": ["a"] * 3}).status_code == 200
+
+
+def test_a_worker_takes_every_request_a_sift_makes():
+    # `query` reranks its keyword and its semantic candidates in one request, MOST_HITS of each at most.
+    assert max(2 * search.MOST_HITS, remote.BATCH) <= remote.MOST_TEXTS
+
+
+def test_the_protocol_as_documented_says_how_many_texts_a_request_takes():
+    # The limit came with the worker's refusal, and the protocol's description said nothing of it.
+    documented = (Path(__file__).parent.parent / "docs" / "architecture.md").read_text(encoding="utf-8")
+    protocol = documented.split("## Worker protocol")[1]
+    assert f"{remote.MOST_TEXTS:,} texts" in protocol
+    assert "413" in protocol
+
+
 @pytest.mark.parametrize("authorization", [None, "Bearer wrong", f"Basic {TOKEN}", TOKEN])
 def test_the_worker_answers_only_with_its_token(fake_models, authorization):
     c = Client(worker.app(TOKEN, fake_models), headers={"Authorization": authorization} if authorization else {})
@@ -114,6 +143,16 @@ def test_the_worker_makes_its_key_once_and_keeps_it(home):
     assert first.key == f"{first.token}.{first.pin}"
     assert len(first.token) >= 40  # 32 random bytes
     assert first.cert.parent == first.private_key.parent == home / "worker"
+
+
+def test_a_key_file_is_written_whole_or_not_at_all(tmp_path):
+    # Written in place, a key file cut short, by a crash or a full disk, changed the key other machines were given.
+    path = tmp_path / "token"
+    worker._write(path, b"the old key")
+    with pytest.raises(TypeError):
+        worker._write(path, "not bytes")  # fails as it writes
+    assert path.read_bytes() == b"the old key"
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def test_another_home_makes_another_key(tmp_path, configure):
@@ -273,8 +312,9 @@ def test_a_worker_is_reached_over_ipv4_where_it_listens(live, ipv6_listener, mon
     assert not ready  # no connection waits there
 
 
-def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
+def test_embedding_searching_and_serving_through_a_worker_never_load_pytorch(tmp_path):
     # PyTorch takes seconds to load, more on a notebook; a machine whose worker embeds and reranks doesn't need it.
+    # `sift embed` and `sift serve` said they loaded it all the same.
     script = tmp_path / "search.py"
     script.write_text(
         textwrap.dedent(f"""
@@ -282,10 +322,11 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
             import sys
             os.environ["SIFT_EMBED_REMOTE"] = "https://t.p@worker:8766"
             import numpy as np
-            from sift import indexing, remote, store
+            from sift import embed, indexing, remote, server
             from sift.catalog import Catalog
             from sift.search import Index
 
+            remote.Remote.info = {{"model": "m", "dim": 4, "reranker": "r", "version": "1"}}
             remote.Remote.encode = lambda self, texts, query=False: np.full((len(texts), 4), 0.5, np.float16)
             remote.Remote.rerank = lambda self, query, texts: np.ones(len(texts), np.float32)
             notes = {str(tmp_path / "notes")!r}
@@ -294,12 +335,11 @@ def test_searching_through_a_worker_never_loads_pytorch(tmp_path):
             catalog = Catalog({str(tmp_path / "home")!r})
             catalog.add(notes, "notes")
             indexing.index(catalog)
-            chunks = [chunk for (chunk,) in catalog.store("notes").execute("SELECT id FROM chunks")]
-            store.put_vectors(catalog.store("notes"), chunks, np.full((len(chunks), 4), 0.5, np.float16))
-            store.set_meta(catalog.store("notes"), "dim", 4)
-            catalog.store("notes").commit()
+            embed.embed_pending(catalog)
             index = Index(catalog)
             assert index.vsearch("robot") and index.query("robot")
+            server.build(index)
+            index.load()
             print("torch" in sys.modules)
         """),
         encoding="utf-8",
@@ -422,7 +462,7 @@ def test_worker_serves_https_with_its_key_on_all_interfaces(home, fake_models, s
 
 
 def test_the_workers_key_stays_out_of_its_log(home, fake_models, started, monkeypatch, capsys):
-    # The key lets any machine use the worker; its log is kept for good, readable as any file there.
+    # The key lets any machine use the worker; its log is kept, readable as any file there.
     from datetime import datetime
 
     from sift import logs

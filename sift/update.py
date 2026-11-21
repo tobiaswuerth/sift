@@ -104,7 +104,8 @@ class Changes(TypedDict, total=False):
 
 class Spec(TypedDict):
     """An update agreed to, as the process that makes it is told (see `finish`): the command that upgrades, the sift
-    that asked (`pid`, `since`), and the files a running sift of the installation holds."""
+    that asked (`pid`, `since`), the files a running sift of the installation holds, and where its log and the state
+    go: as that sift has them, for this process runs elsewhere (see `start`)."""
 
     version: str
     command: list[str]
@@ -112,6 +113,7 @@ class Spec(TypedDict):
     pid: int
     held: list[str]
     log: str
+    state: str
 
 
 ENTRIES = get_type_hints(State)
@@ -233,6 +235,7 @@ def _schedule(path: Path, latest: str, upgrade: list[str]) -> NoReturn:
         "pid": os.getpid(),
         "held": held,
         "log": str(log),
+        "state": str(path),
     }
     updating = start(["finish", json.dumps(spec)])
     change(path, pending={"version": latest, "since": since, "pid": updating.pid, "upgrading": False})
@@ -346,7 +349,7 @@ def finish(spec: Spec, platform: str = sys.platform, kernel32: "ctypes.CDLL | No
     (`held` files free); then run the upgrade, logged, and keep how it went for the next command to say. Before it
     upgrades, the state says so, which stops the commands started from then on (see offer); a sift started just
     before runs, and is waited for too."""
-    path, log = state_path(), Path(spec["log"])
+    path, log = Path(spec["state"]), Path(spec["log"])
     log.parent.mkdir(parents=True, exist_ok=True)
     deadline, waited = time.perf_counter() + WAIT, False
     while not waited:
@@ -474,12 +477,13 @@ def _fits(value: Json, kind: type) -> bool:
 
 def change(path: Path, **changes: Unpack[Changes]) -> None:
     """Change the state kept, written whole, so that another process reads the old or the new; None removes a key.
-    It is written beside the state first (update.json.PID.part), which goes if it can't take the state's place."""
+    It is written beside the state first (update.json.PID.part), which goes if it can't be written whole or take the
+    state's place."""
     state = {**read(path), **changes}
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f"{path.name}.{os.getpid()}.part")
-    part.write_text(json.dumps({k: v for k, v in state.items() if v is not None}), encoding="utf-8")
     try:
+        part.write_text(json.dumps({k: v for k, v in state.items() if v is not None}), encoding="utf-8")
         _shared(lambda: os.replace(part, path))
     except BaseException:
         part.unlink(missing_ok=True)

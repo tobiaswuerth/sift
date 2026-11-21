@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-11-21
+
+sift updates itself on a yes, looks up a shortened id instead of reading every path, and indexes long documents and
+large JSON Lines files in a fraction of the time and memory.
+
 ### Added
 
 - In a terminal, sift says when a newer version is out and, on `y`, updates itself with the installer it came by (uv,
@@ -17,6 +22,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Logs no longer grow without end: the latest 20 of each command are kept, and a log past 16 MB, as a server's that
+  logs every request, goes on in a new part, its last three kept (`.log.1` to `.log.3`).
+- Indexing a JSON Lines file whose records changed takes half the time: the old versions go together, not one by
+  one. 50,000 changed records took 11.4 s to store, and take 5.7 s.
 - A document named otherwise than by its whole id is looked up, where every path of its collection was read: a
   shortened id (`papers/2603.29315.md` for `papers/2026/03/2603.29315.md`), a record's id alone, a mistyped id, or an
   absolute path in another case, for `get`, `similar`, `links`, `mentions`, and the `links_to` and `linked_from` of
@@ -67,6 +76,38 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A store that was locked or damaged, or a call cancelled, was said as "invalid search query".
 - A bug that is a `KeyError` or an `IndexError` came out as a bare message (`error: 'fields'`); it is reported as a
   bug now, with its type, and its traceback on the command line and in the server's log.
+- On Windows, an index on a network share, or on a drive mapped to one, was made and then never opened again ("unable
+  to open database file"): `SIFT_HOME` there, `sift add --store`, `sift move`. SQLite refused the address of a file on
+  another machine as sift wrote it.
+- A file named by its absolute path through the folder as it was added, a link or junction to it or a drive mapped to
+  a network share, was "in no collection" for `reindex`, `sift index --files` and `get`, and the `sift add` suggested
+  was refused: a collection keeps its folder as it resolves. Such a path is resolved now where it isn't found as given.
+- A range on a number took text without a number for 0: `-f "year<2000"` found every note whose year was `unknown`,
+  empty, or a list inside a list. Text that starts with a number, as a date, still compares as that number. A range
+  given as text, `-f "created>2024"`, compared a list inside a list by its JSON, and found it.
+- A scan skipped as `SIFT_OCR` was off, or as there was no GPU, was read only once its PDF changed: setting
+  `SIFT_OCR=on`, as the skip says, read none of them. The next `sift index` after `SIFT_OCR` is turned on, or from
+  `off` to `auto`, reads them.
+- `reindex` and `sift index --files` failed the whole call, every file of it left as it was, when the index refused
+  one file's text, as text over SQLite's limit of 1 GB. That file is "unreadable" now, with why, and stays as it was
+  indexed; the others are read, as `sift index` reads them.
+- `sift worker` failed a request whose sender's address the server didn't give, and took any number of texts in one,
+  holding the GPU for as long as a request of millions took. It takes at most 20,000, the most a `query` reranks.
+- One collection's index damaged, every page of the UI failed: its collection list now says that index is damaged
+  and what to do, and the others' pages work.
+- `sift embed` and `sift serve` said "loading PyTorch" through a worker, where they never load it, and so did `sift
+  similar` anywhere, which runs no model. `sift serve` said it loaded the models into RAM: it now names where they
+  are, the worker's address or the device.
+- `sift worker` wrote its token and certificate in place: one cut short by a crash or a full disk changed the key other
+  machines were given, unsaid. Each is written whole or not at all now.
+- `SIFT_HOME=~/sift`, as an MCP client's config or Windows' `setx` passes it, unexpanded, was a folder named `~`
+  wherever a command ran. `~` is the user's folder now, and a relative home is taken from where the command runs, so
+  the update's process, which runs at the root of the drive, keeps the state the commands read.
+- A full disk left `update.json.PID.part` behind in `SIFT_HOME`, one more for each command that tried to write the
+  update check's state. It goes now, as when the state can't be replaced.
+- The docs said `sort` orders results by a field "instead of score", which read as the newest of every match first.
+  It orders the best `k`; a range filter on the field finds the newest of all. They also said a mail's `date` is in
+  UTC, which it is only where the mail gives its time zone.
 
 ## [1.12.0] - 2026-11-17
 
@@ -617,7 +658,8 @@ First release.
 - Keyword search (SQLite FTS5, BM25), exact GPU vector search, and hybrid search with cross-encoder reranking.
 - An MCP server (streamable HTTP and stdio) whose instructions tell agents what is indexed.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/tobiaswuerth/sift/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/tobiaswuerth/sift/compare/v1.11.2...v1.12.0
 [1.11.2]: https://github.com/tobiaswuerth/sift/compare/v1.11.1...v1.11.2
 [1.11.1]: https://github.com/tobiaswuerth/sift/compare/v1.11.0...v1.11.1

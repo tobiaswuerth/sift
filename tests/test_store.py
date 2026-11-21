@@ -8,7 +8,7 @@ import sqlite3
 import time
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import numpy as np
 import pytest
@@ -65,6 +65,21 @@ def test_a_missing_store_is_not_made_anew(tmp_path):
     with pytest.raises(FileNotFoundError, match="not found"):
         store.connect(tmp_path / "gone.sqlite", 1)
     assert not (tmp_path / "gone.sqlite").exists()
+
+
+@pytest.mark.parametrize(
+    "path, uri",
+    [
+        (PureWindowsPath(r"\\nas\share\sift\a.sqlite"), "file:////nas/share/sift/a.sqlite?mode=rw"),
+        (PureWindowsPath(r"D:\sift\a b#.sqlite"), "file:///D:/sift/a%20b%23.sqlite?mode=rw"),
+        (PurePosixPath("/home/me/a.sqlite"), "file:///home/me/a.sqlite?mode=rw"),
+        (PurePosixPath("/home/me/a:b ü?.sqlite"), "file:///home/me/a%3Ab%20%C3%BC%3F.sqlite?mode=rw"),
+    ],
+)
+def test_a_store_is_opened_by_a_uri_sqlite_takes(path, uri):
+    # A store on a network share, or on a drive mapped to one (Z:, which resolves to \\nas\share), was made and then
+    # never opened again: SQLite refuses a URI that names a host, file://nas/share/..., as Path.as_uri writes it.
+    assert store.uri(path, "rw") == uri
 
 
 def test_a_store_of_another_collection_is_refused(tmp_path):

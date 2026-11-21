@@ -2,6 +2,7 @@
 running server follows without loading every code again."""
 
 import os
+import sqlite3
 
 import numpy as np
 import pytest
@@ -445,12 +446,72 @@ def test_reindex_refuses_files_behind_a_junction(live, tmp_path):
         index.reindex(["vault/joined/a.md"])
 
 
+def link(folder, to):
+    """Make `to` a folder that leads to `folder`: a symbolic link, or a junction where only administrators may make
+    those (Windows)."""
+    try:
+        os.symlink(folder, to, target_is_directory=True)
+    except OSError:
+        import _winapi
+
+        _winapi.CreateJunction(str(folder), str(to))
+
+
+def test_a_file_named_through_a_link_to_its_collection(live, tmp_path):
+    # A collection's folder is kept as it resolves: added through a link, a junction or a drive mapped to a network
+    # share (Z:, which resolves to \\nas\share), a file named by its path that way was in no collection, and the
+    # `sift add` the error suggested was refused, as that folder was the collection already.
+    index, vault = live
+    through = tmp_path / "through"
+    link(vault, through)
+    write(vault / "a.md", "Alpha note.\n")
+    assert index.reindex([str(through / "a.md")]) == [
+        {"id": "vault/a.md", "status": "added", "chunks": 1, "embedded": 1}
+    ]
+    assert index.get(str(through / "a.md")) == "Alpha note.\n"
+    (vault / "a.md").unlink()
+    assert index.reindex([str(through / "a.md")]) == [{"id": "vault/a.md", "status": "removed"}]
+
+
+def test_a_path_found_as_given_is_not_resolved(live, monkeypatch):
+    # Resolving asks the file system about every folder of the path, which a share that doesn't answer can take many
+    # seconds over: every `get` and `reindex` by absolute path did, though the path was found as given.
+    index, vault = live
+    hans = vault / "01_People" / "Hans Müller.md"
+    real, asked = os.path.realpath, []
+    monkeypatch.setattr(os.path, "realpath", lambda path, *a, **kw: asked.append(str(path)) or real(path, *a, **kw))
+    assert index.get(str(hans)).startswith("---")
+    assert index.reindex([str(hans)])[0]["status"] == "unchanged"
+    assert str(hans.parent) not in asked
+
+
 def test_reindex_refuses_a_collection_whose_folder_is_gone(live):
     # An unplugged drive must not look like every file deleted.
     index, vault = live
     vault.rename(vault.with_name("moved"))
     with pytest.raises(ValueError, match="vault: folder not found"):
         index.reindex(["vault/01_People/Hans Müller.md"])
+
+
+def test_a_file_the_store_refuses_stays_as_it_was_and_the_others_are_read(live, monkeypatch):
+    # `sift index` leaves such a file out alone; reindex rolled back every file of the call, and failed.
+    index, vault = live
+    hans = vault / "01_People" / "Hans Müller.md"
+    write(hans, hans.read_text(encoding="utf-8").replace("Zürich", "Winterthur"))
+    write(vault / "b.md", "Beta note.\n")
+    insert = indexing._insert
+
+    def refusing(db, sid, path, doc):
+        if path.endswith("Hans Müller.md"):
+            raise sqlite3.DataError("string or blob too big")
+        return insert(db, sid, path, doc)
+
+    monkeypatch.setattr(indexing, "_insert", refusing)
+    assert index.reindex([str(hans), "vault/b.md"]) == [
+        {"id": "vault/01_People/Hans Müller.md", "status": "unreadable", "note": "string or blob too big"},
+        {"id": "vault/b.md", "status": "added", "chunks": 1, "embedded": 1},
+    ]
+    assert "vault/01_People/Hans Müller.md" in ids(index.search("Zürich"))  # as it was indexed
 
 
 def test_reindex_refuses_names_sqlite_cannot_store(live):

@@ -63,10 +63,10 @@ Everything sift keeps lies under `SIFT_HOME` (`~/.sift`):
 | `sift.db` | The catalog: collections, folders, where their indexes lie | Made on first use |
 | `collections/NAME.sqlite` | A collection's index, a SQLite file | Made by `sift add`, deleted by `sift rm`, moved by `sift move` |
 | `collections/NAME.sqlite.postings-lock` | Empty; locked while a sift updates the keyword postings | Moved and deleted with its index |
-| `logs/COMMAND-DATE.log` | What `add`, `rm`, `index`, `embed`, `serve` and `worker` said, timed, with errors | Kept; delete freely |
+| `logs/COMMAND-DATE.log` | What `add`, `rm`, `index`, `embed`, `serve` and `worker` said, timed, with errors | The latest 20 of each command kept; past 16 MB a log goes on in a new part, its last 3 kept as `.log.1` (the latest) to `.log.3`; delete freely |
 | `logs/update-DATE.log` | What an update you agreed to did | Kept; delete freely |
 | `update.json` | The latest version on PyPI, when it was asked, and an update waiting or done | Rewritten daily, through `update.json.PID.part` for a moment; delete freely |
-| `worker/` | `sift worker`'s certificate and token, readable by you only | Delete it to make a new key |
+| `worker/` | `sift worker`'s certificate and token, readable by you only | Made on its first start, each file through `FILE.part` for a moment; delete it to make a new key |
 | `numba/` | The compiled search code `sift serve` and `sift bench` keep | Made again when deleted |
 
 An index can lie anywhere else:
@@ -111,7 +111,7 @@ The commands' options; the MCP tools take the same as parameters (`k`, `collecti
 | `--fields a,b` | Front-matter fields to show with each hit, or `*` for all |
 | `--compact` | Results without their text |
 | `--all-passages` | Every matching passage, several per document |
-| `--sort=-created` | Order by a front-matter field instead of score; `-` for descending |
+| `--sort=-created` | Order the `k` results by a front-matter field instead of score; `-` for descending. It orders the best `k`, not every match: for the newest of all, filter on a range too (`-f created>=2026`) |
 | `--links-to`, `--linked-from` | Only documents linking to a note, or linked from it ([Linked notes](#linked-notes)) |
 | `--adaptive` | Only the results before the largest drop in score, and five more, up to `k` |
 | `--budget SECONDS` | `search` only: stop after about this long, once anything is found, with the hits marked `partial` |
@@ -170,7 +170,7 @@ sift search invoice -f "created>=2024-06" -f "created<2025"      # a range
 - A value matches whether the document writes it as a number or as text: `-f year=2024` finds `year: 2024` and
   `"year": "2024"`, and `true` and `false` likewise.
 - Ranges take `>`, `>=`, `<`, `<=`. Dates compare at the precision given: `created<=2024` includes all of 2024; a number
-  compares with the number a date starts with.
+  compares with the number a date starts with, and passes over text that doesn't start with one (`year: unknown`).
 - Field names are as written in the front matter: `-f journal-ref=Nature`, `-f "date created>=2024"`.
 - Over MCP, `filters` maps each field to a value, a list (any of them), `{"not": ...}`, or ranges:
   `{"created": {">=": "2024-06", "<": "2025"}}`.
@@ -224,14 +224,15 @@ tables and columns in reading order; their metadata says `ocr`.
 - On a desktop GPU, in about 3 GB: 15 to 30 seconds a page, up to a minute for a dense one; at most 50 pages a scan. The
   first scan downloads the model (2 GB).
 - Without a GPU, scans are skipped and reported; `SIFT_OCR=on` reads them on the CPU (minutes a page), `off` never.
-  A scan skipped because the GPU's memory was taken, or OCR ran out of it, is read again by the next `sift index`.
+  A scan skipped because the GPU's memory was taken, or OCR ran out of it, is read again by the next `sift index`;
+  so are those skipped before `SIFT_OCR` was turned on, or from `off` to `auto`.
 - `reindex` leaves scans to the next `sift index`, so searches don't wait; `sift index --files` reads them at once.
 
 ### Emails
 
 A `.eml` is a document titled by its subject, with `From`, `To`, `Cc` and `Date` above its plain text (else its HTML as
-Markdown). Its metadata: `from`, `to`, `cc` (bare addresses), `date` (ISO 8601, UTC), `message_id`, `in_reply_to`,
-`attachments`.
+Markdown). Its metadata: `from`, `to`, `cc` (bare addresses), `date` (ISO 8601, in UTC where the mail gives its time
+zone), `message_id`, `in_reply_to`, `attachments`.
 
 Each attachment sift can read is a document below the mail: `mail/2026/offer.eml` holds `mail/2026/offer/contract.pdf`.
 A forwarded mail is one too, named by its subject if it has no file name, with its attachments below it, three levels

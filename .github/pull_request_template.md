@@ -5,6 +5,5 @@
 ## Checklist
 
 - [ ] Tests were written first, and bug fixes come with a regression test
-- [ ] `pytest --cov` passes with 100% coverage
-- [ ] `pre-commit run --all-files` passes
+- [ ] `python scripts/gate.py` is green: the hooks, the types, the tests with 100% coverage, and the smoke run
 - [ ] User-visible changes are noted under "Unreleased" in `CHANGELOG.md`

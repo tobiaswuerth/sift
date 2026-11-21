@@ -131,13 +131,17 @@ def test_a_decoded_block_holds_no_more_than_its_arrays():
     # gaps too, and the cache held half as much again as its budget.
     ids = np.arange(postings.BLOCK, dtype=np.int64) * 3
     data = postings.encode_block(ids, np.ones(postings.BLOCK, np.int64))
-    tracemalloc.start()
+    postings.decode_block(data)  # once before: what the coverage tracer records of lines run the first time counted too
+    tracemalloc.start(8)
     try:
-        before = tracemalloc.get_traced_memory()[0]
+        before = tracemalloc.take_snapshot()
         block = postings.decode_block(data)
-        held = tracemalloc.get_traced_memory()[0] - before
+        after = tracemalloc.take_snapshot()
     finally:
         tracemalloc.stop()
+    # Only what decoding allocated: the process's whole count took in what other threads held meanwhile
+    mine = [tracemalloc.Filter(True, postings.__file__, all_frames=True)]
+    held = sum(stat.size_diff for stat in after.filter_traces(mine).compare_to(before.filter_traces(mine), "filename"))
     assert held <= sum(part.nbytes for part in block) + 1024  # and the arrays' own few hundred bytes
 
 

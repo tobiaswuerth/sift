@@ -21,6 +21,7 @@ from . import __version__
 
 PORT = 8766  # the worker's default
 BATCH = 256  # texts per request to embed
+MOST_TEXTS = 20_000  # texts a worker takes in one request: `query` reranks twice search.MOST_HITS candidates at most
 TIMEOUT = 600  # seconds to wait for an answer; a busy worker can take long, a dead one fails at once
 
 

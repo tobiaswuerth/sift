@@ -45,6 +45,14 @@ def test_only_settings_touches_the_environment():
     assert touching == set(), "read and set environment variables in settings.py, and ask it"
 
 
+def test_the_readme_lists_every_variable_sift_heeds():
+    # settings.py counted six variables, its tests five: the README's table is where they are listed, all of them.
+    source = ast.parse((ROOT / "sift" / "settings.py").read_text(encoding="utf-8"))
+    heeded = {n.value for n in ast.walk(source) if isinstance(n, ast.Constant) and str(n.value).startswith("SIFT_")}
+    listed = set(re.findall(r"^\| `(SIFT_\w+)` \|", (ROOT / "README.md").read_text(encoding="utf-8"), re.MULTILINE))
+    assert heeded == listed, "list each SIFT_ variable settings.py reads in the README's table, and only those"
+
+
 def _touches_environment(node):
     if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "os":
         return node.attr in ENVIRONMENT  # os.environ, os.getenv(...)
@@ -92,6 +100,22 @@ def test_published_text_names_no_machine():
         if MACHINE.search(line)
     }
     assert found == set(), "state hardware by kind (a GPU, 8 CPU threads), not by the model of the machine measured"
+
+
+UNWRAPPED = re.compile(r"\||!\[|\[!\[|\[[^\]]*\]: ")  # a table's row, an image, a badge, a link's address
+
+
+def test_prose_in_the_docs_is_wrapped_as_the_code_is():
+    # A clause added to a paragraph left its line at 151 characters, in a file wrapped at 120 like the code.
+    line_length = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["ruff"]["line-length"]
+    long = set()
+    for path in [*ROOT.glob("*.md"), *(ROOT / "docs").glob("*.md"), *(ROOT / ".github").glob("*.md")]:
+        in_code = False
+        for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+            in_code ^= line.lstrip().startswith("```")
+            if len(line) > line_length and not in_code and not UNWRAPPED.match(line):
+                long.add(f"{path.relative_to(ROOT)}:{n}")
+    assert long == set(), f"wrap prose at {line_length} characters; only tables, code, images and addresses run on"
 
 
 def test_only_newlines_end_lines():

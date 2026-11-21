@@ -1,5 +1,6 @@
 """Several collections, each in a store of its own: searched as one, some of them inactive, a store missing."""
 
+import html
 import json
 import os
 import sqlite3
@@ -8,12 +9,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from sift import cli, embed, indexing, store
+from sift import cli, embed, indexing, server, store
 from sift.catalog import Catalog
 from sift.search import Index
 from sift.server import _collections
 
-from .conftest import write
+from .conftest import Client, write
 
 
 def ids(hits):
@@ -98,6 +99,21 @@ def test_a_damaged_store_stops_no_other_collection(three, tmp_path, capsys):
     started = _collections(index)
     assert f"- papers ({papers.path}): papers: its index is damaged" in started
     assert f"- recipes ({three.get('recipes').path}): 3 documents" in started
+
+
+def test_a_damaged_store_stops_no_page_of_the_ui(three):
+    # Every page lists the collections with the counts their stores keep: one store's damaged, every page failed.
+    papers = three.get("papers")
+    three.release(papers.id)
+    damage(papers.store, "counts")
+    index = Index(three)
+    browser = Client(server.http_app(server.build(index)[0], index, "127.0.0.1"), base_url="http://127.0.0.1:8765")
+    overview = browser.get("/ui/")
+    assert overview.status_code == 200
+    assert "papers: its index is damaged" in html.unescape(overview.text)
+    assert "2 documents" in overview.text  # recipes
+    found = browser.get("/ui/", params={"q": "soup", "c": "recipes"})
+    assert 'data-id="recipes/soup.md"' in found.text
 
 
 def test_a_damaged_store_stops_no_server_from_loading_the_others(three, capsys):

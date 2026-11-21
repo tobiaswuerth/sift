@@ -62,10 +62,20 @@ def _make_certificate(cert, private_key):
 
 
 def _write(path, data):
-    """Write a file only this user may read (on POSIX; on Windows the home folder's permissions do that)."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
+    """Write a file only this user may read (on POSIX; on Windows the home folder's permissions do that), whole or not
+    at all: a key cut short by a crash or a full disk would change the key other machines were given, unsaid. Through
+    PATH.part beside it, for a moment."""
+    part = path.with_name(f"{path.name}.part")
+    fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(part, path)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
 
 
 async def _json(request):
@@ -106,10 +116,15 @@ def app(token, models):
             if not hmac.compare_digest(request.headers.get("authorization", "").encode(), expected):
                 return PlainTextResponse("wrong key", status_code=401)
             response = await handler(request)
-            line.show(status.format(**done, host=request.client.host))
+            line.show(status.format(**done, host=request.client.host if request.client else "an unknown address"))
             return response
 
         return endpoint
+
+    def too_many(texts):
+        """The answer to a request of more texts than a sift sends at once (remote.MOST_TEXTS), which would hold the
+        GPU, and the memory of its answer, for as long as it took."""
+        return PlainTextResponse(f"send at most {remote.MOST_TEXTS:,} texts at a time, not {len(texts):,}", 413)
 
     @authorized
     async def info(request):
@@ -122,6 +137,8 @@ def app(token, models):
         body = await _json(request)
         if not _texts(texts := body.get("texts")):
             return PlainTextResponse('send {"texts": [...], "query": false}', status_code=400)
+        if len(texts) > remote.MOST_TEXTS:
+            return too_many(texts)
         vectors = models.encode(texts, bool(body.get("query")))
         done["texts"] += len(texts)
         return Response(vectors.tobytes(), media_type="application/octet-stream")
@@ -131,6 +148,8 @@ def app(token, models):
         body = await _json(request)
         if not (isinstance(query := body.get("query"), str) and _texts(texts := body.get("texts"))):
             return PlainTextResponse('send {"query": "...", "texts": [...]}', status_code=400)
+        if len(texts) > remote.MOST_TEXTS:
+            return too_many(texts)
         scores = models.rerank(query, texts)
         done["queries"] += 1
         return JSONResponse({"scores": [float(s) for s in scores]})

@@ -1418,6 +1418,36 @@ def test_range_filters_on_numbers(corpus):
     assert ids(index.search("brush", filters={"year": {"<": "2025"}})) == ["notes/robots/brush.md"]  # given as text
 
 
+def test_a_number_range_passes_over_text_without_a_number(corpus):
+    # SQLite casts text without a number to 0: {"<": 2000} found every document whose year was "unknown", empty, or a
+    # list inside a list. Text that starts with a number still compares as it, as a date does with its year.
+    catalog, root = corpus
+    years = {
+        "dated": "1990",
+        "unknown": '"unknown"',
+        "empty": '""',
+        "nested": "[[1990]]",
+        "era": '"-50 BC"',
+        "spaced": '" 1985"',
+    }
+    for name, year in years.items():
+        write(root / "years" / f"{name}.md", f"---\nyear: {year}\n---\n# {name}\nharbour\n")
+    indexing.index(catalog)
+    hits = Index(catalog).search("harbour", k=20, filters={"year": {"<": 2000}})
+    assert sorted(h["id"].rsplit("/", 1)[1] for h in hits) == ["dated.md", "era.md", "spaced.md"]
+
+
+def test_a_text_range_passes_over_lists_inside_lists_and_yes_or_no(corpus):
+    # A range given as text compared the JSON text of a list inside a list, "[...]" after every digit: {">": "2024"}
+    # found it. Numbers and text compare at the precision given, as before.
+    catalog, root = corpus
+    for name, created in {"dated": '"2025-03"', "nested": '[["2025"]]', "flag": "true", "number": "2025"}.items():
+        write(root / "made" / f"{name}.md", f"---\ncreated: {created}\n---\n# {name}\nquay\n")
+    indexing.index(catalog)
+    hits = Index(catalog).search("quay", k=20, filters={"created": {">": "2024"}})
+    assert sorted(h["id"].rsplit("/", 1)[1] for h in hits) == ["dated.md", "number.md"]
+
+
 def test_range_on_a_list_needs_one_element_in_range(corpus):
     catalog, root = corpus
     write(root / "multi.md", "---\nyears: [2019, 2030]\n---\n# Multi\nbrush\n")
@@ -1500,12 +1530,27 @@ def test_sort_in_every_mode(dated, mode):
     assert [day(h) for h in hits] == DAYS[1:][::-1]
 
 
+def test_sort_orders_the_k_best_not_every_match(corpus):
+    # As the docs say now: they read as if the newest of every match came first. A range filter finds those.
+    catalog, root = corpus
+    write(root / "s" / "old.md", "---\ncreated: 2001\n---\n# Old\nledger ledger ledger ledger\n")
+    write(root / "s" / "new.md", "---\ncreated: 2026\n---\n# New\nledger among many other words of a longer note\n")
+    indexing.index(catalog)
+    index = Index(catalog)
+    assert [day(h) for h in index.search("ledger", k=1, sort="-created")] == ["old"]
+    assert [day(h) for h in index.search("ledger", k=1, filters={"created": {">=": 2026}})] == ["new"]
+
+
 def test_sort_puts_numbers_before_text(corpus):
     catalog, root = corpus
     for name, rank in (("a", "2"), ("b", '"x"'), ("c", "10"), ("d", "null")):
         write(root / "ranked" / f"{name}.md", f"---\nrank: {rank}\n---\n# {name}\nranked\n")
     indexing.index(catalog)
-    assert [day(h) for h in Index(catalog).search("ranked", sort="rank")] == ["a", "c", "b", "d"]
+    index = Index(catalog)
+    assert [day(h) for h in index.search("ranked", sort="rank")] == ["a", "c", "b", "d"]
+    # descending, text before numbers, as SQLite orders them, and browse too; those without the field last
+    assert [day(h) for h in index.search("ranked", sort="-rank")] == ["b", "c", "a", "d"]
+    assert [day(h) for h in index.browse(path="ranked/*", sort="-rank")] == ["b", "c", "a", "d"]
 
 
 @pytest.mark.parametrize("sort", ["", "-", 'bad"key', 1, ["created"]])
@@ -1524,6 +1569,16 @@ def test_similar_finds_documents_like_one(dated):
     assert all(h["id"].startswith("notes/dated/") for h in hits)  # the papers with the same words
     assert "notes/dated/2024-01-01.md" not in ids(hits)  # not the document itself
     assert hits[0]["score"] >= hits[-1]["score"]
+
+
+def test_similar_runs_no_model(embedded):
+    # A document's own vectors are its query: nothing is embedded or reranked, so `sift similar` loads no PyTorch,
+    # and says so (see test_cli).
+    class Untouched:
+        def __getattr__(self, name):
+            pytest.fail(f"similar asked the models for {name}")
+
+    assert Index(embedded[0], models=Untouched()).similar("notes/rl.md", k=1)
 
 
 def test_similar_takes_what_searches_take(dated):

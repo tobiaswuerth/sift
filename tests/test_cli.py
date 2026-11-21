@@ -128,6 +128,39 @@ def test_slow_commands_say_they_started_before_loading_anything(home, monkeypatc
     assert said[0].startswith(f"sift {argv[0]}: starting")
 
 
+@pytest.mark.parametrize(
+    "argv, target, said",
+    [
+        (["embed"], "sift.embed.embed_pending", "starting ..."),
+        (["serve"], "sift.server.serve", "starting ..."),
+        (["vsearch", "x"], "sift.search.Index.vsearch", "starting ..."),
+        (["worker"], "sift.worker.serve", "starting, loading PyTorch ..."),  # a worker computes itself
+    ],
+)
+def test_through_a_worker_only_the_worker_says_it_loads_pytorch(
+    home, monkeypatch, capsys, configure, argv, target, said
+):
+    # `sift embed` and `sift serve` said they loaded PyTorch through a worker, where they never load it.
+    configure(remote="https://t.p@worker:8766")
+    monkeypatch.setattr(target, lambda *args, **kwargs: [])
+    cli.main(argv)
+    assert f"sift {argv[0]}: {said}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv, target, said",
+    [
+        (["vsearch", "x"], "sift.search.Index.vsearch", "starting, loading PyTorch ..."),
+        (["similar", "notes/x.md"], "sift.search.Index.similar", "starting ..."),  # it reads the codes
+    ],
+)
+def test_only_a_command_that_runs_a_model_says_it_loads_pytorch(home, monkeypatch, capsys, argv, target, said):
+    # `sift similar` compares the vectors the index holds: it said it loaded PyTorch, and never did.
+    monkeypatch.setattr(target, lambda *args, **kwargs: [])
+    cli.main(argv)
+    assert f"sift {argv[0]}: {said}" in capsys.readouterr().err
+
+
 def test_the_cli_starts_with_the_standard_library_alone():
     # CI installs the wheel without dependencies and runs `sift --version`; importing NumPy at the top of the CLI
     # broke that. It also keeps the first line quick.

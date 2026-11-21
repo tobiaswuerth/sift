@@ -1,7 +1,7 @@
-"""sift's settings: six optional environment variables, read once per process. None are needed; they are for
-special cases, and every module asks `current()` instead of reading the environment itself. Beside them CUDA's
-CUDA_VISIBLE_DEVICES, Hugging Face's HF_HUB_OFFLINE (offline, sift asks PyPI for no update either), and where Numba
-keeps the code it compiles (`keep_compiled_code`), which it reads from the environment."""
+"""sift's settings: the optional environment variables in the README's table, read once per process. None are
+needed; they are for special cases, and every module asks `current()` instead of reading the environment itself.
+Beside them CUDA's CUDA_VISIBLE_DEVICES, Hugging Face's HF_HUB_OFFLINE (offline, sift asks PyPI for no update
+either), and where Numba keeps the code it compiles (`keep_compiled_code`), which it reads from the environment."""
 
 import os
 from collections.abc import Mapping
@@ -23,9 +23,11 @@ class Settings:
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] = os.environ) -> Self:
-        """The settings an environment gives. An empty variable counts as unset."""
+        """The settings an environment gives. An empty variable counts as unset. The home is a whole path: "~" as the
+        user's folder, which no shell expanded for an MCP client's config or `setx`, and a relative one from where the
+        command runs, so that processes it starts elsewhere find the same."""
         return cls(
-            home=Path(environ.get("SIFT_HOME") or Path.home() / ".sift"),
+            home=Path(environ.get("SIFT_HOME") or Path.home() / ".sift").expanduser().absolute(),
             embed_model=environ.get("SIFT_EMBED_MODEL") or "google/embeddinggemma-2",
             rerank_model=environ.get("SIFT_RERANK_MODEL") or "Alibaba-NLP/gte-reranker-modernbert-base",
             remote=environ.get("SIFT_EMBED_REMOTE") or None,

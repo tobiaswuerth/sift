@@ -123,6 +123,22 @@ def _path(rel, doc):
     return f"{rel.rsplit('.', 1)[0]}/{_storable(doc.key)}" if doc.key else rel
 
 
+SCANS_SKIPPED = "scans_skipped"  # in a store's meta table: the SIFT_OCR under which a scan was last left unread
+# How far each SIFT_OCR reads: on, every scan auto reads; auto, every one off does
+OCR_READS = {"off": 0, "auto": 1, "on": 2}
+
+
+def _read_skipped_scans(db):
+    """Have this index read the scans left unread under a SIFT_OCR that reads fewer than the one now (SCANS_SKIPPED),
+    as it was turned on, or from off to auto: the PDFs without documents, and the mails with one attached, once. A
+    skipped scan's file keeps its time, so that no later run reads it again only to skip it again."""
+    skipped = store.get_meta(db, SCANS_SKIPPED)
+    if skipped is not None and OCR_READS[ocr.setting()] > OCR_READS[skipped]:
+        store.read_again(db, (".pdf",))
+        db.execute("DELETE FROM meta WHERE key = ?", (SCANS_SKIPPED,))
+        db.commit()
+
+
 def _read_scans(db, sid, rel, docs, note, now=True):
     """A file's documents with the scans among them read by OCR, those new or changed since the file `sid` was
     indexed (see `ocr`); a scan that can't be read is left out, and noted, as is one read. Reading a scan takes a
@@ -144,6 +160,9 @@ def _read_scans(db, sid, rel, docs, note, now=True):
             note(f"{path}: {said}")
             if doc is None:
                 left |= again
+                if not again and ocr.default().unavailable() is not None:  # SIFT_OCR's doing, not the scan's
+                    store.set_meta(db, SCANS_SKIPPED, ocr.setting())
+                    db.commit()
                 continue
         read.append(doc)
     return read, left
@@ -178,27 +197,35 @@ def _store(db, sid, rel, docs, counts, note, twice=None):
     for batch in _batches_of(docs):
         paths = [_path(rel, doc) for doc in batch]
         held, added, unchanged, given, chunks = indexed.at(paths), [], [], set(), 0
+        replaced, new, again = [], [], []  # old versions of documents that changed; (path, doc, changed?) to insert
         for path, doc in zip(paths, batch):
             old = held.get(path)
             if path in given or (old and old[2]):
-                if twice:
-                    twice(doc)
-                else:
-                    _left_out(db, sid, rel, path, note)
+                again.append((path, doc))  # once the first is in, which keeps the path
                 continue
             given.add(path)
             if old and old[1] == doc.digest:
                 unchanged.append(old[0])
                 continue
             if old:
-                store.delete_docs(db, [old[0]], free=False)  # its new version takes the path at once
+                replaced.append(old[0])
+            new.append((path, doc, bool(old)))
+        # Together, not one by one, which cost twice the statements: 50,000 changed records took 11.4 s to store, not
+        # 5.7. Their new versions take the paths at once.
+        store.delete_docs(db, replaced, free=False)
+        for path, doc, changed in new:
             try:
                 added.append(_insert(db, sid, path, doc))
             except sqlite3.IntegrityError:  # another file's document holds the path
                 _left_out(db, sid, rel, path, note)
                 continue
-            counts["changed" if old else "added"] += 1
+            counts["changed" if changed else "added"] += 1
             chunks += len(doc.chunks)
+        for path, doc in again:
+            if twice:
+                twice(doc)
+            else:
+                _left_out(db, sid, rel, path, note)
         store.keywords(db, added, count=chunks)
         indexed.took(given, unchanged, added)
     counts["removed"] += indexed.drop_the_gone()
@@ -414,10 +441,9 @@ def _locate(catalog, path):
     given = os.path.expanduser(path)
     if os.path.isabs(given):
         full = os.path.normpath(given)
-        holding = [c for c in collections if inside(c.path, full)]
-        if not holding:
+        if (held := holding(collections, full)) is None:
             raise ValueError(_nowhere(path, full, collections))
-        collection, rel = holding[0], os.path.relpath(full, holding[0].path).replace(os.sep, "/")
+        collection, rel = held
     else:
         name, _, rel = path.replace("\\", "/").partition("/")
         collection, rel = catalog.get(name), posixpath.normpath(rel) if rel else ""
@@ -465,6 +491,22 @@ def _locate(catalog, path):
 def inside(root, full):
     """Whether the normalised path `full` lies in the folder `root`, in the file system's case."""
     return os.path.normcase(full).startswith(os.path.normcase(os.path.join(root, "")))
+
+
+def holding(collections, full):
+    """The collection whose folder holds the normalised absolute path `full`, the nearest, and the path in it, with
+    `/`: (collection, rel), or None. As given, else with its folder resolved: a collection keeps its folder as it
+    resolves (`sift add`), so a file named through a link to it, a junction, or a drive mapped to a network share is in
+    it too. Resolved only then: it asks the file system, which a share that doesn't answer takes long over. The file
+    itself stays as named: a linked file is indexed at its link's path."""
+    nearest = sorted(collections, key=lambda c: -len(c.path))
+
+    def held(path):
+        return next(
+            ((c, os.path.relpath(path, c.path).replace(os.sep, "/")) for c in nearest if inside(c.path, path)), None
+        )
+
+    return held(full) or held(os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full)))
 
 
 def _linked(path):
@@ -563,7 +605,8 @@ def _reindex_file(db, name, rel, info, read, left):
     """Bring one file's documents up to date with what `_reindex_read` found, or remove them if it is gone, as `sift
     index` would: ({"id", "status"}, its documents' row ids, the chunks removed). A chunk removed is every chunk of a
     document replaced or removed. A file with a scan `left` is read again by the next `sift index`. One that can't be
-    read to its end as it is stored stays as it is indexed, whole."""
+    read to its end as it is stored, or whose documents the store refuses (REFUSED), stays as it is indexed, whole,
+    "unreadable" with why: the call's other files are read, as `sift index` reads them."""
     entry = {"id": f"{name}/{rel}"}
     sid = _source(db, rel)
     sql = "SELECT c.doc, c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE d.source = ?"
@@ -581,9 +624,9 @@ def _reindex_file(db, name, rel, info, read, left):
     had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
     try:
         _store(db, sid, rel, docs, counts, problems.append, twice)
-    except readers.Unread as unread:
+    except (*REFUSED, readers.Unread) as refused:
         db.execute("ROLLBACK TO file")
-        return entry | {"status": "unreadable", "note": str(unread)}, [], []
+        return entry | {"status": "unreadable", "note": str(refused)}, [], []
     finally:
         db.execute("RELEASE file")
     if twice:  # read as it was stored: what it skipped is known now
@@ -701,6 +744,7 @@ def _index_collection(db, name, root, fields, ignore):
     """Bring one collection in sync: drop what is gone, read what is new or changed; its keyword postings follow
     after (see `postings`)."""
     t0 = time.perf_counter()
+    _read_skipped_scans(db)
     known = {p: (i, m, s) for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources")}
     console.say(f"{name}: scanning {root}")  # a large or cloud folder takes a while
     todo, seen, unlisted = _scan(root, known, ignore)
