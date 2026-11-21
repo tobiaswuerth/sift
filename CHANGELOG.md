@@ -10,10 +10,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The instructions `sift serve` gives agents when they connect start with how to search well: which tool fits what
   the agent has (a question, an exact string such as a version or error code, an idea, a document), and how to research
   in rounds: several phrasings in one call, a compact survey, the best few read in one `get`, then `similar`, `links`
-  and new terms, until a round finds nothing new. The collections come last: Claude Code keeps only the first 2,048
-  characters of a server's instructions, and cut off the list of tools with seven collections. Each search tool's
-  description says what its results carry and how to read on, for agents that find a tool by tool search and read
-  its description alone.
+  and new terms, until a round finds nothing new. The collections come last: a client may keep only the start of a
+  server's instructions (Claude Code is reported to cut them at 2,048 characters), and a long list of collections
+  then loses its own end, not the tools. Each search tool's description says what its results carry and how to read
+  on, for agents that find a tool by tool search and read its description alone.
+- The MCP tools `status` and `links` return their result as data too (structured content), as the other tools do,
+  beside the same text as before: a client that hands its model the data hands it compact, less than half the size
+  for `status`.
 
 - Where stderr is no terminal, in a file, a pipe, a service's log or an agent's shell, the progress line is a line
   a minute and one where it ended, as in the logs. It was drawn again there too, one more line an update and a

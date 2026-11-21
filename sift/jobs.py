@@ -10,7 +10,7 @@ import functools
 import logging
 import queue
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, wait
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -21,6 +21,9 @@ import anyio.to_thread
 from . import store
 
 if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
+
     from .models import Models
 
 T = TypeVar("T")
@@ -75,31 +78,61 @@ async def run(fn: Callable[..., T], *args: Any, abortable: bool = True, **kwargs
         raise
 
 
-class OnMainThread(Models if TYPE_CHECKING else object):  # every method of the models, through __getattr__
+class OnMainThread:
     """Models whose methods run on the main thread, wherever they are called, if they must (`main_thread`): from a
     worker thread of `run`, through the event loop, which waits meanwhile. A worker's run in a thread of their own,
-    waited for until the call is cancelled (see _abortable). Called for a cancelled call, they raise Cancelled."""
+    waited for until the call is cancelled (see _abortable). Called for a cancelled call, they raise Cancelled. Each
+    member of models.Models is written out: the type checker holds the two together."""
 
     def __init__(self, models: "Models") -> None:
         self._models: Models = models._models if isinstance(models, OnMainThread) else models
 
-    def __getattr__(self, name: str) -> Any:
-        value = getattr(self._models, name)
-        if not callable(value):
-            return value
+    @property
+    def name(self) -> str:
+        return self._models.name
 
-        @functools.wraps(value)
-        def on_main_thread(*args: Any, **kwargs: Any) -> Any:
-            if store.ABORT.is_set():
-                raise Cancelled("the call was cancelled")
-            call = functools.partial(value, *args, **kwargs)
-            if not self._models.main_thread:
-                return _abortable(call)
-            if threading.current_thread() is threading.main_thread():
-                return call()
-            return anyio.from_thread.run_sync(call)
+    @property
+    def address(self) -> str:
+        return self._models.address
 
-        return on_main_thread
+    @property
+    def batch(self) -> int:
+        return self._models.batch
+
+    @property
+    def main_thread(self) -> bool:
+        return self._models.main_thread
+
+    def load(self) -> None:
+        self._run(self._models.load)
+
+    def lengths(self, texts: list[str]) -> list[int]:
+        return self._run(functools.partial(self._models.lengths, texts))
+
+    def prepare(self) -> None:
+        self._run(self._models.prepare)
+
+    def encode(self, texts: list[str], query: bool = False) -> "NDArray[np.float16]":
+        return self._run(functools.partial(self._models.encode, texts, query))
+
+    def encode_batches(self, batches: Iterable[list[str]], query: bool = False) -> Iterator["NDArray[np.float16]"]:
+        return self._run(functools.partial(self._models.encode_batches, batches, query))
+
+    def rerank(self, query: str, texts: list[str]) -> "NDArray[np.float32]":
+        return self._run(functools.partial(self._models.rerank, query, texts))
+
+    def release_idle(self) -> bool:
+        return self._run(self._models.release_idle)
+
+    def _run(self, call: Callable[[], T]) -> T:
+        """call(), a method of the models, where they run."""
+        if store.ABORT.is_set():
+            raise Cancelled("the call was cancelled")
+        if not self._models.main_thread:
+            return _abortable(call)
+        if threading.current_thread() is threading.main_thread():
+            return call()
+        return anyio.from_thread.run_sync(call)
 
 
 class _Requests:

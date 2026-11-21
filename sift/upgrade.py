@@ -111,7 +111,7 @@ def _copy(held: sqlite3.Connection, parts: dict[int, sqlite3.Connection], layout
     store got. Rows of collections not pending, and chunks and vectors whose document is gone, are passed over."""
     import numpy as np
 
-    sent = {cid: Counter[str]() for cid in parts}
+    sent: dict[int, Counter[str]] = {cid: Counter() for cid in parts}
     first = {cid: store.first_id(cid) for cid in parts}
     most = held.execute("SELECT max(id) FROM docs").fetchone()[0] or 0
     doc_owner = np.full(most + 1, -1, np.int64)  # the collection of each document, by its old id

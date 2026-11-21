@@ -30,8 +30,8 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 log = logging.getLogger(__name__)
 
-# How to search well, first: clients keep only the start of a server's instructions (Claude Code its first 2,048
-# characters), and the collections, as many as are indexed, follow it.
+# How to search well, first: a client may keep only the start of a server's instructions (Claude Code is reported to
+# cut them at 2,048 characters), and the collections, as many as are indexed, follow it.
 INSTRUCTIONS = """Search the user's local documents and notes, indexed by sift. When a task touches what the collections
 below cover, search here before answering from memory or the web. Cite ids; say so when nothing relevant turns up.
 
@@ -358,10 +358,9 @@ def build(index: Index | None = None) -> tuple[MCPServer, Index]:
     async def get(id: Ids, lines: Lines = None, fields: Fields = None) -> str | dict[str, Any] | list[dict[str, Any]]:
         """Read what a search found: the text of a document, as indexed, all of it or some of its lines, such as a
         result's. Read the best few results at once, by id and lines, rather than one call each. With `fields`, the
-        document as
-        {id, title, fields, text}. Several documents at once (up to 100) come as a list of such, `lines` applying to
-        those asked by id alone; one that can't be read as {id, error}. Texts past 100,000 characters in all are left
-        out, each with the reason (`omitted`): get those alone or by lines."""
+        document as {id, title, fields, text}. Several documents at once (up to 100) come as a list of such, `lines`
+        applying to those asked by id alone; one that can't be read as {id, error}. Texts past 100,000 characters in
+        all are left out, each with the reason (`omitted`): get those alone or by lines."""
         if isinstance(id, list):
             return await _run(_batch, index, id, lines, fields)
         if fields:

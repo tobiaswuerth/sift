@@ -231,17 +231,26 @@ def test_instructions_teach_research_in_rounds(mcp):
 
 
 def test_instructions_put_how_to_search_before_the_collections(mcp):
-    # Claude Code keeps the first 2,048 characters of a server's instructions. The collections, as many as are
-    # indexed, come last, so a long list cuts off only its own end, and `status` lists them all.
+    # Claude Code is reported to keep the first 2,048 characters of a server's instructions. The collections, as
+    # many as are indexed, come last, so a long list cuts off only its own end, and `status` lists them all.
     guide, collections = mcp.instructions.split("Indexed collections")
     assert len(guide) <= 1500
     assert collections.startswith(" (`status` lists them all, with their fields):\n- notes (")
 
 
 def test_tool_descriptions_fit_what_clients_keep(mcp):
-    # Claude Code cuts each tool's description at 2,048 characters, saying nothing.
+    # Claude Code is reported to cut each tool's description at 2,048 characters, saying nothing.
     for tool in tools(mcp).values():
         assert len(tool.description) <= 2048, tool.name
+
+
+def test_every_tool_returns_its_result_as_data_too(mcp):
+    # status and links returned text alone, the others data beside it (structured content): a client that hands its
+    # model the data, compact, handed it their text, indented, twice the size and more. A return type alone decides
+    # it, so each tool's is held here.
+    assert all(tool.output_schema for tool in tools(mcp).values())
+    for tool, args in (("status", {}), ("links", {"id": "notes/rl.md"})):
+        assert isinstance(call(mcp, tool, args).structured_content, dict), tool
 
 
 @pytest.mark.parametrize("tool", ["search", "vsearch", "query", "similar"])

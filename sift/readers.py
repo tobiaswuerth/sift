@@ -516,7 +516,8 @@ def _parsed(lines: Iterable[str], fields: Fields, skipped: _Skipped) -> Iterator
 def _records(raw: bytes, name: str, fields: Fields) -> tuple[list[Doc], list[str]]:
     """A JSON Lines file: one document per line, and the lines skipped with their reason."""
     docs: list[Doc] = []
-    skipped, seen = _Skipped(), set[str]()
+    skipped = _Skipped()
+    seen: set[str] = set()
     for doc in _parsed(decode(raw).split("\n"), fields, skipped):
         if doc.key in seen:
             skipped.add(doc.line, f"id {doc.key} used twice")
@@ -748,7 +749,7 @@ def _attachments(msg: MIMEPart, fields: Fields, depth: int) -> tuple[list[Doc], 
     mail attached while `depth` lasts below it; and what had to be skipped of them."""
     docs: list[Doc] = []
     problems: list[str] = []
-    taken = set[str]()
+    taken: set[str] = set()
     for part in msg.iter_attachments():
         name = _attachment_name(part)
         if not (name and (read := _reader(part, name, depth))):

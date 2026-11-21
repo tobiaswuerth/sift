@@ -63,7 +63,7 @@ def load(path: str | Path, index: "Index") -> list[Case]:
     for n, case in enumerate(cases, 1):
         entry: Json = case
         grades = _grades(entry.get("relevant")) if isinstance(entry, dict) else None
-        if not (grades and isinstance(case.get("query"), str)):
+        if not (grades and isinstance(entry, dict) and isinstance(entry.get("query"), str)):
             raise ValueError(
                 f"case {n} needs a query and the ids of the documents it should find: a list of them, or a dict of "
                 "them with grades above 0"
@@ -95,7 +95,8 @@ def run(index: "Index", cases: list[Case], **options: Any) -> dict[str, dict[str
 def _found(hits: Iterable[Hit], relevant: Grades) -> tuple[list[str], Grades]:
     """The ids the hits stand for, and the case's grades as they count: a hit is the one of it and its copies in other
     collections (`also`), the same paper, that the case grades best, and takes the best grade of them all."""
-    relevant, ranked = dict(relevant), list[str]()
+    relevant = dict(relevant)
+    ranked: list[str] = []
     for hit in hits:
         copies = [hit["id"], *hit.get("also", ())]
         best = max(copies, key=lambda id: relevant.get(id, 0))

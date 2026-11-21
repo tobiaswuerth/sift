@@ -502,7 +502,8 @@ class Index:
         same note however it is written. `links_to` and `linked_from` name notes (see _notes): only documents linking
         one of the first, and linked from one of the second."""
         scope, resolvers = self._scope(collection), _Resolvers(self.catalog)
-        sql, args = ["1"], list[Any]()
+        sql = ["1"]
+        args: list[Any] = []
         if path:
             sql.append("d.path GLOB ?")
             args.append(path)
@@ -582,7 +583,7 @@ class Index:
                 else:
                     raise LookupError(f"no note {spec!r} in the index, and no link to one")
         if linked_from is not None:
-            to = set[int]()
+            to: set[int] = set()
             for spec, note in self._notes(linked_from, "linked_from", scope, resolvers).items():
                 if note is None:
                     raise LookupError(f"no note {spec!r} in the index")
@@ -596,7 +597,8 @@ class Index:
         """The documents whose front-matter field `key` links to a note that a wikilink among the filter values names,
         however the link is written; links to a note no document answers to, or to several, match as written. None if
         no value is a wikilink."""
-        specs, docs = _wikilinks(value), set[int]()
+        specs = _wikilinks(value)
+        docs: set[int] = set()
         for spec in specs:
             for c, (how, found) in self._resolve(spec, scope, resolvers).items():
                 db = self.catalog.store(c)
@@ -1447,7 +1449,7 @@ class Index:
         chunks, those embedded, how its keyword postings stand, front-matter fields and links, or why its store can't
         be opened."""
         collections: list[dict[str, Any]] = []
-        models = set[str | None]()
+        models: set[str | None] = set()
         for c in self.catalog.collections():
             entry: dict[str, Any] = {"name": c.name, "path": c.path, "active": c.active, "store": c.store}
             if not os.path.isfile(c.store):
