@@ -24,7 +24,7 @@ from markupsafe import Markup, escape
 from . import console, jobs, readers, store
 from .filters import each
 from .hits import Hit, line_span
-from .queries import STOPWORDS
+from .queries import words
 
 if TYPE_CHECKING:
     from starlette.datastructures import QueryParams
@@ -140,9 +140,9 @@ def _glob(path: str) -> str:
 
 
 def _pattern(query: str) -> re.Pattern[str] | None:
-    """A regex for the words of a query, any ending, to mark them; None for a query without any."""
-    terms = {w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS | {"and", "or", "not", "near"}}
-    terms = sorted((t for t in terms if len(t) > 1), key=len, reverse=True)
+    """A regex for the words of a query, as searches take them (queries.words), any ending, to mark them; None for a
+    query without any."""
+    terms = sorted(set(words(query)) - {"not", "near"}, key=len, reverse=True)
     return re.compile(r"\b(?:" + "|".join(map(re.escape, terms)) + r")\w*", re.IGNORECASE) if terms else None
 
 

@@ -1094,6 +1094,12 @@ def test_any_word_drops_stopwords_and_duplicates():
     assert any_word("the of a") == ""
 
 
+def test_any_word_keeps_digits_and_single_characters_of_other_scripts():
+    # Every word of one character was dropped: "Python 3" lost its version, and a query of one Chinese or Japanese
+    # word, "猫", found no keyword candidates at all. Single Latin letters are the noise ("a", the "s" of "it's").
+    assert any_word("Python 3 in R, it's a 猫") == '"python" OR "3" OR "猫"'
+
+
 # --- documents and status ----------------------------------------------------
 
 

@@ -26,6 +26,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `sift embed --reset` dropped every vector before it knew the model could load or the worker answered: offline, or
   with a model that couldn't be downloaded, the vectors were gone and nothing embedded. The model now loads, or the
   worker answers, first.
+- `query` passed over every word of one character: "Python 3" lost its version, and a query of one Chinese or Japanese
+  word, such as "猫", got no keyword candidates at all. Digits and single characters of other scripts are words now;
+  single Latin letters ("a", the "s" of "it's") still aren't. The UI marks them in its results alike.
 
 ## [1.14.0] - 2026-11-21
 

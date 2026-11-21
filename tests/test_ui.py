@@ -83,6 +83,16 @@ def test_the_page_shows_the_document_counts_kept(embedded):
     assert "1,234,567 documents" in page(Index(embedded[0])).get("/ui/").text
 
 
+def test_a_search_marks_its_words_of_one_character_but_latin_letters(corpus):
+    # As the searches take them: a digit and a word of one character in another script are words; "a" is none.
+    catalog, root = corpus
+    write(root / "cat.md", "# Cat\n\nDas Tier 猫 hat a 3 Beine.\n")
+    indexing.index(catalog)
+    response = page(Index(catalog)).get("/ui/", params={"q": "猫 3 a"})
+    snippet = re.search(r'<span class="snippet">(.*?)</span>', response.text)[1]
+    assert snippet == "Das Tier <mark>猫</mark> hat a <mark>3</mark> Beine."
+
+
 def test_the_address_of_the_server_leads_to_the_ui(browser):
     response = browser.get("/", follow_redirects=False)
     assert response.status_code in (302, 307)
