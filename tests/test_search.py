@@ -1571,6 +1571,16 @@ def test_similar_finds_documents_like_one(dated):
     assert hits[0]["score"] >= hits[-1]["score"]
 
 
+def test_similar_runs_no_model(embedded):
+    # A document's own vectors are its query: nothing is embedded or reranked, so `sift similar` loads no PyTorch,
+    # and says so (see test_cli).
+    class Untouched:
+        def __getattr__(self, name):
+            pytest.fail(f"similar asked the models for {name}")
+
+    assert Index(embedded[0], models=Untouched()).similar("notes/rl.md", k=1)
+
+
 def test_similar_takes_what_searches_take(dated):
     hits = dated.similar(
         "notes/2024-01-01.md", filters={"created": {">=": "2024-06"}}, fields=["created"], compact=True, sort="created"
