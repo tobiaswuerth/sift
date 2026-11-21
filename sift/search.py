@@ -24,6 +24,20 @@ import numpy as np
 from . import console, embed, expression, indexing, links, postings, readers, store, topk
 from . import models as _models
 from .catalog import Catalog
+from .filters import comparison, json_path
+from .hits import (
+    MOST_HITS,
+    check_budget,
+    check_fields,
+    check_k,
+    check_sort,
+    doi_of,
+    line_span,
+    one_per_work,
+    pick,
+    present,
+    standing_out,
+)
 from .vectors import Codes, Filter, codes, top
 
 STOPWORDS = set(
@@ -31,8 +45,6 @@ STOPWORDS = set(
     "was what when where which who why with".split()
 )
 
-SQLITE_INT = 2**63  # SQLite integers are 64-bit
-OPERATORS = ("=", "<", "<=", ">", ">=", "not")
 FIELD_SAMPLE = 1000  # documents per collection whose front matter tells which fields exist
 START = 600  # characters of a document's start that `browse` shows, as its passage
 QUERY_VECTORS = 256  # questions whose embeddings an index keeps, 3 KB each: an agent asks one again, with other options
@@ -115,59 +127,6 @@ def _remembered(method):
     return remembered
 
 
-def _condition(key, op, value):
-    """SQL comparing a front-matter value (`value` of json_each) with a filter value, and its arguments. For "=" and
-    "not", a list stands for any of its values."""
-    if op not in OPERATORS:
-        raise ValueError(f"filter {key!r}: unknown operator {op!r}, use one of {', '.join(OPERATORS)}")
-    values = value if isinstance(value, list) and op in ("=", "not") else [value]
-    if not values:
-        raise ValueError(f"filter {key!r} needs at least one value")
-    for one in values:
-        if not isinstance(one, str | int | float):
-            raise ValueError(f"filter {key!r} needs a string or number, or for = and not a list of them, got {one!r}")
-        if isinstance(one, int) and not -SQLITE_INT <= one < SQLITE_INT:
-            raise ValueError(f"filter {key!r}: {one} is too large")
-    if op in ("=", "not"):
-        values = list(dict.fromkeys(form for one in values for form in _forms(one)))
-        return f"value IN ({', '.join('?' * len(values))})", values
-    if isinstance(value, str):  # at the precision given: "2024-12-31" is <= "2024", and not > "2024"
-        return f"type IN ('text', 'integer', 'real') AND substr(value, 1, ?) {op} ?", [len(value), value]
-    return f"{NUMBER_FIRST} AND CAST(value AS REAL) {op} ?", [value]  # SQLite reads "2024-06-15" as 2024
-
-
-# The values a number compares with (`type` and `value` of json_each): numbers, yes and no as 1 and 0, and text that
-# starts with a number, as a date does with its year. SQLite casts other text, "unknown", to 0, and a list to text;
-# text compares with text and numbers alone, not with a list's JSON.
-NUMBER_FIRST = (
-    "(type IN ('integer', 'real', 'true', 'false') OR (type = 'text' AND (ltrim(value) GLOB '[0-9]*'"
-    " OR ltrim(value) GLOB '[-+.][0-9]*' OR ltrim(value) GLOB '[-+].[0-9]*')))"
-)
-
-
-def _forms(value):
-    """A value to match, in each form front matter may hold it: as given, and a text as the number or the yes or no it
-    reads as, a number or a yes or no as the text that writes it. "2024" is a number in one document and text in
-    another, as JSON Lines write it, and nobody asking knows which; "007" stays text too, where it is an agent's
-    number."""
-    if isinstance(value, bool):
-        return [value, "true" if value else "false"]
-    if not isinstance(value, str):
-        return [value, json.dumps(value)]
-    if value in ("true", "false"):
-        return [value, value == "true"]
-    if re.fullmatch(r"-?[0-9]+", value) and -SQLITE_INT <= int(value) < SQLITE_INT:
-        return [value, int(value)]
-    return [value, float(value)] if re.fullmatch(r"-?[0-9]+\.[0-9]+", value) else [value]
-
-
-def _field(name, what="filter field"):
-    """A front-matter field name, as SQLite's JSON functions address it: any name without a double quote."""
-    if not (isinstance(name, str) and name and '"' not in name):
-        raise ValueError(f"invalid {what} {name!r}")
-    return f'$."{name}"'
-
-
 def _target(spec):
     """The target of a note named as links name it: `Acme AG`, `[[Acme AG|Acme]]`, `[[02_Organizations/Acme AG]]`."""
     spec = spec.strip()
@@ -185,130 +144,6 @@ def _wikilinks(value):
 def _ids(ids):
     """Document row ids as one SQL argument, for `d.id IN (SELECT value FROM json_each(?))`."""
     return json.dumps(sorted(ids))
-
-
-def _check_fields(fields):
-    if fields is not None and (isinstance(fields, str) or not all(isinstance(f, str) and f for f in fields)):
-        raise ValueError(f"fields must be a list of front-matter field names, or ['*'] for all, got {fields!r}")
-    return fields
-
-
-def _pick(meta, fields):
-    """The front-matter `fields` asked for that a document has, from its meta (JSON); ["*"]: all but the title."""
-    meta = json.loads(meta)
-    return {
-        key: meta[key] for key in ([key for key in meta if key != "title"] if "*" in fields else fields) if key in meta
-    }
-
-
-def _check_sort(sort):
-    if sort is not None:
-        try:
-            _field(sort.removeprefix("-") if isinstance(sort, str) else sort)
-        except ValueError:
-            raise ValueError(
-                f"sort must be a front-matter field, with - first to sort descending, e.g. '-created'; got {sort!r}"
-            ) from None
-    return sort
-
-
-def _by_field(hits, sort):
-    """Hits ordered by the front-matter field `sort` names, descending with "-" first: numbers before text, after it
-    descending, as SQLite orders them (see browse), and hits without the field last, in their order."""
-    field = sort.removeprefix("-")
-    valued = [(json.loads(hit["meta"]).get(field), hit) for hit in hits]
-    have = [(value, hit) for value, hit in valued if value is not None]
-    have.sort(key=lambda vh: (0, vh[0]) if isinstance(vh[0], int | float) else (1, str(vh[0])), reverse=sort[0] == "-")
-    return [hit for _, hit in have] + [hit for value, hit in valued if value is None]
-
-
-def _present(hits, fields, compact, sort):
-    """Hits as returned: ordered by `sort` if given, with the front-matter `fields` asked for, without text if
-    compact, the other copies of the same work under "also", and "partial" if found by a search out of time."""
-    out = []
-    for hit in _by_field(hits, sort) if sort else hits:
-        shown = {key: hit[key] for key in ("id", "title", "lines", "score")}
-        if fields:
-            shown["fields"] = _pick(hit["meta"], fields)
-        if not compact:
-            shown["text"] = hit["text"]
-        if hit.get("also"):
-            shown["also"] = hit["also"]
-        if hit.get("partial"):
-            shown["partial"] = True
-        out.append(shown)
-    return out
-
-
-DOI_PREFIXES = tuple(f"{scheme}{host}doi.org/" for scheme in ("https://", "http://") for host in ("", "www.", "dx."))
-DOI_PREFIXES += ("doi:",)
-
-
-def _doi(meta):
-    """A document's DOI, from its front-matter field `doi`, as DOIs compare: in any case, without the prefix of a link
-    or "doi:"; None if it has none, or one that is no DOI (they all start with "10.")."""
-    value = json.loads(meta).get("doi") if meta else None
-    if not isinstance(value, str):
-        return None
-    value = value.strip().lower()
-    for prefix in DOI_PREFIXES:
-        value = value.removeprefix(prefix).strip()  # "doi: 10...."
-    return value if value.startswith("10.") else None
-
-
-def _one_per_work(hits):
-    """Ranked hits, one per work: a hit with the DOI of a better ranked one goes, as several collections hold the same
-    paper, and the better ranked one names it under "also"."""
-    kept, first = [], {}
-    for hit in hits:
-        doi = _doi(hit["meta"])
-        if doi is None or doi not in first:
-            kept.append(hit)
-            if doi is not None:
-                first[doi] = hit
-        else:
-            first[doi].setdefault("also", []).append(hit["id"])
-    return kept
-
-
-def line_span(lines):
-    """First and last line of a range such as "17-26", or of a single line: "17" or 17."""
-    if isinstance(lines, int) and not isinstance(lines, bool):
-        lines = str(lines)
-    m = isinstance(lines, str) and re.fullmatch(r"([1-9]\d*)(?:-([1-9]\d*))?", lines)
-    if not m or int(m[2] or m[1]) < int(m[1]):
-        raise ValueError(f"lines must be a line number or a range such as '17-26', got {lines!r}")
-    return int(m[1]), int(m[2] or m[1])
-
-
-MOST_HITS = 10_000  # hits a search returns at most: vsearch(k=10**8) read every vector of every collection, and
-# search(k=10**8) scored every posting of its words
-ADAPTIVE_SHARE = 0.9  # of the gaps between neighbouring scores, the first, where the largest is looked for
-ADAPTIVE_BUFFER = 5  # hits kept after the largest gap, as the paper keeps: of 10 or 50 vsearch hits for 2,000 arXiv
-# titles, 6 on average, with the paper sought in 99.2 to 99.6% of the cases it was among them (benchmarks.md)
-
-
-def _adaptive(hits):
-    """Hits, best first, up to the largest drop in score among the first ADAPTIVE_SHARE of their gaps, and
-    ADAPTIVE_BUFFER more: Adaptive-k (Taguchi et al. 2025, arXiv 2506.08479), the few that stand out instead of k."""
-    if len(hits) < 3:
-        return hits
-    scores = np.array([hit["score"] for hit in hits], np.float64)
-    gaps = scores[:-1] - scores[1:]
-    return hits[: int(np.argmax(gaps[: math.ceil(ADAPTIVE_SHARE * len(gaps))])) + 1 + ADAPTIVE_BUFFER]
-
-
-def _check_budget(budget):
-    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int | float) or not budget > 0):
-        raise ValueError(f"budget must be a positive number of seconds, got {budget!r}")
-    return budget
-
-
-def _check_k(k, most=MOST_HITS):
-    """k as asked, at most `most`."""
-    if not isinstance(k, int) or k < 1:
-        raise ValueError(f"k must be a positive integer, got {k!r}")
-    return min(k, most)
 
 
 def _phrases(query):
@@ -701,11 +536,11 @@ class Index:
             sql.append("d.path GLOB ?")
             args.append(path)
         for key, value in (filters or {}).items():
-            field = _field(key)
+            field = json_path(key)
             if value == {}:
                 raise ValueError(f"filter {key!r} has no condition")
             conditions = value if isinstance(value, dict) else {"=": value}
-            some = [_condition(key, op, v) for op, v in conditions.items() if op != "not"]
+            some = [comparison(key, op, v) for op, v in conditions.items() if op != "not"]
             if some:
                 condition = f"EXISTS (SELECT 1 FROM json_each(d.meta, ?) WHERE {' AND '.join(c for c, _ in some)})"
                 args += [field, *(arg for _, condition_args in some for arg in condition_args)]
@@ -714,7 +549,7 @@ class Index:
                     args.append(_ids(linked))
                 sql.append(condition)
             if "not" in conditions:
-                condition, condition_args = _condition(key, "not", conditions["not"])
+                condition, condition_args = comparison(key, "not", conditions["not"])
                 sql.append(f"NOT EXISTS (SELECT 1 FROM json_each(d.meta, ?) WHERE {condition})")
                 args += [field, *condition_args]
                 if linked := self._linking(key, conditions["not"], scope, resolvers):
@@ -1061,7 +896,7 @@ class Index:
         while True:
             ranked = rank(n)
             hits = [hit for hit in self._hits(ranked) if keep(hit)]
-            hits = hits if all_passages else _one_per_work(hits)
+            hits = hits if all_passages else one_per_work(hits)
             if len(hits) >= k or len(ranked) < n or not more():
                 return hits[:k]
             n *= 2
@@ -1126,8 +961,8 @@ class Index:
         If no chunk holds all terms of a query without operators, chunks with any of them are returned. With a
         `budget` in seconds, a search the keyword postings answer stops once it is spent and has found any, and returns
         the best found so far, each hit marked "partial"."""
-        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
-        fields, sort, budget = _check_fields(fields), _check_sort(sort), _check_budget(budget)
+        k, (scope, where, args) = check_k(k), self._where(collection, path, filters, links_to, linked_from)
+        fields, sort, budget = check_fields(fields), check_sort(sort), check_budget(budget)
         deadline = topk.Deadline(budget) if budget is not None else None
 
         def rank(n):
@@ -1146,7 +981,7 @@ class Index:
         hits = self._works(rank, k, all_passages, more=in_time)
         for hit in hits if stopped or (deadline is not None and deadline.cut) else ():
             hit["partial"] = True
-        return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
+        return present(standing_out(hits) if adaptive else hits, fields, compact, sort)
 
     @_several
     @_remembered
@@ -1167,13 +1002,13 @@ class Index:
         adaptive=False,
     ):
         """Semantic search: the passages nearest the query's embedding, by cosine similarity (see `vectors`)."""
-        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
-        fields, sort = _check_fields(fields), _check_sort(sort)
+        k, (scope, where, args) = check_k(k), self._where(collection, path, filters, links_to, linked_from)
+        fields, sort = check_fields(fields), check_sort(sort)
         if not query.strip():  # the embedding of nothing is close to arbitrary chunks
             return []
         vector, allowed = self._vector(query, scope), self._filter(scope, where, args)
         hits = self._works(lambda n: self._nearest(vector, n, scope, allowed, all_passages), k, all_passages)
-        return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
+        return present(standing_out(hits) if adaptive else hits, fields, compact, sort)
 
     @_several
     @_remembered
@@ -1199,8 +1034,8 @@ class Index:
         reciprocal rank, made results worse (MRR@10 0.69 to 0.64 on a known-item test over 3.2 million arXiv
         abstracts); the blend made them better on six of the seven sets in docs/benchmarks.md, and cost a little on
         those arXiv known items (0.937 to 0.929)."""
-        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
-        fields, sort = _check_fields(fields), _check_sort(sort)
+        k, (scope, where, args) = check_k(k), self._where(collection, path, filters, links_to, linked_from)
+        fields, sort = check_fields(fields), check_sort(sort)
         candidates = min(max(candidates, k), MOST_HITS)
         keyword = self._keyword(_any_word(query), candidates, scope, where, args, all_passages)
         vector = self._vector(query, scope, required=False) if query.strip() else None  # semantic candidates, cosines
@@ -1216,8 +1051,8 @@ class Index:
         for h, s in zip(hits, scores):
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])
-        hits = (hits if all_passages else _one_per_work(_first_of_each(hits, itemgetter("id"))))[:k]
-        return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
+        hits = (hits if all_passages else one_per_work(_first_of_each(hits, itemgetter("id"))))[:k]
+        return present(standing_out(hits) if adaptive else hits, fields, compact, sort)
 
     def get(self, id, lines=None):
         """Text of an indexed document, by its `collection/path` id: all of it, or `lines` such as "17-26", as
@@ -1228,9 +1063,9 @@ class Index:
     def document(self, id, lines=None, fields=None):
         """A document as {"id", "title", "text"}, the whole id even if asked by file name, and with "fields" if asked
         for, as in hits; `id` and `lines` as for `get`."""
-        span, fields = None if lines is None else line_span(lines), _check_fields(fields)
+        span, fields = None if lines is None else line_span(lines), check_fields(fields)
         _, whole, title, meta, text = self._find(id)
-        document = {"id": whole, "title": title} | ({"fields": _pick(meta, fields)} if fields else {})
+        document = {"id": whole, "title": title} | ({"fields": pick(meta, fields)} if fields else {})
         if span:
             every = readers.LINE.findall(text)
             if span[0] > len(every):
@@ -1241,7 +1076,7 @@ class Index:
     def documents(self, asked, fields=None):
         """Several documents, each (id, lines) of `asked` as `document` gives it, in order; one that can't be read is
         {"id", "error"}, and the others still come."""
-        _check_fields(fields)
+        check_fields(fields)
         found = []
         for id, lines in asked:
             try:
@@ -1275,8 +1110,8 @@ class Index:
     ):
         """Documents closest in meaning to the document `id` (as for `get`), by cosine similarity with the mean of its
         passages' vectors; the document itself is left out, and so are its copies, documents with its DOI."""
-        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
-        fields, sort = _check_fields(fields), _check_sort(sort)
+        k, (scope, where, args) = check_k(k), self._where(collection, path, filters, links_to, linked_from)
+        fields, sort = check_fields(fields), check_sort(sort)
         doc, _, _, meta, _ = self._find(id)
         self.load(scope)
         sql = "SELECT v.chunk, v.vec FROM vectors v JOIN chunks c ON c.id = v.chunk WHERE c.doc = ?"
@@ -1285,15 +1120,15 @@ class Index:
             raise LookupError(f"{id!r} has no embeddings yet, run `sift embed`")
         mean = np.mean([np.frombuffer(vec, np.float16) for _, vec in own], axis=0, dtype=np.float32)
         excluded, vector = np.array([chunk for chunk, _ in own], np.int64), mean / np.linalg.norm(mean)
-        doi, allowed = _doi(meta), self._filter(scope, where, args)
+        doi, allowed = doi_of(meta), self._filter(scope, where, args)
 
         def other(hit):  # its copies in other collections are the same paper
-            return doi is None or _doi(hit["meta"]) != doi
+            return doi is None or doi_of(hit["meta"]) != doi
 
         hits = self._works(
             lambda n: self._nearest(vector, n, scope, allowed, all_passages, excluded), k, all_passages, keep=other
         )
-        return _present(_adaptive(hits) if adaptive else hits, fields, compact, sort)
+        return present(standing_out(hits) if adaptive else hits, fields, compact, sort)
 
     def _place(self, id):
         """The collection, and the path in it, that `id` names: "collection/path", or an absolute path in a
@@ -1370,13 +1205,13 @@ class Index:
         """Documents without a query, by collection and path: what a collection, folder or filter holds. They come as
         hits without lines and score, with the start of their first passage, after any front matter, as their
         passage; `sort` orders them by a front-matter field instead, as in searches."""
-        k, (scope, where, args) = _check_k(k), self._where(collection, path, filters, links_to, linked_from)
-        fields, sort = _check_fields(fields), _check_sort(sort)
+        k, (scope, where, args) = check_k(k), self._where(collection, path, filters, links_to, linked_from)
+        fields, sort = check_fields(fields), check_sort(sort)
         value, order, by = "NULL", "d.path", []
         if sort:
             value = "json_extract(d.meta, ?)"
             order = f"{value} IS NULL, {value}{' DESC' if sort[0] == '-' else ''}, {order}"
-            by = [_field(sort.removeprefix("-"))]
+            by = [json_path(sort.removeprefix("-"))]
         # The first chunk's start, after any front matter; as a subquery, not a join, so that sorting a whole collection
         # doesn't join every document first (0.4 s, against 5 s, for 3 million).
         first = f"SELECT substr(d.text, c.pos + 1, min(c.len, {START})) FROM chunks c WHERE c.doc = d.id AND c.seq = 0"
@@ -1388,7 +1223,7 @@ class Index:
         for name, doc_path, title, meta, text, _ in rows[:k]:
             doc = {"id": f"{name}/{doc_path}", "title": title}
             if fields:
-                doc["fields"] = _pick(meta, fields)
+                doc["fields"] = pick(meta, fields)
             docs.append(doc if compact else doc | {"text": text})
         return docs
 
@@ -1430,7 +1265,7 @@ class Index:
             raise ValueError(f"depth must be 1 or 2, got {depth!r}")
         if field is not None and not isinstance(field, str):
             raise ValueError(f"field must be the name of a front-matter field, got {field!r}")
-        k = _check_k(k)
+        k = check_k(k)
         doc, whole, title, _, _ = self._note(id)
         db = self._db(doc)
         resolver, found = links.Resolver(db), {"id": whole, "title": title}
@@ -1497,7 +1332,7 @@ class Index:
     def unresolved(self, collection=None, k=50):
         """Link targets no document answers to, in a collection or in every active one: notes not written yet. The
         most linked first, each with how many documents link it and the ids of a few of them."""
-        k, scope = _check_k(k), self._scope(collection)
+        k, scope = check_k(k), self._scope(collection)
         found = [target for c in scope for target in links.unresolved(self.catalog.store(c))]
         found = sorted(found, key=lambda t: (-len(t[1]), t[0]))[:k]
         named = self._named([doc for _, docs, _ in found for doc in docs])
@@ -1512,7 +1347,7 @@ class Index:
         ["emails"]. The note itself and the documents linking it are left out, and names shorter than MENTION_CHARS,
         which would be everywhere. A name with ä, ö, ü or ß is also looked for as written with ae, oe, ue or ss: the
         keyword index finds Müller as Muller, but not as Mueller."""
-        k, fields = _check_k(k), _check_fields(fields)
+        k, fields = check_k(k), check_fields(fields)
         also = [also] if isinstance(also, str) else also
         if also is not None and not (isinstance(also, list | tuple) and all(isinstance(f, str) and f for f in also)):
             raise ValueError(f'also must name front-matter fields, e.g. ["emails"], got {also!r}')
@@ -1534,7 +1369,7 @@ class Index:
         linking = {row[0] for row in links.incoming(db, links.Resolver(db), doc)} | {doc}
         where, args = where + " AND d.id NOT IN (SELECT value FROM json_each(?))", [*args, _ids(linking)]
         match = " OR ".join('"' + phrase.replace('"', '""') + '"' for phrase in phrases.values())
-        return _present(self._hits(self._keyword(match, k, scope, where, args)), fields, compact, None)
+        return present(self._hits(self._keyword(match, k, scope, where, args)), fields, compact, None)
 
     # --- reading files again (see indexing.reindex) ---------------------------
 

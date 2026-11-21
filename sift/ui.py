@@ -20,7 +20,8 @@ from urllib.parse import urlencode, urlsplit
 from markupsafe import Markup, escape
 
 from . import console, jobs, readers, store
-from .search import STOPWORDS, line_span
+from .hits import line_span
+from .search import STOPWORDS
 
 WEB = Path(__file__).parent / "web"
 PREFIX = "/ui/"

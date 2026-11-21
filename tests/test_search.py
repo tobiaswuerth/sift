@@ -12,6 +12,7 @@ import pytest
 
 from sift import embed, expression, indexing, order, postings, search, store, topk, vectors
 from sift.catalog import Catalog
+from sift.hits import doi_of
 from sift.search import Index, _any_word
 
 from .conftest import as_sift_1_12_left_it, write, write_prose
@@ -150,7 +151,7 @@ def test_adaptive_keeps_the_hits_before_the_largest_drop_and_a_few_more(prose, f
     # Adaptive-k (2506.08479): an agent asks for up to k, and reads the few that stand out, not k.
     catalog, _ = prose
     embed.embed_pending(catalog)
-    monkeypatch.setattr(search, "ADAPTIVE_BUFFER", 1)
+    monkeypatch.setattr("sift.hits.ADAPTIVE_BUFFER", 1)
     index, subject = Index(catalog), "prose/n001.md" if mode == "similar" else "w1 w2 w3"
     every = getattr(index, mode)(subject, k=20)
     scores = np.array([h["score"] for h in every])
@@ -1739,7 +1740,7 @@ def test_passages_like_a_paper_are_k_without_its_copies(tmp_path, home, fake_mod
     ],
 )
 def test_a_doi_as_sources_write_it(written):
-    assert search._doi(json.dumps({"doi": written})) == "10.48550/arxiv.1706.03762"
+    assert doi_of(json.dumps({"doi": written})) == "10.48550/arxiv.1706.03762"
 
 
 def test_every_passage_keeps_every_copy(works):

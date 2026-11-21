@@ -15,7 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import console, jobs, logs, store, vectors
 from . import models as _models
-from .search import Index, line_span
+from .hits import line_span
+from .search import Index
 
 log = logging.getLogger(__name__)
 

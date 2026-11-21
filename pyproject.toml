@@ -142,6 +142,8 @@ include = [
     "sift/__init__.py",
     "sift/console.py",
     "sift/expression.py",
+    "sift/filters.py",
+    "sift/hits.py",
     "sift/ignore.py",
     "sift/logs.py",
     "sift/settings.py",

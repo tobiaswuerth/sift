@@ -1,0 +1,66 @@
+"""Conditions on front matter, as SQL: how a filter's value compares with a value a document holds, the `value` of
+SQLite's json_each, and how a field is addressed. Text alone: what runs it, and against which documents, is the
+search's (see search.Index._where)."""
+
+import json
+import re
+from typing import cast
+
+Value = str | int | float  # what a filter compares with; yes and no are numbers here, as Python has them
+
+SQLITE_INT = 2**63  # SQLite integers are 64-bit
+OPERATORS = ("=", "<", "<=", ">", ">=", "not")
+# The values a number compares with (`type` and `value` of json_each): numbers, yes and no as 1 and 0, and text that
+# starts with a number, as a date does with its year. SQLite casts other text, "unknown", to 0, and a list to text;
+# text compares with text and numbers alone, not with a list's JSON.
+NUMBER_FIRST = (
+    "(type IN ('integer', 'real', 'true', 'false') OR (type = 'text' AND (ltrim(value) GLOB '[0-9]*'"
+    " OR ltrim(value) GLOB '[-+.][0-9]*' OR ltrim(value) GLOB '[-+].[0-9]*')))"
+)
+
+
+def comparison(key: str, op: str, value: object) -> tuple[str, list[Value]]:
+    """SQL comparing a front-matter value (`value` of json_each) with a filter value, and its arguments. For "=" and
+    "not", a list stands for any of its values."""
+    if op not in OPERATORS:
+        raise ValueError(f"filter {key!r}: unknown operator {op!r}, use one of {', '.join(OPERATORS)}")
+    several = isinstance(value, list) and op in ("=", "not")
+    given: list[object] = cast("list[object]", value) if several else [value]
+    if not given:
+        raise ValueError(f"filter {key!r} needs at least one value")
+    values: list[Value] = []
+    for one in given:
+        if not isinstance(one, str | int | float):
+            raise ValueError(f"filter {key!r} needs a string or number, or for = and not a list of them, got {one!r}")
+        if isinstance(one, int) and not -SQLITE_INT <= one < SQLITE_INT:
+            raise ValueError(f"filter {key!r}: {one} is too large")
+        values.append(one)
+    if op in ("=", "not"):
+        values = list(dict.fromkeys(form for one in values for form in forms(one)))
+        return f"value IN ({', '.join('?' * len(values))})", values
+    if isinstance(value, str):  # at the precision given: "2024-12-31" is <= "2024", and not > "2024"
+        return f"type IN ('text', 'integer', 'real') AND substr(value, 1, ?) {op} ?", [len(value), value]
+    return f"{NUMBER_FIRST} AND CAST(value AS REAL) {op} ?", values  # SQLite reads "2024-06-15" as 2024
+
+
+def forms(value: Value) -> list[Value]:
+    """A value to match, in each form front matter may hold it: as given, and a text as the number or the yes or no it
+    reads as, a number or a yes or no as the text that writes it. "2024" is a number in one document and text in
+    another, as JSON Lines write it, and nobody asking knows which; "007" stays text too, where it is an agent's
+    number."""
+    if isinstance(value, bool):
+        return [value, "true" if value else "false"]
+    if not isinstance(value, str):
+        return [value, json.dumps(value)]
+    if value in ("true", "false"):
+        return [value, value == "true"]
+    if re.fullmatch(r"-?[0-9]+", value) and -SQLITE_INT <= int(value) < SQLITE_INT:
+        return [value, int(value)]
+    return [value, float(value)] if re.fullmatch(r"-?[0-9]+\.[0-9]+", value) else [value]
+
+
+def json_path(name: object, what: str = "filter field") -> str:
+    """A front-matter field name, as SQLite's JSON functions address it: any name without a double quote."""
+    if not (isinstance(name, str) and name and '"' not in name):
+        raise ValueError(f"invalid {what} {name!r}")
+    return f'$."{name}"'
