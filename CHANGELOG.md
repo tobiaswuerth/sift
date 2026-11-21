@@ -28,6 +28,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   ended in "The weights and list don't have the same length", as did `query`, on the command line and over MCP.
 - A text file of more than a billion bytes, the most a document's text may be, is left out unread, and said, until
   it changes: it was read whole, cut into passages, then refused by the index, and so again on every run.
+- `reindex` says a file whose reader fails `unreadable`, with why, and reads the call's other files, as `sift index`
+  does: the call failed whole.
 - A server keeps its last searches' results through a search of a phrase it hasn't counted yet: each one let every
   result kept go, and wasn't kept itself, so an agent asking phrases got little from memory.
 - A collection without documents sends the searches of the others to their keyword postings, not to FTS5, seconds

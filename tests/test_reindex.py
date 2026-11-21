@@ -575,3 +575,22 @@ def test_reindex_builds_the_postings_of_a_small_collection_that_has_none(notes, 
     assert index.reindex(["notes/plain.txt"])[0]["status"] == "added"
     assert postings.ready(db)
     assert ids(index.search("colour")) == ["notes/plain.txt"]
+
+
+def test_reindex_reads_the_other_files_when_a_reader_fails(corpus, monkeypatch):
+    # `sift index` says a file whose reader fails, by a bug or over a record of gigabytes, and reads the others.
+    # `reindex` failed whole, for an agent with no more than the error's name, and none of its files was read.
+    catalog, root = corpus
+    write(root / "new.md", "# New\n\nfresh words\n")
+    write(root / "bad.md", "# Bad\n")
+    real = readers.load
+
+    def load(path, fields=None):
+        if str(path).endswith("bad.md"):
+            raise TypeError("no reader expected this")
+        return real(path, fields)
+
+    monkeypatch.setattr(readers, "load", load)
+    bad, new = Index(catalog).reindex(["notes/bad.md", "notes/new.md"])
+    assert bad == {"id": "notes/bad.md", "status": "unreadable", "note": "TypeError: no reader expected this"}
+    assert new["status"] == "added"

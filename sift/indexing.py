@@ -675,7 +675,7 @@ def _reindex_read(db, root, fields, rel, scans):
     """A file as `reindex` finds it, before anything is written: its stat, the error that kept it from being stat'ed
     (it is there but out of reach, and kept as indexed), or None if it is gone; its documents and problems as `sift
     index` reads them, scans read if `scans`, its Records, unread, if it is read as it is stored, None if it can't be
-    read; and whether a scan was left for `sift index`."""
+    read, or the error its reader raised; and whether a scan was left for `sift index`."""
     path = os.path.join(root, *rel.split("/"))
     try:
         info = os.stat(path)  # through a link, as `sift index` reads it
@@ -687,9 +687,9 @@ def _reindex_read(db, root, fields, rel, scans):
         return None, None, False
     if readers.streamed(path, info.st_size):
         return info, readers.Records(path, fields), False  # read as it is stored
-    read = readers.load(path, fields)
-    if read is None:
-        return info, None, False
+    read = _loaded(path, fields)
+    if read is None or isinstance(read, Exception):
+        return info, read, False
     docs, problems = read
     docs, left = _read_scans(db, _source(db, rel), rel, docs, problems.append, now=scans)
     return info, (docs, problems), left
@@ -712,6 +712,8 @@ def _reindex_file(db, name, rel, info, read, left):
         return entry | {"status": "removed"}, [], [chunk for _, chunk in chunks]
     if read is None:
         return entry | {"status": "unreadable"}, [], []
+    if isinstance(read, Exception):  # its reader failed: said, as `sift index` says it, and the others are read
+        return entry | {"status": "unreadable", "note": f"{type(read).__name__}: {read}"}, [], []
     docs, problems, twice = (read, [], read.twice) if isinstance(read, readers.Records) else (*read, None)
     db.execute("SAVEPOINT file")
     sid = _source(db, rel, make=True)
