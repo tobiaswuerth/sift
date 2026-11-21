@@ -40,13 +40,13 @@ jobs:
         run: |
           version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' sift/__init__.py)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
-            echo "v$version is released already: nothing to publish."
-            echo "new=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "v$version is new."
-            echo "new=true" >> "$GITHUB_OUTPUT"
-          fi
+          status=0  # git ls-remote --exit-code: 0 the tag is there, 2 it isn't; anything else, it couldn't tell
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null || status=$?
+          case $status in
+            0) echo "v$version is released already: nothing to publish."; echo "new=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "v$version is new."; echo "new=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::git ls-remote failed ($status): whether v$version is released is unknown"; exit "$status" ;;
+          esac
 
   build:
     needs: check

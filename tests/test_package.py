@@ -358,6 +358,15 @@ def test_workflows_run_actions_by_commit():
     assert by_name == set(), "name the action by its commit: `uses: owner/action@<40 hex digits>  # v1.2.3`"
 
 
+def test_the_release_publishes_only_a_version_it_knows_is_new():
+    # `git ls-remote --exit-code` says 2 for no such tag, and 128 for a failure, a network gone: any failure was taken
+    # for a new version, and the release went on to publish one PyPI already had, or to tag a commit twice.
+    check = _job((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"), "check")
+    assert "> /dev/null || status=$?" in check
+    assert '2) echo "v$version is new."' in check
+    assert 'exit "$status"' in check
+
+
 def test_the_package_is_built_by_tools_reviewed():
     # The release built with whatever setuptools, twine and uv were newest that day: what PyPI got was made by code
     # nobody had looked at. Both builds take the backend by hash, twine by version, and the release its uv by version.
