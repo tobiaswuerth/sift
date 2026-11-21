@@ -6,6 +6,10 @@ the smoke run of every command as a user runs it (scripts/smoke.py). The first c
 one that takes longer than its minutes: a test that hangs holds nobody for good. CI runs the hooks, the type checker,
 the tests and the smoke run the same way, the tests and the smoke run on every system and Python.
 
+It checks the checkout it is in, whichever folder it runs from: its checks run there, on the sift its Python imports,
+which must be that checkout's, and on every file there, which git must know of (tracked or ignored), since the hooks
+check only the files git tracks.
+
 The types are checked as on each system sift runs on, whichever runs the gate: what only another system has, or
 lacks, is found here, not in CI. pyright reads the packages of the Python that runs the gate, which it is told: left
 to itself it asks the `python` on the PATH, another one unless the environment is activated.
@@ -15,6 +19,8 @@ tests run once more on the newest Python CI tests on, where a Python warns of wh
 environment of its own, .venv-newest beside .venv, which uv makes on the first run and brings up to date on each.
 The gate owns that folder; deleting it costs the next run its install."""
 
+import functools
+import importlib.util
 import re
 import shutil
 import subprocess
@@ -40,6 +46,7 @@ CHECKS = (
 # The newest Python CI tests on: the last of its matrix
 NEWEST = re.search(r'python: \[.*"([\d.]+)"\]', (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))[1]
 ENVIRONMENT = ROOT / ".venv-newest"
+RUN = functools.partial(subprocess.call, cwd=ROOT)  # each check, in the checkout: its tests, its settings
 UV = shutil.which("uv")  # makes that environment; without it the gate tests on its own Python alone, and says so
 
 
@@ -66,7 +73,35 @@ def on_newest(uv):
     )
 
 
-def main(run=subprocess.call, uv=UV, python=sys.version_info[:2]):
+def sift_at():
+    """The folder of the sift the checks import, or None if they find none."""
+    spec = importlib.util.find_spec("sift")
+    return None if spec is None or spec.origin is None else Path(spec.origin).parent
+
+
+def untracked(root=ROOT):
+    """The files of a checkout git neither tracks nor ignores."""
+    listed = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=root,
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+        timeout=60,
+    )
+    return listed.stdout.split("\0")[:-1]
+
+
+def main(run=RUN, uv=UV, python=sys.version_info[:2]):
+    at = sift_at()
+    if at is None or at.resolve() != (ROOT / "sift").resolve():
+        found = "no sift" if at is None else f"sift from {at}"
+        raise SystemExit(
+            f"gate: this Python imports {found}, not this checkout's: install it with `uv pip install -e .` here, or "
+            f"set PYTHONPATH to {ROOT}"
+        )
+    if new := untracked():
+        raise SystemExit(f"gate: the hooks check only the files git knows; add or ignore these first: {' '.join(new)}")
     this = ".".join(map(str, python))
     package = (("the package", [sys.executable, str(Path(__file__).parent / "package.py")], 15),) if uv else ()
     again = on_newest(uv) if uv and this != NEWEST else ()

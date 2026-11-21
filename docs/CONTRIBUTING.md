@@ -67,7 +67,9 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 - **Tests first:** a test that fails, then the change that makes it pass; every bug fix comes with a regression test.
 - **Full coverage:** `pytest --cov` requires 100% line and branch coverage.
 - **The gate:** `python scripts/gate.py` runs every check a change must pass, and is green when all did: the
-  pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run. With uv on the PATH, it
+  pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run. It checks its own checkout,
+  from whichever folder it runs, and first that its Python imports that checkout's sift and that git tracks or
+  ignores every file there, since the hooks check only those git tracks. With uv on the PATH, it
   then builds and checks the package as CI's package job does (`scripts/package.py`: the changelog's section, the
   build with its backend by hash, twine, the wheel in a clean environment), and runs the tests once more on the
   newest Python CI tests on, where a Python warns of what an older one lets

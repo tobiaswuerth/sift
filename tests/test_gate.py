@@ -13,12 +13,53 @@ ROOT = Path(__file__).parent.parent
 SYSTEMS = ["Linux", "Darwin", "Windows"]  # as pyright names those sift runs on
 
 
-@pytest.fixture
-def gate():
+def load():
     spec = importlib.util.spec_from_file_location("gate", ROOT / "scripts" / "gate.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture
+def gate(monkeypatch):
+    """The gate's module, on a checkout it sees whole: sift imported from it, and no file git doesn't track."""
+    module = load()
+    monkeypatch.setattr(module, "sift_at", lambda: ROOT / "sift")
+    monkeypatch.setattr(module, "untracked", list)
+    return module
+
+
+def test_the_gate_checks_the_sift_of_its_checkout(gate, monkeypatch):
+    # The environment's sift was installed from a worktree since deleted: the gate passed only as it ran from the
+    # checkout's root, whose sift Python finds first; a script run by its path imported the other, or none.
+    monkeypatch.setattr(gate, "sift_at", lambda: Path("D:/elsewhere/sift"))
+    with pytest.raises(SystemExit, match=r"imports sift from .*elsewhere.*`uv pip install -e \.`"):
+        gate.main(run=lambda command, timeout: 0, uv=None)
+
+
+def test_the_gate_sees_every_file(gate, monkeypatch):
+    # The hooks check the files git tracks: a new file not added yet was never formatted nor linted, and the gate was
+    # green on it.
+    monkeypatch.setattr(gate, "untracked", lambda: ["scripts/new.py"])
+    with pytest.raises(SystemExit, match=r"add or ignore these first: scripts/new\.py"):
+        gate.main(run=lambda command, timeout: 0, uv=None)
+
+
+def test_the_gate_runs_its_checks_in_its_checkout():
+    # Run from another folder, pytest found no tests and pyright no configuration.
+    gate = load()
+    assert gate.main.__defaults__[0] is gate.RUN
+    assert (gate.RUN.func, gate.RUN.keywords) == (subprocess.call, {"cwd": ROOT})
+    assert gate.sift_at() == ROOT / "sift"  # as this test run imports it
+
+
+def test_the_files_git_neither_tracks_nor_ignores_are_found(tmp_path):
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True, timeout=60)
+    (tmp_path / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (tmp_path / "run.log").write_text("", encoding="utf-8")
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "notes" / "Übersicht 1.md").write_text("", encoding="utf-8")
+    assert sorted(load().untracked(tmp_path)) == [".gitignore", "notes/Übersicht 1.md"]
 
 
 def test_the_gate_runs_the_hooks_the_types_the_tests_and_the_smoke_run(gate, capsys):
