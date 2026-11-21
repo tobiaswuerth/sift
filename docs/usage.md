@@ -231,8 +231,8 @@ tables and columns in reading order; their metadata says `ocr`.
 ### Emails
 
 A `.eml` is a document titled by its subject, with `From`, `To`, `Cc` and `Date` above its plain text (else its HTML as
-Markdown). Its metadata: `from`, `to`, `cc` (bare addresses), `date` (ISO 8601, in UTC where the mail gives its time zone), `message_id`, `in_reply_to`,
-`attachments`.
+Markdown). Its metadata: `from`, `to`, `cc` (bare addresses), `date` (ISO 8601, in UTC where the mail gives its time
+zone), `message_id`, `in_reply_to`, `attachments`.
 
 Each attachment sift can read is a document below the mail: `mail/2026/offer.eml` holds `mail/2026/offer/contract.pdf`.
 A forwarded mail is one too, named by its subject if it has no file name, with its attachments below it, three levels

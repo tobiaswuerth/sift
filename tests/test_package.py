@@ -102,6 +102,22 @@ def test_published_text_names_no_machine():
     assert found == set(), "state hardware by kind (a GPU, 8 CPU threads), not by the model of the machine measured"
 
 
+UNWRAPPED = re.compile(r"\||!\[|\[!\[|\[[^\]]*\]: ")  # a table's row, an image, a badge, a link's address
+
+
+def test_prose_in_the_docs_is_wrapped_as_the_code_is():
+    # A clause added to a paragraph left its line at 151 characters, in a file wrapped at 120 like the code.
+    line_length = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["ruff"]["line-length"]
+    long = set()
+    for path in [*ROOT.glob("*.md"), *(ROOT / "docs").glob("*.md"), *(ROOT / ".github").glob("*.md")]:
+        in_code = False
+        for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+            in_code ^= line.lstrip().startswith("```")
+            if len(line) > line_length and not in_code and not UNWRAPPED.match(line):
+                long.add(f"{path.relative_to(ROOT)}:{n}")
+    assert long == set(), f"wrap prose at {line_length} characters; only tables, code, images and addresses run on"
+
+
 def test_only_newlines_end_lines():
     # str.splitlines also ends a line at U+2028, U+2029, NEL and five control characters: it shifted search hits' line
     # numbers, cut front-matter values that JSON had written with them, and split .siftignore patterns in two.
