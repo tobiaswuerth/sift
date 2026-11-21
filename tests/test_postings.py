@@ -956,3 +956,22 @@ def test_a_worker_process_reads_the_chunks_from_the_file_they_share(prose, tmp_p
     np.save(chunks, np.stack([ids, ids, lengths]))
     held = postings._Chunks(ids, ids, lengths)
     assert postings._shard((str(path), "", None, str(chunks), 1.0)) == postings._terms(str(path), "", None, held, 1.0)
+
+
+@pytest.mark.usefixtures("small_lists")
+def test_the_ranges_of_long_lists_are_kept_to_a_budget_of_bytes(prose, monkeypatch):
+    # A reader kept the ranges of 1,024 long lists, however long: 32 bytes a range, 12 MB for a word in every chunk
+    # of 50 million, beside the budgets of the blocks and the phrases, and a reader replaced kept its own until the
+    # collector came by.
+    catalog, _ = prose
+    db = catalog.store("prose")
+    reader = postings.Reader(db)
+    long = [key for (key,) in db.execute("SELECT list FROM kw_terms WHERE list IS NOT NULL")]
+    assert len(long) > 3
+    budget = 2 * max(sum(part.nbytes for part in reader._ranges(key)) for key in long)
+    monkeypatch.setattr(postings, "_LISTS", postings._Cache(budget))
+    for key in long:
+        first = reader.ranges(key)
+        assert reader.ranges(key) is first  # kept
+        assert postings._LISTS.size <= budget
+    assert len(postings._LISTS.held) < len(long)  # the first went for the last

@@ -37,7 +37,6 @@ import zlib
 from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
-from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -754,6 +753,8 @@ _BLOCKS = _Cache(BLOCK_CACHE)  # shared by every reader: one budget for the proc
 PHRASE_CACHE = 512 << 20  # bytes of phrases' chunks, counts and lengths kept: 16 a chunk, as many chunks as 256 MB of
 # their ids alone held before; 160 MB for a phrase in 10 million chunks
 _PHRASES = _Cache(PHRASE_CACHE)
+LISTS_CACHE = 256 << 20  # bytes of long lists' ranges kept: 32 a range, 12 MB for a word in every chunk of 50 million
+_LISTS = _Cache(LISTS_CACHE)
 _readers = itertools.count()
 
 
@@ -767,10 +768,14 @@ class Reader:
         masked = db.execute("SELECT chunk, segment FROM kw_masked ORDER BY chunk").fetchall()
         self.masked = np.array([m[0] for m in masked], np.int64)
         self.masked_in = np.array([m[1] for m in masked], np.int64)
-        self.ranges = lru_cache(maxsize=1024)(self._ranges)
         self._me = next(_readers)
         self._dense = {}  # what is read in blocks of places: (first block, values read so far, blocks read) by table
         self._first = _first(db) if _ordered(db) else None  # None: places are ids
+
+    def ranges(self, key):
+        """The ranges of a long list, decoded: through a cache all readers share, by bytes, as the blocks are. Kept
+        by the reader, 1,024 lists however long, the commonest words' ran to gigabytes."""
+        return _LISTS.get((self._me, key), lambda: self._ranges(key))
 
     def block(self, key, n):
         """Block n (from 0) of a long list, decoded: through the cache all readers share."""
