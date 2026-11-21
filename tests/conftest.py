@@ -314,6 +314,15 @@ def close_databases(monkeypatch):
         db.close()
 
 
+@pytest.fixture
+def terminal(monkeypatch):
+    """Have sift take stderr for a terminal, where it draws its progress line again in place: captured, as a test's
+    is, it is a pipe, which gets a line now and then instead."""
+    from sift import console
+
+    monkeypatch.setattr(console, "_terminal", lambda: True)
+
+
 class FakeClock:
     """Stands in for sift's clocks: it stands still until a test moves it, so no test depends on real time."""
 

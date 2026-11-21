@@ -135,6 +135,7 @@ def test_pages_are_pictures_as_the_model_was_trained_on(tmp_path):
     assert small.size == (400, 267)  # 2 by 1.33 inches at 200 dpi
 
 
+@pytest.mark.usefixtures("terminal")
 def test_a_scan_is_read_by_ocr_when_indexed(tmp_path, home, scans, capsys):
     scan(tmp_path / "docs" / "Lieferschein.pdf", pages=2)
     catalog = Catalog(home)

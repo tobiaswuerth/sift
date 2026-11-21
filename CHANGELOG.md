@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Where stderr is no terminal, in a file, a pipe, a service's log or an agent's shell, the progress line is a line
+  a minute and one where it ended, as in the logs. It was drawn again there too, one more line an update and a
+  second: seven for five files, thousands for a night of embedding. In a terminal nothing changes; `sift worker`'s
+  count of what it served shows in a terminal only.
+
 ### Fixed
 
 - `sift index` keeps what is indexed of a collection whose folder holds none of its files any more, and says so,

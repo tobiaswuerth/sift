@@ -183,6 +183,7 @@ def test_intact_vectors_from_older_versions_stay(embedded, capsys):
     assert "nothing to embed" in err
 
 
+@pytest.mark.usefixtures("terminal")
 def test_embed_pending_reports_progress_after_every_batch(corpus, fake_models, monkeypatch, capsys):
     catalog, root = corpus
     for i in range(5):
@@ -517,6 +518,7 @@ def test_embed_says_what_it_embeds_before_loading_the_model(corpus, fake_models,
     assert f"embedding 3 chunks with {fake_models.name} on cpu" in said[0]
 
 
+@pytest.mark.usefixtures("terminal")
 def test_embed_shows_a_progress_bar_with_time_taken_and_left(corpus, fake_models, clock, monkeypatch, capsys):
     monkeypatch.setattr(fake_models.accelerator, "batch_size", 1)
     slow_batches(monkeypatch, clock, 10)  # as on a CPU

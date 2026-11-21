@@ -442,6 +442,7 @@ def test_index_is_incremental(corpus, capsys):
     assert orphans == 0
 
 
+@pytest.mark.usefixtures("terminal")
 def test_index_says_what_it_scans_and_counts_file_by_file(notes, home, monkeypatch, capsys):
     # A batch of large PDFs or a slow cloud folder took minutes before the first line; sift looked hung.
     catalog = Catalog(home)

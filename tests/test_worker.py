@@ -45,6 +45,7 @@ def test_the_worker_says_which_models_it_runs(client, fake_models):
     }
 
 
+@pytest.mark.usefixtures("terminal")
 def test_the_worker_embeds_texts_as_this_machine_would(client, fake_models, capsys):
     response = post(client, "/embed", {"texts": ["brush strokes", "pigments"]})
     assert response.status_code == 200
@@ -96,6 +97,7 @@ def test_the_worker_refuses_malformed_requests(client, path, content):
     assert response.status_code == 400
 
 
+@pytest.mark.usefixtures("terminal")
 def test_a_request_from_an_address_the_server_doesnt_know_is_served(fake_models, capsys):
     # The status line named the client's address, which an ASGI server need not give: the request failed.
     c = Client(worker.app(TOKEN, fake_models), headers={"Authorization": f"Bearer {TOKEN}"}, client=None)
