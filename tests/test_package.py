@@ -333,3 +333,21 @@ def test_modules_import_each_other_one_way():
     assert _cycles({path.stem: _imports(path, anywhere=True) for path in sources}) == CYCLES, (
         "no new cycle: move what both modules need into one both may import; one gone leaves CYCLES"
     )
+
+
+def test_tests_close_the_databases_they_open():
+    # A database a test opens with sqlite3.connect and leaves to the garbage collector is a ResourceWarning on Python
+    # 3.13 and newer, raised in whichever test runs when it is collected: the gate, on an older Python, passed, and CI
+    # failed elsewhere. Those opened through sift are closed by a fixture (conftest.close_databases).
+    left_open = set()
+    for path in (ROOT / "tests").glob("*.py"):
+        for function in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            source = ast.unparse(function)
+            for node in ast.walk(function):
+                if isinstance(node, ast.Assign) and ast.unparse(node.value).startswith("sqlite3.connect("):
+                    name = ast.unparse(node.targets[0])
+                    if f"{name}.close()" not in source and f"return {name}" not in source:  # its caller's to close
+                        left_open.add(f"{path.name}:{node.lineno}")
+    assert left_open == set(), "close it, or open it in `with closing(sqlite3.connect(...)) as db:`"

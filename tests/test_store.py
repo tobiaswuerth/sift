@@ -8,6 +8,7 @@ import sqlite3
 import time
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import numpy as np
@@ -1125,12 +1126,12 @@ def test_only_the_chunks_of_long_documents_are_cut_in_python(tmp_path, statement
 
 def test_the_row_an_insert_made_is_its_rowid():
     # The sqlite3 module types lastrowid optional: a cursor that has run no statement has none.
-    db = sqlite3.connect(":memory:")
-    db.execute("CREATE TABLE t (x)")
-    assert store.inserted(db.execute("INSERT INTO t VALUES (1)")) == 1
-    assert store.inserted(db.execute("INSERT INTO t VALUES (2)")) == 2
-    with pytest.raises(ValueError, match="made no row"):
-        store.inserted(db.cursor())
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("CREATE TABLE t (x)")
+        assert store.inserted(db.execute("INSERT INTO t VALUES (1)")) == 1
+        assert store.inserted(db.execute("INSERT INTO t VALUES (2)")) == 2
+        with pytest.raises(ValueError, match="made no row"):
+            store.inserted(db.cursor())
 
 
 def test_a_store_names_its_collection(tmp_path):
