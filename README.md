@@ -108,7 +108,7 @@ at once, a compact survey, then the best few read), and which collections and fr
 | `sift move [NAME ...] TO` | Move collections' indexes to another folder or drive |
 | `sift rm NAME` | Remove a collection and its index; its files stay |
 | `sift ui` | Search, browse and read the index in your browser |
-| `sift serve [--stdio] [--host H] [--port N]` | The MCP server, and the UI under `/ui` (port 8765) |
+| `sift serve [--stdio] [--host H] [--port N] [--allow-host NAME]` | The MCP server, and the UI under `/ui` (port 8765) |
 | `sift worker [--port N]` | Embed and rerank for other machines on this one's GPU (port 8766) |
 | `sift bench QUESTIONS.json` | How well each search mode finds the answers you expect |
 

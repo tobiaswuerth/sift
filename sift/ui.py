@@ -4,6 +4,7 @@
 they lead to. htmx swaps a pane in place; every view has its own address, so links, reloading and the back button
 work. The server renders everything, so it is tested as the rest of sift is, and needs no build step."""
 
+import ipaddress
 import re
 import socket
 import sqlite3
@@ -12,7 +13,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from itertools import islice
 from pathlib import Path
@@ -438,14 +439,36 @@ def _no_other_site(app: "ASGIApp") -> "ASGIApp":
 
 
 def _local_only(app: "ASGIApp") -> "ASGIApp":
-    """`app`, answering only requests whose Host names a local host, an IPv6 one in brackets too ("[::1]:8765"), which
-    Starlette's TrustedHostMiddleware cuts at its first colon."""
+    """`app`, answering only requests whose Host names a local host."""
+    return _hosts_only(app, lambda name: name in LOCAL_HOSTS)
+
+
+def reached_only(app: "ASGIApp", allowed: Iterable[str] = ()) -> "ASGIApp":
+    """`app`, served on an address other machines reach, answering only requests that name this machine by an
+    address, by its own name (or that name's .local), by a local name, or by one `allowed` (`--allow-host`): a page of
+    another site whose name leads to this machine's address (DNS rebinding) is refused; an address is no such name."""
+    me = socket.gethostname().lower()
+    names = {*LOCAL_HOSTS, me, f"{me}.local", *(name.lower() for name in allowed)}
+
+    def known(name: str) -> bool:
+        try:
+            ipaddress.ip_address(name)
+        except ValueError:
+            return name.lower() in names
+        return True
+
+    return _hosts_only(app, known)
+
+
+def _hosts_only(app: "ASGIApp", known: Callable[[str], bool]) -> "ASGIApp":
+    """`app`, answering only requests whose Host names a host `known` says it is, an IPv6 one in brackets too
+    ("[::1]:8765"), which Starlette's TrustedHostMiddleware cuts at its first colon."""
     from starlette.responses import PlainTextResponse
 
     async def checked(scope: "Scope", receive: "Receive", send: "Send") -> None:
         host = dict(scope.get("headers", ())).get(b"host", b"").decode("latin-1")
         name = host[1 : host.find("]")] if host.startswith("[") else host.partition(":")[0]
-        if scope["type"] != "lifespan" and name not in LOCAL_HOSTS:
+        if scope["type"] != "lifespan" and not known(name):
             await PlainTextResponse("Invalid host header", status_code=400)(scope, receive, send)
             return
         await app(scope, receive, send)
@@ -460,8 +483,9 @@ def address(host: str, port: int) -> str:
     return f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
 
 
-def open_in_browser(host: str = "127.0.0.1", port: int = 8765) -> None:
-    """`sift ui`: open the UI of the `sift serve` on this port in the browser, starting the server if none runs."""
+def open_in_browser(host: str = "127.0.0.1", port: int = 8765, allowed: Sequence[str] = ()) -> None:
+    """`sift ui`: open the UI of the `sift serve` on this port in the browser, starting the server if none runs, with
+    the names `allowed` (see reached_only)."""
     url = address(host, port) + PREFIX
     # Asked itself, not through a proxy set for the web, which knows no server of this machine.
     directly = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -481,7 +505,7 @@ def open_in_browser(host: str = "127.0.0.1", port: int = 8765) -> None:
         from . import server
 
         threading.Thread(target=_open_when_up, args=(url,), daemon=True).start()
-        server.serve(host, port)
+        server.serve(host, port, allowed=allowed)
         return
     _open(url)
 

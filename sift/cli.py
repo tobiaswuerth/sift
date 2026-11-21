@@ -28,6 +28,11 @@ if TYPE_CHECKING:
 # `worker` computes itself.
 SLOW = ("embed", "vsearch", "query", "similar", "bench", "serve", "worker")
 RUN_NO_MODEL = ("similar",)
+ALLOW_HOST = (
+    "with --host on an address other machines reach: a name of this machine their browsers use, beside its addresses "
+    "and its own name, which alone it answers to otherwise, so that no other site's page reaches it under a name of "
+    "its own (DNS rebinding); repeat for more"
+)
 SEARCHES = ("search", "vsearch", "query", "similar")
 
 
@@ -293,10 +298,12 @@ def _parser() -> argparse.ArgumentParser:
     s = sub.add_parser("serve", help="run the MCP server")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--allow-host", action="append", default=[], metavar="NAME", help=ALLOW_HOST)
     s.add_argument("--stdio", action="store_true", help="serve over stdio instead of HTTP")
     s = sub.add_parser("ui", help="search, browse and read the index in a web browser (starts `sift serve` if needed)")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--allow-host", action="append", default=[], metavar="NAME", help=ALLOW_HOST)
     s = sub.add_parser("worker", help="embed for sift on other machines, which set SIFT_EMBED_REMOTE to this one")
     s.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all of this machine's)")
     s.add_argument("--port", type=int, default=8766)
@@ -519,13 +526,13 @@ def _unresolved(a: argparse.Namespace, catalog: Catalog) -> None:
 def _ui(a: argparse.Namespace, catalog: Catalog) -> None:
     from .ui import open_in_browser
 
-    open_in_browser(a.host, a.port)
+    open_in_browser(a.host, a.port, a.allow_host)
 
 
 def _serve(a: argparse.Namespace, catalog: Catalog) -> None:
     from .server import serve
 
-    serve(a.host, a.port, a.stdio)
+    serve(a.host, a.port, a.stdio, allowed=a.allow_host)
 
 
 COMMANDS: dict[str, Callable[[argparse.Namespace, Catalog], None]] = {

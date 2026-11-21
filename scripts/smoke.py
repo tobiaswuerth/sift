@@ -118,7 +118,7 @@ def serve(run):
     with socket.socket() as free:
         free.bind(("127.0.0.1", 0))
         port = free.getsockname()[1]
-    command = [sys.executable, "-m", "sift", "serve", "--port", str(port)]
+    command = [sys.executable, "-m", "sift", "serve", "--port", str(port), "--allow-host", "localhost"]
     with subprocess.Popen(command, env=run.environment, stderr=subprocess.DEVNULL) as server:
         try:
             page = _answer(f"http://127.0.0.1:{port}/ui/?q=rockets", server)

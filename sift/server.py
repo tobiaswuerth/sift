@@ -21,8 +21,8 @@ from .hits import Options, line_span
 from .search import Index
 
 if TYPE_CHECKING:
-    from starlette.applications import Starlette
     from starlette.requests import Request
+    from starlette.types import ASGIApp
 
     from .catalog import Collection as _Collection
     from .models import Models
@@ -458,8 +458,9 @@ async def release_when_idle(models: "Models") -> None:
         models.release_idle()
 
 
-def http_app(mcp: MCPServer, index: Index, host: str) -> "Starlette":
-    """The app `sift serve` runs over HTTP: MCP under /mcp, and the UI under /ui, where the address alone leads."""
+def http_app(mcp: MCPServer, index: Index, host: str, allowed: Sequence[str] = ()) -> "ASGIApp":
+    """The app `sift serve` runs over HTTP: MCP under /mcp, and the UI under /ui, where the address alone leads. On an
+    address other machines reach, it answers only requests naming this machine (see ui.reached_only)."""
     from starlette.responses import RedirectResponse
     from starlette.routing import Mount, Route
 
@@ -470,15 +471,15 @@ def http_app(mcp: MCPServer, index: Index, host: str) -> "Starlette":
 
     app = mcp.streamable_http_app(host=host)  # the host decides on DNS-rebinding protection
     app.router.routes += [Mount("/ui", ui.app(index, host)), Route("/", home)]
-    return app
+    return app if host in ui.LOCAL_HOSTS else ui.reached_only(app, allowed)
 
 
-async def _serve_http(mcp: MCPServer, index: Index, host: str, port: int) -> None:
-    await serve_app(http_app(mcp, index, host), host, port, mcp.settings.log_level.lower())
+async def _serve_http(mcp: MCPServer, index: Index, host: str, port: int, allowed: Sequence[str]) -> None:
+    await serve_app(http_app(mcp, index, host, allowed), host, port, mcp.settings.log_level.lower())
 
 
 async def serve_app(
-    app: "Starlette", host: str, port: int, log_level: str = "info", access_log: bool = True, **options: Any
+    app: "ASGIApp", host: str, port: int, log_level: str = "info", access_log: bool = True, **options: Any
 ) -> None:
     """Serve an HTTP app with uvicorn, but with a time limit on shutdown. Without one, uvicorn waits for every
     connection to close (Python 3.12+), even after a second Ctrl+C, and a client that leaves a request unfinished
@@ -523,7 +524,9 @@ def _no_cancelled_requests(record: logging.LogRecord) -> bool:
     return not (record.exc_info and isinstance(record.exc_info[1], asyncio.CancelledError))
 
 
-async def _serve(mcp: MCPServer, index: Index, host: str, port: int, stdio: bool, models: "Models") -> None:
+async def _serve(
+    mcp: MCPServer, index: Index, host: str, port: int, stdio: bool, models: "Models", allowed: Sequence[str] = ()
+) -> None:
     # One event loop for the transport and the idle check: both stay on the main thread, where PyTorch must run.
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(release_when_idle, models)
@@ -539,12 +542,21 @@ async def _serve(mcp: MCPServer, index: Index, host: str, port: int, stdio: bool
                     f"warning: listening on {host}, so anyone who reaches port {port} can read every indexed "
                     "document, through MCP and the UI: sift has no authentication"
                 )
-            await _serve_http(mcp, index, host, port)
+            await _serve_http(mcp, index, host, port, allowed)
         tasks.cancel_scope.cancel()
 
 
-def serve(host: str = "127.0.0.1", port: int = 8765, stdio: bool = False, models: "Models | None" = None) -> None:
-    """Run the MCP server, with `models` (default: `models.default()`) loaded up front, so the first search is quick."""
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    stdio: bool = False,
+    models: "Models | None" = None,
+    *,
+    allowed: Sequence[str] = (),
+) -> None:
+    """Run the MCP server, with `models` (default: `models.default()`) loaded up front, so the first search is quick.
+    On an address other machines reach, it answers requests naming this machine by an address, its own name, or a
+    name `allowed` (see ui.reached_only)."""
     models = models or _models.default()
     mcp, index = build(Index(models=models))
     # Local models load into RAM, and move to the GPU when used; a worker's are reached
@@ -556,6 +568,6 @@ def serve(host: str = "127.0.0.1", port: int = 8765, stdio: bool = False, models
         except (ConnectionError, LookupError) as e:  # a worker that doesn't answer, no vectors yet: keywords work
             console.say(f"warning: {e}")
     try:
-        anyio.run(_serve, mcp, index, host, port, stdio, models, backend_options=loop_options(stdio))
+        anyio.run(_serve, mcp, index, host, port, stdio, models, allowed, backend_options=loop_options(stdio))
     except BaseExceptionGroup as group:  # from the task group; the error inside is the transport's (or Ctrl+C)
         raise group.exceptions[0] from None

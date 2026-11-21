@@ -11,7 +11,8 @@ Expect a first reply within a week. Security fixes go into the latest release.
 - **The server.** `sift serve` binds to `127.0.0.1` by default and has no authentication: anyone who can reach its port
   can search the indexed files and read them in full, through MCP and the UI. Expose it only behind something that
   authenticates; bound to another address, it warns. Bound locally, it answers only requests naming a local host, so a
-  web page can't reach it under its own domain (DNS rebinding).
+  web page can't reach it under its own domain (DNS rebinding); bound to another address, only requests naming this
+  machine by an address, by its own name, or by a name given with `--allow-host`.
 - **The UI.** Files opened from it carry `Content-Security-Policy: sandbox`, so a saved web page in a collection can't
   run scripts as the UI; PDFs go to the browser's viewer. It refuses what another site's page has the browser ask
   (by Fetch Metadata), and no other site may show it in a frame; a link to it, followed, opens it.

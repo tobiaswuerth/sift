@@ -506,10 +506,24 @@ def test_a_server_on_the_ipv6_loopback_answers_only_local_hosts(embedded):
     assert browser.get("/ui/", headers={"Host": "localhost:8765"}).status_code == 200
 
 
-def test_a_server_for_other_machines_answers_any_host(embedded):
-    index = Index(embedded[0])
-    app = server.http_app(server.build(index)[0], index, "0.0.0.0")
-    assert Client(app, base_url="http://workstation:8765").get("/ui/").status_code == 200
+def test_a_server_for_other_machines_answers_its_addresses_and_names_alone(embedded):
+    # Bound to all addresses, it answered any Host: a page of another site whose name led to this machine's address
+    # (DNS rebinding) read every document, from any browser on the network. An address is no such name.
+    index, me = Index(embedded[0]), socket.gethostname()
+    app = server.http_app(server.build(index)[0], index, "0.0.0.0", allowed=["notes.example"])
+    browser = Client(app, base_url="http://192.168.1.5:8765")
+    for host, status in (
+        ("192.168.1.5:8765", 200),
+        ("[fe80::1]:8765", 200),
+        ("localhost:8765", 200),
+        (f"{me.upper()}:8765", 200),  # this machine's name, in any case
+        (f"{me}.local", 200),
+        ("Notes.Example:8765", 200),  # one --allow-host names
+        ("attacker.example:8765", 400),
+        ("", 400),
+    ):
+        assert browser.get("/ui/", headers={"Host": host}).status_code == status, host
+    assert browser.post("/mcp", json={}, headers={"Host": "attacker.example:8765"}).status_code == 400  # MCP too
 
 
 def test_the_ui_brings_its_scripts_and_styles(browser):
@@ -631,8 +645,8 @@ def test_sift_ui_opens_a_server_that_is_busy(home, opened, monkeypatch, capsys):
 def test_sift_ui_starts_the_server_when_none_runs(home, opened, monkeypatch):
     port, started = free_port(), []
 
-    def serve(host, port):  # listens, as `sift serve` does once its models are loaded, until the page opened
-        started.append((host, port))
+    def serve(host, port, allowed):  # listens, as `sift serve` does once its models are loaded, until the page opened
+        started.append((host, port, allowed))
         with socket.create_server(("127.0.0.1", port)):
             deadline = time.monotonic() + 10  # a hang detector
             while not opened:
@@ -641,7 +655,7 @@ def test_sift_ui_starts_the_server_when_none_runs(home, opened, monkeypatch):
 
     monkeypatch.setattr(server, "serve", serve)
     cli.main(["ui", "--port", str(port)])
-    assert started == [("127.0.0.1", port)]
+    assert started == [("127.0.0.1", port, [])]
     assert opened == [f"http://127.0.0.1:{port}/ui/"]
 
 

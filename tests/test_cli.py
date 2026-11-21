@@ -555,9 +555,13 @@ def test_a_reader_leaving_is_found_before_python_ends(home, tmp_path):
 
 def test_serve(home, monkeypatch):
     calls = []
-    monkeypatch.setattr("sift.server.serve", lambda *args: calls.append(args))
+    monkeypatch.setattr("sift.server.serve", lambda *args, **options: calls.append((args, options)))
     cli.main(["serve", "--port", "9000", "--stdio"])
-    assert calls == [("127.0.0.1", 9000, True)]
+    cli.main(["serve", "--host", "0.0.0.0", "--allow-host", "notes.example", "--allow-host", "nas"])
+    assert calls == [
+        (("127.0.0.1", 9000, True), {"allowed": []}),
+        (("0.0.0.0", 8765, False), {"allowed": ["notes.example", "nas"]}),
+    ]
 
 
 def test_version_and_module_entry_point(monkeypatch, capsys):
