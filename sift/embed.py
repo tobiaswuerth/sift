@@ -100,8 +100,9 @@ def _embed(
     """Embed the slabs of these stores as the reader brings them, and hand each to the writer once all its vectors
     are in. Returns (chunks done, chunks the model broke)."""
     turn = threading.Lock()  # the store's connection, which the reader and the writer take in turn
+    # (slab, part) of each batch handed to the model, not yet back
     on_gpu: collections.deque[tuple[_Slab, list[int]]] = collections.deque()
-    done = 0  # (slab, part) of each batch handed to the model, not yet back
+    done = 0
     tally = _Tally(stores)
     with _Reader(models, stores, turn, tally) as slabs, _Writer(turn, using, tally) as writer:
 

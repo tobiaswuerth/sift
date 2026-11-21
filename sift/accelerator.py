@@ -122,9 +122,8 @@ class Accelerator:
         self.memory, self.clock = memory, clock
         self.batch_size = BATCH_SIZE
         self._budget: float | _Unset | None = _UNSET  # asked once, on first use
-        self._resident: dict[
-            int, Callable[[], object]
-        ] = {}  # what is on the GPU now: key -> function that moves it back to RAM
+        # what is on the GPU now: key -> function that moves it back to RAM
+        self._resident: dict[int, Callable[[], object]] = {}
         self._released = False  # whether everything left the GPU at some point, so the budget needs a fresh look
         self._last_use = 0.0
 

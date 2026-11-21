@@ -20,17 +20,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # no step after it pushes with git
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
           python-version: "3.12"
       - run: uvx pre-commit run --all-files --show-diff-on-failure
 
   types:
-    # pyright, strictly, over the modules pyproject.toml lists: as on each system sift runs on, whichever runs this.
+    # pyright, strictly, over all of sift: as on each system sift runs on, whichever runs this.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # no step after it pushes with git
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
           python-version: "3.12"
@@ -41,17 +45,22 @@ jobs:
       - run: pyright --pythonplatform Darwin
       - run: pyright --pythonplatform Windows
 
-  test:
+  first:
+    # The oldest and the newest Python, on one system, before the other jobs of the matrix: what fails on a Python,
+    # as a warning new in one does, is said by two jobs, not by twenty. Named as the matrix names its jobs.
     # Tests use small fake models, so they need neither a GPU nor model downloads. Coverage must stay at 100%.
+    name: test (${{ matrix.os }}, ${{ matrix.python }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-        python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+        os: [ubuntu-latest]
+        python: ["3.11", "3.15"]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20  # a hung install fails here instead of after GitHub's 6 hours
-    steps:
+    steps: &test
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # no step after it pushes with git
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
           python-version: ${{ matrix.python }}
@@ -62,17 +71,34 @@ jobs:
       - run: pytest -q --cov -n auto --durations=15
       - run: python scripts/smoke.py  # every command as a user runs it, each in a process of its own
 
+  test:
+    # Every other system and Python, once the hooks, the types and the first two jobs pass.
+    name: test (${{ matrix.os }}, ${{ matrix.python }})
+    needs: [lint, types, first]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+        exclude:  # what `first` ran
+          - {os: ubuntu-latest, python: "3.11"}
+          - {os: ubuntu-latest, python: "3.15"}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps: *test
+
   tests:
     # One check for the whole matrix: required in place of each of its jobs by name, it lets the matrix change.
     if: always()
-    needs: test
+    needs: [first, test]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Every job of the matrix passed
         env:
-          RESULT: ${{ needs.test.result }}
-        run: test "$RESULT" = success
+          FIRST: ${{ needs.first.result }}
+          REST: ${{ needs.test.result }}
+        run: test "$FIRST" = success && test "$REST" = success
 
   package:
     # Builds the package and checks it as PyPI and users will see it.
@@ -80,6 +106,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # no step after it pushes with git
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
           python-version: "3.12"

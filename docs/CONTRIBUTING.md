@@ -67,7 +67,10 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 - **Tests first:** a test that fails, then the change that makes it pass; every bug fix comes with a regression test.
 - **Full coverage:** `pytest --cov` requires 100% line and branch coverage.
 - **The gate:** `python scripts/gate.py` runs every check a change must pass, and is green when all did: the
-  pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run.
+  pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run. With uv on the PATH, it
+  then runs the tests once more on the newest Python CI tests on, where a Python warns of what an older one lets
+  pass: in `.venv-newest`, an environment the gate makes, keeps up to date and owns (delete it at will). CI itself
+  runs the oldest and the newest Python first, and every other system and Python once those pass.
 - **Types:** [pyright](https://github.com/microsoft/pyright) checks all of `sift/` in its strict mode, as on Linux,
   macOS and Windows each, whichever runs it: `pyright --pythonplatform Linux` (`Darwin`, `Windows`), in the activated
   environment. It checks for the Python of CI's types job, whose packages it reads (NumPy's types name what only that
@@ -76,8 +79,15 @@ Rules the code keeps, several checked by `tests/test_package.py`:
   Protocol of what sift uses. No finding is silenced by a setting, and by a comment only with the owner's yes, for
   one rule on one line, which `tests/test_package.py` lists.
 - **Quality gates:** pre-commit runs on every commit and in CI: ruff (lint and format), whitespace, line endings, byte
-  order marks, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schemas, actionlint and codespell.
-  Workflows name their actions by commit, which a test holds them to.
+  order marks, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schemas, actionlint, codespell, and
+  [zizmor](https://docs.zizmor.sh), which reads the workflows for what makes them unsafe. Workflows name their
+  actions by commit, which a test holds them to. Once a week, the Audit workflow checks the packages sift installs
+  that day against the advisories known for them (`pip-audit`); Dependabot proposes a new release once it is a week
+  old.
+- **Nothing private:** the `private` hook refuses a commit whose files or message match a pattern of the maintainer's
+  own list, `~/.private-patterns` (or the file `PRIVATE_PATTERNS` names): regular expressions, one a line, in no
+  repository. Without that file, as in CI and for contributors, it checks nothing. `pre-commit install` sets up the
+  hook for the message too.
 - **The smoke run:** `python scripts/smoke.py` runs every command as a user runs it, each in a process of its own, on
   a small folder of notes; with `--models` also what loads the models: `embed`, the semantic searches, `bench` and
   `sift serve` with its page and MCP endpoint. A new command or option gets a line there.

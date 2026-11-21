@@ -1,0 +1,31 @@
+name: Audit
+
+# Once a week, the packages sift installs today are checked against the advisories known for them. sift names ranges
+# of versions, not versions, so what Dependabot reads in pyproject.toml isn't what a user gets, least of all of the
+# packages those bring along. A finding fails this run, which GitHub mails; it holds up no pull request.
+on:
+  schedule:
+    - cron: "17 5 * * 1"  # Mondays, 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # no step after it pushes with git
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
+        with:
+          python-version: "3.12"
+          activate-environment: true
+          enable-cache: true
+      - run: uv pip install --torch-backend cpu -e .
+      # Without sift itself, which is this checkout; PyTorch's CPU builds under the versions they are builds of,
+      # as the advisories name them.
+      - run: uv pip freeze --exclude-editable | sed -E 's/\+cpu$//' > installed.txt
+      - run: uvx pip-audit -r installed.txt --no-deps --disable-pip

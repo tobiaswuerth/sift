@@ -246,8 +246,8 @@ class _Filter(Filter):
     def __init__(self, catalog: Catalog, scope: Scope, where: str, args: Sequence[Any]) -> None:
         self.stores: dict[int, Db] = {c.id: catalog.store(c) for c in scope}
         self.where, self.args = where, args
-        self.seen: Ids = np.empty(0, np.int64)  # the chunks checked, by id, and which pass
-        self.passed: Mask = np.empty(0, bool)
+        self.seen: Ids = np.empty(0, np.int64)  # the chunks checked, by id
+        self.passed: Mask = np.empty(0, bool)  # which of them pass
         self._listed: Ids | None = None
 
     def check(self, ids: Ids) -> Mask:

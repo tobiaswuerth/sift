@@ -23,7 +23,7 @@ def gate():
 
 def test_the_gate_runs_the_hooks_the_types_the_tests_and_the_smoke_run(gate, capsys):
     ran = []
-    gate.main(run=lambda command, timeout: ran.append(command) or 0)
+    gate.main(run=lambda command, timeout: ran.append(command) or 0, uv=None)
     hooks, *types, tests, smoke = ran
     assert hooks[:3] == [sys.executable, "-m", "pre_commit"]
     assert "--all-files" in hooks  # every file, as CI checks them, not only those changed
@@ -106,3 +106,38 @@ def test_the_checks_are_those_ci_runs(gate):
     assert "run: python scripts/smoke.py" in workflow  # on every system: it ran on the one that ran the gate alone
     for command in types:
         assert f"run: {' '.join(command[:3])}\n" in workflow
+
+
+def test_the_gate_tests_on_the_newest_python_too(gate, capsys):
+    # The gate ran on one Python, and CI on five: a test that left a database open, a warning on Python 3.13 and
+    # newer, passed here and failed there. The tests run again on the newest Python CI has, in an environment of its
+    # own that uv makes and keeps.
+    ran = []
+    gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=(3, 12))
+    made, installed, tests = ran[-3:]
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert f', "{gate.NEWEST}"]' in workflow  # the last Python of CI's matrix
+    assert made == ["uv", "venv", "--quiet", "--allow-existing", "--python", gate.NEWEST, str(gate.ENVIRONMENT)]
+    there = str(gate.python_of(gate.ENVIRONMENT))
+    assert installed[:5] == ["uv", "pip", "install", "--quiet", "--python"]
+    assert installed[5:] == [there, "--torch-backend", "cpu", "-e", f"{ROOT}[dev]"]  # as CI installs sift
+    assert tests == [there, "-m", "pytest", "-q", "-n", "auto"]
+    assert ".venv-newest/" in (ROOT / ".gitignore").read_text(encoding="utf-8").split()
+    assert capsys.readouterr().out.strip().endswith("gate: green")
+
+
+def test_a_gate_on_the_newest_python_tests_once(gate):
+    ran = []
+    newest = tuple(map(int, gate.NEWEST.split(".")))
+    gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=newest)
+    assert len(ran) == len(gate.CHECKS)
+
+
+def test_a_gate_without_uv_says_which_python_it_tested_on(gate, capsys):
+    # uv makes the newest Python's environment: without it the gate is the checks of this Python, and says so.
+    ran = []
+    gate.main(run=lambda command, timeout: ran.append(command) or 0, uv=None, python=(3, 12))
+    assert len(ran) == len(gate.CHECKS)
+    said = capsys.readouterr().out
+    assert f"gate: no uv on the PATH: the tests ran on Python 3.12 alone, not on {gate.NEWEST}" in said
+    assert said.strip().endswith("gate: green")

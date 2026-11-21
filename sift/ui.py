@@ -200,9 +200,7 @@ def _facets(hits: Iterable[Hit], view: View) -> list[tuple[str, list[dict[str, A
     return facets
 
 
-def _collections(
-    stores: Iterable[tuple["Collection", sqlite3.Connection]],
-) -> list[tuple[str, int | None, str | None]]:
+def _collections(stores: Iterable[tuple["Collection", sqlite3.Connection]]) -> list[tuple[str, int | None, str | None]]:
     """The collections of [(collection, its store)], each as (name, its number of documents as its store keeps it,
     None), or of a store found damaged (name, None, what is wrong and what to do)."""
     listed: list[tuple[str, int | None, str | None]] = []

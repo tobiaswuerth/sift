@@ -48,9 +48,8 @@ Counts = Counter[str]
 Unlisted = list[tuple[str, OSError]]
 Task = tuple[list[tuple[str, int]], Future[list[Loaded]], ProcessPoolExecutor]
 FileRow = tuple[int, str, str, str]  # a document's id, path, title and meta, as stored
-Info = (
-    os.stat_result | OSError | None
-)  # a file's stat, the error that kept it from being stat'ed, or None if it is gone
+# a file's stat, the error that kept it from being stat'ed, or None if it is gone
+Info = os.stat_result | OSError | None
 Entry = dict[str, str]  # {"id", "status"[, "note"]}
 
 

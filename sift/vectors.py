@@ -250,8 +250,8 @@ class Codes:
 
     def patched(self, removed: IdList, ids: IdList, bits: Bits) -> "Codes":
         """These codes without those of the chunks `removed`, and with those of the chunks `ids`, rows of `bits`, which
-        replace any these hold under the same ids, as of a chunk embedded again. The codes loaded
-        stay as they are, masked; the added ones form one more part, rebuilt on every patch, small."""
+        replace any these hold under the same ids, as of a chunk embedded again. The codes loaded stay as they are,
+        masked; the added ones form one more part, rebuilt on every patch, small."""
         ids, base = np.asarray(ids, np.int64), self._parts[0]
         gone = np.concatenate([np.asarray(removed, np.int64), ids])
         alive = ~np.isin(self.ids, gone)

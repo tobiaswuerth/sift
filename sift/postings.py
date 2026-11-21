@@ -589,8 +589,8 @@ def update(db: store.Connection, path: str | Path, name: str = "", workers: int 
     since; when deltas grow too many, merge them into one (MOST_SEGMENTS), and when the chunks changed since the
     postings were built grow too many, build them anew (REBUILD_SHARE). Without `rebuild`, as for a file an agent
     reindexes, nothing is built: that reads the whole store, so `sift index` does it; but for a small store without
-    any (SMALL), as one filled by `reindex` alone, which takes a moment. Another sift changing the
-    postings meanwhile? Then nothing happens here, and searches read FTS5 until the next update."""
+    any (SMALL), as one filled by `reindex` alone, which takes a moment. Another sift changing the postings
+    meanwhile? Then nothing happens here, and searches read FTS5 until the next update."""
     if built(db) and not behind(db) and not (rebuild and _unordered(db)):
         return
     with _alone(path) as alone:
@@ -807,9 +807,8 @@ class Reader:
         self.masked = np.array([m[0] for m in masked], np.int64)
         self.masked_in = np.array([m[1] for m in masked], np.int64)
         self._me = next(_readers)
-        self._dense: dict[
-            tuple[str, int | None], tuple[int, NDArray[np.uint32], Mask]
-        ] = {}  # what is read in blocks of places: (first block, values read so far, blocks read) by table
+        # what is read in blocks of places: (first block, values read so far, blocks read) by table
+        self._dense: dict[tuple[str, int | None], tuple[int, NDArray[np.uint32], Mask]] = {}
         self._first: int | None = _first(db) if _ordered(db) else None  # None: places are ids
 
     def ranges(self, key: int) -> Ranges:

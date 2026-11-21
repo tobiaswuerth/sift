@@ -168,6 +168,28 @@ def test_only_newlines_end_lines():
     assert found == set(), 'split on "\n" (see readers.LINE): only it ends a line, as in editors and git'
 
 
+def test_no_comment_makes_the_formatter_wrap_its_statement():
+    # A comment after a statement counts toward its line's length. Too long together, the formatter wraps the
+    # statement around the comment: an annotation over three lines, a value alone in parentheses, where the statement
+    # fits on one line and the comment belongs above it.
+    toml = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    width = toml["tool"]["ruff"]["line-length"]
+    wrapped = set()
+    for path in (path for folder in ("sift", "scripts", "tests") for path in (ROOT / folder).glob("*.py")):
+        lines = path.read_text(encoding="utf-8").split("\n")
+        for n, (opened, held, closed) in enumerate(zip(lines, lines[1:], lines[2:]), 1):
+            (held, _, said), (closed, _, after) = held.partition("  # "), closed.partition("  # ")
+            if (
+                opened.endswith(("(", "["))
+                and closed.lstrip().startswith((")", "]"))
+                and not held.rstrip().endswith(",")  # a comma the formatter keeps the statement wrapped for
+                and (said or after)
+                and len(opened + held.strip() + closed.strip()) <= width
+            ):
+                wrapped.add(f"{path.relative_to(ROOT).as_posix()}:{n}")
+    assert wrapped == set(), "put the comment on a line of its own, above the statement, which then fits on one"
+
+
 SILENCED = re.compile(r"#\s*(?:type:\s*ignore|pyright:)")
 # The findings silenced with the owner's yes, each for one rule in one place, saying why: the module, and its line.
 SILENCED_WITH_YES = {
@@ -196,11 +218,35 @@ def test_types_are_checked_for_the_python_whose_packages_they_read():
     toml = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     oldest = toml["project"]["requires-python"].removeprefix(">=")
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    types_job = ci.split("\n  types:\n", 1)[1].split("\n  test:\n", 1)[0]
-    assert f'python-version: "{_pyright()["pythonVersion"]}"' in types_job
+    assert f'python-version: "{_pyright()["pythonVersion"]}"' in _job(ci, "types")
     assert toml["tool"]["ruff"]["target-version"] == "py" + oldest.replace(".", "")
-    assert f'python: ["{oldest}",' in ci
+    assert f'python: ["{oldest}",' in _job(ci, "test")
     assert toml["tool"]["coverage"]["report"]["fail_under"] == 100
+
+
+def _job(workflow, name):
+    """The text of a workflow's job."""
+    return re.split(r"\n  (?=[\w-]+:\n)", workflow.split(f"\n  {name}:\n", 1)[1])[0]
+
+
+def test_ci_looks_at_two_pythons_before_it_runs_every_system_and_python():
+    # A test that left a database open failed on Python 3.13 and newer alone: twenty jobs ran to say it. The oldest
+    # and the newest Python run first, on one system; the other jobs of the matrix only once those, the hooks and the
+    # types pass, all under the names the matrix gave its jobs, which main requires.
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    first, rest = _job(ci, "first"), _job(ci, "test")
+    pythons = re.search(r"python: \[(.*)\]", rest)[1].split(", ")
+    assert f"python: [{pythons[0]}, {pythons[-1]}]" in first
+    assert "os: [ubuntu-latest]" in first
+    assert "needs: [lint, types, first]" in rest
+    for python in (pythons[0], pythons[-1]):
+        assert f"- {{os: ubuntu-latest, python: {python}}}" in rest  # left out there: `first` ran it
+    for job in (first, rest):
+        assert "name: test (${{ matrix.os }}, ${{ matrix.python }})" in job
+    assert "steps: *test" in rest  # the steps of `first`, not a copy of them
+    summary = _job(ci, "tests")
+    assert "needs: [first, test]" in summary  # one check for all of them
+    assert 'test "$FIRST" = success && test "$REST" = success' in summary
 
 
 def test_nothing_silences_the_type_checker():
@@ -285,6 +331,73 @@ def test_workflows_run_actions_by_commit():
         if "uses:" in line and not re.search(r"uses: [\w./-]+@[0-9a-f]{40}  # v\d+\.\d+\.\d+", line)
     }
     assert by_name == set(), "name the action by its commit: `uses: owner/action@<40 hex digits>  # v1.2.3`"
+
+
+# The findings of zizmor silenced with the owner's yes, each for one audit on one line: the workflow, and the line.
+ZIZMOR_IGNORED_WITH_YES = {
+    # The release starts when CI has ended (workflow_run), with what it takes to publish: the test below holds what
+    # keeps a run that isn't main's own from starting it, which zizmor can't see.
+    ("release.yml", "workflow_run:  # zizmor: ignore[dangerous-triggers]"),
+}
+
+
+def test_the_release_starts_only_for_ci_of_this_repository_s_main():
+    # A workflow started by another's end runs with this repository's rights, whoever's run that was: a pull
+    # request's, from a fork, would publish. Three conditions keep the release to CI that passed, on a push, to this
+    # repository; every job waits for the one that checks them; and nothing of that run is used but its commit, never
+    # in a command's text, and no file it made.
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    check = _job(release, "check")
+    for condition in (
+        "github.event.workflow_run.conclusion == 'success'",
+        "&& github.event.workflow_run.event == 'push'",
+        "&& github.event.workflow_run.head_repository.full_name == github.repository",
+    ):
+        assert condition in check.split("runs-on:")[0], condition
+    jobs = re.findall(r"\n  ([\w-]+):\n", release.split("\njobs:\n", 1)[1].join(["\n", ""]))
+    assert jobs[0] == "check"
+    waits = {job: set(re.findall(r"[\w-]+", re.search(r"needs: (.*)", _job(release, job))[1])) for job in jobs[1:]}
+    assert all(needed & {"check", *(j for j in waits if "check" in waits[j])} for needed in waits.values()), waits
+    taken = set(re.findall(r"github\.event\.workflow_run\.([\w.]+)", release))
+    assert taken == {"conclusion", "event", "head_repository.full_name", "head_sha"}
+    for line in release.split("\n"):
+        if "workflow_run.head_sha" in line:
+            assert line.strip().startswith(("ref: ", "COMMIT: ")), line  # an input or a variable, no command's text
+    assert "run-id" not in release  # the files downloaded are those this run built
+    assert "artifacts_url" not in release
+    ignored = {
+        (path.name, line.strip())
+        for path in (ROOT / ".github").rglob("*.yml")
+        for line in path.read_text(encoding="utf-8").split("\n")
+        if "zizmor:" in line
+    }
+    assert ignored == ZIZMOR_IGNORED_WITH_YES, "fix what zizmor finds; an audit silenced needs the owner's yes first"
+    assert "- id: zizmor" in (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+
+
+# Each repository of hooks in .pre-commit-config.yaml, and what docs/CONTRIBUTING.md calls what its hooks check.
+HOOKS_AS_CONTRIBUTING_NAMES_THEM = {
+    "local": "the `private` hook",
+    "https://github.com/pre-commit/pre-commit-hooks": "whitespace, line endings, byte order marks, YAML/TOML checks",
+    "https://github.com/astral-sh/ruff-pre-commit": "ruff (lint and format)",
+    "https://github.com/abravalheri/validate-pyproject": "`validate-pyproject`",
+    "https://github.com/python-jsonschema/check-jsonschema": "workflow and Dependabot schemas",
+    "https://github.com/Mateusz-Grzelinski/actionlint-py": "actionlint",
+    "https://github.com/codespell-project/codespell": "codespell",
+    "https://github.com/zizmorcore/zizmor-pre-commit": "zizmor",
+}
+
+
+def test_contributing_names_every_hook():
+    # A hook was added, zizmor, and the list of what runs on every commit stayed as it was: a contributor read of
+    # checks that weren't all of them.
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert set(re.findall(r"- repo: (\S+)", config)) == set(HOOKS_AS_CONTRIBUTING_NAMES_THEM), (
+        "name a new hook in docs/CONTRIBUTING.md, under how changes are made, and here"
+    )
+    contributing = " ".join((ROOT / "docs" / "CONTRIBUTING.md").read_text(encoding="utf-8").split())
+    for repository, named in HOOKS_AS_CONTRIBUTING_NAMES_THEM.items():
+        assert named in contributing, repository
 
 
 def _imports(path, anywhere):
