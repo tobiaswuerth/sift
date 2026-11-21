@@ -20,7 +20,8 @@ PINNED = {
     "Alibaba-NLP/gte-reranker-modernbert-base": "f7481e6055501a30fb19d090657df9ec1f79ab2c",
     "lightonai/LightOnOCR-2-1B": "be7c41313c30e940fe5571de59e5fabc779e00c8",
 }
-REVISION = re.compile(r"[\w.-]+")  # a commit, branch or tag of the Hub: no folder of a path
+REPOSITORY = re.compile(r"\w[\w.-]*(/\w[\w.-]*)?")  # a repository of the Hub, "name" or "owner/name": no folder's path
+REVISION = re.compile(r"[\w.-]+")  # a commit, branch or tag of the Hub
 
 
 def pinned(name: str) -> str:
@@ -30,10 +31,10 @@ def pinned(name: str) -> str:
 
 
 def hub(name: str) -> tuple[str, str | None]:
-    """A model's repository or folder, and the revision to load: the one named after its last "@", else its pin, else
-    None, its latest commit."""
+    """A model's repository or folder, and the revision to load: the one a repository names after its "@", else its
+    pin, else None, its latest commit. A folder is taken whole, an "@" in its path too."""
     repository, at, revision = name.rpartition("@")
-    if at and REVISION.fullmatch(revision):
+    if at and REPOSITORY.fullmatch(repository) and REVISION.fullmatch(revision):
         return repository, revision
     return name, PINNED.get(name)
 

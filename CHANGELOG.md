@@ -25,8 +25,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   --follow-links` reads them, as before, for a new collection or one added already; `--no-follow-links` leaves them
   out again.
 - Any web page could have the browser ask the UI of `sift serve` for searches, each holding the server's one call
-  at a time and the GPU, or show the UI in a frame of its own. The UI refuses what another site's page asks, as
-  browsers say by Fetch Metadata, and forbids frames; a link to it from elsewhere still opens it.
+  at a time and the GPU, or show the UI in a frame of its own. The UI refuses what another site's page asks for in
+  the background, as browsers say by Fetch Metadata, and forbids frames; a link to it from elsewhere still opens it.
 - `sift serve --host 0.0.0.0` (or another address) answered requests naming any host: a page of another site whose
   name led to this machine's address (DNS rebinding) read every document, from any browser on the network. It now
   answers only requests naming this machine by an address, by its own name, or by a name given with the new

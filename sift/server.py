@@ -557,6 +557,9 @@ def serve(
     """Run the MCP server, with `models` (default: `models.default()`) loaded up front, so the first search is quick.
     On an address other machines reach, it answers requests naming this machine by an address, its own name, or a
     name `allowed` (see ui.reached_only)."""
+    from .ui import host_name
+
+    allowed = [host_name(name) for name in allowed]  # what is no name is an error before the models load
     models = models or _models.default()
     mcp, index = build(Index(models=models))
     # Local models load into RAM, and move to the GPU when used; a worker's are reached

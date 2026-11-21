@@ -32,6 +32,11 @@ def test_a_model_is_loaded_at_the_revision_it_names_or_at_its_pin():
     assert settings.hub(EMBEDDER.split("@")[0]) == tuple(EMBEDDER.split("@"))
     assert settings.hub("D:\\models\\a@b\\model") == ("D:\\models\\a@b\\model", None)  # a folder, no revision
     assert settings.hub("/models/a@b/model") == ("/models/a@b/model", None)
+    # A folder whose own name holds an @ was cut there, and the folder before it loaded, or none.
+    assert settings.hub("D:\\models\\gemma@v2") == ("D:\\models\\gemma@v2", None)
+    assert settings.hub("/models/gemma@v2") == ("/models/gemma@v2", None)
+    assert settings.hub("./gemma@v2") == ("./gemma@v2", None)
+    assert settings.hub("gemma@v2") == ("gemma", "v2")  # a repository of the Hub without an owner
 
 
 def test_each_variable_overrides_its_default(tmp_path):

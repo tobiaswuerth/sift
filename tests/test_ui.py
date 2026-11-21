@@ -519,11 +519,39 @@ def test_a_server_for_other_machines_answers_its_addresses_and_names_alone(embed
         (f"{me.upper()}:8765", 200),  # this machine's name, in any case
         (f"{me}.local", 200),
         ("Notes.Example:8765", 200),  # one --allow-host names
+        ("notes.example.:8765", 200),  # as a browser names it with the dot of its root
         ("attacker.example:8765", 400),
+        ("[1.2.3.4x", 400),  # no address: its bracket never closes
         ("", 400),
     ):
         assert browser.get("/ui/", headers={"Host": host}).status_code == status, host
-    assert browser.post("/mcp", json={}, headers={"Host": "attacker.example:8765"}).status_code == 400  # MCP too
+    refused = browser.post("/mcp", json={}, headers={"Host": "attacker.example:8765"})  # MCP too
+    assert (refused.status_code, "`sift serve --allow-host NAME`" in refused.text) == (400, True)  # and what lets in
+
+
+@pytest.mark.parametrize(
+    "given, name",
+    [("Notes.Example", "notes.example"), ("nas.", "nas"), ("münchen.example", "xn--mnchen-3ya.example")],
+)
+def test_a_name_to_answer_to_is_taken_as_requests_name_it(given, name):
+    # `--allow-host` took a name as typed: one with a capital, a dot at its end, or letters beyond ASCII, which a
+    # browser sends encoded, never matched, and the server refused its own name without saying why.
+    assert ui.host_name(given) == name
+
+
+@pytest.mark.parametrize("given", ["nas:8765", "http://nas", "[::1]", "nas/ui", "a b", ""])
+def test_what_is_no_name_of_a_host_is_refused(given):
+    with pytest.raises(ValueError, match="--allow-host takes a name"):
+        ui.host_name(given)
+
+
+def test_a_name_that_is_none_is_refused_before_the_models_load():
+    class Unasked:
+        def __getattr__(self, name):
+            pytest.fail("the models were asked for")
+
+    with pytest.raises(ValueError, match=r"--allow-host takes a name .* got 'nas:8765'"):
+        server.serve("0.0.0.0", 8765, models=Unasked(), allowed=["nas:8765"])
 
 
 def test_the_ui_brings_its_scripts_and_styles(browser):

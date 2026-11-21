@@ -48,6 +48,7 @@ SHORT = 60  # characters a front-matter value may have to filter by it
 SNIPPET = 260  # characters of a passage shown in the results
 READER_LINES = 2000  # lines of a document the reader shows at once: a long log would make a page of megabytes
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+HOST_NAME = re.compile(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*")  # a host's name, as a request's Host header holds it
 STARTUP_SECONDS = 600  # how long `sift ui` waits for the server it started: loading models and codes takes a while
 PROBE_SECONDS = 5  # how long `sift ui` waits for a server on its port to answer, before it takes it for busy
 # A page and its parts share an address, told apart by the request's headers: a browser that kept one showed a part
@@ -422,9 +423,10 @@ def app(index: "Index", host: str = "127.0.0.1") -> "ASGIApp":
 
 
 def _no_other_site(app: "ASGIApp") -> "ASGIApp":
-    """`app`, refusing what another site's page has the browser ask: a search, which holds the server's one call at a
-    time and the GPU, or the UI in a frame. Browsers say who asks (Fetch Metadata); a link to the UI, followed, goes
-    on, as does a client that is no browser."""
+    """`app`, refusing what another site's page has the browser fetch in the background or show in a frame: a search,
+    which holds the server's one call at a time and the GPU. Browsers say who asks (Fetch Metadata). A navigation of
+    the whole tab to the UI goes on, a link followed or a page sending the browser there, which the user sees; so
+    does a client that is no browser."""
     from starlette.responses import PlainTextResponse
 
     async def checked(scope: "Scope", receive: "Receive", send: "Send") -> None:
@@ -443,33 +445,54 @@ def _local_only(app: "ASGIApp") -> "ASGIApp":
     return _hosts_only(app, lambda name: name in LOCAL_HOSTS)
 
 
+def host_name(name: str) -> str:
+    """A name a server answers to beside its own (`--allow-host`), as a request's Host names it: in lower case,
+    without a dot at its end, and one beyond ASCII as browsers send it (IDNA). An error for what is no name: an
+    address needs no allowing, and a port or a path is no part of a name."""
+    try:
+        encoded = name.strip().lower().removesuffix(".").encode("idna").decode("ascii")
+    except UnicodeError:
+        encoded = ""
+    if not HOST_NAME.fullmatch(encoded):
+        raise ValueError(
+            "--allow-host takes a name this machine is reached by, such as nas or notes.example, without a port or a "
+            f"path: got {name!r}"
+        )
+    return encoded
+
+
 def reached_only(app: "ASGIApp", allowed: Iterable[str] = ()) -> "ASGIApp":
     """`app`, served on an address other machines reach, answering only requests that name this machine by an
     address, by its own name (or that name's .local), by a local name, or by one `allowed` (`--allow-host`): a page of
     another site whose name leads to this machine's address (DNS rebinding) is refused; an address is no such name."""
     me = socket.gethostname().lower()
-    names = {*LOCAL_HOSTS, me, f"{me}.local", *(name.lower() for name in allowed)}
+    names = {*LOCAL_HOSTS, me, f"{me}.local", *map(host_name, allowed)}
 
     def known(name: str) -> bool:
         try:
             ipaddress.ip_address(name)
         except ValueError:
-            return name.lower() in names
+            return name.lower().removesuffix(".") in names
         return True
 
-    return _hosts_only(app, known)
+    refusal = (
+        "This sift answers to its machine's addresses and names alone: `sift serve --allow-host NAME` adds a name it "
+        "is reached by."
+    )
+    return _hosts_only(app, known, refusal)
 
 
-def _hosts_only(app: "ASGIApp", known: Callable[[str], bool]) -> "ASGIApp":
+def _hosts_only(app: "ASGIApp", known: Callable[[str], bool], refusal: str = "Invalid host header") -> "ASGIApp":
     """`app`, answering only requests whose Host names a host `known` says it is, an IPv6 one in brackets too
-    ("[::1]:8765"), which Starlette's TrustedHostMiddleware cuts at its first colon."""
+    ("[::1]:8765"), which Starlette's TrustedHostMiddleware cuts at its first colon; any other gets `refusal`."""
     from starlette.responses import PlainTextResponse
 
     async def checked(scope: "Scope", receive: "Receive", send: "Send") -> None:
         host = dict(scope.get("headers", ())).get(b"host", b"").decode("latin-1")
-        name = host[1 : host.find("]")] if host.startswith("[") else host.partition(":")[0]
+        bracketed = host.startswith("[") and "]" in host
+        name = host[1 : host.find("]")] if bracketed else host.partition(":")[0]
         if scope["type"] != "lifespan" and not known(name):
-            await PlainTextResponse("Invalid host header", status_code=400)(scope, receive, send)
+            await PlainTextResponse(refusal, status_code=400)(scope, receive, send)
             return
         await app(scope, receive, send)
 
