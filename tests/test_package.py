@@ -196,11 +196,35 @@ def test_types_are_checked_for_the_python_whose_packages_they_read():
     toml = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     oldest = toml["project"]["requires-python"].removeprefix(">=")
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    types_job = ci.split("\n  types:\n", 1)[1].split("\n  test:\n", 1)[0]
-    assert f'python-version: "{_pyright()["pythonVersion"]}"' in types_job
+    assert f'python-version: "{_pyright()["pythonVersion"]}"' in _job(ci, "types")
     assert toml["tool"]["ruff"]["target-version"] == "py" + oldest.replace(".", "")
-    assert f'python: ["{oldest}",' in ci
+    assert f'python: ["{oldest}",' in _job(ci, "test")
     assert toml["tool"]["coverage"]["report"]["fail_under"] == 100
+
+
+def _job(workflow, name):
+    """The text of a workflow's job."""
+    return re.split(r"\n  (?=[\w-]+:\n)", workflow.split(f"\n  {name}:\n", 1)[1])[0]
+
+
+def test_ci_looks_at_two_pythons_before_it_runs_every_system_and_python():
+    # A test that left a database open failed on Python 3.13 and newer alone: twenty jobs ran to say it. The oldest
+    # and the newest Python run first, on one system; the other jobs of the matrix only once those, the hooks and the
+    # types pass, all under the names the matrix gave its jobs, which main requires.
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    first, rest = _job(ci, "first"), _job(ci, "test")
+    pythons = re.search(r"python: \[(.*)\]", rest)[1].split(", ")
+    assert f"python: [{pythons[0]}, {pythons[-1]}]" in first
+    assert "os: [ubuntu-latest]" in first
+    assert "needs: [lint, types, first]" in rest
+    for python in (pythons[0], pythons[-1]):
+        assert f"- {{os: ubuntu-latest, python: {python}}}" in rest  # left out there: `first` ran it
+    for job in (first, rest):
+        assert "name: test (${{ matrix.os }}, ${{ matrix.python }})" in job
+    assert "steps: *test" in rest  # the steps of `first`, not a copy of them
+    summary = _job(ci, "tests")
+    assert "needs: [first, test]" in summary  # one check for all of them
+    assert 'test "$FIRST" = success && test "$REST" = success' in summary
 
 
 def test_nothing_silences_the_type_checker():
