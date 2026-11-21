@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-11-21
+
+Agents learn on connecting how to search well, `sift index` survives readers that crash or hang and keeps a
+collection whose folder came back empty, and keyword search no longer falls back to FTS5 for a collection without
+documents.
+
 ### Changed
 
 - The instructions `sift serve` gives agents when they connect start with how to search well: which tool fits what
@@ -17,7 +23,6 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The MCP tools `status` and `links` return their result as data too (structured content), as the other tools do,
   beside the same text as before: a client that hands its model the data hands it compact, less than half the size
   for `status`.
-
 - Where stderr is no terminal, in a file, a pipe, a service's log or an agent's shell, the progress line is a line
   a minute and one where it ended, as in the logs. It was drawn again there too, one more line an update and a
   second: seven for five files, thousands for a night of embedding. In a terminal nothing changes; `sift worker`'s
@@ -715,7 +720,8 @@ First release.
 - Keyword search (SQLite FTS5, BM25), exact GPU vector search, and hybrid search with cross-encoder reranking.
 - An MCP server (streamable HTTP and stdio) whose instructions tell agents what is indexed.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/tobiaswuerth/sift/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/tobiaswuerth/sift/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/tobiaswuerth/sift/compare/v1.11.2...v1.12.0
 [1.11.2]: https://github.com/tobiaswuerth/sift/compare/v1.11.1...v1.11.2
