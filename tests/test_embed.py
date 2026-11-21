@@ -23,7 +23,7 @@ def test_embed_pending(corpus, fake_models, capsys):
     catalog, _ = corpus
     embed.embed_pending(catalog)
     assert vector_count(catalog) == 3
-    assert store.get_meta(catalog.store("notes"), "model") == fake_models.name
+    assert store.model(catalog.store("notes")) == fake_models.name
     assert store.get_meta(catalog.store("notes"), "dim") == "64"
     assert "embedded 3 chunks" in capsys.readouterr().err
     embed.embed_pending(catalog)
@@ -266,8 +266,37 @@ def test_embed_refuses_mixing_models(embedded, fake_models):
     with pytest.raises(SystemExit, match="--reset"):
         embed.embed_pending(catalog)
     embed.embed_pending(catalog, reset=True)
-    assert store.get_meta(catalog.store("notes"), "model") == fake_models.name
+    assert store.model(catalog.store("notes")) == fake_models.name
     assert vector_count(catalog) == 3
+
+
+def test_embed_refuses_mixing_commits_of_a_model(embedded, fake_models):
+    # Another commit of a model may hold other weights: its vectors beside the old ones would compare as nothing.
+    catalog, _ = embedded
+    db, older = catalog.store("notes"), "google/embeddinggemma-2@an-older-commit"
+    store.set_model(db, older)
+    db.commit()
+    asked = f"notes was embedded with {older}; run `sift embed --reset` to switch to {fake_models.name}"
+    with pytest.raises(SystemExit, match=re.escape(asked)):
+        embed.embed_pending(catalog)
+    embed.embed_pending(catalog, reset=True)
+    assert store.model(db) == fake_models.name
+
+
+def test_a_collection_an_older_sift_embedded_is_embedded_on_without_a_reset(embedded, fake_models):
+    # sift 1.14 and older recorded the default model by its name alone, which meant its repository's latest commit:
+    # the commit sift pins holds the same weights, so its vectors stay, and new passages are embedded beside them.
+    # The name stays as that sift reads it, for one that shares the store.
+    catalog, root = embedded
+    db = catalog.store("notes")
+    db.execute("DELETE FROM meta WHERE key = ?", (store.MODEL_AT,))  # as sift 1.14 left it
+    db.commit()
+    assert store.get_meta(db, "model") == "google/embeddinggemma-2"
+    write(root / "new.md", "# New\n\nA note written since.\n")
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    assert vector_count(catalog) == 4
+    assert (store.get_meta(db, "model"), store.model(db)) == ("google/embeddinggemma-2", fake_models.name)
 
 
 def test_a_reset_drops_no_vector_before_the_model_is_there(embedded, fake_models, monkeypatch):
@@ -282,7 +311,7 @@ def test_a_reset_drops_no_vector_before_the_model_is_there(embedded, fake_models
     with pytest.raises(OSError, match="downloaded"):
         embed.embed_pending(catalog, reset=True)
     assert vector_count(catalog) == 3
-    assert store.get_meta(catalog.store("notes"), "model") == fake_models.name
+    assert store.model(catalog.store("notes")) == fake_models.name
 
 
 def test_waiting_for_the_reader_stays_open_to_ctrl_c(embedded, fake_models, monkeypatch):

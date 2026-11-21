@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, overload
 from urllib.parse import quote
 
-from . import console, readers
+from . import console, readers, settings
 
 if TYPE_CHECKING:
     from .vectors import Bits, Floats, Ids
@@ -310,14 +310,11 @@ def _layout(db: sqlite3.Connection, path: str | Path, cid: int, create: bool) ->
             _once(db, key, partial(read_again, kinds=kinds))
     if get_meta(db, WAITED) is None:
         _once(db, WAITED, _read_waited_again)
-    if get_meta(db, MODELS_PINNED) is None:
-        _once(db, MODELS_PINNED, _name_pinned_model)
 
 
 def make(db: sqlite3.Connection, cid: int, read: bool = True) -> None:
-    """The tables of a new store of the collection `cid`, its ids starting at first_id(cid). Unless `read`, as for a
-    store an older sift's index is split into, what older sifts left is still to be mended: the files of the kinds
-    they skipped read again (READ_AGAIN), and the model they embedded with named at its commit (MODELS_PINNED)."""
+    """The tables of a new store of the collection `cid`, its ids starting at first_id(cid). Unless `read`, its files
+    of the kinds an older sift skipped are still to be read again (READ_AGAIN)."""
     kept_by_triggers = "".join(f"{statement};\n" for statement in (*COUNTS, *BASENAMES))
     db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + CODES + POSTINGS + kept_by_triggers)
     db.executemany("INSERT INTO counts(name, n) VALUES(?, 0)", [(table,) for table in COUNTED])
@@ -325,7 +322,7 @@ def make(db: sqlite3.Connection, cid: int, read: bool = True) -> None:
     db.executemany("INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)", [("docs", first), ("chunks", first)])
     set_meta(db, "collection", cid)
     set_meta(db, LISTED, 1)  # its documents are listed as they come
-    for key in (*READ_AGAIN, WAITED, ANSI_READ, MODELS_PINNED) if read else ():
+    for key in (*READ_AGAIN, WAITED, ANSI_READ) if read else ():
         set_meta(db, key, 1)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -358,7 +355,7 @@ READ_AGAIN: dict[str, tuple[str, ...]] = {
     "documents_read": readers.DOCUMENTS,  # the server of sift 1.3.0 and older skipped every document it reindexed
 }
 WAITED = "paths_waited"  # in the meta table, once what sift 1.11 left out for a taken path is to be read again
-MODELS_PINNED = "models_pinned"  # in the meta table, once the model a store was embedded with is named at its commit
+MODEL_AT = "model_at"  # in the meta table: the model a store was embedded with, at its revision (see model)
 # The default embedding model as sift 1.14 and older recorded it, by its name alone, which meant its repository's latest
 # commit, and the commit that name means: every commit of that repository up to this one holds the same weights. Not
 # settings.PINNED, whose pin a later release moves.
@@ -383,10 +380,22 @@ def _once(db: sqlite3.Connection, key: str, work: Callable[[sqlite3.Connection],
             raise
 
 
-def _name_pinned_model(db: sqlite3.Connection) -> None:
-    """Name the model a store was embedded with at the commit its vectors are of, where sift 1.14 or older recorded the
-    default model by its name alone (UNPINNED): those vectors need no embedding again."""
-    db.executemany("UPDATE meta SET value = ? WHERE key = 'model' AND value = ?", [(v, k) for k, v in UNPINNED.items()])
+def model(db: sqlite3.Connection) -> str | None:
+    """The model a store's vectors are of, at its revision ("name@revision", as settings.pinned names it), or None
+    before any. The meta table holds it twice: under `model` its name alone, as sift 1.14 and older record it and
+    compare it with theirs, so that they still embed into a store this sift embedded; under MODEL_AT at its revision.
+    Where the two name different models, an older sift embedded the store again since, and the name counts; a name
+    alone is of the commit it meant to that sift (UNPINNED), whose vectors need no embedding again."""
+    name, at = get_meta(db, "model"), get_meta(db, MODEL_AT)
+    if name is None:
+        return None
+    return at if at is not None and settings.hub(at)[0] == name else UNPINNED.get(name, name)
+
+
+def set_model(db: sqlite3.Connection, using: str) -> None:
+    """Record the model a store's vectors are of, given at its revision (see model)."""
+    set_meta(db, "model", settings.hub(using)[0])
+    set_meta(db, MODEL_AT, using)
 
 
 def _read_waited_again(db: sqlite3.Connection) -> None:

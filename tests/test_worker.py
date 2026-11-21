@@ -245,7 +245,7 @@ def test_embed_through_a_worker(corpus, fake_models, live, monkeypatch, capsys, 
     for seq, title, text, vec in rows:
         expected = fake_vector(embed.text_of(seq, title, text)).astype(np.float16)
         assert np.frombuffer(vec, np.float16).tolist() == expected.tolist()
-    assert store.get_meta(catalog.store("notes"), "model") == fake_models.name
+    assert store.model(catalog.store("notes")) == fake_models.name
     err = capsys.readouterr().err
     assert f"embedding 3 chunks with {fake_models.name} on {live.address}" in err
     assert live.token not in err  # the key stays off the screen

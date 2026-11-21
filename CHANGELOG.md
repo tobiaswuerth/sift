@@ -38,7 +38,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   reranker and the OCR model now load at a commit this version of sift pins, and a collection records its model at
   that commit; a release that moves a pin says to run `sift embed --reset`. A collection embedded with the default
   model by an older sift needs no embedding again: the pinned commit holds the same weights. `SIFT_EMBED_MODEL` and
-  `SIFT_RERANK_MODEL` take a revision after an `@` (`org/model@v2`); a worker of an older sift still works.
+  `SIFT_RERANK_MODEL` take a revision after an `@` (`org/model@v2`). A worker of an older sift still works, and an
+  older sift still embeds into a collection this one embedded.
 
 ### Fixed
 

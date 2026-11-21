@@ -32,23 +32,44 @@ def test_a_new_store_records_its_layout_and_collection(tmp_path):
     db = store.connect(tmp_path / "a.sqlite", 7, create=True)
     assert db.execute("PRAGMA user_version").fetchone() == (store.SCHEMA_VERSION,)
     assert store.get_meta(db, "collection") == "7"
-    # nothing an older sift skipped or left out, to be read again, nor a model named by an older sift
-    assert all(store.get_meta(db, key) == "1" for key in (*store.READ_AGAIN, store.WAITED, store.MODELS_PINNED))
+    # nothing an older sift skipped or left out, to be read again
+    assert all(store.get_meta(db, key) == "1" for key in (*store.READ_AGAIN, store.WAITED))
 
 
-def test_a_store_embedded_with_the_default_model_by_its_name_alone_names_its_commit(tmp_path):
-    # sift 1.14 and older recorded the default embedding model by its name, which meant the latest commit of its
-    # repository: every commit up to the one sift pins holds the same weights, so its vectors are that commit's and
-    # need no embedding again. Another model's name stays as it was.
-    pinned = "google/embeddinggemma-2@f9972ac22e696a105c482202646979e33e4b5a1e"
-    for n, (model, now) in enumerate([("google/embeddinggemma-2", pinned), ("org/model", "org/model")]):
-        db = store.connect(tmp_path / f"{n}.sqlite", 1, create=True)
-        store.set_meta(db, "model", model)
-        db.execute("DELETE FROM meta WHERE key = ?", (store.MODELS_PINNED,))  # as an older sift left it
-        db.commit()
-        db.close()
-        db = store.connect(tmp_path / f"{n}.sqlite", 1)
-        assert (store.get_meta(db, "model"), store.get_meta(db, store.MODELS_PINNED)) == (now, "1")
+PINNED = "google/embeddinggemma-2@f9972ac22e696a105c482202646979e33e4b5a1e"  # the default model, at its commit
+
+
+def test_a_store_names_its_model_alone_as_older_sifts_read_it_and_at_its_commit_beside(tmp_path):
+    # sift 1.14 and older record the embedding model by its name, and refuse to embed into a store that names another.
+    # With the commit written into that name ("name@commit"), a sift 1.14 that shares the store, or one gone back to,
+    # asked for `sift embed --reset` of every vector. The name stays as they read it; the commit lies beside it.
+    db = store.connect(tmp_path / "a.sqlite", 1, create=True)
+    assert store.model(db) is None  # not embedded yet
+    store.set_model(db, PINNED)
+    assert store.get_meta(db, "model") == "google/embeddinggemma-2"  # what sift 1.14 compares with its own
+    assert store.model(db) == PINNED
+    store.set_model(db, "org/model")  # one without a revision: its latest commit
+    assert (store.get_meta(db, "model"), store.model(db)) == ("org/model", "org/model")
+
+
+@pytest.mark.parametrize(
+    "name, at, model",
+    [
+        # As sift 1.14 and older left it. The default model's name meant the latest commit of its repository: every
+        # commit up to the one sift pins holds the same weights, so its vectors need no embedding again.
+        ("google/embeddinggemma-2", None, PINNED),
+        ("org/model", None, "org/model"),
+        # An older sift embedded it again with another model since: the commit beside the name is the model's before.
+        ("org/other", PINNED, "org/other"),
+        ("google/embeddinggemma-2", "google/embeddinggemma-2@v1", "google/embeddinggemma-2@v1"),  # at another commit
+    ],
+)
+def test_the_model_of_a_store_is_the_one_its_name_and_commit_agree_on(tmp_path, name, at, model):
+    db = store.connect(tmp_path / "a.sqlite", 1, create=True)
+    store.set_meta(db, "model", name)
+    if at:
+        store.set_meta(db, store.MODEL_AT, at)
+    assert store.model(db) == model
 
 
 def test_a_collections_ids_start_at_its_own(corpus):

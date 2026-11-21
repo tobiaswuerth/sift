@@ -1378,7 +1378,7 @@ class Index:
         return "; ".join(dict.fromkeys(filter(None, notes))) or None
 
     def _embed_new_in(self, collection: Collection, db: Db, docs: list[int]) -> str | None:
-        model = store.get_meta(db, "model")
+        model = store.model(db)
         if model is None:  # never embedded: keyword search alone, and no model to load
             return None
         new = """chunks c JOIN docs d ON d.id = c.doc WHERE c.doc IN (SELECT value FROM json_each(?))
@@ -1469,7 +1469,7 @@ class Index:
                     entry["keywords"] = _postings_state(db)
                     entry["fields"] = self.fields(c)
                     entry |= {"links": linked, "unresolved": unresolved}
-                    models.add(store.get_meta(db, "model"))
+                    models.add(store.model(db))
                 except sqlite3.DatabaseError as error:  # damaged where it opened fine: said, the others still come
                     entry = {k: entry[k] for k in ("name", "path", "active", "store", "size")}
                     entry["error"] = store.damage(c.name, error)

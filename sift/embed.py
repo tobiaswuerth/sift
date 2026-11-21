@@ -303,14 +303,15 @@ def _stores(catalog: store.Catalog[C], collections: Iterable[C], named: bool) ->
 
 def _forget_vectors(db: sqlite3.Connection) -> None:
     store.drop_vectors(db, "1")
-    db.execute("DELETE FROM meta WHERE key IN ('model', 'dim', 'kw_ordered')")  # kw_ordered: see postings._unordered
+    # kw_ordered: see postings._unordered
+    db.execute("DELETE FROM meta WHERE key IN ('model', ?, 'dim', 'kw_ordered')", (store.MODEL_AT,))
     store.touch(db)
     db.commit()
 
 
 def _check_model(db: sqlite3.Connection, name: str, using: str) -> None:
-    """A collection embedded already must have been embedded with the model in use."""
-    model = store.get_meta(db, "model")
+    """A collection embedded already must have been embedded with the model in use, at its revision."""
+    model = store.model(db)
     if model and model != using:
         raise SystemExit(f"{name} was embedded with {model}; run `sift embed --reset` to switch to {using}")
 
@@ -366,7 +367,7 @@ def _store_vectors(db: sqlite3.Connection, chunks: list[int], vectors: Vectors, 
     there = {c for (c,) in db.execute(sql, (json.dumps([int(c) for c in chunks]),))}
     keep = intact & np.fromiter((c in there for c in chunks), bool, len(chunks))
     store.put_vectors(db, [chunk for chunk, ok in zip(chunks, keep) if ok], vectors[keep])
-    store.set_meta(db, "model", model)
+    store.set_model(db, model)
     store.set_meta(db, "dim", vectors.shape[1])
     store.touch(db)  # tells a running server the codes changed
     db.commit()

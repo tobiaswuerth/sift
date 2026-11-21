@@ -777,20 +777,6 @@ def test_codes_of_a_model_of_other_dimensions_are_read_anew(embedded, capsys):
     assert held_codes(index) == fresh_codes(catalog)
 
 
-def test_a_collection_an_older_sift_embedded_is_searched_without_embedding_it_again(embedded, home, capsys):
-    # Its store names the default model alone, as sift 1.14 and older recorded it: semantic search went on, with no
-    # `sift embed --reset` asked for every vector, as the model sift now pins holds the same weights.
-    catalog, _ = embedded
-    db = catalog.store("notes")
-    store.set_meta(db, "model", "google/embeddinggemma-2")
-    db.execute("DELETE FROM meta WHERE key = ?", (store.MODELS_PINNED,))
-    db.commit()
-    index = Index(Catalog(home))
-    index.load()
-    assert index.vsearch("brush strokes")
-    assert "embedded with" not in capsys.readouterr().err
-
-
 def blocked_reads(monkeypatch):
     """Reads of all codes anew that hand what they read over once released: (release, the reads begun, an Event set
     once the first has read, so that a test changes the store only after it)."""
@@ -1215,10 +1201,10 @@ def test_get_a_folder_is_no_document(corpus):
         Index(corpus[0]).get("notes/robots")
 
 
-def test_status(embedded, home):
+def test_status(embedded, home, fake_models):
     status = Index(embedded[0]).status()
     assert status["index"] == str(home / "sift.db")
-    assert status["model"]
+    assert status["model"] == fake_models.name  # at its commit
     fields = ["categories", "title", "year"]
     (entry,) = status["collections"]
     assert entry == {

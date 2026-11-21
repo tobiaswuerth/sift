@@ -146,8 +146,9 @@ def contents(db):
         "names": f"SELECT {doc.format('doc')}, key, kind FROM names",
         "basenames": f"SELECT name, {doc.format('doc')} FROM basenames",
         # the keyword postings are built from the rest (see `postings`), anew where an index is split; the first `sift
-        # index` of a split store looks for text the old one read with replacement characters (store.read_ansi_again)
-        "meta": "SELECT key, value FROM meta WHERE key NOT IN ('version', 'collection', 'ansi_read') "
+        # index` of a split store looks for text the old one read with replacement characters (store.read_ansi_again);
+        # and an old index names its model alone, without the commit this sift records beside it (store.model)
+        "meta": "SELECT key, value FROM meta WHERE key NOT IN ('version', 'collection', 'ansi_read', 'model_at') "
         "AND key NOT LIKE 'kw!_%' ESCAPE '!'",
     }
     return {table: sorted(db.execute(sql).fetchall()) for table, sql in queries.items()}
@@ -326,17 +327,15 @@ def test_the_stores_of_a_split_keep_their_counts(made, home, layout):
         assert store.counts(db)["vectors"] > 0
 
 
-def test_a_split_store_names_the_default_model_at_the_commit_sift_pins(made, home):
+def test_a_split_store_is_of_the_default_model_at_the_commit_its_name_meant(made, home):
     # sift 1.7 recorded the default embedding model by its name alone, as later sifts did: the stores split from its
-    # index kept that name, marked as named anew, and every `sift embed` asked for `--reset`.
-    for c in made.collections():
-        store.set_meta(made.store(c), "model", "google/embeddinggemma-2")
-        made.store(c).commit()
+    # index keep that name, and are of the commit it meant, so that `sift embed` asks for no `--reset`.
     home.mkdir()
     as_made_by_sift_1_7(made, home / "sift.db")
     catalog = Catalog(home)
     pinned = "google/embeddinggemma-2@f9972ac22e696a105c482202646979e33e4b5a1e"
-    assert [store.get_meta(catalog.store(c), "model") for c in catalog.collections()] == [pinned, pinned]
+    assert [store.model(catalog.store(c)) for c in catalog.collections()] == [pinned, pinned]
+    assert [store.get_meta(catalog.store(c), "model") for c in catalog.collections()] == ["google/embeddinggemma-2"] * 2
 
 
 def test_an_index_of_sift_1_0_reads_its_front_matter_again(made, home, capsys):
