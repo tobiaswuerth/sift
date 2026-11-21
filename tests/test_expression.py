@@ -104,7 +104,7 @@ def test_leaves_to_fts5_what_it_doesnt_read(query):
     ],
 )
 def test_what_fts5_rejects(query, rejected):
-    # A query FTS5 never reads as written: sift searches its words as exact phrases instead (see search._phrases).
+    # A query FTS5 never reads as written: sift searches its words as exact phrases instead (see queries.as_phrases).
     assert expression.rejected(query) == rejected
 
 
