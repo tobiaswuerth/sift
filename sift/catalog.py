@@ -271,17 +271,19 @@ def _open(path: Path, split_into: Path) -> Connection:
     """The catalog at `path`: made if there is none, and split off an index of sift 1.7 or older there first."""
     db = store.database(path, create=not path.exists())
     try:
-        version = db.execute("PRAGMA user_version").fetchone()[0]
+        # Both at one moment: another sift making the catalog meanwhile shows neither, or both (made in one transaction)
+        version, tables = db.execute(
+            "SELECT (SELECT user_version FROM pragma_user_version), (SELECT count(*) FROM sqlite_master)"
+        ).fetchone()
         if version > SCHEMA_VERSION:
             raise SystemExit(f"{path} was made by a newer sift; upgrade sift to use it")
-        tables = db.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
         if version < 2 and tables:
             raise SystemExit(
                 f"this index was made by an older sift, which stored documents differently: delete {path}, "
                 "then run `sift add`, `sift index` and `sift embed` again"
             )
-        if not version:
-            db.executescript(SCHEMA + f"PRAGMA user_version = {SCHEMA_VERSION};")
+        if not version:  # a sift making it at the same moment holds it, then this one finds it made, as IF NOT EXISTS
+            db.executescript(f"BEGIN IMMEDIATE; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;")
             return db
     except BaseException:
         db.close()

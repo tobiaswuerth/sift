@@ -37,6 +37,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   again one file at a time.
 - The MCP tool `unresolved` failed with a bare `KeyError` when another sift deleted a linking note while it ran. It
   reads the targets and the notes linking them as the index was at one moment, as `links` does.
+- The catalog was made a table at a time, its layout version last: a sift stopped in between, or a second one
+  starting at that moment on a new SIFT_HOME (a server and a command, say), found tables without a version and asked
+  for the catalog to be deleted as an older sift's. It is made in one transaction now.
 
 ## [1.14.0] - 2026-11-21
 
