@@ -76,16 +76,10 @@ def _several(method):
     return several
 
 
-def _changes(db):
-    """How SQLite counts a database's changes through a connection: those other connections committed, and the rows
-    the connection changed itself."""
-    return db.execute("PRAGMA data_version").fetchone()[0], db.total_changes
-
-
 def _reachable(db):
     """Whether an open store still answers: not when its drive went away, or a network share dropped."""
     try:
-        _changes(db)
+        store.changes(db)
     except sqlite3.Error:
         return False
     return True
@@ -604,11 +598,11 @@ class Index:
         stores = []
         for cid, path, db in self.catalog.open_stores():
             try:
-                stores.append((cid, path, *_changes(db)))
+                stores.append((cid, path, *store.changes(db)))
             except sqlite3.Error:  # out of reach, as on a drive unplugged: equal to no state, so nothing kept or used
                 stores.append((cid, path, object()))
         held = tuple((cid, h.version, h.epoch, h.count, h.last) for cid, h in self.vectors.items())
-        return _changes(self.catalog.db), tuple(stores), held
+        return store.changes(self.catalog.db), tuple(stores), held
 
     def forget(self):
         """Let go of the questions' embeddings and the searches' results kept: as `sift bench` times each mode."""

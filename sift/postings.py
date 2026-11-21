@@ -250,7 +250,9 @@ def _apart(db, chunks):
     """While this lasts, these chunks (ids) as they are now, in a keyword index of their own that holds their rows:
     the FTS5 table temp.kw_tokens. Asked for a column, or to highlight one, the store's own index reads the chunk
     through its view, which loads the document's whole text for each: 5 ms a chunk of an 8 MB file."""
-    with store.snapshot([db]):  # in a transaction: Python begins one before the rows are written, else left open
+    # In a transaction: Python begins one before the rows are written, else left open. And as scratch: SQLite counts
+    # these rows among the connection's changes, by which a search's results kept are told from stale ones.
+    with store.snapshot([db]), store.scratch(db):
         db.execute(f"CREATE VIRTUAL TABLE temp.kw_tokens USING fts5(title, text, meta, tokenize='{store.TOKENIZER}')")
         try:
             store.fill(db, "temp.kw_tokens", chunks=chunks)

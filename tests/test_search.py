@@ -2047,6 +2047,21 @@ def test_a_search_asked_again_is_answered_from_memory_until_a_store_changes(embe
         index.search("brush", k=3)
 
 
+def test_counting_a_phrase_costs_no_search_its_results(corpus):
+    # A phrase is counted in a table of the connection's own, and SQLite counts its rows among the connection's
+    # changes: the first search of a phrase looked like a change of the store. It wasn't kept, and every result kept
+    # before it was let go, so an agent asking phrases got little from memory.
+    catalog, _ = corpus
+    index = Index(catalog)
+    index.search("reward")  # opens the store, a change of what it reads: not kept
+    kept = index.search("reward")
+    assert ids(index.search('"reward shaping"')) == ["notes/rl.md"]  # counted now, for the first time
+    ran = statements(index, catalog)
+    assert index.search("reward") == kept
+    assert ids(index.search('"reward shaping"')) == ["notes/rl.md"]
+    assert ran == []  # both from memory
+
+
 def test_results_follow_the_servers_own_reindex(embedded):
     catalog, root = embedded
     index = Index(catalog)
