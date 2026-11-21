@@ -87,7 +87,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   one file's text, as text over SQLite's limit of 1 GB. That file is "unreadable" now, with why, and stays as it was
   indexed; the others are read, as `sift index` reads them.
 - `sift worker` failed a request whose sender's address the server didn't give, and took any number of texts in one,
-  holding the GPU for as long as a request of millions took. It takes at most 20,000, twice what a `query` reranks.
+  holding the GPU for as long as a request of millions took. It takes at most 20,000, the most a `query` reranks.
 - One collection's index damaged, every page of the UI failed: its collection list now says that index is damaged
   and what to do, and the others' pages work.
 - `sift embed` and `sift serve` said "loading PyTorch" through a worker, where they never load it, and so did `sift
@@ -95,6 +95,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   are, the worker's address or the device.
 - `sift worker` wrote its token and certificate in place: one cut short by a crash or a full disk changed the key other
   machines were given, unsaid. Each is written whole or not at all now.
+- A full disk left `update.json.PID.part` behind in `SIFT_HOME`, one more for each command that tried to write the
+  update check's state. It goes now, as when the state can't be replaced.
 - The docs said `sort` orders results by a field "instead of score", which read as the newest of every match first.
   It orders the best `k`; a range filter on the field finds the newest of all. They also said a mail's `date` is in
   UTC, which it is only where the mail gives its time zone.

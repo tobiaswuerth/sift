@@ -424,6 +424,22 @@ def test_a_state_that_stays_refused_is_an_error_and_leaves_nothing_behind(home, 
     assert kept(home) == {"latest": NEWER}
 
 
+def test_a_state_the_disk_has_no_room_for_leaves_nothing_behind(home, monkeypatch):
+    # Cut short as it was written beside the state, the file stayed, one more for each process that tried.
+    keep(home, latest=NEWER)
+    write_text = update.Path.write_text
+
+    def filling(path, text, **kwargs):
+        write_text(path, text[:5], **kwargs)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(update.Path, "write_text", filling)
+    with pytest.raises(OSError, match="No space left"):
+        update.change(home / "update.json", asked=NEWER)
+    assert [file.name for file in home.iterdir()] == ["update.json"]
+    assert kept(home) == {"latest": NEWER}
+
+
 def test_commands_at_once_read_and_change_the_state_without_error(home):
     # On Windows a read and a replace at the same moment refuse each other: of 3,000 changes beside two readers,
     # 2,591 failed, and 1,295 reads. Each round a change and two readers start at once; the readers read a few times

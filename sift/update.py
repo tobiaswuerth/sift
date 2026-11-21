@@ -474,12 +474,13 @@ def _fits(value: Json, kind: type) -> bool:
 
 def change(path: Path, **changes: Unpack[Changes]) -> None:
     """Change the state kept, written whole, so that another process reads the old or the new; None removes a key.
-    It is written beside the state first (update.json.PID.part), which goes if it can't take the state's place."""
+    It is written beside the state first (update.json.PID.part), which goes if it can't be written whole or take the
+    state's place."""
     state = {**read(path), **changes}
     path.parent.mkdir(parents=True, exist_ok=True)
     part = path.with_name(f"{path.name}.{os.getpid()}.part")
-    part.write_text(json.dumps({k: v for k, v in state.items() if v is not None}), encoding="utf-8")
     try:
+        part.write_text(json.dumps({k: v for k, v in state.items() if v is not None}), encoding="utf-8")
         _shared(lambda: os.replace(part, path))
     except BaseException:
         part.unlink(missing_ok=True)
