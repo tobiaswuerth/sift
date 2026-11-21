@@ -836,11 +836,14 @@ def stop_waiting(db: sqlite3.Connection, source: int) -> None:
 
 def freed(db: sqlite3.Connection) -> list[str]:
     """The paths of the files whose documents waited for a path freed since this was last asked (see _free)."""
-    if not _waits(db):
-        return []
-    sql = "SELECT DISTINCT s.path FROM waiting w JOIN sources s ON s.id = w.source WHERE w.freed"
-    if found := [path for (path,) in db.execute(sql)]:
-        db.execute("UPDATE waiting SET freed = 0 WHERE freed")  # written only then: a write waits for other writers
+    if not _waits(db) or db.execute("SELECT 1 FROM waiting WHERE freed LIMIT 1").fetchone() is None:
+        return []  # nothing written then: a write waits for other writers
+    # Marked as being taken first, which holds the store till the caller commits: one another sift frees meanwhile
+    # is marked after, and taken by the next call, not cleared unread
+    db.execute("UPDATE waiting SET freed = 2 WHERE freed = 1")
+    sql = "SELECT DISTINCT s.path FROM waiting w JOIN sources s ON s.id = w.source WHERE w.freed = 2 ORDER BY s.path"
+    found = [path for (path,) in db.execute(sql)]
+    db.execute("UPDATE waiting SET freed = 0 WHERE freed = 2")
     return found
 
 

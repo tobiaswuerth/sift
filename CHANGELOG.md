@@ -54,6 +54,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `k: true` was taken for one result, as Python counts `True` as 1; it is refused as `k: "3"` is.
 - A latest version with a digit such as "²" in sift's update check, as PyPI could answer, failed every command until
   `update.json` was deleted. Such a version is no release's, and is passed over.
+- A file waiting for a path that another sift freed just as `sift index` took the freed ones was marked taken without
+  being read; the next `sift index` read it. It is now taken by the running one.
 
 ## [1.14.0] - 2026-11-21
 

@@ -225,6 +225,35 @@ def test_codes_go_with_a_reset(embedded, fake_models, monkeypatch):
     assert catalog.store("notes").execute("SELECT count(*) FROM codes").fetchone() == (0,)
 
 
+def test_a_file_freed_while_the_freed_are_taken_is_taken_too(tmp_path):
+    # The files whose paths were freed were read, then all marked taken, in two statements: one another sift freed in
+    # between was marked taken too, unread, and the running `sift index` never read it.
+    path = tmp_path / "s.sqlite"
+    db, other = store.connect(path, 1, create=True), store.connect(tmp_path / "s.sqlite", 1)
+    db.executemany("INSERT INTO sources(id, path, mtime, size) VALUES(?, ?, 1, 1)", [(1, "a.md"), (2, "b.md")])
+    store.wait(db, "x/1", 1)
+    store.wait(db, "y/1", 2)
+    store._free(db, ["x/1"])
+    db.commit()
+    real, freed_meanwhile = db.execute, []
+
+    def meanwhile(sql, *args):
+        cursor = real(sql, *args)
+        if "FROM waiting" in sql and sql.lstrip().startswith("SELECT") and not freed_meanwhile:
+            freed_meanwhile.append(sql)
+            store._free(other, ["y/1"])  # another sift frees b.md's path, now
+            other.commit()
+        return cursor
+
+    db.execute = meanwhile
+    taken = store.freed(db)
+    del db.execute
+    assert freed_meanwhile
+    assert sorted(taken + store.freed(db)) == ["a.md", "b.md"]  # each taken, by this call or the next
+    other.close()
+    db.close()
+
+
 # --- counts --------------------------------------------------------------------
 
 
