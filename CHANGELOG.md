@@ -27,6 +27,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - A worker that shows no certificate is refused as one showing another than its key names: "has another
   certificate than its key", before anything is sent. It ended in a TypeError.
+- A worker whose name resolves only to addresses this Python can't connect to, IPv6 ones where Python was built
+  without IPv6, says so: it ended in a TypeError.
 - A collection's index that doesn't say which collection it is, as only damage leaves one, says so, and what to do,
   when its keyword index is built or brought up to date: it ended in a TypeError.
 - `sift index` keeps what is indexed of a collection whose folder holds none of its files any more, and says so,

@@ -139,14 +139,6 @@ def test_only_newlines_end_lines():
     assert found == set(), 'split on "\n" (see readers.LINE): only it ends a line, as in editors and git'
 
 
-NOT_YET_STRICT = {  # the modules the type checker doesn't read yet. It only shrinks: modules leave it, none joins it
-    "sift/accelerator.py",
-    "sift/local.py",
-    "sift/ocr.py",
-    "sift/remote.py",
-    "sift/scan.py",
-    "sift/ui.py",
-}
 SILENCED = re.compile(r"#\s*(?:type:\s*ignore|pyright:)")
 # The findings silenced with the owner's yes, each for one rule in one place, saying why: the module, and its line.
 SILENCED_WITH_YES = {
@@ -162,16 +154,10 @@ def _pyright():
     return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["pyright"]
 
 
-def test_the_modules_checked_for_types_only_grow():
-    # The type checker came to code written without it, some modules at a time: those it checks ([tool.pyright] in
-    # pyproject.toml) are all but the ones still waiting, so a new module is checked from its start, and one checked
-    # stays so.
-    modules = {f"sift/{path.name}" for path in (ROOT / "sift").glob("*.py")}
-    assert modules >= NOT_YET_STRICT, "a module that is gone waits no more: take it out of NOT_YET_STRICT"
-    assert set(_pyright()["include"]) == modules - NOT_YET_STRICT, (
-        "list a new module under include in [tool.pyright]; one that became strict there, and no more in "
-        "NOT_YET_STRICT, which only shrinks"
-    )
+def test_every_module_is_checked_for_types():
+    # The type checker came to code written without it, some modules at a time, until it read all of them: a new
+    # module is checked from its start.
+    assert _pyright()["include"] == ["sift"]
 
 
 def test_types_are_checked_for_the_python_whose_packages_they_read():
