@@ -25,6 +25,14 @@ def test_each_variable_overrides_its_default(tmp_path):
     assert Settings.from_env(environ) == Settings(tmp_path, "a/embedder", "b/reranker", "https://key@worker:8766")
 
 
+def test_the_home_is_a_whole_path_however_it_is_written(tmp_path, monkeypatch):
+    # An MCP client's config or Windows' setx passes "~/sift" unexpanded: it was a folder "~" wherever a command ran.
+    # And a relative home was another for every folder a command ran in, and for the update's process at the root.
+    assert Settings.from_env({"SIFT_HOME": "~/sift-data"}).home == Path.home() / "sift-data"
+    monkeypatch.chdir(tmp_path)
+    assert Settings.from_env({"SIFT_HOME": "data"}).home == tmp_path / "data"
+
+
 def test_the_gpus_cuda_may_use_are_as_cuda_reads_them():
     # CUDA's own variable: empty, it hides every GPU, so it doesn't count as unset.
     assert Settings.from_env({}).gpus is None

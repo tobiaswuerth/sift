@@ -95,6 +95,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   are, the worker's address or the device.
 - `sift worker` wrote its token and certificate in place: one cut short by a crash or a full disk changed the key other
   machines were given, unsaid. Each is written whole or not at all now.
+- `SIFT_HOME=~/sift`, as an MCP client's config or Windows' `setx` passes it, unexpanded, was a folder named `~`
+  wherever a command ran. `~` is the user's folder now, and a relative home is taken from where the command runs, so
+  the update's process, which runs at the root of the drive, keeps the state the commands read.
 - A full disk left `update.json.PID.part` behind in `SIFT_HOME`, one more for each command that tried to write the
   update check's state. It goes now, as when the state can't be replaced.
 - The docs said `sort` orders results by a field "instead of score", which read as the newest of every match first.

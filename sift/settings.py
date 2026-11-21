@@ -23,9 +23,11 @@ class Settings:
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] = os.environ) -> Self:
-        """The settings an environment gives. An empty variable counts as unset."""
+        """The settings an environment gives. An empty variable counts as unset. The home is a whole path: "~" as the
+        user's folder, which no shell expanded for an MCP client's config or `setx`, and a relative one from where the
+        command runs, so that processes it starts elsewhere find the same."""
         return cls(
-            home=Path(environ.get("SIFT_HOME") or Path.home() / ".sift"),
+            home=Path(environ.get("SIFT_HOME") or Path.home() / ".sift").expanduser().absolute(),
             embed_model=environ.get("SIFT_EMBED_MODEL") or "google/embeddinggemma-2",
             rerank_model=environ.get("SIFT_RERANK_MODEL") or "Alibaba-NLP/gte-reranker-modernbert-base",
             remote=environ.get("SIFT_EMBED_REMOTE") or None,

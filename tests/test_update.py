@@ -104,6 +104,7 @@ def test_yes_starts_the_update_and_stops_the_command(installed, home, monkeypatc
     assert spec["version"] == NEWER
     assert spec["command"] == [str(home / "uv"), "tool", "upgrade", "sift-rag"]
     assert spec["log"].startswith(str(home / "logs" / "update-"))
+    assert spec["state"] == str(home / "update.json")
     pending = kept(home)["pending"]
     assert (pending["version"], pending["pid"], pending["upgrading"]) == (NEWER, UPDATER, False)
     assert spec["since"] == pending["since"]
@@ -592,6 +593,7 @@ def spec(home, tmp_path):
         "pid": 1234,
         "held": [],
         "log": str(home / "logs" / "update-1.log"),
+        "state": str(home / "update.json"),
     }
 
 
@@ -629,6 +631,16 @@ def test_the_update_waits_for_the_sift_that_asked_then_upgrades(spec, home, monk
     command = console.command(*spec["command"])  # quoted for the shell of the OS it runs on
     assert log.splitlines() == [command, "upgraded", "exit code 0"]
     assert kept(home)["result"] == {"version": NEWER, "ok": True, "log": spec["log"]}
+
+
+def test_the_update_keeps_the_state_of_the_sift_that_asked(spec, home, tmp_path, configure, monkeypatch):
+    # Its process runs at the root of a drive, where a relative SIFT_HOME is another folder: it left how the update
+    # went in a state no command read.
+    monkeypatch.setattr(update, "_running", lambda *args: False)
+    configure(home=tmp_path / "another home")
+    update.finish(spec, platform="linux")
+    assert kept(home)["result"]["ok"]
+    assert not (tmp_path / "another home").exists()
 
 
 def test_while_it_upgrades_the_state_says_so_with_its_process(spec, home, monkeypatch):
