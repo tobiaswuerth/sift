@@ -956,6 +956,27 @@ def test_a_file_linked_from_outside_its_collection_is_left_out(corpus, tmp_path,
     assert "linked to outside" not in capsys.readouterr().err
 
 
+def test_a_collection_of_links_alone_drops_what_an_older_sift_read_through_them(tmp_path, home, monkeypatch, capsys):
+    # sift 1.14 read every linked file. A folder of links alone, all of them left out now, looked like a folder
+    # emptied, whose documents are kept: what the links led to stayed indexed, and was said to be kept as of a drive
+    # not mounted.
+    root = tmp_path / "links"
+    root.mkdir()
+    write(tmp_path / "outside" / "secret.txt", "a private key\n")
+    link_file(tmp_path / "outside" / "secret.txt", root / "notes.txt", monkeypatch)
+    catalog = Catalog(home)
+    catalog.add(root, "links", {"links": "follow"})
+    indexing.index(catalog)  # as sift 1.14 read it
+    assert list(doc_ids(catalog)) == ["notes.txt"]
+    catalog.follow_links("links", False)
+    capsys.readouterr()
+    indexing.index(catalog)
+    assert doc_ids(catalog) == {}
+    said = capsys.readouterr().err
+    assert "links: 1 file linked to outside its folder left out" in said
+    assert "kept as indexed" not in said
+
+
 def test_a_file_linked_from_inside_its_collection_is_read(corpus, monkeypatch):
     catalog, root = corpus
     link_file(root / "rl.md", root / "again.md", monkeypatch)

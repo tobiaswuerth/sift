@@ -210,14 +210,16 @@ class Catalog:
         is now."""
         return self._choose(name, "title_from", title_from)
 
-    def follow_links(self, name: str) -> Collection:
-        """Have a collection read the files that link to outside its folder (see indexing.walk). Returns it as it is
-        now."""
-        return self._choose(name, "links", "follow")
+    def follow_links(self, name: str, follow: bool = True) -> Collection:
+        """Have a collection read the files that link to outside its folder (see indexing.walk), or leave them out
+        again. Returns it as it is now."""
+        return self._choose(name, "links", "follow" if follow else None)
 
-    def _choose(self, name: str, key: str, value: str) -> Collection:
+    def _choose(self, name: str, key: str, value: str | None) -> Collection:
+        """Make one choice of a collection (see _fields), or with None take it back; the others stay."""
         collection = self.get(name)
-        stored = _fields(collection.choices | {key: value})
+        others = {chosen: how for chosen, how in collection.choices.items() if chosen != key}
+        stored = _fields(others | ({key: value} if value else {}))
         self.db.execute("UPDATE collections SET fields = ? WHERE id = ?", (stored, collection.id))
         self.db.commit()
         return collection._replace(fields=stored)

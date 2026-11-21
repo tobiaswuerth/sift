@@ -979,7 +979,8 @@ def _index_collection(db: Db, name: str, root: str, fields: Fields, ignore: Igno
         )
     kept = _kept(name, known.keys() - seen, unlisted)
     counts: Counts = Counter()
-    for rel in _gone(name, root, known.keys() - seen - kept, seen):
+    there = seen | set(outside or ())  # a folder of links alone, all left out, is no folder emptied
+    for rel in _gone(name, root, known.keys() - seen - kept, there):
         counts["removed"] += _drop_source(db, known[rel][0])
     db.commit()  # before any file is read: other writers wait for none of it
     todo += _freed(db, root, seen - {item[1] for item in todo})  # those that waited for a path these drops freed

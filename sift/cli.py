@@ -174,9 +174,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     s.add_argument(
         "--follow-links",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         help="read the files that link to outside the folder too, which are left out otherwise: a link may lead to "
-        "any file of this machine. Given for a folder that is a collection already, it changes that collection",
+        "any file of this machine; --no-follow-links leaves them out again. Given for a folder that is a collection "
+        "already, it changes that collection",
     )
     s.add_argument(
         "--nested",
@@ -384,22 +385,24 @@ def _command(a: argparse.Namespace) -> None:
 
 def _add(a: argparse.Namespace, catalog: Catalog) -> None:
     """`sift add`: register a folder; or, for a folder registered already, change where its titles come from, or
-    have it follow links."""
+    whether it follows links."""
     chosen = {"id": a.id, "title": a.title, "text": a.text and [f.strip() for f in a.text.split(",")]}
     chosen = {k: v for k, v in chosen.items() if v} | ({"title_from": a.title_from} if a.title_from else {})
     chosen |= {"links": "follow"} if a.follow_links else {}
     existing = catalog.collection_at(a.path)
-    if existing and list(chosen) == ["links"] and a.name in (None, existing) and not a.store:
-        catalog.follow_links(existing)
-        console.say(f"collection {existing!r} reads files linked from outside its folder now; run `sift index`")
+    again = existing if a.name in (None, existing) and not a.store else None  # the collection there, to change
+    if again and a.follow_links is not None and not set(chosen) - {"links"}:
+        catalog.follow_links(again, a.follow_links)
+        does = "reads" if a.follow_links else "leaves out"
+        console.say(f"collection {again!r} {does} files linked from outside its folder now; run `sift index`")
         return
-    if existing and list(chosen) == ["title_from"] and a.name in (None, existing) and not a.store:
+    if again and list(chosen) == ["title_from"] and a.follow_links is None:
         from .indexing import retitle
 
-        changed, dropped = retitle(catalog, existing, a.title_from)
+        changed, dropped = retitle(catalog, again, a.title_from)
         source = "file names" if a.title_from == "name" else "headings"
         console.say(
-            f"collection {existing!r} takes titles from {source} now: {console.count(changed, 'title')} changed"
+            f"collection {again!r} takes titles from {source} now: {console.count(changed, 'title')} changed"
             + (
                 f"; run `sift embed` to embed {console.count(dropped, 'passage')} again, which carries its title"
                 if dropped

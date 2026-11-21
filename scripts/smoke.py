@@ -87,6 +87,7 @@ def without_models(run):
     sift("mentions", "Acme AG", "--also", "aliases", says="no matches")  # the one note naming it links it
     sift("unresolved", says="A note not written")
     sift("add", run.vault, "--follow-links", says="reads files linked from outside its folder now")
+    sift("add", run.vault, "--no-follow-links", says="leaves out files linked from outside its folder now")
     (run.vault / "notes.txt").write_text("Plain text, changed: now about turbines.\n", encoding="utf-8")
     sift("index", "--files", run.vault / "notes.txt", "notes/gone.md", says="notes/notes.txt: changed")
     assert found("search", "turbines") == ["notes/notes.txt"]

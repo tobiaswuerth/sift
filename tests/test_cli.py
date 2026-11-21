@@ -97,6 +97,17 @@ def test_add_again_with_follow_links_changes_the_collection(cli_corpus, home, ca
     assert Catalog(home).get("notes").choices == {"links": "follow"}
 
 
+def test_add_again_with_no_follow_links_leaves_them_out_again(cli_corpus, home, capsys):
+    # Following links could be chosen and never taken back, but by removing the collection, its vectors with it.
+    run(capsys, "add", str(cli_corpus), "--title-from", "name")
+    run(capsys, "add", str(cli_corpus), "--follow-links")
+    err = run(capsys, "add", str(cli_corpus), "--no-follow-links").err
+    assert "collection 'notes' leaves out files linked from outside its folder now; run `sift index`" in err
+    assert Catalog(home).get("notes").choices == {"title_from": "name"}  # its other choices stay
+    with pytest.raises(SystemExit, match="is the collection 'notes' already"):  # one change at a time
+        cli.main(["add", str(cli_corpus), "--no-follow-links", "--title-from", "heading"])
+
+
 @pytest.mark.parametrize("options", [[], ["--id", "key"], ["--title-from", "name", "--name", "other"]])
 def test_add_again_with_anything_else_is_an_error(cli_corpus, capsys, options):
     with pytest.raises(SystemExit, match="is the collection 'notes' already"):
