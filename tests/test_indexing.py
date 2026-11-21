@@ -1,10 +1,12 @@
 """`sift index`: scanning folders, reading new and changed files in worker processes, and keeping the index in
 step with the files, incrementally."""
 
+import multiprocessing
 import os
 import shutil
 import sqlite3
 import stat
+import time
 
 import pytest
 
@@ -13,6 +15,7 @@ from sift.catalog import Catalog
 from sift.ignore import Ignore
 from sift.search import Index
 
+from . import workers
 from .conftest import index_contents, keywords_agree, write
 from .test_documents import email_file
 
@@ -484,6 +487,107 @@ def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):
     # spawned, not forked, on every platform: forking a process with threads (PyTorch starts some) can deadlock
     assert pools == [(2, "spawn")]
     assert index_contents(parallel.store("notes")) == index_contents(serial.store("notes"))
+
+
+def sized(*paths):
+    """Files as the worker processes are handed them: (path, size)."""
+    return [(str(path), path.stat().st_size) for path in paths]
+
+
+def no_process_left():
+    """Whether every process this one started has ended, waited for at most ten seconds."""
+    deadline = time.monotonic() + 10
+    while multiprocessing.active_children() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return not multiprocessing.active_children()
+
+
+@pytest.fixture
+def three_files(tmp_path):
+    """Three notes, of which the first ends or hangs a reader from tests/workers.py: (poison, hangs, fine)."""
+    files = [tmp_path / name for name in ("poison.md", "hangs.md", "fine.md")]
+    for file in files:
+        write(file, f"# {file.stem}\n")
+    return files
+
+
+def test_a_file_that_ends_its_reader_is_left_out_and_the_others_are_read(notes, home, monkeypatch, capsys):
+    # A reader's native code that crashed took its worker process along. The pool said no more than that it was
+    # broken: `sift index` ended in a traceback, and every later run met the same file in the same batch.
+    write(notes / "poison.md", "# Poison\n")
+    monkeypatch.setattr(indexing, "_cpus", lambda: 3)  # two workers, one CPU for writing
+    monkeypatch.setattr(indexing, "FILES_PER_WORKER", 1)
+    monkeypatch.setattr(indexing, "WRITE_BATCH", 2)  # several batches in flight, as one of them ends the pool
+    monkeypatch.setattr(indexing, "_loaded", workers.ending)
+    catalog = Catalog(home)
+    catalog.add(notes, "notes")
+    indexing.index(catalog)
+    assert set(doc_ids(catalog)) == {"plain.txt", "rl.md", "robots/brush.md"}
+    said = capsys.readouterr().err
+    assert "notes: poison.md: skipped (Stopped: its reader ended the process it ran in)" in said
+    assert "notes: 4 files, 3 added, 0 changed, 0 removed, 1 unreadable" in said
+    assert no_process_left()
+
+
+def test_the_files_started_with_one_that_ends_the_pool_are_read_alone(three_files, monkeypatch):
+    # The pool tells no more than that it broke: which of the files not read yet did it, each alone tells.
+    poison, _, fine = three_files
+    monkeypatch.setattr(indexing, "_loaded", workers.ending)
+    with indexing._Workers(2, {}) as reading:
+        (stopped, (docs, problems)) = reading.results(reading.start(sized(poison, fine)))
+    assert isinstance(stopped, indexing.Stopped)
+    assert str(stopped) == "its reader ended the process it ran in"
+    assert ([doc.title for doc in docs], problems) == (["fine"], [])
+    assert no_process_left()
+
+
+def test_a_file_whose_reader_comes_to_no_end_is_stopped(three_files, monkeypatch):
+    # A reader in a loop held `sift index` for good: no wait had an end. Its process is ended, at once, and the file
+    # left out; a file gets its time by its size, and here the one that hangs gets none.
+    _, hangs, fine = three_files
+    monkeypatch.setattr(indexing, "_loaded", workers.hanging)
+    monkeypatch.setattr(indexing, "_patience", lambda files: 0 if any("hangs" in path for path, _ in files) else 600)
+    with indexing._Workers(2, {}) as reading:
+        (stopped, (docs, _)) = reading.results(reading.start(sized(hangs, fine)))
+    assert isinstance(stopped, indexing.Stopped)
+    assert str(stopped) == "its reader came to no end in 0:00:00"
+    assert [doc.title for doc in docs] == ["fine"]
+    assert no_process_left()
+
+
+def test_a_batch_started_in_a_pool_another_batch_ended_starts_again(three_files, monkeypatch):
+    # The next batch is started while the one before is stored: in a pool the one before then ends. One process, so
+    # that the batch after the poison is never read in it.
+    poison, _, fine = three_files
+    monkeypatch.setattr(indexing, "_loaded", workers.ending)
+    with indexing._Workers(1, {}) as reading:
+        first, second = reading.start(sized(poison)), reading.start(sized(fine))
+        assert isinstance(reading.results(first)[0], indexing.Stopped)
+        ((docs, _),) = reading.results(second)
+    assert [doc.title for doc in docs] == ["fine"]
+    assert no_process_left()
+
+
+def test_stopping_sift_ends_the_worker_processes_at_once(three_files, monkeypatch):
+    # Ctrl+C waited for every file started, the next batch's too: thousands of them.
+    _, hangs, _ = three_files
+    monkeypatch.setattr(indexing, "_loaded", workers.hanging)
+
+    def stopped():
+        with indexing._Workers(1, {}) as reading:
+            reading.start(sized(hangs))
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        stopped()
+    assert no_process_left()
+
+
+def test_a_file_gets_more_time_the_larger_it_is():
+    assert indexing._patience([("a.pdf", 0)]) == indexing.READ_SECONDS
+    assert indexing._patience([("a.pdf", 50 * indexing.READ_RATE), ("b.pdf", 50 * indexing.READ_RATE)]) == (
+        indexing.READ_SECONDS + 100
+    )
 
 
 def test_small_updates_skip_worker_processes(corpus, monkeypatch, pools):

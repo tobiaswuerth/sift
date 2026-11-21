@@ -10,6 +10,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `sift index` keeps what is indexed of a collection whose folder holds none of its files any more, and says so,
   with how to let it go (`sift rm NAME`). A drive not mounted leaves its folder there, empty, as does a folder being
   filled anew: every document went, and the vectors embedded for them.
+- A file whose reader ends its worker process, as a converter's native code can, or comes to no end, is left out and
+  said, and the other files are read: `sift index` ended in a traceback, or never, and every later run met the same
+  file again. A file gets ten minutes, and a second more for every 100 KB. Ctrl+C ends the worker processes at once,
+  not once they have read every file started.
 
 ## [1.13.0] - 2026-11-21
 
