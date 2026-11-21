@@ -10,7 +10,8 @@ The types are checked as on each system sift runs on, whichever runs the gate: w
 lacks, is found here, not in CI. pyright reads the packages of the Python that runs the gate, which it is told: left
 to itself it asks the `python` on the PATH, another one unless the environment is activated.
 
-The tests run once more on the newest Python CI tests on, where a Python warns of what an older one lets pass: in an
+With uv on the PATH it then builds and checks the package as CI's package job does (scripts/package.py), and the
+tests run once more on the newest Python CI tests on, where a Python warns of what an older one lets pass: in an
 environment of its own, .venv-newest beside .venv, which uv makes on the first run and brings up to date on each.
 The gate owns that folder; deleting it costs the next run its install."""
 
@@ -67,8 +68,9 @@ def on_newest(uv):
 
 def main(run=subprocess.call, uv=UV, python=sys.version_info[:2]):
     this = ".".join(map(str, python))
+    package = (("the package", [sys.executable, str(Path(__file__).parent / "package.py")], 15),) if uv else ()
     again = on_newest(uv) if uv and this != NEWEST else ()
-    for check, command, minutes in (*CHECKS, *again):
+    for check, command, minutes in (*CHECKS, *package, *again):
         print(f"gate: {check} ...", flush=True)
         try:
             failed = run(command, timeout=60 * minutes)
@@ -76,8 +78,9 @@ def main(run=subprocess.call, uv=UV, python=sys.version_info[:2]):
             raise SystemExit(f"gate: {check} took more than {minutes} minutes, and was stopped") from None
         if failed:
             raise SystemExit(f"gate: {check} failed")
-    if not uv and this != NEWEST:
-        print(f"gate: no uv on the PATH: the tests ran on Python {this} alone, not on {NEWEST}")
+    if not uv:
+        newest = "" if this == NEWEST else f", the tests ran on Python {this} alone, not on {NEWEST}"
+        print(f"gate: no uv on the PATH: the package wasn't built and checked{newest}")
     print("gate: green")
 
 

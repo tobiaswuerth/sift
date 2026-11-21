@@ -68,7 +68,9 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 - **Full coverage:** `pytest --cov` requires 100% line and branch coverage.
 - **The gate:** `python scripts/gate.py` runs every check a change must pass, and is green when all did: the
   pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run. With uv on the PATH, it
-  then runs the tests once more on the newest Python CI tests on, where a Python warns of what an older one lets
+  then builds and checks the package as CI's package job does (`scripts/package.py`: the changelog's section, the
+  build with its backend by hash, twine, the wheel in a clean environment), and runs the tests once more on the
+  newest Python CI tests on, where a Python warns of what an older one lets
   pass: in `.venv-newest`, an environment the gate makes, keeps up to date and owns (delete it at will). CI itself
   runs the oldest and the newest Python first, and every other system and Python once those pass.
 - **Types:** [pyright](https://github.com/microsoft/pyright) checks all of `sift/` in its strict mode, as on Linux,

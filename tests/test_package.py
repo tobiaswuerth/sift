@@ -370,15 +370,16 @@ def test_the_release_publishes_only_a_version_it_knows_is_new():
 def test_the_package_is_built_by_tools_reviewed():
     # The release built with whatever setuptools, twine and uv were newest that day: what PyPI got was made by code
     # nobody had looked at. Both builds take the backend by hash, twine by version, and the release its uv by version.
-    workflows = ROOT / ".github" / "workflows"
-    for name in ("ci.yml", "release.yml"):
-        workflow = (workflows / name).read_text(encoding="utf-8")
-        assert "- run: uv build --build-constraints .github/requirements-build.txt --require-hashes\n" in workflow
-        assert re.search(r"- run: uvx twine@\d+\.\d+\.\d+ check", workflow), name
-        assert not re.search(r"uv build\s*$|uvx twine check", workflow, re.MULTILINE), name
-    assert re.search(
-        r'version: "\d+\.\d+\.\d+"', _job((workflows / "release.yml").read_text(encoding="utf-8"), "build")
-    )
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "- run: uv build --build-constraints .github/requirements-build.txt --require-hashes\n" in release
+    twine = re.search(r"- run: uvx (twine@\d+\.\d+\.\d+) check", release)
+    assert twine
+    assert not re.search(r"uv build\s*$|uvx twine check", release, re.MULTILINE)
+    assert re.search(r'version: "\d+\.\d+\.\d+"', _job(release, "build"))
+    package = (ROOT / "scripts" / "package.py").read_text(encoding="utf-8")  # CI's package job's, and the gate's
+    assert '"--build-constraints", str(ROOT / ".github" / "requirements-build.txt")]' in package
+    assert '"--require-hashes"' in package
+    assert f'TWINE = "{twine[1]}"' in package
     pinned = (ROOT / ".github" / "requirements-build.txt").read_text(encoding="utf-8")
     assert re.search(r"^setuptools==\S+ \\$", pinned, re.MULTILINE)
     assert "--hash=sha256:" in pinned

@@ -130,7 +130,17 @@ def test_a_gate_on_the_newest_python_tests_once(gate):
     ran = []
     newest = tuple(map(int, gate.NEWEST.split(".")))
     gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=newest)
-    assert len(ran) == len(gate.CHECKS)
+    assert len(ran) == len(gate.CHECKS) + 1  # and the package
+
+
+def test_the_gate_checks_the_package_as_ci_does(gate):
+    # CI's package job built the package and checked its changelog, its metadata and its wheel; the gate didn't, and
+    # a version without its changelog section passed here and failed there.
+    ran = []
+    gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=(3, 12))
+    assert ran[len(gate.CHECKS)] == [sys.executable, str(ROOT / "scripts" / "package.py")]
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "run: uv run --no-project scripts/package.py" in workflow
 
 
 def test_a_gate_without_uv_says_which_python_it_tested_on(gate, capsys):
@@ -139,5 +149,5 @@ def test_a_gate_without_uv_says_which_python_it_tested_on(gate, capsys):
     gate.main(run=lambda command, timeout: ran.append(command) or 0, uv=None, python=(3, 12))
     assert len(ran) == len(gate.CHECKS)
     said = capsys.readouterr().out
-    assert f"gate: no uv on the PATH: the tests ran on Python 3.12 alone, not on {gate.NEWEST}" in said
+    assert "gate: no uv on the PATH: the package wasn't built and checked, the tests ran on Python 3.12 alone, " in said
     assert said.strip().endswith("gate: green")
