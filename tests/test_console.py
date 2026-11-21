@@ -196,12 +196,14 @@ def test_garbage_is_freed_on_the_working_thread_while_a_line_redraws(progress, m
     collected = []
     monkeypatch.setattr(gc, "collect", lambda generation=2: collected.append((generation, threading.current_thread())))
     monkeypatch.setattr(gc, "get_count", lambda: (10**6, 0, 0))  # always due
-    with progress(300) as bar, progress(2) as inner:
-        assert not gc.isenabled()
-        inner.update(1)
+    with progress(300) as bar:
+        with progress(2) as inner:
+            assert not gc.isenabled()
+            inner.update(1)
+        assert not gc.isenabled()  # the inner line ended; the outer one still draws
         for done in range(1, 101):
             bar.update(done)
-        assert not gc.isenabled()  # the inner line ended; the outer one still draws
+        assert not gc.isenabled()
     assert gc.isenabled()
     assert {thread for _, thread in collected} == {threading.main_thread()}
     generations = [generation for generation, _ in collected]
