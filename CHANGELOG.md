@@ -14,6 +14,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   said, and the other files are read: `sift index` ended in a traceback, or never, and every later run met the same
   file again. A file gets ten minutes, and a second more for every 100 KB. Ctrl+C ends the worker processes at once,
   not once they have read every file started.
+- A sift whose stderr no one reads any more, a pipe to a program that ended, goes on with its work. `sift serve`
+  stopped at its next message, five minutes later that the models had left the GPU, and a batch too large for the
+  GPU ended in the error of saying so.
 
 ## [1.13.0] - 2026-11-21
 

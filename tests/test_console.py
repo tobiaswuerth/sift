@@ -60,6 +60,31 @@ def test_without_stderr_nothing_is_said_least_of_all_on_stdout(monkeypatch, caps
     assert capsys.readouterr().out == ""
 
 
+class Unread(io.StringIO):
+    """A stderr no one reads any more: a pipe to a program that ended."""
+
+    def write(self, text):
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+def closed():
+    stream = io.StringIO()
+    stream.close()
+    return stream
+
+
+@pytest.mark.parametrize("gone", [Unread, closed])
+def test_a_stderr_no_one_reads_any_more_stops_no_work(gone, monkeypatch):
+    # With its stderr piped to a program that ended, `sift serve` stopped five minutes later, at the message that the
+    # models had left the GPU; and a batch too large for the GPU ended in the error of saying so, not in a smaller one.
+    monkeypatch.setattr(sys, "stderr", gone())
+    console.say("hello")
+    console.write("Update now? [y/N] ", end="")
+    with console.Progress(2, "chunks") as progress:
+        progress.update(1)
+        console.say("a note")
+
+
 # --- progress ------------------------------------------------------------------------
 
 

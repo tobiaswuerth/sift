@@ -3,6 +3,7 @@ and one kind of progress line (`Progress`) for every long step, which redraws it
 while a single step takes minutes. All of it through `write`, which alone prints: without a stderr nothing is told,
 and the command's log has it still."""
 
+import contextlib
 import gc
 import shlex
 import subprocess
@@ -34,9 +35,11 @@ def say(*parts: object, logged: str | None = None) -> None:
 def write(text: str = "", end: str = "\n") -> None:
     """Text for the user as it is, on stderr: what a message and a progress line are made of, and a question, to be
     answered on its line. Nowhere without a stderr, as under pythonw: print() takes a stream that is None for stdout,
-    where the results go."""
+    where the results go. Nor where no one reads it any more, a pipe to a program that ended, or it is closed: the
+    work goes on as without one, where a server stopped at its next message."""
     if sys.stderr is not None:
-        print(text, end=end, file=sys.stderr, flush=True)
+        with contextlib.suppress(OSError, ValueError):
+            print(text, end=end, file=sys.stderr, flush=True)
 
 
 def count(n: int, noun: str) -> str:
