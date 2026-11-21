@@ -60,6 +60,16 @@ def test_a_check_of_the_types_that_fails_names_its_system(gate):
         gate.main(run=lambda command: "Darwin" in command)
 
 
+def test_the_pull_request_template_asks_for_the_gate():
+    # It asked for the tests and the hooks, each by its command: the types and the smoke run, which the gate added,
+    # went unasked.
+    template = (ROOT / ".github" / "pull_request_template.md").read_text(encoding="utf-8")
+    assert "`python scripts/gate.py`" in template
+    assert not {"pytest", "pre-commit", "pyright"} & set(template.replace("`", " ").split()), (
+        "ask for the gate, which runs every check, not for some of its checks by their commands"
+    )
+
+
 def test_the_checks_are_those_ci_runs(gate):
     # Green here and red there helps nobody: the hooks, the type checker and the tests are called as the workflow
     # calls them, in an environment that is activated there.
