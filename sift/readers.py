@@ -761,13 +761,24 @@ def _mail_text(msg: MIMEPart, fields: Fields) -> tuple[str, list[str]]:
 
 
 def _text_of(part: MIMEPart) -> str:
-    """A text part's content, in the charset its mail declares; where Python doesn't know that charset, or the bytes
-    aren't of it, as mail programs call 8-bit text us-ascii, as a text file is read (see decode)."""
+    """A text part's content, in the charset its mail declares (see _in_charset), else as a text file is read (see
+    decode)."""
     raw = _payload(part)
+    text = _in_charset(raw, part.get_content_charset("ascii"))
+    return decode(raw) if text is None else text
+
+
+def _in_charset(raw: bytes, charset: str) -> str | None:
+    """Bytes as text in the charset a mail declares for them, or None where they are to be read as a text file's: in
+    a charset Python doesn't know, and where they aren't of a charset that says nothing of them, us-ascii or UTF-8,
+    as mail programs call 8-bit text. Bytes that aren't of another charset are replaced, the others kept: mail in
+    Shift_JIS holds a vendor's characters that Python's has not."""
     try:
-        return raw.decode(part.get_content_charset("ascii"))
-    except (LookupError, UnicodeError):
-        return decode(raw)
+        return raw.decode(charset)
+    except LookupError:
+        return None
+    except UnicodeError:
+        return None if codecs.lookup(charset).name in ("ascii", "utf-8") else raw.decode(charset, "replace")
 
 
 class _Words(HTMLParser):
@@ -868,14 +879,12 @@ def _within(key: str, inner: str) -> str:
 
 def _as_utf8(raw: bytes, charset: str | None) -> bytes:
     """A text attachment as UTF-8, as sift reads text files: as it is if it is UTF-8 already, whatever its mail says
-    (mail clients call text us-ascii that isn't), else in the charset its mail declares, if Python knows it and the
-    bytes are of it; else as it is, for a text file's reader to read what isn't UTF-8 as ANSI (see decode)."""
+    (mail clients call text us-ascii that isn't), else in the charset its mail declares (see _in_charset); else as it
+    is, for a text file's reader to read what isn't UTF-8 as ANSI (see decode)."""
     if not charset or _utf8(raw):
         return raw
-    try:
-        return raw.decode(charset).encode()
-    except (LookupError, UnicodeError):
-        return raw
+    text = _in_charset(raw, charset)
+    return raw if text is None else text.encode()
 
 
 def _utf8(raw: bytes) -> bool:

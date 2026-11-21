@@ -478,6 +478,25 @@ def test_mail_text_that_is_not_of_the_charset_it_declares_reads_as_ansi(tmp_path
     assert (note.text, problems) == ("Grüße von Müller.", [])
 
 
+def test_mail_text_in_a_charset_of_its_own_keeps_it_where_a_byte_is_not_of_it(tmp_path):
+    # Only text called us-ascii or UTF-8 that is neither is read as a text file is. Japanese mail declares Shift_JIS
+    # and holds a vendor's characters that Python's Shift_JIS has not: read as ANSI for one such byte, every character
+    # of the mail and of a text file attached was lost. The bytes that aren't of the charset are replaced, as before.
+    text = "見積書を送ります。".encode("shift_jis") + b"\x87\x40" + "以上です。".encode("shift_jis")
+
+    def part(disposition):
+        head = f"--b\r\nContent-Type: text/plain; charset=shift_jis\r\n{disposition}"
+        return head.encode() + b"Content-Transfer-Encoding: 8bit\r\n\r\n" + text + b"\r\n"
+
+    head = b"Subject: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
+    attached = "Content-Disposition: attachment; filename=note.txt\r\n"
+    (tmp_path / "m.eml").write_bytes(head + part("") + part(attached) + b"--b--\r\n")
+    (mail, note), _ = readers.load(tmp_path / "m.eml")
+    for read in (mail.text, note.text):
+        assert "見積書を送ります。" in read
+        assert read.endswith("以上です。")
+
+
 def test_a_text_attachment_reads_in_the_charset_its_mail_declares(tmp_path):
     # sift reads text files as UTF-8; a mail can say that an attachment is Latin-1, whose umlauts came out as "\ufffd".
     def attachment(name, charset, data):

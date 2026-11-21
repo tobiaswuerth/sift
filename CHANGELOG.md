@@ -5,6 +5,28 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-11-21
+
+A review of all of sift for what could go wrong, and its fixes: files, models and requests from elsewhere are trusted
+less, text that isn't UTF-8 is read as it was written, and an agent can set sift up by a guide of its own. No index
+changes its layout: an older sift still uses a collection this one indexed and embedded.
+
+What updating takes: the first `sift index` looks once through each collection for text an older sift stored with
+replacement characters, minutes for tens of millions of documents, and reads the files concerned again. A file that
+links to outside its collection's folder is no longer read unless told (`--follow-links`), and a server on an address
+other machines reach answers only to this machine's addresses and names (`--allow-host`). The oldest PyTorch sift
+installs with is 2.13.
+
+### Added
+
+- [Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agents.md): the steps for an
+  agent that installs sift, indexes the folders you name and connects itself, with what to ask first and what to
+  leave alone.
+- `sift add FOLDER --follow-links` and `--no-follow-links`, `--allow-host NAME` for `sift serve` and `sift ui`, and
+  a revision after an `@` in `SIFT_EMBED_MODEL` and `SIFT_RERANK_MODEL`; each is described with the change it came
+  with, below.
+- usage.md describes the server and its options.
+
 ### Security
 
 - The log of `sift serve` kept every request with its query, and with it every search made in the UI and every
@@ -49,8 +71,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   found them. Such lines are now the note's text; front matter is lines each of which could be part of it.
 - Text that isn't UTF-8, such as a note Notepad or Excel saved as "ANSI", had its accented letters indexed as "�", so
   a search for "Müller" never found it. Bytes that aren't UTF-8 are now read as Windows' ANSI code page (cp1252), in
-  text files, JSON Lines, and mail text that isn't of the charset its mail declares (8-bit text called us-ascii) or is
-  in one Python doesn't know; what is UTF-8 stays as it is. The next `sift index` looks once through each collection
+  text files, JSON Lines, and mail text that its mail calls us-ascii or UTF-8 and is neither, or that is in a charset
+  Python doesn't know; what is UTF-8 stays as it is. The next `sift index` looks once through each collection
   for documents an older sift stored with a replacement character, and reads their files again where the bytes
   aren't UTF-8, and such mails; `sift embed` then embeds the passages that changed. A file of UTF-8 that holds the
   character itself is left as it is.
@@ -814,7 +836,8 @@ First release.
 - Keyword search (SQLite FTS5, BM25), exact GPU vector search, and hybrid search with cross-encoder reranking.
 - An MCP server (streamable HTTP and stdio) whose instructions tell agents what is indexed.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.14.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/tobiaswuerth/sift/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/tobiaswuerth/sift/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/tobiaswuerth/sift/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/tobiaswuerth/sift/compare/v1.11.2...v1.12.0
