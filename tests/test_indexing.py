@@ -16,7 +16,7 @@ from sift.ignore import Ignore
 from sift.search import Index
 
 from . import workers
-from .conftest import index_contents, keywords_agree, write
+from .conftest import index_contents, keywords_agree, only, write
 from .test_documents import email_file
 
 
@@ -231,6 +231,80 @@ def test_a_collection_whose_siftignore_cannot_be_read_is_skipped(corpus, tmp_pat
 
 def test_index_picks_text_and_markdown_only(corpus):
     assert sorted(doc_ids(corpus[0])) == ["plain.txt", "rl.md", "robots/brush.md"]
+
+
+def test_files_an_older_sift_read_with_replacement_characters_are_read_again_once(tmp_path, home, monkeypatch, capsys):
+    # sift 1.14 made U+FFFD of every byte that wasn't UTF-8, as in a note saved as ANSI: unchanged, such a file was
+    # never read again, and "Müller" stayed unfindable. The next index reads again the text files, JSON Lines and
+    # mails whose text holds one, a batch of documents at a time, and only once.
+    root = tmp_path / "c"
+    root.mkdir()
+    (root / "ansi.txt").write_bytes("Grüezi Müller\n".encode("cp1252"))
+    (root / "fine.md").write_bytes(b"# Fine\n\nnothing to read again\n")
+    (root / "data.jsonl").write_bytes('{"id": "1", "text": "Zürich"}\n'.encode("cp1252"))
+    catalog = Catalog(home)
+    catalog.add(root, "c")
+    indexing.index(catalog)
+    db = only(catalog)
+    db.execute("UPDATE docs SET text = replace(text, 'ü', char(65533))")  # as sift 1.14 stored them
+    db.execute("DELETE FROM meta WHERE key = 'ansi_read'")
+    db.commit()
+    monkeypatch.setattr(store, "ANSI_BATCH", 2)  # three documents: two batches
+    capsys.readouterr()
+    indexing.index(catalog)
+    assert dict(db.execute("SELECT path, text FROM docs")) == {
+        "ansi.txt": "Grüezi Müller\n",
+        "fine.md": "# Fine\n\nnothing to read again\n",
+        "data/1": "Zürich",
+    }
+    said = capsys.readouterr().err
+    assert "replacement characters" in said
+    assert "3 files, 0 added, 2 changed, 0 removed" in said
+    indexing.index(catalog)  # once
+    assert "3 files, 0 added, 0 changed, 0 removed" in capsys.readouterr().err
+    assert store.get_meta(db, "ansi_read") == "1"
+
+
+def test_a_look_for_replacement_characters_stopped_goes_on_where_it_stopped(tmp_path, home, monkeypatch, capsys):
+    root = tmp_path / "c"
+    root.mkdir()
+    for name in "abc":
+        (root / f"{name}.txt").write_bytes(f"{name} Müller\n".encode("cp1252"))
+    catalog = Catalog(home)
+    catalog.add(root, "c")
+    indexing.index(catalog)
+    db = only(catalog)
+    db.execute("UPDATE docs SET text = replace(text, 'ü', char(65533))")
+    db.execute("DELETE FROM meta WHERE key = 'ansi_read'")
+    db.commit()
+    monkeypatch.setattr(store, "ANSI_BATCH", 1)
+    set_meta, calls = store.set_meta, []
+
+    def stopped_in_the_second_batch(db, key, value):
+        calls.append(key)
+        if calls.count("ansi_read_to") == 2:
+            raise KeyboardInterrupt
+        set_meta(db, key, value)
+
+    monkeypatch.setattr(store, "set_meta", stopped_in_the_second_batch)
+    with pytest.raises(KeyboardInterrupt):
+        indexing.index(catalog)
+    monkeypatch.setattr(store, "set_meta", set_meta)
+    assert db.execute("SELECT path FROM sources WHERE mtime IS NULL").fetchall() == [("a.txt",)]  # the first batch's
+    indexing.index(catalog)
+    assert sorted(db.execute("SELECT path, text FROM docs")) == [(f"{n}.txt", f"{n} Müller\n") for n in "abc"]
+
+
+def test_an_older_store_without_documents_is_looked_through_without_a_word(tmp_path, home, capsys):
+    (tmp_path / "c").mkdir()
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    db = only(catalog)
+    db.execute("DELETE FROM meta WHERE key = 'ansi_read'")
+    db.commit()
+    indexing.index(catalog)
+    assert "replacement characters" not in capsys.readouterr().err
+    assert store.get_meta(db, "ansi_read") == "1"
 
 
 def test_a_nul_in_a_file_hides_nothing_after_it(corpus):

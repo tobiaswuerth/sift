@@ -7,6 +7,7 @@ Readers run in worker processes while indexing, so they read from bytes and retu
 """
 
 import asyncio
+import codecs
 import hashlib
 import io
 import json
@@ -273,17 +274,29 @@ def chunk(text: str, first_line: int = 1) -> Iterator[Chunk]:
             yield first, first + stripped.count("\n"), start + lead, len(stripped)
 
 
-def _encoding(start: bytes) -> str:
-    """How a text file is encoded, by its first bytes: UTF-16 or UTF-32 after their byte order marks (Windows
-    PowerShell 5.1 writes UTF-16), otherwise UTF-8. UTF-32's little-endian mark starts as UTF-16's does."""
+def _ansi(error: UnicodeError) -> tuple[str, int]:
+    """Bytes that aren't UTF-8 as Windows' ANSI code page (cp1252) reads them, as Notepad and Excel wrote text saved as
+    "ANSI": "Müller", not a replacement character for its "ü". Its five unassigned bytes become U+FFFD."""
+    if not isinstance(error, UnicodeDecodeError):
+        raise error
+    return error.object[error.start : error.end].decode("cp1252", "replace"), error.end
+
+
+codecs.register_error("sift.ansi", _ansi)
+
+
+def _encoding(start: bytes) -> tuple[str, str]:
+    """How a text file is encoded, by its first bytes, and what to do with bytes that aren't: UTF-16 or UTF-32 after
+    their byte order marks (Windows PowerShell 5.1 writes UTF-16), invalid bytes replaced; otherwise UTF-8, any byte
+    that isn't read as ANSI (_ansi). UTF-32's little-endian mark starts as UTF-16's does."""
     if start[:4] in (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"):
-        return "utf-32"
-    return "utf-16" if start[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
+        return "utf-32", "replace"
+    return ("utf-16", "replace") if start[:2] in (b"\xff\xfe", b"\xfe\xff") else ("utf-8-sig", "sift.ansi")
 
 
 def decode(raw: bytes) -> str:
-    """A text file's content, with invalid bytes replaced."""
-    return raw.decode(_encoding(raw), "replace")
+    """A text file's content (see _encoding)."""
+    return raw.decode(*_encoding(raw))
 
 
 def _lines(file: IO[bytes]) -> io.TextIOWrapper:
@@ -291,7 +304,7 @@ def _lines(file: IO[bytes]) -> io.TextIOWrapper:
     when it is asked for."""
     start = file.read(4)
     file.seek(0)
-    return io.TextIOWrapper(file, _encoding(start), "replace", newline="\n")
+    return io.TextIOWrapper(file, *_encoding(start), newline="\n")
 
 
 class Doc(NamedTuple):

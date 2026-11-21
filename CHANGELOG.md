@@ -10,6 +10,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A note that opens with `---` and has another `---` line further down kept the lines between them out of every
   search when they were no front matter, such as a paragraph between two thematic breaks: `get` showed them, no search
   found them. Such lines are now the note's text; front matter is lines each of which could be part of it.
+- Text that isn't UTF-8, such as a note Notepad or Excel saved as "ANSI", had its accented letters indexed as "�", so
+  a search for "Müller" never found it. Bytes that aren't UTF-8 are now read as Windows' ANSI code page (cp1252), in
+  text files, JSON Lines, and mail parts in a charset Python doesn't know; what is UTF-8 stays as it is. The next
+  `sift index` reads again, once, every such file whose text holds a replacement character, a batch of documents at a
+  time; `sift embed` then embeds the passages that changed.
 
 ## [1.14.0] - 2026-11-21
 

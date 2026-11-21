@@ -195,7 +195,8 @@ comment or blank); a paragraph between two thematic breaks stays text, and is se
 | Scanned PDFs | Markdown, by OCR ([below](#documents-and-scans)) |
 | Saved emails (`.eml`) | The message, and each attachment as a document of its own ([below](#emails)) |
 
-Text files are read as UTF-8, or UTF-16/UTF-32 after a byte order mark. Damaged files are skipped and reported until
+Text files are read as UTF-8, or UTF-16/UTF-32 after a byte order mark; bytes that aren't UTF-8 as Windows' ANSI
+(cp1252), as Notepad and Excel saved text, so that "Müller" stays "Müller". Damaged files are skipped and reported until
 they change. Old binary Office files (`.doc`, `.ppt`, `.xls`) aren't read.
 
 A JSON Lines record or an email attachment is a document below its file's name: record `a.md` of `data.jsonl` is

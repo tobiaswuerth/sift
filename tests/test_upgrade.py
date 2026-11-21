@@ -145,9 +145,10 @@ def contents(db):
         "links": f"SELECT {doc.format('doc')}, field, line, kind, target, key, fragment, shown FROM links",
         "names": f"SELECT {doc.format('doc')}, key, kind FROM names",
         "basenames": f"SELECT name, {doc.format('doc')} FROM basenames",
-        # the keyword postings are built from the rest (see `postings`), anew where an index is split
-        "meta": "SELECT key, value FROM meta WHERE key NOT IN ('version', 'collection') AND key NOT LIKE 'kw!_%' "
-        "ESCAPE '!'",
+        # the keyword postings are built from the rest (see `postings`), anew where an index is split; the first `sift
+        # index` of a split store looks for text the old one read with replacement characters (store.read_ansi_again)
+        "meta": "SELECT key, value FROM meta WHERE key NOT IN ('version', 'collection', 'ansi_read') "
+        "AND key NOT LIKE 'kw!_%' ESCAPE '!'",
     }
     return {table: sorted(db.execute(sql).fetchall()) for table, sql in queries.items()}
 

@@ -463,7 +463,7 @@ def test_a_text_attachment_reads_in_the_charset_its_mail_declares(tmp_path):
         + b"--b--\r\n"
     )
     (_, *attached), problems = readers.load(tmp_path / "m.eml")
-    assert [doc.text for doc in attached] == ["Grüße aus Zürich", "Grüße", "Gr\ufffd\ufffde"]
+    assert [doc.text for doc in attached] == ["Grüße aus Zürich", "Grüße", "Grüße"]  # unknown: what isn't UTF-8, ANSI
     assert problems == []
 
 

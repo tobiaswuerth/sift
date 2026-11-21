@@ -317,10 +317,15 @@ def test_load_reads_utf16_and_utf32_files(tmp_path, bom, codec):
     assert (doc.title, doc.meta, doc.chunks) == ("Héllo", {}, [(1, 2, "# Héllo\nworld")])
 
 
-def test_load_replaces_invalid_utf8(tmp_path):
-    path = tmp_path / "latin1.txt"
-    path.write_bytes(b"r\xe9sum\xe9 du jour\n")
-    assert loaded(path).chunks == [(1, 1, "r\ufffdsum\ufffd du jour")]
+def test_load_reads_what_isnt_utf8_as_windows_ansi(tmp_path):
+    # A note saved by Notepad or Excel as "ANSI" had its umlauts stored as a replacement character, so a search for
+    # "Müller" found nothing. What is UTF-8 stays UTF-8, also in a file that mixes both; a byte ANSI leaves unassigned
+    # is replaced.
+    path = tmp_path / "ansi.txt"
+    path.write_bytes("Grüezi Müller, 5 €\n".encode("cp1252") + "naïve ✓\n".encode() + b"r\xe9sum\xe9 \x81\n")
+    assert loaded(path).chunks == [(1, 3, "Grüezi Müller, 5 €\nnaïve ✓\nrésumé \ufffd")]
+    with pytest.raises(UnicodeEncodeError):  # it reads, and writes nothing
+        "é".encode("ascii", "sift.ansi")
 
 
 # --- links -------------------------------------------------------------------

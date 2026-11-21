@@ -917,6 +917,7 @@ def _index_collection(db: Db, name: str, root: str, fields: Fields, ignore: Igno
     after (see `postings`)."""
     t0 = time.perf_counter()
     _read_skipped_scans(db)
+    store.read_ansi_again(db, name)
     known: dict[str, tuple[int, int, int]] = {
         p: (i, m, s) for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources")
     }
