@@ -43,6 +43,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - When the GPU ran out of memory, `sift embed` embedded the batch again in smaller parts, and emptied PyTorch's cache,
   while the error's traceback still held the failed batch's tensors: the parts could run short of memory as well, and
   the batch size stayed halved for the rest of the run. Both now happen once the error is let go.
+- On Windows, Ctrl+C didn't stop `sift embed` while it waited for its first slab of a large collection, read for
+  minutes: a wait without a timeout there takes no Ctrl+C until it ends. It waits in steps of a tenth of a second.
 
 ## [1.14.0] - 2026-11-21
 

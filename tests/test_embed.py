@@ -1,5 +1,6 @@
 """`sift embed`: embedding every chunk without a vector, slab by slab, with progress. The models are fakes."""
 
+import queue
 import re
 import sqlite3
 import threading
@@ -282,6 +283,57 @@ def test_a_reset_drops_no_vector_before_the_model_is_there(embedded, fake_models
         embed.embed_pending(catalog, reset=True)
     assert vector_count(catalog) == 3
     assert store.get_meta(catalog.store("notes"), "model") == fake_models.name
+
+
+def test_waiting_for_the_reader_stays_open_to_ctrl_c(embedded, fake_models, monkeypatch):
+    # On Windows a wait without a timeout takes no Ctrl+C until it ends: the first slab of a large store, read for
+    # minutes, held `sift embed` deaf to it. Every wait for the reader thread is in short steps.
+    catalog, _ = embedded
+    store.drop_vectors(catalog.store("notes"), "1")
+    catalog.store("notes").commit()
+    waits, get, join = [], queue.Queue.get, threading.Thread.join
+
+    def waited_for_a_slab(self, block=True, timeout=None):
+        if threading.current_thread() is threading.main_thread():
+            waits.append(("get", timeout))
+        return get(self, block, timeout)
+
+    def waited_for_the_end(self, timeout=None):
+        if self.name == "sift-embed-read":
+            waits.append(("join", timeout))
+        return join(self, timeout)
+
+    monkeypatch.setattr(queue.Queue, "get", waited_for_a_slab)
+    monkeypatch.setattr(threading.Thread, "join", waited_for_the_end)
+    rows = embed._Reader._rows
+    monkeypatch.setattr(embed._Reader, "_rows", lambda self, db, last: time.sleep(0.3) or rows(self, db, last))
+    embed.embed_pending(catalog)
+    assert vector_count(catalog) == 3
+    assert [name for name, _ in waits].count("get") > 2  # waited for the slow first slab in steps
+    assert all(timeout is not None and timeout <= 1 for _, timeout in waits), waits
+
+
+def test_embedding_stopped_while_the_reader_reads_ends_it(embedded, fake_models, monkeypatch):
+    catalog, _ = embedded
+    store.drop_vectors(catalog.store("notes"), "1")
+    catalog.store("notes").commit()
+    rows, started = embed._Reader._rows, []
+
+    def slow(self, db, last):
+        started.append(last)
+        if len(started) > 1:  # reading the second slab when embedding stops
+            time.sleep(0.3)
+        return rows(self, db, last)
+
+    def interrupted(batches, query=False):
+        raise KeyboardInterrupt
+        yield  # a generator, as encode_batches is
+
+    monkeypatch.setattr(embed._Reader, "_rows", slow)
+    monkeypatch.setattr(fake_models, "encode_batches", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        embed.embed_pending(catalog)
+    assert not any(t.name == "sift-embed-read" for t in threading.enumerate())
 
 
 def test_embed_pending_calibrates_first(corpus, make_local, gpu_memory):

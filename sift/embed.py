@@ -25,6 +25,7 @@ C = TypeVar("C", bound=store.Collection)
 
 SLAB = 20000  # chunks per commit; length sorting happens within a slab
 AHEAD = 2  # slabs read ahead of the model
+STEP = 0.1  # seconds a wait for the reader thread lasts at a time, so that Ctrl+C stops it
 
 Passage = tuple[int, int, str, str]  # (chunk id, seq, title, text)
 Vectors = NDArray[np.float16]
@@ -195,13 +196,23 @@ class _Reader:
 
     def __exit__(self, *exc: object) -> None:
         self.stop.set()
-        self.thread.join()
+        while self.thread.is_alive():  # in steps: on Windows a wait without a timeout takes no Ctrl+C till it ends
+            self.thread.join(STEP)
 
     def __iter__(self) -> Iterator[_Slab]:
-        while (slab := self.slabs.get()) is not _DONE:
+        while (slab := self._next()) is not _DONE:
             if isinstance(slab, BaseException):
                 raise slab
             yield slab
+
+    def _next(self) -> _Slab | BaseException | _End:
+        """The next item the thread queued, waited for in steps (see __exit__): a large store's first slab takes
+        minutes."""
+        while True:
+            try:
+                return self.slabs.get(timeout=STEP)
+            except queue.Empty:
+                continue
 
     def _read(self) -> None:
         try:
@@ -228,7 +239,7 @@ class _Reader:
         """Queue an item, unless embedding stops meanwhile."""
         while not self.stop.is_set():
             try:
-                self.slabs.put(item, timeout=0.1)
+                self.slabs.put(item, timeout=STEP)
                 return
             except queue.Full:
                 continue
