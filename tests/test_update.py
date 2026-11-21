@@ -231,7 +231,8 @@ def test_without_a_command_to_upgrade_it_a_newer_sift_is_told_of(installed, home
     assert kept(home)["asked"] == NEWER
 
 
-@pytest.mark.parametrize("latest", [__version__, f"{MAJOR}.{MINOR}.{PATCH + 1}rc1", None])
+# a pre-release; digits int() can't read ("²" is a digit to str.isdigit), which failed every command
+@pytest.mark.parametrize("latest", [__version__, f"{MAJOR}.{MINOR}.{PATCH + 1}rc1", None, f"{MAJOR}.{MINOR}.²"])
 def test_nothing_newer_is_not_offered(installed, home, latest):
     keep(home, latest=latest, checked=time.time())
     update.offer("status", TERMINAL)  # Terminal() fails if asked

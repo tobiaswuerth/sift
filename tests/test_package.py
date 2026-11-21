@@ -307,6 +307,19 @@ def test_only_the_console_and_the_results_print():
     assert elsewhere == set(), "say it with console.say, or write it with console.write; results go through cli._print"
 
 
+def test_digits_are_matched_as_ascii_digits():
+    # str.isdigit takes "²" and "٣" for digits, which int() refuses: a version "1.2.²" read from PyPI's answer
+    # failed every command. Digits are [0-9].
+    sources = [path for folder in ("sift", "scripts") for path in (ROOT / folder).glob("*.py")]
+    found = {
+        f"{path.name}:{node.lineno}"
+        for path in sources
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Attribute) and node.attr in ("isdigit", "isdecimal", "isnumeric")
+    }
+    assert found == set(), 'match digits as re.fullmatch("[0-9]+", text)'
+
+
 def test_sql_placeholders_have_no_numbers():
     # Python 3.12.0 to 3.12.3 take a placeholder with a number for a named one, and warn that binding it from a
     # sequence becomes an error: a test that bound one failed on the one system whose Python was 3.12.3.

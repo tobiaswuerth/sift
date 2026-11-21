@@ -52,6 +52,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   A filter of a list of some 16,000 values failed with "too many SQL variables"; its values now go to SQLite as one.
   A filter value that is no finite number (NaN, infinity) is a clear error.
 - `k: true` was taken for one result, as Python counts `True` as 1; it is refused as `k: "3"` is.
+- A latest version with a digit such as "²" in sift's update check, as PyPI could answer, failed every command until
+  `update.json` was deleted. Such a version is no release's, and is passed over.
 
 ## [1.14.0] - 2026-11-21
 

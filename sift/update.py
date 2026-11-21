@@ -17,6 +17,7 @@ update.json is this module's alone, written whole; deleting it only makes the ne
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -184,9 +185,9 @@ def _newer(latest: str, major: bool = False) -> bool:
 
 
 def _version(text: str) -> tuple[int, ...] | None:
-    """A release's version as numbers, (1, 12, 0); None for any other, such as a pre-release."""
-    parts = text.split(".")
-    return tuple(map(int, parts)) if len(parts) == 3 and all(p.isdigit() for p in parts) else None
+    """A release's version as numbers, (1, 12, 0); None for any other, such as a pre-release, or one of digits int()
+    can't read, as str.isdigit takes "²" for one."""
+    return tuple(map(int, text.split("."))) if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", text) else None
 
 
 def _ask(path: Path, latest: str, upgrade: list[str]) -> None:
