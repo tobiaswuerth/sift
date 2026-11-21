@@ -158,7 +158,7 @@ class Models:
     def __init__(self):
         self.threads = []
 
-    def encode(self, texts):
+    def encode(self, texts, query=False):
         self.threads.append(threading.current_thread())
         return len(texts)
 
@@ -171,7 +171,7 @@ class Worker:
     def __init__(self):
         self.answered = threading.Event()
 
-    def encode(self, texts):
+    def encode(self, texts, query=False):
         return self.answered.wait(5)
 
 
@@ -221,7 +221,7 @@ def test_requests_of_calls_cancelled_before_they_were_sent_never_are():
     class Slow:
         name, main_thread = "worker", False
 
-        def encode(self, texts):
+        def encode(self, texts, query=False):
             sent.append(texts[0])
             left.set()
             answer.wait(30)
@@ -271,7 +271,7 @@ def test_a_slow_workers_answer_is_awaited(monkeypatch):
     class Slow:
         name, main_thread = "worker", False
 
-        def encode(self, texts):
+        def encode(self, texts, query=False):
             looked.wait(5)
             return texts
 
@@ -283,7 +283,7 @@ def test_a_workers_answer_and_error_come_back_from_its_thread():
     class Answering:
         name, main_thread = "worker", False
 
-        def encode(self, texts):
+        def encode(self, texts, query=False):
             if not texts:
                 raise ConnectionError("embedding remote https://pc:8766 is unreachable")
             return threading.current_thread()
@@ -339,3 +339,59 @@ def test_a_request_cancelled_before_its_turn_is_not_made():
     assert on_its_way.result(timeout=5) == "first"
     assert requests.submit(lambda: "after").result(timeout=5) == "after"  # its turn came and went
     assert made == []
+
+
+def test_every_member_of_the_models_is_passed_on():
+    # The models' members were passed on by name, through __getattr__, which no type checker follows: one the
+    # server used and the models lacked failed when it was called. Each is written out, and checked.
+    class Recording:
+        name, address, batch, main_thread = "fake", "cpu", 8, True
+
+        def __init__(self):
+            self.calls = []
+
+        def load(self):
+            self.calls.append("load")
+
+        def lengths(self, texts):
+            self.calls.append(("lengths", texts))
+            return [len(text) for text in texts]
+
+        def prepare(self):
+            self.calls.append("prepare")
+
+        def encode(self, texts, query=False):
+            self.calls.append(("encode", texts, query))
+            return "vectors"
+
+        def encode_batches(self, batches, query=False):
+            self.calls.append(("encode_batches", query))
+            return iter(batches)
+
+        def rerank(self, query, texts):
+            self.calls.append(("rerank", query, texts))
+            return "scores"
+
+        def release_idle(self):
+            self.calls.append("release_idle")
+            return True
+
+    real = Recording()
+    models = jobs.OnMainThread(real)
+    assert (models.name, models.address, models.batch, models.main_thread) == ("fake", "cpu", 8, True)
+    models.load()
+    models.prepare()
+    assert models.lengths(["ab"]) == [2]
+    assert models.encode(["a"], query=True) == "vectors"
+    assert list(models.encode_batches([["a"]], query=True)) == [["a"]]
+    assert models.rerank("q", ["a"]) == "scores"
+    assert models.release_idle() is True
+    assert real.calls == [
+        "load",
+        "prepare",
+        ("lengths", ["ab"]),
+        ("encode", ["a"], True),
+        ("encode_batches", True),
+        ("rerank", "q", ["a"]),
+        "release_idle",
+    ]

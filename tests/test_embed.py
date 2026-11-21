@@ -125,6 +125,12 @@ def test_a_batch_holds_texts_of_similar_length_to_the_model():
     assert vectors[:, 0].tolist() == [len(t) for t in texts]  # each vector with its text
 
 
+def test_no_texts_are_no_vectors_and_no_call_to_the_models():
+    models = Tokens()
+    assert embed.encode(models, []).shape[0] == 0  # it was None, which callers had to tell from an array
+    assert models.batches == []
+
+
 def test_embed_pending_uses_the_models_it_is_given(corpus, capsys):
     catalog, _ = corpus
     embed.embed_pending(catalog, models=Ones())

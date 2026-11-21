@@ -15,11 +15,13 @@ import os
 import posixpath
 import re
 import unicodedata
-from collections import namedtuple
-from datetime import UTC
+from collections.abc import Callable, Coroutine, Iterable, Iterator
+from datetime import UTC, datetime
+from email.message import MIMEPart
 from functools import partial
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import IO, Any, NamedTuple, TypeVar
 from urllib.parse import unquote
 
 from . import console
@@ -52,7 +54,10 @@ class NestedTooDeeply(RecursionError):
     """JSON nested deeper than SQLite stores it (JSON_DEPTH)."""
 
 
-def _json(text):
+Json = None | bool | int | float | str | list[Any] | dict[str, Any]  # a JSON value, nested ones as Any
+
+
+def _json(text: str) -> Any:
     """JSON as sift keeps it: NaN, Infinity and numbers too large for a float (1e999) as written, which SQLite's JSON
     rejects, and a surrogate alone as U+FFFD (a pair Python joins itself). Raises ValueError, and RecursionError for
     JSON nested deeper than Python recurses or SQLite stores."""
@@ -62,13 +67,13 @@ def _json(text):
     return _whole(value) if SURROGATE.search(text) else value
 
 
-def _float(text):
+def _float(text: str) -> float | str:
     """A JSON number with a fraction or an exponent, as a float; as written if a float can't hold it."""
     number = float(text)
     return number if math.isfinite(number) else text
 
 
-def _depth(value):
+def _depth(value: Json) -> int:
     """How deeply a JSON value nests lists and objects: 0 for none."""
     deepest, todo = 0, [(value, 0)]
     while todo:
@@ -79,7 +84,7 @@ def _depth(value):
     return deepest
 
 
-def _whole(value):
+def _whole(value: Json) -> Any:
     """A JSON value with every surrogate alone in its strings as U+FFFD."""
     if isinstance(value, str):
         return LONE.sub("\ufffd", value)
@@ -90,7 +95,7 @@ def _whole(value):
     return value
 
 
-def _value(text):
+def _value(text: str) -> Any:
     """A front-matter value: JSON if it parses (lists, numbers, quoted strings), else a YAML flow list of unquoted
     items, else plain text; as written, if nested deeper than Python recurses."""
     try:
@@ -103,12 +108,13 @@ def _value(text):
         return text
 
 
-def _flow_list(text):
+def _flow_list(text: str) -> list[Any] | None:
     """The items of a YAML flow list such as `[Hans Mueller, "H. Müller"]`, or None if `text` isn't one list. A single
     wikilink, `[[Acme AG]]`, is a link, as Obsidian users mean it, though YAML reads a list in a list."""
     if not (text.startswith("[") and text.endswith("]")) or WIKILINK_VALUE.fullmatch(text):
         return None
-    items, depth, quote, start = [], 0, None, 1
+    items: list[str] = []
+    depth, quote, start = 0, None, 1
     for i, c in enumerate(text):
         if quote:
             quote = None if c == quote else quote
@@ -129,9 +135,11 @@ def _flow_list(text):
     return [_value(item.strip()) for item in items if item.strip()]
 
 
-def _front_matter(block):
+def _front_matter(block: str) -> dict[str, Any]:
     """Flat `key: value` lines, and lists as `- item` lines below a key without a value, as Obsidian writes them."""
-    meta, listing, written = {}, None, {}  # written: each value's text, or its `- item` lines' texts
+    meta: dict[str, Any] = {}
+    listing: str | None = None
+    written: dict[str, Any] = {}  # each value's text, or its `- item` lines' texts
     for line in block.split("\n"):  # only \n ends a line (LINE): JSON writes U+2028 in a string as it is
         if listing and (item := LIST_ITEM.match(line)):
             text = item.group(1).strip()
@@ -154,10 +162,14 @@ def _front_matter(block):
     return meta
 
 
-def _outside_code(lines):
+Chunk = tuple[int, int, int, int]  # first line, last line, position, length
+
+
+def _outside_code(lines: Iterable[str]) -> list[bool]:
     """For each of these lines of Markdown, in order, whether it lies outside fenced code blocks; a fence's own lines
     don't."""
-    outside, fence = [], None
+    outside: list[bool] = []
+    fence: str | None = None
     for line in lines:
         if m := FENCE.match(line):
             mark = m.group(1)
@@ -171,13 +183,13 @@ def _outside_code(lines):
     return outside
 
 
-def _prose(text, first_line=1):
+def _prose(text: str, first_line: int = 1) -> Iterator[tuple[int, str]]:
     """The lines of Markdown `text` outside fenced code blocks, with their numbers."""
     lines = text.split("\n")
     return ((n, line) for n, (line, outside) in enumerate(zip(lines, _outside_code(lines)), first_line) if outside)
 
 
-def _heading(text):
+def _heading(text: str) -> str | None:
     """The first Markdown heading outside fenced code blocks, or None."""
     for _, line in _prose(text):
         if HEADING.match(line):
@@ -189,10 +201,11 @@ def _heading(text):
     return None
 
 
-def parse(text, fallback_title, title_from="heading"):
+def parse(text: str, fallback_title: str, title_from: str = "heading") -> tuple[str, dict[str, Any], str, int]:
     """Split off YAML front matter. Returns title, meta, body and the body's first line number. The title is the
     `title` field, else with title_from "heading" the first heading, else `fallback_title`, the file name."""
-    meta, first_line = {}, 1
+    meta: dict[str, Any] = {}
+    first_line = 1
     m = FRONT_MATTER.match(text)
     if m:
         meta = _front_matter(m.group(1) or "")
@@ -203,14 +216,15 @@ def parse(text, fallback_title, title_from="heading"):
     return title or (title_from == "heading" and _heading(text)) or fallback_title, meta, text, first_line
 
 
-def chunk(text, first_line=1):
+def chunk(text: str, first_line: int = 1) -> Iterator[Chunk]:
     """Split text into pieces of at most CHUNK_CHARS on line boundaries, preferring headings, with a small overlap.
 
     Yields (first line, last line, position, length): each piece is text[position:position + length], stripped. A
     heading is a line that starts as one in Markdown (HEADING), outside fenced code: not any line starting with "#",
     as a comment in code does, an include, or a tag.
     """
-    lines, pos, whole = [], 0, LINE.findall(text)  # (line number, position, line, whether it is a heading)
+    lines: list[tuple[int, int, str, bool]] = []  # (line number, position, line, whether it is a heading)
+    pos, whole = 0, LINE.findall(text)
     for n, (line, prose) in enumerate(zip(whole, _outside_code(whole)), first_line):
         start, heading = 0, prose and HEADING.match(line) is not None
         while len(line) - start > CHUNK_CHARS:  # break overlong lines at whitespace, the rest of the line not copied
@@ -221,7 +235,9 @@ def chunk(text, first_line=1):
         lines.append((n, pos + start, line[start:], heading and start == 0))
         pos += len(line)
 
-    pieces, buf, size = [], [], 0
+    pieces: list[list[tuple[int, int, str]]] = []
+    buf: list[tuple[int, int, str]] = []
+    size = 0
     for n, at, line, heading in lines:
         if buf and (size + len(line) > CHUNK_CHARS or (heading and size > CHUNK_CHARS // 2)):
             pieces.append(buf)
@@ -257,7 +273,7 @@ def decode(raw: bytes) -> str:
     return raw.decode(_encoding(raw), "replace")
 
 
-def _lines(file):
+def _lines(file: IO[bytes]) -> io.TextIOWrapper:
     """The lines of a text file open for its bytes, as decode() and a split at newlines give them, but each read only
     when it is asked for."""
     start = file.read(4)
@@ -265,22 +281,36 @@ def _lines(file):
     return io.TextIOWrapper(file, _encoding(start), "replace", newline="\n")
 
 
-Doc = namedtuple("Doc", "key digest title meta text chunks links scan line", defaults=((), None, None))
-"""A document read from a file: key is "" for a whole file, the record id for a JSON Lines record; chunks are
-(first line, last line, position, length) spans of text; links are the Links of a Markdown file; scan is the bytes of a
-PDF without text, for the process that writes the index to read with OCR (see `ocr`), else None; line is a JSON Lines
-record's in its file."""
+class Doc(NamedTuple):
+    """A document read from a file: key is "" for a whole file, the record id for a JSON Lines record; chunks are
+    (first line, last line, position, length) spans of text; links are the Links of a Markdown file; scan is the bytes
+    of a PDF without text, for the process that writes the index to read with OCR (see `ocr`), else None; line is a JSON
+    Lines record's in its file."""
+
+    key: str
+    digest: str
+    title: str
+    meta: dict[str, Any]
+    text: str
+    chunks: list[Chunk]
+    links: tuple["Link", ...] = ()
+    scan: bytes | None = None
+    line: int | None = None
+
+
+Fields = dict[str, Any]  # a collection's field choices: "id", "title", "text" (a list), "title_from"
+Reader = Callable[[bytes, str, Fields], tuple[list[Doc], list[str]]]
 
 ID_FIELDS = ("id", "_id")
 TITLE_FIELDS = ("title", "name", "headline", "subject")
 TEXT_FIELDS = ("text", "content", "body", "abstract", "description", "summary")
 
 
-def _digest(raw):
+def _digest(raw: bytes) -> str:
     return hashlib.blake2b(raw, digest_size=16).hexdigest()
 
 
-def _as_text(value):
+def _as_text(value: Json) -> str:
     """A field's text: a string, or a list of strings joined as paragraphs; "" for anything else."""
     if isinstance(value, str):
         return value.strip()
@@ -289,16 +319,17 @@ def _as_text(value):
     return ""
 
 
-def _record(obj, line, fields):
+def _record(obj: dict[str, Any], line: int, fields: Fields) -> Doc | None:
     """One JSON object as a Doc, or None if it has no text. Without chosen fields, the text is the first of
     TEXT_FIELDS, else the longest string; the title one of TITLE_FIELDS; the id one of ID_FIELDS, else the line
     number. Every field but the text is metadata, as front matter is for Markdown."""
     id_key = fields.get("id") or next((k for k in ID_FIELDS if k in obj), None)
-    key = obj.get(id_key)
+    key = obj.get(id_key) if id_key else None
     key = str(line) if key is None or key == "" else str(key)
     title_key = fields.get("title") or next((k for k in TITLE_FIELDS if _as_text(obj.get(k))), None)
-    text_keys = fields.get("text") or [next((k for k in TEXT_FIELDS if _as_text(obj.get(k))), None)]
-    if text_keys == [None]:  # no known text field: the longest string is the text
+    known = next((k for k in TEXT_FIELDS if _as_text(obj.get(k))), None)
+    text_keys: list[str] = fields.get("text") or ([known] if known else [])
+    if not text_keys:  # no known text field: the longest string is the text
         strings = [(len(v), k) for k, v in obj.items() if k not in (id_key, title_key) and isinstance(v, str)]
         text_keys = [max(strings)[1]] if strings else []
     body = "\n\n".join(t for k in text_keys if (t := _as_text(obj.get(k))))
@@ -310,13 +341,13 @@ def _record(obj, line, fields):
     return Doc(key, "", title or _heading(body) or key, meta, text, list(chunk(text)))
 
 
-def _text(raw, name, fields):
+def _text(raw: bytes, name: str, fields: Fields) -> tuple[list[Doc], list[str]]:
     """A Markdown or text file: one document, with its YAML front matter as metadata."""
     text = decode(raw).replace("\r\n", "\n")  # same chunks on every OS
     return [note(text, name, fields)._replace(digest=_digest(raw))], []
 
 
-def note(text, name, fields=None):
+def note(text: str, name: str, fields: Fields | None = None) -> Doc:
     """The document of a Markdown or text file named `name`, from its text, with the links of a Markdown file. The
     index keeps that text, so a newer sift can read the note again without its file."""
     title, meta, body, first_line = parse(text, Path(name).stem, (fields or {}).get("title_from", "heading"))
@@ -344,10 +375,19 @@ MARKDOWN_LINK = re.compile(  # [shown](target#fragment "title"), CommonMark's in
 SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]+:")  # https:, mailto:, obsidian:: not a link between notes
 BACKTICKS = re.compile(r"`+")
 
-Link = namedtuple("Link", "field line kind target key fragment shown")
-"""A link in a Markdown file: the front-matter field it is in (None in the text), its line in the file, its kind
-("wikilink", "embed" for ![[...]], "markdown"), its target as written (decoded, in a Markdown link) without the
-heading or block it points into (`fragment`) and the text it shows, and the target's `key`."""
+
+class Link(NamedTuple):
+    """A link in a Markdown file: the front-matter field it is in (None in the text), its line in the file, its kind
+    ("wikilink", "embed" for ![[...]], "markdown"), its target as written (decoded, in a Markdown link) without the
+    heading or block it points into (`fragment`) and the text it shows, and the target's `key`."""
+
+    field: str | None
+    line: int
+    kind: str
+    target: str
+    key: str
+    fragment: str | None
+    shown: str | None
 
 
 def fold(name: str) -> str:
@@ -355,18 +395,19 @@ def fold(name: str) -> str:
     return unicodedata.normalize("NFC", unicodedata.normalize("NFC", name).casefold())
 
 
-def key(name):
+def key(name: str) -> str:
     """What a file name or the last part of a link's target compares as: folded, without a Markdown extension."""
     stem, ext = posixpath.splitext(name)
     return fold(stem if ext.lower() in MARKDOWN else name)
 
 
-def links(text, offset, first_line):
+def links(text: str, offset: int, first_line: int) -> tuple[Link, ...]:
     """The links of a Markdown file's `text` in order: wikilinks in the front matter, text[:offset], and wikilinks and
     Markdown links in the body, from line `first_line`, outside code."""
     if "[[" not in text and "](" not in text:  # most files of a collection without links, at the cost of a scan
         return ()
-    found, field = [], None
+    found: list[Link] = []
+    field: str | None = None
     for n, line in enumerate(text[:offset].split("\n")[:-1], 1):  # the front matter: `key: value` lines
         name, colon, value = line.partition(":")
         if colon and name.strip() and not name[0].isspace() and name[0] not in "#-":
@@ -379,9 +420,10 @@ def links(text, offset, first_line):
     return tuple(found)
 
 
-def _in_line(line, n, field=None):
+def _in_line(line: str, n: int, field: str | None = None) -> list[Link]:
     """The links in line `n`, in order: in the body all kinds, in the front-matter field `field` wikilinks."""
-    line, found = _without_code(line), []
+    line = _without_code(line)
+    found: list[tuple[int, Link | None]] = []
     for m in WIKILINK.finditer(line):
         target, _, shown = m[2].partition("|")
         target, _, fragment = target.removesuffix("\\").partition("#")  # [[a\|b]] in a table
@@ -396,7 +438,7 @@ def _in_line(line, n, field=None):
     return [link for _, link in sorted(found, key=lambda item: item[0]) if link]
 
 
-def _link(field, n, kind, target, fragment, shown):
+def _link(field: str | None, n: int, kind: str, target: str, fragment: str, shown: str) -> Link | None:
     """A Link, or None for one into its own note, to a folder, or to a file sift doesn't read."""
     target = target.strip()
     last = target.rsplit("/", 1)[-1]
@@ -405,17 +447,19 @@ def _link(field, n, kind, target, fragment, shown):
     return Link(field, n, kind, target, key(last), fragment.strip() or None, shown.strip() or None)
 
 
-def _without_code(line):
+def _without_code(line: str) -> str:
     """The line with its code spans, `code` or ``co`de``, blanked out: a span ends at the next run of as many
     backticks, and a run without one is just backticks."""
     if "`" not in line:
         return line
     runs = [m.span() for m in BACKTICKS.finditer(line)]
-    following, last_of_length = [None] * len(runs), {}  # the next run of the same length, found from the end
+    following: list[int | None] = [None] * len(runs)
+    last_of_length: dict[int, int] = {}  # the next run of the same length, found from the end
     for i in range(len(runs) - 1, -1, -1):
         length = runs[i][1] - runs[i][0]
         following[i], last_of_length[length] = last_of_length.get(length), i
-    pieces, i, end = [], 0, 0
+    pieces: list[str] = []
+    i, end = 0, 0
     while i < len(runs):
         if (j := following[i]) is None:
             i += 1
@@ -428,14 +472,15 @@ def _without_code(line):
 class _Skipped:
     """The lines of a JSON Lines file that were skipped, each with its reason: how many, and the first five."""
 
-    def __init__(self):
-        self.count, self.first = 0, []
+    def __init__(self) -> None:
+        self.count = 0
+        self.first: list[tuple[int | None, str]] = []
 
-    def add(self, line, why):
+    def add(self, line: int | None, why: str) -> None:
         self.count += 1
         self.first = sorted([*self.first, (line, why)])[:5]
 
-    def said(self):
+    def said(self) -> list[str]:
         """What to say of them, as a reader's problems: one sentence, or nothing."""
         if not self.count:
             return []
@@ -443,7 +488,7 @@ class _Skipped:
         return [f"{console.count(self.count, 'line')} skipped ({shown})"]
 
 
-def _parsed(lines, fields, skipped):
+def _parsed(lines: Iterable[str], fields: Fields, skipped: _Skipped) -> Iterator[Doc]:
     """The documents of a JSON Lines file's lines, one per line, as they are asked for; a line without one goes to
     `skipped`, with its reason."""
     for n, line in enumerate(lines, 1):
@@ -451,7 +496,7 @@ def _parsed(lines, fields, skipped):
         if not line:
             continue
         try:
-            obj = _json(line)
+            obj: Json = _json(line)
         except ValueError:
             skipped.add(n, "not JSON")
             continue
@@ -468,9 +513,11 @@ def _parsed(lines, fields, skipped):
             yield doc._replace(digest=_digest(line.encode()), line=n)
 
 
-def _records(raw, name, fields):
+def _records(raw: bytes, name: str, fields: Fields) -> tuple[list[Doc], list[str]]:
     """A JSON Lines file: one document per line, and the lines skipped with their reason."""
-    docs, skipped, seen = [], _Skipped(), set()
+    docs: list[Doc] = []
+    skipped = _Skipped()
+    seen: set[str] = set()
     for doc in _parsed(decode(raw).split("\n"), fields, skipped):
         if doc.key in seen:
             skipped.add(doc.line, f"id {doc.key} used twice")
@@ -480,10 +527,12 @@ def _records(raw, name, fields):
     return docs, skipped.said()
 
 
+_T = TypeVar("_T")
+
 STREAMED = 32 << 20  # bytes past which a JSON Lines file is read as it is stored, not whole (see Records)
 
 
-def streamed(path, size):
+def streamed(path: str | Path, size: int) -> bool:
     """Whether a file of `size` bytes is read as it is stored (Records), not whole by `load`."""
     return size > STREAMED and extension(Path(path).name) in JSONL  # the size first: asked of every file indexed
 
@@ -498,21 +547,21 @@ class Records:
     twice is for whoever stores them to find, among the paths it stored, and to tell with `twice`: the ids of millions
     of records are not held either. Any error of reading comes as Unread."""
 
-    def __init__(self, path, fields=None):
+    def __init__(self, path: str | Path, fields: Fields | None = None) -> None:
         self.path, self.fields, self._skipped = path, fields or {}, _Skipped()
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Doc]:
         try:
             with open(self.path, "rb") as file, _lines(file) as lines:
                 yield from _parsed(lines, self.fields, self._skipped)
         except Exception as error:
             raise Unread(f"{type(error).__name__}: {error}") from error
 
-    def twice(self, doc):
+    def twice(self, doc: Doc) -> None:
         self._skipped.add(doc.line, f"id {doc.key} used twice")
 
     @property
-    def problems(self):
+    def problems(self) -> list[str]:
         """The lines skipped with their reason, as `load` gives them: of those read and told of so far."""
         return self._skipped.said()
 
@@ -528,7 +577,7 @@ PROPERTIES = {  # the document properties sift keeps as metadata: Xberg's name, 
 }
 
 
-def _xberg(raw, name):
+def _xberg(raw: bytes, name: str) -> Any:
     """Xberg's reading of a file's bytes, converted to Markdown, with its properties. Raises what Xberg raises."""
     import xberg  # only indexing documents needs it
     from xberg.options import ConversionOptions, SecurityLimits
@@ -552,13 +601,13 @@ def _xberg(raw, name):
     return doc
 
 
-def _finished(make):
+def _finished(make: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
     """The result of the coroutine make() returns, run to its end. No event loop runs in this thread: sift's server
     runs its tools' work on a worker thread (see `jobs`)."""
     return asyncio.run(make())
 
 
-def _document(raw, name, fields):
+def _document(raw: bytes, name: str, fields: Fields) -> tuple[list[Doc], list[str]]:
     """A PDF, office file, e-book or web page, converted to Markdown by Xberg: one document, with its properties
     as metadata. A PDF without text is a scan, passed on for OCR."""
     try:
@@ -577,7 +626,7 @@ def _document(raw, name, fields):
 MAIL_DEPTH = 3  # levels of mail attached to mail that sift reads; a mail that nests mails without end must not stall it
 
 
-def _email(raw, name, fields, depth=MAIL_DEPTH):
+def _email(raw: bytes, name: str, fields: Fields, depth: int = MAIL_DEPTH) -> tuple[list[Doc], list[str]]:
     """A saved email (.eml): one document, titled by its subject, with its sender, recipients, date and ids as metadata
     (the addresses bare, for filters) and above its text, which is its plain text, else its HTML as Markdown; and one
     document for each attachment sift reads, named by its file name, and a mail attached `depth` levels deep with its
@@ -599,9 +648,10 @@ def _email(raw, name, fields, depth=MAIL_DEPTH):
     return [Doc("", _digest(raw), title, meta, text, list(chunk(text))), *attached], problems + trouble
 
 
-def _mail_headers(msg):
+def _mail_headers(msg: MIMEPart) -> tuple[dict[str, Any], list[str]]:
     """An email's metadata, and its headers as they show above its text: From, To, Cc and Date."""
-    meta, shown = {}, []
+    meta: dict[str, Any] = {}
+    shown: list[str] = []
     for key in ("from", "to", "cc"):
         header = msg.get(key)
         if addresses := [a.addr_spec for a in getattr(header, "addresses", ()) if a.addr_spec]:
@@ -620,7 +670,7 @@ def _mail_headers(msg):
     return _whole(meta), [LONE.sub("\ufffd", line) for line in shown]
 
 
-def _in_utc(when):
+def _in_utc(when: datetime) -> datetime:
     """A time in UTC, so that dates sort as times do; as it is if UTC would take it past year 9999, or before year 1."""
     try:
         return when.astimezone(UTC)
@@ -628,7 +678,7 @@ def _in_utc(when):
         return when
 
 
-def _mail_text(msg, fields):
+def _mail_text(msg: MIMEPart, fields: Fields) -> tuple[str, list[str]]:
     """An email's text: its plain part, else its HTML part as Markdown, "" if it has none; and what went wrong."""
     part = msg.get_body(preferencelist=("plain", "html"))
     if part is None:
@@ -636,7 +686,7 @@ def _mail_text(msg, fields):
     try:
         content = part.get_content()
     except (LookupError, UnicodeError):  # a charset Python doesn't know: as UTF-8, with what doesn't decode replaced
-        content = decode(part.get_payload(decode=True) or b"")
+        content = decode(_payload(part))
     if part.get_content_subtype() != "html":
         return content.replace("\r\n", "\n").strip(), []
     try:
@@ -655,32 +705,34 @@ class _Words(HTMLParser):
     )
     HIDDEN = frozenset(("head", "script", "style", "template"))
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.paragraphs, self.words, self.hidden = [], [], 0
+        self.paragraphs: list[str] = []
+        self.words: list[str] = []
+        self.hidden = 0
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.hidden += tag in self.HIDDEN
         if tag in self.BLOCKS:
             self.end_paragraph()
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if tag in self.HIDDEN and self.hidden:
             self.hidden -= 1
         if tag in self.BLOCKS:
             self.end_paragraph()
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if not self.hidden:
             self.words.append(data)
 
-    def end_paragraph(self):
+    def end_paragraph(self) -> None:
         if paragraph := " ".join("".join(self.words).split()):
             self.paragraphs.append(paragraph)
         self.words = []
 
 
-def _plain(html):
+def _plain(html: str) -> str:
     """HTML's words, a paragraph per block: what is left when converting it to Markdown fails."""
     words = _Words()
     words.feed(html)
@@ -692,10 +744,12 @@ def _plain(html):
 ATTACHED = (*TEXT, *DOCUMENTS)  # the files attached to an email sift reads, besides mails: whole files, no records
 
 
-def _attachments(msg, fields, depth):
+def _attachments(msg: MIMEPart, fields: Fields, depth: int) -> tuple[list[Doc], list[str]]:
     """The documents of an email's attachments sift reads, each named by its file name, made unique, with those of a
     mail attached while `depth` lasts below it; and what had to be skipped of them."""
-    docs, problems, taken = [], [], set()
+    docs: list[Doc] = []
+    problems: list[str] = []
+    taken: set[str] = set()
     for part in msg.iter_attachments():
         name = _attachment_name(part)
         if not (name and (read := _reader(part, name, depth))):
@@ -707,33 +761,38 @@ def _attachments(msg, fields, depth):
     return docs, problems
 
 
-def _reader(part, name, depth):
+def _reader(part: MIMEPart, name: str, depth: int) -> Reader | None:
     """How sift reads an attachment: a mail while `depth` lasts, a file it reads whole; None for others."""
     if _attached_mail(part) is not None or extension(name) in EMAIL:
         return partial(_email, depth=depth - 1) if depth else None
     return READERS[extension(name)] if extension(name) in ATTACHED else None
 
 
-def _content(part, name):
+def _content(part: MIMEPart, name: str) -> bytes:
     """An attachment's bytes: a mail attached as message/rfc822 as that mail's, a text file's as UTF-8."""
     if (mail := _attached_mail(part)) is not None:
         return mail.as_bytes()
-    raw = part.get_payload(decode=True) or b""
+    raw = _payload(part)
     return _as_utf8(raw, part.get_content_charset()) if extension(name) in TEXT else raw
 
 
-def _attached_mail(part):
+def _payload(part: MIMEPart) -> bytes:
+    """A part's bytes, its transfer encoding undone; none of a part that holds parts."""
+    raw = part.get_payload(decode=True)
+    return raw if isinstance(raw, bytes) else b""
+
+
+def _attached_mail(part: MIMEPart) -> MIMEPart | None:
     """The mail a message/rfc822 attachment holds, or None."""
-    payload = part.get_payload() if part.get_content_type() == "message/rfc822" else None
-    return payload[0] if isinstance(payload, list) and payload else None
+    return next(part.iter_parts(), None) if part.get_content_type() == "message/rfc822" else None
 
 
-def _within(key, inner):
+def _within(key: str, inner: str) -> str:
     """The key of the document keyed `inner` of the attachment keyed `key`: the attachment's own, or one below it."""
     return f"{posixpath.splitext(key)[0]}/{inner}" if inner else key
 
 
-def _as_utf8(raw, charset):
+def _as_utf8(raw: bytes, charset: str | None) -> bytes:
     """A text attachment as UTF-8, as sift reads text files: as it is if it is UTF-8 already, whatever its mail says
     (mail clients call text us-ascii that isn't), else in the charset its mail declares, if Python knows it."""
     if not charset or _utf8(raw):
@@ -744,7 +803,7 @@ def _as_utf8(raw, charset):
         return raw
 
 
-def _utf8(raw):
+def _utf8(raw: bytes) -> bool:
     try:
         raw.decode()
     except UnicodeDecodeError:
@@ -752,7 +811,7 @@ def _utf8(raw):
     return True
 
 
-def _attachment_name(part):
+def _attachment_name(part: MIMEPart) -> str | None:
     """An attachment's file name without any folders it claims; a mail attached without one named by its subject, or
     "message.eml". None for any other attachment without a name."""
     name = re.split(r"[\\/]", part.get_filename() or "")[-1].strip()
@@ -764,7 +823,7 @@ def _attachment_name(part):
     return f"{subject or 'message'}.eml"
 
 
-def _unique(name, taken):
+def _unique(name: str, taken: set[str]) -> str:
     """`name`, or `name (2)` and so on if a name of `taken` is the same in any case; added to `taken`."""
     stem, ext = posixpath.splitext(name)
     key, n = name, 1
@@ -775,7 +834,7 @@ def _unique(name, taken):
     return key
 
 
-READERS = {
+READERS: dict[str, Reader] = {
     **dict.fromkeys(TEXT, _text),
     **dict.fromkeys(JSONL, _records),
     **dict.fromkeys(DOCUMENTS, _document),
@@ -785,7 +844,7 @@ READERS = {
 where fields are the collection's field choices and problems say what was skipped and why."""
 
 
-def extension(name):
+def extension(name: str) -> str:
     """A file name's extension, lowercase, by which sift picks its reader; "" for none, as for `.md`, a name that
     starts with a dot."""
     return posixpath.splitext(name)[1].lower()
@@ -794,7 +853,7 @@ def extension(name):
 MOST_TEXT = 1_000_000_000  # bytes SQLite stores as one value, as it is built (SQLITE_MAX_LENGTH): a document's text
 
 
-def load(path, fields=None):
+def load(path: str | Path, fields: Fields | None = None) -> tuple[list[Doc], list[str]] | None:
     """Read one file into documents with the reader for its extension (runs in worker processes). Returns
     (documents, problems), or None if the file can't be read. A text file of more than a document's text may be is
     left out unread: read, cut into passages and handed over, the store refused it, on every run."""

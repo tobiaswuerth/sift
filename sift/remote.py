@@ -15,9 +15,15 @@ import ssl
 import threading
 import urllib.parse
 import weakref
+from collections.abc import Iterable, Iterator
 from functools import cached_property
+from typing import TYPE_CHECKING, Any
 
 from . import __version__
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 PORT = 8766  # the worker's default
 BATCH = 256  # texts per request to embed
@@ -29,12 +35,12 @@ class RemoteError(ConnectionError):
     """The worker failed or can't be reached; the message says how, and never shows the key."""
 
 
-def fingerprint(der):
+def fingerprint(der: bytes) -> str:
     """A certificate's SHA-256, as the key carries it."""
     return base64.urlsafe_b64encode(hashlib.sha256(der).digest()).rstrip(b"=").decode()
 
 
-def _series(version):
+def _series(version: object) -> list[str]:
     """What two sifts must share to work together, by semantic versioning: from 1.0 on the major version, before it
     the minor one too."""
     parts = str(version).split(".")
@@ -45,7 +51,7 @@ class _Connection(http.client.HTTPSConnection):
     """HTTPS to the worker, kept open between requests. Every connect checks that the worker shows the certificate
     its key names, also when http.client reconnects by itself."""
 
-    def __init__(self, host, port, pin):
+    def __init__(self, host: str, port: int, pin: str) -> None:
         # The worker's certificate is its own, signed by no authority: the fingerprint in the key vouches for it
         # instead, checked before anything is sent, so a machine posing as the worker gets neither the token nor any
         # text.
@@ -54,13 +60,20 @@ class _Connection(http.client.HTTPSConnection):
         super().__init__(host, port, timeout=TIMEOUT, context=self._tls)
         self._pin = pin
 
-    def connect(self):
+    def connect(self) -> None:
         # The worker listens on IPv4, but a name often resolves to an IPv6 link-local address first. Where a firewall
         # dropped those attempts, every request waited 21 s for one to fail before the system tried IPv4.
         found = socket.getaddrinfo(self.host, self.port, type=socket.SOCK_STREAM)
-        address = min(found, key=lambda a: a[0] != socket.AF_INET)[4][:2]  # IPv4 if the name has one
-        self.sock = self._tls.wrap_socket(socket.create_connection(address, self.timeout), server_hostname=self.host)
-        if fingerprint(self.sock.getpeercert(binary_form=True)) != self._pin:
+        # A Python built without IPv6 hands an IPv6 address over as (family, bytes), which it can't connect to
+        ips = [(family, ip) for family, _, _, _, (ip, *_) in found if isinstance(ip, str)]
+        if not ips:
+            raise RemoteError(f"embedding remote {self.host} resolves to no address this Python can connect to")
+        ip = min(ips, key=lambda a: a[0] != socket.AF_INET)[1]  # IPv4 if the name has one
+        self.sock = self._tls.wrap_socket(
+            socket.create_connection((ip, self.port), self.timeout), server_hostname=self.host
+        )
+        der = self.sock.getpeercert(binary_form=True)  # None where the worker showed no certificate
+        if der is None or fingerprint(der) != self._pin:
             self.close()
             address = f"https://{self.host}:{self.port}"
             raise RemoteError(f"embedding remote {address} has another certificate than its key: not that worker")
@@ -72,7 +85,7 @@ class Remote:
     batch = BATCH
     main_thread = False  # no PyTorch: a request that hangs holds the call waiting for it, not the server's event loop
 
-    def __init__(self, url):
+    def __init__(self, url: str) -> None:
         parts = urllib.parse.urlsplit(url)
         self._token, _, self._pin = (parts.username or "").partition(".")
         if parts.scheme != "https" or not (parts.hostname and self._token and self._pin):
@@ -85,7 +98,7 @@ class Remote:
         weakref.finalize(self, self._connection.close)  # the kept connection closes with this object
 
     @cached_property
-    def info(self):
+    def info(self) -> dict[str, Any]:
         """What the worker says about itself: its models, the length of its vectors and its version. Asked once."""
         info = json.loads(self._request("/"))
         if _series(info.get("version")) != _series(__version__):
@@ -96,42 +109,42 @@ class Remote:
         return info
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self.info["model"]
 
-    def load(self):
+    def load(self) -> None:
         """Reach the worker now, to find out early whether it answers."""
         self.info  # noqa: B018 - asked for its side effect
 
-    def lengths(self, texts):
+    def lengths(self, texts: list[str]) -> list[int]:
         """Characters: the tokens are the worker's to count, and asking it would cost a request."""
         return [len(text) for text in texts]
 
-    def prepare(self):
+    def prepare(self) -> None:
         """The worker sizes its batches itself."""
 
-    def encode(self, texts, query=False):
+    def encode(self, texts: list[str], query: bool = False) -> "NDArray[np.float16]":
         """Normalised fp16 embeddings from the worker, one row per text."""
         import numpy as np  # here, not at the top: the CLI imports this module and starts with the standard library
 
         raw = self._request("/embed", {"texts": texts, "query": query})
         return np.frombuffer(raw, np.float16).reshape(len(texts), self.info["dim"])
 
-    def encode_batches(self, batches, query=False):
+    def encode_batches(self, batches: Iterable[list[str]], query: bool = False) -> Iterator["NDArray[np.float16]"]:
         """The worker's embeddings of each batch, in order, a request each."""
         return (self.encode(texts, query) for texts in batches)
 
-    def rerank(self, query, texts):
+    def rerank(self, query: str, texts: list[str]) -> "NDArray[np.float32]":
         """The worker's scores of (query, text) pairs."""
         import numpy as np
 
         return np.array(json.loads(self._request("/rerank", {"query": query, "texts": texts}))["scores"], np.float32)
 
-    def release_idle(self):
+    def release_idle(self) -> bool:
         """The worker hands its GPU back itself."""
         return False
 
-    def _request(self, path, payload=None):
+    def _request(self, path: str, payload: dict[str, Any] | None = None) -> bytes:
         """The body of the worker's answer to a GET of `path`, or to a POST of `payload` as JSON, one request at a
         time over the connection kept from the last one."""
         body = None if payload is None else json.dumps(payload).encode()
@@ -151,7 +164,7 @@ class Remote:
             raise RemoteError(f"embedding remote {self.address} answered {response.status}: {shown}")
         return data
 
-    def _exchange(self, *request):
+    def _exchange(self, *request: Any) -> tuple[http.client.HTTPResponse, bytes]:
         """The worker's response and its body. The worker closes connections that idle for a few seconds, so if the
         one kept from an earlier request turns out closed, the request goes once more, on a new connection."""
         kept = self._connection.sock is not None
@@ -163,7 +176,9 @@ class Remote:
                 raise
         return self._send(*request)
 
-    def _send(self, method, path, body, headers):
+    def _send(
+        self, method: str, path: str, body: bytes | None, headers: dict[str, str]
+    ) -> tuple[http.client.HTTPResponse, bytes]:
         self._connection.request(method, path, body, headers)
         response = self._connection.getresponse()
         return response, response.read()

@@ -6,7 +6,8 @@ import dataclasses
 import logging
 import sqlite3
 import sys
-from typing import Annotated, Any, Literal
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 import anyio
 from mcp.server.mcpserver import MCPServer
@@ -19,47 +20,55 @@ from . import models as _models
 from .hits import Options, line_span
 from .search import Index
 
+if TYPE_CHECKING:
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+
+    from .catalog import Collection as _Collection
+    from .models import Models
+
+T = TypeVar("T")
 log = logging.getLogger(__name__)
 
-INSTRUCTIONS = """Search the user's local documents and notes, indexed by sift.
-When a question touches what these collections cover, search here before answering from memory or searching the web,
-and cite what you find; say so when nothing relevant turns up.
+# How to search well, first: a client may keep only the start of a server's instructions (Claude Code is reported to
+# cut them at 2,048 characters), and the collections, as many as are indexed, follow it.
+INSTRUCTIONS = """Search the user's local documents and notes, indexed by sift. When a task touches what the collections
+below cover, search here before answering from memory or the web. Cite ids; say so when nothing relevant turns up.
 
-{collections}
+Pick the tool by what you have:
+- A question, topic or description: `query` (keywords and meaning, reranked). The default; the slowest.
+- An exact string, e.g. a version "3.12.4", an error code, identifier, name, DOI or "quoted phrase": `search`.
+- An idea whose wording you can't guess: `vsearch`.
+- A document, to find more like it: `similar`. Its links and backlinks: `links`. Its text: `get`.
+- A note, for documents naming it without a link: `mentions`. Links that lead nowhere yet: `unresolved`.
 
-- `query`: hybrid search with reranking. Best default for questions; slower than the others.
-- `search`: exact keyword search (BM25). Best for names, identifiers, exact terms and "quoted phrases".
-- `vsearch`: semantic search. Best when the wording of the answer is unknown.
-- `similar`: documents like a given one, e.g. more papers like one found.
-- `get`: a document, or some of its lines, such as a result's; or several at once, e.g. the results that matter.
-- `links`: the links of a note ([[wikilinks]], embeds, Markdown links): those it holds, and those into it (backlinks).
-- `unresolved`: link targets no note answers to yet: the notes a collection lacks.
-- `mentions`: documents that name a note without linking to it.
-- `reindex`: after writing, changing or deleting files in a collection, index them again, so searches find them.
-Results carry `id` (collection/path), `lines`, `title`, `score` and the passage's `text`. Scores rank the results of
-one call; each tool has its own scale, so don't compare them across tools. All search tools take `collection`, a
-`path` glob, `filters` on front-matter fields, `fields` to show, and `links_to` and `linked_from` to keep to a note's
-links; with `compact: true` results leave out the text: survey many results compactly, then read the ones that
-matter. With `adaptive: true`, a search returns only the results before the largest drop in score, and a few more: ask
-for more, e.g. k=30, and read fewer. A paper that several collections hold is one result, which names the other copies
-under `also`. To save calls, `search`, `vsearch` and `query` take a list of queries, and `get` a list of ids."""
+Research in rounds; one search is rarely enough:
+1. Survey: one call with several phrasings, query=["...", "...", "..."] (up to 20), with
+   `compact: true, k: 30, adaptive: true`: results without their text, so many fit. Send `search` for exact
+   strings in the same turn.
+2. Read: `get` the 3 or so best in one call, with their lines: id=[{"id": "...", "lines": "17-26"}, ...].
+3. Dig: `similar` and `links` on the best one; search again with the terms and names the hits use.
+4. Stop when a round returns only documents you have seen; then answer.
+
+Narrow any search with `collection`, a `path` glob, `filters` on front matter and `sort`. Scores rank one call's
+results only. After writing or deleting a file of a collection, `reindex` it."""
 
 
-def _collections(index):
+def _collections(index: Index) -> str:
     """The active collections with their folders, sizes and front-matter fields, read when the server starts."""
     active = index.active().values()
     if not active:
         return "No collections are active." if index.catalog.collections() else "No collections are indexed yet."
-    lines = []
+    lines: list[str] = []
     for c in active:
         try:
             lines.append(_collection_line(index, c))
         except sqlite3.DatabaseError as error:  # one store damaged keeps no server from starting
             lines.append(f"- {c.name} ({c.path}): {store.damage(c.name, error)}")
-    return "Indexed collections:\n" + "\n".join(lines)
+    return "Indexed collections (`status` lists them all, with their fields):\n" + "\n".join(lines)
 
 
-def _collection_line(index, c):
+def _collection_line(index: Index, c: "_Collection") -> str:
     """A collection as the server's instructions name it: its folder, size, front-matter fields and links."""
     n = store.counts(index.catalog.store(c))["docs"]
     line = f"- {c.name} ({c.path}): {n:,} document{'' if n == 1 else 's'}"
@@ -71,14 +80,14 @@ def _collection_line(index, c):
     return line
 
 
-async def _run(fn, *args, abortable=True, **kwargs):
+async def _run(fn: Callable[..., T], *args: Any, abortable: bool = True, **kwargs: Any) -> T:
     """Call an Index method, off the event loop (see `jobs`). Any failure becomes a ToolError, the only kind whose
     message the MCP library passes on (it tells the agent just "Error executing tool" otherwise): expected ones as
     their message, others, which are bugs, with their type, and with a traceback in the server's log."""
     return await jobs.run(_call, fn, *args, abortable=abortable, **kwargs)
 
 
-def _call(fn, *args, **kwargs):
+def _call(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     try:
         return fn(*args, **kwargs)
     except (KeyError, IndexError) as e:  # LookupErrors too, but a bug's, never what sift says of a call
@@ -91,7 +100,7 @@ def _call(fn, *args, **kwargs):
         raise _bug(e) from None
 
 
-def _bug(error):
+def _bug(error: Exception) -> ToolError:
     """What to tell the agent of an error that is a bug, being handled now: its type too, and its traceback logged."""
     log.exception("tool failed")
     return ToolError(f"{type(error).__name__}: {error}")
@@ -201,10 +210,20 @@ Budget = Annotated[
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 
 
-def _add_search(mcp, index, name, description, query_description):
+# What a search returns and what to do next, for agents that found a search tool by tool search and read its
+# description alone, without the server's instructions.
+RESULTS = (
+    "Results carry id (collection/path), title, lines, score and the passage's text; a document that several "
+    "collections hold is one result, naming the other copies under `also`. To survey many, compact: true leaves the "
+    "text out; then `get` the best few by id and lines, in one call."
+)
+
+
+def _add_search(mcp: MCPServer, index: Index, name: str, description: str, query_description: str) -> None:
     """Add the tool for the Index search called `name`: keyword search's takes a budget too."""
     method = getattr(index, name)
 
+    description += " " + RESULTS
     query_description += " Or several at once, a list of up to 20: a list of results for each, in order."
 
     async def tool(
@@ -220,7 +239,7 @@ def _add_search(mcp, index, name, description, query_description):
         links_to: LinksTo = None,
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
-    ) -> list[dict] | list[list[dict]]:
+    ) -> list[dict[str, Any]] | list[list[dict[str, Any]]]:
         return await _search(method, query, k, locals())
 
     async def timed(
@@ -237,7 +256,7 @@ def _add_search(mcp, index, name, description, query_description):
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
         budget: Budget = None,
-    ) -> list[dict] | list[list[dict]]:
+    ) -> list[dict[str, Any]] | list[list[dict[str, Any]]]:
         return await _search(method, query, k, locals())
 
     mcp.tool(name, description=description, annotations=READ_ONLY)(timed if name == "search" else tool)
@@ -246,12 +265,14 @@ def _add_search(mcp, index, name, description, query_description):
 OPTIONS = (*(option.name for option in dataclasses.fields(Options)), "budget")  # of a search, and keyword search's
 
 
-async def _search(method, subject, k, arguments):
+async def _search(method: Callable[..., Any], subject: str | list[str], k: int, arguments: dict[str, Any]) -> Any:
     """Run a search tool's Index method with the options among the tool's `arguments`, by name."""
     return await _run(method, subject, k, **{key: arguments[key] for key in OPTIONS if key in arguments})
 
 
-def _batch(index, asked, lines, fields):
+def _batch(
+    index: Index, asked: Sequence["str | Part"], lines: str | int | None, fields: list[str] | None
+) -> list[dict[str, Any]]:
     """The documents of one `get` that names several, their texts up to BATCH_TEXT characters in all."""
     if not asked:
         raise ValueError("get takes at least one id")
@@ -273,12 +294,12 @@ def _batch(index, asked, lines, fields):
     return documents
 
 
-def build(index=None):
+def build(index: Index | None = None) -> tuple[MCPServer, Index]:
     # Tools run one at a time on a worker thread (see `jobs`), which serialises GPU and SQLite work and leaves the
     # event loop free; the models run on the main thread, which holds the loop.
     index = index or Index()
     index.models_through(jobs.OnMainThread)
-    mcp = MCPServer("sift", instructions=INSTRUCTIONS.format(collections=_collections(index)))
+    mcp = MCPServer("sift", instructions=f"{INSTRUCTIONS}\n\n{_collections(index)}")
     _add_search(
         mcp,
         index,
@@ -286,7 +307,8 @@ def build(index=None):
         "Exact keyword search, ranked by BM25 (scores from 0 up, higher is better), over each passage's text, its "
         "document's title and front-matter values, such as authors and ids. When no passage holds all terms of a "
         "query without operators, passages holding any of them are returned; a query with operators is taken as it "
-        "is, so drop terms when it finds nothing.",
+        'is, so drop terms when it finds nothing. For strings known exactly: versions such as "3.12.4", error codes, '
+        'identifiers, names, DOIs, "quoted phrases". For a question or topic, use `query`.',
         'Keywords. "Exact phrases", prefix*, AND, OR, NOT (in capitals) and parentheses work, e.g. '
         '"notice period" AND (contract OR agreement); title: and meta: limit a term to the title or the front matter.',
     )
@@ -294,20 +316,28 @@ def build(index=None):
         mcp,
         index,
         "vsearch",
-        "Semantic search: passages closest in meaning to the query (cosine similarity, -1 to 1).",
+        "Semantic search: passages closest in meaning to the query (cosine similarity, -1 to 1). For ideas whose "
+        "wording you can't guess; `query` adds keywords and reranking, and is usually better.",
         "What to find, in any wording.",
     )
     _add_search(
         mcp,
         index,
         "query",
-        "Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. Best for questions. "
-        "Scores are the reranker's raw scores, higher for more relevant; with the default reranker, close matches "
-        "score about 2.5 to 4, and unrelated results below 2.",
+        "Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. The default for "
+        'questions, topics and descriptions; the slowest search. For an exact string, e.g. a version "3.12.4", an '
+        "error code or a name, use `search`. One phrasing rarely finds everything: pass several phrasings at once, as "
+        "a list, and search again with the terms the hits use. Scores are the reranker's raw scores, higher for more "
+        "relevant; with the default reranker, close matches score about 2.5 to 4, and unrelated results below 2.",
         "A question, or a description of what to find.",
     )
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(
+        annotations=READ_ONLY,
+        description="Documents closest in meaning to a document, e.g. more papers like one found: run it on a search's "
+        "best result to widen the search. The document itself is left out, and so are its copies in other collections "
+        f"(cosine similarity, -1 to 1). {RESULTS}",
+    )
     async def similar(
         id: Id,
         k: K = 10,
@@ -321,17 +351,16 @@ def build(index=None):
         links_to: LinksTo = None,
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
-    ) -> list[dict]:
-        """Documents closest in meaning to a document, e.g. more papers like one found; the document itself is left
-        out, and so are its copies in other collections (cosine similarity, -1 to 1)."""
+    ) -> list[dict[str, Any]]:
         return await _search(index.similar, id, k, locals())
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get(id: Ids, lines: Lines = None, fields: Fields = None) -> str | dict | list[dict]:
-        """Text of a document, as indexed: all of it, or some of its lines. With `fields`, the document as
-        {id, title, fields, text}. Several documents at once (up to 100) come as a list of such, `lines` applying to
-        those asked by id alone; one that can't be read as {id, error}. Texts past 100,000 characters in all are left
-        out, each with the reason (`omitted`): get those alone or by lines."""
+    async def get(id: Ids, lines: Lines = None, fields: Fields = None) -> str | dict[str, Any] | list[dict[str, Any]]:
+        """Read what a search found: the text of a document, as indexed, all of it or some of its lines, such as a
+        result's. Read the best few results at once, by id and lines, rather than one call each. With `fields`, the
+        document as {id, title, fields, text}. Several documents at once (up to 100) come as a list of such, `lines`
+        applying to those asked by id alone; one that can't be read as {id, error}. Texts past 100,000 characters in
+        all are left out, each with the reason (`omitted`): get those alone or by lines."""
         if isinstance(id, list):
             return await _run(_batch, index, id, lines, fields)
         if fields:
@@ -339,7 +368,7 @@ def build(index=None):
         return await _run(index.get, id, lines)
 
     @mcp.tool(annotations=READ_ONLY)
-    async def status() -> dict:
+    async def status() -> dict[str, Any]:
         """Collections with their folders (`path`), whether they are `active` (searched), their index files (`store`)
         and sizes; of active ones the counts of documents, chunks and those `embedded`, whether keyword search is
         quick (`keywords`: "ready"), their front-matter `fields`, and their links, or why their index can't be opened
@@ -365,7 +394,7 @@ def build(index=None):
             ),
         ] = None,
         k: Annotated[int, Field(description="At most this many links out, and this many documents in.")] = 50,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Links between Markdown notes: [[wikilinks]], ![[embeds]] and [Markdown](links.md), in the text and in
         front-matter values. "out" lists each link the note holds, with its line and front-matter field, and where it
         leads: the document's id, and `via` path, name or alias; or `ambiguous`, with the candidates; or `unresolved`,
@@ -377,7 +406,7 @@ def build(index=None):
     async def unresolved(
         collection: Annotated[str | None, Field(description="Only this collection's links.")] = None,
         k: Annotated[int, Field(description="Number of targets.")] = 50,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Link targets no document answers to: the notes a collection lacks, most linked first, each with how many
         documents link it and the ids of a few of them."""
         return await _run(index.unresolved, collection, k)
@@ -393,7 +422,7 @@ def build(index=None):
         ] = None,
         fields: Fields = None,
         compact: Compact = False,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Documents that name a note without linking to it (unlinked mentions), in any collection: found by keyword
         search for the note's names as phrases, its file name, title and aliases. Results look like search results;
         the note itself and the documents linking it are left out. Read the passages to judge which mean the note."""
@@ -408,7 +437,7 @@ def build(index=None):
                 "a collection. A file that is gone has its documents removed."
             ),
         ],
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Index files again right after writing, changing or deleting them, so that the next search finds them as
         they are now: their text, front matter and links, and, if the index is embedded, their passages for vsearch
         and query. Changes only sift's index, never a file. Per file: its id and status (added, changed, unchanged,
@@ -422,21 +451,21 @@ IDLE_CHECK_SECONDS = 30  # how often the server checks whether the models can le
 SHUTDOWN_SECONDS = 3  # how long Ctrl+C waits for open requests before the server stops anyway
 
 
-async def release_when_idle(models):
+async def release_when_idle(models: "Models") -> None:
     """Every IDLE_CHECK_SECONDS, let the models hand the GPU back if it has been idle long enough."""
     while True:
         await anyio.sleep(IDLE_CHECK_SECONDS)
         models.release_idle()
 
 
-def http_app(mcp, index, host):
+def http_app(mcp: MCPServer, index: Index, host: str) -> "Starlette":
     """The app `sift serve` runs over HTTP: MCP under /mcp, and the UI under /ui, where the address alone leads."""
     from starlette.responses import RedirectResponse
     from starlette.routing import Mount, Route
 
     from . import ui
 
-    async def home(request):
+    async def home(request: "Request") -> RedirectResponse:
         return RedirectResponse(ui.PREFIX)
 
     app = mcp.streamable_http_app(host=host)  # the host decides on DNS-rebinding protection
@@ -444,11 +473,13 @@ def http_app(mcp, index, host):
     return app
 
 
-async def _serve_http(mcp, index, host, port):
+async def _serve_http(mcp: MCPServer, index: Index, host: str, port: int) -> None:
     await serve_app(http_app(mcp, index, host), host, port, mcp.settings.log_level.lower())
 
 
-async def serve_app(app, host, port, log_level="info", access_log=True, **options):
+async def serve_app(
+    app: "Starlette", host: str, port: int, log_level: str = "info", access_log: bool = True, **options: Any
+) -> None:
     """Serve an HTTP app with uvicorn, but with a time limit on shutdown. Without one, uvicorn waits for every
     connection to close (Python 3.12+), even after a second Ctrl+C, and a client that leaves a request unfinished
     keeps the server from ever stopping. Options go to uvicorn, e.g. its TLS files."""
@@ -468,7 +499,7 @@ async def serve_app(app, host, port, log_level="info", access_log=True, **option
     await uvicorn.Server(config).serve()
 
 
-def loop_options(stdio=False):
+def loop_options(stdio: bool = False) -> dict[str, Any]:
     """How anyio runs a server's event loop. On Windows, HTTP is served on a selector loop: the default one, the
     proactor, closes the listening socket for good when one accept fails (WinError 64, a client gone mid-accept), and
     the server then runs on but answers no one. Over stdio, which listens on no socket, the default stays."""
@@ -477,12 +508,12 @@ def loop_options(stdio=False):
     return {}
 
 
-def _no_cancelled_requests(record):
+def _no_cancelled_requests(record: logging.LogRecord) -> bool:
     """Drop the traceback uvicorn logs for each request it cancels at shutdown; it says beforehand that it does."""
     return not (record.exc_info and isinstance(record.exc_info[1], asyncio.CancelledError))
 
 
-async def _serve(mcp, index, host, port, stdio, models):
+async def _serve(mcp: MCPServer, index: Index, host: str, port: int, stdio: bool, models: "Models") -> None:
     # One event loop for the transport and the idle check: both stay on the main thread, where PyTorch must run.
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(release_when_idle, models)
@@ -502,7 +533,7 @@ async def _serve(mcp, index, host, port, stdio, models):
         tasks.cancel_scope.cancel()
 
 
-def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
+def serve(host: str = "127.0.0.1", port: int = 8765, stdio: bool = False, models: "Models | None" = None) -> None:
     """Run the MCP server, with `models` (default: `models.default()`) loaded up front, so the first search is quick."""
     models = models or _models.default()
     mcp, index = build(Index(models=models))

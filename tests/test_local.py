@@ -210,6 +210,15 @@ def test_a_batch_out_of_memory_in_a_stream_is_embedded_in_smaller_parts(make_loc
     assert models.batch == 2  # halved, as it ran out of memory: the batches after it in parts of the smaller size
 
 
+def test_a_batch_larger_than_the_gpu_takes_comes_in_its_turn(make_local):
+    # One launched before it is collected first: its vectors come before those of the batch embedded in parts.
+    models = make_local("cuda")
+    models.accelerator.batch_size = 2
+    batches = [["a"], ["b", "c", "d"], ["e"]]
+    got = list(models.encode_batches(iter(batches)))
+    assert [g.tolist() for g in got] == [models.encode(b).tolist() for b in batches]
+
+
 def test_lengths_are_tokens_as_the_model_reads_them(fake_models, monkeypatch):
     monkeypatch.setattr(local, "LENGTHS_AT_ONCE", 2)  # several rounds
     texts = ["brush", "brush strokes on canvas", "word " * 5000, ""]

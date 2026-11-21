@@ -4,7 +4,7 @@ search's (see search.Index._where)."""
 
 import json
 import re
-from typing import cast
+from typing import Any, TypeGuard, cast
 
 Value = str | int | float  # what a filter compares with; yes and no are numbers here, as Python has them
 
@@ -17,6 +17,24 @@ NUMBER_FIRST = (
     "(type IN ('integer', 'real', 'true', 'false') OR (type = 'text' AND (ltrim(value) GLOB '[0-9]*'"
     " OR ltrim(value) GLOB '[-+.][0-9]*' OR ltrim(value) GLOB '[-+].[0-9]*')))"
 )
+
+
+def each(value: object) -> list[Any]:
+    """The values of a front-matter field or a filter: a list's, or the one."""
+    return value if _is_list(value) else [value]
+
+
+def conditions(value: object) -> dict[Any, Any]:
+    """A filter's conditions, {operator: value}: a value alone is {"=": value}."""
+    return value if _is_dict(value) else {"=": value}
+
+
+def _is_list(value: object) -> TypeGuard[list[Any]]:  # parsed from JSON, or a caller's: it may hold anything
+    return isinstance(value, list)
+
+
+def _is_dict(value: object) -> TypeGuard[dict[Any, Any]]:
+    return isinstance(value, dict)
 
 
 def comparison(key: str, op: str, value: object) -> tuple[str, list[Value]]:

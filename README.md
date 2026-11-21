@@ -88,8 +88,9 @@ computer.
 
 Every result carries `id` (`collection/path`), `title`, `lines`, `score` and the passage's `text`. The search tools
 take up to 20 queries per call, filters on front matter, paths and links, `compact` (no text), `adaptive` (only the
-results before the largest drop in score) and more; the tools' schemas describe every parameter, and the server tells
-agents which collections and front-matter fields exist.
+results before the largest drop in score) and more; the tools' schemas describe every parameter. When an agent
+connects, the server tells it which tool fits which kind of question, how to research in rounds (several phrasings
+at once, a compact survey, then the best few read), and which collections and front-matter fields exist.
 
 ## Commands
 

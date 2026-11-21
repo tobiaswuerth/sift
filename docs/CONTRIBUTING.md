@@ -68,13 +68,13 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 - **Full coverage:** `pytest --cov` requires 100% line and branch coverage.
 - **The gate:** `python scripts/gate.py` runs every check a change must pass, and is green when all did: the
   pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run.
-- **Types:** [pyright](https://github.com/microsoft/pyright) checks the modules listed under `[tool.pyright]` in
-  `pyproject.toml`, in its strict mode, for the oldest Python sift runs on, and as on Linux, macOS and Windows each,
-  whichever runs it: `pyright --pythonplatform Linux` (`Darwin`, `Windows`), in the activated environment. The list
-  only grows, a few modules a pull request, until it is all of `sift/`; a new module is on it from its start, and
-  `tests/test_package.py` names those still waiting. A module joins once pyright finds nothing in it: fully
-  annotated, and whatever it calls in a module still waiting annotated too. No finding is silenced, by a comment or
-  by a setting.
+- **Types:** [pyright](https://github.com/microsoft/pyright) checks all of `sift/` in its strict mode, as on Linux,
+  macOS and Windows each, whichever runs it: `pyright --pythonplatform Linux` (`Darwin`, `Windows`), in the activated
+  environment. It checks for the Python of CI's types job, whose packages it reads (NumPy's types name what only that
+  Python has); that sift runs on the oldest Python it claims, ruff's target and CI's tests there hold. A package that
+  ships no types gets a stub in `typings/` of what sift calls of it; one whose types don't fit is reached through a
+  Protocol of what sift uses. No finding is silenced by a setting, and by a comment only with the owner's yes, for
+  one rule on one line, which `tests/test_package.py` lists.
 - **Quality gates:** pre-commit runs on every commit and in CI: ruff (lint and format), whitespace, line endings, byte
   order marks, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schemas, actionlint and codespell.
   Workflows name their actions by commit, which a test holds them to.

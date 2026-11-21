@@ -5,57 +5,82 @@ asks which it has.
 This module loads neither PyTorch nor a model: a machine searching through a worker never needs them.
 """
 
+from collections.abc import Iterable, Iterator
 from functools import cache
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from . import remote, settings
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 
 class Models(Protocol):
     """An embedding model and a reranker, wherever they run."""
 
-    name: str  # the embedding model, as the index records it
-    address: str  # where the models compute, to show: a device or a worker's address
-    batch: int  # texts per encode() call: small enough to fit, large enough to be quick
-    main_thread: bool  # whether a server calls them on its main thread: PyTorch crashes in others on Python 3.15
+    @property
+    def name(self) -> str:
+        """The embedding model, as the index records it."""
+        ...
+
+    @property
+    def address(self) -> str:
+        """Where the models compute, to show: a device or a worker's address."""
+        ...
+
+    @property
+    def batch(self) -> int:
+        """Texts per encode() call: small enough to fit, large enough to be quick."""
+        ...
+
+    @property
+    def main_thread(self) -> bool:
+        """Whether a server calls them on its main thread: PyTorch crashes in others on Python 3.15."""
+        ...
 
     def load(self) -> None:
         """Get ready now, so the first request is quick."""
 
-    def lengths(self, texts) -> list:
+    def lengths(self, texts: list[str]) -> list[int]:
         """How long each text is to the embedding model, to batch texts of similar length: a batch is padded to its
         longest. Runs in any thread, beside the others."""
+        ...
 
     def prepare(self) -> None:
         """Get ready to embed: size batches to the memory where the models run, if that matters there."""
 
-    def encode(self, texts, query=False):
+    def encode(self, texts: list[str], query: bool = False) -> "NDArray[np.float16]":
         """Normalised fp16 embeddings, one row per text."""
+        ...
 
-    def encode_batches(self, batches, query=False):
+    def encode_batches(self, batches: Iterable[list[str]], query: bool = False) -> Iterator["NDArray[np.float16]"]:
         """The embeddings of each batch of texts (an iterable), in order, as an iterator: the next batch prepared while
         the one before is embedded. Iterate it on the thread that may run the models."""
+        ...
 
-    def rerank(self, query, texts):
+    def rerank(self, query: str, texts: list[str]) -> "NDArray[np.float32]":
         """Scores of (query, text) pairs, higher for better matches."""
+        ...
 
     def release_idle(self) -> bool:
         """Hand the GPU back after a while without use. Returns whether anything moved."""
+        ...
 
 
-def default():
+def default() -> Models:
     """The models this process uses: the worker set in SIFT_EMBED_REMOTE, else those of this machine."""
     url = settings.current().remote
     return _remote(url) if url else _local()
 
 
 @cache
-def _remote(url):
+def _remote(url: str) -> remote.Remote:
     return remote.Remote(url)  # one per worker, so what it said about itself is asked once
 
 
 @cache
-def _local():
+def _local() -> Models:
     from .local import Local  # PyTorch, only when this machine computes
 
     return Local()

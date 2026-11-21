@@ -10,13 +10,23 @@ import functools
 import logging
 import queue
 import threading
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, wait
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import anyio
 import anyio.from_thread
 import anyio.to_thread
 
 from . import store
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
+
+    from .models import Models
+
+T = TypeVar("T")
 
 log = logging.getLogger(__name__)
 ABORT_CHECK = 0.05  # seconds between looks at store.ABORT while a worker's answer is awaited
@@ -27,27 +37,27 @@ class Cancelled(Exception):
 
 
 class _Call:
-    def __init__(self):
+    def __init__(self) -> None:
         self.cancelled = False
 
 
 _turn = threading.Lock()  # held by the call that runs: one at a time
 _state = threading.Lock()  # guards _running, so that a cancellation never stops the call after the cancelled one
-_running = None
+_running: _Call | None = None
 
 
-async def run(fn, *args, abortable=True, **kwargs):
+async def run(fn: Callable[..., T], *args: Any, abortable: bool = True, **kwargs: Any) -> T:
     """Run fn(*args, **kwargs) on a worker thread once the calls before it are done, and return what it returns. If
     the awaiting task is cancelled, it returns at once; the call itself stops (SQLite statements interrupted, models
     refused) unless not `abortable`, and one that hasn't started yet never does."""
     call = _Call()
 
-    def work():
+    def work() -> T:
         global _running
         with _turn:
             with _state:
-                if call.cancelled:
-                    return None
+                if call.cancelled:  # its caller has gone, and what this raises reaches no one
+                    raise Cancelled("the call was cancelled")
                 _running = call
                 store.ABORT.clear()
             try:
@@ -71,40 +81,72 @@ async def run(fn, *args, abortable=True, **kwargs):
 class OnMainThread:
     """Models whose methods run on the main thread, wherever they are called, if they must (`main_thread`): from a
     worker thread of `run`, through the event loop, which waits meanwhile. A worker's run in a thread of their own,
-    waited for until the call is cancelled (see _abortable). Called for a cancelled call, they raise Cancelled."""
+    waited for until the call is cancelled (see _abortable). Called for a cancelled call, they raise Cancelled. Each
+    member of models.Models is written out: the type checker holds the two together."""
 
-    def __init__(self, models):
-        self._models = models._models if isinstance(models, OnMainThread) else models
+    def __init__(self, models: "Models") -> None:
+        self._models: Models = models._models if isinstance(models, OnMainThread) else models
 
-    def __getattr__(self, name):
-        value = getattr(self._models, name)
-        if not callable(value):
-            return value
+    @property
+    def name(self) -> str:
+        return self._models.name
 
-        @functools.wraps(value)
-        def on_main_thread(*args, **kwargs):
-            if store.ABORT.is_set():
-                raise Cancelled("the call was cancelled")
-            call = functools.partial(value, *args, **kwargs)
-            if not self._models.main_thread:
-                return _abortable(call)
-            if threading.current_thread() is threading.main_thread():
-                return call()
-            return anyio.from_thread.run_sync(call)
+    @property
+    def address(self) -> str:
+        return self._models.address
 
-        return on_main_thread
+    @property
+    def batch(self) -> int:
+        return self._models.batch
+
+    @property
+    def main_thread(self) -> bool:
+        return self._models.main_thread
+
+    def load(self) -> None:
+        self._run(self._models.load)
+
+    def lengths(self, texts: list[str]) -> list[int]:
+        return self._run(functools.partial(self._models.lengths, texts))
+
+    def prepare(self) -> None:
+        self._run(self._models.prepare)
+
+    def encode(self, texts: list[str], query: bool = False) -> "NDArray[np.float16]":
+        return self._run(functools.partial(self._models.encode, texts, query))
+
+    def encode_batches(self, batches: Iterable[list[str]], query: bool = False) -> Iterator["NDArray[np.float16]"]:
+        return self._run(functools.partial(self._models.encode_batches, batches, query))
+
+    def rerank(self, query: str, texts: list[str]) -> "NDArray[np.float32]":
+        return self._run(functools.partial(self._models.rerank, query, texts))
+
+    def release_idle(self) -> bool:
+        return self._run(self._models.release_idle)
+
+    def _run(self, call: Callable[[], T]) -> T:
+        """call(), a method of the models, where they run."""
+        if store.ABORT.is_set():
+            raise Cancelled("the call was cancelled")
+        if not self._models.main_thread:
+            return _abortable(call)
+        if threading.current_thread() is threading.main_thread():
+            return call()
+        return anyio.from_thread.run_sync(call)
 
 
 class _Requests:
     """A worker's requests, made one after another in a thread of their own: one cancelled before its turn is never
     made. A daemon, so that a request left waiting holds up no exit."""
 
-    def __init__(self):
-        self._queue, self._lock, self._thread = queue.SimpleQueue(), threading.Lock(), None
+    def __init__(self) -> None:
+        self._queue: queue.SimpleQueue[tuple[Future[Any], Callable[[], Any]]] = queue.SimpleQueue()
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
 
-    def submit(self, call):
+    def submit(self, call: Callable[[], T]) -> Future[T]:
         """call(), in its turn: a Future of its answer."""
-        answer = Future()
+        answer: Future[T] = Future()
         with self._lock:
             if self._thread is None:
                 self._thread = threading.Thread(target=self._serve, name="sift-worker-requests", daemon=True)
@@ -112,7 +154,7 @@ class _Requests:
         self._queue.put((answer, call))
         return answer
 
-    def _serve(self):
+    def _serve(self) -> None:
         while True:
             answer, call = self._queue.get()
             if not answer.set_running_or_notify_cancel():  # cancelled before its turn
@@ -129,7 +171,7 @@ class _Requests:
 _requests = _Requests()
 
 
-def _abortable(call):
+def _abortable(call: Callable[[], T]) -> T:
     """call() as a worker's request (see _Requests), its answer awaited until the call it belongs to is cancelled:
     then Cancelled at once, and the request dropped if not made yet, its answer if it was. A worker's request can wait
     minutes for one (remote.TIMEOUT), and meanwhile the server takes no other call."""

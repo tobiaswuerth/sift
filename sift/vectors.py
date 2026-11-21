@@ -8,10 +8,14 @@ exactly found 99.75% of exact search's top 10 and its known-item MRR, 0.9530 (do
 import os
 import threading
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from functools import cache
+from types import ModuleType
+from typing import Any, TypeVar
 
 import numpy as np
+from numpy.typing import NDArray
 
 from . import console, settings
 
@@ -29,11 +33,21 @@ MARGIN = 1.25  # candidates checked beyond those that, at the rate let through s
 _BITS = np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).astype(np.float32)  # each byte's bits
 _NONE = np.zeros(0, bool)  # no codes left out of a scan
 
+Ids = NDArray[np.int64]
+IdList = Sequence[int] | Ids
+Floats = NDArray[np.floating[Any]]
+Bits = NDArray[np.uint8]  # packed codes, a row each
+Distances = NDArray[np.uint16]
+Mask = NDArray[np.bool_]
+Candidates = tuple[Ids, Distances, Ids, Ids]  # ids, distances, which collection holds each, and where in it
+Measure = Callable[[NDArray[np.uint64], NDArray[np.uint64], Mask | None, Distances], Ids]
+_T = TypeVar("_T")
+_U = TypeVar("_U")
 
-_scan = None  # the compiled scan, `scan`, once compile_scan loaded it
+_scan: ModuleType | None = None  # the compiled scan, `scan`, once compile_scan loaded it
 
 
-def compile_scan():
+def compile_scan() -> None:
     """Load the compiled scan of the codes (see `scan`), for collections of COMPILED codes or more: loading Numba and
     the compiled code takes a second or two, which a server pays once, as it starts; a single search from the command
     line keeps NumPy's scan, which costs it less. One that can't be loaded is said, and NumPy's scan stays."""
@@ -52,7 +66,7 @@ def compile_scan():
     _scan = scan
 
 
-def codes(matrix):
+def codes(matrix: Floats) -> Bits:
     """The signs of vectors, one bit per dimension (positive is 1), packed in whole 8-byte words: uint8, a row each."""
     bits = np.packbits(np.asarray(matrix) > 0, axis=1)
     pad = -bits.shape[1] % 8
@@ -63,15 +77,22 @@ class Filter(ABC):
     """Which chunks a search may find (see top), asked either way."""
 
     @abstractmethod
-    def check(self, ids):
+    def check(self, ids: Ids) -> Mask:
         """Which of these chunks it lets through, as a boolean array: a lookup each."""
 
     @abstractmethod
-    def listed(self):
+    def listed(self) -> Ids:
         """The ids of all the chunks it lets through: a pass over every document."""
 
 
-def top(held, query, k, exact, allowed=None, excluded=None):
+def top(
+    held: Sequence["Codes"],
+    query: Floats,
+    k: int,
+    exact: Callable[[Ids], tuple[Ids, NDArray[np.float16]]],
+    allowed: IdList | Filter | None = None,
+    excluded: IdList | None = None,
+) -> list[tuple[int, float]]:
     """The k chunks nearest `query`, a normalised vector, as [(id, cosine)], best first, ties by id, among the codes
     `held` (a Codes per collection): of those `allowed` (ids, or a Filter; None for all) but those `excluded`. Of the
     SHORTLIST times RESCORE nearest by Hamming distance, of all collections together, the RESCORE best by the query's
@@ -100,7 +121,13 @@ def top(held, query, k, exact, allowed=None, excluded=None):
     return [(int(found[i]), float(scores[i])) for i in order]
 
 
-def _nearest(held, bits, want, allowed, excluded):
+def _nearest(
+    held: Sequence["Codes"],
+    bits: Bits,
+    want: int,
+    allowed: IdList | None,
+    excluded: IdList | None,
+) -> Candidates:
     """The `want` nearest codes of all collections, ties by id, of those `allowed` (ids; None for all) but those
     `excluded`, as _between gives them."""
     distances, within = _measured(held, bits, allowed, excluded)
@@ -108,7 +135,12 @@ def _nearest(held, bits, want, allowed, excluded):
     return _first(_between(held, distances, 0, high), want)
 
 
-def _measured(held, bits, allowed=None, excluded=None):
+def _measured(
+    held: Sequence["Codes"],
+    bits: Bits,
+    allowed: IdList | None = None,
+    excluded: IdList | None = None,
+) -> tuple[list[Distances], Ids]:
     """Each collection's distances to the query's code (see Codes.measure), and how many codes of all collections
     are within each distance (those left out not counted)."""
     measured = [c.measure(bits, allowed, excluded) for c in held]
@@ -116,26 +148,32 @@ def _measured(held, bits, allowed=None, excluded=None):
     return [distances for distances, _ in measured], np.cumsum(counts)
 
 
-def _checked(held, bits, want, allowed, excluded):
+def _checked(
+    held: Sequence["Codes"], bits: Bits, want: int, allowed: Filter, excluded: IdList | None
+) -> Candidates | None:
     """The `want` nearest codes of all collections, ties by id, that the Filter `allowed` lets through, but those
     `excluded`, as _between gives them: the nearest checked first, all codes at a distance together, more each time,
     as many as would be enough at the rate let through so far. None once that would check more than SCAN_SHARE of the
     codes."""
     distances, within = _measured(held, bits, excluded=excluded)
-    passed, found, low, n = [], 0, 0, want  # codes from distance `low` on are unchecked
+    passed: list[Candidates] = []
+    found, low, n = 0, 0, want  # codes from distance `low` on are unchecked
     while n <= SCAN_SHARE * within[-1]:
         high = int(np.searchsorted(within, n))  # the codes up to this distance are at least n
         candidates = _between(held, distances, low, high)
         let = np.asarray(allowed.check(candidates[0]), bool)
-        passed.append(tuple(part[let] for part in candidates))
+        passed.append((candidates[0][let], candidates[1][let], candidates[2][let], candidates[3][let]))
         found, checked, low = found + int(let.sum()), int(within[high]), high + 1
         if found >= want:
-            return _first(tuple(np.concatenate(part) for part in zip(*passed)), want)
+            ids, distance, owner, rows = zip(*passed)
+            return _first(
+                (np.concatenate(ids), np.concatenate(distance), np.concatenate(owner), np.concatenate(rows)), want
+            )
         n = max(2 * checked, checked + int((want - found) * checked / max(found, 1) * MARGIN))
     return None
 
 
-def _between(held, distances, low, high):
+def _between(held: Sequence["Codes"], distances: Sequence[Distances], low: int, high: int) -> Candidates:
     """The codes of all collections at distances from low to high: (their ids, distances, which of `held` holds each,
     and where in it)."""
     rows = [c.between(d, low, high) for c, d in zip(held, distances)]
@@ -147,14 +185,14 @@ def _between(held, distances, low, high):
     )
 
 
-def _first(candidates, n):
+def _first(candidates: Candidates, n: int) -> Candidates:
     """The n nearest of candidates as _between gives them, ties by id."""
     ids, distance, *_ = candidates
     pick = np.lexsort((ids, distance))[:n]
-    return tuple(part[pick] for part in candidates)
+    return (candidates[0][pick], candidates[1][pick], candidates[2][pick], candidates[3][pick])
 
 
-def _best_by_floats(held, query, candidates, n):
+def _best_by_floats(held: Sequence["Codes"], query: NDArray[np.float32], candidates: Candidates, n: int) -> Ids:
     """The ids of the n best candidates (as _between gives them) by the query's floats against their bits, ties by
     id: q . (2b - 1) = 2 q . b - sum(q), and per byte of a code, q . b is a sum looked up for its 256 values."""
     ids, _, owner, rows = candidates
@@ -175,20 +213,27 @@ class Codes:
     """The codes of the vectors of chunks `ids`, rows of `bits`, of one collection. Patched codes keep these as they
     are and add to them."""
 
-    def __init__(self, ids, bits, *, _parts=None, _alive=None):
+    def __init__(
+        self,
+        ids: IdList,
+        bits: Bits | None,
+        *,
+        _parts: list[Bits] | None = None,
+        _alive: Mask | None = None,
+    ) -> None:
         self.ids = np.asarray(ids, np.int64)
         self._parts = _parts or [np.ascontiguousarray(bits)]  # rows of codes, in the order of `ids`
         self._alive = _alive  # which of `ids` still count; None: all
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.ids) if self._alive is None else int(self._alive.sum())
 
     @property
-    def width(self):
+    def width(self) -> int:
         """The bytes of each code."""
         return self._parts[0].shape[1]
 
-    def rows(self, at):
+    def rows(self, at: Ids) -> Bits:
         """The codes at these places in `ids`."""
         out, start = np.empty((len(at), self.width), np.uint8), 0
         for part in self._parts:
@@ -197,13 +242,13 @@ class Codes:
             start += len(part)
         return out
 
-    def live(self):
+    def live(self) -> tuple[Ids, Bits]:
         """The ids that count and their codes, by id."""
         rows = np.flatnonzero(self._alive) if self._alive is not None else np.arange(len(self.ids))
         rows = rows[np.argsort(self.ids[rows], kind="stable")]
         return self.ids[rows], np.concatenate(self._parts)[rows]
 
-    def patched(self, removed, ids, bits):
+    def patched(self, removed: IdList, ids: IdList, bits: Bits) -> "Codes":
         """These codes without those of the chunks `removed`, and with those of the chunks `ids`, rows of `bits`, which
         replace any these hold under the same ids, as of a chunk embedded again. The codes loaded
         stay as they are, masked; the added ones form one more part, rebuilt on every patch, small."""
@@ -221,7 +266,7 @@ class Codes:
             _alive=np.concatenate([alive[: len(base)], np.ones(len(added) + len(ids), bool)]),
         )
 
-    def appended(self, ids, bits):
+    def appended(self, ids: IdList, bits: Bits) -> "Codes":
         """These codes, and those of the chunks `ids`, rows of `bits`, which none of them holds (written past the last
         by `sift embed`): the codes loaded stay as they are, and the added ones form a part of their own, merged with
         the part before once as large. Joined to all added before, a slab a minute for a day copied every code embedded
@@ -239,7 +284,7 @@ class Codes:
             _alive=None if self._alive is None else np.concatenate([self._alive, np.ones(len(ids), bool)]),
         )
 
-    def _keep(self, allowed, excluded):
+    def _keep(self, allowed: IdList | None, excluded: "IdList | None") -> Mask | None:
         """Which of `ids` may be found, or None for all."""
         keep = self._alive
         if allowed is not None:
@@ -250,42 +295,51 @@ class Codes:
             keep = outside if keep is None else keep & outside
         return keep
 
-    def measure(self, query_bits, allowed=None, excluded=None):
+    def measure(
+        self,
+        query_bits: Bits,
+        allowed: IdList | None = None,
+        excluded: IdList | None = None,
+    ) -> tuple[Distances, Ids]:
         """The Hamming distance of every code to the query's, by `ids`, FAR for those that don't count (those not
         `allowed`, ids or None for all, and those `excluded`); and how many codes that count are at each distance,
         from 0 to every bit: each part of the codes in one pass (see `scan`)."""
         keep, word = self._keep(allowed, excluded), np.ascontiguousarray(query_bits).view(np.uint64)
         out, at, counts = np.empty(len(self.ids), np.uint16), 0, np.zeros(8 * len(query_bits) + 1, np.int64)
-        count = _compiled if _scan is not None and len(self.ids) >= COMPILED else _numpy
+        count = _compiled(_scan) if _scan is not None and len(self.ids) >= COMPILED else _numpy
         for part in self._parts:
             kept = None if keep is None else keep[at : at + len(part)]
             counts += count(part.view(np.uint64), word, kept, out[at : at + len(part)])
             at += len(part)
         return out, counts
 
-    def between(self, distances, low, high):
+    def between(self, distances: Distances, low: int, high: int) -> Ids:
         """Where in `ids` the codes at distances (as measure gives them) from low to high are, ascending; in blocks,
         each in a thread."""
         step = max(BLOCK, -(-len(distances) // (4 * THREADS)))
 
-        def block(start):
+        def block(start: int) -> Ids:
             part = distances[start : start + step]
             return start + np.flatnonzero((part >= low) & (part <= high) if low else part <= high)
 
         return np.concatenate([np.empty(0, np.int64), *_threaded(block, range(0, len(distances), step))])
 
 
-def _compiled(words, word, keep, out):
-    """A part's distances and how many codes are at each, in one pass of compiled code (see `scan`)."""
-    return _scan.measure(words, word, _NONE if keep is None else keep, out, FAR, THREADS)
+def _compiled(scan: ModuleType) -> Measure:
+    """What measures a part's distances, and how many codes are at each, in one pass of `scan`'s compiled code."""
+
+    def count(words: NDArray[np.uint64], word: NDArray[np.uint64], keep: Mask | None, out: Distances) -> Ids:
+        return scan.measure(words, word, _NONE if keep is None else keep, out, FAR, THREADS)
+
+    return count
 
 
-def _numpy(words, word, keep, out):
+def _numpy(words: NDArray[np.uint64], word: NDArray[np.uint64], keep: Mask | None, out: Distances) -> Ids:
     """A part's distances and how many codes are at each, by NumPy: in blocks, each in a thread, which counts its own
     (NumPy lets go of the GIL)."""
     top = 64 * words.shape[1]
 
-    def block(start):
+    def block(start: int) -> Ids:
         rows, here = words[start : start + BLOCK], out[start : start + BLOCK]
         xor, count = _buffers(len(rows), words.shape[1])
         np.bitwise_xor(rows, word, out=xor)
@@ -301,7 +355,7 @@ def _numpy(words, word, keep, out):
 _scratch = threading.local()
 
 
-def _buffers(rows, words):
+def _buffers(rows: int, words: int) -> tuple[NDArray[np.uint64], NDArray[np.uint8]]:
     """This thread's arrays for a block's XOR and bit counts, `rows` codes of `words` 64-bit words, made once: made
     anew for every block, large arrays came from the OS each time, which halved the speed of a scan."""
     shape = (BLOCK, words)
@@ -311,12 +365,12 @@ def _buffers(rows, words):
 
 
 @cache
-def _pool():
+def _pool() -> ThreadPoolExecutor:
     """The threads blocks of codes are measured in, kept for every search."""
     return ThreadPoolExecutor(THREADS, thread_name_prefix="sift-codes")
 
 
-def _threaded(work, items):
+def _threaded(work: Callable[[_T], _U], items: Iterable[_T]) -> list[_U]:
     """work(item) of each item, in order: in the threads of _pool if there are several."""
-    items = list(items)
-    return list(_pool().map(work, items)) if len(items) > 1 else [work(item) for item in items]
+    pending = list(items)
+    return list(_pool().map(work, pending)) if len(pending) > 1 else [work(item) for item in pending]

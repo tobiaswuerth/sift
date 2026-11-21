@@ -136,22 +136,11 @@ ignore = [
 parametrize-names-type = "csv"  # @pytest.mark.parametrize("a, b", ...)
 
 [tool.pyright]
-# The modules whose types are checked, strictly; the others are read for what these use of them. The list only grows,
-# until it is all of sift/, and a new module is on it from its start (tests/test_package.py).
-include = [
-    "sift/__init__.py",
-    "sift/console.py",
-    "sift/expression.py",
-    "sift/filters.py",
-    "sift/hits.py",
-    "sift/ignore.py",
-    "sift/logs.py",
-    "sift/queries.py",
-    "sift/settings.py",
-    "sift/update.py",
-]
+# All of sift, strictly (tests/test_package.py holds it so). typings/ types what sift calls of packages that ship
+# no types of their own: pynvml, pypdfium2.
+include = ["sift"]
 typeCheckingMode = "strict"
-pythonVersion = "3.11"  # the oldest sift runs on
+pythonVersion = "3.12"  # CI's types job's, whose packages pyright reads; the oldest sift runs on, ruff and the tests hold
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

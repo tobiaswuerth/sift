@@ -10,10 +10,13 @@ import json
 import os
 import re
 import sqlite3
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from . import console, readers, settings, store
+
+Connection = store.Connection
 
 SCHEMA_VERSION = 6  # in SQLite's user_version; up to 5, sift.db was the whole index (see `upgrade`)
 SCHEMA = """
@@ -36,35 +39,35 @@ class Collection(NamedTuple):
     active: bool
 
     @property
-    def choices(self):
+    def choices(self) -> dict[str, Any]:
         """Its choices of fields, and where titles come from, as a dict."""
         return json.loads(self.fields) if self.fields else {}
 
 
-def _collection(row):
-    return Collection(*row[:5], bool(row[5]))
+def _collection(row: Sequence[Any]) -> Collection:
+    return Collection(row[0], row[1], row[2], row[3], row[4], bool(row[5]))
 
 
 class Catalog:
     """The catalog in the folder `home` (default: SIFT_HOME), and the stores opened through it, each once. An index of
     sift 1.7 or older there is split into stores first, in the folder `split_into` (see `upgrade`)."""
 
-    def __init__(self, home=None, split_into=None):
+    def __init__(self, home: str | Path | None = None, split_into: str | Path | None = None) -> None:
         self.home = Path(home or settings.current().home)
         self.path = self.home / "sift.db"
         self.db = _open(self.path, Path(split_into) if split_into else self.home / "collections")
-        self._stores = {}  # collection id: (its store's file, the store opened)
+        self._stores: dict[int, tuple[str, Connection]] = {}  # collection id: (its store's file, the store)
 
-    def close(self):
+    def close(self) -> None:
         for cid in list(self._stores):
             self.release(cid)
         self.db.close()
 
-    def collections(self):
+    def collections(self) -> list[Collection]:
         """Every collection, by name."""
         return [_collection(row) for row in self.db.execute(f"SELECT {COLUMNS} FROM collections ORDER BY name")]
 
-    def get(self, name):
+    def get(self, name: str) -> Collection:
         """The collection called `name`; an error naming those there are if there is none."""
         row = self.db.execute(f"SELECT {COLUMNS} FROM collections WHERE name = ?", (name,)).fetchone()
         if row is None:
@@ -73,7 +76,7 @@ class Catalog:
             raise LookupError(f"no collection named {name!r}; {there}")
         return _collection(row)
 
-    def store(self, collection):
+    def store(self, collection: Collection | str) -> Connection:
         """The store of a collection, or of the collection of that name, opened once, and anew where the collection
         has moved meanwhile. A store missing, damaged or of a newer sift is a LookupError, which commands of every
         collection pass over."""
@@ -97,7 +100,7 @@ class Catalog:
         self._stores[collection.id] = (collection.store, db)
         return db
 
-    def opened(self, collection):
+    def opened(self, collection: Collection) -> Connection:
         """The store of a collection, as `store` gives it, for commands of every collection: one that can't be opened
         now, locked by another program or out of reach, is a LookupError too, which they pass over."""
         try:
@@ -105,18 +108,25 @@ class Catalog:
         except sqlite3.OperationalError as error:
             raise LookupError(f"{collection.name}: its index can't be opened: {error}") from None
 
-    def open_stores(self):
+    def open_stores(self) -> list[tuple[int, str, Connection]]:
         """The stores opened so far, as (collection id, its store's file, the store opened)."""
         return [(cid, path, db) for cid, (path, db) in self._stores.items()]
 
-    def release(self, cid):
+    def release(self, cid: int) -> None:
         """Close the store of the collection `cid`, if it is open."""
         if held := self._stores.pop(cid, None):
             held[1].close()
 
     # --- changing the catalog --------------------------------------------------
 
-    def add(self, path, name=None, fields=None, nested=False, into=None):
+    def add(
+        self,
+        path: str | Path,
+        name: str | None = None,
+        fields: dict[str, Any] | None = None,
+        nested: bool = False,
+        into: str | Path | None = None,
+    ) -> str:
         """Register a folder, its store made at `into`: a file ending in .sqlite, or a folder to make NAME.sqlite in
         (default: `collections` in the catalog's folder). `fields` chooses JSON Lines fields instead of the defaults:
         {"id", "title", "text"}. A folder inside a collection, or one holding a collection, only if `nested`: the
@@ -144,10 +154,12 @@ class Catalog:
         self.db.execute("BEGIN IMMEDIATE")
         try:
             try:
-                cid = self.db.execute(
-                    "INSERT INTO collections(name, path, fields, store) VALUES(?, ?, ?, ?)",
-                    (name, str(path), stored, str(file)),
-                ).lastrowid
+                cid = store.inserted(
+                    self.db.execute(
+                        "INSERT INTO collections(name, path, fields, store) VALUES(?, ?, ?, ?)",
+                        (name, str(path), stored, str(file)),
+                    )
+                )
             except sqlite3.IntegrityError:
                 raise SystemExit(f"collection {name!r} already exists") from None
             taken = self.db.execute("SELECT count(*) FROM collections WHERE store = ?", (str(file),)).fetchone()[0] > 1
@@ -163,7 +175,7 @@ class Catalog:
             raise
         return name
 
-    def remove(self, name):
+    def remove(self, name: str) -> int | None:
         """Remove a collection: its store is deleted, its files stay on disk. Returns the number of documents its
         store held, or None if it was missing or couldn't be opened (damaged, or a newer sift's)."""
         collection = self.get(name)
@@ -183,7 +195,7 @@ class Catalog:
             )
         return docs
 
-    def set_active(self, names, active):
+    def set_active(self, names: Iterable[str], active: bool) -> list[str]:
         """Make the collections named active, or inactive. Returns the names of those that changed."""
         chosen = [self.get(name) for name in dict.fromkeys(names)]  # every name checked before anything changes
         self.db.executemany("UPDATE collections SET active = ? WHERE id = ?", [(int(active), c.id) for c in chosen])
@@ -193,7 +205,7 @@ class Catalog:
                 self.release(c.id)
         return [c.name for c in chosen if c.active != active]
 
-    def set_title_from(self, name, title_from):
+    def set_title_from(self, name: str, title_from: str) -> Collection:
         """Choose where a collection's Markdown and text files take their titles from. Returns the collection as it
         is now."""
         collection = self.get(name)
@@ -203,7 +215,7 @@ class Catalog:
         self.db.commit()
         return collection._replace(fields=stored)
 
-    def move(self, names, to):
+    def move(self, names: Iterable[str] | None, to: str | Path) -> list[str]:
         """Move the stores of the collections named, or of all, to `to`: a file ending in .sqlite, for one collection,
         or a folder, where each keeps its file's name. On the same drive the file gets a second name, at once, else it
         is copied; then the catalog points at it, and the old file is deleted. No other sift may have a store open
@@ -213,7 +225,7 @@ class Catalog:
             raise SystemExit(f"{to} is the file of one collection's index: name one collection, or give a folder")
         return [c.name for c in chosen if self._move(c, _target(to, Path(c.store).name))]
 
-    def _move(self, collection, new):
+    def _move(self, collection: Collection, new: Path) -> bool:
         old = Path(collection.store)
         if os.path.normcase(old.resolve()) == os.path.normcase(new):
             console.say(f"{collection.name}: its index is {new} already")
@@ -239,12 +251,12 @@ class Catalog:
 
     # --- folders -----------------------------------------------------------------
 
-    def collection_at(self, path):
+    def collection_at(self, path: str | Path) -> str | None:
         """The name of the collection of the folder `path`, or None."""
         path = os.path.normcase(Path(path).expanduser().resolve())
         return next((c.name for c in self.collections() if os.path.normcase(c.path) == path), None)
 
-    def _overlapping(self, path):
+    def _overlapping(self, path: str | Path) -> tuple[str, str, bool] | None:
         """A collection whose folder holds the folder `path`, or lies inside it: (its name, its folder, whether `path`
         is inside it); None if there is none."""
         mine = Path(os.path.normcase(path))
@@ -255,7 +267,7 @@ class Catalog:
         return None
 
 
-def _open(path, split_into):
+def _open(path: Path, split_into: Path) -> Connection:
     """The catalog at `path`: made if there is none, and split off an index of sift 1.7 or older there first."""
     db = store.database(path, create=not path.exists())
     try:
@@ -283,7 +295,7 @@ def _open(path, split_into):
     return _open(path, split_into)
 
 
-def _fields(fields):
+def _fields(fields: dict[str, Any] | None) -> str | None:
     """A collection's choices, as stored: JSON Lines fields, {"id": name, "title": name, "text": [names]}, and where
     its Markdown and text files take their titles from, {"title_from": "heading" or "name"}."""
     if not fields:
@@ -295,8 +307,7 @@ def _fields(fields):
             continue
         if key not in ("id", "title", "text"):
             raise SystemExit(f"unknown field choice {key!r}: choose the id, title or text field")
-        names = value if key == "text" else [value]
-        if not (isinstance(names, list) and names and all(isinstance(n, str) and n for n in names)):
+        if not _are_names(value if key == "text" else [value]):
             raise SystemExit(
                 f"the {key} field must be {'one or more field names' if key == 'text' else 'a field name'}, "
                 f"got {value!r}"
@@ -304,13 +315,17 @@ def _fields(fields):
     return json.dumps(fields)
 
 
-def _target(to, name):
+def _are_names(names: list[Any] | dict[str, Any] | str | float | bool | None) -> bool:
+    return isinstance(names, list) and bool(names) and all(isinstance(n, str) and n for n in names)
+
+
+def _target(to: str | Path, name: str) -> Path:
     """The file a store gets at `to`: `to` itself, if it ends in .sqlite, else the file `name` in the folder `to`."""
     to = Path(to).expanduser().resolve()
     return to if to.name.lower().endswith(SUFFIX) else to / name
 
 
-def _transfer(held, old, new, name):
+def _transfer(held: sqlite3.Connection, old: Path, new: Path, name: str) -> None:
     """Give the store `held` at `old` the path `new`: a second name for the file, or on another drive, a copy, made
     through SQLite, as Windows keeps other readers out of the bytes SQLite locks."""
     try:
@@ -337,9 +352,9 @@ def _transfer(held, old, new, name):
         raise
 
 
-def _delete(path):
+def _delete(path: Path) -> list[Path]:
     """Delete a store's files; returns those that could not be, as another sift has them open (Windows)."""
-    left = []
+    left: list[Path] = []
     for file in store.files(path):
         try:
             file.unlink(missing_ok=True)

@@ -11,12 +11,14 @@ import posixpath
 import sqlite3
 import stat
 import time
-from collections import Counter, namedtuple
-from concurrent.futures import CancelledError, ProcessPoolExecutor
+from collections import Counter
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from concurrent.futures import CancelledError, Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from contextlib import nullcontext
 from itertools import takewhile
 from pathlib import Path
+from typing import Literal, NamedTuple, TypeGuard, TypeVar, overload
 
 from . import console, embed, links, ocr, postings, readers, store
 from .ignore import NAME as SIFTIGNORE
@@ -32,28 +34,51 @@ BYTES_PER_WORKER = 32 << 20  # or this much content
 PROGRESS_LINES = 200  # at most this many progress updates per collection: printing is slow on Windows consoles
 WINDOWS = os.name == "nt"  # where "C:x.md", "sub./x.md" and "x.md:stream" name other files, or none
 
+Db = sqlite3.Connection
+Catalog = store.Catalog
+C = TypeVar("C", bound=store.Collection)
 
-def _cpus():
+
+Fields = readers.Fields
+Item = tuple[str, str, int, int]  # a file to read: its path, its path in the collection, its mtime_ns and size
+Loaded = tuple[list[readers.Doc], list[str]] | None | Exception  # what readers.load gives, or the error a reader raised
+Note = Callable[[str], None]
+Twice = Callable[[readers.Doc], None] | None
+Counts = Counter[str]
+Unlisted = list[tuple[str, OSError]]
+Task = tuple[list[tuple[str, int]], Future[list[Loaded]], ProcessPoolExecutor]
+FileRow = tuple[int, str, str, str]  # a document's id, path, title and meta, as stored
+Info = (
+    os.stat_result | OSError | None
+)  # a file's stat, the error that kept it from being stat'ed, or None if it is gone
+Entry = dict[str, str]  # {"id", "status"[, "note"]}
+
+
+def cpus() -> int:
     """CPUs this process may use, honouring affinity and container limits where the platform reports them."""
-    if hasattr(os, "process_cpu_count"):  # Python 3.13+
-        return os.process_cpu_count() or 1
-    if hasattr(os, "sched_getaffinity"):  # Linux
-        return len(os.sched_getaffinity(0))
+    process_cpu_count: Callable[[], int | None] | None = getattr(os, "process_cpu_count", None)  # Python 3.13+
+    if process_cpu_count:
+        return process_cpu_count() or 1
+    sched_getaffinity: Callable[[int], set[int]] | None = getattr(os, "sched_getaffinity", None)  # Linux
+    if sched_getaffinity:
+        return len(sched_getaffinity(0))
     return os.cpu_count() or 1
 
 
-def workers(files, size=0):
+def workers(files: int, size: int = 0) -> int:
     """Worker processes for parsing `files` files of `size` bytes in all; 0 or 1 means parse in-process.
 
     One per CPU except the one the main process uses for writing, and at most one per FILES_PER_WORKER files or
     BYTES_PER_WORKER bytes, whichever allows more.
     """
-    return max(0, min(_cpus() - 1, max(files // FILES_PER_WORKER, size // BYTES_PER_WORKER)))
+    return max(0, min(cpus() - 1, max(files // FILES_PER_WORKER, size // BYTES_PER_WORKER)))
 
 
-def _batches(todo):
+def _batches(todo: Iterable[Item]) -> list[list[Item]]:
     """Files to read per commit: at most WRITE_BATCH files with at most BATCH_BYTES of content."""
-    batches, batch, size = [], [], 0
+    batches: list[list[Item]] = []
+    batch: list[Item] = []
+    size = 0
     for item in todo:
         if batch and (len(batch) >= WRITE_BATCH or size + item[3] > BATCH_BYTES):
             batches.append(batch)
@@ -63,27 +88,27 @@ def _batches(todo):
     return [*batches, batch] if batch else batches
 
 
-def _whole(todo):
+def _whole(todo: Iterable[Item]) -> list[Item]:
     """The files to do that are read whole, each before it is stored, not as it is stored (readers.Records)."""
     return [item for item in todo if not readers.streamed(item[0], item[3])]
 
 
-def _read(pool, fields, batch):
+def _read(pool: "_Workers | None", fields: Fields, batch: list[Item]) -> Callable[[], list[Loaded | readers.Records]]:
     """Start loading a batch of files: in the worker processes of `pool` all at once, without one none yet. Returns
     what gives them, in the batch's order, when called: a file read as it is stored as its Records, unread, here, as
     workers hand over what they read whole."""
     whole = [(item[0], item[3]) for item in _whole(batch)]
-    started = pool.start(whole) if pool else None
+    running = (pool, pool.start(whole)) if pool else None
 
-    def loaded():
-        read = iter(pool.results(started) if pool else _loaded_all(_loaded, [path for path, _ in whole], fields))
+    def loaded() -> list[Loaded | readers.Records]:
+        read = iter(running[0].results(running[1]) if running else _loaded_all(_loaded, [p for p, _ in whole], fields))
         streamed = readers.streamed
         return [readers.Records(path, fields) if streamed(path, size) else next(read) for path, _, _, size in batch]
 
     return loaded
 
 
-def _loaded(path, fields):
+def _loaded(path: str, fields: Fields) -> Loaded:
     """What readers.load reads of a file, or the error a reader raised (runs in worker processes): one file's
     trouble, a record of gigabytes, a reader's bug, mustn't stop the others, nor every later run."""
     try:
@@ -92,7 +117,7 @@ def _loaded(path, fields):
         return error
 
 
-def _loaded_all(read, paths, fields):
+def _loaded_all(read: Callable[[str, Fields], Loaded], paths: list[str], fields: Fields) -> list[Loaded]:
     """What `read` gives of each of a task's files (runs in worker processes)."""
     return [read(path, fields) for path in paths]
 
@@ -105,18 +130,18 @@ class Stopped(Exception):
     """A file whose reader was stopped: it ended the process it ran in, or came to no end."""
 
 
-def _patience(files):
+def _patience(files: Iterable[tuple[str, int]]) -> float:
     """Seconds reading these files, (path, size) each, may take before their process is taken for hung."""
     return READ_SECONDS + sum(size for _, size in files) / READ_RATE
 
 
-def _pool(n):
+def _pool(n: int) -> ProcessPoolExecutor:
     """`n` worker processes. Spawned everywhere, as on Windows and macOS: forking a process that has threads can
     deadlock."""
     return ProcessPoolExecutor(n, mp_context=multiprocessing.get_context("spawn"))
 
 
-def _end(pool):
+def _end(pool: ProcessPoolExecutor) -> None:
     """End a pool at once: its processes are killed, one that hangs too, and what was started in it is lost. Before
     Python 3.14 (kill_workers) a pool names its processes here alone."""
     for process in list(pool._processes.values()):
@@ -131,31 +156,34 @@ class _Workers:
     the one that ends or hangs it is known: it is left out, as Stopped, and the others are read. Files started in a
     pool that those of another batch ended start again in the next one."""
 
-    def __init__(self, n, fields):
+    single: ProcessPoolExecutor | None
+
+    def __init__(self, n: int, fields: Fields) -> None:
         self.n, self.fields, self.pool, self.single = n, fields, _pool(n), None
 
-    def __enter__(self):
+    def __enter__(self) -> "_Workers":
         return self
 
-    def __exit__(self, kind, *exc):
+    def __exit__(self, kind: type[BaseException] | None, *exc: object) -> None:
         for pool in filter(None, (self.pool, self.single)):
             if kind is None:
                 pool.shutdown()
             else:  # stopped, as by Ctrl+C: not once every file started is read
                 _end(pool)
 
-    def start(self, files):
+    def start(self, files: list[tuple[str, int]]) -> list[Task]:
         """Start reading these files, (path, size) each, some to a task: fewer tasks cost less to hand over. Returns
         what `results` takes."""
         size = max(1, min(64, len(files) // (4 * self.n)))
         return [self._task(self.pool, files[i : i + size]) for i in range(0, len(files), size)]
 
-    def _task(self, pool, files):
+    def _task(self, pool: ProcessPoolExecutor, files: list[tuple[str, int]]) -> Task:
         return files, pool.submit(_loaded_all, _loaded, [path for path, _ in files], self.fields), pool
 
-    def results(self, started):
+    def results(self, started: list[Task]) -> list[Loaded]:
         """What each of the files started was read as, in order: as _loaded gives it, or Stopped."""
-        read, at = [], 0
+        read: list[Loaded] = []
+        at = 0
         while at < len(started):
             files, future, pool = started[at]
             try:
@@ -169,7 +197,7 @@ class _Workers:
                 started[at:] = [self._task(self.pool, files) for files, _, _ in started[at:]]  # another batch's did
         return read
 
-    def _alone(self, file):
+    def _alone(self, file: tuple[str, int]) -> Loaded:
         """What one file is read as in a process that reads nothing else, or Stopped."""
         self.single = self.single or _pool(1)
         patience = _patience([file])
@@ -183,35 +211,37 @@ class _Workers:
             return Stopped("its reader ended the process it ran in")
 
 
-def _storable(text):
+def _storable(text: str) -> str:
     """Text as the store keeps it: a NUL, at which SQLite's substr stops cutting passages out of the text, and with it
     what is searched, and half a surrogate pair, as UTF-7 can encode, which SQLite's UTF-8 can't hold, as U+FFFD, of
     the same length, so that the chunks' positions stay."""
     return readers.LONE.sub("\ufffd", text.replace("\x00", "\ufffd"))
 
 
-def _insert(db, sid, path, doc):
+def _insert(db: Db, sid: int, path: str, doc: readers.Doc) -> int:
     """Add a document, its chunks, its links and, if it is a whole file, its names, and return its id. Its keyword
     entries come with its file's (see _store)."""
     title, meta, text = map(_storable, (doc.title, json.dumps(doc.meta, ensure_ascii=False), doc.text))
-    doc_id = db.execute(
-        "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?)",
-        (sid, path, doc.digest, title, meta, text),
-    ).lastrowid
+    doc_id = store.inserted(
+        db.execute(
+            "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?,?,?,?,?,?)",
+            (sid, path, doc.digest, title, meta, text),
+        )
+    )
     _add_chunks(db, doc_id, doc.chunks)
     if doc.links or not doc.key:  # a JSON Lines record has no name, and no links: millions of them cost nothing
         links.save(db, [(doc_id, path, doc.meta, doc.links, not doc.key)])
     return doc_id
 
 
-def _add_chunks(db, doc_id, chunks):
+def _add_chunks(db: Db, doc_id: int, chunks: Iterable[readers.Chunk]) -> None:
     db.executemany(
         "INSERT INTO chunks(doc, seq, line_start, line_end, pos, len) VALUES(?,?,?,?,?,?)",
         [(doc_id, seq, first, last, pos, length) for seq, (first, last, pos, length) in enumerate(chunks)],
     )
 
 
-def _path(rel, doc):
+def _path(rel: str, doc: readers.Doc) -> str:
     """A document's path in its collection: its file's, or for a record or an attachment, one below it, its key as the
     store keeps text (a JSON Lines id or a mail's attachment name may hold a NUL)."""
     return f"{rel.rsplit('.', 1)[0]}/{_storable(doc.key)}" if doc.key else rel
@@ -222,7 +252,7 @@ SCANS_SKIPPED = "scans_skipped"  # in a store's meta table: the SIFT_OCR under w
 OCR_READS = {"off": 0, "auto": 1, "on": 2}
 
 
-def _read_skipped_scans(db):
+def _read_skipped_scans(db: Db) -> None:
     """Have this index read the scans left unread under a SIFT_OCR that reads fewer than the one now (SCANS_SKIPPED),
     as it was turned on, or from off to auto: the PDFs without documents, and the mails with one attached, once. A
     skipped scan's file keeps its time, so that no later run reads it again only to skip it again."""
@@ -233,14 +263,17 @@ def _read_skipped_scans(db):
         db.commit()
 
 
-def _read_scans(db, sid, rel, docs, note, now=True):
+def _read_scans(
+    db: Db, sid: int | None, rel: str, docs: Iterable[readers.Doc], note: Note, now: bool = True
+) -> tuple[list[readers.Doc], bool]:
     """A file's documents with the scans among them read by OCR, those new or changed since the file `sid` was
     indexed (see `ocr`); a scan that can't be read is left out, and noted, as is one read. Reading a scan takes a
     while, so what is written is committed first: no other writer, such as the server's `reindex`, waits for it.
     Unless `now`, a scan to read is left out for `sift index`. Returns the documents, and whether a scan was left,
     for now or for a try that may read it (its GPU busy, OCR failing): its file is read again by the next index."""
     known = dict(db.execute("SELECT path, hash FROM docs WHERE source = ?", (sid,))) if sid else {}
-    read, left = [], False
+    read: list[readers.Doc] = []
+    left = False
     for doc in docs:
         path = _path(rel, doc)
         if doc.scan is not None and known.get(path) != doc.digest:
@@ -250,7 +283,7 @@ def _read_scans(db, sid, rel, docs, note, now=True):
                 continue
             if db.in_transaction:
                 db.commit()
-            doc, said, again = ocr.default().read(doc)
+            doc, said, again = ocr.default().read(doc, doc.scan)
             note(f"{path}: {said}")
             if doc is None:
                 left |= again
@@ -267,9 +300,10 @@ STORED_CHARS = 16 << 20  # of this much text at most, or one document: what is i
 DROPPED = 10_000  # documents a file no longer holds, deleted at a time
 
 
-def _batches_of(docs):
+def _batches_of(docs: Iterable[readers.Doc]) -> Iterator[list[readers.Doc]]:
     """A file's documents in the batches they are stored in: STORED of them, of STORED_CHARS of text or one alone."""
-    batch, size = [], 0
+    batch: list[readers.Doc] = []
+    size = 0
     for doc in docs:
         batch.append(doc)
         size += len(doc.text)
@@ -280,7 +314,9 @@ def _batches_of(docs):
         yield batch
 
 
-def _store(db, sid, rel, docs, counts, note, twice=None):
+def _store(
+    db: Db, sid: int, rel: str, docs: Iterable[readers.Doc], counts: Counts, note: Note, twice: Twice = None
+) -> None:
     """Bring one file's documents in the index up to date, a batch at a time (see _batches_of), so that a file read
     as it is stored is in memory a batch at a time. Unchanged ones (by hash) stay, vectors included; those the file
     no longer holds go. note(text) tells the user of a document left out (see _left_out). A document whose path the
@@ -290,8 +326,14 @@ def _store(db, sid, rel, docs, counts, note, twice=None):
     indexed = _Indexed(db, sid)
     for batch in _batches_of(docs):
         paths = [_path(rel, doc) for doc in batch]
-        held, added, unchanged, given, chunks = indexed.at(paths), [], [], set(), 0
-        replaced, new, again = [], [], []  # old versions of documents that changed; (path, doc, changed?) to insert
+        held = indexed.at(paths)
+        added: list[int] = []
+        unchanged: list[int] = []
+        given: set[str] = set()
+        chunks = 0
+        replaced: list[int] = []  # old versions of documents that changed
+        new: list[tuple[str, readers.Doc, bool]] = []  # (path, doc, changed?) to insert
+        again: list[tuple[str, readers.Doc]] = []
         for path, doc in zip(paths, batch):
             old = held.get(path)
             if path in given or (old and old[2]):
@@ -334,16 +376,16 @@ class _Indexed:
 
     STAYING = "CREATE TEMP TABLE IF NOT EXISTS sift_staying(doc INTEGER PRIMARY KEY)"
 
-    def __init__(self, db, sid):
+    def __init__(self, db: Db, sid: int) -> None:
         self.db, self.sid = db, sid
         rows = db.execute("SELECT path, id, hash FROM docs WHERE source = ? LIMIT ?", (sid, STORED + 1)).fetchall()
         self.few = len(rows) <= STORED
-        self.old = {path: (doc, digest) for path, doc, digest in rows} if self.few else {}
-        self.given = set()  # of the few, the paths the file gave again
-        self.first = None  # the first document added: the file's from it on are this run's
+        self.old: dict[str, tuple[int, str]] = {path: (doc, digest) for path, doc, digest in rows} if self.few else {}
+        self.given: set[str] = set()  # of the few, the paths the file gave again
+        self.first: int | None = None  # the first document added: the file's from it on are this run's
         self.staying = False  # whether any of the many stay
 
-    def at(self, paths):
+    def at(self, paths: list[str]) -> dict[str, tuple[int, str, bool]]:
         """The file's documents at these paths, by path: (id, hash, whether the file gave the path before in this
         run, so that its document stays as it is or was added)."""
         held = {path: (*self.old[path], path in self.given) for path in paths if path in self.old}
@@ -356,7 +398,7 @@ class _Indexed:
                 held[path] = (doc, digest, bool(stays) or (self.first is not None and doc >= self.first))
         return held
 
-    def took(self, given, unchanged, added):
+    def took(self, given: set[str], unchanged: list[int], added: list[int]) -> None:
         """A batch is stored: the paths it gave, the documents (ids) at them that stay as they are, those added."""
         if self.first is None and added:
             self.first = added[0]
@@ -367,7 +409,7 @@ class _Indexed:
             self.db.executemany("INSERT INTO temp.sift_staying(doc) VALUES(?)", [(doc,) for doc in unchanged])
             self.staying = True
 
-    def drop_the_gone(self):
+    def drop_the_gone(self) -> int:
         """Delete the documents the file no longer holds: its old ones whose paths it didn't give again. Returns how
         many."""
         if self.few:
@@ -385,7 +427,7 @@ class _Indexed:
         return dropped
 
 
-def _left_out(db, sid, rel, path, note):
+def _left_out(db: Db, sid: int, rel: str, path: str, note: Note) -> None:
     """Leave out a document of the file `rel` (`sid`) whose path another file's document holds: a record or an
     attachment is a document below its file's name (`data.jsonl` holds `data/a.md`), as a real file may be. The first
     keeps the path; the other waits for it (store.wait), and its file is read again once it is free, not before."""
@@ -399,7 +441,7 @@ def _left_out(db, sid, rel, path, note):
 REFRESH_BATCH = 1000  # files read again from the index at a time
 
 
-def retitle(catalog, name, title_from):
+def retitle(catalog: Catalog[C], name: str, title_from: str) -> tuple[int, int]:
     """Choose where a collection's Markdown and text files take their titles from (see readers.parse), and retitle
     those indexed from the text its store holds: no file is read again. Returns how many titles changed, and how many
     passages lost their vectors for `sift embed` to embed again."""
@@ -414,7 +456,7 @@ def retitle(catalog, name, title_from):
     return changed, dropped
 
 
-def add_links(db, name, fields):
+def add_links(db: Db, name: str, fields: Fields) -> None:
     """Read every indexed file's document again from the text the store of the collection `name` holds, as this sift
     reads it with the collection's `fields`, and store its links and names: what an index of sift 1.0 lacks. Front
     matter is read again too, as lists of unquoted items were text before. No file is read; nothing is embedded
@@ -428,7 +470,7 @@ def add_links(db, name, fields):
             progress.update(done)
 
 
-def _files(db):
+def _files(db: Db) -> Iterator[tuple[int, list[FileRow]]]:
     """The documents of the files, REFRESH_BATCH files at a time: how many files, and (id, path, title, meta) of their
     documents. A file's document has the file's path; a JSON Lines file has records instead."""
     sql = """SELECT s.id, d.id, d.path, d.title, d.meta FROM sources s
@@ -439,7 +481,7 @@ def _files(db):
         yield len(rows), [row[1:] for row in rows if row[1] is not None]
 
 
-def _reread(db, files, fields):
+def _reread(db: Db, files: Sequence[FileRow], fields: Fields) -> tuple[int, int]:
     """Read the documents of files again from the index, (id, path, title, meta) of each: Markdown and text files from
     the text the index holds, as this sift reads them with the collection's `fields`, other files only for their
     names. Their names and links are stored anew; titles and front matter that changed go into the documents and the
@@ -449,7 +491,9 @@ def _reread(db, files, fields):
     texts = dict(db.execute("SELECT id, text FROM docs WHERE id IN (SELECT value FROM json_each(?))", (notes,)))
     sql = "SELECT doc, count(*) FROM chunks WHERE doc IN (SELECT value FROM json_each(?)) GROUP BY doc"
     passages = dict(db.execute(sql, (notes,)))
-    changed, fresh, saved = {}, {}, []
+    changed: dict[int, tuple[str, str, str]] = {}
+    fresh: dict[int, list[readers.Chunk]] = {}
+    saved: list[links.Saved] = []
     for doc_id, path, title, meta in files:
         if doc_id not in texts:
             saved.append((doc_id, path, json.loads(meta), (), True))
@@ -474,7 +518,7 @@ def _reread(db, files, fields):
         return 0, 0
     sql = "SELECT id, doc, pos, len, seq FROM chunks WHERE doc IN (SELECT value FROM json_each(?)) AND seq > 0"
     later = db.execute(sql, (json.dumps(list(changed)),)).fetchall()
-    texts = store.texts(db, (span for *span, _ in later))
+    texts = store.texts(db, ((chunk, doc, pos, length) for chunk, doc, pos, length, _ in later))
     stale = [
         chunk
         for chunk, doc, _, _, seq in later
@@ -486,21 +530,25 @@ def _reread(db, files, fields):
     return len(changed), dropped
 
 
-Reindexed = namedtuple("Reindexed", "files removed versions")
-"""What `reindex` did: per file, ({"id", "status"[, "note"]}, its documents' row ids); the chunks it removed; and, by
-collection id, what each store it changed said of its vectors before and after: (version before, version after, the
-epoch of its codes after, how many vectors it counted after), read in the change's transaction, for a server to follow
-without loading every code again (see search.Index._patch)."""
+class Reindexed(NamedTuple):
+    """What `reindex` did: per file, ({"id", "status"[, "note"]}, its documents' row ids); the chunks it removed; and,
+    by collection id, what each store it changed said of its vectors before and after: (version before, version after,
+    the epoch of its codes after, how many vectors it counted after), read in the change's transaction, for a server to
+    follow without loading every code again (see search.Index._patch)."""
+
+    files: list[tuple[Entry, list[int]]]
+    removed: list[int]
+    versions: dict[int, tuple[str | None, str | None, str | None, int]]
 
 
-def reindex(catalog, paths, scans=True):
+def reindex(catalog: Catalog[C], paths: Sequence[str], scans: bool = True) -> Reindexed:
     """Read files again now, or remove their documents if they are gone, so that the next search finds them as they
     are: their text, front matter, links and keyword entries. `paths` are ids, `collection/path`, or absolute paths in
     a collection, each a file `sift index` would read; if one isn't, nothing is read. A file's status is "added",
     "changed", "unchanged", "removed", "not found", "skipped" (no documents in it, with a "note" saying why) or
     "unreadable". In one transaction per collection. Without `scans`, scans to read with OCR are left for `sift
     index`, which reads their files again even if they don't change."""
-    if not isinstance(paths, list | tuple) or not all(isinstance(path, str) for path in paths):
+    if not _are_paths(paths):
         raise ValueError(f"paths must be a list of ids or absolute paths, got {paths!r}")
     if not paths:
         raise ValueError("paths needs at least one id or absolute path")
@@ -508,7 +556,9 @@ def reindex(catalog, paths, scans=True):
         raise ValueError(f"at most {MOST_FILES:,} files at a time; `sift index` reads any number")
     files = list(dict.fromkeys(_locate(catalog, path) for path in paths))
     on_disk = [_reindex_read(catalog.store(c), c.path, c.choices, rel, scans) for c, rel in files]
-    found, removed, versions = [None] * len(files), [], {}
+    found: dict[int, tuple[Entry, list[int]]] = {}  # by the file's place in `files`: a collection at a time
+    removed: list[int] = []
+    versions: dict[int, tuple[str | None, str | None, str | None, int]] = {}
     for collection in dict.fromkeys(c for c, _ in files):
         db = catalog.store(collection)
         db.execute("BEGIN IMMEDIATE")
@@ -525,10 +575,16 @@ def reindex(catalog, paths, scans=True):
             db.rollback()
             raise
         postings.update(db, collection.store, collection.name, rebuild=False)  # quick: what changed, no more
-    return Reindexed(found, removed, versions)
+    return Reindexed([found[i] for i in range(len(files))], removed, versions)
 
 
-def _locate(catalog, path):
+def _are_paths(paths: Sequence[object]) -> TypeGuard[list[str] | tuple[str, ...]]:
+    """Whether `paths` is a list of paths, as a caller that isn't type-checked may get wrong: one path, not in a list,
+    is a sequence of its characters."""
+    return isinstance(paths, list | tuple) and all(isinstance(path, str) for path in paths)
+
+
+def _locate(catalog: Catalog[C], path: str) -> tuple[C, str]:
     """The file an id or absolute path names, as `sift index` stores it: (its collection, its path in it), in the file
     system's spelling. A file `sift index` wouldn't read is an error."""
     collections = sorted(catalog.collections(), key=lambda c: -len(c.path))
@@ -582,12 +638,12 @@ def _locate(catalog, path):
     return collection, rel
 
 
-def inside(root, full):
+def inside(root: str, full: str) -> bool:
     """Whether the normalised path `full` lies in the folder `root`, in the file system's case."""
     return os.path.normcase(full).startswith(os.path.normcase(os.path.join(root, "")))
 
 
-def holding(collections, full):
+def holding(collections: Sequence[C], full: str) -> tuple[C, str] | None:
     """The collection whose folder holds the normalised absolute path `full`, the nearest, and the path in it, with
     `/`: (collection, rel), or None. As given, else with its folder resolved: a collection keeps its folder as it
     resolves (`sift add`), so a file named through a link to it, a junction, or a drive mapped to a network share is in
@@ -595,7 +651,7 @@ def holding(collections, full):
     itself stays as named: a linked file is indexed at its link's path."""
     nearest = sorted(collections, key=lambda c: -len(c.path))
 
-    def held(path):
+    def held(path: str) -> tuple[C, str] | None:
         return next(
             ((c, os.path.relpath(path, c.path).replace(os.sep, "/")) for c in nearest if inside(c.path, path)), None
         )
@@ -603,7 +659,7 @@ def holding(collections, full):
     return held(full) or held(os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full)))
 
 
-def _linked(path):
+def _linked(path: str) -> bool:
     """Whether a folder leads elsewhere: a symbolic link, or on Windows a junction, which any user may make."""
     return os.path.islink(path) or _junction(path)
 
@@ -611,7 +667,7 @@ def _linked(path):
 MOUNT_POINT = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT, a junction's; module stat names it on Windows alone
 
 
-def _junction(path, entry=None):
+def _junction(path: str, entry: os.DirEntry[str] | None = None) -> bool:
     """Whether a folder (its path, or the DirEntry of it) is a Windows junction; nothing elsewhere is."""
     try:
         found = entry.stat(follow_symlinks=False) if entry is not None else os.lstat(path)
@@ -623,12 +679,12 @@ def _junction(path, entry=None):
 NEAREST_SHOWN = 5  # collections an error about a file in none names, the nearest first
 
 
-def _nowhere(path, full, collections):
+def _nowhere(path: str, full: str, collections: Sequence[C]) -> str:
     """Why the file at `full` is in no collection, and how it could be: the collections' folders, nearest first, and
     the `sift add` that would cover it."""
     parts = Path(os.path.normcase(full)).parts
 
-    def shared(root):  # how many folders, from the drive or root on, the file and the folder have in common
+    def shared(root: str) -> int:  # how many folders, from the drive or root on, the file and the folder have in common
         return len(list(takewhile(lambda pair: pair[0] == pair[1], zip(parts, Path(os.path.normcase(root)).parts))))
 
     nearest = sorted(collections, key=lambda c: (-shared(c.path), c.name))
@@ -641,11 +697,12 @@ def _nowhere(path, full, collections):
     )
 
 
-def _spelled(root, parts):
+def _spelled(root: str, parts: list[str]) -> list[str]:
     """A path's parts as the file system spells them: on Windows and macOS a path names a file in any case or Unicode
     form, which indexed so would be the file a second time. Parts that don't exist stay as given; one that exists
     under no such name, a Windows short name (PRIVAT~1), is an error: through it, a folder left out was read."""
-    folder, spelled = root, []
+    folder = root
+    spelled: list[str] = []
     for i, part in enumerate(parts):
         try:
             names = os.listdir(folder)
@@ -662,7 +719,7 @@ def _spelled(root, parts):
     return spelled
 
 
-def _indexed_as(db, rel):
+def _indexed_as(db: Db, rel: str) -> list[str]:
     """The paths of the collection's files that `rel` names, in any case or Unicode form: one, or none."""
     if db.execute("SELECT 1 FROM sources WHERE path = ?", (rel,)).fetchone():
         return [rel]
@@ -671,7 +728,9 @@ def _indexed_as(db, rel):
     return same if len(same) == 1 else []
 
 
-def _reindex_read(db, root, fields, rel, scans):
+def _reindex_read(
+    db: Db, root: str, fields: Fields, rel: str, scans: bool
+) -> tuple[Info, Loaded | readers.Records, bool]:
     """A file as `reindex` finds it, before anything is written: its stat, the error that kept it from being stat'ed
     (it is there but out of reach, and kept as indexed), or None if it is gone; its documents and problems as `sift
     index` reads them, scans read if `scans`, its Records, unread, if it is read as it is stored, None if it can't be
@@ -695,7 +754,9 @@ def _reindex_read(db, root, fields, rel, scans):
     return info, (docs, problems), left
 
 
-def _reindex_file(db, name, rel, info, read, left):
+def _reindex_file(
+    db: Db, name: str, rel: str, info: Info, read: Loaded | readers.Records, left: bool
+) -> tuple[Entry, list[int], list[int]]:
     """Bring one file's documents up to date with what `_reindex_read` found, or remove them if it is gone, as `sift
     index` would: ({"id", "status"}, its documents' row ids, the chunks removed). A chunk removed is every chunk of a
     document replaced or removed. A file with a scan `left` is read again by the next `sift index`. One that can't be
@@ -710,14 +771,21 @@ def _reindex_file(db, name, rel, info, read, left):
             return entry | {"status": "not found"}, [], []
         _drop_source(db, sid)
         return entry | {"status": "removed"}, [], [chunk for _, chunk in chunks]
-    if read is None:
+    if read is None or isinstance(info, OSError):  # an error kept it from being stat'ed: it can't be read either
         return entry | {"status": "unreadable"}, [], []
     if isinstance(read, Exception):  # its reader failed: said, as `sift index` says it, and the others are read
         return entry | {"status": "unreadable", "note": f"{type(read).__name__}: {read}"}, [], []
-    docs, problems, twice = (read, [], read.twice) if isinstance(read, readers.Records) else (*read, None)
+    problems: list[str]
+    docs: Iterable[readers.Doc]
+    if isinstance(read, readers.Records):  # read as it is stored, while it is written
+        records, docs, problems = read, read, []
+    else:
+        records, (docs, problems) = None, read
+    twice = records.twice if records else None
     db.execute("SAVEPOINT file")
     sid = _source(db, rel, make=True)
-    had, counts = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0], Counter()
+    had = db.execute("SELECT count(*) FROM docs WHERE source = ?", (sid,)).fetchone()[0]
+    counts: Counts = Counter()
     try:
         _store(db, sid, rel, docs, counts, problems.append, twice)
     except (*REFUSED, readers.Unread) as refused:
@@ -725,8 +793,8 @@ def _reindex_file(db, name, rel, info, read, left):
         return entry | {"status": "unreadable", "note": str(refused)}, [], []
     finally:
         db.execute("RELEASE file")
-    if twice:  # read as it was stored: what it skipped is known now
-        problems += read.problems
+    if records and twice:  # read as it was stored: what it skipped is known now
+        problems += records.problems
     mtime = None if left else info.st_mtime_ns  # no time: `sift index` takes it for changed
     db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (mtime, info.st_size, sid))
     now = [d for (d,) in db.execute("SELECT id FROM docs WHERE source = ?", (sid,))]
@@ -741,7 +809,15 @@ def _reindex_file(db, name, rel, info, read, left):
     return entry | {"status": status} | note, now, [chunk for doc, chunk in chunks if doc not in unchanged]
 
 
-def _source(db, rel, make=False):
+@overload
+def _source(db: Db, rel: str, make: Literal[True]) -> int: ...
+
+
+@overload
+def _source(db: Db, rel: str, make: bool = False) -> int | None: ...
+
+
+def _source(db: Db, rel: str, make: bool = False) -> int | None:
     """The id of the file `rel` as the store holds it now, made if `make`; None if there is none. Not as scanned: a
     server's `reindex` may have added the file or dropped it since."""
     if make:
@@ -750,7 +826,7 @@ def _source(db, rel, make=False):
     return row and row[0]
 
 
-def _drop_source(db, sid):
+def _drop_source(db: Db, sid: int) -> int:
     docs = [d for (d,) in db.execute("SELECT id FROM docs WHERE source=?", (sid,))]
     store.stop_waiting(db, sid)
     store.delete_docs(db, docs)
@@ -758,18 +834,18 @@ def _drop_source(db, sid):
     return len(docs)
 
 
-def walk(root, ignore=None, unlisted=None):
+def walk(root: str, ignore: Ignore | None = None, unlisted: Unlisted | None = None) -> Iterator[tuple[str, int, int]]:
     """Yield (path, mtime_ns, size) for the files sift has a reader for, but those in hidden folders, SKIP_DIRS and
     what `ignore`, the collection's .siftignore, leaves out. DirEntry.stat() is free on Windows. What is there but out
     of reach for the moment (access denied, a share that doesn't answer) goes into `unlisted`, if given, as (its path
     relative to root, the error): a folder that can't be listed, or whose listing breaks off, with a slash, or "" for
     root; a file that can't be stat'ed. What is gone meanwhile, a broken link too, is passed over."""
 
-    def unreachable(rel, error):
+    def unreachable(rel: str, error: OSError) -> None:
         if unlisted is not None:
             unlisted.append((rel, error))
 
-    stack = [(root, "")]
+    stack: list[tuple[str, str]] = [(root, "")]
     while stack:
         folder, rel = stack.pop()
         try:
@@ -804,7 +880,7 @@ def walk(root, ignore=None, unlisted=None):
                 unreachable(rel, error)
 
 
-def index(catalog, names=None):
+def index(catalog: Catalog[C], names: Sequence[str] | None = None) -> None:
     """Bring the stores of the collections named, or of every active one, in sync with the files on disk. Only new or
     changed files are read, and of those only new or changed documents are indexed again."""
     for name in names or ():
@@ -831,22 +907,24 @@ def index(catalog, names=None):
         try:
             _index_collection(db, c.name, c.path, c.choices, ignore)
             store.list_basenames(db, c.name)
-            postings.update(db, c.store, c.name, _cpus() - 1)
+            postings.update(db, c.store, c.name, cpus() - 1)
         except sqlite3.DatabaseError as error:  # one store damaged stops no other collection
             db.rollback()
             console.say(f"{store.damage(c.name, error)}; skipped")
 
 
-def _index_collection(db, name, root, fields, ignore):
+def _index_collection(db: Db, name: str, root: str, fields: Fields, ignore: Ignore) -> None:
     """Bring one collection in sync: drop what is gone, read what is new or changed; its keyword postings follow
     after (see `postings`)."""
     t0 = time.perf_counter()
     _read_skipped_scans(db)
-    known = {p: (i, m, s) for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources")}
+    known: dict[str, tuple[int, int, int]] = {
+        p: (i, m, s) for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources")
+    }
     console.say(f"{name}: scanning {root}")  # a large or cloud folder takes a while
     todo, seen, unlisted = _scan(root, known, ignore)
     kept = _kept(name, known.keys() - seen, unlisted)
-    counts = Counter()
+    counts: Counts = Counter()
     for rel in _gone(name, root, known.keys() - seen - kept, seen):
         counts["removed"] += _drop_source(db, known[rel][0])
     db.commit()  # before any file is read: other writers wait for none of it
@@ -864,7 +942,7 @@ def _index_collection(db, name, root, fields, ignore):
     )
 
 
-def _gone(name, root, unseen, seen):
+def _gone(name: str, root: str, unseen: set[str], seen: set[str]) -> set[str]:
     """The files not seen whose documents go: all of them, unless no file at all was seen. A folder left without
     any of its files is one emptied, but also a drive not mounted, whose folder stays, and a folder being filled anew:
     its documents, and the vectors embedded for them, are kept, and said, with how to let them go."""
@@ -878,9 +956,9 @@ def _gone(name, root, unseen, seen):
     return set()
 
 
-def _freed(db, root, among):
+def _freed(db: Db, root: str, among: set[str]) -> list[Item]:
     """The files to read now, of those `among`, whose documents waited for a path freed meanwhile (see store.wait)."""
-    freed = []
+    freed: list[Item] = []
     for rel in [rel for rel in store.freed(db) if rel in among]:
         path = os.path.join(root, *rel.split("/"))
         with contextlib.suppress(OSError):  # gone meanwhile: the next index drops it
@@ -889,10 +967,10 @@ def _freed(db, root, among):
     return freed
 
 
-def _kept(name, unseen, unlisted):
+def _kept(name: str, unseen: set[str], unlisted: Unlisted) -> set[str]:
     """The files not seen that are kept as indexed, as they lie in a folder that couldn't be listed: an unanswering
     share or a denied folder is no folder deleted. Says so for each folder."""
-    kept = set()
+    kept: set[str] = set()
     for where, error in unlisted:
         why = f"{name}: {where or 'its folder'} can't be read ({error.strerror or error})"
         if where and not where.endswith("/"):  # a file
@@ -905,10 +983,12 @@ def _kept(name, unseen, unlisted):
     return kept
 
 
-def _scan(root, known, ignore):
+def _scan(root: str, known: dict[str, tuple[int, int, int]], ignore: Ignore) -> tuple[list[Item], set[str], Unlisted]:
     """The files to read, new or changed since `known` (path -> id, mtime, size), every file seen but those `ignore`
     leaves out, and the folders that couldn't be listed (see `walk`)."""
-    todo, seen, unlisted = [], set(), []
+    todo: list[Item] = []
+    seen: set[str] = set()
+    unlisted: Unlisted = []
     for path, mtime, size in walk(root, ignore, unlisted):
         rel = os.path.relpath(path, root).replace(os.sep, "/")
         try:
@@ -923,7 +1003,9 @@ def _scan(root, known, ignore):
     return todo, seen, unlisted
 
 
-def _read_and_store(db, name, fields, todo, counts, progress):
+def _read_and_store(
+    db: Db, name: str, fields: Fields, todo: list[Item], counts: Counts, progress: console.Progress
+) -> None:
     """Read the files to do, in worker processes when it pays off, and store their documents batch by batch."""
     batches, whole = _batches(todo), _whole(todo)
     n = workers(len(whole), sum(item[3] for item in whole))  # parsing is CPU-bound: processes, not threads
@@ -940,7 +1022,7 @@ def _read_and_store(db, name, fields, todo, counts, progress):
                 done += 1
                 if done % step == 0 or done == len(todo):
                     progress.update(done)
-                note = lambda text: console.say(f"{name}: {text}")  # noqa: E731
+                note: Note = lambda text: console.say(f"{name}: {text}")  # noqa: E731
                 if isinstance(res, readers.Records):  # read as it is stored: what it skipped is known after
                     if _stored(db, rel, res, (mtime, size), counts, note, res.twice):
                         for problem in res.problems:
@@ -965,7 +1047,15 @@ def _read_and_store(db, name, fields, todo, counts, progress):
 REFUSED = (ValueError, RecursionError, sqlite3.DataError, sqlite3.IntegrityError)  # Recursion: Python 3.11's JSON
 
 
-def _stored(db, rel, docs, stat, counts, note, twice=None):
+def _stored(
+    db: Db,
+    rel: str,
+    docs: Iterable[readers.Doc],
+    stat: tuple[int | None, int],
+    counts: Counts,
+    note: Note,
+    twice: Twice = None,
+) -> bool:
     """Store a file's documents and its (mtime, size), in a savepoint of the batch's transaction: if the store refuses
     them, as text SQLite can't hold, or the file can't be read to its end as it is stored, only this file is left
     out, whole, said, and read again by the next run. Returns whether it is stored."""

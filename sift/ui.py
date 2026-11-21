@@ -12,16 +12,26 @@ import urllib.error
 import urllib.request
 import webbrowser
 from collections import Counter
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, fields, replace
 from itertools import islice
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode, urlsplit
 
 from markupsafe import Markup, escape
 
 from . import console, jobs, readers, store
-from .hits import line_span
+from .filters import each
+from .hits import Hit, line_span
 from .queries import STOPWORDS
+
+if TYPE_CHECKING:
+    from starlette.datastructures import QueryParams
+    from starlette.types import ASGIApp, Receive, Scope, Send
+
+    from .catalog import Collection
+    from .search import Index
 
 WEB = Path(__file__).parent / "web"
 PREFIX = "/ui/"
@@ -45,6 +55,8 @@ UNKEPT = {"Cache-Control": "no-store"}
 ERRORS = (LookupError, ValueError, ConnectionError, sqlite3.Error)  # what a view shows, as the MCP tools say it
 BUGS = (KeyError, IndexError)  # LookupErrors too, but never what sift says of a view: the server's error page, logged
 
+Context = dict[str, Any]  # what a template is rendered with
+
 
 @dataclass(frozen=True)
 class View:
@@ -54,7 +66,7 @@ class View:
     mode: str = "search"
     c: str = ""  # collection
     path: str = ""  # folder in it, e.g. "2024/"
-    f: tuple = ()  # front-matter filters, "field=value"
+    f: tuple[str, ...] = ()  # front-matter filters, "field=value"
     sort: str = ""
     k: int = PAGE
     similar: str = ""  # a document whose like to list
@@ -65,11 +77,12 @@ class View:
     at: int = 0  # the first of its lines to show; 0: a little before the marked ones
 
     @classmethod
-    def of(cls, params):
+    def of(cls, params: "QueryParams") -> "View":
         k, at, path = _count(params.get("k", "")), _count(params.get("at", "")), params.get("path", "").strip("/")
+        mode = params.get("mode", "")
         return cls(
             q=params.get("q", "").strip(),
-            mode=params.get("mode") if params.get("mode") in MODES else "search",
+            mode=mode if mode in MODES else "search",
             c=params.get("c", ""),
             path=path and path + "/",  # "2024", "/2024/": the folder 2024/
             f=tuple(params.getlist("f")),
@@ -83,7 +96,7 @@ class View:
             at=at or 0,
         )
 
-    def href(self, **changes):
+    def href(self, **changes: Any) -> str:
         """The address of this view with `changes`; values left at their defaults stay out of it."""
         view, default = replace(self, **changes), View()
         pairs = [
@@ -94,10 +107,10 @@ class View:
         ]
         return PREFIX + ("?" + urlencode(pairs) if pairs else "")
 
-    def filters(self):
+    def filters(self) -> dict[str, list[str]]:
         """The filters as searches take them: the values of one field stand for any of them, each in whatever form
         the front matter holds it, a number or text."""
-        found = {}
+        found: dict[str, list[str]] = {}
         for pair in self.f:
             key, equals, value = pair.partition("=")
             if not equals:
@@ -105,47 +118,48 @@ class View:
             found.setdefault(key, []).append(value)
         return found
 
-    def filtered(self, key, value):
+    def filtered(self, key: str, value: object) -> str:
         """This view with the filter key=value added, or removed if it is there; on the first page."""
         pair = f"{key}={value}"
         return self.href(f=tuple(p for p in self.f if p != pair) if pair in self.f else (*self.f, pair), k=PAGE)
 
 
-def _count(text):
+def _count(text: str) -> int | None:
     """A count from the address, or None for anything else: one too long for int() to read, too."""
     return int(text) if re.fullmatch("[0-9]{1,9}", text) else None
 
 
-def _shown(value):
+def _shown(value: Any) -> Any:
     """A front-matter value as the page shows it, and as a filter names it: yes and no as JSON writes them."""
     return ("true" if value else "false") if isinstance(value, bool) else value
 
 
-def _glob(path):
+def _glob(path: str) -> str:
     """A folder's path as a glob that matches what is inside it: [, * and ? stand for themselves."""
     return re.sub(r"[\[*?]", r"[\g<0>]", path) + "*"
 
 
-def _pattern(query):
+def _pattern(query: str) -> re.Pattern[str] | None:
     """A regex for the words of a query, any ending, to mark them; None for a query without any."""
     terms = {w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS | {"and", "or", "not", "near"}}
     terms = sorted((t for t in terms if len(t) > 1), key=len, reverse=True)
     return re.compile(r"\b(?:" + "|".join(map(re.escape, terms)) + r")\w*", re.IGNORECASE) if terms else None
 
 
-def _marked(text, pattern):
+def _marked(text: str, pattern: re.Pattern[str] | None) -> Markup:
     """Text as HTML, its matches of `pattern` in <mark>. Escaped piece by piece, so a match can't land inside an
     escape such as &amp;."""
     if pattern is None:
         return escape(text)
-    out, last = [], 0
+    out: list[Markup] = []
+    last = 0
     for m in pattern.finditer(text):
         out += [escape(text[last : m.start()]), Markup("<mark>"), escape(m[0]), Markup("</mark>")]
         last = m.end()
     return Markup("").join([*out, escape(text[last:])])
 
 
-def _snippet(text, pattern, title=""):
+def _snippet(text: str, pattern: re.Pattern[str] | None, title: str = "") -> Markup:
     """A passage on one line, about SNIPPET characters from a little before its first match, marked; without
     Markdown's heading marks, and without the title the results show anyway."""
     text = re.sub(r"(?<!\S)#{1,6}\s", "", " ".join(text.split()))
@@ -156,29 +170,25 @@ def _snippet(text, pattern, title=""):
     return _marked(("…" if start else "") + piece + ("…" if start + SNIPPET < len(text) else ""), pattern)
 
 
-def _short(value):
+def _short(value: object) -> bool:
     return isinstance(value, str | int | float) and not isinstance(value, bool) and len(str(value)) <= SHORT
 
 
-def _link(value):
+def _link(value: object) -> bool:
     return isinstance(value, str) and re.match(r"https?://\S+$", value) is not None
 
 
-def _values(value):
-    return value if isinstance(value, list) else [value]
-
-
-def _facets(hits, view):
+def _facets(hits: Iterable[Hit], view: View) -> list[tuple[str, list[dict[str, Any]]]]:
     """For each front-matter field of the hits, its most common short values with their counts, as filters: first the
     fields whose values most hits share. A field whose values all differ, such as an id or a link, helps nobody
     filter, unless it has few."""
-    counts = {}
+    counts: dict[str, Counter[Any]] = {}
     for hit in hits:
         for key, value in hit.get("fields", {}).items():
-            for one in map(_shown, _values(value)):
+            for one in map(_shown, each(value)):
                 if _short(one) and not _link(one):
                     counts.setdefault(key, Counter())[one] += 1
-    facets = []
+    facets: list[tuple[str, list[dict[str, Any]]]] = []
     for key, counter in sorted(counts.items(), key=lambda kc: (-max(kc[1].values()), kc[0])):  # the most shared first
         if len(counter) > FACET_VALUES and max(counter.values()) == 1:
             continue
@@ -190,10 +200,12 @@ def _facets(hits, view):
     return facets
 
 
-def _collections(stores):
+def _collections(
+    stores: Iterable[tuple["Collection", sqlite3.Connection]],
+) -> list[tuple[str, int | None, str | None]]:
     """The collections of [(collection, its store)], each as (name, its number of documents as its store keeps it,
     None), or of a store found damaged (name, None, what is wrong and what to do)."""
-    listed = []
+    listed: list[tuple[str, int | None, str | None]] = []
     for c, db in stores:
         try:
             listed.append((c.name, store.counts(db)["docs"], None))
@@ -202,7 +214,7 @@ def _collections(stores):
     return listed
 
 
-def _crumbs(view):
+def _crumbs(view: View) -> list[tuple[str, str]]:
     """The collection and folders the view is in, each a link to browse it."""
     if not view.c:
         return []
@@ -213,7 +225,7 @@ def _crumbs(view):
     return crumbs
 
 
-def _scored(hits, view, pattern):
+def _scored(hits: list[Hit], view: View, pattern: re.Pattern[str] | None) -> list[Hit]:
     """The hits as the results list shows them: a link to read each, its passage shortened, its score as a bar."""
     scores = [h["score"] for h in hits if h.get("score") is not None]
     low, high = (min(scores), max(scores)) if scores else (0, 0)
@@ -225,9 +237,9 @@ def _scored(hits, view, pattern):
     return hits
 
 
-def _explore(index, view, pattern):
+def _explore(index: "Index", view: View, pattern: re.Pattern[str] | None) -> Context:
     """The filters, folders and results of a view."""
-    options = {
+    options: dict[str, Any] = {
         "collection": view.c or None,
         "path": view.path and _glob(view.path),
         "fields": ["*"],
@@ -235,7 +247,14 @@ def _explore(index, view, pattern):
         "links_to": [view.to] if view.to else None,
         "linked_from": [view.by] if view.by else None,
     }
-    context = {"kind": "overview", "hits": [], "folders": [], "crumbs": _crumbs(view), "error": None, "linking": []}
+    context: Context = {
+        "kind": "overview",
+        "hits": [],
+        "folders": [],
+        "crumbs": _crumbs(view),
+        "error": None,
+        "linking": [],
+    }
     # One result more than the page tells whether there are more; but a search sorted by a field sorts its k best,
     # which one more would change.
     peek = not (view.sort and (view.q or view.similar))
@@ -274,10 +293,10 @@ def _explore(index, view, pattern):
     }
 
 
-def _lines(text, span, pattern, at):
+def _lines(text: str, span: tuple[int, int] | None, pattern: re.Pattern[str] | None, at: int) -> list[dict[str, Any]]:
     """READER_LINES lines of a document, from line `at` on, for the reader: number, text marked, whether in the hit,
     and what kind of line it is."""
-    rows = []
+    rows: list[dict[str, Any]] = []
     for n, found in enumerate(islice(readers.LINE.finditer(text), at - 1, at - 1 + READER_LINES), at):
         line, kind = found[0].rstrip("\n"), "t" if found[0].lstrip().startswith("|") else ""
         if m := re.match(r"(#{1,6}) ", line):  # a heading, shown as one rather than with its marks
@@ -286,7 +305,7 @@ def _lines(text, span, pattern, at):
     return rows
 
 
-def _field(view, key, value):
+def _field(view: View, key: str, value: Any) -> dict[str, Any]:
     """A front-matter value in the reader: a link opens its page, a short value filters by it, others are text."""
     value = _shown(value)
     if _link(value):
@@ -294,7 +313,7 @@ def _field(view, key, value):
     return {"value": value, "href": view.filtered(key, value) if _short(value) else None}
 
 
-def _title(index, note):
+def _title(index: "Index", note: str) -> str:
     """A note's title, or as named if it names none: a link target, in an address written by hand."""
     try:
         return index.document(note)["title"]
@@ -302,7 +321,7 @@ def _title(index, note):
         return note
 
 
-def _reader(index, view, pattern):
+def _reader(index: "Index", view: View, pattern: re.Pattern[str] | None) -> Context | None:
     """The document a view reads, with its front matter as filters, and the notes linking it and that it links;
     None if it reads none."""
     if not view.doc:
@@ -317,7 +336,7 @@ def _reader(index, view, pattern):
     except ERRORS as e:
         return {"error": str(e)}
     listing = {"q": "", "similar": "", "c": "", "path": "", "f": (), "k": PAGE}  # all of them, wherever they are
-    fields_ = [(key, [_field(view, key, v) for v in _values(value)]) for key, value in document["fields"].items()]
+    fields_ = [(key, [_field(view, key, v) for v in each(value)]) for key, value in document["fields"].items()]
     text = document["text"]
     total = text.count("\n") + (not text.endswith("\n") and text != "")
     at = min(view.at or (max(1, span[0] - READER_LINES // 10) if span else 1), max(1, total))
@@ -338,43 +357,45 @@ def _reader(index, view, pattern):
     }
 
 
-def app(index, host="127.0.0.1"):
+def app(index: "Index", host: str = "127.0.0.1") -> "ASGIApp":
     """The UI's ASGI app over `index`, to serve under /ui. Served on a local address, it answers only requests that
     name a local host: a web page could otherwise reach it under its own domain (DNS rebinding) and read the
     documents. Its pages are made as the MCP tools' calls are run: one at a time, off the event loop (see `jobs`)."""
     from jinja2 import Environment, FileSystemLoader
     from starlette.applications import Starlette
-    from starlette.responses import FileResponse, HTMLResponse, PlainTextResponse
+    from starlette.requests import Request
+    from starlette.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
     from starlette.routing import Mount, Route
     from starlette.staticfiles import StaticFiles
 
     env = Environment(loader=FileSystemLoader(WEB), autoescape=True, trim_blocks=True, lstrip_blocks=True)
     env.filters["num"] = lambda n: f"{n:,}"
-    env.globals["PAGE"] = PAGE
 
-    def render(view, part, headers):
+    def render(view: View, part: str | None, headers: Mapping[str, str]) -> str:
         pattern = _pattern(view.q)
-        context = {
+        context: Context = {
             "view": view,
             "modes": MODES,
             "oob": part == "explore",  # the form's parts come along, to show the view
             "typed": headers.get("hx-trigger") == "search",  # the box holds what is being typed: it stays
             "title": f"{view.q} · sift" if view.q else "sift",
             "collections": _collections([(c, index.catalog.store(c)) for c in index.active().values()]),
+            "PAGE": PAGE,  # in the context, as included templates see it: jinja2 types its globals as its own alone
         }
         if part != "reader":
             context |= _explore(index, view, pattern)
         if part != "explore":
             context["reader"] = _reader(index, view, pattern)
-        name = {"explore": "explore.html", "reader": "reader.html"}.get(part, "page.html")
+        templates: dict[str | None, str] = {"explore": "explore.html", "reader": "reader.html"}
+        name = templates.get(part, "page.html")
         return env.get_template(name).render(context)
 
-    async def page(request):
+    async def page(request: Request) -> HTMLResponse:
         view = View.of(request.query_params)
         part = request.headers.get("hx-target") if "hx-history-restore-request" not in request.headers else None
         return HTMLResponse(await jobs.run(render, view, part, request.headers), headers=UNKEPT)
 
-    def located(id):
+    def located(id: str) -> Path | None:
         """The file of the document `id`, if it is there: looked for here, off the event loop, which a share that
         doesn't answer would hold for as long as the system waits."""
         try:
@@ -383,7 +404,7 @@ def app(index, host="127.0.0.1"):
             return None
         return path if path is not None and path.is_file() else None
 
-    async def file(request):
+    async def file(request: Request) -> Response:
         path = await jobs.run(located, request.query_params.get("id", ""))
         if path is None:
             return PlainTextResponse("no such file", status_code=404)
@@ -400,12 +421,12 @@ def app(index, host="127.0.0.1"):
     return _local_only(ui) if host in LOCAL_HOSTS else ui
 
 
-def _local_only(app):
+def _local_only(app: "ASGIApp") -> "ASGIApp":
     """`app`, answering only requests whose Host names a local host, an IPv6 one in brackets too ("[::1]:8765"), which
     Starlette's TrustedHostMiddleware cuts at its first colon."""
     from starlette.responses import PlainTextResponse
 
-    async def checked(scope, receive, send):
+    async def checked(scope: "Scope", receive: "Receive", send: "Send") -> None:
         host = dict(scope.get("headers", ())).get(b"host", b"").decode("latin-1")
         name = host[1 : host.find("]")] if host.startswith("[") else host.partition(":")[0]
         if scope["type"] != "lifespan" and name not in LOCAL_HOSTS:
@@ -416,14 +437,14 @@ def _local_only(app):
     return checked
 
 
-def address(host, port):
+def address(host: str, port: int) -> str:
     """Where to reach a server listening on `host`: this machine's own address if it listens on all of them, and
     IPv6 addresses in brackets."""
     host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
     return f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
 
 
-def open_in_browser(host="127.0.0.1", port=8765):
+def open_in_browser(host: str = "127.0.0.1", port: int = 8765) -> None:
     """`sift ui`: open the UI of the `sift serve` on this port in the browser, starting the server if none runs."""
     url = address(host, port) + PREFIX
     # Asked itself, not through a proxy set for the web, which knows no server of this machine.
@@ -449,12 +470,12 @@ def open_in_browser(host="127.0.0.1", port=8765):
     _open(url)
 
 
-def _open(url):
+def _open(url: str) -> None:
     console.say(f"sift ui on {url}")
     webbrowser.open(url)
 
 
-def _open_when_up(url, wait=STARTUP_SECONDS):
+def _open_when_up(url: str, wait: float = STARTUP_SECONDS) -> None:
     """Open the page once something listens on its port, within `wait` seconds."""
     deadline, parts = time.monotonic() + wait, urlsplit(url)
     while time.monotonic() < deadline:

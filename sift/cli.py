@@ -10,11 +10,18 @@ import re
 import sqlite3
 import sys
 import textwrap
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 from . import __version__, console, logs, readers, settings, update
 from .catalog import SUFFIX, Catalog
+from .filters import each
+
+if TYPE_CHECKING:
+    from .hits import Hit
+    from .search import Index
 
 # The commands that take a while to start, and say so first. Those that run a model load PyTorch, unless a worker
 # computes for them (SIFT_EMBED_REMOTE): all but `similar`, which compares the vectors the index holds, and of them
@@ -24,17 +31,17 @@ RUN_NO_MODEL = ("similar",)
 SEARCHES = ("search", "vsearch", "query", "similar")
 
 
-def _value(text):
+def _value(text: str) -> Any:
     try:
         return json.loads(text)
     except ValueError:
         return text
 
 
-def _filters(pairs):
+def _filters(pairs: Iterable[str]) -> dict[str, Any]:
     """-f KEY=VALUE, KEY!=VALUE and ranges such as -f created>=2024-06 -f created<2025, as search filters. Repeated,
     KEY=VALUE stands for any of the values, and KEY!=VALUE for none of them."""
-    out = {}
+    out: dict[str, dict[str, Any]] = {}
     for pair in pairs:
         m = re.fullmatch(r"(\w[^=<>!]*)(>=|<=|!=|=|<|>)(.*)", pair)  # a field name: "journal-ref", "date created"
         if not m:
@@ -44,25 +51,21 @@ def _filters(pairs):
         key, op, value = m[1].rstrip(), "not" if m[2] == "!=" else m[2], _value(m[3])
         conditions = out.setdefault(key, {})
         if op in ("=", "not") and op in conditions:
-            value = _listed(conditions[op]) + _listed(value)
+            value = each(conditions[op]) + each(value)
         conditions[op] = value
     return {key: c["="] if list(c) == ["="] else c for key, c in out.items()}
 
 
-def _fields(text):
+def _fields(text: str | None) -> list[str] | Literal[""] | None:
     """--fields url,created as a list of field names."""
     return text and [field.strip() for field in text.split(",")]
 
 
-def _listed(value):
-    return value if isinstance(value, list) else [value]
-
-
-def _shown(value):
+def _shown(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
-def _print_document(document):
+def _print_document(document: dict[str, Any]) -> None:
     """A document as `sift get` prints it: its fields, if asked for, then its text."""
     for key, value in document.get("fields", {}).items():
         _print(f"{key}: {_shown(value)}")
@@ -72,7 +75,7 @@ def _print_document(document):
     _print(text if text.endswith("\n") or not text else text + "\n", end="")  # JSON records end without one
 
 
-def _print_documents(documents):
+def _print_documents(documents: list[dict[str, Any]]) -> None:
     """Several documents, each headed by its id as `head` heads files; those that can't be read said, and then an
     error."""
     for n, document in enumerate(d for d in documents if "error" not in d):
@@ -85,7 +88,7 @@ def _print_documents(documents):
         raise SystemExit(f"{len(failed)} of {len(documents)} documents can't be read")
 
 
-def _print_hits(hits, as_json):
+def _print_hits(hits: "list[Hit]", as_json: bool) -> None:
     if as_json:
         _print(json.dumps(hits, ensure_ascii=False, indent=2))
         return
@@ -103,7 +106,7 @@ def _print_hits(hits, as_json):
         console.say("out of time: the best found so far; better matches may be missing")
 
 
-def _print_links(found, as_json):
+def _print_links(found: dict[str, Any], as_json: bool) -> None:
     """`sift links`: each link out with where it leads, and each document linking in with its lines."""
     if as_json:
         _print(json.dumps(found, ensure_ascii=False, indent=2))
@@ -129,7 +132,7 @@ def _print_links(found, as_json):
             _print(f"{link['line']:>6}  {written}  ->  {to}{through}")
 
 
-def _print_unresolved(targets, as_json):
+def _print_unresolved(targets: list[dict[str, Any]], as_json: bool) -> None:
     """`sift unresolved`: each target with how many documents link it, and a few of them."""
     if as_json:
         _print(json.dumps(targets, ensure_ascii=False, indent=2))
@@ -141,7 +144,7 @@ def _print_unresolved(targets, as_json):
         _print(f"{target['docs']:>6}  {target['target']}  {', '.join(target['ids'])}{more}")
 
 
-def _parser():
+def _parser() -> argparse.ArgumentParser:
     """The command line: every command of sift, with its options."""
     p = argparse.ArgumentParser(prog="sift", description="Fast local search over your documents and notes.")
     p.add_argument("--version", action="version", version=f"sift {__version__}")
@@ -294,7 +297,7 @@ def _parser():
     return p
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> None:
     a = _parser().parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # what sift says names files and titles, as its results do
         # e.g. a Windows pipe: titles may be any script. A stream that is no TextIOWrapper has no encoding to switch:
@@ -322,7 +325,7 @@ class _ReaderLeft(Exception):
     """Whoever read sift's results has left, as `head` does once it has its lines."""
 
 
-def _print(*parts, **options):
+def _print(*parts: object, **options: Any) -> None:
     """print() results, which go to stdout from here alone. Refused as to a broken pipe, which Windows calls an
     invalid argument, they have no reader any more (_ReaderLeft); refused otherwise, as by a full disk, it is an
     error."""
@@ -334,7 +337,7 @@ def _print(*parts, **options):
         raise _ReaderLeft from None
 
 
-def _unread():
+def _unread() -> int:
     """Let go of the results nobody reads any more, which Python, ending, would try to write once more and report;
     returns the exit code Python itself ends with on a broken pipe."""
     with contextlib.suppress(OSError, ValueError):  # a stdout that is no file: nothing of it is left to Python
@@ -342,7 +345,7 @@ def _unread():
     return 1
 
 
-def _offer_update(command):
+def _offer_update(command: str) -> None:
     """In a terminal: a newer sift, and how an update went (see update.offer). Trouble with the update's own state, a
     folder that may not be written, is said, and the command runs: it is what was asked, the update an offer."""
     try:
@@ -351,7 +354,7 @@ def _offer_update(command):
         console.say(f"sift couldn't look for an update: {error}")
 
 
-def _command(a):
+def _command(a: argparse.Namespace) -> None:
     if a.cmd in SLOW:  # loading PyTorch alone can take long: say first that sift runs
         through_a_worker = settings.current().remote and a.cmd != "worker"
         loading = "" if through_a_worker or a.cmd in RUN_NO_MODEL else ", loading PyTorch"
@@ -367,7 +370,7 @@ def _command(a):
         COMMANDS[a.cmd](a, catalog)
 
 
-def _add(a, catalog):
+def _add(a: argparse.Namespace, catalog: Catalog) -> None:
     """`sift add`: register a folder; or, for a folder registered already, change where its titles come from."""
     chosen = {"id": a.id, "title": a.title, "text": a.text and [f.strip() for f in a.text.split(",")]}
     chosen = {k: v for k, v in chosen.items() if v} | ({"title_from": a.title_from} if a.title_from else {})
@@ -395,25 +398,25 @@ def _add(a, catalog):
         )
 
 
-def _index(catalog):
+def _index(catalog: Catalog) -> "Index":
     """The catalog's Index. Imported here: only the commands that search load NumPy."""
     from .search import Index
 
     return Index(catalog)
 
 
-def _rm(a, catalog):
+def _rm(a: argparse.Namespace, catalog: Catalog) -> None:
     n = catalog.remove(a.name)
     held = "" if n is None else f" and its index of {console.count(n, 'document')}"
     console.say(f"removed collection {a.name!r}{held}; the files on disk are untouched")
 
 
-def _move(a, catalog):
+def _move(a: argparse.Namespace, catalog: Catalog) -> None:
     moved = catalog.move(a.names, a.to)
     console.say(f"moved the index of {', '.join(moved)} to {a.to}" if moved else "nothing moved")
 
 
-def _set_active(a, catalog):
+def _set_active(a: argparse.Namespace, catalog: Catalog) -> None:
     active = a.cmd == "activate"
     changed = catalog.set_active(a.names, active)
     state = "active: searched again" if active else "inactive: left out of searches"
@@ -424,7 +427,7 @@ def _set_active(a, catalog):
     )
 
 
-def _index_command(a, catalog):
+def _index_command(a: argparse.Namespace, catalog: Catalog) -> None:
     """`sift index`: every collection, those named, or with --files the files given."""
     from .indexing import index, reindex
 
@@ -440,13 +443,13 @@ def _index_command(a, catalog):
         console.say(f"{entry['id']}: {entry['status']}" + (f" ({entry['note']})" if "note" in entry else ""))
 
 
-def _embed(a, catalog):
+def _embed(a: argparse.Namespace, catalog: Catalog) -> None:
     from .embed import embed_pending
 
     embed_pending(catalog, a.reset, collections=a.names)
 
 
-def _search(a, catalog):
+def _search(a: argparse.Namespace, catalog: Catalog) -> None:
     hits = getattr(_index(catalog), a.cmd)(
         a.subject,
         a.k,
@@ -465,7 +468,7 @@ def _search(a, catalog):
     _print_hits(hits, a.json)
 
 
-def _get(a, catalog):
+def _get(a: argparse.Namespace, catalog: Catalog) -> None:
     index, fields = _index(catalog), _fields(a.fields)
     if len(a.id) == 1:
         _print_document(index.document(a.id[0], a.lines, fields))
@@ -473,7 +476,7 @@ def _get(a, catalog):
         _print_documents(index.documents([(id, a.lines) for id in a.id], fields))
 
 
-def _bench(a, catalog):
+def _bench(a: argparse.Namespace, catalog: Catalog) -> None:
     from . import bench, vectors
 
     vectors.compile_scan()  # many searches: worth the second it takes, as for a server
@@ -484,37 +487,37 @@ def _bench(a, catalog):
         _print(f"{mode:10}{r['nDCG@10']:>10.3f}{r['MRR@10']:>10.3f}{r['Recall@10']:>11.3f}{r['ms']:>10.0f}")
 
 
-def _status(a, catalog):
+def _status(a: argparse.Namespace, catalog: Catalog) -> None:
     _print(json.dumps(_index(catalog).status(), indent=2))
 
 
-def _links(a, catalog):
+def _links(a: argparse.Namespace, catalog: Catalog) -> None:
     _print_links(_index(catalog).links(a.id, a.direction, a.depth, a.field, a.k), a.json)
 
 
-def _mentions(a, catalog):
+def _mentions(a: argparse.Namespace, catalog: Catalog) -> None:
     also, fields = _fields(a.also), _fields(a.fields)
     hits = _index(catalog).mentions(a.id, a.k, collection=a.collection, also=also, fields=fields, compact=a.compact)
     _print_hits(hits, a.json)
 
 
-def _unresolved(a, catalog):
+def _unresolved(a: argparse.Namespace, catalog: Catalog) -> None:
     _print_unresolved(_index(catalog).unresolved(a.collection, a.k), a.json)
 
 
-def _ui(a, catalog):
+def _ui(a: argparse.Namespace, catalog: Catalog) -> None:
     from .ui import open_in_browser
 
     open_in_browser(a.host, a.port)
 
 
-def _serve(a, catalog):
+def _serve(a: argparse.Namespace, catalog: Catalog) -> None:
     from .server import serve
 
     serve(a.host, a.port, a.stdio)
 
 
-COMMANDS = {
+COMMANDS: dict[str, Callable[[argparse.Namespace, Catalog], None]] = {
     "add": _add,
     "rm": _rm,
     "move": _move,

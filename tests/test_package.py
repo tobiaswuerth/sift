@@ -1,7 +1,9 @@
 """The package as it is published: what it depends on, and the rules its modules keep."""
 
 import ast
+import importlib
 import importlib.metadata
+import inspect
 import re
 import sys
 import tomllib
@@ -30,6 +32,33 @@ def test_every_package_sift_imports_is_a_dependency():
         if not {d.lower() for d in distributions[module]} & declared
     }
     assert undeclared == set()
+    by_name = {
+        f"{path.name}:{node.lineno}"
+        for path in (ROOT / "sift").glob("*.py")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] in ("import_module", "__import__")
+    }
+    assert by_name == set(), "import a package with an import statement: one imported by name isn't seen above"
+
+
+def test_the_stubs_name_what_their_packages_have():
+    # typings/ types what sift calls of packages that ship no types: a name or a parameter there that the package
+    # doesn't have (any more) would pass the type checker and fail when called.
+    for stub in (ROOT / "typings").rglob("*.pyi"):
+        package = importlib.import_module(stub.parent.name if stub.stem == "__init__" else stub.stem)
+        for node in ast.parse(stub.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.FunctionDef):
+                _assert_takes(getattr(package, node.name), node, f"{stub.name}: {node.name}")
+            for method in node.body if isinstance(node, ast.ClassDef) else ():
+                real = getattr(getattr(package, node.name), method.name)
+                _assert_takes(real, method, f"{stub.name}: {node.name}.{method.name}")
+
+
+def _assert_takes(real, stubbed, where):
+    """The function `real` takes every parameter its stub names, but those of methods Python calls itself."""
+    if not stubbed.name.startswith("__") or stubbed.name == "__init__":
+        named = {a.arg for a in stubbed.args.args} - {"self"}
+        assert named <= set(inspect.signature(real).parameters), where
 
 
 def test_requirements_txt_names_the_dependencies_pyproject_does():
@@ -139,67 +168,56 @@ def test_only_newlines_end_lines():
     assert found == set(), 'split on "\n" (see readers.LINE): only it ends a line, as in editors and git'
 
 
-NOT_YET_STRICT = {  # the modules the type checker doesn't read yet. It only shrinks: modules leave it, none joins it
-    "sift/__main__.py",
-    "sift/accelerator.py",
-    "sift/bench.py",
-    "sift/catalog.py",
-    "sift/cli.py",
-    "sift/embed.py",
-    "sift/indexing.py",
-    "sift/jobs.py",
-    "sift/links.py",
-    "sift/local.py",
-    "sift/models.py",
-    "sift/ocr.py",
-    "sift/order.py",
-    "sift/postings.py",
-    "sift/readers.py",
-    "sift/remote.py",
-    "sift/scan.py",
-    "sift/search.py",
-    "sift/server.py",
-    "sift/store.py",
-    "sift/topk.py",
-    "sift/ui.py",
-    "sift/upgrade.py",
-    "sift/vectors.py",
-    "sift/worker.py",
-}
 SILENCED = re.compile(r"#\s*(?:type:\s*ignore|pyright:)")
+# The findings silenced with the owner's yes, each for one rule in one place, saying why: the module, and its line.
+SILENCED_WITH_YES = {
+    # Numba's @intrinsic: compiled code calls it with the word alone, Numba passing its typing context first
+    (
+        "scan.py",
+        "distance += _popcount(words[i, k] ^ query[k])  # pyright: ignore[reportCallIssue]  # numba gives typingctx",
+    ),
+}
 
 
 def _pyright():
     return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["pyright"]
 
 
-def test_the_modules_checked_for_types_only_grow():
-    # The type checker came to code written without it, some modules at a time: those it checks ([tool.pyright] in
-    # pyproject.toml) are all but the ones still waiting, so a new module is checked from its start, and one checked
-    # stays so.
-    modules = {f"sift/{path.name}" for path in (ROOT / "sift").glob("*.py")}
-    assert modules >= NOT_YET_STRICT, "a module that is gone waits no more: take it out of NOT_YET_STRICT"
-    assert set(_pyright()["include"]) == modules - NOT_YET_STRICT, (
-        "list a new module under include in [tool.pyright]; one that became strict there, and no more in "
-        "NOT_YET_STRICT, which only shrinks"
-    )
+def test_every_module_is_checked_for_types():
+    # The type checker came to code written without it, some modules at a time, until it read all of them: a new
+    # module is checked from its start.
+    assert _pyright()["include"] == ["sift"]
+
+
+def test_types_are_checked_for_the_python_whose_packages_they_read():
+    # Checked for 3.11 with the packages of 3.12, every NumPy call was an error: NumPy 2.5 needs 3.12, and its types
+    # name what only 3.12 has. pyright checks for the Python of CI's types job, whose packages it reads; that sift
+    # still runs on the oldest Python it claims, ruff's target and CI's tests there, at full coverage, hold.
+    toml = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    oldest = toml["project"]["requires-python"].removeprefix(">=")
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    types_job = ci.split("\n  types:\n", 1)[1].split("\n  test:\n", 1)[0]
+    assert f'python-version: "{_pyright()["pythonVersion"]}"' in types_job
+    assert toml["tool"]["ruff"]["target-version"] == "py" + oldest.replace(".", "")
+    assert f'python: ["{oldest}",' in ci
+    assert toml["tool"]["coverage"]["report"]["fail_under"] == 100
 
 
 def test_nothing_silences_the_type_checker():
     # Green by a rule switched off, or by a line the checker is told to pass over, says nothing: its settings are
-    # the strict ones and no more, for the oldest Python sift runs on, and no module talks it out of a finding.
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    # the strict ones and no more, and no module talks it out of a finding.
     settings = _pyright()
     assert sorted(settings) == ["include", "pythonVersion", "typeCheckingMode"], "no rule is set apart from strict"
     assert settings["typeCheckingMode"] == "strict"
-    assert project["requires-python"] == f">={settings['pythonVersion']}"
     silenced = {
-        f"{path.name}:{n}"
+        (path.name, line.strip())
         for path in (ROOT / "sift").glob("*.py")
-        for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1)
+        for line in path.read_text(encoding="utf-8").split("\n")
         if SILENCED.search(line)
     }
-    assert silenced == set(), "fix what the checker finds; a rule silenced in one place needs the owner's yes first"
+    assert silenced == SILENCED_WITH_YES, (
+        "fix what the checker finds; a rule silenced in one place needs the owner's yes first, then SILENCED_WITH_YES"
+    )
 
 
 def test_chunks_are_cut_from_their_text_in_one_place():
@@ -315,3 +333,21 @@ def test_modules_import_each_other_one_way():
     assert _cycles({path.stem: _imports(path, anywhere=True) for path in sources}) == CYCLES, (
         "no new cycle: move what both modules need into one both may import; one gone leaves CYCLES"
     )
+
+
+def test_tests_close_the_databases_they_open():
+    # A database a test opens with sqlite3.connect and leaves to the garbage collector is a ResourceWarning on Python
+    # 3.13 and newer, raised in whichever test runs when it is collected: the gate, on an older Python, passed, and CI
+    # failed elsewhere. Those opened through sift are closed by a fixture (conftest.close_databases).
+    left_open = set()
+    for path in (ROOT / "tests").glob("*.py"):
+        for function in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            source = ast.unparse(function)
+            for node in ast.walk(function):
+                if isinstance(node, ast.Assign) and ast.unparse(node.value).startswith("sqlite3.connect("):
+                    name = ast.unparse(node.targets[0])
+                    if f"{name}.close()" not in source and f"return {name}" not in source:  # its caller's to close
+                        left_open.add(f"{path.name}:{node.lineno}")
+    assert left_open == set(), "close it, or open it in `with closing(sqlite3.connect(...)) as db:`"
