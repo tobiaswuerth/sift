@@ -153,17 +153,41 @@ def owner(row_id):
     return int(row_id) >> SHIFT
 
 
-def database(path, create=False) -> sqlite3.Connection:
+class Connection(sqlite3.Connection):
+    """A database's connection that knows how many rows it changed in tables of its own (see scratch): they change
+    nothing of the database, and `changes` leaves them out."""
+
+    scratch = 0
+
+
+@contextmanager
+def scratch(db):
+    """While this lasts, `db` writes only tables of its own, temporary ones: the rows it changes are counted as such,
+    as SQLite counts them among the connection's changes, where they looked like changes of the store."""
+    before = db.total_changes
+    try:
+        yield
+    finally:
+        db.scratch += db.total_changes - before
+
+
+def changes(db):
+    """How SQLite counts a database's changes through a connection: those other connections committed, and the rows
+    the connection changed itself, but those in tables of its own (see scratch)."""
+    return db.execute("PRAGMA data_version").fetchone()[0], db.total_changes - db.scratch
+
+
+def database(path, create=False) -> Connection:
     """The SQLite database at `path`, with sift's settings. It is made only if `create`: a store on a drive that isn't
     connected stays missing, and is never made anew, empty."""
-    path = Path(path)
+    path, options = Path(path), {"timeout": TIMEOUT, "check_same_thread": False, "factory": Connection}
     if create:
         path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(path, timeout=TIMEOUT, check_same_thread=False)
+        db = sqlite3.connect(path, **options)
     elif not path.is_file():
         raise FileNotFoundError(f"not found: {path}")
     else:
-        db = sqlite3.connect(uri(path.resolve(), "rw"), uri=True, timeout=TIMEOUT, check_same_thread=False)
+        db = sqlite3.connect(uri(path.resolve(), "rw"), uri=True, **options)
     try:
         db.execute("PRAGMA journal_mode=WAL")
         db.execute(f"PRAGMA journal_size_limit={WAL_LIMIT}")
@@ -176,10 +200,10 @@ def database(path, create=False) -> sqlite3.Connection:
     return db
 
 
-def read_only(path) -> sqlite3.Connection:
+def read_only(path) -> Connection:
     """The database at `path`, to read only, through a connection of its own: no setting changes, and no call
     cancelled meanwhile (ABORT) stops what it reads."""
-    return sqlite3.connect(uri(Path(path).resolve(), "ro"), uri=True, timeout=TIMEOUT)
+    return sqlite3.connect(uri(Path(path).resolve(), "ro"), uri=True, timeout=TIMEOUT, factory=Connection)
 
 
 def uri(path, mode):

@@ -153,6 +153,7 @@ pythonVersion = "3.11"  # the oldest sift runs on
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["error"]  # a warning today is a failure tomorrow
+faulthandler_timeout = 300  # seconds after which a test that hangs says where: every thread's stack, on stderr
 
 [tool.coverage.run]
 source = ["sift"]

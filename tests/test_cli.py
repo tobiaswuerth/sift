@@ -724,3 +724,10 @@ def test_index_files_or_collections(cli_vault, capsys, tmp_path):
     write(tmp_path / "elsewhere.md", "x")
     with pytest.raises(SystemExit, match="is in no collection"):
         run(capsys, "index", "--files", str(tmp_path / "elsewhere.md"))
+
+
+def test_every_command_has_what_runs_it():
+    # A chain of a hundred lines chose what a command runs by comparing its name, case after case: a command the
+    # parser took and the chain didn't name was served. The table names each, and here it names them all.
+    (commands,) = [action.choices for action in cli._parser()._actions if action.dest == "cmd"]
+    assert set(cli.COMMANDS) == set(commands) - {"worker"}  # which needs no index, and runs before one is opened

@@ -22,21 +22,27 @@ def ids(hits):
 
 
 @pytest.fixture
-def three(tmp_path, home, fake_models):
-    """Three collections, indexed and embedded: papers, recipes and diary, in stores of their own."""
-    write(
-        tmp_path / "papers" / "robots.md", "---\nyear: 2024\n---\n# Painting robots\n\nA robot paints brush strokes.\n"
-    )
-    write(tmp_path / "papers" / "rl.md", "---\nyear: 2019\n---\n# Reward shaping\n\nReward shaping speeds learning.\n")
-    write(tmp_path / "recipes" / "soup.md", "---\nyear: 2021\n---\n# Tomato soup\n\nA soup a robot could cook.\n")
-    write(tmp_path / "recipes" / "bread.md", "---\nyear: old\n---\n# Bread\n\nFlour, water, salt.\n")
-    write(tmp_path / "diary" / "monday.md", "# Monday\n\nThe robot vacuum broke again.\n")
-    catalog = Catalog(home)
-    for name in ("papers", "recipes", "diary"):
-        catalog.add(tmp_path / name, name)
-    indexing.index(catalog)
-    embed.embed_pending(catalog)
-    return catalog
+def three(tmp_path, home, fake_models, built_once):
+    """Three collections, indexed and embedded: papers, recipes and diary, in stores of their own. Built once and
+    copied (see conftest.Built)."""
+
+    def make(root):
+        write(
+            root / "papers" / "robots.md", "---\nyear: 2024\n---\n# Painting robots\n\nA robot paints brush strokes.\n"
+        )
+        write(root / "papers" / "rl.md", "---\nyear: 2019\n---\n# Reward shaping\n\nReward shaping speeds learning.\n")
+        write(root / "recipes" / "soup.md", "---\nyear: 2021\n---\n# Tomato soup\n\nA soup a robot could cook.\n")
+        write(root / "recipes" / "bread.md", "---\nyear: old\n---\n# Bread\n\nFlour, water, salt.\n")
+        write(root / "diary" / "monday.md", "# Monday\n\nThe robot vacuum broke again.\n")
+        catalog = Catalog(root / "home")
+        for name in ("papers", "recipes", "diary"):
+            catalog.add(root / name, name)
+        indexing.index(catalog)
+        embed.embed_pending(catalog)
+        catalog.close()
+
+    built_once.copy("three", make, tmp_path)
+    return Catalog(home)
 
 
 def test_a_semantic_search_of_one_collection_reads_its_codes_alone(three):
@@ -696,3 +702,27 @@ def test_a_documents_best_passage_is_that_of_one_index(tmp_path, fake_models):
         return hit["lines"], hit["score"]
 
     assert best(two, "small/doc.md") == pytest.approx(best(one, "all/small/doc.md"), abs=1e-3)
+
+
+def test_a_collection_without_documents_keeps_no_other_from_its_postings(corpus, tmp_path):
+    # Added and not indexed yet, a collection has no postings, and nothing to find: a search of every collection read
+    # FTS5 for all of them, seconds over millions of passages, until the next `sift index`.
+    catalog, _ = corpus
+    (tmp_path / "empty").mkdir()
+    catalog.add(tmp_path / "empty", "empty")
+    ran = []
+    catalog.store("notes").set_trace_callback(ran.append)
+    assert ids(Index(catalog).search("reward")) == ["notes/rl.md"]
+    assert not [sql for sql in ran if "bm25(fts)" in sql]
+
+
+def test_a_collection_never_indexed_fails_no_search_of_the_others(corpus, tmp_path):
+    # Its keyword index never held a row, and FTS5's record of its totals is empty: from `sift add` until `sift index`,
+    # every keyword search without a collection named ended in "The weights and list don't have the same length".
+    catalog, _ = corpus
+    (tmp_path / "empty").mkdir()
+    catalog.add(tmp_path / "empty", "empty")
+    db = catalog.store("notes")
+    db.execute("DELETE FROM meta WHERE key = 'kw_built'")  # no postings: FTS5 answers, with the counts of both
+    db.commit()
+    assert ids(Index(catalog).search("reward")) == ["notes/rl.md"]

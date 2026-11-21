@@ -216,24 +216,31 @@ def test_a_call_cancelled_while_a_worker_is_asked_holds_up_no_other():
 def test_requests_of_calls_cancelled_before_they_were_sent_never_are():
     # Each waited in a thread of its own for the one before, then went to the worker anyway: the next call waited for
     # all of them, and the worker's GPU computed answers no one read.
-    sent, answer = [], threading.Event()
+    sent, left, answer = [], threading.Event(), threading.Event()
 
     class Slow:
         name, main_thread = "worker", False
 
         def encode(self, texts):
             sent.append(texts[0])
-            answer.wait(5)
+            left.set()
+            answer.wait(30)
             return texts[0]
 
     models = jobs.OnMainThread(Slow())
 
     async def main():
-        for text in "abc":
+        # a is cancelled once it is on its way, not after a time: on a slow machine its thread hadn't started in
+        # 50 ms, a never left, and b did. Then b and c, whenever they are cancelled, find the worker taken by a.
+        async with anyio.create_task_group() as calls:
+            calls.start_soon(jobs.run, lambda: models.encode(["a"]))
+            assert await anyio.to_thread.run_sync(left.wait, 30)
+            calls.cancel_scope.cancel()
+        for text in "bc":
             with anyio.move_on_after(0.05):
                 await jobs.run(lambda text=text: models.encode([text]))
         answer.set()
-        with anyio.fail_after(2):
+        with anyio.fail_after(30):
             return await jobs.run(lambda: models.encode(["d"]))
 
     assert anyio.run(main) == "d"

@@ -2,7 +2,9 @@
 real ones are this very test run, the hooks and the type checker."""
 
 import importlib.util
+import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -21,7 +23,7 @@ def gate():
 
 def test_the_gate_runs_the_hooks_the_types_the_tests_and_the_smoke_run(gate, capsys):
     ran = []
-    gate.main(run=lambda command: ran.append(command) or 0)
+    gate.main(run=lambda command, timeout: ran.append(command) or 0)
     hooks, *types, tests, smoke = ran
     assert hooks[:3] == [sys.executable, "-m", "pre_commit"]
     assert "--all-files" in hooks  # every file, as CI checks them, not only those changed
@@ -38,14 +40,14 @@ def test_the_gate_runs_the_hooks_the_types_the_tests_and_the_smoke_run(gate, cap
 def test_the_types_are_checked_against_the_packages_of_the_gate_s_python(gate):
     # pyright asks the `python` on the PATH for the packages sift imports: run without its environment activated, the
     # gate had it read another Python's, or none.
-    types = [command for _, command in gate.CHECKS if "pyright" in command]
+    types = [command for _, command, _ in gate.CHECKS if "pyright" in command]
     assert [command[5:] for command in types] == [["--pythonpath", sys.executable]] * len(SYSTEMS)
 
 
 def test_the_gate_ends_at_the_first_check_that_fails(gate, capsys):
     ran = []
 
-    def failing(command):
+    def failing(command, timeout):
         ran.append(command)
         return "pytest" in command  # the tests fail
 
@@ -57,7 +59,31 @@ def test_the_gate_ends_at_the_first_check_that_fails(gate, capsys):
 
 def test_a_check_of_the_types_that_fails_names_its_system(gate):
     with pytest.raises(SystemExit, match="gate: the types as on Darwin failed"):
-        gate.main(run=lambda command: "Darwin" in command)
+        gate.main(run=lambda command, timeout: "Darwin" in command)
+
+
+def test_a_check_that_comes_to_no_end_is_stopped(gate):
+    # No check had a time to end in: a test that hung held the gate, and whoever ran it, for good.
+    limits = []
+
+    def hanging(command, timeout):
+        limits.append(timeout)
+        if "pytest" in command:
+            raise subprocess.TimeoutExpired(command, timeout)
+        return 0
+
+    with pytest.raises(SystemExit, match="gate: the tests, with the coverage gate, took more than 20 minutes"):
+        gate.main(run=hanging)
+    assert limits[-1] == 20 * 60
+    assert all(limit > 0 for limit in limits)
+
+
+def test_a_test_that_hangs_says_where_before_the_gate_stops_it(gate):
+    # Stopped from outside, a hung test said nothing of where it stood: pytest writes every thread's stack once a
+    # test takes this long, well before the gate's patience with all of them ends.
+    options = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["pytest"]["ini_options"]
+    (minutes,) = [minutes for _, command, minutes in gate.CHECKS if "pytest" in command]
+    assert 0 < options["faulthandler_timeout"] <= 60 * minutes / 2
 
 
 def test_the_pull_request_template_asks_for_the_gate():
@@ -74,8 +100,9 @@ def test_the_checks_are_those_ci_runs(gate):
     # Green here and red there helps nobody: the hooks, the type checker and the tests are called as the workflow
     # calls them, in an environment that is activated there.
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    hooks, *types, tests, _ = (command[2:] for _, command in gate.CHECKS)
+    hooks, *types, tests, _ = (command[2:] for _, command, _ in gate.CHECKS)
     assert f"pre-commit {' '.join(hooks[1:])}" in workflow
     assert f"pytest {' '.join(tests[1:])}" in workflow
+    assert "run: python scripts/smoke.py" in workflow  # on every system: it ran on the one that ran the gate alone
     for command in types:
         assert f"run: {' '.join(command[:3])}\n" in workflow

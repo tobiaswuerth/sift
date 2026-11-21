@@ -76,16 +76,10 @@ def _several(method):
     return several
 
 
-def _changes(db):
-    """How SQLite counts a database's changes through a connection: those other connections committed, and the rows
-    the connection changed itself."""
-    return db.execute("PRAGMA data_version").fetchone()[0], db.total_changes
-
-
 def _reachable(db):
     """Whether an open store still answers: not when its drive went away, or a network share dropped."""
     try:
-        _changes(db)
+        store.changes(db)
     except sqlite3.Error:
         return False
     return True
@@ -350,8 +344,8 @@ def _phrases_of(match):
 def _totals(db):
     """The rows of a store's keyword index, and the tokens they hold in all: FTS5's record of them."""
     row = db.execute("SELECT block FROM fts_data WHERE id = 1").fetchone()
-    numbers = postings.varints(row[0])[0].tolist() if row else [0]
-    return numbers[0], sum(numbers[1:])
+    numbers = postings.varints(row[0])[0].tolist() if row else []
+    return (numbers[0], sum(numbers[1:])) if numbers else (0, 0)  # none: an index that never held a row
 
 
 def _words(text):
@@ -604,11 +598,11 @@ class Index:
         stores = []
         for cid, path, db in self.catalog.open_stores():
             try:
-                stores.append((cid, path, *_changes(db)))
+                stores.append((cid, path, *store.changes(db)))
             except sqlite3.Error:  # out of reach, as on a drive unplugged: equal to no state, so nothing kept or used
                 stores.append((cid, path, object()))
         held = tuple((cid, h.version, h.epoch, h.count, h.last) for cid, h in self.vectors.items())
-        return _changes(self.catalog.db), tuple(stores), held
+        return store.changes(self.catalog.db), tuple(stores), held
 
     def forget(self):
         """Let go of the questions' embeddings and the searches' results kept: as `sift bench` times each mode."""
@@ -853,10 +847,13 @@ class Index:
 
     def _ready(self, scope):
         """The keyword postings of the collections of `scope`, one postings.Reader each, or None if any has none
-        ready: never built, or behind FTS5 since a change."""
+        ready: never built, or behind FTS5 since a change. A collection without a chunk has nothing to find, and no
+        postings to wait for: added and not indexed yet, it sent the searches of every collection to FTS5."""
         readers = []
         for c in scope:
             db = self.catalog.store(c)
+            if not store.counts(db)["chunks"]:
+                continue
             if not postings.ready(db):
                 return None
             state = postings.Reader.state(db)
@@ -1437,10 +1434,11 @@ class Index:
         doc, whole, title, _, _ = self._note(id)
         db = self._db(doc)
         resolver, found = links.Resolver(db), {"id": whole, "title": title}
-        if direction != "in":
-            found["out"] = self._out(db, resolver, doc, depth, field, k)
-        if direction != "out":
-            found["in"] = self._in(db, resolver, doc, depth, field, k)
+        with store.snapshot([db]):  # the links, and the notes they name, as they are at one moment
+            if direction != "in":
+                found["out"] = self._out(db, resolver, doc, depth, field, k)
+            if direction != "out":
+                found["in"] = self._in(db, resolver, doc, depth, field, k)
         return found
 
     def _out(self, db, resolver, doc, depth, field, k):

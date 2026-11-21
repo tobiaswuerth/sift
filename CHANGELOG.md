@@ -5,6 +5,46 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Where stderr is no terminal, in a file, a pipe, a service's log or an agent's shell, the progress line is a line
+  a minute and one where it ended, as in the logs. It was drawn again there too, one more line an update and a
+  second: seven for five files, thousands for a night of embedding. In a terminal nothing changes; `sift worker`'s
+  count of what it served shows in a terminal only.
+
+### Fixed
+
+- `sift index` keeps what is indexed of a collection whose folder holds none of its files any more, and says so,
+  with how to let it go (`sift rm NAME`). A drive not mounted leaves its folder there, empty, as does a folder being
+  filled anew: every document went, and the vectors embedded for them.
+- A file whose reader ends its worker process, as a converter's native code can, or comes to no end, is left out and
+  said, and the other files are read: `sift index` ended in a traceback, or never, and every later run met the same
+  file again. A file gets ten minutes, and a second more for every 100 KB. Ctrl+C ends the worker processes at once,
+  not once they have read every file started.
+- A sift whose stderr no one reads any more, a pipe to a program that ended, goes on with its work. `sift serve`
+  stopped at its next message, five minutes later that the models had left the GPU, and a batch too large for the
+  GPU ended in the error of saying so.
+- A keyword search of every collection works between `sift add` and the new collection's first `sift index`: it
+  ended in "The weights and list don't have the same length", as did `query`, on the command line and over MCP.
+- A text file of more than a billion bytes, the most a document's text may be, is left out unread, and said, until
+  it changes: it was read whole, cut into passages, then refused by the index, and so again on every run.
+- A server keeps what it has read of the keyword postings' long lists within 256 MB, as it keeps their blocks and
+  the phrases: it kept those of 1,024 words per collection however long, 12 MB for a word in every passage of 50
+  million.
+- `links` reads a note's links and the notes they name as they are at one moment: a `sift index` beside the server
+  that removed a linking note in between ended the call in "KeyError".
+- `sift index` passes over what is no file under a name it reads, a named pipe or a folder linked as `x.md`: a pipe
+  held it for good, a folder was unreadable on every run.
+- The page looks for a document's file off the server's event loop: on a share that doesn't answer, the server heard
+  no request for as long as the system waited.
+- `reindex` says a file whose reader fails `unreadable`, with why, and reads the call's other files, as `sift index`
+  does: the call failed whole.
+- A server keeps its last searches' results through a search of a phrase it hasn't counted yet: each one let every
+  result kept go, and wasn't kept itself, so an agent asking phrases got little from memory.
+- A collection without documents sends the searches of the others to their keyword postings, not to FTS5, seconds
+  over millions of passages; and `reindex` builds the postings of a small collection that has none (under 2,000
+  passages), as one an agent fills through `reindex` alone, which had none until a `sift index`.
+
 ## [1.13.0] - 2026-11-21
 
 sift updates itself on a yes, looks up a shortened id instead of reading every path, and indexes long documents and

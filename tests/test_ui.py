@@ -728,3 +728,13 @@ def test_a_link_filter_of_an_unknown_note_says_so(vault_browser):
         "no note &#39;vault/Nobody.md&#39; in the index"
         in vault_browser.get("/ui/", params={"by": "vault/Nobody.md"}).text
     )
+
+
+def test_a_documents_file_is_looked_for_off_the_event_loop(browser, monkeypatch):
+    # The page looked on the server's event loop whether the file is there: on a share that doesn't answer, for as
+    # long as the system waits, and meanwhile the server heard no request and no cancellation.
+    looked, real = [], Path.is_file
+    monkeypatch.setattr(Path, "is_file", lambda path: looked.append(threading.current_thread()) or real(path))
+    assert browser.get("/ui/file", params={"id": "notes/rl.md"}).status_code == 200
+    assert looked
+    assert threading.main_thread() not in looked

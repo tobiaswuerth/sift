@@ -58,7 +58,21 @@ jobs:
           activate-environment: true
           enable-cache: true
       - run: uv pip install --torch-backend cpu -e ".[dev]"
-      - run: pytest -q --cov -n auto  # in a process per core: a quarter of the time on four
+      # In a process per core: a quarter of the time on four. The slowest are named: what a system is slow at shows.
+      - run: pytest -q --cov -n auto --durations=15
+      - run: python scripts/smoke.py  # every command as a user runs it, each in a process of its own
+
+  tests:
+    # One check for the whole matrix: required in place of each of its jobs by name, it lets the matrix change.
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job of the matrix passed
+        env:
+          RESULT: ${{ needs.test.result }}
+        run: test "$RESULT" = success
 
   package:
     # Builds the package and checks it as PyPI and users will see it.

@@ -12,9 +12,10 @@ import sqlite3
 import stat
 import time
 from collections import Counter, namedtuple
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import CancelledError, ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from contextlib import nullcontext
-from itertools import repeat, takewhile
+from itertools import takewhile
 from pathlib import Path
 
 from . import console, embed, links, ocr, postings, readers, store
@@ -67,17 +68,19 @@ def _whole(todo):
     return [item for item in todo if not readers.streamed(item[0], item[3])]
 
 
-def _read(pool, workers, fields, batch):
-    """Load a batch of files: pool.map starts all of them at once, builtin map reads one at a time. A file read as it
-    is stored comes as its Records, unread: here, as workers hand over what they read whole."""
-    paths = [item[0] for item in _whole(batch)]
-    if pool:
-        loaded = pool.map(_loaded, paths, repeat(fields), chunksize=max(1, min(64, len(paths) // (4 * workers))))
-    else:
-        loaded = map(_loaded, paths, repeat(fields))
-    return (
-        readers.Records(path, fields) if readers.streamed(path, size) else next(loaded) for path, _, _, size in batch
-    )
+def _read(pool, fields, batch):
+    """Start loading a batch of files: in the worker processes of `pool` all at once, without one none yet. Returns
+    what gives them, in the batch's order, when called: a file read as it is stored as its Records, unread, here, as
+    workers hand over what they read whole."""
+    whole = [(item[0], item[3]) for item in _whole(batch)]
+    started = pool.start(whole) if pool else None
+
+    def loaded():
+        read = iter(pool.results(started) if pool else _loaded_all(_loaded, [path for path, _ in whole], fields))
+        streamed = readers.streamed
+        return [readers.Records(path, fields) if streamed(path, size) else next(read) for path, _, _, size in batch]
+
+    return loaded
 
 
 def _loaded(path, fields):
@@ -87,6 +90,97 @@ def _loaded(path, fields):
         return readers.load(path, fields)
     except Exception as error:
         return error
+
+
+def _loaded_all(read, paths, fields):
+    """What `read` gives of each of a task's files (runs in worker processes)."""
+    return [read(path, fields) for path in paths]
+
+
+READ_SECONDS = 600  # a process gets this long for the files of a task before it is taken for hung: a long PDF takes
+READ_RATE = 100_000  # minutes; and a second more for every so many bytes of them, 43 minutes more for 256 MB
+
+
+class Stopped(Exception):
+    """A file whose reader was stopped: it ended the process it ran in, or came to no end."""
+
+
+def _patience(files):
+    """Seconds reading these files, (path, size) each, may take before their process is taken for hung."""
+    return READ_SECONDS + sum(size for _, size in files) / READ_RATE
+
+
+def _pool(n):
+    """`n` worker processes. Spawned everywhere, as on Windows and macOS: forking a process that has threads can
+    deadlock."""
+    return ProcessPoolExecutor(n, mp_context=multiprocessing.get_context("spawn"))
+
+
+def _end(pool):
+    """End a pool at once: its processes are killed, one that hangs too, and what was started in it is lost. Before
+    Python 3.14 (kill_workers) a pool names its processes here alone."""
+    for process in list(pool._processes.values()):
+        process.kill()
+    pool.shutdown(wait=False, cancel_futures=True)
+
+
+class _Workers:
+    """Worker processes that read files, several to a task (see start), handed over in the order started. A reader's
+    native code can end its process, or never come to an end: every task not done then goes with the pool, which
+    tells no more than that it broke. Their files are read again one at a time, in a process of their own, so that
+    the one that ends or hangs it is known: it is left out, as Stopped, and the others are read. Files started in a
+    pool that those of another batch ended start again in the next one."""
+
+    def __init__(self, n, fields):
+        self.n, self.fields, self.pool, self.single = n, fields, _pool(n), None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, kind, *exc):
+        for pool in filter(None, (self.pool, self.single)):
+            if kind is None:
+                pool.shutdown()
+            else:  # stopped, as by Ctrl+C: not once every file started is read
+                _end(pool)
+
+    def start(self, files):
+        """Start reading these files, (path, size) each, some to a task: fewer tasks cost less to hand over. Returns
+        what `results` takes."""
+        size = max(1, min(64, len(files) // (4 * self.n)))
+        return [self._task(self.pool, files[i : i + size]) for i in range(0, len(files), size)]
+
+    def _task(self, pool, files):
+        return files, pool.submit(_loaded_all, _loaded, [path for path, _ in files], self.fields), pool
+
+    def results(self, started):
+        """What each of the files started was read as, in order: as _loaded gives it, or Stopped."""
+        read, at = [], 0
+        while at < len(started):
+            files, future, pool = started[at]
+            try:
+                read += future.result(timeout=_patience(files))
+                at += 1
+            except (BrokenProcessPool, CancelledError, TimeoutError):
+                if pool is self.pool:  # a file not read yet ended it, or hangs: which of them, each alone tells
+                    _end(pool)
+                    self.pool = _pool(self.n)
+                    return read + [self._alone(file) for files, _, _ in started[at:] for file in files]
+                started[at:] = [self._task(self.pool, files) for files, _, _ in started[at:]]  # another batch's did
+        return read
+
+    def _alone(self, file):
+        """What one file is read as in a process that reads nothing else, or Stopped."""
+        self.single = self.single or _pool(1)
+        patience = _patience([file])
+        try:
+            return self._task(self.single, [file])[1].result(timeout=patience)[0]
+        except (BrokenProcessPool, TimeoutError) as ended:
+            _end(self.single)
+            self.single = None
+            if isinstance(ended, TimeoutError):
+                return Stopped(f"its reader came to no end in {console.duration(patience)}")
+            return Stopped("its reader ended the process it ran in")
 
 
 def _storable(text):
@@ -581,7 +675,7 @@ def _reindex_read(db, root, fields, rel, scans):
     """A file as `reindex` finds it, before anything is written: its stat, the error that kept it from being stat'ed
     (it is there but out of reach, and kept as indexed), or None if it is gone; its documents and problems as `sift
     index` reads them, scans read if `scans`, its Records, unread, if it is read as it is stored, None if it can't be
-    read; and whether a scan was left for `sift index`."""
+    read, or the error its reader raised; and whether a scan was left for `sift index`."""
     path = os.path.join(root, *rel.split("/"))
     try:
         info = os.stat(path)  # through a link, as `sift index` reads it
@@ -593,9 +687,9 @@ def _reindex_read(db, root, fields, rel, scans):
         return None, None, False
     if readers.streamed(path, info.st_size):
         return info, readers.Records(path, fields), False  # read as it is stored
-    read = readers.load(path, fields)
-    if read is None:
-        return info, None, False
+    read = _loaded(path, fields)
+    if read is None or isinstance(read, Exception):
+        return info, read, False
     docs, problems = read
     docs, left = _read_scans(db, _source(db, rel), rel, docs, problems.append, now=scans)
     return info, (docs, problems), left
@@ -618,6 +712,8 @@ def _reindex_file(db, name, rel, info, read, left):
         return entry | {"status": "removed"}, [], [chunk for _, chunk in chunks]
     if read is None:
         return entry | {"status": "unreadable"}, [], []
+    if isinstance(read, Exception):  # its reader failed: said, as `sift index` says it, and the others are read
+        return entry | {"status": "unreadable", "note": f"{type(read).__name__}: {read}"}, [], []
     docs, problems, twice = (read, [], read.twice) if isinstance(read, readers.Records) else (*read, None)
     db.execute("SAVEPOINT file")
     sid = _source(db, rel, make=True)
@@ -702,7 +798,8 @@ def walk(root, ignore=None, unlisted=None):
                         except OSError as error:
                             unreachable(rel + e.name, error)
                             continue
-                        yield e.path, st.st_mtime_ns, st.st_size
+                        if stat.S_ISREG(st.st_mode):  # no pipe, which has no end to read to, nor a folder so named
+                            yield e.path, st.st_mtime_ns, st.st_size
             except OSError as error:  # the listing broke off
                 unreachable(rel, error)
 
@@ -750,7 +847,7 @@ def _index_collection(db, name, root, fields, ignore):
     todo, seen, unlisted = _scan(root, known, ignore)
     kept = _kept(name, known.keys() - seen, unlisted)
     counts = Counter()
-    for rel in known.keys() - seen - kept:
+    for rel in _gone(name, root, known.keys() - seen - kept, seen):
         counts["removed"] += _drop_source(db, known[rel][0])
     db.commit()  # before any file is read: other writers wait for none of it
     todo += _freed(db, root, seen - {item[1] for item in todo})  # those that waited for a path these drops freed
@@ -765,6 +862,20 @@ def _index_collection(db, name, root, fields, ignore):
         f"{name}: {len(seen)} files, {counts['added']} added, {counts['changed']} changed, {counts['removed']} removed"
         f"{unreadable} ({time.perf_counter() - t0:.1f}s)"
     )
+
+
+def _gone(name, root, unseen, seen):
+    """The files not seen whose documents go: all of them, unless no file at all was seen. A folder left without
+    any of its files is one emptied, but also a drive not mounted, whose folder stays, and a folder being filled anew:
+    its documents, and the vectors embedded for them, are kept, and said, with how to let them go."""
+    if seen or not unseen:
+        return unseen
+    console.say(
+        f"{name}: none of its {console.count(len(unseen), 'file')} is left in {root}: kept as indexed, as a drive "
+        f"not mounted and a folder being filled anew look so. If they are gone for good, "
+        f"`{console.command('sift', 'rm', name)}` forgets them"
+    )
+    return set()
 
 
 def _freed(db, root, among):
@@ -816,17 +927,15 @@ def _read_and_store(db, name, fields, todo, counts, progress):
     """Read the files to do, in worker processes when it pays off, and store their documents batch by batch."""
     batches, whole = _batches(todo), _whole(todo)
     n = workers(len(whole), sum(item[3] for item in whole))  # parsing is CPU-bound: processes, not threads
-    # spawned everywhere, as on Windows and macOS: forking a process that has threads can deadlock
-    spawn = multiprocessing.get_context("spawn")
-    with ProcessPoolExecutor(n, mp_context=spawn) if n > 1 else nullcontext() as pool:
+    with _Workers(n, fields) if n > 1 else nullcontext() as pool:
         # double buffering: the next batch is parsed while the current one is written
-        pending = _read(pool, n, fields, batches[0])
+        pending = _read(pool, fields, batches[0])
         done, step = 0, max(1, len(todo) // PROGRESS_LINES)  # an update per file, or fewer for many small ones
         for b, batch in enumerate(batches):
-            results = pending
+            loaded = pending
             if b + 1 < len(batches):
-                pending = _read(pool, n, fields, batches[b + 1])
-            results = list(results)  # read before the batch's first write: no lock held while files are read
+                pending = _read(pool, fields, batches[b + 1])
+            results = loaded()  # read before the batch's first write: no lock held while files are read
             for (path, rel, mtime, size), res in zip(batch, results):
                 done += 1
                 if done % step == 0 or done == len(todo):

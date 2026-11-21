@@ -7,7 +7,7 @@ import sqlite3
 import numpy as np
 import pytest
 
-from sift import indexing, readers, search, store
+from sift import indexing, postings, readers, search, store
 from sift.catalog import Catalog
 from sift.search import Index
 
@@ -559,3 +559,38 @@ def test_reindex_takes_at_most_so_many_paths(live, monkeypatch):
     monkeypatch.setattr(indexing, "MOST_FILES", 2)
     with pytest.raises(ValueError, match="at most 2 files at a time"):
         live[0].reindex(["vault/a.md", "vault/b.md", "vault/c.md"])
+
+
+def test_reindex_builds_the_postings_of_a_small_collection_that_has_none(notes, home, monkeypatch):
+    # A collection an agent fills through `reindex` alone had no postings until a `sift index`: its keyword searches
+    # read FTS5, and with them those of every collection searched together. A small one's are built in a moment; a
+    # large one's read the whole store, which is `sift index`'s to do.
+    catalog = Catalog(home)
+    catalog.add(notes, "notes")
+    index, db = Index(catalog), catalog.store("notes")
+    monkeypatch.setattr(postings, "SMALL", 1)
+    assert index.reindex(["notes/rl.md"])[0]["status"] == "added"
+    assert not postings.built(db)
+    monkeypatch.setattr(postings, "SMALL", 2_000)
+    assert index.reindex(["notes/plain.txt"])[0]["status"] == "added"
+    assert postings.ready(db)
+    assert ids(index.search("colour")) == ["notes/plain.txt"]
+
+
+def test_reindex_reads_the_other_files_when_a_reader_fails(corpus, monkeypatch):
+    # `sift index` says a file whose reader fails, by a bug or over a record of gigabytes, and reads the others.
+    # `reindex` failed whole, for an agent with no more than the error's name, and none of its files was read.
+    catalog, root = corpus
+    write(root / "new.md", "# New\n\nfresh words\n")
+    write(root / "bad.md", "# Bad\n")
+    real = readers.load
+
+    def load(path, fields=None):
+        if str(path).endswith("bad.md"):
+            raise TypeError("no reader expected this")
+        return real(path, fields)
+
+    monkeypatch.setattr(readers, "load", load)
+    bad, new = Index(catalog).reindex(["notes/bad.md", "notes/new.md"])
+    assert bad == {"id": "notes/bad.md", "status": "unreadable", "note": "TypeError: no reader expected this"}
+    assert new["status"] == "added"

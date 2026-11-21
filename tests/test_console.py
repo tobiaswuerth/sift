@@ -40,6 +40,7 @@ def test_a_command_to_paste_is_quoted_for_the_shells_there(platform, path, text)
     assert console.command("sift", "add", path, platform=platform) == text
 
 
+@pytest.mark.usefixtures("terminal")
 def test_a_line_blanks_out_what_a_longer_one_left_behind(capsys):
     line = console.Line()
     line.show("a longer line")
@@ -60,6 +61,31 @@ def test_without_stderr_nothing_is_said_least_of_all_on_stdout(monkeypatch, caps
     assert capsys.readouterr().out == ""
 
 
+class Unread(io.StringIO):
+    """A stderr no one reads any more: a pipe to a program that ended."""
+
+    def write(self, text):
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+def closed():
+    stream = io.StringIO()
+    stream.close()
+    return stream
+
+
+@pytest.mark.parametrize("gone", [Unread, closed])
+def test_a_stderr_no_one_reads_any_more_stops_no_work(gone, monkeypatch):
+    # With its stderr piped to a program that ended, `sift serve` stopped five minutes later, at the message that the
+    # models had left the GPU; and a batch too large for the GPU ended in the error of saying so, not in a smaller one.
+    monkeypatch.setattr(sys, "stderr", gone())
+    console.say("hello")
+    console.write("Update now? [y/N] ", end="")
+    with console.Progress(2, "chunks") as progress:
+        progress.update(1)
+        console.say("a note")
+
+
 # --- progress ------------------------------------------------------------------------
 
 
@@ -68,6 +94,7 @@ def progress(clock):
     return lambda total, **kw: console.Progress(total, "chunks", **kw)
 
 
+@pytest.mark.usefixtures("terminal")
 def test_progress_shows_a_bar_the_speed_and_the_time_taken_and_left(progress, clock, capsys):
     with progress(3) as bar:
         clock.advance(10)
@@ -102,6 +129,7 @@ def test_progress_takes_a_total_found_as_the_work_goes(progress, clock, capsys):
     assert "[#####               ]  25% 1/4 chunks, 0.1/s, 0:00:10 elapsed, 0:00:30 left" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("terminal")
 def test_progress_carries_a_prefix(clock, capsys):
     with console.Progress(2, "files", prefix="notes: ") as bar:
         bar.update(1)
@@ -135,6 +163,7 @@ def progress_threads():
     return [t for t in threading.enumerate() if t.name == "sift-progress"]
 
 
+@pytest.mark.usefixtures("terminal")
 def test_progress_keeps_counting_while_a_step_takes_long(progress, clock, monkeypatch):
     # On a CPU one batch can take minutes; meanwhile the elapsed time must keep moving, so sift visibly works.
     monkeypatch.setattr(console, "REDRAW_SECONDS", 0.01)
@@ -165,6 +194,7 @@ def test_a_long_step_goes_into_the_log_every_minute(progress, clock, monkeypatch
         assert logged.wait(timeout=10), "the log heard nothing of a long step"
 
 
+@pytest.mark.usefixtures("terminal")
 def test_a_step_shorter_than_a_minute_goes_into_the_log_once_where_it_ended(progress, clock, monkeypatch):
     monkeypatch.setattr(console, "REDRAW_SECONDS", 0.01)
     logged, redrawn = [], threading.Event()
@@ -222,3 +252,50 @@ def test_garbage_waits_while_the_collector_is_off(progress, monkeypatch):
     finally:
         gc.enable()
     assert collected == []
+
+
+# --- where stderr is no terminal -------------------------------------------------------
+
+
+class Screen(io.StringIO):
+    """A stderr that is a terminal."""
+
+    def isatty(self):
+        return True
+
+
+@pytest.mark.parametrize("stream, live", [(Screen, True), (io.StringIO, False), (closed, False), (lambda: None, False)])
+def test_a_line_is_drawn_again_in_a_terminal_alone(stream, live, monkeypatch):
+    monkeypatch.setattr(sys, "stderr", stream())
+    assert console.Line().live is live
+
+
+def test_progress_to_a_file_or_a_pipe_is_a_line_where_it_ended(progress, clock, capsys):
+    # Each time the line was drawn again was one more line there, one an update and one a second: seven for five
+    # files, thousands for a night of embedding, in a service's log or an agent's reading of `sift index`.
+    with progress(3) as bar:
+        bar.update(1)
+        console.say("a note")
+        clock.advance(30)
+        bar.update(3)
+    said = "a note\n[####################] 100% 3/3 chunks, 0.1/s, 0:00:30 elapsed, 0:00:00 left\n"
+    assert capsys.readouterr().err == said
+
+
+def test_a_long_step_to_a_file_or_a_pipe_is_a_line_a_minute(progress, clock, monkeypatch):
+    monkeypatch.setattr(console, "REDRAW_SECONDS", 0.01)
+    written = threading.Event()
+
+    class Pipe(io.StringIO):
+        def write(self, text):
+            if "0:01:00 elapsed" in text:
+                written.set()
+            return super().write(text)
+
+    pipe = Pipe()
+    monkeypatch.setattr(sys, "stderr", pipe)
+    with progress(3):
+        clock.advance(60)  # a slow step, with no update
+        assert written.wait(timeout=10), "nothing was said of a step a minute long"
+    lines = pipe.getvalue().split("\n")
+    assert lines == ["[                    ]   0% 0/3 chunks, 0:01:00 elapsed"] * 2 + [""]  # after a minute; at its end

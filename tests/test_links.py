@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from sift import indexing
+from sift import indexing, links, store
 from sift.catalog import Catalog
 from sift.search import Index
 
@@ -553,3 +553,26 @@ def test_mentions_by_every_name_of_a_note(tmp_path, home):
 def test_mentions_takes_field_names(linked, also):
     with pytest.raises(ValueError, match="also must name front-matter fields"):
         Index(linked[0]).mentions(HANS, also=also)
+
+
+def test_the_links_into_a_note_are_read_as_they_are_at_one_moment(linked, home, monkeypatch):
+    # A `sift index` beside a server removed a linking note between two of the server's reads: the note was among the
+    # links, and gone when its title was asked, "KeyError" for an agent.
+    catalog, _, _ = linked
+    index, incoming = Index(catalog), links.incoming
+
+    def then_removed_by_another_sift(db, *args):
+        found = incoming(db, *args)
+        other = Catalog(home)
+        theirs = other.store("vault")
+        gone = [doc for (doc,) in theirs.execute("SELECT id FROM docs WHERE path = '02_Organizations/Acme AG.md'")]
+        store.delete_docs(theirs, gone)
+        theirs.commit()
+        other.close()
+        return found
+
+    monkeypatch.setattr(links, "incoming", then_removed_by_another_sift)
+    found = index.links("vault/01_People/Hans Müller.md", direction="in")
+    assert "vault/02_Organizations/Acme AG.md" in [link["id"] for link in found["in"]]  # as it was when asked
+    again = index.links("vault/01_People/Hans Müller.md", direction="in")
+    assert "vault/02_Organizations/Acme AG.md" not in [link["id"] for link in again["in"]]

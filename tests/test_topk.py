@@ -131,14 +131,25 @@ def reader(catalog, name="prose"):
 
 
 @pytest.fixture(params=["indexed", "topical"])
-def built(prose, request):
-    """The prose collection's postings, built with its chunks in the order indexed, or, embedded, in topical order."""
-    catalog, _ = prose
-    if request.param == "topical":
-        request.getfixturevalue("fake_models")
-        embed.embed_pending(catalog)
-    postings.build(catalog.store("prose"), catalog.get("prose").store)
-    return catalog
+def built(tmp_path, home, built_once, request):
+    """The prose collection's postings, built with its chunks in the order indexed, or, embedded, in topical order.
+    Built once and copied (see conftest.Built)."""
+    topical = request.param == "topical"
+
+    def make(root):
+        write_prose(root / "prose", 7)
+        catalog = Catalog(root / "home")
+        catalog.add(root / "prose", "prose")
+        indexing.index(catalog)
+        if topical:
+            embed.embed_pending(catalog)
+        postings.build(catalog.store("prose"), catalog.get("prose").store)
+        catalog.close()
+
+    if topical:
+        request.getfixturevalue("fake_models")  # before the copy is chosen: they patch sift
+    built_once.copy(f"built-{request.param}", make, tmp_path)
+    return Catalog(home)
 
 
 @pytest.mark.usefixtures("small_lists")

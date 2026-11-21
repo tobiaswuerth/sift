@@ -3,6 +3,7 @@ and one kind of progress line (`Progress`) for every long step, which redraws it
 while a single step takes minutes. All of it through `write`, which alone prints: without a stderr nothing is told,
 and the command's log has it still."""
 
+import contextlib
 import gc
 import shlex
 import subprocess
@@ -34,9 +35,11 @@ def say(*parts: object, logged: str | None = None) -> None:
 def write(text: str = "", end: str = "\n") -> None:
     """Text for the user as it is, on stderr: what a message and a progress line are made of, and a question, to be
     answered on its line. Nowhere without a stderr, as under pythonw: print() takes a stream that is None for stdout,
-    where the results go."""
+    where the results go. Nor where no one reads it any more, a pipe to a program that ended, or it is closed: the
+    work goes on as without one, where a server stopped at its next message."""
     if sys.stderr is not None:
-        print(text, end=end, file=sys.stderr, flush=True)
+        with contextlib.suppress(OSError, ValueError):
+            print(text, end=end, file=sys.stderr, flush=True)
 
 
 def count(n: int, noun: str) -> str:
@@ -66,26 +69,39 @@ def _collect() -> None:
         gc.collect(2 if _collections % 100 == 0 else 1 if _collections % 10 == 0 else 0)
 
 
+def _terminal() -> bool:
+    """Whether stderr is a terminal, where a line can be written again in place: in a file, a pipe or a service's
+    log, each time would be one more line."""
+    try:
+        return sys.stderr is not None and sys.stderr.isatty()
+    except ValueError:  # closed
+        return False
+
+
 class Line:
-    """One line on stderr, rewritten in place; a shorter text blanks out what a longer one left behind."""
+    """One line on stderr, rewritten in place; a shorter text blanks out what a longer one left behind. In a terminal
+    only (`live`): elsewhere it shows nothing."""
 
     def __init__(self) -> None:
-        self._width = 0
+        self._width, self.live = 0, _terminal()
 
     def show(self, text: str) -> None:
-        self._width = max(self._width, len(text))
-        write(f"\r{text:<{self._width}}", end="")
+        if self.live:
+            self._width = max(self._width, len(text))
+            write(f"\r{text:<{self._width}}", end="")
 
     def end(self) -> None:
         """Move on to the next line; the next text starts afresh."""
-        write()
+        if self.live:
+            write()
         self._width = 0
 
 
 class Progress:
     """A progress line, used as a context manager: a bar, `done` of `total` units, the speed, and the time taken and
     left. It draws at once, on every update, and every REDRAW_SECONDS in between; into the command's log every
-    LOG_SECONDS, and where it ended."""
+    LOG_SECONDS, and where it ended. So too on a stderr that is no terminal, where no line is drawn again: a line
+    every LOG_SECONDS and one where it ended, not one a second in a file, a service's log or an agent's reading."""
 
     def __init__(self, total: int, unit: str, prefix: str = "") -> None:
         self.total, self.unit, self.prefix, self.done, self.start = total, unit, prefix, 0, perf_counter()
@@ -111,6 +127,7 @@ class Progress:
         self._thread.join()
         with self._lock:
             self._line.end()
+            self._plain(self.text())
         if self._holds:
             _held = False
             gc.enable()
@@ -122,6 +139,13 @@ class Progress:
             if self.elapsed - self._logged >= LOG_SECONDS:
                 self._logged = self.elapsed
                 logs.said.info(self.text())
+                with self._lock:
+                    self._plain(self.text())
+
+    def _plain(self, text: str) -> None:
+        """A line of its own, where stderr is no terminal and the progress line draws nothing."""
+        if not self._line.live:
+            write(text)
 
     @property
     def elapsed(self) -> float:
@@ -140,6 +164,7 @@ class Progress:
         with self._lock:
             self._line.show(text)
             self._line.end()
+            self._plain(text)
         self.draw()
 
     def text(self) -> str:

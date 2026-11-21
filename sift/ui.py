@@ -374,14 +374,17 @@ def app(index, host="127.0.0.1"):
         return HTMLResponse(await jobs.run(render, view, part, request.headers), headers=UNKEPT)
 
     def located(id):
+        """The file of the document `id`, if it is there: looked for here, off the event loop, which a share that
+        doesn't answer would hold for as long as the system waits."""
         try:
-            return index.file(id)
+            path = index.file(id)
         except LookupError:
             return None
+        return path if path is not None and path.is_file() else None
 
     async def file(request):
         path = await jobs.run(located, request.query_params.get("id", ""))
-        if path is None or not path.is_file():
+        if path is None:
             return PlainTextResponse("no such file", status_code=404)
         response = FileResponse(path, filename=path.name, content_disposition_type="inline")
         # A file runs no scripts as the UI, where a saved web page could read the whole index. Chromium's PDF viewer
