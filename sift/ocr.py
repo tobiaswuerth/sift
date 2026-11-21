@@ -93,8 +93,11 @@ def _load(name: str, dtype: "torch.dtype | None") -> _Loaded:
     transformers = _transformers()
     transformers.logging.disable_progress_bar()  # no "Loading weights" bar: it fills the log of `sift serve`
     transformers.logging.set_verbosity_error()  # nor its note that the checkpoint's type, mistral3, isn't lighton_ocr
-    model = transformers.LightOnOcrForConditionalGeneration.from_pretrained(name, dtype=dtype or torch.float32)
-    return model.eval(), transformers.LightOnOcrProcessor.from_pretrained(name)
+    repository, revision = settings.hub(name)  # at the commit sift pins it to
+    model = transformers.LightOnOcrForConditionalGeneration.from_pretrained(
+        repository, dtype=dtype or torch.float32, revision=revision
+    )
+    return model.eval(), transformers.LightOnOcrProcessor.from_pretrained(repository, revision=revision)
 
 
 class Ocr:

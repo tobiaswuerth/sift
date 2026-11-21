@@ -37,7 +37,7 @@ uv tool install --torch-backend auto sift-rag   # installs the `sift` command
 ```
 
 With pip, in a virtual environment: `pip install sift-rag`. The first use downloads two models from Hugging Face
-(about 2 GB).
+(about 2 GB), each at the commit this version of sift pins it to: what their owners push later changes no vectors.
 
 sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, where `query` takes about 25 seconds a
 question instead of 0.3. PyTorch from PyPI uses the GPU on Linux and macOS. On Windows, `--torch-backend auto` installs
@@ -127,8 +127,8 @@ None needed: sift picks the device, its GPU memory budget and batch sizes itself
 | Variable | Default | Purpose |
 |---|---|---|
 | `SIFT_HOME` | `~/.sift` | The catalog, logs, the worker's key, and the indexes unless moved |
-| `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model; run `sift embed --reset` after a change |
-| `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
+| `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model, at a revision after `@`; run `sift embed --reset` after a change |
+| `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder, at a revision after `@` |
 | `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed and rerank on: the `https://<key>@host:8766` it prints |
 | `SIFT_OCR` | `auto` | Where scans are read: `auto` on a GPU, `on` also on the CPU (slow), `off` never |
 | `SIFT_UPDATE_CHECK` | `on` | `off`: never ask PyPI for a newer sift (nor with `HF_HUB_OFFLINE=1`) |

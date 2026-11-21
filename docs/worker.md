@@ -36,8 +36,8 @@ the machine using it keeps the index and the files.
 - The worker sees the texts it embeds and reranks, but no index and no files. It sizes its batches to its GPU and frees
   the GPU after 5 idle minutes, as `sift serve` does.
 - Both machines need the same major version of sift; sift refuses another and says which runs where.
-- The worker's `SIFT_EMBED_MODEL` decides the model. `sift embed` and `reindex` refuse a worker whose model differs from
-  the index's; searches only check the vector length, so keep the worker's model the index's.
+- The worker's `SIFT_EMBED_MODEL` decides the model, and its revision. `sift embed` and `reindex` refuse a worker whose
+  model differs from the index's; searches only check the vector length, so keep the worker's model the index's.
 
 ## Security
 

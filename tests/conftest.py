@@ -75,8 +75,8 @@ class FakeSentenceTransformer:
     saved_in = "bfloat16"  # the checkpoint's dtype, which the model loads in unless it is given one, as embeddinggemma
     prompts, default_prompt_name = {}, None  # embeddinggemma's: {"query": "task: search result | query: ", ...}
 
-    def __init__(self, name, device=None, model_kwargs=None):
-        self.name, self.device, self.max_seq_length = name, device, None
+    def __init__(self, name, device=None, model_kwargs=None, revision=None):
+        self.name, self.revision, self.device, self.max_seq_length = name, revision, device, None
         self.dtype = str((model_kwargs or {}).get("dtype", self.saved_in)).removeprefix("torch.")
         self.training, self.texts, self.embedded = True, [], []  # in training mode until eval(), as nn.Module
 
@@ -141,8 +141,9 @@ class FakeCrossEncoder:
 
     limit = 8192  # the most tokens the model reads, as its position embeddings allow (MiniLM: 512)
 
-    def __init__(self, name, device=None, max_length=None, model_kwargs=None):
-        self.name, self.device, self.model = name, device, FakeSentenceTransformer(name, device, model_kwargs)
+    def __init__(self, name, device=None, max_length=None, model_kwargs=None, revision=None):
+        self.name, self.revision, self.device = name, revision, device
+        self.model = FakeSentenceTransformer(name, device, model_kwargs, revision)
         self.head = self.model.dtype  # loaded in one dtype, the transformer and its head alike
         self.max_seq_length = max_length or self.limit  # sentence-transformers 6 truncates to this
 

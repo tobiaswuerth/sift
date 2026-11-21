@@ -86,7 +86,8 @@ def _embedder(name: str, dtype: "torch.dtype | None") -> "SentenceTransformer":
     from sentence_transformers import SentenceTransformer
 
     _quietly()
-    model = SentenceTransformer(name, device="cpu", model_kwargs=_in(dtype))  # into RAM; to the GPU when used
+    repository, revision = settings.hub(name)
+    model = SentenceTransformer(repository, device="cpu", model_kwargs=_in(dtype), revision=revision)  # into RAM
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)
     return model.eval()  # as encode() sets it: in training mode, dropout would change every vector at random
 
@@ -95,7 +96,8 @@ def _reranker(name: str, dtype: "torch.dtype | None") -> "CrossEncoder":
     from sentence_transformers import CrossEncoder
 
     _quietly()
-    model = CrossEncoder(name, device="cpu", model_kwargs=_in(dtype))  # into RAM, its scoring head in dtype too
+    repository, revision = settings.hub(name)
+    model = CrossEncoder(repository, device="cpu", model_kwargs=_in(dtype), revision=revision)  # its head in dtype too
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)  # MiniLM reads at most 512 tokens
     return model
 

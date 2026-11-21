@@ -362,9 +362,9 @@ def test_a_document_without_text_that_is_no_pdf_is_no_scan(tmp_path, monkeypatch
 def test_the_model_loads_with_transformers(monkeypatch):
     class Loaded:
         @classmethod
-        def from_pretrained(cls, name, dtype=None):
+        def from_pretrained(cls, name, dtype=None, revision=None):
             loaded = cls()
-            loaded.name, loaded.dtype, loaded.evaluated = name, dtype, False
+            loaded.name, loaded.dtype, loaded.revision, loaded.evaluated = name, dtype, revision, False
             return loaded
 
         def eval(self):
@@ -377,7 +377,8 @@ def test_the_model_loads_with_transformers(monkeypatch):
     monkeypatch.setitem(sys.modules, "transformers", module)
     model, processor = ocr._load(ocr.MODEL, None)
     assert (model.name, model.dtype, model.evaluated) == (ocr.MODEL, torch.float32, True)  # inference, not training
-    assert processor.name == ocr.MODEL
+    pin = "be7c41313c30e940fe5571de59e5fabc779e00c8"  # the commit sift pins it to, as the other models
+    assert (model.revision, processor.name, processor.revision) == (pin, ocr.MODEL, pin)
     assert ocr._load(ocr.MODEL, torch.bfloat16)[0].dtype == torch.bfloat16
 
 

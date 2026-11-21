@@ -5,14 +5,33 @@ from pathlib import Path
 from sift import settings
 from sift.settings import Settings
 
+# The default models, each at the commit of its repository on the Hugging Face Hub that sift pins it to
+EMBEDDER = "google/embeddinggemma-2@f9972ac22e696a105c482202646979e33e4b5a1e"
+RERANKER = "Alibaba-NLP/gte-reranker-modernbert-base@f7481e6055501a30fb19d090657df9ec1f79ab2c"
+
 
 def test_the_defaults_need_no_environment():
     assert Settings.from_env({}) == Settings(
-        home=Path.home() / ".sift",
-        embed_model="google/embeddinggemma-2",
-        rerank_model="Alibaba-NLP/gte-reranker-modernbert-base",
-        remote=None,
+        home=Path.home() / ".sift", embed_model=EMBEDDER, rerank_model=RERANKER, remote=None
     )
+
+
+def test_the_default_models_are_pinned_to_a_commit_however_named():
+    # They loaded from the latest commit of their repositories: a push of their owners' changed the vectors of new
+    # passages beside the old ones, or the code that computes them, unseen. A release of sift moves a pin.
+    named = {"SIFT_EMBED_MODEL": EMBEDDER.split("@")[0], "SIFT_RERANK_MODEL": RERANKER.split("@")[0]}
+    assert (Settings.from_env(named).embed_model, Settings.from_env(named).rerank_model) == (EMBEDDER, RERANKER)
+    assert Settings.from_env({"SIFT_EMBED_MODEL": "org/model"}).embed_model == "org/model"  # another, as named
+    at = "google/embeddinggemma-2@main"
+    assert Settings.from_env({"SIFT_EMBED_MODEL": at}).embed_model == at  # a revision of one's own
+
+
+def test_a_model_is_loaded_at_the_revision_it_names_or_at_its_pin():
+    assert settings.hub("org/model@v2.0") == ("org/model", "v2.0")
+    assert settings.hub("org/model") == ("org/model", None)  # its latest commit
+    assert settings.hub(EMBEDDER.split("@")[0]) == tuple(EMBEDDER.split("@"))
+    assert settings.hub("D:\\models\\a@b\\model") == ("D:\\models\\a@b\\model", None)  # a folder, no revision
+    assert settings.hub("/models/a@b/model") == ("/models/a@b/model", None)
 
 
 def test_each_variable_overrides_its_default(tmp_path):

@@ -33,6 +33,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The package published to PyPI was built with whatever setuptools, twine and uv were newest that day. The release
   now builds with setuptools pinned by hash (`.github/requirements-build.txt`, kept current by Dependabot), twine and
   uv pinned by version; CI's package job builds the same way.
+- The models loaded from the latest commit of their repositories on Hugging Face: a push of their owners could change
+  the vectors of new passages beside the old ones, or the code that computes them, unseen. The embedding model, the
+  reranker and the OCR model now load at a commit this version of sift pins, and a collection records its model at
+  that commit; a release that moves a pin says to run `sift embed --reset`. A collection embedded with the default
+  model by an older sift needs no embedding again: the pinned commit holds the same weights. `SIFT_EMBED_MODEL` and
+  `SIFT_RERANK_MODEL` take a revision after an `@` (`org/model@v2`); a worker of an older sift still works.
 
 ### Fixed
 

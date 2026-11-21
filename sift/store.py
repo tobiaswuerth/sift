@@ -310,6 +310,8 @@ def _layout(db: sqlite3.Connection, path: str | Path, cid: int, create: bool) ->
             _once(db, key, partial(read_again, kinds=kinds))
     if get_meta(db, WAITED) is None:
         _once(db, WAITED, _read_waited_again)
+    if get_meta(db, MODELS_PINNED) is None:
+        _once(db, MODELS_PINNED, _name_pinned_model)
 
 
 def make(db: sqlite3.Connection, cid: int, read: bool = True) -> None:
@@ -324,6 +326,7 @@ def make(db: sqlite3.Connection, cid: int, read: bool = True) -> None:
     set_meta(db, LISTED, 1)  # its documents are listed as they come
     for key in (*READ_AGAIN, WAITED, ANSI_READ) if read else ():
         set_meta(db, key, 1)
+    set_meta(db, MODELS_PINNED, 1)  # nothing embedded yet
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
@@ -355,6 +358,11 @@ READ_AGAIN: dict[str, tuple[str, ...]] = {
     "documents_read": readers.DOCUMENTS,  # the server of sift 1.3.0 and older skipped every document it reindexed
 }
 WAITED = "paths_waited"  # in the meta table, once what sift 1.11 left out for a taken path is to be read again
+MODELS_PINNED = "models_pinned"  # in the meta table, once the model a store was embedded with is named at its commit
+# The default embedding model as sift 1.14 and older recorded it, by its name alone, which meant its repository's latest
+# commit, and the commit that name means: every commit of that repository up to this one holds the same weights. Not
+# settings.PINNED, whose pin a later release moves.
+UNPINNED = {"google/embeddinggemma-2": "google/embeddinggemma-2@f9972ac22e696a105c482202646979e33e4b5a1e"}
 
 
 def _once(db: sqlite3.Connection, key: str, work: Callable[[sqlite3.Connection], object]) -> None:
@@ -373,6 +381,12 @@ def _once(db: sqlite3.Connection, key: str, work: Callable[[sqlite3.Connection],
     except sqlite3.OperationalError as error:
         if getattr(error, "sqlite_errorcode", 0) & 0xFF != sqlite3.SQLITE_READONLY:
             raise
+
+
+def _name_pinned_model(db: sqlite3.Connection) -> None:
+    """Name the model a store was embedded with at the commit its vectors are of, where sift 1.14 or older recorded the
+    default model by its name alone (UNPINNED): those vectors need no embedding again."""
+    db.executemany("UPDATE meta SET value = ? WHERE key = 'model' AND value = ?", [(v, k) for k, v in UNPINNED.items()])
 
 
 def _read_waited_again(db: sqlite3.Connection) -> None:

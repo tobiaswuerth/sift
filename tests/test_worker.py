@@ -38,8 +38,12 @@ def post(client, path, payload):
 
 
 def test_the_worker_says_which_models_it_runs(client, fake_models):
+    # Its embedding model by its name, as sift 1.14 and older compare it with the model a collection was embedded
+    # with, and the commit sift pins it to beside it; the reranker, which no collection records, as it is named.
+    model, revision = fake_models.name.split("@")
     assert client.get("/").json() == {
-        "model": fake_models.name,
+        "model": model,
+        "revision": revision,
         "dim": 64,
         "reranker": fake_models.reranker_name,
         "version": __version__,

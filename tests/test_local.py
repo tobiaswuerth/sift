@@ -14,16 +14,30 @@ from .conftest import FakeCrossEncoder, FakeSentenceTransformer, GiB
 
 
 def test_models_load_once_with_limits(fake_models):
+    # Each at the commit sift pins it to, which the name sift records says too.
     model = fake_models.embedder()
-    assert (model.name, model.device, model.max_seq_length, model.dtype) == (
+    assert (model.name, model.revision, model.device, model.max_seq_length, model.dtype) == (
         "google/embeddinggemma-2",
+        "f9972ac22e696a105c482202646979e33e4b5a1e",
         "cpu",
         local.MAX_TOKENS,
         "float32",
     )
-    assert fake_models.reranker().name == "Alibaba-NLP/gte-reranker-modernbert-base"
+    reranker = fake_models.reranker()
+    assert (reranker.name, reranker.revision) == (
+        "Alibaba-NLP/gte-reranker-modernbert-base",
+        "f7481e6055501a30fb19d090657df9ec1f79ab2c",
+    )
     assert fake_models.embedder() is model
-    assert (fake_models.name, fake_models.reranker_name) == ("google/embeddinggemma-2", fake_models.reranker().name)
+    assert fake_models.name == f"{model.name}@{model.revision}"
+    assert fake_models.reranker_name == f"{reranker.name}@{reranker.revision}"
+
+
+def test_a_model_of_ones_own_loads_at_the_revision_it_names(make_local, configure):
+    configure(embed_model="org/embedder@v2", rerank_model="org/reranker")
+    models = make_local()
+    assert (models.embedder().name, models.embedder().revision) == ("org/embedder", "v2")
+    assert (models.reranker().name, models.reranker().revision) == ("org/reranker", None)  # its latest commit
 
 
 @pytest.mark.parametrize("device, dtype", [("cuda", "bfloat16"), ("mps", "float32"), ("cpu", "float32")])
