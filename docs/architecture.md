@@ -100,8 +100,11 @@ sift therefore ranks from postings of its own, read out of FTS5's index, which s
   document is represented by its best passage.
 - Queries of words, AND, OR, NOT and parentheses are answered from the postings by Block-Max Pruning
   ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): each term's best score in a range, summed over the query's
-  terms, bounds every chunk there, so ranges are scored best bound first until none left can beat the k-th best. The
-  results are FTS5's, score for score (nested queries aside).
+  terms, bounds every chunk there, so ranges are scored best bound first until none left can beat the k-th best. On
+  postings built anew the results are FTS5's, score for score (nested queries aside). After deltas, a word's counts
+  (passages, tokens, how many passages hold it) still include the postings deltas masked, as Lucene's do until its
+  segments merge, while FTS5 counts what is there now: scores drift from FTS5's, most for rare words, until the
+  postings are built anew, once more than 5% of the chunks changed. A phrase's count is FTS5's, as it is now.
 - Common words are read only where they can matter: with all words required, the rarest first and each next only
   where chunks holding all before it remain; with any of them, the words that together can't reach the k-th best score
   only for chunks the others bring within reach (MaxScore).
