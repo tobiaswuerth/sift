@@ -22,9 +22,10 @@ Expect a first reply within a week. Security fixes go into the latest release.
   link in a folder from elsewhere, a cloned repository, may lead to any file of the machine.
 - **The worker** admits only requests with its token, over HTTPS pinned by its key
   ([details](worker.md#security)).
-- **Models** come from Hugging Face on first use (embedding, reranker and, for scans, OCR). sift loads their weights
-  with transformers' own classes and runs no code shipped with a model. Scans are rendered with PDFium, which runs no
-  scripts they hold.
+- **Models** come from Hugging Face on first use (embedding, reranker and, for scans, OCR), each at the commit this
+  version of sift pins it to: what a model's owner pushes later reaches no one until a release of sift moves the pin.
+  sift loads their weights with transformers' own classes and runs no code shipped with a model. Scans are rendered
+  with PDFium, which runs no scripts they hold.
 - **Updates.** Commands run in a terminal ask PyPI for sift's latest version once a day, in a process of their own: a
   plain HTTPS GET of `pypi.org/pypi/sift-rag/json`, sending nothing of you or your files but sift's version.
   `SIFT_UPDATE_CHECK=off` or `HF_HUB_OFFLINE=1` stops it. sift updates itself only when you answer `y`, with the

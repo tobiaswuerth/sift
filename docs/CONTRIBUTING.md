@@ -10,7 +10,7 @@ git clone https://github.com/tobiaswuerth/sift
 cd sift
 uv venv && uv pip install --torch-backend auto -e ".[dev]"   # or: pip install -r requirements.txt -e ".[dev]"
 pre-commit install      # lint, format and config checks on every commit
-python scripts/gate.py  # the gate: every hook, the types, the tests with the coverage gate, and the smoke run
+python scripts/gate.py  # the gate: every check a change must pass (see "How changes are made")
 ```
 
 The tests replace the models, GPU memory and the clock with small deterministic fakes, so they need no GPU and no
@@ -50,7 +50,7 @@ downloads; everything else, the MCP server included, runs for real.
 | `ui.py` | `sift ui`: the browser UI's views; `web/` holds its templates, styles, script and htmx 2.0.11 (0BSD) |
 | `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |
 | `update.py` | A newer sift on PyPI: asking once a day, offering it in a terminal, updating once no sift runs |
-| `settings.py` | The environment variables, read once (`settings.current()`) |
+| `settings.py` | The environment variables, read once (`settings.current()`), and the commit each default model is pinned to |
 | `console.py` | What sift tells the user on stderr: messages, plurals, commands to paste, one progress bar |
 | `logs.py` | A log for each command that changes the index or serves it |
 

@@ -5,5 +5,5 @@
 ## Checklist
 
 - [ ] Tests were written first, and bug fixes come with a regression test
-- [ ] `python scripts/gate.py` is green: the hooks, the types, the tests with 100% coverage, and the smoke run
+- [ ] `python scripts/gate.py` is green
 - [ ] User-visible changes are noted under "Unreleased" in `CHANGELOG.md`
