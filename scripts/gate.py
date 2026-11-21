@@ -79,12 +79,13 @@ def on_newest(uv):
 
 def on_lowest(uv, environment):
     """The checks with the lowest versions sift names, on the oldest Python, as CI's lowest job: a new environment,
-    those versions in it, the tests."""
+    those versions in it, which are the ones named (scripts/floors.py), the tests."""
     python = str(python_of(environment))
     lowest = ["--resolution", "lowest-direct", "--torch-backend", "cpu", "-e", f"{ROOT}[dev]"]
     return (
         (f"an environment of Python {OLDEST}", [uv, "venv", "--quiet", "--python", OLDEST, str(environment)], 10),
         ("the lowest versions sift names", [uv, "pip", "install", "--quiet", "--python", python, *lowest], 20),
+        ("that those are the versions installed", [python, str(Path(__file__).parent / "floors.py")], 2),
         ("the tests with the lowest versions", [python, "-m", "pytest", "-q", "-n", "auto"], 20),
     )
 

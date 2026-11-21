@@ -101,6 +101,7 @@ jobs:
           activate-environment: true
           enable-cache: true
       - run: uv pip install --resolution lowest-direct --torch-backend cpu -e ".[dev]"
+      - run: python scripts/floors.py
       - run: pytest -q -n auto
 
   tests:
@@ -128,5 +129,6 @@ jobs:
           persist-credentials: false  # no step after it pushes with git
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
+          version: "0.13.9"  # the uv the release builds with
           python-version: "3.12"
       - run: uv run --no-project scripts/package.py  # as the gate checks it

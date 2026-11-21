@@ -539,7 +539,7 @@ def test_a_name_to_answer_to_is_taken_as_requests_name_it(given, name):
     assert ui.host_name(given) == name
 
 
-@pytest.mark.parametrize("given", ["nas:8765", "http://nas", "[::1]", "nas/ui", "a b", ""])
+@pytest.mark.parametrize("given", ["nas:8765", "http://nas", "[::1]", "nas/ui", "a b", "", "münchen..example"])
 def test_what_is_no_name_of_a_host_is_refused(given):
     with pytest.raises(ValueError, match="--allow-host takes a name"):
         ui.host_name(given)

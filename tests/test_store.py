@@ -290,19 +290,51 @@ def test_a_file_freed_while_the_freed_are_taken_is_taken_too(tmp_path):
     db.close()
 
 
+def read_with_replacement_characters(tmp_path, files):
+    """A store as sift 1.14 left it, and another sift's connection to it: `files` maps each file to how many of its
+    documents hold U+FFFD."""
+    db, other = store.connect(tmp_path / "s.sqlite", 1, create=True), store.connect(tmp_path / "s.sqlite", 1)
+    for n, (name, documents) in enumerate(files.items(), 1):
+        db.execute("INSERT INTO sources(id, path, mtime, size) VALUES(?, ?, 1, 1)", (n, name))
+        db.executemany(
+            "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?, ?, 'h', '', '{}', 'M\ufffdller')",
+            [(n, f"{name}/{i}") for i in range(documents)],
+        )
+    db.execute("DELETE FROM meta WHERE key = ?", (store.ANSI_READ,))
+    db.commit()
+    return db, other
+
+
+def test_a_file_is_looked_at_once_for_all_its_documents(tmp_path, monkeypatch, capsys):
+    # A JSON Lines file's records lie in many batches: its bytes, gigabytes of them, are read once.
+    monkeypatch.setattr(store, "ANSI_BATCH", 2)
+    db, other = read_with_replacement_characters(tmp_path, {"data.jsonl": 3})
+    asked = []
+    store.read_ansi_again(db, "c", lambda path: asked.append(path) or True)
+    assert asked == ["data.jsonl"]
+    assert db.execute("SELECT count(*) FROM docs WHERE hash IS NULL").fetchone() == (3,)
+    other.close()
+    db.close()
+
+
+def test_a_look_another_sift_ended_meanwhile_ends(tmp_path):
+    db, other = read_with_replacement_characters(tmp_path, {"a.txt": 1})
+
+    def misread(path):  # while this sift looks at the file, the other looks through every document
+        while store._ansi_batch(other, lambda path: True, {}) is not None:
+            pass
+        return True
+
+    assert store._ansi_batch(db, misread, {}) is None
+    other.close()
+    db.close()
+
+
 def test_documents_another_sift_looked_through_meanwhile_are_left_to_it(tmp_path, monkeypatch):
     # The look for text an older sift read with replacement characters reads files, which it does before it holds the
     # store: another `sift index` may have looked through the same documents by then, and marked what is to be read.
     monkeypatch.setattr(store, "ANSI_BATCH", 1)
-    db, other = store.connect(tmp_path / "s.sqlite", 1, create=True), store.connect(tmp_path / "s.sqlite", 1)
-    for n, name in enumerate(("a.txt", "b.txt"), 1):
-        db.execute("INSERT INTO sources(id, path, mtime, size) VALUES(?, ?, 1, 1)", (n, name))
-        db.execute(
-            "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?, ?, 'h', '', '{}', 'M\ufffdller')",
-            (n, name),
-        )
-    db.execute("DELETE FROM meta WHERE key = ?", (store.ANSI_READ,))
-    db.commit()
+    db, other = read_with_replacement_characters(tmp_path, {"a.txt": 1, "b.txt": 1})
     asked = []
 
     def misread(path):  # this sift has found its documents, and looks at their files

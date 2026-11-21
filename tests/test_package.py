@@ -11,6 +11,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 ENVIRONMENT = {"environ", "environb", "getenv", "getenvb", "putenv", "unsetenv"}
 
@@ -73,8 +75,8 @@ def test_requirements_txt_names_the_dependencies_pyproject_does():
 
 
 def test_every_way_to_install_cuda_pytorch_names_one_index():
-    # The index of PyTorch's CUDA builds stood in four places, and went stale in all: cu128 carries no PyTorch since
-    # 2.10, so the fix sift prints, the README's and requirements.txt installed none at or above sift's floor.
+    # The index of PyTorch's CUDA builds stood in four places, and went stale in all: cu128 carries no PyTorch past
+    # 2.11, so the fix sift prints, the README's and requirements.txt installed none at or above sift's floor.
     from sift import accelerator
 
     index = accelerator.CUDA_INDEX
@@ -271,10 +273,28 @@ def test_ci_tests_the_lowest_versions_sift_names():
     lowest = _job(ci, "lowest")
     assert f"python-version: {oldest}" in lowest
     assert '- run: uv pip install --resolution lowest-direct --torch-backend cpu -e ".[dev]"' in lowest
-    assert "- run: pytest -q -n auto" in lowest
+    assert "- run: python scripts/floors.py\n      - run: pytest -q -n auto" in lowest  # they are those installed
     audit = (ROOT / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
     assert "resolution: [highest, lowest-direct]" in audit
     assert '- run: uv pip install --resolution "$RESOLUTION" --torch-backend cpu -e .' in audit
+
+
+def test_the_lowest_versions_sift_names_are_those_an_install_reaches():
+    # tokenizers was named from 0.20, and transformers 5.18 takes none below 0.23.1: where the lowest versions were
+    # asked for, one sift never named was installed, and its claim to run with 0.20 was never tried. The script runs
+    # there, in CI's lowest job and in the gate.
+    spec = importlib.util.spec_from_file_location("floors", ROOT / "scripts" / "floors.py")
+    floors = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(floors)
+    lowest = floors.named(["numpy>=2.0", "tokenizers>=0.20", "nvidia-ml-py>=12", "pyright[nodejs]==1.1.414"])
+    assert lowest == {"numpy": "2.0", "tokenizers": "0.20", "nvidia-ml-py": "12", "pyright": "1.1.414"}
+    installed = {"numpy": "2.0.0+cpu", "tokenizers": "0.23.1", "nvidia-ml-py": "12.535.77", "pyright": "1.1.414"}
+    assert floors.above(lowest, installed) == ["tokenizers 0.23.1, named from 0.20"]
+    with pytest.raises(SystemExit, match="'torchvision' names no lowest version"):
+        floors.named(["torchvision"])
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    extras = [requirement for extra in project["optional-dependencies"].values() for requirement in extra]
+    assert len(floors.named(project["dependencies"] + extras)) == len(project["dependencies"] + extras)
 
 
 def test_nothing_silences_the_type_checker():
@@ -391,7 +411,10 @@ def test_the_package_is_built_by_tools_reviewed():
     twine = re.search(r"- run: uvx (twine@\d+\.\d+\.\d+) check", release)
     assert twine
     assert not re.search(r"uv build\s*$|uvx twine check", release, re.MULTILINE)
-    assert re.search(r'version: "\d+\.\d+\.\d+"', _job(release, "build"))
+    uv = re.search(r'version: "(\d+\.\d+\.\d+)"', _job(release, "build"))
+    assert uv
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert f'version: "{uv[1]}"' in _job(ci, "package")  # the package checked is built by the release's uv
     package = (ROOT / "scripts" / "package.py").read_text(encoding="utf-8")  # CI's package job's, and the gate's
     assert '"--build-constraints", str(ROOT / ".github" / "requirements-build.txt")]' in package
     assert '"--require-hashes"' in package

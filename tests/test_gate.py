@@ -171,7 +171,7 @@ def test_a_gate_on_the_newest_python_tests_once(gate):
     ran = []
     newest = tuple(map(int, gate.NEWEST.split(".")))
     gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=newest)
-    assert len(ran) == len(gate.CHECKS) + 1 + 3  # and the package, and the lowest versions
+    assert len(ran) == len(gate.CHECKS) + 1 + 4  # and the package, and the lowest versions
 
 
 def test_the_gate_tests_the_lowest_versions_sift_names(gate):
@@ -179,11 +179,12 @@ def test_the_gate_tests_the_lowest_versions_sift_names(gate):
     # environment made afresh each time, as in CI: one kept keeps what it has, versions above the lowest too.
     ran = []
     gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=(3, 12))
-    made, installed, tests = ran[-3:]
+    made, installed, floors, tests = ran[-4:]
     assert made[:5] == ["uv", "venv", "--quiet", "--python", gate.OLDEST]
     there = str(gate.python_of(Path(made[5])))
     assert installed[:6] == ["uv", "pip", "install", "--quiet", "--python", there]
     assert installed[6:] == ["--resolution", "lowest-direct", "--torch-backend", "cpu", "-e", f"{ROOT}[dev]"]
+    assert floors == [there, str(ROOT / "scripts" / "floors.py")]  # they are the versions installed
     assert tests == [there, "-m", "pytest", "-q", "-n", "auto"]
     assert not Path(made[5]).parent.exists()  # gone with the gate
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")

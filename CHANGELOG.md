@@ -13,8 +13,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - sift's lowest versions of its dependencies had advisories known against them, 142 in nine packages: they are now
   PyTorch 2.13 (torchvision 0.28), Pillow 13, Starlette 1.3.1, cryptography 49, mcp 2.2, AnyIO 4.14.2 and Jinja2
   3.1.6. The lowest versions sift named didn't even work together: transformers 5.18 disables a PyTorch older than
-  2.5. The CUDA index that the fix sift prints, the README and requirements.txt name is now cu126, as cu128 carries
-  no PyTorch past 2.9.
+  2.5, and takes no tokenizers older than 0.23.1, now the lowest named. The CUDA index that the fix sift prints, the
+  README and requirements.txt name is now cu126, as cu128 carries no PyTorch past 2.11.
 - An update agreed to with pip ran `python -m pip` at the root of the drive, which Python searches for modules first:
   on Windows, where any user may make a folder there, another user's `pip` folder would have run as you. It runs with
   `-P` now, which leaves that folder out.
