@@ -389,7 +389,7 @@ def test_going_back_gets_the_whole_page(browser):
 @pytest.mark.parametrize(
     "params, message",
     [
-        ({"q": "brush", "f": '"=1'}, "invalid filter field"),
+        ({"q": "brush", "f": "=1"}, "invalid filter field"),
         ({"q": "brush", "f": "no equals sign"}, "must be field=value"),
         ({"q": "brush", "c": "nope"}, "no collection named"),
         ({"doc": "notes/missing.md"}, "unknown document"),

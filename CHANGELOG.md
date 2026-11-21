@@ -47,6 +47,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   minutes: a wait without a timeout there takes no Ctrl+C until it ends. It waits in steps of a tenth of a second.
 - `adaptive` cut hits whose scores were all alike to the first six, as if the first one stood out. With no drop in
   score, every hit is returned.
+- A filter or sort on a front-matter field whose name ends in a backslash failed with SQLite's "bad JSON path", one
+  with a backslash inside matched nothing, and one with a double quote was refused: any name now filters and sorts.
+  A filter of a list of some 16,000 values failed with "too many SQL variables"; its values now go to SQLite as one.
+  A filter value that is no finite number (NaN, infinity) is a clear error.
 
 ## [1.14.0] - 2026-11-21
 

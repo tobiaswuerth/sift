@@ -419,7 +419,6 @@ def test_not_with_a_range(corpus):
 @pytest.mark.parametrize(
     "kwargs, error",
     [
-        ({"filters": {'bad"key': 1}}, ValueError),
         ({"filters": {"": 1}}, ValueError),
         ({"filters": {"categories": []}}, ValueError),
         ({"filters": {"categories": [None]}}, ValueError),
@@ -1314,6 +1313,32 @@ def test_huge_numbers_in_filters_are_clear_errors(corpus):
         Index(corpus[0]).search("brush", filters={"year": 10**30})
 
 
+def test_any_front_matter_field_name_filters_and_sorts(corpus):
+    # A name ending in a backslash was a raw "bad JSON path" from SQLite, one holding one matched nothing, and one
+    # holding a double quote was refused: SQLite reads a field's name in a JSON path as a JSON string, escapes too.
+    catalog, root = corpus
+    names = ["back\\slash", "ends\\", 'say "hi"', "dotted.name", "tab\there"]
+    write(root / "odd.md", "---\n" + "".join(f"{name}: 7\n" for name in names) + "---\n\nbrush\n")
+    indexing.index(catalog)
+    index = Index(catalog)
+    for name in names:
+        assert ids(index.search("brush", filters={name: 7})) == ["notes/odd.md"], name
+        assert ids(index.search("brush", sort=f"-{name}"))[0] == "notes/odd.md", name
+    assert index.search("brush", filters={names[0]: 8}) == []
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), [1, float("-inf")]])
+def test_a_filter_of_no_finite_number_is_a_clear_error(corpus, value):
+    with pytest.raises(ValueError, match="finite"):
+        Index(corpus[0]).search("brush", filters={"year": value})
+
+
+def test_a_filter_of_many_values_is_answered(corpus):
+    # Each value, in each of its forms, was a variable of the statement: past SQLite's 32,766, "too many SQL variables".
+    hits = Index(corpus[0]).search("brush", filters={"year": [*map(str, range(20_000)), 2024]})
+    assert ids(hits) == ["notes/robots/brush.md"]
+
+
 def test_query_returns_k_hits_beyond_its_candidate_count(embedded):
     # Candidates came from a fixed pool of 40 per mode, so k=100 could return fewer hits than there are.
     assert len(Index(embedded[0]).query("brush", k=3, candidates=1)) == 3
@@ -1571,7 +1596,7 @@ def test_sort_puts_numbers_before_text(corpus):
     assert [day(h) for h in index.browse(path="ranked/*", sort="-rank")] == ["b", "c", "a", "d"]
 
 
-@pytest.mark.parametrize("sort", ["", "-", 'bad"key', 1, ["created"]])
+@pytest.mark.parametrize("sort", ["", "-", 1, ["created"]])
 def test_bad_sort_is_a_clear_error(corpus, sort):
     with pytest.raises(ValueError, match="sort"):
         Index(corpus[0]).search("brush", sort=sort)

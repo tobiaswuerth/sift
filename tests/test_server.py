@@ -301,7 +301,7 @@ def test_get_and_status(mcp, embedded):
     [
         ("search", {"query": "x", "collection": "missing"}, "no collection named 'missing'"),
         ("vsearch", {"query": "x", "k": 0}, "k must be a positive integer"),
-        ("query", {"query": "x", "filters": {'bad"key': "v"}}, "invalid filter field 'bad\"key'"),
+        ("query", {"query": "x", "filters": {"": "v"}}, "invalid filter field ''"),
         ("get", {"id": "missing/x.md"}, "unknown document 'missing/x.md'"),
         ("links", {"id": "notes/rl.md", "direction": "up"}, "'out', 'in' or 'both'"),
         ("links", {"id": "notes/rl.md", "depth": 3}, "1 or 2"),
