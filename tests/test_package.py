@@ -267,3 +267,51 @@ def test_workflows_run_actions_by_commit():
         if "uses:" in line and not re.search(r"uses: [\w./-]+@[0-9a-f]{40}  # v\d+\.\d+\.\d+", line)
     }
     assert by_name == set(), "name the action by its commit: `uses: owner/action@<40 hex digits>  # v1.2.3`"
+
+
+def _imports(path, anywhere):
+    """The modules of sift that the module at `path` imports: at its top, or `anywhere`, inside its functions too."""
+
+    def found(node, top):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ImportFrom) and child.level == 1 and (top or anywhere):
+                yield from [child.module.split(".")[0]] if child.module else [name.name for name in child.names]
+            yield from found(
+                child, top and not isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+            )
+
+    modules = {other.stem for other in (ROOT / "sift").glob("*.py")}
+    return set(found(ast.parse(path.read_text(encoding="utf-8")), True)) & modules - {path.stem}
+
+
+def _cycles(imports):
+    """The cycles among modules, each as its modules in order of name, given what each imports."""
+    cycles = set()
+
+    def follow(module, path):
+        for other in imports[module]:
+            if other in path:
+                cycles.add(tuple(sorted(path[path.index(other) :])))
+            else:
+                follow(other, [*path, other])
+
+    for module in imports:
+        follow(module, [module])
+    return cycles
+
+
+CYCLES = {("catalog", "upgrade"), ("server", "ui")}  # through imports inside functions. It only shrinks
+
+
+def test_modules_import_each_other_one_way():
+    # Nothing held the direction of sift's imports: what imports what was known by reading all of it. At their tops
+    # the modules form no cycle, so each can be imported, and read, before those that use it; inside functions two
+    # pairs still import each other, and no third may.
+    assert _cycles({"a": {"b"}, "b": {"c"}, "c": {"a"}, "d": {"a"}}) == {("a", "b", "c")}  # the check finds one
+    sources = sorted((ROOT / "sift").glob("*.py"))
+    assert _cycles({path.stem: _imports(path, anywhere=False) for path in sources}) == set(), (
+        "import the other module inside the function that needs it, or move what both need into a third"
+    )
+    assert _cycles({path.stem: _imports(path, anywhere=True) for path in sources}) == CYCLES, (
+        "no new cycle: move what both modules need into one both may import; one gone leaves CYCLES"
+    )

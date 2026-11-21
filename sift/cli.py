@@ -141,7 +141,8 @@ def _print_unresolved(targets, as_json):
         _print(f"{target['docs']:>6}  {target['target']}  {', '.join(target['ids'])}{more}")
 
 
-def main(argv=None):
+def _parser():
+    """The command line: every command of sift, with its options."""
     p = argparse.ArgumentParser(prog="sift", description="Fast local search over your documents and notes.")
     p.add_argument("--version", action="version", version=f"sift {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -290,8 +291,11 @@ def main(argv=None):
     s = sub.add_parser("worker", help="embed for sift on other machines, which set SIFT_EMBED_REMOTE to this one")
     s.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all of this machine's)")
     s.add_argument("--port", type=int, default=8766)
+    return p
 
-    a = p.parse_args(argv)
+
+def main(argv=None):
+    a = _parser().parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # what sift says names files and titles, as its results do
         # e.g. a Windows pipe: titles may be any script. A stream that is no TextIOWrapper has no encoding to switch:
         # a host's takes text as it is (io.StringIO), and pythonw has none
@@ -360,7 +364,7 @@ def _command(a):
     # An index of sift 1.7 or older is split into a store per collection on first use; moving them all, straight there.
     into = a.to if a.cmd == "move" and not a.names and not a.to.lower().endswith(SUFFIX) else None
     with contextlib.closing(Catalog(split_into=into)) as catalog:
-        _run(a, catalog)
+        COMMANDS[a.cmd](a, catalog)
 
 
 def _add(a, catalog):
@@ -391,103 +395,142 @@ def _add(a, catalog):
         )
 
 
-def _run(a, catalog):
-    if a.cmd == "add":
-        _add(a, catalog)
-    elif a.cmd == "rm":
-        n = catalog.remove(a.name)
-        held = "" if n is None else f" and its index of {console.count(n, 'document')}"
-        console.say(f"removed collection {a.name!r}{held}; the files on disk are untouched")
-    elif a.cmd == "move":
-        moved = catalog.move(a.names, a.to)
-        console.say(f"moved the index of {', '.join(moved)} to {a.to}" if moved else "nothing moved")
-    elif a.cmd in ("activate", "deactivate"):
-        active = a.cmd == "activate"
-        changed = catalog.set_active(a.names, active)
-        state = "active: searched again" if active else "inactive: left out of searches"
-        console.say(
-            f"{', '.join(changed)} {'is' if len(changed) == 1 else 'are'} {state}"
-            if changed
-            else f"{', '.join(a.names)} {'was' if len(a.names) == 1 else 'were'} {a.cmd}d already"
-        )
-    elif a.cmd == "index" and a.files:
-        from .indexing import reindex
+def _index(catalog):
+    """The catalog's Index. Imported here: only the commands that search load NumPy."""
+    from .search import Index
 
-        if a.names:
-            raise SystemExit("error: give collections or --files, not both")
-        # a path from the current folder, as the shell completes it, or ./ or ../ before a file gone; else an id
-        relative = tuple(dots + sep for dots in (".", "..") for sep in {"/", os.sep})
-        paths = [os.path.abspath(p) if os.path.exists(p) or p.startswith(relative) else p for p in a.files]
-        for entry, _ in reindex(catalog, paths).files:
-            console.say(f"{entry['id']}: {entry['status']}" + (f" ({entry['note']})" if "note" in entry else ""))
-    elif a.cmd == "index":
-        from .indexing import index
+    return Index(catalog)
 
+
+def _rm(a, catalog):
+    n = catalog.remove(a.name)
+    held = "" if n is None else f" and its index of {console.count(n, 'document')}"
+    console.say(f"removed collection {a.name!r}{held}; the files on disk are untouched")
+
+
+def _move(a, catalog):
+    moved = catalog.move(a.names, a.to)
+    console.say(f"moved the index of {', '.join(moved)} to {a.to}" if moved else "nothing moved")
+
+
+def _set_active(a, catalog):
+    active = a.cmd == "activate"
+    changed = catalog.set_active(a.names, active)
+    state = "active: searched again" if active else "inactive: left out of searches"
+    console.say(
+        f"{', '.join(changed)} {'is' if len(changed) == 1 else 'are'} {state}"
+        if changed
+        else f"{', '.join(a.names)} {'was' if len(a.names) == 1 else 'were'} {a.cmd}d already"
+    )
+
+
+def _index_command(a, catalog):
+    """`sift index`: every collection, those named, or with --files the files given."""
+    from .indexing import index, reindex
+
+    if not a.files:
         index(catalog, a.names)
-    elif a.cmd == "embed":
-        from .embed import embed_pending
+        return
+    if a.names:
+        raise SystemExit("error: give collections or --files, not both")
+    # a path from the current folder, as the shell completes it, or ./ or ../ before a file gone; else an id
+    relative = tuple(dots + sep for dots in (".", "..") for sep in {"/", os.sep})
+    paths = [os.path.abspath(p) if os.path.exists(p) or p.startswith(relative) else p for p in a.files]
+    for entry, _ in reindex(catalog, paths).files:
+        console.say(f"{entry['id']}: {entry['status']}" + (f" ({entry['note']})" if "note" in entry else ""))
 
-        embed_pending(catalog, a.reset, collections=a.names)
-    elif a.cmd in SEARCHES:
-        from .search import Index
 
-        hits = getattr(Index(catalog), a.cmd)(
-            a.subject,
-            a.k,
-            collection=a.collection,
-            path=a.path,
-            filters=_filters(a.filter),
-            fields=_fields(a.fields),
-            compact=a.compact,
-            all_passages=a.all_passages,
-            sort=a.sort,
-            links_to=a.links_to,
-            linked_from=a.linked_from,
-            adaptive=a.adaptive,
-            **({"budget": a.budget} if a.cmd == "search" else {}),
-        )
-        _print_hits(hits, a.json)
-    elif a.cmd == "get":
-        from .search import Index
+def _embed(a, catalog):
+    from .embed import embed_pending
 
-        index, fields = Index(catalog), _fields(a.fields)
-        if len(a.id) == 1:
-            _print_document(index.document(a.id[0], a.lines, fields))
-        else:
-            _print_documents(index.documents([(id, a.lines) for id in a.id], fields))
-    elif a.cmd == "bench":
-        from . import bench, vectors
-        from .search import Index
+    embed_pending(catalog, a.reset, collections=a.names)
 
-        vectors.compile_scan()  # many searches: worth the second it takes, as for a server
-        index = Index(catalog)
-        results = bench.run(index, bench.load(a.file, index), collection=a.collection)
-        _print(f"{'mode':10}{'nDCG@10':>10}{'MRR@10':>10}{'Recall@10':>11}{'ms/query':>10}")
-        for mode, r in results.items():
-            _print(f"{mode:10}{r['nDCG@10']:>10.3f}{r['MRR@10']:>10.3f}{r['Recall@10']:>11.3f}{r['ms']:>10.0f}")
-    elif a.cmd == "status":
-        from .search import Index
 
-        _print(json.dumps(Index(catalog).status(), indent=2))
-    elif a.cmd == "links":
-        from .search import Index
+def _search(a, catalog):
+    hits = getattr(_index(catalog), a.cmd)(
+        a.subject,
+        a.k,
+        collection=a.collection,
+        path=a.path,
+        filters=_filters(a.filter),
+        fields=_fields(a.fields),
+        compact=a.compact,
+        all_passages=a.all_passages,
+        sort=a.sort,
+        links_to=a.links_to,
+        linked_from=a.linked_from,
+        adaptive=a.adaptive,
+        **({"budget": a.budget} if a.cmd == "search" else {}),
+    )
+    _print_hits(hits, a.json)
 
-        _print_links(Index(catalog).links(a.id, a.direction, a.depth, a.field, a.k), a.json)
-    elif a.cmd == "mentions":
-        from .search import Index
 
-        also, fields = _fields(a.also), _fields(a.fields)
-        hits = Index(catalog).mentions(a.id, a.k, collection=a.collection, also=also, fields=fields, compact=a.compact)
-        _print_hits(hits, a.json)
-    elif a.cmd == "unresolved":
-        from .search import Index
+def _get(a, catalog):
+    index, fields = _index(catalog), _fields(a.fields)
+    if len(a.id) == 1:
+        _print_document(index.document(a.id[0], a.lines, fields))
+    else:
+        _print_documents(index.documents([(id, a.lines) for id in a.id], fields))
 
-        _print_unresolved(Index(catalog).unresolved(a.collection, a.k), a.json)
-    elif a.cmd == "ui":
-        from .ui import open_in_browser
 
-        open_in_browser(a.host, a.port)
-    else:  # serve
-        from .server import serve
+def _bench(a, catalog):
+    from . import bench, vectors
 
-        serve(a.host, a.port, a.stdio)
+    vectors.compile_scan()  # many searches: worth the second it takes, as for a server
+    index = _index(catalog)
+    results = bench.run(index, bench.load(a.file, index), collection=a.collection)
+    _print(f"{'mode':10}{'nDCG@10':>10}{'MRR@10':>10}{'Recall@10':>11}{'ms/query':>10}")
+    for mode, r in results.items():
+        _print(f"{mode:10}{r['nDCG@10']:>10.3f}{r['MRR@10']:>10.3f}{r['Recall@10']:>11.3f}{r['ms']:>10.0f}")
+
+
+def _status(a, catalog):
+    _print(json.dumps(_index(catalog).status(), indent=2))
+
+
+def _links(a, catalog):
+    _print_links(_index(catalog).links(a.id, a.direction, a.depth, a.field, a.k), a.json)
+
+
+def _mentions(a, catalog):
+    also, fields = _fields(a.also), _fields(a.fields)
+    hits = _index(catalog).mentions(a.id, a.k, collection=a.collection, also=also, fields=fields, compact=a.compact)
+    _print_hits(hits, a.json)
+
+
+def _unresolved(a, catalog):
+    _print_unresolved(_index(catalog).unresolved(a.collection, a.k), a.json)
+
+
+def _ui(a, catalog):
+    from .ui import open_in_browser
+
+    open_in_browser(a.host, a.port)
+
+
+def _serve(a, catalog):
+    from .server import serve
+
+    serve(a.host, a.port, a.stdio)
+
+
+COMMANDS = {
+    "add": _add,
+    "rm": _rm,
+    "move": _move,
+    "activate": _set_active,
+    "deactivate": _set_active,
+    "index": _index_command,
+    "embed": _embed,
+    **dict.fromkeys(SEARCHES, _search),
+    "get": _get,
+    "bench": _bench,
+    "status": _status,
+    "links": _links,
+    "mentions": _mentions,
+    "unresolved": _unresolved,
+    "ui": _ui,
+    "serve": _serve,
+}
+"""What runs each command, given its arguments and the catalog: every command but `worker`, which needs no index. A
+new command is a function and a line here; one that loads a model or a server imports it inside."""
