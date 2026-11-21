@@ -6,11 +6,10 @@ import json
 import math
 import re
 import sqlite3
+from functools import cache
 from typing import Any, TypeGuard, cast
 
 Value = str | int | float  # what a filter compares with; yes and no are numbers here, as Python has them
-
-ESCAPES = sqlite3.sqlite_version_info >= (3, 45)  # whether SQLite reads the escapes of a name in a JSON path
 
 SQLITE_INT = 2**63  # SQLite integers are 64-bit
 OPERATORS = ("=", "<", "<=", ">", ">=", "not")
@@ -86,13 +85,24 @@ def forms(value: Value) -> list[Value]:
 def json_path(name: object, what: str = "filter field") -> str:
     """A front-matter field name, as SQLite's JSON functions address it: any name, written as a JSON string, which
     SQLite reads with its escapes, so that a backslash or a double quote in it is the name's own. Its letters as they
-    are, as indexing stores front matter: SQLite before 3.45 compares the name with the stored one byte for byte, and
-    ends it at its first double quote, so there a name that holds one is refused."""
+    are, as indexing stores front matter: SQLite before 3.45 compares the name with the stored one byte for byte. A
+    name that holds a double quote is refused where SQLite reads none in a name (see reads_quotes)."""
     if not (isinstance(name, str) and name):
         raise ValueError(f"invalid {what} {name!r}")
-    if '"' in name and not ESCAPES:
+    if '"' in name and not reads_quotes():
         raise ValueError(
-            f"invalid {what} {name!r}: SQLite reads a double quote in a field's name from 3.45 on, and this is "
-            f"{sqlite3.sqlite_version}"
+            f"invalid {what} {name!r}: this SQLite ({sqlite3.sqlite_version}) reads no double quote in a field's "
+            "name; SQLite 3.47 and newer do"
         )
     return "$." + json.dumps(name, ensure_ascii=False)
+
+
+@cache
+def reads_quotes() -> bool:
+    """Whether this SQLite reads a double quote, escaped, in the name of a JSON path: asked of it, as its version
+    tells poorly. Up to 3.46 it ends the name there, and the path matches nothing."""
+    db = sqlite3.connect(":memory:")
+    try:
+        return db.execute("SELECT json_extract(?, ?)", ('{"a\\"b": 1}', '$."a\\"b"')).fetchone()[0] == 1
+    finally:
+        db.close()

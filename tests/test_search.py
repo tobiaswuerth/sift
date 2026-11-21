@@ -1334,6 +1334,10 @@ def test_any_front_matter_field_name_filters_and_sorts(corpus):
     indexing.index(catalog)
     index = Index(catalog)
     for name in names:
+        if '"' in name and not filters.reads_quotes():  # this SQLite reads none in a name: refused, with why
+            with pytest.raises(ValueError, match=r"SQLite 3\.47 and newer do"):
+                index.search("brush", filters={name: 7})
+            continue
         assert ids(index.search("brush", filters={name: 7})) == ["notes/odd.md"], name
         assert ids(index.search("brush", sort=f"-{name}"))[0] == "notes/odd.md", name
     assert index.search("brush", filters={names[0]: 8}) == []
@@ -1346,12 +1350,25 @@ def test_a_field_name_is_addressed_with_its_letters_as_front_matter_stores_them(
 
 
 def test_a_field_name_with_a_double_quote_is_refused_where_sqlite_reads_no_escapes(monkeypatch):
-    # SQLite before 3.45 (3.43.1, tried) ends a path's name at its first double quote, escaped or not: a filter on
-    # such a field matched nothing, without a word. A backslash it compares as stored, which matches.
-    monkeypatch.setattr(filters, "ESCAPES", False)
-    with pytest.raises(ValueError, match=r"invalid filter field 'say \"hi\"': SQLite .* from 3\.45 on"):
+    # SQLite up to 3.46 (3.43.1 to 3.46.1, tried) ends a path's name at its first double quote, escaped or not: a
+    # filter on such a field matched nothing, without a word, on the systems that ship one. Which SQLite reads it is
+    # asked of the SQLite itself, not told by its version. A backslash it compares as stored, which matches.
+    monkeypatch.setattr(filters, "reads_quotes", lambda: False)
+    with pytest.raises(ValueError, match=r"invalid filter field 'say \"hi\"': this SQLite \(.*\) reads no double"):
         filters.json_path('say "hi"')
     assert filters.json_path("back\\slash") == '$."back\\\\slash"'
+    monkeypatch.setattr(filters, "reads_quotes", lambda: True)
+    assert filters.json_path('say "hi"') == '$."say \\"hi\\""'
+
+
+def test_whether_sqlite_reads_a_quote_in_a_name_is_asked_of_it():
+    # What it answers is what its JSON functions do with such a name.
+    db = sqlite3.connect(":memory:")
+    try:
+        found = db.execute("SELECT json_extract(?, ?)", ('{"a\\"b": 1}', '$."a\\"b"')).fetchone()[0]
+    finally:
+        db.close()
+    assert filters.reads_quotes() is (found == 1)
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), [1, float("-inf")]])

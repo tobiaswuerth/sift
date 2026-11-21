@@ -112,7 +112,7 @@ installs with is 2.13.
   score, every hit is returned.
 - A filter or sort on a front-matter field whose name ends in a backslash failed with SQLite's "bad JSON path", one
   with a backslash inside matched nothing, and one with a double quote was refused: any name now filters and sorts
-  (one with a double quote from SQLite 3.45 on, as older ones read none in a name).
+  (one with a double quote where SQLite reads it in a name, 3.47 and newer; elsewhere it is refused, with the reason).
   A filter of a list of some 16,000 values failed with "too many SQL variables"; its values now go to SQLite as one.
   A filter value that is no finite number (NaN, infinity) is a clear error.
 - `k: true` was taken for one result, as Python counts `True` as 1; it is refused as `k: "3"` is.
