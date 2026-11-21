@@ -17,6 +17,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   time; `sift embed` then embeds the passages that changed.
 - A mail with an empty plain part beside its HTML, as some mail programs send, was indexed without its words: the
   empty part was taken. Its HTML is read instead.
+- A line such as "```code```", code on its line alone, was taken for the start of a code block that never ended: the
+  rest of the note lost its title, its headings and its links. A backtick fence is one only without another backtick
+  after it on its line, as CommonMark and Obsidian read it.
 
 ## [1.14.0] - 2026-11-21
 

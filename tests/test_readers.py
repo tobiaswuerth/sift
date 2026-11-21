@@ -392,6 +392,15 @@ def test_links_in_code_blocks_are_no_links():
     assert links(text) == [(None, 9, "wikilink", "Real", None, None)]
 
 
+def test_three_backticks_with_one_after_them_open_no_code_block():
+    # "```x```" is code on its line, as CommonMark and Obsidian read it: a backtick fence's info string holds no
+    # backtick. Taken for a fence that never closed, it made the rest of the note code: no title, no links.
+    doc = readers.note("```inline``` is code\n\n# Real heading\n\nSee [[Target]].\n", "Note.md")
+    assert (doc.title, [link.target for link in doc.links]) == ("Real heading", ["Target"])
+    # A tilde fence's info string may hold backticks; and the fence it opens hides its links.
+    assert links("~~~ `x`\n[[Hidden]]\n~~~\n[[Real]]\n") == [(None, 4, "wikilink", "Real", None, None)]
+
+
 def test_an_unmatched_backtick_hides_nothing():
     assert links("It's 5` long, see [[Real]] and ``[[code]]``.\n") == [(None, 1, "wikilink", "Real", None, None)]
 

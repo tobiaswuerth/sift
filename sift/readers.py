@@ -172,7 +172,10 @@ def _outside_code(lines: Iterable[str]) -> list[bool]:
     outside: list[bool] = []
     fence: str | None = None
     for line in lines:
-        if m := FENCE.match(line):
+        m = FENCE.match(line)
+        if m and not fence and m.group(1)[0] == "`" and "`" in line[m.end() :]:  # "```x```": code on its line alone
+            m = None
+        if m:
             mark = m.group(1)
             if not fence:
                 fence = mark
