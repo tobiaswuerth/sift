@@ -925,3 +925,22 @@ def test_a_mail_python_reads_oddly_is_indexed(corpus, date, charset, body):
     write(root / "odd.eml", MAIL.format(subject="Odd", date=date, charset=charset, body=body))
     indexing.index(catalog)
     assert [hit["id"] for hit in Index(catalog).search("wombat")] == ["notes/odd.eml"]
+
+
+def test_a_text_file_larger_than_a_document_may_be_is_left_out_unread(corpus, monkeypatch, capsys):
+    # SQLite stores a billion bytes as one value at most. A larger text file was read whole, cut into passages and
+    # handed over by its worker process, gigabytes each time, then refused by the store: on every run, as a file
+    # refused is read again by the next.
+    catalog, root = corpus
+    monkeypatch.setattr(readers, "MOST_TEXT", 50)
+    write(root / "huge.txt", "x" * 51)
+    write(root / "full.txt", "x" * 50)
+    indexing.index(catalog)
+    assert {"full.txt", "rl.md"} <= set(doc_ids(catalog))
+    assert "huge.txt" not in doc_ids(catalog)
+    said = capsys.readouterr().err
+    assert "notes: huge.txt: skipped (51 bytes: a document holds at most 50 bytes of text; split the file)" in said
+    read, real = [], readers.load
+    monkeypatch.setattr(readers, "load", lambda *args: read.append(args) or real(*args))
+    indexing.index(catalog)
+    assert read == []  # known by its time and size: left alone until it changes

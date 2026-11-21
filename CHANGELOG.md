@@ -19,6 +19,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   GPU ended in the error of saying so.
 - A keyword search of every collection works between `sift add` and the new collection's first `sift index`: it
   ended in "The weights and list don't have the same length", as did `query`, on the command line and over MCP.
+- A text file of more than a billion bytes, the most a document's text may be, is left out unread, and said, until
+  it changes: it was read whole, cut into passages, then refused by the index, and so again on every run.
 - A collection without documents sends the searches of the others to their keyword postings, not to FTS5, seconds
   over millions of passages; and `reindex` builds the postings of a small collection that has none (under 2,000
   passages), as one an agent fills through `reindex` alone, which had none until a `sift index`.

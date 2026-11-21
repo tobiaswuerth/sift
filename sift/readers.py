@@ -11,6 +11,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import posixpath
 import re
 import unicodedata
@@ -790,12 +791,21 @@ def extension(name):
     return posixpath.splitext(name)[1].lower()
 
 
+MOST_TEXT = 1_000_000_000  # bytes SQLite stores as one value, as it is built (SQLITE_MAX_LENGTH): a document's text
+
+
 def load(path, fields=None):
     """Read one file into documents with the reader for its extension (runs in worker processes). Returns
-    (documents, problems), or None if the file can't be read."""
+    (documents, problems), or None if the file can't be read. A text file of more than a document's text may be is
+    left out unread: read, cut into passages and handed over, the store refused it, on every run."""
     path = Path(path)
     try:
-        raw = path.read_bytes()
+        with path.open("rb") as file:
+            size = os.fstat(file.fileno()).st_size
+            if size > MOST_TEXT and extension(path.name) in TEXT:
+                most = f"a document holds at most {MOST_TEXT:,} bytes of text"
+                return [], [f"skipped ({size:,} bytes: {most}; split the file)"]
+            raw = file.read()
     except OSError:
         return None
     return READERS[extension(path.name)](raw, path.name, fields or {})
