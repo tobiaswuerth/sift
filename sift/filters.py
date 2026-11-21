@@ -82,7 +82,8 @@ def forms(value: Value) -> list[Value]:
 
 def json_path(name: object, what: str = "filter field") -> str:
     """A front-matter field name, as SQLite's JSON functions address it: any name, written as a JSON string, which
-    SQLite reads with its escapes, so that a backslash or a double quote in it is the name's own."""
+    SQLite reads with its escapes, so that a backslash or a double quote in it is the name's own. Its letters as they
+    are, as indexing stores front matter: SQLite before 3.45 compares the name with the stored one byte for byte."""
     if not (isinstance(name, str) and name):
         raise ValueError(f"invalid {what} {name!r}")
-    return "$." + json.dumps(name)
+    return "$." + json.dumps(name, ensure_ascii=False)

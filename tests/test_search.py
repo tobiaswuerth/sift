@@ -10,7 +10,7 @@ import threading
 import numpy as np
 import pytest
 
-from sift import embed, expression, indexing, order, postings, queries, search, store, topk, vectors
+from sift import embed, expression, filters, indexing, order, postings, queries, search, store, topk, vectors
 from sift.catalog import Catalog
 from sift.hits import doi_of
 from sift.queries import any_word
@@ -1331,7 +1331,7 @@ def test_any_front_matter_field_name_filters_and_sorts(corpus):
     # A name ending in a backslash was a raw "bad JSON path" from SQLite, one holding one matched nothing, and one
     # holding a double quote was refused: SQLite reads a field's name in a JSON path as a JSON string, escapes too.
     catalog, root = corpus
-    names = ["back\\slash", "ends\\", 'say "hi"', "dotted.name", "tab\there"]
+    names = ["back\\slash", "ends\\", 'say "hi"', "dotted.name", "tab\there", "Straße"]
     write(root / "odd.md", "---\n" + "".join(f"{name}: 7\n" for name in names) + "---\n\nbrush\n")
     indexing.index(catalog)
     index = Index(catalog)
@@ -1339,6 +1339,12 @@ def test_any_front_matter_field_name_filters_and_sorts(corpus):
         assert ids(index.search("brush", filters={name: 7})) == ["notes/odd.md"], name
         assert ids(index.search("brush", sort=f"-{name}"))[0] == "notes/odd.md", name
     assert index.search("brush", filters={names[0]: 8}) == []
+
+
+def test_a_field_name_is_addressed_with_its_letters_as_front_matter_stores_them():
+    # SQLite before 3.45, as Ubuntu 22.04 and Debian 12 have it, compares a JSON path's name with the stored one byte
+    # for byte: sift stores "Straße" as it is, and a path escaping its letter, as json.dumps writes it, matched nothing.
+    assert filters.json_path("Straße") == '$."Straße"'
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), [1, float("-inf")]])
