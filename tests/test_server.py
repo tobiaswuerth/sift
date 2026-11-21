@@ -209,7 +209,57 @@ def test_instructions_tell_agents_what_is_indexed(mcp):
     # Agents read these when they connect: without the collections they can't tell when sift is worth asking.
     assert "): 3 documents" in mcp.instructions
     assert "before answering from memory" in mcp.instructions
-    assert "`adaptive: true`" in mcp.instructions  # fewer results to read, when a few stand out
+
+
+def test_instructions_say_which_tool_fits_what_the_agent_has(mcp):
+    # Agents searched exact strings, a version or an error code, by meaning, and questions by keyword.
+    guide = mcp.instructions
+    assert "A question, topic or description: `query`" in guide
+    assert 'a version "3.12.4", an error code' in guide
+    assert "wording you can't guess: `vsearch`" in guide
+
+
+def test_instructions_teach_research_in_rounds(mcp):
+    # One search, its first result read, and an answer: agents missed what other phrasings and the hits' own terms
+    # find. The arguments are written as calls take them, so that weaker models copy them.
+    guide = mcp.instructions
+    assert 'query=["...", "...", "..."]' in guide  # several phrasings, one call
+    assert "`compact: true, k: 30, adaptive: true`" in guide  # many results surveyed, few read
+    assert 'id=[{"id": "...", "lines": "17-26"}, ...]' in guide  # the best few read, one call
+    assert "`similar` and `links` on the best one" in guide
+    assert "Stop when a round returns only documents you have seen" in guide
+
+
+def test_instructions_put_how_to_search_before_the_collections(mcp):
+    # Claude Code keeps the first 2,048 characters of a server's instructions. The collections, as many as are
+    # indexed, come last, so a long list cuts off only its own end, and `status` lists them all.
+    guide, collections = mcp.instructions.split("Indexed collections")
+    assert len(guide) <= 1500
+    assert collections.startswith(" (`status` lists them all, with their fields):\n- notes (")
+
+
+def test_tool_descriptions_fit_what_clients_keep(mcp):
+    # Claude Code cuts each tool's description at 2,048 characters, saying nothing.
+    for tool in tools(mcp).values():
+        assert len(tool.description) <= 2048, tool.name
+
+
+@pytest.mark.parametrize("tool", ["search", "vsearch", "query", "similar"])
+def test_search_tools_say_how_to_read_on(mcp, tool):
+    # An agent that found a tool by tool search reads its description alone, not the server's instructions.
+    description = tools(mcp)[tool].description
+    assert "`get` the best few by id and lines, in one call" in description
+    assert "`also`" in description
+
+
+def test_keyword_and_hybrid_search_point_to_each_other(mcp):
+    # Each says when the other fits: exact strings, or questions.
+    found = tools(mcp)
+    assert "For a question or topic, use `query`" in found["search"].description
+    assert 'For an exact string, e.g. a version "3.12.4", an error code or a name, use `search`' in (
+        found["query"].description
+    )
+    assert "pass several phrasings at once, as a list" in found["query"].description
 
 
 def test_instructions_name_the_front_matter_fields(mcp, embedded):

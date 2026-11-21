@@ -7,6 +7,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The instructions `sift serve` gives agents when they connect start with how to search well: which tool fits what
+  the agent has (a question, an exact string such as a version or error code, an idea, a document), and how to research
+  in rounds: several phrasings in one call, a compact survey, the best few read in one `get`, then `similar`, `links`
+  and new terms, until a round finds nothing new. The collections come last: Claude Code keeps only the first 2,048
+  characters of a server's instructions, and cut off the list of tools with seven collections. Each search tool's
+  description says what its results carry and how to read on, for agents that find a tool by tool search and read
+  its description alone.
+
 - Where stderr is no terminal, in a file, a pipe, a service's log or an agent's shell, the progress line is a line
   a minute and one where it ended, as in the logs. It was drawn again there too, one more line an update and a
   second: seven for five files, thousands for a night of embedding. In a terminal nothing changes; `sift worker`'s

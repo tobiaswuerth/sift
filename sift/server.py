@@ -21,28 +21,28 @@ from .search import Index
 
 log = logging.getLogger(__name__)
 
-INSTRUCTIONS = """Search the user's local documents and notes, indexed by sift.
-When a question touches what these collections cover, search here before answering from memory or searching the web,
-and cite what you find; say so when nothing relevant turns up.
+# How to search well, first: clients keep only the start of a server's instructions (Claude Code its first 2,048
+# characters), and the collections, as many as are indexed, follow it.
+INSTRUCTIONS = """Search the user's local documents and notes, indexed by sift. When a task touches what the collections
+below cover, search here before answering from memory or the web. Cite ids; say so when nothing relevant turns up.
 
-{collections}
+Pick the tool by what you have:
+- A question, topic or description: `query` (keywords and meaning, reranked). The default; the slowest.
+- An exact string, e.g. a version "3.12.4", an error code, identifier, name, DOI or "quoted phrase": `search`.
+- An idea whose wording you can't guess: `vsearch`.
+- A document, to find more like it: `similar`. Its links and backlinks: `links`. Its text: `get`.
+- A note, for documents naming it without a link: `mentions`. Links that lead nowhere yet: `unresolved`.
 
-- `query`: hybrid search with reranking. Best default for questions; slower than the others.
-- `search`: exact keyword search (BM25). Best for names, identifiers, exact terms and "quoted phrases".
-- `vsearch`: semantic search. Best when the wording of the answer is unknown.
-- `similar`: documents like a given one, e.g. more papers like one found.
-- `get`: a document, or some of its lines, such as a result's; or several at once, e.g. the results that matter.
-- `links`: the links of a note ([[wikilinks]], embeds, Markdown links): those it holds, and those into it (backlinks).
-- `unresolved`: link targets no note answers to yet: the notes a collection lacks.
-- `mentions`: documents that name a note without linking to it.
-- `reindex`: after writing, changing or deleting files in a collection, index them again, so searches find them.
-Results carry `id` (collection/path), `lines`, `title`, `score` and the passage's `text`. Scores rank the results of
-one call; each tool has its own scale, so don't compare them across tools. All search tools take `collection`, a
-`path` glob, `filters` on front-matter fields, `fields` to show, and `links_to` and `linked_from` to keep to a note's
-links; with `compact: true` results leave out the text: survey many results compactly, then read the ones that
-matter. With `adaptive: true`, a search returns only the results before the largest drop in score, and a few more: ask
-for more, e.g. k=30, and read fewer. A paper that several collections hold is one result, which names the other copies
-under `also`. To save calls, `search`, `vsearch` and `query` take a list of queries, and `get` a list of ids."""
+Research in rounds; one search is rarely enough:
+1. Survey: one call with several phrasings, query=["...", "...", "..."] (up to 20), with
+   `compact: true, k: 30, adaptive: true`: results without their text, so many fit. Send `search` for exact
+   strings in the same turn.
+2. Read: `get` the 3 or so best in one call, with their lines: id=[{"id": "...", "lines": "17-26"}, ...].
+3. Dig: `similar` and `links` on the best one; search again with the terms and names the hits use.
+4. Stop when a round returns only documents you have seen; then answer.
+
+Narrow any search with `collection`, a `path` glob, `filters` on front matter and `sort`. Scores rank one call's
+results only. After writing or deleting a file of a collection, `reindex` it."""
 
 
 def _collections(index):
@@ -56,7 +56,7 @@ def _collections(index):
             lines.append(_collection_line(index, c))
         except sqlite3.DatabaseError as error:  # one store damaged keeps no server from starting
             lines.append(f"- {c.name} ({c.path}): {store.damage(c.name, error)}")
-    return "Indexed collections:\n" + "\n".join(lines)
+    return "Indexed collections (`status` lists them all, with their fields):\n" + "\n".join(lines)
 
 
 def _collection_line(index, c):
@@ -201,10 +201,20 @@ Budget = Annotated[
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 
 
+# What a search returns and what to do next, for agents that found a search tool by tool search and read its
+# description alone, without the server's instructions.
+RESULTS = (
+    "Results carry id (collection/path), title, lines, score and the passage's text; a document that several "
+    "collections hold is one result, naming the other copies under `also`. To survey many, compact: true leaves the "
+    "text out; then `get` the best few by id and lines, in one call."
+)
+
+
 def _add_search(mcp, index, name, description, query_description):
     """Add the tool for the Index search called `name`: keyword search's takes a budget too."""
     method = getattr(index, name)
 
+    description += " " + RESULTS
     query_description += " Or several at once, a list of up to 20: a list of results for each, in order."
 
     async def tool(
@@ -278,7 +288,7 @@ def build(index=None):
     # event loop free; the models run on the main thread, which holds the loop.
     index = index or Index()
     index.models_through(jobs.OnMainThread)
-    mcp = MCPServer("sift", instructions=INSTRUCTIONS.format(collections=_collections(index)))
+    mcp = MCPServer("sift", instructions=f"{INSTRUCTIONS}\n\n{_collections(index)}")
     _add_search(
         mcp,
         index,
@@ -286,7 +296,8 @@ def build(index=None):
         "Exact keyword search, ranked by BM25 (scores from 0 up, higher is better), over each passage's text, its "
         "document's title and front-matter values, such as authors and ids. When no passage holds all terms of a "
         "query without operators, passages holding any of them are returned; a query with operators is taken as it "
-        "is, so drop terms when it finds nothing.",
+        'is, so drop terms when it finds nothing. For strings known exactly: versions such as "3.12.4", error codes, '
+        'identifiers, names, DOIs, "quoted phrases". For a question or topic, use `query`.',
         'Keywords. "Exact phrases", prefix*, AND, OR, NOT (in capitals) and parentheses work, e.g. '
         '"notice period" AND (contract OR agreement); title: and meta: limit a term to the title or the front matter.',
     )
@@ -294,20 +305,28 @@ def build(index=None):
         mcp,
         index,
         "vsearch",
-        "Semantic search: passages closest in meaning to the query (cosine similarity, -1 to 1).",
+        "Semantic search: passages closest in meaning to the query (cosine similarity, -1 to 1). For ideas whose "
+        "wording you can't guess; `query` adds keywords and reranking, and is usually better.",
         "What to find, in any wording.",
     )
     _add_search(
         mcp,
         index,
         "query",
-        "Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. Best for questions. "
-        "Scores are the reranker's raw scores, higher for more relevant; with the default reranker, close matches "
-        "score about 2.5 to 4, and unrelated results below 2.",
+        "Hybrid search for RAG: keyword and semantic candidates, reranked by a cross-encoder. The default for "
+        'questions, topics and descriptions; the slowest search. For an exact string, e.g. a version "3.12.4", an '
+        "error code or a name, use `search`. One phrasing rarely finds everything: pass several phrasings at once, as "
+        "a list, and search again with the terms the hits use. Scores are the reranker's raw scores, higher for more "
+        "relevant; with the default reranker, close matches score about 2.5 to 4, and unrelated results below 2.",
         "A question, or a description of what to find.",
     )
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(
+        annotations=READ_ONLY,
+        description="Documents closest in meaning to a document, e.g. more papers like one found: run it on a search's "
+        "best result to widen the search. The document itself is left out, and so are its copies in other collections "
+        f"(cosine similarity, -1 to 1). {RESULTS}",
+    )
     async def similar(
         id: Id,
         k: K = 10,
@@ -322,13 +341,13 @@ def build(index=None):
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
     ) -> list[dict]:
-        """Documents closest in meaning to a document, e.g. more papers like one found; the document itself is left
-        out, and so are its copies in other collections (cosine similarity, -1 to 1)."""
         return await _search(index.similar, id, k, locals())
 
     @mcp.tool(annotations=READ_ONLY)
     async def get(id: Ids, lines: Lines = None, fields: Fields = None) -> str | dict | list[dict]:
-        """Text of a document, as indexed: all of it, or some of its lines. With `fields`, the document as
+        """Read what a search found: the text of a document, as indexed, all of it or some of its lines, such as a
+        result's. Read the best few results at once, by id and lines, rather than one call each. With `fields`, the
+        document as
         {id, title, fields, text}. Several documents at once (up to 100) come as a list of such, `lines` applying to
         those asked by id alone; one that can't be read as {id, error}. Texts past 100,000 characters in all are left
         out, each with the reason (`omitted`): get those alone or by lines."""
