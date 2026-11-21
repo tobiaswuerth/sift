@@ -67,7 +67,10 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 - **Tests first:** a test that fails, then the change that makes it pass; every bug fix comes with a regression test.
 - **Full coverage:** `pytest --cov` requires 100% line and branch coverage.
 - **The gate:** `python scripts/gate.py` runs every check a change must pass, and is green when all did: the
-  pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run.
+  pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run. With uv on the PATH, it
+  then runs the tests once more on the newest Python CI tests on, where a Python warns of what an older one lets
+  pass: in `.venv-newest`, an environment the gate makes, keeps up to date and owns (delete it at will). CI itself
+  runs the oldest and the newest Python first, and every other system and Python once those pass.
 - **Types:** [pyright](https://github.com/microsoft/pyright) checks all of `sift/` in its strict mode, as on Linux,
   macOS and Windows each, whichever runs it: `pyright --pythonplatform Linux` (`Darwin`, `Windows`), in the activated
   environment. It checks for the Python of CI's types job, whose packages it reads (NumPy's types name what only that
