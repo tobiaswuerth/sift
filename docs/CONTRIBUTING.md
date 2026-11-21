@@ -80,7 +80,9 @@ Rules the code keeps, several checked by `tests/test_package.py`:
   one rule on one line, which `tests/test_package.py` lists.
 - **Quality gates:** pre-commit runs on every commit and in CI: ruff (lint and format), whitespace, line endings, byte
   order marks, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schemas, actionlint and codespell.
-  Workflows name their actions by commit, which a test holds them to.
+  Workflows name their actions by commit, which a test holds them to. Once a week, the Audit workflow checks the
+  packages sift installs that day against the advisories known for them (`pip-audit`); Dependabot proposes a new
+  release once it is a week old.
 - **The smoke run:** `python scripts/smoke.py` runs every command as a user runs it, each in a process of its own, on
   a small folder of notes; with `--models` also what loads the models: `embed`, the semantic searches, `bench` and
   `sift serve` with its page and MCP endpoint. A new command or option gets a line there.
