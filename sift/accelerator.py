@@ -31,6 +31,9 @@ CPU_THREADS = torch.get_num_threads()  # PyTorch's own choice, a thread per core
 # Beside an NVIDIA GPU, PyTorch's CPU steps are small, and the threads it keeps for them wait busily after each (Intel
 # OpenMP's 200 ms): a thread per core kept 9 of 24 cores busy through `sift embed`, and embedding ran 5% slower.
 GPU_THREADS = 1
+# PyTorch's CUDA builds, as the fix sift prints installs them: CUDA 12.6 runs on the most drivers of the indexes that
+# carry sift's lowest PyTorch (README.md and requirements.txt name it too, which a test holds)
+CUDA_INDEX = "https://download.pytorch.org/whl/cu126"
 _Item = TypeVar("_Item")
 _Result = TypeVar("_Result")
 
@@ -81,9 +84,7 @@ def cuda_pytorch_command(platform: str = sys.platform) -> str:
     """How to replace a CPU-only PyTorch with the CUDA build. Windows wheels bundle their CUDA libraries, so
     torch's other dependencies can stay; Linux wheels depend on nvidia-* packages, which must come along."""
     no_deps = "--no-deps " if platform == "win32" else ""
-    return (
-        f"pip install --force-reinstall {no_deps}torch torchvision --index-url https://download.pytorch.org/whl/cu128"
-    )
+    return f"pip install --force-reinstall {no_deps}torch torchvision --index-url {CUDA_INDEX}"
 
 
 def _unused_nvidia_gpu() -> str | None:

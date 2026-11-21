@@ -42,7 +42,7 @@ With pip, in a virtual environment: `pip install sift-rag`. The first use downlo
 sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, where `query` takes about 25 seconds a
 question instead of 0.3. PyTorch from PyPI uses the GPU on Linux and macOS. On Windows, `--torch-backend auto` installs
 the CUDA build for your driver; with pip, run `pip install --force-reinstall --no-deps torch torchvision --index-url
-https://download.pytorch.org/whl/cu128` afterwards. If an NVIDIA GPU sits unused, sift says so and prints the fix. A
+https://download.pytorch.org/whl/cu126` afterwards. If an NVIDIA GPU sits unused, sift says so and prints the fix. A
 machine without a GPU can [use another machine's](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md).
 
 ## Quick start

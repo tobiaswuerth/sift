@@ -14,25 +14,25 @@ requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.0",  # np.bitwise_count, which counts the bits of the codes
     "numba>=0.68",  # the scan of the codes in one pass (sift/scan.py); wheels for every platform and Python sift takes
-    "torch>=2.4",
+    "torch>=2.13",  # older releases have advisories known against them; transformers 5.18 needs 2.5
     "sentence-transformers>=6.1",  # the module layout embeddinggemma-2 is saved in
     "transformers>=5.18",  # the first release with embeddinggemma-2
     "tokenizers>=0.20",  # counts tokens with a copy of the model's, outside PyTorch; transformers brings it too
-    "pillow>=10",  # embeddinggemma-2 handles images and video too, so transformers needs Pillow
-    "torchvision",  # and torchvision even for text; it must match torch, so install them together
-    "mcp>=2.0",
+    "pillow>=13",  # embeddinggemma-2 handles images and video too, so transformers needs Pillow
+    "torchvision>=0.28",  # and torchvision even for text; it must match torch (0.28 is 2.13's), so install both
+    "mcp>=2.2",
     # what sift imports itself, though mcp and jinja2 bring them too: the HTTP servers, their event loop, the
     # parameter schemas of the MCP tools, and the UI's escaping
     "uvicorn>=0.31",
-    "starlette>=0.48",
-    "anyio>=4.9",
+    "starlette>=1.3.1",
+    "anyio>=4.14.2",
     "pydantic>=2.12",
     "markupsafe>=2",
     "nvidia-ml-py>=12",  # NVML: free GPU memory as nvidia-smi sees it
     "xberg>=1.3",  # reads PDF, office files, e-books and web pages
     "pypdfium2>=4.30",  # the pages of scans as pictures, for OCR (Apache-2.0 and BSD-3-Clause, PDFium inside)
-    "cryptography>=42",  # the certificate `sift worker` makes for HTTPS
-    "jinja2>=3.1",  # the pages of `sift ui`
+    "cryptography>=49",  # the certificate `sift worker` makes for HTTPS
+    "jinja2>=3.1.6",  # the pages of `sift ui`
 ]
 keywords = [
     "rag",

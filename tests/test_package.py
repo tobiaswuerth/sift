@@ -70,6 +70,18 @@ def test_requirements_txt_names_the_dependencies_pyproject_does():
     assert listed == set(project["dependencies"]), "name each dependency in both, with the same versions"
 
 
+def test_every_way_to_install_cuda_pytorch_names_one_index():
+    # The index of PyTorch's CUDA builds stood in four places, and went stale in all: cu128 carries no PyTorch since
+    # 2.10, so the fix sift prints, the README's and requirements.txt installed none at or above sift's floor.
+    from sift import accelerator
+
+    index = accelerator.CUDA_INDEX
+    assert index in accelerator.cuda_pytorch_command()
+    assert f"--extra-index-url {index}\n" in (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    assert set(re.findall(r"https://download\.pytorch\.org/whl/\w+", readme)) == {index}
+
+
 def test_only_settings_touches_the_environment():
     # vectors.py once set NUMBA_CACHE_DIR itself: settings.py alone reads and sets the environment, so every variable
     # sift heeds is in one place.

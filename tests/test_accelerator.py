@@ -385,7 +385,7 @@ def nvml(monkeypatch):
     "cuda_build, hint",
     [
         (None, "uv tool install --reinstall --torch-backend auto sift-rag"),  # uv environments have no pip
-        (None, "--index-url https://download.pytorch.org/whl/cu128"),
+        (None, "--index-url https://download.pytorch.org/whl/cu126"),
         ("12.8", "update the NVIDIA driver"),
     ],
 )
@@ -451,9 +451,9 @@ def test_no_hint_on_apple_gpus(make, nvml, capsys):
         # Windows CUDA wheels bundle their CUDA libraries; Linux ones depend on nvidia-* packages
         (
             "win32",
-            "pip install --force-reinstall --no-deps torch torchvision --index-url https://download.pytorch.org/whl/cu128",
+            "pip install --force-reinstall --no-deps torch torchvision --index-url https://download.pytorch.org/whl/cu126",
         ),
-        ("linux", "pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128"),
+        ("linux", "pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu126"),
     ],
 )
 def test_cuda_pytorch_command_fits_the_platform(platform, command):

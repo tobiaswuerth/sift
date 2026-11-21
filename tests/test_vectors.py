@@ -376,7 +376,7 @@ def test_a_scan_counts_the_codes_at_each_distance(monkeypatch):
     monkeypatch.setattr(vectors, "BLOCK", 7)  # many blocks, each counted in its thread
     ids, matrix, _, index = random_index(n=100)
     query = codes(unit(np.ones((1, 64))))[0]
-    expected = np.bitwise_count(codes(matrix) ^ query).sum(1)
+    expected = np.bitwise_count(codes(matrix) ^ query).sum(1, dtype=np.int64)  # NumPy 2.0 counts no unsigned ints
     distances, counts = index.measure(query, excluded=ids[:10])
     assert counts.tolist() == np.bincount(expected[10:], minlength=8 * index.width + 1).tolist()  # those left out: none
     assert distances[10:].tolist() == expected[10:].tolist()
