@@ -6,8 +6,8 @@ embeds the one before (encode_batches)."""
 
 import logging
 import threading
-from collections.abc import Callable, Iterable, Iterator
-from typing import TYPE_CHECKING, Any, TypeVar
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -35,6 +35,38 @@ class _Unset:
 
 
 _UNSET = _Unset()
+
+
+# What sift uses of Sentence Transformers' models and of a fast tokenizer, typed by sift: their own types name
+# optional packages (audio, video) that are Unknown where those aren't installed. The type checker holds the real
+# classes to these where they are handed over.
+class _Embedder(Protocol):
+    @property
+    def max_seq_length(self) -> int | None: ...
+    @property
+    def device(self) -> "torch.device": ...
+    @property
+    def prompts(self) -> Mapping[str, str | None]: ...
+    @property
+    def default_prompt_name(self) -> str | None: ...
+    def preprocess(self, inputs: Any, prompt: str | None = None, **kwargs: Any) -> dict[str, Any]: ...
+    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
+class _Reranker(Protocol):
+    def predict(
+        self, inputs: Any, *, batch_size: int = ..., show_progress_bar: bool | None = ..., activation_fn: Any = ...
+    ) -> Any: ...
+
+
+class _Truncating(Protocol):
+    def enable_truncation(self, max_length: int, /, **kwargs: Any) -> None: ...
+
+
+def _longest(model: _Embedder) -> int:
+    """The most tokens the model reads of a text: as the loaders set it, MAX_TOKENS at most."""
+    return model.max_seq_length or MAX_TOKENS
+
 
 # The MCP server logs at INFO, where loading a model logs every HTTP request to Hugging Face: through httpx, or
 # httpx2, which huggingface_hub 2 uses.
@@ -151,7 +183,7 @@ class Local:
             if isinstance(self._counter, _Unset):
                 model = self.embedder()
                 backend = getattr(model.tokenizer, "backend_tokenizer", None)
-                self._counter = None if backend is None else _counter_of(backend, model.max_seq_length)
+                self._counter = None if backend is None else _counter_of(backend, _longest(model))
             return self._counter
 
     def prepare(self) -> None:
@@ -162,7 +194,7 @@ class Local:
         if self.accelerator.kind != "cuda":
             return
         steps = _Steps(self._ready(self.embedder), query=False)
-        longest = "x " * (4 * steps.model.max_seq_length)  # truncated to the longest input
+        longest = "x " * (4 * _longest(steps.model))  # truncated to the longest input
         self.accelerator.calibrate(lambda n: steps.collect(steps.launch(steps.tokenize([longest] * n))))
 
     def encode(self, texts: list[str], query: bool = False) -> NDArray[np.float16]:
@@ -175,7 +207,7 @@ class Local:
         Iterate it on the models' thread. A batch the GPU has no memory for is embedded by encode(), which embeds it
         in parts; so is one larger than the batch size, since halved."""
         steps = _Steps(self._ready(self.embedder), query)
-        return _pipelined(steps, batches, lambda texts: self.encode(texts, query), lambda: self.batch)
+        return _pipelined(steps, batches, (lambda texts: self.encode(texts, query), lambda: self.batch))
 
     def rerank(self, query: str, texts: list[str]) -> NDArray[np.float32]:
         """Raw scores (logits) of (query, text) pairs, higher for better matches, whatever activation the model's
@@ -184,11 +216,7 @@ class Local:
 
         model, raw = self._ready(self.reranker), torch.nn.Identity()
         return self.accelerator.run(
-            lambda t, size: model.predict(
-                [(query, x) for x in t], batch_size=size, show_progress_bar=False, activation_fn=raw
-            ),
-            texts,
-            most=RERANK_BATCH,
+            lambda t, size: _scores(model, [(query, x) for x in t], size, raw), texts, most=RERANK_BATCH
         )
 
     def release_idle(self) -> bool:
@@ -201,7 +229,7 @@ class _Steps:
     in three steps: tokenize it on the CPU, launch the forward pass (the GPU runs it while the CPU goes on), collect
     the vectors (waiting for the GPU)."""
 
-    def __init__(self, model: "SentenceTransformer", query: bool):
+    def __init__(self, model: _Embedder, query: bool):
         self.model, self.task = model, TASKS[query]
         name = next((name for name in PROMPTS[query] if name in model.prompts), model.default_prompt_name)
         self.prompt = model.prompts.get(name) if name else None
@@ -226,25 +254,28 @@ class _Steps:
 def _pipelined(
     steps: _Steps,
     batches: Iterable[list[str]],
-    again: Callable[[list[str]], NDArray[np.float16]] | None = None,
-    size: Callable[[], int] | None = None,
+    fallback: tuple[Callable[[list[str]], NDArray[np.float16]], Callable[[], int]] | None = None,
 ) -> Iterator[NDArray[np.float16]]:
-    """The vectors of each batch, in order, each tokenized while the GPU runs the one before. With again(texts), a
-    batch the GPU has no memory for, or of more texts than size(), is embedded by it instead."""
+    """The vectors of each batch, in order, each tokenized while the GPU runs the one before. With a `fallback`,
+    (again, size): a batch of more texts than size(), or one the GPU has no memory for, is embedded by again(texts)."""
     launched = None
     for texts in batches:
-        features = steps.tokenize(texts) if again is None or len(texts) <= size() else None
+        if fallback is not None and len(texts) > fallback[1]():
+            if launched is not None:
+                yield steps.collect(launched)
+                launched = None
+            yield fallback[0](texts)
+            continue
+        features = steps.tokenize(texts)
         if launched is not None:
             yield steps.collect(launched)
             launched = None
-        if features is not None:
-            try:
-                launched = steps.launch(features)
-                continue
-            except RuntimeError as error:
-                if again is None or not accelerator.out_of_memory(error):
-                    raise
-        yield again(texts)
+        try:
+            launched = steps.launch(features)
+        except RuntimeError as error:
+            if fallback is None or not accelerator.out_of_memory(error):
+                raise
+            yield fallback[0](texts)
     if launched is not None:
         yield steps.collect(launched)
 
@@ -264,5 +295,13 @@ def _counter_of(backend: "Tokenizer", longest: int) -> "Tokenizer":
 
     counter = Tokenizer.from_str(backend.to_str())
     counter.no_padding()
-    counter.enable_truncation(longest)
+    _truncate(counter, longest)
     return counter
+
+
+def _truncate(tokenizer: _Truncating, longest: int) -> None:
+    tokenizer.enable_truncation(longest)
+
+
+def _scores(model: _Reranker, pairs: list[tuple[str, str]], size: int, activation: Any) -> NDArray[np.float32]:
+    return model.predict(pairs, batch_size=size, show_progress_bar=False, activation_fn=activation)

@@ -370,7 +370,6 @@ def app(index: "Index", host: str = "127.0.0.1") -> "ASGIApp":
 
     env = Environment(loader=FileSystemLoader(WEB), autoescape=True, trim_blocks=True, lstrip_blocks=True)
     env.filters["num"] = lambda n: f"{n:,}"
-    env.globals["PAGE"] = PAGE
 
     def render(view: View, part: str | None, headers: Mapping[str, str]) -> str:
         pattern = _pattern(view.q)
@@ -381,6 +380,7 @@ def app(index: "Index", host: str = "127.0.0.1") -> "ASGIApp":
             "typed": headers.get("hx-trigger") == "search",  # the box holds what is being typed: it stays
             "title": f"{view.q} · sift" if view.q else "sift",
             "collections": _collections([(c, index.catalog.store(c)) for c in index.active().values()]),
+            "PAGE": PAGE,  # in the context, as included templates see it: jinja2 types its globals as its own alone
         }
         if part != "reader":
             context |= _explore(index, view, pattern)

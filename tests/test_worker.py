@@ -315,6 +315,17 @@ def test_a_worker_is_reached_over_ipv4_where_it_listens(live, ipv6_listener, mon
     assert not ready  # no connection waits there
 
 
+def test_a_worker_whose_name_has_no_address_this_python_reaches_is_a_clear_error(monkeypatch):
+    # A Python built without IPv6 hands an IPv6 address over as (family, bytes): connecting to it raised a TypeError.
+    def names(host, port, family=0, type=0, proto=0, flags=0):
+        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", (int(socket.AF_INET6), bytes(16)))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", names)
+    worker_remote = remote.Remote("https://t.p@workstation.test:8766")
+    with pytest.raises(ConnectionError, match=r"workstation\.test resolves to no address this Python can connect to"):
+        worker_remote.encode(["brush strokes"])
+
+
 def test_embedding_searching_and_serving_through_a_worker_never_load_pytorch(tmp_path):
     # PyTorch takes seconds to load, more on a notebook; a machine whose worker embeds and reranks doesn't need it.
     # `sift embed` and `sift serve` said they loaded it all the same.

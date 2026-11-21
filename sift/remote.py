@@ -64,8 +64,14 @@ class _Connection(http.client.HTTPSConnection):
         # The worker listens on IPv4, but a name often resolves to an IPv6 link-local address first. Where a firewall
         # dropped those attempts, every request waited 21 s for one to fail before the system tried IPv4.
         found = socket.getaddrinfo(self.host, self.port, type=socket.SOCK_STREAM)
-        address = min(found, key=lambda a: a[0] != socket.AF_INET)[4][:2]  # IPv4 if the name has one
-        self.sock = self._tls.wrap_socket(socket.create_connection(address, self.timeout), server_hostname=self.host)
+        # A Python built without IPv6 hands an IPv6 address over as (family, bytes), which it can't connect to
+        ips = [(family, ip) for family, _, _, _, (ip, *_) in found if isinstance(ip, str)]
+        if not ips:
+            raise RemoteError(f"embedding remote {self.host} resolves to no address this Python can connect to")
+        ip = min(ips, key=lambda a: a[0] != socket.AF_INET)[1]  # IPv4 if the name has one
+        self.sock = self._tls.wrap_socket(
+            socket.create_connection((ip, self.port), self.timeout), server_hostname=self.host
+        )
         der = self.sock.getpeercert(binary_form=True)  # None where the worker showed no certificate
         if der is None or fingerprint(der) != self._pin:
             self.close()

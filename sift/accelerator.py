@@ -181,9 +181,9 @@ class Accelerator:
             console.say(f"only {free / GiB:.1f} GB of GPU memory is free; using the CPU (slower)")
             self.device = "cpu"
             return None
-        index = torch.device(self.device).index  # PyTorch wants an index here; plain "cuda" is the current device
+        _, _, index = self.device.partition(":")  # PyTorch wants an index here; plain "cuda" is the current device
         self.memory.set_per_process_memory_fraction(
-            budget / total, self.memory.current_device() if index is None else index
+            budget / total, int(index) if index else self.memory.current_device()
         )
         console.say(f"using at most {budget / GiB:.1f} of {total / GiB:.1f} GB of GPU memory")
         return budget
