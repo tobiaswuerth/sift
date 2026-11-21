@@ -293,7 +293,8 @@ def test_a_look_for_replacement_characters_stopped_goes_on_where_it_stopped(tmp_
     with pytest.raises(KeyboardInterrupt):
         indexing.index(catalog)
     monkeypatch.setattr(store, "set_meta", set_meta)
-    assert db.execute("SELECT path FROM sources WHERE mtime IS NULL").fetchall() == [("a.txt",)]  # the first batch's
+    first = db.execute("SELECT s.path FROM docs d JOIN sources s ON s.id = d.source ORDER BY d.id LIMIT 1").fetchall()
+    assert db.execute("SELECT path FROM sources WHERE mtime IS NULL").fetchall() == first  # the first batch's alone
     indexing.index(catalog)
     assert sorted(db.execute("SELECT path, text FROM docs")) == [(f"{n}.txt", f"{n} Müller\n") for n in "abc"]
 

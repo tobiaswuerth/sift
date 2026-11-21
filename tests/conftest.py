@@ -565,6 +565,38 @@ def home(tmp_path, monkeypatch):
     return path
 
 
+@pytest.fixture(autouse=True)
+def listed_backwards(monkeypatch):
+    """Every folder lists its entries last name first, on every system. A file system lists them in an order of its
+    own, NTFS by name and ext4 by a hash: a test that counted on the order of the system it was written on passed
+    there and failed elsewhere. It now fails on every system."""
+    scandir = os.scandir
+
+    class Backwards:
+        """What os.scandir gives, read at once: an iterator of its entries, and a context manager."""
+
+        def __init__(self, path="."):
+            with scandir(path) as entries:
+                self.entries = iter(sorted(entries, key=lambda entry: entry.name, reverse=True))
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self.entries)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *error):
+            self.close()
+
+        def close(self):
+            """Nothing left open: the folder was read when it was listed."""
+
+    monkeypatch.setattr(os, "scandir", Backwards)
+
+
 @pytest.fixture
 def corpus(notes, home, built_once, request):
     """A catalog with the collection `notes`, keyword search ready, not embedded; embedded, for a test that asks for
