@@ -315,8 +315,9 @@ def _layout(db: sqlite3.Connection, path: str | Path, cid: int, create: bool) ->
 
 
 def make(db: sqlite3.Connection, cid: int, read: bool = True) -> None:
-    """The tables of a new store of the collection `cid`, its ids starting at first_id(cid). Unless `read`, its files
-    of the kinds an older sift skipped are still to be read again (READ_AGAIN)."""
+    """The tables of a new store of the collection `cid`, its ids starting at first_id(cid). Unless `read`, as for a
+    store an older sift's index is split into, what older sifts left is still to be mended: the files of the kinds
+    they skipped read again (READ_AGAIN), and the model they embedded with named at its commit (MODELS_PINNED)."""
     kept_by_triggers = "".join(f"{statement};\n" for statement in (*COUNTS, *BASENAMES))
     db.executescript(SCHEMA + KEYWORD_INDEX + LINKS + CODES + POSTINGS + kept_by_triggers)
     db.executemany("INSERT INTO counts(name, n) VALUES(?, 0)", [(table,) for table in COUNTED])
@@ -324,9 +325,8 @@ def make(db: sqlite3.Connection, cid: int, read: bool = True) -> None:
     db.executemany("INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)", [("docs", first), ("chunks", first)])
     set_meta(db, "collection", cid)
     set_meta(db, LISTED, 1)  # its documents are listed as they come
-    for key in (*READ_AGAIN, WAITED, ANSI_READ) if read else ():
+    for key in (*READ_AGAIN, WAITED, ANSI_READ, MODELS_PINNED) if read else ():
         set_meta(db, key, 1)
-    set_meta(db, MODELS_PINNED, 1)  # nothing embedded yet
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 

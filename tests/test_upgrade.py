@@ -326,6 +326,19 @@ def test_the_stores_of_a_split_keep_their_counts(made, home, layout):
         assert store.counts(db)["vectors"] > 0
 
 
+def test_a_split_store_names_the_default_model_at_the_commit_sift_pins(made, home):
+    # sift 1.7 recorded the default embedding model by its name alone, as later sifts did: the stores split from its
+    # index kept that name, marked as named anew, and every `sift embed` asked for `--reset`.
+    for c in made.collections():
+        store.set_meta(made.store(c), "model", "google/embeddinggemma-2")
+        made.store(c).commit()
+    home.mkdir()
+    as_made_by_sift_1_7(made, home / "sift.db")
+    catalog = Catalog(home)
+    pinned = "google/embeddinggemma-2@f9972ac22e696a105c482202646979e33e4b5a1e"
+    assert [store.get_meta(catalog.store(c), "model") for c in catalog.collections()] == [pinned, pinned]
+
+
 def test_an_index_of_sift_1_0_reads_its_front_matter_again(made, home, capsys):
     # sift 1.0 read lists of unquoted items as text, and gave a note of front matter alone no passage.
     vault = made.store("vault")
