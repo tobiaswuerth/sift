@@ -5,13 +5,14 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 
 ## Indexing
 
-- Worker processes read and parse files in parallel while the previous batch is written; small updates skip the
-  process start-up. Each kind of file has a reader, chosen by extension; adding a format means adding a reader.
-- A reader's native code can end its process, or never come to an end; a file gets ten minutes, and a second more
-  for every 100 KB. The pool then says no more than that it broke, so the files it hadn't read are read again one at a
-  time, in a process of their own: the one that ends or hangs it is left out, said, and tried again by the next run;
-  the others are read. Files read in the indexing process itself, a small update's and those of `reindex`, have no
-  such guard.
+- Worker processes read and parse files in parallel while the previous batch is written; small updates of notes, text
+  files and JSON Lines skip the process start-up. Each kind of file has a reader, chosen by extension; adding a format
+  means adding a reader.
+- A reader's native code (Xberg's, for documents and mails) can end its process, or never come to an end, so such a
+  file is always read in a worker process, by `sift index` and by `reindex` alike, in a task of its own: it gets ten
+  minutes, and a second more for every 100 KB. The pool then says no more than that it broke, so the files it hadn't
+  read are read again one at a time, in a process of their own: the one that ends or hangs it is left out, said, and
+  tried again by the next run; the others are read, and what tasks had read by then is kept.
 - Files are compared by modification time and size, so unchanged files cost nothing, and documents by content hash, so
   a changed JSON Lines file re-indexes only its changed records.
 - A JSON Lines file over 32 MB is read line by line as it is stored, in batches of 10,000 records (or 16 MB of text),

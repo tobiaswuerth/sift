@@ -2,7 +2,9 @@
 running server follows without loading every code again."""
 
 import os
+import shutil
 import sqlite3
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -11,7 +13,10 @@ from sift import indexing, postings, readers, search, store
 from sift.catalog import Catalog
 from sift.search import Index
 
+from . import workers
 from .conftest import write
+
+SAMPLES = Path(__file__).parent / "samples"
 
 NEW = "vault/06_Topics/Wartungsvertrag 2027.md"
 OFFER = "vault/03_Interactions/2026-10-14 Offerte.md"
@@ -575,6 +580,19 @@ def test_reindex_builds_the_postings_of_a_small_collection_that_has_none(notes, 
     assert index.reindex(["notes/plain.txt"])[0]["status"] == "added"
     assert postings.ready(db)
     assert ids(index.search("colour")) == ["notes/plain.txt"]
+
+
+def test_reindex_reads_a_file_read_by_native_code_in_a_process_of_its_own(corpus, monkeypatch, pools):
+    # A document whose reader ended its process, when an agent reindexed it, ended `sift serve`. Notes are read here.
+    catalog, root = corpus
+    shutil.copy(SAMPLES / "sample.pdf", root / "poison.pdf")
+    write(root / "new.md", "# New\n\nfresh words\n")
+    monkeypatch.setattr(indexing, "_loaded", workers.ending)
+    bad, new = Index(catalog).reindex(["notes/poison.pdf", "notes/new.md"])
+    note = "Stopped: its reader ended the process it ran in"
+    assert bad == {"id": "notes/poison.pdf", "status": "unreadable", "note": note}
+    assert new["status"] == "added"
+    assert pools[0] == (1, "spawn")
 
 
 def test_reindex_reads_the_other_files_when_a_reader_fails(corpus, monkeypatch):

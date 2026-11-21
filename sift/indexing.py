@@ -171,10 +171,17 @@ class _Workers:
                 _end(pool)
 
     def start(self, files: list[tuple[str, int]]) -> list[Task]:
-        """Start reading these files, (path, size) each, some to a task: fewer tasks cost less to hand over. Returns
-        what `results` takes."""
+        """Start reading these files, (path, size) each: text files and JSON Lines some to a task, as fewer tasks cost
+        less to hand over; a file read by native code in a task of its own, so that it gets the time its size gives
+        (see _patience), and one that hangs is found then. Returns what `results` takes."""
         size = max(1, min(64, len(files) // (4 * self.n)))
-        return [self._task(self.pool, files[i : i + size]) for i in range(0, len(files), size)]
+        tasks: list[list[tuple[str, int]]] = []
+        for file in files:
+            if tasks and len(tasks[-1]) < size and not readers.native(file[0]) and not readers.native(tasks[-1][0][0]):
+                tasks[-1].append(file)
+            else:
+                tasks.append([file])
+        return [self._task(self.pool, task) for task in tasks]
 
     def _task(self, pool: ProcessPoolExecutor, files: list[tuple[str, int]]) -> Task:
         return files, pool.submit(_loaded_all, _loaded, [path for path, _ in files], self.fields), pool
@@ -192,9 +199,16 @@ class _Workers:
                 if pool is self.pool:  # a file not read yet ended it, or hangs: which of them, each alone tells
                     _end(pool)
                     self.pool = _pool(self.n)
-                    return read + [self._alone(file) for files, _, _ in started[at:] for file in files]
+                    return read + [loaded for task in started[at:] for loaded in self._kept(task)]
                 started[at:] = [self._task(self.pool, files) for files, _, _ in started[at:]]  # another batch's did
         return read
+
+    def _kept(self, task: Task) -> list[Loaded]:
+        """What a task of a pool that ended had read, if it was done by then; else each of its files read alone."""
+        files, future, _ = task
+        if future.done() and not future.cancelled() and future.exception() is None:
+            return future.result()
+        return [self._alone(file) for file in files]
 
     def _alone(self, file: tuple[str, int]) -> Loaded:
         """What one file is read as in a process that reads nothing else, or Stopped."""
@@ -745,12 +759,19 @@ def _reindex_read(
         return None, None, False
     if readers.streamed(path, info.st_size):
         return info, readers.Records(path, fields), False  # read as it is stored
-    read = _loaded(path, fields)
+    read = _guarded(path, info.st_size, fields) if readers.native(path) else _loaded(path, fields)
     if read is None or isinstance(read, Exception):
         return info, read, False
     docs, problems = read
     docs, left = _read_scans(db, _source(db, rel), rel, docs, problems.append, now=scans)
     return info, (docs, problems), left
+
+
+def _guarded(path: str, size: int, fields: Fields) -> Loaded:
+    """What a file read by native code is read as, in a process of its own: one that ends it, or hangs, is Stopped,
+    and the process that asked, a server's, goes on."""
+    with _Workers(1, fields) as reading:
+        return reading.results(reading.start([(path, size)]))[0]
 
 
 def _reindex_file(
@@ -1009,7 +1030,8 @@ def _read_and_store(
     """Read the files to do, in worker processes when it pays off, and store their documents batch by batch."""
     batches, whole = _batches(todo), _whole(todo)
     n = workers(len(whole), sum(item[3] for item in whole))  # parsing is CPU-bound: processes, not threads
-    with _Workers(n, fields) if n > 1 else nullcontext() as pool:
+    native = any(readers.native(item[0]) for item in whole)  # a crash or hang there ends a process: not this one
+    with _Workers(max(n, 1), fields) if n > 1 or native else nullcontext() as pool:
         # double buffering: the next batch is parsed while the current one is written
         pending = _read(pool, fields, batches[0])
         done, step = 0, max(1, len(todo) // PROGRESS_LINES)  # an update per file, or fewer for many small ones

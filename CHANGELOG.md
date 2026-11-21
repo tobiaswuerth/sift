@@ -29,6 +29,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `query` passed over every word of one character: "Python 3" lost its version, and a query of one Chinese or Japanese
   word, such as "猫", got no keyword candidates at all. Digits and single characters of other scripts are words now;
   single Latin letters ("a", the "s" of "it's") still aren't. The UI marks them in its results alike.
+- Documents and mails, whose readers run native code that may crash or hang, were read in the indexing process
+  itself in an update of fewer than a thousand files, and always by the server's `reindex`: one such file ended `sift
+  index` on every run, without naming it, or ended `sift serve`. They are now always read in a worker process, each in
+  a task of its own with its own ten minutes; up to 64 of them shared one task's time, and forty slow PDFs were taken
+  for hung. When a file does end or hang its process, what the other workers had read by then is kept, not read
+  again one file at a time.
 
 ## [1.14.0] - 2026-11-21
 

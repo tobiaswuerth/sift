@@ -568,6 +568,12 @@ def streamed(path: str | Path, size: int) -> bool:
     return size > STREAMED and extension(Path(path).name) in JSONL  # the size first: asked of every file indexed
 
 
+def native(path: str | Path) -> bool:
+    """Whether a file's reader runs native code, Xberg's, which may end its process or never come to an end: a
+    document's, and a mail's, for its HTML and attachments. Text files and JSON Lines are read by Python alone."""
+    return extension(Path(path).name) in DOCUMENTS + EMAIL
+
+
 class Unread(Exception):
     """A file read as it is stored could not be read to its end: why, as "Error: what it said"."""
 

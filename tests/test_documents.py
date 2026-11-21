@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from sift import indexing, readers
+from sift import indexing, readers, store
 from sift.catalog import Catalog
 from sift.search import Index
 
@@ -239,7 +239,7 @@ def test_documents_are_converted_in_worker_processes(library, tmp_path, monkeypa
     assert index_contents(only(parallel)) == index_contents(only(catalog))
 
 
-def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home, monkeypatch):
+def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home):
     # The server of sift 1.3.0 and older skipped every document its reindex tool was given: their files, and mails
     # with one attached, are read again by the next index.
     root, word = tmp_path / "docs", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -248,9 +248,10 @@ def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home, mon
     email_file(root, Subject="Offer", attachments=[("offer.docx", sample(".docx").read_bytes(), word)])
     catalog = Catalog(home)
     catalog.add(root, "docs")
-    with monkeypatch.context() as patched:
-        patched.setattr(readers, "_xberg", lambda raw, name: 1 / 0)
-        indexing.index(catalog)  # as that server did: no documents of them
+    indexing.index(catalog)
+    db = only(catalog)
+    store.delete_docs(db, [i for (i,) in db.execute("SELECT id FROM docs WHERE path LIKE '%offer.docx'")])
+    db.commit()  # as that server left them: no documents of them, their files as read
     assert [p for (p,) in only(catalog).execute("SELECT path FROM docs")] == ["mail.eml"]
     only(catalog).execute("DELETE FROM meta WHERE key = 'documents_read'")  # as an index of sift 1.3.0 has it
     only(catalog).commit()
@@ -369,8 +370,14 @@ def test_mail_dates_sort_as_time_whatever_the_zone(tmp_path):
     zurich = email_file(tmp_path, name="a.eml", Date="Tue, 14 Oct 2026 09:30:00 +0200")
     london = email_file(tmp_path, name="b.eml", Date="Tue, 14 Oct 2026 08:00:00 +0000")
     unknown = email_file(tmp_path, name="c.eml", Date="Tue, 14 Oct 2026 08:00:00 -0000")  # a zone unknown, RFC 5322
-    dates = [readers.load(path)[0][0].meta["date"] for path in (zurich, london, unknown)]
-    assert dates == ["2026-10-14T07:30:00+00:00", "2026-10-14T08:00:00+00:00", "2026-10-14T08:00:00"]
+    late = email_file(tmp_path, name="d.eml", Date="Fri, 31 Dec 9999 23:00:00 -0500")  # past 9999 in UTC
+    dates = [readers.load(path)[0][0].meta["date"] for path in (zurich, london, unknown, late)]
+    assert dates == [
+        "2026-10-14T07:30:00+00:00",
+        "2026-10-14T08:00:00+00:00",
+        "2026-10-14T08:00:00",
+        "9999-12-31T23:00:00-05:00",  # as written
+    ]
 
 
 def test_raw_8_bit_addresses_read_without_halves_of_characters(tmp_path, home):

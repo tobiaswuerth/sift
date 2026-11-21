@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import stat
 import time
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +19,8 @@ from sift.search import Index
 from . import workers
 from .conftest import index_contents, keywords_agree, only, write
 from .test_documents import email_file
+
+SAMPLES = Path(__file__).parent / "samples"
 
 
 def doc_ids(catalog):
@@ -564,6 +567,31 @@ def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):
     assert index_contents(parallel.store("notes")) == index_contents(serial.store("notes"))
 
 
+def test_a_few_files_read_by_native_code_are_read_in_a_worker_process(notes, tmp_path, pools):
+    # Under a thousand files, `sift index` read them in its own process: a PDF whose reader ended its process ended
+    # `sift index`, on every run, without naming it. Files whose readers run native code get a worker; notes don't.
+    serial = Catalog(tmp_path / "notes")
+    serial.add(notes, "notes")
+    indexing.index(serial)
+    assert pools == []
+    shutil.copy(SAMPLES / "sample.pdf", notes / "paper.pdf")
+    indexing.index(serial)
+    assert pools == [(1, "spawn")]
+    assert "paper.pdf" in doc_ids(serial)
+
+
+def test_a_few_files_with_one_that_ends_its_reader_leave_it_out(notes, home, monkeypatch, capsys):
+    shutil.copy(SAMPLES / "sample.pdf", notes / "poison.pdf")
+    shutil.copy(SAMPLES / "sample.pdf", notes / "paper.pdf")
+    monkeypatch.setattr(indexing, "_loaded", workers.ending)
+    catalog = Catalog(home)
+    catalog.add(notes, "notes")
+    indexing.index(catalog)
+    assert set(doc_ids(catalog)) == {"paper.pdf", "plain.txt", "rl.md", "robots/brush.md"}
+    assert "notes: poison.pdf: skipped (Stopped: its reader ended the process it ran in)" in capsys.readouterr().err
+    assert no_process_left()
+
+
 def sized(*paths):
     """Files as the worker processes are handed them: (path, size)."""
     return [(str(path), path.stat().st_size) for path in paths]
@@ -627,6 +655,46 @@ def test_a_file_whose_reader_comes_to_no_end_is_stopped(three_files, monkeypatch
     assert isinstance(stopped, indexing.Stopped)
     assert str(stopped) == "its reader came to no end in 0:00:00"
     assert [doc.title for doc in docs] == ["fine"]
+    assert no_process_left()
+
+
+def test_files_read_by_native_code_get_a_task_each(tmp_path):
+    # Up to 64 files shared one task's time, ten minutes and a second per 100 KB: forty PDFs of twenty seconds each
+    # were taken for hung, and read again one at a time. Text files still share tasks.
+    files = [tmp_path / name for name in ("a.md", "b.md", "c.pdf", "d.md", "e.md", "f.eml", "g.md", "h.md")]
+    for file in files:
+        write(file, "x\n")
+    with indexing._Workers(1, {}) as reading:
+        started = reading.start(sized(*files))
+        reading.results(started)
+    assert [[Path(path).name for path, _ in task] for task, _, _ in started] == [
+        ["a.md", "b.md"],
+        ["c.pdf"],
+        ["d.md", "e.md"],
+        ["f.eml"],
+        ["g.md", "h.md"],
+    ]
+
+
+def test_files_read_before_one_hung_are_kept_not_read_again(three_files, monkeypatch):
+    # One file that hung had every task after it read again, one file at a time, those done already too: a batch of
+    # thousands of files, read anew in one process.
+    _, hangs, fine = three_files
+    monkeypatch.setattr(indexing, "_loaded", workers.hanging)
+    patience = iter([5, 0])  # time for the other worker to read `fine`; then none for the one that hangs, alone
+    monkeypatch.setattr(indexing, "_patience", lambda files: next(patience))
+    alone, read_alone = [], indexing._Workers._alone
+
+    def recorded(self, file):
+        alone.append(Path(file[0]).name)
+        return read_alone(self, file)
+
+    monkeypatch.setattr(indexing._Workers, "_alone", recorded)
+    with indexing._Workers(2, {}) as reading:
+        (stopped, (docs, _)) = reading.results(reading.start(sized(hangs, fine)))
+    assert isinstance(stopped, indexing.Stopped)
+    assert [doc.title for doc in docs] == ["fine"]
+    assert alone == ["hangs.md"]
     assert no_process_left()
 
 
