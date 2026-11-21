@@ -43,8 +43,8 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   of their paths, read from the index on the paths alone, each recording how far it got, so a listing stopped goes on
   there. A batch is found before its transaction, which then holds the store for about 50 ms, and other sifts' changes
   get their turn in between; 3 million documents take 5 seconds. Until a store is listed, such ids read every path.
-- A collection whose store is damaged is passed over by `sift index`, `sift status` and the server's start, with how to
-  forget it; a search reading its damaged tables fails.
+- A collection whose store is damaged is passed over by `sift index`, `sift status`, the server's start and the UI's
+  list of collections, with how to forget it; a search reading its damaged tables fails.
 - Searches and `get` never read the files, so results and documents agree until the next `sift index`.
 
 ### Keyword postings
@@ -165,7 +165,8 @@ and go without the notes linking to them being read again.
 ## Worker protocol
 
 HTTPS with the worker's self-made certificate (EC P-256), pinned by its SHA-256 in the key, and a bearer token of 32
-random bytes. The worker runs one request at a time on its GPU.
+random bytes. The worker runs one request at a time on its GPU, of at most 20,000 texts, the most a `query` reranks;
+more is refused (413).
 
 | Request | Answer |
 |---|---|

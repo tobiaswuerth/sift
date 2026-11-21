@@ -117,6 +117,14 @@ def test_a_worker_takes_every_request_a_sift_makes():
     assert max(2 * search.MOST_HITS, remote.BATCH) <= remote.MOST_TEXTS
 
 
+def test_the_protocol_as_documented_says_how_many_texts_a_request_takes():
+    # The limit came with the worker's refusal, and the protocol's description said nothing of it.
+    documented = (Path(__file__).parent.parent / "docs" / "architecture.md").read_text(encoding="utf-8")
+    protocol = documented.split("## Worker protocol")[1]
+    assert f"{remote.MOST_TEXTS:,} texts" in protocol
+    assert "413" in protocol
+
+
 @pytest.mark.parametrize("authorization", [None, "Bearer wrong", f"Basic {TOKEN}", TOKEN])
 def test_the_worker_answers_only_with_its_token(fake_models, authorization):
     c = Client(worker.app(TOKEN, fake_models), headers={"Authorization": authorization} if authorization else {})
