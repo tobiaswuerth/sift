@@ -14,7 +14,7 @@ from sift.catalog import Catalog
 from sift.search import Index
 
 from . import workers
-from .conftest import write
+from .conftest import live_codes, write
 
 SAMPLES = Path(__file__).parent / "samples"
 
@@ -105,7 +105,7 @@ def every_code(index):
     """The codes an index holds, of every collection: (chunk ids, codes as bytes)."""
     ids, bits = [], []
     for cid in sorted(index.vectors):
-        held_ids, held = index.vectors[cid][1].live()
+        held_ids, held = live_codes(index.vectors[cid][1])
         ids, bits = ids + held_ids.tolist(), bits + [row.tobytes() for row in held]
     return ids, bits
 

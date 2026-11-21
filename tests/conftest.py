@@ -413,6 +413,13 @@ def nobody_listens():
     return "https://s3cret.pin@127.0.0.1:0"
 
 
+def live_codes(codes):
+    """The ids that count of codes held (vectors.Codes), and their codes, by id: what searches compare."""
+    rows = np.flatnonzero(codes._alive) if codes._alive is not None else np.arange(len(codes.ids))
+    rows = rows[np.argsort(codes.ids[rows], kind="stable")]
+    return codes.ids[rows], codes.rows(rows)
+
+
 def only(catalog):
     """The store of a catalog's one collection."""
     (collection,) = catalog.collections()

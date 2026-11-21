@@ -35,11 +35,12 @@ _Item = TypeVar("_Item")
 _Result = TypeVar("_Result")
 
 
-class _Unset:
-    """The type of _UNSET: a budget not asked for yet, unlike None, which is a budget asked for and not there."""
+class Unset:
+    """The type of UNSET: a value not asked for yet, as a budget or a counter, unlike None, which is one asked for and
+    not there."""
 
 
-_UNSET = _Unset()
+UNSET = Unset()
 
 
 class GpuMemory(Protocol):
@@ -121,7 +122,7 @@ class Accelerator:
         self.found: str = self.device  # the device found: `device` falls back to the CPU if too little memory is free
         self.memory, self.clock = memory, clock
         self.batch_size = BATCH_SIZE
-        self._budget: float | _Unset | None = _UNSET  # asked once, on first use
+        self._budget: float | Unset | None = UNSET  # asked once, on first use
         # what is on the GPU now: key -> function that moves it back to RAM
         self._resident: dict[int, Callable[[], object]] = {}
         self._released = False  # whether everything left the GPU at some point, so the budget needs a fresh look
@@ -149,7 +150,7 @@ class Accelerator:
     def budget(self) -> float | None:
         """The GPU memory sift may use, set once as a cap on PyTorch: what other programs leave free now, minus
         headroom. None off CUDA, and when too little is free, which moves sift to the CPU."""
-        if isinstance(self._budget, _Unset):
+        if isinstance(self._budget, Unset):
             if self.kind != "cuda":
                 if self.device == "cpu" and (reason := _unused_nvidia_gpu()):
                     console.say(reason)

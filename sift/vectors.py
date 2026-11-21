@@ -242,12 +242,6 @@ class Codes:
             start += len(part)
         return out
 
-    def live(self) -> tuple[Ids, Bits]:
-        """The ids that count and their codes, by id."""
-        rows = np.flatnonzero(self._alive) if self._alive is not None else np.arange(len(self.ids))
-        rows = rows[np.argsort(self.ids[rows], kind="stable")]
-        return self.ids[rows], np.concatenate(self._parts)[rows]
-
     def patched(self, removed: IdList, ids: IdList, bits: Bits) -> "Codes":
         """These codes without those of the chunks `removed`, and with those of the chunks `ids`, rows of `bits`, which
         replace any these hold under the same ids, as of a chunk embedded again. The codes loaded stay as they are,

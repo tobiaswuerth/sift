@@ -13,7 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from . import accelerator, settings
-from .accelerator import Accelerator
+from .accelerator import UNSET, Accelerator, Unset
 
 if TYPE_CHECKING:
     import torch
@@ -28,13 +28,6 @@ LENGTHS_AT_ONCE = 1000  # texts tokenized at a time to count their tokens
 PROMPTS = {False: ("document", "passage", "corpus"), True: ("query",)}  # as encode_document and encode_query pick
 TASKS = {False: "document", True: "query"}  # what Sentence Transformers routes texts by, in models that route
 _Model = TypeVar("_Model", bound="torch.nn.Module")
-
-
-class _Unset:
-    """The type of _UNSET: a counter not made yet, unlike None, which is a counter made and not there."""
-
-
-_UNSET = _Unset()
 
 
 # What sift uses of Sentence Transformers' models and of a fast tokenizer, typed by sift: their own types name
@@ -120,7 +113,7 @@ class Local:
         self._dtype: torch.dtype | None = None  # the precision all of them are in
         self._lock = threading.RLock()  # loading, which threads may ask for at once
         # a tokenizer of the embedding model's own, to count tokens with (see lengths)
-        self._counter: Tokenizer | _Unset | None = _UNSET
+        self._counter: Tokenizer | Unset | None = UNSET
 
     @property
     def address(self) -> str:
@@ -179,7 +172,7 @@ class Local:
         """The tokenizer lengths() counts with, made on first use: its first call loads the model, so it belongs on
         the models' thread (prepare does it)."""
         with self._lock:
-            if isinstance(self._counter, _Unset):
+            if isinstance(self._counter, Unset):
                 model = self.embedder()
                 backend = getattr(model.tokenizer, "backend_tokenizer", None)
                 self._counter = None if backend is None else _counter_of(backend, _longest(model))

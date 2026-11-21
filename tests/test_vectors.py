@@ -12,6 +12,8 @@ import pytest
 from sift import vectors
 from sift.vectors import Codes, codes
 
+from .conftest import live_codes
+
 
 @pytest.fixture(autouse=True, params=["numpy", "compiled"])
 def scan_by(request, monkeypatch):
@@ -304,7 +306,7 @@ def test_codes_patched_many_times_hold_what_a_fresh_load_would():
         for chunk in removed:
             held.pop(chunk)
         held.update(zip(added, rows))
-        live_ids, live_bits = index.live()
+        live_ids, live_bits = live_codes(index)
         assert live_ids.tolist() == sorted(held), f"step {step}"
         assert (live_bits == np.array([held[c] for c in sorted(held)]).reshape(len(held), -1)).all(), f"step {step}"
         assert len(index) == len(held)
@@ -318,7 +320,7 @@ def test_codes_appended_hold_what_a_fresh_load_would():
     held = Codes(ids[:100], bits[:100]).patched(removed=ids[:3], ids=[], bits=bits[:0])
     for start, end in ((100, 180), (180, 181), (181, 300)):
         held = held.appended(ids[start:end], bits[start:end])
-    live_ids, live_bits = held.live()
+    live_ids, live_bits = live_codes(held)
     assert live_ids.tolist() == ids[3:].tolist()
     assert (live_bits == bits[3:]).all()
     query = unit(np.ones((1, 64)))[0]
@@ -336,7 +338,7 @@ def test_codes_appended_slab_by_slab_copy_only_what_they_merge():
         held = held.appended(ids[start : start + 10], bits[start : start + 10])
     assert held._parts[0] is base  # the codes loaded, never copied
     assert len(held._parts) <= 2 + int(np.log2(100))  # appended parts merge as they grow, halving in size
-    live_ids, live_bits = held.live()
+    live_ids, live_bits = live_codes(held)
     assert (live_ids.tolist(), (live_bits == bits).all()) == (ids.tolist(), True)
     query = unit(np.ones((1, 64)))[0]
     assert top(held, exact, query, 10) == top(whole, exact, query, 10)

@@ -6,7 +6,6 @@ starts in a fraction of a second, even on a light notebook."""
 
 import copy
 import json
-import math
 import os
 import posixpath
 import re
@@ -696,8 +695,7 @@ class Index:
             rows, tokens = rows + n, tokens + t
             for i, phrase in enumerate(phrases):
                 holding[i] += db.execute("SELECT count(*) FROM fts WHERE fts MATCH ?", (phrase,)).fetchone()[0]
-        idf = [math.log((rows - n + 0.5) / (n + 0.5)) for n in holding]
-        idf = [value if value > 0 else 1e-6 for value in idf]  # as FTS5 takes them
+        idf = [topk.idf(rows, n) for n in holding]
         average = tokens / rows if rows else 1.0
         scored: dict[Collection, Passages] = {}
         for c, passages in found.items():

@@ -28,7 +28,6 @@ Leaf = str | tuple[str, ...]  # a term (text) or a phrase (tokens)
 Expr = tuple[Any, ...]  # (kind, ...) as expression.parse gives it, without "nothing", which it never hands over
 Hold = tuple[Ids, Ids, Scores]  # a short list's range ids, places, term scores
 Ranged = tuple[postings.Long, Ranges, float]  # a long list, its ranges, how far their bounds may fall short
-Found = list[tuple[Ids, Scores]]  # (places, term scores) per segment
 
 FIRST_BATCH = 16  # ranges scored first, doubling each batch: the threshold rises before much is read
 MOST_BATCH = 4096

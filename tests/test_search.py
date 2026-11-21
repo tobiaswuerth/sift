@@ -16,7 +16,7 @@ from sift.hits import doi_of
 from sift.queries import any_word
 from sift.search import Index
 
-from .conftest import as_sift_1_12_left_it, write, write_prose
+from .conftest import as_sift_1_12_left_it, live_codes, write, write_prose
 
 
 def ids(hits):
@@ -588,7 +588,7 @@ def held_codes(index):
     """The codes an index holds of every collection, (chunk ids, codes as bytes), as a fresh load would give them."""
     found = []
     for cid in sorted(index.vectors):
-        ids, bits = index.vectors[cid][1].live()
+        ids, bits = live_codes(index.vectors[cid][1])
         found += zip(ids.tolist(), (row.tobytes() for row in bits))
     return found
 
