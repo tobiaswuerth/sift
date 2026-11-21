@@ -181,7 +181,9 @@ sift search invoice -f "created>=2024-06" -f "created<2025"      # a range
   `{"created": {">=": "2024-06", "<": "2025"}}`.
 
 A document's title is its `title` field, else its first heading outside code, else its file name (with
-`--title-from name`, the file name first). A note of front matter alone has its front matter as its passage.
+`--title-from name`, the file name first). A note of front matter alone has its front matter as its passage. Lines
+between two `---` lines are front matter only if each could be part of it (`key: value`, `- item`, indented, a
+comment or blank); a paragraph between two thematic breaks stays text, and is searched.
 
 ## What sift reads
 

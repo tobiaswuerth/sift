@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A note that opens with `---` and has another `---` line further down kept the lines between them out of every
+  search when they were no front matter, such as a paragraph between two thematic breaks: `get` showed them, no search
+  found them. Such lines are now the note's text; front matter is lines each of which could be part of it.
+
 ## [1.14.0] - 2026-11-21
 
 Agents learn on connecting how to search well, `sift index` survives readers that crash or hang and keeps a

@@ -201,12 +201,25 @@ def _heading(text: str) -> str | None:
     return None
 
 
+def _front_matter_block(text: str) -> re.Match[str] | None:
+    """The front matter a note starts with: lines between two `---` lines, each of which a mapping could hold, a `key:
+    value`, a `- item`, an indented continuation, a comment or a blank. None for any other, such as a paragraph between
+    two thematic breaks, which is text to search."""
+    m = FRONT_MATTER.match(text)
+    return m if m and all(map(_in_mapping, (m.group(1) or "").split("\n"))) else None
+
+
+def _in_mapping(line: str) -> bool:
+    key, colon, _ = line.partition(":")
+    return not line.strip() or line[0].isspace() or line[0] == "#" or bool(LIST_ITEM.match(line) or (colon and key))
+
+
 def parse(text: str, fallback_title: str, title_from: str = "heading") -> tuple[str, dict[str, Any], str, int]:
     """Split off YAML front matter. Returns title, meta, body and the body's first line number. The title is the
     `title` field, else with title_from "heading" the first heading, else `fallback_title`, the file name."""
     meta: dict[str, Any] = {}
     first_line = 1
-    m = FRONT_MATTER.match(text)
+    m = _front_matter_block(text)
     if m:
         meta = _front_matter(m.group(1) or "")
         first_line += text.count("\n", 0, m.end())
@@ -353,7 +366,7 @@ def note(text: str, name: str, fields: Fields | None = None) -> Doc:
     title, meta, body, first_line = parse(text, Path(name).stem, (fields or {}).get("title_from", "heading"))
     offset = len(text) - len(body)  # the chunks are spans of the whole file, front matter included
     chunks = [(first, last, offset + pos, length) for first, last, pos, length in chunk(body, first_line)]
-    if not chunks and (m := FRONT_MATTER.match(text)) and m.group(1):  # front matter alone, as contact notes are
+    if not chunks and (m := _front_matter_block(text)) and m.group(1):  # front matter alone, as contact notes are
         chunks = [(first, last, m.start(1) + pos, length) for first, last, pos, length in chunk(m.group(1), 2)]
     found = links(text, offset, first_line) if name.lower().endswith(MARKDOWN) else ()
     return Doc("", "", title, meta, text, chunks, found)

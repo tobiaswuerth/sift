@@ -130,6 +130,22 @@ def test_parse_without_closing_front_matter_is_plain_text():
     assert body.startswith("---")
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "---\nSome intro words xyzzy\n---\nbody text\n",  # two thematic breaks around a paragraph
+        "---\ntitle: x\nxyzzy, a line of prose\n---\nbody text\n",  # no `key: value`, nor a list item or continuation
+    ],
+)
+def test_text_between_two_rules_that_isnt_front_matter_stays_searchable(text):
+    # A note may open with a thematic break and have another further down: the lines between them were taken for
+    # front matter and left out of every passage, so no search found them, though `get` showed them.
+    title, meta, body, first_line = readers.parse(text, "file")
+    assert (title, meta, body, first_line) == ("file", {}, text, 1)
+    doc = readers.note(text, "Rules.md")
+    assert any("xyzzy" in doc.text[p : p + n] for _, _, p, n in doc.chunks)
+
+
 # --- chunking ----------------------------------------------------------------
 
 
