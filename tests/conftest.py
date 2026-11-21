@@ -552,11 +552,15 @@ def write_notes(root):
     return root
 
 
-@pytest.fixture
-def home(tmp_path, configure):
-    """SIFT_HOME for code that connects on its own (CLI, server)."""
+@pytest.fixture(autouse=True)
+def home(tmp_path, monkeypatch):
+    """Every test's SIFT_HOME, in a folder of its own, never the user's: for this process, whose settings are read
+    again, and for those it starts."""
+    from sift import settings
+
     path = tmp_path / "home"
-    configure(home=path)
+    monkeypatch.setenv("SIFT_HOME", str(path))
+    settings.current.cache_clear()
     return path
 
 

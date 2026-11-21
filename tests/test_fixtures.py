@@ -1,6 +1,8 @@
-"""The tests' own fixtures: what they build once and copy for each test (conftest.Built)."""
+"""The tests' own fixtures: what they build once and copy for each test (conftest.Built), and the home each has."""
 
-from sift import postings
+import os
+
+from sift import postings, settings
 from sift.catalog import Catalog
 
 from .conftest import write
@@ -52,3 +54,10 @@ def test_tests_that_patch_sift_otherwise_share_no_build(built_once, tmp_path, mo
     configure(ocr="off")
     built_once.copy("patched", made_by(made), tmp_path / "other settings")
     assert len(made) == 4
+
+
+def test_every_test_has_a_sift_home_of_its_own(tmp_path):
+    # Tests stayed out of the user's SIFT_HOME by asking for the `home` fixture: one that forgot, or a process one
+    # started, wrote its catalog, logs and keys in the user's.
+    assert settings.current().home == tmp_path / "home"
+    assert os.environ["SIFT_HOME"] == str(tmp_path / "home")  # for the processes it starts too
