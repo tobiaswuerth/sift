@@ -10,10 +10,11 @@ import threading
 import numpy as np
 import pytest
 
-from sift import embed, expression, indexing, order, postings, search, store, topk, vectors
+from sift import embed, expression, indexing, order, postings, queries, search, store, topk, vectors
 from sift.catalog import Catalog
 from sift.hits import doi_of
-from sift.search import Index, _any_word
+from sift.queries import any_word
+from sift.search import Index
 
 from .conftest import as_sift_1_12_left_it, write, write_prose
 
@@ -310,7 +311,7 @@ def test_a_long_chain_of_nots_is_left_to_fts5(corpus):
 
 
 def test_unusable_query_is_a_clear_error(corpus, monkeypatch):
-    monkeypatch.setattr(search, "_phrases", lambda q: "(")
+    monkeypatch.setattr(queries, "as_phrases", lambda q: "(")
     with pytest.raises(ValueError, match="invalid search query"):
         Index(corpus[0]).search("NEAR(")
 
@@ -992,26 +993,26 @@ def test_the_reranker_reads_only_the_front_matter_values_a_query_names(embedded_
 
 def test_blend_is_the_rerankers_score_when_the_cosines_agree():
     rerank = np.array([3.0, 1.0, 2.0])
-    assert search._blend(rerank, np.full(3, 0.8), np.zeros(3, bool)).tolist() == rerank.tolist()
+    assert queries.blend(rerank, np.full(3, 0.8), np.zeros(3, bool)).tolist() == rerank.tolist()
 
 
 def test_blend_lifts_a_passage_closer_in_meaning():
     # The reranker alone ranked scientific claims worse than the embedding did (BEIR SciFact nDCG@10 0.760 against
     # 0.840): the cosine has a say too.
     # The reranker prefers the second slightly (its third candidate it clearly dislikes); the first is far closer.
-    blended = search._blend(np.array([1.0, 1.05, 0.0]), np.array([0.9, 0.5, 0.5]), np.zeros(3, bool))
+    blended = queries.blend(np.array([1.0, 1.05, 0.0]), np.array([0.9, 0.5, 0.5]), np.zeros(3, bool))
     assert blended[0] > blended[1] > blended[2]
 
 
 def test_blend_fits_any_rerankers_scale():
     # Rerankers score on scales of their own; the cosine counts in units of their spread, so one weight fits all.
     rerank, cosine, named = np.array([1.0, 1.1, 0.4]), np.array([0.9, 0.5, 0.7]), np.zeros(3, bool)
-    assert np.allclose(search._blend(10 * rerank, cosine, named), 10 * search._blend(rerank, cosine, named))
+    assert np.allclose(queries.blend(10 * rerank, cosine, named), 10 * queries.blend(rerank, cosine, named))
 
 
 def test_blend_leaves_front_matter_matches_to_the_reranker():
     # The embedding never sees front matter: a paper found by its author must not lose for a low cosine.
-    blended = search._blend(np.array([1.1, 1.0]), np.array([0.5, 0.9]), np.array([True, False]))
+    blended = queries.blend(np.array([1.1, 1.0]), np.array([0.5, 0.9]), np.array([True, False]))
     assert blended[0] > blended[1]
 
 
@@ -1089,8 +1090,8 @@ def test_query_without_matches(embedded):
 
 
 def test_any_word_drops_stopwords_and_duplicates():
-    assert _any_word("How do robots mix the pigments, robots?") == '"robots" OR "mix" OR "pigments"'
-    assert _any_word("the of a") == ""
+    assert any_word("How do robots mix the pigments, robots?") == '"robots" OR "mix" OR "pigments"'
+    assert any_word("the of a") == ""
 
 
 # --- documents and status ----------------------------------------------------

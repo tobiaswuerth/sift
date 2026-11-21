@@ -32,6 +32,7 @@ downloads; everything else, the MCP server included, runs for real.
 | `search.py` | Keyword, semantic and hybrid search, documents like a document, `get`, links, mentions and `reindex` |
 | `filters.py` | Conditions on front matter as SQL: how a filter's value compares with a document's, in each form |
 | `hits.py` | What a search hands back: its options checked, its hits ordered, one per work, cut to those that stand out |
+| `queries.py` | A query as text: its words as FTS5 phrases, any of them; what the reranker reads, how its scores blend |
 | `expression.py` | Keyword queries (words, phrases, AND, OR, NOT, parentheses) as FTS5 reads them, for the postings |
 | `postings.py` | Keyword search's own postings in a topical order; deltas, merges and rebuilds as FTS5 changes |
 | `order.py` | The topical order of a collection's chunks, by binary k-means of their codes |

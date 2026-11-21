@@ -21,7 +21,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from . import console, embed, expression, indexing, links, postings, readers, store, topk
+from . import console, embed, expression, indexing, links, postings, queries, readers, store, topk
 from . import models as _models
 from .catalog import Catalog
 from .filters import comparison, json_path
@@ -39,11 +39,6 @@ from .hits import (
     present,
 )
 from .vectors import Codes, Filter, codes, top
-
-STOPWORDS = set(
-    "a an and are as at be by can do does for from has have how i in is it of on or that the this to "
-    "was what when where which who why with".split()
-)
 
 FIELD_SAMPLE = 1000  # documents per collection whose front matter tells which fields exist
 START = 600  # characters of a document's start that `browse` shows, as its passage
@@ -146,34 +141,7 @@ def _ids(ids):
     return json.dumps(sorted(ids))
 
 
-def _phrases(query):
-    """Fallback for input that isn't valid FTS5 syntax: every word becomes an exact phrase, all required."""
-    return " ".join('"' + w.replace('"', '""') + '"' for w in query.split())
-
-
-def _any_term(query):
-    """The terms of a keyword query joined by OR, for when no chunk holds them all. None for a single term, and
-    for queries with operators, which say what they want."""
-    terms = [t for t in re.findall(r'"[^"]*"|[^\s"]+', query) if re.search(r"\w", t)]
-    if len(terms) < 2 or any(t in ("AND", "OR", "NOT") or t.startswith("NEAR(") for t in terms):
-        return None
-    if re.search(r"(?:^|\s)-?(?:title|text|meta|\{[^}]*\})\s*:", query):  # a column filter: "title: ...", "{a b}: ..."
-        return None
-    return " OR ".join(t if t[0] == '"' else f'"{t[:-1]}" *' if t[-1] == "*" else f'"{t}"' for t in terms)
-
-
-QUOTED = r'"(?:[^"]|"")*"'
-PHRASE = re.compile(rf"(?:{QUOTED}|[^\s()\"*]+)(?:\s*\*)?")  # a quoted phrase or a bare word, prefix or not
-PLACED = re.compile(r"NEAR\s*\(|[{}+^:]")  # operators that join phrases or tie them to columns or places
 MORE_CANDIDATES = 20  # each collection gives this many more of its best, or as many again, to be scored again
-
-
-def _phrases_of(match):
-    """The phrases of an FTS5 query that is phrases and AND, OR, NOT and parentheses alone, each as a query of its own;
-    None for another, such as one with NEAR or a column filter."""
-    if PLACED.search(re.sub(QUOTED, " ", match)):
-        return None
-    return [phrase for phrase in PHRASE.findall(match) if phrase not in ("AND", "OR", "NOT")]
 
 
 def _totals(db):
@@ -181,47 +149,6 @@ def _totals(db):
     row = db.execute("SELECT block FROM fts_data WHERE id = 1").fetchone()
     numbers = postings.varints(row[0])[0].tolist() if row else []
     return (numbers[0], sum(numbers[1:])) if numbers else (0, 0)  # none: an index that never held a row
-
-
-def _words(text):
-    """The meaningful words of a text: lowercase, without stopwords and single letters, in order."""
-    return [w for w in re.findall(r"\w+", str(text).lower()) if w not in STOPWORDS and len(w) > 1]
-
-
-def _any_word(query):
-    """OR query over the meaningful words, used to collect keyword candidates for hybrid search."""
-    return " OR ".join(f'"{w}"' for w in dict.fromkeys(_words(query)))
-
-
-def _named(hit, asked):
-    """The front-matter values of a hit, but its title, that share a word with the query `asked` (a set of words):
-    an author's name, an id."""
-    return [
-        str(value)
-        for key, field in json.loads(hit["meta"]).items()
-        if key != "title"
-        for value in (field if isinstance(field, list) else [field])
-        if asked & set(_words(value))
-    ]
-
-
-def _passage(hit, named):
-    """What the reranker reads of a hit: its title, the front-matter values the query names, and its text. Only those:
-    all of them (links, licences, long author lists) diluted the passage, and topical queries ranked worse."""
-    return f"{hit['title']}\n{' '.join(named)}\n\n{hit['text']}" if named else f"{hit['title']}\n\n{hit['text']}"
-
-
-COSINE_WEIGHT = 0.5  # how much the cosine counts in `query`, in units of the reranker's spread: see docs/benchmarks.md
-
-
-def _blend(rerank, cosine, named, weight=COSINE_WEIGHT):
-    """`query`'s scores: the reranker's, plus the candidates' cosine with the query, centred and in units of the
-    spread of the reranker's scores, so one weight fits any reranker's scale and the scores keep it. A reranker
-    trained on web search ranked scientific claims worse than the embedding did. Candidates whose front matter the
-    query names keep the best cosine: the embedding never sees front matter."""
-    cosine = np.where(named, cosine.max(), cosine)
-    spread = rerank.std() / cosine.std() if np.ptp(cosine) > 0 else 0.0  # ptp: exactly 0 when all agree
-    return rerank + weight * spread * (cosine - cosine.mean())
 
 
 def _first_of_each(items, key):
@@ -645,7 +572,7 @@ class Index:
             return []
         query = expression.parse(match)
         if query is None and expression.rejected(match):
-            query = expression.parse(_phrases(match))  # as FTS5 below reads it: its words as phrases
+            query = expression.parse(queries.as_phrases(match))  # as FTS5 below reads it: its words as phrases
         if query is not None:
             with store.snapshot(self.catalog.store(c) for c in scope):  # postings rebuilt meanwhile are another state's
                 if (held := self._ready(scope)) is not None:
@@ -662,8 +589,8 @@ class Index:
         every = f"""WITH p AS MATERIALIZED ({passages}),
                     best AS (SELECT doc FROM p GROUP BY doc ORDER BY max(score) DESC LIMIT ?)
                     SELECT passage, doc, score FROM p WHERE doc IN (SELECT doc FROM best)"""
-        for attempt in (match, _phrases(match)):
-            phrases = _phrases_of(attempt) if len(scope) > 1 else None
+        for attempt in (match, queries.as_phrases(match)):
+            phrases = queries.phrases_of(attempt) if len(scope) > 1 else None
             each = k if not phrases else k + max(k, MORE_CANDIDATES)  # a collection's best may rank otherwise
             query = sql if all_passages or not phrases else every
             try:
@@ -955,7 +882,7 @@ class Index:
 
         def rank(n):
             ranked = self._keyword(query, n, scope, where, args, asked.all_passages, deadline)
-            if not ranked and (relaxed := _any_term(query)):
+            if not ranked and (relaxed := queries.any_term(query)):
                 ranked = self._keyword(relaxed, n, scope, where, args, asked.all_passages, deadline)
             return ranked
 
@@ -994,17 +921,19 @@ class Index:
         those arXiv known items (0.937 to 0.929)."""
         k, asked, scope, where, args = self._options(k, options)
         candidates = min(max(candidates, k), MOST_HITS)
-        keyword = self._keyword(_any_word(query), candidates, scope, where, args, asked.all_passages)
+        keyword = self._keyword(queries.any_word(query), candidates, scope, where, args, asked.all_passages)
         vector = self._vector(query, scope, required=False) if query.strip() else None  # semantic candidates, cosines
         allowed = self._filter(scope, where, args)
         semantic = self._nearest(vector, candidates, scope, allowed, asked.all_passages) if vector is not None else []
         hits = self._hits([(chunk, 0.0) for chunk in dict.fromkeys(chunk for chunk, _ in keyword + semantic)])
         if not hits:
             return []
-        words = set(_words(query))
-        named = [_named(h, words) for h in hits]
-        rerank = np.asarray(self.models.rerank(query, [_passage(h, n) for h, n in zip(hits, named)]), np.float64)
-        scores = _blend(rerank, self._cosines(vector, [h["chunk"] for h in hits]), np.array([bool(n) for n in named]))
+        words = set(queries.words(query))
+        named = [queries.named(h, words) for h in hits]
+        rerank = np.asarray(self.models.rerank(query, [queries.passage(h, n) for h, n in zip(hits, named)]), np.float64)
+        scores = queries.blend(
+            rerank, self._cosines(vector, [h["chunk"] for h in hits]), np.array([bool(n) for n in named])
+        )
         for h, s in zip(hits, scores):
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])

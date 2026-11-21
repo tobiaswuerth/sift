@@ -146,6 +146,7 @@ include = [
     "sift/hits.py",
     "sift/ignore.py",
     "sift/logs.py",
+    "sift/queries.py",
     "sift/settings.py",
     "sift/update.py",
 ]
