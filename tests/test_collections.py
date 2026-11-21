@@ -22,21 +22,27 @@ def ids(hits):
 
 
 @pytest.fixture
-def three(tmp_path, home, fake_models):
-    """Three collections, indexed and embedded: papers, recipes and diary, in stores of their own."""
-    write(
-        tmp_path / "papers" / "robots.md", "---\nyear: 2024\n---\n# Painting robots\n\nA robot paints brush strokes.\n"
-    )
-    write(tmp_path / "papers" / "rl.md", "---\nyear: 2019\n---\n# Reward shaping\n\nReward shaping speeds learning.\n")
-    write(tmp_path / "recipes" / "soup.md", "---\nyear: 2021\n---\n# Tomato soup\n\nA soup a robot could cook.\n")
-    write(tmp_path / "recipes" / "bread.md", "---\nyear: old\n---\n# Bread\n\nFlour, water, salt.\n")
-    write(tmp_path / "diary" / "monday.md", "# Monday\n\nThe robot vacuum broke again.\n")
-    catalog = Catalog(home)
-    for name in ("papers", "recipes", "diary"):
-        catalog.add(tmp_path / name, name)
-    indexing.index(catalog)
-    embed.embed_pending(catalog)
-    return catalog
+def three(tmp_path, home, fake_models, built_once):
+    """Three collections, indexed and embedded: papers, recipes and diary, in stores of their own. Built once and
+    copied (see conftest.Built)."""
+
+    def make(root):
+        write(
+            root / "papers" / "robots.md", "---\nyear: 2024\n---\n# Painting robots\n\nA robot paints brush strokes.\n"
+        )
+        write(root / "papers" / "rl.md", "---\nyear: 2019\n---\n# Reward shaping\n\nReward shaping speeds learning.\n")
+        write(root / "recipes" / "soup.md", "---\nyear: 2021\n---\n# Tomato soup\n\nA soup a robot could cook.\n")
+        write(root / "recipes" / "bread.md", "---\nyear: old\n---\n# Bread\n\nFlour, water, salt.\n")
+        write(root / "diary" / "monday.md", "# Monday\n\nThe robot vacuum broke again.\n")
+        catalog = Catalog(root / "home")
+        for name in ("papers", "recipes", "diary"):
+            catalog.add(root / name, name)
+        indexing.index(catalog)
+        embed.embed_pending(catalog)
+        catalog.close()
+
+    built_once.copy("three", make, tmp_path)
+    return Catalog(home)
 
 
 def test_a_semantic_search_of_one_collection_reads_its_codes_alone(three):

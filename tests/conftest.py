@@ -2,6 +2,8 @@ import functools
 import os
 import random
 import re
+import shutil
+import sqlite3
 import sys
 import tempfile
 import types
@@ -463,10 +465,73 @@ def pools(monkeypatch):
     return created
 
 
+def _plain(value):
+    return value is None or isinstance(value, bool | int | float | str | bytes)
+
+
+class Built:
+    """Folders a fixture builds once in this test process and copies for each test: a collection indexed takes many
+    times as long to make as to copy. A copy holds the files as they were indexed, their times too, so that the index
+    finds them unchanged, and its catalog names the copy's folders. Tests share one only where sift is patched alike
+    when their fixture runs (`patched`): a build under small lists, or without postings, is another."""
+
+    def __init__(self, folder):
+        self.folder, self.made = folder, {}
+        self.imported = {name: dict(vars(module)) for name, module in self._modules()}
+
+    @staticmethod
+    def _modules():
+        return [(name, module) for name, module in sorted(sys.modules.items()) if name.startswith("sift.")]
+
+    def patched(self):
+        """What of sift's modules is patched now, by name, and to what if that is a plain value; and the settings but
+        the home, which is each test's own."""
+        from dataclasses import replace
+
+        from sift import settings
+
+        found = [replace(settings.current(), home=self.folder)]
+        for name, module in self._modules():
+            before = self.imported.setdefault(name, dict(vars(module)))  # imported since: as it is, unpatched
+            for attribute, value in vars(module).items():
+                if before.get(attribute, value) is not value:
+                    found.append((name, attribute, value if _plain(value) else None))
+        return tuple(found)
+
+    def copy(self, name, make, to):
+        """The folder `name` as make(folder) makes it, which closes what it opened, copied into the folder `to`."""
+        key = (name, self.patched())
+        if key not in self.made:
+            root = self.made[key] = self.folder / f"{name}{len(self.made)}"
+            make(root)
+        root = self.made[key]
+        shutil.copytree(root, to, dirs_exist_ok=True)
+        catalog = sqlite3.connect(to / "home" / "sift.db")
+        try:
+            catalog.execute(
+                "UPDATE collections SET path = replace(path, :was, :now), store = replace(store, :was, :now)",
+                {"was": str(root.resolve()), "now": str(to.resolve())},
+            )
+            catalog.commit()
+        finally:
+            catalog.close()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def built_once(tmp_path_factory):
+    """What fixtures build once and copy (see Built). For every test, so that it sees sift's modules before any test
+    patches them."""
+    return Built(tmp_path_factory.mktemp("built"))
+
+
 @pytest.fixture
 def notes(tmp_path):
     """A small folder of notes."""
-    root = tmp_path / "notes"
+    return write_notes(tmp_path / "notes")
+
+
+def write_notes(root):
+    """A small folder of notes."""
     write(
         root / "robots" / "brush.md",
         '---\ntitle: "Brush stroke planning"\ncategories: ["cs.RO", "cs.GR"]\nyear: 2024\n---\n\n'
@@ -489,12 +554,25 @@ def home(tmp_path, configure):
 
 
 @pytest.fixture
-def corpus(notes, home):
-    """A catalog with the collection `notes`, keyword search ready, not embedded."""
-    catalog = Catalog(home)
-    catalog.add(notes, "notes")
-    indexing.index(catalog)
-    return catalog, notes
+def corpus(notes, home, built_once, request):
+    """A catalog with the collection `notes`, keyword search ready, not embedded; embedded, for a test that asks for
+    `embedded`. Built once and copied (see Built)."""
+    with_vectors = "embedded" in request.fixturenames
+
+    def make(root):
+        catalog = Catalog(root / "home")
+        catalog.add(write_notes(root / "notes"), "notes")
+        indexing.index(catalog)
+        if with_vectors:
+            from sift import embed
+
+            embed.embed_pending(catalog)
+        catalog.close()
+
+    if with_vectors:
+        request.getfixturevalue("fake_models")  # before the copy is chosen: they patch sift, as for every such test
+    built_once.copy("embedded" if with_vectors else "corpus", make, home.parent)
+    return Catalog(home), notes
 
 
 PROSE_WORDS = [f"w{i}" for i in range(60)] + ["Müller", "naïve", "über", "日本語"]
@@ -516,14 +594,19 @@ def write_prose(root, seed, notes=120):
 
 
 @pytest.fixture
-def prose(tmp_path, home):
-    """A collection of 120 notes of drawn words, keyword search ready: (catalog, its folder)."""
-    root = tmp_path / "prose"
-    write_prose(root, 7)
-    catalog = Catalog(home)
-    catalog.add(root, "prose")
-    indexing.index(catalog)
-    return catalog, root
+def prose(tmp_path, home, built_once):
+    """A collection of 120 notes of drawn words, keyword search ready: (catalog, its folder). Built once and copied
+    (see Built)."""
+
+    def make(root):
+        write_prose(root / "prose", 7)
+        catalog = Catalog(root / "home")
+        catalog.add(root / "prose", "prose")
+        indexing.index(catalog)
+        catalog.close()
+
+    built_once.copy("prose", make, tmp_path)
+    return Catalog(home), tmp_path / "prose"
 
 
 @pytest.fixture
@@ -539,7 +622,12 @@ def small_lists(monkeypatch):
 @pytest.fixture
 def vault(tmp_path):
     """An Obsidian vault of linked notes, and a folder of other documents: (vault, work)."""
-    root = tmp_path / "vault"
+    return write_vault(tmp_path)
+
+
+def write_vault(folder):
+    """An Obsidian vault of linked notes, and a folder of other documents, both in `folder`: (vault, work)."""
+    root = folder / "vault"
     write(
         root / "01_People" / "Hans Müller.md",
         '---\naliases: [Hans Mueller, H. Müller]\norg: "[[Acme AG]]"\nreports_to: "[[Peter Frei]]"\n---\n'
@@ -558,24 +646,29 @@ def vault(tmp_path):
         "## Summary\n\nCall with [[Hans Mueller]] about [[Wartungsvertrag 2027]].\n`[[Not a link]]`\n\n"
         "```\n[[Also not a link]]\n```\n",
     )
-    work = tmp_path / "work"
+    work = folder / "work"
     write(work / "contract.md", "# Maintenance contract\n\nSigned by Hans Müller for Acme AG in October.\n")
     return root, work
 
 
 @pytest.fixture
-def linked(vault, home):
-    """The vault, its notes titled by their file names, and the work folder, indexed: (catalog, vault, work)."""
-    catalog = Catalog(home)
-    catalog.add(vault[0], "vault", {"title_from": "name"})
-    catalog.add(vault[1], "work")
-    indexing.index(catalog)
-    return catalog, *vault
+def linked(vault, home, built_once):
+    """The vault, its notes titled by their file names, and the work folder, indexed: (catalog, vault, work). Built
+    once and copied (see Built)."""
+
+    def make(root):
+        notes, work = write_vault(root)
+        catalog = Catalog(root / "home")
+        catalog.add(notes, "vault", {"title_from": "name"})
+        catalog.add(work, "work")
+        indexing.index(catalog)
+        catalog.close()
+
+    built_once.copy("linked", make, home.parent)
+    return Catalog(home), *vault
 
 
 @pytest.fixture
 def embedded(corpus, fake_models):
-    from sift import embed
-
-    embed.embed_pending(corpus[0])
+    """The corpus, embedded with the fake models: `corpus` copies it so for a test that asks for this."""
     return corpus
