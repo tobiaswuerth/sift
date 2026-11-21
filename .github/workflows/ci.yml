@@ -118,8 +118,8 @@ jobs:
             echo "::error::CHANGELOG.md has no section for $version, the version in sift/__init__.py"
             exit 1
           fi
-      - run: uv build
-      - run: uvx twine check --strict dist/*
+      - run: uv build --build-constraints .github/requirements-build.txt --require-hashes
+      - run: uvx twine@7.0.0 check --strict dist/*
       - name: Install the wheel in a clean environment and run both commands
         run: |
           uv venv /tmp/clean

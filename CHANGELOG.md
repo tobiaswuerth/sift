@@ -30,6 +30,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   name led to this machine's address (DNS rebinding) read every document, from any browser on the network. It now
   answers only requests naming this machine by an address, by its own name, or by a name given with the new
   `--allow-host NAME` of `sift serve` and `sift ui`.
+- The package published to PyPI was built with whatever setuptools, twine and uv were newest that day. The release
+  now builds with setuptools pinned by hash (`.github/requirements-build.txt`, kept current by Dependabot), twine and
+  uv pinned by version; CI's package job builds the same way.
 
 ### Fixed
 

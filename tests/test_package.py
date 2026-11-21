@@ -358,6 +358,23 @@ def test_workflows_run_actions_by_commit():
     assert by_name == set(), "name the action by its commit: `uses: owner/action@<40 hex digits>  # v1.2.3`"
 
 
+def test_the_package_is_built_by_tools_reviewed():
+    # The release built with whatever setuptools, twine and uv were newest that day: what PyPI got was made by code
+    # nobody had looked at. Both builds take the backend by hash, twine by version, and the release its uv by version.
+    workflows = ROOT / ".github" / "workflows"
+    for name in ("ci.yml", "release.yml"):
+        workflow = (workflows / name).read_text(encoding="utf-8")
+        assert "- run: uv build --build-constraints .github/requirements-build.txt --require-hashes\n" in workflow
+        assert re.search(r"- run: uvx twine@\d+\.\d+\.\d+ check", workflow), name
+        assert not re.search(r"uv build\s*$|uvx twine check", workflow, re.MULTILINE), name
+    assert re.search(
+        r'version: "\d+\.\d+\.\d+"', _job((workflows / "release.yml").read_text(encoding="utf-8"), "build")
+    )
+    pinned = (ROOT / ".github" / "requirements-build.txt").read_text(encoding="utf-8")
+    assert re.search(r"^setuptools==\S+ \\$", pinned, re.MULTILINE)
+    assert "--hash=sha256:" in pinned
+
+
 # The findings of zizmor silenced with the owner's yes, each for one audit on one line: the workflow, and the line.
 ZIZMOR_IGNORED_WITH_YES = {
     # The release starts when CI has ended (workflow_run), with what it takes to publish: the test below holds what
