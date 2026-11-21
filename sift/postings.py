@@ -35,13 +35,24 @@ import tempfile
 import uuid
 import zlib
 from collections import OrderedDict
+from collections.abc import Callable, Generator, Hashable, Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Generic, TypeVar
 
 import numpy as np
+from numpy.typing import NDArray
 
 from . import console, expression, order, store
+from .vectors import Bits, Ids, Mask
+
+Counts = NDArray[np.integer[Any]]  # how often a term occurs in each posting: stored in as few bytes as fit
+Scores = NDArray[np.float64]
+Ranges = tuple[Ids, Ids, Ids, Scores]  # range ids, where each one's postings start and end, its best term score
+Encoded = tuple[str, int, bytes] | tuple[str, int, bytes, list[bytes]]  # (term, df, blob) or (term, df, ranges, blocks)
+Job = tuple[str, str, str | None, str, float]  # a shard of `_terms`: store path, term range, chunks file, average
+_Part = TypeVar("_Part", bound=tuple[NDArray[Any], ...])
 
 RANGE_SHIFT = 7  # a range is 128 consecutive places: on PubMed, quicker and smaller than 64 (benchmarks.md); at
 # most 8, as a range's postings are counted in a byte
@@ -61,14 +72,14 @@ FETCH = 1_000_000  # rows fetched at a time
 LEVEL = 6  # zlib's
 
 _BLOCK = struct.Struct("<qIB")  # first place, postings, bytes per count (1, 2 or 4)
-_WIDTHS = {1: np.uint8, 2: np.uint16, 4: np.uint32}
+_WIDTHS: dict[int, type[np.unsignedinteger[Any]]] = {1: np.uint8, 2: np.uint16, 4: np.uint32}
 _RANGES = struct.Struct("<qI")  # first range id, ranges
 
 
 # --- encoding ------------------------------------------------------------------
 
 
-def _gaps(values):
+def _gaps(values: Ids) -> NDArray[np.uint32]:
     """Ascending ids as the gaps after the first, which fit 32 bits: a collection hands out ids in order."""
     gaps = np.diff(values)
     if len(gaps) and gaps.max() >= 1 << 32:
@@ -76,7 +87,7 @@ def _gaps(values):
     return gaps.astype(np.uint32)
 
 
-def _ascending(first, gaps, n):
+def _ascending(first: int, gaps: NDArray[np.uint32], n: int) -> Ids:
     values = np.empty(n, np.int64)
     values[0] = first
     np.cumsum(gaps, out=values[1:])
@@ -84,7 +95,7 @@ def _ascending(first, gaps, n):
     return values
 
 
-def encode_block(ids, tf):
+def encode_block(ids: Ids, tf: Counts) -> bytes:
     """Postings as stored: places (ascending, at least one) and how often the term occurs in each (1 or more)."""
     most = int(tf.max())
     width = 1 if most < 1 << 8 else 2 if most < 1 << 16 else 4
@@ -92,7 +103,7 @@ def encode_block(ids, tf):
     return zlib.compress(_BLOCK.pack(int(ids[0]), len(ids), width) + _gaps(ids).tobytes() + counts.tobytes(), LEVEL)
 
 
-def decode_block(data):
+def decode_block(data: bytes) -> tuple[Ids, Counts]:
     """(places as int64, counts as stored: mostly a byte each) of an encoded block: arrays of their own, which keep
     nothing else alive, as the cache counts them."""
     raw = zlib.decompress(data)
@@ -102,7 +113,7 @@ def decode_block(data):
     return ids, np.frombuffer(raw, _WIDTHS[width], n, at + 4 * (n - 1)).copy()
 
 
-def encode_ranges(rid, counts, best):
+def encode_ranges(rid: Ids, counts: Ids, best: NDArray[np.uint8]) -> bytes:
     """A long list's ranges: their ids (ascending), postings in each (1 to 2**RANGE_SHIFT), and best term score, as
     bytes."""
     return zlib.compress(
@@ -114,7 +125,7 @@ def encode_ranges(rid, counts, best):
     )
 
 
-def decode_ranges(data):
+def decode_ranges(data: bytes) -> Ranges:
     """(range ids, where each range's postings start and end in the list, its best term score) of encoded ranges."""
     raw = zlib.decompress(data)
     first, n = _RANGES.unpack_from(raw)
@@ -126,15 +137,15 @@ def decode_ranges(data):
     return rid, np.r_[0, ends[:-1]], ends, best
 
 
-def quantized(scores):
+def quantized(scores: Scores) -> NDArray[np.uint8]:
     """Term scores as bytes, rounded up, so that a bound stays one."""
     return np.minimum(np.ceil(scores * (255 / TOP)), 255).astype(np.uint8)
 
 
-def encode_lengths(ids, lengths):
+def encode_lengths(ids: Ids, lengths: Ids) -> dict[int, bytes]:
     """{block: data} of values by id (ids ascending), chunks' lengths by place, or the order's chunks by place: per
     block of 2**LENGTHS_SHIFT consecutive ids, the value of each, 0 for an id without one."""
-    encoded = {}
+    encoded: dict[int, bytes] = {}
     for block, start, end in _runs(ids >> LENGTHS_SHIFT):
         dense = np.zeros(1 << LENGTHS_SHIFT, np.uint32)
         dense[ids[start:end] & ((1 << LENGTHS_SHIFT) - 1)] = lengths[start:end]
@@ -142,19 +153,21 @@ def encode_lengths(ids, lengths):
     return encoded
 
 
-def _runs(blocks):
+def _runs(blocks: Ids) -> list[tuple[int, int, int]]:
     """(block, start, end) of each run of one block in `blocks` (ascending): a slice each, so that a block's work is
     its own, not a pass over all of them."""
     cuts = np.r_[0, np.flatnonzero(np.diff(blocks)) + 1, len(blocks)] if len(blocks) else np.zeros(1, np.int64)
     return [(int(blocks[start]), start, end) for start, end in itertools.pairwise(cuts.tolist())]
 
 
-def decode_lengths(data):
+def decode_lengths(data: bytes) -> Ids:
     """The values of a block's ids, by id from its first, as int64 (0 for none)."""
     return np.frombuffer(zlib.decompress(data), np.uint32).astype(np.int64)
 
 
-def term_scores(tf, lengths, average):
+def term_scores(
+    tf: NDArray[np.number[Any]] | float, lengths: NDArray[np.number[Any]] | float, average: float
+) -> Scores:
     """BM25's term scores as FTS5's bm25 computes them, without the idf: from counts, lengths, the average length."""
     tf = np.asarray(tf, np.float64)
     return tf * TOP / (tf + K1 * (1 - B + B * np.asarray(lengths) / average))
@@ -163,7 +176,7 @@ def term_scores(tf, lengths, average):
 # --- reading FTS5 --------------------------------------------------------------
 
 
-def varints(blob):
+def varints(blob: bytes) -> tuple[Ids, Ids]:
     """The numbers of a blob of SQLite varints, as FTS5 stores sizes and totals, and the offset each starts at: 7 bits a
     byte, the high bit set on all but the last. Vectorised, for a blob of many. (Numbers from 2**56 on take a ninth
     byte of 8 bits; no count of tokens gets there.)"""
@@ -179,9 +192,10 @@ def varints(blob):
     return np.bincount(which, weights=weights, minlength=len(starts)).astype(np.int64), starts
 
 
-def _lengths(db, table):
+def _lengths(db: sqlite3.Connection, table: str) -> tuple[Ids, Ids]:
     """(chunk ids, lengths) as an FTS5 docsize table has them, all columns' tokens, a batch at a time."""
-    ids, lengths = [np.zeros(0, np.int64)], [np.zeros(0, np.int64)]
+    ids: list[Ids] = [np.zeros(0, np.int64)]
+    lengths: list[Ids] = [np.zeros(0, np.int64)]
     rows = db.execute(f"SELECT id, sz FROM {table} ORDER BY id")
     for batch in iter(lambda: rows.fetchmany(FETCH), []):
         blobs = [row[1] for row in batch]
@@ -193,15 +207,16 @@ def _lengths(db, table):
     return np.concatenate(ids), np.concatenate(lengths)
 
 
-def _postings(rows):
+def _postings(rows: sqlite3.Cursor) -> Generator[tuple[str, Ids, Ids]]:
     """(term, chunk ids, counts) per term of FTS5 vocabulary rows (term, chunk), one per occurrence, in its order:
     by term, then chunk."""
-    term, parts = None, []
+    term: str | None = None
+    parts: list[Ids] = []
     for batch in iter(lambda: rows.fetchmany(FETCH), []):
-        names = np.array([row[0] for row in batch], dtype=object)
+        names: NDArray[np.object_] = np.array([row[0] for row in batch], dtype=object)
         chunks = np.fromiter((row[1] for row in batch), np.int64, len(batch))
-        cuts = np.r_[0, np.flatnonzero(names[1:] != names[:-1]) + 1, len(batch)]
-        for start, end in zip(cuts[:-1].tolist(), cuts[1:].tolist()):
+        cuts: list[int] = np.r_[0, np.flatnonzero(names[1:] != names[:-1]) + 1, len(batch)].tolist()
+        for start, end in itertools.pairwise(cuts):
             if names[start] != term:
                 if term is not None:
                     yield term, *_counted(np.concatenate(parts))
@@ -214,12 +229,12 @@ def _postings(rows):
 MARK = "\x01"  # what highlight() puts before each phrase it finds, to count them; texts may hold it too
 
 
-def phrase_query(tokens):
+def phrase_query(tokens: Iterable[str]) -> str:
     """A phrase of tokens as an FTS5 query: tokens are letters and digits, so no quote is in one."""
     return '"' + " ".join(tokens) + '"'
 
 
-def matches(db, match, chunks):
+def matches(db: store.Connection, match: str, chunks: Iterable[int]) -> dict[int, int]:
     """How often an FTS5 query of one phrase (quoted, or a prefix: w*) occurs in each of these chunks (ids), all
     columns, as FTS5's bm25 counts it: {chunk: count}, of the chunks it is in. A mark each by highlight(), FTS5 seeking
     each chunk in the phrase's lists, beyond the marks the column holds itself; but highlight() merges occurrences that
@@ -245,7 +260,7 @@ def matches(db, match, chunks):
 
 
 @contextmanager
-def _apart(db, chunks):
+def _apart(db: store.Connection, chunks: Sequence[int]) -> Generator[None]:
     """While this lasts, these chunks (ids) as they are now, in a keyword index of their own that holds their rows:
     the FTS5 table temp.kw_tokens. Asked for a column, or to highlight one, the store's own index reads the chunk
     through its view, which loads the document's whole text for each: 5 ms a chunk of an 8 MB file."""
@@ -260,11 +275,11 @@ def _apart(db, chunks):
             db.execute("DROP TABLE temp.kw_tokens")
 
 
-def _marks(texts):
+def _marks(texts: Iterable[str | None]) -> int:
     return sum(text.count(MARK) for text in texts if text)
 
 
-def _quoted(match):
+def _quoted(match: str) -> tuple[str, ...] | None:
     """The tokens of a phrase query that is a quoted phrase, or None (a prefix, w*, or "w" *)."""
     match = match.strip()
     if match.endswith("*"):
@@ -272,24 +287,24 @@ def _quoted(match):
     return expression.tokenize(match[1:-1].replace('""', '"') if match.startswith('"') else match)
 
 
-def sizes(db, chunks):
+def sizes(db: sqlite3.Connection, chunks: Iterable[int]) -> dict[int, int]:
     """The lengths in tokens, all columns, of these chunks (ids), as FTS5 has them: {chunk: length}."""
     sql = "SELECT id, sz FROM fts_docsize WHERE id IN (SELECT value FROM json_each(?))"
     return {i: int(varints(sz)[0].sum()) for i, sz in db.execute(sql, (json.dumps([int(c) for c in chunks]),))}
 
 
-def _overlapping(phrase):
+def _overlapping(phrase: tuple[str, ...]) -> bool:
     """Whether two occurrences of the phrase can overlap: an end of it is also its start ("a a", "a b a")."""
     return any(phrase[:n] == phrase[-n:] for n in range(1, len(phrase)))
 
 
-def _occurrences(tokens, phrase):
+def _occurrences(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> int:
     """How often the phrase (tokens) occurs in a text's tokens, one after the other, overlapping occurrences each."""
     n = len(phrase)
     return sum(tokens[i : i + n] == phrase for i in range(len(tokens) - n + 1))
 
 
-def _counted(chunks):
+def _counted(chunks: Ids) -> tuple[Ids, Ids]:
     """Each chunk once, with how often it was listed."""
     cuts = np.r_[0, np.flatnonzero(np.diff(chunks)) + 1]
     return chunks[cuts], np.diff(np.r_[cuts, len(chunks)])
@@ -301,10 +316,10 @@ def _counted(chunks):
 class _Chunks:
     """The chunks a segment holds, by id ascending: their places and lengths."""
 
-    def __init__(self, ids, places, lengths):
+    def __init__(self, ids: Ids, places: Ids, lengths: Ids) -> None:
         self.ids, self.places, self.lengths = ids, places, lengths
 
-    def of(self, chunks):
+    def of(self, chunks: Ids) -> tuple[Ids, Ids, Mask]:
         """The places and lengths of these chunks, and which of them the segment holds: one added after the lengths
         were read is dirty, and a delta has it once it is updated."""
         if not len(self.ids):
@@ -313,7 +328,7 @@ class _Chunks:
         return np.asarray(self.places[at]), np.asarray(self.lengths[at]), np.asarray(self.ids[at] == chunks)
 
 
-def _encoded(term, chunks, tf, held, average, ranged):
+def _encoded(term: str, chunks: Ids, tf: Ids, held: _Chunks, average: float, ranged: bool) -> Encoded | None:
     """A term's postings, by place, encoded: (term, df, blob) for a short list, (term, df, ranges, blocks) for a long
     one."""
     places, lengths, keep = held.of(chunks)
@@ -331,13 +346,13 @@ def _encoded(term, chunks, tf, held, average, ranged):
     return term, len(places), encode_ranges(rid[starts], counts, quantized(best)), blocks
 
 
-def _shard(job):
+def _shard(job: Job) -> list[Encoded]:
     """`_terms` in a worker process, with the chunks from the file all workers map: one copy for all, the OS's."""
     path, lo, hi, chunks_file, average = job
     return _terms(path, lo, hi, _Chunks(*np.load(chunks_file, mmap_mode="r")), average)
 
 
-def _terms(path, lo, hi, held, average):
+def _terms(path: str | Path, lo: str, hi: str | None, held: _Chunks, average: float) -> list[Encoded]:
     """The encoded postings of the terms from `lo` up to `hi` (None: all after), read out of a store's FTS5 index."""
     db = store.read_only(path)
     try:
@@ -349,7 +364,7 @@ def _terms(path, lo, hi, held, average):
         db.close()
 
 
-def _shards():
+def _shards() -> list[tuple[str, str | None]]:
     """Term ranges [lo, hi) covering every term: one per prefix of up to three digits and letters, the rest
     (non-ASCII) last. FTS5 orders terms by their UTF-8 bytes; its tokens hold letters and digits, lowercase. With two
     characters, one range held "the", "that", "this" and more, a tenth of all words, and the build waited on it."""
@@ -360,7 +375,7 @@ def _shards():
 
 
 @contextmanager
-def _alone(path):
+def _alone(path: str | Path) -> Generator[bool]:
     """True while this process alone changes the postings of the store at `path`, False if another sift is changing
     them: an exclusive transaction on a database of its own beside the store, which the OS ends with the process. A
     build reads the store for minutes, without holding the store's own lock, so other writers go on meanwhile."""
@@ -379,7 +394,7 @@ def _alone(path):
         lock.close()
 
 
-def build(db, path, name="", workers=0):
+def build(db: store.Connection, path: str | Path, name: str = "", workers: int = 0) -> None:
     """Build a store's postings anew, out of its FTS5 index: one base segment, which searches read once it is done.
     Chunks that change meanwhile stay dirty, so searches read FTS5 for this store until the next `update`. A large
     store is read by `workers` processes. Another sift building them already? Then nothing happens here."""
@@ -390,7 +405,7 @@ def build(db, path, name="", workers=0):
         _build(db, path, name, workers)
 
 
-def _build(db, path, name, workers):
+def _build(db: store.Connection, path: str | Path, name: str, workers: int) -> None:
     db.execute("BEGIN IMMEDIATE")
     try:
         change, coded = int(store.get_meta(db, "kw_change", 0)), store.counts(db)["vectors"]
@@ -435,12 +450,12 @@ def _build(db, path, name, workers):
     store.empty_log(db)  # it holds the postings, written while the build's readers held it
 
 
-def _first(db):
+def _first(db: sqlite3.Connection) -> int:
     """The id before the collection's first chunk: places count from it, as ids do."""
     return store.first_id(int(store.get_meta(db, "collection")))
 
 
-def _topical(db, ids, name):
+def _topical(db: sqlite3.Connection, ids: Ids, name: str) -> Ids | None:
     """The chunks `ids` (ascending) in topical order by their codes (see `order`), those without a code after the
     others, in the order of their ids; None if none of them has a code."""
     coded, bits = _codes(db)
@@ -455,26 +470,26 @@ def _topical(db, ids, name):
     return np.r_[ordered, ids[~np.isin(ids, ordered)]]
 
 
-def _too_far(db):
+def _too_far(db: sqlite3.Connection) -> bool:
     """Whether the collection handed out chunk ids 2**32 or more past its first, which the order can't hold (see
     _write_order): ids are never handed out twice, so a collection read anew often enough gets there."""
     row = db.execute("SELECT seq FROM sqlite_sequence WHERE name = 'chunks'").fetchone()
     return row is not None and row[0] - _first(db) >= 1 << 32
 
 
-def _codes(db):
+def _codes(db: sqlite3.Connection) -> tuple[Ids, Bits]:
     """(chunk ids, codes as rows of uint8) of the chunks with codes (see store.read_codes)."""
     return store.read_codes(db) or (np.zeros(0, np.int64), np.zeros((0, 8), np.uint8))
 
 
-def _places_of(ids, sequence, first):
+def _places_of(ids: Ids, sequence: Ids, first: int) -> Ids:
     """The places of the chunks `ids` (ascending), in the order `sequence` holds them: from first + 1 on."""
     places = np.empty(len(ids), np.int64)
     places[np.searchsorted(ids, sequence)] = first + 1 + np.arange(len(sequence))
     return places
 
 
-def _write_order(db, start, chunks, first):
+def _write_order(db: sqlite3.Connection, start: int, chunks: Ids, first: int) -> None:
     """Record the chunks at the places from `start` on, in kw_order's blocks (see encode_lengths), as chunk ids from
     `first`: a block written before, as the last one is when chunks take the next free places, keeps what it held."""
     local = np.asarray(chunks, np.int64) - first
@@ -491,7 +506,7 @@ def _write_order(db, start, chunks, first):
         db.execute("INSERT OR REPLACE INTO kw_order(block, data) VALUES(?, ?)", (block, data))
 
 
-def _chunks_at(db, places, first):
+def _chunks_at(db: sqlite3.Connection, places: Ids, first: int) -> Ids:
     """The chunks at these places, from kw_order (see _write_order)."""
     places = np.asarray(places, np.int64)
     by_place = np.argsort(places, kind="stable")
@@ -505,7 +520,7 @@ def _chunks_at(db, places, first):
 PROGRESS_LINES = 200  # updates of a build's progress at most: printing is slow on Windows consoles
 
 
-def _in_parallel(db, name, work, workers, keys):
+def _in_parallel(db: sqlite3.Connection, name: str, work: list[Job], workers: int, keys: Iterator[int]) -> None:
     """Run the shards in worker processes, writing each one's postings as it comes."""
     spawn = multiprocessing.get_context("spawn")
     step = max(1, len(work) // PROGRESS_LINES)
@@ -520,8 +535,9 @@ def _in_parallel(db, name, work, workers, keys):
                 progress.update(done)
 
 
-def _write_terms(db, segment, encoded, keys):
-    rows, blocks = [], []
+def _write_terms(db: sqlite3.Connection, segment: int, encoded: Iterable[Encoded], keys: Iterator[int]) -> None:
+    rows: list[tuple[str, int, int, int | None, bytes | None]] = []
+    blocks: list[tuple[int, bytes]] = []
     for entry in encoded:
         if len(entry) == 3:
             term, df, data = entry
@@ -535,7 +551,7 @@ def _write_terms(db, segment, encoded, keys):
     db.executemany("INSERT INTO kw_blocks(id, data) VALUES(?, ?)", blocks)
 
 
-def _write_lengths(db, segment, ids, lengths):
+def _write_lengths(db: sqlite3.Connection, segment: int, ids: Ids, lengths: Ids) -> None:
     db.executemany(
         "INSERT INTO kw_lengths(segment, block, data) VALUES(?, ?, ?)",
         [(segment, block, data) for block, data in encode_lengths(ids, lengths).items()],
@@ -545,29 +561,29 @@ def _write_lengths(db, segment, ids, lengths):
 # --- updating ------------------------------------------------------------------
 
 
-def built(db):
+def built(db: sqlite3.Connection) -> bool:
     """Whether the store's postings are built (if behind FTS5 meanwhile, see `ready`): meta kw_built holds the change
     they were built at, after ORDERED if they are in an order of their own."""
     return str(store.get_meta(db, "kw_built", "")).removeprefix(ORDERED).isdigit()
 
 
-def _ordered(db):
+def _ordered(db: sqlite3.Connection) -> bool:
     """Whether the postings are in an order of their own (kw_built after ORDERED), kw_order holding it. Its meta alone
     tells nothing: a sift 1.10 building the postings anew leaves both behind, stale."""
     return str(store.get_meta(db, "kw_built", "")).startswith(ORDERED)
 
 
-def behind(db):
+def behind(db: sqlite3.Connection) -> int:
     """How many chunks changed since the store's postings were last updated."""
     return db.execute("SELECT count(*) FROM kw_dirty").fetchone()[0]
 
 
-def ready(db):
+def ready(db: sqlite3.Connection) -> bool:
     """Whether searches can read the store's postings: built, and no chunk changed since."""
     return built(db) and not db.execute("SELECT 1 FROM kw_dirty LIMIT 1").fetchone()
 
 
-def update(db, path, name="", workers=0, rebuild=True):
+def update(db: store.Connection, path: str | Path, name: str = "", workers: int = 0, rebuild: bool = True) -> None:
     """Bring a store's postings up to FTS5: build them if there are none, else add a delta of the chunks changed
     since; when deltas grow too many, merge them into one (MOST_SEGMENTS), and when the chunks changed since the
     postings were built grow too many, build them anew (REBUILD_SHARE). Without `rebuild`, as for a file an agent
@@ -594,7 +610,7 @@ def update(db, path, name="", workers=0, rebuild=True):
                 _delta(db, merge=segments >= MOST_SEGMENTS)
 
 
-def _unordered(db):
+def _unordered(db: sqlite3.Connection) -> bool:
     """Whether the postings are to be ordered anew: chunks that got codes since they were ordered (see `order`) are
     more than ORDER_SHARE of all, or a sift 1.10 built them anew, in the chunks' order, over one, or chunk ids grew
     too far for the order (then in the chunks' order: see _topical)."""
@@ -605,7 +621,7 @@ def _unordered(db):
     return counts["vectors"] - int(store.get_meta(db, "kw_ordered", 0)) > ORDER_SHARE * counts["chunks"]
 
 
-def _delta(db, merge=False):
+def _delta(db: store.Connection, merge: bool = False) -> None:
     """Add a segment of the chunks changed since the postings were updated, tokenized as FTS5 tokenizes them, and mask
     their postings in the segments before. To `merge` the deltas, the chunks of those before go into it too, and it
     takes their place, after the base. In postings in topical order, each chunk of a delta takes the next free place,
@@ -648,17 +664,17 @@ def _delta(db, merge=False):
         raise
 
 
-def _delta_places(db):
+def _delta_places(db: sqlite3.Connection) -> dict[int, int]:
     """The chunks the deltas hold, those with a length, and their places: {chunk: place}."""
-    places = []
+    found: list[int] = []
     for block, data in db.execute("SELECT block, data FROM kw_lengths WHERE segment > 1"):
-        places += ((block << LENGTHS_SHIFT) + np.flatnonzero(decode_lengths(data))).tolist()
-    places = np.array(places, np.int64)
+        found += ((block << LENGTHS_SHIFT) + np.flatnonzero(decode_lengths(data))).tolist()
+    places = np.array(found, np.int64)
     chunks = _chunks_at(db, places, _first(db)) if _ordered(db) else places
     return dict(zip(chunks.tolist(), places.tolist()))
 
 
-def _placed(ids, kept, start):
+def _placed(ids: Ids, kept: dict[int, int], start: int) -> tuple[Ids, Ids]:
     """Places of these chunks (ascending): those `kept` ({chunk: place}) keep theirs, the others take the next free
     ones from `start`, in the order of their ids. Returns (places, the chunks that took new ones)."""
     places = np.fromiter((kept.get(c, -1) for c in ids.tolist()), np.int64, len(ids))
@@ -667,7 +683,9 @@ def _placed(ids, kept, start):
     return places, ids[new]
 
 
-def _tokenized(db, chunks, kept, start):
+def _tokenized(
+    db: store.Connection, chunks: Sequence[int], kept: dict[int, int], start: int | None
+) -> tuple[list[Encoded], Ids, Ids, Ids, Ids]:
     """The postings of these chunks as they are now, tokenized by FTS5 in a table of their own: (encoded terms, chunk
     ids, their places, lengths, the chunks placed anew). Their places are their ids if `start` is None, else as
     _placed gives them. Chunks deleted meanwhile have none."""
@@ -691,25 +709,25 @@ class Term:
     """A term's postings in one segment: `df` of them. A short list is read whole (everything); a long one by its
     ranges, then the postings of some of them."""
 
-    def __init__(self, reader, segment, df, key, data):
+    def __init__(self, reader: "Reader", segment: int, df: int, key: int | None, data: bytes | None) -> None:
         self.reader, self.segment, self.df, self.key, self.data = reader, segment, df, key, data
 
     @property
-    def long(self):
+    def long(self) -> bool:
         return self.key is not None
 
-    def everything(self):
+    def everything(self) -> tuple[Ids, Counts]:
         """(places, counts), all of them."""
         if not self.long:
             return decode_block(self.data)
         _, starts, ends, _ = self.ranges()
         return self.postings(starts[:1], ends[-1:])
 
-    def ranges(self):
+    def ranges(self) -> Ranges:
         """(range ids, where each range's postings start and end in the list, its best term score)."""
         return self.reader.ranges(self.key)
 
-    def postings(self, starts, ends):
+    def postings(self, starts: Ids, ends: Ids) -> tuple[Ids, Counts]:
         """(places, counts) of the postings from each start up to its end (ascending), in the list's order: only
         those, from the blocks that hold them."""
         idx = slices(starts, ends)
@@ -724,19 +742,20 @@ class Term:
         return ids, tf
 
 
-def slices(starts, ends):
+def slices(starts: Ids, ends: Ids) -> Ids:
     """The indexes from each start up to its end, in order."""
     size = ends - starts
     return np.repeat(starts - np.r_[0, np.cumsum(size)[:-1]], size) + np.arange(size.sum())
 
 
-class _Cache:
+class _Cache(Generic[_Part]):
     """Values by key, the most recently used kept up to `budget` bytes."""
 
-    def __init__(self, budget):
-        self.budget, self.held, self.size = budget, OrderedDict(), 0
+    def __init__(self, budget: int) -> None:
+        self.budget, self.size = budget, 0
+        self.held: OrderedDict[Hashable, _Part] = OrderedDict()
 
-    def get(self, key, make):
+    def get(self, key: Hashable, make: Callable[[], _Part]) -> _Part:
         if key in self.held:
             self.held.move_to_end(key)
             return self.held[key]
@@ -749,12 +768,12 @@ class _Cache:
 
 
 BLOCK_CACHE = 512 << 20  # bytes of decoded blocks kept: a long question over PubMed reads about 150 MB of them
-_BLOCKS = _Cache(BLOCK_CACHE)  # shared by every reader: one budget for the process
+_BLOCKS = _Cache[tuple[Ids, Counts]](BLOCK_CACHE)  # shared by every reader: one budget for the process
 PHRASE_CACHE = 512 << 20  # bytes of phrases' chunks, counts and lengths kept: 16 a chunk, as many chunks as 256 MB of
 # their ids alone held before; 160 MB for a phrase in 10 million chunks
-_PHRASES = _Cache(PHRASE_CACHE)
+_PHRASES = _Cache[tuple[Ids, NDArray[np.int32], NDArray[np.int32]]](PHRASE_CACHE)
 LISTS_CACHE = 256 << 20  # bytes of long lists' ranges kept: 32 a range, 12 MB for a word in every chunk of 50 million
-_LISTS = _Cache(LISTS_CACHE)
+_LISTS = _Cache[Ranges](LISTS_CACHE)
 _readers = itertools.count()
 
 
@@ -762,71 +781,75 @@ class Reader:
     """A store's postings as searches read them: segments and their statistics, terms, chunks' lengths, and which
     postings are masked. Made for a state of the postings (`state`), and read through caches."""
 
-    def __init__(self, db):
+    def __init__(self, db: store.Connection) -> None:
         self.db = db
-        self.segments = {s: (n, tokens) for s, n, tokens in db.execute("SELECT id, chunks, tokens FROM kw_segments")}
+        self.segments: dict[int, tuple[int, int]] = {
+            s: (n, tokens) for s, n, tokens in db.execute("SELECT id, chunks, tokens FROM kw_segments")
+        }
         masked = db.execute("SELECT chunk, segment FROM kw_masked ORDER BY chunk").fetchall()
         self.masked = np.array([m[0] for m in masked], np.int64)
         self.masked_in = np.array([m[1] for m in masked], np.int64)
         self._me = next(_readers)
-        self._dense = {}  # what is read in blocks of places: (first block, values read so far, blocks read) by table
-        self._first = _first(db) if _ordered(db) else None  # None: places are ids
+        self._dense: dict[
+            tuple[str, int | None], tuple[int, NDArray[np.uint32], Mask]
+        ] = {}  # what is read in blocks of places: (first block, values read so far, blocks read) by table
+        self._first: int | None = _first(db) if _ordered(db) else None  # None: places are ids
 
-    def ranges(self, key):
+    def ranges(self, key: int) -> Ranges:
         """The ranges of a long list, decoded: through a cache all readers share, by bytes, as the blocks are. Kept
         by the reader, 1,024 lists however long, the commonest words' ran to gigabytes."""
         return _LISTS.get((self._me, key), lambda: self._ranges(key))
 
-    def block(self, key, n):
+    def block(self, key: int, n: int) -> tuple[Ids, Counts]:
         """Block n (from 0) of a long list, decoded: through the cache all readers share."""
         return _BLOCKS.get((self._me, key, n), lambda: self._block(key, n))
 
     @staticmethod
-    def state(db):
+    def state(db: sqlite3.Connection) -> tuple[str | None, str | None, str | None]:
         """What a Reader is made for: in another state, the postings need another Reader."""
         return store.get_meta(db, "kw_built"), store.get_meta(db, "kw_change"), store.get_meta(db, "kw_stamp")
 
     @property
-    def chunks(self):
+    def chunks(self) -> int:
         return sum(n for n, _ in self.segments.values())
 
     @property
-    def tokens(self):
+    def tokens(self) -> int:
         return sum(t for _, t in self.segments.values())
 
-    def term(self, term):
+    def term(self, term: str) -> list[Term]:
         """The term's postings, a Term per segment that has any."""
         rows = self.db.execute("SELECT segment, df, list, data FROM kw_terms WHERE term = ?", (term,))
         return [Term(self, *row) for row in rows]
 
-    def _ranges(self, key):
+    def _ranges(self, key: int) -> Ranges:
         return decode_ranges(self._blob(key << 24))
 
-    def _block(self, key, n):
+    def _block(self, key: int, n: int) -> tuple[Ids, Counts]:
         return decode_block(self._blob(key << 24 | n + 1))
 
-    def _blob(self, rowid):
+    def _blob(self, rowid: int) -> bytes:
         return self.db.execute("SELECT data FROM kw_blocks WHERE id = ?", (rowid,)).fetchone()[0]
 
-    def phrase_chunks(self, phrase):
+    def phrase_chunks(self, phrase: tuple[str, ...]) -> Ids:
         """The chunks that hold the phrase (a tuple of tokens), ascending, as FTS5 finds them, which has the positions
         the postings leave out: found once for these postings, while the cache all readers share keeps them."""
         return self._phrase(phrase)[0]
 
-    def _phrase(self, phrase):
+    def _phrase(self, phrase: tuple[str, ...]) -> tuple[Ids, NDArray[np.int32], NDArray[np.int32]]:
         """(the chunks holding the phrase, how often it occurs in each and their lengths, -1 until counted), kept."""
         return _PHRASES.get((self._me, phrase), lambda: self._holding(phrase))
 
-    def _holding(self, phrase):
+    def _holding(self, phrase: tuple[str, ...]) -> tuple[Ids, NDArray[np.int32], NDArray[np.int32]]:
         rows = self.db.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rowid", (phrase_query(phrase),))
         chunks = np.fromiter((chunk for (chunk,) in rows), np.int64)
         return chunks, np.full(len(chunks), -1, np.int32), np.full(len(chunks), -1, np.int32)
 
-    def phrase_df(self, phrase):
+    def phrase_df(self, phrase: tuple[str, ...]) -> int:
         """How many chunks hold the phrase, as FTS5's bm25 counts them."""
         return len(self.phrase_chunks(phrase))
 
-    def phrase_counts(self, phrase, chunks):
+    def phrase_counts(self, phrase: tuple[str, ...], chunks: Ids) -> tuple[Ids, Ids]:
         """How often the phrase occurs in each of these chunks (ids), all columns, and their lengths in tokens:
         (counts, lengths), 0 for a chunk it isn't in. As FTS5's bm25 counts them, overlapping occurrences each (see
         `matches`): each chunk once for these postings, kept with the phrase's chunks, as a question asked again, or
@@ -844,17 +867,17 @@ class Reader:
         out[:, member] = counted[at[member]], lengths[at[member]]
         return out[0], out[1]
 
-    def lengths(self, segment, places):
+    def lengths(self, segment: int, places: Ids) -> NDArray[np.uint32]:
         """The lengths of the chunks at these places, as the segment holds them."""
         return self._by_place(("kw_lengths", segment), places)
 
-    def chunks_at(self, places):
+    def chunks_at(self, places: Ids) -> Ids:
         """The chunks at these places: themselves, unless the postings are in an order of their own (kw_order)."""
         if self._first is None:
             return np.asarray(places, np.int64)
         return self._by_place(("kw_order", None), places).astype(np.int64) + self._first
 
-    def _by_place(self, table, places):
+    def _by_place(self, table: tuple[str, int | None], places: Ids) -> NDArray[np.uint32]:
         """Values by place from blocks of 2**LENGTHS_SHIFT places (see encode_lengths), of kw_lengths for a segment or
         of kw_order: each block read once, into an array of the table's places, which takes memory only where
         written."""
@@ -874,7 +897,7 @@ class Reader:
             read[block] = True
         return held[places - (first << LENGTHS_SHIFT)]
 
-    def documents(self, ids):
+    def documents(self, ids: Ids) -> Ids:
         """The documents of these chunks, by id; -1 for a chunk another sift deleted since the postings were read."""
         owner = dict(
             self.db.execute(
@@ -883,7 +906,7 @@ class Reader:
         )
         return np.fromiter((owner.get(i, -1) for i in ids.tolist()), np.int64, len(ids))
 
-    def alive(self, segment, places):
+    def alive(self, segment: int, places: Ids) -> Mask:
         """Which of these postings of the segment count: those of chunks not masked since it was built."""
         if not len(self.masked):
             return np.ones(len(places), bool)

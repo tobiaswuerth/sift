@@ -11,14 +11,18 @@ scored a half to a twentieth as many ranges, the slowest in half the time (docs/
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+from numpy.typing import NDArray
 
 LEVELS = (64, 64)  # clusters per level: 4,096 leaves, a few ranges each in a collection of millions of chunks
 ROUNDS = 8  # of k-means
 PER_CLUSTER = 300  # codes k-means is trained on per cluster, at each node: training costs the same at any size
 STEP = 65_536  # codes measured at a time, in a thread each
 
+Words = NDArray[np.uint64]  # codes as rows of 64-bit words
+Indexes = NDArray[np.int64]
 
-def topical(ids, bits):
+
+def topical(ids: Indexes, bits: NDArray[np.uint8]) -> Indexes:
     """`ids` in topical order, by `bits`, their codes (rows of uint8 in whole 64-bit words, as vectors.codes packs
     them): see the module."""
     ids = np.asarray(ids, np.int64)
@@ -29,7 +33,7 @@ def topical(ids, bits):
     return ids[np.lexsort((ids, leaf))]
 
 
-def _cluster(words, rows, level, prefix, leaf, rng):
+def _cluster(words: Words, rows: Indexes, level: int, prefix: int, leaf: Indexes, rng: np.random.Generator) -> None:
     """Number the leaves under the node of these rows, at this level, from prefix * LEVELS[level] on."""
     k = LEVELS[level]
     centroids, assign = _kmeans(words if len(rows) == len(words) else words[rows], k, rng)  # all: no copy of them
@@ -44,7 +48,7 @@ def _cluster(words, rows, level, prefix, leaf, rng):
             leaf[mine] = code * np.prod(LEVELS[level + 1 :], dtype=np.int64)
 
 
-def _kmeans(words, k, rng):
+def _kmeans(words: Words, k: int, rng: np.random.Generator) -> tuple[Words, Indexes]:
     """k centroids (codes as uint64 words), trained on a sample of `words`, and the nearest of them to every word."""
     size = PER_CLUSTER * k
     sample = words[rng.choice(len(words), size, replace=False)] if len(words) > size else words
@@ -54,12 +58,12 @@ def _kmeans(words, k, rng):
     return centroids, _nearest(words, centroids)
 
 
-def _nearest(words, centroids):
+def _nearest(words: Words, centroids: Words) -> Indexes:
     """The centroid nearest to every code by Hamming distance, the first of those as near, STEP codes at a time in
     threads: a part's distances alone are held."""
     out = np.empty(len(words), np.int64)
 
-    def part(start):
+    def part(start: int) -> None:
         rows = words[start : start + STEP]
         distances = np.empty((len(rows), len(centroids)), np.uint16)
         for j, centroid in enumerate(centroids):
@@ -75,7 +79,7 @@ def _nearest(words, centroids):
     return out
 
 
-def _majority(words, assign, centroids):
+def _majority(words: Words, assign: Indexes, centroids: Words) -> Words:
     """Each cluster's centroid as the majority of its codes' bits; a cluster left empty keeps its centroid."""
     order = np.argsort(assign, kind="stable")
     held, starts = np.unique(assign[order], return_index=True)
@@ -87,7 +91,7 @@ def _majority(words, assign, centroids):
     return centroids
 
 
-def _chain(centroids):
+def _chain(centroids: Words) -> Indexes:
     """The centroids in an order where each is next to one close to it: a greedy walk from the first."""
     distance = np.bitwise_count(centroids[:, None, :] ^ centroids[None, :, :]).sum(2)
     walk, left = [0], np.ones(len(centroids), bool)

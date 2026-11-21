@@ -13,20 +13,23 @@ import re
 import sqlite3
 import threading
 from collections import OrderedDict
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from concurrent.futures import Future, wait
 from functools import partial, wraps
 from operator import itemgetter
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, Concatenate, Literal, NamedTuple, TypeVar, overload
 
 import numpy as np
+from numpy.typing import NDArray
 
 from . import console, embed, expression, indexing, links, postings, queries, readers, store, topk
 from . import models as _models
-from .catalog import Catalog
+from .catalog import Catalog, Collection
 from .filters import comparison, json_path
 from .hits import (
     MOST_HITS,
+    Hit,
     Options,
     check_budget,
     check_fields,
@@ -38,7 +41,20 @@ from .hits import (
     pick,
     present,
 )
-from .vectors import Codes, Filter, codes, top
+from .vectors import Codes, Filter, Floats, IdList, Ids, Mask, codes, top
+
+_T = TypeVar("_T")
+Db = store.Connection
+Row = links.Row
+Resolution = links.Resolution
+Resolver = links.Resolver
+Scope = list[Collection]  # the collections a search covers
+Where = tuple[Scope, str, list[Any]]  # them, an SQL condition on their documents `d`, and its arguments
+Ranked = list[tuple[int, float]]  # (chunk id, score), best first
+Passages = list[tuple[int, int, float]]  # (chunk id, document id, score) of each
+Named = dict[int, tuple[str, str]]  # documents' whole ids and titles, by row id
+Doc = tuple[int, str, str, str, str]  # a document: (row id, whole id, title, meta, text)
+State = tuple[tuple[int, int], tuple[tuple[Any, ...], ...], tuple[tuple[Any, ...], ...]]  # see Index._state
 
 FIELD_SAMPLE = 1000  # documents per collection whose front matter tells which fields exist
 START = 600  # characters of a document's start that `browse` shows, as its passage
@@ -50,40 +66,7 @@ KEPT_HITS = 1000  # hits of a search at most for its results to be kept: 10,000 
 MOST_QUERIES = 20  # queries one search call takes
 
 
-def _several(method):
-    """A search that takes a list of queries too, and answers each as if asked alone, in order: one call, and one
-    turn of an agent, instead of several. Their questions are embedded together, in one pass of the model, once the
-    first is checked (see Index._vector); they return at most MOST_HITS hits in all, and share a time `budget`."""
-
-    @wraps(method)
-    def several(self, query, *args, **kwargs):
-        if not isinstance(query, list):
-            return method(self, query, *args, **kwargs)
-        if not query:
-            raise ValueError("a search takes at least one query")
-        if len(query) > MOST_QUERIES:
-            raise ValueError(f"a search takes at most {MOST_QUERIES} queries at once, got {len(query)}")
-        if wrong := [q for q in query if not isinstance(q, str) or not q.strip()]:
-            raise ValueError(f"each query of several is a text that isn't blank, got {wrong[0]!r}")
-        k = args[0] if args else kwargs.get("k", 10)
-        if isinstance(k, int) and min(k, MOST_HITS) * len(query) > MOST_HITS:  # one asked for more gets MOST_HITS
-            raise ValueError(
-                f"several queries return at most {MOST_HITS:,} hits in all; {len(query)} of k={k} would be "
-                f"{k * len(query):,}: ask fewer at a time, or a smaller k"
-            )
-        budget = kwargs.get("budget")
-        if isinstance(budget, int | float) and not isinstance(budget, bool) and budget > 0:  # else said as it was
-            kwargs = kwargs | {"budget": budget / len(query)}
-        self._asked = list(dict.fromkeys(query))
-        try:
-            return [method(self, q, *args, **kwargs) for q in query]
-        finally:
-            self._asked = []
-
-    return several
-
-
-def _reachable(db):
+def _reachable(db: Db) -> bool:
     """Whether an open store still answers: not when its drive went away, or a network share dropped."""
     try:
         store.changes(db)
@@ -92,37 +75,7 @@ def _reachable(db):
     return True
 
 
-def _remembered(method):
-    """A search whose results the index keeps, the last RESULTS of them, as long as what it reads stays as it was
-    (Index._state): an agent asking again, or the UI showing a page again, gets them without reading the stores."""
-
-    @wraps(method)
-    def remembered(self, *args, **kwargs):
-        if kwargs.get("budget") is not None:  # what a search finds in time depends on the time it had
-            return method(self, *args, **kwargs)
-        try:
-            key = json.dumps([method.__name__, args, kwargs], sort_keys=True, default=str)
-        except TypeError:  # filters of keys JSON can't sort: no key, and the search says what is wrong
-            return method(self, *args, **kwargs)
-        self._settle()  # the codes read anew meanwhile are those the state holds
-        state = self._state()
-        if (kept := self._results.get(key)) is not None and kept[0] == state:
-            self._results.move_to_end(key)
-            return copy.deepcopy(kept[1])
-        self._passed.clear()
-        hits = method(self, *args, **kwargs)
-        # Not with codes being read anew, which take over later; nor a collection passed over, whose store may come
-        # back unsaid; nor results so large that keeping them costs more.
-        if not (self._reading or self._passed) and len(hits) <= KEPT_HITS and self._state() == state:
-            self._results[key] = (state, copy.deepcopy(hits))
-            while len(self._results) > RESULTS:
-                self._results.popitem(last=False)
-        return hits
-
-    return remembered
-
-
-def _target(spec):
+def _target(spec: str) -> str:
     """The target of a note named as links name it: `Acme AG`, `[[Acme AG|Acme]]`, `[[02_Organizations/Acme AG]]`."""
     spec = spec.strip()
     if readers.WIKILINK_VALUE.fullmatch(spec):
@@ -130,13 +83,13 @@ def _target(spec):
     return spec
 
 
-def _wikilinks(value):
+def _wikilinks(value: Any) -> list[str]:
     """The filter values among `value`, one or a list, that are wikilinks."""
-    values = value if isinstance(value, list) else [value]
+    values: list[Any] = value if isinstance(value, list) else [value]
     return [v for v in values if isinstance(v, str) and readers.WIKILINK_VALUE.fullmatch(v.strip())]
 
 
-def _ids(ids):
+def _ids(ids: Iterable[int]) -> str:
     """Document row ids as one SQL argument, for `d.id IN (SELECT value FROM json_each(?))`."""
     return json.dumps(sorted(ids))
 
@@ -144,16 +97,16 @@ def _ids(ids):
 MORE_CANDIDATES = 20  # each collection gives this many more of its best, or as many again, to be scored again
 
 
-def _totals(db):
+def _totals(db: Db) -> tuple[int, int]:
     """The rows of a store's keyword index, and the tokens they hold in all: FTS5's record of them."""
     row = db.execute("SELECT block FROM fts_data WHERE id = 1").fetchone()
     numbers = postings.varints(row[0])[0].tolist() if row else []
     return (numbers[0], sum(numbers[1:])) if numbers else (0, 0)  # none: an index that never held a row
 
 
-def _first_of_each(items, key):
+def _first_of_each(items: Iterable[_T], key: Callable[[_T], Hashable]) -> list[_T]:
     """The first of the items with the same key, in order."""
-    first = {}
+    first: dict[Hashable, _T] = {}
     for item in items:
         first.setdefault(key(item), item)
     return list(first.values())
@@ -167,10 +120,10 @@ LINKING_SHOWN = 5  # documents an unresolved target names, of those linking it
 LINE_CHARS = 300  # characters of a linking line a link into a document shows, around the link
 
 
-def _link_out(row, how, through, named):
+def _link_out(row: Row, how: Resolution, through: int | None, named: Named) -> dict[str, Any]:
     """A link out of a document, as `links` returns it: as written, and where it leads."""
     _, _, field, line, kind, target, _, fragment, shown = row
-    link = {"target": target, "line": line, "kind": kind}
+    link: dict[str, Any] = {"target": target, "line": line, "kind": kind}
     link |= {key: value for key, value in (("field", field), ("fragment", fragment), ("shown", shown)) if value}
     via, docs = how
     if via in VIA:
@@ -182,19 +135,22 @@ def _link_out(row, how, through, named):
     return link | ({"through": named[through][0]} if through else {})
 
 
-def _by_document(rows):
+def _by_document(rows: Iterable[Row]) -> dict[int, list[Row]]:
     """Link rows by the document holding them, in order."""
-    found = {}
+    found: dict[int, list[Row]] = {}
     for row in rows:
         found.setdefault(row[0], []).append(row)
     return found
 
 
-def _lines_of(rows, text):
+def _lines_of(rows: Iterable[Row], text: str) -> list[dict[str, Any]]:
     """The lines of a document holding these links, once each: their number, front-matter field, and text, around the
     link if the line is long."""
-    every, found = text.split("\n"), {}
-    for _, _, field, line, _, target, *_ in rows:
+    every = text.split("\n")
+    found: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        field, target = row[2], row[5]
+        line: int = row[3]
         if line not in found:
             content = every[line - 1].strip()
             if len(content) > LINE_CHARS:
@@ -205,7 +161,7 @@ def _lines_of(rows, text):
     return list(found.values())
 
 
-def _by_value(rows, descending):
+def _by_value(rows: list[Row], descending: bool) -> list[Row]:
     """Rows of several stores, (collection, path, ..., value), each store's in SQLite's order by value and path,
     merged in that order: numbers before text ascending, text before numbers descending, and rows without a value
     last; then by collection and path."""
@@ -223,11 +179,11 @@ class _Held(NamedTuple):
     version: str | None
     codes: Codes
     epoch: str | None = None
-    count: int | None = None
+    stored: int | None = None
     last: int = -1
 
 
-def _held(db):
+def _held(db: Db) -> _Held | None:
     """The codes of a store's vectors (see store.read_codes) to search, read in one snapshot with what the store says
     of them; None if it has none."""
     with store.snapshot([db]):
@@ -236,7 +192,7 @@ def _held(db):
     return _Held(version, Codes(*found), epoch, count["vectors"], int(found[0][-1])) if found else None
 
 
-def _read_anew(path):
+def _read_anew(path: str) -> _Held | None:
     """_held of the store at `path`, through a connection of its own, which a call cancelled meanwhile can't stop."""
     db = store.read_only(path)
     try:
@@ -245,11 +201,11 @@ def _read_anew(path):
         db.close()
 
 
-def _in_a_thread(work):
+def _in_a_thread(work: Callable[[], _T]) -> "Future[_T]":
     """A Future of work(), done in a thread of its own, which never holds up the process from ending."""
-    done = Future()
+    done: Future[_T] = Future()
 
-    def run():
+    def run() -> None:
         try:
             done.set_result(work())
         except BaseException as error:  # handed to whoever takes the result
@@ -259,12 +215,12 @@ def _in_a_thread(work):
     return done
 
 
-def _size(path):
+def _size(path: str) -> int:
     """The bytes a store takes on disk, its write-ahead log included."""
     return sum(os.path.getsize(file) for file in (path, f"{path}-wal") if os.path.isfile(file))
 
 
-def _postings_state(db):
+def _postings_state(db: Db) -> str:
     """How a collection's keyword postings stand, for a status: "ready", "not built" or "N chunks behind" (searches
     read FTS5 meanwhile, slower; `sift index` builds or updates them)."""
     if not postings.built(db):
@@ -280,12 +236,14 @@ class _Filter(Filter):
 
     CHUNKS = "SELECT c.id FROM chunks c JOIN docs d ON d.id = c.doc WHERE "
 
-    def __init__(self, catalog, scope, where, args):
-        self.stores, self.where, self.args = {c.id: catalog.store(c) for c in scope}, where, args
-        self.seen, self.passed = np.empty(0, np.int64), np.empty(0, bool)  # the chunks checked, by id, and which pass
-        self._listed = None
+    def __init__(self, catalog: Catalog, scope: Scope, where: str, args: Sequence[Any]) -> None:
+        self.stores: dict[int, Db] = {c.id: catalog.store(c) for c in scope}
+        self.where, self.args = where, args
+        self.seen: Ids = np.empty(0, np.int64)  # the chunks checked, by id, and which pass
+        self.passed: Mask = np.empty(0, bool)
+        self._listed: Ids | None = None
 
-    def check(self, ids):
+    def check(self, ids: Ids) -> Mask:
         ids = np.asarray(ids, np.int64)
         if len(new := np.setdiff1d(ids, self.seen)):
             seen = np.concatenate([self.seen, new])
@@ -293,31 +251,32 @@ class _Filter(Filter):
             self.seen, self.passed = seen[order], np.concatenate([self.passed, self.passes(new)])[order]
         return self.passed[np.searchsorted(self.seen, ids)]
 
-    def passes(self, ids):
+    def passes(self, ids: Ids) -> Mask:
         """Which of these chunks, of the collections of the scope, pass, as their stores tell."""
         sql = f"{self.CHUNKS}c.id IN (SELECT value FROM json_each(?)) AND {self.where}"
-        owners, passed = ids >> store.SHIFT, []
+        owners = ids >> store.SHIFT
+        passed: list[int] = []
         for cid in np.unique(owners).tolist():
             rows = self.stores[cid].execute(sql, [json.dumps(ids[owners == cid].tolist()), *self.args])
             passed += [chunk for (chunk,) in rows]
         return np.isin(ids, np.array(passed, np.int64))
 
-    def listed(self):
+    def listed(self) -> Ids:
         if self._listed is None:
             rows = (i for db in self.stores.values() for (i,) in db.execute(self.CHUNKS + self.where, self.args))
             self._listed = np.fromiter(rows, np.int64)
         return self._listed
 
 
-class _Resolvers(dict):
+class _Resolvers(dict[Collection, Resolver]):
     """A links.Resolver for each collection, made when first needed."""
 
-    def __init__(self, catalog):
+    def __init__(self, catalog: Catalog) -> None:
         super().__init__()
         self.catalog = catalog
 
-    def __missing__(self, collection):
-        self[collection] = resolver = links.Resolver(self.catalog.store(collection))
+    def __missing__(self, collection: Collection) -> Resolver:
+        self[collection] = resolver = Resolver(self.catalog.store(collection))
         return resolver
 
 
@@ -325,63 +284,132 @@ class Index:
     """Search over the active collections of a catalog (default: SIFT_HOME's). Semantic search uses `models` (default:
     `models.default()`, chosen when first needed, so keyword search loads no models)."""
 
-    def __init__(self, catalog=None, models=None):
+    def __init__(self, catalog: Catalog | None = None, models: _models.Models | None = None) -> None:
         self.catalog = catalog or Catalog()
         self._models = models
-        self._wrap = None
-        self.vectors = {}  # collection id: the codes of its vectors, as _Held
-        self._reading = {}  # collection id: the Future of its codes read anew, in a thread of their own
-        self._postings = {}  # collection id: (the state of its keyword postings, their postings.Reader)
-        self._said = set()  # warnings given, each once
-        self._query_vectors = OrderedDict()  # question: its embedding, the last QUERY_VECTORS asked
-        self._results = OrderedDict()  # a search and its options: (the state it read, its results), see _remembered
-        self._asked = []  # the questions of the call of several being answered, embedded together (see _several)
-        self._passed = set()  # active collections a search passed over, their stores missing or unusable: not kept
+        self._wrap: Callable[[_models.Models], _models.Models] | None = None
+        self.vectors: dict[int, _Held] = {}  # collection id: the codes of its vectors
+        self._reading: dict[int, Future[_Held | None]] = {}  # collection id: its codes read anew, in a thread
+        # collection id: (the state of its keyword postings, their postings.Reader)
+        self._postings: dict[int, tuple[tuple[str | None, str | None, str | None], postings.Reader]] = {}
+        self._said: set[str] = set()  # warnings given, each once
+        self._query_vectors: OrderedDict[str, NDArray[np.float32]] = OrderedDict()  # question: its embedding
+        # a search and its options: (the state it read, its results), see _remembered
+        self._results: OrderedDict[str, tuple[State, list[Hit]]] = OrderedDict()
+        self._asked: list[str] = []  # the questions of the call of several being answered, embedded together
+        self._passed: set[int] = set()  # active collections a search passed over, stores missing or unusable: not kept
+
+    @staticmethod
+    def _several(
+        method: Callable[Concatenate["Index", str, ...], list[Hit]],
+    ) -> Callable[Concatenate["Index", str | list[Any], ...], list[Hit] | list[list[Hit]]]:
+        """A search that takes a list of queries too, and answers each as if asked alone, in order: one call, and one
+        turn of an agent, instead of several. Their questions are embedded together, in one pass of the model, once the
+        first is checked (see Index._vector); they return at most MOST_HITS hits in all, and share a time `budget`."""
+
+        @wraps(method)
+        def several(self: "Index", query: str | list[Any], *args: Any, **kwargs: Any) -> list[Hit] | list[list[Hit]]:
+            if not isinstance(query, list):
+                return method(self, query, *args, **kwargs)
+            if not query:
+                raise ValueError("a search takes at least one query")
+            if len(query) > MOST_QUERIES:
+                raise ValueError(f"a search takes at most {MOST_QUERIES} queries at once, got {len(query)}")
+            if wrong := [q for q in query if not isinstance(q, str) or not q.strip()]:
+                raise ValueError(f"each query of several is a text that isn't blank, got {wrong[0]!r}")
+            k = args[0] if args else kwargs.get("k", 10)
+            if isinstance(k, int) and min(k, MOST_HITS) * len(query) > MOST_HITS:  # one asked for more gets MOST_HITS
+                raise ValueError(
+                    f"several queries return at most {MOST_HITS:,} hits in all; {len(query)} of k={k} would be "
+                    f"{k * len(query):,}: ask fewer at a time, or a smaller k"
+                )
+            budget = kwargs.get("budget")
+            if isinstance(budget, int | float) and not isinstance(budget, bool) and budget > 0:  # else said as it was
+                kwargs = kwargs | {"budget": budget / len(query)}
+            self._asked = list(dict.fromkeys(query))
+            try:
+                return [method(self, q, *args, **kwargs) for q in query]
+            finally:
+                self._asked = []
+
+        return several
+
+    @staticmethod
+    def _remembered(
+        method: Callable[Concatenate["Index", ...], list[Hit]],
+    ) -> Callable[Concatenate["Index", ...], list[Hit]]:
+        """A search whose results the index keeps, the last RESULTS of them, as long as what it reads stays as it was
+        (Index._state): an agent asking again, or the UI showing a page again, gets them without reading the stores."""
+
+        @wraps(method)
+        def remembered(self: "Index", *args: Any, **kwargs: Any) -> list[Hit]:
+            if kwargs.get("budget") is not None:  # what a search finds in time depends on the time it had
+                return method(self, *args, **kwargs)
+            try:
+                key = json.dumps([method.__name__, args, kwargs], sort_keys=True, default=str)
+            except TypeError:  # filters of keys JSON can't sort: no key, and the search says what is wrong
+                return method(self, *args, **kwargs)
+            self._settle()  # the codes read anew meanwhile are those the state holds
+            state = self._state()
+            if (kept := self._results.get(key)) is not None and kept[0] == state:
+                self._results.move_to_end(key)
+                return copy.deepcopy(kept[1])
+            self._passed.clear()
+            hits = method(self, *args, **kwargs)
+            # Not with codes being read anew, which take over later; nor a collection passed over, whose store may come
+            # back unsaid; nor results so large that keeping them costs more.
+            if not (self._reading or self._passed) and len(hits) <= KEPT_HITS and self._state() == state:
+                self._results[key] = (state, copy.deepcopy(hits))
+                while len(self._results) > RESULTS:
+                    self._results.popitem(last=False)
+            return hits
+
+        return remembered
 
     @property
-    def models(self):
+    def models(self) -> _models.Models:
         if self._models is None:
             self._models = _models.default()
             if self._wrap:
                 self._models = self._wrap(self._models)
         return self._models
 
-    def models_through(self, wrap):
+    def models_through(self, wrap: Callable[[_models.Models], _models.Models]) -> None:
         """Have the models used through wrap(models), e.g. jobs.OnMainThread: now if chosen, else once they are."""
         self._wrap = wrap
         if self._models is not None:
             self._models = wrap(self._models)
 
-    def _state(self):
+    def _state(self) -> State:
         """What searches read, as a value that changes with it: the catalog and the stores opened so far as SQLite
         counts their changes, those other connections commit (data_version) and those of the connection itself
         (total_changes, as the server's own `reindex` makes them), and the codes held. A store not opened yet was read
         by no search kept, and a search that opens it changes this, so it isn't kept that time."""
-        stores = []
+        stores: list[tuple[Any, ...]] = []
         for cid, path, db in self.catalog.open_stores():
             try:
                 stores.append((cid, path, *store.changes(db)))
             except sqlite3.Error:  # out of reach, as on a drive unplugged: equal to no state, so nothing kept or used
                 stores.append((cid, path, object()))
-        held = tuple((cid, h.version, h.epoch, h.count, h.last) for cid, h in self.vectors.items())
+        held = tuple((cid, h.version, h.epoch, h.stored, h.last) for cid, h in self.vectors.items())
         return store.changes(self.catalog.db), tuple(stores), held
 
-    def forget(self):
+    def forget(self) -> None:
         """Let go of the questions' embeddings and the searches' results kept: as `sift bench` times each mode."""
         self._query_vectors.clear()
         self._results.clear()
 
-    def _warn(self, text):
+    def _warn(self, text: str) -> None:
         if text not in self._said:
             self._said.add(text)
             console.say(f"warning: {text}")
 
     # --- which collections and documents a search may find -----------------------
 
-    def active(self):
+    def active(self) -> dict[int, Collection]:
         """The active collections whose stores open, by id; what is held of others is let go (see _settle)."""
         self._settle()
-        found = {}
+        found: dict[int, Collection] = {}
         for c in self.catalog.collections():
             if not c.active:
                 continue
@@ -401,7 +429,7 @@ class Index:
                 del held[cid]
         return found
 
-    def _scope(self, collection):
+    def _scope(self, collection: str | None) -> Scope:
         """The collections a search covers: the one named, or every active one. None active, or none at all, is an
         error that says what to do: "no matches" told nobody that nothing was searched. Those whose stores are
         missing are active, and passed over as said (see active)."""
@@ -414,7 +442,7 @@ class Index:
         self._readable(c)
         return [c]
 
-    def _nothing_active(self):
+    def _nothing_active(self) -> str | None:
         """What to say when no collection is active, and to do about it; None if one is."""
         collections = self.catalog.collections()
         if any(c.active for c in collections):
@@ -423,7 +451,7 @@ class Index:
             return "no collection is active: `sift activate NAME` takes one back into searches"
         return "no collection yet: `sift add FOLDER`, then `sift index`"
 
-    def _readable(self, collection):
+    def _readable(self, collection: Collection) -> Db:
         """The store of a collection to read from; an error if the collection is inactive, or its store missing."""
         if not collection.active:
             raise LookupError(
@@ -432,33 +460,42 @@ class Index:
             )
         return self.catalog.store(collection)
 
-    def _owner(self, row_id):
+    def _owner(self, row_id: int) -> Collection:
         """The collection a document or chunk belongs to, by its row id."""
         cid = store.owner(row_id)
         if found := next((c for c in self.catalog.collections() if c.id == cid), None):
             return found
         raise LookupError("its collection was removed meanwhile")
 
-    def _db(self, row_id):
+    def _db(self, row_id: int) -> Db:
         """The store holding a document or chunk, by its row id."""
         return self.catalog.store(self._owner(row_id))
 
-    def _by_store(self, ids):
+    def _by_store(self, ids: Iterable[int]) -> list[tuple[Collection, Db, list[int]]]:
         """Row ids of documents or chunks by the collection they belong to, of those still there: (collection, its
         store, [ids]) each."""
-        known, groups = {c.id: c for c in self.catalog.collections()}, {}
+        known = {c.id: c for c in self.catalog.collections()}
+        groups: dict[int, list[int]] = {}
         for i in ids:
             groups.setdefault(store.owner(i), []).append(int(i))
         return [(known[cid], self.catalog.store(known[cid]), group) for cid, group in groups.items() if cid in known]
 
-    def _where(self, collection=None, path=None, filters=None, links_to=None, linked_from=None):
+    def _where(
+        self,
+        collection: str | None = None,
+        path: str | None = None,
+        filters: dict[str, Any] | None = None,
+        links_to: Any = None,
+        linked_from: Any = None,
+    ) -> Where:
         """The collections to search, and an SQL condition on their docs `d` with its arguments. Filters match
         front-matter fields: a value, which a list field matches if it contains it, a list of values for any of them,
         or conditions such as {">=": "2024-06", "<": "2025"}, which one value or list element must satisfy, and
         {"not": value or list}, which none may match. A value that is a wikilink, "[[Acme AG]]", matches a link to the
         same note however it is written. `links_to` and `linked_from` name notes (see _notes): only documents linking
         one of the first, and linked from one of the second."""
-        scope, sql, args, resolvers = self._scope(collection), ["1"], [], _Resolvers(self.catalog)
+        scope, resolvers = self._scope(collection), _Resolvers(self.catalog)
+        sql, args = ["1"], list[Any]()
         if path:
             sql.append("d.path GLOB ?")
             args.append(path)
@@ -466,7 +503,7 @@ class Index:
             field = json_path(key)
             if value == {}:
                 raise ValueError(f"filter {key!r} has no condition")
-            conditions = value if isinstance(value, dict) else {"=": value}
+            conditions: dict[str, Any] = value if isinstance(value, dict) else {"=": value}
             some = [comparison(key, op, v) for op, v in conditions.items() if op != "not"]
             if some:
                 condition = f"EXISTS (SELECT 1 FROM json_each(d.meta, ?) WHERE {' AND '.join(c for c, _ in some)})"
@@ -488,25 +525,27 @@ class Index:
             args.append(_ids(allowed))
         return scope, " AND ".join(sql), args
 
-    def _resolve(self, spec, scope, resolvers):
+    def _resolve(self, spec: str, scope: Scope, resolvers: _Resolvers) -> dict[Collection, Resolution]:
         """Where a note named as links name it leads, from no note in particular, in each collection of `scope`:
         {collection: (how, [doc ids])}."""
         target = _target(spec)
         key = readers.key(target.rsplit("/", 1)[-1])
         return {c: resolvers[c].resolve(None, "wikilink", target, key) for c in scope}
 
-    def _notes(self, specs, what, scope, resolvers):
+    def _notes(
+        self, specs: str | Sequence[Any], what: str, scope: Scope, resolvers: _Resolvers
+    ) -> dict[str, int | None]:
         """The notes that `specs`, one or a list, name: by a document's id, as for `get`, or as links name them,
         "Acme AG" or "[[Acme AG]]", in the collections of `scope`, wherever one note answers. As {spec: doc row id, or
         None for a note no document answers to}; a name that more than one note answers to is an error."""
         specs = [specs] if isinstance(specs, str) else specs
         if not isinstance(specs, list | tuple) or not specs:
             raise ValueError(f"{what} needs at least one note: their ids, or link targets, got {specs!r}")
-        found = {}
+        found: dict[str, int | None] = {}
         for spec in specs:
             if not isinstance(spec, str) or not spec.strip():
                 raise ValueError(f"{what} takes ids of documents or link targets, got {spec!r}")
-            rows = [] if readers.WIKILINK_VALUE.fullmatch(spec.strip()) else self._rows(spec.strip())
+            rows: list[Row] = [] if readers.WIKILINK_VALUE.fullmatch(spec.strip()) else self._rows(spec.strip())
             if len(rows) == 1:
                 found[spec] = rows[0][0]
                 continue
@@ -521,10 +560,10 @@ class Index:
             found[spec] = next(iter(matches), None)
         return found
 
-    def _linked(self, links_to, linked_from, scope, resolvers):
+    def _linked(self, links_to: Any, linked_from: Any, scope: Scope, resolvers: _Resolvers) -> set[int] | None:
         """The documents that link to any of the notes `links_to` names, and that one of `linked_from` links to, by
         row id; None if neither is given. A note no document answers to yet is linked by the links that name it."""
-        allowed = None
+        allowed: set[int] | None = None
         if links_to is not None:
             allowed = set()
             for spec, note in self._notes(links_to, "links_to", scope, resolvers).items():
@@ -536,7 +575,7 @@ class Index:
                 else:
                     raise LookupError(f"no note {spec!r} in the index, and no link to one")
         if linked_from is not None:
-            to = set()
+            to = set[int]()
             for spec, note in self._notes(linked_from, "linked_from", scope, resolvers).items():
                 if note is None:
                     raise LookupError(f"no note {spec!r} in the index")
@@ -546,11 +585,11 @@ class Index:
             allowed = to if allowed is None else allowed & to
         return allowed
 
-    def _linking(self, key, value, scope, resolvers):
+    def _linking(self, key: str, value: Any, scope: Scope, resolvers: _Resolvers) -> set[int] | None:
         """The documents whose front-matter field `key` links to a note that a wikilink among the filter values names,
         however the link is written; links to a note no document answers to, or to several, match as written. None if
         no value is a wikilink."""
-        specs, docs = _wikilinks(value), set()
+        specs, docs = _wikilinks(value), set[int]()
         for spec in specs:
             for c, (how, found) in self._resolve(spec, scope, resolvers).items():
                 db = self.catalog.store(c)
@@ -562,7 +601,16 @@ class Index:
 
     # --- candidates as [(chunk_id, score)] -----------------------------------
 
-    def _keyword(self, match, k, scope, where, args, all_passages=False, deadline=None):
+    def _keyword(
+        self,
+        match: str,
+        k: int,
+        scope: Scope,
+        where: str,
+        args: Sequence[Any],
+        all_passages: bool = False,
+        deadline: topk.Deadline | None = None,
+    ) -> Ranked:
         """The best passage of each of the k documents that best match an FTS5 query, by BM25, or the k best
         passages, in the collections of `scope`, scored with the word counts of all of them. A query of words and
         phrases, AND, OR and NOT is answered from the keyword postings (see `topk`), until the topk.Deadline if given,
@@ -607,11 +655,11 @@ class Index:
             return [(passage, score) for passage, _, score in ranked[:k]]
         raise ValueError(f"invalid search query {match!r}: {error}")
 
-    def _ready(self, scope):
+    def _ready(self, scope: Scope) -> list[postings.Reader] | None:
         """The keyword postings of the collections of `scope`, one postings.Reader each, or None if any has none
         ready: never built, or behind FTS5 since a change. A collection without a chunk has nothing to find, and no
         postings to wait for: added and not indexed yet, it sent the searches of every collection to FTS5."""
-        readers = []
+        readers: list[postings.Reader] = []
         for c in scope:
             db = self.catalog.store(c)
             if not store.counts(db)["chunks"]:
@@ -625,7 +673,7 @@ class Index:
             readers.append(held[1])
         return readers
 
-    def _as_one(self, found, phrases):
+    def _as_one(self, found: dict[Collection, Passages], phrases: list[str]) -> dict[Collection, Passages]:
         """The passages found in each collection, {collection: [(passage, doc, score)]}, scored again by BM25 as FTS5
         scores them, with the word counts of all these collections together, as one index would. Each collection's own
         would take a word common in a small collection for a common word: a page alone in its collection, about
@@ -641,7 +689,7 @@ class Index:
         idf = [math.log((rows - n + 0.5) / (n + 0.5)) for n in holding]
         idf = [value if value > 0 else 1e-6 for value in idf]  # as FTS5 takes them
         average = tokens / rows if rows else 1.0
-        scored = {}
+        scored: dict[Collection, Passages] = {}
         for c, passages in found.items():
             db, ids = self.catalog.store(c), [passage for passage, _, _ in passages]
             size = postings.sizes(db, ids)
@@ -652,7 +700,7 @@ class Index:
             scored[c] = [(passage, doc, score.get(passage, 0.0)) for passage, doc, _ in passages]
         return scored
 
-    def load(self, scope=None, required=True):
+    def load(self, scope: Scope | None = None, required: bool = True) -> None:
         """Load the codes of the vectors (see `vectors`) of the collections of `scope`, those a search covers, or of
         every active one, as a server does when it starts: each store's batch by batch. Follow a store that changed
         since: the codes written past the last held are read alone, as `sift embed` writes them; after another change,
@@ -665,7 +713,7 @@ class Index:
             self._settle()
         if not scope and self.catalog.collections() and (nothing := self._nothing_active()):
             raise LookupError(nothing)
-        damaged = {}
+        damaged: dict[str, str] = {}
         for c in scope:
             try:
                 self._follow(c)
@@ -679,7 +727,7 @@ class Index:
             said = [f"no embeddings yet{where}, run `sift embed`"] if bare or not damaged else []
             raise LookupError("; ".join(said + list(damaged.values())))
 
-    def _settle(self):
+    def _settle(self) -> None:
         """Let go of what is held of collections no longer active, as another sift deactivated or removed them, and
         close their stores (the space of a store `sift rm` deleted is freed once closed); and take the codes read anew
         that are ready. Without opening every active store, as a search of one collection doesn't."""
@@ -695,7 +743,7 @@ class Index:
         for cid in [cid for cid, reading in self._reading.items() if reading.done()]:
             self._take_read(collections[cid])
 
-    def _take_read(self, collection):
+    def _take_read(self, collection: Collection) -> None:
         """Take the codes of a collection read anew, once they are."""
         cid = collection.id
         if (reading := self._reading.get(cid)) is not None and reading.done():
@@ -709,7 +757,7 @@ class Index:
                 if found is None:
                     self.vectors.pop(cid)
 
-    def _follow(self, collection):
+    def _follow(self, collection: Collection) -> None:
         """Bring the codes held of a collection up to its store (see load)."""
         cid, db = collection.id, self.catalog.store(collection)
         self._take_read(collection)
@@ -719,8 +767,8 @@ class Index:
             if held is not None and version is not None and held.version == version:
                 return
             count, epoch = store.counts(db)["vectors"], store.get_meta(db, "codes_epoch")
-            appended = held is not None and held.count is not None and held.epoch == epoch and count >= held.count
-            most = count - held.count + 1 if appended else count
+            appended = held is not None and held.stored is not None and held.epoch == epoch and count >= held.stored
+            most = count - held.stored + 1 if appended else count
             tail = store.read_codes(db, after=held.last, most=most) if held is not None and count else None
         if tail and tail[1].shape[1] != held.codes.width:  # another model's codes, after a reset: all read anew
             tail, appended = None, False
@@ -731,21 +779,21 @@ class Index:
             self._reading.pop(cid, None)  # older than what is read now
             if (found := _held(db)) is not None:
                 self.vectors[cid] = found
-        elif appended and len(tail[0] if tail else ()) == count - held.count:
+        elif appended and len(tail[0] if tail else ()) == count - held.stored:
             codes, last = (held.codes.appended(*tail), int(tail[0][-1])) if tail else (held.codes, held.last)
             self.vectors[cid] = _Held(version, codes, epoch, count, last)
         else:  # read anew; meanwhile the codes past the last held join them, so that a note just embedded is found
             if tail:
-                self.vectors[cid] = held._replace(codes=held.codes.appended(*tail), count=None, last=int(tail[0][-1]))
+                self.vectors[cid] = held._replace(codes=held.codes.appended(*tail), stored=None, last=int(tail[0][-1]))
             if cid not in self._reading:
                 self._reading[cid] = _in_a_thread(partial(_read_anew, collection.store))
 
-    def settle(self, timeout=None):
+    def settle(self, timeout: float | None = None) -> None:
         """Wait until the codes being read anew are read, at most `timeout` seconds each; the next search takes them."""
         for reading in list(self._reading.values()):
             wait([reading], timeout)
 
-    def _exact(self, chunks, dim):
+    def _exact(self, chunks: IdList, dim: int) -> tuple[Ids, NDArray[np.float16]]:
         """The vectors the stores hold of these chunks, of `dim` dimensions, as (their ids, fp16 rows): those deleted
         meanwhile, and any of another length, are left out."""
         sql = "SELECT chunk, vec FROM vectors WHERE chunk IN (SELECT value FROM json_each(?))"
@@ -758,7 +806,16 @@ class Index:
         matrix = np.frombuffer(b"".join(vec for _, vec in rows), np.float16).reshape(len(rows), dim)
         return np.array([chunk for chunk, _ in rows], np.int64), matrix
 
-    def _vector(self, query, scope, required=True):
+    @overload
+    def _vector(self, query: str, scope: Scope) -> NDArray[np.float32]: ...
+
+    @overload
+    def _vector(self, query: str, scope: Scope, required: Literal[True]) -> NDArray[np.float32]: ...
+
+    @overload
+    def _vector(self, query: str, scope: Scope, required: bool) -> NDArray[np.float32] | None: ...
+
+    def _vector(self, query: str, scope: Scope, required: bool = True) -> NDArray[np.float32] | None:
         """The query's vector, with the codes of the collections searched loaded (see load): kept for the next
         QUERY_VECTORS questions, and embedded together with the others of a call of several queries, the first time one
         is needed, after the search checked what it was asked."""
@@ -768,7 +825,7 @@ class Index:
         self._embed_questions([query, *self._asked])
         return self._query_vectors[query]
 
-    def _embed_questions(self, questions):
+    def _embed_questions(self, questions: list[str]) -> None:
         """Embed those of the questions not kept, together, keeping all of them as the latest."""
         new = [q for q in dict.fromkeys(questions) if q not in self._query_vectors]
         for question, vector in zip(new, self.models.encode(new, query=True) if new else ()):
@@ -780,22 +837,31 @@ class Index:
         while len(self._query_vectors) > QUERY_VECTORS:
             self._query_vectors.popitem(last=False)
 
-    def _filter(self, scope, where, args):
+    def _filter(self, scope: Scope, where: str, args: Sequence[Any]) -> _Filter | None:
         """A search's filter of the chunks `where` allows, or None for all: one per search, as it remembers what it was
         asked (see _Filter)."""
         return _Filter(self.catalog, scope, where, args) if args else None
 
-    def _nearest(self, query, k, scope, allowed, all_passages, excluded=None):
+    def _nearest(
+        self,
+        query: Floats,
+        k: int,
+        scope: Scope,
+        allowed: Filter | None,
+        all_passages: bool,
+        excluded: IdList | None = None,
+    ) -> Ranked:
         """The best passage of each of the k documents nearest the query's vector, among the chunks of the collections
         of `scope` the filter `allowed` lets through (see _filter), but those `excluded`; or the k best passages."""
-        held, width = [], codes(query[None, :]).shape[1]
+        held: list[Codes] = []
+        width = codes(query[None, :]).shape[1]
         for c in scope:
             if c.id in self.vectors and (theirs := self.vectors[c.id][1]).width != width:
                 self._warn(f"{c.name} was embedded with another model: `sift embed --reset` embeds it with this one")
             elif c.id in self.vectors:
                 held.append(theirs)
 
-        def exact(ids):
+        def exact(ids: Ids) -> tuple[Ids, NDArray[np.float16]]:
             return self._exact(ids, len(query))
 
         if all_passages:
@@ -808,14 +874,22 @@ class Index:
                 return best[:k]
             n *= 4
 
-    def _per_document(self, ranked):
+    def _per_document(self, ranked: Ranked) -> Ranked:
         """The first, best, of each document's passages in `ranked`."""
-        sql, docs = "SELECT c.id, c.doc FROM json_each(?) j JOIN chunks c ON c.id = j.value", {}
+        sql = "SELECT c.id, c.doc FROM json_each(?) j JOIN chunks c ON c.id = j.value"
+        docs: dict[int, int] = {}
         for _, db, group in self._by_store(chunk for chunk, _ in ranked):
             docs |= dict(db.execute(sql, (json.dumps(group),)))
         return _first_of_each((r for r in ranked if r[0] in docs), lambda r: docs[r[0]])  # in docs: not removed
 
-    def _works(self, rank, k, all_passages, more=lambda: True, keep=lambda hit: True):
+    def _works(
+        self,
+        rank: Callable[[int], Ranked],
+        k: int,
+        all_passages: bool,
+        more: Callable[[], bool] = lambda: True,
+        keep: Callable[[Hit], bool] = lambda hit: True,
+    ) -> list[Hit]:
         """The hits of the best k works by rank(n), the best n documents, of those keep(hit) keeps: one hit per work, as
         _one_per_work leaves them, or with `all_passages` the best k passages; asking for more while fewer are left,
         and more() allows."""
@@ -828,10 +902,11 @@ class Index:
                 return hits[:k]
             n *= 2
 
-    def _hits(self, ranked):
+    def _hits(self, ranked: Ranked) -> list[Hit]:
         sql = """SELECT d.path, d.title, d.meta, c.line_start, c.line_end, c.id, c.doc, c.pos, c.len
                  FROM chunks c JOIN docs d ON d.id = c.doc WHERE c.id IN (SELECT value FROM json_each(?))"""
-        found, hits = {}, []
+        found: dict[int, tuple[Any, ...]] = {}
+        hits: list[Hit] = []
         for c, db, chunks in self._by_store(chunk for chunk, _ in ranked):
             with store.snapshot([db]):  # the chunks and their texts as they are at one moment
                 rows = db.execute(sql, (json.dumps(chunks),)).fetchall()
@@ -841,11 +916,11 @@ class Index:
         for chunk, score in ranked:
             if chunk in found:  # else removed by a concurrent `sift index`
                 name, path, title, meta, start, end, text = found[chunk]
-                hit = {"id": f"{name}/{path}", "title": title, "lines": f"{start}-{end}", "score": round(score, 4)}
+                hit: Hit = {"id": f"{name}/{path}", "title": title, "lines": f"{start}-{end}", "score": round(score, 4)}
                 hits.append(hit | {"meta": meta, "text": text, "chunk": chunk})  # for _present, and `query`'s scores
         return hits
 
-    def _cosines(self, query, chunks):
+    def _cosines(self, query: Floats | None, chunks: Sequence[int]) -> NDArray[np.float64]:
         """The cosines of these chunks with the query's vector, exactly; one not embedded yet, or broken, gets the
         others' mean, neither a bonus nor a penalty; all of them 0 without a vector (see _vector)."""
         if query is None:
@@ -862,7 +937,7 @@ class Index:
     # Every search takes, beside what it looks for and k, the options of hits.Options, by name: where it looks, what
     # it lets through, and how its hits come.
 
-    def _options(self, k, options):
+    def _options(self, k: object, options: dict[str, Any]) -> tuple[int, Options, Scope, str, list[Any]]:
         """What a search was asked beside what it looks for, checked: (k, its Options, the collections it covers, and
         the SQL condition on their documents with its arguments, see _where)."""
         asked = Options(**options)
@@ -871,7 +946,7 @@ class Index:
 
     @_several
     @_remembered
-    def search(self, query, k=10, *, budget=None, **options):
+    def search(self, query: str, k: int = 10, *, budget: float | None = None, **options: Any) -> list[Hit]:
         """Exact keyword search, ranked by BM25. Accepts FTS5 syntax: "phrases", prefix*, AND, OR, NOT.
         If no chunk holds all terms of a query without operators, chunks with any of them are returned. With a
         `budget` in seconds, a search the keyword postings answer stops once it is spent and has found any, and returns
@@ -880,15 +955,15 @@ class Index:
         budget = check_budget(budget)
         deadline = topk.Deadline(budget) if budget is not None else None
 
-        def rank(n):
+        def rank(n: int) -> Ranked:
             ranked = self._keyword(query, n, scope, where, args, asked.all_passages, deadline)
             if not ranked and (relaxed := queries.any_term(query)):
                 ranked = self._keyword(relaxed, n, scope, where, args, asked.all_passages, deadline)
             return ranked
 
-        stopped = []
+        stopped: list[bool] = []
 
-        def in_time():  # asked again out of time, a search scores less than the first ask did
+        def in_time() -> bool:  # asked again out of time, a search scores less than the first ask did
             if deadline is not None and (deadline.cut or deadline.over()):
                 stopped.append(True)
             return not stopped
@@ -900,7 +975,7 @@ class Index:
 
     @_several
     @_remembered
-    def vsearch(self, query, k=10, **options):
+    def vsearch(self, query: str, k: int = 10, **options: Any) -> list[Hit]:
         """Semantic search: the passages nearest the query's embedding, by cosine similarity (see `vectors`)."""
         k, asked, scope, where, args = self._options(k, options)
         if not query.strip():  # the embedding of nothing is close to arbitrary chunks
@@ -913,7 +988,7 @@ class Index:
 
     @_several
     @_remembered
-    def query(self, query, k=10, *, candidates=40, **options):
+    def query(self, query: str, k: int = 10, *, candidates: int = 40, **options: Any) -> list[Hit]:
         """Hybrid search for RAG: keyword and semantic candidates, all reranked together, and ordered by the reranker's
         score blended with their cosine (see _blend). Fusing the candidates' first ranks into the order, e.g. by
         reciprocal rank, made results worse (MRR@10 0.69 to 0.64 on a known-item test over 3.2 million arXiv
@@ -940,18 +1015,18 @@ class Index:
         hits = (hits if asked.all_passages else one_per_work(_first_of_each(hits, itemgetter("id"))))[:k]
         return asked.shown(hits)
 
-    def get(self, id, lines=None):
+    def get(self, id: str, lines: object = None) -> str:
         """Text of an indexed document, by its `collection/path` id: all of it, or `lines` such as "17-26", as
         search hits give them, or one line number. The path may leave out folders if the file name is unique in the
         collection. The text comes from the index as it was indexed, so it always matches the hits."""
         return self.document(id, lines)["text"]
 
-    def document(self, id, lines=None, fields=None):
+    def document(self, id: str, lines: object = None, fields: Any = None) -> dict[str, Any]:
         """A document as {"id", "title", "text"}, the whole id even if asked by file name, and with "fields" if asked
         for, as in hits; `id` and `lines` as for `get`."""
         span, fields = None if lines is None else line_span(lines), check_fields(fields)
         _, whole, title, meta, text = self._find(id)
-        document = {"id": whole, "title": title} | ({"fields": pick(meta, fields)} if fields else {})
+        document: dict[str, Any] = {"id": whole, "title": title} | ({"fields": pick(meta, fields)} if fields else {})
         if span:
             every = readers.LINE.findall(text)
             if span[0] > len(every):
@@ -959,11 +1034,11 @@ class Index:
             text = "".join(every[span[0] - 1 : span[1]])
         return document | {"text": text}
 
-    def documents(self, asked, fields=None):
+    def documents(self, asked: Iterable[tuple[str, object]], fields: Any = None) -> list[dict[str, Any]]:
         """Several documents, each (id, lines) of `asked` as `document` gives it, in order; one that can't be read is
         {"id", "error"}, and the others still come."""
         check_fields(fields)
-        found = []
+        found: list[dict[str, Any]] = []
         for id, lines in asked:
             try:
                 found.append(self.document(id, lines, fields))
@@ -978,7 +1053,7 @@ class Index:
         return found
 
     @_remembered
-    def similar(self, id, k=10, **options):
+    def similar(self, id: str, k: int = 10, **options: Any) -> list[Hit]:
         """Documents closest in meaning to the document `id` (as for `get`), by cosine similarity with the mean of its
         passages' vectors; the document itself is left out, and so are its copies, documents with its DOI."""
         k, asked, scope, where, args = self._options(k, options)
@@ -992,7 +1067,7 @@ class Index:
         excluded, vector = np.array([chunk for chunk, _ in own], np.int64), mean / np.linalg.norm(mean)
         doi, allowed = doi_of(meta), self._filter(scope, where, args)
 
-        def other(hit):  # its copies in other collections are the same paper
+        def other(hit: Hit) -> bool:  # its copies in other collections are the same paper
             return doi is None or doi_of(hit["meta"]) != doi
 
         hits = self._works(
@@ -1003,7 +1078,7 @@ class Index:
         )
         return asked.shown(hits)
 
-    def _place(self, id):
+    def _place(self, id: str) -> tuple[Collection | None, str]:
         """The collection, and the path in it, that `id` names: "collection/path", or an absolute path in a
         collection's folder, the nearest that holds it (see indexing.holding); (None, path) for a collection there
         isn't, (None, "") for an absolute path in none."""
@@ -1013,7 +1088,7 @@ class Index:
             return next((c for c in collections if c.name == name), None), rel
         return indexing.holding(collections, os.path.normpath(id)) or (None, "")
 
-    def _rows(self, id):
+    def _rows(self, id: str) -> list[Row]:
         """The documents `id` may name (see `get`), at most six: (row id, path, title, meta, text) of each. For an id
         that is no document's path, only the documents whose paths end in its last part are read, as the store lists
         them (store.BASENAMES); every path of an older store, until `sift index` has listed them."""
@@ -1028,7 +1103,7 @@ class Index:
         among = "basenames b CROSS JOIN docs d ON d.id = b.doc WHERE b.name = ? AND " if listed else "docs d WHERE "
         name = [rel.rsplit("/", 1)[-1]] if listed else []
 
-        def where(condition, *args):
+        def where(condition: str, *args: Any) -> list[Row]:
             """The documents among those whose path `condition` holds for, by path. Their ids first, found by their
             paths alone: no text is read but of the documents returned."""
             ids = f"SELECT d.id FROM {among}{condition}"
@@ -1040,7 +1115,7 @@ class Index:
         # e.g. arxiv/2603.29315.md for arxiv/2026/03/2603.29315.md
         return where("substr(d.path, -?) = ? ORDER BY d.path LIMIT 6", len(rel) + 1, "/" + rel)
 
-    def _note(self, id):
+    def _note(self, id: str) -> Doc:
         """The document `id` names, as for `get`, or else the note `id` names as links name it, "Acme AG" or
         "[[Acme AG]]", if one note answers to it in all active collections: as _find gives it."""
         try:
@@ -1051,7 +1126,7 @@ class Index:
                 raise unknown from None
             return self._find(self._named([note])[note][0])
 
-    def _find(self, id):
+    def _find(self, id: str) -> Doc:
         """The document `id` names (see `get`), as (row id, whole id, title, meta, text)."""
         collection, rows = self._place(id)[0], self._rows(id)
         if len(rows) > 1:
@@ -1064,23 +1139,24 @@ class Index:
 
     def browse(
         self,
-        k=50,
+        k: int = 50,
         *,
-        collection=None,
-        path=None,
-        filters=None,
-        fields=None,
-        compact=False,
-        sort=None,
-        links_to=None,
-        linked_from=None,
-    ):
+        collection: str | None = None,
+        path: str | None = None,
+        filters: dict[str, Any] | None = None,
+        fields: Any = None,
+        compact: bool = False,
+        sort: Any = None,
+        links_to: Any = None,
+        linked_from: Any = None,
+    ) -> list[dict[str, Any]]:
         """Documents without a query, by collection and path: what a collection, folder or filter holds. They come as
         hits without lines and score, with the start of their first passage, after any front matter, as their
         passage; `sort` orders them by a front-matter field instead, as in searches."""
         k, (scope, where, args) = check_k(k), self._where(collection, path, filters, links_to, linked_from)
         fields, sort = check_fields(fields), check_sort(sort)
-        value, order, by = "NULL", "d.path", []
+        value, order = "NULL", "d.path"
+        by: list[str] = []
         if sort:
             value = "json_extract(d.meta, ?)"
             order = f"{value} IS NULL, {value}{' DESC' if sort[0] == '-' else ''}, {order}"
@@ -1092,20 +1168,21 @@ class Index:
                   ORDER BY {order} LIMIT ?"""
         rows = [(c.name, *row) for c in scope for row in self.catalog.store(c).execute(sql, [*by, *args, *by * 2, k])]
         rows = _by_value(rows, sort[0] == "-") if sort else rows  # else in order: the collections by name, each by path
-        docs = []
+        docs: list[dict[str, Any]] = []
         for name, doc_path, title, meta, text, _ in rows[:k]:
-            doc = {"id": f"{name}/{doc_path}", "title": title}
+            doc: dict[str, Any] = {"id": f"{name}/{doc_path}", "title": title}
             if fields:
                 doc["fields"] = pick(meta, fields)
             docs.append(doc if compact else doc | {"text": text})
         return docs
 
-    def folders(self, collection, path=""):
+    def folders(self, collection: str, path: str = "") -> list[str]:
         """The folders directly inside the folder `path` ("" or e.g. "2024/") of a collection, by name. Each folder
         is one jump through the index, past the documents in it, so a folder holding millions of documents in its
         folders costs as little as an empty one; documents lying in `path` itself are passed over within a query."""
         path = path.strip("/") + "/" if path.strip("/") else ""  # "2024", "/2024/": the folder 2024/
-        db, found, after = self._readable(self.catalog.get(collection)), [], path
+        db, after = self._readable(self.catalog.get(collection)), path
+        found: list[str] = []
         within, bound = (" AND path < ?", [path[:-1] + "0"]) if path else ("", [])  # "0" follows "/"
         sql = f"SELECT path FROM docs WHERE path > ?{within} AND instr(substr(path, ?), '/') ORDER BY path LIMIT 1"
         while row := db.execute(sql, (after, *bound, len(path) + 1)).fetchone():
@@ -1115,7 +1192,7 @@ class Index:
             after = path + name + "0"  # past the folder: whatever starts with `name/` sorts before
         return sorted(found)
 
-    def file(self, id):
+    def file(self, id: str) -> Path | None:
         """The file a document was read from, by its id as for `get`; None for a JSON Lines record, which is a part
         of its file, and for a file outside the collection's folder, as an older sift's reindex stored "D:/x.md"."""
         doc = self._find(id)[0]
@@ -1127,21 +1204,22 @@ class Index:
 
     # --- links between notes (see `links`) -----------------------------------
 
-    def links(self, id, direction="out", depth=1, field=None, k=50):
+    def links(self, id: str, direction: str = "out", depth: Any = 1, field: Any = None, k: int = 50) -> dict[str, Any]:
         """The links of a document `id` (as for `get`), as {"id", "title", "out", "in"}: "out" the links it holds, in
         order, each with where it leads; "in" the documents linking it, by path, each with the lines that do. Depth 2
         adds those one link further, each with the document it was reached `through`; `field` keeps to links in that
         front-matter field; k caps each way."""
         if direction not in ("out", "in", "both"):
             raise ValueError(f'direction must be "out", "in" or "both", got {direction!r}')
-        if depth not in (1, 2) or isinstance(depth, bool):
+        if isinstance(depth, bool) or depth not in (1, 2):
             raise ValueError(f"depth must be 1 or 2, got {depth!r}")
         if field is not None and not isinstance(field, str):
             raise ValueError(f"field must be the name of a front-matter field, got {field!r}")
         k = check_k(k)
         doc, whole, title, _, _ = self._note(id)
         db = self._db(doc)
-        resolver, found = links.Resolver(db), {"id": whole, "title": title}
+        resolver = Resolver(db)
+        found: dict[str, Any] = {"id": whole, "title": title}
         with store.snapshot([db]):  # the links, and the notes they name, as they are at one moment
             if direction != "in":
                 found["out"] = self._out(db, resolver, doc, depth, field, k)
@@ -1149,10 +1227,10 @@ class Index:
                 found["in"] = self._in(db, resolver, doc, depth, field, k)
         return found
 
-    def _out(self, db, resolver, doc, depth, field, k):
+    def _out(self, db: Db, resolver: Resolver, doc: int, depth: int, field: str | None, k: int) -> list[dict[str, Any]]:
         """The links out of a document, and with depth 2, the documents they lead to link: (row, how, through)."""
         first = links.outgoing(db, resolver, doc, field)
-        found = [(row, how, None) for row, how in first]
+        found: list[tuple[Row, Resolution, int | None]] = [(row, how, None) for row, how in first]
         if depth == 2:
             reached = [docs[0] for _, (via, docs) in first if via in VIA]
             seen = {doc, *reached}
@@ -1165,10 +1243,10 @@ class Index:
         named = self._named([d for _, (_, docs), through in found for d in [*docs, through] if d])
         return [_link_out(row, how, through, named) for row, how, through in found]
 
-    def _in(self, db, resolver, doc, depth, field, k):
+    def _in(self, db: Db, resolver: Resolver, doc: int, depth: int, field: str | None, k: int) -> list[dict[str, Any]]:
         """The documents linking a document, and with depth 2, those linking them: (doc, its links, through)."""
         first = _by_document(links.incoming(db, resolver, doc, field))
-        found = [(source, rows, None) for source, rows in first.items()]
+        found: list[tuple[int, list[Row], int | None]] = [(source, rows, None) for source, rows in first.items()]
         if depth == 2:
             seen = {doc, *first}
             for step in first:
@@ -1186,7 +1264,7 @@ class Index:
             for source, rows, through in found
         ]
 
-    def link_count(self, id):
+    def link_count(self, id: str) -> tuple[int, int]:
         """How many documents link to the document `id`, and how many documents it links to: (in, out)."""
         doc = self._note(id)[0]
         db = self._db(doc)
@@ -1195,14 +1273,15 @@ class Index:
         out = {docs[0] for _, (via, docs) in links.outgoing(db, resolver, doc) if via in VIA}
         return len(into), len(out)
 
-    def _named(self, docs):
+    def _named(self, docs: Iterable[int]) -> Named:
         """The whole id and title of documents, by row id."""
-        sql, named = "SELECT id, path, title FROM docs WHERE id IN (SELECT value FROM json_each(?))", {}
+        sql = "SELECT id, path, title FROM docs WHERE id IN (SELECT value FROM json_each(?))"
+        named: Named = {}
         for c, db, group in self._by_store(set(docs)):
             named |= {doc: (f"{c.name}/{path}", title) for doc, path, title in db.execute(sql, (json.dumps(group),))}
         return named
 
-    def unresolved(self, collection=None, k=50):
+    def unresolved(self, collection: str | None = None, k: int = 50) -> list[dict[str, Any]]:
         """Link targets no document answers to, in a collection or in every active one: notes not written yet. The
         most linked first, each with how many documents link it and the ids of a few of them."""
         k, scope = check_k(k), self._scope(collection)
@@ -1214,7 +1293,16 @@ class Index:
             for target, docs, _ in found
         ]
 
-    def mentions(self, id, k=10, *, collection=None, also=None, fields=None, compact=False):
+    def mentions(
+        self,
+        id: str,
+        k: int = 10,
+        *,
+        collection: str | None = None,
+        also: str | Sequence[Any] | None = None,
+        fields: Any = None,
+        compact: bool = False,
+    ) -> list[Hit]:
         """Documents that name the note `id` without linking to it, found as search finds them, by its names as phrases:
         its file name, its `title`, its aliases, and the values of the front-matter fields `also` names, e.g.
         ["emails"]. The note itself and the documents linking it are left out, and names shorter than MENTION_CHARS,
@@ -1228,8 +1316,9 @@ class Index:
         meta = json.loads(meta)
         names = [posixpath.splitext(whole.rsplit("/", 1)[-1])[0], *links.aliases(meta)]
         for value in [meta.get("title"), *(meta.get(field) for field in also or [])]:
-            names += [v for v in (value if isinstance(value, list) else [value]) if isinstance(v, str)]
-        phrases = {}
+            listed: list[Any] = value if isinstance(value, list) else [value]
+            names += [v for v in listed if isinstance(v, str)]
+        phrases: dict[str, str] = {}
         for name in names:
             for variant in (name, name.translate(UMLAUTS)):
                 variant = " ".join(variant.split())
@@ -1239,14 +1328,14 @@ class Index:
             return []
         scope, where, args = self._where(collection)
         db = self._db(doc)
-        linking = {row[0] for row in links.incoming(db, links.Resolver(db), doc)} | {doc}
+        linking = {row[0] for row in links.incoming(db, Resolver(db), doc)} | {doc}
         where, args = where + " AND d.id NOT IN (SELECT value FROM json_each(?))", [*args, _ids(linking)]
         match = " OR ".join('"' + phrase.replace('"', '""') + '"' for phrase in phrases.values())
         return present(self._hits(self._keyword(match, k, scope, where, args)), fields, compact, None)
 
     # --- reading files again (see indexing.reindex) ---------------------------
 
-    def reindex(self, paths):
+    def reindex(self, paths: Sequence[str]) -> list[dict[str, Any]]:
         """Read files again now, after they were written, changed or deleted, and embed their new passages if their
         collection is embedded: the next search finds them as they are, the codes in memory following without a full
         load. Per file: {"id", "status"}, see indexing.reindex, with "chunks", its documents' passages, and
@@ -1259,7 +1348,7 @@ class Index:
         note = self._embed_new([doc for _, docs in done.files for doc in docs])
         sql = """SELECT count(c.id), count(v.chunk) FROM chunks c LEFT JOIN vectors v ON v.chunk = c.id
                  WHERE c.doc IN (SELECT value FROM json_each(?))"""
-        results = []
+        results: list[dict[str, Any]] = []
         for entry, docs in done.files:
             if entry["status"] in ("added", "changed", "unchanged"):
                 chunks, embedded = self._db(docs[0]).execute(sql, (json.dumps(docs),)).fetchone() if docs else (0, 0)
@@ -1269,13 +1358,13 @@ class Index:
             results.append(entry)
         return results
 
-    def _embed_new(self, docs):
+    def _embed_new(self, docs: Iterable[int]) -> str | None:
         """Embed the passages of these documents that have no vector yet, in each collection already embedded, and add
         their codes to those in memory. Returns why some weren't, or None."""
         notes = [self._embed_new_in(c, db, group) for c, db, group in self._by_store(docs)]
         return "; ".join(dict.fromkeys(filter(None, notes))) or None
 
-    def _embed_new_in(self, collection, db, docs):
+    def _embed_new_in(self, collection: Collection, db: Db, docs: list[int]) -> str | None:
         model = store.get_meta(db, "model")
         if model is None:  # never embedded: keyword search alone, and no model to load
             return None
@@ -1309,7 +1398,15 @@ class Index:
         self._patch(collection.id, before, after, ids=[rows[i][0] for i in keep], matrix=matrix[keep])
         return None if intact.all() else "some passages could not be embedded (the model returned NaN); try again"
 
-    def _patch(self, cid, before, after, removed=(), ids=(), matrix=None):
+    def _patch(
+        self,
+        cid: int,
+        before: str | None,
+        after: Sequence[Any],
+        removed: Sequence[int] = (),
+        ids: Sequence[int] = (),
+        matrix: Floats | None = None,
+    ) -> None:
         """Bring the codes in memory of the collection `cid` from its store's version `before` to the state `after`
         (version, epoch, count of vectors: store.vectors_state, read in the change's transaction), a change this index
         made itself, without loading them all again. Codes of another version are followed by the next search anyway."""
@@ -1320,7 +1417,7 @@ class Index:
         last = max([held.last, *map(int, ids)])
         self.vectors[cid] = _Held(version, held.codes.patched(list(removed), list(ids), bits), epoch, count, last)
 
-    def fields(self, collection):
+    def fields(self, collection: Collection) -> list[str]:
         """The front-matter fields of a collection, from FIELD_SAMPLE documents spread from its first to its last,
         each looked up by id: reading every document for its front matter took a large collection minutes."""
         db = self.catalog.store(collection)
@@ -1333,14 +1430,15 @@ class Index:
                  json_each((SELECT meta FROM docs WHERE id >= p.value ORDER BY id LIMIT 1)) j ORDER BY j.key"""
         return [key for (key,) in db.execute(sql, (json.dumps(ids),))]
 
-    def status(self):
+    def status(self) -> dict[str, Any]:
         """The catalog, the model the active collections are embedded with, and every collection: its folder, whether
         it is active, its store and the bytes it takes, or that it is missing; and of an active one, its documents,
         chunks, those embedded, how its keyword postings stand, front-matter fields and links, or why its store can't
         be opened."""
-        collections, models = [], set()
+        collections: list[dict[str, Any]] = []
+        models = set[str | None]()
         for c in self.catalog.collections():
-            entry = {"name": c.name, "path": c.path, "active": c.active, "store": c.store}
+            entry: dict[str, Any] = {"name": c.name, "path": c.path, "active": c.active, "store": c.store}
             if not os.path.isfile(c.store):
                 collections.append(entry | {"missing": True})
                 continue
@@ -1369,7 +1467,7 @@ class Index:
             "collections": collections,
         }
 
-    def link_counts(self, collection):
+    def link_counts(self, collection: Collection) -> tuple[int, int]:
         """How many links the notes of a collection hold, and how many of them are unresolved."""
         db = self.catalog.store(collection)
         return db.execute("SELECT count(*) FROM links").fetchone()[0], sum(n for *_, n in links.unresolved(db))

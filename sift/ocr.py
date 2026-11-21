@@ -6,9 +6,21 @@ SIFT_OCR chooses where: auto (the default) on a GPU, on also on the CPU, where a
 """
 
 import time
+from collections.abc import Callable, Iterable
 from functools import cache
+from typing import TYPE_CHECKING, Any
 
 from . import console, settings
+
+if TYPE_CHECKING:
+    import torch
+    import transformers
+    from PIL.Image import Image
+
+    from .accelerator import Accelerator
+    from .readers import Doc
+
+_Loaded = tuple["transformers.LightOnOcrForConditionalGeneration", "transformers.LightOnOcrProcessor"]
 
 MODEL = "lightonai/LightOnOCR-2-1B"  # https://huggingface.co/lightonai/LightOnOCR-2-1B
 SETTINGS = ("auto", "on", "off")
@@ -23,7 +35,7 @@ RETRY_PENALTY = 1.1  # the repetition penalty a page that looped is read again w
 # 12 s and 20 GB, too much of a GPU other programs share.
 
 
-def setting():
+def setting() -> str:
     """SIFT_OCR, checked."""
     value = settings.current().ocr
     if value not in SETTINGS:
@@ -34,14 +46,14 @@ def setting():
     return value
 
 
-def pages(raw, limit=None):
+def pages(raw: bytes, limit: int | None = None) -> tuple[list["Image"], int]:
     """The pictures of a PDF's first `limit` pages (PAGES by default), as the model reads them, and how many pages it
     has."""
     import pypdfium2  # only reading scans needs it
 
     pdf = pypdfium2.PdfDocument(raw)
     try:
-        images = []
+        images: list[Image] = []
         for i in range(min(len(pdf), limit or PAGES)):
             page = pdf[i]
             width, height = page.get_size()  # in points, 72 to the inch
@@ -52,7 +64,7 @@ def pages(raw, limit=None):
         pdf.close()
 
 
-def _load(name, dtype):
+def _load(name: str, dtype: "torch.dtype | None") -> _Loaded:
     """LightOnOCR-2 and its processor, into RAM, in `dtype` (None: float32)."""
     import torch
     import transformers
@@ -67,15 +79,16 @@ class Ocr:
     """The OCR model of this machine: it loads on first use, into RAM in the accelerator's half precision, and moves
     to the GPU while it reads, as the other models do. `load` is how it loads; tests pass a fake."""
 
-    def __init__(self, accelerator, load=_load):
-        self.accelerator, self._load, self._loaded = accelerator, load, None
+    def __init__(self, accelerator: "Accelerator", load: Callable[[str, "torch.dtype | None"], _Loaded] = _load):
+        self.accelerator, self._load = accelerator, load
+        self._loaded: tuple[torch.dtype | None, *_Loaded] | None = None
 
-    def on_gpu(self):
+    def on_gpu(self) -> bool:
         """Whether it reads on a GPU: the accelerator's, unless too little of its memory is free."""
         self.accelerator.budget()
         return self.accelerator.gpu
 
-    def _ready(self):
+    def _ready(self) -> _Loaded:
         dtype = self.accelerator.half_precision
         if self._loaded is None or self._loaded[0] != dtype:
             console.say(f"loading the OCR model {MODEL} (downloaded once, 2 GB)")
@@ -84,12 +97,17 @@ class Ocr:
         self.accelerator.acquire(id(model), lambda: model.to(self.accelerator.device), lambda: model.to("cpu"))
         return model, processor
 
-    def read(self, images):
+    def read(self, images: Iterable["Image"]) -> list[str]:
         """The text of each picture, as Markdown, in order."""
         model, processor = self._ready()
         return [self._page(model, processor, image) for image in images]
 
-    def _page(self, model, processor, image):
+    def _page(
+        self,
+        model: "transformers.LightOnOcrForConditionalGeneration",
+        processor: "transformers.LightOnOcrProcessor",
+        image: "Image",
+    ) -> str:
         inputs = processor.apply_chat_template(
             [{"role": "user", "content": [{"type": "image", "image": image}]}],
             add_generation_prompt=True,
@@ -98,18 +116,24 @@ class Ocr:
             return_tensors="pt",
         )
         device, dtype = self.accelerator.device, self.accelerator.half_precision
-        inputs = {
+        moved: dict[str, torch.Tensor] = {
             key: value.to(device=device, dtype=dtype) if dtype and value.is_floating_point() else value.to(device)
             for key, value in inputs.items()
         }
-        text = self._generate(model, processor, inputs)
+        text = self._generate(model, processor, moved)
         if looping(text):  # read once more, with a penalty that breaks loops, but would bend every page's words
             text = max(
-                without_loop(text), without_loop(self._generate(model, processor, inputs, RETRY_PENALTY)), key=len
+                without_loop(text), without_loop(self._generate(model, processor, moved, RETRY_PENALTY)), key=len
             )
         return without_loop(text)
 
-    def _generate(self, model, processor, inputs, repetition_penalty=None):
+    def _generate(
+        self,
+        model: "transformers.LightOnOcrForConditionalGeneration",
+        processor: "transformers.LightOnOcrProcessor",
+        inputs: "dict[str, torch.Tensor]",
+        repetition_penalty: float | None = None,
+    ) -> str:
         import torch
 
         prompt = inputs["input_ids"].shape[1]
@@ -125,14 +149,16 @@ class Ocr:
         return processor.decode(out[0, prompt:], skip_special_tokens=True)
 
 
-def _guard(processor, prompt):
+def _guard(processor: "transformers.LightOnOcrProcessor", prompt: int) -> "transformers.StoppingCriteriaList":
     """What stops generate() once a page's text loops, looking every LOOP_STEP tokens: on two pages of the first
     twelve scans read, greedy decoding repeated a line until it ran out of tokens, two minutes a page."""
     import torch
     from transformers import StoppingCriteria, StoppingCriteriaList
 
     class Loop(StoppingCriteria):
-        def __call__(self, input_ids, scores, **kwargs):
+        def __call__(
+            self, input_ids: torch.LongTensor, scores: tuple[torch.FloatTensor] | None, **kwargs: Any
+        ) -> torch.BoolTensor:
             new = input_ids.shape[1] - prompt
             stop = new % LOOP_STEP == 0 and looping(processor.decode(input_ids[0, prompt:], skip_special_tokens=True))
             return torch.full((input_ids.shape[0],), stop, dtype=torch.bool, device=input_ids.device)
@@ -140,7 +166,7 @@ def _guard(processor, prompt):
     return StoppingCriteriaList([Loop()])
 
 
-def looping(text):
+def looping(text: str) -> bool:
     """Whether a page's text ends in a loop: the same line LOOP_LINES times running, or a pattern of at most
     LOOP_PERIOD characters repeated for LOOP_CHARS."""
     lines = [line.strip() for line in text.split("\n") if line.strip()]
@@ -149,7 +175,7 @@ def looping(text):
     return _repeated_tail(text) is not None
 
 
-def _repeated_tail(text):
+def _repeated_tail(text: str) -> tuple[int, int] | None:
     """Where the pattern that repeats for at least LOOP_CHARS at the end of `text` begins, and its length; or None."""
     tail = text[-LOOP_CHARS:]
     if len(tail) < LOOP_CHARS:
@@ -163,7 +189,7 @@ def _repeated_tail(text):
     return None
 
 
-def without_loop(text):
+def without_loop(text: str) -> str:
     """A page's text with its loops cut to one turn each: a pattern repeated at its end, and a line repeated
     LOOP_LINES times or more running, blank lines between aside."""
     if found := _repeated_tail(text):
@@ -171,7 +197,8 @@ def without_loop(text):
         text = text[: start + period]
     lines = text.rstrip().split("\n")
     filled = [i for i, line in enumerate(lines) if line.strip()]
-    dropped, first = set(), 0
+    dropped: set[int] = set()
+    first = 0
     while first < len(filled):
         last = first
         while last + 1 < len(filled) and lines[filled[last + 1]].strip() == lines[filled[first]].strip():
@@ -185,16 +212,16 @@ def without_loop(text):
 class Scans:
     """What indexing reads scans with. `engine` is the OCR model (an Ocr, made on first need)."""
 
-    def __init__(self, engine=None):
+    def __init__(self, engine: Ocr | None = None):
         self._engine = engine
 
     @property
-    def engine(self):
+    def engine(self) -> Ocr:
         if self._engine is None:
             self._engine = Ocr(_accelerator())
         return self._engine
 
-    def unavailable(self):
+    def unavailable(self) -> tuple[str, bool] | None:
         """Why scans can't be read here, and whether they may be on another try; None if they can be."""
         chosen = setting()
         if chosen == "off":
@@ -208,7 +235,7 @@ class Scans:
             )
         return None
 
-    def read(self, doc):
+    def read(self, doc: "Doc") -> tuple["Doc | None", str, bool]:
         """A scan's document with the text the OCR model reads in its pages, and what to tell the user; or None, why
         it couldn't be read, and whether another try may read it. The third value is False for a document read."""
         from . import readers
@@ -233,7 +260,7 @@ class Scans:
         return doc._replace(title=title, meta=meta, text=text, chunks=list(readers.chunk(text)), scan=None), said, False
 
 
-def _accelerator():
+def _accelerator() -> "Accelerator":
     """The accelerator of this machine's models, which OCR shares, so that one memory budget covers all; a new one
     where the models are another machine's."""
     from . import models
@@ -243,11 +270,11 @@ def _accelerator():
     return found if found is not None else Accelerator()
 
 
-def default():
+def default() -> Scans:
     """The scans reader of this process: one, so that the model loads once."""
     return _scans()
 
 
 @cache
-def _scans():
+def _scans() -> Scans:
     return Scans()

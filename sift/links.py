@@ -16,31 +16,37 @@ extension. A link that matches several files is ambiguous, and one that matches 
 
 import json
 import posixpath
+import sqlite3
 from collections import Counter
+from collections.abc import Sequence
+from typing import Any
 
 from . import readers
 
 AMBIGUOUS_SHOWN = 5  # candidates an ambiguous link names
-UNRESOLVED = ("unresolved", [])
+Candidate = tuple[int, str]  # a document's id and path
+Resolution = tuple[str, list[int]]  # how a link resolves, and the ids of the documents it leads to
+Row = tuple[Any, ...]  # a row with LINK's columns
+Saved = tuple[int, str, dict[str, Any], Sequence[readers.Link], bool]
+UNRESOLVED: Resolution = ("unresolved", [])
 
 
-def aliases(meta):
+def aliases(meta: dict[str, Any]) -> list[str]:
     """A note's aliases, from its front matter: Obsidian's `aliases`, or the older `alias`; one or a list."""
-    found = []
+    found: list[str] = []
     for field in ("aliases", "alias"):
-        value = meta.get(field)
-        found += [
-            a.strip() for a in (value if isinstance(value, list) else [value]) if isinstance(a, str) and a.strip()
-        ]
+        value: str | list[Any] | None = meta.get(field)
+        listed = value if isinstance(value, list) else [value]
+        found += [a.strip() for a in listed if isinstance(a, str) and a.strip()]
     return found
 
 
-def names(path, meta):
+def names(path: str, meta: dict[str, Any]) -> list[tuple[str, str]]:
     """The names a file answers to, as (key, kind): its file name, and its aliases."""
     return sorted({(readers.key(path.rsplit("/", 1)[-1]), "name")} | {(readers.key(a), "alias") for a in aliases(meta)})
 
 
-def save(db, docs):
+def save(db: sqlite3.Connection, docs: Sequence[Saved]) -> None:
     """Store the links of documents, and the names of those that are whole files: (id, path, meta, links, whole
     file?) of each."""
     db.executemany(
@@ -53,13 +59,13 @@ def save(db, docs):
     )
 
 
-def _stem(path):
+def _stem(path: str) -> str:
     """A path as paths compare: folded, a note's without `.md`."""
     stem, ext = posixpath.splitext(path)
     return readers.fold(stem if ext.lower() in readers.MARKDOWN else path)
 
 
-def _path(source, kind, target):
+def _path(source: str, kind: str, target: str) -> str:
     """Where a link of the note at path `source` points in its collection, as written: from the note's folder for a
     relative path or a Markdown link, else from the collection's root."""
     if kind == "markdown" or target.startswith(("./", "../")):
@@ -67,7 +73,7 @@ def _path(source, kind, target):
     return target.lstrip("/")
 
 
-def _one(via, docs):
+def _one(via: str, docs: list[Candidate]) -> Resolution:
     """How a link resolves to these candidates, (doc id, path) each: to the one, or ambiguously."""
     return (via, [docs[0][0]]) if len(docs) == 1 else ("ambiguous", [doc for doc, _ in docs])
 
@@ -75,10 +81,11 @@ def _one(via, docs):
 class Resolver:
     """Resolves the links of a collection, its store `db`, to its documents, looking each name up once."""
 
-    def __init__(self, db):
-        self.db, self._named = db, {}
+    def __init__(self, db: sqlite3.Connection) -> None:
+        self.db = db
+        self._named: dict[str, tuple[list[Candidate], ...]] = {}
 
-    def _candidates(self, key):
+    def _candidates(self, key: str) -> tuple[list[Candidate], ...]:
         """The files that answer to `key`, by file name and by alias: (doc id, path) each, by path."""
         if key not in self._named:
             sql = (
@@ -88,7 +95,7 @@ class Resolver:
             self._named[key] = tuple([(doc, path) for kind, doc, path in rows if kind == k] for k in ("name", "alias"))
         return self._named[key]
 
-    def resolve(self, source, kind, target, key):
+    def resolve(self, source: str | None, kind: str, target: str, key: str) -> Resolution:
         """Where a link of the note at path `source` leads, or with `source` None, a target named from no note in
         particular: ("path" | "name" | "alias", [doc id]), ("ambiguous", [doc ids]) or ("unresolved", [])."""
         named, aliased = self._candidates(key)
@@ -117,12 +124,14 @@ LINK = "l.doc, d.path, l.field, l.line, l.kind, l.target, l.key, l.fragment, l.s
 """What the queries below read of a link and the note holding it."""
 
 
-def _resolve(resolver, row):
+def _resolve(resolver: Resolver, row: Row) -> Resolution:
     """Where the link of a row with LINK's columns leads."""
     return resolver.resolve(row[1], row[4], row[5], row[6])
 
 
-def outgoing(db, resolver, doc, field=None):
+def outgoing(
+    db: sqlite3.Connection, resolver: Resolver, doc: int, field: str | None = None
+) -> list[tuple[Row, Resolution]]:
     """The links of a document in order, each as (row with LINK's columns, (how, [doc ids])); with `field`, only those
     in that front-matter field."""
     sql, args = f"SELECT {LINK} FROM links l JOIN docs d ON d.id = l.doc WHERE l.doc = ?", [doc]
@@ -131,7 +140,7 @@ def outgoing(db, resolver, doc, field=None):
     return [(row, _resolve(resolver, row)) for row in db.execute(sql + " ORDER BY l.id", args)]
 
 
-def incoming(db, resolver, doc, field=None):
+def incoming(db: sqlite3.Connection, resolver: Resolver, doc: int, field: str | None = None) -> list[Row]:
     """The links into a document from the other documents of its collection, by their path and line: rows with LINK's
     columns; with `field`, only those in that front-matter field. Only links that match one of the document's names
     can lead to it, so only those are resolved, found through the index on links' keys."""
@@ -145,7 +154,7 @@ def incoming(db, resolver, doc, field=None):
     return [row for row in rows if _resolve(resolver, row) in (("path", [doc]), ("name", [doc]), ("alias", [doc]))]
 
 
-def written(db, target, field=None):
+def written(db: sqlite3.Connection, target: str, field: str | None = None) -> list[Any]:
     """The documents holding a link to `target`, from the collection's root, however written: `[[Missing]]`,
     `[[missing.md]]` and, in a folder, `[text](../Missing.md)`; but not `[[Other/Missing]]`. With `field`, only links
     in that front-matter field."""
@@ -158,11 +167,12 @@ def written(db, target, field=None):
     return list(dict.fromkeys(row[0] for row in rows if _stem(_path(row[1], row[4], row[5])) == want))
 
 
-def unresolved(db):
+def unresolved(db: sqlite3.Connection) -> list[tuple[str, list[int], int]]:
     """The targets of links that no document answers to, each as (target as most often written, [ids of the
     documents linking it], number of links). Links to the same path are one target, however written: `[[Missing]]`,
     `[[missing.md]]`."""
-    resolver, targets = Resolver(db), {}
+    resolver = Resolver(db)
+    targets: dict[str, tuple[Counter[str], dict[int, None]]] = {}
     # A link by name alone can't be unresolved if any file answers to its key: so only those, and links by path, need
     # resolving, of the hundreds of thousands a vault may hold.
     sql = f"""SELECT {LINK} FROM links l JOIN docs d ON d.id = l.doc WHERE (l.kind = 'markdown'

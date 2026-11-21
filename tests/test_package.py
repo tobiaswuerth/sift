@@ -140,17 +140,12 @@ def test_only_newlines_end_lines():
 
 
 NOT_YET_STRICT = {  # the modules the type checker doesn't read yet. It only shrinks: modules leave it, none joins it
-    "sift/__main__.py",
     "sift/accelerator.py",
-    "sift/bench.py",
     "sift/catalog.py",
     "sift/cli.py",
     "sift/embed.py",
     "sift/indexing.py",
-    "sift/jobs.py",
-    "sift/links.py",
     "sift/local.py",
-    "sift/models.py",
     "sift/ocr.py",
     "sift/order.py",
     "sift/postings.py",
@@ -164,7 +159,6 @@ NOT_YET_STRICT = {  # the modules the type checker doesn't read yet. It only shr
     "sift/ui.py",
     "sift/upgrade.py",
     "sift/vectors.py",
-    "sift/worker.py",
 }
 SILENCED = re.compile(r"#\s*(?:type:\s*ignore|pyright:)")
 

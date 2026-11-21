@@ -4,28 +4,37 @@ NumPy took three passes, writing and reading two arrays as large as the codes be
 codes, 43 ms against 133 (docs/benchmarks.md). Loaded by vectors.compile_scan, as Numba takes a second or two."""
 
 import threading
+from typing import Any
 
 import numba
 import numpy as np
 from numba import njit, prange, types
 from numba.extending import intrinsic
+from numpy.typing import NDArray
 
 PARTS = 64  # pieces of the codes the threads take in turn, each tallying its own distances
 _ONE_AT_A_TIME = threading.Lock()  # Numba's threads take one scan at a time (its workqueue layer takes no more)
 
 
 @intrinsic
-def _popcount(typingctx, word):
+def _popcount(typingctx: Any, word: Any) -> Any:
     """The bits set in a 64-bit word, as the CPU counts them in one instruction."""
 
-    def codegen(context, builder, signature, args):
+    def codegen(context: Any, builder: Any, signature: Any, args: Any) -> Any:
         return builder.ctpop(args[0])
 
     return types.uint64(types.uint64), codegen
 
 
 @njit(parallel=True, cache=True, nogil=True)
-def _scan(words, query, keep, far, out, tallies):
+def _scan(
+    words: NDArray[np.uint64],
+    query: NDArray[np.uint64],
+    keep: NDArray[np.bool_],
+    far: int,
+    out: NDArray[np.uint16],
+    tallies: NDArray[np.int64],
+) -> None:
     n, width = words.shape
     parts = tallies.shape[0]
     step = (n + parts - 1) // parts
@@ -41,7 +50,14 @@ def _scan(words, query, keep, far, out, tallies):
             tallies[part, distance] += 1
 
 
-def measure(words, query, keep, out, far, threads):
+def measure(
+    words: NDArray[np.uint64],
+    query: NDArray[np.uint64],
+    keep: NDArray[np.bool_],
+    out: NDArray[np.uint16],
+    far: int,
+    threads: int,
+) -> NDArray[np.int64]:
     """Write the Hamming distance of each code, `words` (rows of uint64), to the query's (uint64) into `out`, `far`
     for those `keep` (bools, or empty for all) leaves out; and return how many codes kept are at each distance, from 0
     to every bit. In `threads` of Numba's."""

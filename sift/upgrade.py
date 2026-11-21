@@ -14,8 +14,14 @@ import shutil
 import sqlite3
 import time
 from collections import Counter
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 from . import console, store
 
@@ -25,15 +31,17 @@ INDEXES = ("docs_source", "chunks_doc", "links_doc", "links_key", "names_doc", "
 CARRIED = ("model", "dim", "vectors_checked", *store.READ_AGAIN)  # what the old meta says of every store
 GB = 1e9
 
+Job = tuple[str, str, int, str, str | None, int, Counter[str]]  # see _finish
 
-def split(path, into):
+
+def split(path: str | Path, into: str | Path) -> None:
     """Split the index at `path` into a store per collection in the folder `into`, and put the catalog in its place.
     Interrupted, it goes on where it stopped when run again."""
     into = Path(into).expanduser().resolve()
     with store.alone(path, "the index") as held:
         layout = held.execute("PRAGMA user_version").fetchone()[0]
         collections = held.execute("SELECT id, name, path, fields FROM collections ORDER BY id").fetchall()
-        meta = dict(held.execute("SELECT key, value FROM meta"))
+        meta: dict[str, Any] = dict(held.execute("SELECT key, value FROM meta"))
         files = {cid: into / f"{name}.sqlite" for cid, name, _, _ in collections}
         pending = {cid: file for cid, file in files.items() if not _complete(file, cid)}
         if pending:
@@ -50,14 +58,16 @@ def split(path, into):
                 for part in parts.values():
                     part.close()
             names = {cid: (name, fields) for cid, name, _, fields in collections}
-            jobs = [(f"{file}.part", str(file), cid, *names[cid], layout, sent[cid]) for cid, file in pending.items()]
+            jobs: list[Job] = [
+                (f"{file}.part", str(file), cid, *names[cid], layout, sent[cid]) for cid, file in pending.items()
+            ]
             _finish_all(jobs, sum(sent[cid]["chunks"] for cid in pending))
             console.say(f"split in {console.duration(time.perf_counter() - start)}")
         catalog = _catalog(Path(f"{path}.next"), collections, files)
     _replace(path, catalog)
 
 
-def _complete(file, cid):
+def _complete(file: Path, cid: int) -> bool:
     """Whether `file` is the complete store of the collection `cid`, from a split stopped later."""
     if not file.exists():
         return False
@@ -68,7 +78,7 @@ def _complete(file, cid):
     return True
 
 
-def _space(path, into):
+def _space(path: str | Path, into: Path) -> None:
     """An error unless `into` has room for the stores: as much as the old index takes, at most."""
     into.mkdir(parents=True, exist_ok=True)
     need, free = os.path.getsize(path), shutil.disk_usage(into).free
@@ -79,7 +89,7 @@ def _space(path, into):
         )
 
 
-def _begin(part, cid, meta):
+def _begin(part: Path, cid: int, meta: dict[str, Any]) -> sqlite3.Connection:
     """A new store at `part`, written without a journal: until it is complete, it is made again rather than repaired.
     Its secondary indexes come after its rows, which is faster than keeping them up to date."""
     for file in (part, Path(f"{part}-journal")):
@@ -96,32 +106,34 @@ def _begin(part, cid, meta):
     return db
 
 
-def _copy(held, parts, layout):
+def _copy(held: sqlite3.Connection, parts: dict[int, sqlite3.Connection], layout: int) -> dict[int, Counter[str]]:
     """Send every row of the old index to its collection's store, ids moved; returns how many rows of each table each
     store got. Rows of collections not pending, and chunks and vectors whose document is gone, are passed over."""
     import numpy as np
 
-    sent = {cid: Counter() for cid in parts}
+    sent = {cid: Counter[str]() for cid in parts}
     first = {cid: store.first_id(cid) for cid in parts}
     most = held.execute("SELECT max(id) FROM docs").fetchone()[0] or 0
     doc_owner = np.full(most + 1, -1, np.int64)  # the collection of each document, by its old id
     most = held.execute("SELECT max(id) FROM chunks").fetchone()[0] or 0
     chunk_owner = np.full(most + 1, -1, np.int64)
 
-    def owners(ids, of):
-        ids = np.asarray(ids, np.int64)
+    def owners(old: list[int], of: "NDArray[np.int64]") -> list[int]:
+        ids = np.asarray(old, np.int64)
         found = np.full(len(ids), -1, np.int64)
         inside = ids < len(of)
         found[inside] = of[ids[inside]]
         return found.tolist()
 
-    def table(name, select, insert, rows_of):
+    def table(
+        name: str, select: str, insert: str, rows_of: Callable[[list[Any]], list[tuple[int, tuple[Any, ...]]]]
+    ) -> None:
         """Copy a table: rows_of(rows) gives the collection of each row and the row as its store takes it."""
         total = held.execute(f"SELECT count(*) FROM {name}").fetchone()[0]
         cursor, done = held.execute(select), 0
         with console.Progress(total, "rows", prefix=f"{name}: ") as progress:
             while rows := cursor.fetchmany(BATCH):
-                batches = {}
+                batches: dict[int, list[tuple[Any, ...]]] = {}
                 for cid, row in rows_of(rows):
                     if cid in parts:
                         batches.setdefault(cid, []).append(row)
@@ -140,7 +152,7 @@ def _copy(held, parts, layout):
         lambda rows: [(row[1], (row[0], *row[2:])) for row in rows],
     )
 
-    def docs(rows):
+    def docs(rows: list[Any]) -> list[tuple[int, tuple[Any, ...]]]:
         doc_owner[[row[0] for row in rows]] = [row[1] for row in rows]
         return [(row[1], (row[0] + first.get(row[1], 0), *row[2:])) for row in rows]
 
@@ -151,7 +163,7 @@ def _copy(held, parts, layout):
         docs,
     )
 
-    def chunks(rows):
+    def chunks(rows: list[Any]) -> list[tuple[int, tuple[Any, ...]]]:
         cids = owners([row[1] for row in rows], doc_owner)
         chunk_owner[[row[0] for row in rows]] = cids
         shift = [first.get(cid, 0) for cid in cids]
@@ -164,7 +176,7 @@ def _copy(held, parts, layout):
         chunks,
     )
 
-    def by_chunk(rows):
+    def by_chunk(rows: list[Any]) -> list[tuple[int, tuple[Any, ...]]]:
         cids = owners([row[0] for row in rows], chunk_owner)
         return [(cid, (row[0] + first.get(cid, 0), row[1])) for cid, row in zip(cids, rows)]
 
@@ -187,7 +199,7 @@ def _copy(held, parts, layout):
     return sent
 
 
-def _finish_all(jobs, chunks):
+def _finish_all(jobs: list[Job], chunks: int) -> None:
     """Finish the stores: in processes of their own when there are many chunks, as the keyword index of each takes
     a while; else here."""
     console.say(f"making the keyword index of {console.count(len(jobs), 'collection')} ...")
@@ -205,7 +217,7 @@ def _finish_all(jobs, chunks):
             console.say(_finish(*job))
 
 
-def _finish(part, file, cid, name, fields, layout, sent):
+def _finish(part: str, file: str, cid: int, name: str, fields: str | None, layout: int, sent: Counter[str]) -> str:
     """Complete the store at `part`: its secondary indexes, its keyword index, and the links and codes an older layout
     lacks; then give it its name `file`. An error if it doesn't hold every row `sent` to it."""
     import json
@@ -236,14 +248,14 @@ def _finish(part, file, cid, name, fields, layout, sent):
     return f"{name}: done in {console.duration(time.perf_counter() - start)}"
 
 
-def _durable(file):
+def _durable(file: str) -> None:
     """Write a file through to the disk, written without SQLite's syncing as it was: the old index goes once its stores
     are complete, and a power cut then must not take them with it."""
     with open(file, "r+b") as written:
         os.fsync(written.fileno())
 
 
-def _catalog(path, collections, files):
+def _catalog(path: Path, collections: list[Any], files: dict[int, Path]) -> Path:
     """The catalog of these collections, their stores `files`, made at `path` and closed."""
     path.unlink(missing_ok=True)
     db = sqlite3.connect(path)
@@ -261,7 +273,7 @@ def _catalog(path, collections, files):
     return path
 
 
-def _replace(path, catalog):
+def _replace(path: str | Path, catalog: Path) -> None:
     """Put the catalog in the old index's place. Its log must be gone: SQLite would apply it to the catalog."""
     log = Path(f"{path}-wal")
     if log.exists() and log.stat().st_size:

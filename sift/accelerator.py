@@ -9,7 +9,9 @@ import contextlib
 import logging
 import sys
 import warnings
+from collections.abc import Callable
 from time import monotonic
+from typing import Protocol, TypeVar
 
 import torch
 
@@ -29,10 +31,38 @@ CPU_THREADS = torch.get_num_threads()  # PyTorch's own choice, a thread per core
 # Beside an NVIDIA GPU, PyTorch's CPU steps are small, and the threads it keeps for them wait busily after each (Intel
 # OpenMP's 200 ms): a thread per core kept 9 of 24 cores busy through `sift embed`, and embedding ran 5% slower.
 GPU_THREADS = 1
-_UNSET = object()
+_Item = TypeVar("_Item")
+_Result = TypeVar("_Result")
 
 
-def detect():
+class _Unset:
+    """The type of _UNSET: a budget not asked for yet, unlike None, which is a budget asked for and not there."""
+
+
+_UNSET = _Unset()
+
+
+class GpuMemory(Protocol):
+    """The part of CUDA's memory API (torch.cuda) that sift uses."""
+
+    def mem_get_info(self, device: str) -> tuple[int, int]: ...
+
+    def device_memory_used(self, device: str) -> int: ...
+
+    def set_per_process_memory_fraction(self, fraction: float, device: int) -> None: ...
+
+    def current_device(self) -> int: ...
+
+    def empty_cache(self) -> None: ...
+
+    def memory_reserved(self, device: str) -> int: ...
+
+    def max_memory_reserved(self, device: str) -> int: ...
+
+    def reset_peak_memory_stats(self, device: str) -> None: ...
+
+
+def detect() -> str:
     """An NVIDIA GPU (CUDA) if there is one, else an Apple GPU (MPS), else the CPU."""
     if torch.cuda.is_available():
         return "cuda"
@@ -41,12 +71,12 @@ def detect():
         return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
-def out_of_memory(error):
+def out_of_memory(error: BaseException) -> bool:
     """Whether a RuntimeError says the GPU ran out of memory: CUDA raises OutOfMemoryError, MPS a plain one."""
     return isinstance(error, torch.cuda.OutOfMemoryError) or "MPS backend out of memory" in str(error)
 
 
-def cuda_pytorch_command(platform=sys.platform):
+def cuda_pytorch_command(platform: str = sys.platform) -> str:
     """How to replace a CPU-only PyTorch with the CUDA build. Windows wheels bundle their CUDA libraries, so
     torch's other dependencies can stay; Linux wheels depend on nvidia-* packages, which must come along."""
     no_deps = "--no-deps " if platform == "win32" else ""
@@ -55,7 +85,7 @@ def cuda_pytorch_command(platform=sys.platform):
     )
 
 
-def _unused_nvidia_gpu():
+def _unused_nvidia_gpu() -> str | None:
     """Why an NVIDIA GPU sits unused, if there is one; None otherwise. NVML sees every GPU, whatever
     CUDA_VISIBLE_DEVICES hides from CUDA."""
     try:
@@ -84,28 +114,32 @@ class Accelerator:
     `memory` is CUDA's memory API (torch.cuda) and `clock` a monotonic clock; tests pass fakes of both.
     """
 
-    def __init__(self, device=None, memory=torch.cuda, clock=monotonic):
-        self.device = device or detect()
-        self.found = self.device  # the device found: `device` falls back to the CPU if too little memory is free
+    def __init__(
+        self, device: str | None = None, memory: GpuMemory = torch.cuda, clock: Callable[[], float] = monotonic
+    ):
+        self.device: str = device or detect()
+        self.found: str = self.device  # the device found: `device` falls back to the CPU if too little memory is free
         self.memory, self.clock = memory, clock
         self.batch_size = BATCH_SIZE
-        self._budget = _UNSET  # asked once, on first use
-        self._resident = {}  # what is on the GPU now: key -> function that moves it back to RAM
+        self._budget: float | _Unset | None = _UNSET  # asked once, on first use
+        self._resident: dict[
+            int, Callable[[], object]
+        ] = {}  # what is on the GPU now: key -> function that moves it back to RAM
         self._released = False  # whether everything left the GPU at some point, so the budget needs a fresh look
         self._last_use = 0.0
 
     @property
-    def kind(self):
+    def kind(self) -> str:
         """ "cuda", "mps" or "cpu"."""
         return torch.device(self.device).type
 
     @property
-    def gpu(self):
+    def gpu(self) -> bool:
         """Whether sift computes on a GPU (NVIDIA or Apple)."""
         return self.kind in ("cuda", "mps")
 
     @property
-    def half_precision(self):
+    def half_precision(self) -> torch.dtype | None:
         """The 16-bit type models compute in: bfloat16 on NVIDIA GPUs that have it, None (float32) elsewhere. Never
         fp16: its range is too small for EmbeddingGemma, which overflows in it now and then into NaN vectors;
         bfloat16 has the range of float32."""
@@ -113,10 +147,10 @@ class Accelerator:
 
     # --- memory ------------------------------------------------------------------
 
-    def budget(self):
+    def budget(self) -> float | None:
         """The GPU memory sift may use, set once as a cap on PyTorch: what other programs leave free now, minus
         headroom. None off CUDA, and when too little is free, which moves sift to the CPU."""
-        if self._budget is _UNSET:
+        if isinstance(self._budget, _Unset):
             if self.kind != "cuda":
                 if self.device == "cpu" and (reason := _unused_nvidia_gpu()):
                     console.say(reason)
@@ -126,11 +160,11 @@ class Accelerator:
             self._set_threads()
         return self._budget
 
-    def _set_threads(self):
+    def _set_threads(self) -> None:
         """PyTorch's CPU threads for the device settled on: one beside an NVIDIA GPU, else a thread per core."""
         torch.set_num_threads(GPU_THREADS if self.kind == "cuda" else CPU_THREADS)
 
-    def _free(self):
+    def _free(self) -> tuple[int, int]:
         """Free and total memory of the GPU. On Windows (WDDM), CUDA counts memory other programs hold as free,
         since the driver could page it out; NVML, which nvidia-smi reads, does not. The smaller value wins."""
         free, total = self.memory.mem_get_info(self.device)
@@ -138,7 +172,7 @@ class Accelerator:
             free = min(free, total - self.memory.device_memory_used(self.device))
         return free, total
 
-    def _set_budget(self):
+    def _set_budget(self) -> float | None:
         """Cap PyTorch's GPU memory at what other programs leave free, minus headroom. None, and the CPU from now on,
         if too little is free."""
         free, total = self._free()
@@ -154,7 +188,7 @@ class Accelerator:
         console.say(f"using at most {budget / GiB:.1f} of {total / GiB:.1f} GB of GPU memory")
         return budget
 
-    def _empty_cache(self):
+    def _empty_cache(self) -> None:
         """Hand cached memory back to the GPU, not just to PyTorch's cache. Only GPUs come here: the CPU has none."""
         if self.kind == "cuda":
             self.memory.empty_cache()
@@ -163,7 +197,7 @@ class Accelerator:
 
     # --- batches ---------------------------------------------------------------------
 
-    def run(self, fn, items, most=None):
+    def run(self, fn: Callable[[_Item, int], _Result], items: _Item, most: int | None = None) -> _Result:
         """fn(items, batch_size), halving the batch size whenever the GPU runs out of memory. With `most`, at most that
         many at a time, halved for this call alone: a rerank short of memory in batches of 16 says nothing of the
         embedding's batches, which then went on at 8 for the life of the process."""
@@ -180,7 +214,7 @@ class Accelerator:
                     self.batch_size = size
                 console.say(f"\nout of GPU memory, batch size now {size}")
 
-    def calibrate(self, run):
+    def calibrate(self, run: Callable[[int], object]) -> int:
         """Measure the largest batch that fits the memory budget, and use it from now on. run(n) runs a batch of n
         texts as long as any to come: of the longest input the model takes, so that the batch fits every text.
 
@@ -196,7 +230,7 @@ class Accelerator:
         base = self.memory.memory_reserved(self.device)
         target = FILL * budget - base
 
-        def cost(n):
+        def cost(n: int) -> int:
             self._empty_cache()  # what an earlier batch left cached would hide what this one needs
             self.memory.reset_peak_memory_stats(self.device)
             run(n)
@@ -219,7 +253,7 @@ class Accelerator:
 
     # --- what is on the GPU ------------------------------------------------------------
 
-    def acquire(self, key, to_gpu, off_gpu):
+    def acquire(self, key: int, to_gpu: Callable[[], object], off_gpu: Callable[[], object]) -> None:
         """Make sure something is on the GPU: to_gpu() moves it there unless it is already, off_gpu() moves it back.
         Every call counts as use. On the CPU, nothing moves."""
         self._last_use = self.clock()
@@ -229,7 +263,7 @@ class Accelerator:
         to_gpu()
         self._resident[key] = off_gpu
 
-    def release_idle(self):
+    def release_idle(self) -> bool:
         """Move everything back to RAM once the GPU has been unused for IDLE_SECONDS. Returns whether it did."""
         if not self._resident or self.clock() < self._last_use + IDLE_SECONDS:  # not now - last use: rounding
             return False
@@ -241,7 +275,7 @@ class Accelerator:
         console.say(f"idle for {IDLE_SECONDS // 60} min: models moved off the GPU")
         return True
 
-    def resume(self):
+    def resume(self) -> None:
         """After an idle release, look at the GPU memory again: other programs may hold more or less of it by now.
         With too little left, sift uses the CPU from then on, as it does when there is too little at start-up."""
         if self._released and self.kind == "cuda":

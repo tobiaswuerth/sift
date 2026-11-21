@@ -6,7 +6,8 @@ import dataclasses
 import logging
 import sqlite3
 import sys
-from typing import Annotated, Any, Literal
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 import anyio
 from mcp.server.mcpserver import MCPServer
@@ -19,6 +20,14 @@ from . import models as _models
 from .hits import Options, line_span
 from .search import Index
 
+if TYPE_CHECKING:
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+
+    from .catalog import Collection as _Collection
+    from .models import Models
+
+T = TypeVar("T")
 log = logging.getLogger(__name__)
 
 # How to search well, first: clients keep only the start of a server's instructions (Claude Code its first 2,048
@@ -45,12 +54,12 @@ Narrow any search with `collection`, a `path` glob, `filters` on front matter an
 results only. After writing or deleting a file of a collection, `reindex` it."""
 
 
-def _collections(index):
+def _collections(index: Index) -> str:
     """The active collections with their folders, sizes and front-matter fields, read when the server starts."""
     active = index.active().values()
     if not active:
         return "No collections are active." if index.catalog.collections() else "No collections are indexed yet."
-    lines = []
+    lines: list[str] = []
     for c in active:
         try:
             lines.append(_collection_line(index, c))
@@ -59,7 +68,7 @@ def _collections(index):
     return "Indexed collections (`status` lists them all, with their fields):\n" + "\n".join(lines)
 
 
-def _collection_line(index, c):
+def _collection_line(index: Index, c: "_Collection") -> str:
     """A collection as the server's instructions name it: its folder, size, front-matter fields and links."""
     n = store.counts(index.catalog.store(c))["docs"]
     line = f"- {c.name} ({c.path}): {n:,} document{'' if n == 1 else 's'}"
@@ -71,14 +80,14 @@ def _collection_line(index, c):
     return line
 
 
-async def _run(fn, *args, abortable=True, **kwargs):
+async def _run(fn: Callable[..., T], *args: Any, abortable: bool = True, **kwargs: Any) -> T:
     """Call an Index method, off the event loop (see `jobs`). Any failure becomes a ToolError, the only kind whose
     message the MCP library passes on (it tells the agent just "Error executing tool" otherwise): expected ones as
     their message, others, which are bugs, with their type, and with a traceback in the server's log."""
     return await jobs.run(_call, fn, *args, abortable=abortable, **kwargs)
 
 
-def _call(fn, *args, **kwargs):
+def _call(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     try:
         return fn(*args, **kwargs)
     except (KeyError, IndexError) as e:  # LookupErrors too, but a bug's, never what sift says of a call
@@ -91,7 +100,7 @@ def _call(fn, *args, **kwargs):
         raise _bug(e) from None
 
 
-def _bug(error):
+def _bug(error: Exception) -> ToolError:
     """What to tell the agent of an error that is a bug, being handled now: its type too, and its traceback logged."""
     log.exception("tool failed")
     return ToolError(f"{type(error).__name__}: {error}")
@@ -210,7 +219,7 @@ RESULTS = (
 )
 
 
-def _add_search(mcp, index, name, description, query_description):
+def _add_search(mcp: MCPServer, index: Index, name: str, description: str, query_description: str) -> None:
     """Add the tool for the Index search called `name`: keyword search's takes a budget too."""
     method = getattr(index, name)
 
@@ -230,7 +239,7 @@ def _add_search(mcp, index, name, description, query_description):
         links_to: LinksTo = None,
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
-    ) -> list[dict] | list[list[dict]]:
+    ) -> list[dict[str, Any]] | list[list[dict[str, Any]]]:
         return await _search(method, query, k, locals())
 
     async def timed(
@@ -247,7 +256,7 @@ def _add_search(mcp, index, name, description, query_description):
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
         budget: Budget = None,
-    ) -> list[dict] | list[list[dict]]:
+    ) -> list[dict[str, Any]] | list[list[dict[str, Any]]]:
         return await _search(method, query, k, locals())
 
     mcp.tool(name, description=description, annotations=READ_ONLY)(timed if name == "search" else tool)
@@ -256,12 +265,14 @@ def _add_search(mcp, index, name, description, query_description):
 OPTIONS = (*(option.name for option in dataclasses.fields(Options)), "budget")  # of a search, and keyword search's
 
 
-async def _search(method, subject, k, arguments):
+async def _search(method: Callable[..., Any], subject: str | list[str], k: int, arguments: dict[str, Any]) -> Any:
     """Run a search tool's Index method with the options among the tool's `arguments`, by name."""
     return await _run(method, subject, k, **{key: arguments[key] for key in OPTIONS if key in arguments})
 
 
-def _batch(index, asked, lines, fields):
+def _batch(
+    index: Index, asked: Sequence["str | Part"], lines: str | int | None, fields: list[str] | None
+) -> list[dict[str, Any]]:
     """The documents of one `get` that names several, their texts up to BATCH_TEXT characters in all."""
     if not asked:
         raise ValueError("get takes at least one id")
@@ -283,7 +294,7 @@ def _batch(index, asked, lines, fields):
     return documents
 
 
-def build(index=None):
+def build(index: Index | None = None) -> tuple[MCPServer, Index]:
     # Tools run one at a time on a worker thread (see `jobs`), which serialises GPU and SQLite work and leaves the
     # event loop free; the models run on the main thread, which holds the loop.
     index = index or Index()
@@ -340,11 +351,11 @@ def build(index=None):
         links_to: LinksTo = None,
         linked_from: LinkedFrom = None,
         adaptive: Adaptive = False,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         return await _search(index.similar, id, k, locals())
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get(id: Ids, lines: Lines = None, fields: Fields = None) -> str | dict | list[dict]:
+    async def get(id: Ids, lines: Lines = None, fields: Fields = None) -> str | dict[str, Any] | list[dict[str, Any]]:
         """Read what a search found: the text of a document, as indexed, all of it or some of its lines, such as a
         result's. Read the best few results at once, by id and lines, rather than one call each. With `fields`, the
         document as
@@ -358,7 +369,7 @@ def build(index=None):
         return await _run(index.get, id, lines)
 
     @mcp.tool(annotations=READ_ONLY)
-    async def status() -> dict:
+    async def status() -> dict[str, Any]:
         """Collections with their folders (`path`), whether they are `active` (searched), their index files (`store`)
         and sizes; of active ones the counts of documents, chunks and those `embedded`, whether keyword search is
         quick (`keywords`: "ready"), their front-matter `fields`, and their links, or why their index can't be opened
@@ -384,7 +395,7 @@ def build(index=None):
             ),
         ] = None,
         k: Annotated[int, Field(description="At most this many links out, and this many documents in.")] = 50,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Links between Markdown notes: [[wikilinks]], ![[embeds]] and [Markdown](links.md), in the text and in
         front-matter values. "out" lists each link the note holds, with its line and front-matter field, and where it
         leads: the document's id, and `via` path, name or alias; or `ambiguous`, with the candidates; or `unresolved`,
@@ -396,7 +407,7 @@ def build(index=None):
     async def unresolved(
         collection: Annotated[str | None, Field(description="Only this collection's links.")] = None,
         k: Annotated[int, Field(description="Number of targets.")] = 50,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Link targets no document answers to: the notes a collection lacks, most linked first, each with how many
         documents link it and the ids of a few of them."""
         return await _run(index.unresolved, collection, k)
@@ -412,7 +423,7 @@ def build(index=None):
         ] = None,
         fields: Fields = None,
         compact: Compact = False,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Documents that name a note without linking to it (unlinked mentions), in any collection: found by keyword
         search for the note's names as phrases, its file name, title and aliases. Results look like search results;
         the note itself and the documents linking it are left out. Read the passages to judge which mean the note."""
@@ -427,7 +438,7 @@ def build(index=None):
                 "a collection. A file that is gone has its documents removed."
             ),
         ],
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Index files again right after writing, changing or deleting them, so that the next search finds them as
         they are now: their text, front matter and links, and, if the index is embedded, their passages for vsearch
         and query. Changes only sift's index, never a file. Per file: its id and status (added, changed, unchanged,
@@ -441,21 +452,21 @@ IDLE_CHECK_SECONDS = 30  # how often the server checks whether the models can le
 SHUTDOWN_SECONDS = 3  # how long Ctrl+C waits for open requests before the server stops anyway
 
 
-async def release_when_idle(models):
+async def release_when_idle(models: "Models") -> None:
     """Every IDLE_CHECK_SECONDS, let the models hand the GPU back if it has been idle long enough."""
     while True:
         await anyio.sleep(IDLE_CHECK_SECONDS)
         models.release_idle()
 
 
-def http_app(mcp, index, host):
+def http_app(mcp: MCPServer, index: Index, host: str) -> "Starlette":
     """The app `sift serve` runs over HTTP: MCP under /mcp, and the UI under /ui, where the address alone leads."""
     from starlette.responses import RedirectResponse
     from starlette.routing import Mount, Route
 
     from . import ui
 
-    async def home(request):
+    async def home(request: "Request") -> RedirectResponse:
         return RedirectResponse(ui.PREFIX)
 
     app = mcp.streamable_http_app(host=host)  # the host decides on DNS-rebinding protection
@@ -463,11 +474,13 @@ def http_app(mcp, index, host):
     return app
 
 
-async def _serve_http(mcp, index, host, port):
+async def _serve_http(mcp: MCPServer, index: Index, host: str, port: int) -> None:
     await serve_app(http_app(mcp, index, host), host, port, mcp.settings.log_level.lower())
 
 
-async def serve_app(app, host, port, log_level="info", access_log=True, **options):
+async def serve_app(
+    app: "Starlette", host: str, port: int, log_level: str = "info", access_log: bool = True, **options: Any
+) -> None:
     """Serve an HTTP app with uvicorn, but with a time limit on shutdown. Without one, uvicorn waits for every
     connection to close (Python 3.12+), even after a second Ctrl+C, and a client that leaves a request unfinished
     keeps the server from ever stopping. Options go to uvicorn, e.g. its TLS files."""
@@ -487,7 +500,7 @@ async def serve_app(app, host, port, log_level="info", access_log=True, **option
     await uvicorn.Server(config).serve()
 
 
-def loop_options(stdio=False):
+def loop_options(stdio: bool = False) -> dict[str, Any]:
     """How anyio runs a server's event loop. On Windows, HTTP is served on a selector loop: the default one, the
     proactor, closes the listening socket for good when one accept fails (WinError 64, a client gone mid-accept), and
     the server then runs on but answers no one. Over stdio, which listens on no socket, the default stays."""
@@ -496,12 +509,12 @@ def loop_options(stdio=False):
     return {}
 
 
-def _no_cancelled_requests(record):
+def _no_cancelled_requests(record: logging.LogRecord) -> bool:
     """Drop the traceback uvicorn logs for each request it cancels at shutdown; it says beforehand that it does."""
     return not (record.exc_info and isinstance(record.exc_info[1], asyncio.CancelledError))
 
 
-async def _serve(mcp, index, host, port, stdio, models):
+async def _serve(mcp: MCPServer, index: Index, host: str, port: int, stdio: bool, models: "Models") -> None:
     # One event loop for the transport and the idle check: both stay on the main thread, where PyTorch must run.
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(release_when_idle, models)
@@ -521,7 +534,7 @@ async def _serve(mcp, index, host, port, stdio, models):
         tasks.cancel_scope.cancel()
 
 
-def serve(host="127.0.0.1", port=8765, stdio=False, models=None):
+def serve(host: str = "127.0.0.1", port: int = 8765, stdio: bool = False, models: "Models | None" = None) -> None:
     """Run the MCP server, with `models` (default: `models.default()`) loaded up front, so the first search is quick."""
     models = models or _models.default()
     mcp, index = build(Index(models=models))

@@ -140,15 +140,21 @@ parametrize-names-type = "csv"  # @pytest.mark.parametrize("a, b", ...)
 # until it is all of sift/, and a new module is on it from its start (tests/test_package.py).
 include = [
     "sift/__init__.py",
+    "sift/__main__.py",
+    "sift/bench.py",
     "sift/console.py",
     "sift/expression.py",
     "sift/filters.py",
     "sift/hits.py",
     "sift/ignore.py",
+    "sift/jobs.py",
+    "sift/links.py",
     "sift/logs.py",
+    "sift/models.py",
     "sift/queries.py",
     "sift/settings.py",
     "sift/update.py",
+    "sift/worker.py",
 ]
 typeCheckingMode = "strict"
 pythonVersion = "3.11"  # the oldest sift runs on

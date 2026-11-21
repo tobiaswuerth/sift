@@ -12,18 +12,38 @@ import os
 import secrets
 import socket
 import ssl
-from collections import namedtuple
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeGuard
 
 import anyio
 
 from . import __version__, console, remote, settings
 from .server import loop_options, release_when_idle, serve_app
 
-Credentials = namedtuple("Credentials", "token pin cert private_key")
-Credentials.key = property(lambda self: f"{self.token}.{self.pin}")  # what other machines put before @
+if TYPE_CHECKING:
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    from .local import Local
+
+Handler = Callable[["Request"], Awaitable["Response"]]
 
 
-def credentials():
+class Credentials(NamedTuple):
+    token: str
+    pin: str
+    cert: Path
+    private_key: Path
+
+    @property
+    def key(self) -> str:
+        """What other machines put before @."""
+        return f"{self.token}.{self.pin}"
+
+
+def credentials() -> Credentials:
     """The worker's token, certificate and private key, made on its first start and kept, so the key other machines
     were given stays valid. Deleting SIFT_HOME/worker makes a new one."""
     folder = settings.current().home / "worker"
@@ -36,7 +56,7 @@ def credentials():
     return Credentials(token.read_text(encoding="ascii").strip(), pin, cert, private_key)
 
 
-def _make_certificate(cert, private_key):
+def _make_certificate(cert: Path, private_key: Path) -> None:
     """A certificate of the worker's own, EC P-256: the fingerprint in the key vouches for it, not an authority."""
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
@@ -61,7 +81,7 @@ def _make_certificate(cert, private_key):
     _write(cert, certificate.public_bytes(pem))
 
 
-def _write(path, data):
+def _write(path: Path, data: bytes) -> None:
     """Write a file only this user may read (on POSIX; on Windows the home folder's permissions do that), whole or not
     at all: a key cut short by a crash or a full disk would change the key other machines were given, unsaid. Through
     PATH.part beside it, for a moment."""
@@ -78,21 +98,21 @@ def _write(path, data):
         raise
 
 
-async def _json(request):
+async def _json(request: "Request") -> dict[str, Any]:
     """The request's JSON object; {} for anything else."""
     try:
-        body = await request.json()
+        body: dict[str, Any] | list[Any] | str | float | bool | None = await request.json()
     except ValueError:  # not JSON, or not UTF-8
         return {}
     return body if isinstance(body, dict) else {}
 
 
-def _texts(value):
+def _texts(value: list[object] | str | dict[str, Any] | float | bool | None) -> TypeGuard[list[str]]:
     """Whether a request field is a list of texts."""
     return isinstance(value, list) and all(isinstance(v, str) for v in value)
 
 
-def app(token, models):
+def app(token: str, models: "Local") -> "Starlette":
     """The worker's HTTP API over `models`, for requests that carry `Authorization: Bearer <token>`.
 
     GET / names the models and the length of the vectors. POST /embed takes {"texts": [...], "query": false} and
@@ -101,6 +121,7 @@ def app(token, models):
     the GPU, and PyTorch stays on the main thread, as it must on some platforms.
     """
     from starlette.applications import Starlette
+    from starlette.requests import Request
     from starlette.responses import JSONResponse, PlainTextResponse, Response
     from starlette.routing import Route
 
@@ -108,11 +129,11 @@ def app(token, models):
     expected, done = f"Bearer {token}".encode(), {"texts": 0, "queries": 0}
     status, line = "{texts:,} texts embedded, {queries:,} queries reranked (last for {host})", console.Line()
 
-    def authorized(handler):
+    def authorized(handler: Handler) -> Handler:
         """The handler, for requests with the token only; afterwards the status line shows what was done."""
 
         @functools.wraps(handler)
-        async def endpoint(request):
+        async def endpoint(request: "Request") -> "Response":
             if not hmac.compare_digest(request.headers.get("authorization", "").encode(), expected):
                 return PlainTextResponse("wrong key", status_code=401)
             response = await handler(request)
@@ -121,19 +142,19 @@ def app(token, models):
 
         return endpoint
 
-    def too_many(texts):
+    def too_many(texts: list[str]) -> Response:
         """The answer to a request of more texts than a sift sends at once (remote.MOST_TEXTS), which would hold the
         GPU, and the memory of its answer, for as long as it took."""
         return PlainTextResponse(f"send at most {remote.MOST_TEXTS:,} texts at a time, not {len(texts):,}", 413)
 
     @authorized
-    async def info(request):
+    async def info(request: Request) -> Response:
         return JSONResponse(
             {"model": models.name, "dim": dim, "reranker": models.reranker_name, "version": __version__}
         )
 
     @authorized
-    async def embed_texts(request):
+    async def embed_texts(request: Request) -> Response:
         body = await _json(request)
         if not _texts(texts := body.get("texts")):
             return PlainTextResponse('send {"texts": [...], "query": false}', status_code=400)
@@ -144,7 +165,7 @@ def app(token, models):
         return Response(vectors.tobytes(), media_type="application/octet-stream")
 
     @authorized
-    async def rerank(request):
+    async def rerank(request: Request) -> Response:
         body = await _json(request)
         if not (isinstance(query := body.get("query"), str) and _texts(texts := body.get("texts"))):
             return PlainTextResponse('send {"query": "...", "texts": [...]}', status_code=400)
@@ -162,7 +183,7 @@ def app(token, models):
     return Starlette(routes=routes)
 
 
-async def _serve(application, host, port, found, models):
+async def _serve(application: "Starlette", host: str, port: int, found: Credentials, models: "Local") -> None:
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(release_when_idle, models)  # the GPU stays free for others while nobody sends work
         tls = {"ssl_certfile": str(found.cert), "ssl_keyfile": str(found.private_key)}
@@ -170,7 +191,7 @@ async def _serve(application, host, port, found, models):
         tasks.cancel_scope.cancel()
 
 
-def serve(host="0.0.0.0", port=8766, models=None):
+def serve(host: str = "0.0.0.0", port: int = 8766, models: "Local | None" = None) -> None:
     """Serve `models` to other machines; by default the models of this machine (never another worker's)."""
     if models is None:
         from .local import Local

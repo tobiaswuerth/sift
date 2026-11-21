@@ -13,12 +13,19 @@ import json
 import sqlite3
 import threading
 import uuid
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, overload
 from urllib.parse import quote
 
 from . import console, readers
+
+if TYPE_CHECKING:
+    from .vectors import Bits, Floats, Ids
+
+_D = TypeVar("_D")
 
 SCHEMA_VERSION = 10  # in SQLite's user_version; up to sift 1.7, one database held every collection (see `upgrade`)
 FIRST_LAYOUT = 6  # sift 1.8's, the first of a store per collection; its rows are counted once (see _count_rows)
@@ -133,22 +140,22 @@ CREATE TABLE IF NOT EXISTS kw_order(block INTEGER PRIMARY KEY, data BLOB NOT NUL
 """
 
 
-def postings_lock(path):
+def postings_lock(path: str | Path) -> Path:
     """The file beside the store at `path` whose lock is held while its keyword postings change (postings._alone)."""
     return Path(f"{path}.postings-lock")
 
 
-def files(path):
+def files(path: str | Path) -> list[Path]:
     """The files of the store at `path`: the database, its write-ahead log and shared memory, and its postings' lock."""
     return [Path(path), Path(f"{path}-wal"), Path(f"{path}-shm"), postings_lock(path)]
 
 
-def first_id(cid):
+def first_id(cid: int) -> int:
     """The first row id of the collection `cid`."""
     return cid << SHIFT
 
 
-def owner(row_id):
+def owner(row_id: int) -> int:
     """The id of the collection a document or chunk, by its row id, belongs to."""
     return int(row_id) >> SHIFT
 
@@ -160,8 +167,39 @@ class Connection(sqlite3.Connection):
     scratch = 0
 
 
+class Collection(Protocol):
+    """What the modules below the catalog ask of its collections (catalog.Collection): catalog imports them, through
+    upgrade, so they can't import it."""
+
+    @property
+    def id(self) -> int: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def path(self) -> str: ...
+    @property
+    def store(self) -> str: ...
+    @property
+    def active(self) -> bool: ...
+    @property
+    def choices(self) -> dict[str, Any]: ...
+
+
+C = TypeVar("C", bound=Collection)
+
+
+class Catalog(Protocol[C]):
+    """What the modules below the catalog ask of it (catalog.Catalog)."""
+
+    def collections(self) -> list[C]: ...
+    def get(self, name: str) -> C: ...
+    def store(self, collection: C) -> Connection: ...
+    def opened(self, collection: C) -> Connection: ...
+    def set_title_from(self, name: str, title_from: str) -> C: ...
+
+
 @contextmanager
-def scratch(db):
+def scratch(db: Connection) -> Generator[None]:
     """While this lasts, `db` writes only tables of its own, temporary ones: the rows it changes are counted as such,
     as SQLite counts them among the connection's changes, where they looked like changes of the store."""
     before = db.total_changes
@@ -171,23 +209,25 @@ def scratch(db):
         db.scratch += db.total_changes - before
 
 
-def changes(db):
+def changes(db: Connection) -> tuple[int, int]:
     """How SQLite counts a database's changes through a connection: those other connections committed, and the rows
     the connection changed itself, but those in tables of its own (see scratch)."""
     return db.execute("PRAGMA data_version").fetchone()[0], db.total_changes - db.scratch
 
 
-def database(path, create=False) -> Connection:
+def database(path: str | Path, create: bool = False) -> Connection:
     """The SQLite database at `path`, with sift's settings. It is made only if `create`: a store on a drive that isn't
     connected stays missing, and is never made anew, empty."""
-    path, options = Path(path), {"timeout": TIMEOUT, "check_same_thread": False, "factory": Connection}
+    path = Path(path)
     if create:
         path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(path, **options)
+        db = sqlite3.connect(path, timeout=TIMEOUT, check_same_thread=False, factory=Connection)
     elif not path.is_file():
         raise FileNotFoundError(f"not found: {path}")
     else:
-        db = sqlite3.connect(uri(path.resolve(), "rw"), uri=True, **options)
+        db = sqlite3.connect(
+            uri(path.resolve(), "rw"), timeout=TIMEOUT, check_same_thread=False, factory=Connection, uri=True
+        )
     try:
         db.execute("PRAGMA journal_mode=WAL")
         db.execute(f"PRAGMA journal_size_limit={WAL_LIMIT}")
@@ -200,13 +240,13 @@ def database(path, create=False) -> Connection:
     return db
 
 
-def read_only(path) -> Connection:
+def read_only(path: str | Path) -> Connection:
     """The database at `path`, to read only, through a connection of its own: no setting changes, and no call
     cancelled meanwhile (ABORT) stops what it reads."""
     return sqlite3.connect(uri(Path(path).resolve(), "ro"), uri=True, timeout=TIMEOUT, factory=Connection)
 
 
-def uri(path, mode):
+def uri(path: Path, mode: str) -> str:
     r"""The URI SQLite opens the file at the absolute `path` by, to read and write it ("rw") or to read it only ("ro").
     A Windows network path, \\nas\share\x, as file:////nas/share/x: SQLite refuses a URI that names a host, as
     Path.as_uri writes it (file://nas/share/x), and a drive mapped to a share resolves to its network path. Written
@@ -219,7 +259,7 @@ def uri(path, mode):
 DAMAGED = (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB)
 
 
-def damage(name, error):
+def damage(name: str, error: BaseException) -> str:
     """What to say of the collection `name` whose store SQLite found damaged as it read it, as a failing disk leaves
     one, and what to do. Any other error of SQLite's (locked, full, misused) is raised again: not the store's fault."""
     if (getattr(error, "sqlite_errorcode", 0) & 0xFF) not in DAMAGED:
@@ -228,7 +268,7 @@ def damage(name, error):
     return f"{name}: its index is damaged ({error}): `{forget}` forgets it; then add its folder and index it again"
 
 
-def connect(path, cid, create=False) -> sqlite3.Connection:
+def connect(path: str | Path, cid: int, create: bool = False) -> Connection:
     """The store of the collection `cid` at `path`; with `create`, a new one, made there."""
     db = database(path, create)
     try:
@@ -239,7 +279,7 @@ def connect(path, cid, create=False) -> sqlite3.Connection:
     return db
 
 
-def _layout(db, path, cid, create):
+def _layout(db: sqlite3.Connection, path: str | Path, cid: int, create: bool) -> None:
     """Make a new store's tables, or check that an existing one is this collection's, in this version's layout."""
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version > SCHEMA_VERSION:
@@ -265,7 +305,7 @@ def _layout(db, path, cid, create):
         _once(db, WAITED, _read_waited_again)
 
 
-def make(db, cid, read=True):
+def make(db: sqlite3.Connection, cid: int, read: bool = True) -> None:
     """The tables of a new store of the collection `cid`, its ids starting at first_id(cid). Unless `read`, its files
     of the kinds an older sift skipped are still to be read again (READ_AGAIN)."""
     kept_by_triggers = "".join(f"{statement};\n" for statement in (*COUNTS, *BASENAMES))
@@ -281,7 +321,7 @@ def make(db, cid, read=True):
 
 
 @contextmanager
-def alone(path, name):
+def alone(path: str | Path, name: str) -> Generator[sqlite3.Connection]:
     """The store at `path` of the collection `name`, held so that no other sift reads or writes it until this ends;
     its write-ahead log is written into it first, so that the file holds it all. An error if another sift has it
     open."""
@@ -302,14 +342,16 @@ def alone(path, name):
         db.close()
 
 
-READ_AGAIN = {  # in the meta table, once the files of these kinds that an older sift skipped are to be read again
+READ_AGAIN: dict[
+    str, tuple[str, ...]
+] = {  # in the meta table, once the files of these kinds that an older sift skipped are to be read again
     "scans_read": (".pdf",),  # sift 1.2 and older read no scans
     "documents_read": readers.DOCUMENTS,  # the server of sift 1.3.0 and older skipped every document it reindexed
 }
 WAITED = "paths_waited"  # in the meta table, once what sift 1.11 left out for a taken path is to be read again
 
 
-def _once(db, key, work):
+def _once(db: sqlite3.Connection, key: str, work: Callable[[sqlite3.Connection], object]) -> None:
     """work(db), once per store, as the meta `key` records: in one transaction, which another sift starting at the same
     time waits for, and then finds done. Not in a store this sift may only read: once it may write."""
     try:
@@ -327,7 +369,7 @@ def _once(db, key, work):
             raise
 
 
-def _read_waited_again(db):
+def _read_waited_again(db: sqlite3.Connection) -> None:
     """Have the next `sift index` read again what sift 1.11 left out for good, as another file's document held its path,
     with nothing to say that it waits (see wait). Every file without documents, as a file left out whole is, whether
     or not its path is free by now; and a JSON Lines file or mail below whose name lie more documents than its own, as
@@ -349,7 +391,7 @@ def _read_waited_again(db):
             db.execute("UPDATE sources SET mtime = NULL WHERE id = ?", (sid,))
 
 
-def read_again(db, kinds):
+def read_again(db: sqlite3.Connection, kinds: tuple[str, ...]) -> None:
     """Have the next `sift index` read again the files of these kinds without documents, and the mails with one
     attached: those an older sift skipped (READ_AGAIN), or scans left unread (indexing.SCANS_SKIPPED). Their
     unchanged documents stay, vectors included."""
@@ -365,7 +407,7 @@ def read_again(db, kinds):
     )
 
 
-def _count_rows(db, path):
+def _count_rows(db: sqlite3.Connection, path: str | Path) -> None:
     """Count the rows of a store of sift 1.8 once, a pass over each table, and keep them counted from then on (layout
     6 to 7). In one transaction, which another sift opening the store meanwhile waits for, and then finds done."""
     db.execute(f"PRAGMA busy_timeout = {UPGRADE_WAIT * 1000}")
@@ -387,7 +429,7 @@ def _count_rows(db, path):
         db.execute(f"PRAGMA busy_timeout = {TIMEOUT * 1000}")
 
 
-def _add_tables(db):
+def _add_tables(db: sqlite3.Connection) -> None:
     """Add the tables a store lacks, in one transaction, which another sift opening the store meanwhile waits for, and
     then finds done. The keyword postings': all of them to a store of sift 1.9 (layout 7), unbuilt, so that keyword
     search reads FTS5 until `sift index` builds them (see `postings`); their order to one of 1.10 (layout 8), empty,
@@ -406,13 +448,13 @@ def _add_tables(db):
         raise
 
 
-def basenames_listed(db):
+def basenames_listed(db: sqlite3.Connection) -> bool:
     """Whether the store lists the last part of every document's path (see BASENAMES): one this sift made does, an
     older one once `sift index` has listed them."""
     return get_meta(db, LISTED) is not None
 
 
-def list_basenames(db, name=""):
+def list_basenames(db: sqlite3.Connection, name: str = "") -> None:
     """List the last part of every document's path in a store of sift 1.12 or older, the collection `name`'s, once: a
     batch of documents per transaction, so that this goes on where it stopped, and another sift's change waits for
     a batch, not for the store. Documents that come and go meanwhile are the triggers'."""
@@ -430,7 +472,7 @@ def list_basenames(db, name=""):
             done = _list_batch(db)
 
 
-def _list_batch(db):
+def _list_batch(db: sqlite3.Connection) -> int | None:
     """List the next BASENAMES_BATCH documents in the order of their paths, and record how far this got. Returns how
     many are listed by now; None once none was left, the store marked as listed, by this sift or another meanwhile.
     The documents are read from the index on their paths alone, never with their texts. The batch is found before its
@@ -465,12 +507,12 @@ def _list_batch(db):
     return done
 
 
-def counts(db):
+def counts(db: sqlite3.Connection) -> dict[str, int]:
     """How many rows of each table in COUNTED the store holds, by table, as kept: no table is read."""
     return dict(db.execute("SELECT name, n FROM counts"))
 
 
-def read_codes(db, after=None, most=None):
+def read_codes(db: sqlite3.Connection, after: int | None = None, most: int | None = None) -> "tuple[Ids, Bits] | None":
     """The codes of a store's vectors, by chunk id: (ids, rows of uint8), batch by batch; None if there are none. All of
     them, at most `most`, by default as many as the vectors the store counts, which it keeps, into room made for that
     many at once: counting the codes was a pass over millions before the one that reads them, and codes added since
@@ -480,13 +522,15 @@ def read_codes(db, after=None, most=None):
 
     if after is not None:
         sql = "SELECT chunk, bits FROM codes WHERE chunk > ? ORDER BY chunk LIMIT ?"
-        cursor, parts = db.execute(sql, (after, -1 if most is None else most)), []
+        cursor = db.execute(sql, (after, -1 if most is None else most))
+        parts: list[tuple[Ids, Bits]] = []
         while batch := cursor.fetchmany(CODES_BATCH):
             ids = np.fromiter((chunk for chunk, _ in batch), np.int64, len(batch))
             parts.append((ids, np.frombuffer(b"".join(b for _, b in batch), np.uint8).reshape(len(batch), -1)))
         return (np.concatenate([i for i, _ in parts]), np.concatenate([b for _, b in parts])) if parts else None
     n = counts(db)["vectors"] if most is None else most
-    ids, bits, row = np.empty(n, np.int64), None, 0
+    ids, row = np.empty(n, np.int64), 0
+    bits: Bits | None = None
     cursor = db.execute("SELECT chunk, bits FROM codes ORDER BY chunk")
     while row < n and (batch := cursor.fetchmany(CODES_BATCH)):
         batch = batch[: n - row]
@@ -498,7 +542,7 @@ def read_codes(db, after=None, most=None):
     return (ids[:row], bits[:row]) if row else None  # none, or all deleted meanwhile
 
 
-def add_codes(db):
+def add_codes(db: sqlite3.Connection) -> None:
     """Add the codes of the vectors that have none, computed from the vectors: nothing is embedded again. A batch per
     transaction, so that this goes on where it stopped, and another sift waits a batch at most. Vectors of another
     length than the store's get none: they can't be searched with the others."""
@@ -523,18 +567,18 @@ def add_codes(db):
             raise
 
 
-def put_vectors(db, chunks, matrix):
+def put_vectors(db: sqlite3.Connection, chunks: Iterable[int], matrix: "Floats") -> None:
     """Store the vectors of chunks (fp16 rows of `matrix`) with their codes, replacing any they had: as an upsert,
     which keeps the count (see COUNTS)."""
-    chunks = [int(chunk) for chunk in chunks]
-    rows = zip(chunks, (vector.tobytes() for vector in matrix))
+    ids = [int(chunk) for chunk in chunks]
+    rows = zip(ids, (vector.tobytes() for vector in matrix))
     db.executemany(
         "INSERT INTO vectors(chunk, vec) VALUES(?, ?) ON CONFLICT(chunk) DO UPDATE SET vec = excluded.vec", rows
     )
-    _put_codes(db, chunks, matrix)
+    _put_codes(db, ids, matrix)
 
 
-def _put_codes(db, chunks, matrix):
+def _put_codes(db: sqlite3.Connection, chunks: list[int], matrix: "Floats") -> None:
     """Write the codes of these chunks' vectors. Codes written at or before the last there is change those a running
     server holds: a new epoch (see codes_changed); `sift embed` writes past the last, which a server reads alone."""
     from .vectors import codes  # imports NumPy
@@ -546,7 +590,7 @@ def _put_codes(db, chunks, matrix):
     db.executemany("INSERT OR REPLACE INTO codes(chunk, bits) VALUES(?, ?)", zip(chunks, (b.tobytes() for b in bits)))
 
 
-def drop_vectors(db, where, args=()):
+def drop_vectors(db: sqlite3.Connection, where: str, args: Sequence[Any] = ()) -> int:
     """Delete the vectors, and with them their codes, of the chunks `where` (SQL on the vectors' `chunk`, with `args`)
     selects; a new epoch of the codes if any went. Every deletion of vectors goes through here. Returns how many."""
     dropped = db.execute(f"DELETE FROM vectors WHERE {where}", args).rowcount
@@ -555,20 +599,20 @@ def drop_vectors(db, where, args=()):
     return dropped
 
 
-def vectors_state(db):
+def vectors_state(db: sqlite3.Connection) -> tuple[str | None, str | None, int]:
     """What a store says of its vectors, as a server follows them: (its version, the epoch of its codes, how many
     vectors it counts)."""
     return get_meta(db, "version"), get_meta(db, "codes_epoch"), counts(db)["vectors"]
 
 
-def codes_changed(db):
+def codes_changed(db: sqlite3.Connection) -> None:
     """Mark that the codes changed otherwise than by codes written past the last: a server holding them reads them all
     again, beside its searches, where it reads only those past the last it holds as long as the epoch stays."""
     set_meta(db, "codes_epoch", uuid.uuid4().hex)
 
 
 @contextmanager
-def snapshot(dbs):
+def snapshot(dbs: Iterable[sqlite3.Connection]) -> Generator[None]:
     """While this lasts, each of these stores is read in one transaction: as it was at the first read, whatever other
     sifts write meanwhile (WAL). A store in a transaction already stays in it."""
     began = [db for db in dbs if not db.in_transaction]
@@ -581,38 +625,48 @@ def snapshot(dbs):
             db.commit()  # nothing written: it ends the reading
 
 
-def get_meta(db, key, default=None):
+@overload
+def get_meta(db: sqlite3.Connection, key: str) -> str | None: ...
+
+
+@overload
+def get_meta(db: sqlite3.Connection, key: str, default: _D) -> str | _D: ...
+
+
+def get_meta(db: sqlite3.Connection, key: str, default: object = None) -> object:
     row = db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
     return row[0] if row else default
 
 
-def set_meta(db, key, value):
+def set_meta(db: sqlite3.Connection, key: str, value: object) -> None:
     db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?, ?)", (key, str(value)))
 
 
-def empty_log(db):
+def empty_log(db: sqlite3.Connection) -> None:
     """Write the write-ahead log into the store and empty it, after a change that grew it while readers held it (a
     postings build): it would keep its size while any other sift has the store open. Waits for those readers, at most
     TIMEOUT; still held then, it shrinks at a later change (WAL_LIMIT)."""
     db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
 
-def touch(db):
+def touch(db: sqlite3.Connection) -> None:
     """Mark the vectors as changed, so a running server follows their codes (see codes_changed). Random, as clocks can
     tick too slowly."""
     set_meta(db, "version", uuid.uuid4().hex)
 
 
-def texts(db, spans):
+def texts(db: sqlite3.Connection, spans: Iterable[tuple[int, int, int, int]]) -> dict[int, str]:
     """The texts of chunks, each given as (id, document, position, length): {id: text}, without those whose document
     is gone. As the chunk_text view cuts them, but from a text read once per document: SQLite's substr loads the whole
     text and walks to the position for every chunk it cuts, 6 ms for each of the 3,310 of an 8 MB file."""
     return dict(_cut(db, spans))
 
 
-def _cut(db, spans, columns=""):
+def _cut(
+    db: sqlite3.Connection, spans: Iterable[tuple[int, int, int, int]], columns: str = ""
+) -> Iterator[tuple[Any, ...]]:
     """(id, text, *`columns` of its document `d`, as SQL) of each chunk of `spans`, document by document."""
-    chunks = {}
+    chunks: dict[int, list[tuple[int, int, int]]] = {}
     for chunk, doc, pos, length in spans:
         chunks.setdefault(doc, []).append((chunk, pos, length))
     sql = f"SELECT d.id, d.text{columns} FROM docs d WHERE d.id IN (SELECT value FROM json_each(?))"
@@ -623,7 +677,7 @@ def _cut(db, spans, columns=""):
             yield (chunk, text[pos : pos + length], *rest)
 
 
-def _chunks(chunks, docs):
+def _chunks(chunks: Sequence[int] | None, docs: Sequence[int] | None) -> tuple[str, tuple[str, ...]]:
     """Chunks `c` as a FROM clause, with its arguments: these `chunks` (ids), else the chunks of these `docs` (ids),
     else every chunk."""
     if chunks is not None:
@@ -633,7 +687,9 @@ def _chunks(chunks, docs):
     return "chunks c", ()
 
 
-def chunk_rows(db, chunks=None, docs=None, where="1"):
+def chunk_rows(
+    db: sqlite3.Connection, chunks: Sequence[int] | None = None, docs: Sequence[int] | None = None, where: str = "1"
+) -> Iterator[tuple[Any, ...]]:
     """What the chunk_text view reads of chunks (see _chunks, and of those the ones `where` holds for), each as (id,
     text, title, meta), by id. Cut as `texts` cuts them, CUT at a time as they are asked for: the rows of millions of
     chunks pass through, none held."""
@@ -644,7 +700,14 @@ def chunk_rows(db, chunks=None, docs=None, where="1"):
         yield from sorted(_cut(db, batch, f", d.title, {META}"))  # by id, as FTS5 writes them in one go
 
 
-def fill(db, table, chunks=None, docs=None, delete=False, count=None):
+def fill(
+    db: sqlite3.Connection,
+    table: str,
+    chunks: Sequence[int] | None = None,
+    docs: Sequence[int] | None = None,
+    delete: bool = False,
+    count: int | None = None,
+) -> None:
     """Write what the chunk_text view reads of chunks (see _chunks) into the FTS5 table `table`, or with `delete` take
     their entries out of it. The chunks of short documents in one statement, through the view, as one per document
     took twice as long; those of documents of more than LONG chunks cut by chunk_rows. `count` is how many chunks
@@ -663,7 +726,7 @@ def fill(db, table, chunks=None, docs=None, delete=False, count=None):
         db.executemany(f"INSERT INTO {table}({columns}, text, title, meta) VALUES({first}?, ?, ?, ?)", rows)
 
 
-def keywords(db, docs, add=True, count=None):
+def keywords(db: sqlite3.Connection, docs: Sequence[int], add: bool = True, count: int | None = None) -> None:
     """Add the keyword index's entries for the chunks of these documents, by id, or delete them, as the chunk_text
     view reads them now; `count` is how many chunks they have, if known (see fill). Delete them before a document's
     text, title or meta changes, and add them after: entries that no longer match the view can't be deleted any
@@ -675,7 +738,7 @@ def keywords(db, docs, add=True, count=None):
         _mark_dirty(db, docs)
 
 
-def _mark_dirty(db, docs):
+def _mark_dirty(db: sqlite3.Connection, docs: Sequence[int]) -> None:
     """Mark the chunks of these documents dirty, numbered by this change: their postings no longer follow FTS5."""
     change = int(get_meta(db, "kw_change", 0)) + 1
     set_meta(db, "kw_change", change)
@@ -696,21 +759,21 @@ WAITING = (
 )
 
 
-def wait(db, path, source):
+def wait(db: sqlite3.Connection, path: str, source: int) -> None:
     """Record that a document of the file `source` waits for `path`, which another file's document holds."""
     for statement in WAITING:
         db.execute(statement)
     db.execute("INSERT OR IGNORE INTO waiting(path, source) VALUES(?, ?)", (path, source))
 
 
-def stop_waiting(db, source):
+def stop_waiting(db: sqlite3.Connection, source: int) -> None:
     """Forget what the documents of the file `source` waited for: it is being stored anew, and says so again if they
     still wait, or it is gone."""
     if _waits(db):
         db.execute("DELETE FROM waiting WHERE source = ?", (source,))
 
 
-def freed(db):
+def freed(db: sqlite3.Connection) -> list[str]:
     """The paths of the files whose documents waited for a path freed since this was last asked (see _free)."""
     if not _waits(db):
         return []
@@ -720,11 +783,11 @@ def freed(db):
     return found
 
 
-def _waits(db):
+def _waits(db: sqlite3.Connection) -> bool:
     return db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'waiting'").fetchone() is not None
 
 
-def _free(db, paths):
+def _free(db: sqlite3.Connection, paths: Sequence[str]) -> None:
     """Mark the files waiting for these paths, freed (see wait), to be read again: their times cleared, for the next
     `sift index`, and `freed` for one running."""
     if paths and _waits(db):
@@ -735,7 +798,7 @@ def _free(db, paths):
         )
 
 
-def delete_docs(db, doc_ids, free=True):
+def delete_docs(db: sqlite3.Connection, doc_ids: Sequence[int], free: bool = True) -> None:
     """Delete documents, with all that is theirs; the files waiting for their paths are read again (see _free), unless
     not `free`, as for a document replaced by its new version at once."""
     for i in range(0, len(doc_ids), 500):
