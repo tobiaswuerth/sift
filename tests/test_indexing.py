@@ -945,3 +945,24 @@ def test_a_text_file_larger_than_a_document_may_be_is_left_out_unread(corpus, mo
     monkeypatch.setattr(readers, "load", lambda *args: read.append(args) or real(*args))
     indexing.index(catalog)
     assert read == []  # known by its time and size: left alone until it changes
+
+
+class Pipe(Denied):
+    """A directory entry that is a named pipe: no file with an end to read to."""
+
+    def stat(self):
+        return os.stat_result((stat.S_IFIFO | 0o644, *tuple(self.entry.stat())[1:]))
+
+
+def test_walk_passes_over_what_is_no_file(notes, monkeypatch):
+    # A named pipe called x.md was opened as a file is, and its reader waited for an end that never came; a folder
+    # linked under such a name was "unreadable" on every run.
+    real = os.scandir
+
+    def scandir(path):
+        with real(path) as entries:
+            return Listing([Pipe(e) if e.name == "rl.md" else e for e in entries])
+
+    monkeypatch.setattr(indexing.os, "scandir", scandir)
+    found = sorted(os.path.relpath(p, notes).replace(os.sep, "/") for p, _, _ in indexing.walk(str(notes)))
+    assert found == ["plain.txt", "robots/brush.md"]

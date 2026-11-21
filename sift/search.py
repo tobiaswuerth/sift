@@ -1434,10 +1434,11 @@ class Index:
         doc, whole, title, _, _ = self._note(id)
         db = self._db(doc)
         resolver, found = links.Resolver(db), {"id": whole, "title": title}
-        if direction != "in":
-            found["out"] = self._out(db, resolver, doc, depth, field, k)
-        if direction != "out":
-            found["in"] = self._in(db, resolver, doc, depth, field, k)
+        with store.snapshot([db]):  # the links, and the notes they name, as they are at one moment
+            if direction != "in":
+                found["out"] = self._out(db, resolver, doc, depth, field, k)
+            if direction != "out":
+                found["in"] = self._in(db, resolver, doc, depth, field, k)
         return found
 
     def _out(self, db, resolver, doc, depth, field, k):

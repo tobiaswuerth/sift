@@ -798,7 +798,8 @@ def walk(root, ignore=None, unlisted=None):
                         except OSError as error:
                             unreachable(rel + e.name, error)
                             continue
-                        yield e.path, st.st_mtime_ns, st.st_size
+                        if stat.S_ISREG(st.st_mode):  # no pipe, which has no end to read to, nor a folder so named
+                            yield e.path, st.st_mtime_ns, st.st_size
             except OSError as error:  # the listing broke off
                 unreachable(rel, error)
 

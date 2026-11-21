@@ -31,6 +31,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A server keeps what it has read of the keyword postings' long lists within 256 MB, as it keeps their blocks and
   the phrases: it kept those of 1,024 words per collection however long, 12 MB for a word in every passage of 50
   million.
+- `links` reads a note's links and the notes they name as they are at one moment: a `sift index` beside the server
+  that removed a linking note in between ended the call in "KeyError".
+- `sift index` passes over what is no file under a name it reads, a named pipe or a folder linked as `x.md`: a pipe
+  held it for good, a folder was unreadable on every run.
+- The page looks for a document's file off the server's event loop: on a share that doesn't answer, the server heard
+  no request for as long as the system waited.
 - `reindex` says a file whose reader fails `unreadable`, with why, and reads the call's other files, as `sift index`
   does: the call failed whole.
 - A server keeps its last searches' results through a search of a phrase it hasn't counted yet: each one let every
