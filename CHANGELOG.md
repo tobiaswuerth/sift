@@ -23,6 +23,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A front-matter list of many `- item` lines took time growing with the square of its length: 100,000 items took 14
   seconds, and a note with several hundred thousand was left out by `sift index` as hung, and held up the server's
   `reindex`. It now reads in a fraction of a second.
+- `sift embed --reset` dropped every vector before it knew the model could load or the worker answered: offline, or
+  with a model that couldn't be downloaded, the vectors were gone and nothing embedded. The model now loads, or the
+  worker answers, first.
 
 ## [1.14.0] - 2026-11-21
 

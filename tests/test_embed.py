@@ -269,6 +269,21 @@ def test_embed_refuses_mixing_models(embedded, fake_models):
     assert vector_count(catalog) == 3
 
 
+def test_a_reset_drops_no_vector_before_the_model_is_there(embedded, fake_models, monkeypatch):
+    # Offline, or with a model that can't be downloaded, `sift embed --reset` dropped every vector, then failed: days
+    # of embedding gone for nothing.
+    catalog, _ = embedded
+
+    def unavailable():
+        raise OSError("the model can't be downloaded")
+
+    monkeypatch.setattr(fake_models, "prepare", unavailable)
+    with pytest.raises(OSError, match="downloaded"):
+        embed.embed_pending(catalog, reset=True)
+    assert vector_count(catalog) == 3
+    assert store.get_meta(catalog.store("notes"), "model") == fake_models.name
+
+
 def test_embed_pending_calibrates_first(corpus, make_local, gpu_memory):
     embed.embed_pending(corpus[0], models=make_local("cuda"))
     assert gpu_memory.batches[:3] == [1, 2, 4]  # calibration, then the 3 chunks in one batch

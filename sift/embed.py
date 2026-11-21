@@ -71,10 +71,11 @@ def embed_pending(
         )
     chosen = _chosen(catalog, collections)
     models = models or _models.default()
+    using = models.name  # a worker's: asked of it
     if reset:
+        models.prepare()  # the model loads, or the worker answers, before any vector goes
         for db in [catalog.store(c) for c in catalog.collections()]:  # every one opens, or none changes
             _forget_vectors(db)
-    using = models.name
     stores = list(_stores(catalog, chosen, named=bool(collections)))
     for c, db in stores:
         _check_model(db, c.name, using)
@@ -86,7 +87,8 @@ def embed_pending(
         return
     of = f" of {named}" if named else ""
     console.say(f"embedding {console.count(total, 'chunk')}{of} with {using} on {models.address}")
-    models.prepare()
+    if not reset:  # prepared before the reset
+        models.prepare()
     with console.Progress(total, "chunks") as progress:
         done, broken = _embed(models, [db for _, db, n in pending if n], using, progress)
     console.say(f"embedded {done - broken:,} chunks in {console.duration(progress.elapsed)}")
