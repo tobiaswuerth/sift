@@ -2,6 +2,8 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    cooldown:  # a release a week old: one found malicious is usually pulled within days
+      default-days: 7
     schedule:
       interval: weekly
     groups:
@@ -10,6 +12,8 @@ updates:
 
   - package-ecosystem: pip
     directory: /
+    cooldown:  # a release a week old: one found malicious is usually pulled within days
+      default-days: 7
     schedule:
       interval: weekly
     groups:
@@ -18,6 +22,8 @@ updates:
 
   - package-ecosystem: pre-commit
     directory: /
+    cooldown:  # a release a week old: one found malicious is usually pulled within days
+      default-days: 7
     schedule:
       interval: monthly
     groups:
