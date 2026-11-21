@@ -1,6 +1,7 @@
 """The models of this machine: an embedding model and a reranker, loaded once per precision, on the GPU while in use.
 Sentence Transformers, GPU memory and the clock are fakes."""
 
+import sys
 import threading
 import time
 
@@ -13,16 +14,30 @@ from .conftest import FakeCrossEncoder, FakeSentenceTransformer, GiB
 
 
 def test_models_load_once_with_limits(fake_models):
+    # Each at the commit sift pins it to, which the name sift records says too.
     model = fake_models.embedder()
-    assert (model.name, model.device, model.max_seq_length, model.dtype) == (
+    assert (model.name, model.revision, model.device, model.max_seq_length, model.dtype) == (
         "google/embeddinggemma-2",
+        "f9972ac22e696a105c482202646979e33e4b5a1e",
         "cpu",
         local.MAX_TOKENS,
         "float32",
     )
-    assert fake_models.reranker().name == "Alibaba-NLP/gte-reranker-modernbert-base"
+    reranker = fake_models.reranker()
+    assert (reranker.name, reranker.revision) == (
+        "Alibaba-NLP/gte-reranker-modernbert-base",
+        "f7481e6055501a30fb19d090657df9ec1f79ab2c",
+    )
     assert fake_models.embedder() is model
-    assert (fake_models.name, fake_models.reranker_name) == ("google/embeddinggemma-2", fake_models.reranker().name)
+    assert fake_models.name == f"{model.name}@{model.revision}"
+    assert fake_models.reranker_name == f"{reranker.name}@{reranker.revision}"
+
+
+def test_a_model_of_ones_own_loads_at_the_revision_it_names(make_local, configure):
+    configure(embed_model="org/embedder@v2", rerank_model="org/reranker")
+    models = make_local()
+    assert (models.embedder().name, models.embedder().revision) == ("org/embedder", "v2")
+    assert (models.reranker().name, models.reranker().revision) == ("org/reranker", None)  # its latest commit
 
 
 @pytest.mark.parametrize("device, dtype", [("cuda", "bfloat16"), ("mps", "float32"), ("cpu", "float32")])
@@ -208,6 +223,22 @@ def test_a_batch_out_of_memory_in_a_stream_is_embedded_in_smaller_parts(make_loc
     got = list(models.encode_batches(iter(batches)))
     assert [g.tolist() for g in got] == [models.encode(b).tolist() for b in batches]
     assert models.batch == 2  # halved, as it ran out of memory: the batches after it in parts of the smaller size
+
+
+def test_a_batch_out_of_memory_is_embedded_again_once_its_error_is_let_go(make_local, monkeypatch):
+    # Embedded again inside the `except`, the error's traceback held the failed batch's tensors on the GPU all the
+    # while: the parts ran short of memory too, and the batch size was halved for the rest of `sift embed`.
+    monkeypatch.setattr(FakeSentenceTransformer, "max_batch", 3)
+    models, handling = make_local("cuda"), []
+    encode = models.encode
+
+    def again(texts, query=False):
+        handling.append(sys.exc_info()[1])
+        return encode(texts, query)
+
+    monkeypatch.setattr(models, "encode", again)
+    list(models.encode_batches(iter([["a", "b", "c", "d"]])))
+    assert handling == [None]
 
 
 def test_a_batch_larger_than_the_gpu_takes_comes_in_its_turn(make_local):

@@ -61,7 +61,7 @@ class Options:
 
 def check_k(k: object, most: int = MOST_HITS) -> int:
     """k as asked, at most `most`."""
-    if not isinstance(k, int) or k < 1:
+    if not isinstance(k, int) or isinstance(k, bool) or k < 1:
         raise ValueError(f"k must be a positive integer, got {k!r}")
     return min(k, most)
 
@@ -172,4 +172,7 @@ def standing_out(hits: list[Hit]) -> list[Hit]:
         return hits
     scores = np.array([hit["score"] for hit in hits], np.float64)
     gaps = scores[:-1] - scores[1:]
-    return hits[: int(gaps[: math.ceil(ADAPTIVE_SHARE * len(gaps))].argmax()) + 1 + ADAPTIVE_BUFFER]
+    considered = gaps[: math.ceil(ADAPTIVE_SHARE * len(gaps))]
+    if not considered.max() > 0:  # no drop at all: none stands out
+        return hits
+    return hits[: int(considered.argmax()) + 1 + ADAPTIVE_BUFFER]

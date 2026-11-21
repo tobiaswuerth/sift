@@ -3,6 +3,7 @@ reader (see test_documents.py for the contract they all keep, and test_jsonl.py 
 
 import json
 import random
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -124,10 +125,52 @@ def test_front_matter_values_sqlite_cant_store_or_python_cant_nest(json_room):
     assert readers._depth(meta) <= readers.JSON_DEPTH + 1  # what SQLite stores
 
 
+def test_a_long_front_matter_list_reads_in_time_linear_in_its_length():
+    # Each `- item` copied the list before it: 100,000 items took 14 s, 600,000 longer than a worker may read a file,
+    # and `reindex` hung on such a note. Read now in a fraction of a second; the bound leaves room for a busy machine.
+    items = 100_000
+    block = "tags:\n" + "".join(f"- item{i}\n" for i in range(items))
+    started = time.perf_counter()
+    _, meta, _, _ = readers.parse(f"---\n{block}---\nbody\n", "f")
+    assert time.perf_counter() - started < 3
+    assert meta["tags"] == [f"item{i}" for i in range(items)]
+
+
 def test_parse_without_closing_front_matter_is_plain_text():
     title, meta, body, _ = readers.parse("---\ntitle: x\nno end\n", "file")
     assert (title, meta) == ("file", {})
     assert body.startswith("---")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "---\nSome intro words xyzzy\n---\nbody text\n",  # two thematic breaks around a paragraph
+        "---\ntitle: x\nxyzzy, a line of prose\n---\nbody text\n",  # no `key: value`, nor a list item or continuation
+    ],
+)
+def test_text_between_two_rules_that_isnt_front_matter_stays_searchable(text):
+    # A note may open with a thematic break and have another further down: the lines between them were taken for
+    # front matter and left out of every passage, so no search found them, though `get` showed them.
+    title, meta, body, first_line = readers.parse(text, "file")
+    assert (title, meta, body, first_line) == ("file", {}, text, 1)
+    doc = readers.note(text, "Rules.md")
+    assert any("xyzzy" in doc.text[p : p + n] for _, _, p, n in doc.chunks)
+
+
+@pytest.mark.parametrize(
+    "block, tags",
+    [
+        ("tags:\n-\n- a\n", ["a"]),  # a list item without a value
+        ("tags: [\n  a,\n  b\n]\n", "["),  # a list over several lines, which sift reads no further than its first
+        ("tags: {\n  a: 1\n}\n", "{"),
+    ],
+)
+def test_front_matter_stays_front_matter_with_lines_yaml_allows_at_the_margin(block, tags):
+    # A line that could be no part of a mapping makes the lines between two rules text: an item without a value, or
+    # the bracket closing a list written over several lines, did too, and the note lost its title and every field.
+    title, meta, body, _ = readers.parse(f"---\ntitle: T\n{block}---\nbody\n", "file")
+    assert (title, meta, body) == ("T", {"title": "T", "tags": tags}, "body\n")
 
 
 # --- chunking ----------------------------------------------------------------
@@ -301,10 +344,36 @@ def test_load_reads_utf16_and_utf32_files(tmp_path, bom, codec):
     assert (doc.title, doc.meta, doc.chunks) == ("Héllo", {}, [(1, 2, "# Héllo\nworld")])
 
 
-def test_load_replaces_invalid_utf8(tmp_path):
-    path = tmp_path / "latin1.txt"
-    path.write_bytes(b"r\xe9sum\xe9 du jour\n")
-    assert loaded(path).chunks == [(1, 1, "r\ufffdsum\ufffd du jour")]
+def test_load_reads_what_isnt_utf8_as_windows_ansi(tmp_path):
+    # A note saved by Notepad or Excel as "ANSI" had its umlauts stored as a replacement character, so a search for
+    # "Müller" found nothing. What is UTF-8 stays UTF-8, also in a file that mixes both; a byte ANSI leaves unassigned
+    # is replaced.
+    path = tmp_path / "ansi.txt"
+    path.write_bytes("Grüezi Müller, 5 €\n".encode("cp1252") + "naïve ✓\n".encode() + b"r\xe9sum\xe9 \x81\n")
+    assert loaded(path).chunks == [(1, 3, "Grüezi Müller, 5 €\nnaïve ✓\nrésumé \ufffd")]
+    with pytest.raises(UnicodeEncodeError):  # it reads, and writes nothing
+        "é".encode("ascii", "sift.ansi")
+
+
+MISREAD = {  # a file's bytes, and whether sift 1.14 read them otherwise than this sift
+    "ansi.txt": ("Müller\n".encode("cp1252"), True),  # bytes that aren't UTF-8: replaced then, read as ANSI now
+    "late.jsonl": (b"x" * readers.LOOKED_AT + b'{"text": "M\xfcller"}\n', True),  # past the first block looked at
+    "own.txt": ("lost before sift: \ufffd, and Müller\n".encode(), False),  # UTF-8, the character its own
+    "marked.md": (b"\xef\xbb\xbfM\xc3\xbcller\n", False),  # UTF-8 after its byte order mark
+    "wide.txt": ("Müller \ufffd\n".encode("utf-16"), False),  # UTF-16, read as before
+    "mail.eml": (b"Subject: x\r\n\r\nplain\r\n", True),  # a mail's parts may be encoded: reading it again tells
+}
+
+
+@pytest.mark.parametrize("name", MISREAD)
+def test_a_file_an_older_sift_read_otherwise_is_told_by_its_bytes(tmp_path, name):
+    raw, otherwise = MISREAD[name]
+    (tmp_path / name).write_bytes(raw)
+    assert readers.misread(tmp_path / name) is otherwise
+
+
+def test_a_file_that_cant_be_looked_at_counts_as_read_otherwise(tmp_path):
+    assert readers.misread(tmp_path / "gone.txt") is True  # reading it again tells, and says what is wrong
 
 
 # --- links -------------------------------------------------------------------
@@ -369,6 +438,15 @@ def test_what_is_no_link(written):
 def test_links_in_code_blocks_are_no_links():
     text = "```\n[[Also not a link]]\n```\n~~~python\n[x](y.md)\n```\n[[still code]]\n~~~\n[[Real]]\n"
     assert links(text) == [(None, 9, "wikilink", "Real", None, None)]
+
+
+def test_three_backticks_with_one_after_them_open_no_code_block():
+    # "```x```" is code on its line, as CommonMark and Obsidian read it: a backtick fence's info string holds no
+    # backtick. Taken for a fence that never closed, it made the rest of the note code: no title, no links.
+    doc = readers.note("```inline``` is code\n\n# Real heading\n\nSee [[Target]].\n", "Note.md")
+    assert (doc.title, [link.target for link in doc.links]) == ("Real heading", ["Target"])
+    # A tilde fence's info string may hold backticks; and the fence it opens hides its links.
+    assert links("~~~ `x`\n[[Hidden]]\n~~~\n[[Real]]\n") == [(None, 4, "wikilink", "Real", None, None)]
 
 
 def test_an_unmatched_backtick_hides_nothing():

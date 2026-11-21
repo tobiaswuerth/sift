@@ -231,7 +231,8 @@ def test_without_a_command_to_upgrade_it_a_newer_sift_is_told_of(installed, home
     assert kept(home)["asked"] == NEWER
 
 
-@pytest.mark.parametrize("latest", [__version__, f"{MAJOR}.{MINOR}.{PATCH + 1}rc1", None])
+# a pre-release; digits int() can't read ("²" is a digit to str.isdigit), which failed every command
+@pytest.mark.parametrize("latest", [__version__, f"{MAJOR}.{MINOR}.{PATCH + 1}rc1", None, f"{MAJOR}.{MINOR}.²"])
 def test_nothing_newer_is_not_offered(installed, home, latest):
     keep(home, latest=latest, checked=time.time())
     update.offer("status", TERMINAL)  # Terminal() fails if asked
@@ -502,14 +503,16 @@ def test_a_pipx_installation_is_upgraded_by_pipx(tmp_path):
 
 
 def test_another_environment_is_upgraded_by_pip(environment):
+    # Without -P, `python -m pip` imports from the folder it runs in first: the root of the drive (see update.start),
+    # where on Windows any user may make a folder `pip` that runs as the one updating.
     command = update.upgrade_command(*environment, pip=True)
-    assert command == [sys.executable, "-m", "pip", "install", "--upgrade", "sift-rag"]
+    assert command == [sys.executable, "-P", "-m", "pip", "install", "--upgrade", "sift-rag"]
 
 
 def test_whether_an_environment_has_pip_is_looked_up(environment):
     # uv's environments have none: `python -m pip` there ends in "No module named pip", and the update with it.
     has_pip = importlib.util.find_spec("pip") is not None
-    assert (update.upgrade_command(*environment)[:3] == [sys.executable, "-m", "pip"]) == has_pip
+    assert (update.upgrade_command(*environment)[:4] == [sys.executable, "-P", "-m", "pip"]) == has_pip
 
 
 def test_an_environment_of_uv_s_without_pip_is_upgraded_by_hand(environment):

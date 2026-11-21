@@ -3,11 +3,15 @@
 import ast
 import importlib
 import importlib.metadata
+import importlib.util
 import inspect
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).parent.parent
 ENVIRONMENT = {"environ", "environb", "getenv", "getenvb", "putenv", "unsetenv"}
@@ -68,6 +72,18 @@ def test_requirements_txt_names_the_dependencies_pyproject_does():
     lines = (ROOT / "requirements.txt").read_text(encoding="utf-8").split("\n")
     listed = {line.strip() for line in lines if line.strip() and not line.startswith(("#", "--"))}
     assert listed == set(project["dependencies"]), "name each dependency in both, with the same versions"
+
+
+def test_every_way_to_install_cuda_pytorch_names_one_index():
+    # The index of PyTorch's CUDA builds stood in four places, and went stale in all: cu128 carries no PyTorch past
+    # 2.11, so the fix sift prints, the README's and requirements.txt installed none at or above sift's floor.
+    from sift import accelerator
+
+    index = accelerator.CUDA_INDEX
+    assert index in accelerator.cuda_pytorch_command()
+    assert f"--extra-index-url {index}\n" in (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    assert set(re.findall(r"https://download\.pytorch\.org/whl/\w+", readme)) == {index}
 
 
 def test_only_settings_touches_the_environment():
@@ -245,8 +261,40 @@ def test_ci_looks_at_two_pythons_before_it_runs_every_system_and_python():
         assert "name: test (${{ matrix.os }}, ${{ matrix.python }})" in job
     assert "steps: *test" in rest  # the steps of `first`, not a copy of them
     summary = _job(ci, "tests")
-    assert "needs: [first, test]" in summary  # one check for all of them
-    assert 'test "$FIRST" = success && test "$REST" = success' in summary
+    assert "needs: [first, test, lowest]" in summary  # one check for all of them, and the lowest versions' job
+    assert 'test "$FIRST" = success && test "$REST" = success && test "$LOWEST" = success' in summary
+
+
+def test_ci_tests_the_lowest_versions_sift_names():
+    # They were never installed: at those sift named, transformers disabled PyTorch, and 21 tests failed. A job tests
+    # them on the oldest Python, and the weekly audit checks them for advisories as it checks today's.
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    oldest = re.search(r"python: \[(.*)\]", _job(ci, "test"))[1].split(", ")[0]
+    lowest = _job(ci, "lowest")
+    assert f"python-version: {oldest}" in lowest
+    assert '- run: uv pip install --resolution lowest-direct --torch-backend cpu -e ".[dev]"' in lowest
+    assert "- run: python scripts/floors.py\n      - run: pytest -q -n auto" in lowest  # they are those installed
+    audit = (ROOT / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    assert "resolution: [highest, lowest-direct]" in audit
+    assert '- run: uv pip install --resolution "$RESOLUTION" --torch-backend cpu -e .' in audit
+
+
+def test_the_lowest_versions_sift_names_are_those_an_install_reaches():
+    # tokenizers was named from 0.20, and transformers 5.18 takes none below 0.23.1: where the lowest versions were
+    # asked for, one sift never named was installed, and its claim to run with 0.20 was never tried. The script runs
+    # there, in CI's lowest job and in the gate.
+    spec = importlib.util.spec_from_file_location("floors", ROOT / "scripts" / "floors.py")
+    floors = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(floors)
+    lowest = floors.named(["numpy>=2.0", "tokenizers>=0.20", "nvidia-ml-py>=12", "pyright[nodejs]==1.1.414"])
+    assert lowest == {"numpy": "2.0", "tokenizers": "0.20", "nvidia-ml-py": "12", "pyright": "1.1.414"}
+    installed = {"numpy": "2.0.0+cpu", "tokenizers": "0.23.1", "nvidia-ml-py": "12.535.77", "pyright": "1.1.414"}
+    assert floors.above(lowest, installed) == ["tokenizers 0.23.1, named from 0.20"]
+    with pytest.raises(SystemExit, match="'torchvision' names no lowest version"):
+        floors.named(["torchvision"])
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    extras = [requirement for extra in project["optional-dependencies"].values() for requirement in extra]
+    assert len(floors.named(project["dependencies"] + extras)) == len(project["dependencies"] + extras)
 
 
 def test_nothing_silences_the_type_checker():
@@ -307,6 +355,19 @@ def test_only_the_console_and_the_results_print():
     assert elsewhere == set(), "say it with console.say, or write it with console.write; results go through cli._print"
 
 
+def test_digits_are_matched_as_ascii_digits():
+    # str.isdigit takes "²" and "٣" for digits, which int() refuses: a version "1.2.²" read from PyPI's answer
+    # failed every command. Digits are [0-9].
+    sources = [path for folder in ("sift", "scripts") for path in (ROOT / folder).glob("*.py")]
+    found = {
+        f"{path.name}:{node.lineno}"
+        for path in sources
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Attribute) and node.attr in ("isdigit", "isdecimal", "isnumeric")
+    }
+    assert found == set(), 'match digits as re.fullmatch("[0-9]+", text)'
+
+
 def test_sql_placeholders_have_no_numbers():
     # Python 3.12.0 to 3.12.3 take a placeholder with a number for a named one, and warn that binding it from a
     # sequence becomes an error: a test that bound one failed on the one system whose Python was 3.12.3.
@@ -331,6 +392,67 @@ def test_workflows_run_actions_by_commit():
         if "uses:" in line and not re.search(r"uses: [\w./-]+@[0-9a-f]{40}  # v\d+\.\d+\.\d+", line)
     }
     assert by_name == set(), "name the action by its commit: `uses: owner/action@<40 hex digits>  # v1.2.3`"
+
+
+def test_the_release_publishes_only_a_version_it_knows_is_new():
+    # `git ls-remote --exit-code` says 2 for no such tag, and 128 for a failure, a network gone: any failure was taken
+    # for a new version, and the release went on to publish one PyPI already had, or to tag a commit twice.
+    check = _job((ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"), "check")
+    assert "> /dev/null || status=$?" in check
+    assert '2) echo "v$version is new."' in check
+    assert 'exit "$status"' in check
+
+
+def test_the_package_is_built_by_tools_reviewed():
+    # The release built with whatever setuptools, twine and uv were newest that day: what PyPI got was made by code
+    # nobody had looked at. Both builds take the backend by hash, twine by version, and the release its uv by version.
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "- run: uv build --build-constraints .github/requirements-build.txt --require-hashes\n" in release
+    twine = re.search(r"- run: uvx (twine@\d+\.\d+\.\d+) check", release)
+    assert twine
+    assert not re.search(r"uv build\s*$|uvx twine check", release, re.MULTILINE)
+    uv = re.search(r'version: "(\d+\.\d+\.\d+)"', _job(release, "build"))
+    assert uv
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert f'version: "{uv[1]}"' in _job(ci, "package")  # the package checked is built by the release's uv
+    package = (ROOT / "scripts" / "package.py").read_text(encoding="utf-8")  # CI's package job's, and the gate's
+    assert '"--build-constraints", str(ROOT / ".github" / "requirements-build.txt")]' in package
+    assert '"--require-hashes"' in package
+    assert f'TWINE = "{twine[1]}"' in package
+    pinned = (ROOT / ".github" / "requirements-build.txt").read_text(encoding="utf-8")
+    assert re.search(r"^setuptools==\S+ \\$", pinned, re.MULTILINE)
+    assert "--hash=sha256:" in pinned
+
+
+def test_the_sdist_holds_sift_and_its_metadata_alone():
+    # It held tests/, whose tests read docs/, scripts/ and the workflows, which it didn't: none ran from it. The
+    # package check refuses an sdist holding anything else.
+    spec = importlib.util.spec_from_file_location("package", ROOT / "scripts" / "package.py")
+    package = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(package)
+    top = "sift_rag-1.0"
+    names = [f"{top}/", f"{top}/PKG-INFO", f"{top}/sift/", f"{top}/sift/cli.py", f"{top}/tests/", f"{top}/tests/a.py"]
+    assert package.strays(names) == ["tests"]
+    assert package.strays([f"{top}/{name}" for name in package.SDIST]) == []
+
+
+def test_the_package_is_built_from_the_files_a_clone_holds(tmp_path):
+    # Built in the checkout, the sdist held whatever an earlier build had listed in its sift_rag.egg-info, which
+    # setuptools reads again: the check judged a package the release, building from a clone, never makes.
+    spec = importlib.util.spec_from_file_location("package", ROOT / "scripts" / "package.py")
+    package = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(package)
+    checkout, copy = tmp_path / "checkout", tmp_path / "copy"
+    subprocess.run(["git", "init", "--quiet", str(checkout)], check=True, timeout=60)
+    for name in (".gitignore", "sift/__init__.py", "sift/web/Übersicht.html", "gone.py", "new.py", "old.egg-info/a"):
+        (checkout / name).parent.mkdir(parents=True, exist_ok=True)
+        (checkout / name).write_text("*.egg-info/\n" if name == ".gitignore" else name, encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore", "sift", "gone.py"], cwd=checkout, check=True, timeout=60)
+    (checkout / "gone.py").unlink()
+    package.copy_checkout(checkout, copy)
+    copied = sorted(path.relative_to(copy).as_posix() for path in copy.rglob("*") if path.is_file())
+    assert copied == [".gitignore", "new.py", "sift/__init__.py", "sift/web/Übersicht.html"]
+    assert (copy / "sift" / "web" / "Übersicht.html").read_text(encoding="utf-8") == "sift/web/Übersicht.html"
 
 
 # The findings of zizmor silenced with the owner's yes, each for one audit on one line: the workflow, and the line.
@@ -377,7 +499,6 @@ def test_the_release_starts_only_for_ci_of_this_repository_s_main():
 
 # Each repository of hooks in .pre-commit-config.yaml, and what docs/CONTRIBUTING.md calls what its hooks check.
 HOOKS_AS_CONTRIBUTING_NAMES_THEM = {
-    "local": "the `private` hook",
     "https://github.com/pre-commit/pre-commit-hooks": "whitespace, line endings, byte order marks, YAML/TOML checks",
     "https://github.com/astral-sh/ruff-pre-commit": "ruff (lint and format)",
     "https://github.com/abravalheri/validate-pyproject": "`validate-pyproject`",

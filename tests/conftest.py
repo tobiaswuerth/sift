@@ -75,8 +75,8 @@ class FakeSentenceTransformer:
     saved_in = "bfloat16"  # the checkpoint's dtype, which the model loads in unless it is given one, as embeddinggemma
     prompts, default_prompt_name = {}, None  # embeddinggemma's: {"query": "task: search result | query: ", ...}
 
-    def __init__(self, name, device=None, model_kwargs=None):
-        self.name, self.device, self.max_seq_length = name, device, None
+    def __init__(self, name, device=None, model_kwargs=None, revision=None):
+        self.name, self.revision, self.device, self.max_seq_length = name, revision, device, None
         self.dtype = str((model_kwargs or {}).get("dtype", self.saved_in)).removeprefix("torch.")
         self.training, self.texts, self.embedded = True, [], []  # in training mode until eval(), as nn.Module
 
@@ -141,8 +141,9 @@ class FakeCrossEncoder:
 
     limit = 8192  # the most tokens the model reads, as its position embeddings allow (MiniLM: 512)
 
-    def __init__(self, name, device=None, max_length=None, model_kwargs=None):
-        self.name, self.device, self.model = name, device, FakeSentenceTransformer(name, device, model_kwargs)
+    def __init__(self, name, device=None, max_length=None, model_kwargs=None, revision=None):
+        self.name, self.revision, self.device = name, revision, device
+        self.model = FakeSentenceTransformer(name, device, model_kwargs, revision)
         self.head = self.model.dtype  # loaded in one dtype, the transformer and its head alike
         self.max_seq_length = max_length or self.limit  # sentence-transformers 6 truncates to this
 
@@ -413,6 +414,13 @@ def nobody_listens():
     return "https://s3cret.pin@127.0.0.1:0"
 
 
+def live_codes(codes):
+    """The ids that count of codes held (vectors.Codes), and their codes, by id: what searches compare."""
+    rows = np.flatnonzero(codes._alive) if codes._alive is not None else np.arange(len(codes.ids))
+    rows = rows[np.argsort(codes.ids[rows], kind="stable")]
+    return codes.ids[rows], codes.rows(rows)
+
+
 def only(catalog):
     """The store of a catalog's one collection."""
     (collection,) = catalog.collections()
@@ -545,12 +553,68 @@ def write_notes(root):
     return root
 
 
-@pytest.fixture
-def home(tmp_path, configure):
-    """SIFT_HOME for code that connects on its own (CLI, server)."""
+# The variables sift heeds besides SIFT_HOME (settings.Settings.from_env), but CUDA's own, which hides a GPU from the
+# whole process: a test starts without them.
+HEEDED = (
+    "SIFT_EMBED_MODEL",
+    "SIFT_RERANK_MODEL",
+    "SIFT_EMBED_REMOTE",
+    "SIFT_OCR",
+    "SIFT_UPDATE_CHECK",
+    "HF_HUB_OFFLINE",
+)
+
+
+def own_environment(monkeypatch, home):
+    """SIFT_HOME at `home`, and none of the other variables sift heeds: for this process, whose settings are read
+    again, and for those it starts."""
+    from sift import settings
+
+    monkeypatch.setenv("SIFT_HOME", str(home))
+    for name in HEEDED:
+        monkeypatch.delenv(name, raising=False)
+    settings.current.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def home(tmp_path, monkeypatch):
+    """Every test's SIFT_HOME, in a folder of its own, never the user's, and sift's defaults for every other setting,
+    whatever the shell that runs the tests holds (see own_environment)."""
     path = tmp_path / "home"
-    configure(home=path)
+    own_environment(monkeypatch, path)
     return path
+
+
+@pytest.fixture(autouse=True)
+def listed_backwards(monkeypatch):
+    """Every folder lists its entries last name first, on every system. A file system lists them in an order of its
+    own, NTFS by name and ext4 by a hash: a test that counted on the order of the system it was written on passed
+    there and failed elsewhere. It now fails on every system."""
+    scandir = os.scandir
+
+    class Backwards:
+        """What os.scandir gives, read at once: an iterator of its entries, and a context manager."""
+
+        def __init__(self, path="."):
+            with scandir(path) as entries:
+                self.entries = iter(sorted(entries, key=lambda entry: entry.name, reverse=True))
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self.entries)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *error):
+            self.close()
+
+        def close(self):
+            """Nothing left open: the folder was read when it was listed."""
+
+    monkeypatch.setattr(os, "scandir", Backwards)
 
 
 @pytest.fixture

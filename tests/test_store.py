@@ -36,6 +36,42 @@ def test_a_new_store_records_its_layout_and_collection(tmp_path):
     assert all(store.get_meta(db, key) == "1" for key in (*store.READ_AGAIN, store.WAITED))
 
 
+PINNED = "google/embeddinggemma-2@f9972ac22e696a105c482202646979e33e4b5a1e"  # the default model, at its commit
+
+
+def test_a_store_names_its_model_alone_as_older_sifts_read_it_and_at_its_commit_beside(tmp_path):
+    # sift 1.14 and older record the embedding model by its name, and refuse to embed into a store that names another.
+    # With the commit written into that name ("name@commit"), a sift 1.14 that shares the store, or one gone back to,
+    # asked for `sift embed --reset` of every vector. The name stays as they read it; the commit lies beside it.
+    db = store.connect(tmp_path / "a.sqlite", 1, create=True)
+    assert store.model(db) is None  # not embedded yet
+    store.set_model(db, PINNED)
+    assert store.get_meta(db, "model") == "google/embeddinggemma-2"  # what sift 1.14 compares with its own
+    assert store.model(db) == PINNED
+    store.set_model(db, "org/model")  # one without a revision: its latest commit
+    assert (store.get_meta(db, "model"), store.model(db)) == ("org/model", "org/model")
+
+
+@pytest.mark.parametrize(
+    "name, at, model",
+    [
+        # As sift 1.14 and older left it. The default model's name meant the latest commit of its repository: every
+        # commit up to the one sift pins holds the same weights, so its vectors need no embedding again.
+        ("google/embeddinggemma-2", None, PINNED),
+        ("org/model", None, "org/model"),
+        # An older sift embedded it again with another model since: the commit beside the name is the model's before.
+        ("org/other", PINNED, "org/other"),
+        ("google/embeddinggemma-2", "google/embeddinggemma-2@v1", "google/embeddinggemma-2@v1"),  # at another commit
+    ],
+)
+def test_the_model_of_a_store_is_the_one_its_name_and_commit_agree_on(tmp_path, name, at, model):
+    db = store.connect(tmp_path / "a.sqlite", 1, create=True)
+    store.set_meta(db, "model", name)
+    if at:
+        store.set_meta(db, store.MODEL_AT, at)
+    assert store.model(db) == model
+
+
 def test_a_collections_ids_start_at_its_own(corpus):
     # Unique across collections, an id says whose it is: results of several stores merge as they are.
     catalog, _ = corpus
@@ -223,6 +259,98 @@ def test_codes_go_with_a_reset(embedded, fake_models, monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         embed.embed_pending(catalog, reset=True)
     assert catalog.store("notes").execute("SELECT count(*) FROM codes").fetchone() == (0,)
+
+
+def test_a_file_freed_while_the_freed_are_taken_is_taken_too(tmp_path):
+    # The files whose paths were freed were read, then all marked taken, in two statements: one another sift freed in
+    # between was marked taken too, unread, and the running `sift index` never read it.
+    path = tmp_path / "s.sqlite"
+    db, other = store.connect(path, 1, create=True), store.connect(tmp_path / "s.sqlite", 1)
+    db.executemany("INSERT INTO sources(id, path, mtime, size) VALUES(?, ?, 1, 1)", [(1, "a.md"), (2, "b.md")])
+    store.wait(db, "x/1", 1)
+    store.wait(db, "y/1", 2)
+    store._free(db, ["x/1"])
+    db.commit()
+    real, freed_meanwhile = db.execute, []
+
+    def meanwhile(sql, *args):
+        cursor = real(sql, *args)
+        if "FROM waiting" in sql and sql.lstrip().startswith("SELECT") and not freed_meanwhile:
+            freed_meanwhile.append(sql)
+            store._free(other, ["y/1"])  # another sift frees b.md's path, now
+            other.commit()
+        return cursor
+
+    db.execute = meanwhile
+    taken = store.freed(db)
+    del db.execute
+    assert freed_meanwhile
+    assert sorted(taken + store.freed(db)) == ["a.md", "b.md"]  # each taken, by this call or the next
+    other.close()
+    db.close()
+
+
+def read_with_replacement_characters(tmp_path, files):
+    """A store as sift 1.14 left it, and another sift's connection to it: `files` maps each file to how many of its
+    documents hold U+FFFD."""
+    db, other = store.connect(tmp_path / "s.sqlite", 1, create=True), store.connect(tmp_path / "s.sqlite", 1)
+    for n, (name, documents) in enumerate(files.items(), 1):
+        db.execute("INSERT INTO sources(id, path, mtime, size) VALUES(?, ?, 1, 1)", (n, name))
+        db.executemany(
+            "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?, ?, 'h', '', '{}', 'M\ufffdller')",
+            [(n, f"{name}/{i}") for i in range(documents)],
+        )
+    db.execute("DELETE FROM meta WHERE key = ?", (store.ANSI_READ,))
+    db.commit()
+    return db, other
+
+
+def test_a_file_is_looked_at_once_for_all_its_documents(tmp_path, monkeypatch, capsys):
+    # A JSON Lines file's records lie in many batches: its bytes, gigabytes of them, are read once.
+    monkeypatch.setattr(store, "ANSI_BATCH", 2)
+    db, other = read_with_replacement_characters(tmp_path, {"data.jsonl": 3})
+    asked = []
+    store.read_ansi_again(db, "c", lambda path: asked.append(path) or True)
+    assert asked == ["data.jsonl"]
+    assert db.execute("SELECT count(*) FROM docs WHERE hash IS NULL").fetchone() == (3,)
+    other.close()
+    db.close()
+
+
+def test_a_look_another_sift_ended_meanwhile_ends(tmp_path):
+    db, other = read_with_replacement_characters(tmp_path, {"a.txt": 1})
+
+    def misread(path):  # while this sift looks at the file, the other looks through every document
+        while store._ansi_batch(other, lambda path: True, {}) is not None:
+            pass
+        return True
+
+    assert store._ansi_batch(db, misread, {}) is None
+    other.close()
+    db.close()
+
+
+def test_documents_another_sift_looked_through_meanwhile_are_left_to_it(tmp_path, monkeypatch):
+    # The look for text an older sift read with replacement characters reads files, which it does before it holds the
+    # store: another `sift index` may have looked through the same documents by then, and marked what is to be read.
+    monkeypatch.setattr(store, "ANSI_BATCH", 1)
+    db, other = read_with_replacement_characters(tmp_path, {"a.txt": 1, "b.txt": 1})
+    asked = []
+
+    def misread(path):  # this sift has found its documents, and looks at their files
+        asked.append(path)
+        if len(asked) == 1:
+            assert store._ansi_batch(other, lambda path: True, {}) == 1  # the other sift looks through them, now
+        return True
+
+    assert store._ansi_batch(db, misread, {}) == 0  # none of its own: left to the other
+    assert [store._ansi_batch(db, misread, {}), store._ansi_batch(db, misread, {})] == [1, None]
+    assert store._ansi_batch(other, misread, {}) is None  # the other finds it done
+    assert asked == ["a.txt", "b.txt"]
+    assert db.execute("SELECT count(*) FROM sources WHERE mtime IS NULL").fetchone() == (2,)
+    assert store.get_meta(db, store.ANSI_READ) == "1"
+    other.close()
+    db.close()
 
 
 # --- counts --------------------------------------------------------------------

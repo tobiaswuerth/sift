@@ -3,6 +3,7 @@ reranker reads of a hit beside them, and how its scores blend with the cosines. 
 
 import json
 import re
+import unicodedata
 from typing import Any
 
 import numpy as np
@@ -48,9 +49,18 @@ def phrases_of(match: str) -> list[str] | None:
 
 
 def words(text: object) -> list[str]:
-    """The meaningful words of a text: lowercase, without stopwords and single letters, in order."""
+    """The meaningful words of a text: lowercase, without stopwords, single Latin letters ("a", the "s" of "it's") and
+    underscores alone, where FTS5 parts words, in order. A digit stays, and a word of one character in another script,
+    as Chinese and Japanese write many."""
     found: list[str] = re.findall(r"\w+", str(text).lower())
-    return [w for w in found if w not in STOPWORDS and len(w) > 1]
+    return [w for w in found if w not in STOPWORDS and w.strip("_") and not (len(w) == 1 and _latin_letter(w))]
+
+
+def _latin_letter(character: str) -> bool:
+    """Whether a character is a Latin letter, with or without an accent: the keyword index reads "à" as "a"
+    (store.TOKENIZER removes diacritics)."""
+    base = unicodedata.normalize("NFKD", character)[0]
+    return base.isascii() and base.isalpha()
 
 
 def any_word(query: str) -> str:

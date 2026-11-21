@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from sift import indexing, readers
+from sift import indexing, readers, store
 from sift.catalog import Catalog
 from sift.search import Index
 
@@ -239,7 +239,7 @@ def test_documents_are_converted_in_worker_processes(library, tmp_path, monkeypa
     assert index_contents(only(parallel)) == index_contents(only(catalog))
 
 
-def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home, monkeypatch):
+def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home):
     # The server of sift 1.3.0 and older skipped every document its reindex tool was given: their files, and mails
     # with one attached, are read again by the next index.
     root, word = tmp_path / "docs", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -248,9 +248,10 @@ def test_documents_an_older_sift_skipped_are_read_again_once(tmp_path, home, mon
     email_file(root, Subject="Offer", attachments=[("offer.docx", sample(".docx").read_bytes(), word)])
     catalog = Catalog(home)
     catalog.add(root, "docs")
-    with monkeypatch.context() as patched:
-        patched.setattr(readers, "_xberg", lambda raw, name: 1 / 0)
-        indexing.index(catalog)  # as that server did: no documents of them
+    indexing.index(catalog)
+    db = only(catalog)
+    store.delete_docs(db, [i for (i,) in db.execute("SELECT id FROM docs WHERE path LIKE '%offer.docx'")])
+    db.commit()  # as that server left them: no documents of them, their files as read
     assert [p for (p,) in only(catalog).execute("SELECT path FROM docs")] == ["mail.eml"]
     only(catalog).execute("DELETE FROM meta WHERE key = 'documents_read'")  # as an index of sift 1.3.0 has it
     only(catalog).commit()
@@ -321,6 +322,15 @@ def test_an_email_is_a_document_of_its_headers_and_text():
     assert "<h1>" not in doc.text  # its plain text, not the HTML beside it
 
 
+@pytest.mark.parametrize("plain", ["", " \n\n", "\r\n"])
+def test_a_mail_whose_plain_part_is_empty_reads_its_html(tmp_path, plain):
+    # Mail programs send an empty plain part beside the HTML one: the plain part was taken, and the mail's words lost.
+    path = email_file(tmp_path, body=plain, html="<p>Real content here, xyzzy.</p>", Subject="Offer")
+    (doc,), problems = readers.load(path)
+    assert "Real content here, xyzzy." in doc.text
+    assert problems == []
+
+
 def test_an_email_of_html_alone_reads_as_markdown(tmp_path):
     path = email_file(tmp_path, body=None, html="<h1>Offer</h1><p>Prices for <b>2027</b>.</p>", Subject="Offer")
     (doc,), _ = readers.load(path)
@@ -360,8 +370,14 @@ def test_mail_dates_sort_as_time_whatever_the_zone(tmp_path):
     zurich = email_file(tmp_path, name="a.eml", Date="Tue, 14 Oct 2026 09:30:00 +0200")
     london = email_file(tmp_path, name="b.eml", Date="Tue, 14 Oct 2026 08:00:00 +0000")
     unknown = email_file(tmp_path, name="c.eml", Date="Tue, 14 Oct 2026 08:00:00 -0000")  # a zone unknown, RFC 5322
-    dates = [readers.load(path)[0][0].meta["date"] for path in (zurich, london, unknown)]
-    assert dates == ["2026-10-14T07:30:00+00:00", "2026-10-14T08:00:00+00:00", "2026-10-14T08:00:00"]
+    late = email_file(tmp_path, name="d.eml", Date="Fri, 31 Dec 9999 23:00:00 -0500")  # past 9999 in UTC
+    dates = [readers.load(path)[0][0].meta["date"] for path in (zurich, london, unknown, late)]
+    assert dates == [
+        "2026-10-14T07:30:00+00:00",
+        "2026-10-14T08:00:00+00:00",
+        "2026-10-14T08:00:00",
+        "9999-12-31T23:00:00-05:00",  # as written
+    ]
 
 
 def test_raw_8_bit_addresses_read_without_halves_of_characters(tmp_path, home):
@@ -446,6 +462,41 @@ def test_an_email_in_an_unknown_charset_still_reads(tmp_path):
     assert "Plain Grüße." in doc.text
 
 
+@pytest.mark.parametrize("charset", ["us-ascii", "utf-8"])
+def test_mail_text_that_is_not_of_the_charset_it_declares_reads_as_ansi(tmp_path, charset):
+    # Mail programs call 8-bit text us-ascii, or UTF-8, that is neither: each such byte became a replacement
+    # character, in the mail's text and in a text file attached, and "Müller" was never found.
+    def part(disposition):
+        head = f"--b\r\nContent-Type: text/plain; charset={charset}\r\n{disposition}"
+        return head.encode() + b"Content-Transfer-Encoding: 8bit\r\n\r\nGr\xfc\xdfe von M\xfcller.\r\n"
+
+    head = b"Subject: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
+    attached = "Content-Disposition: attachment; filename=note.txt\r\n"
+    (tmp_path / "m.eml").write_bytes(head + part("") + part(attached) + b"--b--\r\n")
+    (mail, note), problems = readers.load(tmp_path / "m.eml")
+    assert mail.text.endswith("Grüße von Müller.")
+    assert (note.text, problems) == ("Grüße von Müller.", [])
+
+
+def test_mail_text_in_a_charset_of_its_own_keeps_it_where_a_byte_is_not_of_it(tmp_path):
+    # Only text called us-ascii or UTF-8 that is neither is read as a text file is. Japanese mail declares Shift_JIS
+    # and holds a vendor's characters that Python's Shift_JIS has not: read as ANSI for one such byte, every character
+    # of the mail and of a text file attached was lost. The bytes that aren't of the charset are replaced, as before.
+    text = "見積書を送ります。".encode("shift_jis") + b"\x87\x40" + "以上です。".encode("shift_jis")
+
+    def part(disposition):
+        head = f"--b\r\nContent-Type: text/plain; charset=shift_jis\r\n{disposition}"
+        return head.encode() + b"Content-Transfer-Encoding: 8bit\r\n\r\n" + text + b"\r\n"
+
+    head = b"Subject: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
+    attached = "Content-Disposition: attachment; filename=note.txt\r\n"
+    (tmp_path / "m.eml").write_bytes(head + part("") + part(attached) + b"--b--\r\n")
+    (mail, note), _ = readers.load(tmp_path / "m.eml")
+    for read in (mail.text, note.text):
+        assert "見積書を送ります。" in read
+        assert read.endswith("以上です。")
+
+
 def test_a_text_attachment_reads_in_the_charset_its_mail_declares(tmp_path):
     # sift reads text files as UTF-8; a mail can say that an attachment is Latin-1, whose umlauts came out as "\ufffd".
     def attachment(name, charset, data):
@@ -463,7 +514,7 @@ def test_a_text_attachment_reads_in_the_charset_its_mail_declares(tmp_path):
         + b"--b--\r\n"
     )
     (_, *attached), problems = readers.load(tmp_path / "m.eml")
-    assert [doc.text for doc in attached] == ["Grüße aus Zürich", "Grüße", "Gr\ufffd\ufffde"]
+    assert [doc.text for doc in attached] == ["Grüße aus Zürich", "Grüße", "Grüße"]  # unknown: what isn't UTF-8, ANSI
     assert problems == []
 
 

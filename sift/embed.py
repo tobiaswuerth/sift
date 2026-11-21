@@ -25,6 +25,7 @@ C = TypeVar("C", bound=store.Collection)
 
 SLAB = 20000  # chunks per commit; length sorting happens within a slab
 AHEAD = 2  # slabs read ahead of the model
+STEP = 0.1  # seconds a wait for the reader thread lasts at a time, so that Ctrl+C stops it
 
 Passage = tuple[int, int, str, str]  # (chunk id, seq, title, text)
 Vectors = NDArray[np.float16]
@@ -71,10 +72,11 @@ def embed_pending(
         )
     chosen = _chosen(catalog, collections)
     models = models or _models.default()
+    using = models.name  # a worker's: asked of it
     if reset:
+        models.prepare()  # the model loads, or the worker answers, before any vector goes
         for db in [catalog.store(c) for c in catalog.collections()]:  # every one opens, or none changes
             _forget_vectors(db)
-    using = models.name
     stores = list(_stores(catalog, chosen, named=bool(collections)))
     for c, db in stores:
         _check_model(db, c.name, using)
@@ -86,7 +88,8 @@ def embed_pending(
         return
     of = f" of {named}" if named else ""
     console.say(f"embedding {console.count(total, 'chunk')}{of} with {using} on {models.address}")
-    models.prepare()
+    if not reset:  # prepared before the reset
+        models.prepare()
     with console.Progress(total, "chunks") as progress:
         done, broken = _embed(models, [db for _, db, n in pending if n], using, progress)
     console.say(f"embedded {done - broken:,} chunks in {console.duration(progress.elapsed)}")
@@ -193,13 +196,23 @@ class _Reader:
 
     def __exit__(self, *exc: object) -> None:
         self.stop.set()
-        self.thread.join()
+        while self.thread.is_alive():  # in steps: on Windows a wait without a timeout takes no Ctrl+C till it ends
+            self.thread.join(STEP)
 
     def __iter__(self) -> Iterator[_Slab]:
-        while (slab := self.slabs.get()) is not _DONE:
+        while (slab := self._next()) is not _DONE:
             if isinstance(slab, BaseException):
                 raise slab
             yield slab
+
+    def _next(self) -> _Slab | BaseException | _End:
+        """The next item the thread queued, waited for in steps (see __exit__): a large store's first slab takes
+        minutes."""
+        while True:
+            try:
+                return self.slabs.get(timeout=STEP)
+            except queue.Empty:
+                continue
 
     def _read(self) -> None:
         try:
@@ -226,7 +239,7 @@ class _Reader:
         """Queue an item, unless embedding stops meanwhile."""
         while not self.stop.is_set():
             try:
-                self.slabs.put(item, timeout=0.1)
+                self.slabs.put(item, timeout=STEP)
                 return
             except queue.Full:
                 continue
@@ -290,14 +303,15 @@ def _stores(catalog: store.Catalog[C], collections: Iterable[C], named: bool) ->
 
 def _forget_vectors(db: sqlite3.Connection) -> None:
     store.drop_vectors(db, "1")
-    db.execute("DELETE FROM meta WHERE key IN ('model', 'dim', 'kw_ordered')")  # kw_ordered: see postings._unordered
+    # kw_ordered: see postings._unordered
+    db.execute("DELETE FROM meta WHERE key IN ('model', ?, 'dim', 'kw_ordered')", (store.MODEL_AT,))
     store.touch(db)
     db.commit()
 
 
 def _check_model(db: sqlite3.Connection, name: str, using: str) -> None:
-    """A collection embedded already must have been embedded with the model in use."""
-    model = store.get_meta(db, "model")
+    """A collection embedded already must have been embedded with the model in use, at its revision."""
+    model = store.model(db)
     if model and model != using:
         raise SystemExit(f"{name} was embedded with {model}; run `sift embed --reset` to switch to {using}")
 
@@ -353,7 +367,7 @@ def _store_vectors(db: sqlite3.Connection, chunks: list[int], vectors: Vectors, 
     there = {c for (c,) in db.execute(sql, (json.dumps([int(c) for c in chunks]),))}
     keep = intact & np.fromiter((c in there for c in chunks), bool, len(chunks))
     store.put_vectors(db, [chunk for chunk, ok in zip(chunks, keep) if ok], vectors[keep])
-    store.set_meta(db, "model", model)
+    store.set_model(db, model)
     store.set_meta(db, "dim", vectors.shape[1])
     store.touch(db)  # tells a running server the codes changed
     db.commit()

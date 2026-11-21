@@ -31,15 +31,19 @@ CPU_THREADS = torch.get_num_threads()  # PyTorch's own choice, a thread per core
 # Beside an NVIDIA GPU, PyTorch's CPU steps are small, and the threads it keeps for them wait busily after each (Intel
 # OpenMP's 200 ms): a thread per core kept 9 of 24 cores busy through `sift embed`, and embedding ran 5% slower.
 GPU_THREADS = 1
+# PyTorch's CUDA builds, as the fix sift prints installs them: CUDA 12.6 runs on the most drivers of the indexes that
+# carry sift's lowest PyTorch (README.md and requirements.txt name it too, which a test holds)
+CUDA_INDEX = "https://download.pytorch.org/whl/cu126"
 _Item = TypeVar("_Item")
 _Result = TypeVar("_Result")
 
 
-class _Unset:
-    """The type of _UNSET: a budget not asked for yet, unlike None, which is a budget asked for and not there."""
+class Unset:
+    """The type of UNSET: a value not asked for yet, as a budget or a counter, unlike None, which is one asked for and
+    not there."""
 
 
-_UNSET = _Unset()
+UNSET = Unset()
 
 
 class GpuMemory(Protocol):
@@ -80,9 +84,7 @@ def cuda_pytorch_command(platform: str = sys.platform) -> str:
     """How to replace a CPU-only PyTorch with the CUDA build. Windows wheels bundle their CUDA libraries, so
     torch's other dependencies can stay; Linux wheels depend on nvidia-* packages, which must come along."""
     no_deps = "--no-deps " if platform == "win32" else ""
-    return (
-        f"pip install --force-reinstall {no_deps}torch torchvision --index-url https://download.pytorch.org/whl/cu128"
-    )
+    return f"pip install --force-reinstall {no_deps}torch torchvision --index-url {CUDA_INDEX}"
 
 
 def _unused_nvidia_gpu() -> str | None:
@@ -121,7 +123,7 @@ class Accelerator:
         self.found: str = self.device  # the device found: `device` falls back to the CPU if too little memory is free
         self.memory, self.clock = memory, clock
         self.batch_size = BATCH_SIZE
-        self._budget: float | _Unset | None = _UNSET  # asked once, on first use
+        self._budget: float | Unset | None = UNSET  # asked once, on first use
         # what is on the GPU now: key -> function that moves it back to RAM
         self._resident: dict[int, Callable[[], object]] = {}
         self._released = False  # whether everything left the GPU at some point, so the budget needs a fresh look
@@ -149,7 +151,7 @@ class Accelerator:
     def budget(self) -> float | None:
         """The GPU memory sift may use, set once as a cap on PyTorch: what other programs leave free now, minus
         headroom. None off CUDA, and when too little is free, which moves sift to the CPU."""
-        if isinstance(self._budget, _Unset):
+        if isinstance(self._budget, Unset):
             if self.kind != "cuda":
                 if self.device == "cpu" and (reason := _unused_nvidia_gpu()):
                     console.say(reason)
@@ -207,11 +209,11 @@ class Accelerator:
             except RuntimeError as e:
                 if size == 1 or not out_of_memory(e):
                     raise
-                self._empty_cache()
-                size //= 2
-                if most is None:
-                    self.batch_size = size
-                console.say(f"\nout of GPU memory, batch size now {size}")
+            self._empty_cache()  # after the `except`, whose traceback held the failed batch's tensors while it lasted
+            size //= 2
+            if most is None:
+                self.batch_size = size
+            console.say(f"\nout of GPU memory, batch size now {size}")
 
     def calibrate(self, run: Callable[[int], object]) -> int:
         """Measure the largest batch that fits the memory budget, and use it from now on. run(n) runs a batch of n

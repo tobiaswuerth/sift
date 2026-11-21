@@ -5,13 +5,15 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 
 ## Indexing
 
-- Worker processes read and parse files in parallel while the previous batch is written; small updates skip the
-  process start-up. Each kind of file has a reader, chosen by extension; adding a format means adding a reader.
-- A reader's native code can end its process, or never come to an end; a file gets ten minutes, and a second more
-  for every 100 KB. The pool then says no more than that it broke, so the files it hadn't read are read again one at a
-  time, in a process of their own: the one that ends or hangs it is left out, said, and tried again by the next run;
-  the others are read. Files read in the indexing process itself, a small update's and those of `reindex`, have no
-  such guard.
+- Worker processes read and parse files in parallel while the previous batch is written; small updates of notes, text
+  files and JSON Lines skip the process start-up. Each kind of file has a reader, chosen by extension; adding a format
+  means adding a reader.
+- A reader's native code (Xberg's, for documents and mails) can end its process, or never come to an end, so such a
+  file is always read in a worker process, by `sift index` and by `reindex` alike, in a task of its own: it gets ten
+  minutes, and a second more for every 100 KB. The pool then says no more than that it broke, so the files it hadn't
+  read are read again one at a time, in a process of their own: the one that ends or hangs it is left out, said, and
+  tried again by the next run; the others are read, and what tasks had read by then is kept. A file that hung alone
+  in its task is known by then, and gets no second time.
 - Files are compared by modification time and size, so unchanged files cost nothing, and documents by content hash, so
   a changed JSON Lines file re-indexes only its changed records.
 - A JSON Lines file over 32 MB is read line by line as it is stored, in batches of 10,000 records (or 16 MB of text),
@@ -71,6 +73,10 @@ sift therefore ranks from postings of its own, read out of FTS5's index, which s
 
 ## Embedding
 
+- The default models load at a commit of their repositories that sift pins (`settings.PINNED`), so that a push of
+  their owners changes no vector; a release moves a pin. A store records the model its vectors are of twice: by its
+  name alone, as sift 1.14 and older record and compare it, and at its revision (`name@commit`). `sift embed` refuses
+  to mix models or commits; a store with the name alone is of the commit that name meant to the sift that wrote it.
 - PyTorch on the GPU (NVIDIA, else Apple), in batches of texts of similar length in tokens: a batch is padded to its
   longest text, and characters predict tokens poorly.
 - bfloat16 on NVIDIA GPUs that have it, float32 elsewhere, never fp16, where EmbeddingGemma overflows into NaN vectors
@@ -100,8 +106,11 @@ sift therefore ranks from postings of its own, read out of FTS5's index, which s
   document is represented by its best passage.
 - Queries of words, AND, OR, NOT and parentheses are answered from the postings by Block-Max Pruning
   ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): each term's best score in a range, summed over the query's
-  terms, bounds every chunk there, so ranges are scored best bound first until none left can beat the k-th best. The
-  results are FTS5's, score for score (nested queries aside).
+  terms, bounds every chunk there, so ranges are scored best bound first until none left can beat the k-th best. On
+  postings built anew the results are FTS5's, score for score (nested queries aside). After deltas, a word's counts
+  (passages, tokens, how many passages hold it) still include the postings deltas masked, as Lucene's do until its
+  segments merge, while FTS5 counts what is there now: scores drift from FTS5's, most for rare words, until the
+  postings are built anew, once more than 5% of the chunks changed. A phrase's count is FTS5's, as it is now.
 - Common words are read only where they can matter: with all words required, the rarest first and each next only
   where chunks holding all before it remain; with any of them, the words that together can't reach the k-th best score
   only for chunks the others bring within reach (MaxScore).
@@ -175,6 +184,6 @@ more is refused (413).
 
 | Request | Answer |
 |---|---|
-| `GET /` | The worker's models, vector length and sift version |
+| `GET /` | The worker's models (`model`, its `revision`, `reranker`), vector length (`dim`) and sift `version` |
 | `POST /embed` with `{"texts": [...], "query": false}` | The vectors as raw fp16, one row per text |
 | `POST /rerank` with `{"query": "...", "texts": [...]}` | The raw scores, `{"scores": [...]}` |

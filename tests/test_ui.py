@@ -83,6 +83,16 @@ def test_the_page_shows_the_document_counts_kept(embedded):
     assert "1,234,567 documents" in page(Index(embedded[0])).get("/ui/").text
 
 
+def test_a_search_marks_its_words_of_one_character_but_latin_letters(corpus):
+    # As the searches take them: a digit and a word of one character in another script are words; "a" is none.
+    catalog, root = corpus
+    write(root / "cat.md", "# Cat\n\nDas Tier 猫 hat a 3 Beine.\n")
+    indexing.index(catalog)
+    response = page(Index(catalog)).get("/ui/", params={"q": "猫 3 a"})
+    snippet = re.search(r'<span class="snippet">(.*?)</span>', response.text)[1]
+    assert snippet == "Das Tier <mark>猫</mark> hat a <mark>3</mark> Beine."
+
+
 def test_the_address_of_the_server_leads_to_the_ui(browser):
     response = browser.get("/", follow_redirects=False)
     assert response.status_code in (302, 307)
@@ -379,7 +389,7 @@ def test_going_back_gets_the_whole_page(browser):
 @pytest.mark.parametrize(
     "params, message",
     [
-        ({"q": "brush", "f": '"=1'}, "invalid filter field"),
+        ({"q": "brush", "f": "=1"}, "invalid filter field"),
         ({"q": "brush", "f": "no equals sign"}, "must be field=value"),
         ({"q": "brush", "c": "nope"}, "no collection named"),
         ({"doc": "notes/missing.md"}, "unknown document"),
@@ -463,6 +473,29 @@ def test_the_ui_answers_local_hosts_only(browser):
     assert browser.get("/ui/", headers={"Host": "localhost:8765"}).status_code == 200
 
 
+@pytest.mark.parametrize(
+    "site, mode, dest, status",
+    [
+        ("cross-site", "no-cors", "image", 403),  # another site's page: <img src="http://127.0.0.1:8765/ui/?q=...">
+        ("cross-site", "cors", "empty", 403),  # its fetch()
+        ("cross-site", "navigate", "iframe", 403),  # the UI in its frame
+        ("cross-site", "navigate", "document", 200),  # a link to the UI, followed
+        ("same-origin", "cors", "empty", 200),  # the UI's own htmx
+        ("none", "navigate", "document", 200),  # the address typed
+        (None, None, None, 200),  # no browser: curl, an agent
+    ],
+)
+def test_the_ui_answers_no_other_site(browser, site, mode, dest, status):
+    # Any web page could have the browser ask the UI for a search, the reranker on the GPU and the server's one
+    # call at a time held for it, or show the UI in a frame of its own. Browsers say who asks (Fetch Metadata).
+    names = ("Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest")
+    headers = {name: value for name, value in zip(names, (site, mode, dest)) if value}
+    response = browser.get("/ui/", params={"q": "brush", "mode": "query"}, headers=headers)
+    assert response.status_code == status
+    if status == 200:
+        assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+
+
 def test_a_server_on_the_ipv6_loopback_answers_only_local_hosts(embedded):
     # As on 127.0.0.1: a web page reaching it under its own domain must not read the documents.
     index = Index(embedded[0])
@@ -473,10 +506,52 @@ def test_a_server_on_the_ipv6_loopback_answers_only_local_hosts(embedded):
     assert browser.get("/ui/", headers={"Host": "localhost:8765"}).status_code == 200
 
 
-def test_a_server_for_other_machines_answers_any_host(embedded):
-    index = Index(embedded[0])
-    app = server.http_app(server.build(index)[0], index, "0.0.0.0")
-    assert Client(app, base_url="http://workstation:8765").get("/ui/").status_code == 200
+def test_a_server_for_other_machines_answers_its_addresses_and_names_alone(embedded):
+    # Bound to all addresses, it answered any Host: a page of another site whose name led to this machine's address
+    # (DNS rebinding) read every document, from any browser on the network. An address is no such name.
+    index, me = Index(embedded[0]), socket.gethostname()
+    app = server.http_app(server.build(index)[0], index, "0.0.0.0", allowed=["notes.example"])
+    browser = Client(app, base_url="http://192.168.1.5:8765")
+    for host, status in (
+        ("192.168.1.5:8765", 200),
+        ("[fe80::1]:8765", 200),
+        ("localhost:8765", 200),
+        (f"{me.upper()}:8765", 200),  # this machine's name, in any case
+        (f"{me}.local", 200),
+        ("Notes.Example:8765", 200),  # one --allow-host names
+        ("notes.example.:8765", 200),  # as a browser names it with the dot of its root
+        ("attacker.example:8765", 400),
+        ("[1.2.3.4x", 400),  # no address: its bracket never closes
+        ("", 400),
+    ):
+        assert browser.get("/ui/", headers={"Host": host}).status_code == status, host
+    refused = browser.post("/mcp", json={}, headers={"Host": "attacker.example:8765"})  # MCP too
+    assert (refused.status_code, "`sift serve --allow-host NAME`" in refused.text) == (400, True)  # and what lets in
+
+
+@pytest.mark.parametrize(
+    "given, name",
+    [("Notes.Example", "notes.example"), ("nas.", "nas"), ("münchen.example", "xn--mnchen-3ya.example")],
+)
+def test_a_name_to_answer_to_is_taken_as_requests_name_it(given, name):
+    # `--allow-host` took a name as typed: one with a capital, a dot at its end, or letters beyond ASCII, which a
+    # browser sends encoded, never matched, and the server refused its own name without saying why.
+    assert ui.host_name(given) == name
+
+
+@pytest.mark.parametrize("given", ["nas:8765", "http://nas", "[::1]", "nas/ui", "a b", "", "münchen..example"])
+def test_what_is_no_name_of_a_host_is_refused(given):
+    with pytest.raises(ValueError, match="--allow-host takes a name"):
+        ui.host_name(given)
+
+
+def test_a_name_that_is_none_is_refused_before_the_models_load():
+    class Unasked:
+        def __getattr__(self, name):
+            pytest.fail("the models were asked for")
+
+    with pytest.raises(ValueError, match=r"--allow-host takes a name .* got 'nas:8765'"):
+        server.serve("0.0.0.0", 8765, models=Unasked(), allowed=["nas:8765"])
 
 
 def test_the_ui_brings_its_scripts_and_styles(browser):
@@ -598,8 +673,8 @@ def test_sift_ui_opens_a_server_that_is_busy(home, opened, monkeypatch, capsys):
 def test_sift_ui_starts_the_server_when_none_runs(home, opened, monkeypatch):
     port, started = free_port(), []
 
-    def serve(host, port):  # listens, as `sift serve` does once its models are loaded, until the page opened
-        started.append((host, port))
+    def serve(host, port, allowed):  # listens, as `sift serve` does once its models are loaded, until the page opened
+        started.append((host, port, allowed))
         with socket.create_server(("127.0.0.1", port)):
             deadline = time.monotonic() + 10  # a hang detector
             while not opened:
@@ -608,7 +683,7 @@ def test_sift_ui_starts_the_server_when_none_runs(home, opened, monkeypatch):
 
     monkeypatch.setattr(server, "serve", serve)
     cli.main(["ui", "--port", str(port)])
-    assert started == [("127.0.0.1", port)]
+    assert started == [("127.0.0.1", port, [])]
     assert opened == [f"http://127.0.0.1:{port}/ui/"]
 
 

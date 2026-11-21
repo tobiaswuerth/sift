@@ -1,8 +1,9 @@
 name: Audit
 
-# Once a week, the packages sift installs today are checked against the advisories known for them. sift names ranges
-# of versions, not versions, so what Dependabot reads in pyproject.toml isn't what a user gets, least of all of the
-# packages those bring along. A finding fails this run, which GitHub mails; it holds up no pull request.
+# Once a week, the packages sift installs today, and those of the lowest versions it names, are checked against the
+# advisories known for them. sift names ranges of versions, not versions, so what Dependabot reads in pyproject.toml
+# isn't what a user gets, least of all of the packages those bring along. A finding fails this run, which GitHub
+# mails; it holds up no pull request. One against a lowest version is fixed by raising it.
 on:
   schedule:
     - cron: "17 5 * * 1"  # Mondays, 05:17 UTC
@@ -13,6 +14,11 @@ permissions:
 
 jobs:
   dependencies:
+    name: dependencies (${{ matrix.resolution }})
+    strategy:
+      fail-fast: false
+      matrix:
+        resolution: [highest, lowest-direct]  # what users get today, and the lowest versions sift allows them
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -24,7 +30,9 @@ jobs:
           python-version: "3.12"
           activate-environment: true
           enable-cache: true
-      - run: uv pip install --torch-backend cpu -e .
+      - run: uv pip install --resolution "$RESOLUTION" --torch-backend cpu -e .
+        env:
+          RESOLUTION: ${{ matrix.resolution }}
       # Without sift itself, which is this checkout; PyTorch's CPU builds under the versions they are builds of,
       # as the advisories name them.
       - run: uv pip freeze --exclude-editable | sed -E 's/\+cpu$//' > installed.txt

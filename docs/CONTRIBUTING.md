@@ -10,7 +10,7 @@ git clone https://github.com/tobiaswuerth/sift
 cd sift
 uv venv && uv pip install --torch-backend auto -e ".[dev]"   # or: pip install -r requirements.txt -e ".[dev]"
 pre-commit install      # lint, format and config checks on every commit
-python scripts/gate.py  # the gate: every hook, the types, the tests with the coverage gate, and the smoke run
+python scripts/gate.py  # the gate: every check a change must pass (see "How changes are made")
 ```
 
 The tests replace the models, GPU memory and the clock with small deterministic fakes, so they need no GPU and no
@@ -50,7 +50,7 @@ downloads; everything else, the MCP server included, runs for real.
 | `ui.py` | `sift ui`: the browser UI's views; `web/` holds its templates, styles, script and htmx 2.0.11 (0BSD) |
 | `worker.py` | `sift worker`: lends this machine's GPU to others, over HTTPS |
 | `update.py` | A newer sift on PyPI: asking once a day, offering it in a terminal, updating once no sift runs |
-| `settings.py` | The environment variables, read once (`settings.current()`) |
+| `settings.py` | The environment variables, read once (`settings.current()`), and the commit each default model is pinned to |
 | `console.py` | What sift tells the user on stderr: messages, plurals, commands to paste, one progress bar |
 | `logs.py` | A log for each command that changes the index or serves it |
 
@@ -61,16 +61,25 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 - Only `settings.py` reads or sets the environment.
 - Results go to stdout from `cli.py` alone; everything else goes to stderr through `console.py`, so output can be piped.
 - Tests build objects around fakes instead of patching module state, and change settings with the `configure` fixture.
+  Each test has a SIFT_HOME of its own, the `home` fixture's, which the processes it starts share, and sift's
+  defaults for every other setting, whatever the shell that runs it holds. It sees every folder listed last name
+  first, on every system: file systems list in orders of their own, which no test may count on.
 
 ## How changes are made
 
 - **Tests first:** a test that fails, then the change that makes it pass; every bug fix comes with a regression test.
 - **Full coverage:** `pytest --cov` requires 100% line and branch coverage.
 - **The gate:** `python scripts/gate.py` runs every check a change must pass, and is green when all did: the
-  pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run. With uv on the PATH, it
-  then runs the tests once more on the newest Python CI tests on, where a Python warns of what an older one lets
-  pass: in `.venv-newest`, an environment the gate makes, keeps up to date and owns (delete it at will). CI itself
-  runs the oldest and the newest Python first, and every other system and Python once those pass.
+  pre-commit hooks, the type checker, the tests with the coverage gate, and the smoke run. It checks its own checkout,
+  from whichever folder it runs, and first that its Python imports that checkout's sift and that git tracks or
+  ignores every file there, since the hooks check only those git tracks. With uv on the PATH, it then builds and
+  checks the package as CI's package job does (`scripts/package.py`: the changelog's section, the build from the files
+  a clone holds with its backend by hash, twine, what the sdist holds, the wheel in a clean environment); runs the
+  tests once more on the newest Python CI tests on, where a Python warns of what an older one lets pass, in
+  `.venv-newest`, an environment the gate makes, keeps up to date and owns (delete it at will); and runs them with the
+  lowest versions sift names of what it depends on, on the oldest Python, as CI's lowest job does, in an environment
+  made afresh in a temporary folder, where `scripts/floors.py` first holds each version named to the one installed.
+  CI itself runs the oldest and the newest Python first, and every other system and Python once those pass.
 - **Types:** [pyright](https://github.com/microsoft/pyright) checks all of `sift/` in its strict mode, as on Linux,
   macOS and Windows each, whichever runs it: `pyright --pythonplatform Linux` (`Darwin`, `Windows`), in the activated
   environment. It checks for the Python of CI's types job, whose packages it reads (NumPy's types name what only that
@@ -82,19 +91,15 @@ Rules the code keeps, several checked by `tests/test_package.py`:
   order marks, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schemas, actionlint, codespell, and
   [zizmor](https://docs.zizmor.sh), which reads the workflows for what makes them unsafe. Workflows name their
   actions by commit, which a test holds them to. Once a week, the Audit workflow checks the packages sift installs
-  that day against the advisories known for them (`pip-audit`); Dependabot proposes a new release once it is a week
-  old.
-- **Nothing private:** the `private` hook refuses a commit whose files or message match a pattern of the maintainer's
-  own list, `~/.private-patterns` (or the file `PRIVATE_PATTERNS` names): regular expressions, one a line, in no
-  repository. Without that file, as in CI and for contributors, it checks nothing. `pre-commit install` sets up the
-  hook for the message too.
+  that day, and those of the lowest versions it names, against the advisories known for them (`pip-audit`); one
+  against a lowest version is fixed by raising it. Dependabot proposes a new release once it is a week old.
 - **The smoke run:** `python scripts/smoke.py` runs every command as a user runs it, each in a process of its own, on
   a small folder of notes; with `--models` also what loads the models: `embed`, the semantic searches, `bench` and
   `sift serve` with its page and MCP endpoint. A new command or option gets a line there.
 - **Pull requests:** `main` is protected; pull requests are squash-merged once every check passes. CI runs the hooks,
   the type checker, the tests and the smoke run on Linux (x86 and ARM), macOS and Windows for Python 3.11 to 3.15,
-  and builds the package, on pull requests and again on each merge commit. Its check `tests` passes when every job
-  of that matrix did.
+  tests the lowest versions sift names on Python 3.11, and builds the package, on pull requests and again on each
+  merge commit. Its check `tests` passes when every job of that matrix did, and that of the lowest versions.
 - **Changelog:** user-visible changes go under "Unreleased" in [CHANGELOG.md](../CHANGELOG.md).
 - **Measurements** in docs state the hardware by kind (a GPU, 8 CPU threads), not by model, and leave out what else
   ran on the machine.

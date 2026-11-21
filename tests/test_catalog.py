@@ -41,6 +41,18 @@ def test_an_index_from_an_older_sift_asks_to_be_rebuilt(home):
         Catalog(home)
 
 
+def test_a_catalog_is_made_whole_or_not_at_all(home, monkeypatch):
+    # Its tables were made a statement at a time, its layout version last: a sift stopped in between, or another
+    # starting at that moment, found tables without a version, and was told to delete the catalog as an older sift's.
+    schema = catalog_module.SCHEMA
+    monkeypatch.setattr(catalog_module, "SCHEMA", schema + "CREATE TABLE meta(key TEXT);")  # fails after the tables
+    with pytest.raises(sqlite3.OperationalError, match="already exists"):
+        Catalog(home)
+    monkeypatch.setattr(catalog_module, "SCHEMA", schema)
+    Catalog(home).close()
+    assert Catalog(home).db.execute("PRAGMA user_version").fetchone() == (catalog_module.SCHEMA_VERSION,)
+
+
 def test_a_catalog_from_a_newer_sift_asks_for_an_upgrade(home):
     home.mkdir()
     newer = sqlite3.connect(home / "sift.db")
@@ -127,6 +139,12 @@ def test_a_collection_can_take_titles_from_file_names(home, notes):
 def test_titles_come_from_headings_or_file_names(home, notes, choice):
     with pytest.raises(SystemExit, match="titles come from 'heading' or 'name'"):
         Catalog(home).add(notes, fields={"title_from": choice})
+
+
+@pytest.mark.parametrize("choice", ["yes", True, None])
+def test_links_out_of_a_collection_are_followed_with_follow_alone(home, notes, choice):
+    with pytest.raises(SystemExit, match="read with 'follow'"):
+        Catalog(home).add(notes, fields={"links": choice})
 
 
 def test_the_collection_at_a_folder(corpus, tmp_path):

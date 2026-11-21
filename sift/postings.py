@@ -29,6 +29,7 @@ reads FTS5, as before.
 import itertools
 import json
 import multiprocessing
+import re
 import sqlite3
 import struct
 import tempfile
@@ -565,7 +566,7 @@ def _write_lengths(db: sqlite3.Connection, segment: int, ids: Ids, lengths: Ids)
 def built(db: sqlite3.Connection) -> bool:
     """Whether the store's postings are built (if behind FTS5 meanwhile, see `ready`): meta kw_built holds the change
     they were built at, after ORDERED if they are in an order of their own."""
-    return str(store.get_meta(db, "kw_built", "")).removeprefix(ORDERED).isdigit()
+    return re.fullmatch("[0-9]+", str(store.get_meta(db, "kw_built", "")).removeprefix(ORDERED)) is not None
 
 
 def _ordered(db: sqlite3.Connection) -> bool:

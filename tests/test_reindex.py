@@ -2,7 +2,9 @@
 running server follows without loading every code again."""
 
 import os
+import shutil
 import sqlite3
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -11,7 +13,11 @@ from sift import indexing, postings, readers, search, store
 from sift.catalog import Catalog
 from sift.search import Index
 
-from .conftest import write
+from . import workers
+from .conftest import live_codes, write
+from .test_indexing import link_file
+
+SAMPLES = Path(__file__).parent / "samples"
 
 NEW = "vault/06_Topics/Wartungsvertrag 2027.md"
 OFFER = "vault/03_Interactions/2026-10-14 Offerte.md"
@@ -100,7 +106,7 @@ def every_code(index):
     """The codes an index holds, of every collection: (chunk ids, codes as bytes)."""
     ids, bits = [], []
     for cid in sorted(index.vectors):
-        held_ids, held = index.vectors[cid][1].live()
+        held_ids, held = live_codes(index.vectors[cid][1])
         ids, bits = ids + held_ids.tolist(), bits + [row.tobytes() for row in held]
     return ids, bits
 
@@ -434,6 +440,17 @@ def test_reindex_refuses_files_behind_a_linked_folder(live, tmp_path, monkeypatc
         index.reindex(["vault/linked/a.md"])
 
 
+def test_reindex_refuses_a_file_linked_from_outside_its_collection(corpus, tmp_path, monkeypatch):
+    # As `sift index` leaves it out, unless the collection was added with --follow-links.
+    catalog, root = corpus
+    write(tmp_path / "outside" / "secret.txt", "a private key\n")
+    link_file(tmp_path / "outside" / "secret.txt", root / "notes.txt", monkeypatch)
+    with pytest.raises(ValueError, match=r"notes/notes\.txt links to outside its collection's folder"):
+        Index(catalog).reindex(["notes/notes.txt"])
+    catalog.follow_links("notes")
+    assert Index(catalog).reindex(["notes/notes.txt"])[0]["status"] == "added"
+
+
 @pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")
 def test_reindex_refuses_files_behind_a_junction(live, tmp_path):
     # A junction leads elsewhere as a link does, and every user may make one.
@@ -575,6 +592,19 @@ def test_reindex_builds_the_postings_of_a_small_collection_that_has_none(notes, 
     assert index.reindex(["notes/plain.txt"])[0]["status"] == "added"
     assert postings.ready(db)
     assert ids(index.search("colour")) == ["notes/plain.txt"]
+
+
+def test_reindex_reads_a_file_read_by_native_code_in_a_process_of_its_own(corpus, monkeypatch, pools):
+    # A document whose reader ended its process, when an agent reindexed it, ended `sift serve`. Notes are read here.
+    catalog, root = corpus
+    shutil.copy(SAMPLES / "sample.pdf", root / "poison.pdf")
+    write(root / "new.md", "# New\n\nfresh words\n")
+    monkeypatch.setattr(indexing, "_loaded", workers.ending)
+    bad, new = Index(catalog).reindex(["notes/poison.pdf", "notes/new.md"])
+    note = "Stopped: its reader ended the process it ran in"
+    assert bad == {"id": "notes/poison.pdf", "status": "unreadable", "note": note}
+    assert new["status"] == "added"
+    assert pools[0] == (1, "spawn")
 
 
 def test_reindex_reads_the_other_files_when_a_reader_fails(corpus, monkeypatch):

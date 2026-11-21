@@ -38,8 +38,12 @@ def post(client, path, payload):
 
 
 def test_the_worker_says_which_models_it_runs(client, fake_models):
+    # Its embedding model by its name, as sift 1.14 and older compare it with the model a collection was embedded
+    # with, and the commit sift pins it to beside it; the reranker, which no collection records, as it is named.
+    model, revision = fake_models.name.split("@")
     assert client.get("/").json() == {
-        "model": fake_models.name,
+        "model": model,
+        "revision": revision,
         "dim": 64,
         "reranker": fake_models.reranker_name,
         "version": __version__,
@@ -241,7 +245,7 @@ def test_embed_through_a_worker(corpus, fake_models, live, monkeypatch, capsys, 
     for seq, title, text, vec in rows:
         expected = fake_vector(embed.text_of(seq, title, text)).astype(np.float16)
         assert np.frombuffer(vec, np.float16).tolist() == expected.tolist()
-    assert store.get_meta(catalog.store("notes"), "model") == fake_models.name
+    assert store.model(catalog.store("notes")) == fake_models.name
     err = capsys.readouterr().err
     assert f"embedding 3 chunks with {fake_models.name} on {live.address}" in err
     assert live.token not in err  # the key stays off the screen

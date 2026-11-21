@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, overload
 from urllib.parse import quote
 
-from . import console, readers
+from . import console, readers, settings
 
 if TYPE_CHECKING:
     from .vectors import Bits, Floats, Ids
@@ -322,7 +322,7 @@ def make(db: sqlite3.Connection, cid: int, read: bool = True) -> None:
     db.executemany("INSERT INTO sqlite_sequence(name, seq) VALUES(?, ?)", [("docs", first), ("chunks", first)])
     set_meta(db, "collection", cid)
     set_meta(db, LISTED, 1)  # its documents are listed as they come
-    for key in (*READ_AGAIN, WAITED) if read else ():
+    for key in (*READ_AGAIN, WAITED, ANSI_READ) if read else ():
         set_meta(db, key, 1)
     db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -355,6 +355,11 @@ READ_AGAIN: dict[str, tuple[str, ...]] = {
     "documents_read": readers.DOCUMENTS,  # the server of sift 1.3.0 and older skipped every document it reindexed
 }
 WAITED = "paths_waited"  # in the meta table, once what sift 1.11 left out for a taken path is to be read again
+MODEL_AT = "model_at"  # in the meta table: the model a store was embedded with, at its revision (see model)
+# The default embedding model as sift 1.14 and older recorded it, by its name alone, which meant its repository's latest
+# commit, and the commit that name means: every commit of that repository up to this one holds the same weights. Not
+# settings.PINNED, whose pin a later release moves.
+UNPINNED = {"google/embeddinggemma-2": "google/embeddinggemma-2@f9972ac22e696a105c482202646979e33e4b5a1e"}
 
 
 def _once(db: sqlite3.Connection, key: str, work: Callable[[sqlite3.Connection], object]) -> None:
@@ -373,6 +378,24 @@ def _once(db: sqlite3.Connection, key: str, work: Callable[[sqlite3.Connection],
     except sqlite3.OperationalError as error:
         if getattr(error, "sqlite_errorcode", 0) & 0xFF != sqlite3.SQLITE_READONLY:
             raise
+
+
+def model(db: sqlite3.Connection) -> str | None:
+    """The model a store's vectors are of, at its revision ("name@revision", as settings.pinned names it), or None
+    before any. The meta table holds it twice: under `model` its name alone, as sift 1.14 and older record it and
+    compare it with theirs, so that they still embed into a store this sift embedded; under MODEL_AT at its revision.
+    Where the two name different models, an older sift embedded the store again since, and the name counts; a name
+    alone is of the commit it meant to that sift (UNPINNED), whose vectors need no embedding again."""
+    name, at = get_meta(db, "model"), get_meta(db, MODEL_AT)
+    if name is None:
+        return None
+    return at if at is not None and settings.hub(at)[0] == name else UNPINNED.get(name, name)
+
+
+def set_model(db: sqlite3.Connection, using: str) -> None:
+    """Record the model a store's vectors are of, given at its revision (see model)."""
+    set_meta(db, "model", settings.hub(using)[0])
+    set_meta(db, MODEL_AT, using)
 
 
 def _read_waited_again(db: sqlite3.Connection) -> None:
@@ -411,6 +434,71 @@ def read_again(db: sqlite3.Connection, kinds: tuple[str, ...]) -> None:
                WHERE d.source = sources.id AND lower(a.value) LIKE '%' || k.value))""",
         {"kinds": json.dumps(kinds)},
     )
+
+
+ANSI_READ, ANSI_TO = "ansi_read", "ansi_read_to"  # in the meta table: done; the last document looked at so far
+ANSI_BATCH = 2_000  # documents whose texts a transaction looks through, some 100 ms of holding the store
+ANSI_KINDS = json.dumps(readers.TEXT + readers.JSONL + readers.EMAIL)  # the files readers.decode reads
+
+
+def read_ansi_again(db: sqlite3.Connection, name: str, misread: Callable[[str], bool]) -> None:
+    """Have this `sift index` read again, once, the files an older sift read otherwise than this one: sift 1.14 and
+    older made U+FFFD of every byte that wasn't UTF-8, which is now read as Windows' ANSI ("Müller"). Those are the
+    text files, JSON Lines and mails with a document whose text holds U+FFFD, of which `misread` says so, by the
+    file's path in the collection: a file of UTF-8 with the character itself in it reads as it did, and stays as it
+    is, its documents' vectors too. A batch of documents at a time, each recording how far this got, so that a run
+    stopped goes on there."""
+    if get_meta(db, ANSI_READ) is not None:
+        return
+    if total := counts(db)["docs"]:
+        console.say(f"{name}: looking, once, for text an older sift read with replacement characters, to read again")
+    verdicts: dict[int, bool] = {}  # what `misread` said of each file: a JSON Lines file's records lie in many batches
+    with console.Progress(total, "documents", prefix=f"{name}: ") as progress:
+        done = 0
+        while (n := _ansi_batch(db, misread, verdicts)) is not None:
+            done += n
+            progress.update(min(done, total), max(done, total))
+
+
+def _ansi_batch(db: sqlite3.Connection, misread: Callable[[str], bool], verdicts: dict[int, bool]) -> int | None:
+    """Look through the next ANSI_BATCH documents (see read_ansi_again): how many, or None once none is left. Their
+    files are looked at before the store is held, as reading a large one takes long: where another sift looked through
+    these documents meanwhile, they are left to it, and this one counts none."""
+    if get_meta(db, ANSI_READ) is not None:
+        return None
+    after = int(get_meta(db, ANSI_TO, 0))
+    n: int | None
+    n, last = db.execute(
+        "SELECT count(*), max(id) FROM (SELECT id FROM docs WHERE id > ? ORDER BY id LIMIT ?)", (after, ANSI_BATCH)
+    ).fetchone()
+    found = """SELECT d.id, d.source, s.path FROM docs d JOIN sources s ON s.id = d.source
+               WHERE d.id > ? AND d.id <= ? AND instr(d.text, char(65533))
+               AND EXISTS (SELECT 1 FROM json_each(?) k WHERE lower(s.path) LIKE '%' || k.value)"""
+    rows = db.execute(found, (after, last, ANSI_KINDS)).fetchall() if n else []
+    for _, source, path in rows:
+        if source not in verdicts:
+            verdicts[source] = misread(path)
+    docs = json.dumps([doc for doc, source, _ in rows if verdicts[source]])
+    sources = json.dumps(sorted({source for _, source, _ in rows if verdicts[source]}))
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if get_meta(db, ANSI_READ) is not None:  # another sift looked through all the rest
+            n = None
+        elif int(get_meta(db, ANSI_TO, 0)) != after:  # or through these
+            n = 0
+        elif n:  # their files read again, and their documents taken for changed, though the bytes are as they were
+            db.execute("UPDATE docs SET hash = NULL WHERE id IN (SELECT value FROM json_each(?))", (docs,))
+            db.execute("UPDATE sources SET mtime = NULL WHERE id IN (SELECT value FROM json_each(?))", (sources,))
+            set_meta(db, ANSI_TO, last)
+        else:
+            db.execute("DELETE FROM meta WHERE key = ?", (ANSI_TO,))
+            set_meta(db, ANSI_READ, 1)
+            n = None
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    return n
 
 
 def _count_rows(db: sqlite3.Connection, path: str | Path) -> None:
@@ -789,11 +877,14 @@ def stop_waiting(db: sqlite3.Connection, source: int) -> None:
 
 def freed(db: sqlite3.Connection) -> list[str]:
     """The paths of the files whose documents waited for a path freed since this was last asked (see _free)."""
-    if not _waits(db):
-        return []
-    sql = "SELECT DISTINCT s.path FROM waiting w JOIN sources s ON s.id = w.source WHERE w.freed"
-    if found := [path for (path,) in db.execute(sql)]:
-        db.execute("UPDATE waiting SET freed = 0 WHERE freed")  # written only then: a write waits for other writers
+    if not _waits(db) or db.execute("SELECT 1 FROM waiting WHERE freed LIMIT 1").fetchone() is None:
+        return []  # nothing written then: a write waits for other writers
+    # Marked as being taken first, which holds the store till the caller commits: one another sift frees meanwhile
+    # is marked after, and taken by the next call, not cleared unread
+    db.execute("UPDATE waiting SET freed = 2 WHERE freed = 1")
+    sql = "SELECT DISTINCT s.path FROM waiting w JOIN sources s ON s.id = w.source WHERE w.freed = 2 ORDER BY s.path"
+    found = [path for (path,) in db.execute(sql)]
+    db.execute("UPDATE waiting SET freed = 0 WHERE freed = 2")
     return found
 
 

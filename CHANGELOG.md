@@ -5,6 +5,122 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-11-21
+
+A review of all of sift for what could go wrong, and its fixes: files, models and requests from elsewhere are trusted
+less, text that isn't UTF-8 is read as it was written, and an agent can set sift up by a guide of its own. No index
+changes its layout: an older sift still uses a collection this one indexed and embedded.
+
+What updating takes: the first `sift index` looks once through each collection for text an older sift stored with
+replacement characters, minutes for tens of millions of documents, and reads the files concerned again. A file that
+links to outside its collection's folder is no longer read unless told (`--follow-links`), and a server on an address
+other machines reach answers only to this machine's addresses and names (`--allow-host`). The oldest PyTorch sift
+installs with is 2.13.
+
+### Added
+
+- [Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agents.md): the steps for an
+  agent that installs sift, indexes the folders you name and connects itself, with what to ask first and what to
+  leave alone.
+- `sift add FOLDER --follow-links` and `--no-follow-links`, `--allow-host NAME` for `sift serve` and `sift ui`, and
+  a revision after an `@` in `SIFT_EMBED_MODEL` and `SIFT_RERANK_MODEL`; each is described with the change it came
+  with, below.
+- usage.md describes the server and its options.
+
+### Security
+
+- The log of `sift serve` kept every request with its query, and with it every search made in the UI and every
+  document read there ("?q=...", "?doc=..."), on disk in SIFT_HOME/logs, up to 64 MB a log. Requests are logged
+  without their queries now. Logs written before keep theirs: delete them if they matter.
+- sift's lowest versions of its dependencies had advisories known against them, 142 in nine packages: they are now
+  PyTorch 2.13 (torchvision 0.28), Pillow 13, Starlette 1.3.1, cryptography 49, mcp 2.2, AnyIO 4.14.2 and Jinja2
+  3.1.6. The lowest versions sift named didn't even work together: transformers 5.18 disables a PyTorch older than
+  2.5, and takes no tokenizers older than 0.23.1, now the lowest named. The CUDA index that the fix sift prints, the
+  README and requirements.txt name is now cu126, as cu128 carries no PyTorch past 2.11.
+- An update agreed to with pip ran `python -m pip` at the root of the drive, which Python searches for modules first:
+  on Windows, where any user may make a folder there, another user's `pip` folder would have run as you. It runs with
+  `-P` now, which leaves that folder out.
+- A file that is a link was read as the file it points to, wherever that lay: a folder from elsewhere, such as a
+  cloned repository, could hand any file of the machine, a private key named notes.txt, to the index, and to the
+  agents that read it. A file linking to outside its collection's folder is now left out, and said, by `sift index`
+  and the server's `reindex`; one indexed before is dropped by the next `sift index`. `sift add FOLDER
+  --follow-links` reads them, as before, for a new collection or one added already; `--no-follow-links` leaves them
+  out again.
+- Any web page could have the browser ask the UI of `sift serve` for searches, each holding the server's one call
+  at a time and the GPU, or show the UI in a frame of its own. The UI refuses what another site's page asks for in
+  the background, as browsers say by Fetch Metadata, and forbids frames; a link to it from elsewhere still opens it.
+- `sift serve --host 0.0.0.0` (or another address) answered requests naming any host: a page of another site whose
+  name led to this machine's address (DNS rebinding) read every document, from any browser on the network. It now
+  answers only requests naming this machine by an address, by its own name, or by a name given with the new
+  `--allow-host NAME` of `sift serve` and `sift ui`.
+- The package published to PyPI was built with whatever setuptools, twine and uv were newest that day. The release
+  now builds with setuptools pinned by hash (`.github/requirements-build.txt`, kept current by Dependabot), twine and
+  uv pinned by version; CI's package job builds the same way.
+- The models loaded from the latest commit of their repositories on Hugging Face: a push of their owners could change
+  the vectors of new passages beside the old ones, or the code that computes them, unseen. The embedding model, the
+  reranker and the OCR model now load at a commit this version of sift pins, and a collection records its model at
+  that commit; a release that moves a pin says to run `sift embed --reset`. A collection embedded with the default
+  model by an older sift needs no embedding again: the pinned commit holds the same weights. `SIFT_EMBED_MODEL` and
+  `SIFT_RERANK_MODEL` take a revision after an `@` (`org/model@v2`). A worker of an older sift still works, and an
+  older sift still embeds into a collection this one embedded.
+
+### Fixed
+
+- A note that opens with `---` and has another `---` line further down kept the lines between them out of every
+  search when they were no front matter, such as a paragraph between two thematic breaks: `get` showed them, no search
+  found them. Such lines are now the note's text; front matter is lines each of which could be part of it.
+- Text that isn't UTF-8, such as a note Notepad or Excel saved as "ANSI", had its accented letters indexed as "�", so
+  a search for "Müller" never found it. Bytes that aren't UTF-8 are now read as Windows' ANSI code page (cp1252), in
+  text files, JSON Lines, and mail text that its mail calls us-ascii or UTF-8 and is neither, or that is in a charset
+  Python doesn't know; what is UTF-8 stays as it is. The next `sift index` looks once through each collection
+  for documents an older sift stored with a replacement character, and reads their files again where the bytes
+  aren't UTF-8, and such mails; `sift embed` then embeds the passages that changed. A file of UTF-8 that holds the
+  character itself is left as it is.
+- A mail with an empty plain part beside its HTML, as some mail programs send, was indexed without its words: the
+  empty part was taken. Its HTML is read instead.
+- A line such as "```code```", code on its line alone, was taken for the start of a code block that never ended: the
+  rest of the note lost its title, its headings and its links. A backtick fence is one only without another backtick
+  after it on its line, as CommonMark and Obsidian read it.
+- A front-matter list of many `- item` lines took time growing with the square of its length: 100,000 items took 14
+  seconds, and a note with several hundred thousand was left out by `sift index` as hung, and held up the server's
+  `reindex`. It now reads in a fraction of a second.
+- `sift embed --reset` dropped every vector before it knew the model could load or the worker answered: offline, or
+  with a model that couldn't be downloaded, the vectors were gone and nothing embedded. The model now loads, or the
+  worker answers, first.
+- `query` passed over every word of one character: "Python 3" lost its version, and a query of one Chinese or Japanese
+  word, such as "猫", got no keyword candidates at all. Digits and single characters of other scripts are words now;
+  single Latin letters ("a", the "s" of "it's", "à") still aren't. The UI marks them in its results alike.
+- Documents and mails, whose readers run native code that may crash or hang, were read in the indexing process
+  itself in an update of fewer than a thousand files, and always by the server's `reindex`: one such file ended `sift
+  index` on every run, without naming it, or ended `sift serve`. They are now always read in a worker process, each in
+  a task of its own with its own ten minutes; up to 64 of them shared one task's time, and forty slow PDFs were taken
+  for hung. When a file does end or hang its process, what the other workers had read by then is kept, not read
+  again one file at a time, and a document that hangs is left out after its time, not given it a second time.
+- The source package (sdist) on PyPI held tests that can't run from it, as they read the repository's docs, scripts
+  and workflows it doesn't hold. It holds sift and its metadata alone now.
+- The MCP tool `unresolved` failed with a bare `KeyError` when another sift deleted a linking note while it ran. It
+  reads the targets and the notes linking them as the index was at one moment, as `links` does.
+- The catalog was made a table at a time, its layout version last: a sift stopped in between, or a second one
+  starting at that moment on a new SIFT_HOME (a server and a command, say), found tables without a version and asked
+  for the catalog to be deleted as an older sift's. It is made in one transaction now.
+- When the GPU ran out of memory, `sift embed` embedded the batch again in smaller parts, and emptied PyTorch's cache,
+  while the error's traceback still held the failed batch's tensors: the parts could run short of memory as well, and
+  the batch size stayed halved for the rest of the run. Both now happen once the error is let go.
+- On Windows, Ctrl+C didn't stop `sift embed` while it waited for its first slab of a large collection, read for
+  minutes: a wait without a timeout there takes no Ctrl+C until it ends. It waits in steps of a tenth of a second.
+- `adaptive` cut hits whose scores were all alike to the first six, as if the first one stood out. With no drop in
+  score, every hit is returned.
+- A filter or sort on a front-matter field whose name ends in a backslash failed with SQLite's "bad JSON path", one
+  with a backslash inside matched nothing, and one with a double quote was refused: any name now filters and sorts
+  (one with a double quote where SQLite reads it in a name, 3.47 and newer; elsewhere it is refused, with the reason).
+  A filter of a list of some 16,000 values failed with "too many SQL variables"; its values now go to SQLite as one.
+  A filter value that is no finite number (NaN, infinity) is a clear error.
+- `k: true` was taken for one result, as Python counts `True` as 1; it is refused as `k: "3"` is.
+- A latest version with a digit such as "²" in sift's update check, as PyPI could answer, failed every command until
+  `update.json` was deleted. Such a version is no release's, and is passed over.
+- A file waiting for a path that another sift freed just as `sift index` took the freed ones was marked taken without
+  being read; the next `sift index` read it. It is now taken by the running one.
+
 ## [1.14.0] - 2026-11-21
 
 Agents learn on connecting how to search well, `sift index` survives readers that crash or hang and keeps a
@@ -720,7 +836,8 @@ First release.
 - Keyword search (SQLite FTS5, BM25), exact GPU vector search, and hybrid search with cross-encoder reranking.
 - An MCP server (streamable HTTP and stdio) whose instructions tell agents what is indexed.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.14.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/tobiaswuerth/sift/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/tobiaswuerth/sift/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/tobiaswuerth/sift/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/tobiaswuerth/sift/compare/v1.11.2...v1.12.0

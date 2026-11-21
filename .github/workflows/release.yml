@@ -40,13 +40,13 @@ jobs:
         run: |
           version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' sift/__init__.py)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
-            echo "v$version is released already: nothing to publish."
-            echo "new=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "v$version is new."
-            echo "new=true" >> "$GITHUB_OUTPUT"
-          fi
+          status=0  # git ls-remote --exit-code: 0 the tag is there, 2 it isn't; anything else, it couldn't tell
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null || status=$?
+          case $status in
+            0) echo "v$version is released already: nothing to publish."; echo "new=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "v$version is new."; echo "new=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::git ls-remote failed ($status): whether v$version is released is unknown"; exit "$status" ;;
+          esac
 
   build:
     needs: check
@@ -60,9 +60,10 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
         with:
+          version: "0.13.9"  # the uv that builds what PyPI gets, as reviewed: not whichever is newest that day
           python-version: "3.12"
-      - run: uv build
-      - run: uvx twine check --strict dist/*
+      - run: uv build --build-constraints .github/requirements-build.txt --require-hashes
+      - run: uvx twine@7.0.0 check --strict dist/*
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: dist

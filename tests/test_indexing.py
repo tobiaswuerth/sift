@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import stat
 import time
+from pathlib import Path
 
 import pytest
 
@@ -16,8 +17,10 @@ from sift.ignore import Ignore
 from sift.search import Index
 
 from . import workers
-from .conftest import index_contents, keywords_agree, write
+from .conftest import index_contents, keywords_agree, only, write
 from .test_documents import email_file
+
+SAMPLES = Path(__file__).parent / "samples"
 
 
 def doc_ids(catalog):
@@ -231,6 +234,105 @@ def test_a_collection_whose_siftignore_cannot_be_read_is_skipped(corpus, tmp_pat
 
 def test_index_picks_text_and_markdown_only(corpus):
     assert sorted(doc_ids(corpus[0])) == ["plain.txt", "rl.md", "robots/brush.md"]
+
+
+def test_files_an_older_sift_read_with_replacement_characters_are_read_again_once(tmp_path, home, monkeypatch, capsys):
+    # sift 1.14 made U+FFFD of every byte that wasn't UTF-8, as in a note saved as ANSI: unchanged, such a file was
+    # never read again, and "Müller" stayed unfindable. The next index reads again the text files, JSON Lines and
+    # mails whose text holds one, a batch of documents at a time, and only once.
+    root = tmp_path / "c"
+    root.mkdir()
+    (root / "ansi.txt").write_bytes("Grüezi Müller\n".encode("cp1252"))
+    (root / "fine.md").write_bytes(b"# Fine\n\nnothing to read again\n")
+    (root / "data.jsonl").write_bytes('{"id": "1", "text": "Zürich"}\n'.encode("cp1252"))
+    catalog = Catalog(home)
+    catalog.add(root, "c")
+    indexing.index(catalog)
+    db = only(catalog)
+    db.execute("UPDATE docs SET text = replace(text, 'ü', char(65533))")  # as sift 1.14 stored them
+    db.execute("DELETE FROM meta WHERE key = 'ansi_read'")
+    db.commit()
+    monkeypatch.setattr(store, "ANSI_BATCH", 2)  # three documents: two batches
+    capsys.readouterr()
+    indexing.index(catalog)
+    assert dict(db.execute("SELECT path, text FROM docs")) == {
+        "ansi.txt": "Grüezi Müller\n",
+        "fine.md": "# Fine\n\nnothing to read again\n",
+        "data/1": "Zürich",
+    }
+    said = capsys.readouterr().err
+    assert "replacement characters" in said
+    assert "3 files, 0 added, 2 changed, 0 removed" in said
+    indexing.index(catalog)  # once
+    assert "3 files, 0 added, 0 changed, 0 removed" in capsys.readouterr().err
+    assert store.get_meta(db, "ansi_read") == "1"
+
+
+def test_a_look_for_replacement_characters_stopped_goes_on_where_it_stopped(tmp_path, home, monkeypatch, capsys):
+    root = tmp_path / "c"
+    root.mkdir()
+    for name in "abc":
+        (root / f"{name}.txt").write_bytes(f"{name} Müller\n".encode("cp1252"))
+    catalog = Catalog(home)
+    catalog.add(root, "c")
+    indexing.index(catalog)
+    db = only(catalog)
+    db.execute("UPDATE docs SET text = replace(text, 'ü', char(65533))")
+    db.execute("DELETE FROM meta WHERE key = 'ansi_read'")
+    db.commit()
+    monkeypatch.setattr(store, "ANSI_BATCH", 1)
+    set_meta, calls = store.set_meta, []
+
+    def stopped_in_the_second_batch(db, key, value):
+        calls.append(key)
+        if calls.count("ansi_read_to") == 2:
+            raise KeyboardInterrupt
+        set_meta(db, key, value)
+
+    monkeypatch.setattr(store, "set_meta", stopped_in_the_second_batch)
+    with pytest.raises(KeyboardInterrupt):
+        indexing.index(catalog)
+    monkeypatch.setattr(store, "set_meta", set_meta)
+    first = db.execute("SELECT s.path FROM docs d JOIN sources s ON s.id = d.source ORDER BY d.id LIMIT 1").fetchall()
+    assert db.execute("SELECT path FROM sources WHERE mtime IS NULL").fetchall() == first  # the first batch's alone
+    indexing.index(catalog)
+    assert sorted(db.execute("SELECT path, text FROM docs")) == [(f"{n}.txt", f"{n} Müller\n") for n in "abc"]
+
+
+def test_a_file_of_utf8_with_a_replacement_character_of_its_own_is_left_as_it_is(tmp_path, home, capsys):
+    # Every document whose text held U+FFFD was taken for misread: a file of UTF-8 with the character itself in it, as
+    # corpora of millions of records hold some, was read again whole, and its documents embedded again, for the text
+    # they had. Only a file with bytes that aren't UTF-8 reads otherwise now.
+    root = tmp_path / "c"
+    root.mkdir()
+    (root / "own.txt").write_bytes("a letter lost before sift: \ufffd\n".encode())
+    (root / "ansi.txt").write_bytes("Müller\n".encode("cp1252"))
+    catalog = Catalog(home)
+    catalog.add(root, "c")
+    indexing.index(catalog)
+    db = only(catalog)
+    db.execute("UPDATE docs SET text = replace(text, 'ü', char(65533))")  # as sift 1.14 stored them
+    db.execute("DELETE FROM meta WHERE key = 'ansi_read'")
+    db.commit()
+    before = dict(db.execute("SELECT path, id FROM docs"))
+    capsys.readouterr()
+    indexing.index(catalog)
+    assert "2 files, 0 added, 1 changed, 0 removed" in capsys.readouterr().err
+    after = dict(db.execute("SELECT path, id FROM docs"))
+    assert (after["own.txt"], after["ansi.txt"] != before["ansi.txt"]) == (before["own.txt"], True)
+    assert dict(db.execute("SELECT path, text FROM docs"))["ansi.txt"] == "Müller\n"
+
+
+def test_an_older_store_without_documents_is_looked_through_without_a_word(tmp_path, home, capsys):
+    (tmp_path / "c").mkdir()
+    catalog = Catalog(home)
+    catalog.add(tmp_path / "c", "c")
+    db = only(catalog)
+    db.execute("DELETE FROM meta WHERE key = 'ansi_read'")
+    db.commit()
+    indexing.index(catalog)
+    assert "replacement characters" not in capsys.readouterr().err
+    assert store.get_meta(db, "ansi_read") == "1"
 
 
 def test_a_nul_in_a_file_hides_nothing_after_it(corpus):
@@ -490,6 +592,31 @@ def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):
     assert index_contents(parallel.store("notes")) == index_contents(serial.store("notes"))
 
 
+def test_a_few_files_read_by_native_code_are_read_in_a_worker_process(notes, tmp_path, pools):
+    # Under a thousand files, `sift index` read them in its own process: a PDF whose reader ended its process ended
+    # `sift index`, on every run, without naming it. Files whose readers run native code get a worker; notes don't.
+    serial = Catalog(tmp_path / "notes")
+    serial.add(notes, "notes")
+    indexing.index(serial)
+    assert pools == []
+    shutil.copy(SAMPLES / "sample.pdf", notes / "paper.pdf")
+    indexing.index(serial)
+    assert pools == [(1, "spawn")]
+    assert "paper.pdf" in doc_ids(serial)
+
+
+def test_a_few_files_with_one_that_ends_its_reader_leave_it_out(notes, home, monkeypatch, capsys):
+    shutil.copy(SAMPLES / "sample.pdf", notes / "poison.pdf")
+    shutil.copy(SAMPLES / "sample.pdf", notes / "paper.pdf")
+    monkeypatch.setattr(indexing, "_loaded", workers.ending)
+    catalog = Catalog(home)
+    catalog.add(notes, "notes")
+    indexing.index(catalog)
+    assert set(doc_ids(catalog)) == {"paper.pdf", "plain.txt", "rl.md", "robots/brush.md"}
+    assert "notes: poison.pdf: skipped (Stopped: its reader ended the process it ran in)" in capsys.readouterr().err
+    assert no_process_left()
+
+
 def sized(*paths):
     """Files as the worker processes are handed them: (path, size)."""
     return [(str(path), path.stat().st_size) for path in paths]
@@ -553,6 +680,65 @@ def test_a_file_whose_reader_comes_to_no_end_is_stopped(three_files, monkeypatch
     assert isinstance(stopped, indexing.Stopped)
     assert str(stopped) == "its reader came to no end in 0:00:00"
     assert [doc.title for doc in docs] == ["fine"]
+    assert no_process_left()
+
+
+def test_files_read_by_native_code_get_a_task_each(tmp_path):
+    # Up to 64 files shared one task's time, ten minutes and a second per 100 KB: forty PDFs of twenty seconds each
+    # were taken for hung, and read again one at a time. Text files still share tasks.
+    files = [tmp_path / name for name in ("a.md", "b.md", "c.pdf", "d.md", "e.md", "f.eml", "g.md", "h.md")]
+    for file in files:
+        write(file, "x\n")
+    with indexing._Workers(1, {}) as reading:
+        started = reading.start(sized(*files))
+        reading.results(started)
+    assert [[Path(path).name for path, _ in task] for task, _, _ in started] == [
+        ["a.md", "b.md"],
+        ["c.pdf"],
+        ["d.md", "e.md"],
+        ["f.eml"],
+        ["g.md", "h.md"],
+    ]
+
+
+def test_files_read_before_one_hung_are_kept_not_read_again(three_files, monkeypatch):
+    # One file that hung had every task after it read again, one file at a time, those done already too: a batch of
+    # thousands of files, read anew in one process.
+    # A file that hung in a task of its own, as every file read by native code has one, is known by then: it was given
+    # its time once more, alone, ten minutes and more for a PDF.
+    _, hangs, fine = three_files
+    monkeypatch.setattr(indexing, "_loaded", workers.hanging)
+    patience = iter([5])  # time for the other worker to read `fine`; asked once, for the one that hangs
+    monkeypatch.setattr(indexing, "_patience", lambda files: next(patience))
+    alone, read_alone = [], indexing._Workers._alone
+
+    def recorded(self, file):
+        alone.append(Path(file[0]).name)
+        return read_alone(self, file)
+
+    monkeypatch.setattr(indexing._Workers, "_alone", recorded)
+    with indexing._Workers(2, {}) as reading:
+        (stopped, (docs, _)) = reading.results(reading.start(sized(hangs, fine)))
+    assert str(stopped) == "its reader came to no end in 0:00:05"
+    assert [doc.title for doc in docs] == ["fine"]
+    assert alone == []
+    assert no_process_left()
+
+
+def test_files_that_shared_a_task_with_one_that_hung_are_read_alone(tmp_path, monkeypatch):
+    # Text files share tasks: which file of a task had it come to no end, each alone tells.
+    files = [tmp_path / name for name in ("a.md", "b.md", "hangs.md", "c.md", "d.md", "e.md", "f.md", "g.md")]
+    for file in files:
+        write(file, f"# {file.stem}\n")
+    monkeypatch.setattr(indexing, "_loaded", workers.hanging)
+    monkeypatch.setattr(indexing, "_patience", lambda files: 0 if any("hangs" in path for path, _ in files) else 600)
+    with indexing._Workers(1, {}) as reading:
+        started = reading.start(sized(*files))
+        assert [len(task) for task, _, _ in started] == [2, 2, 2, 2]
+        read = reading.results(started)
+    stopped = [n for n, loaded in enumerate(read) if isinstance(loaded, indexing.Stopped)]
+    assert (stopped, str(read[2])) == ([2], "its reader came to no end in 0:00:00")
+    assert [loaded[0][0].title for n, loaded in enumerate(read) if n != 2] == ["a", "b", "c", "d", "e", "f", "g"]
     assert no_process_left()
 
 
@@ -714,6 +900,88 @@ class Denied:
 
     def stat(self):
         raise PermissionError(13, "Access is denied")
+
+
+class Linked:
+    """A directory entry of a file that is a symbolic link, where only administrators may make those (Windows)."""
+
+    def __init__(self, entry):
+        self.name, self.path, self.entry = entry.name, entry.path, entry
+
+    def is_dir(self, follow_symlinks):
+        return False
+
+    def is_symlink(self):
+        return True
+
+    def stat(self):
+        return self.entry.stat()
+
+
+def link_file(target, at, monkeypatch):
+    """Make the file `at` a symbolic link to the file `target`; where the system refuses, pretend so to sift."""
+    try:
+        os.symlink(target, at)
+    except OSError:
+        shutil.copy(target, at)
+        real_scandir, real_realpath = os.scandir, os.path.realpath
+
+        def scandir(path):
+            with real_scandir(path) as entries:
+                return Listing([Linked(e) if os.path.samefile(e.path, at) else e for e in entries])
+
+        def realpath(path, *args, **kwargs):
+            return str(target) if os.path.normcase(str(path)) == os.path.normcase(str(at)) else real_realpath(path)
+
+        monkeypatch.setattr(indexing.os, "scandir", scandir)
+        monkeypatch.setattr(indexing.os.path, "realpath", realpath)
+        monkeypatch.setattr(indexing.os.path, "islink", lambda path: realpath(path) != real_realpath(path))
+
+
+def test_a_file_linked_from_outside_its_collection_is_left_out(corpus, tmp_path, monkeypatch, capsys):
+    # A file that is a link was read as the file it points to, wherever that lay: a folder from elsewhere, a cloned
+    # repository, could hand ~/.ssh/id_rsa to the index as notes.txt, and an agent's `get` then read it out. A link to
+    # a file of the collection's own folder is read still, and a collection added with --follow-links reads them all.
+    catalog, root = corpus
+    write(tmp_path / "outside" / "secret.txt", "a private key\n")
+    link_file(tmp_path / "outside" / "secret.txt", root / "notes.txt", monkeypatch)
+    indexing.index(catalog)
+    assert "notes.txt" not in doc_ids(catalog)
+    said = capsys.readouterr().err
+    assert "notes: 1 file linked to outside its folder left out: `sift add" in said
+    assert "--follow-links` reads such files" in said
+    catalog.follow_links("notes")
+    indexing.index(catalog)
+    assert "notes.txt" in doc_ids(catalog)
+    assert "linked to outside" not in capsys.readouterr().err
+
+
+def test_a_collection_of_links_alone_drops_what_an_older_sift_read_through_them(tmp_path, home, monkeypatch, capsys):
+    # sift 1.14 read every linked file. A folder of links alone, all of them left out now, looked like a folder
+    # emptied, whose documents are kept: what the links led to stayed indexed, and was said to be kept as of a drive
+    # not mounted.
+    root = tmp_path / "links"
+    root.mkdir()
+    write(tmp_path / "outside" / "secret.txt", "a private key\n")
+    link_file(tmp_path / "outside" / "secret.txt", root / "notes.txt", monkeypatch)
+    catalog = Catalog(home)
+    catalog.add(root, "links", {"links": "follow"})
+    indexing.index(catalog)  # as sift 1.14 read it
+    assert list(doc_ids(catalog)) == ["notes.txt"]
+    catalog.follow_links("links", False)
+    capsys.readouterr()
+    indexing.index(catalog)
+    assert doc_ids(catalog) == {}
+    said = capsys.readouterr().err
+    assert "links: 1 file linked to outside its folder left out" in said
+    assert "kept as indexed" not in said
+
+
+def test_a_file_linked_from_inside_its_collection_is_read(corpus, monkeypatch):
+    catalog, root = corpus
+    link_file(root / "rl.md", root / "again.md", monkeypatch)
+    indexing.index(catalog)
+    assert "again.md" in doc_ids(catalog)
 
 
 def test_a_file_that_cannot_be_stated_keeps_its_documents(corpus, monkeypatch, capsys):

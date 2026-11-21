@@ -13,12 +13,53 @@ ROOT = Path(__file__).parent.parent
 SYSTEMS = ["Linux", "Darwin", "Windows"]  # as pyright names those sift runs on
 
 
-@pytest.fixture
-def gate():
+def load():
     spec = importlib.util.spec_from_file_location("gate", ROOT / "scripts" / "gate.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture
+def gate(monkeypatch):
+    """The gate's module, on a checkout it sees whole: sift imported from it, and no file git doesn't track."""
+    module = load()
+    monkeypatch.setattr(module, "sift_at", lambda: ROOT / "sift")
+    monkeypatch.setattr(module, "untracked", list)
+    return module
+
+
+def test_the_gate_checks_the_sift_of_its_checkout(gate, monkeypatch):
+    # The environment's sift was installed from a worktree since deleted: the gate passed only as it ran from the
+    # checkout's root, whose sift Python finds first; a script run by its path imported the other, or none.
+    monkeypatch.setattr(gate, "sift_at", lambda: Path("D:/elsewhere/sift"))
+    with pytest.raises(SystemExit, match=r"imports sift from .*elsewhere.*`uv pip install -e \.`"):
+        gate.main(run=lambda command, timeout: 0, uv=None)
+
+
+def test_the_gate_sees_every_file(gate, monkeypatch):
+    # The hooks check the files git tracks: a new file not added yet was never formatted nor linted, and the gate was
+    # green on it.
+    monkeypatch.setattr(gate, "untracked", lambda: ["scripts/new.py"])
+    with pytest.raises(SystemExit, match=r"add or ignore these first: scripts/new\.py"):
+        gate.main(run=lambda command, timeout: 0, uv=None)
+
+
+def test_the_gate_runs_its_checks_in_its_checkout():
+    # Run from another folder, pytest found no tests and pyright no configuration.
+    gate = load()
+    assert gate.main.__defaults__[0] is gate.RUN
+    assert (gate.RUN.func, gate.RUN.keywords) == (subprocess.call, {"cwd": ROOT})
+    assert gate.sift_at() == ROOT / "sift"  # as this test run imports it
+
+
+def test_the_files_git_neither_tracks_nor_ignores_are_found(tmp_path):
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True, timeout=60)
+    (tmp_path / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (tmp_path / "run.log").write_text("", encoding="utf-8")
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "notes" / "Übersicht 1.md").write_text("", encoding="utf-8")
+    assert sorted(load().untracked(tmp_path)) == [".gitignore", "notes/Übersicht 1.md"]
 
 
 def test_the_gate_runs_the_hooks_the_types_the_tests_and_the_smoke_run(gate, capsys):
@@ -114,7 +155,7 @@ def test_the_gate_tests_on_the_newest_python_too(gate, capsys):
     # own that uv makes and keeps.
     ran = []
     gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=(3, 12))
-    made, installed, tests = ran[-3:]
+    made, installed, tests = ran[len(gate.CHECKS) + 1 : len(gate.CHECKS) + 4]  # after the package
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert f', "{gate.NEWEST}"]' in workflow  # the last Python of CI's matrix
     assert made == ["uv", "venv", "--quiet", "--allow-existing", "--python", gate.NEWEST, str(gate.ENVIRONMENT)]
@@ -130,7 +171,34 @@ def test_a_gate_on_the_newest_python_tests_once(gate):
     ran = []
     newest = tuple(map(int, gate.NEWEST.split(".")))
     gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=newest)
-    assert len(ran) == len(gate.CHECKS)
+    assert len(ran) == len(gate.CHECKS) + 1 + 4  # and the package, and the lowest versions
+
+
+def test_the_gate_tests_the_lowest_versions_sift_names(gate):
+    # CI tests them, on the oldest Python, and the gate didn't: a count NumPy 2.0 refuses passed here. In an
+    # environment made afresh each time, as in CI: one kept keeps what it has, versions above the lowest too.
+    ran = []
+    gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=(3, 12))
+    made, installed, floors, tests = ran[-4:]
+    assert made[:5] == ["uv", "venv", "--quiet", "--python", gate.OLDEST]
+    there = str(gate.python_of(Path(made[5])))
+    assert installed[:6] == ["uv", "pip", "install", "--quiet", "--python", there]
+    assert installed[6:] == ["--resolution", "lowest-direct", "--torch-backend", "cpu", "-e", f"{ROOT}[dev]"]
+    assert floors == [there, str(ROOT / "scripts" / "floors.py")]  # they are the versions installed
+    assert tests == [there, "-m", "pytest", "-q", "-n", "auto"]
+    assert not Path(made[5]).parent.exists()  # gone with the gate
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert f'python: ["{gate.OLDEST}", ' in workflow  # the first Python of CI's matrix
+
+
+def test_the_gate_checks_the_package_as_ci_does(gate):
+    # CI's package job built the package and checked its changelog, its metadata and its wheel; the gate didn't, and
+    # a version without its changelog section passed here and failed there.
+    ran = []
+    gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=(3, 12))
+    assert ran[len(gate.CHECKS)] == [sys.executable, str(ROOT / "scripts" / "package.py")]
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "run: uv run --no-project scripts/package.py" in workflow
 
 
 def test_a_gate_without_uv_says_which_python_it_tested_on(gate, capsys):
@@ -139,5 +207,6 @@ def test_a_gate_without_uv_says_which_python_it_tested_on(gate, capsys):
     gate.main(run=lambda command, timeout: ran.append(command) or 0, uv=None, python=(3, 12))
     assert len(ran) == len(gate.CHECKS)
     said = capsys.readouterr().out
-    assert f"gate: no uv on the PATH: the tests ran on Python 3.12 alone, not on {gate.NEWEST}" in said
+    no_uv = "gate: no uv on the PATH: the package and the lowest versions sift names went unchecked, the tests ran "
+    assert f"{no_uv}on Python 3.12 alone, " in said
     assert said.strip().endswith("gate: green")

@@ -134,6 +134,11 @@ def _patience(files: Iterable[tuple[str, int]]) -> float:
     return READ_SECONDS + sum(size for _, size in files) / READ_RATE
 
 
+def _no_end(patience: float) -> Stopped:
+    """A file whose reader was given `patience` seconds, and stopped."""
+    return Stopped(f"its reader came to no end in {console.duration(patience)}")
+
+
 def _pool(n: int) -> ProcessPoolExecutor:
     """`n` worker processes. Spawned everywhere, as on Windows and macOS: forking a process that has threads can
     deadlock."""
@@ -152,8 +157,9 @@ class _Workers:
     """Worker processes that read files, several to a task (see start), handed over in the order started. A reader's
     native code can end its process, or never come to an end: every task not done then goes with the pool, which
     tells no more than that it broke. Their files are read again one at a time, in a process of their own, so that
-    the one that ends or hangs it is known: it is left out, as Stopped, and the others are read. Files started in a
-    pool that those of another batch ended start again in the next one."""
+    the one that ends or hangs it is known: it is left out, as Stopped, and the others are read. One that hung in a
+    task of its own is known by then, and is given no time again. Files started in a pool that those of another batch
+    ended start again in the next one."""
 
     single: ProcessPoolExecutor | None
 
@@ -171,10 +177,17 @@ class _Workers:
                 _end(pool)
 
     def start(self, files: list[tuple[str, int]]) -> list[Task]:
-        """Start reading these files, (path, size) each, some to a task: fewer tasks cost less to hand over. Returns
-        what `results` takes."""
+        """Start reading these files, (path, size) each: text files and JSON Lines some to a task, as fewer tasks cost
+        less to hand over; a file read by native code in a task of its own, so that it gets the time its size gives
+        (see _patience), and one that hangs is found then. Returns what `results` takes."""
         size = max(1, min(64, len(files) // (4 * self.n)))
-        return [self._task(self.pool, files[i : i + size]) for i in range(0, len(files), size)]
+        tasks: list[list[tuple[str, int]]] = []
+        for file in files:
+            if tasks and len(tasks[-1]) < size and not readers.native(file[0]) and not readers.native(tasks[-1][0][0]):
+                tasks[-1].append(file)
+            else:
+                tasks.append([file])
+        return [self._task(self.pool, task) for task in tasks]
 
     def _task(self, pool: ProcessPoolExecutor, files: list[tuple[str, int]]) -> Task:
         return files, pool.submit(_loaded_all, _loaded, [path for path, _ in files], self.fields), pool
@@ -185,16 +198,26 @@ class _Workers:
         at = 0
         while at < len(started):
             files, future, pool = started[at]
+            patience = _patience(files)
             try:
-                read += future.result(timeout=_patience(files))
+                read += future.result(timeout=patience)
                 at += 1
-            except (BrokenProcessPool, CancelledError, TimeoutError):
+            except (BrokenProcessPool, CancelledError, TimeoutError) as ended:
                 if pool is self.pool:  # a file not read yet ended it, or hangs: which of them, each alone tells
                     _end(pool)
                     self.pool = _pool(self.n)
-                    return read + [self._alone(file) for files, _, _ in started[at:] for file in files]
+                    if isinstance(ended, TimeoutError) and len(files) == 1:  # but one that had its time to itself
+                        read, at = [*read, _no_end(patience)], at + 1
+                    return read + [loaded for task in started[at:] for loaded in self._kept(task)]
                 started[at:] = [self._task(self.pool, files) for files, _, _ in started[at:]]  # another batch's did
         return read
+
+    def _kept(self, task: Task) -> list[Loaded]:
+        """What a task of a pool that ended had read, if it was done by then; else each of its files read alone."""
+        files, future, _ = task
+        if future.done() and not future.cancelled() and future.exception() is None:
+            return future.result()
+        return [self._alone(file) for file in files]
 
     def _alone(self, file: tuple[str, int]) -> Loaded:
         """What one file is read as in a process that reads nothing else, or Stopped."""
@@ -206,7 +229,7 @@ class _Workers:
             _end(self.single)
             self.single = None
             if isinstance(ended, TimeoutError):
-                return Stopped(f"its reader came to no end in {console.duration(patience)}")
+                return _no_end(patience)
             return Stopped("its reader ended the process it ran in")
 
 
@@ -627,6 +650,13 @@ def _locate(catalog: Catalog[C], path: str) -> tuple[C, str]:
             raise ValueError(
                 f"{name}/{rel}: {parts[i - 1]}/ is linked from elsewhere, and `sift index` doesn't follow it"
             )
+    full = os.path.join(root, *parts)
+    linked = os.path.islink(full) and not inside(os.path.realpath(root), os.path.realpath(full))
+    if linked and collection.choices.get("links") != "follow":
+        raise ValueError(
+            f"{name}/{rel} links to outside its collection's folder, which `sift index` leaves out: "
+            f"`{console.command('sift', 'add', root, '--follow-links')}` reads such files"
+        )
     rel = "/".join(parts)
     try:
         rel.encode()
@@ -745,12 +775,19 @@ def _reindex_read(
         return None, None, False
     if readers.streamed(path, info.st_size):
         return info, readers.Records(path, fields), False  # read as it is stored
-    read = _loaded(path, fields)
+    read = _guarded(path, info.st_size, fields) if readers.native(path) else _loaded(path, fields)
     if read is None or isinstance(read, Exception):
         return info, read, False
     docs, problems = read
     docs, left = _read_scans(db, _source(db, rel), rel, docs, problems.append, now=scans)
     return info, (docs, problems), left
+
+
+def _guarded(path: str, size: int, fields: Fields) -> Loaded:
+    """What a file read by native code is read as, in a process of its own: one that ends it, or hangs, is Stopped,
+    and the process that asked, a server's, goes on."""
+    with _Workers(1, fields) as reading:
+        return reading.results(reading.start([(path, size)]))[0]
 
 
 def _reindex_file(
@@ -833,12 +870,18 @@ def _drop_source(db: Db, sid: int) -> int:
     return len(docs)
 
 
-def walk(root: str, ignore: Ignore | None = None, unlisted: Unlisted | None = None) -> Iterator[tuple[str, int, int]]:
+def walk(
+    root: str, ignore: Ignore | None = None, unlisted: Unlisted | None = None, outside: list[str] | None = None
+) -> Iterator[tuple[str, int, int]]:
     """Yield (path, mtime_ns, size) for the files sift has a reader for, but those in hidden folders, SKIP_DIRS and
     what `ignore`, the collection's .siftignore, leaves out. DirEntry.stat() is free on Windows. What is there but out
     of reach for the moment (access denied, a share that doesn't answer) goes into `unlisted`, if given, as (its path
     relative to root, the error): a folder that can't be listed, or whose listing breaks off, with a slash, or "" for
-    root; a file that can't be stat'ed. What is gone meanwhile, a broken link too, is passed over."""
+    root; a file that can't be stat'ed. What is gone meanwhile, a broken link too, is passed over. With `outside`, a
+    file that links to outside root is left out and goes into it, by its path relative to root: a link may lead to any
+    file of the machine, a private key as notes.txt; without, as for a collection added with --follow-links, it is
+    read as the file it leads to."""
+    resolved = os.path.realpath(root)
 
     def unreachable(rel: str, error: OSError) -> None:
         if unlisted is not None:
@@ -873,8 +916,12 @@ def walk(root: str, ignore: Ignore | None = None, unlisted: Unlisted | None = No
                         except OSError as error:
                             unreachable(rel + e.name, error)
                             continue
-                        if stat.S_ISREG(st.st_mode):  # no pipe, which has no end to read to, nor a folder so named
-                            yield e.path, st.st_mtime_ns, st.st_size
+                        if not stat.S_ISREG(st.st_mode):  # no pipe, which has no end to read to, nor a folder so named
+                            continue
+                        if outside is not None and e.is_symlink() and not inside(resolved, os.path.realpath(e.path)):
+                            outside.append(rel + e.name)
+                            continue
+                        yield e.path, st.st_mtime_ns, st.st_size
             except OSError as error:  # the listing broke off
                 unreachable(rel, error)
 
@@ -917,14 +964,23 @@ def _index_collection(db: Db, name: str, root: str, fields: Fields, ignore: Igno
     after (see `postings`)."""
     t0 = time.perf_counter()
     _read_skipped_scans(db)
+    store.read_ansi_again(db, name, lambda rel: readers.misread(os.path.join(root, *rel.split("/"))))
     known: dict[str, tuple[int, int, int]] = {
         p: (i, m, s) for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources")
     }
     console.say(f"{name}: scanning {root}")  # a large or cloud folder takes a while
-    todo, seen, unlisted = _scan(root, known, ignore)
+    outside: list[str] | None = None if fields.get("links") == "follow" else []
+    todo, seen, unlisted = _scan(root, known, ignore, outside)
+    if outside:  # left out, and dropped if indexed before, as by sift 1.14, which read them
+        follow = console.command("sift", "add", root, "--follow-links")
+        console.say(
+            f"{name}: {console.count(len(outside), 'file')} linked to outside its folder left out: `{follow}` reads "
+            "such files, which may be any file of this machine"
+        )
     kept = _kept(name, known.keys() - seen, unlisted)
     counts: Counts = Counter()
-    for rel in _gone(name, root, known.keys() - seen - kept, seen):
+    there = seen | set(outside or ())  # a folder of links alone, all left out, is no folder emptied
+    for rel in _gone(name, root, known.keys() - seen - kept, there):
         counts["removed"] += _drop_source(db, known[rel][0])
     db.commit()  # before any file is read: other writers wait for none of it
     todo += _freed(db, root, seen - {item[1] for item in todo})  # those that waited for a path these drops freed
@@ -982,13 +1038,16 @@ def _kept(name: str, unseen: set[str], unlisted: Unlisted) -> set[str]:
     return kept
 
 
-def _scan(root: str, known: dict[str, tuple[int, int, int]], ignore: Ignore) -> tuple[list[Item], set[str], Unlisted]:
+def _scan(
+    root: str, known: dict[str, tuple[int, int, int]], ignore: Ignore, outside: list[str] | None
+) -> tuple[list[Item], set[str], Unlisted]:
     """The files to read, new or changed since `known` (path -> id, mtime, size), every file seen but those `ignore`
-    leaves out, and the folders that couldn't be listed (see `walk`)."""
+    leaves out, and the folders that couldn't be listed; files linked from outside root go into `outside`, if given
+    (see `walk`)."""
     todo: list[Item] = []
     seen: set[str] = set()
     unlisted: Unlisted = []
-    for path, mtime, size in walk(root, ignore, unlisted):
+    for path, mtime, size in walk(root, ignore, unlisted, outside):
         rel = os.path.relpath(path, root).replace(os.sep, "/")
         try:
             rel.encode()
@@ -1008,7 +1067,8 @@ def _read_and_store(
     """Read the files to do, in worker processes when it pays off, and store their documents batch by batch."""
     batches, whole = _batches(todo), _whole(todo)
     n = workers(len(whole), sum(item[3] for item in whole))  # parsing is CPU-bound: processes, not threads
-    with _Workers(n, fields) if n > 1 else nullcontext() as pool:
+    native = any(readers.native(item[0]) for item in whole)  # a crash or hang there ends a process: not this one
+    with _Workers(max(n, 1), fields) if n > 1 or native else nullcontext() as pool:
         # double buffering: the next batch is parsed while the current one is written
         pending = _read(pool, fields, batches[0])
         done, step = 0, max(1, len(todo) // PROGRESS_LINES)  # an update per file, or fewer for many small ones

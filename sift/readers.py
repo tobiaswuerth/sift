@@ -7,6 +7,7 @@ Readers run in worker processes while indexing, so they read from bytes and retu
 """
 
 import asyncio
+import codecs
 import hashlib
 import io
 import json
@@ -35,6 +36,9 @@ CHUNK_CHARS, OVERLAP_CHARS = 3000, 300  # ~750 tokens, well inside the models' 1
 
 FRONT_MATTER = re.compile(r"\A---[ \t]*\r?\n(?:(.*?)\r?\n)??---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 LIST_ITEM = re.compile(r"[ \t]*-[ \t]+(.*)")
+# Lines of front matter that are neither `key: value` nor `- item`: a list item without a value, and the bracket that
+# closes a list or mapping written over several lines
+AT_THE_MARGIN = ("-", "]", "}", "],", "},")
 HEADING = re.compile(r" {0,3}#{1,6}[ \t]")  # how a Markdown (ATX) heading starts
 FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")  # how a fenced code block starts and ends
 LINE = re.compile(r"[^\n]*\n|[^\n]+")  # only \n ends a line, as in editors; str.splitlines knows eight more
@@ -143,7 +147,9 @@ def _front_matter(block: str) -> dict[str, Any]:
     for line in block.split("\n"):  # only \n ends a line (LINE): JSON writes U+2028 in a string as it is
         if listing and (item := LIST_ITEM.match(line)):
             text = item.group(1).strip()
-            meta[listing] = [*(meta[listing] or []), _value(text)]
+            if meta[listing] is None:
+                meta[listing] = []
+            meta[listing].append(_value(text))  # in place: a copy for each item made a long list take minutes
             written[listing].append(text)
             continue
         key, sep, value = line.partition(":")
@@ -171,7 +177,10 @@ def _outside_code(lines: Iterable[str]) -> list[bool]:
     outside: list[bool] = []
     fence: str | None = None
     for line in lines:
-        if m := FENCE.match(line):
+        m = FENCE.match(line)
+        if m and not fence and m.group(1)[0] == "`" and "`" in line[m.end() :]:  # "```x```": code on its line alone
+            m = None
+        if m:
             mark = m.group(1)
             if not fence:
                 fence = mark
@@ -201,12 +210,27 @@ def _heading(text: str) -> str | None:
     return None
 
 
+def _front_matter_block(text: str) -> re.Match[str] | None:
+    """The front matter a note starts with: lines between two `---` lines, each of which a mapping could hold, a `key:
+    value`, a `- item`, an indented continuation, a comment, a blank, or what YAML allows at the margin besides
+    (AT_THE_MARGIN). None for any other, such as a paragraph between two thematic breaks, which is text to search."""
+    m = FRONT_MATTER.match(text)
+    return m if m and all(map(_in_mapping, (m.group(1) or "").split("\n"))) else None
+
+
+def _in_mapping(line: str) -> bool:
+    key, colon, _ = line.partition(":")
+    if not line.strip() or line[0].isspace() or line[0] == "#" or line.rstrip() in AT_THE_MARGIN:
+        return True
+    return bool(LIST_ITEM.match(line) or (colon and key))
+
+
 def parse(text: str, fallback_title: str, title_from: str = "heading") -> tuple[str, dict[str, Any], str, int]:
     """Split off YAML front matter. Returns title, meta, body and the body's first line number. The title is the
     `title` field, else with title_from "heading" the first heading, else `fallback_title`, the file name."""
     meta: dict[str, Any] = {}
     first_line = 1
-    m = FRONT_MATTER.match(text)
+    m = _front_matter_block(text)
     if m:
         meta = _front_matter(m.group(1) or "")
         first_line += text.count("\n", 0, m.end())
@@ -260,17 +284,52 @@ def chunk(text: str, first_line: int = 1) -> Iterator[Chunk]:
             yield first, first + stripped.count("\n"), start + lead, len(stripped)
 
 
-def _encoding(start: bytes) -> str:
-    """How a text file is encoded, by its first bytes: UTF-16 or UTF-32 after their byte order marks (Windows
-    PowerShell 5.1 writes UTF-16), otherwise UTF-8. UTF-32's little-endian mark starts as UTF-16's does."""
+def _ansi(error: UnicodeError) -> tuple[str, int]:
+    """Bytes that aren't UTF-8 as Windows' ANSI code page (cp1252) reads them, as Notepad and Excel wrote text saved as
+    "ANSI": "Müller", not a replacement character for its "ü". Its five unassigned bytes become U+FFFD."""
+    if not isinstance(error, UnicodeDecodeError):
+        raise error
+    return error.object[error.start : error.end].decode("cp1252", "replace"), error.end
+
+
+codecs.register_error("sift.ansi", _ansi)
+LOOKED_AT = 1 << 20  # bytes of a file that `misread` looks at at a time
+
+
+def _encoding(start: bytes) -> tuple[str, str]:
+    """How a text file is encoded, by its first bytes, and what to do with bytes that aren't: UTF-16 or UTF-32 after
+    their byte order marks (Windows PowerShell 5.1 writes UTF-16), invalid bytes replaced; otherwise UTF-8, any byte
+    that isn't read as ANSI (_ansi). UTF-32's little-endian mark starts as UTF-16's does."""
     if start[:4] in (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"):
-        return "utf-32"
-    return "utf-16" if start[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
+        return "utf-32", "replace"
+    return ("utf-16", "replace") if start[:2] in (b"\xff\xfe", b"\xfe\xff") else ("utf-8-sig", "sift.ansi")
 
 
 def decode(raw: bytes) -> str:
-    """A text file's content, with invalid bytes replaced."""
-    return raw.decode(_encoding(raw), "replace")
+    """A text file's content (see _encoding)."""
+    return raw.decode(*_encoding(raw))
+
+
+def misread(path: str | Path) -> bool:
+    """Whether sift 1.14 and older read the file at `path`, whose text they stored with U+FFFD in it, otherwise than
+    this sift does: a text file or JSON Lines that holds bytes that aren't UTF-8, which they replaced and this reads
+    as ANSI (see _encoding); a mail in any case, as its transfer encodings hide its parts' bytes. A file that can't be
+    looked at counts too: reading it again says what is wrong with it."""
+    if extension(Path(path).name) in EMAIL:
+        return True
+    try:
+        with open(path, "rb") as file:
+            start = file.read(4)
+            file.seek(0)
+            if _encoding(start)[1] != "sift.ansi":
+                return False
+            strict = codecs.getincrementaldecoder("utf-8")()
+            while block := file.read(LOOKED_AT):
+                strict.decode(block)
+            strict.decode(b"", final=True)
+    except (UnicodeDecodeError, OSError):
+        return True
+    return False
 
 
 def _lines(file: IO[bytes]) -> io.TextIOWrapper:
@@ -278,7 +337,7 @@ def _lines(file: IO[bytes]) -> io.TextIOWrapper:
     when it is asked for."""
     start = file.read(4)
     file.seek(0)
-    return io.TextIOWrapper(file, _encoding(start), "replace", newline="\n")
+    return io.TextIOWrapper(file, *_encoding(start), newline="\n")
 
 
 class Doc(NamedTuple):
@@ -353,7 +412,7 @@ def note(text: str, name: str, fields: Fields | None = None) -> Doc:
     title, meta, body, first_line = parse(text, Path(name).stem, (fields or {}).get("title_from", "heading"))
     offset = len(text) - len(body)  # the chunks are spans of the whole file, front matter included
     chunks = [(first, last, offset + pos, length) for first, last, pos, length in chunk(body, first_line)]
-    if not chunks and (m := FRONT_MATTER.match(text)) and m.group(1):  # front matter alone, as contact notes are
+    if not chunks and (m := _front_matter_block(text)) and m.group(1):  # front matter alone, as contact notes are
         chunks = [(first, last, m.start(1) + pos, length) for first, last, pos, length in chunk(m.group(1), 2)]
     found = links(text, offset, first_line) if name.lower().endswith(MARKDOWN) else ()
     return Doc("", "", title, meta, text, chunks, found)
@@ -537,6 +596,12 @@ def streamed(path: str | Path, size: int) -> bool:
     return size > STREAMED and extension(Path(path).name) in JSONL  # the size first: asked of every file indexed
 
 
+def native(path: str | Path) -> bool:
+    """Whether a file's reader runs native code, Xberg's, which may end its process or never come to an end: a
+    document's, and a mail's, for its HTML and attachments. Text files and JSON Lines are read by Python alone."""
+    return extension(Path(path).name) in DOCUMENTS + EMAIL
+
+
 class Unread(Exception):
     """A file read as it is stored could not be read to its end: why, as "Error: what it said"."""
 
@@ -679,21 +744,41 @@ def _in_utc(when: datetime) -> datetime:
 
 
 def _mail_text(msg: MIMEPart, fields: Fields) -> tuple[str, list[str]]:
-    """An email's text: its plain part, else its HTML part as Markdown, "" if it has none; and what went wrong."""
-    part = msg.get_body(preferencelist=("plain", "html"))
-    if part is None:
+    """An email's text: its plain part, else, if it has none or an empty one, as mail programs send beside the HTML,
+    its HTML part as Markdown; "" if it has neither; and what went wrong."""
+    plain = msg.get_body(preferencelist=("plain",))
+    if plain is not None and (text := _text_of(plain).replace("\r\n", "\n").strip()):
+        return text, []
+    html = msg.get_body(preferencelist=("html",))
+    if html is None:
         return "", []
-    try:
-        content = part.get_content()
-    except (LookupError, UnicodeError):  # a charset Python doesn't know: as UTF-8, with what doesn't decode replaced
-        content = decode(_payload(part))
-    if part.get_content_subtype() != "html":
-        return content.replace("\r\n", "\n").strip(), []
+    content = _text_of(html)
     try:
         text = _xberg(content.encode(), "mail.html").content.strip()
     except Exception as error:  # Xberg's converter panics on some HTML: the words are still worth having
         return _plain(content), [f"its HTML: read as plain text, as converting it failed ({error})"]
     return text, [] if text else ["its HTML: no text in it"]
+
+
+def _text_of(part: MIMEPart) -> str:
+    """A text part's content, in the charset its mail declares (see _in_charset), else as a text file is read (see
+    decode)."""
+    raw = _payload(part)
+    text = _in_charset(raw, part.get_content_charset("ascii"))
+    return decode(raw) if text is None else text
+
+
+def _in_charset(raw: bytes, charset: str) -> str | None:
+    """Bytes as text in the charset a mail declares for them, or None where they are to be read as a text file's: in
+    a charset Python doesn't know, and where they aren't of a charset that says nothing of them, us-ascii or UTF-8,
+    as mail programs call 8-bit text. Bytes that aren't of another charset are replaced, the others kept: mail in
+    Shift_JIS holds a vendor's characters that Python's has not."""
+    try:
+        return raw.decode(charset)
+    except LookupError:
+        return None
+    except UnicodeError:
+        return None if codecs.lookup(charset).name in ("ascii", "utf-8") else raw.decode(charset, "replace")
 
 
 class _Words(HTMLParser):
@@ -794,13 +879,12 @@ def _within(key: str, inner: str) -> str:
 
 def _as_utf8(raw: bytes, charset: str | None) -> bytes:
     """A text attachment as UTF-8, as sift reads text files: as it is if it is UTF-8 already, whatever its mail says
-    (mail clients call text us-ascii that isn't), else in the charset its mail declares, if Python knows it."""
+    (mail clients call text us-ascii that isn't), else in the charset its mail declares (see _in_charset); else as it
+    is, for a text file's reader to read what isn't UTF-8 as ANSI (see decode)."""
     if not charset or _utf8(raw):
         return raw
-    try:
-        return raw.decode(charset, "replace").encode()
-    except LookupError:
-        return raw
+    text = _in_charset(raw, charset)
+    return raw if text is None else text.encode()
 
 
 def _utf8(raw: bytes) -> bool:

@@ -4,6 +4,7 @@
 they lead to. htmx swaps a pane in place; every view has its own address, so links, reloading and the back button
 work. The server renders everything, so it is tested as the rest of sift is, and needs no build step."""
 
+import ipaddress
 import re
 import socket
 import sqlite3
@@ -12,7 +13,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from itertools import islice
 from pathlib import Path
@@ -24,7 +25,7 @@ from markupsafe import Markup, escape
 from . import console, jobs, readers, store
 from .filters import each
 from .hits import Hit, line_span
-from .queries import STOPWORDS
+from .queries import words
 
 if TYPE_CHECKING:
     from starlette.datastructures import QueryParams
@@ -47,11 +48,13 @@ SHORT = 60  # characters a front-matter value may have to filter by it
 SNIPPET = 260  # characters of a passage shown in the results
 READER_LINES = 2000  # lines of a document the reader shows at once: a long log would make a page of megabytes
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+HOST_NAME = re.compile(r"[a-z0-9_-]+(\.[a-z0-9_-]+)*")  # a host's name, as a request's Host header holds it
 STARTUP_SECONDS = 600  # how long `sift ui` waits for the server it started: loading models and codes takes a while
 PROBE_SECONDS = 5  # how long `sift ui` waits for a server on its port to answer, before it takes it for busy
 # A page and its parts share an address, told apart by the request's headers: a browser that kept one showed a part
 # alone, without the page around it, on the way back to the address. Nor do the documents' texts belong in its cache.
 UNKEPT = {"Cache-Control": "no-store"}
+FRAMED_BY_NONE = {"Content-Security-Policy": "frame-ancestors 'none'"}  # no other site shows the UI in a frame
 ERRORS = (LookupError, ValueError, ConnectionError, sqlite3.Error)  # what a view shows, as the MCP tools say it
 BUGS = (KeyError, IndexError)  # LookupErrors too, but never what sift says of a view: the server's error page, logged
 
@@ -140,9 +143,9 @@ def _glob(path: str) -> str:
 
 
 def _pattern(query: str) -> re.Pattern[str] | None:
-    """A regex for the words of a query, any ending, to mark them; None for a query without any."""
-    terms = {w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS | {"and", "or", "not", "near"}}
-    terms = sorted((t for t in terms if len(t) > 1), key=len, reverse=True)
+    """A regex for the words of a query, as searches take them (queries.words), any ending, to mark them; None for a
+    query without any."""
+    terms = sorted(set(words(query)) - {"not", "near"}, key=len, reverse=True)
     return re.compile(r"\b(?:" + "|".join(map(re.escape, terms)) + r")\w*", re.IGNORECASE) if terms else None
 
 
@@ -391,7 +394,7 @@ def app(index: "Index", host: str = "127.0.0.1") -> "ASGIApp":
     async def page(request: Request) -> HTMLResponse:
         view = View.of(request.query_params)
         part = request.headers.get("hx-target") if "hx-history-restore-request" not in request.headers else None
-        return HTMLResponse(await jobs.run(render, view, part, request.headers), headers=UNKEPT)
+        return HTMLResponse(await jobs.run(render, view, part, request.headers), headers=UNKEPT | FRAMED_BY_NONE)
 
     def located(id: str) -> Path | None:
         """The file of the document `id`, if it is there: looked for here, off the event loop, which a share that
@@ -415,20 +418,81 @@ def app(index: "Index", host: str = "127.0.0.1") -> "ASGIApp":
         return response
 
     routes = [Route("/", page), Route("/file", file), Mount("/static", StaticFiles(directory=WEB / "static"))]
-    ui = Starlette(routes=routes)
+    ui = _no_other_site(Starlette(routes=routes))
     return _local_only(ui) if host in LOCAL_HOSTS else ui
 
 
+def _no_other_site(app: "ASGIApp") -> "ASGIApp":
+    """`app`, refusing what another site's page has the browser fetch in the background or show in a frame: a search,
+    which holds the server's one call at a time and the GPU. Browsers say who asks (Fetch Metadata). A navigation of
+    the whole tab to the UI goes on, a link followed or a page sending the browser there, which the user sees; so
+    does a client that is no browser."""
+    from starlette.responses import PlainTextResponse
+
+    async def checked(scope: "Scope", receive: "Receive", send: "Send") -> None:
+        headers = dict(scope.get("headers", ()))
+        followed = headers.get(b"sec-fetch-mode") == b"navigate" and headers.get(b"sec-fetch-dest") == b"document"
+        if scope["type"] == "http" and headers.get(b"sec-fetch-site") == b"cross-site" and not followed:
+            await PlainTextResponse("refused: another site's page asked", status_code=403)(scope, receive, send)
+            return
+        await app(scope, receive, send)
+
+    return checked
+
+
 def _local_only(app: "ASGIApp") -> "ASGIApp":
-    """`app`, answering only requests whose Host names a local host, an IPv6 one in brackets too ("[::1]:8765"), which
-    Starlette's TrustedHostMiddleware cuts at its first colon."""
+    """`app`, answering only requests whose Host names a local host."""
+    return _hosts_only(app, lambda name: name in LOCAL_HOSTS)
+
+
+def host_name(name: str) -> str:
+    """A name a server answers to beside its own (`--allow-host`), as a request's Host names it: in lower case,
+    without a dot at its end, and one beyond ASCII as browsers send it (IDNA). An error for what is no name: an
+    address needs no allowing, and a port or a path is no part of a name."""
+    try:
+        encoded = name.strip().lower().removesuffix(".").encode("idna").decode("ascii")
+    except UnicodeError:
+        encoded = ""
+    if not HOST_NAME.fullmatch(encoded):
+        raise ValueError(
+            "--allow-host takes a name this machine is reached by, such as nas or notes.example, without a port or a "
+            f"path: got {name!r}"
+        )
+    return encoded
+
+
+def reached_only(app: "ASGIApp", allowed: Iterable[str] = ()) -> "ASGIApp":
+    """`app`, served on an address other machines reach, answering only requests that name this machine by an
+    address, by its own name (or that name's .local), by a local name, or by one `allowed` (`--allow-host`): a page of
+    another site whose name leads to this machine's address (DNS rebinding) is refused; an address is no such name."""
+    me = socket.gethostname().lower()
+    names = {*LOCAL_HOSTS, me, f"{me}.local", *map(host_name, allowed)}
+
+    def known(name: str) -> bool:
+        try:
+            ipaddress.ip_address(name)
+        except ValueError:
+            return name.lower().removesuffix(".") in names
+        return True
+
+    refusal = (
+        "This sift answers to its machine's addresses and names alone: `sift serve --allow-host NAME` adds a name it "
+        "is reached by."
+    )
+    return _hosts_only(app, known, refusal)
+
+
+def _hosts_only(app: "ASGIApp", known: Callable[[str], bool], refusal: str = "Invalid host header") -> "ASGIApp":
+    """`app`, answering only requests whose Host names a host `known` says it is, an IPv6 one in brackets too
+    ("[::1]:8765"), which Starlette's TrustedHostMiddleware cuts at its first colon; any other gets `refusal`."""
     from starlette.responses import PlainTextResponse
 
     async def checked(scope: "Scope", receive: "Receive", send: "Send") -> None:
         host = dict(scope.get("headers", ())).get(b"host", b"").decode("latin-1")
-        name = host[1 : host.find("]")] if host.startswith("[") else host.partition(":")[0]
-        if scope["type"] != "lifespan" and name not in LOCAL_HOSTS:
-            await PlainTextResponse("Invalid host header", status_code=400)(scope, receive, send)
+        bracketed = host.startswith("[") and "]" in host
+        name = host[1 : host.find("]")] if bracketed else host.partition(":")[0]
+        if scope["type"] != "lifespan" and not known(name):
+            await PlainTextResponse(refusal, status_code=400)(scope, receive, send)
             return
         await app(scope, receive, send)
 
@@ -442,8 +506,9 @@ def address(host: str, port: int) -> str:
     return f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}"
 
 
-def open_in_browser(host: str = "127.0.0.1", port: int = 8765) -> None:
-    """`sift ui`: open the UI of the `sift serve` on this port in the browser, starting the server if none runs."""
+def open_in_browser(host: str = "127.0.0.1", port: int = 8765, allowed: Sequence[str] = ()) -> None:
+    """`sift ui`: open the UI of the `sift serve` on this port in the browser, starting the server if none runs, with
+    the names `allowed` (see reached_only)."""
     url = address(host, port) + PREFIX
     # Asked itself, not through a proxy set for the web, which knows no server of this machine.
     directly = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -463,7 +528,7 @@ def open_in_browser(host: str = "127.0.0.1", port: int = 8765) -> None:
         from . import server
 
         threading.Thread(target=_open_when_up, args=(url,), daemon=True).start()
-        server.serve(host, port)
+        server.serve(host, port, allowed=allowed)
         return
     _open(url)
 

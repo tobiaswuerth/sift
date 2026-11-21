@@ -6,7 +6,6 @@ starts in a fraction of a second, even on a light notebook."""
 
 import copy
 import json
-import math
 import os
 import posixpath
 import re
@@ -696,8 +695,7 @@ class Index:
             rows, tokens = rows + n, tokens + t
             for i, phrase in enumerate(phrases):
                 holding[i] += db.execute("SELECT count(*) FROM fts WHERE fts MATCH ?", (phrase,)).fetchone()[0]
-        idf = [math.log((rows - n + 0.5) / (n + 0.5)) for n in holding]
-        idf = [value if value > 0 else 1e-6 for value in idf]  # as FTS5 takes them
+        idf = [topk.idf(rows, n) for n in holding]
         average = tokens / rows if rows else 1.0
         scored: dict[Collection, Passages] = {}
         for c, passages in found.items():
@@ -1298,9 +1296,11 @@ class Index:
         """Link targets no document answers to, in a collection or in every active one: notes not written yet. The
         most linked first, each with how many documents link it and the ids of a few of them."""
         k, scope = check_k(k), self._scope(collection)
-        found = [target for c in scope for target in links.unresolved(self.catalog.store(c))]
-        found = sorted(found, key=lambda t: (-len(t[1]), t[0]))[:k]
-        named = self._named([doc for _, docs, _ in found for doc in docs])
+        dbs = [self.catalog.store(c) for c in scope]
+        with store.snapshot(dbs):  # the targets, and the documents linking them, as they are at one moment
+            found = sorted((target for db in dbs for target in links.unresolved(db)), key=lambda t: (-len(t[1]), t[0]))
+            found = found[:k]
+            named = self._named([doc for _, docs, _ in found for doc in docs])
         return [
             {"target": target, "docs": len(docs), "ids": sorted(named[doc][0] for doc in docs)[:LINKING_SHOWN]}
             for target, docs, _ in found
@@ -1378,7 +1378,7 @@ class Index:
         return "; ".join(dict.fromkeys(filter(None, notes))) or None
 
     def _embed_new_in(self, collection: Collection, db: Db, docs: list[int]) -> str | None:
-        model = store.get_meta(db, "model")
+        model = store.model(db)
         if model is None:  # never embedded: keyword search alone, and no model to load
             return None
         new = """chunks c JOIN docs d ON d.id = c.doc WHERE c.doc IN (SELECT value FROM json_each(?))
@@ -1469,7 +1469,7 @@ class Index:
                     entry["keywords"] = _postings_state(db)
                     entry["fields"] = self.fields(c)
                     entry |= {"links": linked, "unresolved": unresolved}
-                    models.add(store.get_meta(db, "model"))
+                    models.add(store.model(db))
                 except sqlite3.DatabaseError as error:  # damaged where it opened fine: said, the others still come
                     entry = {k: entry[k] for k in ("name", "path", "active", "store", "size")}
                     entry["error"] = store.damage(c.name, error)

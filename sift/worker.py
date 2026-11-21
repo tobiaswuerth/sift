@@ -149,8 +149,17 @@ def app(token: str, models: "Local") -> "Starlette":
 
     @authorized
     async def info(request: Request) -> Response:
+        # The embedding model by its name, which sift 1.14 compares with the model a collection was embedded with,
+        # and its revision beside it (remote.Remote.name); the reranker, which no collection records, as named.
+        model, revision = settings.hub(models.name)
         return JSONResponse(
-            {"model": models.name, "dim": dim, "reranker": models.reranker_name, "version": __version__}
+            {
+                "model": model,
+                "revision": revision,
+                "dim": dim,
+                "reranker": models.reranker_name,
+                "version": __version__,
+            }
         )
 
     @authorized

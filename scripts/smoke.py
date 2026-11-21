@@ -86,6 +86,8 @@ def without_models(run):
     sift("links", "Acme", "--direction", "in", "--field", "org", "--json", says='"field": "org"')
     sift("mentions", "Acme AG", "--also", "aliases", says="no matches")  # the one note naming it links it
     sift("unresolved", says="A note not written")
+    sift("add", run.vault, "--follow-links", says="reads files linked from outside its folder now")
+    sift("add", run.vault, "--no-follow-links", says="leaves out files linked from outside its folder now")
     (run.vault / "notes.txt").write_text("Plain text, changed: now about turbines.\n", encoding="utf-8")
     sift("index", "--files", run.vault / "notes.txt", "notes/gone.md", says="notes/notes.txt: changed")
     assert found("search", "turbines") == ["notes/notes.txt"]
@@ -117,7 +119,7 @@ def serve(run):
     with socket.socket() as free:
         free.bind(("127.0.0.1", 0))
         port = free.getsockname()[1]
-    command = [sys.executable, "-m", "sift", "serve", "--port", str(port)]
+    command = [sys.executable, "-m", "sift", "serve", "--port", str(port), "--allow-host", "localhost"]
     with subprocess.Popen(command, env=run.environment, stderr=subprocess.DEVNULL) as server:
         try:
             page = _answer(f"http://127.0.0.1:{port}/ui/?q=rockets", server)

@@ -37,12 +37,12 @@ uv tool install --torch-backend auto sift-rag   # installs the `sift` command
 ```
 
 With pip, in a virtual environment: `pip install sift-rag`. The first use downloads two models from Hugging Face
-(about 2 GB).
+(about 2 GB), each at the commit this version of sift pins it to: what their owners push later changes no vectors.
 
 sift uses an NVIDIA GPU (CUDA) if there is one, else an Apple GPU, else the CPU, where `query` takes about 25 seconds a
 question instead of 0.3. PyTorch from PyPI uses the GPU on Linux and macOS. On Windows, `--torch-backend auto` installs
 the CUDA build for your driver; with pip, run `pip install --force-reinstall --no-deps torch torchvision --index-url
-https://download.pytorch.org/whl/cu128` afterwards. If an NVIDIA GPU sits unused, sift says so and prints the fix. A
+https://download.pytorch.org/whl/cu126` afterwards. If an NVIDIA GPU sits unused, sift says so and prints the fix. A
 machine without a GPU can [use another machine's](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md).
 
 ## Quick start
@@ -56,7 +56,8 @@ sift serve                             # MCP server on http://127.0.0.1:8765/mcp
 ```
 
 `sift index` and `sift embed` process only what changed since their last run; an interrupted `sift embed` continues
-where it stopped.
+where it stopped. Or let your agent do it all: tell it to read and follow
+[Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agents.md).
 
 ## Connect an agent
 
@@ -96,7 +97,7 @@ at once, a compact survey, then the best few read), and which collections and fr
 
 | Command | Does |
 |---|---|
-| `sift add FOLDER [--name NAME]` | Register a folder as a collection (`--store PATH` puts its index elsewhere) |
+| `sift add FOLDER [--name NAME]` | Register a folder as a collection (`--store PATH` puts its index elsewhere, `--follow-links` reads files linked from outside it) |
 | `sift index [NAME ...] [--files PATH ...]` | Read new and changed files, of every active collection or those named; `--files`: only these |
 | `sift embed [NAME ...]` | Embed every passage without a vector |
 | `sift search`, `vsearch`, `query` `TEXT` | Keyword, semantic and hybrid search |
@@ -107,8 +108,8 @@ at once, a compact survey, then the best few read), and which collections and fr
 | `sift activate`, `deactivate NAME ...` | Take collections into searches, or leave them out |
 | `sift move [NAME ...] TO` | Move collections' indexes to another folder or drive |
 | `sift rm NAME` | Remove a collection and its index; its files stay |
-| `sift ui` | Search, browse and read the index in your browser |
-| `sift serve [--stdio] [--host H] [--port N]` | The MCP server, and the UI under `/ui` (port 8765) |
+| `sift ui [--host H] [--port N] [--allow-host NAME]` | Search, browse and read the index in your browser |
+| `sift serve [--stdio] [--host H] [--port N] [--allow-host NAME]` | The MCP server, and the UI under `/ui` (port 8765) |
 | `sift worker [--port N]` | Embed and rerank for other machines on this one's GPU (port 8766) |
 | `sift bench QUESTIONS.json` | How well each search mode finds the answers you expect |
 
@@ -127,8 +128,8 @@ None needed: sift picks the device, its GPU memory budget and batch sizes itself
 | Variable | Default | Purpose |
 |---|---|---|
 | `SIFT_HOME` | `~/.sift` | The catalog, logs, the worker's key, and the indexes unless moved |
-| `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model; run `sift embed --reset` after a change |
-| `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder |
+| `SIFT_EMBED_MODEL` | `google/embeddinggemma-2` | Any Sentence Transformers embedding model, at a revision after `@`; run `sift embed --reset` after a change |
+| `SIFT_RERANK_MODEL` | `Alibaba-NLP/gte-reranker-modernbert-base` | Any Sentence Transformers cross-encoder, at a revision after `@` |
 | `SIFT_EMBED_REMOTE` | none | A `sift worker` to embed and rerank on: the `https://<key>@host:8766` it prints |
 | `SIFT_OCR` | `auto` | Where scans are read: `auto` on a GPU, `on` also on the CPU (slow), `off` never |
 | `SIFT_UPDATE_CHECK` | `on` | `off`: never ask PyPI for a newer sift (nor with `HF_HUB_OFFLINE=1`) |
@@ -176,7 +177,9 @@ older, read 1.8.0's entry first.
 ## Documentation
 
 - [Usage](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md): collections, search options and syntax,
-  filters, the formats sift reads, linked notes, the UI, `sift bench`, where indexes and logs lie
+  filters, the formats sift reads, linked notes, the server, the UI, `sift bench`, where indexes and logs lie
+- [Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agents.md): the steps for an
+  agent that installs sift and connects it for you
 - [Another machine's GPU](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md): `sift worker`
 - [How sift works](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md): indexing, storage,
   embedding and search, and why

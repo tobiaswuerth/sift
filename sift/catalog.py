@@ -208,9 +208,18 @@ class Catalog:
     def set_title_from(self, name: str, title_from: str) -> Collection:
         """Choose where a collection's Markdown and text files take their titles from. Returns the collection as it
         is now."""
+        return self._choose(name, "title_from", title_from)
+
+    def follow_links(self, name: str, follow: bool = True) -> Collection:
+        """Have a collection read the files that link to outside its folder (see indexing.walk), or leave them out
+        again. Returns it as it is now."""
+        return self._choose(name, "links", "follow" if follow else None)
+
+    def _choose(self, name: str, key: str, value: str | None) -> Collection:
+        """Make one choice of a collection (see _fields), or with None take it back; the others stay."""
         collection = self.get(name)
-        fields = {key: value for key, value in collection.choices.items() if key != "title_from"}
-        stored = _fields(fields | {"title_from": title_from})
+        others = {chosen: how for chosen, how in collection.choices.items() if chosen != key}
+        stored = _fields(others | ({key: value} if value else {}))
         self.db.execute("UPDATE collections SET fields = ? WHERE id = ?", (stored, collection.id))
         self.db.commit()
         return collection._replace(fields=stored)
@@ -271,17 +280,19 @@ def _open(path: Path, split_into: Path) -> Connection:
     """The catalog at `path`: made if there is none, and split off an index of sift 1.7 or older there first."""
     db = store.database(path, create=not path.exists())
     try:
-        version = db.execute("PRAGMA user_version").fetchone()[0]
+        # Both at one moment: another sift making the catalog meanwhile shows neither, or both (made in one transaction)
+        version, tables = db.execute(
+            "SELECT (SELECT user_version FROM pragma_user_version), (SELECT count(*) FROM sqlite_master)"
+        ).fetchone()
         if version > SCHEMA_VERSION:
             raise SystemExit(f"{path} was made by a newer sift; upgrade sift to use it")
-        tables = db.execute("SELECT count(*) FROM sqlite_master").fetchone()[0]
         if version < 2 and tables:
             raise SystemExit(
                 f"this index was made by an older sift, which stored documents differently: delete {path}, "
                 "then run `sift add`, `sift index` and `sift embed` again"
             )
-        if not version:
-            db.executescript(SCHEMA + f"PRAGMA user_version = {SCHEMA_VERSION};")
+        if not version:  # a sift making it at the same moment holds it, then this one finds it made, as IF NOT EXISTS
+            db.executescript(f"BEGIN IMMEDIATE; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;")
             return db
     except BaseException:
         db.close()
@@ -296,14 +307,21 @@ def _open(path: Path, split_into: Path) -> Connection:
 
 
 def _fields(fields: dict[str, Any] | None) -> str | None:
-    """A collection's choices, as stored: JSON Lines fields, {"id": name, "title": name, "text": [names]}, and where
-    its Markdown and text files take their titles from, {"title_from": "heading" or "name"}."""
+    """A collection's choices, as stored: JSON Lines fields, {"id": name, "title": name, "text": [names]}, where its
+    Markdown and text files take their titles from, {"title_from": "heading" or "name"}, and whether it reads files
+    linked from outside its folder, {"links": "follow"}."""
     if not fields:
         return None
     for key, value in fields.items():
         if key == "title_from":
             if value not in readers.TITLE_FROM:
                 raise SystemExit(f"titles come from 'heading' or 'name', got {value!r}")
+            continue
+        if key == "links":
+            if value != "follow":
+                raise SystemExit(
+                    f"files linked from outside a collection's folder are read with 'follow', got {value!r}"
+                )
             continue
         if key not in ("id", "title", "text"):
             raise SystemExit(f"unknown field choice {key!r}: choose the id, title or text field")

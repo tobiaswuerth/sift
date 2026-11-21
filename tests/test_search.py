@@ -10,13 +10,13 @@ import threading
 import numpy as np
 import pytest
 
-from sift import embed, expression, indexing, order, postings, queries, search, store, topk, vectors
+from sift import embed, expression, filters, indexing, order, postings, queries, search, store, topk, vectors
 from sift.catalog import Catalog
 from sift.hits import doi_of
 from sift.queries import any_word
 from sift.search import Index
 
-from .conftest import as_sift_1_12_left_it, write, write_prose
+from .conftest import as_sift_1_12_left_it, live_codes, write, write_prose
 
 
 def ids(hits):
@@ -157,13 +157,23 @@ def test_adaptive_keeps_the_hits_before_the_largest_drop_and_a_few_more(prose, f
     every = getattr(index, mode)(subject, k=20)
     scores = np.array([h["score"] for h in every])
     gaps = scores[:-1] - scores[1:]
-    cut = int(np.argmax(gaps[: int(np.ceil(0.9 * len(gaps)))])) + 2  # the hits before the gap, and one more
+    considered = gaps[: int(np.ceil(0.9 * len(gaps)))]
+    # the hits before the gap, and one more; all of them where their scores tie, as keyword search's and query's here
+    cut = int(np.argmax(considered)) + 2 if considered.max() > 0 else len(every)
     assert getattr(index, mode)(subject, k=20, adaptive=True) == every[:cut]
 
 
 def test_adaptive_leaves_few_hits_as_they_are(prose):
     index = Index(prose[0])
     assert index.search("w1", k=2, adaptive=True) == index.search("w1", k=2)
+
+
+def test_adaptive_keeps_every_hit_when_none_stands_out():
+    # Hits of one score have no drop between them: they were cut to the first six, as if the first one stood out.
+    from sift.hits import standing_out
+
+    alike = [{"id": str(i), "score": 1.0} for i in range(10)]
+    assert standing_out(alike) == alike
 
 
 @pytest.mark.usefixtures("small_lists")
@@ -327,7 +337,7 @@ def test_a_store_s_trouble_is_not_a_bad_query(corpus):
         Index(catalog).search("bru*")
 
 
-@pytest.mark.parametrize("k", [0, -1, "3", 1.5])
+@pytest.mark.parametrize("k", [0, -1, "3", 1.5, True])  # True is 1 to Python, and no count
 def test_k_must_be_positive_integer(corpus, k):
     with pytest.raises(ValueError, match="k must be"):
         Index(corpus[0]).search("reward", k=k)
@@ -409,7 +419,6 @@ def test_not_with_a_range(corpus):
 @pytest.mark.parametrize(
     "kwargs, error",
     [
-        ({"filters": {'bad"key': 1}}, ValueError),
         ({"filters": {"": 1}}, ValueError),
         ({"filters": {"categories": []}}, ValueError),
         ({"filters": {"categories": [None]}}, ValueError),
@@ -579,7 +588,7 @@ def held_codes(index):
     """The codes an index holds of every collection, (chunk ids, codes as bytes), as a fresh load would give them."""
     found = []
     for cid in sorted(index.vectors):
-        ids, bits = index.vectors[cid][1].live()
+        ids, bits = live_codes(index.vectors[cid][1])
         found += zip(ids.tolist(), (row.tobytes() for row in bits))
     return found
 
@@ -1094,6 +1103,24 @@ def test_any_word_drops_stopwords_and_duplicates():
     assert any_word("the of a") == ""
 
 
+def test_any_word_keeps_digits_and_single_characters_of_other_scripts():
+    # Every word of one character was dropped: "Python 3" lost its version, and a query of one Chinese or Japanese
+    # word, "猫", found no keyword candidates at all. Single Latin letters are the noise ("a", the "s" of "it's").
+    assert any_word("Python 3 in R, it's a 猫") == '"python" OR "3" OR "猫"'
+
+
+def test_a_single_latin_letter_under_an_accent_is_no_word():
+    # The keyword index reads "à" as "a" (remove_diacritics): as a word of a query it brought every passage that
+    # holds an "a", the longest list of an English collection.
+    assert any_word("chat à la maison, É ö ñ, and 猫") == '"chat" OR "la" OR "maison" OR "猫"'
+
+
+def test_underscores_alone_are_no_word():
+    # A regex's \w takes "_" for a letter, FTS5 for a break between words: a lone "_" was a word that matched nothing,
+    # and the UI marked every underscore of its results.
+    assert any_word("snake_case _ __") == '"snake_case"'
+
+
 # --- documents and status ----------------------------------------------------
 
 
@@ -1180,10 +1207,10 @@ def test_get_a_folder_is_no_document(corpus):
         Index(corpus[0]).get("notes/robots")
 
 
-def test_status(embedded, home):
+def test_status(embedded, home, fake_models):
     status = Index(embedded[0]).status()
     assert status["index"] == str(home / "sift.db")
-    assert status["model"]
+    assert status["model"] == fake_models.name  # at its commit
     fields = ["categories", "title", "year"]
     (entry,) = status["collections"]
     assert entry == {
@@ -1296,6 +1323,64 @@ def test_huge_k_is_fine(embedded, mode):
 def test_huge_numbers_in_filters_are_clear_errors(corpus):
     with pytest.raises(ValueError, match="too large"):
         Index(corpus[0]).search("brush", filters={"year": 10**30})
+
+
+def test_any_front_matter_field_name_filters_and_sorts(corpus):
+    # A name ending in a backslash was a raw "bad JSON path" from SQLite, one holding one matched nothing, and one
+    # holding a double quote was refused: SQLite reads a field's name in a JSON path as a JSON string, escapes too.
+    catalog, root = corpus
+    names = ["back\\slash", "ends\\", 'say "hi"', "dotted.name", "tab\there", "Straße"]
+    write(root / "odd.md", "---\n" + "".join(f"{name}: 7\n" for name in names) + "---\n\nbrush\n")
+    indexing.index(catalog)
+    index = Index(catalog)
+    for name in names:
+        if '"' in name and not filters.reads_quotes():  # this SQLite reads none in a name: refused, with why
+            with pytest.raises(ValueError, match=r"SQLite 3\.47 and newer do"):
+                index.search("brush", filters={name: 7})
+            continue
+        assert ids(index.search("brush", filters={name: 7})) == ["notes/odd.md"], name
+        assert ids(index.search("brush", sort=f"-{name}"))[0] == "notes/odd.md", name
+    assert index.search("brush", filters={names[0]: 8}) == []
+
+
+def test_a_field_name_is_addressed_with_its_letters_as_front_matter_stores_them():
+    # SQLite before 3.45, as Ubuntu 22.04 and Debian 12 have it, compares a JSON path's name with the stored one byte
+    # for byte: sift stores "Straße" as it is, and a path escaping its letter, as json.dumps writes it, matched nothing.
+    assert filters.json_path("Straße") == '$."Straße"'
+
+
+def test_a_field_name_with_a_double_quote_is_refused_where_sqlite_reads_no_escapes(monkeypatch):
+    # SQLite up to 3.46 (3.43.1 to 3.46.1, tried) ends a path's name at its first double quote, escaped or not: a
+    # filter on such a field matched nothing, without a word, on the systems that ship one. Which SQLite reads it is
+    # asked of the SQLite itself, not told by its version. A backslash it compares as stored, which matches.
+    monkeypatch.setattr(filters, "reads_quotes", lambda: False)
+    with pytest.raises(ValueError, match=r"invalid filter field 'say \"hi\"': this SQLite \(.*\) reads no double"):
+        filters.json_path('say "hi"')
+    assert filters.json_path("back\\slash") == '$."back\\\\slash"'
+    monkeypatch.setattr(filters, "reads_quotes", lambda: True)
+    assert filters.json_path('say "hi"') == '$."say \\"hi\\""'
+
+
+def test_whether_sqlite_reads_a_quote_in_a_name_is_asked_of_it():
+    # What it answers is what its JSON functions do with such a name.
+    db = sqlite3.connect(":memory:")
+    try:
+        found = db.execute("SELECT json_extract(?, ?)", ('{"a\\"b": 1}', '$."a\\"b"')).fetchone()[0]
+    finally:
+        db.close()
+    assert filters.reads_quotes() is (found == 1)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), [1, float("-inf")]])
+def test_a_filter_of_no_finite_number_is_a_clear_error(corpus, value):
+    with pytest.raises(ValueError, match="finite"):
+        Index(corpus[0]).search("brush", filters={"year": value})
+
+
+def test_a_filter_of_many_values_is_answered(corpus):
+    # Each value, in each of its forms, was a variable of the statement: past SQLite's 32,766, "too many SQL variables".
+    hits = Index(corpus[0]).search("brush", filters={"year": [*map(str, range(20_000)), 2024]})
+    assert ids(hits) == ["notes/robots/brush.md"]
 
 
 def test_query_returns_k_hits_beyond_its_candidate_count(embedded):
@@ -1555,7 +1640,7 @@ def test_sort_puts_numbers_before_text(corpus):
     assert [day(h) for h in index.browse(path="ranked/*", sort="-rank")] == ["b", "c", "a", "d"]
 
 
-@pytest.mark.parametrize("sort", ["", "-", 'bad"key', 1, ["created"]])
+@pytest.mark.parametrize("sort", ["", "-", 1, ["created"]])
 def test_bad_sort_is_a_clear_error(corpus, sort):
     with pytest.raises(ValueError, match="sort"):
         Index(corpus[0]).search("brush", sort=sort)

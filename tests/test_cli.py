@@ -3,15 +3,19 @@
 import io
 import json
 import os
+import re
 import runpy
+import shlex
 import sqlite3
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from mcp.server.mcpserver import MCPServer
 
 from sift import cli, indexing
+from sift.catalog import Catalog
 
 from .conftest import write
 
@@ -83,6 +87,28 @@ def test_add_again_says_which_passages_to_embed_again(cli_corpus, capsys):
     err = run(capsys, "add", str(cli_corpus), "--title-from", "name").err
     assert "run `sift embed` to embed 1 passage again, which carries its title" in err
     assert "embedded 1 chunk" in run(capsys, "embed").err
+
+
+def test_add_with_follow_links_reads_files_linked_from_outside(notes, home, capsys):
+    run(capsys, "add", str(notes), "--follow-links")
+    assert Catalog(home).get("notes").choices == {"links": "follow"}
+
+
+def test_add_again_with_follow_links_changes_the_collection(cli_corpus, home, capsys):
+    err = run(capsys, "add", str(cli_corpus), "--follow-links").err
+    assert "collection 'notes' reads files linked from outside its folder now; run `sift index`" in err
+    assert Catalog(home).get("notes").choices == {"links": "follow"}
+
+
+def test_add_again_with_no_follow_links_leaves_them_out_again(cli_corpus, home, capsys):
+    # Following links could be chosen and never taken back, but by removing the collection, its vectors with it.
+    run(capsys, "add", str(cli_corpus), "--title-from", "name")
+    run(capsys, "add", str(cli_corpus), "--follow-links")
+    err = run(capsys, "add", str(cli_corpus), "--no-follow-links").err
+    assert "collection 'notes' leaves out files linked from outside its folder now; run `sift index`" in err
+    assert Catalog(home).get("notes").choices == {"title_from": "name"}  # its other choices stay
+    with pytest.raises(SystemExit, match="is the collection 'notes' already"):  # one change at a time
+        cli.main(["add", str(cli_corpus), "--no-follow-links", "--title-from", "heading"])
 
 
 @pytest.mark.parametrize("options", [[], ["--id", "key"], ["--title-from", "name", "--name", "other"]])
@@ -543,9 +569,32 @@ def test_a_reader_leaving_is_found_before_python_ends(home, tmp_path):
 
 def test_serve(home, monkeypatch):
     calls = []
-    monkeypatch.setattr("sift.server.serve", lambda *args: calls.append(args))
+    monkeypatch.setattr("sift.server.serve", lambda *args, **options: calls.append((args, options)))
     cli.main(["serve", "--port", "9000", "--stdio"])
-    assert calls == [("127.0.0.1", 9000, True)]
+    cli.main(["serve", "--host", "0.0.0.0", "--allow-host", "notes.example", "--allow-host", "nas"])
+    assert calls == [
+        (("127.0.0.1", 9000, True), {"allowed": []}),
+        (("0.0.0.0", 8765, False), {"allowed": ["notes.example", "nas"]}),
+    ]
+
+
+def test_the_commands_the_docs_show_are_commands_sift_takes(capsys):
+    # An example with an option sift has not, or one renamed since, sends its reader into an error, and an agent that
+    # sets sift up by docs/agents.md with it.
+    root, parser, shown, refused = Path(__file__).parent.parent, cli._parser(), 0, []
+    for path in [root / "README.md", *sorted((root / "docs").glob("*.md"))]:
+        for block in re.findall(r"```bash\n(.*?)```", path.read_text(encoding="utf-8"), re.DOTALL):
+            for line in block.splitlines():
+                words = shlex.split(line, comments=True)
+                if words[:1] != ["sift"] or "--version" in words:
+                    continue
+                shown += 1
+                try:
+                    parser.parse_args(words[1:])
+                except SystemExit:
+                    refused.append(f"{path.name}: {line.strip()}")
+    assert shown > 30
+    assert refused == [], capsys.readouterr().err
 
 
 def test_version_and_module_entry_point(monkeypatch, capsys):

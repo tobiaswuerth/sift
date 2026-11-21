@@ -13,7 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from . import accelerator, settings
-from .accelerator import Accelerator
+from .accelerator import UNSET, Accelerator, Unset
 
 if TYPE_CHECKING:
     import torch
@@ -28,13 +28,6 @@ LENGTHS_AT_ONCE = 1000  # texts tokenized at a time to count their tokens
 PROMPTS = {False: ("document", "passage", "corpus"), True: ("query",)}  # as encode_document and encode_query pick
 TASKS = {False: "document", True: "query"}  # what Sentence Transformers routes texts by, in models that route
 _Model = TypeVar("_Model", bound="torch.nn.Module")
-
-
-class _Unset:
-    """The type of _UNSET: a counter not made yet, unlike None, which is a counter made and not there."""
-
-
-_UNSET = _Unset()
 
 
 # What sift uses of Sentence Transformers' models and of a fast tokenizer, typed by sift: their own types name
@@ -93,7 +86,8 @@ def _embedder(name: str, dtype: "torch.dtype | None") -> "SentenceTransformer":
     from sentence_transformers import SentenceTransformer
 
     _quietly()
-    model = SentenceTransformer(name, device="cpu", model_kwargs=_in(dtype))  # into RAM; to the GPU when used
+    repository, revision = settings.hub(name)
+    model = SentenceTransformer(repository, device="cpu", model_kwargs=_in(dtype), revision=revision)  # into RAM
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)
     return model.eval()  # as encode() sets it: in training mode, dropout would change every vector at random
 
@@ -102,7 +96,8 @@ def _reranker(name: str, dtype: "torch.dtype | None") -> "CrossEncoder":
     from sentence_transformers import CrossEncoder
 
     _quietly()
-    model = CrossEncoder(name, device="cpu", model_kwargs=_in(dtype))  # into RAM, its scoring head in dtype too
+    repository, revision = settings.hub(name)
+    model = CrossEncoder(repository, device="cpu", model_kwargs=_in(dtype), revision=revision)  # its head in dtype too
     model.max_seq_length = min(model.max_seq_length or MAX_TOKENS, MAX_TOKENS)  # MiniLM reads at most 512 tokens
     return model
 
@@ -120,7 +115,7 @@ class Local:
         self._dtype: torch.dtype | None = None  # the precision all of them are in
         self._lock = threading.RLock()  # loading, which threads may ask for at once
         # a tokenizer of the embedding model's own, to count tokens with (see lengths)
-        self._counter: Tokenizer | _Unset | None = _UNSET
+        self._counter: Tokenizer | Unset | None = UNSET
 
     @property
     def address(self) -> str:
@@ -179,7 +174,7 @@ class Local:
         """The tokenizer lengths() counts with, made on first use: its first call loads the model, so it belongs on
         the models' thread (prepare does it)."""
         with self._lock:
-            if isinstance(self._counter, _Unset):
+            if isinstance(self._counter, Unset):
                 model = self.embedder()
                 backend = getattr(model.tokenizer, "backend_tokenizer", None)
                 self._counter = None if backend is None else _counter_of(backend, _longest(model))
@@ -271,10 +266,12 @@ def _pipelined(
             launched = None
         try:
             launched = steps.launch(features)
+            continue
         except RuntimeError as error:
             if fallback is None or not accelerator.out_of_memory(error):
                 raise
-            yield fallback[0](texts)
+        # after the `except`, whose traceback held the failed batch's tensors on the GPU while it lasted
+        yield fallback[0](texts)
     if launched is not None:
         yield steps.collect(launched)
 

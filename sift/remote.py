@@ -19,7 +19,7 @@ from collections.abc import Iterable, Iterator
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from . import __version__
+from . import __version__, settings
 
 if TYPE_CHECKING:
     import numpy as np
@@ -110,7 +110,10 @@ class Remote:
 
     @property
     def name(self) -> str:
-        return self.info["model"]
+        """The worker's embedding model at its revision, which it sends beside the name. A worker of sift 1.14 sends
+        none, and loads the default model at its latest commit, which holds the weights of the commit sift pins."""
+        revision = self.info.get("revision")
+        return settings.pinned(self.info["model"] + (f"@{revision}" if revision else ""))
 
     def load(self) -> None:
         """Reach the worker now, to find out early whether it answers."""

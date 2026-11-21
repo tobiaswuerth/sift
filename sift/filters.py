@@ -3,7 +3,10 @@ SQLite's json_each, and how a field is addressed. Text alone: what runs it, and 
 search's (see search.Index._where)."""
 
 import json
+import math
 import re
+import sqlite3
+from functools import cache
 from typing import Any, TypeGuard, cast
 
 Value = str | int | float  # what a filter compares with; yes and no are numbers here, as Python has them
@@ -52,10 +55,12 @@ def comparison(key: str, op: str, value: object) -> tuple[str, list[Value]]:
             raise ValueError(f"filter {key!r} needs a string or number, or for = and not a list of them, got {one!r}")
         if isinstance(one, int) and not -SQLITE_INT <= one < SQLITE_INT:
             raise ValueError(f"filter {key!r}: {one} is too large")
+        if isinstance(one, float) and not math.isfinite(one):
+            raise ValueError(f"filter {key!r}: {one} is no finite number")
         values.append(one)
-    if op in ("=", "not"):
+    if op in ("=", "not"):  # as one JSON array: a variable each, a long list passed SQLite's limit of them
         values = list(dict.fromkeys(form for one in values for form in forms(one)))
-        return f"value IN ({', '.join('?' * len(values))})", values
+        return "value IN (SELECT value FROM json_each(?))", [json.dumps(values)]
     if isinstance(value, str):  # at the precision given: "2024-12-31" is <= "2024", and not > "2024"
         return f"type IN ('text', 'integer', 'real') AND substr(value, 1, ?) {op} ?", [len(value), value]
     return f"{NUMBER_FIRST} AND CAST(value AS REAL) {op} ?", values  # SQLite reads "2024-06-15" as 2024
@@ -78,7 +83,26 @@ def forms(value: Value) -> list[Value]:
 
 
 def json_path(name: object, what: str = "filter field") -> str:
-    """A front-matter field name, as SQLite's JSON functions address it: any name without a double quote."""
-    if not (isinstance(name, str) and name and '"' not in name):
+    """A front-matter field name, as SQLite's JSON functions address it: any name, written as a JSON string, which
+    SQLite reads with its escapes, so that a backslash or a double quote in it is the name's own. Its letters as they
+    are, as indexing stores front matter: SQLite before 3.45 compares the name with the stored one byte for byte. A
+    name that holds a double quote is refused where SQLite reads none in a name (see reads_quotes)."""
+    if not (isinstance(name, str) and name):
         raise ValueError(f"invalid {what} {name!r}")
-    return f'$."{name}"'
+    if '"' in name and not reads_quotes():
+        raise ValueError(
+            f"invalid {what} {name!r}: this SQLite ({sqlite3.sqlite_version}) reads no double quote in a field's "
+            "name; SQLite 3.47 and newer do"
+        )
+    return "$." + json.dumps(name, ensure_ascii=False)
+
+
+@cache
+def reads_quotes() -> bool:
+    """Whether this SQLite reads a double quote, escaped, in the name of a JSON path: asked of it, as its version
+    tells poorly. Up to 3.46 it ends the name there, and the path matches nothing."""
+    db = sqlite3.connect(":memory:")
+    try:
+        return db.execute("SELECT json_extract(?, ?)", ('{"a\\"b": 1}', '$."a\\"b"')).fetchone()[0] == 1
+    finally:
+        db.close()

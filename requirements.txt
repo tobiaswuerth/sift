@@ -1,21 +1,21 @@
 # PyTorch with CUDA, for pip users (`pip install -r requirements.txt -e ".[dev]"`). uv users: --torch-backend auto
---extra-index-url https://download.pytorch.org/whl/cu128
-torch>=2.4
-torchvision
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch>=2.13
+torchvision>=0.28
 numpy>=2.0
 numba>=0.68
 sentence-transformers>=6.1
 transformers>=5.18
-tokenizers>=0.20
-pillow>=10
-mcp>=2.0
+tokenizers>=0.23.1
+pillow>=13
+mcp>=2.2
 uvicorn>=0.31
-starlette>=0.48
-anyio>=4.9
+starlette>=1.3.1
+anyio>=4.14.2
 pydantic>=2.12
 markupsafe>=2
 nvidia-ml-py>=12
 xberg>=1.3
 pypdfium2>=4.30
-cryptography>=42
-jinja2>=3.1
+cryptography>=49
+jinja2>=3.1.6

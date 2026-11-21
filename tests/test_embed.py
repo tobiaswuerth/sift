@@ -1,5 +1,6 @@
 """`sift embed`: embedding every chunk without a vector, slab by slab, with progress. The models are fakes."""
 
+import queue
 import re
 import sqlite3
 import threading
@@ -22,7 +23,7 @@ def test_embed_pending(corpus, fake_models, capsys):
     catalog, _ = corpus
     embed.embed_pending(catalog)
     assert vector_count(catalog) == 3
-    assert store.get_meta(catalog.store("notes"), "model") == fake_models.name
+    assert store.model(catalog.store("notes")) == fake_models.name
     assert store.get_meta(catalog.store("notes"), "dim") == "64"
     assert "embedded 3 chunks" in capsys.readouterr().err
     embed.embed_pending(catalog)
@@ -265,8 +266,103 @@ def test_embed_refuses_mixing_models(embedded, fake_models):
     with pytest.raises(SystemExit, match="--reset"):
         embed.embed_pending(catalog)
     embed.embed_pending(catalog, reset=True)
-    assert store.get_meta(catalog.store("notes"), "model") == fake_models.name
+    assert store.model(catalog.store("notes")) == fake_models.name
     assert vector_count(catalog) == 3
+
+
+def test_embed_refuses_mixing_commits_of_a_model(embedded, fake_models):
+    # Another commit of a model may hold other weights: its vectors beside the old ones would compare as nothing.
+    catalog, _ = embedded
+    db, older = catalog.store("notes"), "google/embeddinggemma-2@an-older-commit"
+    store.set_model(db, older)
+    db.commit()
+    asked = f"notes was embedded with {older}; run `sift embed --reset` to switch to {fake_models.name}"
+    with pytest.raises(SystemExit, match=re.escape(asked)):
+        embed.embed_pending(catalog)
+    embed.embed_pending(catalog, reset=True)
+    assert store.model(db) == fake_models.name
+
+
+def test_a_collection_an_older_sift_embedded_is_embedded_on_without_a_reset(embedded, fake_models):
+    # sift 1.14 and older recorded the default model by its name alone, which meant its repository's latest commit:
+    # the commit sift pins holds the same weights, so its vectors stay, and new passages are embedded beside them.
+    # The name stays as that sift reads it, for one that shares the store.
+    catalog, root = embedded
+    db = catalog.store("notes")
+    db.execute("DELETE FROM meta WHERE key = ?", (store.MODEL_AT,))  # as sift 1.14 left it
+    db.commit()
+    assert store.get_meta(db, "model") == "google/embeddinggemma-2"
+    write(root / "new.md", "# New\n\nA note written since.\n")
+    indexing.index(catalog)
+    embed.embed_pending(catalog)
+    assert vector_count(catalog) == 4
+    assert (store.get_meta(db, "model"), store.model(db)) == ("google/embeddinggemma-2", fake_models.name)
+
+
+def test_a_reset_drops_no_vector_before_the_model_is_there(embedded, fake_models, monkeypatch):
+    # Offline, or with a model that can't be downloaded, `sift embed --reset` dropped every vector, then failed: days
+    # of embedding gone for nothing.
+    catalog, _ = embedded
+
+    def unavailable():
+        raise OSError("the model can't be downloaded")
+
+    monkeypatch.setattr(fake_models, "prepare", unavailable)
+    with pytest.raises(OSError, match="downloaded"):
+        embed.embed_pending(catalog, reset=True)
+    assert vector_count(catalog) == 3
+    assert store.model(catalog.store("notes")) == fake_models.name
+
+
+def test_waiting_for_the_reader_stays_open_to_ctrl_c(embedded, fake_models, monkeypatch):
+    # On Windows a wait without a timeout takes no Ctrl+C until it ends: the first slab of a large store, read for
+    # minutes, held `sift embed` deaf to it. Every wait for the reader thread is in short steps.
+    catalog, _ = embedded
+    store.drop_vectors(catalog.store("notes"), "1")
+    catalog.store("notes").commit()
+    waits, get, join = [], queue.Queue.get, threading.Thread.join
+
+    def waited_for_a_slab(self, block=True, timeout=None):
+        if threading.current_thread() is threading.main_thread():
+            waits.append(("get", timeout))
+        return get(self, block, timeout)
+
+    def waited_for_the_end(self, timeout=None):
+        if self.name == "sift-embed-read":
+            waits.append(("join", timeout))
+        return join(self, timeout)
+
+    monkeypatch.setattr(queue.Queue, "get", waited_for_a_slab)
+    monkeypatch.setattr(threading.Thread, "join", waited_for_the_end)
+    rows = embed._Reader._rows
+    monkeypatch.setattr(embed._Reader, "_rows", lambda self, db, last: time.sleep(0.3) or rows(self, db, last))
+    embed.embed_pending(catalog)
+    assert vector_count(catalog) == 3
+    assert [name for name, _ in waits].count("get") > 2  # waited for the slow first slab in steps
+    assert all(timeout is not None and timeout <= 1 for _, timeout in waits), waits
+
+
+def test_embedding_stopped_while_the_reader_reads_ends_it(embedded, fake_models, monkeypatch):
+    catalog, _ = embedded
+    store.drop_vectors(catalog.store("notes"), "1")
+    catalog.store("notes").commit()
+    rows, started = embed._Reader._rows, []
+
+    def slow(self, db, last):
+        started.append(last)
+        if len(started) > 1:  # reading the second slab when embedding stops
+            time.sleep(0.3)
+        return rows(self, db, last)
+
+    def interrupted(batches, query=False):
+        raise KeyboardInterrupt
+        yield  # a generator, as encode_batches is
+
+    monkeypatch.setattr(embed._Reader, "_rows", slow)
+    monkeypatch.setattr(fake_models, "encode_batches", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        embed.embed_pending(catalog)
+    assert not any(t.name == "sift-embed-read" for t in threading.enumerate())
 
 
 def test_embed_pending_calibrates_first(corpus, make_local, gpu_memory):

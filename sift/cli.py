@@ -28,6 +28,11 @@ if TYPE_CHECKING:
 # `worker` computes itself.
 SLOW = ("embed", "vsearch", "query", "similar", "bench", "serve", "worker")
 RUN_NO_MODEL = ("similar",)
+ALLOW_HOST = (
+    "with --host on an address other machines reach: a name of this machine their browsers use, beside its addresses "
+    "and its own name, which alone it answers to otherwise, so that no other site's page reaches it under a name of "
+    "its own (DNS rebinding); repeat for more"
+)
 SEARCHES = ("search", "vsearch", "query", "similar")
 
 
@@ -168,6 +173,13 @@ def _parser() -> argparse.ArgumentParser:
         "changes that collection",
     )
     s.add_argument(
+        "--follow-links",
+        action=argparse.BooleanOptionalAction,
+        help="read the files that link to outside the folder too, which are left out otherwise: a link may lead to "
+        "any file of this machine; --no-follow-links leaves them out again. Given for a folder that is a collection "
+        "already, it changes that collection",
+    )
+    s.add_argument(
         "--nested",
         action="store_true",
         help="add a folder inside a collection, or one that holds a collection, though the files of both are then "
@@ -287,10 +299,12 @@ def _parser() -> argparse.ArgumentParser:
     s = sub.add_parser("serve", help="run the MCP server")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--allow-host", action="append", default=[], metavar="NAME", help=ALLOW_HOST)
     s.add_argument("--stdio", action="store_true", help="serve over stdio instead of HTTP")
     s = sub.add_parser("ui", help="search, browse and read the index in a web browser (starts `sift serve` if needed)")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--allow-host", action="append", default=[], metavar="NAME", help=ALLOW_HOST)
     s = sub.add_parser("worker", help="embed for sift on other machines, which set SIFT_EMBED_REMOTE to this one")
     s.add_argument("--host", default="0.0.0.0", help="address to listen on (default: all of this machine's)")
     s.add_argument("--port", type=int, default=8766)
@@ -370,17 +384,25 @@ def _command(a: argparse.Namespace) -> None:
 
 
 def _add(a: argparse.Namespace, catalog: Catalog) -> None:
-    """`sift add`: register a folder; or, for a folder registered already, change where its titles come from."""
+    """`sift add`: register a folder; or, for a folder registered already, change where its titles come from, or
+    whether it follows links."""
     chosen = {"id": a.id, "title": a.title, "text": a.text and [f.strip() for f in a.text.split(",")]}
     chosen = {k: v for k, v in chosen.items() if v} | ({"title_from": a.title_from} if a.title_from else {})
+    chosen |= {"links": "follow"} if a.follow_links else {}
     existing = catalog.collection_at(a.path)
-    if existing and list(chosen) == ["title_from"] and a.name in (None, existing) and not a.store:
+    again = existing if a.name in (None, existing) and not a.store else None  # the collection there, to change
+    if again and a.follow_links is not None and not set(chosen) - {"links"}:
+        catalog.follow_links(again, a.follow_links)
+        does = "reads" if a.follow_links else "leaves out"
+        console.say(f"collection {again!r} {does} files linked from outside its folder now; run `sift index`")
+        return
+    if again and list(chosen) == ["title_from"] and a.follow_links is None:
         from .indexing import retitle
 
-        changed, dropped = retitle(catalog, existing, a.title_from)
+        changed, dropped = retitle(catalog, again, a.title_from)
         source = "file names" if a.title_from == "name" else "headings"
         console.say(
-            f"collection {existing!r} takes titles from {source} now: {console.count(changed, 'title')} changed"
+            f"collection {again!r} takes titles from {source} now: {console.count(changed, 'title')} changed"
             + (
                 f"; run `sift embed` to embed {console.count(dropped, 'passage')} again, which carries its title"
                 if dropped
@@ -507,13 +529,13 @@ def _unresolved(a: argparse.Namespace, catalog: Catalog) -> None:
 def _ui(a: argparse.Namespace, catalog: Catalog) -> None:
     from .ui import open_in_browser
 
-    open_in_browser(a.host, a.port)
+    open_in_browser(a.host, a.port, a.allow_host)
 
 
 def _serve(a: argparse.Namespace, catalog: Catalog) -> None:
     from .server import serve
 
-    serve(a.host, a.port, a.stdio)
+    serve(a.host, a.port, a.stdio, allowed=a.allow_host)
 
 
 COMMANDS: dict[str, Callable[[argparse.Namespace, Catalog], None]] = {
