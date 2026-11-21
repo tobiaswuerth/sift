@@ -4,7 +4,8 @@ those that stand out, one per work, and shown with what was asked for. None of i
 import json
 import math
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Self
 
 import numpy as np
 
@@ -19,6 +20,43 @@ ADAPTIVE_BUFFER = 5  # hits kept after the largest gap, as the paper keeps: of 1
 # titles, 6 on average, with the paper sought in 99.2 to 99.6% of the cases it was among them (benchmarks.md)
 DOI_LINKS = tuple(f"{scheme}{host}doi.org/" for scheme in ("https://", "http://") for host in ("", "www.", "dx."))
 DOI_PREFIXES = (*DOI_LINKS, "doi:")
+
+
+@dataclass(frozen=True)
+class Options:
+    """What every search takes beside what it looks for and k. Where it looks: one `collection`, or every active one;
+    the documents whose path matches the glob `path`, that pass the `filters` on their front matter, that link one of
+    the notes `links_to` names, and that one of `linked_from` links. And how its hits come: the best passage of each
+    document, or with `all_passages` every passage; with the front-matter `fields` asked for (["*"] for all);
+    `compact`, without their text; by `sort`, a front-matter field that orders the k found instead of their score
+    ("-created": newest first); and with `adaptive`, k at most, those before the largest drop in score and a few more
+    (see standing_out)."""
+
+    collection: str | None = None
+    path: str | None = None
+    filters: dict[str, Any] | None = None
+    fields: Any = None
+    compact: bool = False
+    all_passages: bool = False
+    sort: Any = None
+    links_to: Any = None
+    linked_from: Any = None
+    adaptive: bool = False
+
+    @property
+    def where(self) -> tuple[str | None, str | None, dict[str, Any] | None, Any, Any]:
+        """Where the search looks, as search.Index._where takes it."""
+        return self.collection, self.path, self.filters, self.links_to, self.linked_from
+
+    def checked(self) -> Self:
+        """These options, their `fields` and `sort` checked."""
+        check_fields(self.fields)
+        check_sort(self.sort)
+        return self
+
+    def shown(self, hits: list[Hit]) -> list[Hit]:
+        """Ranked hits as these options return them (see present)."""
+        return present(standing_out(hits) if self.adaptive else hits, self.fields, self.compact, self.sort)
 
 
 def check_k(k: object, most: int = MOST_HITS) -> int:

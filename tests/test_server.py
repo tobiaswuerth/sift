@@ -1,6 +1,7 @@
 """`sift serve`: the MCP tools agents call, the errors and instructions they read, and the server around them."""
 
 import asyncio
+import dataclasses
 import json
 import logging
 import shutil
@@ -16,6 +17,7 @@ from mcp.server.mcpserver import MCPServer
 
 from sift import indexing, remote, server, vectors
 from sift.catalog import Catalog
+from sift.hits import Options
 from sift.search import Index
 
 from .conftest import nobody_listens, write
@@ -51,6 +53,15 @@ def tools(mcp):
             return {t.name: t for t in (await client.list_tools()).tools}
 
     return asyncio.run(go())
+
+
+def test_every_search_tool_takes_every_option_of_a_search(mcp):
+    # A search's options were written out for each search and each tool, nine times: one added to the searches
+    # reached no agent until the tools were given it too, by hand.
+    options = {option.name for option in dataclasses.fields(Options)}
+    for name in ("search", "vsearch", "query", "similar"):
+        assert options <= set(tools(mcp)[name].input_schema["properties"]), name
+    assert set(server.OPTIONS) == options | {"budget"}
 
 
 def test_lists_tools(mcp):

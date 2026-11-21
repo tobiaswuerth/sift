@@ -27,6 +27,7 @@ from .catalog import Catalog
 from .filters import comparison, json_path
 from .hits import (
     MOST_HITS,
+    Options,
     check_budget,
     check_fields,
     check_k,
@@ -36,7 +37,6 @@ from .hits import (
     one_per_work,
     pick,
     present,
-    standing_out,
 )
 from .vectors import Codes, Filter, codes, top
 
@@ -932,43 +932,31 @@ class Index:
 
     # --- public API ----------------------------------------------------------
 
-    # Every search returns the best passage of each document it finds, or with `all_passages` every passage, and
-    # takes `fields`, front-matter fields to add to each hit (["*"] for all), `compact`, which leaves out the text,
-    # and `sort`, a front-matter field to order the k hits found by instead of score ("-created": newest first). With
-    # `adaptive`, k is the most hits returned: those before the largest drop in score, and a few more (see _adaptive).
-    # Without a `collection`, a search covers every active one.
+    # Every search takes, beside what it looks for and k, the options of hits.Options, by name: where it looks, what
+    # it lets through, and how its hits come.
+
+    def _options(self, k, options):
+        """What a search was asked beside what it looks for, checked: (k, its Options, the collections it covers, and
+        the SQL condition on their documents with its arguments, see _where)."""
+        asked = Options(**options)
+        k, (scope, where, args) = check_k(k), self._where(*asked.where)
+        return k, asked.checked(), scope, where, args
 
     @_several
     @_remembered
-    def search(
-        self,
-        query,
-        k=10,
-        *,
-        collection=None,
-        path=None,
-        filters=None,
-        fields=None,
-        compact=False,
-        all_passages=False,
-        sort=None,
-        links_to=None,
-        linked_from=None,
-        adaptive=False,
-        budget=None,
-    ):
+    def search(self, query, k=10, *, budget=None, **options):
         """Exact keyword search, ranked by BM25. Accepts FTS5 syntax: "phrases", prefix*, AND, OR, NOT.
         If no chunk holds all terms of a query without operators, chunks with any of them are returned. With a
         `budget` in seconds, a search the keyword postings answer stops once it is spent and has found any, and returns
         the best found so far, each hit marked "partial"."""
-        k, (scope, where, args) = check_k(k), self._where(collection, path, filters, links_to, linked_from)
-        fields, sort, budget = check_fields(fields), check_sort(sort), check_budget(budget)
+        k, asked, scope, where, args = self._options(k, options)
+        budget = check_budget(budget)
         deadline = topk.Deadline(budget) if budget is not None else None
 
         def rank(n):
-            ranked = self._keyword(query, n, scope, where, args, all_passages, deadline)
+            ranked = self._keyword(query, n, scope, where, args, asked.all_passages, deadline)
             if not ranked and (relaxed := _any_term(query)):
-                ranked = self._keyword(relaxed, n, scope, where, args, all_passages, deadline)
+                ranked = self._keyword(relaxed, n, scope, where, args, asked.all_passages, deadline)
             return ranked
 
         stopped = []
@@ -978,81 +966,50 @@ class Index:
                 stopped.append(True)
             return not stopped
 
-        hits = self._works(rank, k, all_passages, more=in_time)
+        hits = self._works(rank, k, asked.all_passages, more=in_time)
         for hit in hits if stopped or (deadline is not None and deadline.cut) else ():
             hit["partial"] = True
-        return present(standing_out(hits) if adaptive else hits, fields, compact, sort)
+        return asked.shown(hits)
 
     @_several
     @_remembered
-    def vsearch(
-        self,
-        query,
-        k=10,
-        *,
-        collection=None,
-        path=None,
-        filters=None,
-        fields=None,
-        compact=False,
-        all_passages=False,
-        sort=None,
-        links_to=None,
-        linked_from=None,
-        adaptive=False,
-    ):
+    def vsearch(self, query, k=10, **options):
         """Semantic search: the passages nearest the query's embedding, by cosine similarity (see `vectors`)."""
-        k, (scope, where, args) = check_k(k), self._where(collection, path, filters, links_to, linked_from)
-        fields, sort = check_fields(fields), check_sort(sort)
+        k, asked, scope, where, args = self._options(k, options)
         if not query.strip():  # the embedding of nothing is close to arbitrary chunks
             return []
         vector, allowed = self._vector(query, scope), self._filter(scope, where, args)
-        hits = self._works(lambda n: self._nearest(vector, n, scope, allowed, all_passages), k, all_passages)
-        return present(standing_out(hits) if adaptive else hits, fields, compact, sort)
+        hits = self._works(
+            lambda n: self._nearest(vector, n, scope, allowed, asked.all_passages), k, asked.all_passages
+        )
+        return asked.shown(hits)
 
     @_several
     @_remembered
-    def query(
-        self,
-        query,
-        k=10,
-        *,
-        collection=None,
-        path=None,
-        filters=None,
-        fields=None,
-        compact=False,
-        all_passages=False,
-        sort=None,
-        links_to=None,
-        linked_from=None,
-        adaptive=False,
-        candidates=40,
-    ):
+    def query(self, query, k=10, *, candidates=40, **options):
         """Hybrid search for RAG: keyword and semantic candidates, all reranked together, and ordered by the reranker's
         score blended with their cosine (see _blend). Fusing the candidates' first ranks into the order, e.g. by
         reciprocal rank, made results worse (MRR@10 0.69 to 0.64 on a known-item test over 3.2 million arXiv
         abstracts); the blend made them better on six of the seven sets in docs/benchmarks.md, and cost a little on
         those arXiv known items (0.937 to 0.929)."""
-        k, (scope, where, args) = check_k(k), self._where(collection, path, filters, links_to, linked_from)
-        fields, sort = check_fields(fields), check_sort(sort)
+        k, asked, scope, where, args = self._options(k, options)
         candidates = min(max(candidates, k), MOST_HITS)
-        keyword = self._keyword(_any_word(query), candidates, scope, where, args, all_passages)
+        keyword = self._keyword(_any_word(query), candidates, scope, where, args, asked.all_passages)
         vector = self._vector(query, scope, required=False) if query.strip() else None  # semantic candidates, cosines
         allowed = self._filter(scope, where, args)
-        semantic = self._nearest(vector, candidates, scope, allowed, all_passages) if vector is not None else []
+        semantic = self._nearest(vector, candidates, scope, allowed, asked.all_passages) if vector is not None else []
         hits = self._hits([(chunk, 0.0) for chunk in dict.fromkeys(chunk for chunk, _ in keyword + semantic)])
         if not hits:
             return []
-        asked = set(_words(query))
-        named = [_named(h, asked) for h in hits]
+        words = set(_words(query))
+        named = [_named(h, words) for h in hits]
         rerank = np.asarray(self.models.rerank(query, [_passage(h, n) for h, n in zip(hits, named)]), np.float64)
         scores = _blend(rerank, self._cosines(vector, [h["chunk"] for h in hits]), np.array([bool(n) for n in named]))
         for h, s in zip(hits, scores):
             h["score"] = round(float(s), 4)
         hits = sorted(hits, key=lambda h: -h["score"])
-        hits = (hits if all_passages else one_per_work(_first_of_each(hits, itemgetter("id"))))[:k]
-        return present(standing_out(hits) if adaptive else hits, fields, compact, sort)
+        hits = (hits if asked.all_passages else one_per_work(_first_of_each(hits, itemgetter("id"))))[:k]
+        return asked.shown(hits)
 
     def get(self, id, lines=None):
         """Text of an indexed document, by its `collection/path` id: all of it, or `lines` such as "17-26", as
@@ -1092,26 +1049,10 @@ class Index:
         return found
 
     @_remembered
-    def similar(
-        self,
-        id,
-        k=10,
-        *,
-        collection=None,
-        path=None,
-        filters=None,
-        fields=None,
-        compact=False,
-        all_passages=False,
-        sort=None,
-        links_to=None,
-        linked_from=None,
-        adaptive=False,
-    ):
+    def similar(self, id, k=10, **options):
         """Documents closest in meaning to the document `id` (as for `get`), by cosine similarity with the mean of its
         passages' vectors; the document itself is left out, and so are its copies, documents with its DOI."""
-        k, (scope, where, args) = check_k(k), self._where(collection, path, filters, links_to, linked_from)
-        fields, sort = check_fields(fields), check_sort(sort)
+        k, asked, scope, where, args = self._options(k, options)
         doc, _, _, meta, _ = self._find(id)
         self.load(scope)
         sql = "SELECT v.chunk, v.vec FROM vectors v JOIN chunks c ON c.id = v.chunk WHERE c.doc = ?"
@@ -1126,9 +1067,12 @@ class Index:
             return doi is None or doi_of(hit["meta"]) != doi
 
         hits = self._works(
-            lambda n: self._nearest(vector, n, scope, allowed, all_passages, excluded), k, all_passages, keep=other
+            lambda n: self._nearest(vector, n, scope, allowed, asked.all_passages, excluded),
+            k,
+            asked.all_passages,
+            keep=other,
         )
-        return present(standing_out(hits) if adaptive else hits, fields, compact, sort)
+        return asked.shown(hits)
 
     def _place(self, id):
         """The collection, and the path in it, that `id` names: "collection/path", or an absolute path in a

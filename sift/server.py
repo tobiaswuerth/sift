@@ -2,6 +2,7 @@
 unresolved, mentions and reindex), with the UI for people under /ui (see `ui`)."""
 
 import asyncio
+import dataclasses
 import logging
 import sqlite3
 import sys
@@ -15,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import console, jobs, logs, store, vectors
 from . import models as _models
-from .hits import line_span
+from .hits import Options, line_span
 from .search import Index
 
 log = logging.getLogger(__name__)
@@ -242,8 +243,7 @@ def _add_search(mcp, index, name, description, query_description):
     mcp.tool(name, description=description, annotations=READ_ONLY)(timed if name == "search" else tool)
 
 
-OPTIONS = ("collection", "path", "filters", "fields", "compact", "all_passages", "sort", "links_to", "linked_from")
-OPTIONS += ("adaptive", "budget")
+OPTIONS = (*(option.name for option in dataclasses.fields(Options)), "budget")  # of a search, and keyword search's
 
 
 async def _search(method, subject, k, arguments):
