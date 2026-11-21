@@ -61,7 +61,9 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 - Only `settings.py` reads or sets the environment.
 - Results go to stdout from `cli.py` alone; everything else goes to stderr through `console.py`, so output can be piped.
 - Tests build objects around fakes instead of patching module state, and change settings with the `configure` fixture.
-  Each test has a SIFT_HOME of its own, the `home` fixture's, which the processes it starts share.
+  Each test has a SIFT_HOME of its own, the `home` fixture's, which the processes it starts share, and sees every
+  folder listed last name first, on every system: file systems list in orders of their own, which no test may count
+  on.
 
 ## How changes are made
 
@@ -76,8 +78,8 @@ Rules the code keeps, several checked by `tests/test_package.py`:
   tests once more on the newest Python CI tests on, where a Python warns of what an older one lets pass, in
   `.venv-newest`, an environment the gate makes, keeps up to date and owns (delete it at will); and runs them with the
   lowest versions sift names of what it depends on, on the oldest Python, as CI's lowest job does, in an environment
-  made afresh in a temporary folder. CI itself runs the oldest and the newest Python first, and every other system and
-  Python once those pass.
+  made afresh in a temporary folder, where `scripts/floors.py` first holds each version named to the one installed.
+  CI itself runs the oldest and the newest Python first, and every other system and Python once those pass.
 - **Types:** [pyright](https://github.com/microsoft/pyright) checks all of `sift/` in its strict mode, as on Linux,
   macOS and Windows each, whichever runs it: `pyright --pythonplatform Linux` (`Darwin`, `Windows`), in the activated
   environment. It checks for the Python of CI's types job, whose packages it reads (NumPy's types name what only that

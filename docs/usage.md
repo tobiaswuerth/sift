@@ -7,6 +7,7 @@ The details behind the [README](https://github.com/tobiaswuerth/sift#readme).
 - [Front matter and filters](#front-matter-and-filters)
 - [What sift reads](#what-sift-reads): formats, JSON Lines, documents and scans, emails
 - [Linked notes](#linked-notes)
+- [The server](#the-server)
 - [The browser UI](#the-browser-ui)
 - [Measuring search on your own documents](#measuring-search-on-your-own-documents)
 
@@ -42,7 +43,8 @@ sift reads the files it has a reader for, except in folders whose name starts wi
 `node_modules` and `__pycache__`, and in linked folders (symbolic links, junctions). A linked file is read as the file
 it points to if that lies in the collection's folder too; one that links to outside it is left out, and said, as a
 link may lead to any file of the machine: `sift add FOLDER --follow-links` reads those too, for a collection added
-before as well. A `.siftignore` in the collection's folder leaves out more, in gitignore's syntax:
+before as well, and `--no-follow-links` leaves them out again; the next `sift index` follows either. A `.siftignore`
+in the collection's folder leaves out more, in gitignore's syntax:
 
 ```gitignore
 drafts/
@@ -79,10 +81,10 @@ Everything sift keeps lies under `SIFT_HOME` (`~/.sift`):
 An index can lie anywhere else:
 
 ```bash
-sift add ~/archive --store D:/sift                  # a new collection's index in another folder
-sift add ~/archive --store D:/data_archive.sqlite   # or under a name of your choice
-sift move D:/sift                                   # every collection's index into another folder
-sift move archive D:/data_archive.sqlite            # one collection's
+sift add ~/archive --store /mnt/big/sift            # a new collection's index in another folder
+sift add ~/archive --store /mnt/big/archive.sqlite  # or under a name of your choice
+sift move /mnt/big/sift                             # every collection's index into another folder
+sift move archive /mnt/big/archive.sqlite           # one collection's
 ```
 
 A move on the same drive is instant; to another drive the index is copied, then deleted. Stop `sift serve`, and any
@@ -185,7 +187,7 @@ sift search invoice -f "created>=2024-06" -f "created<2025"      # a range
 A document's title is its `title` field, else its first heading outside code, else its file name (with
 `--title-from name`, the file name first). A note of front matter alone has its front matter as its passage. Lines
 between two `---` lines are front matter only if each could be part of it (`key: value`, `- item`, indented, a
-comment or blank); a paragraph between two thematic breaks stays text, and is searched.
+closing bracket, a comment or blank); a paragraph between two thematic breaks stays text, and is searched.
 
 ## What sift reads
 
@@ -285,9 +287,30 @@ title and aliases as phrases (ä, ö, ü, ß also as ae, oe, ue, ss; names under
 **A note just written** is found by the next search once the agent calls `reindex` (or you run `sift index --files`):
 it reads those files at once, or drops the documents of files gone, and over MCP embeds their new passages too.
 
+## The server
+
+`sift serve` is one process for any number of agents and browsers: MCP (streamable HTTP) at
+`http://127.0.0.1:8765/mcp`, the UI under `/ui`. It loads the models and the vectors' codes once, runs one call at a
+time, and frees the GPU after 5 minutes without use.
+
+| Option | Effect |
+|---|---|
+| `--port N` | Another port than 8765 |
+| `--host ADDRESS` | Another address than `127.0.0.1` to listen on, such as `0.0.0.0` for every machine that reaches this one. sift has no authentication: whoever reaches the port reads every indexed document, which it says when it starts |
+| `--allow-host NAME` | With such a `--host`: a name browsers reach this machine by, beside its addresses and its own name. It answers to those alone, so that no other site's page reaches it under a name of its own (DNS rebinding); repeat for more |
+| `--stdio` | MCP over stdio, for a client that starts its servers itself: a server per session, each loading the models |
+
+- Every command but `sift move` may run beside it; it finds what `sift index` and `sift embed` wrote with its next
+  search.
+- What it says is kept in `SIFT_HOME/logs`, its requests without their queries
+  ([above](#where-indexes-and-logs-lie)).
+- What it protects, and what not: [security](SECURITY.md). To lend a GPU to other machines, without the index:
+  [worker](worker.md).
+
 ## The browser UI
 
-`sift ui` opens the index at `http://127.0.0.1:8765/ui/`, using the `sift serve` on that port or starting one.
+`sift ui` opens the index at `http://127.0.0.1:8765/ui/`, using the `sift serve` on that port or starting one, with
+the same `--host`, `--port` and `--allow-host`.
 
 ![sift ui in dark mode: the 2025 folder of an arXiv collection, filtered by category, with its subfolders and the categories and dates of its papers to drill into](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-browse-dark.png)
 

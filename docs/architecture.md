@@ -12,7 +12,8 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
   file is always read in a worker process, by `sift index` and by `reindex` alike, in a task of its own: it gets ten
   minutes, and a second more for every 100 KB. The pool then says no more than that it broke, so the files it hadn't
   read are read again one at a time, in a process of their own: the one that ends or hangs it is left out, said, and
-  tried again by the next run; the others are read, and what tasks had read by then is kept.
+  tried again by the next run; the others are read, and what tasks had read by then is kept. A file that hung alone
+  in its task is known by then, and gets no second time.
 - Files are compared by modification time and size, so unchanged files cost nothing, and documents by content hash, so
   a changed JSON Lines file re-indexes only its changed records.
 - A JSON Lines file over 32 MB is read line by line as it is stored, in batches of 10,000 records (or 16 MB of text),
@@ -72,6 +73,10 @@ sift therefore ranks from postings of its own, read out of FTS5's index, which s
 
 ## Embedding
 
+- The default models load at a commit of their repositories that sift pins (`settings.PINNED`), so that a push of
+  their owners changes no vector; a release moves a pin. A store records the model its vectors are of twice: by its
+  name alone, as sift 1.14 and older record and compare it, and at its revision (`name@commit`). `sift embed` refuses
+  to mix models or commits; a store with the name alone is of the commit that name meant to the sift that wrote it.
 - PyTorch on the GPU (NVIDIA, else Apple), in batches of texts of similar length in tokens: a batch is padded to its
   longest text, and characters predict tokens poorly.
 - bfloat16 on NVIDIA GPUs that have it, float32 elsewhere, never fp16, where EmbeddingGemma overflows into NaN vectors
@@ -179,6 +184,6 @@ more is refused (413).
 
 | Request | Answer |
 |---|---|
-| `GET /` | The worker's models, vector length and sift version |
+| `GET /` | The worker's models (`model`, its `revision`, `reranker`), vector length (`dim`) and sift `version` |
 | `POST /embed` with `{"texts": [...], "query": false}` | The vectors as raw fp16, one row per text |
 | `POST /rerank` with `{"query": "...", "texts": [...]}` | The raw scores, `{"scores": [...]}` |

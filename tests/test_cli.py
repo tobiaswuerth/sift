@@ -3,10 +3,13 @@
 import io
 import json
 import os
+import re
 import runpy
+import shlex
 import sqlite3
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from mcp.server.mcpserver import MCPServer
@@ -573,6 +576,25 @@ def test_serve(home, monkeypatch):
         (("127.0.0.1", 9000, True), {"allowed": []}),
         (("0.0.0.0", 8765, False), {"allowed": ["notes.example", "nas"]}),
     ]
+
+
+def test_the_commands_the_docs_show_are_commands_sift_takes(capsys):
+    # An example with an option sift has not, or one renamed since, sends its reader into an error, and an agent that
+    # sets sift up by docs/agents.md with it.
+    root, parser, shown, refused = Path(__file__).parent.parent, cli._parser(), 0, []
+    for path in [root / "README.md", *sorted((root / "docs").glob("*.md"))]:
+        for block in re.findall(r"```bash\n(.*?)```", path.read_text(encoding="utf-8"), re.DOTALL):
+            for line in block.splitlines():
+                words = shlex.split(line, comments=True)
+                if words[:1] != ["sift"] or "--version" in words:
+                    continue
+                shown += 1
+                try:
+                    parser.parse_args(words[1:])
+                except SystemExit:
+                    refused.append(f"{path.name}: {line.strip()}")
+    assert shown > 30
+    assert refused == [], capsys.readouterr().err
 
 
 def test_version_and_module_entry_point(monkeypatch, capsys):

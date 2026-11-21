@@ -56,7 +56,8 @@ sift serve                             # MCP server on http://127.0.0.1:8765/mcp
 ```
 
 `sift index` and `sift embed` process only what changed since their last run; an interrupted `sift embed` continues
-where it stopped.
+where it stopped. Or let your agent do it all: tell it to read and follow
+[Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agents.md).
 
 ## Connect an agent
 
@@ -96,7 +97,7 @@ at once, a compact survey, then the best few read), and which collections and fr
 
 | Command | Does |
 |---|---|
-| `sift add FOLDER [--name NAME]` | Register a folder as a collection (`--store PATH` puts its index elsewhere) |
+| `sift add FOLDER [--name NAME]` | Register a folder as a collection (`--store PATH` puts its index elsewhere, `--follow-links` reads files linked from outside it) |
 | `sift index [NAME ...] [--files PATH ...]` | Read new and changed files, of every active collection or those named; `--files`: only these |
 | `sift embed [NAME ...]` | Embed every passage without a vector |
 | `sift search`, `vsearch`, `query` `TEXT` | Keyword, semantic and hybrid search |
@@ -107,7 +108,7 @@ at once, a compact survey, then the best few read), and which collections and fr
 | `sift activate`, `deactivate NAME ...` | Take collections into searches, or leave them out |
 | `sift move [NAME ...] TO` | Move collections' indexes to another folder or drive |
 | `sift rm NAME` | Remove a collection and its index; its files stay |
-| `sift ui` | Search, browse and read the index in your browser |
+| `sift ui [--host H] [--port N] [--allow-host NAME]` | Search, browse and read the index in your browser |
 | `sift serve [--stdio] [--host H] [--port N] [--allow-host NAME]` | The MCP server, and the UI under `/ui` (port 8765) |
 | `sift worker [--port N]` | Embed and rerank for other machines on this one's GPU (port 8766) |
 | `sift bench QUESTIONS.json` | How well each search mode finds the answers you expect |
@@ -176,7 +177,9 @@ older, read 1.8.0's entry first.
 ## Documentation
 
 - [Usage](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md): collections, search options and syntax,
-  filters, the formats sift reads, linked notes, the UI, `sift bench`, where indexes and logs lie
+  filters, the formats sift reads, linked notes, the server, the UI, `sift bench`, where indexes and logs lie
+- [Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agents.md): the steps for an
+  agent that installs sift and connects it for you
 - [Another machine's GPU](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md): `sift worker`
 - [How sift works](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md): indexing, storage,
   embedding and search, and why
