@@ -20,6 +20,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A line such as "```code```", code on its line alone, was taken for the start of a code block that never ended: the
   rest of the note lost its title, its headings and its links. A backtick fence is one only without another backtick
   after it on its line, as CommonMark and Obsidian read it.
+- A front-matter list of many `- item` lines took time growing with the square of its length: 100,000 items took 14
+  seconds, and a note with several hundred thousand was left out by `sift index` as hung, and held up the server's
+  `reindex`. It now reads in a fraction of a second.
 
 ## [1.14.0] - 2026-11-21
 

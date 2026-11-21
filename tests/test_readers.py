@@ -3,6 +3,7 @@ reader (see test_documents.py for the contract they all keep, and test_jsonl.py 
 
 import json
 import random
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -122,6 +123,17 @@ def test_front_matter_values_sqlite_cant_store_or_python_cant_nest(json_room):
     _, meta, _, _ = readers.parse(f"---\ntags:\n  - {deep}\n  - fine\nk: [x, {deep}]\nok: [[1]]\n---\n", "f")
     assert meta == {"tags": [deep, "fine"], "k": f"[x, {deep}]", "ok": [[1]]}
     assert readers._depth(meta) <= readers.JSON_DEPTH + 1  # what SQLite stores
+
+
+def test_a_long_front_matter_list_reads_in_time_linear_in_its_length():
+    # Each `- item` copied the list before it: 100,000 items took 14 s, 600,000 longer than a worker may read a file,
+    # and `reindex` hung on such a note. Read now in a fraction of a second; the bound leaves room for a busy machine.
+    items = 100_000
+    block = "tags:\n" + "".join(f"- item{i}\n" for i in range(items))
+    started = time.perf_counter()
+    _, meta, _, _ = readers.parse(f"---\n{block}---\nbody\n", "f")
+    assert time.perf_counter() - started < 3
+    assert meta["tags"] == [f"item{i}" for i in range(items)]
 
 
 def test_parse_without_closing_front_matter_is_plain_text():

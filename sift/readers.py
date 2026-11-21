@@ -144,7 +144,9 @@ def _front_matter(block: str) -> dict[str, Any]:
     for line in block.split("\n"):  # only \n ends a line (LINE): JSON writes U+2028 in a string as it is
         if listing and (item := LIST_ITEM.match(line)):
             text = item.group(1).strip()
-            meta[listing] = [*(meta[listing] or []), _value(text)]
+            if meta[listing] is None:
+                meta[listing] = []
+            meta[listing].append(_value(text))  # in place: a copy for each item made a long list take minutes
             written[listing].append(text)
             continue
         key, sep, value = line.partition(":")
