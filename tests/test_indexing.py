@@ -561,6 +561,24 @@ def test_a_folder_that_cannot_be_listed_keeps_its_documents(corpus, monkeypatch,
     assert "robots/brush.md" not in doc_ids(catalog)
 
 
+def test_a_folder_left_without_any_file_keeps_its_documents(corpus, capsys):
+    # A drive not mounted leaves its folder there, empty, and so does a folder being filled anew: `sift index` took
+    # every file for deleted, and dropped the documents with the vectors embedded for them, days of a GPU's work.
+    catalog, root = corpus
+    held = doc_ids(catalog)
+    shutil.rmtree(root)
+    root.mkdir()
+    capsys.readouterr()
+    indexing.index(catalog)
+    assert doc_ids(catalog) == held
+    said = capsys.readouterr().err
+    assert f"notes: none of its 3 files is left in {root}: kept as indexed" in said
+    assert "`sift rm notes` forgets them" in said
+    write(root / "rl.md", "# Reward shaping\n\nWritten anew.\n")  # one is there again: the others are gone for good
+    indexing.index(catalog)
+    assert set(doc_ids(catalog)) == {"rl.md"}
+
+
 class Listing(list):
     """What os.scandir gives, made of other entries: a context manager that iterates them, and may break off."""
 

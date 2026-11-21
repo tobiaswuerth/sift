@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `sift index` keeps what is indexed of a collection whose folder holds none of its files any more, and says so,
+  with how to let it go (`sift rm NAME`). A drive not mounted leaves its folder there, empty, as does a folder being
+  filled anew: every document went, and the vectors embedded for them.
+
 ## [1.13.0] - 2026-11-21
 
 sift updates itself on a yes, looks up a shortened id instead of reading every path, and indexes long documents and

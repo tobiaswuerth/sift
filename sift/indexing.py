@@ -750,7 +750,7 @@ def _index_collection(db, name, root, fields, ignore):
     todo, seen, unlisted = _scan(root, known, ignore)
     kept = _kept(name, known.keys() - seen, unlisted)
     counts = Counter()
-    for rel in known.keys() - seen - kept:
+    for rel in _gone(name, root, known.keys() - seen - kept, seen):
         counts["removed"] += _drop_source(db, known[rel][0])
     db.commit()  # before any file is read: other writers wait for none of it
     todo += _freed(db, root, seen - {item[1] for item in todo})  # those that waited for a path these drops freed
@@ -765,6 +765,20 @@ def _index_collection(db, name, root, fields, ignore):
         f"{name}: {len(seen)} files, {counts['added']} added, {counts['changed']} changed, {counts['removed']} removed"
         f"{unreadable} ({time.perf_counter() - t0:.1f}s)"
     )
+
+
+def _gone(name, root, unseen, seen):
+    """The files not seen whose documents go: all of them, unless no file at all was seen. A folder left without
+    any of its files is one emptied, but also a drive not mounted, whose folder stays, and a folder being filled anew:
+    its documents, and the vectors embedded for them, are kept, and said, with how to let them go."""
+    if seen or not unseen:
+        return unseen
+    console.say(
+        f"{name}: none of its {console.count(len(unseen), 'file')} is left in {root}: kept as indexed, as a drive "
+        f"not mounted and a folder being filled anew look so. If they are gone for good, "
+        f"`{console.command('sift', 'rm', name)}` forgets them"
+    )
+    return set()
 
 
 def _freed(db, root, among):

@@ -31,6 +31,10 @@ collections; `sift index` builds them. A collection whose index is missing (a dr
 searches and marked `"missing": true`; sift never makes such an index anew. One that can't be opened (damaged, or
 updated by a newer sift) is passed over too, with the reason as `"error"`.
 
+**Files gone.** `sift index` drops the documents of files that are gone. But a folder that is missing, or holds none
+of its files any more, keeps what is indexed, and `sift index` says so: a drive not mounted, or a folder being filled
+anew, is no folder emptied. If its files are gone for good, `sift rm NAME` forgets the collection.
+
 ### Leaving files out
 
 sift reads the files it has a reader for, except in folders whose name starts with a dot (`.obsidian/`, `.git/`), in

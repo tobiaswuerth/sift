@@ -1074,8 +1074,8 @@ def _lived(tmp_path, sections):
     assert index.reindex(["long/long.md"])[0]["embedded"] == sections + 1
     assert len(index.search('"w1x1 w1x2"', all_passages=True)) == 2
     assert indexing.retitle(catalog, "long", "name") == (1, sections)
-    (root / "long.md").unlink()
-    indexing.index(catalog)
+    (root / "long.md").unlink()  # removed by name: a folder left without any file keeps its documents
+    assert index.reindex(["long/long.md"])[0]["status"] == "removed"
     assert store.counts(catalog.store("long"))["chunks"] == 0
     catalog.close()
 
@@ -1106,16 +1106,18 @@ def test_only_the_chunks_of_long_documents_are_cut_in_python(tmp_path, statement
     write(root / "long.md", "".join(section.format(n) for n in range(store.LONG + 1)))
     for name in "abc":
         write(root / f"{name}.md", "".join(section.format(n) for n in range(2)))
+    write(root / "stays.md", "stays\n")  # so that the others are gone, not the folder left without any file
     catalog.add(root, "notes")
     indexing.index(catalog)
     db = catalog.store("notes")
-    assert store.counts(db)["chunks"] == store.LONG + 1 + 3 * 2
+    assert store.counts(db)["chunks"] == store.LONG + 1 + 3 * 2 + 1
     assert sum(s.startswith("INSERT INTO fts(rowid, text, title, meta) VALUES") for s in statements) == store.LONG + 1
     assert keywords_agree(db)
     for path in root.iterdir():
-        path.unlink()
+        if path.name != "stays.md":
+            path.unlink()
     indexing.index(catalog)
     assert sum("VALUES('delete'" in s for s in statements) == store.LONG + 1
     db.execute("CREATE VIRTUAL TABLE temp.terms USING fts5vocab(main, fts, row)")
-    assert db.execute("SELECT * FROM temp.terms").fetchall() == []
+    assert [term for term, *_ in db.execute("SELECT * FROM temp.terms")] == ["stays"]
     catalog.close()
