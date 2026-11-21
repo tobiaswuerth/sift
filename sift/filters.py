@@ -5,9 +5,12 @@ search's (see search.Index._where)."""
 import json
 import math
 import re
+import sqlite3
 from typing import Any, TypeGuard, cast
 
 Value = str | int | float  # what a filter compares with; yes and no are numbers here, as Python has them
+
+ESCAPES = sqlite3.sqlite_version_info >= (3, 45)  # whether SQLite reads the escapes of a name in a JSON path
 
 SQLITE_INT = 2**63  # SQLite integers are 64-bit
 OPERATORS = ("=", "<", "<=", ">", ">=", "not")
@@ -83,7 +86,13 @@ def forms(value: Value) -> list[Value]:
 def json_path(name: object, what: str = "filter field") -> str:
     """A front-matter field name, as SQLite's JSON functions address it: any name, written as a JSON string, which
     SQLite reads with its escapes, so that a backslash or a double quote in it is the name's own. Its letters as they
-    are, as indexing stores front matter: SQLite before 3.45 compares the name with the stored one byte for byte."""
+    are, as indexing stores front matter: SQLite before 3.45 compares the name with the stored one byte for byte, and
+    ends it at its first double quote, so there a name that holds one is refused."""
     if not (isinstance(name, str) and name):
         raise ValueError(f"invalid {what} {name!r}")
+    if '"' in name and not ESCAPES:
+        raise ValueError(
+            f"invalid {what} {name!r}: SQLite reads a double quote in a field's name from 3.45 on, and this is "
+            f"{sqlite3.sqlite_version}"
+        )
     return "$." + json.dumps(name, ensure_ascii=False)

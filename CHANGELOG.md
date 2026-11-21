@@ -66,7 +66,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   worker answers, first.
 - `query` passed over every word of one character: "Python 3" lost its version, and a query of one Chinese or Japanese
   word, such as "猫", got no keyword candidates at all. Digits and single characters of other scripts are words now;
-  single Latin letters ("a", the "s" of "it's") still aren't. The UI marks them in its results alike.
+  single Latin letters ("a", the "s" of "it's", "à") still aren't. The UI marks them in its results alike.
 - Documents and mails, whose readers run native code that may crash or hang, were read in the indexing process
   itself in an update of fewer than a thousand files, and always by the server's `reindex`: one such file ended `sift
   index` on every run, without naming it, or ended `sift serve`. They are now always read in a worker process, each in
@@ -88,7 +88,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `adaptive` cut hits whose scores were all alike to the first six, as if the first one stood out. With no drop in
   score, every hit is returned.
 - A filter or sort on a front-matter field whose name ends in a backslash failed with SQLite's "bad JSON path", one
-  with a backslash inside matched nothing, and one with a double quote was refused: any name now filters and sorts.
+  with a backslash inside matched nothing, and one with a double quote was refused: any name now filters and sorts
+  (one with a double quote from SQLite 3.45 on, as older ones read none in a name).
   A filter of a list of some 16,000 values failed with "too many SQL variables"; its values now go to SQLite as one.
   A filter value that is no finite number (NaN, infinity) is a clear error.
 - `k: true` was taken for one result, as Python counts `True` as 1; it is refused as `k: "3"` is.

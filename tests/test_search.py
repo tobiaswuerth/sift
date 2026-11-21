@@ -1109,6 +1109,12 @@ def test_any_word_keeps_digits_and_single_characters_of_other_scripts():
     assert any_word("Python 3 in R, it's a 猫") == '"python" OR "3" OR "猫"'
 
 
+def test_a_single_latin_letter_under_an_accent_is_no_word():
+    # The keyword index reads "à" as "a" (remove_diacritics): as a word of a query it brought every passage that
+    # holds an "a", the longest list of an English collection.
+    assert any_word("chat à la maison, É ö ñ, and 猫") == '"chat" OR "la" OR "maison" OR "猫"'
+
+
 def test_underscores_alone_are_no_word():
     # A regex's \w takes "_" for a letter, FTS5 for a break between words: a lone "_" was a word that matched nothing,
     # and the UI marked every underscore of its results.
@@ -1337,6 +1343,15 @@ def test_a_field_name_is_addressed_with_its_letters_as_front_matter_stores_them(
     # SQLite before 3.45, as Ubuntu 22.04 and Debian 12 have it, compares a JSON path's name with the stored one byte
     # for byte: sift stores "Straße" as it is, and a path escaping its letter, as json.dumps writes it, matched nothing.
     assert filters.json_path("Straße") == '$."Straße"'
+
+
+def test_a_field_name_with_a_double_quote_is_refused_where_sqlite_reads_no_escapes(monkeypatch):
+    # SQLite before 3.45 (3.43.1, tried) ends a path's name at its first double quote, escaped or not: a filter on
+    # such a field matched nothing, without a word. A backslash it compares as stored, which matches.
+    monkeypatch.setattr(filters, "ESCAPES", False)
+    with pytest.raises(ValueError, match=r"invalid filter field 'say \"hi\"': SQLite .* from 3\.45 on"):
+        filters.json_path('say "hi"')
+    assert filters.json_path("back\\slash") == '$."back\\\\slash"'
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), [1, float("-inf")]])

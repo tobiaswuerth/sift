@@ -305,7 +305,7 @@ def test_a_file_of_utf8_with_a_replacement_character_of_its_own_is_left_as_it_is
     # they had. Only a file with bytes that aren't UTF-8 reads otherwise now.
     root = tmp_path / "c"
     root.mkdir()
-    (root / "own.txt").write_bytes("a letter lost before sift: �\n".encode())
+    (root / "own.txt").write_bytes("a letter lost before sift: \ufffd\n".encode())
     (root / "ansi.txt").write_bytes("Müller\n".encode("cp1252"))
     catalog = Catalog(home)
     catalog.add(root, "c")

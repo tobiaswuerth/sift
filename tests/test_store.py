@@ -298,7 +298,8 @@ def test_documents_another_sift_looked_through_meanwhile_are_left_to_it(tmp_path
     for n, name in enumerate(("a.txt", "b.txt"), 1):
         db.execute("INSERT INTO sources(id, path, mtime, size) VALUES(?, ?, 1, 1)", (n, name))
         db.execute(
-            "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?, ?, 'h', '', '{}', 'M�ller')", (n, name)
+            "INSERT INTO docs(source, path, hash, title, meta, text) VALUES(?, ?, 'h', '', '{}', 'M\ufffdller')",
+            (n, name),
         )
     db.execute("DELETE FROM meta WHERE key = ?", (store.ANSI_READ,))
     db.commit()

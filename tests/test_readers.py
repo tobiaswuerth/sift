@@ -358,9 +358,9 @@ def test_load_reads_what_isnt_utf8_as_windows_ansi(tmp_path):
 MISREAD = {  # a file's bytes, and whether sift 1.14 read them otherwise than this sift
     "ansi.txt": ("Müller\n".encode("cp1252"), True),  # bytes that aren't UTF-8: replaced then, read as ANSI now
     "late.jsonl": (b"x" * readers.LOOKED_AT + b'{"text": "M\xfcller"}\n', True),  # past the first block looked at
-    "own.txt": ("lost before sift: �, and Müller\n".encode(), False),  # UTF-8, the character its own
+    "own.txt": ("lost before sift: \ufffd, and Müller\n".encode(), False),  # UTF-8, the character its own
     "marked.md": (b"\xef\xbb\xbfM\xc3\xbcller\n", False),  # UTF-8 after its byte order mark
-    "wide.txt": ("Müller �\n".encode("utf-16"), False),  # UTF-16, read as before
+    "wide.txt": ("Müller \ufffd\n".encode("utf-16"), False),  # UTF-16, read as before
     "mail.eml": (b"Subject: x\r\n\r\nplain\r\n", True),  # a mail's parts may be encoded: reading it again tells
 }
 
