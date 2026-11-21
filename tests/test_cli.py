@@ -12,6 +12,7 @@ import pytest
 from mcp.server.mcpserver import MCPServer
 
 from sift import cli, indexing
+from sift.catalog import Catalog
 
 from .conftest import write
 
@@ -83,6 +84,17 @@ def test_add_again_says_which_passages_to_embed_again(cli_corpus, capsys):
     err = run(capsys, "add", str(cli_corpus), "--title-from", "name").err
     assert "run `sift embed` to embed 1 passage again, which carries its title" in err
     assert "embedded 1 chunk" in run(capsys, "embed").err
+
+
+def test_add_with_follow_links_reads_files_linked_from_outside(notes, home, capsys):
+    run(capsys, "add", str(notes), "--follow-links")
+    assert Catalog(home).get("notes").choices == {"links": "follow"}
+
+
+def test_add_again_with_follow_links_changes_the_collection(cli_corpus, home, capsys):
+    err = run(capsys, "add", str(cli_corpus), "--follow-links").err
+    assert "collection 'notes' reads files linked from outside its folder now; run `sift index`" in err
+    assert Catalog(home).get("notes").choices == {"links": "follow"}
 
 
 @pytest.mark.parametrize("options", [[], ["--id", "key"], ["--title-from", "name", "--name", "other"]])

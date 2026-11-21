@@ -18,6 +18,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - An update agreed to with pip ran `python -m pip` at the root of the drive, which Python searches for modules first:
   on Windows, where any user may make a folder there, another user's `pip` folder would have run as you. It runs with
   `-P` now, which leaves that folder out.
+- A file that is a link was read as the file it points to, wherever that lay: a folder from elsewhere, such as a
+  cloned repository, could hand any file of the machine, a private key named notes.txt, to the index, and to the
+  agents that read it. A file linking to outside its collection's folder is now left out, and said, by `sift index`
+  and the server's `reindex`; one indexed before is dropped by the next `sift index`. `sift add FOLDER
+  --follow-links` reads them, as before, for a new collection or one added already.
 
 ### Fixed
 

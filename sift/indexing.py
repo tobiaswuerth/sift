@@ -641,6 +641,13 @@ def _locate(catalog: Catalog[C], path: str) -> tuple[C, str]:
             raise ValueError(
                 f"{name}/{rel}: {parts[i - 1]}/ is linked from elsewhere, and `sift index` doesn't follow it"
             )
+    full = os.path.join(root, *parts)
+    linked = os.path.islink(full) and not inside(os.path.realpath(root), os.path.realpath(full))
+    if linked and collection.choices.get("links") != "follow":
+        raise ValueError(
+            f"{name}/{rel} links to outside its collection's folder, which `sift index` leaves out: "
+            f"`{console.command('sift', 'add', root, '--follow-links')}` reads such files"
+        )
     rel = "/".join(parts)
     try:
         rel.encode()
@@ -854,12 +861,18 @@ def _drop_source(db: Db, sid: int) -> int:
     return len(docs)
 
 
-def walk(root: str, ignore: Ignore | None = None, unlisted: Unlisted | None = None) -> Iterator[tuple[str, int, int]]:
+def walk(
+    root: str, ignore: Ignore | None = None, unlisted: Unlisted | None = None, outside: list[str] | None = None
+) -> Iterator[tuple[str, int, int]]:
     """Yield (path, mtime_ns, size) for the files sift has a reader for, but those in hidden folders, SKIP_DIRS and
     what `ignore`, the collection's .siftignore, leaves out. DirEntry.stat() is free on Windows. What is there but out
     of reach for the moment (access denied, a share that doesn't answer) goes into `unlisted`, if given, as (its path
     relative to root, the error): a folder that can't be listed, or whose listing breaks off, with a slash, or "" for
-    root; a file that can't be stat'ed. What is gone meanwhile, a broken link too, is passed over."""
+    root; a file that can't be stat'ed. What is gone meanwhile, a broken link too, is passed over. With `outside`, a
+    file that links to outside root is left out and goes into it, by its path relative to root: a link may lead to any
+    file of the machine, a private key as notes.txt; without, as for a collection added with --follow-links, it is
+    read as the file it leads to."""
+    resolved = os.path.realpath(root)
 
     def unreachable(rel: str, error: OSError) -> None:
         if unlisted is not None:
@@ -894,8 +907,12 @@ def walk(root: str, ignore: Ignore | None = None, unlisted: Unlisted | None = No
                         except OSError as error:
                             unreachable(rel + e.name, error)
                             continue
-                        if stat.S_ISREG(st.st_mode):  # no pipe, which has no end to read to, nor a folder so named
-                            yield e.path, st.st_mtime_ns, st.st_size
+                        if not stat.S_ISREG(st.st_mode):  # no pipe, which has no end to read to, nor a folder so named
+                            continue
+                        if outside is not None and e.is_symlink() and not inside(resolved, os.path.realpath(e.path)):
+                            outside.append(rel + e.name)
+                            continue
+                        yield e.path, st.st_mtime_ns, st.st_size
             except OSError as error:  # the listing broke off
                 unreachable(rel, error)
 
@@ -943,7 +960,14 @@ def _index_collection(db: Db, name: str, root: str, fields: Fields, ignore: Igno
         p: (i, m, s) for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources")
     }
     console.say(f"{name}: scanning {root}")  # a large or cloud folder takes a while
-    todo, seen, unlisted = _scan(root, known, ignore)
+    outside: list[str] | None = None if fields.get("links") == "follow" else []
+    todo, seen, unlisted = _scan(root, known, ignore, outside)
+    if outside:  # left out, and dropped if indexed before, as by sift 1.14, which read them
+        follow = console.command("sift", "add", root, "--follow-links")
+        console.say(
+            f"{name}: {console.count(len(outside), 'file')} linked to outside its folder left out: `{follow}` reads "
+            "such files, which may be any file of this machine"
+        )
     kept = _kept(name, known.keys() - seen, unlisted)
     counts: Counts = Counter()
     for rel in _gone(name, root, known.keys() - seen - kept, seen):
@@ -1004,13 +1028,16 @@ def _kept(name: str, unseen: set[str], unlisted: Unlisted) -> set[str]:
     return kept
 
 
-def _scan(root: str, known: dict[str, tuple[int, int, int]], ignore: Ignore) -> tuple[list[Item], set[str], Unlisted]:
+def _scan(
+    root: str, known: dict[str, tuple[int, int, int]], ignore: Ignore, outside: list[str] | None
+) -> tuple[list[Item], set[str], Unlisted]:
     """The files to read, new or changed since `known` (path -> id, mtime, size), every file seen but those `ignore`
-    leaves out, and the folders that couldn't be listed (see `walk`)."""
+    leaves out, and the folders that couldn't be listed; files linked from outside root go into `outside`, if given
+    (see `walk`)."""
     todo: list[Item] = []
     seen: set[str] = set()
     unlisted: Unlisted = []
-    for path, mtime, size in walk(root, ignore, unlisted):
+    for path, mtime, size in walk(root, ignore, unlisted, outside):
         rel = os.path.relpath(path, root).replace(os.sep, "/")
         try:
             rel.encode()

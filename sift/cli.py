@@ -168,6 +168,12 @@ def _parser() -> argparse.ArgumentParser:
         "changes that collection",
     )
     s.add_argument(
+        "--follow-links",
+        action="store_true",
+        help="read the files that link to outside the folder too, which are left out otherwise: a link may lead to "
+        "any file of this machine. Given for a folder that is a collection already, it changes that collection",
+    )
+    s.add_argument(
         "--nested",
         action="store_true",
         help="add a folder inside a collection, or one that holds a collection, though the files of both are then "
@@ -370,10 +376,16 @@ def _command(a: argparse.Namespace) -> None:
 
 
 def _add(a: argparse.Namespace, catalog: Catalog) -> None:
-    """`sift add`: register a folder; or, for a folder registered already, change where its titles come from."""
+    """`sift add`: register a folder; or, for a folder registered already, change where its titles come from, or
+    have it follow links."""
     chosen = {"id": a.id, "title": a.title, "text": a.text and [f.strip() for f in a.text.split(",")]}
     chosen = {k: v for k, v in chosen.items() if v} | ({"title_from": a.title_from} if a.title_from else {})
+    chosen |= {"links": "follow"} if a.follow_links else {}
     existing = catalog.collection_at(a.path)
+    if existing and list(chosen) == ["links"] and a.name in (None, existing) and not a.store:
+        catalog.follow_links(existing)
+        console.say(f"collection {existing!r} reads files linked from outside its folder now; run `sift index`")
+        return
     if existing and list(chosen) == ["title_from"] and a.name in (None, existing) and not a.store:
         from .indexing import retitle
 

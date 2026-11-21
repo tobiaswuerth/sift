@@ -15,6 +15,7 @@ from sift.search import Index
 
 from . import workers
 from .conftest import live_codes, write
+from .test_indexing import link_file
 
 SAMPLES = Path(__file__).parent / "samples"
 
@@ -437,6 +438,17 @@ def test_reindex_refuses_files_behind_a_linked_folder(live, tmp_path, monkeypatc
         monkeypatch.setattr(indexing.os.path, "islink", lambda path: path.endswith("linked"))
     with pytest.raises(ValueError, match="linked/ is linked from elsewhere"):
         index.reindex(["vault/linked/a.md"])
+
+
+def test_reindex_refuses_a_file_linked_from_outside_its_collection(corpus, tmp_path, monkeypatch):
+    # As `sift index` leaves it out, unless the collection was added with --follow-links.
+    catalog, root = corpus
+    write(tmp_path / "outside" / "secret.txt", "a private key\n")
+    link_file(tmp_path / "outside" / "secret.txt", root / "notes.txt", monkeypatch)
+    with pytest.raises(ValueError, match=r"notes/notes\.txt links to outside its collection's folder"):
+        Index(catalog).reindex(["notes/notes.txt"])
+    catalog.follow_links("notes")
+    assert Index(catalog).reindex(["notes/notes.txt"])[0]["status"] == "added"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="junctions are Windows'")

@@ -141,6 +141,12 @@ def test_titles_come_from_headings_or_file_names(home, notes, choice):
         Catalog(home).add(notes, fields={"title_from": choice})
 
 
+@pytest.mark.parametrize("choice", ["yes", True, None])
+def test_links_out_of_a_collection_are_followed_with_follow_alone(home, notes, choice):
+    with pytest.raises(SystemExit, match="read with 'follow'"):
+        Catalog(home).add(notes, fields={"links": choice})
+
+
 def test_the_collection_at_a_folder(corpus, tmp_path):
     catalog, notes = corpus
     assert catalog.collection_at(notes / ".." / notes.name) == "notes"

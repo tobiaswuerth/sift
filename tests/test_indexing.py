@@ -858,6 +858,67 @@ class Denied:
         raise PermissionError(13, "Access is denied")
 
 
+class Linked:
+    """A directory entry of a file that is a symbolic link, where only administrators may make those (Windows)."""
+
+    def __init__(self, entry):
+        self.name, self.path, self.entry = entry.name, entry.path, entry
+
+    def is_dir(self, follow_symlinks):
+        return False
+
+    def is_symlink(self):
+        return True
+
+    def stat(self):
+        return self.entry.stat()
+
+
+def link_file(target, at, monkeypatch):
+    """Make the file `at` a symbolic link to the file `target`; where the system refuses, pretend so to sift."""
+    try:
+        os.symlink(target, at)
+    except OSError:
+        shutil.copy(target, at)
+        real_scandir, real_realpath = os.scandir, os.path.realpath
+
+        def scandir(path):
+            with real_scandir(path) as entries:
+                return Listing([Linked(e) if os.path.samefile(e.path, at) else e for e in entries])
+
+        def realpath(path, *args, **kwargs):
+            return str(target) if os.path.normcase(str(path)) == os.path.normcase(str(at)) else real_realpath(path)
+
+        monkeypatch.setattr(indexing.os, "scandir", scandir)
+        monkeypatch.setattr(indexing.os.path, "realpath", realpath)
+        monkeypatch.setattr(indexing.os.path, "islink", lambda path: realpath(path) != real_realpath(path))
+
+
+def test_a_file_linked_from_outside_its_collection_is_left_out(corpus, tmp_path, monkeypatch, capsys):
+    # A file that is a link was read as the file it points to, wherever that lay: a folder from elsewhere, a cloned
+    # repository, could hand ~/.ssh/id_rsa to the index as notes.txt, and an agent's `get` then read it out. A link to
+    # a file of the collection's own folder is read still, and a collection added with --follow-links reads them all.
+    catalog, root = corpus
+    write(tmp_path / "outside" / "secret.txt", "a private key\n")
+    link_file(tmp_path / "outside" / "secret.txt", root / "notes.txt", monkeypatch)
+    indexing.index(catalog)
+    assert "notes.txt" not in doc_ids(catalog)
+    said = capsys.readouterr().err
+    assert "notes: 1 file linked to outside its folder left out: `sift add" in said
+    assert "--follow-links` reads such files" in said
+    catalog.follow_links("notes")
+    indexing.index(catalog)
+    assert "notes.txt" in doc_ids(catalog)
+    assert "linked to outside" not in capsys.readouterr().err
+
+
+def test_a_file_linked_from_inside_its_collection_is_read(corpus, monkeypatch):
+    catalog, root = corpus
+    link_file(root / "rl.md", root / "again.md", monkeypatch)
+    indexing.index(catalog)
+    assert "again.md" in doc_ids(catalog)
+
+
 def test_a_file_that_cannot_be_stated_keeps_its_documents(corpus, monkeypatch, capsys):
     # As a folder that can't be listed: a file a share denies for the moment is no file deleted.
     catalog, root = corpus

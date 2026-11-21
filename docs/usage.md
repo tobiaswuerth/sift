@@ -39,8 +39,10 @@ anew, is no folder emptied. If its files are gone for good, `sift rm NAME` forge
 ### Leaving files out
 
 sift reads the files it has a reader for, except in folders whose name starts with a dot (`.obsidian/`, `.git/`), in
-`node_modules` and `__pycache__`, and in linked folders (symbolic links, junctions); a linked file is read as the file
-it points to. A `.siftignore` in the collection's folder leaves out more, in gitignore's syntax:
+`node_modules` and `__pycache__`, and in linked folders (symbolic links, junctions). A linked file is read as the file
+it points to if that lies in the collection's folder too; one that links to outside it is left out, and said, as a
+link may lead to any file of the machine: `sift add FOLDER --follow-links` reads those too, for a collection added
+before as well. A `.siftignore` in the collection's folder leaves out more, in gitignore's syntax:
 
 ```gitignore
 drafts/

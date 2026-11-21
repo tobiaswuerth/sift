@@ -16,7 +16,8 @@ Expect a first reply within a week. Security fixes go into the latest release.
   run scripts as the UI; PDFs go to the browser's viewer.
 - **Your files.** sift never writes to them. One MCP tool changes anything, `reindex`, and only sift's index: it reads
   only files `sift index` would read, inside a registered collection, outside hidden and linked folders. A linked file
-  is read as the file it points to, wherever that lies.
+  is read only if it points into its collection's folder, unless the collection was added with `--follow-links`: a
+  link in a folder from elsewhere, a cloned repository, may lead to any file of the machine.
 - **The worker** admits only requests with its token, over HTTPS pinned by its key
   ([details](worker.md#security)).
 - **Models** come from Hugging Face on first use (embedding, reranker and, for scans, OCR). sift loads their weights
