@@ -350,8 +350,8 @@ def _phrases_of(match):
 def _totals(db):
     """The rows of a store's keyword index, and the tokens they hold in all: FTS5's record of them."""
     row = db.execute("SELECT block FROM fts_data WHERE id = 1").fetchone()
-    numbers = postings.varints(row[0])[0].tolist() if row else [0]
-    return numbers[0], sum(numbers[1:])
+    numbers = postings.varints(row[0])[0].tolist() if row else []
+    return (numbers[0], sum(numbers[1:])) if numbers else (0, 0)  # none: an index that never held a row
 
 
 def _words(text):
@@ -853,10 +853,13 @@ class Index:
 
     def _ready(self, scope):
         """The keyword postings of the collections of `scope`, one postings.Reader each, or None if any has none
-        ready: never built, or behind FTS5 since a change."""
+        ready: never built, or behind FTS5 since a change. A collection without a chunk has nothing to find, and no
+        postings to wait for: added and not indexed yet, it sent the searches of every collection to FTS5."""
         readers = []
         for c in scope:
             db = self.catalog.store(c)
+            if not store.counts(db)["chunks"]:
+                continue
             if not postings.ready(db):
                 return None
             state = postings.Reader.state(db)

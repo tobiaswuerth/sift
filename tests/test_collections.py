@@ -696,3 +696,27 @@ def test_a_documents_best_passage_is_that_of_one_index(tmp_path, fake_models):
         return hit["lines"], hit["score"]
 
     assert best(two, "small/doc.md") == pytest.approx(best(one, "all/small/doc.md"), abs=1e-3)
+
+
+def test_a_collection_without_documents_keeps_no_other_from_its_postings(corpus, tmp_path):
+    # Added and not indexed yet, a collection has no postings, and nothing to find: a search of every collection read
+    # FTS5 for all of them, seconds over millions of passages, until the next `sift index`.
+    catalog, _ = corpus
+    (tmp_path / "empty").mkdir()
+    catalog.add(tmp_path / "empty", "empty")
+    ran = []
+    catalog.store("notes").set_trace_callback(ran.append)
+    assert ids(Index(catalog).search("reward")) == ["notes/rl.md"]
+    assert not [sql for sql in ran if "bm25(fts)" in sql]
+
+
+def test_a_collection_never_indexed_fails_no_search_of_the_others(corpus, tmp_path):
+    # Its keyword index never held a row, and FTS5's record of its totals is empty: from `sift add` until `sift index`,
+    # every keyword search without a collection named ended in "The weights and list don't have the same length".
+    catalog, _ = corpus
+    (tmp_path / "empty").mkdir()
+    catalog.add(tmp_path / "empty", "empty")
+    db = catalog.store("notes")
+    db.execute("DELETE FROM meta WHERE key = 'kw_built'")  # no postings: FTS5 answers, with the counts of both
+    db.commit()
+    assert ids(Index(catalog).search("reward")) == ["notes/rl.md"]

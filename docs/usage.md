@@ -27,9 +27,10 @@ its next request. Their indexes stay, `reindex` still updates them, and `sift ac
 **Status.** `sift status` lists every collection as JSON: `"active"`, its index file (`"store"`) and size, and for
 active ones the counts of documents, chunks and vectors, and the keyword postings (`"keywords"`): `"ready"`, `"not
 built"`, or how many chunks behind. Until they are ready, keyword searches read SQLite's FTS5 index, slower on large
-collections; `sift index` builds them. A collection whose index is missing (a drive not connected) is passed over by
-searches and marked `"missing": true`; sift never makes such an index anew. One that can't be opened (damaged, or
-updated by a newer sift) is passed over too, with the reason as `"error"`.
+collections, and so do searches of several collections while one of them isn't; `sift index` builds them, and
+`reindex` those of a collection under 2,000 passages. A collection whose index is missing (a drive not connected) is
+passed over by searches and marked `"missing": true`; sift never makes such an index anew. One that can't be opened
+(damaged, or updated by a newer sift) is passed over too, with the reason as `"error"`.
 
 **Files gone.** `sift index` drops the documents of files that are gone. But a folder that is missing, or holds none
 of its files any more, keeps what is indexed, and `sift index` says so: a drive not mounted, or a folder being filled

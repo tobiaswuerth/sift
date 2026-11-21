@@ -169,6 +169,8 @@ def varints(blob):
     byte, the high bit set on all but the last. Vectorised, for a blob of many. (Numbers from 2**56 on take a ninth
     byte of 8 bits; no count of tokens gets there.)"""
     raw = np.frombuffer(blob, np.uint8)
+    if not len(raw):  # as FTS5's totals of an index that never held a row
+        return np.zeros(0, np.int64), np.zeros(0, np.int64)
     last = (raw & 0x80) == 0
     starts = np.flatnonzero(np.r_[True, last[:-1]])
     which = np.cumsum(np.r_[True, last[:-1]]) - 1  # the number each byte belongs to
@@ -568,7 +570,8 @@ def update(db, path, name="", workers=0, rebuild=True):
     """Bring a store's postings up to FTS5: build them if there are none, else add a delta of the chunks changed
     since; when deltas grow too many, merge them into one (MOST_SEGMENTS), and when the chunks changed since the
     postings were built grow too many, build them anew (REBUILD_SHARE). Without `rebuild`, as for a file an agent
-    reindexes, nothing is built: that reads the whole store, so `sift index` does it. Another sift changing the
+    reindexes, nothing is built: that reads the whole store, so `sift index` does it; but for a small store without
+    any (SMALL), as one filled by `reindex` alone, which takes a moment. Another sift changing the
     postings meanwhile? Then nothing happens here, and searches read FTS5 until the next update."""
     if built(db) and not behind(db) and not (rebuild and _unordered(db)):
         return
@@ -576,7 +579,7 @@ def update(db, path, name="", workers=0, rebuild=True):
         if not alone:
             console.say(f"{name}: another sift is updating its keyword postings; searches read FTS5 meanwhile")
         elif not built(db) or (rebuild and _unordered(db)):
-            if rebuild:
+            if rebuild or store.counts(db)["chunks"] < SMALL:
                 _build(db, path, name, workers)
         elif _ordered(db) and _too_far(db):
             pass  # a delta can't place the chunks in the order: `sift index` builds anew (_unordered)

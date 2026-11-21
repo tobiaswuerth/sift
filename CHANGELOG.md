@@ -17,6 +17,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A sift whose stderr no one reads any more, a pipe to a program that ended, goes on with its work. `sift serve`
   stopped at its next message, five minutes later that the models had left the GPU, and a batch too large for the
   GPU ended in the error of saying so.
+- A keyword search of every collection works between `sift add` and the new collection's first `sift index`: it
+  ended in "The weights and list don't have the same length", as did `query`, on the command line and over MCP.
+- A collection without documents sends the searches of the others to their keyword postings, not to FTS5, seconds
+  over millions of passages; and `reindex` builds the postings of a small collection that has none (under 2,000
+  passages), as one an agent fills through `reindex` alone, which had none until a `sift index`.
 
 ## [1.13.0] - 2026-11-21
 
