@@ -172,4 +172,7 @@ def standing_out(hits: list[Hit]) -> list[Hit]:
         return hits
     scores = np.array([hit["score"] for hit in hits], np.float64)
     gaps = scores[:-1] - scores[1:]
-    return hits[: int(gaps[: math.ceil(ADAPTIVE_SHARE * len(gaps))].argmax()) + 1 + ADAPTIVE_BUFFER]
+    considered = gaps[: math.ceil(ADAPTIVE_SHARE * len(gaps))]
+    if not considered.max() > 0:  # no drop at all: none stands out
+        return hits
+    return hits[: int(considered.argmax()) + 1 + ADAPTIVE_BUFFER]

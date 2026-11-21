@@ -45,6 +45,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   the batch size stayed halved for the rest of the run. Both now happen once the error is let go.
 - On Windows, Ctrl+C didn't stop `sift embed` while it waited for its first slab of a large collection, read for
   minutes: a wait without a timeout there takes no Ctrl+C until it ends. It waits in steps of a tenth of a second.
+- `adaptive` cut hits whose scores were all alike to the first six, as if the first one stood out. With no drop in
+  score, every hit is returned.
 
 ## [1.14.0] - 2026-11-21
 

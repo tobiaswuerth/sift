@@ -157,13 +157,23 @@ def test_adaptive_keeps_the_hits_before_the_largest_drop_and_a_few_more(prose, f
     every = getattr(index, mode)(subject, k=20)
     scores = np.array([h["score"] for h in every])
     gaps = scores[:-1] - scores[1:]
-    cut = int(np.argmax(gaps[: int(np.ceil(0.9 * len(gaps)))])) + 2  # the hits before the gap, and one more
+    considered = gaps[: int(np.ceil(0.9 * len(gaps)))]
+    # the hits before the gap, and one more; all of them where their scores tie, as keyword search's and query's here
+    cut = int(np.argmax(considered)) + 2 if considered.max() > 0 else len(every)
     assert getattr(index, mode)(subject, k=20, adaptive=True) == every[:cut]
 
 
 def test_adaptive_leaves_few_hits_as_they_are(prose):
     index = Index(prose[0])
     assert index.search("w1", k=2, adaptive=True) == index.search("w1", k=2)
+
+
+def test_adaptive_keeps_every_hit_when_none_stands_out():
+    # Hits of one score have no drop between them: they were cut to the first six, as if the first one stood out.
+    from sift.hits import standing_out
+
+    alike = [{"id": str(i), "score": 1.0} for i in range(10)]
+    assert standing_out(alike) == alike
 
 
 @pytest.mark.usefixtures("small_lists")
