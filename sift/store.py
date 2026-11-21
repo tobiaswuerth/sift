@@ -349,9 +349,8 @@ def alone(path: str | Path, name: str) -> Generator[sqlite3.Connection]:
         db.close()
 
 
-READ_AGAIN: dict[
-    str, tuple[str, ...]
-] = {  # in the meta table, once the files of these kinds that an older sift skipped are to be read again
+# in the meta table, once the files of these kinds that an older sift skipped are to be read again
+READ_AGAIN: dict[str, tuple[str, ...]] = {
     "scans_read": (".pdf",),  # sift 1.2 and older read no scans
     "documents_read": readers.DOCUMENTS,  # the server of sift 1.3.0 and older skipped every document it reindexed
 }

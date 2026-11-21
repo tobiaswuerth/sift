@@ -308,9 +308,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         _offer_update(a.cmd)
         with logs.kept(a.cmd, datetime.now()) if a.cmd in logs.LOGGED else contextlib.nullcontext():
             _command(a)
-        _print(
-            end="", flush=True
-        )  # what stdout still holds, here: left to Python as it ends, a reader gone is an error
+        # what stdout still holds, here: left to Python as it ends, a reader gone is an error
+        _print(end="", flush=True)
     except _ReaderLeft:
         raise SystemExit(_unread()) from None
     except (KeyError, IndexError):  # LookupErrors too, but a bug's: its traceback finds it, "error: 'fields'" doesn't

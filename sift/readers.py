@@ -453,8 +453,8 @@ def _without_code(line: str) -> str:
     if "`" not in line:
         return line
     runs = [m.span() for m in BACKTICKS.finditer(line)]
-    following: list[int | None] = [None] * len(runs)
-    last_of_length: dict[int, int] = {}  # the next run of the same length, found from the end
+    following: list[int | None] = [None] * len(runs)  # the next run of the same length, found from the end
+    last_of_length: dict[int, int] = {}
     for i in range(len(runs) - 1, -1, -1):
         length = runs[i][1] - runs[i][0]
         following[i], last_of_length[length] = last_of_length.get(length), i

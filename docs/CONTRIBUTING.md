@@ -79,10 +79,11 @@ Rules the code keeps, several checked by `tests/test_package.py`:
   Protocol of what sift uses. No finding is silenced by a setting, and by a comment only with the owner's yes, for
   one rule on one line, which `tests/test_package.py` lists.
 - **Quality gates:** pre-commit runs on every commit and in CI: ruff (lint and format), whitespace, line endings, byte
-  order marks, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schemas, actionlint and codespell.
-  Workflows name their actions by commit, which a test holds them to. Once a week, the Audit workflow checks the
-  packages sift installs that day against the advisories known for them (`pip-audit`); Dependabot proposes a new
-  release once it is a week old.
+  order marks, YAML/TOML checks, `validate-pyproject`, workflow and Dependabot schemas, actionlint, codespell, and
+  [zizmor](https://docs.zizmor.sh), which reads the workflows for what makes them unsafe. Workflows name their
+  actions by commit, which a test holds them to. Once a week, the Audit workflow checks the packages sift installs
+  that day against the advisories known for them (`pip-audit`); Dependabot proposes a new release once it is a week
+  old.
 - **Nothing private:** the `private` hook refuses a commit whose files or message match a pattern of the maintainer's
   own list, `~/.private-patterns` (or the file `PRIVATE_PATTERNS` names): regular expressions, one a line, in no
   repository. Without that file, as in CI and for contributors, it checks nothing. `pre-commit install` sets up the

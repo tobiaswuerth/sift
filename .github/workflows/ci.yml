@@ -28,7 +28,7 @@ jobs:
       - run: uvx pre-commit run --all-files --show-diff-on-failure
 
   types:
-    # pyright, strictly, over the modules pyproject.toml lists: as on each system sift runs on, whichever runs this.
+    # pyright, strictly, over all of sift: as on each system sift runs on, whichever runs this.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

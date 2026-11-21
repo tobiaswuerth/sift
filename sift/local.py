@@ -116,12 +116,11 @@ class Local:
     def __init__(self, accelerator: Accelerator | None = None):
         self.accelerator = accelerator or Accelerator()
         self.name, self.reranker_name = settings.current().embed_model, settings.current().rerank_model
-        self._loaded: dict[str, Any] = {}
-        self._dtype: torch.dtype | None = None  # model by kind, all in this precision
+        self._loaded: dict[str, Any] = {}  # the models loaded, by name
+        self._dtype: torch.dtype | None = None  # the precision all of them are in
         self._lock = threading.RLock()  # loading, which threads may ask for at once
-        self._counter: Tokenizer | _Unset | None = (
-            _UNSET  # a tokenizer of the embedding model's own, to count tokens with (see lengths)
-        )
+        # a tokenizer of the embedding model's own, to count tokens with (see lengths)
+        self._counter: Tokenizer | _Unset | None = _UNSET
 
     @property
     def address(self) -> str:

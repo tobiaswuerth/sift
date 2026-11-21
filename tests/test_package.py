@@ -168,6 +168,28 @@ def test_only_newlines_end_lines():
     assert found == set(), 'split on "\n" (see readers.LINE): only it ends a line, as in editors and git'
 
 
+def test_no_comment_makes_the_formatter_wrap_its_statement():
+    # A comment after a statement counts toward its line's length. Too long together, the formatter wraps the
+    # statement around the comment: an annotation over three lines, a value alone in parentheses, where the statement
+    # fits on one line and the comment belongs above it.
+    toml = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    width = toml["tool"]["ruff"]["line-length"]
+    wrapped = set()
+    for path in (path for folder in ("sift", "scripts", "tests") for path in (ROOT / folder).glob("*.py")):
+        lines = path.read_text(encoding="utf-8").split("\n")
+        for n, (opened, held, closed) in enumerate(zip(lines, lines[1:], lines[2:]), 1):
+            (held, _, said), (closed, _, after) = held.partition("  # "), closed.partition("  # ")
+            if (
+                opened.endswith(("(", "["))
+                and closed.lstrip().startswith((")", "]"))
+                and not held.rstrip().endswith(",")  # a comma the formatter keeps the statement wrapped for
+                and (said or after)
+                and len(opened + held.strip() + closed.strip()) <= width
+            ):
+                wrapped.add(f"{path.relative_to(ROOT).as_posix()}:{n}")
+    assert wrapped == set(), "put the comment on a line of its own, above the statement, which then fits on one"
+
+
 SILENCED = re.compile(r"#\s*(?:type:\s*ignore|pyright:)")
 # The findings silenced with the owner's yes, each for one rule in one place, saying why: the module, and its line.
 SILENCED_WITH_YES = {
@@ -351,6 +373,31 @@ def test_the_release_starts_only_for_ci_of_this_repository_s_main():
     }
     assert ignored == ZIZMOR_IGNORED_WITH_YES, "fix what zizmor finds; an audit silenced needs the owner's yes first"
     assert "- id: zizmor" in (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+
+
+# Each repository of hooks in .pre-commit-config.yaml, and what docs/CONTRIBUTING.md calls what its hooks check.
+HOOKS_AS_CONTRIBUTING_NAMES_THEM = {
+    "local": "the `private` hook",
+    "https://github.com/pre-commit/pre-commit-hooks": "whitespace, line endings, byte order marks, YAML/TOML checks",
+    "https://github.com/astral-sh/ruff-pre-commit": "ruff (lint and format)",
+    "https://github.com/abravalheri/validate-pyproject": "`validate-pyproject`",
+    "https://github.com/python-jsonschema/check-jsonschema": "workflow and Dependabot schemas",
+    "https://github.com/Mateusz-Grzelinski/actionlint-py": "actionlint",
+    "https://github.com/codespell-project/codespell": "codespell",
+    "https://github.com/zizmorcore/zizmor-pre-commit": "zizmor",
+}
+
+
+def test_contributing_names_every_hook():
+    # A hook was added, zizmor, and the list of what runs on every commit stayed as it was: a contributor read of
+    # checks that weren't all of them.
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert set(re.findall(r"- repo: (\S+)", config)) == set(HOOKS_AS_CONTRIBUTING_NAMES_THEM), (
+        "name a new hook in docs/CONTRIBUTING.md, under how changes are made, and here"
+    )
+    contributing = " ".join((ROOT / "docs" / "CONTRIBUTING.md").read_text(encoding="utf-8").split())
+    for repository, named in HOOKS_AS_CONTRIBUTING_NAMES_THEM.items():
+        assert named in contributing, repository
 
 
 def _imports(path, anywhere):
