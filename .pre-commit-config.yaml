@@ -56,3 +56,9 @@ repos:
     hooks:
       - id: codespell
         additional_dependencies: [tomli]
+
+  # The workflows' security: credentials left behind, input run as code, triggers that hand a fork's code secrets.
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.32.0
+    hooks:
+      - id: zizmor

@@ -3,7 +3,10 @@ name: Release
 # Runs when CI has passed on a commit of main. When that commit's sift/__init__.py names a version without a tag, it
 # publishes that version to PyPI and makes a GitHub release, tagging that commit. See "Releasing" in docs/CONTRIBUTING.md.
 on:
-  workflow_run:
+  # zizmor warns of this trigger wherever it stands: it runs with this repository's rights for any run of CI, a
+  # fork's pull request too. The `check` job's conditions keep it to main's own, which a test holds
+  # (tests/test_package.py), and nothing that run made is used but its commit.
+  workflow_run:  # zizmor: ignore[dangerous-triggers]
     workflows: [CI]
     types: [completed]
     branches: [main]

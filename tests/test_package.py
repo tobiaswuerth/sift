@@ -311,6 +311,48 @@ def test_workflows_run_actions_by_commit():
     assert by_name == set(), "name the action by its commit: `uses: owner/action@<40 hex digits>  # v1.2.3`"
 
 
+# The findings of zizmor silenced with the owner's yes, each for one audit on one line: the workflow, and the line.
+ZIZMOR_IGNORED_WITH_YES = {
+    # The release starts when CI has ended (workflow_run), with what it takes to publish: the test below holds what
+    # keeps a run that isn't main's own from starting it, which zizmor can't see.
+    ("release.yml", "workflow_run:  # zizmor: ignore[dangerous-triggers]"),
+}
+
+
+def test_the_release_starts_only_for_ci_of_this_repository_s_main():
+    # A workflow started by another's end runs with this repository's rights, whoever's run that was: a pull
+    # request's, from a fork, would publish. Three conditions keep the release to CI that passed, on a push, to this
+    # repository; every job waits for the one that checks them; and nothing of that run is used but its commit, never
+    # in a command's text, and no file it made.
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    check = _job(release, "check")
+    for condition in (
+        "github.event.workflow_run.conclusion == 'success'",
+        "&& github.event.workflow_run.event == 'push'",
+        "&& github.event.workflow_run.head_repository.full_name == github.repository",
+    ):
+        assert condition in check.split("runs-on:")[0], condition
+    jobs = re.findall(r"\n  ([\w-]+):\n", release.split("\njobs:\n", 1)[1].join(["\n", ""]))
+    assert jobs[0] == "check"
+    waits = {job: set(re.findall(r"[\w-]+", re.search(r"needs: (.*)", _job(release, job))[1])) for job in jobs[1:]}
+    assert all(needed & {"check", *(j for j in waits if "check" in waits[j])} for needed in waits.values()), waits
+    taken = set(re.findall(r"github\.event\.workflow_run\.([\w.]+)", release))
+    assert taken == {"conclusion", "event", "head_repository.full_name", "head_sha"}
+    for line in release.split("\n"):
+        if "workflow_run.head_sha" in line:
+            assert line.strip().startswith(("ref: ", "COMMIT: ")), line  # an input or a variable, no command's text
+    assert "run-id" not in release  # the files downloaded are those this run built
+    assert "artifacts_url" not in release
+    ignored = {
+        (path.name, line.strip())
+        for path in (ROOT / ".github").rglob("*.yml")
+        for line in path.read_text(encoding="utf-8").split("\n")
+        if "zizmor:" in line
+    }
+    assert ignored == ZIZMOR_IGNORED_WITH_YES, "fix what zizmor finds; an audit silenced needs the owner's yes first"
+    assert "- id: zizmor" in (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+
+
 def _imports(path, anywhere):
     """The modules of sift that the module at `path` imports: at its top, or `anywhere`, inside its functions too."""
 
