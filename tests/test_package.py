@@ -259,8 +259,22 @@ def test_ci_looks_at_two_pythons_before_it_runs_every_system_and_python():
         assert "name: test (${{ matrix.os }}, ${{ matrix.python }})" in job
     assert "steps: *test" in rest  # the steps of `first`, not a copy of them
     summary = _job(ci, "tests")
-    assert "needs: [first, test]" in summary  # one check for all of them
-    assert 'test "$FIRST" = success && test "$REST" = success' in summary
+    assert "needs: [first, test, lowest]" in summary  # one check for all of them, and the lowest versions' job
+    assert 'test "$FIRST" = success && test "$REST" = success && test "$LOWEST" = success' in summary
+
+
+def test_ci_tests_the_lowest_versions_sift_names():
+    # They were never installed: at those sift named, transformers disabled PyTorch, and 21 tests failed. A job tests
+    # them on the oldest Python, and the weekly audit checks them for advisories as it checks today's.
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    oldest = re.search(r"python: \[(.*)\]", _job(ci, "test"))[1].split(", ")[0]
+    lowest = _job(ci, "lowest")
+    assert f"python-version: {oldest}" in lowest
+    assert '- run: uv pip install --resolution lowest-direct --torch-backend cpu -e ".[dev]"' in lowest
+    assert "- run: pytest -q -n auto" in lowest
+    audit = (ROOT / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    assert "resolution: [highest, lowest-direct]" in audit
+    assert '- run: uv pip install --resolution "$RESOLUTION" --torch-backend cpu -e .' in audit
 
 
 def test_nothing_silences_the_type_checker():

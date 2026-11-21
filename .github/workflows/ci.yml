@@ -87,18 +87,36 @@ jobs:
     timeout-minutes: 20
     steps: *test
 
+  lowest:
+    # The lowest versions sift names of what it depends on, on the oldest Python: what sift claims to run with.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # no step after it pushes with git
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
+        with:
+          python-version: "3.11"
+          activate-environment: true
+          enable-cache: true
+      - run: uv pip install --resolution lowest-direct --torch-backend cpu -e ".[dev]"
+      - run: pytest -q -n auto
+
   tests:
-    # One check for the whole matrix: required in place of each of its jobs by name, it lets the matrix change.
+    # One check for the whole matrix and the lowest versions: required in place of each job by name, it lets the
+    # matrix change.
     if: always()
-    needs: [first, test]
+    needs: [first, test, lowest]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every job of the matrix passed
+      - name: Every job of the matrix passed, and that of the lowest versions
         env:
           FIRST: ${{ needs.first.result }}
           REST: ${{ needs.test.result }}
-        run: test "$FIRST" = success && test "$REST" = success
+          LOWEST: ${{ needs.lowest.result }}
+        run: test "$FIRST" = success && test "$REST" = success && test "$LOWEST" = success
 
   package:
     # Builds the package and checks it as PyPI and users will see it.

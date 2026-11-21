@@ -17,7 +17,9 @@ to itself it asks the `python` on the PATH, another one unless the environment i
 With uv on the PATH it then builds and checks the package as CI's package job does (scripts/package.py), and the
 tests run once more on the newest Python CI tests on, where a Python warns of what an older one lets pass: in an
 environment of its own, .venv-newest beside .venv, which uv makes on the first run and brings up to date on each.
-The gate owns that folder; deleting it costs the next run its install."""
+The gate owns that folder; deleting it costs the next run its install. Last, as CI's lowest job, the tests run with
+the lowest versions sift names of what it depends on, on the oldest Python CI tests on: in an environment made afresh
+in a temporary folder each time, since one kept would keep versions above those, and deleted at the end."""
 
 import functools
 import importlib.util
@@ -25,6 +27,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -43,8 +46,9 @@ CHECKS = (
     ("the tests, with the coverage gate,", [sys.executable, "-m", "pytest", "-q", "--cov", "-n", "auto"], 20),
     ("the smoke run", [sys.executable, str(Path(__file__).parent / "smoke.py")], 10),
 )
-# The newest Python CI tests on: the last of its matrix
-NEWEST = re.search(r'python: \[.*"([\d.]+)"\]', (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))[1]
+# The oldest and the newest Python CI tests on: the first and the last of its matrix
+MATRIX = re.search(r"python: \[(.*)\]", (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))[1]
+OLDEST, *_, NEWEST = re.findall(r'"([\d.]+)"', MATRIX)
 ENVIRONMENT = ROOT / ".venv-newest"
 RUN = functools.partial(subprocess.call, cwd=ROOT)  # each check, in the checkout: its tests, its settings
 UV = shutil.which("uv")  # makes that environment; without it the gate tests on its own Python alone, and says so
@@ -70,6 +74,18 @@ def on_newest(uv):
             20,
         ),
         (f"the tests on Python {NEWEST}", [python, "-m", "pytest", "-q", "-n", "auto"], 20),
+    )
+
+
+def on_lowest(uv, environment):
+    """The checks with the lowest versions sift names, on the oldest Python, as CI's lowest job: a new environment,
+    those versions in it, the tests."""
+    python = str(python_of(environment))
+    lowest = ["--resolution", "lowest-direct", "--torch-backend", "cpu", "-e", f"{ROOT}[dev]"]
+    return (
+        (f"an environment of Python {OLDEST}", [uv, "venv", "--quiet", "--python", OLDEST, str(environment)], 10),
+        ("the lowest versions sift names", [uv, "pip", "install", "--quiet", "--python", python, *lowest], 20),
+        ("the tests with the lowest versions", [python, "-m", "pytest", "-q", "-n", "auto"], 20),
     )
 
 
@@ -105,17 +121,19 @@ def main(run=RUN, uv=UV, python=sys.version_info[:2]):
     this = ".".join(map(str, python))
     package = (("the package", [sys.executable, str(Path(__file__).parent / "package.py")], 15),) if uv else ()
     again = on_newest(uv) if uv and this != NEWEST else ()
-    for check, command, minutes in (*CHECKS, *package, *again):
-        print(f"gate: {check} ...", flush=True)
-        try:
-            failed = run(command, timeout=60 * minutes)
-        except subprocess.TimeoutExpired:
-            raise SystemExit(f"gate: {check} took more than {minutes} minutes, and was stopped") from None
-        if failed:
-            raise SystemExit(f"gate: {check} failed")
+    with tempfile.TemporaryDirectory(prefix="sift-gate-") as folder:
+        lowest = on_lowest(uv, Path(folder) / "lowest") if uv else ()
+        for check, command, minutes in (*CHECKS, *package, *again, *lowest):
+            print(f"gate: {check} ...", flush=True)
+            try:
+                failed = run(command, timeout=60 * minutes)
+            except subprocess.TimeoutExpired:
+                raise SystemExit(f"gate: {check} took more than {minutes} minutes, and was stopped") from None
+            if failed:
+                raise SystemExit(f"gate: {check} failed")
     if not uv:
         newest = "" if this == NEWEST else f", the tests ran on Python {this} alone, not on {NEWEST}"
-        print(f"gate: no uv on the PATH: the package wasn't built and checked{newest}")
+        print(f"gate: no uv on the PATH: the package and the lowest versions sift names went unchecked{newest}")
     print("gate: green")
 
 

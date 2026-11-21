@@ -155,7 +155,7 @@ def test_the_gate_tests_on_the_newest_python_too(gate, capsys):
     # own that uv makes and keeps.
     ran = []
     gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=(3, 12))
-    made, installed, tests = ran[-3:]
+    made, installed, tests = ran[len(gate.CHECKS) + 1 : len(gate.CHECKS) + 4]  # after the package
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert f', "{gate.NEWEST}"]' in workflow  # the last Python of CI's matrix
     assert made == ["uv", "venv", "--quiet", "--allow-existing", "--python", gate.NEWEST, str(gate.ENVIRONMENT)]
@@ -171,7 +171,23 @@ def test_a_gate_on_the_newest_python_tests_once(gate):
     ran = []
     newest = tuple(map(int, gate.NEWEST.split(".")))
     gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=newest)
-    assert len(ran) == len(gate.CHECKS) + 1  # and the package
+    assert len(ran) == len(gate.CHECKS) + 1 + 3  # and the package, and the lowest versions
+
+
+def test_the_gate_tests_the_lowest_versions_sift_names(gate):
+    # CI tests them, on the oldest Python, and the gate didn't: a count NumPy 2.0 refuses passed here. In an
+    # environment made afresh each time, as in CI: one kept keeps what it has, versions above the lowest too.
+    ran = []
+    gate.main(run=lambda command, timeout: ran.append(command) or 0, uv="uv", python=(3, 12))
+    made, installed, tests = ran[-3:]
+    assert made[:5] == ["uv", "venv", "--quiet", "--python", gate.OLDEST]
+    there = str(gate.python_of(Path(made[5])))
+    assert installed[:6] == ["uv", "pip", "install", "--quiet", "--python", there]
+    assert installed[6:] == ["--resolution", "lowest-direct", "--torch-backend", "cpu", "-e", f"{ROOT}[dev]"]
+    assert tests == [there, "-m", "pytest", "-q", "-n", "auto"]
+    assert not Path(made[5]).parent.exists()  # gone with the gate
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert f'python: ["{gate.OLDEST}", ' in workflow  # the first Python of CI's matrix
 
 
 def test_the_gate_checks_the_package_as_ci_does(gate):
@@ -190,5 +206,6 @@ def test_a_gate_without_uv_says_which_python_it_tested_on(gate, capsys):
     gate.main(run=lambda command, timeout: ran.append(command) or 0, uv=None, python=(3, 12))
     assert len(ran) == len(gate.CHECKS)
     said = capsys.readouterr().out
-    assert "gate: no uv on the PATH: the package wasn't built and checked, the tests ran on Python 3.12 alone, " in said
+    no_uv = "gate: no uv on the PATH: the package and the lowest versions sift names went unchecked, the tests ran "
+    assert f"{no_uv}on Python 3.12 alone, " in said
     assert said.strip().endswith("gate: green")
