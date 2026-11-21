@@ -5,11 +5,9 @@ such a document (`Doc.scan`): the model runs in the process that writes the inde
 SIFT_OCR chooses where: auto (the default) on a GPU, on also on the CPU, where a page takes minutes, off never.
 """
 
-import importlib
 import time
 from collections.abc import Callable, Iterable
 from functools import cache
-from types import ModuleType
 from typing import TYPE_CHECKING, Any, Protocol
 
 from . import console, settings
@@ -39,9 +37,11 @@ _Loaded = tuple[_Model, _Processor]
 _Stop = Callable[["torch.Tensor", Any], "torch.Tensor"]  # generate()'s stopping criteria: whether each row is done
 
 
-def _transformers() -> ModuleType:
-    """transformers, as a module: what sift reaches of it is typed by _Model and _Processor."""
-    return importlib.import_module("transformers")
+def _transformers() -> Any:
+    """transformers, untyped: what sift reaches of it is typed by _Model and _Processor."""
+    import transformers  # only reading scans needs it
+
+    return transformers
 
 
 MODEL = "lightonai/LightOnOCR-2-1B"  # https://huggingface.co/lightonai/LightOnOCR-2-1B

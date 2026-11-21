@@ -1,7 +1,9 @@
 """The package as it is published: what it depends on, and the rules its modules keep."""
 
 import ast
+import importlib
 import importlib.metadata
+import inspect
 import re
 import sys
 import tomllib
@@ -30,6 +32,33 @@ def test_every_package_sift_imports_is_a_dependency():
         if not {d.lower() for d in distributions[module]} & declared
     }
     assert undeclared == set()
+    by_name = {
+        f"{path.name}:{node.lineno}"
+        for path in (ROOT / "sift").glob("*.py")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] in ("import_module", "__import__")
+    }
+    assert by_name == set(), "import a package with an import statement: one imported by name isn't seen above"
+
+
+def test_the_stubs_name_what_their_packages_have():
+    # typings/ types what sift calls of packages that ship no types: a name or a parameter there that the package
+    # doesn't have (any more) would pass the type checker and fail when called.
+    for stub in (ROOT / "typings").rglob("*.pyi"):
+        package = importlib.import_module(stub.parent.name if stub.stem == "__init__" else stub.stem)
+        for node in ast.parse(stub.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.FunctionDef):
+                _assert_takes(getattr(package, node.name), node, f"{stub.name}: {node.name}")
+            for method in node.body if isinstance(node, ast.ClassDef) else ():
+                real = getattr(getattr(package, node.name), method.name)
+                _assert_takes(real, method, f"{stub.name}: {node.name}.{method.name}")
+
+
+def _assert_takes(real, stubbed, where):
+    """The function `real` takes every parameter its stub names, but those of methods Python calls itself."""
+    if not stubbed.name.startswith("__") or stubbed.name == "__init__":
+        named = {a.arg for a in stubbed.args.args} - {"self"}
+        assert named <= set(inspect.signature(real).parameters), where
 
 
 def test_requirements_txt_names_the_dependencies_pyproject_does():
