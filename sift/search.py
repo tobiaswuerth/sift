@@ -1298,9 +1298,11 @@ class Index:
         """Link targets no document answers to, in a collection or in every active one: notes not written yet. The
         most linked first, each with how many documents link it and the ids of a few of them."""
         k, scope = check_k(k), self._scope(collection)
-        found = [target for c in scope for target in links.unresolved(self.catalog.store(c))]
-        found = sorted(found, key=lambda t: (-len(t[1]), t[0]))[:k]
-        named = self._named([doc for _, docs, _ in found for doc in docs])
+        dbs = [self.catalog.store(c) for c in scope]
+        with store.snapshot(dbs):  # the targets, and the documents linking them, as they are at one moment
+            found = sorted((target for db in dbs for target in links.unresolved(db)), key=lambda t: (-len(t[1]), t[0]))
+            found = found[:k]
+            named = self._named([doc for _, docs, _ in found for doc in docs])
         return [
             {"target": target, "docs": len(docs), "ids": sorted(named[doc][0] for doc in docs)[:LINKING_SHOWN]}
             for target, docs, _ in found

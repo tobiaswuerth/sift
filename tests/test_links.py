@@ -225,6 +225,25 @@ def test_unresolved_targets(linked):
         index.unresolved("nope")
 
 
+def test_unresolved_targets_are_read_as_the_store_was_at_one_moment(linked, home, monkeypatch):
+    # Another sift that deleted a linking note between the targets and their documents' names failed the call with a
+    # bare KeyError.
+    catalog = linked[0]
+    index, unresolved = Index(catalog), links.unresolved
+
+    def meanwhile(db):
+        found = unresolved(db)
+        other = Catalog(home)  # another sift
+        theirs = other.store(other.get("vault"))
+        store.delete_docs(theirs, [doc for _, docs, _ in found for doc in docs])
+        theirs.commit()
+        other.close()
+        return found
+
+    monkeypatch.setattr(links, "unresolved", meanwhile)
+    assert [target["target"] for target in index.unresolved("vault")] == ["Peter Frei", "Wartungsvertrag 2027"]
+
+
 def test_unresolved_targets_most_linked_first(tmp_path, home):
     catalog, _ = note_vault(
         tmp_path,

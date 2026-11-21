@@ -35,6 +35,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   a task of its own with its own ten minutes; up to 64 of them shared one task's time, and forty slow PDFs were taken
   for hung. When a file does end or hang its process, what the other workers had read by then is kept, not read
   again one file at a time.
+- The MCP tool `unresolved` failed with a bare `KeyError` when another sift deleted a linking note while it ran. It
+  reads the targets and the notes linking them as the index was at one moment, as `links` does.
 
 ## [1.14.0] - 2026-11-21
 
