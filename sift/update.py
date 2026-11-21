@@ -279,7 +279,8 @@ def upgrade_command(
     if pip is None:
         pip = importlib.util.find_spec("pip") is not None
     if pip:
-        return [sys.executable, "-m", "pip", "install", "--upgrade", "sift-rag"]
+        # -P: no module from the folder it runs in, the drive's root (see start), where anyone may put a folder `pip`
+        return [sys.executable, "-P", "-m", "pip", "install", "--upgrade", "sift-rag"]
     if not _made_by_uv(prefix):
         return []
     if prefix.parent.name.startswith("archive-v"):  # uv's cache

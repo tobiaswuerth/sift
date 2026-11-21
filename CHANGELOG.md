@@ -15,6 +15,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   3.1.6. The lowest versions sift named didn't even work together: transformers 5.18 disables a PyTorch older than
   2.5. The CUDA index that the fix sift prints, the README and requirements.txt name is now cu126, as cu128 carries
   no PyTorch past 2.9.
+- An update agreed to with pip ran `python -m pip` at the root of the drive, which Python searches for modules first:
+  on Windows, where any user may make a folder there, another user's `pip` folder would have run as you. It runs with
+  `-P` now, which leaves that folder out.
 
 ### Fixed
 
