@@ -110,7 +110,9 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 
 1. In a pull request, set the version in `sift/__init__.py` and move the "Unreleased" changes in `CHANGELOG.md` under
    it, with its compare link at the bottom; CI checks the changelog has that section. Run
-   `python scripts/smoke.py --models` on it once: CI's smoke run loads no model.
+   `python scripts/smoke.py --models` on it once: CI's smoke run loads no model. And run the Audit workflow on its
+   branch (`gh workflow run audit.yml --ref BRANCH`): an advisory against a lowest version sift names is fixed in the
+   release, not found the Monday after it.
 2. Merge it. Once CI passes on the merge commit, the release workflow publishes that commit: it builds the package,
    publishes it to PyPI by trusted publishing (no tokens; the `pypi` environment deploys from `main` only), tags the
    commit and creates a GitHub release with that version's changelog. It never runs for a failed CI run. If a job
