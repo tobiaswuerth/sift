@@ -1,6 +1,5 @@
 import itertools
 from dataclasses import dataclass, field
-from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -47,13 +46,10 @@ class Dense:
     numbers: Ids
     table: NDArray[np.uint32]
     order: Ids
-
-    @property
-    def blocks(self) -> Ascending:
-        return Ascending(self.numbers[self.order])
+    blocks: Ascending
 
     def rows_of(self, blocks: Ids) -> Ids:
-        return self.order[np.searchsorted(self.numbers[self.order], blocks)]
+        return self.order[np.searchsorted(self.blocks.values, blocks)]
 
 
 @dataclass(slots=True)
@@ -174,13 +170,13 @@ def _segments_at(store: Opened, places: Ids) -> Ids:
 
 def _empty(shift: int) -> Dense:
     none = np.zeros(0, np.int64)
-    return Dense(none, np.zeros((0, 1 << shift), np.uint32), none)
+    return Dense(none, np.zeros((0, 1 << shift), np.uint32), none, Ascending(none))
 
 
-def _grown(table: NDArray[np.uint32], rows: int) -> NDArray[np.uint32]:
+def _grown(table: NDArray[np.uint32], rows: int, shift: int) -> NDArray[np.uint32]:
     if rows <= len(table):
         return table
-    grown = np.zeros((max(rows, 2 * len(table)), cast("int", table.shape[1])), np.uint32)
+    grown = np.zeros((max(rows, 2 * len(table)), 1 << shift), np.uint32)
     grown[: len(table)] = table
     return grown
 
@@ -196,10 +192,11 @@ def _loaded(store: Opened, segment: SegmentRow, blocks: Ids) -> Dense:
     if [row.block for row in found] != ints(missing):
         raise DamagedError("the lengths of some chunks are missing from the keyword index")
     used = len(held.numbers)
-    table = _grown(held.table, used + len(missing))
+    table = _grown(held.table, used + len(missing), shift)
     table[used : used + len(missing)] = np.stack([lengths_of(row.lengths, shift) for row in found])
     numbers = np.concatenate([held.numbers, missing])
-    store.lengths[segment.id] = Dense(numbers, table, np.argsort(numbers, kind="stable"))
+    order = np.argsort(numbers, kind="stable")
+    store.lengths[segment.id] = Dense(numbers, table, order, Ascending(numbers[order]))
     return store.lengths[segment.id]
 
 

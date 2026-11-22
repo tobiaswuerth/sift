@@ -18,6 +18,7 @@ from sift.app.problems import EMPTY_INSIDE, EMPTY_INSIDE_REMEDY, LEFT_AS_INDEXED
 from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows
 from sift.storage.documents import stored
+from sift.storage.keywords import settle
 from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
 from tests.damage import damage_table
 
@@ -334,7 +335,7 @@ def test_a_file_s_documents_are_stored_whole(home: Path) -> None:
 def test_merges_too_large_for_a_write_run_as_their_own_phase(home: Path, notes: Path) -> None:
     write(notes / "more.md", "# More\n\nOne more note.\n")
     said: list[Event] = []
-    batches = Batches(chunks_a_settle=0, merging=Policy(factor=2, floor=1, span=0.0))
+    batches = Batches(chunks_a_settle=0, merged_a_written=0, merging=Policy(factor=2, floor=1, span=0.0))
     limits = Limits(most_files_a_write=1, batches=batches)
     index(home, IndexCollections(), said.append, limits)
     assert [event.phase for event in said if isinstance(event, PhaseStarted)] == [Phase.SCAN, Phase.READ, Phase.MERGE]
@@ -346,13 +347,50 @@ def test_merges_too_large_for_a_write_run_as_their_own_phase(home: Path, notes: 
 
 
 def test_merges_left_by_a_remake_run_though_the_folder_is_gone(home: Path, notes: Path) -> None:
-    batches = Batches(chunks_a_segment=1, chunks_a_settle=0, merging=Policy(factor=2, floor=1, span=0.0))
+    batches = Batches(
+        chunks_a_segment=1, chunks_a_settle=0, merged_a_written=0, merging=Policy(factor=2, floor=1, span=0.0)
+    )
     index(home, IndexCollections(), lambda _: None, Limits(batches=batches))
     (store,) = [Path(each.store) for each in status(home, ShowStatus()).collections]
     with contextlib.closing(open_store(store, CollectionId(1))) as connection, connection:
         connection.execute("UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
     shutil.rmtree(notes)
     said: list[Event] = []
-    index(home, IndexCollections(), said.append, Limits(batches=batches))
+    held: list[int] = []
+
+    def seen(event: Event) -> None:
+        said.append(event)
+        if isinstance(event, PhaseStarted) and event.phase is Phase.MERGE:
+            held.append(segments(store))
+
+    index(home, IndexCollections(), seen, Limits(batches=batches))
     assert [event.phase for event in said if isinstance(event, PhaseStarted)] == [Phase.REMAKE, Phase.MERGE]
     assert isinstance(said[-1], Noted)
+    assert held[0] > segments(store)
+
+
+def test_a_merge_phase_another_sift_settled_meanwhile_still_ends(home: Path, notes: Path) -> None:
+    write(notes / "more.md", "# More\n\nOne more note.\n")
+    batches = Batches(chunks_a_settle=0, merged_a_written=0, merging=Policy(factor=2, floor=1, span=0.0))
+    said: list[Event] = []
+
+    def seen(event: Event) -> None:
+        said.append(event)
+        if isinstance(event, PhaseStarted) and event.phase is Phase.MERGE:
+            (store,) = [Path(each.store) for each in status(home, ShowStatus()).collections]
+            with contextlib.closing(open_store(store, CollectionId(1))) as connection:
+                assert list(settle(connection, batches))[-1] > 0
+
+    index(home, IndexCollections(), seen, Limits(most_files_a_write=1, batches=batches))
+    phases = [event for event in said if isinstance(event, (PhaseStarted, PhaseDone))]
+    assert phases[-2:] == [PhaseStarted(Phase.MERGE, None), PhaseDone(0)]
+
+
+class Count(NamedTuple):
+    n: int
+
+
+def segments(store: Path) -> int:
+    with contextlib.closing(open_store(store, CollectionId(1))) as connection, reading(connection) as transaction:
+        (found,) = rows(transaction, Count, "SELECT count(*) FROM keyword_segments")
+        return found.n

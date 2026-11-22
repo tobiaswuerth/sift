@@ -153,6 +153,7 @@ def blocked_all(each: Sequence[bytes]) -> tuple[Ids, Ids, list[int]]:
     inside = np.ones(len(steps), np.bool_)
     inside[firsts_at] = False
     steps[inside] = np.frombuffer(b"".join(gaps), np.uint32)
+    _sound(holds=bool((steps[inside] >= 1).all()), problem="a block holds ids out of order")
     steps[firsts_at] = starts
     summed = np.cumsum(steps)
     ids = summed - np.repeat(summed[firsts_at] - steps[firsts_at], held)
@@ -175,6 +176,7 @@ def positions_all(each: Sequence[bytes], counts: Ids) -> Ids:
 
 
 def _ascending(start: int, gaps: NDArray[np.uint32]) -> Ids:
+    _sound(holds=bool((gaps >= 1).all()), problem="ranges hold ids out of order")
     return start + after(0, np.cumsum(gaps, dtype=np.int64))
 
 

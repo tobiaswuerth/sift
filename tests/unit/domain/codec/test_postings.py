@@ -183,6 +183,7 @@ def test_a_list_with_a_byte_changed_or_cut_off_decodes_to_its_own_shape_or_is_re
         (RAW + BLOCK_HEAD.pack(1, 1) + b"\x81" * 9 + b"\x01", "more than nine bytes"),
         (RAW + BLOCK_HEAD.pack(1, 1) + b"\x00", "a count below one"),
         (RAW + BLOCK_HEAD.pack(1, 1) + b"\x01\x01", "counts other than its ids"),
+        (RAW + BLOCK_HEAD.pack(1, 2) + bytes(4) + b"\x01\x01", "ids out of order"),
     ],
 )
 def test_a_damaged_block_is_refused_with_what_is_wrong(data: bytes, refusal: str) -> None:
@@ -197,6 +198,8 @@ def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -
         ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(1)))
     with pytest.raises(DamagedError, match="other than their head says"):
         ranges_of(zlib.compress(bytes(1)))
+    with pytest.raises(DamagedError, match="ranges hold ids out of order"):
+        ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(4) + bytes(4)))
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
         lengths_of(zlib.compress(bytes(7)), 6)
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):

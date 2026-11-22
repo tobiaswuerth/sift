@@ -39,6 +39,7 @@ NUMBERS_PROBE = """SELECT coalesce(group_concat(j.atom, ' '), '') FROM json_tree
 REMAKE_REMEDY = "run sift index to remake it"
 REMAKING = "remaking "
 STALE = "the store's keyword index is of another version of sift"
+UNFINISHED = "the store's keyword index is not yet wholly remade"
 TAKEN_OVER = "another sift began to remake this keyword index for itself meanwhile"
 TAKEN_OVER_REMEDY = (
     "index with one sift at a time: sifts whose SQLite writes numbers otherwise remake it for themselves"
@@ -202,9 +203,10 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
 
 def index_new(transaction: WritingDocuments) -> None:
     shape = shape_of(transaction)
-    while _index_new(transaction, shape):
-        pass
-    settled(transaction, shape)
+    indexed = 0
+    while added := _index_new(transaction, shape):
+        indexed += added
+    settled(transaction, shape, indexed)
 
 
 def _dead_by_segment(transaction: Writing, dead: Sequence[int]) -> list[tuple[int, int]]:
@@ -290,8 +292,9 @@ def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
             if found != REMAKING + made:
                 raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
             held, shape = WritingDocuments(connection, batches), shape_of(transaction)
-            done += _index_new(held, shape)
-            settled(held, shape)
+            indexed = _index_new(held, shape)
+            done += indexed
+            settled(held, shape, indexed)
             whole = _done_if_whole(transaction, made)
         yield done
 
@@ -300,6 +303,8 @@ def _refuse_stale(transaction: Reading) -> None:
     made = fingerprint(transaction)
     found = _meta(transaction, FINGERPRINT_KEY)
     if found == REMAKING + made:
+        raise StoreUnavailableError(UNFINISHED, REMAKE_REMEDY)
+    if found is not None and found.startswith(REMAKING):
         raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
     if found != made:
         raise StoreUnavailableError(STALE, REMAKE_REMEDY)
@@ -325,8 +330,7 @@ def settle(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
 @contextmanager
 def writing_documents(connection: Connection, batches: Batches = BATCHES) -> Generator[WritingDocuments]:
     with writing(connection) as transaction:
-        if not current(transaction):
-            raise StoreUnavailableError(STALE, REMAKE_REMEDY)
+        _refuse_stale(transaction)
         held = WritingDocuments(connection, batches)
         yield held
         index_new(held)

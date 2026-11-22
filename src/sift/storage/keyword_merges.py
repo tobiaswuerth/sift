@@ -79,7 +79,7 @@ def _listed(transaction: WritingDocuments, merged: Sequence[Placed], block: int)
     return heapq.merge(*streams, key=_order)
 
 
-def _batches(listed: Iterator[Listed], batches: Batches) -> Iterator[list[Listed]]:
+def batched(listed: Iterator[Listed], batches: Batches) -> Iterator[list[Listed]]:
     batch: list[Listed] = []
     volume = size = 0
     for _, rows_of_term in itertools.groupby(listed, key=lambda row: row.term):
@@ -141,7 +141,7 @@ def _merged(transaction: WritingDocuments, merged: Sequence[Placed], shape: Shap
     made = segment_added(transaction, Head(first(live), last(live), len(live), total(lengths), average))
     dead = _ids(transaction, "SELECT chunk FROM keyword_dead WHERE chunk BETWEEN ? AND ? ORDER BY chunk", low, high)
     listed = _listed(transaction, merged, shape.block)
-    for batch in _batches(listed, transaction.batches):
+    for batch in batched(listed, transaction.batches):
         lists = _lists(batch, dead, live, lengths)
         if lists.terms:
             postings_added(transaction, made, postings_of(lists, average, shape))
@@ -167,8 +167,9 @@ def _live(merged: Sequence[Placed]) -> int:
     return sum(each.chunks - each.dead for each in merged)
 
 
-def settled(transaction: WritingDocuments, shape: Shape) -> None:
-    written, most = 0, transaction.batches.chunks_a_settle
+def settled(transaction: WritingDocuments, shape: Shape, indexed: int) -> None:
+    batches = transaction.batches
+    written, most = 0, max(batches.chunks_a_settle, batches.merged_a_written * indexed)
     while fitting := [merged for merged in _planned(transaction) if written + _live(merged) <= most]:
         for merged in fitting:
             if written + _live(merged) <= most:

@@ -183,10 +183,11 @@ def _remade(connection: Connection, report: Reporter, batches: Batches) -> None:
 
 
 def _settled(connection: Connection, report: Reporter, batches: Batches) -> None:
-    done = 0
+    done, started = 0, False
     for done in settle(connection, batches):
-        report(Advanced(done) if done else PhaseStarted(Phase.MERGE, None))
-    if done:
+        report(Advanced(done) if started else PhaseStarted(Phase.MERGE, None))
+        started = True
+    if started:
         report(PhaseDone(done))
 
 
