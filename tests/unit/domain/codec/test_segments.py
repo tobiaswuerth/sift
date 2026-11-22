@@ -1,3 +1,6 @@
+import json
+from typing import cast
+
 import numpy as np
 import pytest
 from hypothesis import given
@@ -83,6 +86,9 @@ def test_the_ranges_of_a_long_list_bound_every_score_in_them(columns: list[tuple
         ({"range_shift": -1}, "its counts are bytes"),
         ({"block": 0}, "one entry at least"),
         ({"lengths_shift": 0}, "one entry at least"),
+        ({"block": (1 << 20) + 1}, "at most 1,048,576"),
+        ({"long": (1 << 20) + 1}, "at most 1,048,576"),
+        ({"lengths_shift": 21}, r"2\*\*20"),
     ],
 )
 def test_a_shape_whose_ranges_or_blocks_cannot_be_written_is_refused(asked: dict[str, int], refusal: str) -> None:
@@ -94,3 +100,9 @@ def test_a_chunk_of_no_word_is_in_the_segment_with_no_tokens() -> None:
     written = segment(np.array([7, 8], np.int64), [stream([], [], []), stream(["a"], [], [])], average=0.5)
     assert [(held.term, held.chunks) for held in written.postings] == [("a", 1)]
     assert ints(lengths_of(written.lengths[0], 10)[7:9]) == [0, 1]
+
+
+@pytest.mark.parametrize("written", ['{"range_shift": 7.5}', '{"block": true}', '{"long": "9"}'])
+def test_a_shape_of_other_than_whole_numbers_is_refused(written: str) -> None:
+    with pytest.raises(TypeError, match="whole numbers"):
+        Shape(**cast("dict[str, int]", json.loads(written)))

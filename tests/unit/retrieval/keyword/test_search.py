@@ -308,8 +308,9 @@ def test_a_block_missing_or_of_another_size_than_its_ranges_say_is_damage(sql: s
             search(stores, Term("w0"), 10)
 
 
-def test_ranges_outside_their_segment_are_damage() -> None:
-    far = ranged(np.array([1 << 40], np.int64), np.ones(1, np.int64), np.zeros(1, np.uint8))
+@pytest.mark.parametrize("place", [0, 1 << 40])
+def test_ranges_outside_their_segment_are_damage(place: int) -> None:
+    far = ranged(np.array([place], np.int64), np.ones(1, np.int64), np.zeros(1, np.uint8))
     with collections([[prose(Draws(np.random.default_rng(7)), 60)]]) as (stores, _):
         (store,) = stores
         store.transaction.connection.execute("UPDATE keyword_postings SET ranges = ? WHERE ranges IS NOT NULL", (far,))

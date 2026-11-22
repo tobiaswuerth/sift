@@ -160,7 +160,8 @@ def test_a_remake_cut_short_goes_on_where_it_stopped_and_one_of_another_version_
         assert remake_started(connection) == len(NOTES) - 2
         with writing(connection) as transaction:
             run(transaction, "UPDATE meta SET value = 'remaking other' WHERE key = 'keyword_fingerprint'")
-        assert list(remade(connection, TWO)) == []
+        with pytest.raises(StoreUnavailableError, match="another sift"):
+            list(remade(connection, TWO))
         assert remake_started(connection) == len(NOTES)
         assert list(remade(connection))[-1] == len(NOTES)
         checked(connection)
@@ -234,3 +235,47 @@ def test_a_chunk_deleted_outside_every_segment_is_damage() -> None:
             run(transaction, "DELETE FROM keyword_segments")
         with pytest.raises(DamagedError, match="no segment of a chunk"):
             applied(connection, [{"a.md": None}])
+
+
+def test_a_remake_with_nothing_left_to_index_is_done_at_once() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        staled(connection)
+        assert remake_started(connection) == 0
+        with reading(connection) as transaction:
+            assert current(transaction)
+        applied(connection, [NOTES])
+        checked(connection)
+
+
+def test_a_remake_cut_right_after_its_last_batch_is_done() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [NOTES])
+        staled(connection)
+        remake_started(connection)
+        batches = iter(remade(connection, Batches(chunks_a_segment=len(NOTES))))
+        assert next(batches) == len(NOTES)
+        with reading(connection) as transaction:
+            assert current(transaction)
+        assert remake_started(connection) == 0
+        checked(connection)
+
+
+def test_a_chunk_deleted_past_the_end_of_its_segment_is_damage() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{"a.md": ("", "a", "one two " * 5000)}])
+        with writing(connection) as transaction:
+            run(transaction, "UPDATE keyword_segments SET last = first")
+        with pytest.raises(DamagedError, match="no segment of a chunk"):
+            applied(connection, [{"a.md": None}])
+
+
+def test_a_segment_written_after_deletions_averages_the_live_chunks() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{"a.md": ("", "a", "one " * 50), "b.md": ("", "b", "two " * 300)}, {"b.md": None}])
+        with reading(connection) as transaction:
+            tokens = totals(transaction).tokens
+        applied(connection, [{"c.md": ("", "c", "three")}])
+        with reading(connection) as transaction:
+            made = rows(transaction, Average, "SELECT chunks, tokens, average FROM keyword_segments ORDER BY first")
+        live = made[0].chunks - 1
+        assert made[-1].average == pytest.approx((tokens + made[-1].tokens) / (live + made[-1].chunks))

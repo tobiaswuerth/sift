@@ -61,6 +61,7 @@ def test_a_search_finds_each_document_by_its_best_passage_with_where_it_is(home:
         (Hit("notes/halo.md", "Halo", "4-6", result.hits[0].score, "# Halo\n\nDark matter halo models."),), 1, ()
     )
     assert result.hits[0].score > 0
+    assert result.hits[0].score != round(result.hits[0].score, 4)
 
 
 def test_the_lines_of_a_hit_are_its_passage(home: Path) -> None:
@@ -235,9 +236,13 @@ def test_a_store_lost_while_searched_weighs_on_no_score(home: Path, tmp_path: Pa
 
 def test_a_store_lost_in_the_looser_search_weighs_on_no_score(home: Path, tmp_path: Path) -> None:
     _more(home, tmp_path)
-    alone = search(home, SearchKeywords("halo zzzq", collection="more")).hits
-    _changed(home / "collections" / "notes.sqlite", "DELETE FROM keyword_lengths")
-    result = search(home, SearchKeywords("halo zzzq"))
+    alone = search(home, SearchKeywords("halo pruning", collection="more")).hits
+    assert search(home, SearchKeywords("halo AND pruning")).hits == ()
+    _changed(
+        home / "collections" / "notes.sqlite",
+        "DELETE FROM chunks WHERE document = (SELECT id FROM documents WHERE title = 'Halo')",
+    )
+    result = search(home, SearchKeywords("halo pruning"))
     assert result.hits == alone != ()
     assert [each.collection for each in result.unsearched] == ["notes"]
 
@@ -272,3 +277,12 @@ def test_an_index_of_another_version_is_remade_by_indexing_even_with_its_folder_
     assert isinstance(said[-2], PhaseDone)
     assert said[-2].count == chunks
     assert ids(home, SearchKeywords("halo")) == ["notes/halo.md"]
+
+
+def test_an_empty_collection_of_another_version_is_current_once_indexed(home: Path, tmp_path: Path) -> None:
+    (tmp_path / "empty").mkdir()
+    add(home, AddCollection(str(tmp_path / "empty")))
+    indexed(home)
+    _changed(home / "collections" / "empty.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
+    indexed(home)
+    assert search(home, SearchKeywords("halo", collection="empty")) == SearchResult((), 1, ())

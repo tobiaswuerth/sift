@@ -22,6 +22,7 @@ from sift.storage.database import (
     Reading,
     Writing,
     WritingDocuments,
+    reading,
     rows,
     run,
     run_each,
@@ -35,7 +36,11 @@ NUMBERS_PROBE = """SELECT coalesce(group_concat(j.atom, ' '), '') FROM json_tree
                    WHERE j.atom IS NOT NULL"""
 REMAKE_REMEDY = "run sift index to remake it"
 REMAKING = "remaking "
-DIGITS = re.compile("[0-9]{1,19}")
+TAKEN_OVER = "another sift began to remake this keyword index for itself meanwhile"
+TAKEN_OVER_REMEDY = (
+    "index with one sift at a time: sifts whose SQLite writes numbers otherwise remake it for themselves"
+)
+DIGITS = re.compile("[0-9]{1,18}")
 
 
 class Value(NamedTuple):
@@ -278,30 +283,40 @@ def _anew(transaction: Writing, made: str) -> None:
     )
 
 
+def _left(transaction: Reading) -> int:
+    (found,) = rows(transaction, Count, "SELECT count(*) FROM chunks WHERE id > ?", (_through(transaction),))
+    return found.n
+
+
+def _done_if_whole(transaction: Writing, made: str) -> bool:
+    if _left(transaction):
+        return False
+    run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (made, FINGERPRINT_KEY))
+    return True
+
+
 def remake_started(connection: Connection) -> int:
+    with reading(connection) as transaction:
+        if current(transaction):
+            return 0
     with writing(connection) as transaction:
         made = fingerprint(transaction)
         found = _meta(transaction, FINGERPRINT_KEY)
-        if found == made:
-            return 0
-        if found != REMAKING + made:
+        if found not in {made, REMAKING + made}:
             _anew(transaction, REMAKING + made)
-        (left,) = rows(transaction, Count, "SELECT count(*) FROM chunks WHERE id > ?", (_through(transaction),))
-        return left.n
+        return 0 if found == made or _done_if_whole(transaction, made) else _left(transaction)
 
 
 def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
     done = 0
-    while True:
+    whole = False
+    while not whole:
         with writing(connection) as transaction:
             made = fingerprint(transaction)
             if _meta(transaction, FINGERPRINT_KEY) != REMAKING + made:
-                return
-            added = _index_new(WritingDocuments(connection, batches), shape_of(transaction))
-            if not added:
-                run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (made, FINGERPRINT_KEY))
-                return
-        done += added
+                raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
+            done += _index_new(WritingDocuments(connection, batches), shape_of(transaction))
+            whole = _done_if_whole(transaction, made)
         yield done
 
 

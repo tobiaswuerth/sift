@@ -1,5 +1,6 @@
 import contextlib
 import itertools
+import tracemalloc
 import zlib
 
 import numpy as np
@@ -200,5 +201,19 @@ def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -
         lengths_of(zlib.compress(bytes(7)), 6)
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
         lengths_of(zlib.compress(bytes(1 << 16)), 6)
+    with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
+        lengths_of(zlib.compress(bytes(256))[:-4], 6)
     with pytest.raises(DamagedError, match="positions other than its counts"):
         positions_of(RAW + b"\x01\x02", np.array([3], np.int64))
+
+
+def test_lengths_packed_far_larger_than_their_block_are_never_unpacked_whole() -> None:
+    packed = zlib.compress(bytes(1 << 26))
+    tracemalloc.start()
+    try:
+        with pytest.raises(DamagedError, match="unpacks to other than"):
+            lengths_of(packed, 6)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 1 << 20
