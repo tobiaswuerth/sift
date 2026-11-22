@@ -229,6 +229,28 @@ def test_without_streams_a_command_runs(settings: Settings, notes: Path) -> None
     assert run(["add", str(notes)], settings, None, None) == 0
     assert run(["status"], settings, None, None) == 0
     assert run([], settings, None, None) == 0
+    assert run(["--help"], settings, None, None) == 0
+    assert run(["--version"], settings, None, None) == 0
+    assert run(["--frobnicate"], settings, None, None) == 2
+
+
+@pytest.mark.parametrize(
+    "argv", [("get", "notes/name\udce9.md"), ("add", "bad\udce9", "--name", "ok"), ("status", "n\udce9")]
+)
+def test_an_argument_that_is_no_text_is_refused_with_what_to_do(settings: Settings, argv: tuple[str, ...]) -> None:
+    code, out, err = ran(settings, *argv)
+    assert (code, out) == (1, "")
+    assert err.startswith("error  an argument is no text: '")
+    assert "\\udce9" in err
+    assert err.endswith("  fix  name files and folders in UTF-8, or rename this one\n")
+
+
+@pytest.mark.parametrize("argv", [("add", ""), ("add", "notes", "--store", "")])
+def test_an_empty_path_is_a_usage_error_not_the_current_folder(settings: Settings, argv: tuple[str, ...]) -> None:
+    code, out, err = ran(settings, *argv)
+    assert (code, out) == (2, "")
+    assert "an empty path names nothing" in err
+    assert not settings.home.exists()
 
 
 @pytest.mark.parametrize("stream", ["out", "err"])
@@ -331,3 +353,39 @@ def test_the_command_line_needs_the_standard_library_alone() -> None:
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60)
     assert result.stdout == "['sift']\n"
+
+
+def test_index_fails_if_a_collection_was_skipped_however_it_answers(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    (settings.home / "collections" / "notes.sqlite").unlink()
+    code, out, err = ran(settings, "index")
+    assert (code, out) == (1, "")
+    assert "  note  the store is missing: " in err
+    code, out, _ = ran(settings, "index", "--json")
+    assert (code, json.loads(out)["collections"][0]["outcome"]["state"]) == (1, "skipped")
+
+
+@final
+class Terminal(io.TextIOWrapper):
+    @override
+    def isatty(self) -> bool:
+        return True
+
+
+def test_in_a_terminal_the_running_phase_is_drawn_in_place_and_cleared(
+    settings: Settings, notes: Path, tmp_path: Path
+) -> None:
+    indexed_notes(settings, notes)
+    with Terminal((tmp_path / "err").open("w+b"), encoding="utf-8", newline="\n") as err:
+        assert run(["index", "--color", "never"], settings, io.StringIO(), err) == 0
+        err.flush()
+        drawn = (tmp_path / "err").read_bytes().decode()
+    lines = drawn.split("\n")
+    assert lines[0] == f"notes  {notes.resolve()}"
+    assert "\r  scan" in lines[1]
+    assert "\r  read           0 files   " in lines[2]
+    shown = [line.rsplit("\r", 1)[-1] for line in lines]
+    assert [line.split()[:3] for line in shown[1:3]] == [["scan", "2", "files"], ["read", "2", "files"]]
+    assert shown[3].startswith("  done  +2  ~0  -0  ")
+    assert shown[4:] == [""]
+    assert "\x1b[" not in drawn

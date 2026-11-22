@@ -10,6 +10,8 @@ LEFT_AS_INDEXED = (
     "none of its {files} is left in {folder}: kept as indexed, as a drive not mounted and a folder being filled anew "
     "look so"
 )
+EMPTY_INSIDE = "{folder} is empty: {files} once in it kept as indexed, as a drive not mounted looks so"
+EMPTY_INSIDE_REMEDY = "connect the drive, or delete the empty folder to let them go"
 
 
 def counted(n: int, noun: str) -> str:
@@ -31,6 +33,13 @@ def _unlisted_file(scanned: Scanned, known: AbstractSet[str], path: str) -> Note
     return Noted(f"{path} can't be read ({scanned.refusals.get(path, '')}): {kept}")
 
 
+def _emptied(folder: Path, plan: IndexPlan, emptied: str) -> Noted:
+    held = counted(sum(emptied == ROOT or path.startswith(emptied) for path in plan.left_as_indexed), "file")
+    if emptied == ROOT:
+        return Noted(LEFT_AS_INDEXED.format(files=held, folder=folder))
+    return Noted(EMPTY_INSIDE.format(files=held, folder=emptied), EMPTY_INSIDE_REMEDY)
+
+
 def problems(folder: Path, scanned: Scanned, plan: IndexPlan, known: AbstractSet[str]) -> tuple[Noted, ...]:
     found, said = scanned.found, list[Noted]()
     said.extend(_unlisted_folder(scanned, plan, unlisted) for unlisted in found.unlisted_folders)
@@ -38,8 +47,7 @@ def problems(folder: Path, scanned: Scanned, plan: IndexPlan, known: AbstractSet
     if found.outside:
         outside = counted(len(found.outside), "file")
         said.append(Noted(f"{outside} linked to outside the folder left out: {_named(found.outside)}"))
-    if plan.left_as_indexed:
-        said.append(Noted(LEFT_AS_INDEXED.format(files=counted(len(plan.left_as_indexed), "file"), folder=folder)))
+    said.extend(_emptied(folder, plan, emptied) for emptied in plan.emptied)
     if scanned.unnamed:
         unnamed = counted(len(scanned.unnamed), "file")
         said.append(Noted(f"{unnamed} left out, whose names are no text: {_named(scanned.unnamed)}"))

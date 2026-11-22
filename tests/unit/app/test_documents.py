@@ -9,6 +9,8 @@ from sift.api.indexing import IndexCollections
 from sift.app.collections import add
 from sift.app.documents import documents
 from sift.app.indexing import index
+from sift.storage.store import DAMAGED_REMEDY
+from tests.damage import damage_table
 
 UNKNOWN = "take the id from a search result, or `sift status`"
 
@@ -118,6 +120,12 @@ def test_a_shortened_id_many_paths_end_in_names_the_first_five(tmp_path: Path, h
     index(home, IndexCollections(), lambda _: None)
     listed = ", ".join(f"{folder}/same.md" for folder in "abcde")
     assert unfound(home, "notes/same.md").message == f"'notes/same.md' matches {listed}, ..."
+
+
+def test_a_document_of_a_damaged_store_is_not_found_and_says_why(home: Path) -> None:
+    damage_table(home / "collections" / "notes.sqlite", "documents")
+    missing = unfound(home, "notes/rl.md")
+    assert ("is damaged" in missing.message, missing.remedy) == (True, DAMAGED_REMEDY)
 
 
 def test_without_any_collection_every_id_is_unknown(tmp_path: Path) -> None:

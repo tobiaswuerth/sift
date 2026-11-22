@@ -159,27 +159,32 @@ class PathRow(NamedTuple):
     path: str
 
 
+PATHS_NAMED = """SELECT s.path FROM sources s JOIN documents d ON d.source = s.id AND d.key = ''
+                 WHERE s.name = ? COLLATE NOCASE ORDER BY s.path"""
+
+
 def paths_named(transaction: Reading, name: str) -> list[str]:
-    sql = """SELECT s.path FROM sources s JOIN documents d ON d.source = s.id AND d.key = ''
-             WHERE s.name = ? COLLATE NOCASE ORDER BY s.path"""
-    return [found.path for found in rows(transaction, PathRow, sql, (name,))]
+    return [found.path for found in rows(transaction, PathRow, PATHS_NAMED, (name,))]
 
 
 class Unreadable(NamedTuple):
     path: str
     problem: str
+    read_again: int
 
 
-def mark_unreadable(transaction: Writing, path: str, problem: str) -> None:
-    run(transaction, "INSERT OR REPLACE INTO unreadable(path, problem) VALUES (?, ?)", (path, problem))
+def mark_unreadable(transaction: Writing, path: str, problem: str, *, read_again: bool) -> None:
+    sql = "INSERT OR REPLACE INTO unreadable(path, problem, read_again) VALUES (?, ?, ?)"
+    run(transaction, sql, (path, problem, int(read_again)))
 
 
 def clear_unreadable(transaction: Writing, paths: Sequence[str]) -> None:
-    run(transaction, "DELETE FROM unreadable WHERE path IN (SELECT value FROM json_each(?))", (json.dumps(paths),))
+    chosen = (json.dumps(list(paths)),)
+    run(transaction, "DELETE FROM unreadable WHERE path IN (SELECT value FROM json_each(?))", chosen)
 
 
 def unreadable(transaction: Reading) -> list[Unreadable]:
-    return rows(transaction, Unreadable, "SELECT path, problem FROM unreadable ORDER BY path")
+    return rows(transaction, Unreadable, "SELECT path, problem, read_again FROM unreadable ORDER BY path")
 
 
 class Counts(NamedTuple):

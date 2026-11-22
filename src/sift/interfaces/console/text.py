@@ -22,7 +22,10 @@ def width(text: str) -> int:
 
 
 def _escaped(character: str) -> str:
-    if unicodedata.category(character) != "Cc":
+    category = unicodedata.category(character)
+    if category == "Cs":
+        return f"\\u{ord(character):04x}"
+    if category != "Cc":
         return character
     return ESCAPES.get(character) or f"\\x{ord(character):02x}"
 

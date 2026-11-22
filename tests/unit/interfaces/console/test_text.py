@@ -37,9 +37,15 @@ def test_control_characters_are_shown_as_escapes_so_no_text_can_steer_the_termin
     assert printable(text) == shown
 
 
-@given(st.text())
-def test_a_printable_text_holds_no_control_character(text: str) -> None:
-    assert not any(unicodedata.category(character) == "Cc" for character in printable(text))
+def test_half_a_surrogate_pair_which_no_stream_can_encode_is_shown_as_an_escape() -> None:
+    assert printable("name" + chr(0xDCE9) + ".md") == "name\\udce9.md"
+
+
+@given(st.text(st.characters(codec=None)))
+def test_a_printable_text_holds_no_control_character_and_can_be_encoded(text: str) -> None:
+    shown = printable(text)
+    assert not any(unicodedata.category(character) == "Cc" for character in shown)
+    assert shown.encode().decode() == shown
 
 
 def test_a_table_aligns_its_columns_by_the_width_a_terminal_shows() -> None:

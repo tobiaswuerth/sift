@@ -1,5 +1,6 @@
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 
@@ -19,7 +20,11 @@ LAYOUT: tuple[Migration, ...] = (
             name TEXT NOT NULL GENERATED ALWAYS AS (substr(path, length(rtrim(path, replace(path, '/', ''))) + 1))
         ) STRICT""",
         "CREATE INDEX sources_name ON sources(name COLLATE NOCASE)",
-        "CREATE TABLE unreadable(path TEXT PRIMARY KEY, problem TEXT NOT NULL) STRICT, WITHOUT ROWID",
+        """CREATE TABLE unreadable(
+            path TEXT PRIMARY KEY,
+            problem TEXT NOT NULL,
+            read_again INTEGER NOT NULL CHECK (read_again IN (0, 1))
+        ) STRICT, WITHOUT ROWID""",
         """CREATE TABLE documents(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             source INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -95,8 +100,15 @@ def delete_store(path: Path) -> None:
         file.unlink()
 
 
+def _size(file: Path) -> int:
+    try:
+        return file.stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
 def stored_bytes(path: Path) -> int:
-    return sum(file.stat().st_size for file in _files(path, DATA_SUFFIXES))
+    return sum(_size(Path(f"{path}{suffix}")) for suffix in DATA_SUFFIXES)
 
 
 def _made(path: Path, collection: CollectionId, layout: Sequence[Migration]) -> None:
@@ -129,6 +141,14 @@ def _raise_for(path: Path, error: sqlite3.DatabaseError) -> NoReturn:
     if primary_code(error) in DAMAGED:
         raise StoreUnavailableError(f"the store {path} is damaged: {error}", DAMAGED_REMEDY) from None
     raise error
+
+
+@contextmanager
+def unavailable_if_damaged(path: Path) -> Generator[None]:
+    try:
+        yield
+    except sqlite3.DatabaseError as error:
+        _raise_for(path, error)
 
 
 def _checked(connection: sqlite3.Connection, path: Path, collection: CollectionId, layout: Sequence[Migration]) -> None:

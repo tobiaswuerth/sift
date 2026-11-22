@@ -18,7 +18,14 @@ A, B = Stat(1, 10), Stat(2, 20)
 def test_new_and_changed_files_are_read_and_unchanged_ones_counted() -> None:
     plan = index_plan(Found({"new.md": A, "changed.md": B, "same.md": A}), {"changed.md": A, "same.md": A})
     assert plan == IndexPlan(
-        read=("changed.md", "new.md"), too_large=(), drop=(), kept=(), left_as_indexed=(), unchanged=1
+        read=("changed.md", "new.md"),
+        too_large=(),
+        drop=(),
+        kept=(),
+        left_as_indexed=(),
+        emptied=(),
+        forget=(),
+        unchanged=1,
     )
 
 
@@ -48,7 +55,34 @@ def test_a_file_that_could_not_be_stated_is_kept() -> None:
 
 def test_a_folder_left_without_any_file_keeps_its_documents() -> None:
     plan = index_plan(Found({}), {"a.md": A, "b.md": B})
-    assert (plan.drop, plan.left_as_indexed) == ((), ("a.md", "b.md"))
+    assert (plan.drop, plan.left_as_indexed, plan.emptied) == ((), ("a.md", "b.md"), ("",))
+    assert index_plan(Found({}), {}).emptied == ()
+
+
+def test_a_folder_inside_that_is_there_but_empty_keeps_its_documents_as_a_drive_not_mounted_looks_so() -> None:
+    known = {"archive/2020/a.md": A, "archive/b.md": A, "archived.md": A, "gone/c.md": A, "rl.md": A}
+    plan = index_plan(Found({"rl.md": A}, empty_folders=("archive/", "new/")), known)
+    assert (plan.left_as_indexed, plan.emptied) == (("archive/2020/a.md", "archive/b.md"), ("archive/",))
+    assert plan.drop == ("archived.md", "gone/c.md")
+
+
+def test_a_file_that_could_not_be_read_is_read_again_though_it_looks_unchanged() -> None:
+    marks = {"locked.md": True, "huge.md": False}
+    files = {"locked.md": A, "huge.md": A, "same.md": A}
+    plan = index_plan(Found(files), files, unreadable=marks)
+    assert (plan.read, plan.unchanged, plan.forget) == (("locked.md",), 2, ())
+
+
+def test_the_mark_of_an_unreadable_file_is_forgotten_once_the_file_is_gone_for_good() -> None:
+    marked = ("gone.md", "new-gone.md", "kept/a.md", "unstated.md", "there.md", "empty/x.md")
+    marks: dict[str, bool] = dict.fromkeys(marked, True)
+    known = {"gone.md": A, "kept/a.md": A, "there.md": A, "empty/x.md": A}
+    found = Found(
+        {"there.md": A}, unlisted_folders=("kept/",), unlisted_files=("unstated.md",), empty_folders=("empty/",)
+    )
+    plan = index_plan(found, known, unreadable=marks)
+    assert plan.forget == ("gone.md", "new-gone.md")
+    assert plan.drop == ("gone.md",)
 
 
 def test_a_folder_of_links_alone_left_out_is_no_folder_emptied() -> None:
@@ -72,23 +106,35 @@ stats = st.builds(Stat, st.integers(0, 3), st.integers(0, 3))
 listings = st.dictionaries(paths, stats, max_size=8)
 
 
-@given(
+folders_there = st.lists(st.sampled_from(["", "a/", "b/", "a"]), max_size=2).map(tuple)
+founds = st.builds(
+    Found,
     listings,
-    listings,
-    st.lists(st.sampled_from(["", "a/", "b/", "a"]), max_size=2),
-    st.lists(paths, max_size=2),
+    folders_there,
+    st.lists(paths, max_size=2).map(tuple),
+    st.just(tuple[str, ...]()),
+    st.lists(st.sampled_from(["a/", "b/", "a"]), max_size=2).map(tuple),
 )
+
+
+@given(founds, listings, st.dictionaries(paths, st.booleans()))
 def test_a_plan_reads_drops_and_keeps_what_it_should(
-    seen: dict[str, Stat], known: dict[str, Stat], folders: list[str], unstated: list[str]
+    found: Found, known: dict[str, Stat], marks: dict[str, bool]
 ) -> None:
-    plan = index_plan(Found(seen, tuple(folders), tuple(unstated)), known)
+    seen, unlisted, unstated = found.files, found.unlisted_folders, found.unlisted_files
+    plan = index_plan(found, known, unreadable=marks)
     unseen = known.keys() - seen.keys()
-    assert set(plan.read) | {path for path in seen if known.get(path) == seen[path]} == seen.keys()
+    drop, kept, left = set(plan.drop), set(plan.kept), set(plan.left_as_indexed)
     assert len(plan.read) + plan.unchanged == len(seen)
-    assert set(plan.drop) | set(plan.kept) | set(plan.left_as_indexed) == unseen
-    assert not set(plan.drop) & set(plan.kept)
-    assert not plan.left_as_indexed or not seen
+    assert set(plan.read) == {path for path in seen if known.get(path) != seen[path] or marks.get(path)}
     assert list(plan.read) == sorted(plan.read)
+    assert drop | kept | left == unseen
+    assert len(drop) + len(kept) + len(left) == len(unseen)
+    assert not [path for path in drop if path in unstated or any(path.startswith(folder) for folder in unlisted)]
+    assert not [path for path in drop for folder in plan.emptied if path.startswith(folder)]
+    assert bool(left) == bool(plan.emptied)
+    assert not set(plan.forget) & (seen.keys() | kept | left | set(unstated))
+    assert drop & marks.keys() <= set(plan.forget) <= marks.keys()
 
 
 def test_files_are_read_in_batches_of_so_many_files_and_bytes() -> None:

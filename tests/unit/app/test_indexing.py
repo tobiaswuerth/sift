@@ -13,11 +13,12 @@ from sift.api.events import Advanced, CollectionStarted, Event, Finished, Noted,
 from sift.api.ids import CollectionId
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import add, status
-from sift.app.indexing import FOLDER_MISSING_REMEDY, Limits, index
-from sift.app.problems import LEFT_AS_INDEXED
+from sift.app.indexing import FOLDER_MISSING_REMEDY, OUT_OF_REACH_REMEDY, Limits, index
+from sift.app.problems import EMPTY_INSIDE, EMPTY_INSIDE_REMEDY, LEFT_AS_INDEXED
 from sift.storage.database import reading, rows
 from sift.storage.documents import stored
-from sift.storage.store import MISSING_REMEDY, open_store
+from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
+from tests.damage import damage_table
 
 
 def write(path: Path, text: str) -> Path:
@@ -191,8 +192,118 @@ def test_a_file_larger_than_a_document_may_be_is_left_out_until_it_changes(home:
     assert result.outcome == Indexed(files=4, added=3, changed=0, removed=0, unreadable=1)
     problems = [entry.problem for entry in unreadable_files(home)]
     assert problems == ["100 bytes: a document holds at most 60; split the file"]
-    (again,) = index(home, IndexCollections(), lambda _: None, small).collections
-    assert again.outcome == Indexed(files=4, added=0, changed=0, removed=0, unreadable=0)
+    said: list[Event] = []
+    (again,) = index(home, IndexCollections(), said.append, small).collections
+    assert again.outcome == Indexed(files=4, added=0, changed=0, removed=0, unreadable=1)
+    assert (PhaseStarted(Phase.READ, 0) in said, said[-1]) == (True, Finished(0, 0, 0, 1))
+
+
+def test_a_file_that_is_too_large_only_once_decoded_is_left_out_until_it_changes(home: Path, notes: Path) -> None:
+    (notes / "wide.txt").write_bytes(
+        "\N{BYTE ORDER MARK}".encode("utf-16-le") + ("\N{CJK UNIFIED IDEOGRAPH-65E5}" * 25).encode("utf-16-le")
+    )
+    small = Limits(most_text_bytes=60)
+    (result,) = index(home, IndexCollections(), lambda _: None, small).collections
+    assert result.outcome == Indexed(files=4, added=3, changed=0, removed=0, unreadable=1)
+    assert unreadable_files(home) == (
+        UnreadableFile("wide.txt", "75 bytes as text: a document holds at most 60; split the file"),
+    )
+    assert "wide.txt" not in titles(home)
+    said: list[Event] = []
+    index(home, IndexCollections(), said.append, small)
+    assert PhaseStarted(Phase.READ, 0) in said
+
+
+def test_a_file_that_could_not_be_read_is_read_again_though_it_is_as_it_was(home: Path, notes: Path) -> None:
+    plain = notes / "plain.txt"
+    indexed(home)
+    as_it_was = plain.stat().st_mtime_ns
+
+    def vanish(event: Event) -> None:
+        if event == PhaseStarted(Phase.READ, 1):
+            plain.rename(notes / "away")
+
+    write(plain, "changed and then out of reach\n")
+    assert indexed(home, report=vanish).collections[0].outcome == Indexed(3, 0, 0, 0, 1)
+    (notes / "away").unlink()
+    write(plain, "plain text\n")
+    os.utime(plain, ns=(as_it_was, as_it_was))
+    assert outcome(home) == Indexed(files=3, added=0, changed=0, removed=0, unreadable=0)
+    assert titles(home)["plain.txt"] == "plain"
+
+
+@pytest.mark.usefixtures("notes")
+def test_files_are_counted_as_they_are_read_before_their_batch_is_written(home: Path) -> None:
+    held: list[tuple[int, int]] = []
+
+    def count(event: Event) -> None:
+        if isinstance(event, Advanced):
+            held.append((event.done, len(titles(home))))
+
+    index(home, IndexCollections(), count, Limits(most_files_a_write=2))
+    assert held == [(1, 0), (2, 0), (3, 2)]
+
+
+@pytest.mark.usefixtures("notes")
+def test_an_index_interrupted_keeps_the_batches_written_and_goes_on_the_next_time(home: Path) -> None:
+    def interrupt(event: Event) -> None:
+        if event == Advanced(3):
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        index(home, IndexCollections(), interrupt, Limits(most_files_a_write=2))
+    assert len(titles(home)) == 2
+    assert outcome(home) == Indexed(files=3, added=1, changed=0, removed=0, unreadable=0)
+
+
+def test_a_folder_inside_that_is_empty_keeps_its_documents_until_it_is_deleted(home: Path, notes: Path) -> None:
+    indexed(home)
+    (notes / "robots" / "brush.md").unlink()
+    said: list[Event] = []
+    assert indexed(home, report=said.append).collections[0].outcome == Indexed(2, 0, 0, 0, 0)
+    assert Noted(EMPTY_INSIDE.format(folder="robots/", files="1 file"), EMPTY_INSIDE_REMEDY) in said
+    assert "robots/brush.md" in titles(home)
+    (notes / "robots").rmdir()
+    assert outcome(home) == Indexed(files=2, added=0, changed=0, removed=1, unreadable=0)
+
+
+def two_collections(tmp_path: Path, home: Path) -> None:
+    for name in ("a", "b"):
+        write(tmp_path / name / "note.md", f"# {name}\n")
+        add(home, AddCollection(str(tmp_path / name)))
+
+
+def test_a_store_damaged_where_indexing_reads_it_is_skipped_and_the_others_are_indexed(
+    tmp_path: Path, home: Path
+) -> None:
+    two_collections(tmp_path, home)
+    damage_table(home / "collections" / "a.sqlite", "sources")
+    damaged, sound = indexed(home).collections
+    assert isinstance(damaged.outcome, Skipped)
+    assert (damaged.outcome.reason.startswith("the store "), damaged.outcome.remedy) == (True, DAMAGED_REMEDY)
+    assert "is damaged" in damaged.outcome.reason
+    assert sound == CollectionIndexed("b", Indexed(1, 1, 0, 0, 0))
+
+
+def test_a_collection_out_of_reach_is_skipped_and_the_others_are_indexed(tmp_path: Path, home: Path) -> None:
+    two_collections(tmp_path, home)
+
+    def denied_while_scanning(event: Event) -> None:
+        if event == PhaseDone(1) and not seen:
+            seen.append(event)
+            raise PermissionError(13, "Access is denied")
+
+    seen: list[Event] = []
+    out_of_reach, sound = indexed(home, report=denied_while_scanning).collections
+    assert out_of_reach == CollectionIndexed("a", Skipped("it is out of reach (Access is denied)", OUT_OF_REACH_REMEDY))
+    assert sound == CollectionIndexed("b", Indexed(1, 1, 0, 0, 0))
+
+
+def test_indexing_where_there_is_no_catalog_makes_none(home: Path) -> None:
+    assert indexed(home) == IndexResult(())
+    with pytest.raises(NotFoundError, match="no collection is named 'notes'"):
+        indexed(home, "notes")
+    assert not home.exists()
 
 
 def test_a_file_grown_too_large_loses_its_documents(home: Path, notes: Path) -> None:

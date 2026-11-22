@@ -2,7 +2,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from sift.api.events import Noted
-from sift.app.problems import LEFT_AS_INDEXED, counted, problems
+from sift.app.problems import EMPTY_INSIDE_REMEDY, LEFT_AS_INDEXED, counted, problems
 from sift.domain.plan.indexing import Found, Stat, index_plan
 from sift.ingest.scan import Scanned
 
@@ -42,6 +42,16 @@ def test_a_folder_left_empty_keeps_what_it_held_and_says_so() -> None:
         Noted(LEFT_AS_INDEXED.format(files="1 file", folder=Path("/data/notes"))),
     )
     assert LEFT_AS_INDEXED.startswith("none of its {files} is left in {folder}: kept as indexed")
+
+
+def test_a_folder_inside_left_empty_keeps_what_it_held_and_says_how_to_let_it_go() -> None:
+    found = Found({"a.md": A}, empty_folders=("archive/", "new/"))
+    assert said(Scanned(found), {"a.md": A, "archive/b.md": A, "archive/deep/c.md": A}) == (
+        Noted(
+            "archive/ is empty: 2 files once in it kept as indexed, as a drive not mounted looks so",
+            EMPTY_INSIDE_REMEDY,
+        ),
+    )
 
 
 def test_counts_are_written_with_their_noun() -> None:

@@ -18,7 +18,9 @@ from sift.storage.store import (
     delete_store,
     open_store,
     stored_bytes,
+    unavailable_if_damaged,
 )
+from tests.damage import damage_table
 
 COLLECTION = CollectionId(7)
 
@@ -157,6 +159,32 @@ def test_the_bytes_a_store_holds_count_its_log_and_not_its_shared_memory(tmp_pat
         assert shared.is_file()
         assert stored_bytes(path) == path.stat().st_size + log.stat().st_size
     assert stored_bytes(tmp_path / "gone.sqlite") == 0
+
+
+def test_damage_found_after_a_store_opened_is_said_as_that_of_a_store(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    damage_table(path, "sources")
+    with (
+        pytest.raises(StoreUnavailableError, match="damaged") as refused,
+        unavailable_if_damaged(path),
+        opened(path) as connection,
+        reading(connection) as transaction,
+    ):
+        first(transaction, Value, "SELECT max(size) FROM sources")
+    assert refused.value.remedy == DAMAGED_REMEDY
+
+
+def test_an_error_that_is_no_damage_stays_the_error_it_is(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    with (
+        pytest.raises(sqlite3.OperationalError, match="no such table"),
+        unavailable_if_damaged(path),
+        opened(path) as connection,
+        reading(connection) as transaction,
+    ):
+        first(transaction, Value, "SELECT value FROM absent")
 
 
 def test_a_store_of_an_older_layout_is_brought_up_to_this_one_when_opened(tmp_path: Path) -> None:

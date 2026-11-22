@@ -21,8 +21,11 @@ class Fake:
     mode: int = stat.S_IFREG | 0o644
     modified_ns: int = 7
     refusal: OSError | None = None
+    untyped: OSError | None = None
 
     def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+        if self.untyped is not None:
+            raise self.untyped
         return self.folder and (follow_symlinks or not self.symlink)
 
     def is_junction(self) -> bool:
@@ -182,3 +185,49 @@ def test_a_link_to_a_folder_whose_name_begins_as_the_root_s_leads_outside(tmp_pa
     root.mkdir()
     entries = [Fake("a.md", str(sibling), symlink=True)]
     assert scan(root, follow_links=False, listing=listing({str(root): entries})).found.outside == ("a.md",)
+
+
+def test_a_link_whose_file_is_out_of_reach_is_named_not_taken_for_gone(tmp_path: Path) -> None:
+    root, missing = tmp_path / "notes", FileNotFoundError(2, "No such file or directory")
+    root.mkdir()
+    entries = [
+        Fake("inside.md", str(root / "elsewhere.md"), symlink=True, refusal=missing),
+        Fake("outside.md", str(tmp_path / "drive" / "x.md"), symlink=True, refusal=missing),
+        Fake("deleted.md", str(root / "deleted.md"), refusal=missing),
+    ]
+    fake = listing({str(root): entries})
+    left = scan(root, follow_links=False, listing=fake)
+    assert (left.found.unlisted_files, left.found.outside, left.found.files) == (("inside.md",), ("outside.md",), {})
+    assert left.refusals == {"inside.md": "No such file or directory"}
+    assert scan(root, follow_links=True, listing=fake).found.unlisted_files == ("inside.md", "outside.md")
+
+
+def test_an_entry_whose_kind_cannot_be_told_is_named_as_a_file_and_as_a_folder(tmp_path: Path) -> None:
+    entries = [Fake("odd", "odd", untyped=PermissionError(13, "Access is denied")), Fake("ok.md", "ok.md")]
+    scanned = scan(tmp_path, follow_links=False, listing=listing({str(tmp_path): entries}))
+    assert (paths(scanned), scanned.found.unlisted_files, scanned.found.unlisted_folders) == (
+        ["ok.md"],
+        ("odd",),
+        ("odd/",),
+    )
+    assert scanned.refusals == {"odd": "Access is denied", "odd/": "Access is denied"}
+
+
+def test_folders_inside_that_are_there_but_empty_are_named(notes: Path) -> None:
+    for name in ("archive", "robots/none", "denied", "gone"):
+        (notes / name).mkdir()
+    fake = listing(
+        {str(notes / "denied"): PermissionError(13, "Access is denied"), str(notes / "gone"): FileNotFoundError()}
+    )
+    assert sorted(scan(notes, follow_links=False, listing=fake).found.empty_folders) == ["archive/", "robots/none/"]
+
+
+def test_an_empty_root_is_no_empty_folder_inside(tmp_path: Path) -> None:
+    assert scan(tmp_path, follow_links=False).found.empty_folders == ()
+
+
+def test_a_long_scan_says_how_many_files_it_has_found_every_thousand_entries(tmp_path: Path) -> None:
+    entries = [Fake(f"{n}.md" if n % 2 else f"{n}.png", str(n)) for n in range(2500)]
+    said: list[int] = []
+    scan(tmp_path, follow_links=False, listing=listing({str(tmp_path): entries}), progress=said.append)
+    assert said == [500, 1000]

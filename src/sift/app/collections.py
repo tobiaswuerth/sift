@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
 
@@ -14,18 +15,17 @@ from sift.api.collections import (
 )
 from sift.api.errors import StoreUnavailableError
 from sift.storage.catalog import (
-    CATALOG,
     Choices,
     Collection,
     NewCollection,
     add_collection,
-    collection,
-    collections,
+    known_collections,
+    named,
     open_catalog,
 )
 from sift.storage.database import reading
 from sift.storage.documents import counts, unreadable
-from sift.storage.store import open_store, stored_bytes
+from sift.storage.store import open_store, stored_bytes, unavailable_if_damaged
 
 OBSIDIAN = ".obsidian"
 
@@ -48,30 +48,29 @@ def add(home: Path, request: AddCollection) -> CollectionAdded:
     )
 
 
-def _contents(chosen: Collection, *, listed: bool) -> Counted | Unavailable:
+def chosen(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
+    known = known_collections(home)
+    return tuple(dict.fromkeys(named(known, name) for name in names)) if names else known
+
+
+def _contents(one: Collection, *, listed: bool) -> Counted | Unavailable:
     try:
-        connection = open_store(chosen.store, chosen.id)
+        with (
+            unavailable_if_damaged(one.store),
+            closing(open_store(one.store, one.id)) as connection,
+            reading(connection) as transaction,
+        ):
+            kept, failed = counts(transaction), unreadable(transaction)
     except StoreUnavailableError as error:
         return Unavailable(error.message, error.remedy)
-    with closing(connection), reading(connection) as transaction:
-        kept, failed = counts(transaction), unreadable(transaction)
     files = tuple(UnreadableFile(entry.path, entry.problem) for entry in failed) if listed else ()
-    return Counted(kept.documents, kept.chunks, stored_bytes(chosen.store), len(failed), files)
+    return Counted(kept.documents, kept.chunks, stored_bytes(one.store), len(failed), files)
 
 
-def _status(chosen: Collection, *, listed: bool) -> CollectionStatus:
-    return CollectionStatus(chosen.name, str(chosen.folder), str(chosen.store), _contents(chosen, listed=listed))
-
-
-def _chosen(home: Path, names: tuple[str, ...]) -> tuple[Collection, ...]:
-    with closing(open_catalog(home)) as catalog, reading(catalog) as transaction:
-        if not names:
-            return collections(transaction)
-        return tuple(dict.fromkeys(collection(transaction, name) for name in names))
+def _status(one: Collection, *, listed: bool) -> CollectionStatus:
+    return CollectionStatus(one.name, str(one.folder), str(one.store), _contents(one, listed=listed))
 
 
 def status(home: Path, request: ShowStatus) -> Status:
-    if not (home / CATALOG).is_file() and not request.names:
-        return Status(str(home), ())
-    chosen = _chosen(home, request.names)
-    return Status(str(home), tuple(_status(each, listed=request.unreadable) for each in chosen))
+    found = chosen(home, request.names)
+    return Status(str(home), tuple(_status(one, listed=request.unreadable) for one in found))

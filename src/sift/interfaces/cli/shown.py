@@ -6,7 +6,7 @@ from sift.api.errors import SiftError
 from sift.api.indexing import IndexResult
 from sift.interfaces.console.shell import command
 from sift.interfaces.console.style import Style, Tone
-from sift.interfaces.console.text import labelled, table
+from sift.interfaces.console.text import labelled, printable, table
 from sift.interfaces.console.units import size
 
 STATUS_HEADER = ("collection", "folder", "documents", "chunks", "size")
@@ -90,14 +90,14 @@ def indexed(result: IndexResult, platform: str, style: Style) -> Shown:
     return _empty(platform, style) if not result.collections else Shown((), ())
 
 
-def _text(text: str) -> str:
-    return text.removesuffix("\n")
+def _text(text: str) -> tuple[str, ...]:
+    return (text.removesuffix("\n"),) if text else ()
 
 
 def documents(result: Documents, _platform: str, style: Style) -> Shown:
     if len(result.found) == 1 and not result.unfound:
-        return Shown((_text(result.found[0].text),), ())
-    shown = [line for found in result.found for line in (f"==> {found.id} <==", _text(found.text), "")]
+        return Shown(_text(result.found[0].text), ())
+    shown = [line for found in result.found for line in (f"==> {printable(found.id)} <==", *_text(found.text), "")]
     messages = [
         line
         for unfound in result.unfound
@@ -106,7 +106,7 @@ def documents(result: Documents, _platform: str, style: Style) -> Shown:
             *_fix(unfound.remedy, style),
         )
     ]
-    return Shown(tuple(shown[:-1]), tuple(messages), failed=bool(result.unfound))
+    return Shown(tuple(shown[:-1]), tuple(messages))
 
 
 def failure(error: SiftError | OSError, style: Style) -> Shown:

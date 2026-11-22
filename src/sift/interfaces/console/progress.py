@@ -7,7 +7,7 @@ from sift.interfaces.console.style import Style, Tone, paint
 from sift.interfaces.console.text import fitted, printable
 from sift.interfaces.console.units import duration, rate
 
-UNITS = MappingProxyType({Phase.SCAN: "files", Phase.READ: "files"})
+UNITS = MappingProxyType({Phase.SCAN: "file", Phase.READ: "file"})
 INDENT = "  "
 LABEL = 6
 COUNT = 10
@@ -51,12 +51,16 @@ def _label(label: str, tone: Tone | None, style: Style) -> str:
     return INDENT + (paint(label, tone, style) if tone else label) + padding
 
 
+def _counted(phase: Phase, count: int) -> str:
+    unit = UNITS[phase] + ("" if count == 1 else "s")
+    return f"{count:>{COUNT},} {unit:<{UNIT}}"
+
+
 def _row(running: Running, count: int, now: float, style: Style) -> str:
     seconds = now - running.started
     speed = rate(count, seconds) if running.phase is Phase.READ and count else ""
     took = paint(f"{duration(seconds):>{TIME}}", Tone.SECONDARY, style)
-    counted = f"{count:>{COUNT},} {UNITS[running.phase]:<{UNIT}}"
-    return f"{_label(running.phase, None, style)}{counted}{speed:>{SPEED}}{took}"
+    return f"{_label(running.phase, None, style)}{_counted(running.phase, count)}{speed:>{SPEED}}{took}"
 
 
 def _done(finished: Finished, view: View, now: float, looks: Looks) -> tuple[str, ...]:
@@ -113,10 +117,11 @@ def running_line(view: View, now: float, columns: int, style: Style) -> str | No
         return None
     seconds, head = now - running.started, f"{INDENT}{running.phase:<{LABEL}}"
     if running.total is None:
-        return fitted(f"{head}{'':>{COUNT}} {'':<{UNIT}}{'':>{SPEED}}{duration(seconds):>{TIME}}", columns - 1)
+        found = _counted(running.phase, running.done) if running.done else " " * (COUNT + 1 + UNIT)
+        return fitted(f"{head}{found}{'':>{SPEED}}{duration(seconds):>{TIME}}", columns - 1)
     total, done = running.total, running.done
     share = done / total if total else 1.0
     per_second = done / seconds if seconds > 0 else 0.0
     left = f"{duration((total - done) / per_second)} left" if per_second else ""
     progress = f"{_bar(running, total, style)} {share:>4.0%}{rate(done, seconds):>{SPEED}}  {left}"
-    return fitted(f"{head}{done:>{COUNT},} {UNITS[running.phase]:<{UNIT}}{progress}".rstrip(), columns - 1)
+    return fitted(f"{head}{_counted(running.phase, done)}{progress}".rstrip(), columns - 1)

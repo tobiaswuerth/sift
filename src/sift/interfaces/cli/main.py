@@ -13,9 +13,9 @@ from typing import ClassVar, Protocol, TextIO, cast
 
 from sift.api.collections import AddCollection, CollectionAdded, ShowStatus, Status
 from sift.api.documents import Documents, GetDocuments
-from sift.api.errors import SiftError
+from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.events import Reporter
-from sift.api.indexing import IndexCollections, IndexResult
+from sift.api.indexing import IndexCollections, IndexResult, Skipped
 from sift.app import collections, documents, indexing
 from sift.interfaces.cli import shown
 from sift.interfaces.cli.arguments import options, request_of
@@ -29,6 +29,7 @@ from sift.settings import Settings, from_environment, whole_path
 
 DONE, FAILED, USAGE, INTERRUPTED = 0, 1, 2, 130
 DESCRIPTION = "Fast local search over your documents and notes."
+NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,9 +65,8 @@ def command[R, A: Answer](
 ) -> Command:
     def run(namespace: argparse.Namespace, context: Context) -> Shown:
         answer = act(context, request_of(request, namespace))
-        if context.json:
-            return Shown((as_json(answer),), (), failed(answer))
-        return show(answer, context.platform, context.style)
+        found = Shown((as_json(answer),), ()) if context.json else show(answer, context.platform, context.style)
+        return found._replace(failed=failed(answer))
 
     return Command(help_text, request, run)
 
@@ -87,13 +87,21 @@ def _get(context: Context, request: GetDocuments) -> Documents:
     return documents.documents(context.settings.home, request)
 
 
+def _some_skipped(result: IndexResult) -> bool:
+    return any(isinstance(each.outcome, Skipped) for each in result.collections)
+
+
+def _some_unfound(found: Documents) -> bool:
+    return bool(found.unfound)
+
+
 COMMANDS = MappingProxyType(
     {
         "add": command("add a folder as a collection", AddCollection, _add, shown.added),
-        "index": command("read what is new or changed in collections", IndexCollections, _index, shown.indexed),
-        "get": command(
-            "print documents by their ids", GetDocuments, _get, shown.documents, lambda found: bool(found.unfound)
+        "index": command(
+            "read what is new or changed in collections", IndexCollections, _index, shown.indexed, _some_skipped
         ),
+        "get": command("print documents by their ids", GetDocuments, _get, shown.documents, _some_unfound),
         "status": command(
             "show each collection: its folder and what its store holds", ShowStatus, _status, shown.status
         ),
@@ -102,7 +110,17 @@ COMMANDS = MappingProxyType(
 
 
 def _placed(settings: Settings, written: str) -> str:
+    if not written:
+        raise argparse.ArgumentTypeError("an empty path names nothing")
     return str(whole_path(written, settings.user, settings.cwd))
+
+
+def _is_text(argument: str) -> bool:
+    try:
+        argument.encode()
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def parser(settings: Settings) -> argparse.ArgumentParser:
@@ -142,6 +160,8 @@ def _live(err: TextIO | None, settings: Settings, style: Style, platform: str) -
 
 
 def _ran(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO | None, platform: str) -> Shown | int:
+    if (odd := next((argument for argument in argv if not _is_text(argument)), None)) is not None:
+        return shown.failure(InvalidRequestError(f"an argument is no text: {odd!r}", NO_TEXT_REMEDY), PLAIN)
     built = parser(settings)
     namespace = _parsed(built, argv, out, err)
     if isinstance(namespace, int):

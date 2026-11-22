@@ -112,6 +112,7 @@ def test_one_document_is_printed_as_its_text() -> None:
     assert documents(one, "linux", PLAIN) == Shown(("# A\n\ntext",), ())
     unended = Documents((DocumentText("data/r", "R", "a record"),), ())
     assert documents(unended, "linux", PLAIN).results == ("a record",)
+    assert documents(Documents((DocumentText("notes/empty.md", "empty", ""),), ()), "linux", PLAIN).results == ()
 
 
 def test_several_documents_are_headed_by_their_ids_and_those_not_found_said() -> None:
@@ -120,9 +121,18 @@ def test_several_documents_are_headed_by_their_ids_and_those_not_found_said() ->
     assert documents(Documents(found, unfound), "linux", PLAIN) == Shown(
         ("==> notes/a.md <==", "# A", "", "==> notes/b.md <==", "# B"),
         ("error  notes/x.md: unknown document 'notes/x.md'", "  fix  take the id from a search result"),
-        failed=True,
     )
     assert documents(Documents((), unfound), "linux", PLAIN).results == ()
+
+
+def test_an_id_that_would_steer_the_terminal_heads_its_document_as_an_escape() -> None:
+    found = (DocumentText("notes/esc\x1b[2J.md", "x", ""), DocumentText("notes/b.md", "B", "# B\n"))
+    assert documents(Documents(found, ()), "linux", PLAIN).results == (
+        "==> notes/esc\\x1b[2J.md <==",
+        "",
+        "==> notes/b.md <==",
+        "# B",
+    )
 
 
 def test_a_failure_says_what_failed_and_how_to_fix_it() -> None:

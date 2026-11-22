@@ -91,3 +91,15 @@ def test_a_running_line_never_takes_the_last_column(done: int, total: int, secon
     view, _ = replayed(((0.0, PhaseStarted(Phase.READ, total)), (seconds, Advanced(min(done, total)))))
     line = running_line(view, seconds, columns, PLAIN) or ""
     assert width(line) <= max(columns - 1, 0)
+
+
+def test_one_file_is_a_file() -> None:
+    lines = replayed(((0.0, PhaseStarted(Phase.READ, 1)), (0.5, PhaseDone(1))))[1]
+    assert lines == ["  read           1 file        2.0/s     0.5 s"]
+    view, _ = replayed(((0.0, PhaseStarted(Phase.READ, 2)), (0.5, Advanced(1))))
+    assert (running_line(view, 0.5, 100, PLAIN) or "").startswith("  read           1 file    ")
+
+
+def test_a_running_scan_says_how_many_files_it_has_found_so_far() -> None:
+    view, _ = replayed(((0.0, PhaseStarted(Phase.SCAN, None)), (2.0, Advanced(12_431))))
+    assert running_line(view, 2.5, 100, PLAIN) == "  scan      12,431 files                 2.5 s"

@@ -17,6 +17,8 @@ from sift.storage.catalog import (
     add_collection,
     collection,
     collections,
+    known_collections,
+    named,
     open_catalog,
     store_path,
 )
@@ -110,6 +112,17 @@ def test_an_unknown_collection_names_those_there_are(tmp_path: Path, home: Path,
     with pytest.raises(NotFoundError, match="no collection is named 'notes'") as missing, reading(catalog) as tx:
         collection(tx, "notes")
     assert missing.value.remedy == "the collections are: mail, papers"
+
+
+def test_the_collections_of_a_home_are_read_without_making_a_catalog(tmp_path: Path, home: Path) -> None:
+    assert known_collections(home) == ()
+    assert not home.exists()
+    with contextlib.closing(open_catalog(home)) as catalog:
+        added = add_collection(catalog, home, NewCollection(folder(tmp_path, "papers")))
+    assert known_collections(home) == (added,)
+    assert named(known_collections(home), "PAPERS") == added
+    with pytest.raises(NotFoundError, match="no collection is named 'x'"):
+        named((), "x")
 
 
 @pytest.mark.parametrize("name", ["", "has space", "a/b", "semi;colon", "dots..ok?", "-x", ".", "..", ".hidden"])

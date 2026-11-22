@@ -2,6 +2,8 @@ import json
 import os
 import re
 import sqlite3
+from collections.abc import Sequence
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, cast
@@ -101,13 +103,23 @@ def collections(transaction: Reading) -> tuple[Collection, ...]:
     return tuple(sorted(map(_collection, found), key=lambda known: (known.name.casefold(), known.name)))
 
 
-def collection(transaction: Reading, name: str) -> Collection:
-    known = collections(transaction)
+def named(known: Sequence[Collection], name: str) -> Collection:
     if found := next((one for one in known if one.name.casefold() == name.casefold()), None):
         return found
     there = ", ".join(one.name for one in known)
     remedy = f"the collections are: {there}" if there else "add a folder as a collection first"
     raise NotFoundError(f"no collection is named {name!r}", remedy)
+
+
+def collection(transaction: Reading, name: str) -> Collection:
+    return named(collections(transaction), name)
+
+
+def known_collections(home: Path) -> tuple[Collection, ...]:
+    if not (home / CATALOG).is_file():
+        return ()
+    with closing(open_catalog(home)) as connection, reading(connection) as transaction:
+        return collections(transaction)
 
 
 def store_path(home: Path, name: str, given: Path | None) -> Path:

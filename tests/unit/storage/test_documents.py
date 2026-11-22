@@ -14,6 +14,7 @@ from sift.domain.text.links import LinkKind, NameKind
 from sift.domain.text.notes import Document, note
 from sift.storage.database import reading, rows, run, writing
 from sift.storage.documents import (
+    PATHS_NAMED,
     Counts,
     Kept,
     SourceId,
@@ -291,12 +292,29 @@ def test_a_source_s_name_follows_its_path_to_the_end(store: sqlite3.Connection) 
 
 def test_unreadable_files_are_listed_with_their_problem_until_cleared(store: sqlite3.Connection) -> None:
     with writing(store) as transaction:
-        mark_unreadable(transaction, "b.md", "denied")
-        mark_unreadable(transaction, "a.md", "denied")
-        mark_unreadable(transaction, "a.md", "too large")
+        mark_unreadable(transaction, "b.md", "denied", read_again=True)
+        mark_unreadable(transaction, "a.md", "denied", read_again=True)
+        mark_unreadable(transaction, "a.md", "too large", read_again=False)
     with reading(store) as transaction:
-        assert unreadable(transaction) == [Unreadable("a.md", "too large"), Unreadable("b.md", "denied")]
+        assert unreadable(transaction) == [Unreadable("a.md", "too large", 0), Unreadable("b.md", "denied", 1)]
     with writing(store) as transaction:
         clear_unreadable(transaction, ["a.md", "gone.md"])
     with reading(store) as transaction:
-        assert unreadable(transaction) == [Unreadable("b.md", "denied")]
+        assert unreadable(transaction) == [Unreadable("b.md", "denied", 1)]
+
+
+class Step(NamedTuple):
+    id: int
+    parent: int
+    unused: int
+    detail: str
+
+
+def test_a_shortened_id_is_looked_up_by_the_index_of_names_not_by_reading_every_source(
+    store: sqlite3.Connection,
+) -> None:
+    sql = f"EXPLAIN QUERY PLAN {PATHS_NAMED}"
+    with reading(store) as transaction:
+        steps = [step.detail for step in rows(transaction, Step, sql, ("c.md",))]
+    assert steps[0] == "SEARCH s USING INDEX sources_name (name=?)"
+    assert not [step for step in steps if step.startswith("SCAN")]
