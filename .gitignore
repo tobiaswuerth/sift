@@ -7,7 +7,7 @@ dist/
 
 # Environments
 .venv/
-.venv-newest/
+.nox/
 venv/
 .env
 

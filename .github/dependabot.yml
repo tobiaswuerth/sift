@@ -10,7 +10,7 @@ updates:
       actions:
         patterns: ["*"]
 
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: /
     cooldown:  # a release a week old: one found malicious is usually pulled within days
       default-days: 7

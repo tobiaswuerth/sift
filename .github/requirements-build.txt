@@ -1,5 +1,21 @@
-# The build backend the release builds sift's package with, and CI's package job, by hash (uv build
-# --build-constraints ... --require-hashes): what PyPI gets is built by exactly this code. Dependabot keeps it current.
-setuptools==84.2.1 \
-    --hash=sha256:3ff8b3b5492a0aa66960f4419365a86b84e013070d4313e4d4a6894f5d64d6bc \
-    --hash=sha256:ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2
+# uv build --build-constraints .github/requirements-build.txt --require-hashes
+uv-build==0.13.9 \
+    --hash=sha256:01683b385c93ba6e28b14f61d87e4bffa1d7ef5ecd0312e328e0a365452bcb45 \
+    --hash=sha256:0ce2a9a2c3c52ff32cb785a0e900f0ca21cf4e59854cecda0ca215b5b7426826 \
+    --hash=sha256:16f37ec3b676c74bf150cb802f0a1e95a7869044b99634905339cd0f61ed1d82 \
+    --hash=sha256:3ae0466d17e38b82ed52d5201b5f265bbd782403b2e5a62cff244072af61a9fd \
+    --hash=sha256:3ba133159f9308616319ca44f22edddb7d159ded1829c4ff2c766811c53cbebf \
+    --hash=sha256:47a889dc1e612edfb8806dd23b4633ec6ce8a359501203d6ea10c7e7498b7ded \
+    --hash=sha256:4ec67cf0c9da70b38360e059c4c56798e971607d0a5cbcc48a991094ba041d70 \
+    --hash=sha256:54210df08180d2e55222ff390cf53ac5ed5902f166decff210cc32955d0317fd \
+    --hash=sha256:56fce70783044968debb3277cb75e7bcdf0e5fc899bbfa5660f15ae338c11830 \
+    --hash=sha256:60033183881cf673eec15d0cf870e84badc9b8e4b1e35c8a136b4ff169009d29 \
+    --hash=sha256:6a9415e1f0bc26198e8674a77ac19d70b84a682e89041a13b4dad14577c3be88 \
+    --hash=sha256:8302eb4238e4f2cfdf06853ed52fce88fd47e0cf4d336032defbd89de4245a27 \
+    --hash=sha256:9f401432ffff229002f24afcb57c3acb8e0a76680c5ce688f37889e8553512c9 \
+    --hash=sha256:ba65d21d9d324a115bbd9e9f2ad715c0f1b68a3b0aa6fe2bde807f5f62bec90f \
+    --hash=sha256:c5af769bfd16f8be767d00f2c0a523f1097ae2465a1c7ea69b2d781b3cb34d4d \
+    --hash=sha256:cac1f481b2329b68a392cc10c136986338add8a98d26fe73056b0a8ee8f6f46d \
+    --hash=sha256:cb4356558f1e44e52897695b9a9e3506b73ad5f59cbe93a4ff1dd9a740fae04c \
+    --hash=sha256:d703d3372401274bff3f99cc2014de997a915b2256a509294f75cd67c511809e \
+    --hash=sha256:f45dbacbb8dd9e38bdd3b1d8d49d41c03beaf4b48cfa83474498dcc1af3e7c0b

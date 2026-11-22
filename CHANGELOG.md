@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- sift needs Python 3.12 or newer.
+
 ## [1.15.2] - 2026-11-22
 
 The lowest cryptography sift installs with is 50. Nothing else changes, and nothing needs doing after the update.

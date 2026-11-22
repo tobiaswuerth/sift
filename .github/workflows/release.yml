@@ -1,11 +1,11 @@
 name: Release
 
-# Runs when CI has passed on a commit of main. When that commit's sift/__init__.py names a version without a tag, it
+# Runs when CI has passed on a commit of main. When that commit's pyproject.toml names a version without a tag, it
 # publishes that version to PyPI and makes a GitHub release, tagging that commit. See "Releasing" in docs/CONTRIBUTING.md.
 on:
   # zizmor warns of this trigger wherever it stands: it runs with this repository's rights for any run of CI, a
   # fork's pull request too. The `check` job's conditions keep it to main's own, which a test holds
-  # (tests/test_package.py), and nothing that run made is used but its commit.
+  # (tests/repository/test_release.py), and nothing that run made is used but its commit.
   workflow_run:  # zizmor: ignore[dangerous-triggers]
     workflows: [CI]
     types: [completed]
@@ -38,7 +38,7 @@ jobs:
       - name: Is this version released yet?
         id: version
         run: |
-          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' sift/__init__.py)
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           status=0  # git ls-remote --exit-code: 0 the tag is there, 2 it isn't; anything else, it couldn't tell
           git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null || status=$?

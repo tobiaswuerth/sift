@@ -5,5 +5,5 @@
 ## Checklist
 
 - [ ] Tests were written first, and bug fixes come with a regression test
-- [ ] `python scripts/gate.py` is green
+- [ ] `uv run --only-group gate nox` is green
 - [ ] User-visible changes are noted under "Unreleased" in `CHANGELOG.md`

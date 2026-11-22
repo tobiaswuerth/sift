@@ -1,4 +1,0 @@
-include CHANGELOG.md
-# setuptools adds tests/test*.py by default: the tests read docs/, scripts/ and the workflows, and stay with them
-prune tests
-global-exclude __pycache__ *.py[cod]

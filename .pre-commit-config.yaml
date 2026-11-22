@@ -1,6 +1,3 @@
-# Test fixtures, which the tests read as they are, and htmx, kept as its release ships it.
-exclude: ^(tests/samples/(sample|blank)\.|sift/web/static/htmx\.min\.js$)
-
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -16,11 +13,38 @@ repos:
       - id: fix-byte-order-marker  # Windows PowerShell 5.1 writes UTF-8 with one
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.5
+    rev: v0.17.6
     hooks:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: prose
+        name: no comments or docstrings
+        entry: python -m tools prose
+        language: python
+        pass_filenames: false
+        always_run: true
+      - id: shape
+        name: module and class size, immutable module values, value types in the core
+        entry: python -m tools shape
+        language: python
+        pass_filenames: false
+        always_run: true
+      - id: idioms
+        name: banned idioms
+        entry: python -m tools idioms
+        language: python
+        pass_filenames: false
+        always_run: true
+      - id: text
+        name: no machine named, prose wrapped
+        entry: python -m tools text
+        language: python
+        pass_filenames: false
+        always_run: true
 
   - repo: https://github.com/abravalheri/validate-pyproject
     rev: '0.26'
