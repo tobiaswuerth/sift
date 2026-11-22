@@ -5,7 +5,7 @@ from typing import NamedTuple
 import numpy as np
 
 from sift.domain.arrays import Ids, ascending, distinct, floats, ints
-from sift.domain.codec.codes import Bits, Floats, Words, bit_scores, code_of, distances, words
+from sift.domain.codec.codes import Bits, Floats, Words, bit_scores, code_bytes, code_of, distances, words
 from sift.storage.vectors import Halves
 
 RESCORE = 1000
@@ -35,6 +35,8 @@ class Candidates:
 
 
 def coded(ids: Ids, bits: Bits, width: int) -> Coded:
+    if bits.shape != (len(ids), code_bytes(width)):
+        raise ValueError(f"codes of {width:,} dimensions are {code_bytes(width)} bytes each, one a chunk: code them so")
     return Coded(ids, bits, words(bits), width)
 
 
@@ -75,6 +77,8 @@ def _refuse(held: Sequence[Coded], query: Floats, k: int) -> None:
 
 def nearest(held: Sequence[Coded], query: Floats, k: int, exact: Exact, rescore: int = RESCORE) -> tuple[Near, ...]:
     _refuse(held, query, k)
+    if not k:
+        return ()
     want = max(rescore, k)
     chosen = _by_bits(held, query, _shortlist(held, query, SHORTLIST * want), want)
     found: list[Ids] = [np.zeros(0, np.int64)]

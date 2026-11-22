@@ -165,3 +165,19 @@ def test_codes_alike_are_shortlisted_by_id() -> None:
     found = nearest([coded(ids, codes(halves.astype(np.float32)), 24)], query, 3, reader(exact), rescore=1)
     assert list(found) == staged(exact, query, 3, 1)
     assert {near.chunk for near in found} <= set(ints(ids[:3]))
+
+
+def test_codes_not_of_their_width_are_refused() -> None:
+    with pytest.raises(ValueError, match="codes of 64 dimensions are 8 bytes each"):
+        coded(np.arange(2, dtype=np.int64), codes(np.ones((2, 128), np.float32)), 64)
+    with pytest.raises(ValueError, match="one a chunk"):
+        coded(np.arange(3, dtype=np.int64), codes(np.ones((2, 64), np.float32)), 64)
+
+
+def test_none_asked_for_reads_nothing() -> None:
+    held, _ = stores(3, [10], 24)
+
+    def refused(store: int, chunks: Ids) -> tuple[Ids, Halves]:
+        raise AssertionError((store, chunks))
+
+    assert nearest(held, np.ones(24, np.float32), 0, refused) == ()

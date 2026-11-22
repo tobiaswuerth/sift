@@ -5,7 +5,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sift.api.errors import StoreUnavailableError
-from sift.domain.arrays import Ids, among, ascending, ints
+from sift.domain.arrays import Ids, among, ascending, distinct, ints
 from sift.domain.codec.codes import MOST_BITS, Bits, code_bytes, codes, width_of
 from sift.domain.errors import DamagedError
 from sift.storage.database import Reading, Writing, batches, first, rows, run, run_each
@@ -20,6 +20,7 @@ PENDING = """SELECT c.id, c.document, c.start, c.length,
              ORDER BY c.id LIMIT ?"""
 TEXTS = "SELECT id, title, text FROM documents WHERE id IN (SELECT value FROM json_each(?))"
 CODES = "SELECT chunk, bits FROM codes ORDER BY chunk"
+HELD_META = "SELECT value FROM meta WHERE key = ? AND (SELECT vectors FROM counts) > 0"
 READ = 65_536
 MATRIX = 2
 EMBED_REMEDY = "run sift embed --reset to embed every collection with {model}"
@@ -75,7 +76,7 @@ class Chunk(NamedTuple):
 
 
 def _meta(transaction: Reading, key: str) -> str | None:
-    found = first(transaction, Value, "SELECT value FROM meta WHERE key = ?", (key,))
+    found = first(transaction, Value, HELD_META, (key,))
     return None if found is None else found.value
 
 
@@ -120,6 +121,8 @@ def _checked(chunks: Ids, matrix: Halves) -> None:
         raise ValueError(f"{len(chunks):,} chunks were given {len(matrix):,} vectors: give one vector a chunk")
     if not 0 < width_of(matrix) <= MOST_BITS:
         raise ValueError(f"vectors of {width_of(matrix):,} dimensions cannot be coded: from 1 to {MOST_BITS:,} can")
+    if len(distinct(ascending(chunks)).values) != len(chunks):
+        raise ValueError("a chunk was given more than one vector: give each one")
 
 
 def _refuse_another(transaction: Writing, model: str, width: int) -> None:

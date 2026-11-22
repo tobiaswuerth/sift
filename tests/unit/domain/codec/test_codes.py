@@ -53,7 +53,7 @@ def test_distances_are_scanned_in_blocks_without_a_copy_of_the_codes() -> None:
     held = words(rng.integers(0, 256, size=(400_000, 16), dtype=np.uint8))
     query = words(rng.integers(0, 256, size=(1, 16), dtype=np.uint8)).reshape(-1)
     tracemalloc.start()
-    found = distances(held, query)
+    found = distances(held, query, scanned=1 << 20)
     peak = tracemalloc.get_traced_memory()[1]
     tracemalloc.stop()
     assert ints(found) == ints(np.bitwise_count(held ^ query).sum(axis=1))

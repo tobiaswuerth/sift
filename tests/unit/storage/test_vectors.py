@@ -226,3 +226,46 @@ def test_a_store_given_only_broken_vectors_holds_no_model() -> None:
             )
         with reading(connection) as transaction:
             assert (model_of(transaction), width_held(transaction)) == (None, None)
+
+
+class Cut(NamedTuple):
+    text: str
+
+
+CUT = """SELECT substr(d.text, c.start + 1, c.length)
+         FROM chunks c JOIN documents d ON d.id = c.document ORDER BY c.id"""
+
+
+def test_pending_chunks_hold_their_text_cut_by_characters() -> None:
+    notes: Round = {"a.md": ("", "Alpha", "thrée 😀 x " * 3000), "b.md": ("", "Beta", "🎉 two")}
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [notes])
+        with reading(connection) as transaction:
+            cut = rows(transaction, Cut, CUT)
+            waiting = pending(transaction, 0, 1000)
+        assert len(waiting) > 2
+        assert [row.text for row in waiting] == [row.text for row in cut]
+
+
+def test_a_store_whose_vectors_all_went_with_their_documents_takes_another_model() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [NOTES])
+        ids = chunk_ids(connection)
+        with writing(connection) as transaction:
+            put_vectors(transaction, ids, vectors(len(ids)), "model-a")
+        applied(connection, [{"a.md": None, "b.md": None}, {"c.md": ("", "Gamma", "four")}])
+        with reading(connection) as transaction:
+            assert (model_of(transaction), width_held(transaction)) == (None, None)
+        ids = chunk_ids(connection)
+        with writing(connection) as transaction:
+            assert put_vectors(transaction, ids, vectors(len(ids), 32), "model-b").stored == len(ids)
+        with reading(connection) as transaction:
+            assert (model_of(transaction), width_held(transaction)) == ("model-b", 32)
+
+
+def test_a_chunk_given_two_vectors_is_refused() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [NOTES])
+        ids = chunk_ids(connection)
+        with writing(connection) as transaction, pytest.raises(ValueError, match="more than one vector"):
+            put_vectors(transaction, np.append(ids, ids[:1]), vectors(len(ids) + 1), "m")

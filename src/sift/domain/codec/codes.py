@@ -10,7 +10,7 @@ type Distances = NDArray[np.uint16]
 
 WORD_BYTES = 8
 MOST_BITS = int(np.iinfo(np.uint16).max)
-SCANNED = 65_536
+SCANNED = 8 << 20
 BYTE_BITS = np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).astype(np.float32)
 
 
@@ -36,12 +36,11 @@ def code_of(query: Floats) -> Words:
     return words(codes(query.reshape(1, -1))).reshape(-1)
 
 
-def distances(held: Words, query: Words) -> Distances:
+def distances(held: Words, query: Words, scanned: int = SCANNED) -> Distances:
     found = np.empty(len(held), np.uint16)
-    for start in range(0, len(held), SCANNED):
-        found[start : start + SCANNED] = np.bitwise_count(held[start : start + SCANNED] ^ query).sum(
-            axis=1, dtype=np.uint16
-        )
+    step = max(1, scanned // (WORD_BYTES * max(1, len(query))))
+    for start in range(0, len(held), step):
+        found[start : start + step] = np.bitwise_count(held[start : start + step] ^ query).sum(axis=1, dtype=np.uint16)
     return found
 
 
