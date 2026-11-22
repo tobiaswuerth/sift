@@ -1,17 +1,21 @@
+import textwrap
 from typing import NamedTuple
 
 from sift.api.collections import CollectionAdded, CollectionStatus, Counted, Status, TitleFrom
 from sift.api.documents import Documents
 from sift.api.errors import SiftError
 from sift.api.indexing import IndexResult
+from sift.api.search import Hit, SearchResult
+from sift.interfaces.console.progress import DOT
 from sift.interfaces.console.shell import command
 from sift.interfaces.console.style import Style, Tone
-from sift.interfaces.console.text import labelled, printable, table
-from sift.interfaces.console.units import size
+from sift.interfaces.console.text import GAP, labelled, printable, table
+from sift.interfaces.console.units import duration, size
 
 STATUS_HEADER = ("collection", "folder", "documents", "chunks", "size")
 UNREADABLE_HEADER = ("collection", "file", "problem")
 NONE = "-"
+SNIPPET_CHARACTERS = 200
 
 
 class Shown(NamedTuple):
@@ -107,6 +111,41 @@ def documents(result: Documents, _platform: str, style: Style) -> Shown:
         )
     ]
     return Shown(tuple(shown[:-1]), tuple(messages))
+
+
+def _passage(text: str) -> str:
+    return printable(textwrap.shorten(" ".join(text.split()), SNIPPET_CHARACTERS, placeholder=" ..."))
+
+
+def _hit(rank: int, hit: Hit, ranks: int, scores: int) -> tuple[str, ...]:
+    indent = " " * (ranks + scores + 2 * len(GAP))
+    head = f"{rank:>{ranks}}{GAP}{hit.score:>{scores}.2f}{GAP}{printable(hit.title)}"
+    text = (f"{indent}{_passage(hit.text)}",) if hit.text else ()
+    return (head, f"{indent}{printable(hit.id)}:{hit.lines}", *text)
+
+
+def _footer(result: SearchResult, seconds: float, style: Style) -> str:
+    found = f"{len(result.hits):,} result{'s' * (len(result.hits) != 1)}" if result.hits else "no matches"
+    searched = f"{result.collections} collection{'s' * (result.collections != 1)}"
+    separator = f"{GAP}{DOT[0] if style.unicode else DOT[1]}{GAP}"
+    return separator.join((found, "keyword", searched, duration(seconds)))
+
+
+def hits(result: SearchResult, seconds: float, platform: str, style: Style) -> Shown:
+    if not result.collections:
+        return _empty(platform, style)
+    ranks = len(str(len(result.hits)))
+    scores = max((len(f"{hit.score:.2f}") for hit in result.hits), default=0)
+    lines = [line for rank, hit in enumerate(result.hits, 1) for line in _hit(rank, hit, ranks, scores)]
+    problems = [
+        line
+        for each in result.unsearched
+        for line in (
+            labelled("error", f"{each.collection}: {each.message}", Tone.ERROR, style),
+            *_fix(each.remedy, style),
+        )
+    ]
+    return Shown(tuple(lines), (*problems, _footer(result, seconds, style)), failed=bool(result.unsearched))
 
 
 def failure(error: SiftError | OSError, style: Style) -> Shown:

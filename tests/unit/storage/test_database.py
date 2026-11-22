@@ -20,6 +20,7 @@ from sift.storage.database import (
     uri,
     writing,
 )
+from tests.damage import damage_table
 
 
 class Setting(NamedTuple):
@@ -162,6 +163,25 @@ def test_an_error_while_reading_is_not_hidden_by_the_end_of_the_reading(tmp_path
     with database(tmp_path / "a.sqlite") as connection:
         with pytest.raises(KeyError):
             fail_reading_after_sqlite_ended_the_transaction(connection)
+        assert not connection.in_transaction
+
+
+def read_damaged(connection: sqlite3.Connection) -> None:
+    with reading(connection) as transaction:
+        try:
+            rows(transaction, Item, "SELECT id, name FROM items")
+        except sqlite3.DatabaseError as error:
+            raise KeyError(str(error)) from error
+
+
+def test_a_reading_that_failed_ends_without_a_second_error(tmp_path: Path) -> None:
+    path = tmp_path / "a.sqlite"
+    with database(path) as connection, writing(connection) as transaction:
+        run_each(transaction, "INSERT INTO items(name) VALUES (?)", [(str(n),) for n in range(500)])
+    damage_table(path, "items")
+    with contextlib.closing(connect(path, create=False)) as connection:
+        with pytest.raises(KeyError, match="malformed"):
+            read_damaged(connection)
         assert not connection.in_transaction
 
 

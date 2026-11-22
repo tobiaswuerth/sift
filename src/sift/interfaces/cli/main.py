@@ -16,7 +16,8 @@ from sift.api.documents import Documents, GetDocuments
 from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.events import Reporter
 from sift.api.indexing import IndexCollections, IndexResult, Skipped
-from sift.app import collections, documents, indexing
+from sift.api.search import SearchKeywords
+from sift.app import collections, documents, indexing, search
 from sift.interfaces.cli import shown
 from sift.interfaces.cli.arguments import options, request_of
 from sift.interfaces.cli.shown import Shown
@@ -39,6 +40,7 @@ class Context:
     json: bool
     style: Style
     report: Reporter
+    clock: Callable[[], float] = time.perf_counter
 
 
 class Answer(Protocol):
@@ -87,6 +89,14 @@ def _get(context: Context, request: GetDocuments) -> Documents:
     return documents.documents(context.settings.home, request)
 
 
+def _search(namespace: argparse.Namespace, context: Context) -> Shown:
+    started = context.clock()
+    answer = search.search(context.settings.home, request_of(SearchKeywords, namespace))
+    if context.json:
+        return Shown((as_json(answer),), (), failed=bool(answer.unsearched))
+    return shown.hits(answer, context.clock() - started, context.platform, context.style)
+
+
 def _some_skipped(result: IndexResult) -> bool:
     return any(isinstance(each.outcome, Skipped) for each in result.collections)
 
@@ -101,6 +111,7 @@ COMMANDS = MappingProxyType(
         "index": command(
             "read what is new or changed in collections", IndexCollections, _index, shown.indexed, _some_skipped
         ),
+        "search": Command("find passages by their words, ranked by BM25", SearchKeywords, _search),
         "get": command("print documents by their ids", GetDocuments, _get, shown.documents, _some_unfound),
         "status": command(
             "show each collection: its folder and what its store holds", ShowStatus, _status, shown.status
@@ -156,10 +167,23 @@ def _style(err: TextIO | None, settings: Settings, choice: Colour) -> Style:
 def _live(err: TextIO | None, settings: Settings, style: Style, platform: str) -> Live:
     redraw = is_terminal(err) and not settings.dumb
     width = partial(columns, err) if err is not None else lambda: 0
-    return Live(err, Looks(style, platform), redraw=redraw, columns=width, clock=time.monotonic)
+    return Live(err, Looks(style, platform), redraw=redraw, columns=width, clock=time.perf_counter)
 
 
-def _ran(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO | None, platform: str) -> Shown | int:
+@dataclass(frozen=True, slots=True)
+class Host:
+    platform: str = sys.platform
+    clock: Callable[[], float] = time.perf_counter
+
+
+HOST = Host()
+
+
+def _ran(
+    argv: Sequence[str], settings: Settings, streams: tuple[TextIO | None, TextIO | None], host: Host
+) -> Shown | int:
+    out, err = streams
+    platform = host.platform
     if (odd := next((argument for argument in argv if not _is_text(argument)), None)) is not None:
         return shown.failure(InvalidRequestError(f"an argument is no text: {odd!r}", NO_TEXT_REMEDY), PLAIN)
     built = parser(settings)
@@ -173,20 +197,19 @@ def _ran(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextI
     style = _style(err, settings, Colour(str(given["color"])))
     live = _live(err, settings, style, platform)
     try:
-        return COMMANDS[chosen].run(namespace, Context(settings, platform, given["json"] is True, style, live))
+        context = Context(settings, platform, given["json"] is True, style, live, host.clock)
+        return COMMANDS[chosen].run(namespace, context)
     except (SiftError, OSError) as error:
         return shown.failure(error, style)
     finally:
         live.close()
 
 
-def run(
-    argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO | None, platform: str = sys.platform
-) -> int:
+def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO | None, host: Host = HOST) -> int:
     for stream in (out, err):
         utf8(stream)
     try:
-        found = _ran(argv, settings, out, err, platform)
+        found = _ran(argv, settings, (out, err), host)
         if isinstance(found, int):
             return found
         write_results(out, found.results)

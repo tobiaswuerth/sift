@@ -1,7 +1,12 @@
+import re
 from collections.abc import Iterator
 from types import MappingProxyType
 
 from sift.domain.text.fts5_table import FOLDS, SEPARATORS
+
+ASCII_END = 0x80
+BYTES = 0x100
+OUTSIDE_ASCII = re.compile(r"[^\x00-\x7f]+")
 
 
 def _points(span: str) -> range:
@@ -23,5 +28,21 @@ def _translation() -> MappingProxyType[int, str]:
 TRANSLATION = _translation()
 
 
+def _ascii_bytes() -> tuple[bytes, bytes]:
+    kept = [TRANSLATION.get(point, chr(point)) for point in range(ASCII_END)]
+    table = bytes(ord(each) if each else point for point, each in enumerate(kept)) + bytes(range(ASCII_END, BYTES))
+    return table, bytes(point for point, each in enumerate(kept) if not each)
+
+
+ASCII_TABLE, ASCII_DROPPED = _ascii_bytes()
+
+
+def _outside_ascii(found: re.Match[str]) -> str:
+    return found.group().translate(TRANSLATION)
+
+
 def tokens(text: str) -> list[str]:
-    return text.translate(TRANSLATION).split()
+    narrow = text.encode("utf-8", "surrogatepass").translate(ASCII_TABLE, ASCII_DROPPED)
+    if text.isascii():
+        return narrow.decode("ascii").split()
+    return OUTSIDE_ASCII.sub(_outside_ascii, narrow.decode("utf-8", "surrogatepass")).split()

@@ -6,9 +6,11 @@ from dataclasses import dataclass
 from enum import Enum, StrEnum
 from typing import Annotated, cast, get_args, get_origin, get_type_hints
 
-from sift.api.described import Help, Place
+from sift.api.described import Help, Place, Short
 
 type Placed = Callable[[str], str]
+
+PLAIN_KINDS = (str, int)
 
 
 class How(Enum):
@@ -26,18 +28,29 @@ class Argument:
     help: str
     place: bool
     how: How
+    short: str | None = None
+    default: object = None
+
+
+@dataclass(frozen=True, slots=True)
+class Described:
+    kind: object
+    help: Help
+    place: bool
+    short: str | None
 
 
 def _refused(request: type[object], name: str, problem: str) -> TypeError:
     return TypeError(f"{request.__name__}.{name}: {problem}")
 
 
-def _described(request: type[object], name: str, hint: object) -> tuple[object, Help, bool]:
+def _described(request: type[object], name: str, hint: object) -> Described:
     kind, *metadata = cast("tuple[object, ...]", get_args(hint)) if get_origin(hint) is Annotated else (hint,)
     found = [part for part in metadata if isinstance(part, Help)]
     if not found:
         raise _refused(request, name, "no Help")
-    return kind, found[0], any(isinstance(part, Place) for part in metadata)
+    short = next((part.flag for part in metadata if isinstance(part, Short)), None)
+    return Described(kind, found[0], any(isinstance(part, Place) for part in metadata), short)
 
 
 def _left_out(kind: object) -> object | None:
@@ -74,19 +87,20 @@ def _how(request: type[object], name: str, kind: object, default: object) -> How
         if default is not None:
             raise _refused(request, name, "an option that may be left out has no default but None")
         return How.OPTION
-    if not absent:
-        raise _refused(request, name, "an argument given by its place has no default")
-    return How.POSITION
+    return How.POSITION if absent else How.OPTION
 
 
 def _argument(request: type[object], field: dataclasses.Field[object], hint: object) -> Argument:
-    kind, described, place = _described(request, field.name, hint)
-    default: object = field.default
+    described = _described(request, field.name, hint)
+    kind, default = described.kind, field.default
     how = _how(request, field.name, kind, default)
-    taken = _left_out(kind) if how is How.OPTION else str if how in (How.ANY, How.SOME) else kind
-    if how is not How.SWITCH and taken is not str and _choices(taken) is None:
+    taken = _left_out(kind) or kind if how is How.OPTION else str if how in (How.ANY, How.SOME) else kind
+    if how is not How.SWITCH and taken not in PLAIN_KINDS and _choices(taken) is None:
         raise _refused(request, field.name, f"the command line takes no {_named(kind)}")
-    return Argument(field.name, taken, described.text, place, how)
+    if described.short is not None and how is not How.OPTION:
+        raise _refused(request, field.name, "only an option given by name has a short flag")
+    given = None if default is dataclasses.MISSING else default
+    return Argument(field.name, taken, described.help.text, described.place, how, described.short, given)
 
 
 def arguments(request: type[object]) -> tuple[Argument, ...]:
@@ -96,18 +110,35 @@ def arguments(request: type[object]) -> tuple[Argument, ...]:
     return tuple(_argument(request, field, hints[field.name]) for field in dataclasses.fields(request))
 
 
+def _converter(argument: Argument, place: Placed) -> Callable[[str], object]:
+    if argument.place:
+        return place
+    return int if argument.kind is int else str
+
+
 def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placed) -> None:
-    named = f"--{argument.name.replace('_', '-')}" if argument.how in (How.OPTION, How.SWITCH) else argument.name
+    long = f"--{argument.name.replace('_', '-')}"
+    named = [long] if argument.short is None else [argument.short, long]
     choices = _choices(argument.kind)
     if argument.how is How.SWITCH:
-        parser.add_argument(named, action="store_true", help=argument.help)
+        parser.add_argument(long, action="store_true", help=argument.help)
     elif argument.how in (How.ANY, How.SOME):
-        convert = place if argument.place else str
-        parser.add_argument(named, nargs=argument.how.value, type=convert, help=argument.help)
+        parser.add_argument(
+            argument.name, nargs=argument.how.value, type=_converter(argument, place), help=argument.help
+        )
     elif choices is not None:
-        parser.add_argument(named, choices=[str(member) for member in choices], help=argument.help)
+        offered = [str(member) for member in choices]
+        if argument.how is How.OPTION:
+            parser.add_argument(
+                *named, dest=argument.name, choices=offered, default=argument.default, help=argument.help
+            )
+        else:
+            parser.add_argument(argument.name, choices=offered, help=argument.help)
+    elif argument.how is How.OPTION:
+        converted = _converter(argument, place)
+        parser.add_argument(*named, dest=argument.name, type=converted, default=argument.default, help=argument.help)
     else:
-        parser.add_argument(named, type=place if argument.place else str, help=argument.help)
+        parser.add_argument(argument.name, type=_converter(argument, place), help=argument.help)
 
 
 def options(parser: argparse.ArgumentParser, request: type[object], place: Placed) -> None:

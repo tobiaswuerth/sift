@@ -9,3 +9,8 @@ class Help:
 @dataclass(frozen=True, slots=True)
 class Place:
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class Short:
+    flag: str

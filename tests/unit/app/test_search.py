@@ -1,0 +1,175 @@
+import dataclasses
+from pathlib import Path
+
+import pytest
+
+from sift.api.collections import AddCollection
+from sift.api.documents import GetDocuments
+from sift.api.errors import InvalidRequestError, NotFoundError
+from sift.api.indexing import IndexCollections
+from sift.api.search import Hit, SearchKeywords, SearchResult, Unsearched
+from sift.app.collections import add
+from sift.app.documents import documents
+from sift.app.indexing import index
+from sift.app.search import search
+from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY
+from tests.damage import damage_table
+
+LONG = "\n\n".join(["Pruning skips what cannot win. " * 20] * 8)
+
+
+def write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def indexed(home: Path) -> None:
+    index(home, IndexCollections(), lambda _: None)
+
+
+@pytest.fixture
+def notes(tmp_path: Path) -> Path:
+    root = tmp_path / "notes"
+    write(root / "pruning.md", f"# Block-Max Pruning\n\nRanges are scored best bound first.\n\n## More\n\n{LONG}\n")
+    write(root / "halo.md", "---\ntags: [quantum, cosmology]\n---\n# Halo\n\nDark matter halo models.\n")
+    write(root / "matter.md", "# Matter\n\nDark matter, and matter again.\n")
+    for n in range(8):
+        write(root / f"filler{n}.md", f"# Filler {n}\n\nNothing to see here, note {n}.\n")
+    return root
+
+
+@pytest.fixture
+def home(tmp_path: Path, notes: Path) -> Path:
+    home = tmp_path / "home"
+    add(home, AddCollection(str(notes)))
+    indexed(home)
+    return home
+
+
+def ids(home: Path, request: SearchKeywords) -> list[str]:
+    return [hit.id for hit in search(home, request).hits]
+
+
+def test_a_search_finds_each_document_by_its_best_passage_with_where_it_is(home: Path) -> None:
+    result = search(home, SearchKeywords("halo"))
+    assert result == SearchResult(
+        (Hit("notes/halo.md", "Halo", "4-6", result.hits[0].score, "# Halo\n\nDark matter halo models."),), 1, ()
+    )
+    assert result.hits[0].score > 0
+
+
+def test_the_lines_of_a_hit_are_its_passage(home: Path) -> None:
+    (hit,) = search(home, SearchKeywords('"block max"')).hits
+    (shown,) = documents(home, GetDocuments((hit.id,), hit.lines)).found
+    assert hit.text is not None
+    assert shown.text.strip() == hit.text.strip()
+
+
+def test_documents_are_ranked_by_bm25_ties_by_their_order(home: Path) -> None:
+    assert ids(home, SearchKeywords("matter")) == ["notes/matter.md", "notes/halo.md"]
+    assert ids(home, SearchKeywords("matter", k=1)) == ["notes/matter.md"]
+
+
+def test_every_passage_of_a_document_is_found_when_asked(home: Path) -> None:
+    assert ids(home, SearchKeywords("pruning")) == ["notes/pruning.md"]
+    assert len(ids(home, SearchKeywords("pruning", all_passages=True))) > 1
+
+
+def test_compact_hits_leave_their_text_out(home: Path) -> None:
+    (hit,) = search(home, SearchKeywords("halo", compact=True)).hits
+    assert hit.text is None
+    assert hit.lines == "4-6"
+
+
+def test_front_matter_values_are_searched_but_the_title_field_counts_as_the_title(home: Path, notes: Path) -> None:
+    assert ids(home, SearchKeywords("quantum")) == ["notes/halo.md"]
+    write(notes / "halo.md", "---\ntags: [classical]\n---\n# Halo\n\nDark matter halo models.\n")
+    indexed(home)
+    assert ids(home, SearchKeywords("quantum")) == []
+    assert ids(home, SearchKeywords("classical")) == ["notes/halo.md"]
+
+
+def test_words_no_passage_holds_together_find_passages_with_any_of_them(home: Path) -> None:
+    assert sorted(ids(home, SearchKeywords("cosmology pruning"))) == ["notes/halo.md", "notes/pruning.md"]
+    assert ids(home, SearchKeywords("cosmology AND pruning")) == []
+    assert ids(home, SearchKeywords("zzz")) == []
+
+
+@pytest.mark.parametrize("query", ["", "   ", "\N{EN DASH}"])
+def test_a_query_of_no_word_finds_nothing(home: Path, query: str) -> None:
+    assert search(home, SearchKeywords(query)).hits == ()
+
+
+def test_a_nul_parts_words(home: Path) -> None:
+    assert ids(home, SearchKeywords("dark\N{NULL}halo")) == ["notes/halo.md"]
+
+
+def test_a_query_outside_the_grammar_says_how_to_write_one(home: Path) -> None:
+    with pytest.raises(InvalidRequestError, match="a quote is not closed"):
+        search(home, SearchKeywords('halo "dark'))
+
+
+def test_k_counts_results_from_one_and_is_held_to_the_most_there_are(home: Path) -> None:
+    with pytest.raises(InvalidRequestError, match="-k 0 asks for no result"):
+        search(home, SearchKeywords("halo", k=0))
+    assert ids(home, SearchKeywords("note", k=10**12)) == [f"notes/filler{n}.md" for n in range(8)]
+
+
+def test_one_collection_is_searched_when_named(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "more" / "halo.md", "# Halo again\n\nhalo\n")
+    add(home, AddCollection(str(tmp_path / "more")))
+    indexed(home)
+    assert set(ids(home, SearchKeywords("halo"))) == {"notes/halo.md", "more/halo.md"}
+    assert ids(home, SearchKeywords("halo", collection="more")) == ["more/halo.md"]
+    with pytest.raises(NotFoundError):
+        search(home, SearchKeywords("halo", collection="nope"))
+
+
+def test_a_collection_never_indexed_keeps_no_other_from_being_searched(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "later" / "halo.md", "# Halo later\n\nhalo\n")
+    add(home, AddCollection(str(tmp_path / "later")))
+    result = search(home, SearchKeywords("halo"))
+    assert ([hit.id for hit in result.hits], result.collections, result.unsearched) == (["notes/halo.md"], 2, ())
+
+
+def test_without_any_collection_a_search_searches_none(tmp_path: Path) -> None:
+    assert search(tmp_path / "nowhere", SearchKeywords("halo")) == SearchResult((), 0, ())
+
+
+def test_changes_and_removals_are_followed(home: Path, notes: Path) -> None:
+    (notes / "halo.md").unlink()
+    write(notes / "new.md", "# New\n\nA halo of light.\n")
+    indexed(home)
+    assert ids(home, SearchKeywords("halo")) == ["notes/new.md"]
+
+
+def test_a_document_about_a_word_outranks_one_that_names_it_in_its_title(home: Path, notes: Path) -> None:
+    write(notes / "titled.md", "# Entropy\n\n" + "Something else entirely, at length. " * 30 + "\n")
+    write(notes / "about.md", "# Thermodynamics\n\nEntropy grows. Entropy is a state function. Entropy.\n")
+    indexed(home)
+    assert ids(home, SearchKeywords("entropy"))[0] == "notes/about.md"
+
+
+def test_a_store_that_cannot_be_read_is_passed_over_and_said(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "more" / "halo.md", "# Halo again\n\nhalo\n")
+    add(home, AddCollection(str(tmp_path / "more")))
+    indexed(home)
+    (home / "collections" / "more.sqlite").unlink()
+    result = search(home, SearchKeywords("halo"))
+    assert [hit.id for hit in result.hits] == ["notes/halo.md"]
+    assert result.collections == 2
+    (missing,) = result.unsearched
+    assert dataclasses.replace(missing, message="") == Unsearched("more", "", MISSING_REMEDY)
+
+
+@pytest.mark.parametrize("table", ["keyword_postings", "chunks", "keyword_segments", "sources"])
+def test_a_store_damaged_where_a_search_reads_it_is_passed_over_and_the_others_searched(
+    home: Path, tmp_path: Path, table: str
+) -> None:
+    write(tmp_path / "more" / "halo.md", "# Halo again\n\nhalo\n")
+    add(home, AddCollection(str(tmp_path / "more")))
+    indexed(home)
+    damage_table(home / "collections" / "notes.sqlite", table)
+    result = search(home, SearchKeywords("halo"))
+    assert [hit.id for hit in result.hits] == ["more/halo.md"]
+    assert [(each.collection, each.remedy) for each in result.unsearched] == [("notes", DAMAGED_REMEDY)]

@@ -11,7 +11,9 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Tobias Würth" }]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=2.0",
+]
 keywords = [
     "rag",
     "retrieval-augmented-generation",
@@ -120,6 +122,7 @@ ban-relative-imports = "all"
 "sys.exit".msg = "raise a SiftError; each interface maps it to an exit code"
 "unittest.mock".msg = "pass a fake through a port instead of patching"
 "urllib.request".msg = "network access belongs in sift.inference (the worker client) or sift.interfaces"
+"time.monotonic".msg = "it ticks every 16 ms on Windows, so short phases take 0 s: use time.perf_counter"
 
 [tool.ruff.lint.flake8-pytest-style]
 parametrize-names-type = "csv"

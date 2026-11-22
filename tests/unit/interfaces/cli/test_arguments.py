@@ -6,7 +6,7 @@ from typing import Annotated
 import pytest
 
 from sift.api.collections import AddCollection, ShowStatus, TitleFrom
-from sift.api.described import Help
+from sift.api.described import Help, Short
 from sift.api.documents import GetDocuments
 from sift.api.indexing import IndexCollections
 from sift.interfaces.cli.arguments import options, request_of
@@ -85,8 +85,8 @@ class OptionalWithAValue:
 
 
 @dataclass(frozen=True, slots=True)
-class Defaulted:
-    name: Annotated[str, Help("a name")] = "x"
+class ShortPosition:
+    name: Annotated[str, Help("a name"), Short("-n")]
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +112,7 @@ class FilledList:
         (FilledList, r"FilledList.names: a list given by place has no default but \(\)"),
         (Ratio, "Ratio.ratio: the command line takes no float"),
         (Either, r"Either.value: the command line takes no str \| int"),
-        (Defaulted, "Defaulted.name: an argument given by its place has no default"),
+        (ShortPosition, "ShortPosition.name: only an option given by name has a short flag"),
         (Undescribed, "Undescribed.name: no Help"),
         (OnByDefault, "OnByDefault.loud: a switch is off by default"),
         (OptionalWithAValue, "OptionalWithAValue.name: an option that may be left out has no default but None"),
@@ -121,6 +121,24 @@ class FilledList:
 def test_a_field_the_command_line_cannot_take_is_refused(request_type: type[object], refusal: str) -> None:
     with pytest.raises(TypeError, match=refusal):
         options(argparse.ArgumentParser(), request_type, whole)
+
+
+@dataclass(frozen=True, slots=True)
+class Counted:
+    query: Annotated[str, Help("what to find")]
+    k: Annotated[int, Help("how many"), Short("-k")] = 10
+    order: Annotated[TitleFrom, Help("an order"), Short("-o")] = TitleFrom.NAME
+
+
+def test_a_field_with_a_value_for_default_is_an_option_and_may_have_a_short_flag() -> None:
+    assert parsed(Counted, ["x"]) == Counted("x", 10, TitleFrom.NAME)
+    assert parsed(Counted, ["x", "-k", "3", "-o", "heading"]) == Counted("x", 3, TitleFrom.HEADING)
+    assert parsed(Counted, ["x", "--k", "4", "--order", "name"]) == Counted("x", 4, TitleFrom.NAME)
+
+
+def test_a_number_that_is_no_whole_number_is_refused() -> None:
+    with pytest.raises(argparse.ArgumentError, match="invalid int value: 'many'"):
+        parsed(Counted, ["x", "-k", "many"])
 
 
 def test_paths_are_made_whole_by_the_function_given(tmp_path: Path) -> None:

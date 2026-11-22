@@ -77,14 +77,22 @@ def connect(path: Path, *, create: bool) -> sqlite3.Connection:
     return connection
 
 
+def abandon(transaction: Reading) -> None:
+    if transaction.connection.in_transaction:
+        transaction.connection.execute("ROLLBACK")
+
+
 @contextmanager
 def reading(connection: sqlite3.Connection) -> Generator[Reading]:
     connection.execute("BEGIN")
+    held = Reading(connection)
     try:
-        yield Reading(connection)
-    finally:
-        if connection.in_transaction:
-            connection.execute("COMMIT")
+        yield held
+    except BaseException:
+        abandon(held)
+        raise
+    if connection.in_transaction:
+        connection.execute("COMMIT")
 
 
 @contextmanager

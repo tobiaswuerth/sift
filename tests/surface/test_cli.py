@@ -14,6 +14,7 @@ from sift.interfaces.cli.main import main, run
 from sift.interfaces.console.text import table
 from sift.interfaces.console.units import size
 from sift.settings import Settings
+from tests.surface.commands import indexed_notes, ran
 
 
 @final
@@ -37,26 +38,6 @@ def sift(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
         timeout=60,
         env={**os.environ, "SIFT_HOME": str(home), "PYTHONIOENCODING": "utf-8"},
     )
-
-
-@pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    for name in ("user", "work"):
-        (tmp_path / name).mkdir()
-    return Settings(home=tmp_path / "home", user=tmp_path / "user", cwd=tmp_path / "work")
-
-
-@pytest.fixture
-def notes(tmp_path: Path) -> Path:
-    path = tmp_path / "notes"
-    path.mkdir()
-    return path
-
-
-def ran(settings: Settings, *argv: str) -> tuple[int, str, str]:
-    out, err = io.StringIO(), io.StringIO()
-    code = run(argv, settings, out, err)
-    return code, out.getvalue(), err.getvalue()
 
 
 def test_version_names_the_installed_release(tmp_path: Path) -> None:
@@ -286,13 +267,6 @@ def test_a_reader_leaving_is_found_before_python_ends(tmp_path: Path, notes: Pat
     assert (ended.returncode, ended.stderr) == (1, b"")
 
 
-def indexed_notes(settings: Settings, notes: Path) -> None:
-    (notes / "rl.md").write_text("# Reward shaping\n\nReward shaping speeds up learning.\n", encoding="utf-8")
-    (notes / "robots").mkdir()
-    (notes / "robots" / "brush.md").write_text("# Brush\n", encoding="utf-8")
-    assert ran(settings, "add", str(notes))[0] == 0
-
-
 def test_index_says_what_it_read_phase_by_phase(settings: Settings, notes: Path) -> None:
     indexed_notes(settings, notes)
     code, out, err = ran(settings, "index")
@@ -346,13 +320,13 @@ def test_colour_is_given_when_asked_and_kept_out_of_results(settings: Settings, 
     assert "\x1b[" not in ran(settings, "status", "--color", "always")[1]
 
 
-def test_the_command_line_needs_the_standard_library_alone() -> None:
+def test_the_command_line_needs_the_standard_library_and_numpy_alone() -> None:
     code = (
         "import sys; before = set(sys.modules); import sift.interfaces.cli.main; "
         "print(sorted({name.split('.')[0] for name in set(sys.modules) - before} - set(sys.stdlib_module_names)))"
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60)
-    assert result.stdout == "['sift']\n"
+    assert result.stdout == "['numpy', 'sift']\n"
 
 
 def test_index_fails_if_a_collection_was_skipped_however_it_answers(settings: Settings, notes: Path) -> None:

@@ -58,7 +58,7 @@ def _counted(phase: Phase, count: int) -> str:
 
 def _row(running: Running, count: int, now: float, style: Style) -> str:
     seconds = now - running.started
-    speed = rate(count, seconds) if running.phase is Phase.READ and count else ""
+    speed = rate(count, seconds) if running.phase is Phase.READ and count and seconds > 0 else ""
     took = paint(f"{duration(seconds):>{TIME}}", Tone.SECONDARY, style)
     return f"{_label(running.phase, None, style)}{_counted(running.phase, count)}{speed:>{SPEED}}{took}"
 

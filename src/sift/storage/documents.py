@@ -7,6 +7,7 @@ from sift.api.ids import ChunkId, DocumentId
 from sift.domain.text.links import names
 from sift.domain.text.notes import Document
 from sift.storage.database import Reading, Writing, first, inserted, rows, run, run_each
+from sift.storage.keywords import forget
 
 SourceId = NewType("SourceId", int)
 
@@ -78,17 +79,22 @@ class Count(NamedTuple):
     n: int
 
 
+class Owned(NamedTuple):
+    id: DocumentId
+
+
 def delete_sources(transaction: Writing, paths: Sequence[str]) -> int:
     chosen = (json.dumps(list(paths)),)
-    (held,) = rows(
+    held = rows(
         transaction,
-        Count,
-        """SELECT count(*) FROM documents
+        Owned,
+        """SELECT id FROM documents
            WHERE source IN (SELECT id FROM sources WHERE path IN (SELECT value FROM json_each(?)))""",
         chosen,
     )
+    forget(transaction, [document.id for document in held])
     run(transaction, "DELETE FROM sources WHERE path IN (SELECT value FROM json_each(?))", chosen)
-    return held.n
+    return len(held)
 
 
 def kept(transaction: Reading, source: SourceId) -> list[Kept]:
@@ -133,6 +139,7 @@ def add_documents(
 
 
 def delete_documents(transaction: Writing, documents: Sequence[DocumentId]) -> None:
+    forget(transaction, documents)
     run(
         transaction,
         "DELETE FROM documents WHERE id IN (SELECT value FROM json_each(?))",
@@ -165,6 +172,37 @@ PATHS_NAMED = """SELECT s.path FROM sources s JOIN documents d ON d.source = s.i
 
 def paths_named(transaction: Reading, name: str) -> list[str]:
     return [found.path for found in rows(transaction, PathRow, PATHS_NAMED, (name,))]
+
+
+class Passage(NamedTuple):
+    chunk: ChunkId
+    document: DocumentId
+    path: str
+    key: str
+    title: str
+    first_line: int
+    last_line: int
+    start: int
+    length: int
+
+
+class Text(NamedTuple):
+    id: DocumentId
+    text: str
+
+
+PASSAGES = """SELECT c.id, d.id, s.path, d.key, d.title, c.first_line, c.last_line, c.start, c.length
+              FROM chunks c JOIN documents d ON d.id = c.document JOIN sources s ON s.id = d.source
+              WHERE c.id IN (SELECT value FROM json_each(?))"""
+
+
+def passages(transaction: Reading, chunks: Sequence[ChunkId]) -> dict[ChunkId, Passage]:
+    return {found.chunk: found for found in rows(transaction, Passage, PASSAGES, (json.dumps(list(chunks)),))}
+
+
+def texts(transaction: Reading, documents: Sequence[DocumentId]) -> dict[DocumentId, str]:
+    sql = "SELECT id, text FROM documents WHERE id IN (SELECT value FROM json_each(?))"
+    return {found.id: found.text for found in rows(transaction, Text, sql, (json.dumps(list(documents)),))}
 
 
 class Unreadable(NamedTuple):

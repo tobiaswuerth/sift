@@ -13,7 +13,7 @@ from sift.domain.plan.indexing import MOST_TEXT_BYTES, IndexPlan, Stat, batches,
 from sift.domain.text.notes import Document, note
 from sift.ingest.scan import scan
 from sift.storage.catalog import Collection
-from sift.storage.database import Connection, Writing, reading, writing
+from sift.storage.database import Connection, Writing, reading
 from sift.storage.documents import (
     add_documents,
     clear_unreadable,
@@ -25,6 +25,7 @@ from sift.storage.documents import (
     sources,
     unreadable,
 )
+from sift.storage.keywords import writing_documents
 from sift.storage.store import open_store, unavailable_if_damaged
 
 FOLDER_MISSING_REMEDY = "connect the drive it lies on"
@@ -113,7 +114,7 @@ def _stored(transaction: Writing, path: str, stat: Stat, read: Document | Refuse
 
 
 def _dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
-    with writing(job.connection) as transaction:
+    with writing_documents(job.connection) as transaction:
         removed = delete_sources(transaction, plan.drop)
         clear_unreadable(transaction, plan.forget)
         large = [
@@ -131,7 +132,7 @@ def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Ta
             read.append((path, _read(job, path)))
             done += 1
             job.report(Advanced(done))
-        with writing(job.connection) as transaction:
+        with writing_documents(job.connection) as transaction:
             for path, outcome in read:
                 tally += _stored(transaction, path, files[path], outcome)
             clear_unreadable(transaction, [path for path, outcome in read if isinstance(outcome, Document)])

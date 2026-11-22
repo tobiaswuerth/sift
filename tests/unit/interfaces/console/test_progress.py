@@ -100,6 +100,11 @@ def test_one_file_is_a_file() -> None:
     assert (running_line(view, 0.5, 100, PLAIN) or "").startswith("  read           1 file    ")
 
 
+def test_a_phase_done_quicker_than_the_clock_ticks_shows_no_speed() -> None:
+    lines = replayed(((0.0, PhaseStarted(Phase.READ, 2)), (0.0, PhaseDone(2))))[1]
+    assert lines == ["  read           2 files                 0.0 s"]
+
+
 def test_a_running_scan_says_how_many_files_it_has_found_so_far() -> None:
     view, _ = replayed(((0.0, PhaseStarted(Phase.SCAN, None)), (2.0, Advanced(12_431))))
     assert running_line(view, 2.5, 100, PLAIN) == "  scan      12,431 files                 2.5 s"

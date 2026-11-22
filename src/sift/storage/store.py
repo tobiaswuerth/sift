@@ -6,7 +6,9 @@ from typing import NamedTuple, NoReturn
 
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
-from sift.storage.database import DAMAGED, connect, first, primary_code, reading, run, run_each, writing
+from sift.domain.codec.segments import SHAPE, Shape
+from sift.storage.database import DAMAGED, connect, first, primary_code, reading, run_each, writing
+from sift.storage.keywords import keyword_meta
 from sift.storage.migrations import Migration, migrated, newer, version
 
 LAYOUT: tuple[Migration, ...] = (
@@ -67,9 +69,10 @@ LAYOUT: tuple[Migration, ...] = (
         """CREATE TABLE counts(
             id INTEGER PRIMARY KEY CHECK (id = 1),
             documents INTEGER NOT NULL CHECK (documents >= 0),
-            chunks INTEGER NOT NULL CHECK (chunks >= 0)
+            chunks INTEGER NOT NULL CHECK (chunks >= 0),
+            tokens INTEGER NOT NULL CHECK (tokens >= 0)
         ) STRICT""",
-        "INSERT INTO counts(id, documents, chunks) VALUES (1, 0, 0)",
+        "INSERT INTO counts(id, documents, chunks, tokens) VALUES (1, 0, 0, 0)",
         """CREATE TRIGGER documents_added AFTER INSERT ON documents
            BEGIN UPDATE counts SET documents = documents + 1; END""",
         """CREATE TRIGGER documents_deleted AFTER DELETE ON documents
@@ -78,6 +81,52 @@ LAYOUT: tuple[Migration, ...] = (
            BEGIN UPDATE counts SET chunks = chunks + 1; END""",
         """CREATE TRIGGER chunks_deleted AFTER DELETE ON chunks
            BEGIN UPDATE counts SET chunks = chunks - 1; END""",
+        """CREATE TABLE keyword_segments(
+            id INTEGER PRIMARY KEY,
+            first INTEGER NOT NULL,
+            last INTEGER NOT NULL CHECK (last >= first),
+            chunks INTEGER NOT NULL CHECK (chunks > 0),
+            dead INTEGER NOT NULL CHECK (dead BETWEEN 0 AND chunks),
+            tokens INTEGER NOT NULL CHECK (tokens >= 0),
+            average REAL NOT NULL CHECK (average >= 0)
+        ) STRICT""",
+        """CREATE TABLE keyword_postings(
+            segment INTEGER NOT NULL REFERENCES keyword_segments(id) ON DELETE CASCADE,
+            term TEXT NOT NULL,
+            chunks INTEGER NOT NULL CHECK (chunks > 0),
+            postings BLOB,
+            positions BLOB,
+            ranges BLOB,
+            CHECK ((postings IS NULL) = (positions IS NULL) AND (postings IS NULL) <> (ranges IS NULL)),
+            PRIMARY KEY(segment, term)
+        ) STRICT, WITHOUT ROWID""",
+        """CREATE TABLE keyword_blocks(
+            segment INTEGER NOT NULL,
+            term TEXT NOT NULL,
+            number INTEGER NOT NULL CHECK (number >= 0),
+            postings BLOB NOT NULL,
+            positions BLOB NOT NULL,
+            PRIMARY KEY(segment, term, number),
+            FOREIGN KEY(segment, term) REFERENCES keyword_postings(segment, term) ON DELETE CASCADE
+        ) STRICT, WITHOUT ROWID""",
+        """CREATE TABLE keyword_lengths(
+            segment INTEGER NOT NULL REFERENCES keyword_segments(id) ON DELETE CASCADE,
+            block INTEGER NOT NULL,
+            lengths BLOB NOT NULL,
+            PRIMARY KEY(segment, block)
+        ) STRICT, WITHOUT ROWID""",
+        """CREATE TABLE keyword_terms(
+            term TEXT PRIMARY KEY,
+            chunks INTEGER NOT NULL CHECK (chunks > 0)
+        ) STRICT, WITHOUT ROWID""",
+        "CREATE TABLE keyword_dead(chunk INTEGER PRIMARY KEY) STRICT",
+        """CREATE VIEW keyword_documents AS
+           SELECT d.id AS id, d.title AS title, d.text AS text,
+                  (SELECT group_concat(j.atom, ' ') FROM json_tree(d.fields) j
+                   WHERE j.atom IS NOT NULL AND j.fullkey <> '$.title') AS meta
+           FROM documents d""",
+        """CREATE TRIGGER keyword_segment_dropped AFTER DELETE ON keyword_segments
+           BEGIN DELETE FROM keyword_dead WHERE chunk BETWEEN OLD.first AND OLD.last; END""",
     ),
 )
 NUMBERED_TABLES = ("documents", "chunks")
@@ -111,13 +160,17 @@ def stored_bytes(path: Path) -> int:
     return sum(_size(Path(f"{path}{suffix}")) for suffix in DATA_SUFFIXES)
 
 
-def _made(path: Path, collection: CollectionId, layout: Sequence[Migration]) -> None:
+def _made(path: Path, collection: CollectionId, layout: Sequence[Migration], shape: Shape) -> None:
     connection = connect(path, create=False)
     try:
         with writing(connection) as transaction:
             migrated(transaction, layout, path)
-            run(transaction, "INSERT INTO meta(key, value) VALUES ('collection', ?)", (str(collection),))
             start = first_row(collection)
+            run_each(
+                transaction,
+                "INSERT INTO meta(key, value) VALUES (?, ?)",
+                [("collection", str(collection)), *keyword_meta(shape, start)],
+            )
             run_each(
                 transaction,
                 "INSERT INTO sqlite_sequence(name, seq) VALUES (?, ?)",
@@ -127,11 +180,13 @@ def _made(path: Path, collection: CollectionId, layout: Sequence[Migration]) -> 
         connection.close()
 
 
-def create_store(path: Path, collection: CollectionId, layout: Sequence[Migration] = LAYOUT) -> None:
+def create_store(
+    path: Path, collection: CollectionId, layout: Sequence[Migration] = LAYOUT, shape: Shape = SHAPE
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.open("xb").close()
     try:
-        _made(path, collection, layout)
+        _made(path, collection, layout, shape)
     except BaseException:
         delete_store(path)
         raise

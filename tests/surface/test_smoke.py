@@ -46,6 +46,11 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     lines = sift(home, "get", str(notes / "rl.md"), "notes/sub/brush.md", "--lines", "1")
     assert lines.stdout == "==> notes/rl.md <==\n# Reward shaping\n\n==> notes/sub/brush.md <==\n# Brush\n"
 
+    found = sift(home, "search", "learning", "-k", "1")
+    assert (found.returncode, found.stdout.split("\n")[1]) == (0, " " * 9 + "notes/rl.md:1-3")
+    assert found.stderr.startswith("1 result  \N{MIDDLE DOT}  keyword  \N{MIDDLE DOT}  1 collection")
+    assert json.loads(sift(home, "search", '"speeds up"', "--json").stdout)["hits"][0]["id"] == "notes/rl.md"
+
     missing = sift(home, "get", "notes/gone.md")
     assert (missing.returncode, missing.stdout) == (1, "")
     assert missing.stderr.startswith("error  notes/gone.md: unknown document")
