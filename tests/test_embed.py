@@ -260,6 +260,32 @@ def test_vectors_of_chunks_deleted_meanwhile_are_not_stored(corpus, fake_models,
     assert store.counts(db)["vectors"] == vector_count(catalog) == 2
 
 
+def test_vectors_go_into_no_store_that_another_sift_embeds_with_another_model_meanwhile(
+    corpus, fake_models, monkeypatch
+):
+    # Two `sift embed` at once, one of them with --reset and another model: each had checked the store's model before
+    # the other wrote, and the store held both models' vectors under the name of one.
+    catalog, _ = corpus
+    db, another = catalog.store("notes"), "another/model@a-commit"
+    other = store.connect(catalog.get("notes").store, catalog.get("notes").id)  # another sift's connection
+
+    def meanwhile(texts):  # it embeds the first chunk with its model
+        (chunk,) = other.execute("SELECT min(id) FROM chunks").fetchone()
+        store.put_vectors(other, [chunk], np.ones((1, 64), np.float16))
+        store.set_model(other, another)
+        other.commit()
+
+    watching(fake_models, monkeypatch, meanwhile)
+    refused = (
+        f"a store is embedded with {another} by now, not with {fake_models.name}: another sift reset it meanwhile. "
+        f"None of these vectors went into it; run `sift embed --reset` to switch to {fake_models.name}"
+    )
+    with pytest.raises(SystemExit, match=re.escape(refused)):
+        embed.embed_pending(catalog)
+    other.close()
+    assert (store.model(db), vector_count(catalog)) == (another, 1)  # the other's alone
+
+
 def test_embed_refuses_mixing_models(embedded, fake_models):
     catalog, _ = embedded
     store.set_meta(catalog.store("notes"), "model", "another/model")

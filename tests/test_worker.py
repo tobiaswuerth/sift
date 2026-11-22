@@ -23,7 +23,7 @@ import sift
 from sift import __version__, cli, embed, models, remote, search, store, worker
 from sift.search import Index
 
-from .conftest import Client, FakeSentenceTransformer, NumpyModels, fake_vector, nobody_listens
+from .conftest import Client, FakeSentenceTransformer, NumpyModels, fake_vector, nobody_listens, on_windows
 
 TOKEN = "s3cret-token"
 
@@ -416,6 +416,38 @@ def test_a_worker_error_cut_inside_a_character_is_still_a_clear_error(monkeypatc
 
 
 @pytest.mark.parametrize(
+    "path, answer, said",
+    [
+        ("/embed", b"\x00" * 12, "12 bytes for 2 texts of 4 numbers each"),  # the vectors of another model's length
+        ("/rerank", b'{"scores": [0.5]}', "1 score for 2 texts"),
+        ("/rerank", b'{"scores": [0.5, 0.1, 0.9]}', "3 scores for 2 texts"),
+        ("/rerank", b'{"scores": 0.5}', "no list of scores"),
+        ("/rerank", b'{"scores": [0.5, "high"]}', "no list of scores"),
+        ("/rerank", b'{"ranked": [1, 0]}', "no list of scores"),
+        ("/rerank", b"<html>a proxy's page</html>", "no list of scores"),
+        ("/", b"<html>a proxy's page</html>", "nothing a worker says of itself"),
+        ("/", b'["sift"]', "nothing a worker says of itself"),
+        ("/", json.dumps({"version": __version__, "model": "an/embedder"}).encode(), "no length of its vectors"),
+        ("/", json.dumps({"version": __version__, "dim": 4}).encode(), "no model"),
+        ("/", json.dumps({"version": __version__, "model": "an/embedder", "dim": "4"}).encode(), "no length of its"),
+    ],
+)
+def test_an_answer_that_fits_no_request_is_a_clear_error(monkeypatch, path, answer, said):
+    # A worker's scores were taken as they came: one too few, as of another sift or a proxy between, ranked the
+    # results by scores of other passages, or ended a search in an IndexError; vectors of another length in numpy's
+    # "cannot reshape array"; and what it says of itself, if it was something else's answer, in a KeyError.
+    worker_remote = remote.Remote("https://t.p@pc:8766")
+    about = json.dumps({"version": __version__, "model": "an/embedder", "dim": 4}).encode()
+    answers = {"/": about, path: answer}
+    ok = types.SimpleNamespace(status=200)
+    monkeypatch.setattr(worker_remote, "_exchange", lambda method, path, *request: (ok, answers[path]))
+    told = f"embedding remote https://pc:8766 answered {said}"
+    asked = {"/": worker_remote.load, "/embed": lambda: worker_remote.encode(["brush", "robot"])}
+    with pytest.raises(remote.RemoteError, match=re.escape(told) + ".*: not what this sift asked it for"):
+        asked.get(path, lambda: worker_remote.rerank("q", ["a", "b"]))()
+
+
+@pytest.mark.parametrize(
     "url", ["http://t.p@workstation:8766", "https://workstation:8766", "https://token@workstation:8766", "pc:8766"]
 )
 def test_the_remote_must_be_the_https_address_with_the_key(corpus, fake_models, url, configure):
@@ -508,9 +540,6 @@ def test_the_workers_key_stays_out_of_its_log(home, fake_models, started, monkey
 
 def test_a_worker_on_windows_serves_on_a_selector_loop(home, fake_models, monkeypatch):
     # As `sift serve`: the proactor loop stops accepting for good after one failed accept.
-    import asyncio
-    import sys
-
     import uvicorn
 
     loops = []
@@ -520,7 +549,7 @@ def test_a_worker_on_windows_serves_on_a_selector_loop(home, fake_models, monkey
 
     monkeypatch.setattr(uvicorn.Server, "serve", capture)
     monkeypatch.setattr(fake_models, "prepare", lambda: None)
-    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(worker, "loop_options", on_windows(worker.loop_options))
     worker.serve(models=fake_models)
     assert isinstance(loops[0], asyncio.SelectorEventLoop)
 

@@ -75,6 +75,7 @@ Everything sift keeps lies under `SIFT_HOME` (`~/.sift`):
 | `logs/COMMAND-DATE.log` | What `add`, `rm`, `index`, `embed`, `serve` and `worker` said, timed, with errors; the server's requests without their queries | The latest 20 of each command kept; past 16 MB a log goes on in a new part, its last 3 kept as `.log.1` (the latest) to `.log.3`; delete freely |
 | `logs/update-DATE.log` | What an update you agreed to did | Kept; delete freely |
 | `update.json` | The latest version on PyPI, when it was asked, and an update waiting or done | Rewritten daily, through `update.json.PID.part` for a moment; delete freely |
+| `update.lock` | Empty; locked by the process of an update while it waits and installs | Made by the first update; delete freely while none runs |
 | `worker/` | `sift worker`'s certificate and token, readable by you only | Made on its first start, each file through `FILE.part` for a moment; delete it to make a new key |
 | `numba/` | The compiled search code `sift serve` and `sift bench` keep | Made again when deleted |
 
@@ -154,9 +155,11 @@ all, the rest are left out, each saying so.
 
 ## Front matter and filters
 
-YAML front matter of flat `key: value` lines becomes filterable metadata. Lists can be inline
-(`aliases: [Hans Mueller, H. Müller]`) or one `- item` per line. A value is read as JSON first, so a program can write
-each value as JSON and get exactly it back; anything else is read as YAML-like text.
+YAML front matter of flat `key: value` lines becomes filterable metadata. Lists can be in brackets
+(`aliases: [Hans Mueller, H. Müller]`, over several lines too) or one `- item` per line. A value is read as JSON
+first, so a program can write each value as JSON and get exactly it back; anything else is read as YAML-like text.
+Text over several lines goes on the indented lines below `key: |`, which keeps its lines, or `key: >`, which joins
+each paragraph's.
 
 ```markdown
 ---
@@ -201,7 +204,9 @@ closing bracket, a comment or blank); a paragraph between two thematic breaks st
 
 Text files are read as UTF-8, or UTF-16/UTF-32 after a byte order mark; bytes that aren't UTF-8 as Windows' ANSI
 (cp1252), as Notepad and Excel saved text, so that "Müller" stays "Müller". Damaged files are skipped and reported until
-they change. Old binary Office files (`.doc`, `.ppt`, `.xls`) aren't read.
+they change. A file whose reader crashes or comes to no end in its time (ten minutes, and more for a large file) is
+skipped, said once, and read again only once it changes, or by the next version of sift. Old binary Office files
+(`.doc`, `.ppt`, `.xls`) aren't read.
 
 A JSON Lines record or an email attachment is a document below its file's name: record `a.md` of `data.jsonl` is
 `data/a.md`. Where a real file has that path too, the first indexed keeps it; the other is left out, said, and read

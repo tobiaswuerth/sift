@@ -11,9 +11,13 @@ How sift indexes, stores, embeds and searches, and why. The measurements behind 
 - A reader's native code (Xberg's, for documents and mails) can end its process, or never come to an end, so such a
   file is always read in a worker process, by `sift index` and by `reindex` alike, in a task of its own: it gets ten
   minutes, and a second more for every 100 KB. The pool then says no more than that it broke, so the files it hadn't
-  read are read again one at a time, in a process of their own: the one that ends or hangs it is left out, said, and
-  tried again by the next run; the others are read, and what tasks had read by then is kept. A file that hung alone
-  in its task is known by then, and gets no second time.
+  read are read again one at a time, in a process of their own: the one that ends or hangs it is left out and said;
+  the others are read, and what tasks had read by then is kept. A file that hung alone in its task is known by then,
+  and gets no second time. `sift index` keeps such a file's time and size, and its documents as they were, so no
+  later run spends ten minutes or a pool on it until it changes; the store notes it (`readers_stopped` in `meta`),
+  and the next version of sift reads it once more.
+- Worker processes are started in one place (`processes.py`): at most 61 to a pool on Windows, which allows no more,
+  and a pool left by an error runs nothing it hasn't started.
 - Files are compared by modification time and size, so unchanged files cost nothing, and documents by content hash, so
   a changed JSON Lines file re-indexes only its changed records.
 - A JSON Lines file over 32 MB is read line by line as it is stored, in batches of 10,000 records (or 16 MB of text),

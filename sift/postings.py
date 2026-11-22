@@ -28,7 +28,6 @@ reads FTS5, as before.
 
 import itertools
 import json
-import multiprocessing
 import re
 import sqlite3
 import struct
@@ -37,7 +36,7 @@ import uuid
 import zlib
 from collections import OrderedDict
 from collections.abc import Callable, Generator, Hashable, Iterable, Iterator, Sequence
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generic, TypeVar
@@ -45,7 +44,7 @@ from typing import Any, Generic, TypeVar
 import numpy as np
 from numpy.typing import NDArray
 
-from . import console, expression, order, store
+from . import console, expression, order, processes, store
 from .vectors import Bits, Ids, Mask
 
 Counts = NDArray[np.integer[Any]]  # how often a term occurs in each posting: stored in as few bytes as fit
@@ -524,10 +523,9 @@ PROGRESS_LINES = 200  # updates of a build's progress at most: printing is slow 
 
 def _in_parallel(db: sqlite3.Connection, name: str, work: list[Job], workers: int, keys: Iterator[int]) -> None:
     """Run the shards in worker processes, writing each one's postings as it comes."""
-    spawn = multiprocessing.get_context("spawn")
     step = max(1, len(work) // PROGRESS_LINES)
     with (
-        ProcessPoolExecutor(workers, mp_context=spawn) as pool,
+        processes.running(workers) as pool,
         console.Progress(len(work), "parts", prefix=f"{name}: keyword postings: ") as progress,
     ):
         for done, future in enumerate(as_completed([pool.submit(_shard, job) for job in work]), 1):

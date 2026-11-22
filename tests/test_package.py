@@ -328,6 +328,81 @@ def test_chunks_are_cut_from_their_text_in_one_place():
     assert [name for name, line in lines if "FROM chunk_text" in line] == ["store.py"], "ask store.fill"
 
 
+def test_no_function_imports_again_what_its_module_imports():
+    # A module given an import at its top kept the same import inside a function, where it had stood before: read
+    # there, it says the module doesn't have it, and the next reader looks for why.
+    again = []
+    for path in sorted(p for folder in ("sift", "tests", "scripts") for p in (ROOT / folder).glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        imports = [node for node in tree.body if isinstance(node, ast.Import | ast.ImportFrom)]
+        top = {(getattr(node, "module", None), a.name, a.asname) for node in imports for a in node.names}
+        for function in ast.walk(tree):
+            if isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+                again += [
+                    f"{path.name}:{node.lineno}: {ast.unparse(node)}"
+                    for node in ast.walk(function)
+                    if isinstance(node, ast.Import | ast.ImportFrom)
+                    and any((getattr(node, "module", None), a.name, a.asname) in top for a in node.names)
+                ]
+    assert again == [], "the module imports it already: leave it out of the function"
+
+
+AGENT_FILES = {"agents.md", "claude.md", "gemini.md"}  # what coding agents read as a repository's instructions
+
+
+def test_no_page_is_named_as_an_agent_s_instructions_are():
+    # docs/agents.md, the guide for an agent that installs sift, was loaded by coding agents as the instructions of
+    # the repository they worked in, where file systems tell no case apart (AGENTS.md): "install sift, ask which
+    # folders to index". What stays at that name, for the links to it, says in a few lines where the guide went.
+    named = sorted(
+        path.relative_to(ROOT).as_posix()
+        for folder in (ROOT, ROOT / "docs", ROOT / "sift", ROOT / "tests")
+        for path in folder.glob("*.md")
+        if path.name.lower() in AGENT_FILES
+    )
+    assert named == ["docs/agents.md"], "name the page for what it holds, as docs/agent-setup.md"
+    assert len((ROOT / "docs" / "agents.md").read_text(encoding="utf-8").splitlines()) <= 6
+
+
+def test_worker_processes_are_started_in_one_place():
+    # Three modules made pools of their own, each as many processes as the machine has CPUs: more than Windows lets a
+    # pool have, from 63 CPU threads on. `processes` knows the limit, and what a pool left by an error mustn't run.
+    making = [
+        path.name
+        for path in sorted((ROOT / "sift").glob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "ProcessPoolExecutor"
+    ]
+    assert making == ["processes.py"], "ask processes.pool, or processes.running for a block"
+
+
+def _names_the_system(call):
+    """Whether a call sets sys.platform: setattr(sys, "platform", ...), of sys as any module has it, or by its name."""
+    target, *attribute = [ast.unparse(arg) for arg in call.args[:2]] or [""]
+    return target.endswith("sys.platform'") or (target.split(".")[-1] == "sys" and attribute == ["'platform'"])
+
+
+def test_no_test_changes_the_system_s_name_for_all_it_runs():
+    # A test that set sys.platform for its whole length had sift load the models "on Windows": the first package
+    # imported there that asks the system's name looked for Windows' modules on Linux, and failed, in whichever
+    # process ran that test before any that imports it. What depends on the system takes its name (`platform`); the
+    # name itself changes for a block alone, around what asks it and imports nothing of others.
+    for setting in (
+        'm.setattr(sys, "platform", "win32")',
+        'm.setattr(a.sys, "platform", "x")',
+        'm.setattr("sys.platform", "x")',
+    ):
+        assert _names_the_system(ast.parse(setting).body[0].value), setting  # the check finds each way to write it
+    assert not _names_the_system(ast.parse('m.setattr(server, "loop_options", chosen)').body[0].value)
+    whole = [
+        f"{path.name}:{node.lineno}"
+        for path in sorted((ROOT / "tests").glob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "monkeypatch.setattr" and _names_the_system(node)
+    ]
+    assert whole == [], "pass `platform` to what asks it, or change it in a `with monkeypatch.context()` block alone"
+
+
 PRINTING = {("console.py", "write"), ("cli.py", "_print")}  # to the user, and the results
 
 

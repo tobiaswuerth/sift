@@ -457,17 +457,18 @@ def test_the_order_reads_back_at_any_places():
 
 def test_the_order_is_written_and_read_in_time_linear_in_its_chunks():
     # Each block of places masked the whole order: 12 minutes for PubMed's 29.9 million chunks, in the build's write
-    # transaction, past which a `sift embed` beside it failed on the lock. Four times the chunks, four times the time.
+    # transaction, past which a `sift embed` beside it failed on the lock. Four times the chunks, four times the time:
+    # this process's own on a CPU, which the other processes of a busy machine take none of.
     first = 5 << 40
 
     def took(n):
         chunks, places = first + 1 + np.random.default_rng(0).permutation(n), first + 1 + np.arange(n)
         best = math.inf
         for _ in range(3):
-            db, start = order_table(), time.perf_counter()
+            db, start = order_table(), time.process_time()
             postings._write_order(db, first + 1, chunks, first)
             postings._chunks_at(db, places, first)
-            best = min(best, time.perf_counter() - start)
+            best = min(best, time.process_time() - start)
             db.close()
         return best
 

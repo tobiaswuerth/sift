@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from sift import indexing, postings, readers, search, store
+from sift import embed, indexing, postings, readers, search, store
 from sift.catalog import Catalog
 from sift.search import Index
 
@@ -30,8 +30,6 @@ def ids(hits):
 @pytest.fixture
 def live(linked, fake_models):
     """The vault, embedded, and searched once, so its codes are in memory as in a running server: (index, vault)."""
-    from sift import embed
-
     catalog, vault, _ = linked
     embed.embed_pending(catalog)
     index = Index(catalog)
@@ -231,6 +229,32 @@ def test_without_the_index_s_model_nothing_is_embedded(live):
     (found,) = index.reindex(["vault/a.md"])
     assert (found["status"], found["embedded"]) == ("added", 0)
     assert "vault was embedded with another/model" in found["note"]
+
+
+@pytest.mark.parametrize("another", [None, "another/model@a-commit"])
+def test_a_store_reset_while_a_note_is_embedded_takes_no_vector_of_the_old_model(live, monkeypatch, another):
+    # `sift embed --reset` beside a server: the server had read the store's model before it embedded the note, and
+    # wrote its vector after the reset, into a store of no model, or of another's vectors by then.
+    index, vault = live
+    db = index.catalog.store("vault")
+    other = store.connect(index.catalog.get("vault").store, index.catalog.get("vault").id)  # another sift's
+    real = index.models.encode
+
+    def meanwhile(texts, query=False):
+        embed._forget_vectors(other)  # as `sift embed --reset` forgets them
+        if another:
+            store.set_model(other, another)
+            other.commit()
+        return real(texts, query)
+
+    monkeypatch.setattr(index.models, "encode", meanwhile)
+    write(vault / "a.md", "Alpha note.\n")
+    (found,) = index.reindex(["vault/a.md"])
+    other.close()
+    assert (found["status"], found["embedded"]) == ("added", 0)
+    assert found["note"] == "not embedded: vault's vectors were reset meanwhile; `sift embed` embeds its passages"
+    assert db.execute("SELECT count(*) FROM vectors").fetchone() == (0,)
+    assert store.model(db) == another
 
 
 def test_without_a_worker_the_index_still_follows(live, monkeypatch):

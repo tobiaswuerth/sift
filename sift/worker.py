@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeGuard
 import anyio
 
 from . import __version__, console, remote, settings
-from .server import loop_options, release_when_idle, serve_app
+from .server import loop_options, port_free, release_when_idle, serve_app
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -206,6 +206,7 @@ def serve(host: str = "0.0.0.0", port: int = 8766, models: "Local | None" = None
         from .local import Local
 
         models = Local()
+    port_free(host, port)
     found = credentials()
     console.say(f"loading {models.name} and {models.reranker_name} ...")
     models.load()  # now, so the first request is quick

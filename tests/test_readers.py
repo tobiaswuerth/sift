@@ -35,6 +35,52 @@ def test_parse_front_matter():
     assert first_line == 9
 
 
+def test_a_front_matter_value_of_several_lines_is_its_text():
+    # YAML's block scalars, as Obsidian and static site generators write a description: the field held "|" or ">-",
+    # and no search found a word of its lines, which are no part of the body either.
+    text = (
+        "---\n"
+        "description: |\n"
+        "  Zebrafish husbandry,\n"
+        "    indented further.\n"
+        "\n"
+        "  A second paragraph.\n"
+        "summary: >-\n"
+        "  folded onto\n"
+        "  one line\n"
+        "\n"
+        "  and a second\n"
+        "empty: |\n"
+        "tags: [x]\n"
+        "kept: >+ # a comment\n"
+        "\tby a tab\n"
+        "---\n"
+        "the body\n"
+    )
+    title, meta, body, first_line = readers.parse(text, "fallback")
+    assert meta == {
+        "description": "Zebrafish husbandry,\n  indented further.\n\nA second paragraph.",
+        "summary": "folded onto one line\nand a second",
+        "empty": "",
+        "tags": ["x"],
+        "kept": "by a tab",
+    }
+    assert (title, body, first_line) == ("fallback", "the body\n", 17)
+    # A value that only starts like the mark stays as written; a mark with no lines below is a text of none.
+    _, meta, _, _ = readers.parse("---\na: | b\nc: >\nd: 1\n---\n", "f")
+    assert meta == {"a": "| b", "c": "", "d": 1}
+    assert readers.parse("---\na: |\n  first\na: last\n---\n", "f")[1] == {"a": "last"}  # a key written twice
+
+
+def test_a_title_of_several_lines_is_one_line():
+    # As front matter may write it below `title: |`, or a program as a JSON string: with a line break in it, a title
+    # broke the line each result is printed on. The field stays as written.
+    assert readers.parse("---\ntitle: |\n  Annual report\n  2026\n---\nbody\n", "f")[0] == "Annual report 2026"
+    title, meta, _, _ = readers.parse('---\ntitle: "two \\n lines"\n---\n', "f")
+    assert (title, meta) == ("two lines", {"title": "two \n lines"})
+    assert readers.parse("---\ntitle: Two  spaces\n---\n", "f")[0] == "Two  spaces"  # on one line: as it is
+
+
 def test_parse_keeps_json_unsafe_constants_as_text():
     _, meta, _, _ = readers.parse("---\na: NaN\nb: [1, Infinity]\n---\n", "f")
     assert meta == {"a": "NaN", "b": [1, "Infinity"]}
@@ -127,12 +173,13 @@ def test_front_matter_values_sqlite_cant_store_or_python_cant_nest(json_room):
 
 def test_a_long_front_matter_list_reads_in_time_linear_in_its_length():
     # Each `- item` copied the list before it: 100,000 items took 14 s, 600,000 longer than a worker may read a file,
-    # and `reindex` hung on such a note. Read now in a fraction of a second; the bound leaves room for a busy machine.
+    # and `reindex` hung on such a note. Read now in a fraction of a second, of this process's own time on a CPU:
+    # the other processes of a busy machine take none of it.
     items = 100_000
     block = "tags:\n" + "".join(f"- item{i}\n" for i in range(items))
-    started = time.perf_counter()
+    started = time.process_time()
     _, meta, _, _ = readers.parse(f"---\n{block}---\nbody\n", "f")
-    assert time.perf_counter() - started < 3
+    assert time.process_time() - started < 3
     assert meta["tags"] == [f"item{i}" for i in range(items)]
 
 
@@ -162,15 +209,41 @@ def test_text_between_two_rules_that_isnt_front_matter_stays_searchable(text):
     "block, tags",
     [
         ("tags:\n-\n- a\n", ["a"]),  # a list item without a value
-        ("tags: [\n  a,\n  b\n]\n", "["),  # a list over several lines, which sift reads no further than its first
-        ("tags: {\n  a: 1\n}\n", "{"),
+        ("tags: [\n  a,\n  b\n]\n", ["a", "b"]),  # a list over several lines
+        ("tags: [a,\n\n  'b, c',\n  [d, O'Brien]]\n", ["a", "b, c", ["d", "O'Brien"]]),
+        ("tags: {\n  a: 1\n}\n", "{ a: 1 }"),  # a mapping, as written
     ],
 )
 def test_front_matter_stays_front_matter_with_lines_yaml_allows_at_the_margin(block, tags):
     # A line that could be no part of a mapping makes the lines between two rules text: an item without a value, or
     # the bracket closing a list written over several lines, did too, and the note lost its title and every field.
+    # Such a list is read whole now: it was "[", as a text of several lines was "|", and no search found its items.
     title, meta, body, _ = readers.parse(f"---\ntitle: T\n{block}---\nbody\n", "file")
     assert (title, meta, body) == ("T", {"title": "T", "tags": tags}, "body\n")
+
+
+@pytest.mark.parametrize(
+    "block, meta",
+    [
+        ("title: [WIP My note\ntags: [a, b]\n", {"title": "[WIP My note", "tags": ["a", "b"]}),  # no list begun
+        ("tags: [a,\nyear: 2024\n", {"tags": "[a,", "year": 2024}),  # one never closed, before the next field
+        ("tags: [\n  a,\n", {"tags": "["}),  # nor by the front matter's end
+        ("tags: [\n  a\n  ]\nyear: 2024\n", {"tags": ["a"], "year": 2024}),  # closed on an indented line
+    ],
+)
+def test_a_list_begun_and_never_closed_takes_no_other_field_with_it(block, meta):
+    assert readers.parse(f"---\n{block}---\nbody\n", "file")[1] == meta
+
+
+def test_a_list_of_many_lines_is_looked_at_once(monkeypatch):
+    # Each line is looked at for the bracket that closes the list as it comes, never the lines before it again: as
+    # each `- item` once copied the list before it, a list of 100,000 lines would take minutes.
+    looked, real = [], readers._still_open
+    monkeypatch.setattr(readers, "_still_open", lambda text, *state: looked.append(len(text)) or real(text, *state))
+    items = 2000
+    block = "tags: [\n" + "".join(f"  item{i},\n" for i in range(items)) + "]"
+    assert readers.parse(f"---\n{block}\n---\n", "f")[1] == {"tags": [f"item{i}" for i in range(items)]}
+    assert 0 < sum(looked) <= len(block)  # each character once at most
 
 
 # --- chunking ----------------------------------------------------------------
@@ -438,6 +511,28 @@ def test_what_is_no_link(written):
 def test_links_in_code_blocks_are_no_links():
     text = "```\n[[Also not a link]]\n```\n~~~python\n[x](y.md)\n```\n[[still code]]\n~~~\n[[Real]]\n"
     assert links(text) == [(None, 9, "wikilink", "Real", None, None)]
+
+
+@pytest.mark.parametrize(
+    "text, line",
+    [
+        ("> ```bash\n> if [[ -f x ]]; then\n> ```\n[[Real]]\n", 4),  # in a block quote
+        (">> ~~~\n>> [[code]]\n>> ~~~\n> [[Real]]\n", 4),  # in a quote in a quote
+        ("- an item\n\n    ```bash\n    if [[ -f x ]]; then\n    ```\n- [[Real]]\n", 6),  # in a list item
+        ("1. an item\n\t```\n\tx\t[[code]]\n\t```\n[[Real]]\n", 5),  # indented by a tab
+        ("> ```\n> [[code]]\n\n[[Real]]\n", 4),  # never closed: it ends with its quote
+        ("- an item\n    ```\n    [[code]]\n\n[[Real]]\n", 5),  # and with its list item
+    ],
+)
+def test_links_in_code_blocks_of_a_quote_or_a_list_are_no_links(text, line):
+    # A fence counted only at the margin: code in a block quote or a list item was prose, and Bash's `[[ -f x ]]` in
+    # it a link to a note "-f x", which `unresolved` then listed.
+    assert links(text) == [(None, line, "wikilink", "Real", None, None)]
+
+
+def test_a_code_block_never_closed_at_the_margin_goes_to_the_end():
+    assert links("```\n[[code]]\n\n    [[still code]]\n> [[and this]]\n") == []
+    assert links("   ```\n[[code]]\n\n[[still code]]\n") == []  # nor one indented less than a list item's is
 
 
 def test_three_backticks_with_one_after_them_open_no_code_block():

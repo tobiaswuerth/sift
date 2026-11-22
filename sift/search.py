@@ -624,6 +624,7 @@ class Index:
         phrases, AND, OR and NOT is answered from the keyword postings (see `topk`), until the topk.Deadline if given,
         where every collection has them ready; others by FTS5, each collection's best scored again together (see
         _as_one), unless the query places its phrases (NEAR, column filters)."""
+        match = match.replace("\x00", " ")  # a NUL parts words, as in the postings: FTS5 took it for the query's end
         if not match.strip():
             return []
         query = expression.parse(match)
@@ -1205,13 +1206,17 @@ class Index:
 
     def file(self, id: str) -> Path | None:
         """The file a document was read from, by its id as for `get`; None for a JSON Lines record, which is a part
-        of its file, and for a file outside the collection's folder, as an older sift's reindex stored "D:/x.md"."""
+        of its file, for a file outside the collection's folder, as an older sift's reindex stored "D:/x.md", and for
+        one that leads there by now, through a link `sift index` wouldn't read."""
         doc = self._find(id)[0]
         collection = self._owner(doc)
         sql = "SELECT s.path, d.path FROM docs d JOIN sources s ON s.id = d.source WHERE d.id = ?"
         source, path = self.catalog.store(collection).execute(sql, (doc,)).fetchone()
-        full = os.path.normpath(os.path.join(collection.path, *source.split("/")))
-        return Path(full) if source == path and indexing.inside(collection.path, full) else None
+        parts = source.split("/")
+        full = os.path.normpath(os.path.join(collection.path, *parts))
+        if source != path or not indexing.inside(collection.path, full) or indexing.led_elsewhere(collection, parts):
+            return None
+        return Path(full)
 
     # --- links between notes (see `links`) -----------------------------------
 
@@ -1397,6 +1402,11 @@ class Index:
         intact = np.isfinite(matrix).all(axis=1)
         db.execute("BEGIN IMMEDIATE")
         try:
+            if store.model(db) != model:  # `sift embed --reset` forgot its vectors since: none of the old model's
+                db.rollback()
+                return (
+                    f"not embedded: {collection.name}'s vectors were reset meanwhile; `sift embed` embeds its passages"
+                )
             before = store.get_meta(db, "version")
             sql = "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))"  # not removed meanwhile
             still = {c for (c,) in db.execute(sql, (json.dumps([row[0] for row in rows]),))}

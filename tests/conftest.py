@@ -12,7 +12,7 @@ import zlib
 import numpy as np
 import pytest
 
-from sift import indexing, store
+from sift import indexing, processes, store
 from sift.accelerator import Accelerator
 from sift.catalog import Catalog
 
@@ -317,6 +317,21 @@ def close_databases(monkeypatch):
         db.close()
 
 
+def any_port_free(host, port):
+    """What stands in for server.port_free in tests (see ports_unasked): one function for all of them, so that sift
+    is patched alike for each, and what is built once is shared (see Built)."""
+
+
+@pytest.fixture(autouse=True)
+def ports_unasked(monkeypatch):
+    """No test asks this machine for a port unless it listens itself: a server started with its transport replaced
+    takes the port it is given for free (server.port_free), whatever listens there."""
+    from sift import server, worker
+
+    for module in (server, worker):
+        monkeypatch.setattr(module, "port_free", any_port_free)
+
+
 @pytest.fixture
 def terminal(monkeypatch):
     """Have sift take stderr for a terminal, where it draws its progress line again in place: captured, as a test's
@@ -414,6 +429,13 @@ def nobody_listens():
     return "https://s3cret.pin@127.0.0.1:0"
 
 
+def on_windows(loop_options):
+    """sift's choice of a server's loop (server.loop_options), as it chooses on Windows: that alone, on whatever
+    system the test runs. With the system's own name changed for a whole test, a package first imported in it looked
+    for Windows' modules there."""
+    return functools.partial(loop_options, platform="win32")
+
+
 def live_codes(codes):
     """The ids that count of codes held (vectors.Codes), and their codes, by id: what searches compare."""
     rows = np.flatnonzero(codes._alive) if codes._alive is not None else np.arange(len(codes.ids))
@@ -461,15 +483,15 @@ def keywords_agree(db):
 
 @pytest.fixture
 def pools(monkeypatch):
-    """Records every worker process pool that indexing starts."""
+    """Records every pool of worker processes that sift starts."""
     created = []
 
-    class RecordingPool(indexing.ProcessPoolExecutor):
+    class RecordingPool(processes.ProcessPoolExecutor):
         def __init__(self, max_workers, mp_context=None):
             created.append((max_workers, mp_context and mp_context.get_start_method()))
             super().__init__(max_workers, mp_context=mp_context)
 
-    monkeypatch.setattr(indexing, "ProcessPoolExecutor", RecordingPool)
+    monkeypatch.setattr(processes, "ProcessPoolExecutor", RecordingPool)
     return created
 
 

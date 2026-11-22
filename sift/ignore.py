@@ -185,20 +185,18 @@ def _tokens(part: str) -> list[str | _Wild]:
 
 def _class(body: str) -> str:
     """`[body]` as the regex of one character: its characters and ranges, `!` or `^` first for any other. A range
-    backwards, `z-a`, holds nothing, as in git; a regex would refuse it."""
+    backwards, `z-a`, holds its first character alone, as in git; a regex would refuse it."""
     negated = body[:1] in ("!", "^")
     body, i = body[negated:], 0
     held: list[str] = []
     while i < len(body):
         if i + 2 < len(body) and body[i + 1] == "-":
-            if body[i] <= body[i + 2]:
-                held.append(f"{re.escape(body[i])}-{re.escape(body[i + 2])}")
+            last = f"-{re.escape(body[i + 2])}" if body[i] <= body[i + 2] else ""
+            held.append(re.escape(body[i]) + last)
             i += 3
         else:
             held.append(re.escape(body[i]))
             i += 1
-    if not held:
-        return "(?s:.)" if negated else "(?!)"
     return f"[{'^' if negated else ''}{''.join(held)}]"
 
 

@@ -359,10 +359,16 @@ def encode(models: _models.Models, texts: list[str]) -> Vectors:
 def _store_vectors(db: sqlite3.Connection, chunks: list[int], vectors: Vectors, model: str) -> tuple[int, int]:
     """Store the intact vectors of the chunks still there, and commit. A NaN vector, an overflow inside the model,
     stays out, so its chunk stays pending; so does the vector of a chunk another sift deleted meanwhile, which would
-    count as the vector of the chunk that took its place. Returns how many vectors it stored, and how many the model
-    broke."""
+    count as the vector of the chunk that took its place. None goes into a store another sift embeds with another
+    model by now, which ends this run. Returns how many vectors it stored, and how many the model broke."""
     intact = np.isfinite(vectors).all(axis=1)
     db.execute("BEGIN IMMEDIATE")  # what is still there, as it is written
+    if (held := store.model(db)) not in (None, model):  # checked before embedding, when it was another's still
+        db.rollback()
+        raise SystemExit(
+            f"a store is embedded with {held} by now, not with {model}: another sift reset it meanwhile. "
+            f"None of these vectors went into it; run `sift embed --reset` to switch to {model}"
+        )
     sql = "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))"
     there = {c for (c,) in db.execute(sql, (json.dumps([int(c) for c in chunks]),))}
     keep = intact & np.fromiter((c in there for c in chunks), bool, len(chunks))

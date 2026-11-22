@@ -4,8 +4,11 @@ import asyncio
 import dataclasses
 import json
 import logging
+import re
 import shutil
+import socket
 import sqlite3
+import sys
 import threading
 import types
 from pathlib import Path
@@ -15,12 +18,14 @@ import pytest
 from mcp import Client
 from mcp.server.mcpserver import MCPServer
 
-from sift import indexing, logs, remote, server, vectors
+from sift import indexing, logs, remote, server, vectors, worker
 from sift.catalog import Catalog
 from sift.hits import Options
 from sift.search import Index
 
-from .conftest import nobody_listens, write
+from .conftest import nobody_listens, on_windows, write
+
+port_free = server.port_free  # sift's own, before a fixture keeps the tests off this machine's ports (ports_unasked)
 
 SAMPLES = Path(__file__).parent / "samples"
 
@@ -289,6 +294,23 @@ def test_server_log_stays_quiet(mcp):
         assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING, name
 
 
+def test_the_log_keeps_that_a_tool_failed_not_what_it_was_asked(mcp, home):
+    # The MCP library logs why each tool failed, as sift told the caller: "unknown document '...'" names the document
+    # asked for, kept on disk in SIFT_HOME/logs for weeks, where the requests' queries are left out.
+    from datetime import datetime
+
+    with logs.kept("serve", datetime(2026, 11, 22, 12, 0, 0)) as path:
+        assert call(mcp, "get", {"id": "notes/wombatsecret.md"}).is_error
+        assert call(mcp, "mentions", {"id": "wombatsecret"}).is_error
+    written = path.read_text(encoding="utf-8")
+    assert "Tool 'get' failed" in written
+    assert "Tool 'mentions' failed" in written
+    assert "wombatsecret" not in written
+    other = logging.makeLogRecord({"msg": "Tool %r rejected arguments: %r", "args": ("get", ["id"])})
+    assert server._no_reasons(other)
+    assert other.getMessage() == "Tool 'get' rejected arguments: ['id']"  # which names no value
+
+
 def test_get_and_status(mcp, embedded):
     result = call(mcp, "get", {"id": "notes/rl.md"})
     assert result.content[0].text.startswith("# Reward shaping")
@@ -429,6 +451,87 @@ def transports(monkeypatch):
     return fakes
 
 
+def test_a_port_that_is_taken_is_said_to_be():
+    # `sift serve` beside one that runs already loaded the models first, for minutes on a CPU, and then ended with
+    # uvicorn's "[Errno 10048] error while attempting to bind on address".
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        said = f"port {port} is taken: another `sift serve` runs there already, which agents can use as it is, or "
+        with pytest.raises(OSError, match=re.escape(said + "another program; `--port` picks another")):
+            port_free("127.0.0.1", port)
+    port_free("127.0.0.1", port)  # free again
+    nowhere = "nothing can listen on 192.0.2.1, port 8765: it is no address of this machine"  # nor of any other
+    with pytest.raises(OSError, match=re.escape(nowhere)):
+        port_free("192.0.2.1", 8765)
+    with pytest.raises(OSError, match="there is no port 70000: `--port` takes a number up to 65535"):
+        port_free("127.0.0.1", 70000)
+
+
+def test_a_port_is_asked_for_at_each_address_of_its_host_as_a_server_takes_them(monkeypatch):
+    # asyncio passes over an address whose family the machine has not, as IPv6 where it is off, and listens on the
+    # others: "localhost" must not be refused for its ::1.
+    local = (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0))
+    no_family = (9999, socket.SOCK_STREAM, 0, "", ("::1", 0, 0, 0))  # no family any machine has
+    not_ours = (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("192.0.2.1", 0))
+    monkeypatch.setattr(server.socket, "getaddrinfo", lambda *args, **kwargs: [no_family, not_ours, local])
+    port_free("localhost", 8765)
+    monkeypatch.setattr(server.socket, "getaddrinfo", lambda *args, **kwargs: [no_family])
+    with pytest.raises(OSError, match="nothing can listen on localhost, port 8765: it is no address of this machine"):
+        port_free("localhost", 8765)
+
+    def unknown(*args, **kwargs):
+        raise socket.gaierror(11001, "getaddrinfo failed")
+
+    monkeypatch.setattr(server.socket, "getaddrinfo", unknown)
+    with pytest.raises(OSError, match=r"nothing can listen on nas, port 8765: .*getaddrinfo failed"):
+        port_free("nas", 8765)
+
+
+@pytest.mark.parametrize("platform, reuses", [("win32", False), ("linux", True)])
+def test_a_port_is_asked_for_as_asyncio_takes_one_for_a_server(monkeypatch, platform, reuses):
+    # A port a server just left is free again everywhere but on Windows (SO_REUSEADDR), where the same option shares
+    # a port in use: asked for otherwise, a port taken passed there, or one just left was refused elsewhere.
+    options = []
+
+    class Probe(socket.socket):
+        def setsockopt(self, *option):
+            options.append(option)
+            super().setsockopt(*option)
+
+        def bind(self, address):
+            if address[1] == 80:
+                raise PermissionError(13, "Permission denied")  # as Linux keeps the low ports from a user
+            super().bind(address)
+
+    with monkeypatch.context() as elsewhere:  # for sift alone: pytest goes on, on the system it runs on
+        elsewhere.setattr(server.socket, "socket", Probe)
+        elsewhere.setattr(sys, "platform", platform)
+        port_free("127.0.0.1", 0)
+        with pytest.raises(OSError, match=r"nothing can listen on 127\.0\.0\.1, port 80: .*Permission denied"):
+            port_free("127.0.0.1", 80)
+    assert options == [(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)] * (2 * reuses)
+
+
+@pytest.mark.parametrize("serve", [server.serve, worker.serve])
+def test_a_server_asks_for_its_port_before_it_loads_the_models(home, transports, fake_models, monkeypatch, serve):
+    def taken(host, port):
+        raise OSError(f"port {port} is taken")
+
+    monkeypatch.setattr(serve.__globals__["__name__"] + ".port_free", taken)
+    monkeypatch.setattr(fake_models, "load", lambda: pytest.fail("the models were loaded"))
+    with pytest.raises(OSError, match="port 9000 is taken"):
+        serve(port=9000, models=fake_models)
+    assert transports.started == []
+
+
+def test_a_server_over_stdio_asks_for_no_port(embedded, transports, monkeypatch):
+    monkeypatch.setattr(server, "port_free", lambda host, port: pytest.fail("asked for a port"))
+    server.serve(stdio=True)
+    assert transports.started == [("stdio", {})]
+
+
 @pytest.mark.parametrize("host, warned", [("0.0.0.0", True), ("192.168.1.5", True), ("127.0.0.1", False)])
 def test_serving_other_machines_warns_that_they_can_read_everything(embedded, transports, capsys, host, warned):
     server.serve(host=host, port=9000)
@@ -541,17 +644,15 @@ def test_on_windows_http_is_served_on_a_selector_loop(embedded, monkeypatch):
         loops.append(asyncio.get_running_loop())
 
     monkeypatch.setattr(uvicorn.Server, "serve", capture)
-    monkeypatch.setattr(server.sys, "platform", "win32")
+    monkeypatch.setattr(server, "loop_options", on_windows(server.loop_options))
     server.serve(port=8765)
     assert isinstance(loops[0], asyncio.SelectorEventLoop)
 
 
-def test_the_loop_is_chosen_for_windows_and_http_only(monkeypatch):
-    monkeypatch.setattr(server.sys, "platform", "win32")
-    assert server.loop_options() == {"loop_factory": asyncio.SelectorEventLoop}
-    assert server.loop_options(stdio=True) == {}  # stdio's pipes are the proactor's to read
-    monkeypatch.setattr(server.sys, "platform", "linux")
-    assert server.loop_options() == {}  # elsewhere the default loop is a selector loop already
+def test_the_loop_is_chosen_for_windows_and_http_only():
+    assert server.loop_options(platform="win32") == {"loop_factory": asyncio.SelectorEventLoop}
+    assert server.loop_options(stdio=True, platform="win32") == {}  # stdio's pipes are the proactor's to read
+    assert server.loop_options(platform="linux") == {}  # elsewhere the default loop is a selector loop already
 
 
 @pytest.fixture
@@ -591,8 +692,6 @@ def test_http_server_accepts_only_local_hosts(http_app):
 
 def test_a_store_that_refuses_to_open_is_a_tool_error(mcp, monkeypatch):
     # A newer sift's store, opened by a server still running: SystemExit went through the tool, and the server.
-    from sift.catalog import Catalog
-
     real = Catalog.store
 
     def refused(self, collection):
