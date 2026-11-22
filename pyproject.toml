@@ -79,6 +79,7 @@ sift-rag = "sift.interfaces.cli.main:main"
 gate = ["nox==2026.10.20"]
 dev = [
     "basedpyright==1.40.2",
+    "hypothesis==6.170.17",
     "import-linter==2.17",
     "pre-commit==4.5.1",
     "pytest==9.2.0",
