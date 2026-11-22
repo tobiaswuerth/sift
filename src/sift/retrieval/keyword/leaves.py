@@ -56,11 +56,16 @@ def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[Stored]]) -> Po
     return candidates[found], counts[found]
 
 
+def _counted(n: int, what: str) -> str:
+    return f"{n:,} {what}{'s' * (n != 1)}"
+
+
 def _prefix(store: Opened, prefix: Prefix, most: int) -> Postings:
     held = volume(store.transaction, prefix.text)
     if held.passages > most:
+        words, passages = _counted(held.words, "word"), _counted(held.passages, "passage")
         raise InvalidRequestError(
-            f"{prefix.text}* stands for {held.words:,} words in {held.passages:,} passages, more than a search reads",
+            f"{prefix.text}* stands for {words} in {passages}, more than a search reads",
             "write more of the word before the *",
         )
     terms = expansions(store.transaction, prefix.text)

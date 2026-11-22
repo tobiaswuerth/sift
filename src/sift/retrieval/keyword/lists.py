@@ -1,5 +1,6 @@
 import itertools
 from dataclasses import dataclass, field
+from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -34,6 +35,7 @@ class Ranged:
     segment: int
     term: str
     ranges: Ranges
+    ids: Ascending
 
 
 type Stored = Whole | Ranged
@@ -42,8 +44,16 @@ type Postings = tuple[Ids, Ids]
 
 @dataclass(frozen=True, slots=True)
 class Dense:
-    blocks: Ascending
-    table: NDArray[np.int64]
+    numbers: Ids
+    table: NDArray[np.uint32]
+    order: Ids
+
+    @property
+    def blocks(self) -> Ascending:
+        return Ascending(self.numbers[self.order])
+
+    def rows_of(self, blocks: Ids) -> Ids:
+        return self.order[np.searchsorted(self.numbers[self.order], blocks)]
 
 
 @dataclass(slots=True)
@@ -84,7 +94,8 @@ def stored(store: Opened, terms: list[str]) -> dict[str, list[Stored]]:
     placed = {held.id: held for held in store.segments}
     for part in parts:
         if part.ranged:
-            found[part.term].append(Ranged(part.segment, part.term, _placed(store, placed, part.segment, part.data)))
+            ranges = _placed(store, placed, part.segment, part.data)
+            found[part.term].append(Ranged(part.segment, part.term, ranges, Ascending(ranges.ids)))
     return found
 
 
@@ -119,6 +130,10 @@ def _block(store: Opened, held: Ranged, number: int) -> Postings:
         size = min(store.shape.block, last(held.ranges.ends) - number * store.shape.block)
         if len(places) != size:
             raise DamagedError(f"a block holds {len(places):,} postings where its ranges place {size:,}")
+        start = number * store.shape.block
+        owners = np.searchsorted(held.ranges.ends, np.arange(start, start + size), side="right")
+        if not bool(np.array_equal(places >> store.shape.range_shift, held.ranges.ids[owners])):
+            raise DamagedError("a block holds postings outside its ranges")
         store.blocks[key] = places, counts
     return store.blocks[key]
 
@@ -157,9 +172,22 @@ def _segments_at(store: Opened, places: Ids) -> Ids:
     return at
 
 
+def _empty(shift: int) -> Dense:
+    none = np.zeros(0, np.int64)
+    return Dense(none, np.zeros((0, 1 << shift), np.uint32), none)
+
+
+def _grown(table: NDArray[np.uint32], rows: int) -> NDArray[np.uint32]:
+    if rows <= len(table):
+        return table
+    grown = np.zeros((max(rows, 2 * len(table)), cast("int", table.shape[1])), np.uint32)
+    grown[: len(table)] = table
+    return grown
+
+
 def _loaded(store: Opened, segment: SegmentRow, blocks: Ids) -> Dense:
     shift = store.shape.lengths_shift
-    held = store.lengths.get(segment.id, Dense(Ascending(np.zeros(0, np.int64)), np.zeros((0, 1 << shift), np.int64)))
+    held = store.lengths.get(segment.id, _empty(shift))
     wanted = distinct(Ascending(blocks)).values
     missing = wanted[~among(wanted, held.blocks)]
     if not len(missing):
@@ -167,10 +195,11 @@ def _loaded(store: Opened, segment: SegmentRow, blocks: Ids) -> Dense:
     found = keyword_lists.lengths(store.transaction, segment.id, ints(missing))
     if [row.block for row in found] != ints(missing):
         raise DamagedError("the lengths of some chunks are missing from the keyword index")
-    numbers = np.concatenate([held.blocks.values, missing])
-    table = np.concatenate([held.table, np.stack([lengths_of(row.lengths, shift) for row in found])])
-    order = np.argsort(numbers, kind="stable")
-    store.lengths[segment.id] = Dense(Ascending(numbers[order]), table[order])
+    used = len(held.numbers)
+    table = _grown(held.table, used + len(missing))
+    table[used : used + len(missing)] = np.stack([lengths_of(row.lengths, shift) for row in found])
+    numbers = np.concatenate([held.numbers, missing])
+    store.lengths[segment.id] = Dense(numbers, table, np.argsort(numbers, kind="stable"))
     return store.lengths[segment.id]
 
 
@@ -184,7 +213,7 @@ def lengths_at(store: Opened, places: Ids) -> Ids:
         segment = store.segments[first(at[start:end])]
         here = ordered[start:end]
         held = _loaded(store, segment, here >> shift)
-        found[start:end] = held.table[np.searchsorted(held.blocks.values, here >> shift), here & ((1 << shift) - 1)]
+        found[start:end] = held.table[held.rows_of(here >> shift), here & ((1 << shift) - 1)]
     result = np.empty(len(places), np.int64)
     result[order] = found
     return result

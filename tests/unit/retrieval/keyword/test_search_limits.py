@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import pytest
@@ -13,12 +13,21 @@ from sift.domain.query.expressions import And, Prefix, Term
 from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Ranged, opened, stored
 from sift.retrieval.keyword.search import Tuning, prepared, query_of, search, searched
+from sift.storage.database import rows
 from tests.keyword_searches import (
     SEEDS,
     Draws,
     collections,
     prose,
 )
+
+
+class Block(NamedTuple):
+    segment: int
+    term: str
+    number: int
+    postings: bytes
+
 
 if TYPE_CHECKING:
     from tests.keyword_stores import Round
@@ -131,3 +140,23 @@ def test_a_prefix_of_words_in_as_many_passages_as_a_search_reads_is_read() -> No
         assert len(search(stores, Prefix("w1"), 10, tuning=Tuning(most_prefix=3))) == 2
         with pytest.raises(InvalidRequestError, match="w1\\* stands for 3 words in 3 passages"):
             search(stores, Prefix("w1"), 10, tuning=Tuning(most_prefix=2))
+
+
+def test_a_prefix_is_held_to_the_passages_its_words_occur_in_not_to_its_words() -> None:
+    with collections([[{"a.md": ("", "A", "w1"), "b.md": ("", "B", "w1"), "c.md": ("", "C", "w1")}]]) as (stores, _):
+        assert len(search(stores, Prefix("w1"), 10, tuning=Tuning(most_prefix=3))) == 3
+        with pytest.raises(InvalidRequestError, match=r"w1\* stands for 1 word in 3 passages"):
+            search(stores, Prefix("w1"), 10, tuning=Tuning(most_prefix=2))
+
+
+def test_a_block_whose_postings_lie_outside_its_ranges_is_damage() -> None:
+    with collections([[prose(Draws(np.random.default_rng(7)), 60)]]) as (stores, _):
+        (store,) = stores
+        sql = "SELECT segment, term, number, postings FROM keyword_blocks WHERE term = 'w0' ORDER BY segment, number"
+        first, second, *_ = rows(store.transaction, Block, sql)
+        store.transaction.connection.execute(
+            "UPDATE keyword_blocks SET postings = ? WHERE segment = ? AND term = ? AND number = ?",
+            (second.postings, first.segment, first.term, first.number),
+        )
+        with pytest.raises(DamagedError, match="outside its ranges"):
+            search(stores, Term("w0"), 10_000)

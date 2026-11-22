@@ -343,3 +343,16 @@ def test_merges_too_large_for_a_write_run_as_their_own_phase(home: Path, notes: 
     again: list[Event] = []
     index(home, IndexCollections(), again.append, limits)
     assert Phase.MERGE not in [event.phase for event in again if isinstance(event, PhaseStarted)]
+
+
+def test_merges_left_by_a_remake_run_though_the_folder_is_gone(home: Path, notes: Path) -> None:
+    batches = Batches(chunks_a_segment=1, chunks_a_settle=0, merging=Policy(factor=2, floor=1, span=0.0))
+    index(home, IndexCollections(), lambda _: None, Limits(batches=batches))
+    (store,) = [Path(each.store) for each in status(home, ShowStatus()).collections]
+    with contextlib.closing(open_store(store, CollectionId(1))) as connection, connection:
+        connection.execute("UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
+    shutil.rmtree(notes)
+    said: list[Event] = []
+    index(home, IndexCollections(), said.append, Limits(batches=batches))
+    assert [event.phase for event in said if isinstance(event, PhaseStarted)] == [Phase.REMAKE, Phase.MERGE]
+    assert isinstance(said[-1], Noted)

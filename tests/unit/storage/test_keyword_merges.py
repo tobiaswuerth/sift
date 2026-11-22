@@ -102,7 +102,7 @@ def test_merges_too_large_for_a_write_wait_for_settling_a_merge_a_transaction() 
         with reading(connection) as transaction:
             held = rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments ORDER BY first")
         assert len(held) == 4
-        assert list(settle(connection, batches)) == [2, 4, 8]
+        assert list(settle(connection, batches)) == [0, 2, 4, 8]
         assert settled(connection, batches.merging) == [Sized(4, 0)]
         checked(connection)
 
@@ -112,3 +112,44 @@ def test_settling_an_index_of_another_version_is_refused() -> None:
         staled(connection)
         with pytest.raises(StoreUnavailableError, match="another version"):
             list(settle(connection))
+
+
+def test_merges_that_fit_a_write_run_though_a_larger_one_waits() -> None:
+    batches = Batches(chunks_a_settle=2, merging=Policy(factor=2, floor=1, span=0.0))
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        for n in range(12):
+            applied(connection, [{f"n{n}.md": ("", f"Note {n}", "one two")}], batches)
+        with reading(connection) as transaction:
+            sized = rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments ORDER BY first")
+            held = [each.chunks for each in sized]
+        assert held == [2, 2, 2, 2, 2, 2]
+        assert list(settle(connection, batches))[-1] > 0
+        checked(connection)
+
+
+def test_merges_batch_by_bytes_as_well_as_by_postings() -> None:
+    batches = Batches(chunks_a_segment=2, postings_a_merge=10**9, bytes_a_merge=1, merging=Policy(factor=2, floor=1))
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{f"n{n}.md": ("", "N", f"alpha beta gamma {n}") for n in range(8)}], batches)
+        checked(connection)
+        settled(connection, batches.merging)
+
+
+def test_settling_while_another_sift_remakes_the_index_says_so() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{"a.md": ("", "a", "one two")}])
+        with writing(connection) as transaction:
+            run(transaction, "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
+        remake_started(connection)
+        with pytest.raises(StoreUnavailableError, match="another sift began to remake"):
+            list(settle(connection))
+
+
+def test_a_write_merges_no_more_than_its_budget_however_many_would_fit_alone() -> None:
+    batches = Batches(chunks_a_segment=1, chunks_a_settle=2, merging=Policy(factor=2, floor=1, span=0.0))
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{f"n{n}.md": ("", f"Note {n}", "one") for n in range(4)}], batches)
+        with reading(connection) as transaction:
+            sized = rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments ORDER BY first")
+        assert [each.chunks for each in sized] == [2, 1, 1]
+        checked(connection)

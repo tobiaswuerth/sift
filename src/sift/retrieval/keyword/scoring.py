@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ascending, Ids, Mask, among, first, last
+from sift.domain.arrays import Ids, Mask, among, first, last
 from sift.domain.query.expressions import And, Expression, Leaf, Or, Phrase, Prefix, Term
 from sift.domain.rank.bm25 import TOP, Scores, slack, term_scores, unquantized
 from sift.retrieval.keyword.lists import Opened, Postings, Ranged, Stored, Whole, lengths_at, live, postings_in, slices
@@ -102,7 +102,7 @@ def within(store: Opened, query: Query, held: Scored, group: Ids) -> Iterator[tu
     for each in held.bounded:
         ids = each.held.ranges.ids
         at = np.minimum(np.searchsorted(ids, group), len(ids) - 1)
-        hit = among(group, Ascending(ids))
+        hit = among(group, each.held.ids)
         if hit.any():
             places, counts = postings_in(store, each.held, at[hit])
             yield places, term_scores(counts, lengths_at(store, places), query.average)

@@ -10,8 +10,8 @@ from sift.domain.arrays import Ascending, Ids, among, first, firsts, ints, last,
 from sift.domain.codec.postings import blocked_all, lengths_of, positions_all, with_lengths
 from sift.domain.codec.segments import Lists, Shape, postings_of
 from sift.domain.errors import DamagedError
-from sift.domain.plan.segments import Held, merges
-from sift.storage.database import Batches, WritingDocuments, rows, run, streamed
+from sift.domain.plan.segments import Held, Policy, merges
+from sift.storage.database import Batches, Reading, WritingDocuments, rows, run, streamed
 from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
 
 SHORT = """SELECT :rank, term, -1, chunks, length(postings) + length(positions), postings, positions
@@ -150,10 +150,17 @@ def _merged(transaction: WritingDocuments, merged: Sequence[Placed], shape: Shap
         run(transaction, sql, (named,))
 
 
-def _planned(transaction: WritingDocuments) -> list[list[Placed]]:
+def _plan(transaction: Reading, policy: Policy) -> list[list[Placed]]:
     held = rows(transaction, Placed, "SELECT id, first, last, chunks, dead FROM keyword_segments ORDER BY first")
-    chosen = merges([Held(each.chunks, each.dead) for each in held], transaction.batches.merging)
-    return [[held[at] for at in each] for each in chosen]
+    return [[held[at] for at in each] for each in merges([Held(each.chunks, each.dead) for each in held], policy)]
+
+
+def _planned(transaction: WritingDocuments) -> list[list[Placed]]:
+    return _plan(transaction, transaction.batches.merging)
+
+
+def planned(transaction: Reading, policy: Policy) -> bool:
+    return bool(_plan(transaction, policy))
 
 
 def _live(merged: Sequence[Placed]) -> int:
@@ -162,12 +169,11 @@ def _live(merged: Sequence[Placed]) -> int:
 
 def settled(transaction: WritingDocuments, shape: Shape) -> None:
     written, most = 0, transaction.batches.chunks_a_settle
-    while chosen := _planned(transaction):
-        for merged in chosen:
-            if written + _live(merged) > most:
-                return
-            _merged(transaction, merged, shape)
-            written += _live(merged)
+    while fitting := [merged for merged in _planned(transaction) if written + _live(merged) <= most]:
+        for merged in fitting:
+            if written + _live(merged) <= most:
+                _merged(transaction, merged, shape)
+                written += _live(merged)
 
 
 def merged_once(transaction: WritingDocuments, shape: Shape) -> int:

@@ -184,11 +184,8 @@ def _remade(connection: Connection, report: Reporter, batches: Batches) -> None:
 
 def _settled(connection: Connection, report: Reporter, batches: Batches) -> None:
     done = 0
-    for merged in settle(connection, batches):
-        if not done:
-            report(PhaseStarted(Phase.MERGE, None))
-        done = merged
-        report(Advanced(done))
+    for done in settle(connection, batches):
+        report(Advanced(done) if done else PhaseStarted(Phase.MERGE, None))
     if done:
         report(PhaseDone(done))
 

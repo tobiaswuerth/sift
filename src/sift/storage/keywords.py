@@ -28,7 +28,7 @@ from sift.storage.database import (
     run_each,
     writing,
 )
-from sift.storage.keyword_merges import merged_once, settled
+from sift.storage.keyword_merges import merged_once, planned, settled
 from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
 
 SHAPE_KEY, THROUGH_KEY, FINGERPRINT_KEY = "keyword_shape", "keywords_through", "keyword_fingerprint"
@@ -38,6 +38,7 @@ NUMBERS_PROBE = """SELECT coalesce(group_concat(j.atom, ' '), '') FROM json_tree
                    WHERE j.atom IS NOT NULL"""
 REMAKE_REMEDY = "run sift index to remake it"
 REMAKING = "remaking "
+STALE = "the store's keyword index is of another version of sift"
 TAKEN_OVER = "another sift began to remake this keyword index for itself meanwhile"
 TAKEN_OVER_REMEDY = (
     "index with one sift at a time: sifts whose SQLite writes numbers otherwise remake it for themselves"
@@ -295,12 +296,25 @@ def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
         yield done
 
 
+def _refuse_stale(transaction: Reading) -> None:
+    made = fingerprint(transaction)
+    found = _meta(transaction, FINGERPRINT_KEY)
+    if found == REMAKING + made:
+        raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
+    if found != made:
+        raise StoreUnavailableError(STALE, REMAKE_REMEDY)
+
+
 def settle(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
+    with reading(connection) as transaction:
+        _refuse_stale(transaction)
+        if not planned(transaction, batches.merging):
+            return
     done = 0
+    yield done
     while True:
         with writing(connection) as transaction:
-            if not current(transaction):
-                raise StoreUnavailableError("the store's keyword index is of another version of sift", REMAKE_REMEDY)
+            _refuse_stale(transaction)
             written = merged_once(WritingDocuments(connection, batches), shape_of(transaction))
         if not written:
             return
@@ -312,7 +326,7 @@ def settle(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
 def writing_documents(connection: Connection, batches: Batches = BATCHES) -> Generator[WritingDocuments]:
     with writing(connection) as transaction:
         if not current(transaction):
-            raise StoreUnavailableError("the store's keyword index is of another version of sift", REMAKE_REMEDY)
+            raise StoreUnavailableError(STALE, REMAKE_REMEDY)
         held = WritingDocuments(connection, batches)
         yield held
         index_new(held)
