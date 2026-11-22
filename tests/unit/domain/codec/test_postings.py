@@ -223,6 +223,6 @@ def test_lengths_packed_far_larger_than_their_block_are_never_unpacked_whole() -
 
 
 def test_ranges_out_of_order_or_too_far_apart_are_refused() -> None:
-    for ids in ([3, 3], [0, 1 << 32]):
+    for ids in ([3, 3], [3, 1], [0, 1 << 32]):
         with pytest.raises(ValueError, match=r"2\*\*32 apart: more than ranges hold"):
             ranged(np.array(ids, np.int64), np.ones(2, np.int64), np.zeros(2, np.uint8))

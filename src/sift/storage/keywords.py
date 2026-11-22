@@ -40,9 +40,9 @@ REMAKE_REMEDY = "run sift index to remake it"
 REMAKING = "remaking "
 STALE = "the store's keyword index is of another version of sift"
 UNFINISHED = "the store's keyword index is not yet wholly remade"
-TAKEN_OVER = "another sift began to remake this keyword index for itself meanwhile"
+TAKEN_OVER = "another sift is remaking this keyword index for itself"
 TAKEN_OVER_REMEDY = (
-    "index with one sift at a time: sifts whose SQLite writes numbers otherwise remake it for themselves"
+    "run sift index with one sift at a time: sifts whose SQLite writes numbers otherwise remake it in turn"
 )
 DIGITS = re.compile("[0-9]{1,19}")
 MOST_ROW = (1 << 63) - 1

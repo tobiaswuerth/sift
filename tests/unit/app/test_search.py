@@ -18,7 +18,7 @@ from sift.app.documents import documents
 from sift.app.indexing import index
 from sift.app.search import search
 from sift.retrieval.keyword.search import Tuning
-from sift.storage.keywords import REMAKE_REMEDY
+from sift.storage.keywords import REMAKE_REMEDY, TAKEN_OVER_REMEDY
 from sift.storage.store import DAMAGED_REMEDY, LAYOUT, MISSING_REMEDY, create_store, delete_store
 from tests.damage import damage_table
 
@@ -267,16 +267,28 @@ def test_a_keyword_index_of_another_version_is_passed_over_until_indexed_again(h
 
 
 @pytest.mark.parametrize(
-    "marked, said",
+    "marked, said, remedy",
     [
-        ("UPDATE meta SET value = 'remaking ' || value WHERE key = 'keyword_fingerprint'", "not yet wholly remade"),
-        ("UPDATE meta SET value = 'remaking other' WHERE key = 'keyword_fingerprint'", "another sift began to remake"),
+        (
+            "UPDATE meta SET value = 'remaking ' || value WHERE key = 'keyword_fingerprint'",
+            "the store's keyword index is not yet wholly remade",
+            REMAKE_REMEDY,
+        ),
+        (
+            "UPDATE meta SET value = 'remaking other' WHERE key = 'keyword_fingerprint'",
+            "another sift is remaking this keyword index for itself",
+            TAKEN_OVER_REMEDY,
+        ),
     ],
 )
-def test_a_keyword_index_being_remade_is_passed_over_saying_by_whom(home: Path, marked: str, said: str) -> None:
+def test_a_keyword_index_being_remade_is_passed_over_saying_by_whom(
+    home: Path, marked: str, said: str, remedy: str
+) -> None:
     _changed(home / "collections" / "notes.sqlite", marked)
     (unsearched,) = search(home, SearchKeywords("halo")).unsearched
-    assert said in unsearched.message
+    assert (unsearched.message, unsearched.remedy) == (said, remedy)
+    indexed(home)
+    assert ids(home, SearchKeywords("halo")) == ["notes/halo.md"]
 
 
 def test_an_index_of_another_version_is_remade_by_indexing_even_with_its_folder_gone(home: Path, notes: Path) -> None:

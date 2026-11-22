@@ -177,6 +177,10 @@ def test_codes_not_of_their_width_are_refused() -> None:
         coded(np.arange(2, dtype=np.int64), cast("Bits", codes(np.ones((2, 64), np.float32)).astype(np.int8)), 64)
     with pytest.raises(ValueError, match="codes of 65,536 dimensions"):
         coded(np.arange(1, dtype=np.int64), np.zeros((1, 8_192), np.uint8), 65_536)
+    with pytest.raises(ValueError, match="uint8 matrix"):
+        coded(np.arange(8, dtype=np.int64), np.zeros(8, np.uint8), 64)
+    with pytest.raises(ValueError, match="codes of 0 dimensions"):
+        coded(np.arange(2, dtype=np.int64), np.zeros((2, 0), np.uint8), 0)
 
 
 def test_a_store_without_codes_may_be_of_any_width() -> None:
