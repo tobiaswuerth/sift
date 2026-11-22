@@ -42,6 +42,8 @@ class Batches:
     chunks_a_segment: int = 50_000
     documents_a_forget: int = 1_000
     postings_a_merge: int = 2_000_000
+    bytes_a_merge: int = 64 << 20
+    chunks_a_settle: int = 100_000
     merging: Policy = POLICY
 
 

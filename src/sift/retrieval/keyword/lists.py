@@ -2,8 +2,9 @@ import itertools
 from dataclasses import dataclass, field
 
 import numpy as np
+from numpy.typing import NDArray
 
-from sift.domain.arrays import Ids, Mask, after, among, distinct, first, ints, last, run_starts, total
+from sift.domain.arrays import Ascending, Ids, after, among, distinct, first, ints, last, run_starts, total
 from sift.domain.codec.postings import (
     Ranges,
     blocked,
@@ -41,9 +42,8 @@ type Postings = tuple[Ids, Ids]
 
 @dataclass(frozen=True, slots=True)
 class Dense:
-    base: int
-    lengths: Ids
-    loaded: Mask
+    blocks: Ascending
+    table: NDArray[np.int64]
 
 
 @dataclass(slots=True)
@@ -51,7 +51,7 @@ class Opened:
     transaction: Reading
     shape: Shape
     segments: tuple[SegmentRow, ...]
-    dead: Ids
+    dead: Ascending
     chunks: int
     tokens: int
     lengths: dict[int, Dense] = field(default_factory=dict[int, Dense])
@@ -63,11 +63,12 @@ def opened(transaction: Reading) -> Opened:
     found = tuple(keyword_lists.segments(transaction))
     if any(before.last >= after.first for before, after in itertools.pairwise(found)):
         raise DamagedError("segments of the keyword index overlap")
-    return Opened(transaction, shape_of(transaction), found, keyword_lists.dead(transaction), held.chunks, held.tokens)
+    dead = Ascending(keyword_lists.dead(transaction))
+    return Opened(transaction, shape_of(transaction), found, dead, held.chunks, held.tokens)
 
 
 def live(store: Opened, places: Ids, counts: Ids) -> Postings:
-    if not len(store.dead):
+    if not len(store.dead.values):
         return places, counts
     kept = ~among(places, store.dead)
     return places[kept], counts[kept]
@@ -156,26 +157,21 @@ def _segments_at(store: Opened, places: Ids) -> Ids:
     return at
 
 
-def _dense(store: Opened, segment: SegmentRow) -> Dense:
-    if segment.id not in store.lengths:
-        shift = store.shape.lengths_shift
-        base, top = segment.first >> shift, segment.last >> shift
-        size = (top - base + 1) << shift
-        store.lengths[segment.id] = Dense(base, np.zeros(size, np.int64), np.zeros(top - base + 1, np.bool_))
-    return store.lengths[segment.id]
-
-
 def _loaded(store: Opened, segment: SegmentRow, blocks: Ids) -> Dense:
-    held, shift = _dense(store, segment), store.shape.lengths_shift
-    missing = distinct(blocks[~held.loaded[blocks - held.base]])
-    if len(missing):
-        for row in keyword_lists.lengths(store.transaction, segment.id, ints(missing)):
-            at = (row.block - held.base) << shift
-            held.lengths[at : at + (1 << shift)] = lengths_of(row.lengths, shift)
-            held.loaded[row.block - held.base] = True
-        if not bool(held.loaded[missing - held.base].all()):
-            raise DamagedError("the lengths of some chunks are missing from the keyword index")
-    return held
+    shift = store.shape.lengths_shift
+    held = store.lengths.get(segment.id, Dense(Ascending(np.zeros(0, np.int64)), np.zeros((0, 1 << shift), np.int64)))
+    wanted = distinct(Ascending(blocks)).values
+    missing = wanted[~among(wanted, held.blocks)]
+    if not len(missing):
+        return held
+    found = keyword_lists.lengths(store.transaction, segment.id, ints(missing))
+    if [row.block for row in found] != ints(missing):
+        raise DamagedError("the lengths of some chunks are missing from the keyword index")
+    numbers = np.concatenate([held.blocks.values, missing])
+    table = np.concatenate([held.table, np.stack([lengths_of(row.lengths, shift) for row in found])])
+    order = np.argsort(numbers, kind="stable")
+    store.lengths[segment.id] = Dense(Ascending(numbers[order]), table[order])
+    return store.lengths[segment.id]
 
 
 def lengths_at(store: Opened, places: Ids) -> Ids:
@@ -188,26 +184,26 @@ def lengths_at(store: Opened, places: Ids) -> Ids:
         segment = store.segments[first(at[start:end])]
         here = ordered[start:end]
         held = _loaded(store, segment, here >> shift)
-        found[start:end] = held.lengths[here - (held.base << shift)]
+        found[start:end] = held.table[np.searchsorted(held.blocks.values, here >> shift), here & ((1 << shift) - 1)]
     result = np.empty(len(places), np.int64)
     result[order] = found
     return result
 
 
-def _positions_whole(store: Opened, held: Whole, wanted: Ids) -> tuple[Ids, Ids, Ids]:
+def _positions_whole(store: Opened, held: Whole, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
     row = _one(keyword_lists.positions(store.transaction, held.segment, held.term, None), "a list of positions")
     flat = positions_of(row.positions, held.counts)
     return _chosen(held.places, held.counts, flat, wanted)
 
 
-def _chosen(places: Ids, counts: Ids, flat: Ids, wanted: Ids) -> tuple[Ids, Ids, Ids]:
+def _chosen(places: Ids, counts: Ids, flat: Ids, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
     kept = among(places, wanted)
     return places[kept], counts[kept], flat[np.repeat(kept, counts)]
 
 
-def _positions_ranged(store: Opened, held: Ranged, wanted: Ids) -> tuple[Ids, Ids, Ids]:
-    chosen = np.flatnonzero(among(held.ranges.ids, distinct(wanted >> store.shape.range_shift)))
-    numbers = ints(distinct(_indexes(held, chosen) // store.shape.block))
+def _positions_ranged(store: Opened, held: Ranged, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
+    chosen = np.flatnonzero(among(held.ranges.ids, distinct(Ascending(wanted.values >> store.shape.range_shift))))
+    numbers = ints(distinct(Ascending(_indexes(held, chosen) // store.shape.block)).values)
     parts = [_none()]
     for row in keyword_lists.positions(store.transaction, held.segment, held.term, numbers):
         places, counts = _block(store, held, row.number)
@@ -225,7 +221,7 @@ def joined(parts: list[tuple[Ids, Ids, Ids]]) -> tuple[Ids, Ids, Ids]:
     return np.concatenate(places), np.concatenate(counts), np.concatenate(positions)
 
 
-def positions_at(store: Opened, held: Stored, wanted: Ids) -> tuple[Ids, Ids, Ids]:
+def positions_at(store: Opened, held: Stored, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
     if isinstance(held, Whole):
         return _positions_whole(store, held, wanted)
     return _positions_ranged(store, held, wanted)

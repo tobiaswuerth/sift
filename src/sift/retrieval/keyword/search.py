@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ids, among, distinct, ints
+from sift.domain.arrays import Ascending, Ids, among, distinct, ints
 from sift.domain.query.expressions import Expression, Leaf, Prefix, Term, leaves
 from sift.domain.rank.best import Best, offered, ranked
 from sift.domain.rank.bm25 import Scores, idf
@@ -87,10 +87,10 @@ def _with_lazy(work: Pass, best: Best, places: Ids, acc: Scores, lazy: list[Leaf
     for n, leaf in enumerate(lazy):
         near = np.flatnonzero(acc + sum(query.most(other) for other in lazy[n:]) >= best.threshold)
         places, acc = places[near], acc[near]
-        ranges = distinct(places >> shift)
+        ranges = distinct(Ascending(places >> shift)).values
         for here, scores in within(work.store, query, work.lists[leaf], ranges) if len(ranges) else ():
             at = np.minimum(np.searchsorted(here, places), len(here) - 1)
-            hit = np.flatnonzero(among(places, here))
+            hit = np.flatnonzero(among(places, Ascending(here)))
             acc[hit] += query.bounding[leaf] * scores[at[hit]]
     keep = np.flatnonzero((acc >= best.threshold) & (acc > 0))
     return places[keep], acc[keep]
@@ -101,13 +101,13 @@ def _all_of(work: Pass, best: Best, group: Ids) -> Best:
     places, held = np.zeros(0, np.int64), {}
     for n, leaf in enumerate(sorted(query.leaves, key=lambda each: work.lists[each].size)):
         here, scores = merged_within(
-            work.store, query, work.lists[leaf], group if n == 0 else distinct(places >> shift)
+            work.store, query, work.lists[leaf], group if n == 0 else distinct(Ascending(places >> shift)).values
         )
         if n == 0:
             places, held = here, {leaf: scores}
             continue
         at = np.minimum(np.searchsorted(here, places), max(len(here) - 1, 0))
-        hit = np.flatnonzero(among(places, here))
+        hit = np.flatnonzero(among(places, Ascending(here)))
         places, held = places[hit], {key: value[hit] for key, value in held.items()} | {leaf: scores[at[hit]]}
     acc = sum((query.bounding[leaf] * scores for leaf, scores in held.items()), np.zeros(len(places)))
     keep = np.flatnonzero(acc >= best.threshold)

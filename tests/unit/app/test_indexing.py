@@ -15,7 +15,8 @@ from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, Inde
 from sift.app.collections import add, status
 from sift.app.indexing import FOLDER_MISSING_REMEDY, OUT_OF_REACH_REMEDY, Limits, index
 from sift.app.problems import EMPTY_INSIDE, EMPTY_INSIDE_REMEDY, LEFT_AS_INDEXED
-from sift.storage.database import reading, rows
+from sift.domain.plan.segments import Policy
+from sift.storage.database import Batches, reading, rows
 from sift.storage.documents import stored
 from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
 from tests.damage import damage_table
@@ -328,3 +329,17 @@ def test_a_file_s_documents_are_stored_whole(home: Path) -> None:
         found = stored(transaction, "robots/brush.md")
     assert found is not None
     assert found.text == "# Brush\n\nSee [[rl]].\n"
+
+
+def test_merges_too_large_for_a_write_run_as_their_own_phase(home: Path, notes: Path) -> None:
+    write(notes / "more.md", "# More\n\nOne more note.\n")
+    said: list[Event] = []
+    batches = Batches(chunks_a_settle=0, merging=Policy(factor=2, floor=1, span=0.0))
+    limits = Limits(most_files_a_write=1, batches=batches)
+    index(home, IndexCollections(), said.append, limits)
+    assert [event.phase for event in said if isinstance(event, PhaseStarted)] == [Phase.SCAN, Phase.READ, Phase.MERGE]
+    assert [event for event in said if isinstance(event, PhaseDone)][-1] == PhaseDone(8)
+    assert isinstance(said[-1], Finished)
+    again: list[Event] = []
+    index(home, IndexCollections(), again.append, limits)
+    assert Phase.MERGE not in [event.phase for event in again if isinstance(event, PhaseStarted)]

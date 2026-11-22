@@ -7,8 +7,8 @@ from sift.interfaces.console.style import Style, Tone, paint
 from sift.interfaces.console.text import fitted, printable
 from sift.interfaces.console.units import duration, rate
 
-UNITS = MappingProxyType({Phase.REMAKE: "chunk", Phase.SCAN: "file", Phase.READ: "file"})
-RATED = frozenset({Phase.REMAKE, Phase.READ})
+UNITS = MappingProxyType({Phase.REMAKE: "chunk", Phase.SCAN: "file", Phase.READ: "file", Phase.MERGE: "chunk"})
+RATED = frozenset({Phase.REMAKE, Phase.READ, Phase.MERGE})
 INDENT = "  "
 LABEL = 6
 COUNT = 10

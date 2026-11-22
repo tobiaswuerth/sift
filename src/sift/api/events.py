@@ -7,6 +7,7 @@ class Phase(StrEnum):
     REMAKE = "remake"
     SCAN = "scan"
     READ = "read"
+    MERGE = "merge"
 
 
 @dataclass(frozen=True, slots=True)

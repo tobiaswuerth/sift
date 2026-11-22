@@ -2,7 +2,7 @@ import numpy as np
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.domain.arrays import ints
+from sift.domain.arrays import Ascending, ints
 from sift.domain.rank.phrases import Occurrences, merged, phrase_counts
 
 texts = st.lists(st.lists(st.sampled_from("abc"), max_size=12), min_size=1, max_size=8)
@@ -24,7 +24,7 @@ def test_a_phrase_is_counted_where_its_tokens_follow_each_other_overlapping_ones
 ) -> None:
     candidates = np.array([10 * n for n in range(len(chunks))], np.int64)
     want = [sum(text[at : at + len(phrase)] == phrase for at in range(len(text))) for text in chunks]
-    got = phrase_counts(candidates, [occurrences(chunks, token) for token in phrase])
+    got = phrase_counts(Ascending(candidates), [occurrences(chunks, token) for token in phrase])
     assert got.tolist() == want
 
 
@@ -33,7 +33,7 @@ def test_positions_far_apart_are_counted_without_overflow() -> None:
     candidates = np.arange(0, 40, 10, dtype=np.int64)
     first = (candidates, np.ones(4, np.int64), np.full(4, far, np.int64))
     second = (candidates, np.ones(4, np.int64), np.full(4, far + 1, np.int64))
-    assert ints(phrase_counts(candidates, [first, second])) == [1, 1, 1, 1]
+    assert ints(phrase_counts(Ascending(candidates), [first, second])) == [1, 1, 1, 1]
 
 
 def test_many_candidates_are_counted_without_overflow() -> None:
@@ -41,7 +41,7 @@ def test_many_candidates_are_counted_without_overflow() -> None:
     half = candidates[::2]
     first = (candidates, np.ones(len(candidates), np.int64), np.full(len(candidates), 1 << 44, np.int64))
     second = (half, np.ones(len(half), np.int64), np.full(len(half), (1 << 44) + 1, np.int64))
-    counts = phrase_counts(candidates, [first, second])
+    counts = phrase_counts(Ascending(candidates), [first, second])
     assert int(counts.sum()) == len(half)
     assert ints(counts[:4]) == [1, 0, 1, 0]
 

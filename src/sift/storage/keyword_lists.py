@@ -9,6 +9,14 @@ from sift.storage.database import Reading, rows
 
 MOST_POINT = 0x10FFFF
 SURROGATES_START, SURROGATES_END = 0xD800, 0xE000
+EXPANSIONS = (
+    "SELECT term, chunks FROM keyword_terms WHERE term >= ?",
+    "SELECT term, chunks FROM keyword_terms WHERE term >= ? AND term < ?",
+)
+VOLUMES = (
+    "SELECT count(*), coalesce(sum(chunks), 0) FROM keyword_terms WHERE term >= ?",
+    "SELECT count(*), coalesce(sum(chunks), 0) FROM keyword_terms WHERE term >= ? AND term < ?",
+)
 
 
 class SegmentRow(NamedTuple):
@@ -41,6 +49,11 @@ class PositionsRow(NamedTuple):
 class Frequency(NamedTuple):
     term: str
     chunks: int
+
+
+class Volume(NamedTuple):
+    words: int
+    passages: int
 
 
 class Chunk(NamedTuple):
@@ -80,14 +93,20 @@ def _after(prefix: str) -> str | None:
     return kept[:-1] + chr(SURROGATES_END if SURROGATES_START <= following < SURROGATES_END else following)
 
 
-def expansions(transaction: Reading, prefix: str) -> list[str]:
+def _bounded(prefix: str) -> tuple[int, tuple[str, ...]]:
     after = _after(prefix)
-    sql, parameters = (
-        ("SELECT term, chunks FROM keyword_terms WHERE term >= ? AND term < ?", (prefix, after))
-        if after is not None
-        else ("SELECT term, chunks FROM keyword_terms WHERE term >= ?", (prefix,))
-    )
-    return [found.term for found in rows(transaction, Frequency, sql, parameters)]
+    return (0, (prefix,)) if after is None else (1, (prefix, after))
+
+
+def expansions(transaction: Reading, prefix: str) -> list[str]:
+    which, parameters = _bounded(prefix)
+    return [found.term for found in rows(transaction, Frequency, EXPANSIONS[which], parameters)]
+
+
+def volume(transaction: Reading, prefix: str) -> Volume:
+    which, parameters = _bounded(prefix)
+    (found,) = rows(transaction, Volume, VOLUMES[which], parameters)
+    return found
 
 
 def parts(transaction: Reading, terms: Sequence[str]) -> list[Part]:

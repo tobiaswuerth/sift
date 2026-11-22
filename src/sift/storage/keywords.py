@@ -28,7 +28,7 @@ from sift.storage.database import (
     run_each,
     writing,
 )
-from sift.storage.keyword_merges import settled
+from sift.storage.keyword_merges import merged_once, settled
 from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
 
 SHAPE_KEY, THROUGH_KEY, FINGERPRINT_KEY = "keyword_shape", "keywords_through", "keyword_fingerprint"
@@ -42,7 +42,8 @@ TAKEN_OVER = "another sift began to remake this keyword index for itself meanwhi
 TAKEN_OVER_REMEDY = (
     "index with one sift at a time: sifts whose SQLite writes numbers otherwise remake it for themselves"
 )
-DIGITS = re.compile("[0-9]{1,18}")
+DIGITS = re.compile("[0-9]{1,19}")
+MOST_ROW = (1 << 63) - 1
 
 
 class Value(NamedTuple):
@@ -120,7 +121,7 @@ def shape_of(transaction: Reading) -> Shape:
 
 def _number(transaction: Reading, key: str) -> int:
     written = _required(transaction, key)
-    if DIGITS.fullmatch(written) is None:
+    if DIGITS.fullmatch(written) is None or int(written) > MOST_ROW:
         raise DamagedError(f"the store's {key} is {written!r}, no number")
     return int(written)
 
@@ -282,13 +283,28 @@ def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
     whole = False
     while not whole:
         with writing(connection) as transaction:
-            made = fingerprint(transaction)
-            if _meta(transaction, FINGERPRINT_KEY) != REMAKING + made:
+            made, found = fingerprint(transaction), _meta(transaction, FINGERPRINT_KEY)
+            if found == made:
+                return
+            if found != REMAKING + made:
                 raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
             held, shape = WritingDocuments(connection, batches), shape_of(transaction)
             done += _index_new(held, shape)
             settled(held, shape)
             whole = _done_if_whole(transaction, made)
+        yield done
+
+
+def settle(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
+    done = 0
+    while True:
+        with writing(connection) as transaction:
+            if not current(transaction):
+                raise StoreUnavailableError("the store's keyword index is of another version of sift", REMAKE_REMEDY)
+            written = merged_once(WritingDocuments(connection, batches), shape_of(transaction))
+        if not written:
+            return
+        done += written
         yield done
 
 

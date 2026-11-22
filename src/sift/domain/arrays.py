@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import cast
 
 import numpy as np
@@ -52,15 +53,28 @@ def maxima_at(values: Scores, starts: Ids) -> Scores:
     return cast("Scores", np.maximum.reduceat(values, starts))
 
 
-def among(values: Ids, ascending: Ids) -> Mask:
-    if not len(ascending):
+@dataclass(frozen=True, slots=True)
+class Ascending:
+    values: Ids
+
+    def __post_init__(self) -> None:
+        if len(self.values) > 1 and not bool((self.values[1:] >= self.values[:-1]).all()):
+            raise ValueError("these values are not ascending: sort them first")
+
+
+def ascending(values: Ids) -> Ascending:
+    return Ascending(np.sort(values))
+
+
+def among(values: Ids, held: Ascending) -> Mask:
+    if not len(held.values):
         return np.zeros(len(values), np.bool_)
-    at = np.minimum(np.searchsorted(ascending, values), len(ascending) - 1)
-    return cast("Mask", ascending[at] == values)
+    at = np.minimum(np.searchsorted(held.values, values), len(held.values) - 1)
+    return cast("Mask", held.values[at] == values)
 
 
-def distinct(ascending: Ids) -> Ids:
-    return ascending[firsts(ascending)]
+def distinct(held: Ascending) -> Ascending:
+    return Ascending(held.values[firsts(held.values)])
 
 
 def either(masks: list[Mask]) -> Mask:

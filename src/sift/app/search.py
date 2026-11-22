@@ -19,6 +19,7 @@ from sift.retrieval.keyword.search import (
     Expired,
     Found,
     Prepared,
+    Tuning,
     found_in,
     never,
     prepared,
@@ -52,6 +53,7 @@ class Asked:
     expression: Expression
     looser: Expression | None
     expired: Expired
+    tuning: Tuning
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +128,7 @@ def _found(kept: Kept, asked: Asked, expression: Expression) -> Ranked | None:
         return Ranked((), cut=False)
     best, cut = Best(asked.request.k, not asked.request.all_passages), False
     for one, held in ready:
-        after = kept.guarded(one, partial(searched, held, query, best, TUNING, asked.expired))
+        after = kept.guarded(one, partial(searched, held, query, best, asked.tuning, asked.expired))
         if after is None:
             return None
         best, cut = after.best, cut or after.cut
@@ -184,17 +186,19 @@ def _expired(budget: float | None, clock: Clock) -> Expired:
     return lambda: clock() > until
 
 
-def _asked(request: SearchKeywords, clock: Clock) -> Asked:
+def _asked(request: SearchKeywords, clock: Clock, tuning: Tuning) -> Asked:
     if request.k < 1:
         raise InvalidRequestError(f"-k {request.k:,} asks for no result", FEW_REMEDY)
     if request.k > MOST_HITS:
         raise InvalidRequestError(f"-k {request.k:,} asks for more than {MOST_HITS:,} results", MANY_REMEDY)
     expired = _expired(request.budget, clock)
-    return Asked(request, parsed(request.query), relaxed(request.query), expired)
+    return Asked(request, parsed(request.query), relaxed(request.query), expired, tuning)
 
 
-def search(home: Path, request: SearchKeywords, clock: Clock = time.perf_counter) -> SearchResult:
-    asked = _asked(request, clock)
+def search(
+    home: Path, request: SearchKeywords, clock: Clock = time.perf_counter, tuning: Tuning = TUNING
+) -> SearchResult:
+    asked = _asked(request, clock, tuning)
     collections = _collections(home, request.collection)
     with ExitStack() as cleanup:
         kept = _opened(cleanup, collections)

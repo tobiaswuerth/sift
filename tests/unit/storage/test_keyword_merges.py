@@ -1,0 +1,114 @@
+import tempfile
+from pathlib import Path
+
+import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+from sift.api.errors import StoreUnavailableError
+from sift.domain.codec.segments import Shape
+from sift.domain.errors import DamagedError
+from sift.domain.plan.segments import Policy
+from sift.storage.database import Batches, reading, rows, run, writing
+from sift.storage.keywords import remade, remake_started, settle
+from tests.keyword_indexes import (
+    LONG,
+    MERGING,
+    NOTES,
+    PAIRS,
+    Sized,
+    Term,
+    checked,
+    rounds,
+    settled,
+    staled,
+)
+from tests.keyword_stores import SMALL, Content, Round, applied, opened_store
+
+
+@settings(max_examples=30, deadline=None)
+@given(rounds, st.sampled_from([SMALL, Shape()]))
+def test_segments_merged_as_they_come_index_what_fts5_makes_of_the_live_chunks(each: list[Round], shape: Shape) -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, shape) as connection:
+        applied(connection, each, MERGING)
+        checked(connection)
+        settled(connection, MERGING.merging)
+
+
+def test_one_chunk_written_at_a_time_merges_like_a_binary_counter() -> None:
+    batches = Batches(merging=Policy(factor=2, floor=1, span=0.0))
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        for n in range(8):
+            applied(connection, [{f"n{n}.md": ("", f"Note {n}", "one two")}], batches)
+        assert settled(connection, batches.merging) == [Sized(8, 0)]
+        applied(connection, [{"n0.md": None, "n1.md": None, "n2.md": None}], batches)
+        assert settled(connection, batches.merging) == [Sized(5, 0)]
+        checked(connection)
+
+
+def test_a_remake_merges_its_segments_as_it_goes() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [NOTES])
+        staled(connection)
+        remake_started(connection)
+        assert list(remade(connection, MERGING))[-1] == len(NOTES)
+        checked(connection)
+        settled(connection, MERGING.merging)
+
+
+@pytest.mark.parametrize(
+    "sql, problem",
+    [
+        ("DELETE FROM keyword_lengths", "lengths of some chunks are missing"),
+        ("DELETE FROM chunks WHERE id = (SELECT min(id) FROM chunks)", "chunks the store does not"),
+    ],
+)
+def test_segments_damaged_before_they_merge_are_damage(sql: str, problem: str) -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{"a.md": ("", "a", "one two")}], PAIRS)
+        with writing(connection) as transaction:
+            run(transaction, sql)
+        with pytest.raises(DamagedError, match=problem):
+            applied(connection, [{"b.md": ("", "b", "three")}], PAIRS)
+
+
+def test_a_segment_to_rewrite_whose_chunks_are_all_gone_is_damage() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [LONG])
+        with writing(connection) as transaction:
+            run(transaction, "DELETE FROM chunks")
+            run(transaction, "UPDATE keyword_segments SET dead = chunks - 1")
+        with pytest.raises(DamagedError, match="hold no chunk the store holds"):
+            applied(connection, [{}])
+
+
+def test_a_term_only_dead_chunks_held_is_gone_after_a_merge() -> None:
+    batches = Batches(postings_a_merge=1, merging=Policy(factor=2, floor=1, span=0.0, dead_share=0.99))
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        common: Content = ("", "c", "common")
+        applied(connection, [{"a.md": ("", "a", "solo"), "b.md": common, "c.md": common}, {"a.md": None}], batches)
+        applied(connection, [{"d.md": common, "e.md": common}], batches)
+        assert settled(connection, batches.merging) == [Sized(4, 0)]
+        with reading(connection) as transaction:
+            assert rows(transaction, Term, "SELECT term FROM keyword_postings WHERE term = 'solo'") == []
+        checked(connection)
+
+
+def test_merges_too_large_for_a_write_wait_for_settling_a_merge_a_transaction() -> None:
+    batches = Batches(chunks_a_settle=1, merging=Policy(factor=2, floor=1, span=0.0))
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        for n in range(4):
+            applied(connection, [{f"n{n}.md": ("", f"Note {n}", "one two")}], batches)
+        with reading(connection) as transaction:
+            held = rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments ORDER BY first")
+        assert len(held) == 4
+        assert list(settle(connection, batches)) == [2, 4, 8]
+        assert settled(connection, batches.merging) == [Sized(4, 0)]
+        checked(connection)
+
+
+def test_settling_an_index_of_another_version_is_refused() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        staled(connection)
+        with pytest.raises(StoreUnavailableError, match="another version"):
+            list(settle(connection))

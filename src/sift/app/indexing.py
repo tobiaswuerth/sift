@@ -13,7 +13,7 @@ from sift.domain.plan.indexing import MOST_TEXT_BYTES, IndexPlan, Stat, batches,
 from sift.domain.text.notes import Document, note
 from sift.ingest.scan import scan
 from sift.storage.catalog import Collection
-from sift.storage.database import Connection, WritingDocuments, reading
+from sift.storage.database import BATCHES, Batches, Connection, WritingDocuments, reading
 from sift.storage.documents import (
     add_documents,
     clear_unreadable,
@@ -25,7 +25,7 @@ from sift.storage.documents import (
     sources,
     unreadable,
 )
-from sift.storage.keywords import remade, remake_started, writing_documents
+from sift.storage.keywords import remade, remake_started, settle, writing_documents
 from sift.storage.store import open_store, unavailable_if_damaged
 
 FOLDER_MISSING_REMEDY = "connect the drive it lies on"
@@ -38,6 +38,7 @@ class Limits:
     most_text_bytes: int = MOST_TEXT_BYTES
     most_files_a_write: int = 1000
     most_bytes_a_write: int = 64 << 20
+    batches: Batches = BATCHES
 
 
 LIMITS = Limits()
@@ -114,7 +115,7 @@ def _stored(transaction: WritingDocuments, path: str, stat: Stat, read: Document
 
 
 def _dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
-    with writing_documents(job.connection) as transaction:
+    with writing_documents(job.connection, job.limits.batches) as transaction:
         removed = delete_sources(transaction, plan.drop)
         clear_unreadable(transaction, plan.forget)
         large = [
@@ -132,7 +133,7 @@ def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Ta
             read.append((path, _read(job, path)))
             done += 1
             job.report(Advanced(done))
-        with writing_documents(job.connection) as transaction:
+        with writing_documents(job.connection, job.limits.batches) as transaction:
             for path, outcome in read:
                 tally += _stored(transaction, path, files[path], outcome)
             clear_unreadable(transaction, [path for path, outcome in read if isinstance(outcome, Document)])
@@ -157,6 +158,7 @@ def _synced(job: Job) -> Indexed:
     job.report(PhaseStarted(Phase.READ, len(plan.read)))
     tally = _dropped(job, plan, files) + _read_and_stored(job, plan, files)
     job.report(PhaseDone(len(plan.read)))
+    _settled(job.connection, job.report, job.limits.batches)
     with reading(job.connection) as transaction:
         outstanding = len(unreadable(transaction))
     job.report(Finished(tally.added, tally.changed, tally.removed, outstanding))
@@ -168,22 +170,34 @@ def _skipped(skipped: Collection, report: Reporter, reason: str, remedy: str | N
     return CollectionIndexed(skipped.name, Skipped(reason, remedy))
 
 
-def _remade(connection: Connection, report: Reporter) -> None:
+def _remade(connection: Connection, report: Reporter, batches: Batches) -> None:
     left = remake_started(connection)
     if not left:
         return
     report(PhaseStarted(Phase.REMAKE, left))
     done = 0
-    for done in remade(connection):
+    for done in remade(connection, batches):
         report(Advanced(done))
     report(PhaseDone(done))
+    _settled(connection, report, batches)
+
+
+def _settled(connection: Connection, report: Reporter, batches: Batches) -> None:
+    done = 0
+    for merged in settle(connection, batches):
+        if not done:
+            report(PhaseStarted(Phase.MERGE, None))
+        done = merged
+        report(Advanced(done))
+    if done:
+        report(PhaseDone(done))
 
 
 def _indexed(one: Collection, report: Reporter, limits: Limits) -> CollectionIndexed:
     report(CollectionStarted(one.name, str(one.folder)))
     try:
         with unavailable_if_damaged(one.store), closing(open_store(one.store, one.id)) as connection:
-            _remade(connection, report)
+            _remade(connection, report, limits.batches)
             if not one.folder.is_dir():
                 return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)
             return CollectionIndexed(one.name, _synced(Job(one, connection, report, limits)))

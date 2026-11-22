@@ -1,7 +1,7 @@
 import numpy as np
 
 from sift.api.errors import InvalidRequestError
-from sift.domain.arrays import Ids, among, distinct, last
+from sift.domain.arrays import Ascending, Ids, among, ascending, distinct, last
 from sift.domain.query.expressions import Phrase, Prefix
 from sift.domain.rank.phrases import merged, phrase_counts
 from sift.retrieval.keyword.lists import (
@@ -15,7 +15,7 @@ from sift.retrieval.keyword.lists import (
     postings_in,
     stored,
 )
-from sift.storage.keyword_lists import expansions, frequencies
+from sift.storage.keyword_lists import expansions, volume
 
 
 def _all_of(store: Opened, lists: list[Stored]) -> Postings:
@@ -32,7 +32,7 @@ def _size(lists: list[Stored]) -> int:
 def _within(store: Opened, held: Stored, candidates: Ids) -> Ids:
     if isinstance(held, Whole):
         return held.places
-    chosen = np.flatnonzero(among(held.ranges.ids, distinct(candidates >> store.shape.range_shift)))
+    chosen = np.flatnonzero(among(held.ranges.ids, distinct(Ascending(candidates >> store.shape.range_shift))))
     return postings_in(store, held, chosen)[0]
 
 
@@ -43,26 +43,27 @@ def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[Stored]]) -> Po
         if not len(candidates):
             break
         held = np.concatenate([np.zeros(0, np.int64), *(_within(store, part, candidates) for part in lists[token])])
-        candidates = candidates[among(candidates, np.sort(held))]
+        candidates = candidates[among(candidates, ascending(held))]
     if not len(candidates):
         return candidates, candidates
     none = (candidates[:0], candidates[:0], candidates[:0])
+    wanted = Ascending(candidates)
     occurrences = {
-        token: joined([none, *(positions_at(store, part, candidates) for part in lists[token])]) for token in order
+        token: joined([none, *(positions_at(store, part, wanted) for part in lists[token])]) for token in order
     }
-    counts = phrase_counts(candidates, [occurrences[token] for token in phrase.tokens])
+    counts = phrase_counts(wanted, [occurrences[token] for token in phrase.tokens])
     found = counts > 0
     return candidates[found], counts[found]
 
 
 def _prefix(store: Opened, prefix: Prefix, most: int) -> Postings:
-    terms = expansions(store.transaction, prefix.text)
-    volume = sum(frequencies(store.transaction, terms).values())
-    if volume > most:
+    held = volume(store.transaction, prefix.text)
+    if held.passages > most:
         raise InvalidRequestError(
-            f"{prefix.text}* stands for {len(terms):,} words in {volume:,} passages, more than a search reads",
+            f"{prefix.text}* stands for {held.words:,} words in {held.passages:,} passages, more than a search reads",
             "write more of the word before the *",
         )
+    terms = expansions(store.transaction, prefix.text)
     lists = stored(store, terms)
     return _all_of(store, [held for term in terms for held in lists[term]])
 
