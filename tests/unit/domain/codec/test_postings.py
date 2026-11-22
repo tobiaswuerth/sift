@@ -1,4 +1,6 @@
+import contextlib
 import itertools
+import zlib
 
 import numpy as np
 import pytest
@@ -8,8 +10,11 @@ from numpy.typing import NDArray
 
 from sift.domain.arrays import ints
 from sift.domain.codec.postings import (
+    BLOCK_HEAD,
     PACKED,
+    RANGES_HEAD,
     RAW,
+    DamagedError,
     blocked,
     blocked_all,
     encoded,
@@ -119,7 +124,79 @@ def test_lengths_come_back_by_id_in_blocks_of_consecutive_ids(chosen: list[int],
     written = with_lengths(found, lengths, shift=6)
     assert set(written) == set(ints(found >> 6))
     for number, held in written.items():
-        dense = lengths_of(held)
+        dense = lengths_of(held, 6)
         inside = np.flatnonzero(np.isin(found >> 6, [number]))
         assert ints(dense[found[inside] & 63]) == ints(lengths[inside])
         assert int(np.count_nonzero(dense)) == len(inside)
+
+
+def _lengths(data: bytes) -> NDArray[np.int64]:
+    return lengths_of(data, 6)
+
+
+def _decoded_or_refused(data: bytes) -> None:
+    with contextlib.suppress(DamagedError):
+        places, counts = blocked(data)
+        assert len(places) == len(counts)
+        assert min(ints(counts), default=1) >= 1
+    for decode in (ranges_of, _lengths):
+        with contextlib.suppress(DamagedError):
+            decode(data)
+
+
+@given(st.binary(max_size=300))
+def test_bytes_that_hold_no_list_are_refused_as_damaged(data: bytes) -> None:
+    _decoded_or_refused(data)
+    _decoded_or_refused(RAW + data)
+    _decoded_or_refused(PACKED + zlib.compress(data))
+    _decoded_or_refused(zlib.compress(data))
+
+
+@given(lists, st.data())
+def test_a_list_with_a_byte_changed_or_cut_off_decodes_to_its_own_shape_or_is_refused(
+    each: list[Listed], data: st.DataObject
+) -> None:
+    ids = np.cumsum(np.array([gap for held in each for gap, _ in held], np.int64))
+    counts = np.array([len(where) for held in each for _, where in held], np.int64)
+    found = encoded(ids, counts, np.zeros(int(counts.sum()), np.int64), [0, len(ids)])
+    raw = found.postings[0]
+    body = bytearray(zlib.decompress(raw[1:]) if raw[:1] == PACKED else raw[1:])
+    body[data.draw(st.integers(0, len(body) - 1))] = data.draw(st.integers(0, 255))
+    cut = data.draw(st.integers(0, len(body)))
+    for changed in (RAW + bytes(body), RAW + bytes(body[:cut])):
+        _decoded_or_refused(changed)
+        with contextlib.suppress(DamagedError):
+            positions_of(found.positions[0], blocked(changed)[1])
+
+
+@pytest.mark.parametrize(
+    "data, refusal",
+    [
+        (b"", "unknown flag byte"),
+        (b"\x02abc", "unknown flag byte"),
+        (PACKED + b"not zlib", "does not unpack"),
+        (RAW + bytes(5), "shorter than its head"),
+        (RAW + BLOCK_HEAD.pack(1, 3), "fewer ids than its head says"),
+        (RAW + BLOCK_HEAD.pack(1, 0), "fewer ids than its head says"),
+        (RAW + BLOCK_HEAD.pack(1, 1) + b"\x80", "runs past the end"),
+        (RAW + BLOCK_HEAD.pack(1, 1) + b"\x81" * 10 + b"\x01", "more than ten bytes"),
+        (RAW + BLOCK_HEAD.pack(1, 1) + b"\x00", "a count below one"),
+        (RAW + BLOCK_HEAD.pack(1, 1) + b"\x01\x01", "counts other than its ids"),
+    ],
+)
+def test_a_damaged_block_is_refused_with_what_is_wrong(data: bytes, refusal: str) -> None:
+    with pytest.raises(DamagedError, match=refusal):
+        blocked(data)
+
+
+def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -> None:
+    with pytest.raises(DamagedError, match="does not unpack"):
+        ranges_of(b"junk")
+    with pytest.raises(DamagedError, match="other than their head says"):
+        ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(1)))
+    with pytest.raises(DamagedError, match="other than their head says"):
+        ranges_of(zlib.compress(bytes(1)))
+    with pytest.raises(DamagedError, match=r"other than 2\*\*6 lengths"):
+        lengths_of(zlib.compress(bytes(7)), 6)
+    with pytest.raises(DamagedError, match="positions other than its counts"):
+        positions_of(RAW + b"\x01\x02", np.array([3], np.int64))

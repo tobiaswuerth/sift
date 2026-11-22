@@ -6,7 +6,7 @@ from sift.api.fields import Fields
 from sift.api.ids import ChunkId, DocumentId
 from sift.domain.text.links import names
 from sift.domain.text.notes import Document
-from sift.storage.database import Reading, Writing, first, inserted, rows, run, run_each
+from sift.storage.database import Reading, Writing, WritingDocuments, first, inserted, rows, run, run_each
 from sift.storage.keywords import forget
 
 SourceId = NewType("SourceId", int)
@@ -83,7 +83,7 @@ class Owned(NamedTuple):
     id: DocumentId
 
 
-def delete_sources(transaction: Writing, paths: Sequence[str]) -> int:
+def delete_sources(transaction: WritingDocuments, paths: Sequence[str]) -> int:
     chosen = (json.dumps(list(paths)),)
     held = rows(
         transaction,
@@ -133,12 +133,12 @@ def _add(transaction: Writing, source: SourceId, path: str, document: Document) 
 
 
 def add_documents(
-    transaction: Writing, source: SourceId, path: str, documents: Sequence[Document]
+    transaction: WritingDocuments, source: SourceId, path: str, documents: Sequence[Document]
 ) -> tuple[DocumentId, ...]:
     return tuple(_add(transaction, source, path, document) for document in documents)
 
 
-def delete_documents(transaction: Writing, documents: Sequence[DocumentId]) -> None:
+def delete_documents(transaction: WritingDocuments, documents: Sequence[DocumentId]) -> None:
     forget(transaction, documents)
     run(
         transaction,

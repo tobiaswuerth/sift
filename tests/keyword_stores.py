@@ -6,7 +6,7 @@ from typing import NamedTuple
 from sift.api.ids import CollectionId, DocumentId
 from sift.domain.codec.segments import Shape
 from sift.domain.text.notes import note
-from sift.storage.database import Connection, Reading, Writing, rows, run
+from sift.storage.database import BATCHES, Batches, Connection, Reading, Writing, WritingDocuments, rows, run
 from sift.storage.documents import add_documents, delete_documents, delete_sources, kept, put_source
 from sift.storage.keywords import writing_documents
 from sift.storage.store import create_store, open_store
@@ -39,7 +39,7 @@ def written(fields: str, heading: str, body: str) -> bytes:
     return f"{head}# {heading}\n\n{paragraphs}\n".encode()
 
 
-def changed(transaction: Writing, path: str, content: Content | None) -> None:
+def changed(transaction: WritingDocuments, path: str, content: Content | None) -> None:
     if content is None:
         delete_sources(transaction, [path])
         return
@@ -48,9 +48,9 @@ def changed(transaction: Writing, path: str, content: Content | None) -> None:
     add_documents(transaction, source, path, [note(written(*content), path)])
 
 
-def applied(connection: Connection, rounds: list[Round]) -> None:
+def applied(connection: Connection, rounds: list[Round], batches: Batches = BATCHES) -> None:
     for each in rounds:
-        with writing_documents(connection) as transaction:
+        with writing_documents(connection, batches) as transaction:
             for path, content in each.items():
                 changed(transaction, path, content)
 

@@ -1,5 +1,6 @@
 import argparse
 import dataclasses
+import re
 import types
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from sift.api.described import Help, Place, Short
 type Placed = Callable[[str], str]
 
 PLAIN_KINDS = (str, int)
+WHOLE_NUMBER = re.compile("-?[0-9]{1,18}")
 
 
 class How(Enum):
@@ -94,7 +96,7 @@ def _argument(request: type[object], field: dataclasses.Field[object], hint: obj
     described = _described(request, field.name, hint)
     kind, default = described.kind, field.default
     how = _how(request, field.name, kind, default)
-    taken = _left_out(kind) or kind if how is How.OPTION else str if how in (How.ANY, How.SOME) else kind
+    taken = (_left_out(kind) or kind) if how is How.OPTION else str if how in (How.ANY, How.SOME) else kind
     if how is not How.SWITCH and taken not in PLAIN_KINDS and _choices(taken) is None:
         raise _refused(request, field.name, f"the command line takes no {_named(kind)}")
     if described.short is not None and how is not How.OPTION:
@@ -110,10 +112,16 @@ def arguments(request: type[object]) -> tuple[Argument, ...]:
     return tuple(_argument(request, field, hints[field.name]) for field in dataclasses.fields(request))
 
 
+def _whole(written: str) -> int:
+    if WHOLE_NUMBER.fullmatch(written) is None:
+        raise argparse.ArgumentTypeError(f"{written!r} is no whole number: write up to 18 digits alone, e.g. 10")
+    return int(written)
+
+
 def _converter(argument: Argument, place: Placed) -> Callable[[str], object]:
     if argument.place:
         return place
-    return int if argument.kind is int else str
+    return _whole if argument.kind is int else str
 
 
 def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placed) -> None:

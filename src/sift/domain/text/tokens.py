@@ -1,3 +1,4 @@
+import hashlib
 import re
 from collections.abc import Iterator
 from types import MappingProxyType
@@ -26,6 +27,7 @@ def _translation() -> MappingProxyType[int, str]:
 
 
 TRANSLATION = _translation()
+TABLE_DIGEST = hashlib.blake2b(f"{SEPARATORS}|{FOLDS}".encode(), digest_size=16).hexdigest()
 
 
 def _ascii_bytes() -> tuple[bytes, bytes]:

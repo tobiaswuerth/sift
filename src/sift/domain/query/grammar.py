@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sift.api.errors import InvalidRequestError
-from sift.domain.query.expressions import NOTHING, And, Expression, Not, Nothing, Or, Phrase, Prefix, Term
+from sift.domain.query.expressions import NOTHING, And, Expression, Not, Nothing, Or, Phrase, Prefix, Term, leaves
 from sift.domain.text.tokens import tokens
 
 SPACES = frozenset(" \t\n\r\f\v\x1c\x1d\x1e\x1f\N{NULL}")
@@ -13,7 +13,9 @@ AND, OR, NOT = "AND", "OR", "NOT"
 OPERATORS = frozenset({AND, OR, NOT})
 NEAR = "NEAR"
 MOST_DEPTH = 100
+MOST_LEAVES = 1000
 FEWEST_RELAXED = 2
+SURROGATE = re.compile(f"[{chr(0xD800)}-{chr(0xDFFF)}]")
 WORDLIKE = re.compile(r"\w")
 REMEDY = 'write words, "phrases", prefix*, AND, OR, NOT and (parentheses), e.g. (bert OR roberta) AND "fine tuning"'
 PREFIX_REMEDY = "end one word of letters and digits with *, e.g. superconduct*"
@@ -50,7 +52,7 @@ def _bare(query: str, at: int) -> tuple[Lexeme, int]:
     while end < len(query) and query[end] not in OUTSIDE_WORDS:
         end += 1
     text = query[at:end]
-    if text == NEAR and query[end : end + 1] == OPEN:
+    if text == NEAR and query[end:].lstrip("".join(SPACES)).startswith(OPEN):
         raise _refused("NEAR is not supported", 'write the words side by side, or as a "phrase"')
     return (text if text in OPERATORS else Word(text, quoted=False)), end
 
@@ -177,12 +179,16 @@ def _any(items: Sequence[Lexeme], at: int, nesting: int) -> Parsed:
 
 
 def parsed(query: str) -> Expression:
+    if SURROGATE.search(query):
+        raise _refused("it holds half a surrogate pair", "send the query as text in UTF-8")
     items = lexemes(query)
     if not items:
         return NOTHING
     expression, _, at = _any(items, 0, 0)
     if at < len(items):
         raise _refused('a ")" closes nothing')
+    if len(leaves(expression)) > MOST_LEAVES:
+        raise _refused(f"it holds more than {MOST_LEAVES:,} words", "ask with fewer words")
     return expression
 
 

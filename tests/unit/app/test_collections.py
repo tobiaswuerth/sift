@@ -17,8 +17,8 @@ from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.ids import CollectionId
 from sift.app.collections import add, status
 from sift.domain.text.notes import note
-from sift.storage.database import writing
 from sift.storage.documents import add_documents, put_source
+from sift.storage.keywords import writing_documents
 from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
 from tests.damage import damage_table
 
@@ -88,7 +88,10 @@ def test_status_counts_what_each_store_holds(tmp_path: Path, home: Path) -> None
     papers = add(home, AddCollection(str(folder(tmp_path, "papers"))))
     add(home, AddCollection(str(folder(tmp_path, "Notes"))))
     store = Path(papers.store)
-    with contextlib.closing(open_store(store, CollectionId(1))) as connection, writing(connection) as transaction:
+    with (
+        contextlib.closing(open_store(store, CollectionId(1))) as connection,
+        writing_documents(connection) as transaction,
+    ):
         for name in ("a.md", "b.md"):
             add_documents(transaction, put_source(transaction, name, 1, 2), name, [note(b"# A\n\ntext\n", name)])
     (notes, counted) = status(home, ShowStatus()).collections

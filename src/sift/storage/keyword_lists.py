@@ -8,6 +8,7 @@ from sift.domain.arrays import Ids
 from sift.storage.database import Reading, rows
 
 MOST_POINT = 0x10FFFF
+SURROGATES_START, SURROGATES_END = 0xD800, 0xE000
 
 
 class SegmentRow(NamedTuple):
@@ -73,7 +74,10 @@ def frequencies(transaction: Reading, terms: Sequence[str]) -> dict[str, int]:
 
 def _after(prefix: str) -> str | None:
     kept = prefix.rstrip(chr(MOST_POINT))
-    return kept[:-1] + chr(ord(kept[-1]) + 1) if kept else None
+    if not kept:
+        return None
+    following = ord(kept[-1]) + 1
+    return kept[:-1] + chr(SURROGATES_END if SURROGATES_START <= following < SURROGATES_END else following)
 
 
 def expansions(transaction: Reading, prefix: str) -> list[str]:

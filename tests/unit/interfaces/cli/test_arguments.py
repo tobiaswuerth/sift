@@ -136,9 +136,15 @@ def test_a_field_with_a_value_for_default_is_an_option_and_may_have_a_short_flag
     assert parsed(Counted, ["x", "--k", "4", "--order", "name"]) == Counted("x", 4, TitleFrom.NAME)
 
 
-def test_a_number_that_is_no_whole_number_is_refused() -> None:
-    with pytest.raises(argparse.ArgumentError, match="invalid int value: 'many'"):
-        parsed(Counted, ["x", "-k", "many"])
+@pytest.mark.parametrize("written", ["many", "1_000", " 3", "3.0", "+3", chr(0x663), "1" * 19, ""])
+def test_a_number_written_other_than_in_digits_alone_is_refused(written: str) -> None:
+    with pytest.raises(argparse.ArgumentError, match="is no whole number: write up to 18 digits alone"):
+        parsed(Counted, ["x", f"--k={written}"])
+
+
+def test_a_whole_number_may_be_negative_and_have_18_digits() -> None:
+    assert parsed(Counted, ["x", "--k=-3"]).k == -3
+    assert parsed(Counted, ["x", "-k", "9" * 18]).k == int("9" * 18)
 
 
 def test_paths_are_made_whole_by_the_function_given(tmp_path: Path) -> None:

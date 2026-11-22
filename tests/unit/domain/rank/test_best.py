@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -33,6 +34,11 @@ def test_the_best_k_are_kept_as_offers_come_ties_by_chunk(
         chunks = np.array([chunk for chunk, _ in offer], np.int64)
         best = offered(best, chunks, chunks // 4, np.array([score for _, score in offer]))
     assert list(ranked(best)) == brute(each, k, by_document=by_document)
+
+
+def test_k_is_one_at_least() -> None:
+    with pytest.raises(ValueError, match="k is one at least"):
+        Best(0)
 
 
 def test_the_score_to_beat_is_the_kth_once_there_are_k() -> None:

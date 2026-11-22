@@ -36,6 +36,7 @@ from sift.storage.documents import (
     stored,
     unreadable,
 )
+from sift.storage.keywords import writing_documents
 from sift.storage.store import create_store, open_store
 
 COLLECTION = CollectionId(2)
@@ -94,7 +95,7 @@ def counted(connection: sqlite3.Connection, table: str) -> int:
 
 
 def added(connection: sqlite3.Connection, path: str, *documents: Document) -> tuple[SourceId, tuple[DocumentId, ...]]:
-    with writing(connection) as transaction:
+    with writing_documents(connection) as transaction:
         source = put_source(transaction, path, 10, 20)
         return source, add_documents(transaction, source, path, documents)
 
@@ -175,7 +176,7 @@ def test_the_documents_of_a_source_are_listed_with_their_digests(store: sqlite3.
 def test_deleting_a_document_deletes_all_that_is_its(store: sqlite3.Connection) -> None:
     _, (identity,) = added(store, "Hans.md", note(NOTE, "Hans.md"))
     added(store, "Other.md", note(b"# Other\n[[Hans]]\n", "Other.md"))
-    with writing(store) as transaction:
+    with writing_documents(store) as transaction:
         delete_documents(transaction, [identity])
     assert [counted(store, table) for table in ("documents", "chunks", "links", "names")] == [1, 1, 1, 1]
     with reading(store) as transaction:
@@ -186,7 +187,7 @@ def test_deleting_a_document_deletes_all_that_is_its(store: sqlite3.Connection) 
 def test_deleting_a_source_deletes_its_documents_and_all_that_is_theirs(store: sqlite3.Connection) -> None:
     added(store, "Hans.md", note(NOTE, "Hans.md"))
     added(store, "kept.md", note(b"kept", "kept.md"))
-    with writing(store) as transaction:
+    with writing_documents(store) as transaction:
         assert delete_sources(transaction, ["Hans.md", "gone.md"]) == 1
         assert delete_sources(transaction, ["kept.md"]) == 1
     assert [counted(store, table) for table in ("sources", "documents", "chunks", "links", "names")] == [0] * 5
@@ -251,10 +252,10 @@ def test_the_store_keeps_count_of_its_documents_and_chunks_as_they_come_and_go(s
     expected = Counts(counted(store, "documents"), counted(store, "chunks"))
     assert kept_counts(store) == expected
     assert expected.chunks > expected.documents == 2
-    with writing(store) as transaction:
+    with writing_documents(store) as transaction:
         delete_documents(transaction, [hans])
     assert kept_counts(store) == Counts(counted(store, "documents"), counted(store, "chunks"))
-    with writing(store) as transaction:
+    with writing_documents(store) as transaction:
         delete_sources(transaction, ["Other.md"])
     assert kept_counts(store) == Counts(0, 0)
 
@@ -266,7 +267,7 @@ def test_a_count_that_would_fall_below_zero_is_refused(store: sqlite3.Connection
 
 def test_a_document_id_is_never_handed_out_twice(store: sqlite3.Connection) -> None:
     _, (first_id,) = added(store, "a.md", note(b"a", "a.md"))
-    with writing(store) as transaction:
+    with writing_documents(store) as transaction:
         delete_documents(transaction, [first_id])
     _, (second_id,) = added(store, "a.md", note(b"a", "a.md"))
     assert second_id == first_id + 1
@@ -275,7 +276,7 @@ def test_a_document_id_is_never_handed_out_twice(store: sqlite3.Connection) -> N
 def test_a_whole_file_is_found_by_the_last_part_of_its_path_in_any_case(store: sqlite3.Connection) -> None:
     for path in ("a/b/c.md", "x/b/c.md", "c.md", "a/bc.md", "a/b/C.MD"):
         added(store, path, note(b"x", path))
-    with writing(store) as transaction:
+    with writing_documents(store) as transaction:
         put_source(transaction, "y/c.md", 1, 1)
         add_documents(transaction, put_source(transaction, "data.jsonl", 1, 1), "data.jsonl", [record("c.md")])
     with reading(store) as transaction:

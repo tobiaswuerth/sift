@@ -1,3 +1,4 @@
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -179,7 +180,8 @@ def query_of(expression: Expression, each: Sequence[Prepared]) -> Query | None:
     named = leaves(expression)
     unique = tuple(dict.fromkeys(named))
     weight = {leaf: idf(chunks, sum(held.df[leaf] for held in each)) for leaf in unique}
-    bounding = {leaf: weight[leaf] * named.count(leaf) for leaf in unique}
+    times = Counter(named)
+    bounding = {leaf: weight[leaf] * times[leaf] for leaf in unique}
     return Query(expression, unique, weight, bounding, sum(held.store.tokens for held in each) / chunks)
 
 

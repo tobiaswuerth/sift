@@ -51,7 +51,7 @@ def test_search_answers_in_json_when_asked(settings: Settings, notes: Path) -> N
                 "text": None,
             }
         ],
-        "collections": 1,
+        "searched": 1,
         "unsearched": [],
     }
 
@@ -88,4 +88,4 @@ def test_a_search_without_any_collection_says_how_to_add_one(settings: Settings)
 def test_k_is_a_whole_number(settings: Settings) -> None:
     code, out, err = ran(settings, "search", "x", "-k", "many")
     assert (code, out) == (2, "")
-    assert "invalid int value: 'many'" in err
+    assert "'many' is no whole number" in err

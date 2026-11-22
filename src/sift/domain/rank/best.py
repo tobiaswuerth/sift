@@ -21,6 +21,10 @@ class Best:
     documents: Ids = field(default_factory=_none)
     scores: Scores = field(default_factory=_no_scores)
 
+    def __post_init__(self) -> None:
+        if self.k < 1:
+            raise ValueError(f"the best {self.k} are none: k is one at least")
+
     @property
     def threshold(self) -> float:
         return floats(self.scores[-1:])[0] if len(self.scores) >= self.k else 0.0

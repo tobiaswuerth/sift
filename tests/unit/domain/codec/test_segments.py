@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -48,7 +49,7 @@ def test_a_segment_holds_where_each_term_occurs(columns: list[tuple[list[str], .
     assert written.tokens == sum(lengths.values())
     assert (written.first, written.last, written.chunks) == (listed[0], listed[-1], len(ids))
     for block, data in written.lengths.items():
-        dense = lengths_of(data)
+        dense = lengths_of(data, shape.lengths_shift)
         for chunk, length in lengths.items():
             if chunk >> shape.lengths_shift == block:
                 assert dense[chunk & ((1 << shape.lengths_shift) - 1)] == length
@@ -75,7 +76,21 @@ def test_the_ranges_of_a_long_list_bound_every_score_in_them(columns: list[tuple
         assert ranges.ends[-1] == len(found)
 
 
+@pytest.mark.parametrize(
+    "asked, refusal",
+    [
+        ({"range_shift": 9}, "its counts are bytes"),
+        ({"range_shift": -1}, "its counts are bytes"),
+        ({"block": 0}, "one entry at least"),
+        ({"lengths_shift": 0}, "one entry at least"),
+    ],
+)
+def test_a_shape_whose_ranges_or_blocks_cannot_be_written_is_refused(asked: dict[str, int], refusal: str) -> None:
+    with pytest.raises(ValueError, match=refusal):
+        Shape(**asked)
+
+
 def test_a_chunk_of_no_word_is_in_the_segment_with_no_tokens() -> None:
     written = segment(np.array([7, 8], np.int64), [stream([], [], []), stream(["a"], [], [])], average=0.5)
     assert [(held.term, held.chunks) for held in written.postings] == [("a", 1)]
-    assert ints(lengths_of(written.lengths[0])[7:9]) == [0, 1]
+    assert ints(lengths_of(written.lengths[0], 10)[7:9]) == [0, 1]

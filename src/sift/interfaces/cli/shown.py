@@ -126,13 +126,13 @@ def _hit(rank: int, hit: Hit, ranks: int, scores: int) -> tuple[str, ...]:
 
 def _footer(result: SearchResult, seconds: float, style: Style) -> str:
     found = f"{len(result.hits):,} result{'s' * (len(result.hits) != 1)}" if result.hits else "no matches"
-    searched = f"{result.collections} collection{'s' * (result.collections != 1)}"
+    searched = f"{result.searched} collection{'s' * (result.searched != 1)}"
     separator = f"{GAP}{DOT[0] if style.unicode else DOT[1]}{GAP}"
     return separator.join((found, "keyword", searched, duration(seconds)))
 
 
 def hits(result: SearchResult, seconds: float, platform: str, style: Style) -> Shown:
-    if not result.collections:
+    if not result.searched and not result.unsearched:
         return _empty(platform, style)
     ranks = len(str(len(result.hits)))
     scores = max((len(f"{hit.score:.2f}") for hit in result.hits), default=0)

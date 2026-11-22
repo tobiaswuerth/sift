@@ -7,7 +7,7 @@ from typing import NamedTuple, cast
 import numpy as np
 from numpy.typing import NDArray
 
-from sift.domain.arrays import Ids, after, first, ints, largest, run_starts, sums_at, total
+from sift.domain.arrays import Ids, after, first, ints, largest, last, run_starts, sums_at, total
 
 type Bytes = NDArray[np.uint8]
 
@@ -18,9 +18,21 @@ BLOCK_HEAD = struct.Struct("<qI")
 RANGES_HEAD = struct.Struct("<qI")
 MOST_GAP = 1 << 32
 GAP_BYTES = 4
+LENGTH_BYTES = 4
+COUNT_BYTES = 1
+BEST_BYTES = 1
 LOW_BITS = 0x7F
 MORE = 0x80
 MOST_BYTES = 10
+
+
+class DamagedError(ValueError):
+    pass
+
+
+def _sound(*, holds: bool, problem: str) -> None:
+    if not holds:
+        raise DamagedError(problem)
 
 
 class Ranges(NamedTuple):
@@ -39,8 +51,16 @@ def _wrapped(body: bytes) -> bytes:
     return PACKED + zlib.compress(body, LEVEL) if len(body) >= PACKED_FROM else RAW + body
 
 
+def _inflated(data: bytes) -> bytes:
+    try:
+        return zlib.decompress(data)
+    except zlib.error as error:
+        raise DamagedError(f"a packed list does not unpack: {error}") from None
+
+
 def _unwrapped(data: bytes) -> bytes:
-    return zlib.decompress(data[1:]) if data[:1] == PACKED else data[1:]
+    _sound(holds=data[:1] in {RAW, PACKED}, problem="a list starts with an unknown flag byte")
+    return _inflated(data[1:]) if data[:1] == PACKED else data[1:]
 
 
 def varints(values: Ids) -> tuple[bytes, list[int]]:
@@ -59,8 +79,11 @@ def numbers(data: bytes) -> Ids:
     raw = np.frombuffer(data, np.uint8)
     if not len(raw):
         return np.zeros(0, np.int64)
-    starts = np.flatnonzero(np.concatenate((np.ones(1, np.bool_), raw[:-1] < MORE)))
-    place = np.arange(len(raw)) - np.repeat(starts, np.diff(np.append(starts, len(raw))))
+    _sound(holds=last(raw) < MORE, problem="a number runs past the end of its list")
+    starts = np.flatnonzero(np.concatenate((np.ones(1, np.bool_), raw[:-1] < MORE))).astype(np.int64)
+    sizes = np.diff(np.append(starts, len(raw)))
+    _sound(holds=largest(sizes) <= MOST_BYTES, problem="a number takes more than ten bytes")
+    place = np.arange(len(raw)) - np.repeat(starts, sizes)
     return sums_at((raw & LOW_BITS).astype(np.int64) << (7 * place), starts)
 
 
@@ -98,11 +121,8 @@ def encoded(ids: Ids, counts: Ids, positions: Ids, bounds: Sequence[int]) -> Enc
 
 
 def blocked(data: bytes) -> tuple[Ids, Ids]:
-    raw = _unwrapped(data)
-    head, n = cast("tuple[int, int]", BLOCK_HEAD.unpack_from(raw))
-    at = BLOCK_HEAD.size
-    gaps = np.frombuffer(raw, np.uint32, n - 1, at)
-    return _ascending(head, gaps), numbers(raw[at + GAP_BYTES * (n - 1) :])
+    places, counts, _ = blocked_all([data])
+    return places, counts
 
 
 def blocked_all(each: Sequence[bytes]) -> tuple[Ids, Ids, list[int]]:
@@ -112,8 +132,10 @@ def blocked_all(each: Sequence[bytes]) -> tuple[Ids, Ids, list[int]]:
     counts: list[bytes] = []
     for data in each:
         raw = _unwrapped(data)
+        _sound(holds=len(raw) >= BLOCK_HEAD.size, problem="a block is shorter than its head")
         head, n = cast("tuple[int, int]", BLOCK_HEAD.unpack_from(raw))
         split = BLOCK_HEAD.size + GAP_BYTES * (n - 1)
+        _sound(holds=n >= 1 and split <= len(raw), problem="a block holds fewer ids than its head says")
         starts.append(head)
         sizes.append(n)
         gaps.append(raw[BLOCK_HEAD.size : split])
@@ -127,11 +149,15 @@ def blocked_all(each: Sequence[bytes]) -> tuple[Ids, Ids, list[int]]:
     steps[firsts_at] = starts
     summed = np.cumsum(steps)
     ids = summed - np.repeat(summed[firsts_at] - steps[firsts_at], held)
-    return ids, numbers(b"".join(counts)), ints(after(0, np.cumsum(held)))
+    counted = numbers(b"".join(counts))
+    _sound(holds=len(counted) == len(ids), problem="a block holds counts other than its ids")
+    _sound(holds=not len(counted) or int(counted.min()) >= 1, problem="a block holds a count below one")
+    return ids, counted, ints(after(0, np.cumsum(held)))
 
 
 def positions_of(data: bytes, counts: Ids) -> Ids:
     gaps = numbers(_unwrapped(data))
+    _sound(holds=len(gaps) == total(counts), problem="a list holds positions other than its counts")
     summed = np.cumsum(gaps)
     starts = np.cumsum(counts) - counts
     return summed - np.repeat(summed[starts] - gaps[starts], counts)
@@ -148,8 +174,10 @@ def ranged(ids: Ids, counts: Ids, best: Bytes) -> bytes:
 
 
 def ranges_of(data: bytes) -> Ranges:
-    raw = zlib.decompress(data)
-    head, n = cast("tuple[int, int]", RANGES_HEAD.unpack_from(raw))
+    raw = _inflated(data)
+    head, n = cast("tuple[int, int]", RANGES_HEAD.unpack_from(raw)) if len(raw) >= RANGES_HEAD.size else (0, 0)
+    size = RANGES_HEAD.size + GAP_BYTES * (n - 1) + (COUNT_BYTES + BEST_BYTES) * n
+    _sound(holds=n >= 1 and len(raw) == size, problem="ranges hold other than their head says")
     at = RANGES_HEAD.size
     found = _ascending(head, np.frombuffer(raw, np.uint32, n - 1, at))
     at += GAP_BYTES * (n - 1)
@@ -169,5 +197,7 @@ def with_lengths(ids: Ids, lengths: Ids, shift: int) -> dict[int, bytes]:
     return written
 
 
-def lengths_of(data: bytes) -> Ids:
-    return np.frombuffer(zlib.decompress(data), np.uint32).astype(np.int64)
+def lengths_of(data: bytes, shift: int) -> Ids:
+    raw = _inflated(data)
+    _sound(holds=len(raw) == LENGTH_BYTES << shift, problem=f"a block of lengths holds other than 2**{shift} lengths")
+    return np.frombuffer(raw, np.uint32).astype(np.int64)

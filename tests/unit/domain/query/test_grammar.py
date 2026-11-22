@@ -12,7 +12,7 @@ from hypothesis import strategies as st
 from sift.api.errors import InvalidRequestError
 from sift.domain.arrays import Mask, ints
 from sift.domain.query.expressions import NOTHING, And, Expression, Leaf, Not, Or, Phrase, Prefix, Term, leaves
-from sift.domain.query.grammar import MOST_DEPTH, parsed, relaxed
+from sift.domain.query.grammar import MOST_DEPTH, MOST_LEAVES, parsed, relaxed
 from sift.domain.rank.boolean import counted, may_hold
 
 DASH = "\N{EN DASH}"
@@ -92,6 +92,9 @@ def test_a_query_is_read_as_fts5_reads_it_where_both_read_it(query: str, express
         ("a OR OR b", "OR needs words before and after it"),
         ("(a OR)", '")" where words are missing'),
         ("NEAR(a b)", "NEAR is not supported"),
+        ("NEAR (a b)", "NEAR is not supported"),
+        ("ab" + chr(0xD800) + "*", "half a surrogate pair"),
+        ("a " * (MOST_LEAVES + 1), f"more than {MOST_LEAVES:,} words"),
         ("su*per", "* ends a prefix"),
         ("*", "* ends a prefix"),
         ("a**", "* ends a prefix"),

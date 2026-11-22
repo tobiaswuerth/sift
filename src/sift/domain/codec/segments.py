@@ -9,6 +9,8 @@ from sift.domain.codec.postings import encoded, ranged, with_lengths
 from sift.domain.rank.bm25 import quantized, term_scores
 
 GAP = ""
+FORMAT = 1
+MOST_RANGE_SHIFT = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +19,14 @@ class Shape:
     block: int = 4096
     long: int = 4096
     lengths_shift: int = 10
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.range_shift <= MOST_RANGE_SHIFT:
+            raise ValueError(
+                f"a range holds 2**range_shift places, at most 2**{MOST_RANGE_SHIFT}: its counts are bytes"
+            )
+        if min(self.block, self.long, self.lengths_shift) < 1:
+            raise ValueError("blocks, long lists and blocks of lengths hold one entry at least")
 
 
 SHAPE = Shape()
@@ -73,7 +83,7 @@ def _cuts(term_starts: list[int], end: int, shape: Shape) -> list[int]:
 def _coded(streams: Sequence[Sequence[str]]) -> tuple[list[str], Ids, Ids, Ids]:
     flat = list(itertools.chain.from_iterable(streams))
     vocabulary = {GAP: 0}
-    for token in set(flat) - vocabulary.keys():
+    for token in sorted(set(flat) - vocabulary.keys()):
         vocabulary[token] = len(vocabulary)
     codes = np.fromiter(map(vocabulary.__getitem__, flat), np.int64, len(flat))
     sizes = np.fromiter(map(len, streams), np.int64, len(streams))

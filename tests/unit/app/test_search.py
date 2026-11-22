@@ -1,4 +1,6 @@
+import contextlib
 import dataclasses
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -11,7 +13,7 @@ from sift.api.search import Hit, SearchKeywords, SearchResult, Unsearched
 from sift.app.collections import add
 from sift.app.documents import documents
 from sift.app.indexing import index
-from sift.app.search import search
+from sift.app.search import REMAKE_REMEDY, search
 from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY
 from tests.damage import damage_table
 
@@ -56,6 +58,7 @@ def test_a_search_finds_each_document_by_its_best_passage_with_where_it_is(home:
         (Hit("notes/halo.md", "Halo", "4-6", result.hits[0].score, "# Halo\n\nDark matter halo models."),), 1, ()
     )
     assert result.hits[0].score > 0
+    assert result.hits[0].score != round(result.hits[0].score, 4)
 
 
 def test_the_lines_of_a_hit_are_its_passage(home: Path) -> None:
@@ -109,10 +112,20 @@ def test_a_query_outside_the_grammar_says_how_to_write_one(home: Path) -> None:
         search(home, SearchKeywords('halo "dark'))
 
 
-def test_k_counts_results_from_one_and_is_held_to_the_most_there_are(home: Path) -> None:
+def test_k_counts_results_from_one_to_ten_thousand_and_is_held_to_the_most_there_are(home: Path) -> None:
     with pytest.raises(InvalidRequestError, match="-k 0 asks for no result"):
         search(home, SearchKeywords("halo", k=0))
-    assert ids(home, SearchKeywords("note", k=10**12)) == [f"notes/filler{n}.md" for n in range(8)]
+    with pytest.raises(InvalidRequestError, match="-k 10,001 asks for more than 10,000 results"):
+        search(home, SearchKeywords("halo", k=10_001))
+    assert ids(home, SearchKeywords("note", k=10_000)) == [f"notes/filler{n}.md" for n in range(8)]
+
+
+def test_a_query_outside_the_grammar_is_refused_before_any_store_is_opened(home: Path) -> None:
+    store = home / "collections" / "notes.sqlite"
+    store.write_bytes(b"no store")
+    with pytest.raises(InvalidRequestError, match="a quote is not closed"):
+        search(home, SearchKeywords('halo "dark'))
+    assert store.read_bytes() == b"no store"
 
 
 def test_one_collection_is_searched_when_named(home: Path, tmp_path: Path) -> None:
@@ -129,7 +142,7 @@ def test_a_collection_never_indexed_keeps_no_other_from_being_searched(home: Pat
     write(tmp_path / "later" / "halo.md", "# Halo later\n\nhalo\n")
     add(home, AddCollection(str(tmp_path / "later")))
     result = search(home, SearchKeywords("halo"))
-    assert ([hit.id for hit in result.hits], result.collections, result.unsearched) == (["notes/halo.md"], 2, ())
+    assert ([hit.id for hit in result.hits], result.searched, result.unsearched) == (["notes/halo.md"], 2, ())
 
 
 def test_without_any_collection_a_search_searches_none(tmp_path: Path) -> None:
@@ -157,7 +170,7 @@ def test_a_store_that_cannot_be_read_is_passed_over_and_said(home: Path, tmp_pat
     (home / "collections" / "more.sqlite").unlink()
     result = search(home, SearchKeywords("halo"))
     assert [hit.id for hit in result.hits] == ["notes/halo.md"]
-    assert result.collections == 2
+    assert result.searched == 1
     (missing,) = result.unsearched
     assert dataclasses.replace(missing, message="") == Unsearched("more", "", MISSING_REMEDY)
 
@@ -173,3 +186,52 @@ def test_a_store_damaged_where_a_search_reads_it_is_passed_over_and_the_others_s
     result = search(home, SearchKeywords("halo"))
     assert [hit.id for hit in result.hits] == ["more/halo.md"]
     assert [(each.collection, each.remedy) for each in result.unsearched] == [("notes", DAMAGED_REMEDY)]
+
+
+def _more(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "more" / "halo.md", "# Halo again\n\nhalo\n")
+    add(home, AddCollection(str(tmp_path / "more")))
+    indexed(home)
+
+
+def _changed(store: Path, sql: str) -> None:
+    with contextlib.closing(sqlite3.connect(store)) as database, database:
+        database.execute(sql)
+
+
+@pytest.mark.parametrize(
+    "sql, query",
+    [
+        ("UPDATE keyword_postings SET postings = x'02'", "halo"),
+        ("UPDATE keyword_postings SET positions = x'0001'", '"halo models"'),
+        ("DELETE FROM keyword_lengths", "halo"),
+        ("DELETE FROM chunks WHERE document = (SELECT id FROM documents WHERE title = 'Halo')", "halo"),
+    ],
+)
+def test_a_keyword_index_whose_data_is_damaged_is_passed_over_and_the_others_searched(
+    home: Path, tmp_path: Path, sql: str, query: str
+) -> None:
+    _more(home, tmp_path)
+    _changed(home / "collections" / "notes.sqlite", sql)
+    result = search(home, SearchKeywords(query))
+    (said,) = result.unsearched
+    assert (said.collection, said.remedy) == ("notes", DAMAGED_REMEDY)
+    assert "is damaged" in said.message
+    assert result.searched == 1
+
+
+def test_a_store_lost_while_searched_weighs_on_no_score(home: Path, tmp_path: Path) -> None:
+    _more(home, tmp_path)
+    alone = search(home, SearchKeywords("halo", collection="more")).hits
+    _changed(home / "collections" / "notes.sqlite", "DELETE FROM keyword_lengths")
+    result = search(home, SearchKeywords("halo"))
+    assert result.hits == alone
+    assert [each.collection for each in result.unsearched] == ["notes"]
+
+
+def test_a_keyword_index_of_another_version_is_passed_over_until_indexed_again(home: Path) -> None:
+    _changed(home / "collections" / "notes.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
+    (said,) = search(home, SearchKeywords("halo")).unsearched
+    assert (said.collection, said.remedy) == ("notes", REMAKE_REMEDY)
+    indexed(home)
+    assert ids(home, SearchKeywords("halo")) == ["notes/halo.md"]

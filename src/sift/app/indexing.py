@@ -13,7 +13,7 @@ from sift.domain.plan.indexing import MOST_TEXT_BYTES, IndexPlan, Stat, batches,
 from sift.domain.text.notes import Document, note
 from sift.ingest.scan import scan
 from sift.storage.catalog import Collection
-from sift.storage.database import Connection, Writing, reading
+from sift.storage.database import Connection, WritingDocuments, reading
 from sift.storage.documents import (
     add_documents,
     clear_unreadable,
@@ -88,7 +88,7 @@ def _read(job: Job, path: str) -> Document | Refused:
     return document
 
 
-def _refused(transaction: Writing, path: str, stat: Stat, refused: Refused) -> Tally:
+def _refused(transaction: WritingDocuments, path: str, stat: Stat, refused: Refused) -> Tally:
     mark_unreadable(transaction, path, refused.problem, read_again=refused.read_again)
     if refused.read_again:
         return Tally()
@@ -98,7 +98,7 @@ def _refused(transaction: Writing, path: str, stat: Stat, refused: Refused) -> T
     return Tally(removed=len(gone))
 
 
-def _stored(transaction: Writing, path: str, stat: Stat, read: Document | Refused) -> Tally:
+def _stored(transaction: WritingDocuments, path: str, stat: Stat, read: Document | Refused) -> Tally:
     if isinstance(read, Refused):
         return _refused(transaction, path, stat, read)
     source = put_source(transaction, path, stat.modified_ns, stat.size)

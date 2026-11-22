@@ -6,6 +6,7 @@ from typing import NamedTuple, NoReturn
 
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
+from sift.domain.codec.postings import DamagedError
 from sift.domain.codec.segments import SHAPE, Shape
 from sift.storage.database import DAMAGED, connect, first, primary_code, reading, run_each, writing
 from sift.storage.keywords import keyword_meta
@@ -69,10 +70,9 @@ LAYOUT: tuple[Migration, ...] = (
         """CREATE TABLE counts(
             id INTEGER PRIMARY KEY CHECK (id = 1),
             documents INTEGER NOT NULL CHECK (documents >= 0),
-            chunks INTEGER NOT NULL CHECK (chunks >= 0),
-            tokens INTEGER NOT NULL CHECK (tokens >= 0)
+            chunks INTEGER NOT NULL CHECK (chunks >= 0)
         ) STRICT""",
-        "INSERT INTO counts(id, documents, chunks, tokens) VALUES (1, 0, 0, 0)",
+        "INSERT INTO counts(id, documents, chunks) VALUES (1, 0, 0)",
         """CREATE TRIGGER documents_added AFTER INSERT ON documents
            BEGIN UPDATE counts SET documents = documents + 1; END""",
         """CREATE TRIGGER documents_deleted AFTER DELETE ON documents
@@ -81,6 +81,9 @@ LAYOUT: tuple[Migration, ...] = (
            BEGIN UPDATE counts SET chunks = chunks + 1; END""",
         """CREATE TRIGGER chunks_deleted AFTER DELETE ON chunks
            BEGIN UPDATE counts SET chunks = chunks - 1; END""",
+    ),
+    (
+        "ALTER TABLE counts ADD COLUMN tokens INTEGER NOT NULL DEFAULT 0 CHECK (tokens >= 0)",
         """CREATE TABLE keyword_segments(
             id INTEGER PRIMARY KEY,
             first INTEGER NOT NULL,
@@ -169,7 +172,7 @@ def _made(path: Path, collection: CollectionId, layout: Sequence[Migration], sha
             run_each(
                 transaction,
                 "INSERT INTO meta(key, value) VALUES (?, ?)",
-                [("collection", str(collection)), *keyword_meta(shape, start)],
+                [("collection", str(collection)), *keyword_meta(transaction, shape, start)],
             )
             run_each(
                 transaction,
@@ -204,6 +207,8 @@ def unavailable_if_damaged(path: Path) -> Generator[None]:
         yield
     except sqlite3.DatabaseError as error:
         _raise_for(path, error)
+    except DamagedError as error:
+        raise StoreUnavailableError(f"the store {path} is damaged: {error}", DAMAGED_REMEDY) from None
 
 
 def _checked(connection: sqlite3.Connection, path: Path, collection: CollectionId, layout: Sequence[Migration]) -> None:

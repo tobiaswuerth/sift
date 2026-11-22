@@ -35,6 +35,20 @@ class Writing(Reading):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class Batches:
+    chunks_a_segment: int = 50_000
+    documents_a_forget: int = 1_000
+
+
+BATCHES = Batches()
+
+
+@dataclass(frozen=True, slots=True)
+class WritingDocuments(Writing):
+    batches: Batches = BATCHES
+
+
 def uri(path: PurePath, mode: str) -> str:
     written = path.as_posix()
     drive, rest = (written[:2], written[2:]) if written[1:2] == ":" else ("", written)

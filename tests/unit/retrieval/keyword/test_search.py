@@ -13,9 +13,10 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from sift.domain.arrays import last
+from sift.domain.codec.postings import DamagedError, encoded
+from sift.domain.codec.segments import Shape
 from sift.domain.query.expressions import NOTHING, And, Expression, Leaf, Not, Or, Phrase, Prefix, Term
 from sift.domain.query.grammar import parsed
-from sift.domain.rank.bm25 import K1, TOP, B
 from sift.retrieval.keyword.lists import Opened, Ranged, opened, stored
 from sift.retrieval.keyword.search import Found, Tuning, search
 from sift.storage.database import Connection, reading
@@ -24,6 +25,7 @@ from tests.keyword_stores import COLUMNS, SMALL, Content, Round, applied, instan
 VOCABULARY = [f"w{n}" for n in range(30)] + ["Müller"]
 SEEDS = st.integers(0, 2**32 - 1)
 TERMS = [f"w{n}" for n in range(30)] + ["muller", "absent"]
+FTS5_K1, FTS5_B = 1.2, 0.75
 type Chunks = dict[int, tuple[int, list[list[str]]]]
 
 
@@ -107,7 +109,10 @@ def brute(stores: Sequence[Chunks], expression: Expression, k: int, *, by_docume
         ok, counted = held_by(expression, {leaf for leaf in named if counts[leaf][chunk]})
         if ok:
             score = sum(
-                weight[leaf] * counts[leaf][chunk] * TOP / (counts[leaf][chunk] + K1 * (1 - B + B * length / average))
+                weight[leaf]
+                * counts[leaf][chunk]
+                * (FTS5_K1 + 1)
+                / (counts[leaf][chunk] + FTS5_K1 * (1 - FTS5_B + FTS5_B * length / average))
                 for leaf in counted
             )
             found.append((score, chunk, document))
@@ -172,25 +177,27 @@ def phrases_in(stores: Sequence[Chunks]) -> list[tuple[str, ...]]:
 
 
 @contextlib.contextmanager
-def collections(rounds: Sequence[Sequence[Round]]) -> Generator[tuple[list[Opened], list[Chunks]]]:
+def collections(
+    rounds: Sequence[Sequence[Round]], shape: Shape = SMALL
+) -> Generator[tuple[list[Opened], list[Chunks]]]:
     with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
         stores: list[Opened] = []
         held: list[Chunks] = []
         for number, each in enumerate(rounds, 2):
-            connection = stack.enter_context(opened_store(Path(folder), number, SMALL))
+            connection = stack.enter_context(opened_store(Path(folder), number, shape))
             applied(connection, list(each))
             held.append(chunks_of(connection))
             stores.append(opened(stack.enter_context(reading(connection))))
         yield stores, held
 
 
-@settings(max_examples=4)
-@given(seed=SEEDS)
-def test_finds_what_scoring_every_chunk_finds(seed: int) -> None:
+@settings(max_examples=6)
+@given(seed=SEEDS, shape=st.sampled_from([SMALL, Shape()]))
+def test_finds_what_scoring_every_chunk_finds(seed: int, shape: Shape) -> None:
     rng = Draws(np.random.default_rng(seed))
     gone: Round = {f"n{n:03}.md": None for n in range(0, 60, 7)}
     rounds = [prose(rng, 60), prose(rng, 50, "m"), gone, prose(rng, 8)]
-    with collections([rounds]) as (stores, held):
+    with collections([rounds], shape) as (stores, held):
         phrases = phrases_in(held)
         for _ in range(30):
             expression, k = random_expression(rng, phrases), rng.choice([1, 3, 10, 50])
@@ -267,3 +274,34 @@ def test_most_blocks_of_a_common_term_are_never_read(seed: int) -> None:
         lists = [held for held in stored(store, ["w0"])["w0"] if isinstance(held, Ranged)]
         total = sum(-(-last(held.ranges.ends) // store.shape.block) for held in lists)
         assert 0 < read < total / 3
+
+
+@pytest.mark.parametrize("by_document", [True, False])
+def test_passages_of_the_same_score_are_ranked_by_their_order(*, by_document: bool) -> None:
+    same_note: Content = ("", "Same", "w1 w2 w3")
+    rounds: list[list[Round]] = [
+        [{f"n{n}.md": same_note for n in range(4)}],
+        [{f"m{n}.md": same_note for n in range(3)}],
+    ]
+    with collections(rounds) as (stores, held):
+        got = search(stores, Term("w1"), 5, by_document=by_document)
+        every = sorted(chunk for store in held for chunk in store)
+        assert [each.chunk for each in got] == every[:5]
+        assert len({each.score for each in got}) == 1
+
+
+@pytest.mark.parametrize(
+    "sql, damage",
+    [
+        ("DELETE FROM keyword_blocks WHERE ? IS NOT NULL", "a block of postings is missing"),
+        ("UPDATE keyword_blocks SET postings = ?", "where its ranges place"),
+    ],
+)
+def test_a_block_missing_or_of_another_size_than_its_ranges_say_is_damage(sql: str, damage: str) -> None:
+    three = encoded(np.arange(1, 4, dtype=np.int64), np.ones(3, np.int64), np.zeros(3, np.int64), [0, 3])
+    with collections([[prose(Draws(np.random.default_rng(7)), 60)]]) as (stores, _):
+        (store,) = stores
+        assert any(isinstance(held, Ranged) for held in stored(store, ["w0"])["w0"])
+        store.transaction.connection.execute(sql, (three.postings[0],))
+        with pytest.raises(DamagedError, match=damage):
+            search(stores, Term("w0"), 10)

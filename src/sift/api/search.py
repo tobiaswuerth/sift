@@ -40,5 +40,5 @@ class Unsearched:
 @dataclass(frozen=True, slots=True)
 class SearchResult:
     hits: tuple[Hit, ...]
-    collections: int
+    searched: int
     unsearched: tuple[Unsearched, ...]

@@ -3,8 +3,16 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from sift.domain.arrays import Ids, after, first, firsts, ints, run_starts, total
-from sift.domain.codec.postings import Ranges, blocked, blocked_all, lengths_of, positions_of, ranges_of
+from sift.domain.arrays import Ids, after, first, firsts, ints, last, run_starts, total
+from sift.domain.codec.postings import (
+    DamagedError,
+    Ranges,
+    blocked,
+    blocked_all,
+    lengths_of,
+    positions_of,
+    ranges_of,
+)
 from sift.domain.codec.segments import Shape
 from sift.storage import keyword_lists
 from sift.storage.database import Reading
@@ -78,11 +86,21 @@ def _runs(keys: Ids) -> list[tuple[int, int]]:
     return list(itertools.pairwise([*ints(run_starts(keys)), len(keys)]))
 
 
+def _one[T](found: list[T], what: str) -> T:
+    if len(found) != 1:
+        raise DamagedError(f"{what} is missing from the keyword index")
+    return found[0]
+
+
 def _block(store: Opened, held: Ranged, number: int) -> Postings:
     key = (held.segment, held.term, number)
     if key not in store.blocks:
-        (row,) = keyword_lists.blocks(store.transaction, held.segment, held.term, [number])
-        store.blocks[key] = blocked(row.postings)
+        row = _one(keyword_lists.blocks(store.transaction, held.segment, held.term, [number]), "a block of postings")
+        places, counts = blocked(row.postings)
+        size = min(store.shape.block, last(held.ranges.ends) - number * store.shape.block)
+        if len(places) != size:
+            raise DamagedError(f"a block holds {len(places):,} postings where its ranges place {size:,}")
+        store.blocks[key] = places, counts
     return store.blocks[key]
 
 
@@ -111,23 +129,26 @@ def everything(store: Opened, held: Stored) -> Postings:
     return postings_in(store, held, np.arange(len(held.ranges.ids)))
 
 
-def _segments_of(store: Opened, ordered: Ids) -> list[int]:
+def _segments_of(store: Opened, ordered: Ids) -> Ids:
     starts = np.array([segment.first for segment in store.segments], np.int64)
-    return [store.segments[index].id for index in ints(np.searchsorted(starts, ordered, side="right") - 1)]
+    ids = np.array([segment.id for segment in store.segments], np.int64)
+    return ids[np.searchsorted(starts, ordered, side="right") - 1]
 
 
 def _read_lengths(store: Opened, wanted: set[tuple[int, int]]) -> None:
     missing = sorted(wanted - store.lengths.keys())
     for segment, numbers in itertools.groupby(missing, key=lambda each: each[0]):
         for row in keyword_lists.lengths(store.transaction, segment, [number for _, number in numbers]):
-            store.lengths[segment, row.block] = lengths_of(row.lengths)
+            store.lengths[segment, row.block] = lengths_of(row.lengths, store.shape.lengths_shift)
+    if wanted - store.lengths.keys():
+        raise DamagedError("the lengths of some chunks are missing from the keyword index")
 
 
 def lengths_at(store: Opened, places: Ids) -> Ids:
     shift = store.shape.lengths_shift
     order = np.argsort(places, kind="stable")
     ordered = places[order]
-    segments = np.array(_segments_of(store, ordered), np.int64)
+    segments = _segments_of(store, ordered)
     blocks = ordered >> shift
     runs = _runs(np.cumsum(firsts(segments) | firsts(blocks)))
     keys = [(first(segments[start:end]), first(blocks[start:end])) for start, end in runs]
@@ -141,7 +162,7 @@ def lengths_at(store: Opened, places: Ids) -> Ids:
 
 
 def _positions_whole(store: Opened, held: Whole, wanted: Ids) -> tuple[Ids, Ids, Ids]:
-    (row,) = keyword_lists.positions(store.transaction, held.segment, held.term, None)
+    row = _one(keyword_lists.positions(store.transaction, held.segment, held.term, None), "a list of positions")
     flat = positions_of(row.positions, held.counts)
     return _chosen(held.places, held.counts, flat, wanted)
 
@@ -179,4 +200,6 @@ def positions_at(store: Opened, held: Stored, wanted: Ids) -> tuple[Ids, Ids, Id
 
 def owners(store: Opened, places: Ids) -> Ids:
     found = keyword_lists.owners(store.transaction, places)
+    if set(ints(places)) - found.keys():
+        raise DamagedError("the keyword index holds chunks the store does not")
     return np.fromiter(map(found.__getitem__, ints(places)), np.int64, len(places))
