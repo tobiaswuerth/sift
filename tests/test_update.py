@@ -1,6 +1,7 @@
 """`update`: telling of a newer sift, and updating to it on a yes. PyPI, the terminal, the processes started and the
 waits are fakes, but for one real run of the process that updates."""
 
+import contextlib
 import importlib.util
 import io
 import json
@@ -166,6 +167,112 @@ def test_an_update_whose_process_is_gone_is_offered_again(installed, home, monke
     assert f"the update to {NEWER} stopped before it was done" in said
     assert "Update now?" in said
     assert "pending" not in kept(home)
+
+
+def test_an_update_s_process_is_known_by_its_lock_where_another_has_its_id(installed, home, monkeypatch, capsys):
+    # A restart of the machine ends the process that updates, and another gets its id. Told by the id alone, every
+    # command stopped for up to three hours as if sift were still being upgraded, a server started with the machine
+    # too; and an update that had only waited was neither made nor offered again for eight days.
+    another = os.getpid()  # a process that runs, and is not the update's
+    keep(home, latest=NEWER, checked=time.time(), asked=NEWER, pending=waiting(another, upgrading=True, locks=True))
+    update.offer("serve", TERMINAL)  # stops no command
+    answer(monkeypatch, "n\n")
+    keep(home, pending=waiting(another, locks=True))
+    update.offer("status", TERMINAL)
+    said = capsys.readouterr().err
+    assert f"the update to {NEWER} stopped before it was done" in said
+    assert "Update now?" in said
+
+
+def test_while_its_process_holds_the_lock_an_update_runs(installed, home, capsys):
+    with update._holding(home / update.LOCK) as held:
+        assert not held  # no folder to hold it in yet
+    home.mkdir()
+    with update._holding(home / update.LOCK) as held:
+        assert held
+        keep(home, pending=waiting(NO_PROCESS, upgrading=True, locks=True))  # whatever became of its id
+        with pytest.raises(SystemExit, match=f"sift is being updated to {NEWER} right now"):
+            update.offer("status", TERMINAL)
+        keep(home, pending=waiting(NO_PROCESS, locks=True))
+        update.offer("status", TERMINAL)
+        assert f"sift updates to {NEWER} once no sift of this installation runs" in capsys.readouterr().err
+    assert not update._held(home / update.LOCK)  # let go of with the block: the lock file itself stays
+    assert (home / update.LOCK).read_bytes() == b""
+
+
+def test_the_lock_goes_with_the_process_that_holds_it_however_it_ends(home):
+    lock = home / update.LOCK
+    assert not update._held(lock)  # nor is there a file yet
+    home.mkdir()
+    holding = "import sys, time; from pathlib import Path; from sift import update\n"
+    holding += "with update._holding(Path(sys.argv[1])) as held:\n    print(f'held: {held}', flush=True)\n"
+    holding += "    time.sleep(120)"
+    process = subprocess.Popen([sys.executable, "-c", holding, str(lock)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert process.stdout.readline() == "held: True\n"
+        assert update._held(lock)
+        with update._holding(lock) as second:
+            assert not second  # one process at a time
+    finally:
+        process.kill()  # as a restart of the machine ends it: nothing of its own is run
+        process.communicate(timeout=30)
+    deadline = time.monotonic() + 10  # the system lets go of it as the process goes, not before
+    while update._held(lock) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not update._held(lock)
+
+
+@pytest.mark.parametrize(
+    "platform, module, locked",
+    [("win32", "msvcrt", [("locking", 7, "LK_NBLCK", 1)]), ("linux", "fcntl", [("flock", 7, "LOCK_EX|LOCK_NB")])],
+)
+def test_a_file_is_locked_as_its_system_locks_one(monkeypatch, platform, module, locked):
+    calls = []
+    system = SimpleNamespace(
+        LK_NBLCK="LK_NBLCK",
+        locking=lambda fd, how, size: calls.append(("locking", fd, how, size)),
+        LOCK_EX={"LOCK_EX"},
+        LOCK_NB={"LOCK_NB"},
+        flock=lambda file, how: calls.append(("flock", file.fileno(), "|".join(sorted(how)))),
+    )
+    monkeypatch.setitem(sys.modules, module, system)
+    with monkeypatch.context() as elsewhere:  # for sift alone: pytest goes on, on the system it runs on
+        elsewhere.setattr(sys, "platform", platform)
+        lock = update._locker()
+    lock(SimpleNamespace(fileno=lambda: 7))
+    assert calls == locked
+
+
+def test_where_no_file_can_be_locked_an_update_s_process_is_known_by_its_id(spec, home, monkeypatch):
+    def refused(file):
+        raise OSError("no locks available")  # as on some network file systems
+
+    with update._holding(home.parent / "refused.lock", refused) as held:
+        assert not held
+    monkeypatch.setattr(update, "_holding", lambda path: contextlib.nullcontext(False))
+    monkeypatch.setattr(update, "_running", lambda *args: False)
+    shown = "import json, sys; print(json.dumps(json.load(open(sys.argv[1], encoding='utf-8'))['pending']))"
+    spec["command"] = [sys.executable, "-c", shown, str(home / "update.json")]
+    update.finish(spec, platform="linux")
+    pending = json.loads((home / "logs" / "update-1.log").read_text(encoding="utf-8").splitlines()[1])
+    assert "locks" not in pending
+
+
+def test_an_update_that_waits_says_again_that_it_holds_its_lock(spec, home, monkeypatch):
+    # The sift that asked says that an update waits once it has started its process, which may have said so first:
+    # the later word, without the lock, left the update to be told by its id for as long as it waited.
+    states = []
+
+    def running(*args):
+        states.append(update.read(home / "update.json").get("pending", {}).get("locks"))
+        if len(states) == 2:
+            keep(home, pending=waiting(os.getpid()))  # as the sift that asked says it
+        return len(states) < 4
+
+    monkeypatch.setattr(update, "_running", running)
+    monkeypatch.setattr(update, "POLL", 0)
+    update.finish(spec, platform="linux")
+    assert states == [None, True, True, True, True]
 
 
 def test_an_update_that_ends_as_it_is_looked_at_says_how_it_went(installed, home, monkeypatch, capsys):
@@ -372,6 +479,12 @@ def test_entries_of_another_shape_count_as_none(home):
     assert update.read(home / "update.json") == {"result": result}
     keep(home, result={"version": NEWER, "ok": "yes", "log": "update.log"})
     assert update.read(home / "update.json") == {}
+    keep(home, pending="soon", result=None)
+    assert update.read(home / "update.json") == {}
+    keep(home, pending=waiting(locks="yes"))  # an entry a state may leave out, of another type
+    assert update.read(home / "update.json") == {}
+    keep(home, pending=waiting(locks=True))
+    assert update.read(home / "update.json")["pending"]["locks"] is True
 
 
 def test_a_state_cut_short_counts_as_none(home):
@@ -648,13 +761,18 @@ def test_the_update_keeps_the_state_of_the_sift_that_asked(spec, home, tmp_path,
 
 def test_while_it_upgrades_the_state_says_so_with_its_process(spec, home, monkeypatch):
     monkeypatch.setattr(update, "_running", lambda *args: False)
-    shown = "import json, sys; print(json.dumps(json.load(open(sys.argv[1], encoding='utf-8'))['pending']))"
+    shown = "import json, sys; from pathlib import Path; from sift import update\n"
+    shown += "print(json.dumps(json.load(open(sys.argv[1], encoding='utf-8'))['pending']))\n"
+    shown += "print(update._held(Path(sys.argv[1]).with_name(update.LOCK)))"
     spec["command"] = [sys.executable, "-c", shown, str(home / "update.json")]
     update.finish(spec, platform="linux")
-    pending = json.loads((home / "logs" / "update-1.log").read_text(encoding="utf-8").splitlines()[1])
+    pending, held = (home / "logs" / "update-1.log").read_text(encoding="utf-8").splitlines()[-3:-1]
+    pending = json.loads(pending)
     assert pending.pop("since") > time.time() - 60  # since it upgrades, not since it was agreed to
-    assert pending == {"version": NEWER, "pid": os.getpid(), "upgrading": True}
+    # Its lock is said, and held while the installer runs: a restart of the machine lets go of it (see _lives).
+    assert (pending, held) == ({"version": NEWER, "pid": os.getpid(), "upgrading": True, "locks": True}, "True")
     assert "pending" not in kept(home)
+    assert not update._held(home / update.LOCK)  # let go of once the update is done
 
 
 def test_an_upgrade_past_its_time_stops_no_command(installed, home, capsys):

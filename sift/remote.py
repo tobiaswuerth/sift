@@ -17,9 +17,9 @@ import urllib.parse
 import weakref
 from collections.abc import Iterable, Iterator
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from . import __version__, settings
+from . import __version__, console, settings
 
 if TYPE_CHECKING:
     import numpy as np
@@ -100,12 +100,22 @@ class Remote:
     @cached_property
     def info(self) -> dict[str, Any]:
         """What the worker says about itself: its models, the length of its vectors and its version. Asked once."""
-        info = json.loads(self._request("/"))
+        try:
+            said: Any = json.loads(self._request("/"))
+        except ValueError:  # no JSON: something else answers there
+            said = None
+        if not isinstance(said, dict):
+            raise self._unfit("nothing a worker says of itself")
+        info = cast("dict[str, Any]", said)
         if _series(info.get("version")) != _series(__version__):
             raise RemoteError(
                 f"embedding remote {self.address} runs sift {info.get('version')}, this machine sift {__version__}: "
                 "install the same version on both"
             )
+        if not isinstance(info.get("model"), str):
+            raise self._unfit("no model")
+        if not isinstance(info.get("dim"), int):
+            raise self._unfit("no length of its vectors")
         return info
 
     @property
@@ -130,8 +140,10 @@ class Remote:
         """Normalised fp16 embeddings from the worker, one row per text."""
         import numpy as np  # here, not at the top: the CLI imports this module and starts with the standard library
 
-        raw = self._request("/embed", {"texts": texts, "query": query})
-        return np.frombuffer(raw, np.float16).reshape(len(texts), self.info["dim"])
+        raw, dim = self._request("/embed", {"texts": texts, "query": query}), int(self.info["dim"])
+        if len(raw) != len(texts) * dim * np.dtype(np.float16).itemsize:
+            raise self._unfit(f"{len(raw):,} bytes for {console.count(len(texts), 'text')} of {dim} numbers each")
+        return np.frombuffer(raw, np.float16).reshape(len(texts), dim)
 
     def encode_batches(self, batches: Iterable[list[str]], query: bool = False) -> Iterator["NDArray[np.float16]"]:
         """The worker's embeddings of each batch, in order, a request each."""
@@ -141,7 +153,23 @@ class Remote:
         """The worker's scores of (query, text) pairs."""
         import numpy as np
 
-        return np.array(json.loads(self._request("/rerank", {"query": query, "texts": texts}))["scores"], np.float32)
+        answer = self._request("/rerank", {"query": query, "texts": texts})
+        try:
+            scores = np.array(json.loads(answer)["scores"], np.float32)
+        except (ValueError, LookupError, TypeError):  # no JSON, no "scores" in it, or no numbers
+            scores = np.empty((), np.float32)
+        if scores.ndim != 1:
+            raise self._unfit("no list of scores")
+        if len(scores) != len(texts):
+            raise self._unfit(f"{console.count(len(scores), 'score')} for {console.count(len(texts), 'text')}")
+        return scores
+
+    def _unfit(self, answered: str) -> RemoteError:
+        """An answer that fits no request of this sift's: another sift's, or of something between the two."""
+        return RemoteError(
+            f"embedding remote {self.address} answered {answered}: not what this sift asked it for. Install the same "
+            "sift on both, and reach the worker directly"
+        )
 
     def release_idle(self) -> bool:
         """The worker hands its GPU back itself."""

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from sift import embed, indexing, readers, store
+from sift import embed, indexing, processes, readers, store
 from sift.catalog import Catalog
 from sift.ignore import Ignore
 from sift.search import Index
@@ -181,8 +181,6 @@ def test_retitling_holds_the_write_lock_a_batch_at_a_time(corpus, monkeypatch):
 
 def test_junctions_are_told_apart_where_python_knows_no_reparse_tags(notes, monkeypatch):
     # stat.IO_REPARSE_TAG_MOUNT_POINT is Windows' alone: elsewhere, asking for it failed every walk of every folder.
-    import stat
-
     if hasattr(stat, "IO_REPARSE_TAG_MOUNT_POINT"):
         assert indexing.MOUNT_POINT == stat.IO_REPARSE_TAG_MOUNT_POINT
     monkeypatch.delattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", raising=False)
@@ -544,6 +542,30 @@ def test_index_is_incremental(corpus, capsys):
     assert orphans == 0
 
 
+@pytest.mark.parametrize("seconds", [-11_644_473_600 + 86_400, 13_000_000_000])  # the years 1601 and 2381
+def test_a_file_dated_past_what_the_store_counts_to_is_indexed_like_any_other(corpus, capsys, seconds):
+    # A file's time in nanoseconds is past SQLite's 64 bits before 1678 and after 2262, and Windows dates a file
+    # without a time 1601: `sift index` ended in an OverflowError on every run, the files changed with it unread.
+    catalog, root = corpus
+    try:
+        os.utime(root / "rl.md", (seconds, seconds))
+    except (OSError, OverflowError):
+        pytest.skip("this system sets no such time")
+    if abs((root / "rl.md").stat().st_mtime_ns) < 2**63:
+        pytest.skip("this file system holds no such time")
+    write(root / "new.md", "# New\n")
+    indexing.index(catalog)
+    assert "new.md" in doc_ids(catalog)
+    assert "1 added, 0 changed, 0 removed" in capsys.readouterr().err
+    indexing.index(catalog)
+    assert "0 added, 0 changed, 0 removed" in capsys.readouterr().err  # and found unchanged by the next run
+    write(root / "rl.md", "# Reward shaping\n\nChanged body.\n")
+    os.utime(root / "rl.md", (seconds, seconds))
+    assert [entry["status"] for entry, _ in indexing.reindex(catalog, ["notes/rl.md"]).files] == ["changed"]
+    indexing.index(catalog)
+    assert "0 added, 0 changed, 0 removed" in capsys.readouterr().err
+
+
 @pytest.mark.usefixtures("terminal")
 def test_index_says_what_it_scans_and_counts_file_by_file(notes, home, monkeypatch, capsys):
     # A batch of large PDFs or a slow cloud folder took minutes before the first line; sift looked hung.
@@ -581,7 +603,7 @@ def test_index_parses_in_worker_processes(notes, tmp_path, monkeypatch, pools):
     indexing.index(serial)
     assert pools == []
 
-    monkeypatch.setattr(indexing, "cpus", lambda: 3)  # two workers, one CPU for writing
+    monkeypatch.setattr(processes, "cpus", lambda: 3)  # two workers, one CPU for writing
     monkeypatch.setattr(indexing, "FILES_PER_WORKER", 1)
     monkeypatch.setattr(indexing, "WRITE_BATCH", 2)  # several batches in flight
     parallel = Catalog(tmp_path / "parallel")
@@ -643,7 +665,7 @@ def test_a_file_that_ends_its_reader_is_left_out_and_the_others_are_read(notes, 
     # A reader's native code that crashed took its worker process along. The pool said no more than that it was
     # broken: `sift index` ended in a traceback, and every later run met the same file in the same batch.
     write(notes / "poison.md", "# Poison\n")
-    monkeypatch.setattr(indexing, "cpus", lambda: 3)  # two workers, one CPU for writing
+    monkeypatch.setattr(processes, "cpus", lambda: 3)  # two workers, one CPU for writing
     monkeypatch.setattr(indexing, "FILES_PER_WORKER", 1)
     monkeypatch.setattr(indexing, "WRITE_BATCH", 2)  # several batches in flight, as one of them ends the pool
     monkeypatch.setattr(indexing, "_loaded", workers.ending)
@@ -655,6 +677,48 @@ def test_a_file_that_ends_its_reader_is_left_out_and_the_others_are_read(notes, 
     assert "notes: poison.md: skipped (Stopped: its reader ended the process it ran in)" in said
     assert "notes: 4 files, 3 added, 0 changed, 0 removed, 1 unreadable" in said
     assert no_process_left()
+
+
+STOPPED = "poison.pdf: skipped (Stopped: its reader ended the process it ran in): not read again until it changes"
+
+
+def test_a_file_whose_reader_was_stopped_is_left_as_it_is_until_it_changes(notes, home, monkeypatch, capsys, pools):
+    # It was read again by every run: a PDF whose reader hangs took its ten minutes each time, and one that ends its
+    # process the pool, with every file read in it. Its time is kept, as any file's read: the next run passes it over.
+    shutil.copy(SAMPLES / "sample.pdf", notes / "poison.pdf")
+    catalog = Catalog(home)
+    catalog.add(notes, "notes")
+    indexing.index(catalog)  # read, as it was then
+    os.utime(notes / "poison.pdf", ns=(10**18, 10**18))  # changed, into what ends its reader
+    monkeypatch.setattr(indexing, "_loaded", workers.ending)
+    indexing.index(catalog)
+    assert f"notes: {STOPPED}, or by the sift after this one" in capsys.readouterr().err
+    assert "poison.pdf" in doc_ids(catalog)  # as indexed before: what it holds now is not known
+    started = len(pools)
+    indexing.index(catalog)
+    assert len(pools) == started  # no process is started for it
+    assert "notes: 4 files, 0 added, 0 changed, 0 removed (" in capsys.readouterr().err
+    os.utime(notes / "poison.pdf", ns=(2 * 10**18, 2 * 10**18))  # changed again
+    indexing.index(catalog)
+    assert f"notes: {STOPPED}" in capsys.readouterr().err
+
+
+def test_the_sift_after_reads_a_file_whose_reader_was_stopped_once_more(notes, home, monkeypatch, capsys):
+    # Its reader may be another by then, one that reads it: no one has to touch the file to have it tried.
+    shutil.copy(SAMPLES / "sample.pdf", notes / "poison.pdf")
+    monkeypatch.setattr(indexing, "_loaded", workers.ending)
+    catalog = Catalog(home)
+    catalog.add(notes, "notes")
+    indexing.index(catalog)
+    assert f"notes: {STOPPED}" in capsys.readouterr().err
+    monkeypatch.setattr(indexing, "_loaded", workers._loaded)  # a reader that reads it
+    indexing.index(catalog)
+    assert "poison.pdf" not in doc_ids(catalog)  # this sift's reader was stopped: it isn't asked again
+    monkeypatch.setattr(indexing, "__version__", "the sift after")
+    indexing.index(catalog)
+    assert "poison.pdf" in doc_ids(catalog)
+    assert "notes: 4 files, 1 added, 0 changed, 0 removed (" in capsys.readouterr().err
+    assert store.get_meta(catalog.store("notes"), indexing.STOPPED) is None  # once: nothing is left to read again
 
 
 def test_the_files_started_with_one_that_ends_the_pool_are_read_alone(three_files, monkeypatch):
@@ -779,7 +843,7 @@ def test_a_file_gets_more_time_the_larger_it_is():
 
 def test_small_updates_skip_worker_processes(corpus, monkeypatch, pools):
     catalog, root = corpus
-    monkeypatch.setattr(indexing, "cpus", lambda: 64)
+    monkeypatch.setattr(processes, "cpus", lambda: 64)
     write(root / "new.md", "# New\n")
     indexing.index(catalog)
     assert pools == []
@@ -797,19 +861,8 @@ def test_small_updates_skip_worker_processes(corpus, monkeypatch, pools):
     ],
 )
 def test_worker_count_adapts_to_machine_and_workload(monkeypatch, cpus, files, expected):
-    monkeypatch.setattr(indexing, "cpus", lambda: cpus)
+    monkeypatch.setattr(processes, "cpus", lambda: cpus)
     assert indexing.workers(files) == expected
-
-
-def test_cpus_respects_what_the_platform_allows(monkeypatch):
-    monkeypatch.setattr(os, "process_cpu_count", lambda: 6, raising=False)  # Python 3.13+
-    assert indexing.cpus() == 6
-    monkeypatch.delattr(os, "process_cpu_count")
-    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {0, 1, 2}, raising=False)  # Linux
-    assert indexing.cpus() == 3
-    monkeypatch.delattr(os, "sched_getaffinity")
-    monkeypatch.setattr(os, "cpu_count", lambda: None)  # unknown
-    assert indexing.cpus() == 1
 
 
 def test_index_selected_collections(corpus, tmp_path):
@@ -936,6 +989,16 @@ def link_file(target, at, monkeypatch):
         monkeypatch.setattr(indexing.os, "scandir", scandir)
         monkeypatch.setattr(indexing.os.path, "realpath", realpath)
         monkeypatch.setattr(indexing.os.path, "islink", lambda path: realpath(path) != real_realpath(path))
+
+
+def link_folder(target, at):
+    """Make the folder `at` lead to the folder `target`: a junction on Windows, which any user may make there."""
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(at))
+    else:
+        os.symlink(target, at, target_is_directory=True)
 
 
 def test_a_file_linked_from_outside_its_collection_is_left_out(corpus, tmp_path, monkeypatch, capsys):
@@ -1163,7 +1226,7 @@ def test_retitling_an_unknown_collection(corpus):
 
 def test_a_few_big_files_still_get_workers(monkeypatch):
     # 424 JSON Lines files of arXiv are few files but gigabytes of records to parse
-    monkeypatch.setattr(indexing, "cpus", lambda: 16)
+    monkeypatch.setattr(processes, "cpus", lambda: 16)
     assert indexing.workers(424, 0) == 0
     assert indexing.workers(424, 5 << 30) == 15
     assert indexing.workers(2, 3 * indexing.BYTES_PER_WORKER) == 3

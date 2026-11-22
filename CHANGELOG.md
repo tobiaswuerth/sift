@@ -5,6 +5,63 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.15.1] - 2026-11-22
+
+The fixes of a second review of all of sift. No index changes its layout, and nothing needs doing after the update.
+
+### Security
+
+- The UI's "Open file" opened whatever lay at an indexed file's path by now: a link put there after indexing, as by a
+  folder synced or checked out again, led it to any file of the machine, though `sift index` reads no such link. A
+  file is now opened only if `sift index` would still read it: no link to outside its collection's folder (unless
+  the collection follows links), and through no folder linked from elsewhere.
+- The log of `sift serve` kept why each MCP tool failed, and with it the document a `get` or `mentions` was asked for
+  ("unknown document '...'"). It now keeps that the tool failed; the caller still gets the reason.
+
+### Fixed
+
+- `sift index` ended in an OverflowError, on every run, over a file dated before 1678 or after 2262, as Windows
+  dates a file without a time (1601): the files changed with it stayed unread. Such a time is now kept as the nearest
+  the index can hold.
+- On Windows with 63 or more CPU threads, `sift index`, a large keyword build and the upgrade of an old index ended
+  in "max_workers must be <= 61". A pool now has as many processes as Windows allows.
+- Two `sift embed` at once, one of them with `--reset` and another model, or a server's `reindex` beside a reset,
+  could leave one collection with vectors of both models under the name of one. Each write now checks the
+  collection's model as it is then, and the later one stops, or leaves the note unembedded and says so.
+- A file whose reader crashed or hung was read again by every `sift index`: ten minutes and more each time for one
+  that hangs. It is now skipped until it changes, said once, and the next version of sift reads it once more.
+- A keyword build in worker processes that failed to write a part ran every other part before it said so, for
+  minutes to hours on a large collection; so did the upgrade of an old index. What hasn't started is no longer run.
+- Front matter over several lines, YAML's `key: |` and `key: >`, came out as "|" or ">", and a list in brackets
+  written over several lines as "[": no search found their text. Each is now the field's value.
+- A title with a line break in it, as front matter, a JSON Lines record, a mail's subject or a document's
+  properties may hold one, broke the line each result is printed on. A title is one line now; the field stays as
+  written.
+- Code in a block quote or a list item counted as prose: Bash's `[[ -f x ]]` in it became a link to a note "-f x",
+  which `unresolved` listed, and a `#` line in it could become the note's title.
+- `sift serve` and `sift worker` on a port already taken loaded the models first, then ended with the web server's
+  own error. They now say "port N is taken" before anything loads, and refuse a port past 65535, which Windows took
+  for another.
+- After a restart of the machine during an update, another process could have the update's process id: every sift
+  command, a server started with the machine too, stopped for up to three hours as if sift were being upgraded, and
+  an update that had only waited was neither made nor offered again for eight days. The update's process now holds
+  a lock (`SIFT_HOME/update.lock`) that tells whether it runs.
+- A search with a NUL character in it found its passages or failed with "unterminated string", by whether the
+  keyword postings were ready. It now parts words either way.
+- A mail whose text names a charset that is none ("undefined", "idna", "punycode", "unicode_escape") was skipped
+  whole, or read as other characters than it holds.
+- A worker's answer that fits no request, scores for another number of passages or vectors of another length, as a
+  proxy or another sift may send, ranked results by other passages' scores or ended in numpy's error. It is now an
+  error that says so.
+- `.siftignore`: a range written backwards, `[z-a]`, matched nothing, where git matches its first character.
+
+### Changed
+
+- The guide for an agent that sets sift up is now `docs/agent-setup.md`: under its old name, `agents.md`, coding
+  agents took it for the instructions of the repository they worked in. The old address says where it went. The guide
+  now also says how to get uv, what to do when the shell finds no `sift`, and how to start `sift serve` so that it
+  outlives the agent's shell.
+
 ## [1.15.0] - 2026-11-21
 
 A review of all of sift for what could go wrong, and its fixes: files, models and requests from elsewhere are trusted
@@ -836,7 +893,8 @@ First release.
 - Keyword search (SQLite FTS5, BM25), exact GPU vector search, and hybrid search with cross-encoder reranking.
 - An MCP server (streamable HTTP and stdio) whose instructions tell agents what is indexed.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.15.0...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.15.1...HEAD
+[1.15.1]: https://github.com/tobiaswuerth/sift/compare/v1.15.0...v1.15.1
 [1.15.0]: https://github.com/tobiaswuerth/sift/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/tobiaswuerth/sift/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/tobiaswuerth/sift/compare/v1.12.0...v1.13.0

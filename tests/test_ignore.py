@@ -2,6 +2,7 @@
 
 import pytest
 
+from sift import ignore
 from sift.ignore import Ignore
 
 
@@ -69,24 +70,39 @@ def test_patterns_as_in_gitignore(lines, path, folder, ignored):
     assert ignores(lines, path, folder) == ignored
 
 
-def test_a_range_backwards_matches_nothing():
-    # As in git; as a regex it raised "bad character range", and stopped sift index.
+def test_a_range_backwards_holds_its_first_character_alone():
+    # As in git (`git check-ignore`), which reads the range's first character before it sees the range: sift held
+    # nothing, and kept the z.md git leaves out. As a regex it raised "bad character range", and stopped sift index.
     assert not ignores("[z-a].md", "b.md")
+    assert not ignores("[z-a].md", "a.md")
+    assert ignores("[z-a].md", "z.md")
     assert ignores("[z-ab].md", "b.md")
     assert ignores("[!z-a].md", "b.md")
+    assert not ignores("[!z-a].md", "z.md")
 
 
-def test_names_match_as_fnmatch_matches_them():
-    # Within one name, gitignore's * ? [...] mean what fnmatch's do: thousands of random patterns and names agree.
+def backwards(pattern):
+    """Whether a pattern may hold a range written backwards: two characters around a dash, the first the later one,
+    as `b-a` and `a-?` are. Taken wider than a range goes, outside brackets too."""
+    return any(first > last for first, dash, last in zip(pattern, pattern[1:], pattern[2:]) if dash == "-")
+
+
+@pytest.mark.parametrize("seed", [3, 17, 20])
+def test_names_match_as_fnmatch_matches_them(seed):
+    # Within one name, gitignore's * ? [...] mean what fnmatch's do: thousands of random patterns and names agree. But
+    # for a range written backwards, which fnmatch takes for nothing and git for its first character (see above):
+    # with `b-a` alone left out, `[a-?]` and `[[--]` still differed, under one seed in five.
     import fnmatch
     import random
 
-    rng = random.Random(3)
+    rng, compared = random.Random(seed), 0
     for _ in range(5000):
         pattern = "".join(rng.choice("ab*?[]!-") for _ in range(rng.randrange(1, 9)))
         name = "".join(rng.choice("ab-]![") for _ in range(rng.randrange(9)))
-        if not pattern.startswith("!"):  # which takes back in, in a .siftignore
+        if not pattern.startswith("!") and not backwards(pattern):  # "!" takes back in, in a .siftignore
+            compared += 1
             assert ignores(pattern, name) == fnmatch.fnmatchcase(name, pattern), (pattern, name)
+    assert compared > 3000  # most of them: what is left out is the few
 
 
 def test_case_as_the_file_system_takes_it():
@@ -129,15 +145,20 @@ def test_a_siftignore_sift_cannot_read_is_an_error(tmp_path):
         Ignore.of(tmp_path)
 
 
-def test_a_pattern_of_many_stars_stays_fast():
-    # As a regex, nine stars took 73 s against a name of 50 a's: each star tried every split of the rest.
-    import time
-
-    ignore, name = Ignore(["*a" * 9 + "*b", "x/" + "*a" * 9 + "*b/**/*c"]), "a" * 200
-    start = time.perf_counter()
-    assert not ignore(name)
-    assert not ignore("x/" + name + "/" + name)
-    assert time.perf_counter() - start < 1
+def test_a_pattern_of_many_stars_looks_for_each_piece_once(monkeypatch):
+    # As a regex, nine stars took 73 s against a name of 50 a's: each star tried every split of the rest. Each piece
+    # between two stars is looked for once in a name, from where the piece before it ended.
+    looked = []
+    for look in ("_piece_at", "_piece_from"):
+        real = getattr(ignore, look)
+        monkeypatch.setattr(ignore, look, lambda *args, real=real: looked.append(args[1]) or real(*args))
+    pieces, name = 11, "a" * 200
+    ignored = Ignore(["*a" * 9 + "*b", "x/" + "*a" * 9 + "*b/**/*c"])
+    assert not ignored(name)
+    assert 0 < len(looked) <= 2 * pieces  # either pattern's, in the one name
+    del looked[:]
+    assert not ignored("x/" + name + "/" + name)
+    assert 0 < len(looked) <= 2 * 3 * pieces  # in each of the path's three names
 
 
 def test_many_patterns_stay_fast():

@@ -328,6 +328,54 @@ def test_chunks_are_cut_from_their_text_in_one_place():
     assert [name for name, line in lines if "FROM chunk_text" in line] == ["store.py"], "ask store.fill"
 
 
+def test_no_function_imports_again_what_its_module_imports():
+    # A module given an import at its top kept the same import inside a function, where it had stood before: read
+    # there, it says the module doesn't have it, and the next reader looks for why.
+    again = []
+    for path in sorted(p for folder in ("sift", "tests", "scripts") for p in (ROOT / folder).glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        imports = [node for node in tree.body if isinstance(node, ast.Import | ast.ImportFrom)]
+        top = {(getattr(node, "module", None), a.name, a.asname) for node in imports for a in node.names}
+        for function in ast.walk(tree):
+            if isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+                again += [
+                    f"{path.name}:{node.lineno}: {ast.unparse(node)}"
+                    for node in ast.walk(function)
+                    if isinstance(node, ast.Import | ast.ImportFrom)
+                    and any((getattr(node, "module", None), a.name, a.asname) in top for a in node.names)
+                ]
+    assert again == [], "the module imports it already: leave it out of the function"
+
+
+AGENT_FILES = {"agents.md", "claude.md", "gemini.md"}  # what coding agents read as a repository's instructions
+
+
+def test_no_page_is_named_as_an_agent_s_instructions_are():
+    # docs/agents.md, the guide for an agent that installs sift, was loaded by coding agents as the instructions of
+    # the repository they worked in, where file systems tell no case apart (AGENTS.md): "install sift, ask which
+    # folders to index". What stays at that name, for the links to it, says in a few lines where the guide went.
+    named = sorted(
+        path.relative_to(ROOT).as_posix()
+        for folder in (ROOT, ROOT / "docs", ROOT / "sift", ROOT / "tests")
+        for path in folder.glob("*.md")
+        if path.name.lower() in AGENT_FILES
+    )
+    assert named == ["docs/agents.md"], "name the page for what it holds, as docs/agent-setup.md"
+    assert len((ROOT / "docs" / "agents.md").read_text(encoding="utf-8").splitlines()) <= 6
+
+
+def test_worker_processes_are_started_in_one_place():
+    # Three modules made pools of their own, each as many processes as the machine has CPUs: more than Windows lets a
+    # pool have, from 63 CPU threads on. `processes` knows the limit, and what a pool left by an error mustn't run.
+    making = [
+        path.name
+        for path in sorted((ROOT / "sift").glob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "ProcessPoolExecutor"
+    ]
+    assert making == ["processes.py"], "ask processes.pool, or processes.running for a block"
+
+
 PRINTING = {("console.py", "write"), ("cli.py", "_print")}  # to the user, and the results
 
 

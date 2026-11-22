@@ -39,9 +39,13 @@ LIST_ITEM = re.compile(r"[ \t]*-[ \t]+(.*)")
 # Lines of front matter that are neither `key: value` nor `- item`: a list item without a value, and the bracket that
 # closes a list or mapping written over several lines
 AT_THE_MARGIN = ("-", "]", "}", "],", "},")
+BLOCK_SCALAR = re.compile(r"([|>])[+-]?[1-9]?[+-]?(?:[ \t]+#.*)?")  # YAML's mark for a value on the lines below it
 HEADING = re.compile(r" {0,3}#{1,6}[ \t]")  # how a Markdown (ATX) heading starts
-FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")  # how a fenced code block starts and ends
+# How a fenced code block starts and ends: (the quote marks and indentation it stands behind, its mark)
+FENCE = re.compile(r"((?:[ \t]*>)*[ \t]*)(`{3,}|~{3,})")
+LIST_INDENT = 4  # columns from which a fence stands in a list item, not at the margin (CommonMark allows it three)
 LINE = re.compile(r"[^\n]*\n|[^\n]+")  # only \n ends a line, as in editors; str.splitlines knows eight more
+LINE_BREAK = re.compile(r"[ \t]*[\r\n]+[ \t]*")  # in a title, which is one line: a space takes its place
 WIKILINK_VALUE = re.compile(r"\[\[[^\[\]\n]*\]\]")
 TITLE_FROM = ("heading", "name")  # where a Markdown or text file's title comes from, after its `title:` field
 
@@ -139,12 +143,50 @@ def _flow_list(text: str) -> list[Any] | None:
     return [_value(item.strip()) for item in items if item.strip()]
 
 
+Open = tuple[int, str | None, bool]  # of a flow list read so far: brackets open, the quote open, at an item's start
+
+
+def _still_open(text: str, state: Open = (0, None, True)) -> Open:
+    """A YAML flow list or mapping, read on through `text` from `state`: how many brackets are open after it, the
+    quote open if one is, and whether an item starts there, where alone a quote opens one (O'Brien)."""
+    depth, quote, start = state
+    for c in text:
+        if quote:
+            quote = None if c == quote else quote
+        elif c in "\"'" and start:
+            quote = c
+        elif c in "[{":
+            depth += 1
+        elif c in "]}":
+            depth -= 1
+        start = c in "[{," or (start and c.isspace())
+    return depth, quote, start
+
+
 def _front_matter(block: str) -> dict[str, Any]:
-    """Flat `key: value` lines, and lists as `- item` lines below a key without a value, as Obsidian writes them."""
+    """Flat `key: value` lines, lists as `- item` lines below a key without a value, as Obsidian writes them, or
+    in brackets, over several lines too, and text on the indented lines below a key with `|` or `>` (see
+    _block_scalar)."""
     meta: dict[str, Any] = {}
     listing: str | None = None
     written: dict[str, Any] = {}  # each value's text, or its `- item` lines' texts
+    scalars: dict[str, tuple[bool, list[str]]] = {}  # the lines below a key with `|` or `>`, and whether it folds them
+    below: list[str] | None = None  # those of the key the lines are below now
+    flow: tuple[str, list[str], Open] | None = None  # a list in brackets begun and not closed: its key, lines, state
     for line in block.split("\n"):  # only \n ends a line (LINE): JSON writes U+2028 in a string as it is
+        if below is not None and (line[:1].isspace() or not line.strip()):
+            below.append(line.rstrip())
+            continue
+        below = None
+        if flow is not None and (line[:1].isspace() or line.strip().rstrip(",") in ("", "]", "}")):
+            key, lines, state = flow
+            lines.append(line.strip())
+            flow = (key, lines, _still_open(lines[-1], state))
+            if flow[2][0] <= 0:  # closed: read whole, as if written on one line
+                text = " ".join(filter(None, lines))
+                meta[key], written[key], flow = _value(text), text, None
+            continue
+        flow = None  # never closed before the next field: as written, its first line
         if listing and (item := LIST_ITEM.match(line)):
             text = item.group(1).strip()
             if meta[listing] is None:
@@ -158,6 +200,13 @@ def _front_matter(block: str) -> dict[str, Any]:
             meta[key] = _value(value) if value else None
             listing = None if value else key
             written[key] = value or []
+            scalars.pop(key, None)  # written again: the last counts
+            if mark := BLOCK_SCALAR.fullmatch(value):
+                scalars[key] = (mark.group(1) == ">", below := [])
+            elif value[:1] in ("[", "{") and value[-1:] in ("[", "{", ",") and (state := _still_open(value))[0] > 0:
+                flow = (key, [value], state)  # it goes on below: a line ending in its bracket or a comma says so
+    for key, (folded, lines) in scalars.items():
+        meta[key] = written[key] = _block_scalar(lines, folded)
     if block.count("[") + block.count("{") >= JSON_DEPTH:  # else nothing in it nests too deeply
         for key, value in meta.items():
             if _depth(value) > JSON_DEPTH:  # in a list, or in the front matter, one level deeper than alone: as written
@@ -168,28 +217,55 @@ def _front_matter(block: str) -> dict[str, Any]:
     return meta
 
 
+def _block_scalar(lines: list[str], folded: bool) -> str:
+    """The text of a YAML block scalar, from the lines below its key: without their common indentation and the empty
+    lines around them. One with `|` keeps its lines; one with `>` has each paragraph on a line of its own, as YAML
+    folds it."""
+    indents = [len(line) - len(line.lstrip()) for line in lines if line]
+    text = "\n".join(line[min(indents, default=0) :] for line in lines).strip("\n")
+    if not folded:
+        return text
+    return "\n".join(" ".join(paragraph.split()) for paragraph in re.split(r"\n{2,}", text))
+
+
 Chunk = tuple[int, int, int, int]  # first line, last line, position, length
 
 
 def _outside_code(lines: Iterable[str]) -> list[bool]:
     """For each of these lines of Markdown, in order, whether it lies outside fenced code blocks; a fence's own lines
-    don't."""
+    don't. A fence in a block quote or a list item, behind its marks or indentation, opens code too, which ends with
+    its fence or with the quote or item (see _beyond)."""
     outside: list[bool] = []
     fence: str | None = None
+    behind = ""  # what the open fence stands behind: quote marks and indentation
     for line in lines:
+        if fence and _beyond(behind, line):
+            fence = None
         m = FENCE.match(line)
-        if m and not fence and m.group(1)[0] == "`" and "`" in line[m.end() :]:  # "```x```": code on its line alone
+        if m and not fence and m.group(2)[0] == "`" and "`" in line[m.end() :]:  # "```x```": code on its line alone
             m = None
         if m:
-            mark = m.group(1)
+            mark = m.group(2)
             if not fence:
-                fence = mark
+                fence, behind = mark, m.group(1)
             elif mark[0] == fence[0] and len(mark) >= len(fence) and not line[m.end() :].strip():
                 fence = None
             outside.append(False)
         else:
             outside.append(not fence)
     return outside
+
+
+def _beyond(behind: str, line: str) -> bool:
+    """Whether a line of Markdown lies beyond the block quote or list item whose fence stands behind `behind`: its code
+    ends there, closed or not. A quote ends at a line that isn't quoted, a list item at one indented less than its
+    fence; a fence at the margin, indented by less than LIST_INDENT, stands in neither, and its code goes on."""
+    if not line.strip():
+        return False
+    if ">" in behind:
+        return not line.lstrip(" \t").startswith(">")
+    indent, lead = len(behind.expandtabs(LIST_INDENT)), line[: len(line) - len(line.lstrip(" \t"))]
+    return indent >= LIST_INDENT and len(lead.expandtabs(LIST_INDENT)) < indent
 
 
 def _prose(text: str, first_line: int = 1) -> Iterator[tuple[int, str]]:
@@ -225,6 +301,12 @@ def _in_mapping(line: str) -> bool:
     return bool(LIST_ITEM.match(line) or (colon and key))
 
 
+def _one_line(title: str) -> str:
+    """A title on one line, as results print it and a heading holds it: a space where it breaks its line, as a field
+    of front matter, a record's or a mail's subject may."""
+    return LINE_BREAK.sub(" ", title.strip())
+
+
 def parse(text: str, fallback_title: str, title_from: str = "heading") -> tuple[str, dict[str, Any], str, int]:
     """Split off YAML front matter. Returns title, meta, body and the body's first line number. The title is the
     `title` field, else with title_from "heading" the first heading, else `fallback_title`, the file name."""
@@ -236,7 +318,7 @@ def parse(text: str, fallback_title: str, title_from: str = "heading") -> tuple[
         first_line += text.count("\n", 0, m.end())
         text = text[m.end() :]
     title = meta.get("title")
-    title = str(title).strip() if isinstance(title, str | int | float) and not isinstance(title, bool) else None
+    title = _one_line(str(title)) if isinstance(title, str | int | float) and not isinstance(title, bool) else None
     return title or (title_from == "heading" and _heading(text)) or fallback_title, meta, text, first_line
 
 
@@ -394,7 +476,7 @@ def _record(obj: dict[str, Any], line: int, fields: Fields) -> Doc | None:
     body = "\n\n".join(t for k in text_keys if (t := _as_text(obj.get(k))))
     if not body:
         return None
-    title = _as_text(obj.get(title_key)) if title_key else ""
+    title = _one_line(_as_text(obj.get(title_key))) if title_key else ""
     text = f"# {title}\n\n{body}" if title else body
     meta = {k: v for k, v in obj.items() if k not in text_keys}
     return Doc(key, "", title or _heading(body) or key, meta, text, list(chunk(text)))
@@ -682,7 +764,7 @@ def _document(raw: bytes, name: str, fields: Fields) -> tuple[list[Doc], list[st
     if not doc.content.strip() and extension(name) != ".pdf":
         return [], ["skipped (no text in it)"]
     meta = {ours: value for theirs, ours in PROPERTIES.items() if (value := getattr(doc.metadata, theirs))}
-    title = meta.get("title", "").strip() or _heading(doc.content) or Path(name).stem
+    title = _one_line(meta.get("title", "")) or _heading(doc.content) or Path(name).stem
     if not doc.content.strip():
         return [Doc("", _digest(raw), title, meta, "", [], scan=raw)], []
     return [Doc("", _digest(raw), title, meta, doc.content, list(chunk(doc.content)))], []
@@ -704,7 +786,7 @@ def _email(raw: bytes, name: str, fields: Fields, depth: int = MAIL_DEPTH) -> tu
         if names := [n for part in msg.iter_attachments() if (n := _attachment_name(part))]:
             meta["attachments"] = names
             shown.append("Attachments: " + ", ".join(names))
-        title = str(msg.get("subject") or "").strip() or Path(name).stem
+        title = _one_line(str(msg.get("subject") or "")) or Path(name).stem
         body, problems = _mail_text(msg, fields)
         text = "\n\n".join(part for part in (f"# {title}", "\n".join(shown), body) if part)
         attached, trouble = _attachments(msg, fields, depth)
@@ -768,12 +850,20 @@ def _text_of(part: MIMEPart) -> str:
     return decode(raw) if text is None else text
 
 
+# Codecs Python finds under a name a mail may give as its charset that are none: they decode no text, or make other
+# text of it, by Python's version ("punycode" refuses bytes that aren't its own on 3.12, and misreads them on 3.15)
+NO_CHARSETS = frozenset(("idna", "punycode", "undefined", "unicode-escape", "raw-unicode-escape"))
+
+
 def _in_charset(raw: bytes, charset: str) -> str | None:
     """Bytes as text in the charset a mail declares for them, or None where they are to be read as a text file's: in
     a charset Python doesn't know, and where they aren't of a charset that says nothing of them, us-ascii or UTF-8,
-    as mail programs call 8-bit text. Bytes that aren't of another charset are replaced, the others kept: mail in
-    Shift_JIS holds a vendor's characters that Python's has not."""
+    as mail programs call 8-bit text; nor in what Python knows by the name that is no charset (NO_CHARSETS). Bytes
+    that aren't of another charset are replaced, the others kept: mail in Shift_JIS holds a vendor's characters that
+    Python's has not."""
     try:
+        if codecs.lookup(charset).name in NO_CHARSETS:
+            return None
         return raw.decode(charset)
     except LookupError:
         return None

@@ -8,10 +8,11 @@ import re
 import shutil
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from sift import indexing, readers, store
+from sift import indexing, processes, readers, store
 from sift.catalog import Catalog
 from sift.search import Index
 
@@ -230,7 +231,7 @@ def test_a_damaged_document_is_reported_once_and_read_again_when_it_changes(libr
 
 def test_documents_are_converted_in_worker_processes(library, tmp_path, monkeypatch, pools):
     catalog, root = library
-    monkeypatch.setattr(indexing, "cpus", lambda: 3)  # two workers, one CPU for writing
+    monkeypatch.setattr(processes, "cpus", lambda: 3)  # two workers, one CPU for writing
     monkeypatch.setattr(indexing, "FILES_PER_WORKER", 1)
     parallel = Catalog(tmp_path / "parallel")
     parallel.add(root, "library")
@@ -365,6 +366,23 @@ def test_email_headers_as_mail_writes_them(tmp_path):
     assert odd.meta == {"date": "sometime soon"}
 
 
+def test_a_subject_or_a_document_s_title_with_a_line_break_is_one_line(tmp_path, monkeypatch):
+    # A subject may encode a line break (=0A), and a document's properties hold one: the title broke the line each
+    # result is printed on, and a mail's heading ended at it.
+    (tmp_path / "offer.eml").write_bytes(b"Subject: =?utf-8?q?Offer=0A_2026?=\r\n\r\nPlain words.\r\n")
+    (mail,), _ = readers.load(tmp_path / "offer.eml")
+    assert (mail.title, mail.text) == ("Offer 2026", "# Offer 2026\n\nPlain words.")
+    real = readers._xberg
+
+    def titled(raw, name):
+        doc = real(raw, name)
+        properties = {theirs: getattr(doc.metadata, theirs) for theirs in readers.PROPERTIES}
+        return SimpleNamespace(content=doc.content, metadata=SimpleNamespace(**properties | {"title": "Two\r\n lines"}))
+
+    monkeypatch.setattr(readers, "_xberg", titled)
+    assert readers.load(sample(".docx"))[0][0].title == "Two lines"
+
+
 def test_mail_dates_sort_as_time_whatever_the_zone(tmp_path):
     # With the sender's offset, 09:30 in Zurich sorted after 08:00 in London, though it was sent first.
     zurich = email_file(tmp_path, name="a.eml", Date="Tue, 14 Oct 2026 09:30:00 +0200")
@@ -453,13 +471,18 @@ def test_a_file_nested_too_deeply_to_store_is_skipped(tmp_path, home, monkeypatc
     assert "c: deep.md: skipped (maximum recursion depth" in capsys.readouterr().err
 
 
-def test_an_email_in_an_unknown_charset_still_reads(tmp_path):
+@pytest.mark.parametrize(
+    "charset", ["x-unknown", "undefined", "idna", "punycode", "unicode_escape", "raw-unicode-escape", "hex"]
+)
+@pytest.mark.parametrize("body", [b"Plain Gr\xc3\xbc\xc3\x9fe, C:\\new.", b"Plain words-only."])
+def test_an_email_in_an_unknown_charset_still_reads(tmp_path, charset, body):
+    # "undefined", "idna", "punycode" and the escapes are codecs Python knows that are no charsets: they decode no
+    # text, or make other text of it, by Python's version. A mail naming one, as spam does, was skipped whole, with a
+    # UnicodeError, or read as other characters than it holds.
     path = tmp_path / "x.eml"
-    path.write_bytes(
-        b'Subject: x\r\nContent-Type: text/plain; charset="x-unknown"\r\n\r\nPlain Gr\xc3\xbc\xc3\x9fe.\r\n'
-    )
+    path.write_bytes(b'Subject: x\r\nContent-Type: text/plain; charset="%s"\r\n\r\n%s\r\n' % (charset.encode(), body))
     (doc,), _ = readers.load(path)
-    assert "Plain Grüße." in doc.text
+    assert body.decode() in doc.text
 
 
 @pytest.mark.parametrize("charset", ["us-ascii", "utf-8"])

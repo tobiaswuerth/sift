@@ -75,6 +75,17 @@ def test_the_text_is_title_and_abstract_and_everything_else_metadata(papers):
     }
 
 
+@pytest.mark.parametrize("title", ["Brush stroke\n planning", ["Brush stroke", "planning"]])
+def test_a_record_s_title_of_several_lines_is_one_line(tmp_path, title):
+    # A title with a line break, or one given as a list of strings, was a heading of one line and text below it, and
+    # broke the line each result is printed on. The field stays as written.
+    path = tmp_path / "papers.jsonl"
+    path.write_text(jsonl([{"id": "a", "title": title, "text": "A robot paints."}]), "utf-8")
+    (doc,), _ = readers.load(path)
+    assert (doc.title, doc.text) == ("Brush stroke planning", "# Brush stroke planning\n\nA robot paints.")
+    assert doc.meta["title"] == title
+
+
 def test_search_filters_fields_and_get(papers):
     catalog, _ = papers
     index = Index(catalog)

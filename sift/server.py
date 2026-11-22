@@ -3,7 +3,9 @@ unresolved, mentions and reindex), with the UI for people under /ui (see `ui`)."
 
 import asyncio
 import dataclasses
+import errno
 import logging
+import socket
 import sqlite3
 import sys
 from collections.abc import Callable, Sequence
@@ -300,6 +302,7 @@ def build(index: Index | None = None) -> tuple[MCPServer, Index]:
     index = index or Index()
     index.models_through(jobs.OnMainThread)
     mcp = MCPServer("sift", instructions=f"{INSTRUCTIONS}\n\n{_collections(index)}")
+    logging.getLogger("mcp.server.mcpserver.server").addFilter(_no_reasons)
     _add_search(
         mcp,
         index,
@@ -501,6 +504,45 @@ async def serve_app(
     await uvicorn.Server(config).serve()
 
 
+MOST_PORT = 65535
+
+
+def port_free(host: str, port: int) -> None:
+    """Raise an OSError that says so if nothing can listen on host:port now. Asked before the models load, which
+    takes minutes on a CPU: uvicorn told only after, in the system's words. The usual case is a port taken, by a
+    server that runs already. Each address of the host is tried as asyncio takes it for a server: one this machine
+    has no family for, or that isn't its own, is passed over, unless none is left."""
+    if not 0 <= port <= MOST_PORT:  # Windows takes a larger one for another: 70000 for 4464
+        raise OSError(f"there is no port {port}: `--port` takes a number up to {MOST_PORT}")
+    nothing, taken = f"nothing can listen on {host}, port {port}", 0
+    try:
+        addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as error:  # a name that has no address
+        raise OSError(f"{nothing}: {error}") from None
+    for family, kind, protocol, _, address in addresses:
+        try:
+            probe = socket.socket(family, kind, protocol)
+        except OSError:
+            continue
+        with probe:
+            if sys.platform != "win32":  # as asyncio binds a server: a port just left is free. Windows would share one
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind(address)
+            except OSError as error:
+                if error.errno == errno.EADDRINUSE:
+                    raise OSError(
+                        f"port {port} is taken: another `sift serve` runs there already, which agents can use as it "
+                        "is, or another program; `--port` picks another"
+                    ) from None
+                if error.errno != errno.EADDRNOTAVAIL:
+                    raise OSError(f"{nothing}: {error}") from None
+            else:
+                taken += 1
+    if not taken:
+        raise OSError(f"{nothing}: it is no address of this machine")
+
+
 def loop_options(stdio: bool = False) -> dict[str, Any]:
     """How anyio runs a server's event loop. On Windows, HTTP is served on a selector loop: the default one, the
     proactor, closes the listening socket for good when one accept fails (WinError 64, a client gone mid-accept), and
@@ -516,6 +558,15 @@ def _no_queries(record: logging.LogRecord) -> bool:
     if isinstance(record.args, tuple) and len(record.args) == 5:
         client, method, path, version, status = record.args
         record.args = (client, method, str(path).partition("?")[0], version, status)
+    return True
+
+
+def _no_reasons(record: logging.LogRecord) -> bool:
+    """Leave out of the log, which is kept on disk, why a tool failed: the MCP library logs sift's message with each
+    failure, and that names what was asked for, as the document of a `get` ("unknown document '...'"). The caller has
+    it; that the tool failed stays, and a bug's traceback sift logs itself (_bug)."""
+    if isinstance(record.args, tuple) and len(record.args) == 2 and str(record.msg).endswith(" failed: %r"):
+        record.msg, record.args = str(record.msg).removesuffix(": %r"), record.args[:1]
     return True
 
 
@@ -560,6 +611,8 @@ def serve(
     from .ui import host_name
 
     allowed = [host_name(name) for name in allowed]  # what is no name is an error before the models load
+    if not stdio:
+        port_free(host, port)
     models = models or _models.default()
     mcp, index = build(Index(models=models))
     # Local models load into RAM, and move to the GPU when used; a worker's are reached

@@ -8,12 +8,15 @@ installation runs any more, upgrades it as it was installed (uv tool, pipx or pi
 SIFT_HOME/logs/update-DATE.log, and leaves how it went for the next command to say. Waiting matters on Windows, where a
 running sift holds its installation's files: uv, replacing them under a running `sift serve`, failed halfway. While
 the installer runs, update.json says so, and any command of the installation that starts then stops with one line. An
-update whose process is gone before it was done, as a restart of the machine ends it, is said and offered again. A
+update whose process is gone before it was done, as a restart of the machine ends it, is said and offered again: the
+process holds SIFT_HOME/update.lock locked for its life, which tells that it runs where its id may be another's. A
 new major version is only told of, with its changelog, as it may need care; so is a newer sift that sift can't
 install itself, with the command: in an environment without pip, or an installation the user may not write.
 
-update.json is this module's alone, written whole; deleting it only makes the next command check again."""
+update.json and update.lock are this module's alone. update.json is written whole; deleting it only makes the next
+command check again. update.lock is empty, made by the first update and left there: only the lock on it tells."""
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -23,13 +26,15 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
 from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import (
+    IO,
     TYPE_CHECKING,
     NoReturn,
+    NotRequired,
     TextIO,
     TypeAlias,
     TypedDict,
@@ -54,6 +59,7 @@ POLL = 1.0  # seconds between looks whether they stopped
 RUN = 3 * 3600  # seconds the upgrade may take: stopped, it leaves sift half upgraded, and a slow line takes long over
 # a newer PyTorch (2.5 GB: half an hour at 10 Mbit/s)
 SHARING = 1.0  # seconds the state's file is tried again while another sift reads or replaces it (see _shared)
+LOCK = "update.lock"  # beside the state: the file an update's process holds locked while it runs
 QUIET = ("serve", "worker")  # servers, often started by scripts and services: they never ask
 # Windows' CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: a console of its own, hidden, which the programs it runs share,
 # and no Ctrl+C. Detached from any console (DETACHED_PROCESS), each program it ran opened a window of its own.
@@ -65,12 +71,14 @@ Done = TypeVar("Done")
 
 class Pending(TypedDict):
     """An update waiting, since then, for the sifts of its installation to stop, and the process that waits and then
-    updates; or, once it does, `upgrading` since then."""
+    updates; or, once it does, `upgrading` since then. `locks`: its process holds LOCK for its life (see _lives); one
+    of sift 1.15.0 or older says nothing of it, and holds none."""
 
     version: str
     since: float
     pid: int
     upgrading: bool
+    locks: NotRequired[bool]
 
 
 class Result(TypedDict):
@@ -131,14 +139,14 @@ def offer(command: str, streams: Sequence[TextIO | None] | None = None) -> None:
     path = state_path()
     state = read(path)
     pending = state.get("pending")
-    if pending and _upgrading(pending):
+    if pending and _upgrading(path, pending):
         raise SystemExit(f"sift is being updated to {pending['version']} right now: run this again in a moment")
     streams = streams or (sys.stdin, sys.stdout, sys.stderr)
     if command in QUIET or not settings.current().update_check:
         return
     if not all(stream is not None and stream.isatty() for stream in streams):  # None: pythonw has no streams
         return
-    if pending and not _runs(pending["pid"]):
+    if pending and not _lives(path, pending):
         state = _stopped(path, pending)
     if result := state.get("result"):
         console.say(_outcome(result))
@@ -156,12 +164,20 @@ def offer(command: str, streams: Sequence[TextIO | None] | None = None) -> None:
         start(["check", str(path)])
 
 
-def _upgrading(pending: Pending) -> bool:
+def _upgrading(path: Path, pending: Pending) -> bool:
     """Whether the installer replaces sift's files right now: the pending update says so (since when), its process
     runs, and the time an upgrade may take isn't up, after which the process is another's that got its id. A command
     started then ran on files half replaced, or held one the installer was about to replace; and `y` stopped the
     command typed, so the next comes at once."""
-    return pending["upgrading"] and time.time() - pending["since"] < RUN and _runs(pending["pid"])
+    return pending["upgrading"] and time.time() - pending["since"] < RUN and _lives(path, pending)
+
+
+def _lives(path: Path, pending: Pending) -> bool:
+    """Whether the process of a pending update runs. One that `locks` by its lock, which the system lets go of when
+    the process ends, however: after a restart of the machine another process has its id, and by the id alone every
+    command stopped for hours as if sift were being upgraded, or an update that had only waited was neither made nor
+    offered again for a week. A process of sift 1.15.0 or older, which holds no lock, by its id."""
+    return _held(path.with_name(LOCK)) if pending.get("locks") else _runs(pending["pid"])
 
 
 def _stopped(path: Path, pending: Pending) -> State:
@@ -350,20 +366,27 @@ def finish(spec: Spec, platform: str = sys.platform, kernel32: "ctypes.CDLL | No
     """Wait, at most WAIT, until the sift that asked has stopped, and on Windows every other of its installation too
     (`held` files free); then run the upgrade, logged, and keep how it went for the next command to say. Before it
     upgrades, the state says so, which stops the commands started from then on (see offer); a sift started just
-    before runs, and is waited for too."""
-    path, log = Path(spec["state"]), Path(spec["log"])
-    log.parent.mkdir(parents=True, exist_ok=True)
+    before runs, and is waited for too. All the while it holds the state's lock, if it can (see _lives)."""
+    path = Path(spec["state"])
+    Path(spec["log"]).parent.mkdir(parents=True, exist_ok=True)
+    with _holding(path.with_name(LOCK)) as locks:  # until the update is done, or this process ends otherwise
+        _update(path, spec, locks, platform, kernel32)
+
+
+def _update(path: Path, spec: Spec, locks: bool, platform: str, kernel32: "ctypes.CDLL | None") -> None:
+    """Wait, upgrade and keep how it went (see finish), saying in the state whether this process `locks`."""
     deadline, waited = time.perf_counter() + WAIT, False
     while not waited:
         while _running(spec, platform, kernel32):
             if time.perf_counter() >= deadline:
                 return _finished(path, spec, False, "a sift of this installation kept running for a week")
+            _say_upgrading(path, spec, False, locks)  # again, once the sift that asked has said that this one waits
             time.sleep(POLL)
-        _say_upgrading(path, spec, True)
+        _say_upgrading(path, spec, True, locks)
         waited = not _running(spec, platform, kernel32)
         if not waited:
-            _say_upgrading(path, spec, False)
-    with open(log, "w", encoding="utf-8") as out:
+            _say_upgrading(path, spec, False, locks)
+    with open(spec["log"], "w", encoding="utf-8") as out:
         out.write(f"{console.command(*spec['command'])}\n")
         out.flush()
         try:
@@ -377,11 +400,15 @@ def finish(spec: Spec, platform: str = sys.platform, kernel32: "ctypes.CDLL | No
     _finished(path, spec, code == 0, how)
 
 
-def _say_upgrading(path: Path, spec: Spec, now: bool) -> None:
+def _say_upgrading(path: Path, spec: Spec, now: bool, locks: bool) -> None:
     """Keep in the state whether this process upgrades sift `now`, since this moment, or waits still, as it has since
-    the update was agreed to."""
+    the update was agreed to, and that it holds its lock, if it `locks`; written only if the state says otherwise."""
     since = time.time() if now else spec["since"]
-    change(path, pending={"version": spec["version"], "since": since, "pid": os.getpid(), "upgrading": now})
+    pending: Pending = {"version": spec["version"], "since": since, "pid": os.getpid(), "upgrading": now}
+    if locks:
+        pending["locks"] = True
+    if read(path).get("pending") != pending:
+        change(path, pending=pending)
 
 
 def _finished(path: Path, spec: Spec, ok: bool, how: str) -> None:
@@ -425,6 +452,42 @@ def _alive_on_windows(pid: int, kernel32: "ctypes.CDLL | None" = None) -> bool:
         return kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
     finally:
         kernel32.CloseHandle(handle)
+
+
+def _locker() -> Callable[[IO[bytes]], None]:
+    """What locks an open file for its process alone, at once, or raises an OSError where another holds it. The system
+    lets go of the lock when the file is closed, as when its process ends, in whatever way."""
+    if sys.platform == "win32":
+        import msvcrt
+
+        return lambda file: msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
+    import fcntl
+
+    return lambda file: fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@contextlib.contextmanager
+def _holding(path: Path, lock: Callable[[IO[bytes]], None] | None = None) -> Generator[bool]:
+    """Hold the file at `path` locked for the block, made if there is none; yields whether this process holds it. It
+    doesn't where another process does, on a file system without locks, or in a folder that isn't there."""
+    with contextlib.ExitStack() as opened:
+        try:
+            file = opened.enter_context(open(path, "a+b"))
+            file.seek(0)
+            (lock or _locker())(file)
+        except OSError:
+            locked = False
+        else:
+            locked = True
+        yield locked
+
+
+def _held(path: Path) -> bool:
+    """Whether a process holds the file at `path` locked (see _holding)."""
+    if not path.is_file():
+        return False
+    with _holding(path) as free:
+        return not free
 
 
 def _in_use(file: str) -> bool:
@@ -473,7 +536,10 @@ def _fits(value: Json, kind: type) -> bool:
     """Whether a value read is of the type its entry is to be: a dict of entries, of each of theirs; a float, any
     number, as JSON writes a whole one."""
     if is_typeddict(kind):
-        return isinstance(value, dict) and all(_fits(value.get(k), of) for k, of in get_type_hints(kind).items())
+        if not isinstance(value, dict):
+            return False
+        required: frozenset[str] = getattr(kind, "__required_keys__", frozenset())
+        return all(_fits(value.get(k), of) for k, of in get_type_hints(kind).items() if k in required or k in value)
     return isinstance(value, (int, float) if kind is float else kind)
 
 

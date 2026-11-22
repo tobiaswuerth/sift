@@ -69,7 +69,9 @@ jobs:
       - run: uv pip install --torch-backend cpu -e ".[dev]"
       # In a process per core: a quarter of the time on four. The slowest are named: what a system is slow at shows.
       - run: pytest -q --cov -n auto --durations=15
-      - run: python scripts/smoke.py  # every command as a user runs it, each in a process of its own
+      # Every command that loads no model, as a user runs it, each in a process of its own. Those that load the
+      # models (--models) download them: run before a release (docs/CONTRIBUTING.md).
+      - run: python scripts/smoke.py
 
   test:
     # Every other system and Python, once the hooks, the types and the first two jobs pass.

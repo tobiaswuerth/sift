@@ -9,6 +9,7 @@ go to [SECURITY.md](SECURITY.md).
 git clone https://github.com/tobiaswuerth/sift
 cd sift
 uv venv && uv pip install --torch-backend auto -e ".[dev]"   # or: pip install -r requirements.txt -e ".[dev]"
+source .venv/bin/activate   # on Windows: .venv\Scripts\activate
 pre-commit install      # lint, format and config checks on every commit
 python scripts/gate.py  # the gate: every check a change must pass (see "How changes are made")
 ```
@@ -26,6 +27,7 @@ downloads; everything else, the MCP server included, runs for real.
 | `upgrade.py` | Splitting an index of sift 1.7 or older into a store per collection |
 | `readers.py` | Files into documents: a reader per kind of file, chunking, and the links of Markdown notes |
 | `indexing.py` | `sift index`: scanning folders, reading changed files in worker processes; `reindex` of given files |
+| `processes.py` | The worker processes sift starts: how many the machine gives, and the pools of them |
 | `ocr.py` | Reading scans: a PDF's pages as pictures, read by an OCR model, once per scan |
 | `ignore.py` | `.siftignore`: gitignore patterns, matched in linear time |
 | `links.py` | Links between notes: the names files answer to, resolving links, backlinks |
@@ -107,7 +109,10 @@ Rules the code keeps, several checked by `tests/test_package.py`:
 ## Releasing
 
 1. In a pull request, set the version in `sift/__init__.py` and move the "Unreleased" changes in `CHANGELOG.md` under
-   it, with its compare link at the bottom; CI checks the changelog has that section.
+   it, with its compare link at the bottom; CI checks the changelog has that section. Run
+   `python scripts/smoke.py --models` on it once: CI's smoke run loads no model.
 2. Merge it. Once CI passes on the merge commit, the release workflow publishes that commit: it builds the package,
    publishes it to PyPI by trusted publishing (no tokens; the `pypi` environment deploys from `main` only), tags the
-   commit and creates a GitHub release with that version's changelog. It never runs for a failed CI run.
+   commit and creates a GitHub release with that version's changelog. It never runs for a failed CI run. If a job
+   fails after PyPI took the package, re-run the failed jobs only: PyPI takes no version twice, so a run from the
+   start, or one for a later commit of the same version, fails at publishing.

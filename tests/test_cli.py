@@ -580,7 +580,7 @@ def test_serve(home, monkeypatch):
 
 def test_the_commands_the_docs_show_are_commands_sift_takes(capsys):
     # An example with an option sift has not, or one renamed since, sends its reader into an error, and an agent that
-    # sets sift up by docs/agents.md with it.
+    # sets sift up by docs/agent-setup.md with it.
     root, parser, shown, refused = Path(__file__).parent.parent, cli._parser(), 0, []
     for path in [root / "README.md", *sorted((root / "docs").glob("*.md"))]:
         for block in re.findall(r"```bash\n(.*?)```", path.read_text(encoding="utf-8"), re.DOTALL):

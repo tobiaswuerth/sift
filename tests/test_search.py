@@ -4,6 +4,7 @@ browsing by folder."""
 import contextlib
 import itertools
 import json
+import shutil
 import sqlite3
 import threading
 
@@ -17,6 +18,7 @@ from sift.queries import any_word
 from sift.search import Index
 
 from .conftest import as_sift_1_12_left_it, live_codes, write, write_prose
+from .test_indexing import link_file, link_folder
 
 
 def ids(hits):
@@ -318,6 +320,16 @@ def test_a_long_chain_of_nots_is_left_to_fts5(corpus):
     query = "reward" + " NOT w" * 1200
     assert expression.parse(query) is None
     assert Index(corpus[0]).search(query) == []  # what FTS5 can't read: its words, as phrases
+
+
+@pytest.mark.parametrize("ready", [True, False])
+@pytest.mark.parametrize("query", ["reward\x00shaping", '"reward\x00shaping"', "\x00reward", "reward\x00"])
+def test_a_nul_in_a_query_parts_words_however_the_query_is_answered(corpus, monkeypatch, ready, query):
+    # From the postings a NUL parted words, as any character that is no letter; FTS5, which reads a query as C does,
+    # took it for the query's end. One search found its passage or failed, by whether the postings were ready.
+    if not ready:
+        monkeypatch.setattr(Index, "_ready", lambda self, scope: None)
+    assert ids(Index(corpus[0]).search(query)) == ["notes/rl.md"]
 
 
 def test_unusable_query_is_a_clear_error(corpus, monkeypatch):
@@ -2010,6 +2022,26 @@ def test_the_file_a_document_came_from(corpus, tmp_path):
         db.commit()
         found = index.file(f"notes/{outside}")  # elsewhere than on Windows, a drive is a name like any
         assert found is None or found.resolve().is_relative_to(root.resolve()), outside
+
+
+def test_a_link_that_took_an_indexed_file_s_place_is_no_file_to_open(corpus, tmp_path, monkeypatch):
+    # `sift index` reads no link to outside its collection's folder, and follows no folder linked from elsewhere; the
+    # UI opened whatever lay at an indexed file's path by now. A link put there since, as by a folder synced or
+    # checked out again, led it to any file of the machine.
+    catalog, root = corpus
+    index = Index(catalog)
+    write(tmp_path / "outside" / "brush.md", "a private key\n")
+    (root / "plain.txt").unlink()
+    link_file(tmp_path / "outside" / "brush.md", root / "plain.txt", monkeypatch)
+    assert index.file("notes/plain.txt") is None
+    assert index.file("notes/rl.md") == root / "rl.md"  # a file as it was indexed
+    shutil.rmtree(root / "robots")
+    link_folder(tmp_path / "outside", root / "robots")
+    assert index.file("notes/robots/brush.md") is None
+    catalog.follow_links("notes")  # the collection reads linked files, wherever they lead; still through no folder
+    index = Index(catalog)
+    assert index.file("notes/plain.txt") == root / "plain.txt"
+    assert index.file("notes/robots/brush.md") is None
 
 
 def test_get_by_a_file_name_many_documents_have(corpus, aged):

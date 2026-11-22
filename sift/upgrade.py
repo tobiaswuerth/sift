@@ -15,7 +15,6 @@ import sqlite3
 import time
 from collections import Counter
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-from . import console, store
+from . import console, processes, store
 
 BATCH = 50_000  # rows read at a time
 PARALLEL_CHUNKS = 1_000_000  # with more chunks than this, the stores are finished in processes of their own
@@ -204,12 +203,7 @@ def _finish_all(jobs: list[Job], chunks: int) -> None:
     a while; else here."""
     console.say(f"making the keyword index of {console.count(len(jobs), 'collection')} ...")
     if chunks > PARALLEL_CHUNKS and len(jobs) > 1:
-        import multiprocessing
-
-        from .indexing import cpus
-
-        spawn = multiprocessing.get_context("spawn")  # as indexing: forking a process with threads can deadlock
-        with ProcessPoolExecutor(min(len(jobs), cpus()), mp_context=spawn) as pool:
+        with processes.running(min(len(jobs), processes.cpus())) as pool:
             for said in pool.map(_finish, *zip(*jobs)):
                 console.say(said)
     else:

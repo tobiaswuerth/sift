@@ -5,7 +5,6 @@ the previous batch is written. `reindex` reads given files at once, for a note j
 
 import contextlib
 import json
-import multiprocessing
 import os
 import posixpath
 import sqlite3
@@ -20,7 +19,7 @@ from itertools import takewhile
 from pathlib import Path
 from typing import Literal, NamedTuple, TypeGuard, TypeVar, overload
 
-from . import console, embed, links, ocr, postings, readers, store
+from . import __version__, console, embed, links, ocr, postings, processes, readers, store
 from .ignore import NAME as SIFTIGNORE
 from .ignore import Ignore
 
@@ -53,24 +52,13 @@ Info = os.stat_result | OSError | None
 Entry = dict[str, str]  # {"id", "status"[, "note"]}
 
 
-def cpus() -> int:
-    """CPUs this process may use, honouring affinity and container limits where the platform reports them."""
-    process_cpu_count: Callable[[], int | None] | None = getattr(os, "process_cpu_count", None)  # Python 3.13+
-    if process_cpu_count:
-        return process_cpu_count() or 1
-    sched_getaffinity: Callable[[int], set[int]] | None = getattr(os, "sched_getaffinity", None)  # Linux
-    if sched_getaffinity:
-        return len(sched_getaffinity(0))
-    return os.cpu_count() or 1
-
-
 def workers(files: int, size: int = 0) -> int:
     """Worker processes for parsing `files` files of `size` bytes in all; 0 or 1 means parse in-process.
 
     One per CPU except the one the main process uses for writing, and at most one per FILES_PER_WORKER files or
     BYTES_PER_WORKER bytes, whichever allows more.
     """
-    return max(0, min(cpus() - 1, max(files // FILES_PER_WORKER, size // BYTES_PER_WORKER)))
+    return max(0, min(processes.cpus() - 1, max(files // FILES_PER_WORKER, size // BYTES_PER_WORKER)))
 
 
 def _batches(todo: Iterable[Item]) -> list[list[Item]]:
@@ -139,12 +127,6 @@ def _no_end(patience: float) -> Stopped:
     return Stopped(f"its reader came to no end in {console.duration(patience)}")
 
 
-def _pool(n: int) -> ProcessPoolExecutor:
-    """`n` worker processes. Spawned everywhere, as on Windows and macOS: forking a process that has threads can
-    deadlock."""
-    return ProcessPoolExecutor(n, mp_context=multiprocessing.get_context("spawn"))
-
-
 def _end(pool: ProcessPoolExecutor) -> None:
     """End a pool at once: its processes are killed, one that hangs too, and what was started in it is lost. Before
     Python 3.14 (kill_workers) a pool names its processes here alone."""
@@ -164,7 +146,7 @@ class _Workers:
     single: ProcessPoolExecutor | None
 
     def __init__(self, n: int, fields: Fields) -> None:
-        self.n, self.fields, self.pool, self.single = n, fields, _pool(n), None
+        self.n, self.fields, self.pool, self.single = n, fields, processes.pool(n), None
 
     def __enter__(self) -> "_Workers":
         return self
@@ -205,7 +187,7 @@ class _Workers:
             except (BrokenProcessPool, CancelledError, TimeoutError) as ended:
                 if pool is self.pool:  # a file not read yet ended it, or hangs: which of them, each alone tells
                     _end(pool)
-                    self.pool = _pool(self.n)
+                    self.pool = processes.pool(self.n)
                     if isinstance(ended, TimeoutError) and len(files) == 1:  # but one that had its time to itself
                         read, at = [*read, _no_end(patience)], at + 1
                     return read + [loaded for task in started[at:] for loaded in self._kept(task)]
@@ -221,7 +203,7 @@ class _Workers:
 
     def _alone(self, file: tuple[str, int]) -> Loaded:
         """What one file is read as in a process that reads nothing else, or Stopped."""
-        self.single = self.single or _pool(1)
+        self.single = self.single or processes.pool(1)
         patience = _patience([file])
         try:
             return self._task(self.single, [file])[1].result(timeout=patience)[0]
@@ -282,6 +264,28 @@ def _read_skipped_scans(db: Db) -> None:
     if skipped is not None and OCR_READS[ocr.setting()] > OCR_READS[skipped]:
         store.read_again(db, (".pdf",))
         db.execute("DELETE FROM meta WHERE key = ?", (SCANS_SKIPPED,))
+        db.commit()
+
+
+STOPPED = "readers_stopped"  # in a store's meta table: {"sift": the version that stopped a reader, "files": of which}
+
+
+def _leave_stopped(db: Db, rel: str, stat: tuple[int, int]) -> None:
+    """Keep the time and size of a file whose reader was stopped, and its documents as they are: a later run passes
+    it over until it changes, where each gave it its ten minutes again, or lost a pool to it. Noted (STOPPED), for the
+    sift after this one to read it once more: its reader may be another by then."""
+    db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (*stat, _source(db, rel, make=True)))
+    files: list[str] = json.loads(store.get_meta(db, STOPPED, "{}")).get("files", [])
+    store.set_meta(db, STOPPED, json.dumps({"sift": __version__, "files": sorted({*files, rel})}))
+
+
+def _read_stopped_again(db: Db) -> None:
+    """Have this index read the files whose readers another sift stopped (STOPPED), once."""
+    stopped = json.loads(store.get_meta(db, STOPPED, "{}"))
+    if stopped and stopped["sift"] != __version__:
+        paths = json.dumps(stopped["files"])
+        db.execute("UPDATE sources SET mtime = NULL WHERE path IN (SELECT value FROM json_each(?))", (paths,))
+        db.execute("DELETE FROM meta WHERE key = ?", (STOPPED,))
         db.commit()
 
 
@@ -645,14 +649,9 @@ def _locate(catalog: Catalog[C], path: str) -> tuple[C, str]:
     ext = readers.extension(parts[-1])
     if ext not in readers.READERS:
         raise ValueError(f"{name}/{rel}: sift doesn't index {f'{ext} files' if ext else 'files without an extension'}")
-    for i in range(1, len(parts)):
-        if _linked(os.path.join(root, *parts[:i])):
-            raise ValueError(
-                f"{name}/{rel}: {parts[i - 1]}/ is linked from elsewhere, and `sift index` doesn't follow it"
-            )
-    full = os.path.join(root, *parts)
-    linked = os.path.islink(full) and not inside(os.path.realpath(root), os.path.realpath(full))
-    if linked and collection.choices.get("links") != "follow":
+    if (folder := _linked_folder(root, parts)) is not None:
+        raise ValueError(f"{name}/{rel}: {folder}/ is linked from elsewhere, and `sift index` doesn't follow it")
+    if _links_out(collection, parts):
         raise ValueError(
             f"{name}/{rel} links to outside its collection's folder, which `sift index` leaves out: "
             f"`{console.command('sift', 'add', root, '--follow-links')}` reads such files"
@@ -686,6 +685,27 @@ def holding(collections: Sequence[C], full: str) -> tuple[C, str] | None:
         )
 
     return held(full) or held(os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full)))
+
+
+def _linked_folder(root: str, parts: Sequence[str]) -> str | None:
+    """The first folder on the way to the file at `parts` below `root` that is linked from elsewhere, which `sift
+    index` follows none of; None if none is."""
+    return next((parts[i - 1] for i in range(1, len(parts)) if _linked(os.path.join(root, *parts[:i]))), None)
+
+
+def _links_out(collection: store.Collection, parts: Sequence[str]) -> bool:
+    """Whether the file at `parts` below a collection's folder is a link to outside it, which `sift index` reads only
+    for a collection that follows links."""
+    root, full = collection.path, os.path.join(collection.path, *parts)
+    linked = os.path.islink(full) and not inside(os.path.realpath(root), os.path.realpath(full))
+    return linked and collection.choices.get("links") != "follow"
+
+
+def led_elsewhere(collection: store.Collection, parts: Sequence[str]) -> bool:
+    """Whether the file at `parts` below a collection's folder is one `sift index` reads none of for where it leads
+    (see _linked_folder, _links_out). Asked of an indexed file too, before it is read from disk: a link may have
+    taken its place since."""
+    return _linked_folder(collection.path, parts) is not None or _links_out(collection, parts)
 
 
 def _linked(path: str) -> bool:
@@ -831,7 +851,7 @@ def _reindex_file(
         db.execute("RELEASE file")
     if records and twice:  # read as it was stored: what it skipped is known now
         problems += records.problems
-    mtime = None if left else info.st_mtime_ns  # no time: `sift index` takes it for changed
+    mtime = None if left else _changed(info)  # no time: `sift index` takes it for changed
     db.execute("UPDATE sources SET mtime = ?, size = ? WHERE id = ?", (mtime, info.st_size, sid))
     now = [d for (d,) in db.execute("SELECT id FROM docs WHERE source = ?", (sid,))]
     if not now and problems:
@@ -868,6 +888,15 @@ def _drop_source(db: Db, sid: int) -> int:
     store.delete_docs(db, docs)
     db.execute("DELETE FROM sources WHERE id=?", (sid,))
     return len(docs)
+
+
+TIMES = 2**63 - 1  # the nanoseconds a store's integer counts to, either way: the years 1678 to 2262
+
+
+def _changed(info: os.stat_result) -> int:
+    """When a file last changed, in nanoseconds, as the store holds it: within TIMES, the nearest of them for a file
+    dated outside, as Windows dates one without a time 1601. The time is compared with the one stored, never told."""
+    return max(-TIMES, min(TIMES, info.st_mtime_ns))
 
 
 def walk(
@@ -921,7 +950,7 @@ def walk(
                         if outside is not None and e.is_symlink() and not inside(resolved, os.path.realpath(e.path)):
                             outside.append(rel + e.name)
                             continue
-                        yield e.path, st.st_mtime_ns, st.st_size
+                        yield e.path, _changed(st), st.st_size
             except OSError as error:  # the listing broke off
                 unreachable(rel, error)
 
@@ -953,7 +982,7 @@ def index(catalog: Catalog[C], names: Sequence[str] | None = None) -> None:
         try:
             _index_collection(db, c.name, c.path, c.choices, ignore)
             store.list_basenames(db, c.name)
-            postings.update(db, c.store, c.name, cpus() - 1)
+            postings.update(db, c.store, c.name, processes.cpus() - 1)
         except sqlite3.DatabaseError as error:  # one store damaged stops no other collection
             db.rollback()
             console.say(f"{store.damage(c.name, error)}; skipped")
@@ -964,6 +993,7 @@ def _index_collection(db: Db, name: str, root: str, fields: Fields, ignore: Igno
     after (see `postings`)."""
     t0 = time.perf_counter()
     _read_skipped_scans(db)
+    _read_stopped_again(db)
     store.read_ansi_again(db, name, lambda rel: readers.misread(os.path.join(root, *rel.split("/"))))
     known: dict[str, tuple[int, int, int]] = {
         p: (i, m, s) for i, p, m, s in db.execute("SELECT id, path, mtime, size FROM sources")
@@ -1018,7 +1048,7 @@ def _freed(db: Db, root: str, among: set[str]) -> list[Item]:
         path = os.path.join(root, *rel.split("/"))
         with contextlib.suppress(OSError):  # gone meanwhile: the next index drops it
             info = os.stat(path)
-            freed.append((path, rel, info.st_mtime_ns, info.st_size))
+            freed.append((path, rel, _changed(info), info.st_size))
     return freed
 
 
@@ -1089,6 +1119,12 @@ def _read_and_store(
                     continue
                 if res is None:  # unreadable now; retried on the next run
                     console.say(f"unreadable, skipped: {path}")
+                    counts["unreadable"] += 1
+                    continue
+                if isinstance(res, Stopped):
+                    _leave_stopped(db, rel, (mtime, size))
+                    again = "not read again until it changes, or by the sift after this one"
+                    note(f"{rel}: skipped ({type(res).__name__}: {res}): {again}")
                     counts["unreadable"] += 1
                     continue
                 if isinstance(res, Exception):  # a reader failed: said, and read again by the next run

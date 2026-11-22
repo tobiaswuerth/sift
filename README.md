@@ -57,7 +57,7 @@ sift serve                             # MCP server on http://127.0.0.1:8765/mcp
 
 `sift index` and `sift embed` process only what changed since their last run; an interrupted `sift embed` continues
 where it stopped. Or let your agent do it all: tell it to read and follow
-[Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agents.md).
+[Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agent-setup.md).
 
 ## Connect an agent
 
@@ -178,7 +178,7 @@ older, read 1.8.0's entry first.
 
 - [Usage](https://github.com/tobiaswuerth/sift/blob/main/docs/usage.md): collections, search options and syntax,
   filters, the formats sift reads, linked notes, the server, the UI, `sift bench`, where indexes and logs lie
-- [Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agents.md): the steps for an
+- [Setting sift up with an agent](https://github.com/tobiaswuerth/sift/blob/main/docs/agent-setup.md): the steps for an
   agent that installs sift and connects it for you
 - [Another machine's GPU](https://github.com/tobiaswuerth/sift/blob/main/docs/worker.md): `sift worker`
 - [How sift works](https://github.com/tobiaswuerth/sift/blob/main/docs/architecture.md): indexing, storage,

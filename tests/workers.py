@@ -21,3 +21,9 @@ def hanging(path, fields):
     if "hangs" in os.path.basename(path):
         time.sleep(120)
     return _loaded(path, fields)
+
+
+def marking(folder, n):
+    """Leave a file named `n` in `folder`: a task that tells it ran."""
+    open(os.path.join(folder, str(n)), "w").close()
+    return n
