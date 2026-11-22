@@ -6,9 +6,9 @@ from typing import NamedTuple
 
 import pytest
 
+from sift.api.collections import TitleFrom
 from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.ids import CollectionId
-from sift.domain.text.notes import TitleFrom
 from sift.storage.catalog import (
     CATALOG,
     Choices,

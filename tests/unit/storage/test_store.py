@@ -10,7 +10,15 @@ from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.storage.database import connect, first, reading, run, writing
 from sift.storage.migrations import Migration
-from sift.storage.store import DAMAGED_REMEDY, LAYOUT, MISSING_REMEDY, create_store, delete_store, open_store
+from sift.storage.store import (
+    DAMAGED_REMEDY,
+    LAYOUT,
+    MISSING_REMEDY,
+    create_store,
+    delete_store,
+    open_store,
+    stored_bytes,
+)
 
 COLLECTION = CollectionId(7)
 
@@ -135,6 +143,20 @@ def test_deleting_a_store_that_is_not_there_does_nothing(tmp_path: Path) -> None
     delete_store(tmp_path / "gone.sqlite")
     delete_store(tmp_path / "file" / "s.sqlite")
     assert [path.name for path in tmp_path.iterdir()] == ["file"]
+
+
+def test_the_bytes_a_store_holds_count_its_log_and_not_its_shared_memory(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    assert stored_bytes(path) == path.stat().st_size
+    with opened(path) as connection:
+        with writing(connection) as transaction:
+            run(transaction, "INSERT INTO sources(path, modified_ns, size) VALUES ('a.md', 1, 1)")
+        log, shared = Path(f"{path}-wal"), Path(f"{path}-shm")
+        assert log.stat().st_size > 0
+        assert shared.is_file()
+        assert stored_bytes(path) == path.stat().st_size + log.stat().st_size
+    assert stored_bytes(tmp_path / "gone.sqlite") == 0
 
 
 def test_a_store_of_an_older_layout_is_brought_up_to_this_one_when_opened(tmp_path: Path) -> None:

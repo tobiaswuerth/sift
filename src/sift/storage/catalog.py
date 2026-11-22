@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, cast
 
+from sift.api.collections import TitleFrom
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.ids import CollectionId
-from sift.domain.text.notes import TitleFrom
 from sift.storage.database import Reading, Writing, connect, inserted, reading, rows, writing
 from sift.storage.migrations import Migration, migrated, version
 from sift.storage.store import create_store, delete_store

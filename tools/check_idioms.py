@@ -33,6 +33,9 @@ LEFT_OPEN = (
     "sqlite3.connect left to the garbage collector, a ResourceWarning in whichever test runs then: "
     "open it in `with closing(sqlite3.connect(...)) as db:`"
 )
+SETTINGS = "src/sift/settings.py"
+ENVIRONMENT = frozenset({"environ", "environb", "getenv", "getenvb", "putenv", "unsetenv"})
+ENVIRONMENT_READ = "the environment read outside sift.settings: parse it there and pass the Settings in"
 CLOCKS = frozenset({"time", "timeit"})
 CLOCK_IN_A_TEST = (
     "a clock in a test, which passes or fails by the machine and its load: count what costs the time "
@@ -85,6 +88,14 @@ def patching(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, node.lineno, "monkeypatch: pass a fake, a value or an environment in instead")
 
 
+def environment_outside_settings(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Attribute) and ast.unparse(node.value) == "os" and node.attr in ENVIRONMENT) or (
+            isinstance(node, ast.ImportFrom) and node.module == "os" and ENVIRONMENT & {a.name for a in node.names}
+        ):
+            yield Finding(path, node.lineno, ENVIRONMENT_READ)
+
+
 def _imported(node: ast.Import | ast.ImportFrom) -> list[str]:
     return [alias.name for alias in node.names] if isinstance(node, ast.Import) else [node.module or ""]
 
@@ -117,6 +128,7 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *(() if in_tests else banned_methods(path, tree)),
         *(io_in_the_core(path, tree) if path.startswith(CORE) else ()),
         *(exits_outside_interfaces(path, tree) if in_sift and not path.startswith(INTERFACES) else ()),
+        *(environment_outside_settings(path, tree) if in_sift and path != SETTINGS else ()),
         *(patching(path, tree) if in_tests else ()),
         *(clocks(path, tree) if in_tests else ()),
         *(databases_left_open(path, tree) if in_tests else ()),

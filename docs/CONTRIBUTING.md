@@ -35,6 +35,10 @@ else, and the installed commands run). One session: `uv run --only-group gate no
   No module imports one that imports it (`[tool.importlinter]` in `pyproject.toml`).
 - Tests pass fakes and values in; `monkeypatch` is not used, and no test reads a clock: what costs time is counted
   (`python -m tools idioms`, which also holds lessons of earlier bugs: each of its findings names the fix).
+- sift reads its environment in `sift.settings` alone, and only `sift.interfaces` imports that module: the use cases
+  and the core take values (`python -m tools idioms`, the import contracts).
+- A character that shows as nothing, or as another, is written as an escape (`"\N{ZERO WIDTH SPACE}"`), never as
+  itself (`python -m tools idioms`).
 - The tokenizer's table is generated from SQLite's FTS5 (`python -m tools fts5 --write`), and a test holds it equal.
 - Stores need SQLite 3.37 or newer (STRICT tables); an older one is refused with what to do. A store's layout
   changes by a numbered migration appended to `LAYOUT`, never by editing one a release has shipped.

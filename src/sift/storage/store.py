@@ -56,10 +56,25 @@ LAYOUT: tuple[Migration, ...] = (
             PRIMARY KEY(key, document, kind)
         ) STRICT, WITHOUT ROWID""",
         "CREATE INDEX names_document ON names(document)",
+        """CREATE TABLE counts(
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            documents INTEGER NOT NULL CHECK (documents >= 0),
+            chunks INTEGER NOT NULL CHECK (chunks >= 0)
+        ) STRICT""",
+        "INSERT INTO counts(id, documents, chunks) VALUES (1, 0, 0)",
+        """CREATE TRIGGER documents_added AFTER INSERT ON documents
+           BEGIN UPDATE counts SET documents = documents + 1; END""",
+        """CREATE TRIGGER documents_deleted AFTER DELETE ON documents
+           BEGIN UPDATE counts SET documents = documents - 1; END""",
+        """CREATE TRIGGER chunks_added AFTER INSERT ON chunks
+           BEGIN UPDATE counts SET chunks = chunks + 1; END""",
+        """CREATE TRIGGER chunks_deleted AFTER DELETE ON chunks
+           BEGIN UPDATE counts SET chunks = chunks - 1; END""",
     ),
 )
 NUMBERED_TABLES = ("documents", "chunks")
 FILE_SUFFIXES = ("", "-wal", "-shm")
+DATA_SUFFIXES = ("", "-wal")
 MISSING_REMEDY = "connect the drive it lies on, or remove the collection"
 DAMAGED_REMEDY = "remove the collection, then add its folder and index it again"
 
@@ -68,10 +83,17 @@ class Held(NamedTuple):
     value: str
 
 
+def _files(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
+    return [file for file in (Path(f"{path}{suffix}") for suffix in suffixes) if file.is_file()]
+
+
 def delete_store(path: Path) -> None:
-    for file in (Path(f"{path}{suffix}") for suffix in FILE_SUFFIXES):
-        if file.is_file():
-            file.unlink()
+    for file in _files(path, FILE_SUFFIXES):
+        file.unlink()
+
+
+def stored_bytes(path: Path) -> int:
+    return sum(file.stat().st_size for file in _files(path, DATA_SUFFIXES))
 
 
 def _made(path: Path, collection: CollectionId, layout: Sequence[Migration]) -> None:

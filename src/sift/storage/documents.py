@@ -140,3 +140,13 @@ def stored(transaction: Reading, path: str, key: str = "") -> Stored | None:
 def chunks_of(transaction: Reading, document: DocumentId) -> list[StoredChunk]:
     sql = "SELECT id, first_line, last_line, start, length FROM chunks WHERE document = ? ORDER BY id"
     return rows(transaction, StoredChunk, sql, (document,))
+
+
+class Counts(NamedTuple):
+    documents: int
+    chunks: int
+
+
+def counts(transaction: Reading) -> Counts:
+    (kept_counts,) = rows(transaction, Counts, "SELECT documents, chunks FROM counts")
+    return kept_counts

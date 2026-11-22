@@ -60,6 +60,18 @@ def test_a_banned_method_is_found_with_its_fix(method: str) -> None:
     assert problems("tests/a.py", f"y = x.{method}()\n") == []
 
 
+@pytest.mark.parametrize(
+    "code",
+    ["os.environ['A']", "os.environ.get('A')", "os.getenv('A')", "from os import environ", "from os import getenv"],
+)
+def test_reading_the_environment_anywhere_in_sift_but_its_settings_is_found(code: str) -> None:
+    source = f"import os\n{code}\n"
+    (problem,) = problems("src/sift/app/a.py", source)
+    assert problem.startswith("the environment read outside sift.settings")
+    for path in ("src/sift/settings.py", "tests/a.py", "tools/a.py"):
+        assert problems(path, source) == []
+
+
 def test_a_numbered_sql_placeholder_is_found() -> None:
     numbered = f"db.execute('SELECT ?{1}, ?{2}')\n"
     for path in ("src/sift/storage/a.py", "tests/a.py", "tools/a.py"):

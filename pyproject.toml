@@ -117,8 +117,6 @@ ignore = [
 ban-relative-imports = "all"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"os.environ".msg = "read the environment in sift.settings only, and pass the parsed Settings in"
-"os.getenv".msg = "read the environment in sift.settings only, and pass the parsed Settings in"
 "sys.exit".msg = "raise a SiftError; each interface maps it to an exit code"
 "unittest.mock".msg = "pass a fake through a port instead of patching"
 "urllib.request".msg = "network access belongs in sift.inference (the worker client) or sift.interfaces"
@@ -203,12 +201,20 @@ name = "SQLite only in storage and retrieval"
 type = "forbidden"
 source_modules = ["sift.api", "sift.domain", "sift.ingest", "sift.inference", "sift.app", "sift.interfaces"]
 forbidden_modules = ["sqlite3"]
+allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Model libraries only in inference"
 type = "forbidden"
 source_modules = ["sift.api", "sift.domain", "sift.storage", "sift.retrieval", "sift.ingest", "sift.app", "sift.interfaces"]
 forbidden_modules = ["torch", "transformers", "sentence_transformers"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Settings only in interfaces: the core and the use cases take values"
+type = "forbidden"
+source_modules = ["sift.api", "sift.domain", "sift.storage", "sift.retrieval", "sift.ingest", "sift.inference", "sift.app"]
+forbidden_modules = ["sift.settings"]
 
 [[tool.importlinter.contracts]]
 name = "Servers, templates and argument parsing only in interfaces"

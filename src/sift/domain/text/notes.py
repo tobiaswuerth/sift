@@ -1,8 +1,8 @@
 import hashlib
 import posixpath
 from dataclasses import dataclass
-from enum import StrEnum
 
+from sift.api.collections import TitleFrom
 from sift.api.fields import Fields
 from sift.domain.text.chunks import Chunk, chunks
 from sift.domain.text.decoding import file_text
@@ -11,11 +11,6 @@ from sift.domain.text.links import MARKDOWN, Link, links
 from sift.domain.text.markdown import heading, one_line
 
 TEXT_FILES = (".md", ".markdown", ".txt")
-
-
-class TitleFrom(StrEnum):
-    HEADING = "heading"
-    NAME = "name"
 
 
 @dataclass(frozen=True, slots=True)

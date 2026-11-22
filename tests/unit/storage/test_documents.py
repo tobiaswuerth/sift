@@ -14,11 +14,13 @@ from sift.domain.text.links import LinkKind, NameKind
 from sift.domain.text.notes import Document, note
 from sift.storage.database import reading, rows, run, writing
 from sift.storage.documents import (
+    Counts,
     Kept,
     SourceId,
     StoredChunk,
     add_documents,
     chunks_of,
+    counts,
     delete_documents,
     delete_source,
     fields_json,
@@ -223,6 +225,31 @@ def test_fields_are_kept_as_json_whatever_their_mapping_and_sequence() -> None:
 def test_what_json_cannot_keep_is_no_field_value(value: FieldValue) -> None:
     with pytest.raises((ValueError, TypeError)):
         fields_json({"x": value})
+
+
+def kept_counts(connection: sqlite3.Connection) -> Counts:
+    with reading(connection) as transaction:
+        return counts(transaction)
+
+
+def test_the_store_keeps_count_of_its_documents_and_chunks_as_they_come_and_go(store: sqlite3.Connection) -> None:
+    assert kept_counts(store) == Counts(0, 0)
+    _, (hans,) = added(store, "Hans.md", note(NOTE, "Hans.md"))
+    added(store, "Other.md", note(b"# Other\n\n" + b"A line of words.\n" * 400, "Other.md"))
+    expected = Counts(counted(store, "documents"), counted(store, "chunks"))
+    assert kept_counts(store) == expected
+    assert expected.chunks > expected.documents == 2
+    with writing(store) as transaction:
+        delete_documents(transaction, [hans])
+    assert kept_counts(store) == Counts(counted(store, "documents"), counted(store, "chunks"))
+    with writing(store) as transaction:
+        delete_source(transaction, "Other.md")
+    assert kept_counts(store) == Counts(0, 0)
+
+
+def test_a_count_that_would_fall_below_zero_is_refused(store: sqlite3.Connection) -> None:
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"), writing(store) as transaction:
+        run(transaction, "UPDATE counts SET documents = -1")
 
 
 def test_a_document_id_is_never_handed_out_twice(store: sqlite3.Connection) -> None:

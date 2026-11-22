@@ -1,6 +1,7 @@
 import pytest
 
-from sift.domain.text.notes import Document, TitleFrom, file_stem, note
+from sift.api.collections import TitleFrom
+from sift.domain.text.notes import Document, file_stem, note
 
 
 def written(text: str, name: str = "file.md", title_from: TitleFrom = TitleFrom.HEADING) -> Document:
