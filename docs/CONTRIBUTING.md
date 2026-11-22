@@ -33,8 +33,9 @@ else, and the installed commands run). One session: `uv run --only-group gate no
   (`python -m tools shape`, the import contracts, basedpyright).
 - Packages import only those below them: interfaces, app, retrieval and ingest, storage and inference, domain, api.
   No module imports one that imports it (`[tool.importlinter]` in `pyproject.toml`).
-- Tests pass fakes and values in; `monkeypatch` is not used (`python -m tools idioms`, which also holds lessons of
-  earlier bugs: each of its findings names the fix).
+- Tests pass fakes and values in; `monkeypatch` is not used, and no test reads a clock: what costs time is counted
+  (`python -m tools idioms`, which also holds lessons of earlier bugs: each of its findings names the fix).
+- The tokenizer's table is generated from SQLite's FTS5 (`python -m tools fts5 --write`), and a test holds it equal.
 - Published text names no machine's model, and prose is wrapped as the code is (`python -m tools text`).
 - No check is silenced. A suppression needs the owner's yes, scoped to one rule in one place.
 

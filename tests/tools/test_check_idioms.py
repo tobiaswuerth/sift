@@ -119,5 +119,15 @@ def test_a_database_a_test_closes_passes(closing: str) -> None:
     assert problems("tests/a.py", f"with {closing}(sqlite3.connect(':memory:')) as db: ...\n") == []
 
 
+@pytest.mark.parametrize(
+    "source", ["import time\n", "import os, timeit\n", "from time import perf_counter\n", "import time.something\n"]
+)
+def test_a_clock_is_found_in_tests_alone(source: str) -> None:
+    (problem,) = problems("tests/a.py", source)
+    assert problem.startswith("a clock in a test")
+    assert problems("src/sift/interfaces/a.py", source) == []
+    assert problems("tests/a.py", "import datetime\nfrom . import timetable\n") == []
+
+
 def test_the_repository_keeps_the_idioms() -> None:
     assert check_idioms.main([]) == 0

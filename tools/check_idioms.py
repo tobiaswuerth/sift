@@ -33,6 +33,11 @@ LEFT_OPEN = (
     "sqlite3.connect left to the garbage collector, a ResourceWarning in whichever test runs then: "
     "open it in `with closing(sqlite3.connect(...)) as db:`"
 )
+CLOCKS = frozenset({"time", "timeit"})
+CLOCK_IN_A_TEST = (
+    "a clock in a test, which passes or fails by the machine and its load: count what costs the time "
+    "(calls, characters looked at, rows read), or pass a clock in"
+)
 REMEDY = "Each finding names its fix."
 
 
@@ -80,6 +85,16 @@ def patching(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, node.lineno, "monkeypatch: pass a fake, a value or an environment in instead")
 
 
+def _imported(node: ast.Import | ast.ImportFrom) -> list[str]:
+    return [alias.name for alias in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+
+
+def clocks(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import | ast.ImportFrom) and CLOCKS & {n.split(".")[0] for n in _imported(node)}:
+            yield Finding(path, node.lineno, CLOCK_IN_A_TEST)
+
+
 def databases_left_open(path: str, tree: ast.Module) -> Iterator[Finding]:
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
     closed = {
@@ -103,6 +118,7 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *(io_in_the_core(path, tree) if path.startswith(CORE) else ()),
         *(exits_outside_interfaces(path, tree) if in_sift and not path.startswith(INTERFACES) else ()),
         *(patching(path, tree) if in_tests else ()),
+        *(clocks(path, tree) if in_tests else ()),
         *(databases_left_open(path, tree) if in_tests else ()),
     )
 

@@ -121,6 +121,7 @@ ban-relative-imports = "all"
 "os.getenv".msg = "read the environment in sift.settings only, and pass the parsed Settings in"
 "sys.exit".msg = "raise a SiftError; each interface maps it to an exit code"
 "unittest.mock".msg = "pass a fake through a port instead of patching"
+"urllib.request".msg = "network access belongs in sift.inference (the worker client) or sift.interfaces"
 
 [tool.ruff.lint.flake8-pytest-style]
 parametrize-names-type = "csv"
@@ -194,7 +195,6 @@ forbidden_modules = [
     "tempfile",
     "threading",
     "time",
-    "urllib",
     "uuid",
 ]
 
