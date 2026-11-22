@@ -182,7 +182,10 @@ def _ascending(start: int, gaps: NDArray[np.uint32]) -> Ids:
 
 def ranged(ids: Ids, counts: Ids, best: Bytes) -> bytes:
     head = RANGES_HEAD.pack(first(ids), len(ids))
-    gaps = np.diff(ids).astype(np.uint32).tobytes()
+    steps = np.diff(ids)
+    if len(steps) and (steps.min() < 1 or largest(steps) >= MOST_GAP):
+        raise ValueError("ranges not ascending, or more than 2**32 apart: more than ranges hold")
+    gaps = steps.astype(np.uint32).tobytes()
     return zlib.compress(head + gaps + (counts - 1).astype(np.uint8).tobytes() + best.astype(np.uint8).tobytes(), LEVEL)
 
 

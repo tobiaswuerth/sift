@@ -29,7 +29,7 @@ from sift.retrieval.keyword.search import (
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
 from sift.storage.documents import passages, texts
-from sift.storage.keywords import REMAKE_REMEDY, current
+from sift.storage.keywords import refuse_stale
 from sift.storage.store import open_store, unavailable_if_damaged
 
 BUDGET_REMEDY = "give the seconds the search may take, e.g. --budget 0.5"
@@ -86,9 +86,8 @@ def _collections(home: Path, name: str | None) -> tuple[Collection, ...]:
     return chosen(home, (name,)) if name is not None else tuple(one for one in chosen(home, ()) if one.active)
 
 
-def _current(one: Collection, transaction: Reading) -> Reading:
-    if not current(transaction):
-        raise StoreUnavailableError(f"the keyword index of {one.store} is of another version", REMAKE_REMEDY)
+def _current(transaction: Reading) -> Reading:
+    refuse_stale(transaction)
     return transaction
 
 
@@ -97,7 +96,7 @@ def _searching(one: Collection) -> Searching:
     with unavailable_if_damaged(one.store):
         try:
             connection = resources.enter_context(closing(open_store(one.store, one.id)))
-            return Searching(one, opened(_current(one, resources.enter_context(reading(connection)))), resources)
+            return Searching(one, opened(_current(resources.enter_context(reading(connection)))), resources)
         except BaseException:
             resources.close()
             raise

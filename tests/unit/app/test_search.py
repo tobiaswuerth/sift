@@ -266,6 +266,19 @@ def test_a_keyword_index_of_another_version_is_passed_over_until_indexed_again(h
     assert ids(home, SearchKeywords("halo")) == ["notes/halo.md"]
 
 
+@pytest.mark.parametrize(
+    "marked, said",
+    [
+        ("UPDATE meta SET value = 'remaking ' || value WHERE key = 'keyword_fingerprint'", "not yet wholly remade"),
+        ("UPDATE meta SET value = 'remaking other' WHERE key = 'keyword_fingerprint'", "another sift began to remake"),
+    ],
+)
+def test_a_keyword_index_being_remade_is_passed_over_saying_by_whom(home: Path, marked: str, said: str) -> None:
+    _changed(home / "collections" / "notes.sqlite", marked)
+    (unsearched,) = search(home, SearchKeywords("halo")).unsearched
+    assert said in unsearched.message
+
+
 def test_an_index_of_another_version_is_remade_by_indexing_even_with_its_folder_gone(home: Path, notes: Path) -> None:
     _changed(home / "collections" / "notes.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
     notes.rename(notes.with_name("gone"))

@@ -96,7 +96,7 @@ def test_a_term_only_dead_chunks_held_is_gone_after_a_merge() -> None:
 
 
 def test_merges_too_large_for_a_write_wait_for_settling_a_merge_a_transaction() -> None:
-    batches = Batches(chunks_a_settle=1, merged_a_written=0, merging=Policy(factor=2, floor=1, span=0.0))
+    batches = Batches(chunks_a_settle=1, merging=Policy(factor=2, floor=1, span=0.0))
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
         for n in range(4):
             applied(connection, [{f"n{n}.md": ("", f"Note {n}", "one two")}], batches)
@@ -116,7 +116,7 @@ def test_settling_an_index_of_another_version_is_refused() -> None:
 
 
 def test_merges_that_fit_a_write_run_though_a_larger_one_waits() -> None:
-    batches = Batches(chunks_a_settle=2, merged_a_written=0, merging=Policy(factor=2, floor=1, span=0.0))
+    batches = Batches(chunks_a_settle=2, merging=Policy(factor=2, floor=1, span=0.0))
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
         for n in range(12):
             applied(connection, [{f"n{n}.md": ("", f"Note {n}", "one two")}], batches)
@@ -162,37 +162,11 @@ def test_settling_or_writing_while_another_sift_remakes_the_index_for_itself_say
             applied(connection, [{"b.md": ("", "b", "three")}])
 
 
-def test_a_write_merges_in_proportion_to_what_it_wrote() -> None:
-    def kept(merged_a_written: int) -> list[int]:
-        batches = Batches(chunks_a_settle=0, merged_a_written=merged_a_written, merging=Policy(factor=2, floor=1))
-        with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
-            for n in range(2):
-                applied(connection, [{f"n{n}{m}.md": ("", "N", "one two") for m in range(2)}], batches)
-            checked(connection)
-            with reading(connection) as transaction:
-                return [each.chunks for each in rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments")]
-
-    assert kept(1) == [2, 2]
-    assert kept(2) == [4]
-
-
 def test_a_write_merges_no_more_than_its_budget_however_many_would_fit_alone() -> None:
-    batches = Batches(
-        chunks_a_segment=1, chunks_a_settle=2, merged_a_written=0, merging=Policy(factor=2, floor=1, span=0.0)
-    )
+    batches = Batches(chunks_a_segment=1, chunks_a_settle=2, merging=Policy(factor=2, floor=1, span=0.0))
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
         applied(connection, [{f"n{n}.md": ("", f"Note {n}", "one") for n in range(4)}], batches)
         with reading(connection) as transaction:
             sized = rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments ORDER BY first")
         assert [each.chunks for each in sized] == [2, 1, 1]
         checked(connection)
-
-
-def test_a_write_counts_every_segment_it_wrote_toward_its_merges() -> None:
-    batches = Batches(chunks_a_segment=1, chunks_a_settle=0, merged_a_written=1, merging=Policy(factor=2, floor=1))
-    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
-        applied(connection, [{f"n{m}.md": ("", "N", "one two") for m in range(2)}], batches)
-        with reading(connection) as transaction:
-            assert [each.chunks for each in rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments")] == [
-                2
-            ]

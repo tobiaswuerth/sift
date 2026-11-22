@@ -44,7 +44,6 @@ class Batches:
     postings_a_merge: int = 2_000_000
     bytes_a_merge: int = 64 << 20
     chunks_a_settle: int = 100_000
-    merged_a_written: int = 10
     merging: Policy = POLICY
 
 

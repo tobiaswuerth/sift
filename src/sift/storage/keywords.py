@@ -203,10 +203,9 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
 
 def index_new(transaction: WritingDocuments) -> None:
     shape = shape_of(transaction)
-    indexed = 0
-    while added := _index_new(transaction, shape):
-        indexed += added
-    settled(transaction, shape, indexed)
+    while _index_new(transaction, shape):
+        pass
+    settled(transaction, shape)
 
 
 def _dead_by_segment(transaction: Writing, dead: Sequence[int]) -> list[tuple[int, int]]:
@@ -292,14 +291,13 @@ def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
             if found != REMAKING + made:
                 raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
             held, shape = WritingDocuments(connection, batches), shape_of(transaction)
-            indexed = _index_new(held, shape)
-            done += indexed
-            settled(held, shape, indexed)
+            done += _index_new(held, shape)
+            settled(held, shape)
             whole = _done_if_whole(transaction, made)
         yield done
 
 
-def _refuse_stale(transaction: Reading) -> None:
+def refuse_stale(transaction: Reading) -> None:
     made = fingerprint(transaction)
     found = _meta(transaction, FINGERPRINT_KEY)
     if found == REMAKING + made:
@@ -312,14 +310,14 @@ def _refuse_stale(transaction: Reading) -> None:
 
 def settle(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
     with reading(connection) as transaction:
-        _refuse_stale(transaction)
+        refuse_stale(transaction)
         if not planned(transaction, batches.merging):
             return
     done = 0
     yield done
     while True:
         with writing(connection) as transaction:
-            _refuse_stale(transaction)
+            refuse_stale(transaction)
             written = merged_once(WritingDocuments(connection, batches), shape_of(transaction))
         if not written:
             return
@@ -330,7 +328,7 @@ def settle(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
 @contextmanager
 def writing_documents(connection: Connection, batches: Batches = BATCHES) -> Generator[WritingDocuments]:
     with writing(connection) as transaction:
-        _refuse_stale(transaction)
+        refuse_stale(transaction)
         held = WritingDocuments(connection, batches)
         yield held
         index_new(held)

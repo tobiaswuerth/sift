@@ -335,7 +335,7 @@ def test_a_file_s_documents_are_stored_whole(home: Path) -> None:
 def test_merges_too_large_for_a_write_run_as_their_own_phase(home: Path, notes: Path) -> None:
     write(notes / "more.md", "# More\n\nOne more note.\n")
     said: list[Event] = []
-    batches = Batches(chunks_a_settle=0, merged_a_written=0, merging=Policy(factor=2, floor=1, span=0.0))
+    batches = Batches(chunks_a_settle=0, merging=Policy(factor=2, floor=1, span=0.0))
     limits = Limits(most_files_a_write=1, batches=batches)
     index(home, IndexCollections(), said.append, limits)
     assert [event.phase for event in said if isinstance(event, PhaseStarted)] == [Phase.SCAN, Phase.READ, Phase.MERGE]
@@ -347,9 +347,7 @@ def test_merges_too_large_for_a_write_run_as_their_own_phase(home: Path, notes: 
 
 
 def test_merges_left_by_a_remake_run_though_the_folder_is_gone(home: Path, notes: Path) -> None:
-    batches = Batches(
-        chunks_a_segment=1, chunks_a_settle=0, merged_a_written=0, merging=Policy(factor=2, floor=1, span=0.0)
-    )
+    batches = Batches(chunks_a_segment=1, chunks_a_settle=0, merging=Policy(factor=2, floor=1, span=0.0))
     index(home, IndexCollections(), lambda _: None, Limits(batches=batches))
     (store,) = [Path(each.store) for each in status(home, ShowStatus()).collections]
     with contextlib.closing(open_store(store, CollectionId(1))) as connection, connection:
@@ -371,7 +369,7 @@ def test_merges_left_by_a_remake_run_though_the_folder_is_gone(home: Path, notes
 
 def test_a_merge_phase_another_sift_settled_meanwhile_still_ends(home: Path, notes: Path) -> None:
     write(notes / "more.md", "# More\n\nOne more note.\n")
-    batches = Batches(chunks_a_settle=0, merged_a_written=0, merging=Policy(factor=2, floor=1, span=0.0))
+    batches = Batches(chunks_a_settle=0, merging=Policy(factor=2, floor=1, span=0.0))
     said: list[Event] = []
 
     def seen(event: Event) -> None:

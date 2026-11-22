@@ -167,9 +167,8 @@ def _live(merged: Sequence[Placed]) -> int:
     return sum(each.chunks - each.dead for each in merged)
 
 
-def settled(transaction: WritingDocuments, shape: Shape, indexed: int) -> None:
-    batches = transaction.batches
-    written, most = 0, max(batches.chunks_a_settle, batches.merged_a_written * indexed)
+def settled(transaction: WritingDocuments, shape: Shape) -> None:
+    written, most = 0, transaction.batches.chunks_a_settle
     while fitting := [merged for merged in _planned(transaction) if written + _live(merged) <= most]:
         for merged in fitting:
             if written + _live(merged) <= most:
