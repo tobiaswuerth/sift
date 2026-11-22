@@ -10,6 +10,10 @@ class TitleFrom(StrEnum):
     NAME = "name"
 
 
+FOLLOW_LINKS = (
+    "read the files that are links to outside the folder too, which are left out otherwise: a link may lead to any "
+    "file of this machine"
+)
 TITLE_FROM = (
     "a note's title, unless its front matter sets one: its first heading, or its file name as Obsidian does "
     "(default: file names in an Obsidian vault, else headings)"
@@ -32,6 +36,7 @@ class AddCollection:
         bool,
         Help("add a folder inside a collection, or one that holds a collection, though their files are indexed twice"),
     ] = False
+    follow_links: Annotated[bool, Help(FOLLOW_LINKS)] = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,11 +46,19 @@ class CollectionAdded:
     store: str
     title_from: TitleFrom
     vault: bool
+    follow_links: bool
 
 
 @dataclass(frozen=True, slots=True)
 class ShowStatus:
-    pass
+    names: Annotated[tuple[str, ...], Help("the collections to show (default: all)")] = ()
+    unreadable: Annotated[bool, Help("list the files that could not be read, and why")] = False
+
+
+@dataclass(frozen=True, slots=True)
+class UnreadableFile:
+    path: str
+    problem: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +66,8 @@ class Counted:
     documents: int
     chunks: int
     stored_bytes: int
+    unreadable: int
+    unreadable_files: tuple[UnreadableFile, ...]
     state: Literal["counted"] = "counted"
 
 

@@ -8,6 +8,7 @@ from typing import TextIO
 
 UTF8 = "utf-8"
 READER_GONE = frozenset({errno.EPIPE, errno.EINVAL})
+DEFAULT_COLUMNS = 80
 
 
 class ReaderLeftError(Exception):
@@ -57,3 +58,25 @@ def let_go(stream: TextIO) -> None:
         os.dup2(nowhere, target)
     finally:
         os.close(nowhere)
+
+
+def draw(stream: TextIO | None, text: str) -> None:
+    if stream is None:
+        return
+    with contextlib.suppress(OSError, ValueError):
+        stream.write(text)
+        stream.flush()
+
+
+def is_terminal(stream: TextIO | None) -> bool:
+    try:
+        return stream is not None and stream.isatty()
+    except ValueError:
+        return False
+
+
+def columns(stream: TextIO) -> int:
+    try:
+        return os.get_terminal_size(stream.fileno()).columns
+    except (OSError, ValueError):
+        return DEFAULT_COLUMNS

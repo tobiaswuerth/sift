@@ -18,17 +18,22 @@ from sift.storage.documents import (
     Kept,
     SourceId,
     StoredChunk,
+    Unreadable,
     add_documents,
     chunks_of,
+    clear_unreadable,
     counts,
     delete_documents,
-    delete_source,
+    delete_sources,
     fields_json,
     fields_of,
     kept,
+    mark_unreadable,
+    paths_named,
     put_source,
     sources,
     stored,
+    unreadable,
 )
 from sift.storage.store import create_store, open_store
 
@@ -179,8 +184,10 @@ def test_deleting_a_document_deletes_all_that_is_its(store: sqlite3.Connection) 
 
 def test_deleting_a_source_deletes_its_documents_and_all_that_is_theirs(store: sqlite3.Connection) -> None:
     added(store, "Hans.md", note(NOTE, "Hans.md"))
+    added(store, "kept.md", note(b"kept", "kept.md"))
     with writing(store) as transaction:
-        delete_source(transaction, "Hans.md")
+        assert delete_sources(transaction, ["Hans.md", "gone.md"]) == 1
+        assert delete_sources(transaction, ["kept.md"]) == 1
     assert [counted(store, table) for table in ("sources", "documents", "chunks", "links", "names")] == [0] * 5
 
 
@@ -227,6 +234,10 @@ def test_what_json_cannot_keep_is_no_field_value(value: FieldValue) -> None:
         fields_json({"x": value})
 
 
+def record(key: str) -> Document:
+    return dataclasses.replace(note(b"x", "data.jsonl"), key=key)
+
+
 def kept_counts(connection: sqlite3.Connection) -> Counts:
     with reading(connection) as transaction:
         return counts(transaction)
@@ -243,7 +254,7 @@ def test_the_store_keeps_count_of_its_documents_and_chunks_as_they_come_and_go(s
         delete_documents(transaction, [hans])
     assert kept_counts(store) == Counts(counted(store, "documents"), counted(store, "chunks"))
     with writing(store) as transaction:
-        delete_source(transaction, "Other.md")
+        delete_sources(transaction, ["Other.md"])
     assert kept_counts(store) == Counts(0, 0)
 
 
@@ -258,3 +269,34 @@ def test_a_document_id_is_never_handed_out_twice(store: sqlite3.Connection) -> N
         delete_documents(transaction, [first_id])
     _, (second_id,) = added(store, "a.md", note(b"a", "a.md"))
     assert second_id == first_id + 1
+
+
+def test_a_whole_file_is_found_by_the_last_part_of_its_path_in_any_case(store: sqlite3.Connection) -> None:
+    for path in ("a/b/c.md", "x/b/c.md", "c.md", "a/bc.md", "a/b/C.MD"):
+        added(store, path, note(b"x", path))
+    with writing(store) as transaction:
+        put_source(transaction, "y/c.md", 1, 1)
+        add_documents(transaction, put_source(transaction, "data.jsonl", 1, 1), "data.jsonl", [record("c.md")])
+    with reading(store) as transaction:
+        assert paths_named(transaction, "c.md") == ["a/b/C.MD", "a/b/c.md", "c.md", "x/b/c.md"]
+        assert paths_named(transaction, "b") == []
+
+
+def test_a_source_s_name_follows_its_path_to_the_end(store: sqlite3.Connection) -> None:
+    for path in ("end/", "plain"):
+        added(store, path, note(b"x", path))
+    with reading(store) as transaction:
+        assert (paths_named(transaction, ""), paths_named(transaction, "plain")) == (["end/"], ["plain"])
+
+
+def test_unreadable_files_are_listed_with_their_problem_until_cleared(store: sqlite3.Connection) -> None:
+    with writing(store) as transaction:
+        mark_unreadable(transaction, "b.md", "denied")
+        mark_unreadable(transaction, "a.md", "denied")
+        mark_unreadable(transaction, "a.md", "too large")
+    with reading(store) as transaction:
+        assert unreadable(transaction) == [Unreadable("a.md", "too large"), Unreadable("b.md", "denied")]
+    with writing(store) as transaction:
+        clear_unreadable(transaction, ["a.md", "gone.md"])
+    with reading(store) as transaction:
+        assert unreadable(transaction) == [Unreadable("b.md", "denied")]

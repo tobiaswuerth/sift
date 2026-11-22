@@ -74,8 +74,21 @@ def put_source(transaction: Writing, path: str, modified_ns: int, size: int) -> 
     return written.id
 
 
-def delete_source(transaction: Writing, path: str) -> None:
-    run(transaction, "DELETE FROM sources WHERE path = ?", (path,))
+class Count(NamedTuple):
+    n: int
+
+
+def delete_sources(transaction: Writing, paths: Sequence[str]) -> int:
+    chosen = (json.dumps(list(paths)),)
+    (held,) = rows(
+        transaction,
+        Count,
+        """SELECT count(*) FROM documents
+           WHERE source IN (SELECT id FROM sources WHERE path IN (SELECT value FROM json_each(?)))""",
+        chosen,
+    )
+    run(transaction, "DELETE FROM sources WHERE path IN (SELECT value FROM json_each(?))", chosen)
+    return held.n
 
 
 def kept(transaction: Reading, source: SourceId) -> list[Kept]:
@@ -140,6 +153,33 @@ def stored(transaction: Reading, path: str, key: str = "") -> Stored | None:
 def chunks_of(transaction: Reading, document: DocumentId) -> list[StoredChunk]:
     sql = "SELECT id, first_line, last_line, start, length FROM chunks WHERE document = ? ORDER BY id"
     return rows(transaction, StoredChunk, sql, (document,))
+
+
+class PathRow(NamedTuple):
+    path: str
+
+
+def paths_named(transaction: Reading, name: str) -> list[str]:
+    sql = """SELECT s.path FROM sources s JOIN documents d ON d.source = s.id AND d.key = ''
+             WHERE s.name = ? COLLATE NOCASE ORDER BY s.path"""
+    return [found.path for found in rows(transaction, PathRow, sql, (name,))]
+
+
+class Unreadable(NamedTuple):
+    path: str
+    problem: str
+
+
+def mark_unreadable(transaction: Writing, path: str, problem: str) -> None:
+    run(transaction, "INSERT OR REPLACE INTO unreadable(path, problem) VALUES (?, ?)", (path, problem))
+
+
+def clear_unreadable(transaction: Writing, paths: Sequence[str]) -> None:
+    run(transaction, "DELETE FROM unreadable WHERE path IN (SELECT value FROM json_each(?))", (json.dumps(paths),))
+
+
+def unreadable(transaction: Reading) -> list[Unreadable]:
+    return rows(transaction, Unreadable, "SELECT path, problem FROM unreadable ORDER BY path")
 
 
 class Counts(NamedTuple):

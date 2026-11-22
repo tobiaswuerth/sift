@@ -3,6 +3,7 @@ import contextlib
 import dataclasses
 import json
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
@@ -11,11 +12,19 @@ from types import MappingProxyType
 from typing import ClassVar, Protocol, TextIO, cast
 
 from sift.api.collections import AddCollection, CollectionAdded, ShowStatus, Status
+from sift.api.documents import Documents, GetDocuments
 from sift.api.errors import SiftError
-from sift.app import collections
+from sift.api.events import Reporter
+from sift.api.indexing import IndexCollections, IndexResult
+from sift.app import collections, documents, indexing
+from sift.interfaces.cli import shown
 from sift.interfaces.cli.arguments import options, request_of
-from sift.interfaces.cli.shown import Shown, added, failure, status
-from sift.interfaces.console.streams import ReaderLeftError, let_go, say, utf8, write_results
+from sift.interfaces.cli.shown import Shown
+from sift.interfaces.console.live import Live
+from sift.interfaces.console.progress import Looks
+from sift.interfaces.console.streams import ReaderLeftError, columns, is_terminal, let_go, say, utf8, write_results
+from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal, style_of
+from sift.interfaces.console.windows import console, escapes_work
 from sift.settings import Settings, from_environment, whole_path
 
 DONE, FAILED, USAGE, INTERRUPTED = 0, 1, 2, 130
@@ -27,6 +36,12 @@ class Context:
     settings: Settings
     platform: str
     json: bool
+    style: Style
+    report: Reporter
+
+
+class Answer(Protocol):
+    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[object]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,41 +51,51 @@ class Command:
     run: Callable[[argparse.Namespace, Context], Shown]
 
 
-class Answer(Protocol):
-    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[object]]]
-
-
 def as_json(answer: Answer) -> str:
     return json.dumps(dataclasses.asdict(answer), ensure_ascii=False, indent=2)
 
 
 def command[R, A: Answer](
-    help_text: str, request: type[R], act: Callable[[Settings, R], A], show: Callable[[A, str], Shown]
+    help_text: str,
+    request: type[R],
+    act: Callable[[Context, R], A],
+    show: Callable[[A, str, Style], Shown],
+    failed: Callable[[A], bool] = lambda _: False,
 ) -> Command:
     def run(namespace: argparse.Namespace, context: Context) -> Shown:
-        answer = act(context.settings, request_of(request, namespace))
-        return Shown((as_json(answer),), ()) if context.json else show(answer, context.platform)
+        answer = act(context, request_of(request, namespace))
+        if context.json:
+            return Shown((as_json(answer),), (), failed(answer))
+        return show(answer, context.platform, context.style)
 
     return Command(help_text, request, run)
 
 
-def _add(settings: Settings, request: AddCollection) -> CollectionAdded:
-    return collections.add(settings.home, request)
+def _add(context: Context, request: AddCollection) -> CollectionAdded:
+    return collections.add(context.settings.home, request)
 
 
-def _status(settings: Settings, _request: ShowStatus) -> Status:
-    return collections.status(settings.home)
+def _status(context: Context, request: ShowStatus) -> Status:
+    return collections.status(context.settings.home, request)
 
 
-def _status_shown(result: Status, _platform: str) -> Shown:
-    return status(result)
+def _index(context: Context, request: IndexCollections) -> IndexResult:
+    return indexing.index(context.settings.home, request, context.report)
+
+
+def _get(context: Context, request: GetDocuments) -> Documents:
+    return documents.documents(context.settings.home, request)
 
 
 COMMANDS = MappingProxyType(
     {
-        "add": command("add a folder as a collection", AddCollection, _add, added),
+        "add": command("add a folder as a collection", AddCollection, _add, shown.added),
+        "index": command("read what is new or changed in collections", IndexCollections, _index, shown.indexed),
+        "get": command(
+            "print documents by their ids", GetDocuments, _get, shown.documents, lambda found: bool(found.unfound)
+        ),
         "status": command(
-            "show each collection: its folder and what its store holds", ShowStatus, _status, _status_shown
+            "show each collection: its folder and what its store holds", ShowStatus, _status, shown.status
         ),
     }
 )
@@ -88,6 +113,7 @@ def parser(settings: Settings) -> argparse.ArgumentParser:
         chosen = commands.add_parser(name, help=each.help, description=each.help)
         options(chosen, each.request, partial(_placed, settings))
         chosen.add_argument("--json", action="store_true", help="answer in JSON")
+        chosen.add_argument("--color", choices=list(Colour), default=Colour.AUTO, help="colour what sift says")
     return built
 
 
@@ -101,7 +127,21 @@ def _parsed(
             return stop.code if isinstance(stop.code, int) else USAGE
 
 
-def _ran(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO | None, platform: str) -> int:
+def _style(err: TextIO | None, settings: Settings, choice: Colour) -> Style:
+    terminal = is_terminal(err)
+    escapes = terminal and err is not None and escapes_work(console(), err.fileno())
+    encoding: object = err.encoding if err is not None else None
+    stream = Terminal(terminal, escapes, encoding if isinstance(encoding, str) else None)
+    return style_of(stream, Asked(choice, settings.no_color, settings.dumb))
+
+
+def _live(err: TextIO | None, settings: Settings, style: Style, platform: str) -> Live:
+    redraw = is_terminal(err) and not settings.dumb
+    width = partial(columns, err) if err is not None else lambda: 0
+    return Live(err, Looks(style, platform), redraw=redraw, columns=width, clock=time.monotonic)
+
+
+def _ran(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO | None, platform: str) -> Shown | int:
     built = parser(settings)
     namespace = _parsed(built, argv, out, err)
     if isinstance(namespace, int):
@@ -109,12 +149,15 @@ def _ran(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextI
     given = cast("dict[str, object]", vars(namespace))
     chosen = given["command"]
     if not isinstance(chosen, str):
-        write_results(out, (built.format_help().rstrip("\n"),))
-        return DONE
-    shown = COMMANDS[chosen].run(namespace, Context(settings, platform, json=given["json"] is True))
-    write_results(out, shown.results)
-    say(err, shown.messages)
-    return DONE
+        return Shown((built.format_help().rstrip("\n"),), ())
+    style = _style(err, settings, Colour(str(given["color"])))
+    live = _live(err, settings, style, platform)
+    try:
+        return COMMANDS[chosen].run(namespace, Context(settings, platform, given["json"] is True, style, live))
+    except (SiftError, OSError) as error:
+        return shown.failure(error, style)
+    finally:
+        live.close()
 
 
 def run(
@@ -123,15 +166,20 @@ def run(
     for stream in (out, err):
         utf8(stream)
     try:
-        return _ran(argv, settings, out, err, platform)
+        found = _ran(argv, settings, out, err, platform)
+        if isinstance(found, int):
+            return found
+        write_results(out, found.results)
     except ReaderLeftError as left:
         let_go(left.stream)
         return FAILED
-    except (SiftError, OSError) as error:
-        say(err, failure(error).messages)
+    except OSError as error:
+        say(err, shown.failure(error, PLAIN).messages)
         return FAILED
     except KeyboardInterrupt:
         return INTERRUPTED
+    say(err, found.messages)
+    return FAILED if found.failed else DONE
 
 
 def main(argv: Sequence[str] | None = None) -> None:

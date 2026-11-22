@@ -22,6 +22,7 @@ SETTINGS = (
 )
 
 type Parameters = Sequence[object] | Mapping[str, object]
+type Connection = sqlite3.Connection
 
 
 @dataclass(frozen=True, slots=True)

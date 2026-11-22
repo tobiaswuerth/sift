@@ -15,8 +15,11 @@ LAYOUT: tuple[Migration, ...] = (
             id INTEGER PRIMARY KEY,
             path TEXT NOT NULL UNIQUE,
             modified_ns INTEGER NOT NULL,
-            size INTEGER NOT NULL
+            size INTEGER NOT NULL,
+            name TEXT NOT NULL GENERATED ALWAYS AS (substr(path, length(rtrim(path, replace(path, '/', ''))) + 1))
         ) STRICT""",
+        "CREATE INDEX sources_name ON sources(name COLLATE NOCASE)",
+        "CREATE TABLE unreadable(path TEXT PRIMARY KEY, problem TEXT NOT NULL) STRICT, WITHOUT ROWID",
         """CREATE TABLE documents(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             source INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

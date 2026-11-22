@@ -8,11 +8,12 @@ from sift.api.collections import (
     CollectionAdded,
     CollectionStatus,
     Counted,
+    ShowStatus,
     Status,
     TitleFrom,
     Unavailable,
 )
-from sift.api.errors import InvalidRequestError
+from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.ids import CollectionId
 from sift.app.collections import add, status
 from sift.domain.text.notes import note
@@ -40,6 +41,7 @@ def test_a_folder_is_added_as_a_collection_named_after_it(tmp_path: Path, home: 
         store=str((home / "collections" / "notes.sqlite").resolve()),
         title_from=TitleFrom.HEADING,
         vault=False,
+        follow_links=False,
     )
 
 
@@ -77,7 +79,7 @@ def test_a_folder_inside_a_collection_is_added_only_as_nested(tmp_path: Path, ho
 
 
 def test_status_without_a_catalog_is_empty_and_makes_none(home: Path) -> None:
-    assert status(home) == Status(str(home), ())
+    assert status(home, ShowStatus()) == Status(str(home), ())
     assert not home.exists()
 
 
@@ -88,7 +90,7 @@ def test_status_counts_what_each_store_holds(tmp_path: Path, home: Path) -> None
     with contextlib.closing(open_store(store, CollectionId(1))) as connection, writing(connection) as transaction:
         for name in ("a.md", "b.md"):
             add_documents(transaction, put_source(transaction, name, 1, 2), name, [note(b"# A\n\ntext\n", name)])
-    (notes, counted) = status(home).collections
+    (notes, counted) = status(home, ShowStatus()).collections
     assert notes == CollectionStatus(
         "Notes",
         str((tmp_path / "Notes").resolve()),
@@ -97,11 +99,19 @@ def test_status_counts_what_each_store_holds(tmp_path: Path, home: Path) -> None
     )
     assert isinstance(notes.contents, Counted)
     assert (notes.contents.documents, notes.contents.chunks) == (0, 0)
-    assert counted.contents == Counted(documents=2, chunks=2, stored_bytes=store.stat().st_size)
+    assert counted.contents == Counted(2, 2, store.stat().st_size, unreadable=0, unreadable_files=())
+
+
+def test_status_shows_the_collections_named(tmp_path: Path, home: Path) -> None:
+    for name in ("a", "b"):
+        add(home, AddCollection(str(folder(tmp_path, name))))
+    assert [each.name for each in status(home, ShowStatus(("B", "b"))).collections] == ["b"]
+    with pytest.raises(NotFoundError, match="no collection is named 'c'"):
+        status(home, ShowStatus(("c",)))
 
 
 def test_status_says_why_a_store_cannot_be_read(tmp_path: Path, home: Path) -> None:
     added = add(home, AddCollection(str(folder(tmp_path, "notes"))))
     Path(added.store).unlink()
-    (only,) = status(home).collections
+    (only,) = status(home, ShowStatus()).collections
     assert only.contents == Unavailable(f"the store is missing: {added.store}", MISSING_REMEDY)

@@ -87,9 +87,12 @@ def test_a_store_goes_into_the_folder_or_file_given(tmp_path: Path, home: Path) 
 
 
 def test_choices_are_kept(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
-    add_collection(catalog, home, NewCollection(folder(tmp_path, "vault"), choices=Choices(title_from=TitleFrom.NAME)))
+    chosen = Choices(title_from=TitleFrom.NAME, follow_links=True)
+    add_collection(catalog, home, NewCollection(folder(tmp_path, "vault"), choices=chosen))
+    add_collection(catalog, home, NewCollection(folder(tmp_path, "plain")))
     with reading(catalog) as transaction:
-        assert collection(transaction, "vault").choices == Choices(title_from=TitleFrom.NAME)
+        assert collection(transaction, "vault").choices == chosen
+        assert collection(transaction, "plain").choices == Choices(title_from=TitleFrom.HEADING, follow_links=False)
 
 
 def test_collections_are_listed_by_name(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:

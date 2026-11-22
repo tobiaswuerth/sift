@@ -4,7 +4,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.interfaces.console.text import labelled, printable, table, width
+from sift.interfaces.console.style import Style, Tone
+from sift.interfaces.console.text import fitted, labelled, printable, table, width
 
 
 @pytest.mark.parametrize(
@@ -63,3 +64,21 @@ def test_the_rows_of_a_table_end_in_one_column(rows: list[tuple[str, str]]) -> N
 def test_a_labelled_line_aligns_its_label_to_the_right() -> None:
     assert labelled("fix", "sift index notes") == "  fix  sift index notes"
     assert labelled("error", "a\nb") == "error  a\\nb"
+
+
+def test_a_line_is_fitted_to_the_columns_a_terminal_has() -> None:
+    assert fitted("notes 日本 x", 7) == "notes "
+    assert fitted("notes 日本 x", 8) == "notes 日"
+    assert fitted("short", 80) == "short"
+
+
+@given(st.text(), st.integers(0, 40))
+def test_a_fitted_line_never_takes_more_columns_than_there_are(text: str, columns: int) -> None:
+    shown = fitted(text, columns)
+    assert width(shown) <= columns
+    assert text.startswith(shown)
+
+
+def test_a_label_takes_its_tone_where_colour_is_on() -> None:
+    assert labelled("fix", "x", Tone.SECONDARY, Style(colour=True)) == "  \x1b[2mfix\x1b[0m  x"
+    assert labelled("fix", "x", Tone.SECONDARY) == "  fix  x"

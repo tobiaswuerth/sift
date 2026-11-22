@@ -34,6 +34,7 @@ LAYOUT: tuple[Migration, ...] = (
 @dataclass(frozen=True, slots=True)
 class Choices:
     title_from: TitleFrom = TitleFrom.HEADING
+    follow_links: bool = False
 
 
 DEFAULT_CHOICES = Choices()
@@ -59,12 +60,15 @@ class Row(NamedTuple):
 
 
 def choices_json(choices: Choices) -> str:
-    return json.dumps({"title_from": choices.title_from.value})
+    return json.dumps({"title_from": choices.title_from.value, "follow_links": choices.follow_links})
 
 
 def choices_of(written: str) -> Choices:
     document = cast("dict[str, object]", json.loads(written))
-    return Choices(title_from=TitleFrom(document.get("title_from", TitleFrom.HEADING.value)))
+    return Choices(
+        title_from=TitleFrom(document.get("title_from", TitleFrom.HEADING.value)),
+        follow_links=document.get("follow_links") is True,
+    )
 
 
 def _collection(row: Row) -> Collection:

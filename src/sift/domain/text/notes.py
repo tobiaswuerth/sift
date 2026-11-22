@@ -7,10 +7,12 @@ from sift.api.fields import Fields
 from sift.domain.text.chunks import Chunk, chunks
 from sift.domain.text.decoding import file_text
 from sift.domain.text.front_matter import FrontMatter, front_matter
+from sift.domain.text.json_values import REPLACEMENT
 from sift.domain.text.links import MARKDOWN, Link, links
 from sift.domain.text.markdown import heading, one_line
 
 TEXT_FILES = (".md", ".markdown", ".txt")
+NUL = "\N{NULL}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +24,10 @@ class Document:
     text: str
     chunks: tuple[Chunk, ...]
     links: tuple[Link, ...]
+
+
+def storable(text: str) -> str:
+    return text.replace(NUL, REPLACEMENT)
 
 
 def digest(raw: bytes) -> str:
@@ -62,4 +68,4 @@ def note(raw: bytes, name: str, title_from: TitleFrom = TitleFrom.HEADING) -> Do
     first_line = 1 + text.count("\n", 0, end)
     found = links(text, end, first_line) if name.lower().endswith(MARKDOWN) else ()
     named = title(fields, text[end:], name, title_from)
-    return Document("", digest(raw), named, fields, text, _chunks_of(text, head, first_line), found)
+    return Document("", digest(raw), storable(named), fields, storable(text), _chunks_of(text, head, first_line), found)

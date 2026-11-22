@@ -115,6 +115,7 @@ def test_status_and_add_answer_in_json_when_asked(settings: Settings, notes: Pat
         "store": str(store),
         "title_from": "name",
         "vault": False,
+        "follow_links": False,
     }
     code, out, err = ran(settings, "status", "--json")
     assert (code, err) == (0, "")
@@ -125,7 +126,14 @@ def test_status_and_add_answer_in_json_when_asked(settings: Settings, notes: Pat
                 "name": "notes",
                 "folder": str(notes.resolve()),
                 "store": str(store),
-                "contents": {"documents": 0, "chunks": 0, "stored_bytes": store.stat().st_size, "state": "counted"},
+                "contents": {
+                    "documents": 0,
+                    "chunks": 0,
+                    "stored_bytes": store.stat().st_size,
+                    "unreadable": 0,
+                    "unreadable_files": [],
+                    "state": "counted",
+                },
             }
         ],
     }
@@ -254,6 +262,66 @@ def test_a_reader_leaving_is_found_before_python_ends(tmp_path: Path, notes: Pat
     finally:
         os.close(results)
     assert (ended.returncode, ended.stderr) == (1, b"")
+
+
+def indexed_notes(settings: Settings, notes: Path) -> None:
+    (notes / "rl.md").write_text("# Reward shaping\n\nReward shaping speeds up learning.\n", encoding="utf-8")
+    (notes / "robots").mkdir()
+    (notes / "robots" / "brush.md").write_text("# Brush\n", encoding="utf-8")
+    assert ran(settings, "add", str(notes))[0] == 0
+
+
+def test_index_says_what_it_read_phase_by_phase(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    code, out, err = ran(settings, "index")
+    lines = err.split("\n")
+    assert (code, out) == (0, "")
+    assert lines[0] == f"notes  {notes.resolve()}"
+    assert lines[1].split()[:3] == ["scan", "2", "files"]
+    assert lines[2].split()[:3] == ["read", "2", "files"]
+    assert lines[3].startswith("  done  +2  ~0  -0  \N{MIDDLE DOT}  ")
+    assert lines[4:] == [""]
+
+
+def test_index_answers_in_json_when_asked(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    code, out, _ = ran(settings, "index", "notes", "--json")
+    outcome = {"files": 2, "added": 2, "changed": 0, "removed": 0, "unreadable": 0, "state": "indexed"}
+    assert (code, json.loads(out)) == (0, {"collections": [{"name": "notes", "outcome": outcome}]})
+
+
+def test_index_without_collections_says_how_to_add_one(settings: Settings) -> None:
+    assert ran(settings, "index") == (0, "", "empty  no collections yet\n next  sift add FOLDER\n")
+
+
+def test_get_prints_what_was_indexed(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    ran(settings, "index")
+    assert ran(settings, "get", "notes/brush.md") == (0, "# Brush\n", "")
+    assert ran(settings, "get", "notes/rl.md", "--lines", "3") == (0, "Reward shaping speeds up learning.\n", "")
+    assert ran(settings, "get", "notes/rl.md", "notes/brush.md", "--lines", "1") == (
+        0,
+        "==> notes/rl.md <==\n# Reward shaping\n\n==> notes/robots/brush.md <==\n# Brush\n",
+        "",
+    )
+
+
+def test_get_of_a_document_there_is_not_is_an_error(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    ran(settings, "index")
+    code, out, err = ran(settings, "get", "notes/gone.md")
+    assert (code, out) == (1, "")
+    assert err.startswith("error  notes/gone.md: unknown document 'notes/gone.md'\n  fix  ")
+    code, out, err = ran(settings, "get", "notes/gone.md", "--json")
+    assert (code, json.loads(out)["unfound"][0]["id"], err) == (1, "notes/gone.md", "")
+
+
+def test_colour_is_given_when_asked_and_kept_out_of_results(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    code, out, err = ran(settings, "index", "--color", "always")
+    assert (code, out) == (0, "")
+    assert err.startswith("\x1b[1mnotes\x1b[0m")
+    assert "\x1b[" not in ran(settings, "status", "--color", "always")[1]
 
 
 def test_the_command_line_needs_the_standard_library_alone() -> None:

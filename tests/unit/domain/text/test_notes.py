@@ -129,3 +129,11 @@ def test_only_markdown_files_have_links() -> None:
     assert written("[[A]]\n", "notes.markdown").links != ()
     document = note(b"---\r\norg: '[[Acme]]'\r\n---\r\n\r\nSee [[B]].\r\n", "Note.MD")
     assert [(link.field, link.line, link.target) for link in document.links] == [("org", 2, "Acme"), (None, 5, "B")]
+
+
+def test_a_nul_is_kept_as_a_replacement_character_of_the_same_length() -> None:
+    document = note(b"# Num\x00bers\n\nwombat\x00\x00 numbat\n", "pasted.md")
+    replaced = note(b"# Num\xef\xbf\xbdbers\n\nwombat\xef\xbf\xbd\xef\xbf\xbd numbat\n", "pasted.md")
+    assert (document.title, document.text) == (replaced.title, replaced.text)
+    assert document.title == "Num\N{REPLACEMENT CHARACTER}bers"
+    assert document.chunks == replaced.chunks

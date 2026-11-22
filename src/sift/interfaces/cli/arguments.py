@@ -3,12 +3,20 @@ import dataclasses
 import types
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum, StrEnum
 from typing import Annotated, cast, get_args, get_origin, get_type_hints
 
 from sift.api.described import Help, Place
 
 type Placed = Callable[[str], str]
+
+
+class How(Enum):
+    POSITION = "position"
+    OPTION = "option"
+    SWITCH = "switch"
+    ANY = "*"
+    SOME = "+"
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,7 +25,7 @@ class Argument:
     kind: object
     help: str
     place: bool
-    given_by_place: bool
+    how: How
 
 
 def _refused(request: type[object], name: str, problem: str) -> TypeError:
@@ -44,27 +52,41 @@ def _named(kind: object) -> str:
     return kind.__name__ if isinstance(kind, type) else repr(kind)
 
 
+def _many(kind: object) -> bool:
+    return get_origin(kind) is tuple and get_args(kind) == (str, ...)
+
+
 def _choices(kind: object) -> type[StrEnum] | None:
     return kind if isinstance(kind, type) and issubclass(kind, StrEnum) else None
+
+
+def _how(request: type[object], name: str, kind: object, default: object) -> How:
+    absent = default is dataclasses.MISSING
+    if kind is bool:
+        if default is not False:
+            raise _refused(request, name, "a switch is off by default")
+        return How.SWITCH
+    if _many(kind):
+        if not absent and default != ():
+            raise _refused(request, name, "a list given by place has no default but ()")
+        return How.SOME if absent else How.ANY
+    if _left_out(kind) is not None:
+        if default is not None:
+            raise _refused(request, name, "an option that may be left out has no default but None")
+        return How.OPTION
+    if not absent:
+        raise _refused(request, name, "an argument given by its place has no default")
+    return How.POSITION
 
 
 def _argument(request: type[object], field: dataclasses.Field[object], hint: object) -> Argument:
     kind, described, place = _described(request, field.name, hint)
     default: object = field.default
-    absent = default is dataclasses.MISSING
-    if kind is bool:
-        if default is not False:
-            raise _refused(request, field.name, "a switch is off by default")
-        return Argument(field.name, kind, described.text, place=False, given_by_place=False)
-    if (optional := _left_out(kind)) is not None:
-        if default is not None:
-            raise _refused(request, field.name, "an option that may be left out has no default but None")
-        kind = optional
-    elif not absent:
-        raise _refused(request, field.name, "an argument given by its place has no default")
-    if kind is not str and _choices(kind) is None:
+    how = _how(request, field.name, kind, default)
+    taken = _left_out(kind) if how is How.OPTION else str if how in (How.ANY, How.SOME) else kind
+    if how is not How.SWITCH and taken is not str and _choices(taken) is None:
         raise _refused(request, field.name, f"the command line takes no {_named(kind)}")
-    return Argument(field.name, kind, described.text, place=place, given_by_place=absent)
+    return Argument(field.name, taken, described.text, place, how)
 
 
 def arguments(request: type[object]) -> tuple[Argument, ...]:
@@ -75,13 +97,17 @@ def arguments(request: type[object]) -> tuple[Argument, ...]:
 
 
 def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placed) -> None:
-    flag = argument.name if argument.given_by_place else f"--{argument.name.replace('_', '-')}"
-    if argument.kind is bool:
-        parser.add_argument(flag, action="store_true", help=argument.help)
-    elif (choices := _choices(argument.kind)) is not None:
-        parser.add_argument(flag, choices=[str(member) for member in choices], help=argument.help)
+    named = f"--{argument.name.replace('_', '-')}" if argument.how in (How.OPTION, How.SWITCH) else argument.name
+    choices = _choices(argument.kind)
+    if argument.how is How.SWITCH:
+        parser.add_argument(named, action="store_true", help=argument.help)
+    elif argument.how in (How.ANY, How.SOME):
+        convert = place if argument.place else str
+        parser.add_argument(named, nargs=argument.how.value, type=convert, help=argument.help)
+    elif choices is not None:
+        parser.add_argument(named, choices=[str(member) for member in choices], help=argument.help)
     else:
-        parser.add_argument(flag, type=place if argument.place else str, help=argument.help)
+        parser.add_argument(named, type=place if argument.place else str, help=argument.help)
 
 
 def options(parser: argparse.ArgumentParser, request: type[object], place: Placed) -> None:
@@ -90,6 +116,8 @@ def options(parser: argparse.ArgumentParser, request: type[object], place: Place
 
 
 def _value(argument: Argument, given: object) -> object:
+    if argument.how in (How.ANY, How.SOME):
+        return tuple(cast("list[str]", given))
     choices = _choices(argument.kind)
     return choices(given) if choices is not None and isinstance(given, str) else given
 

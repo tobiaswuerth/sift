@@ -20,6 +20,14 @@ def test_the_home_is_a_folder_in_the_user_s_unless_set(user: Path, cwd: Path) ->
     assert parsed({"SIFT_HOME": str(cwd / "elsewhere")}, user, cwd).home == cwd / "elsewhere"
 
 
+def test_colour_is_left_out_where_no_color_is_set_or_the_terminal_is_dumb(user: Path, cwd: Path) -> None:
+    assert (parsed({}, user, cwd).no_color, parsed({}, user, cwd).dumb) == (False, False)
+    assert parsed({"NO_COLOR": "1"}, user, cwd).no_color
+    assert not parsed({"NO_COLOR": ""}, user, cwd).no_color
+    assert parsed({"TERM": "dumb"}, user, cwd).dumb
+    assert not parsed({"TERM": "xterm-256color"}, user, cwd).dumb
+
+
 def test_an_empty_variable_counts_as_unset(user: Path, cwd: Path) -> None:
     assert parsed({"SIFT_HOME": ""}, user, cwd) == parsed({}, user, cwd)
 
