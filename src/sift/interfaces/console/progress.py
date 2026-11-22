@@ -7,7 +7,8 @@ from sift.interfaces.console.style import Style, Tone, paint
 from sift.interfaces.console.text import fitted, printable
 from sift.interfaces.console.units import duration, rate
 
-UNITS = MappingProxyType({Phase.SCAN: "file", Phase.READ: "file"})
+UNITS = MappingProxyType({Phase.REMAKE: "chunk", Phase.SCAN: "file", Phase.READ: "file"})
+RATED = frozenset({Phase.REMAKE, Phase.READ})
 INDENT = "  "
 LABEL = 6
 COUNT = 10
@@ -58,7 +59,7 @@ def _counted(phase: Phase, count: int) -> str:
 
 def _row(running: Running, count: int, now: float, style: Style) -> str:
     seconds = now - running.started
-    speed = rate(count, seconds) if running.phase is Phase.READ and count and seconds > 0 else ""
+    speed = rate(count, seconds) if running.phase in RATED and count and seconds > 0 else ""
     took = paint(f"{duration(seconds):>{TIME}}", Tone.SECONDARY, style)
     return f"{_label(running.phase, None, style)}{_counted(running.phase, count)}{speed:>{SPEED}}{took}"
 

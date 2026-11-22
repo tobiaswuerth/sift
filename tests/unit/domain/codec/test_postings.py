@@ -14,7 +14,6 @@ from sift.domain.codec.postings import (
     PACKED,
     RANGES_HEAD,
     RAW,
-    DamagedError,
     blocked,
     blocked_all,
     encoded,
@@ -26,6 +25,7 @@ from sift.domain.codec.postings import (
     varints,
     with_lengths,
 )
+from sift.domain.errors import DamagedError
 
 
 def ascending(gaps: list[int], start: int) -> NDArray[np.int64]:
@@ -91,7 +91,7 @@ def test_ids_of_separate_lists_may_go_down_between_them() -> None:
     assert [ints(blocked(each)[0]) for each in found.postings] == [[9], [3]]
 
 
-@given(st.lists(st.integers(0, (1 << 62) - 1)))
+@given(st.lists(st.integers(0, (1 << 63) - 1)))
 def test_numbers_come_back_from_their_varints(values: list[int]) -> None:
     written, offsets = varints(np.array(values, np.int64))
     assert ints(numbers(written)) == values
@@ -179,7 +179,7 @@ def test_a_list_with_a_byte_changed_or_cut_off_decodes_to_its_own_shape_or_is_re
         (RAW + BLOCK_HEAD.pack(1, 3), "fewer ids than its head says"),
         (RAW + BLOCK_HEAD.pack(1, 0), "fewer ids than its head says"),
         (RAW + BLOCK_HEAD.pack(1, 1) + b"\x80", "runs past the end"),
-        (RAW + BLOCK_HEAD.pack(1, 1) + b"\x81" * 10 + b"\x01", "more than ten bytes"),
+        (RAW + BLOCK_HEAD.pack(1, 1) + b"\x81" * 9 + b"\x01", "more than nine bytes"),
         (RAW + BLOCK_HEAD.pack(1, 1) + b"\x00", "a count below one"),
         (RAW + BLOCK_HEAD.pack(1, 1) + b"\x01\x01", "counts other than its ids"),
     ],
@@ -196,7 +196,9 @@ def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -
         ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(1)))
     with pytest.raises(DamagedError, match="other than their head says"):
         ranges_of(zlib.compress(bytes(1)))
-    with pytest.raises(DamagedError, match=r"other than 2\*\*6 lengths"):
+    with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
         lengths_of(zlib.compress(bytes(7)), 6)
+    with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
+        lengths_of(zlib.compress(bytes(1 << 16)), 6)
     with pytest.raises(DamagedError, match="positions other than its counts"):
         positions_of(RAW + b"\x01\x02", np.array([3], np.int64))

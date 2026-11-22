@@ -5,7 +5,6 @@ import numpy as np
 
 from sift.domain.arrays import Ids, after, first, firsts, ints, last, run_starts, total
 from sift.domain.codec.postings import (
-    DamagedError,
     Ranges,
     blocked,
     blocked_all,
@@ -14,6 +13,7 @@ from sift.domain.codec.postings import (
     ranges_of,
 )
 from sift.domain.codec.segments import Shape
+from sift.domain.errors import DamagedError
 from sift.storage import keyword_lists
 from sift.storage.database import Reading
 from sift.storage.keyword_lists import SegmentRow
@@ -71,10 +71,19 @@ def stored(store: Opened, terms: list[str]) -> dict[str, list[Stored]]:
     places, counts, bounds = blocked_all([part.data for part in whole])
     for part, (start, end) in zip(whole, itertools.pairwise(bounds), strict=True):
         found[part.term].append(Whole(part.segment, part.term, places[start:end], counts[start:end]))
+    placed = {held.id: held for held in store.segments}
     for part in parts:
         if part.ranged:
-            found[part.term].append(Ranged(part.segment, part.term, ranges_of(part.data)))
+            found[part.term].append(Ranged(part.segment, part.term, _placed(store, placed, part.segment, part.data)))
     return found
+
+
+def _placed(store: Opened, placed: dict[int, SegmentRow], segment: int, data: bytes) -> Ranges:
+    ranges, shift = ranges_of(data), store.shape.range_shift
+    held = placed.get(segment)
+    if held is None or first(ranges.ids) < held.first >> shift or last(ranges.ids) > held.last >> shift:
+        raise DamagedError("the ranges of a list lie outside its segment")
+    return ranges
 
 
 def slices(starts: Ids, ends: Ids) -> Ids:

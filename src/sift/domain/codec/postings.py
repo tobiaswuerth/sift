@@ -8,6 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sift.domain.arrays import Ids, after, first, ints, largest, last, run_starts, sums_at, total
+from sift.domain.errors import DamagedError
 
 type Bytes = NDArray[np.uint8]
 
@@ -23,11 +24,7 @@ COUNT_BYTES = 1
 BEST_BYTES = 1
 LOW_BITS = 0x7F
 MORE = 0x80
-MOST_BYTES = 10
-
-
-class DamagedError(ValueError):
-    pass
+MOST_BYTES = 9
 
 
 def _sound(*, holds: bool, problem: str) -> None:
@@ -58,6 +55,16 @@ def _inflated(data: bytes) -> bytes:
         raise DamagedError(f"a packed list does not unpack: {error}") from None
 
 
+def _inflated_to(data: bytes, size: int) -> bytes:
+    unpacking = zlib.decompressobj()
+    try:
+        found = unpacking.decompress(data, size + 1)
+    except zlib.error as error:
+        raise DamagedError(f"a packed list does not unpack: {error}") from None
+    _sound(holds=len(found) == size and unpacking.eof, problem=f"a packed list unpacks to other than {size:,} bytes")
+    return found
+
+
 def _unwrapped(data: bytes) -> bytes:
     _sound(holds=data[:1] in {RAW, PACKED}, problem="a list starts with an unknown flag byte")
     return _inflated(data[1:]) if data[:1] == PACKED else data[1:]
@@ -82,7 +89,7 @@ def numbers(data: bytes) -> Ids:
     _sound(holds=last(raw) < MORE, problem="a number runs past the end of its list")
     starts = np.flatnonzero(np.concatenate((np.ones(1, np.bool_), raw[:-1] < MORE))).astype(np.int64)
     sizes = np.diff(np.append(starts, len(raw)))
-    _sound(holds=largest(sizes) <= MOST_BYTES, problem="a number takes more than ten bytes")
+    _sound(holds=largest(sizes) <= MOST_BYTES, problem="a number takes more than nine bytes")
     place = np.arange(len(raw)) - np.repeat(starts, sizes)
     return sums_at((raw & LOW_BITS).astype(np.int64) << (7 * place), starts)
 
@@ -198,6 +205,5 @@ def with_lengths(ids: Ids, lengths: Ids, shift: int) -> dict[int, bytes]:
 
 
 def lengths_of(data: bytes, shift: int) -> Ids:
-    raw = _inflated(data)
-    _sound(holds=len(raw) == LENGTH_BYTES << shift, problem=f"a block of lengths holds other than 2**{shift} lengths")
+    raw = _inflated_to(data, LENGTH_BYTES << shift)
     return np.frombuffer(raw, np.uint32).astype(np.int64)

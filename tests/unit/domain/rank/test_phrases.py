@@ -39,8 +39,8 @@ def test_positions_far_apart_are_counted_without_overflow() -> None:
 def test_many_candidates_are_counted_without_overflow() -> None:
     candidates = np.arange(1 << 20, dtype=np.int64)
     half = candidates[::2]
-    first = (candidates, np.ones(len(candidates), np.int64), np.full(len(candidates), 1 << 20, np.int64))
-    second = (half, np.ones(len(half), np.int64), np.full(len(half), (1 << 20) + 1, np.int64))
+    first = (candidates, np.ones(len(candidates), np.int64), np.full(len(candidates), 1 << 44, np.int64))
+    second = (half, np.ones(len(half), np.int64), np.full(len(half), (1 << 44) + 1, np.int64))
     counts = phrase_counts(candidates, [first, second])
     assert int(counts.sum()) == len(half)
     assert ints(counts[:4]) == [1, 0, 1, 0]

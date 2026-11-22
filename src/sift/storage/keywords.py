@@ -1,16 +1,19 @@
 import dataclasses
 import hashlib
 import json
+import re
 from collections import Counter
-from collections.abc import Generator, Iterable, Sequence
+from collections.abc import Generator, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import NamedTuple, cast
 
 import numpy as np
 
+from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, DocumentId, first_row
 from sift.domain.arrays import ints
 from sift.domain.codec.segments import FORMAT, GAP, SHAPE, Long, Segment, Shape, segment, stream
+from sift.domain.errors import DamagedError
 from sift.domain.text.tokens import TABLE_DIGEST, tokens
 from sift.storage.database import (
     BATCHES,
@@ -30,6 +33,9 @@ DOCUMENTS = "SELECT id, title, meta, text FROM keyword_documents WHERE id IN (SE
 NUMBERS_PROBE = """SELECT coalesce(group_concat(j.atom, ' '), '') FROM json_tree(
                        '[1e20, 0.1, 1.0, -0.0, 1.5e-7, 3.141592653589793, 12345678901234567890, true, false]') j
                    WHERE j.atom IS NOT NULL"""
+REMAKE_REMEDY = "run sift index to remake it"
+REMAKING = "remaking "
+DIGITS = re.compile("[0-9]{1,19}")
 
 
 class Value(NamedTuple):
@@ -62,6 +68,11 @@ class Totals(NamedTuple):
 class Range(NamedTuple):
     id: int
     first: int
+    last: int
+
+
+class Count(NamedTuple):
+    n: int
 
 
 def fingerprint(transaction: Reading) -> str:
@@ -82,17 +93,37 @@ def _meta(transaction: Reading, key: str) -> str | None:
     return found[0].value if found else None
 
 
+def _required(transaction: Reading, key: str) -> str:
+    found = _meta(transaction, key)
+    if found is None:
+        raise DamagedError(f"the store's meta holds no {key}")
+    return found
+
+
 def current(transaction: Reading) -> bool:
     return _meta(transaction, FINGERPRINT_KEY) == fingerprint(transaction)
 
 
+def _shape(written: str) -> Shape:
+    try:
+        return Shape(**cast("dict[str, int]", json.loads(written)))
+    except (TypeError, ValueError) as error:
+        raise DamagedError(f"the keyword shape {written!r} is none: {error}") from None
+
+
 def shape_of(transaction: Reading) -> Shape:
-    written = _meta(transaction, SHAPE_KEY)
-    return SHAPE if written is None else Shape(**cast("dict[str, int]", json.loads(written)))
+    return _shape(_required(transaction, SHAPE_KEY))
+
+
+def _number(transaction: Reading, key: str) -> int:
+    written = _required(transaction, key)
+    if DIGITS.fullmatch(written) is None:
+        raise DamagedError(f"the store's {key} is {written!r}, no number")
+    return int(written)
 
 
 def _through(transaction: Reading) -> int:
-    return int(_meta(transaction, THROUGH_KEY) or 0)
+    return _number(transaction, THROUGH_KEY)
 
 
 def totals(transaction: Reading) -> Totals:
@@ -174,7 +205,7 @@ def _uncounted(transaction: Writing, gone: Counter[str], tokens_gone: int) -> No
     run(transaction, "UPDATE counts SET tokens = tokens - ?", (tokens_gone,))
 
 
-def _index_new(transaction: WritingDocuments, shape: Shape) -> bool:
+def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
     spans = rows(
         transaction,
         Span,
@@ -182,15 +213,15 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> bool:
         (_through(transaction), transaction.batches.chunks_a_segment),
     )
     if not spans:
-        return False
+        return 0
     streams = _streams(transaction, spans)
-    held = totals(transaction)
-    average = (held.tokens + _tokens(streams)) / held.chunks
+    (indexed,) = rows(transaction, Count, "SELECT coalesce(sum(chunks - dead), 0) FROM keyword_segments")
+    average = (totals(transaction).tokens + _tokens(streams)) / (indexed.n + len(spans))
     written = segment(np.array([span.id for span in spans], np.int64), streams, average, shape)
     _added(transaction, written)
     _counted(transaction, ((p.term, p.chunks) for p in written.postings), written.tokens)
     run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (str(written.last), THROUGH_KEY))
-    return True
+    return len(spans)
 
 
 def index_new(transaction: WritingDocuments) -> None:
@@ -200,10 +231,12 @@ def index_new(transaction: WritingDocuments) -> None:
 
 
 def _dead_by_segment(transaction: Writing, dead: Sequence[int]) -> list[tuple[int, int]]:
-    held = rows(transaction, Range, "SELECT id, first FROM keyword_segments ORDER BY first")
+    held = rows(transaction, Range, "SELECT id, first, last FROM keyword_segments ORDER BY first")
     starts = np.array([segment.first for segment in held], np.int64)
-    owners = np.searchsorted(starts, np.array(dead, np.int64), side="right") - 1
-    return [(n, held[index].id) for index, n in Counter(ints(owners)).items()]
+    owners = ints(np.searchsorted(starts, np.array(dead, np.int64), side="right") - 1)
+    if any(index < 0 or chunk > held[index].last for index, chunk in zip(owners, dead, strict=True)):
+        raise DamagedError("the keyword index holds no segment of a chunk it indexed")
+    return [(n, held[index].id) for index, n in Counter(owners).items()]
 
 
 def _forget(transaction: Writing, documents: Sequence[DocumentId]) -> None:
@@ -230,17 +263,14 @@ def forget(transaction: WritingDocuments, documents: Sequence[DocumentId]) -> No
         _forget(transaction, documents[at : at + size])
 
 
-def _collection(transaction: Reading) -> CollectionId:
-    return CollectionId(int(_meta(transaction, "collection") or 0))
-
-
 def _anew(transaction: Writing, made: str) -> None:
     run(transaction, "DELETE FROM keyword_segments")
     run(transaction, "DELETE FROM keyword_terms")
     run(transaction, "DELETE FROM keyword_dead")
     run(transaction, "UPDATE counts SET tokens = 0")
-    shape = json.dumps(dataclasses.asdict(shape_of(transaction)))
-    start = str(first_row(_collection(transaction)))
+    written = _meta(transaction, SHAPE_KEY)
+    shape = json.dumps(dataclasses.asdict(SHAPE if written is None else _shape(written)))
+    start = str(first_row(CollectionId(_number(transaction, "collection"))))
     run_each(
         transaction,
         "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
@@ -248,11 +278,38 @@ def _anew(transaction: Writing, made: str) -> None:
     )
 
 
+def remake_started(connection: Connection) -> int:
+    with writing(connection) as transaction:
+        made = fingerprint(transaction)
+        found = _meta(transaction, FINGERPRINT_KEY)
+        if found == made:
+            return 0
+        if found != REMAKING + made:
+            _anew(transaction, REMAKING + made)
+        (left,) = rows(transaction, Count, "SELECT count(*) FROM chunks WHERE id > ?", (_through(transaction),))
+        return left.n
+
+
+def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
+    done = 0
+    while True:
+        with writing(connection) as transaction:
+            made = fingerprint(transaction)
+            if _meta(transaction, FINGERPRINT_KEY) != REMAKING + made:
+                return
+            added = _index_new(WritingDocuments(connection, batches), shape_of(transaction))
+            if not added:
+                run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (made, FINGERPRINT_KEY))
+                return
+        done += added
+        yield done
+
+
 @contextmanager
 def writing_documents(connection: Connection, batches: Batches = BATCHES) -> Generator[WritingDocuments]:
     with writing(connection) as transaction:
         if not current(transaction):
-            _anew(transaction, fingerprint(transaction))
+            raise StoreUnavailableError("the store's keyword index is of another version of sift", REMAKE_REMEDY)
         held = WritingDocuments(connection, batches)
         yield held
         index_new(held)

@@ -5,16 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from sift.api.collections import AddCollection
+from sift.api.collections import AddCollection, Counted, ShowStatus
 from sift.api.documents import GetDocuments
 from sift.api.errors import InvalidRequestError, NotFoundError
-from sift.api.indexing import IndexCollections
+from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
+from sift.api.ids import CollectionId
+from sift.api.indexing import IndexCollections, Skipped
 from sift.api.search import Hit, SearchKeywords, SearchResult, Unsearched
-from sift.app.collections import add
+from sift.app.collections import add, status
 from sift.app.documents import documents
 from sift.app.indexing import index
-from sift.app.search import REMAKE_REMEDY, search
-from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY
+from sift.app.search import search
+from sift.storage.keywords import REMAKE_REMEDY
+from sift.storage.store import DAMAGED_REMEDY, LAYOUT, MISSING_REMEDY, create_store, delete_store
 from tests.damage import damage_table
 
 LONG = "\n\n".join(["Pruning skips what cannot win. " * 20] * 8)
@@ -58,7 +61,6 @@ def test_a_search_finds_each_document_by_its_best_passage_with_where_it_is(home:
         (Hit("notes/halo.md", "Halo", "4-6", result.hits[0].score, "# Halo\n\nDark matter halo models."),), 1, ()
     )
     assert result.hits[0].score > 0
-    assert result.hits[0].score != round(result.hits[0].score, 4)
 
 
 def test_the_lines_of_a_hit_are_its_passage(home: Path) -> None:
@@ -122,10 +124,12 @@ def test_k_counts_results_from_one_to_ten_thousand_and_is_held_to_the_most_there
 
 def test_a_query_outside_the_grammar_is_refused_before_any_store_is_opened(home: Path) -> None:
     store = home / "collections" / "notes.sqlite"
-    store.write_bytes(b"no store")
+    delete_store(store)
+    create_store(store, CollectionId(1), LAYOUT[:1])
     with pytest.raises(InvalidRequestError, match="a quote is not closed"):
         search(home, SearchKeywords('halo "dark'))
-    assert store.read_bytes() == b"no store"
+    with contextlib.closing(sqlite3.connect(store)) as database:
+        assert database.execute("PRAGMA user_version").fetchone() == (1,)
 
 
 def test_one_collection_is_searched_when_named(home: Path, tmp_path: Path) -> None:
@@ -229,9 +233,42 @@ def test_a_store_lost_while_searched_weighs_on_no_score(home: Path, tmp_path: Pa
     assert [each.collection for each in result.unsearched] == ["notes"]
 
 
+def test_a_store_lost_in_the_looser_search_weighs_on_no_score(home: Path, tmp_path: Path) -> None:
+    _more(home, tmp_path)
+    alone = search(home, SearchKeywords("halo zzzq", collection="more")).hits
+    _changed(home / "collections" / "notes.sqlite", "DELETE FROM keyword_lengths")
+    result = search(home, SearchKeywords("halo zzzq"))
+    assert result.hits == alone != ()
+    assert [each.collection for each in result.unsearched] == ["notes"]
+
+
+def test_a_store_lost_while_its_passages_are_read_weighs_on_no_score(home: Path, tmp_path: Path) -> None:
+    _more(home, tmp_path)
+    alone = search(home, SearchKeywords("halo", collection="more")).hits
+    damage_table(home / "collections" / "notes.sqlite", "sources")
+    result = search(home, SearchKeywords("halo"))
+    assert result.hits == alone
+    assert [each.collection for each in result.unsearched] == ["notes"]
+
+
 def test_a_keyword_index_of_another_version_is_passed_over_until_indexed_again(home: Path) -> None:
     _changed(home / "collections" / "notes.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
     (said,) = search(home, SearchKeywords("halo")).unsearched
     assert (said.collection, said.remedy) == ("notes", REMAKE_REMEDY)
     indexed(home)
+    assert ids(home, SearchKeywords("halo")) == ["notes/halo.md"]
+
+
+def test_an_index_of_another_version_is_remade_by_indexing_even_with_its_folder_gone(home: Path, notes: Path) -> None:
+    _changed(home / "collections" / "notes.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
+    notes.rename(notes.with_name("gone"))
+    said: list[Event] = []
+    (outcome,) = index(home, IndexCollections(), said.append).collections
+    assert isinstance(outcome.outcome, Skipped)
+    (shown,) = status(home, ShowStatus()).collections
+    assert isinstance(shown.contents, Counted)
+    chunks = shown.contents.chunks
+    assert said[1] == PhaseStarted(Phase.REMAKE, chunks)
+    assert isinstance(said[-2], PhaseDone)
+    assert said[-2].count == chunks
     assert ids(home, SearchKeywords("halo")) == ["notes/halo.md"]

@@ -25,7 +25,7 @@ from sift.storage.documents import (
     sources,
     unreadable,
 )
-from sift.storage.keywords import writing_documents
+from sift.storage.keywords import remade, remake_started, writing_documents
 from sift.storage.store import open_store, unavailable_if_damaged
 
 FOLDER_MISSING_REMEDY = "connect the drive it lies on"
@@ -168,12 +168,24 @@ def _skipped(skipped: Collection, report: Reporter, reason: str, remedy: str | N
     return CollectionIndexed(skipped.name, Skipped(reason, remedy))
 
 
+def _remade(connection: Connection, report: Reporter) -> None:
+    left = remake_started(connection)
+    if not left:
+        return
+    report(PhaseStarted(Phase.REMAKE, left))
+    done = 0
+    for done in remade(connection):
+        report(Advanced(done))
+    report(PhaseDone(done))
+
+
 def _indexed(one: Collection, report: Reporter, limits: Limits) -> CollectionIndexed:
     report(CollectionStarted(one.name, str(one.folder)))
     try:
-        if not one.folder.is_dir():
-            return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)
         with unavailable_if_damaged(one.store), closing(open_store(one.store, one.id)) as connection:
+            _remade(connection, report)
+            if not one.folder.is_dir():
+                return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)
             return CollectionIndexed(one.name, _synced(Job(one, connection, report, limits)))
     except StoreUnavailableError as error:
         return _skipped(one, report, error.message, error.remedy)

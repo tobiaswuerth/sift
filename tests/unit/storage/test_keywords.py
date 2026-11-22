@@ -5,16 +5,19 @@ from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId
 from sift.domain.arrays import ints
 from sift.domain.codec.postings import blocked, positions_of
 from sift.domain.codec.segments import Shape
+from sift.domain.errors import DamagedError
 from sift.storage.database import Batches, Connection, Reading, WritingDocuments, reading, rows, run, writing
 from sift.storage.keyword_lists import blocks, dead, expansions, frequencies, parts, positions, segments
-from sift.storage.keywords import current, totals
+from sift.storage.keywords import REMAKE_REMEDY, current, remade, remake_started, totals
 from sift.storage.store import LAYOUT, create_store, open_store
 from tests.keyword_stores import COLUMNS, SMALL, Instance, Round, applied, changed, instances, opened_store
 
@@ -112,21 +115,58 @@ def test_segments_of_few_chunks_and_documents_forgotten_a_few_at_a_time_index_th
         checked(connection)
 
 
-def test_an_index_of_another_version_is_made_anew_by_the_next_write() -> None:
+TWO = Batches(chunks_a_segment=2)
+NOTES: Round = {f"n{n}.md": ("", f"Note {n}", "one two three " * n) for n in range(7)}
+
+
+class Average(NamedTuple):
+    chunks: int
+    tokens: int
+    average: float
+
+
+def staled(connection: Connection) -> None:
+    with writing(connection) as transaction:
+        run(transaction, "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
+        run(transaction, "DELETE FROM keyword_postings")
+
+
+def test_an_index_of_another_version_takes_no_writes_until_remade_a_batch_at_a_time() -> None:
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
-        applied(connection, [{"a.md": ("", "a", "one two"), "b.md": ("", "b", "three one")}])
-        with writing(connection) as transaction:
-            run(transaction, "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
-            run(transaction, "DELETE FROM keyword_postings")
-        with reading(connection) as transaction:
-            assert not current(transaction)
-        applied(connection, [{}])
+        applied(connection, [NOTES])
+        staled(connection)
+        with pytest.raises(StoreUnavailableError, match="another version") as refused:
+            applied(connection, [{}])
+        assert refused.value.remedy == REMAKE_REMEDY
+        assert remake_started(connection) == len(NOTES)
+        assert list(remade(connection, TWO)) == [2, 4, 6, 7]
         with reading(connection) as transaction:
             assert current(transaction)
+            made = rows(transaction, Average, "SELECT chunks, tokens, average FROM keyword_segments ORDER BY first")
+        assert [each.average for each in made] == pytest.approx(
+            [sum(m.tokens for m in made[: n + 1]) / sum(m.chunks for m in made[: n + 1]) for n in range(len(made))]
+        )
+        assert remake_started(connection) == 0
+        applied(connection, [{"x.md": ("", "X", "four")}])
         checked(connection)
 
 
-def test_a_store_of_the_layout_before_the_keyword_index_gets_one_by_the_next_write() -> None:
+def test_a_remake_cut_short_goes_on_where_it_stopped_and_one_of_another_version_starts_over() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [NOTES])
+        staled(connection)
+        assert remake_started(connection) == len(NOTES)
+        assert next(iter(remade(connection, TWO))) == 2
+        assert remake_started(connection) == len(NOTES) - 2
+        with writing(connection) as transaction:
+            run(transaction, "UPDATE meta SET value = 'remaking other' WHERE key = 'keyword_fingerprint'")
+        assert list(remade(connection, TWO)) == []
+        assert remake_started(connection) == len(NOTES)
+        assert list(remade(connection))[-1] == len(NOTES)
+        checked(connection)
+
+
+def test_a_store_of_the_layout_before_the_keyword_index_gets_one_when_remade() -> None:
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "3.sqlite"
         create_store(path, CollectionId(3), LAYOUT[:1])
@@ -137,12 +177,32 @@ def test_a_store_of_the_layout_before_the_keyword_index_gets_one_by_the_next_wri
             run(transaction, "DELETE FROM meta WHERE key LIKE 'keyword%'")
             changed(WritingDocuments(connection), "a.md", ("tags: [old]\n", "Old", "kept from before"))
         with contextlib.closing(open_store(path, CollectionId(3))) as connection:
-            with reading(connection) as transaction:
-                assert not current(transaction)
+            assert remake_started(connection) == 1
+            assert list(remade(connection)) == [1]
             applied(connection, [{"b.md": ("", "New", "added after")}])
             checked(connection)
             with reading(connection) as transaction:
                 assert frequencies(transaction, ["old", "added"]) == {"old": 1, "added": 1}
+
+
+@pytest.mark.parametrize(
+    "key, value, problem",
+    [
+        ("keyword_shape", "{bad", "keyword shape"),
+        ("keyword_shape", '{"range_shift": 99}', "keyword shape"),
+        ("keyword_shape", '{"colour": 1}', "keyword shape"),
+        ("keywords_through", "-5", "no number"),
+        ("keywords_through", None, "holds no keywords_through"),
+    ],
+)
+def test_keyword_meta_that_is_damaged_or_missing_is_damage(key: str, value: str | None, problem: str) -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        with writing(connection) as transaction:
+            run(transaction, "DELETE FROM meta WHERE key = ?", (key,))
+            if value is not None:
+                run(transaction, "INSERT INTO meta(key, value) VALUES (?, ?)", (key, value))
+        with pytest.raises(DamagedError, match=problem):
+            applied(connection, [{"a.md": ("", "a", "b")}])
 
 
 def test_a_prefix_expands_to_the_terms_it_begins() -> None:
@@ -165,3 +225,12 @@ def test_a_segment_of_chunks_all_gone_goes_with_them() -> None:
             assert dead(transaction).tolist() == []
             assert frequencies(transaction, ["one", "three"]) == {"three": 1}
             assert left.chunks == 1
+
+
+def test_a_chunk_deleted_outside_every_segment_is_damage() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{"a.md": ("", "a", "one two")}])
+        with writing(connection) as transaction:
+            run(transaction, "DELETE FROM keyword_segments")
+        with pytest.raises(DamagedError, match="no segment of a chunk"):
+            applied(connection, [{"a.md": None}])

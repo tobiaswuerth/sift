@@ -100,6 +100,11 @@ def test_one_file_is_a_file() -> None:
     assert (running_line(view, 0.5, 100, PLAIN) or "").startswith("  read           1 file    ")
 
 
+def test_a_remake_counts_chunks_and_their_speed() -> None:
+    lines = replayed(((0.0, PhaseStarted(Phase.REMAKE, 5_000)), (2.0, PhaseDone(5_000))))[1]
+    assert lines == ["  remake     5,000 chunks    2,500/s     2.0 s"]
+
+
 def test_a_phase_done_quicker_than_the_clock_ticks_shows_no_speed() -> None:
     lines = replayed(((0.0, PhaseStarted(Phase.READ, 2)), (0.0, PhaseDone(2))))[1]
     assert lines == ["  read           2 files                 0.0 s"]

@@ -4,6 +4,7 @@ from enum import StrEnum
 
 
 class Phase(StrEnum):
+    REMAKE = "remake"
     SCAN = "scan"
     READ = "read"
 

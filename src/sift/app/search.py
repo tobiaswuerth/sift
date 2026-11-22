@@ -16,11 +16,10 @@ from sift.retrieval.keyword.search import Found, Prepared, found_in, prepared, q
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
 from sift.storage.documents import passages, texts
-from sift.storage.keywords import current
+from sift.storage.keywords import REMAKE_REMEDY, current
 from sift.storage.store import open_store, unavailable_if_damaged
 
 FEW_REMEDY = "ask for one result or more, e.g. -k 10"
-REMAKE_REMEDY = "run sift index to remake it"
 MANY_REMEDY = f"ask for {MOST_HITS:,} results at most, and narrow the query to reach the rest"
 
 

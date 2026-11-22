@@ -6,8 +6,8 @@ from typing import NamedTuple, NoReturn
 
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
-from sift.domain.codec.postings import DamagedError
 from sift.domain.codec.segments import SHAPE, Shape
+from sift.domain.errors import DamagedError
 from sift.storage.database import DAMAGED, connect, first, primary_code, reading, run_each, writing
 from sift.storage.keywords import keyword_meta
 from sift.storage.migrations import Migration, migrated, newer, version

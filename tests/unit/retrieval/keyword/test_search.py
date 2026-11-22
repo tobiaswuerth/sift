@@ -13,8 +13,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from sift.domain.arrays import last
-from sift.domain.codec.postings import DamagedError, encoded
+from sift.domain.codec.postings import encoded, ranged
 from sift.domain.codec.segments import Shape
+from sift.domain.errors import DamagedError
 from sift.domain.query.expressions import NOTHING, And, Expression, Leaf, Not, Or, Phrase, Prefix, Term
 from sift.domain.query.grammar import parsed
 from sift.retrieval.keyword.lists import Opened, Ranged, opened, stored
@@ -304,4 +305,13 @@ def test_a_block_missing_or_of_another_size_than_its_ranges_say_is_damage(sql: s
         assert any(isinstance(held, Ranged) for held in stored(store, ["w0"])["w0"])
         store.transaction.connection.execute(sql, (three.postings[0],))
         with pytest.raises(DamagedError, match=damage):
+            search(stores, Term("w0"), 10)
+
+
+def test_ranges_outside_their_segment_are_damage() -> None:
+    far = ranged(np.array([1 << 40], np.int64), np.ones(1, np.int64), np.zeros(1, np.uint8))
+    with collections([[prose(Draws(np.random.default_rng(7)), 60)]]) as (stores, _):
+        (store,) = stores
+        store.transaction.connection.execute("UPDATE keyword_postings SET ranges = ? WHERE ranges IS NOT NULL", (far,))
+        with pytest.raises(DamagedError, match="outside its segment"):
             search(stores, Term("w0"), 10)

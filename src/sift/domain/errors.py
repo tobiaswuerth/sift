@@ -1,0 +1,2 @@
+class DamagedError(ValueError):
+    pass

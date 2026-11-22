@@ -13,7 +13,7 @@ AND, OR, NOT = "AND", "OR", "NOT"
 OPERATORS = frozenset({AND, OR, NOT})
 NEAR = "NEAR"
 MOST_DEPTH = 100
-MOST_LEAVES = 1000
+MOST_WORDS = 1000
 FEWEST_RELAXED = 2
 SURROGATE = re.compile(f"[{chr(0xD800)}-{chr(0xDFFF)}]")
 WORDLIKE = re.compile(r"\w")
@@ -52,7 +52,10 @@ def _bare(query: str, at: int) -> tuple[Lexeme, int]:
     while end < len(query) and query[end] not in OUTSIDE_WORDS:
         end += 1
     text = query[at:end]
-    if text == NEAR and query[end:].lstrip("".join(SPACES)).startswith(OPEN):
+    after = end
+    while after < len(query) and query[after] in SPACES:
+        after += 1
+    if text == NEAR and query.startswith(OPEN, after):
         raise _refused("NEAR is not supported", 'write the words side by side, or as a "phrase"')
     return (text if text in OPERATORS else Word(text, quoted=False)), end
 
@@ -187,8 +190,8 @@ def parsed(query: str) -> Expression:
     expression, _, at = _any(items, 0, 0)
     if at < len(items):
         raise _refused('a ")" closes nothing')
-    if len(leaves(expression)) > MOST_LEAVES:
-        raise _refused(f"it holds more than {MOST_LEAVES:,} words", "ask with fewer words")
+    if sum(len(leaf.tokens) if isinstance(leaf, Phrase) else 1 for leaf in leaves(expression)) > MOST_WORDS:
+        raise _refused(f"it holds more than {MOST_WORDS:,} words", "ask with fewer words")
     return expression
 
 
