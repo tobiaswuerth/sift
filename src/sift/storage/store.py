@@ -131,6 +131,21 @@ LAYOUT: tuple[Migration, ...] = (
         """CREATE TRIGGER keyword_segment_dropped AFTER DELETE ON keyword_segments
            BEGIN DELETE FROM keyword_dead WHERE chunk BETWEEN OLD.first AND OLD.last; END""",
     ),
+    (
+        "ALTER TABLE counts ADD COLUMN vectors INTEGER NOT NULL DEFAULT 0 CHECK (vectors >= 0)",
+        """CREATE TABLE vectors(
+            chunk INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+            vector BLOB NOT NULL
+        ) STRICT""",
+        """CREATE TABLE codes(
+            chunk INTEGER PRIMARY KEY REFERENCES vectors(chunk) ON DELETE CASCADE,
+            bits BLOB NOT NULL
+        ) STRICT""",
+        """CREATE TRIGGER vectors_added AFTER INSERT ON vectors
+           BEGIN UPDATE counts SET vectors = vectors + 1; END""",
+        """CREATE TRIGGER vectors_deleted AFTER DELETE ON vectors
+           BEGIN UPDATE counts SET vectors = vectors - 1; END""",
+    ),
 )
 NUMBERED_TABLES = ("documents", "chunks")
 FILE_SUFFIXES = ("", "-wal", "-shm")
