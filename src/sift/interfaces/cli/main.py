@@ -91,7 +91,7 @@ def _get(context: Context, request: GetDocuments) -> Documents:
 
 def _search(namespace: argparse.Namespace, context: Context) -> Shown:
     started = context.clock()
-    answer = search.search(context.settings.home, request_of(SearchKeywords, namespace))
+    answer = search.search(context.settings.home, request_of(SearchKeywords, namespace), context.clock)
     if context.json:
         return Shown((as_json(answer),), (), failed=bool(answer.unsearched))
     return shown.hits(answer, context.clock() - started, context.platform, context.style)

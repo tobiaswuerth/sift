@@ -128,7 +128,8 @@ def _footer(result: SearchResult, seconds: float, style: Style) -> str:
     found = f"{len(result.hits):,} result{'s' * (len(result.hits) != 1)}" if result.hits else "no matches"
     searched = f"{result.searched} collection{'s' * (result.searched != 1)}"
     separator = f"{GAP}{DOT[0] if style.unicode else DOT[1]}{GAP}"
-    return separator.join((found, "keyword", searched, duration(seconds)))
+    partial = ("partial: better matches may be missing",) if result.partial else ()
+    return separator.join((found, "keyword", *partial, searched, duration(seconds)))
 
 
 def hits(result: SearchResult, seconds: float, platform: str, style: Style) -> Shown:

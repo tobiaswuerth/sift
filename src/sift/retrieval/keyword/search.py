@@ -1,10 +1,10 @@
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ids, ints
+from sift.domain.arrays import Ids, among, distinct, ints
 from sift.domain.query.expressions import Expression, Leaf, Prefix, Term, leaves
 from sift.domain.rank.best import Best, offered, ranked
 from sift.domain.rank.bm25 import Scores, idf
@@ -19,9 +19,22 @@ from sift.storage.keyword_lists import frequencies
 class Tuning:
     first_batch: int = 16
     most_batch: int = 4096
+    most_prefix: int = 10_000_000
 
 
 TUNING = Tuning()
+
+type Expired = Callable[[], bool]
+
+
+def never() -> bool:
+    return False
+
+
+@dataclass(frozen=True, slots=True)
+class Searched:
+    best: Best
+    cut: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,10 +87,10 @@ def _with_lazy(work: Pass, best: Best, places: Ids, acc: Scores, lazy: list[Leaf
     for n, leaf in enumerate(lazy):
         near = np.flatnonzero(acc + sum(query.most(other) for other in lazy[n:]) >= best.threshold)
         places, acc = places[near], acc[near]
-        ranges = np.unique(places >> shift)
+        ranges = distinct(places >> shift)
         for here, scores in within(work.store, query, work.lists[leaf], ranges) if len(ranges) else ():
             at = np.minimum(np.searchsorted(here, places), len(here) - 1)
-            hit = np.flatnonzero(np.isin(places, here))
+            hit = np.flatnonzero(among(places, here))
             acc[hit] += query.bounding[leaf] * scores[at[hit]]
     keep = np.flatnonzero((acc >= best.threshold) & (acc > 0))
     return places[keep], acc[keep]
@@ -88,13 +101,13 @@ def _all_of(work: Pass, best: Best, group: Ids) -> Best:
     places, held = np.zeros(0, np.int64), {}
     for n, leaf in enumerate(sorted(query.leaves, key=lambda each: work.lists[each].size)):
         here, scores = merged_within(
-            work.store, query, work.lists[leaf], group if n == 0 else np.unique(places >> shift)
+            work.store, query, work.lists[leaf], group if n == 0 else distinct(places >> shift)
         )
         if n == 0:
             places, held = here, {leaf: scores}
             continue
         at = np.minimum(np.searchsorted(here, places), max(len(here) - 1, 0))
-        hit = np.flatnonzero(np.isin(places, here))
+        hit = np.flatnonzero(among(places, here))
         places, held = places[hit], {key: value[hit] for key, value in held.items()} | {leaf: scores[at[hit]]}
     acc = sum((query.bounding[leaf] * scores for leaf, scores in held.items()), np.zeros(len(places)))
     keep = np.flatnonzero(acc >= best.threshold)
@@ -122,14 +135,16 @@ def _scored_group(work: Pass, best: Best, group: Ids) -> Best:
     return _offer(work, best, places[keep], acc[keep])
 
 
-def _searched(work: Pass, best: Best, tuning: Tuning) -> Best:
+def _searched(work: Pass, best: Best, tuning: Tuning, expired: Expired) -> Searched:
     first, bound, present = bounds(work.query, work.lists)
     candidates = np.flatnonzero(may_hold(work.query.expression, present) & (bound > 0))
     remaining, bound = candidates + first, bound[candidates]
-    batch = tuning.first_batch
+    batch, began = tuning.first_batch, False
     while len(remaining):
         beat = bound >= best.threshold
         remaining, bound = remaining[beat], bound[beat]
+        if began and len(remaining) and len(best.chunks) and expired():
+            return Searched(best, cut=True)
         if len(remaining) > batch:
             pick = np.argpartition(-bound, batch - 1)[:batch]
             rest = np.ones(len(remaining), np.bool_)
@@ -138,9 +153,9 @@ def _searched(work: Pass, best: Best, tuning: Tuning) -> Best:
         else:
             group, remaining, bound = remaining, remaining[:0], bound[:0]
         if len(group):
-            best = _scored_group(work, best, np.sort(group))
+            best, began = _scored_group(work, best, np.sort(group)), True
         batch = min(2 * batch, tuning.most_batch)
-    return best
+    return Searched(best, cut=False)
 
 
 def _tokens(unique: Sequence[Leaf]) -> list[str]:
@@ -158,7 +173,7 @@ class Prepared:
     df: Mapping[Leaf, int]
 
 
-def prepared(store: Opened, expression: Expression) -> Prepared:
+def prepared(store: Opened, expression: Expression, tuning: Tuning = TUNING) -> Prepared:
     unique = tuple(dict.fromkeys(leaves(expression)))
     lists = stored(store, _tokens(unique))
     terms = frequencies(store.transaction, [leaf.text for leaf in unique if isinstance(leaf, Term)])
@@ -168,7 +183,7 @@ def prepared(store: Opened, expression: Expression) -> Prepared:
         if isinstance(leaf, Term):
             found[leaf], df[leaf] = lists[leaf.text], terms.get(leaf.text, 0)
         else:
-            postings = materialized(store, leaf, lists)
+            postings = materialized(store, leaf, lists, tuning.most_prefix)
             found[leaf], df[leaf] = postings, len(postings[0])
     return Prepared(store, found, df)
 
@@ -185,9 +200,9 @@ def query_of(expression: Expression, each: Sequence[Prepared]) -> Query | None:
     return Query(expression, unique, weight, bounding, sum(held.store.tokens for held in each) / chunks)
 
 
-def searched(held: Prepared, query: Query, best: Best, tuning: Tuning = TUNING) -> Best:
+def searched(held: Prepared, query: Query, best: Best, tuning: Tuning = TUNING, expired: Expired = never) -> Searched:
     lists = {leaf: scored(held.store, query, held.lists[leaf]) for leaf in query.leaves}
-    return _searched(Pass(held.store, query, lists), best, tuning)
+    return _searched(Pass(held.store, query, lists), best, tuning, expired)
 
 
 def found_in(best: Best) -> tuple[Found, ...]:
@@ -200,11 +215,11 @@ def found_in(best: Best) -> tuple[Found, ...]:
 def search(
     stores: Sequence[Opened], expression: Expression, k: int, *, by_document: bool = True, tuning: Tuning = TUNING
 ) -> tuple[Found, ...]:
-    each = [prepared(store, expression) for store in stores]
+    each = [prepared(store, expression, tuning) for store in stores]
     query = query_of(expression, each)
     if query is None:
         return ()
     best = Best(k, by_document)
     for held in each:
-        best = searched(held, query, best, tuning)
+        best = searched(held, query, best, tuning).best
     return found_in(best)

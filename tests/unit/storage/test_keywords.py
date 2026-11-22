@@ -15,11 +15,12 @@ from sift.domain.arrays import ints
 from sift.domain.codec.postings import blocked, positions_of
 from sift.domain.codec.segments import Shape
 from sift.domain.errors import DamagedError
+from sift.domain.plan.segments import Held, Policy, merges
 from sift.storage.database import Batches, Connection, Reading, WritingDocuments, reading, rows, run, writing
 from sift.storage.keyword_lists import blocks, dead, expansions, frequencies, parts, positions, segments
 from sift.storage.keywords import REMAKE_REMEDY, current, remade, remake_started, totals
 from sift.storage.store import LAYOUT, create_store, open_store
-from tests.keyword_stores import COLUMNS, SMALL, Instance, Round, applied, changed, instances, opened_store
+from tests.keyword_stores import COLUMNS, SMALL, Content, Instance, Round, applied, changed, instances, opened_store
 
 WORDS = ("alpha", "beta", "Gamma", "δέλτα", "x-ray", "naïve")
 FIELDS = ("", "title: Front\n", "tags: [alpha, 2]\nscore: 1e20\nratio: 0.1\nok: true\n", "nested: {title: beta}\n")
@@ -271,11 +272,102 @@ def test_a_chunk_deleted_past_the_end_of_its_segment_is_damage() -> None:
 
 def test_a_segment_written_after_deletions_averages_the_live_chunks() -> None:
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
-        applied(connection, [{"a.md": ("", "a", "one " * 50), "b.md": ("", "b", "two " * 300)}, {"b.md": None}])
+        keeping = Batches(merging=Policy(dead_share=0.99))
+        applied(
+            connection, [{"a.md": ("", "a", "one " * 50), "b.md": ("", "b", "two " * 300)}, {"b.md": None}], keeping
+        )
         with reading(connection) as transaction:
             tokens = totals(transaction).tokens
-        applied(connection, [{"c.md": ("", "c", "three")}])
+            (live,) = rows(transaction, Sized, "SELECT sum(chunks - dead), 0 FROM keyword_segments")
+            assert rows(transaction, Sized, "SELECT sum(chunks), sum(dead) FROM keyword_segments")[0].dead > 0
+        applied(connection, [{"c.md": ("", "c", "three")}], Batches(merging=Policy(dead_share=0.99)))
         with reading(connection) as transaction:
             made = rows(transaction, Average, "SELECT chunks, tokens, average FROM keyword_segments ORDER BY first")
-        live = made[0].chunks - 1
-        assert made[-1].average == pytest.approx((tokens + made[-1].tokens) / (live + made[-1].chunks))
+        assert made[-1].average == pytest.approx((tokens + made[-1].tokens) / (live.chunks + made[-1].chunks))
+
+
+MERGING = Batches(chunks_a_segment=2, documents_a_forget=1, postings_a_merge=3, merging=Policy(factor=2, floor=1))
+
+
+class Sized(NamedTuple):
+    chunks: int
+    dead: int
+
+
+def settled(connection: Connection, policy: Policy) -> list[Sized]:
+    with reading(connection) as transaction:
+        held = rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments ORDER BY first")
+    assert merges([Held(each.chunks, each.dead) for each in held], policy) == ()
+    return held
+
+
+@settings(max_examples=30, deadline=None)
+@given(rounds, st.sampled_from([SMALL, Shape()]))
+def test_segments_merged_as_they_come_index_what_fts5_makes_of_the_live_chunks(each: list[Round], shape: Shape) -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, shape) as connection:
+        applied(connection, each, MERGING)
+        checked(connection)
+        settled(connection, MERGING.merging)
+
+
+def test_one_chunk_written_at_a_time_merges_like_a_binary_counter() -> None:
+    batches = Batches(merging=Policy(factor=2, floor=1, span=0.0))
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        for n in range(8):
+            applied(connection, [{f"n{n}.md": ("", f"Note {n}", "one two")}], batches)
+        assert settled(connection, batches.merging) == [Sized(8, 0)]
+        applied(connection, [{"n0.md": None, "n1.md": None, "n2.md": None}], batches)
+        assert settled(connection, batches.merging) == [Sized(5, 0)]
+        checked(connection)
+
+
+def test_a_remake_merges_its_segments_as_it_goes() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [NOTES])
+        staled(connection)
+        remake_started(connection)
+        assert list(remade(connection, MERGING))[-1] == len(NOTES)
+        checked(connection)
+        settled(connection, MERGING.merging)
+
+
+PAIRS = Batches(merging=Policy(factor=2, floor=1, span=0.0))
+LONG: Round = {"a.md": ("", "a", "one two " * 5000)}
+
+
+@pytest.mark.parametrize(
+    "sql, problem",
+    [
+        ("DELETE FROM keyword_lengths", "lengths of some chunks are missing"),
+        ("DELETE FROM chunks WHERE id = (SELECT min(id) FROM chunks)", "chunks the store does not"),
+    ],
+)
+def test_segments_damaged_before_they_merge_are_damage(sql: str, problem: str) -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{"a.md": ("", "a", "one two")}], PAIRS)
+        with writing(connection) as transaction:
+            run(transaction, sql)
+        with pytest.raises(DamagedError, match=problem):
+            applied(connection, [{"b.md": ("", "b", "three")}], PAIRS)
+
+
+def test_a_segment_to_rewrite_whose_chunks_are_all_gone_is_damage() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [LONG])
+        with writing(connection) as transaction:
+            run(transaction, "DELETE FROM chunks")
+            run(transaction, "UPDATE keyword_segments SET dead = chunks - 1")
+        with pytest.raises(DamagedError, match="hold no chunk the store holds"):
+            applied(connection, [{}])
+
+
+def test_a_term_only_dead_chunks_held_is_gone_after_a_merge() -> None:
+    batches = Batches(postings_a_merge=1, merging=Policy(factor=2, floor=1, span=0.0, dead_share=0.99))
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        common: Content = ("", "c", "common")
+        applied(connection, [{"a.md": ("", "a", "solo"), "b.md": common, "c.md": common}, {"a.md": None}], batches)
+        applied(connection, [{"d.md": common, "e.md": common}], batches)
+        assert settled(connection, batches.merging) == [Sized(4, 0)]
+        with reading(connection) as transaction:
+            assert rows(transaction, Term, "SELECT term FROM keyword_postings WHERE term = 'solo'") == []
+        checked(connection)

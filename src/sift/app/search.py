@@ -1,3 +1,5 @@
+import math
+import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack, closing
 from dataclasses import dataclass, field
@@ -12,15 +14,29 @@ from sift.domain.query.expressions import NOTHING, Expression
 from sift.domain.query.grammar import parsed, relaxed
 from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Opened, opened
-from sift.retrieval.keyword.search import Found, Prepared, found_in, prepared, query_of, searched
+from sift.retrieval.keyword.search import (
+    TUNING,
+    Expired,
+    Found,
+    Prepared,
+    found_in,
+    never,
+    prepared,
+    query_of,
+    searched,
+)
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
 from sift.storage.documents import passages, texts
 from sift.storage.keywords import REMAKE_REMEDY, current
 from sift.storage.store import open_store, unavailable_if_damaged
 
+BUDGET_REMEDY = "give the seconds the search may take, e.g. --budget 0.5"
 FEW_REMEDY = "ask for one result or more, e.g. -k 10"
 MANY_REMEDY = f"ask for {MOST_HITS:,} results at most, and narrow the query to reach the rest"
+
+
+type Clock = Callable[[], float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +51,13 @@ class Asked:
     request: SearchKeywords
     expression: Expression
     looser: Expression | None
+    expired: Expired
+
+
+@dataclass(frozen=True, slots=True)
+class Ranked:
+    found: tuple[Found, ...]
+    cut: bool
 
 
 @dataclass(slots=True)
@@ -91,7 +114,7 @@ def _opened(cleanup: ExitStack, collections: Sequence[Collection]) -> Kept:
     return kept
 
 
-def _found(kept: Kept, expression: Expression, k: int, *, by_document: bool) -> tuple[Found, ...] | None:
+def _found(kept: Kept, asked: Asked, expression: Expression) -> Ranked | None:
     ready: list[tuple[Searching, Prepared]] = []
     for one in list(kept.searching):
         held = kept.guarded(one, partial(prepared, one.store, expression))
@@ -100,23 +123,21 @@ def _found(kept: Kept, expression: Expression, k: int, *, by_document: bool) -> 
         ready.append((one, held))
     query = query_of(expression, [held for _, held in ready])
     if query is None:
-        return ()
-    best = Best(k, by_document)
+        return Ranked((), cut=False)
+    best, cut = Best(asked.request.k, not asked.request.all_passages), False
     for one, held in ready:
-        after = kept.guarded(one, partial(searched, held, query, best))
+        after = kept.guarded(one, partial(searched, held, query, best, TUNING, asked.expired))
         if after is None:
             return None
-        best = after
-    return found_in(best)
+        best, cut = after.best, cut or after.cut
+    return Ranked(found_in(best), cut)
 
 
-def _searched(kept: Kept, asked: Asked) -> tuple[Found, ...] | None:
-    by_document = not asked.request.all_passages
-    k = asked.request.k
-    found = () if asked.expression == NOTHING else _found(kept, asked.expression, k, by_document=by_document)
-    if found is None or found or asked.looser is None:
+def _searched(kept: Kept, asked: Asked) -> Ranked | None:
+    found = Ranked((), cut=False) if asked.expression == NOTHING else _found(kept, asked, asked.expression)
+    if found is None or found.found or asked.looser is None:
         return found
-    return _found(kept, asked.looser, k, by_document=by_document)
+    return _found(kept, asked, asked.looser)
 
 
 def _read(one: Searching, chunks: Sequence[ChunkId], scores: Mapping[int, float], *, compact: bool) -> dict[int, Hit]:
@@ -146,30 +167,40 @@ def _hits(kept: Kept, found: Sequence[Found], *, compact: bool) -> list[tuple[in
     return [(each.chunk, shown[each.chunk]) for each in found]
 
 
-def _answered(kept: Kept, asked: Asked) -> list[tuple[int, Hit]]:
+def _answered(kept: Kept, asked: Asked) -> tuple[list[tuple[int, Hit]], bool]:
     while True:
-        found = _searched(kept, asked)
-        hits = None if found is None else _hits(kept, found, compact=asked.request.compact)
-        if hits is not None:
-            return hits
+        ranked = _searched(kept, asked)
+        hits = None if ranked is None else _hits(kept, ranked.found, compact=asked.request.compact)
+        if ranked is not None and hits is not None:
+            return hits, ranked.cut
 
 
-def _asked(request: SearchKeywords) -> Asked:
+def _expired(budget: float | None, clock: Clock) -> Expired:
+    if budget is None:
+        return never
+    if not math.isfinite(budget) or budget <= 0:
+        raise InvalidRequestError(f"--budget {budget} leaves no time to search", BUDGET_REMEDY)
+    until = clock() + budget
+    return lambda: clock() > until
+
+
+def _asked(request: SearchKeywords, clock: Clock) -> Asked:
     if request.k < 1:
         raise InvalidRequestError(f"-k {request.k:,} asks for no result", FEW_REMEDY)
     if request.k > MOST_HITS:
         raise InvalidRequestError(f"-k {request.k:,} asks for more than {MOST_HITS:,} results", MANY_REMEDY)
-    return Asked(request, parsed(request.query), relaxed(request.query))
+    expired = _expired(request.budget, clock)
+    return Asked(request, parsed(request.query), relaxed(request.query), expired)
 
 
-def search(home: Path, request: SearchKeywords) -> SearchResult:
-    asked = _asked(request)
+def search(home: Path, request: SearchKeywords, clock: Clock = time.perf_counter) -> SearchResult:
+    asked = _asked(request, clock)
     collections = _collections(home, request.collection)
     with ExitStack() as cleanup:
         kept = _opened(cleanup, collections)
-        answered = _answered(kept, asked)
+        answered, cut = _answered(kept, asked)
         for one in list(kept.searching):
             kept.guarded(one, one.resources.close)
         live = {one.collection.id for one in kept.searching}
     hits = tuple(hit for chunk, hit in answered if owner(chunk) in live)
-    return SearchResult(hits, len(kept.searching), tuple(kept.unsearched))
+    return SearchResult(hits, len(kept.searching), tuple(kept.unsearched), partial=cut)

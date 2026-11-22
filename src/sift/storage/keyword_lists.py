@@ -58,7 +58,7 @@ class LengthsRow(NamedTuple):
 
 
 def segments(transaction: Reading) -> list[SegmentRow]:
-    sql = "SELECT id, first, last, chunks, tokens, average FROM keyword_segments ORDER BY id"
+    sql = "SELECT id, first, last, chunks, tokens, average FROM keyword_segments ORDER BY first"
     return rows(transaction, SegmentRow, sql)
 
 

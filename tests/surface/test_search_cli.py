@@ -53,6 +53,7 @@ def test_search_answers_in_json_when_asked(settings: Settings, notes: Path) -> N
         ],
         "searched": 1,
         "unsearched": [],
+        "partial": False,
     }
 
 
@@ -89,3 +90,10 @@ def test_k_is_a_whole_number(settings: Settings) -> None:
     code, out, err = ran(settings, "search", "x", "-k", "many")
     assert (code, out) == (2, "")
     assert "'many' is no whole number" in err
+
+
+def test_a_budget_of_no_time_is_refused(settings: Settings, notes: Path) -> None:
+    searched_notes(settings, notes)
+    code, out, err = ran(settings, "search", "brush", "--budget", "0")
+    assert (code, out) == (1, "")
+    assert "--budget 0.0 leaves no time to search" in err

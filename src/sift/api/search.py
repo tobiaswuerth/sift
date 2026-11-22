@@ -10,6 +10,12 @@ QUERY = (
 )
 
 
+BUDGET = (
+    "seconds the search may take, roughly: once they are spent and anything is found, the best found so far, "
+    "marked partial (default: no limit)"
+)
+
+
 @dataclass(frozen=True, slots=True)
 class SearchKeywords:
     query: Annotated[str, Help(QUERY)]
@@ -19,6 +25,7 @@ class SearchKeywords:
     )
     all_passages: Annotated[bool, Help("every passage that matches, not only each document's best")] = False
     compact: Annotated[bool, Help("leave out the text of each passage")] = False
+    budget: Annotated[float | None, Help(BUDGET)] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,3 +49,4 @@ class SearchResult:
     hits: tuple[Hit, ...]
     searched: int
     unsearched: tuple[Unsearched, ...]
+    partial: bool = False

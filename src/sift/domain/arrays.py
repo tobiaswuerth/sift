@@ -52,6 +52,17 @@ def maxima_at(values: Scores, starts: Ids) -> Scores:
     return cast("Scores", np.maximum.reduceat(values, starts))
 
 
+def among(values: Ids, ascending: Ids) -> Mask:
+    if not len(ascending):
+        return np.zeros(len(values), np.bool_)
+    at = np.minimum(np.searchsorted(ascending, values), len(ascending) - 1)
+    return cast("Mask", ascending[at] == values)
+
+
+def distinct(ascending: Ids) -> Ids:
+    return ascending[firsts(ascending)]
+
+
 def either(masks: list[Mask]) -> Mask:
     return cast("Mask", np.logical_or.reduce(masks))
 

@@ -1,5 +1,5 @@
 import sqlite3
-from collections.abc import Generator, Iterable, Mapping, Sequence
+from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePath
@@ -7,12 +7,14 @@ from typing import NamedTuple, cast
 from urllib.parse import quote
 
 from sift.api.errors import StoreUnavailableError
+from sift.domain.plan.segments import POLICY, Policy
 
 BUSY_TIMEOUT_SECONDS = 30
 WAL_LIMIT_BYTES = 64 << 20
 CACHE_KIBIBYTES = 256 << 10
 DAMAGED = frozenset({sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB})
 MINIMUM_SQLITE = (3, 37, 0)
+STREAMED = 10_000
 SETTINGS = (
     "PRAGMA journal_mode = WAL",
     f"PRAGMA journal_size_limit = {WAL_LIMIT_BYTES}",
@@ -39,6 +41,8 @@ class Writing(Reading):
 class Batches:
     chunks_a_segment: int = 50_000
     documents_a_forget: int = 1_000
+    postings_a_merge: int = 2_000_000
+    merging: Policy = POLICY
 
 
 BATCHES = Batches()
@@ -124,6 +128,14 @@ def writing(connection: sqlite3.Connection) -> Generator[Writing]:
 def rows[R: NamedTuple](transaction: Reading, shape: type[R], sql: str, parameters: Parameters = ()) -> list[R]:
     fetched = cast("list[tuple[object, ...]]", transaction.connection.execute(sql, parameters).fetchall())
     return [shape._make(row) for row in fetched]
+
+
+def streamed[R: NamedTuple](
+    transaction: Reading, shape: type[R], sql: str, parameters: Parameters = (), size: int = STREAMED
+) -> Iterator[R]:
+    cursor = transaction.connection.execute(sql, parameters)
+    while fetched := cast("list[tuple[object, ...]]", cursor.fetchmany(size)):
+        yield from (shape._make(row) for row in fetched)
 
 
 def first[R: NamedTuple](transaction: Reading, shape: type[R], sql: str, parameters: Parameters = ()) -> R | None:

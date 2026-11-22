@@ -163,7 +163,11 @@ def blocked_all(each: Sequence[bytes]) -> tuple[Ids, Ids, list[int]]:
 
 
 def positions_of(data: bytes, counts: Ids) -> Ids:
-    gaps = numbers(_unwrapped(data))
+    return positions_all([data], counts)
+
+
+def positions_all(each: Sequence[bytes], counts: Ids) -> Ids:
+    gaps = numbers(b"".join(map(_unwrapped, each)))
     _sound(holds=len(gaps) == total(counts), problem="a list holds positions other than its counts")
     summed = np.cumsum(gaps)
     starts = np.cumsum(counts) - counts

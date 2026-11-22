@@ -2,7 +2,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from sift.domain.arrays import Ids, largest, run_starts, sums_at
+from sift.domain.arrays import Ids, among, largest, run_starts, sums_at
 
 MOST_KEY = 1 << 62
 
@@ -19,14 +19,14 @@ def merged(places: Ids, counts: Ids) -> tuple[Ids, Ids]:
 def _keys(candidates: Ids, held: Occurrences, shift: int, stride: int) -> Ids:
     places, counts, positions = held
     each = np.repeat(places, counts)
-    kept = (positions >= shift) & np.isin(each, candidates)
+    kept = (positions >= shift) & among(each, candidates)
     return np.searchsorted(candidates, each[kept]) * stride + positions[kept] - shift
 
 
 def _counted(candidates: Ids, tokens: Sequence[Occurrences], stride: int) -> Ids:
     found = _keys(candidates, tokens[0], 0, stride)
     for shift, held in enumerate(tokens[1:], 1):
-        found = found[np.isin(found, _keys(candidates, held, shift, stride))]
+        found = found[among(found, np.sort(_keys(candidates, held, shift, stride)))]
     return np.bincount(found // stride, minlength=len(candidates)).astype(np.int64)
 
 

@@ -12,21 +12,25 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from sift.domain.arrays import last
+from sift.api.errors import InvalidRequestError
+from sift.domain.arrays import floats, ints, last
 from sift.domain.codec.postings import encoded, ranged
 from sift.domain.codec.segments import Shape
 from sift.domain.errors import DamagedError
+from sift.domain.plan.segments import Policy
 from sift.domain.query.expressions import NOTHING, And, Expression, Leaf, Not, Or, Phrase, Prefix, Term
 from sift.domain.query.grammar import parsed
+from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Opened, Ranged, opened, stored
-from sift.retrieval.keyword.search import Found, Tuning, search
-from sift.storage.database import Connection, reading
+from sift.retrieval.keyword.search import Found, Tuning, prepared, query_of, search, searched
+from sift.storage.database import BATCHES, Batches, Connection, reading
 from tests.keyword_stores import COLUMNS, SMALL, Content, Round, applied, instances, opened_store, texts
 
 VOCABULARY = [f"w{n}" for n in range(30)] + ["Müller"]
 SEEDS = st.integers(0, 2**32 - 1)
 TERMS = [f"w{n}" for n in range(30)] + ["muller", "absent"]
 FTS5_K1, FTS5_B = 1.2, 0.75
+MERGING = Batches(chunks_a_segment=9, postings_a_merge=40, merging=Policy(factor=2, floor=1))
 type Chunks = dict[int, tuple[int, list[list[str]]]]
 
 
@@ -179,26 +183,26 @@ def phrases_in(stores: Sequence[Chunks]) -> list[tuple[str, ...]]:
 
 @contextlib.contextmanager
 def collections(
-    rounds: Sequence[Sequence[Round]], shape: Shape = SMALL
+    rounds: Sequence[Sequence[Round]], shape: Shape = SMALL, batches: Batches = BATCHES
 ) -> Generator[tuple[list[Opened], list[Chunks]]]:
     with tempfile.TemporaryDirectory() as folder, contextlib.ExitStack() as stack:
         stores: list[Opened] = []
         held: list[Chunks] = []
         for number, each in enumerate(rounds, 2):
             connection = stack.enter_context(opened_store(Path(folder), number, shape))
-            applied(connection, list(each))
+            applied(connection, list(each), batches)
             held.append(chunks_of(connection))
             stores.append(opened(stack.enter_context(reading(connection))))
         yield stores, held
 
 
 @settings(max_examples=6)
-@given(seed=SEEDS, shape=st.sampled_from([SMALL, Shape()]))
-def test_finds_what_scoring_every_chunk_finds(seed: int, shape: Shape) -> None:
+@given(seed=SEEDS, shape=st.sampled_from([SMALL, Shape()]), batches=st.sampled_from([BATCHES, MERGING]))
+def test_finds_what_scoring_every_chunk_finds(seed: int, shape: Shape, batches: Batches) -> None:
     rng = Draws(np.random.default_rng(seed))
     gone: Round = {f"n{n:03}.md": None for n in range(0, 60, 7)}
     rounds = [prose(rng, 60), prose(rng, 50, "m"), gone, prose(rng, 8)]
-    with collections([rounds], shape) as (stores, held):
+    with collections([rounds], shape, batches) as (stores, held):
         phrases = phrases_in(held)
         for _ in range(30):
             expression, k = random_expression(rng, phrases), rng.choice([1, 3, 10, 50])
@@ -316,3 +320,64 @@ def test_ranges_outside_their_segment_are_damage(place: int) -> None:
         store.transaction.connection.execute("UPDATE keyword_postings SET ranges = ? WHERE ranges IS NOT NULL", (far,))
         with pytest.raises(DamagedError, match="outside its segment"):
             search(stores, Term("w0"), 10)
+
+
+@settings(max_examples=1)
+@given(seed=SEEDS)
+def test_a_search_out_of_time_returns_the_best_it_found_scored_exactly(seed: int) -> None:
+    rng = Draws(np.random.default_rng(seed))
+    with collections([[prose(rng, 300)]]) as (stores, _):
+        (store,) = stores
+        held = prepared(store, Term("w0"))
+        query = query_of(Term("w0"), [held])
+        assert query is not None
+        exact = searched(held, query, Best(50), Tuning(first_batch=1))
+        cut = searched(held, query, Best(50), Tuning(first_batch=1), expired=lambda: True)
+        assert (exact.cut, cut.cut) == (False, True)
+        assert 0 < len(cut.best.chunks) <= len(exact.best.chunks)
+        scores = dict(zip(ints(exact.best.chunks), floats(exact.best.scores), strict=True))
+        everything = {each.chunk: each.score for each in search(stores, Term("w0"), 10_000)}
+        assert all(
+            everything[chunk] == score
+            for chunk, score in zip(ints(cut.best.chunks), floats(cut.best.scores), strict=True)
+        )
+        assert scores == {chunk: everything[chunk] for chunk in scores}
+
+
+def test_a_prefix_of_words_in_more_passages_than_a_search_reads_is_refused() -> None:
+    with collections([[prose(Draws(np.random.default_rng(7)), 40)]]) as (stores, _):
+        assert search(stores, Prefix("w1"), 10, tuning=Tuning(most_prefix=10**6))
+        refusal = r"w1\* stands for \d+ words in [\d,]+ passages"
+        with pytest.raises(InvalidRequestError, match=refusal) as refused:
+            search(stores, Prefix("w1"), 10, tuning=Tuning(most_prefix=5))
+        assert refused.value.remedy == "write more of the word before the *"
+
+
+def test_a_segment_rewritten_after_a_later_one_is_still_found_in_chunk_order() -> None:
+    first: Round = {f"a{n}.md": ("", "A", "w1 w2 " * (n + 1)) for n in range(3)}
+    later: Round = {f"b{n}.md": ("", "B", "w1 w3 " * (n + 1)) for n in range(3)}
+    gone: Round = {"a0.md": None, "a1.md": None}
+    with collections([[first, later, gone]], SMALL, Batches(merging=Policy(dead_share=0.3))) as (stores, held):
+        (store,) = stores
+        assert [segment.first for segment in store.segments] == sorted(segment.first for segment in store.segments)
+        assert [segment.id for segment in store.segments] != sorted(segment.id for segment in store.segments)
+        for expression in (Term("w1"), Term("w2"), Term("w3")):
+            same(search(stores, expression, 10), brute(held, expression, 30, by_document=True), 10, expression)
+
+
+def test_segments_that_overlap_are_damage() -> None:
+    with collections([[{"a.md": ("", "A", "w1")}, {"b.md": ("", "B", "w1")}]]) as (stores, _):
+        connection = stores[0].transaction.connection
+        connection.execute(
+            "UPDATE keyword_segments SET last = last + 1 WHERE first = (SELECT min(first) FROM keyword_segments)"
+        )
+        with pytest.raises(DamagedError, match="overlap"):
+            opened(stores[0].transaction)
+
+
+def test_postings_outside_their_segment_are_damage() -> None:
+    with collections([[{"a.md": ("", "A", "w1 w2 " * 3000)}]], Shape()) as (stores, _):
+        connection = stores[0].transaction.connection
+        connection.execute("UPDATE keyword_segments SET last = first")
+        with pytest.raises(DamagedError, match="outside its segments"):
+            search([opened(stores[0].transaction)], Term("w1"), 10)

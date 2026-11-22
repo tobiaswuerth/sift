@@ -12,7 +12,8 @@ from sift.api.collections import (
 from sift.api.documents import Documents, DocumentText, Unfound
 from sift.api.errors import NotFoundError, StoreUnavailableError
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
-from sift.interfaces.cli.shown import Shown, added, documents, failure, indexed, status
+from sift.api.search import Hit, SearchResult
+from sift.interfaces.cli.shown import Shown, added, documents, failure, hits, indexed, status
 from sift.interfaces.console.style import PLAIN, Style
 
 ADDED = CollectionAdded(
@@ -143,3 +144,11 @@ def test_a_failure_says_what_failed_and_how_to_fix_it() -> None:
     assert failure(OSError(28, "No space left on device"), PLAIN) == Shown(
         (), ("error  [Errno 28] No space left on device",), failed=True
     )
+
+
+def test_a_partial_search_says_better_matches_may_be_missing() -> None:
+    found = SearchResult((Hit("notes/a.md", "A", "1-2", 1.5, None),), 1, (), partial=True)
+    dot = "  \N{MIDDLE DOT}  "
+    said = dot.join(("1 result", "keyword", "partial: better matches may be missing", "1 collection", "0.2 s"))
+    assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
+    assert "partial" not in hits(dataclasses.replace(found, partial=False), 0.25, "linux", PLAIN).messages[0]

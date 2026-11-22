@@ -60,6 +60,16 @@ class Postings:
 
 
 @dataclass(frozen=True, slots=True)
+class Lists:
+    terms: tuple[str, ...]
+    starts: tuple[int, ...]
+    ids: Ids
+    counts: Ids
+    positions: Ids
+    lengths: Ids
+
+
+@dataclass(frozen=True, slots=True)
 class Segment:
     first: int
     last: int
@@ -100,6 +110,22 @@ def _coded(streams: Sequence[Sequence[str]]) -> tuple[list[str], Ids, Ids, Ids]:
     return list(vocabulary), codes, owners, places
 
 
+def postings_of(lists: Lists, average: float, shape: Shape = SHAPE) -> tuple[Postings, ...]:
+    end = len(lists.ids)
+    coded = encoded(lists.ids, lists.counts, lists.positions, _cuts(list(lists.starts), end, shape))
+    parts = iter(zip(coded.postings, coded.positions, strict=True))
+    written: list[Postings] = []
+    for term, (start, stop) in zip(lists.terms, itertools.pairwise([*lists.starts, end]), strict=True):
+        if stop - start < shape.long:
+            held: Short | Long = Short(*next(parts))
+        else:
+            blocks = tuple(Short(*next(parts)) for _ in range(start, stop, shape.block))
+            here = slice(start, stop)
+            held = Long(_ranges(lists.ids[here], lists.counts[here], lists.lengths[here], average, shape), blocks)
+        written.append(Postings(term, stop - start, held))
+    return tuple(written)
+
+
 def segment(ids: Ids, streams: Sequence[Sequence[str]], average: float, shape: Shape = SHAPE) -> Segment:
     names, codes, owners, places = _coded(streams)
     kept = codes.astype(np.bool_)
@@ -109,18 +135,9 @@ def segment(ids: Ids, streams: Sequence[Sequence[str]], average: float, shape: S
     posting_starts = run_starts(codes * len(streams) + owners)
     counts = np.diff(np.append(posting_starts, len(codes)))
     terms, holders = codes[posting_starts], owners[posting_starts]
-    chunk_ids, term_names, term_starts = ids[holders], ints(terms), ints(run_starts(terms))
-    cuts = _cuts(term_starts, len(term_names), shape)
-    lists = encoded(chunk_ids, counts, places, cuts)
-    parts = iter(zip(lists.postings, lists.positions, strict=True))
-    written: list[Postings] = []
-    for start, end in itertools.pairwise([*term_starts, len(term_names)]):
-        if end - start < shape.long:
-            held: Short | Long = Short(*next(parts))
-        else:
-            blocks = tuple(Short(*next(parts)) for _ in range(start, end, shape.block))
-            here = slice(start, end)
-            held = Long(_ranges(chunk_ids[here], counts[here], lengths[holders[here]], average, shape), blocks)
-        written.append(Postings(names[term_names[start]], end - start, held))
+    term_starts = ints(run_starts(terms))
+    named = tuple(names[code] for code in ints(terms[term_starts]))
+    lists = Lists(named, tuple(term_starts), ids[holders], counts, places, lengths[holders])
+    written = postings_of(lists, average, shape)
     lengths_written = with_lengths(ids, lengths, shape.lengths_shift)
-    return Segment(first(ids), last(ids), len(ids), total(lengths), average, tuple(written), lengths_written)
+    return Segment(first(ids), last(ids), len(ids), total(lengths), average, written, lengths_written)

@@ -66,7 +66,7 @@ def test_each_argument_says_what_it_is_for() -> None:
 
 @dataclass(frozen=True, slots=True)
 class Ratio:
-    ratio: Annotated[float, Help("a share")]
+    ratio: Annotated[complex, Help("a share")]
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,7 +110,7 @@ class FilledList:
         (int, "int is no dataclass"),
         (Numbers, r"Numbers.values: the command line takes no tuple\[int, \.\.\.\]"),
         (FilledList, r"FilledList.names: a list given by place has no default but \(\)"),
-        (Ratio, "Ratio.ratio: the command line takes no float"),
+        (Ratio, "Ratio.ratio: the command line takes no complex"),
         (Either, r"Either.value: the command line takes no str \| int"),
         (ShortPosition, "ShortPosition.name: only an option given by name has a short flag"),
         (Undescribed, "Undescribed.name: no Help"),
@@ -140,6 +140,24 @@ def test_a_field_with_a_value_for_default_is_an_option_and_may_have_a_short_flag
 def test_a_number_written_other_than_in_digits_alone_is_refused(written: str) -> None:
     with pytest.raises(argparse.ArgumentError, match="is no whole number: write up to 18 digits alone"):
         parsed(Counted, ["x", f"--k={written}"])
+
+
+@dataclass(frozen=True, slots=True)
+class Timed:
+    query: Annotated[str, Help("what to find")]
+    budget: Annotated[float | None, Help("seconds")] = None
+
+
+def test_a_decimal_option_takes_digits_with_a_point() -> None:
+    assert parsed(Timed, ["x"]).budget is None
+    assert parsed(Timed, ["x", "--budget", "0.25"]).budget == 0.25
+    assert parsed(Timed, ["x", "--budget=-3"]).budget == -3.0
+
+
+@pytest.mark.parametrize("written", ["1e3", "nan", "inf", ".5", "1.", "0x1", "1_0.5", ""])
+def test_a_decimal_written_otherwise_is_refused(written: str) -> None:
+    with pytest.raises(argparse.ArgumentError, match="is no number"):
+        parsed(Timed, ["x", f"--budget={written}"])
 
 
 def test_a_whole_number_may_be_negative_and_have_18_digits() -> None:

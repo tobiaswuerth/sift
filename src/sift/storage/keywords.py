@@ -12,7 +12,7 @@ import numpy as np
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, DocumentId, first_row
 from sift.domain.arrays import ints
-from sift.domain.codec.segments import FORMAT, GAP, SHAPE, Long, Segment, Shape, segment, stream
+from sift.domain.codec.segments import FORMAT, GAP, SHAPE, Segment, Shape, segment, stream
 from sift.domain.errors import DamagedError
 from sift.domain.text.tokens import TABLE_DIGEST, tokens
 from sift.storage.database import (
@@ -28,6 +28,8 @@ from sift.storage.database import (
     run_each,
     writing,
 )
+from sift.storage.keyword_merges import settled
+from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
 
 SHAPE_KEY, THROUGH_KEY, FINGERPRINT_KEY = "keyword_shape", "keywords_through", "keyword_fingerprint"
 DOCUMENTS = "SELECT id, title, meta, text FROM keyword_documents WHERE id IN (SELECT value FROM json_each(?))"
@@ -59,10 +61,6 @@ class Held(NamedTuple):
     title: str
     meta: str | None
     text: str
-
-
-class Identity(NamedTuple):
-    id: int
 
 
 class Totals(NamedTuple):
@@ -155,39 +153,10 @@ def _streams(transaction: Reading, spans: Sequence[Span]) -> list[list[str]]:
 
 
 def _added(transaction: Writing, written: Segment) -> None:
-    (made,) = rows(
-        transaction,
-        Identity,
-        """INSERT INTO keyword_segments(first, last, chunks, dead, tokens, average)
-           VALUES (?, ?, ?, 0, ?, ?) RETURNING id""",
-        (written.first, written.last, written.chunks, written.tokens, written.average),
-    )
-    identity = made.id
-    run_each(
-        transaction,
-        "INSERT INTO keyword_postings(segment, term, chunks, postings, positions, ranges) VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            (identity, p.term, p.chunks, None, None, p.held.ranges)
-            if isinstance(p.held, Long)
-            else (identity, p.term, p.chunks, p.held.postings, p.held.positions, None)
-            for p in written.postings
-        ],
-    )
-    run_each(
-        transaction,
-        "INSERT INTO keyword_blocks(segment, term, number, postings, positions) VALUES (?, ?, ?, ?, ?)",
-        [
-            (identity, p.term, number, part.postings, part.positions)
-            for p in written.postings
-            if isinstance(p.held, Long)
-            for number, part in enumerate(p.held.blocks)
-        ],
-    )
-    run_each(
-        transaction,
-        "INSERT INTO keyword_lengths(segment, block, lengths) VALUES (?, ?, ?)",
-        [(identity, block, data) for block, data in written.lengths.items()],
-    )
+    head = Head(written.first, written.last, written.chunks, written.tokens, written.average)
+    made = segment_added(transaction, head)
+    postings_added(transaction, made, written.postings)
+    lengths_added(transaction, made, written.lengths)
 
 
 def _counted(transaction: Writing, added: Iterable[tuple[str, int]], tokens_added: int) -> None:
@@ -233,6 +202,7 @@ def index_new(transaction: WritingDocuments) -> None:
     shape = shape_of(transaction)
     while _index_new(transaction, shape):
         pass
+    settled(transaction, shape)
 
 
 def _dead_by_segment(transaction: Writing, dead: Sequence[int]) -> list[tuple[int, int]]:
@@ -315,7 +285,9 @@ def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
             made = fingerprint(transaction)
             if _meta(transaction, FINGERPRINT_KEY) != REMAKING + made:
                 raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
-            done += _index_new(WritingDocuments(connection, batches), shape_of(transaction))
+            held, shape = WritingDocuments(connection, batches), shape_of(transaction)
+            done += _index_new(held, shape)
+            settled(held, shape)
             whole = _done_if_whole(transaction, made)
         yield done
 

@@ -11,8 +11,9 @@ from sift.api.described import Help, Place, Short
 
 type Placed = Callable[[str], str]
 
-PLAIN_KINDS = (str, int)
+PLAIN_KINDS = (str, int, float)
 WHOLE_NUMBER = re.compile("-?[0-9]{1,18}")
+DECIMAL = re.compile("-?[0-9]{1,9}([.][0-9]{1,9})?")
 
 
 class How(Enum):
@@ -118,10 +119,16 @@ def _whole(written: str) -> int:
     return int(written)
 
 
+def _decimal(written: str) -> float:
+    if DECIMAL.fullmatch(written) is None:
+        raise argparse.ArgumentTypeError(f"{written!r} is no number: write digits with a point if need be, e.g. 0.5")
+    return float(written)
+
+
 def _converter(argument: Argument, place: Placed) -> Callable[[str], object]:
     if argument.place:
         return place
-    return _whole if argument.kind is int else str
+    return _whole if argument.kind is int else _decimal if argument.kind is float else str
 
 
 def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placed) -> None:
