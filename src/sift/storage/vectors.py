@@ -5,39 +5,63 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sift.api.errors import StoreUnavailableError
-from sift.domain.arrays import Ids, ints
-from sift.domain.codec.codes import Bits, codes, width_of
+from sift.domain.arrays import Ids, among, ascending, ints
+from sift.domain.codec.codes import MOST_BITS, Bits, code_bytes, codes, width_of
 from sift.domain.errors import DamagedError
-from sift.storage.database import Reading, Writing, rows, run, run_each, streamed
+from sift.storage.database import Reading, Writing, batches, first, rows, run, run_each
 
 type Halves = NDArray[np.float16]
 
 MODEL_KEY, WIDTH_KEY = "vector_model", "vector_width"
-PENDING = """SELECT c.id, d.title, substr(d.text, c.start + 1, c.length),
+PENDING = """SELECT c.id, c.document, c.start, c.length,
                     c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document)
-             FROM chunks c JOIN documents d ON d.id = c.document
+             FROM chunks c
              WHERE c.id > ? AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)
              ORDER BY c.id LIMIT ?"""
+TEXTS = "SELECT id, title, text FROM documents WHERE id IN (SELECT value FROM json_each(?))"
+CODES = "SELECT chunk, bits FROM codes ORDER BY chunk"
+READ = 65_536
+MATRIX = 2
 EMBED_REMEDY = "run sift embed --reset to embed every collection with {model}"
+DAMAGED_CODES = "the store's codes do not match its vectors"
 
 
 class Pending(NamedTuple):
     chunk: int
     title: str
     text: str
+    first: bool
+
+
+class Kept(NamedTuple):
+    stored: int
+    broken: tuple[int, ...]
+
+
+class Waiting(NamedTuple):
+    chunk: int
+    document: int
+    start: int
+    length: int
     first: int
+
+
+class Text(NamedTuple):
+    id: int
+    title: str
+    text: str
 
 
 class Value(NamedTuple):
     value: str
 
 
-class Coded(NamedTuple):
+class CodeRow(NamedTuple):
     chunk: int
     bits: bytes
 
 
-class Stored(NamedTuple):
+class VectorRow(NamedTuple):
     chunk: int
     vector: bytes
 
@@ -50,47 +74,82 @@ class Chunk(NamedTuple):
     id: int
 
 
+def _meta(transaction: Reading, key: str) -> str | None:
+    found = first(transaction, Value, "SELECT value FROM meta WHERE key = ?", (key,))
+    return None if found is None else found.value
+
+
 def model_of(transaction: Reading) -> str | None:
-    found = rows(transaction, Value, "SELECT value FROM meta WHERE key = ?", (MODEL_KEY,))
-    return found[0].value if found else None
+    return _meta(transaction, MODEL_KEY)
 
 
-def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
-    return rows(transaction, Pending, PENDING, (after, most))
+def width_held(transaction: Reading) -> int | None:
+    found = _meta(transaction, WIDTH_KEY)
+    return None if found is None else int(found)
 
 
-def left(transaction: Reading) -> int:
-    (found,) = rows(transaction, Count, "SELECT max(chunks - vectors, 0) FROM counts")
+def changes(transaction: Reading) -> int:
+    (found,) = rows(transaction, Count, "SELECT vector_changes FROM counts")
     return found.n
 
 
-def _held(transaction: Writing, model: str, width: int) -> None:
-    found = model_of(transaction)
+def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
+    waiting = rows(transaction, Waiting, PENDING, (after, most))
+    wanted = json.dumps(sorted({each.document for each in waiting}))
+    texts = {held.id: held for held in rows(transaction, Text, TEXTS, (wanted,))}
+    return [
+        Pending(
+            each.chunk,
+            texts[each.document].title,
+            texts[each.document].text[each.start : each.start + each.length],
+            bool(each.first),
+        )
+        for each in waiting
+    ]
+
+
+def left(transaction: Reading) -> int:
+    (found,) = rows(transaction, Count, "SELECT chunks - vectors FROM counts")
+    return found.n
+
+
+def _checked(chunks: Ids, matrix: Halves) -> None:
+    if matrix.ndim != MATRIX or matrix.dtype != np.float16:
+        raise ValueError(f"vectors are kept as a 2-D float16 matrix, not {matrix.ndim}-D {matrix.dtype}: convert")
+    if len(chunks) != len(matrix):
+        raise ValueError(f"{len(chunks):,} chunks were given {len(matrix):,} vectors: give one vector a chunk")
+    if not 0 < width_of(matrix) <= MOST_BITS:
+        raise ValueError(f"vectors of {width_of(matrix):,} dimensions cannot be coded: from 1 to {MOST_BITS:,} can")
+
+
+def _refuse_another(transaction: Writing, model: str, width: int) -> None:
+    found, held = model_of(transaction), width_held(transaction)
     if found not in {None, model}:
         raise StoreUnavailableError(
             f"the store holds vectors of {found}, not of {model}", EMBED_REMEDY.format(model=model)
         )
-    run_each(
-        transaction,
-        "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-        [(MODEL_KEY, model), (WIDTH_KEY, str(width))],
-    )
-
-
-def put_vectors(transaction: Writing, chunks: Ids, matrix: Halves, model: str) -> int:
-    _held(transaction, model, width_of(matrix))
-    there = {
-        found.id
-        for found in rows(
-            transaction,
-            Chunk,
-            "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))",
-            (json.dumps(ints(chunks)),),
+    if held not in {None, width}:
+        raise StoreUnavailableError(
+            f"the store holds vectors of {held:,} dimensions, not of {width:,}", EMBED_REMEDY.format(model=model)
         )
-    }
+
+
+def put_vectors(transaction: Writing, chunks: Ids, matrix: Halves, model: str) -> Kept:
+    _checked(chunks, matrix)
+    _refuse_another(transaction, model, width_of(matrix))
+    wanted = json.dumps(ints(chunks))
+    sql = "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))"
+    there = among(
+        chunks, ascending(np.array([found.id for found in rows(transaction, Chunk, sql, (wanted,))], np.int64))
+    )
     intact = np.isfinite(matrix).all(axis=1)
-    keep = intact & np.array([chunk in there for chunk in ints(chunks)], np.bool_)
-    kept, rows_kept = ints(chunks[keep]), matrix[keep]
+    kept, rows_kept = ints(chunks[there & intact]), matrix[there & intact]
+    if kept:
+        run_each(
+            transaction,
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+            [(MODEL_KEY, model), (WIDTH_KEY, str(width_of(matrix)))],
+        )
     run_each(
         transaction,
         "INSERT INTO vectors(chunk, vector) VALUES (?, ?) ON CONFLICT(chunk) DO UPDATE SET vector = excluded.vector",
@@ -101,7 +160,7 @@ def put_vectors(transaction: Writing, chunks: Ids, matrix: Halves, model: str) -
         "INSERT OR REPLACE INTO codes(chunk, bits) VALUES (?, ?)",
         zip(kept, _rows(codes(rows_kept.astype(np.float32))), strict=True),
     )
-    return len(kept)
+    return Kept(len(kept), tuple(ints(chunks[there & ~intact])))
 
 
 def _rows(matrix: NDArray[np.generic]) -> list[bytes]:
@@ -115,24 +174,31 @@ def forget_vectors(transaction: Writing) -> None:
     run(transaction, "DELETE FROM meta WHERE key IN (?, ?)", (MODEL_KEY, WIDTH_KEY))
 
 
-def codes_of(transaction: Reading) -> tuple[Ids, Bits]:
-    found = list(streamed(transaction, Coded, "SELECT chunk, bits FROM codes ORDER BY chunk"))
-    ids = np.fromiter((row.chunk for row in found), np.int64, len(found))
-    width = len(found[0].bits) if found else 0
-    bits = np.frombuffer(b"".join(row.bits for row in found), np.uint8).reshape(len(found), width)
+def codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, Bits]:
+    (held,) = rows(transaction, Count, "SELECT vectors FROM counts")
+    size = code_bytes(width_held(transaction) or 0)
+    ids, bits = np.empty(held.n, np.int64), np.empty((held.n, size), np.uint8)
+    done = 0
+    for batch in batches(transaction, CodeRow, CODES, size=read):
+        if done + len(batch) > held.n or any(len(row.bits) != size for row in batch):
+            raise DamagedError(DAMAGED_CODES)
+        ids[done : done + len(batch)] = [row.chunk for row in batch]
+        bits[done : done + len(batch)] = np.frombuffer(b"".join(row.bits for row in batch), np.uint8).reshape(-1, size)
+        done += len(batch)
+    if done != held.n:
+        raise DamagedError(DAMAGED_CODES)
     return ids, bits
 
 
 def vectors_of(transaction: Reading, chunks: Ids) -> tuple[Ids, Halves]:
     found = rows(
         transaction,
-        Stored,
+        VectorRow,
         "SELECT chunk, vector FROM vectors WHERE chunk IN (SELECT value FROM json_each(?)) ORDER BY chunk",
         (json.dumps(ints(chunks)),),
     )
-    widths = {len(row.vector) for row in found}
-    if len(widths) > 1:
-        raise DamagedError("the store's vectors are not all of one width")
+    width = width_held(transaction) or 0
+    if any(len(row.vector) != 2 * width for row in found):
+        raise DamagedError(f"a vector of the store is not of its {width:,} dimensions")
     ids = np.fromiter((row.chunk for row in found), np.int64, len(found))
-    matrix = np.frombuffer(b"".join(row.vector for row in found), np.float16)
-    return ids, matrix.reshape(len(found), -1) if found else matrix.reshape(0, 0)
+    return ids, np.frombuffer(b"".join(row.vector for row in found), np.float16).reshape(len(found), width)

@@ -4,7 +4,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from sift.domain.arrays import Ids, floats, ints
+from sift.domain.arrays import Ids, ascending, distinct, floats, ints
 from sift.domain.codec.codes import Bits, Floats, Words, bit_scores, code_of, distances, words
 from sift.storage.vectors import Halves
 
@@ -19,6 +19,7 @@ class Coded:
     ids: Ids
     bits: Bits
     words: Words
+    width: int
 
 
 class Near(NamedTuple):
@@ -33,14 +34,13 @@ class Candidates:
     rows: Ids
 
 
-def coded(ids: Ids, bits: Bits) -> Coded:
-    return Coded(ids, bits, words(bits))
+def coded(ids: Ids, bits: Bits, width: int) -> Coded:
+    return Coded(ids, bits, words(bits), width)
 
 
 def _shortlist(held: Sequence[Coded], query: Floats, want: int) -> Candidates:
     asked = code_of(query)
-    measured = [distances(each.words, asked) for each in held]
-    found = np.concatenate([np.zeros(0, np.uint16), *measured])
+    found = np.concatenate([np.zeros(0, np.uint16), *(distances(each.words, asked) for each in held)])
     ids = np.concatenate([np.zeros(0, np.int64), *(each.ids for each in held)])
     owners = np.repeat(np.arange(len(held)), [len(each.ids) for each in held])
     rows = np.concatenate([np.zeros(0, np.int64), *(np.arange(len(each.ids)) for each in held)])
@@ -58,24 +58,31 @@ def _by_bits(held: Sequence[Coded], query: Floats, short: Candidates, want: int)
     scores = np.empty(len(short.ids), np.float32)
     for store, each in enumerate(held):
         mine = np.equal(short.owners, store)
-        scores[mine] = bit_scores(each.bits[short.rows[mine]], query)
+        if mine.any():
+            scores[mine] = bit_scores(each.bits[short.rows[mine]], query)
     best = np.lexsort((short.ids, -scores))[:want]
     return Candidates(short.ids[best], short.owners[best], short.rows[best])
 
 
+def _refuse(held: Sequence[Coded], query: Floats, k: int) -> None:
+    if k < 0:
+        raise ValueError(f"{k} nearest were asked for: ask for none or more")
+    if query.ndim != 1 or not bool(np.isfinite(query).all()):
+        raise ValueError("the query is not one vector of finite numbers: embed it again")
+    if any(len(each.ids) and each.width != len(query) for each in held):
+        raise ValueError(f"the query has {len(query):,} dimensions, unlike the vectors: embed it with their model")
+
+
 def nearest(held: Sequence[Coded], query: Floats, k: int, exact: Exact, rescore: int = RESCORE) -> tuple[Near, ...]:
-    if not sum(len(each.ids) for each in held):
-        return ()
+    _refuse(held, query, k)
     want = max(rescore, k)
     chosen = _by_bits(held, query, _shortlist(held, query, SHORTLIST * want), want)
-    found: list[Ids] = []
-    scored: list[Floats] = []
-    for store in range(len(held)):
+    found: list[Ids] = [np.zeros(0, np.int64)]
+    scored: list[Floats] = [np.zeros(0, np.float32)]
+    for store in ints(distinct(ascending(chosen.owners)).values):
         ids, rows = exact(store, np.sort(chosen.ids[chosen.owners == store]))
         found.append(ids)
         scored.append(rows.astype(np.float32) @ query if len(ids) else np.zeros(0, np.float32))
     ids, scores = np.concatenate(found), np.concatenate(scored)
-    intact = np.isfinite(scores)
-    ids, scores = ids[intact], scores[intact]
     order = np.lexsort((ids, -scores))[:k]
     return tuple(Near(chunk, score) for chunk, score in zip(ints(ids[order]), floats(scores[order]), strict=True))

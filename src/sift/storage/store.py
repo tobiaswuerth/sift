@@ -133,6 +133,7 @@ LAYOUT: tuple[Migration, ...] = (
     ),
     (
         "ALTER TABLE counts ADD COLUMN vectors INTEGER NOT NULL DEFAULT 0 CHECK (vectors >= 0)",
+        "ALTER TABLE counts ADD COLUMN vector_changes INTEGER NOT NULL DEFAULT 0",
         """CREATE TABLE vectors(
             chunk INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
             vector BLOB NOT NULL
@@ -142,9 +143,11 @@ LAYOUT: tuple[Migration, ...] = (
             bits BLOB NOT NULL
         ) STRICT""",
         """CREATE TRIGGER vectors_added AFTER INSERT ON vectors
-           BEGIN UPDATE counts SET vectors = vectors + 1; END""",
+           BEGIN UPDATE counts SET vectors = vectors + 1, vector_changes = vector_changes + 1; END""",
         """CREATE TRIGGER vectors_deleted AFTER DELETE ON vectors
-           BEGIN UPDATE counts SET vectors = vectors - 1; END""",
+           BEGIN UPDATE counts SET vectors = vectors - 1, vector_changes = vector_changes + 1; END""",
+        """CREATE TRIGGER vectors_replaced AFTER UPDATE OF vector ON vectors
+           BEGIN UPDATE counts SET vector_changes = vector_changes + 1; END""",
     ),
 )
 NUMBERED_TABLES = ("documents", "chunks")

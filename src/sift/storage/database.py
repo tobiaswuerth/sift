@@ -132,12 +132,19 @@ def rows[R: NamedTuple](transaction: Reading, shape: type[R], sql: str, paramete
     return [shape._make(row) for row in fetched]
 
 
+def batches[R: NamedTuple](
+    transaction: Reading, shape: type[R], sql: str, parameters: Parameters = (), size: int = STREAMED
+) -> Iterator[list[R]]:
+    cursor = transaction.connection.execute(sql, parameters)
+    while fetched := cast("list[tuple[object, ...]]", cursor.fetchmany(size)):
+        yield [shape._make(row) for row in fetched]
+
+
 def streamed[R: NamedTuple](
     transaction: Reading, shape: type[R], sql: str, parameters: Parameters = (), size: int = STREAMED
 ) -> Iterator[R]:
-    cursor = transaction.connection.execute(sql, parameters)
-    while fetched := cast("list[tuple[object, ...]]", cursor.fetchmany(size)):
-        yield from (shape._make(row) for row in fetched)
+    for batch in batches(transaction, shape, sql, parameters, size):
+        yield from batch
 
 
 def first[R: NamedTuple](transaction: Reading, shape: type[R], sql: str, parameters: Parameters = ()) -> R | None:

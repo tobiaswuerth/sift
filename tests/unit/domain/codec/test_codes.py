@@ -1,3 +1,4 @@
+import tracemalloc
 from typing import cast
 
 import numpy as np
@@ -45,3 +46,15 @@ def test_bits_are_scored_as_the_query_against_their_signs(matrix: Floats, data: 
 def test_codes_of_no_rows_are_none() -> None:
     assert codes(np.zeros((0, 8), np.float32)).shape == (0, 8)
     assert distances(np.zeros((0, 1), np.uint64), np.zeros(1, np.uint64)).shape == (0,)
+
+
+def test_distances_are_scanned_in_blocks_without_a_copy_of_the_codes() -> None:
+    rng = np.random.default_rng(5)
+    held = words(rng.integers(0, 256, size=(400_000, 16), dtype=np.uint8))
+    query = words(rng.integers(0, 256, size=(1, 16), dtype=np.uint8)).reshape(-1)
+    tracemalloc.start()
+    found = distances(held, query)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert ints(found) == ints(np.bitwise_count(held ^ query).sum(axis=1))
+    assert peak < held.nbytes / 1.5
