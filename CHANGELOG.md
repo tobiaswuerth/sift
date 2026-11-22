@@ -5,6 +5,17 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.15.2] - 2026-11-22
+
+The lowest cryptography sift installs with is 50. Nothing else changes, and nothing needs doing after the update.
+
+### Security
+
+- The lowest version of cryptography sift named, 49, has an advisory known against it now (PYSEC-2026-3552, in how it
+  decrypts PKCS#7 messages). sift makes the certificate of `sift worker` with cryptography and decrypts no such
+  message, but the lowest is now 50, where it is fixed. cryptography 50 is older than sift's first release: an
+  installation holds it or a newer one already, unless another package kept it back.
+
 ## [1.15.1] - 2026-11-22
 
 The fixes of a second review of all of sift. No index changes its layout, and nothing needs doing after the update.
@@ -893,7 +904,8 @@ First release.
 - Keyword search (SQLite FTS5, BM25), exact GPU vector search, and hybrid search with cross-encoder reranking.
 - An MCP server (streamable HTTP and stdio) whose instructions tell agents what is indexed.
 
-[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.15.1...HEAD
+[Unreleased]: https://github.com/tobiaswuerth/sift/compare/v1.15.2...HEAD
+[1.15.2]: https://github.com/tobiaswuerth/sift/compare/v1.15.1...v1.15.2
 [1.15.1]: https://github.com/tobiaswuerth/sift/compare/v1.15.0...v1.15.1
 [1.15.0]: https://github.com/tobiaswuerth/sift/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/tobiaswuerth/sift/compare/v1.13.0...v1.14.0
