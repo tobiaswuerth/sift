@@ -23,7 +23,7 @@ import sift
 from sift import __version__, cli, embed, models, remote, search, store, worker
 from sift.search import Index
 
-from .conftest import Client, FakeSentenceTransformer, NumpyModels, fake_vector, nobody_listens
+from .conftest import Client, FakeSentenceTransformer, NumpyModels, fake_vector, nobody_listens, on_windows
 
 TOKEN = "s3cret-token"
 
@@ -549,7 +549,7 @@ def test_a_worker_on_windows_serves_on_a_selector_loop(home, fake_models, monkey
 
     monkeypatch.setattr(uvicorn.Server, "serve", capture)
     monkeypatch.setattr(fake_models, "prepare", lambda: None)
-    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(worker, "loop_options", on_windows(worker.loop_options))
     worker.serve(models=fake_models)
     assert isinstance(loops[0], asyncio.SelectorEventLoop)
 

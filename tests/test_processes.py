@@ -1,6 +1,7 @@
 """The worker processes sift starts: how many the machine gives, and the pools of them."""
 
 import os
+import time
 
 import pytest
 
@@ -41,15 +42,20 @@ def test_a_pool_of_more_processes_than_any_system_has_works():
 def test_a_pool_left_by_an_error_runs_nothing_it_has_not_started(tmp_path):
     # A pool left by an error ran everything handed to it before the error showed: a keyword build that could not
     # write its first part read every other part first, for minutes or hours.
-    started = []
+    # Every part after the first holds the pool's one process until the last part is cancelled: what ran by then is
+    # counted, not timed. Parts that ran on while the pool was left were a dozen of fifty on a busy machine.
+    started, hang = [], time.time() + 60  # a hang detector: a pool that cancels nothing runs them all, after it
 
     def left_by_an_error():
         with processes.running(1) as pool:
-            started.extend(pool.submit(workers.marking, str(tmp_path), n) for n in range(50))
+            started.extend(pool.submit(workers.marking, str(tmp_path), n, hang) for n in range(50))
+            started[-1].add_done_callback(lambda last: (tmp_path / workers.RELEASE).touch())
             started[0].result()
             raise RuntimeError("the first part could not be written")
 
     with pytest.raises(RuntimeError, match="the first part"):
         left_by_an_error()
-    assert 1 <= len(list(tmp_path.iterdir())) < 10  # those running by then, and the few a pool holds ready
     assert started[-1].cancelled()
+    ran = {path.name for path in tmp_path.iterdir()} - {workers.RELEASE}
+    assert "0" in ran
+    assert len(ran) < 10  # the first, the one running by then, and the few a pool holds ready

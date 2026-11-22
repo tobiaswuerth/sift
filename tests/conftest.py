@@ -429,6 +429,13 @@ def nobody_listens():
     return "https://s3cret.pin@127.0.0.1:0"
 
 
+def on_windows(loop_options):
+    """sift's choice of a server's loop (server.loop_options), as it chooses on Windows: that alone, on whatever
+    system the test runs. With the system's own name changed for a whole test, a package first imported in it looked
+    for Windows' modules there."""
+    return functools.partial(loop_options, platform="win32")
+
+
 def live_codes(codes):
     """The ids that count of codes held (vectors.Codes), and their codes, by id: what searches compare."""
     rows = np.flatnonzero(codes._alive) if codes._alive is not None else np.arange(len(codes.ids))

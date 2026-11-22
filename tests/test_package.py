@@ -376,6 +376,33 @@ def test_worker_processes_are_started_in_one_place():
     assert making == ["processes.py"], "ask processes.pool, or processes.running for a block"
 
 
+def _names_the_system(call):
+    """Whether a call sets sys.platform: setattr(sys, "platform", ...), of sys as any module has it, or by its name."""
+    target, *attribute = [ast.unparse(arg) for arg in call.args[:2]] or [""]
+    return target.endswith("sys.platform'") or (target.split(".")[-1] == "sys" and attribute == ["'platform'"])
+
+
+def test_no_test_changes_the_system_s_name_for_all_it_runs():
+    # A test that set sys.platform for its whole length had sift load the models "on Windows": the first package
+    # imported there that asks the system's name looked for Windows' modules on Linux, and failed, in whichever
+    # process ran that test before any that imports it. What depends on the system takes its name (`platform`); the
+    # name itself changes for a block alone, around what asks it and imports nothing of others.
+    for setting in (
+        'm.setattr(sys, "platform", "win32")',
+        'm.setattr(a.sys, "platform", "x")',
+        'm.setattr("sys.platform", "x")',
+    ):
+        assert _names_the_system(ast.parse(setting).body[0].value), setting  # the check finds each way to write it
+    assert not _names_the_system(ast.parse('m.setattr(server, "loop_options", chosen)').body[0].value)
+    whole = [
+        f"{path.name}:{node.lineno}"
+        for path in sorted((ROOT / "tests").glob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "monkeypatch.setattr" and _names_the_system(node)
+    ]
+    assert whole == [], "pass `platform` to what asks it, or change it in a `with monkeypatch.context()` block alone"
+
+
 PRINTING = {("console.py", "write"), ("cli.py", "_print")}  # to the user, and the results
 
 

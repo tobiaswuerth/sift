@@ -23,7 +23,7 @@ from sift.catalog import Catalog
 from sift.hits import Options
 from sift.search import Index
 
-from .conftest import nobody_listens, write
+from .conftest import nobody_listens, on_windows, write
 
 port_free = server.port_free  # sift's own, before a fixture keeps the tests off this machine's ports (ports_unasked)
 
@@ -644,17 +644,15 @@ def test_on_windows_http_is_served_on_a_selector_loop(embedded, monkeypatch):
         loops.append(asyncio.get_running_loop())
 
     monkeypatch.setattr(uvicorn.Server, "serve", capture)
-    monkeypatch.setattr(server.sys, "platform", "win32")
+    monkeypatch.setattr(server, "loop_options", on_windows(server.loop_options))
     server.serve(port=8765)
     assert isinstance(loops[0], asyncio.SelectorEventLoop)
 
 
-def test_the_loop_is_chosen_for_windows_and_http_only(monkeypatch):
-    monkeypatch.setattr(server.sys, "platform", "win32")
-    assert server.loop_options() == {"loop_factory": asyncio.SelectorEventLoop}
-    assert server.loop_options(stdio=True) == {}  # stdio's pipes are the proactor's to read
-    monkeypatch.setattr(server.sys, "platform", "linux")
-    assert server.loop_options() == {}  # elsewhere the default loop is a selector loop already
+def test_the_loop_is_chosen_for_windows_and_http_only():
+    assert server.loop_options(platform="win32") == {"loop_factory": asyncio.SelectorEventLoop}
+    assert server.loop_options(stdio=True, platform="win32") == {}  # stdio's pipes are the proactor's to read
+    assert server.loop_options(platform="linux") == {}  # elsewhere the default loop is a selector loop already
 
 
 @pytest.fixture

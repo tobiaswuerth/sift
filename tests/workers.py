@@ -23,7 +23,13 @@ def hanging(path, fields):
     return _loaded(path, fields)
 
 
-def marking(folder, n):
-    """Leave a file named `n` in `folder`: a task that tells it ran."""
+RELEASE = "release"  # the file in a task's folder at which the tasks held there go on
+
+
+def marking(folder, n, held_until=None):
+    """Leave a file named `n` in `folder`: a task that tells it ran. With `held_until`, a time, every task but the
+    first then holds its process until a file named RELEASE is there, or that time has come."""
     open(os.path.join(folder, str(n)), "w").close()
+    while n and held_until and time.time() < held_until and not os.path.exists(os.path.join(folder, RELEASE)):
+        time.sleep(0.01)
     return n

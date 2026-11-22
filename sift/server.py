@@ -543,11 +543,11 @@ def port_free(host: str, port: int) -> None:
         raise OSError(f"{nothing}: it is no address of this machine")
 
 
-def loop_options(stdio: bool = False) -> dict[str, Any]:
+def loop_options(stdio: bool = False, platform: str = sys.platform) -> dict[str, Any]:
     """How anyio runs a server's event loop. On Windows, HTTP is served on a selector loop: the default one, the
     proactor, closes the listening socket for good when one accept fails (WinError 64, a client gone mid-accept), and
     the server then runs on but answers no one. Over stdio, which listens on no socket, the default stays."""
-    if sys.platform == "win32" and not stdio:
+    if platform == "win32" and not stdio:
         return {"loop_factory": asyncio.SelectorEventLoop}
     return {}
 
