@@ -1,3 +1,5 @@
+from typing import cast
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -5,7 +7,7 @@ from hypothesis import strategies as st
 from numpy.typing import NDArray
 
 from sift.domain.arrays import Ids, floats, ints
-from sift.domain.codec.codes import Floats, codes
+from sift.domain.codec.codes import Bits, Floats, codes
 from sift.retrieval.vector.nearest import SHORTLIST, Coded, Exact, Near, coded, nearest
 from sift.storage.vectors import Halves
 
@@ -170,8 +172,16 @@ def test_codes_alike_are_shortlisted_by_id() -> None:
 def test_codes_not_of_their_width_are_refused() -> None:
     with pytest.raises(ValueError, match="codes of 64 dimensions are 8 bytes each"):
         coded(np.arange(2, dtype=np.int64), codes(np.ones((2, 128), np.float32)), 64)
-    with pytest.raises(ValueError, match="one a chunk"):
+    with pytest.raises(ValueError, match="a row a chunk"):
         coded(np.arange(3, dtype=np.int64), codes(np.ones((2, 64), np.float32)), 64)
+    with pytest.raises(ValueError, match="uint8 matrix"):
+        coded(np.arange(2, dtype=np.int64), cast("Bits", codes(np.ones((2, 64), np.float32)).astype(np.int8)), 64)
+    with pytest.raises(ValueError, match="codes of 65,536 dimensions"):
+        coded(np.arange(1, dtype=np.int64), np.zeros((1, 8_192), np.uint8), 65_536)
+
+
+def test_a_store_without_codes_may_be_of_any_width() -> None:
+    assert len(coded(np.zeros(0, np.int64), np.zeros((0, 0), np.uint8), 24).ids) == 0
 
 
 def test_none_asked_for_reads_nothing() -> None:

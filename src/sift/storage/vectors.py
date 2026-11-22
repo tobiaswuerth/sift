@@ -122,7 +122,7 @@ def _checked(chunks: Ids, matrix: Halves) -> None:
     if not 0 < width_of(matrix) <= MOST_BITS:
         raise ValueError(f"vectors of {width_of(matrix):,} dimensions cannot be coded: from 1 to {MOST_BITS:,} can")
     if len(distinct(ascending(chunks)).values) != len(chunks):
-        raise ValueError("a chunk was given more than one vector: give each one")
+        raise ValueError("a chunk was given more than one vector: give each chunk one")
 
 
 def _refuse_another(transaction: Writing, model: str, width: int) -> None:

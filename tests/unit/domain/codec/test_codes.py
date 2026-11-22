@@ -48,10 +48,11 @@ def test_codes_of_no_rows_are_none() -> None:
     assert distances(np.zeros((0, 1), np.uint64), np.zeros(1, np.uint64)).shape == (0,)
 
 
-def test_distances_are_scanned_in_blocks_without_a_copy_of_the_codes() -> None:
+@pytest.mark.parametrize("rows, size", [(400_000, 16), (3_000, 8_192)])
+def test_distances_are_scanned_in_blocks_of_bytes_without_a_copy_of_the_codes(rows: int, size: int) -> None:
     rng = np.random.default_rng(5)
-    held = words(rng.integers(0, 256, size=(400_000, 16), dtype=np.uint8))
-    query = words(rng.integers(0, 256, size=(1, 16), dtype=np.uint8)).reshape(-1)
+    held = words(rng.integers(0, 256, size=(rows, size), dtype=np.uint8))
+    query = words(rng.integers(0, 256, size=(1, size), dtype=np.uint8)).reshape(-1)
     tracemalloc.start()
     found = distances(held, query, scanned=1 << 20)
     peak = tracemalloc.get_traced_memory()[1]

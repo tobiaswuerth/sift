@@ -5,11 +5,23 @@ from typing import NamedTuple
 import numpy as np
 
 from sift.domain.arrays import Ids, ascending, distinct, floats, ints
-from sift.domain.codec.codes import Bits, Floats, Words, bit_scores, code_bytes, code_of, distances, words
+from sift.domain.codec.codes import (
+    MOST_BITS,
+    Bits,
+    Floats,
+    Words,
+    bit_scores,
+    code_bytes,
+    code_of,
+    distances,
+    width_of,
+    words,
+)
 from sift.storage.vectors import Halves
 
 RESCORE = 1000
 SHORTLIST = 10
+CODES_AXES = 2
 
 type Exact = Callable[[int, Ids], tuple[Ids, Halves]]
 
@@ -35,8 +47,10 @@ class Candidates:
 
 
 def coded(ids: Ids, bits: Bits, width: int) -> Coded:
-    if bits.shape != (len(ids), code_bytes(width)):
-        raise ValueError(f"codes of {width:,} dimensions are {code_bytes(width)} bytes each, one a chunk: code them so")
+    if bits.dtype != np.uint8 or bits.ndim != CODES_AXES or len(bits) != len(ids):
+        raise ValueError("codes are a uint8 matrix of a row a chunk: code them so")
+    if len(ids) and not (0 < width <= MOST_BITS and width_of(bits) == code_bytes(width)):
+        raise ValueError(f"codes of {width:,} dimensions are {code_bytes(width)} bytes each: code them so")
     return Coded(ids, bits, words(bits), width)
 
 
