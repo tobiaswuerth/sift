@@ -8,11 +8,10 @@ import pytest
 
 from sift.api.errors import StoreUnavailableError
 from sift.domain.arrays import Ids, first, ints, last
-from sift.domain.codec.codes import codes
+from sift.domain.codec.codes import Halves, codes
 from sift.domain.errors import DamagedError
 from sift.storage.database import Connection, reading, rows, run, writing
 from sift.storage.vectors import (
-    Halves,
     Kept,
     changes,
     codes_of,

@@ -1,5 +1,5 @@
 import posixpath
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,7 +7,7 @@ from pathlib import Path
 from sift.api.errors import StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
-from sift.app.collections import chosen
+from sift.app.collections import chosen_or_active
 from sift.app.problems import problems
 from sift.domain.plan.indexing import MOST_TEXT_BYTES, IndexPlan, Stat, batches, index_plan
 from sift.domain.text.notes import Document, note
@@ -66,10 +66,6 @@ class Job:
     connection: Connection
     report: Reporter
     limits: Limits
-
-
-def _chosen(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
-    return chosen(home, names) if names else tuple(known for known in chosen(home, ()) if known.active)
 
 
 def _too_large(size: int, limits: Limits, measured: str = "bytes") -> Refused:
@@ -206,4 +202,4 @@ def _indexed(one: Collection, report: Reporter, limits: Limits) -> CollectionInd
 
 
 def index(home: Path, request: IndexCollections, report: Reporter, limits: Limits = LIMITS) -> IndexResult:
-    return IndexResult(tuple(_indexed(one, report, limits) for one in _chosen(home, request.names)))
+    return IndexResult(tuple(_indexed(one, report, limits) for one in chosen_or_active(home, request.names)))

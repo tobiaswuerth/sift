@@ -7,9 +7,8 @@ from hypothesis import strategies as st
 from numpy.typing import NDArray
 
 from sift.domain.arrays import Ids, floats, ints
-from sift.domain.codec.codes import Bits, Floats, codes
+from sift.domain.codec.codes import Bits, Floats, Halves, codes
 from sift.retrieval.vector.nearest import SHORTLIST, Coded, Exact, Near, coded, nearest
-from sift.storage.vectors import Halves
 
 
 def unit(values: NDArray[np.float64]) -> Floats:

@@ -200,6 +200,16 @@ def passages(transaction: Reading, chunks: Sequence[ChunkId]) -> dict[ChunkId, P
     return {found.chunk: found for found in rows(transaction, Passage, PASSAGES, (json.dumps(list(chunks)),))}
 
 
+class ChunkOwner(NamedTuple):
+    chunk: int
+    document: int
+
+
+def documents_of(transaction: Reading, chunks: Sequence[int]) -> dict[int, int]:
+    sql = "SELECT id, document FROM chunks WHERE id IN (SELECT value FROM json_each(?))"
+    return {found.chunk: found.document for found in rows(transaction, ChunkOwner, sql, (json.dumps(list(chunks)),))}
+
+
 def texts(transaction: Reading, documents: Sequence[DocumentId]) -> dict[DocumentId, str]:
     sql = "SELECT id, text FROM documents WHERE id IN (SELECT value FROM json_each(?))"
     return {found.id: found.text for found in rows(transaction, Text, sql, (json.dumps(list(documents)),))}

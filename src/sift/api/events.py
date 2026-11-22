@@ -8,6 +8,7 @@ class Phase(StrEnum):
     SCAN = "scan"
     READ = "read"
     MERGE = "merge"
+    EMBED = "embed"
 
 
 @dataclass(frozen=True, slots=True)

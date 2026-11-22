@@ -53,6 +53,10 @@ def chosen(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
     return tuple(dict.fromkeys(named(known, name) for name in names)) if names else known
 
 
+def chosen_or_active(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
+    return chosen(home, names) if names else tuple(known for known in chosen(home, ()) if known.active)
+
+
 def _contents(one: Collection, *, listed: bool) -> Counted | Unavailable:
     try:
         with (

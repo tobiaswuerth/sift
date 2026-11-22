@@ -4,6 +4,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 type Floats = NDArray[np.float32]
+type Halves = NDArray[np.float16]
 type Bits = NDArray[np.uint8]
 type Words = NDArray[np.uint64]
 type Distances = NDArray[np.uint16]

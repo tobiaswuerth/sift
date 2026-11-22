@@ -9,6 +9,7 @@ from sift.domain.codec.codes import (
     MOST_BITS,
     Bits,
     Floats,
+    Halves,
     Words,
     bit_scores,
     code_bytes,
@@ -17,7 +18,6 @@ from sift.domain.codec.codes import (
     width_of,
     words,
 )
-from sift.storage.vectors import Halves
 
 RESCORE = 1000
 SHORTLIST = 10

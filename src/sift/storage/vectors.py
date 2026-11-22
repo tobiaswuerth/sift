@@ -6,11 +6,9 @@ from numpy.typing import NDArray
 
 from sift.api.errors import StoreUnavailableError
 from sift.domain.arrays import Ids, among, ascending, distinct, ints
-from sift.domain.codec.codes import MOST_BITS, Bits, code_bytes, codes, width_of
+from sift.domain.codec.codes import MOST_BITS, Bits, Halves, code_bytes, codes, width_of
 from sift.domain.errors import DamagedError
 from sift.storage.database import Reading, Writing, batches, first, rows, run, run_each
-
-type Halves = NDArray[np.float16]
 
 MODEL_KEY, WIDTH_KEY = "vector_model", "vector_width"
 PENDING = """SELECT c.id, c.document, c.start, c.length,
@@ -125,12 +123,17 @@ def _checked(chunks: Ids, matrix: Halves) -> None:
         raise ValueError("a chunk was given more than one vector: give each chunk one")
 
 
-def _refuse_another(transaction: Writing, model: str, width: int) -> None:
-    found, held = model_of(transaction), width_held(transaction)
+def refuse_model(transaction: Reading, model: str) -> None:
+    found = model_of(transaction)
     if found not in {None, model}:
         raise StoreUnavailableError(
             f"the store holds vectors of {found}, not of {model}", EMBED_REMEDY.format(model=model)
         )
+
+
+def _refuse_another(transaction: Writing, model: str, width: int) -> None:
+    refuse_model(transaction, model)
+    held = width_held(transaction)
     if held not in {None, width}:
         raise StoreUnavailableError(
             f"the store holds vectors of {held:,} dimensions, not of {width:,}", EMBED_REMEDY.format(model=model)

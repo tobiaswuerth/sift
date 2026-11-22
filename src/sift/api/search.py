@@ -29,6 +29,17 @@ class SearchKeywords:
 
 
 @dataclass(frozen=True, slots=True)
+class SearchVectors:
+    query: Annotated[str, Help("what to find, in words: passages near it in meaning are found")]
+    k: Annotated[int, Help(f"how many results, at most {MOST_HITS:,} (default: 10)"), Short("-k")] = 10
+    collection: Annotated[str | None, Help("search this collection alone (default: every active one)"), Short("-c")] = (
+        None
+    )
+    all_passages: Annotated[bool, Help("every passage found, not only each document's best")] = False
+    compact: Annotated[bool, Help("leave out the text of each passage")] = False
+
+
+@dataclass(frozen=True, slots=True)
 class Hit:
     id: str
     title: str
