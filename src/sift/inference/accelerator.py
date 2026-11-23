@@ -14,7 +14,7 @@ LEAST_BUDGET = 2 * GIB
 BATCH = 64
 GPU_THREADS = 1
 CPU_THREADS = torch.get_num_threads()
-DEVICE_FULL = ("out of memory", "CUBLAS_STATUS_ALLOC_FAILED")
+DEVICE_FULL = ("out of memory", "cublas_status_alloc_failed")
 HOST_FULL = ("not enough memory", "paging file is too small")
 HOST_FULL_WINDOWS = frozenset({8, 14, 1455})
 CUDA_FIX = "uv tool install --reinstall --torch-backend auto sift-rag"
@@ -111,7 +111,8 @@ def host_full(error: BaseException) -> bool:
 
 
 def too_large(error: BaseException) -> bool:
-    device_full = isinstance(error, torch.OutOfMemoryError) or any(sign in str(error) for sign in DEVICE_FULL)
+    said = str(error).lower()
+    device_full = isinstance(error, torch.OutOfMemoryError) or any(sign in said for sign in DEVICE_FULL)
     return device_full or host_full(error)
 
 

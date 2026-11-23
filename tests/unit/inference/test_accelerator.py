@@ -100,6 +100,8 @@ def test_out_of_memory_is_told_from_other_failures() -> None:
     assert too_large(OSError("[WinError 8] Not enough memory resources are available to process this command"))
     assert too_large(LocalizedError("Nicht genügend Arbeitsspeicher verfügbar"))
     assert not too_large(OSError(errno.ENOENT, "No such file or directory"))
+    assert not too_large(OSError(errno.ENOSPC, "No space left on device"))
+    assert too_large(RuntimeError("Out of memory while allocating a tensor"))
     assert not too_large(RuntimeError("shapes do not match"))
 
 
