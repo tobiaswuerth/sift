@@ -50,7 +50,7 @@ def test_a_collection_s_documents_and_chunks_are_numbered_from_its_first_row(tmp
         run(transaction, "INSERT INTO sources(path, modified_ns, size) VALUES ('a.md', 1, 1)")
         run(
             transaction,
-            "INSERT INTO documents(source, key, digest, title, fields, text) VALUES (1, '', 'd', 't', '{}', 'x')",
+            "INSERT INTO documents(source, key, digest, title, fields) VALUES (1, '', 'd', 't', '{}')",
         )
         run(
             transaction,

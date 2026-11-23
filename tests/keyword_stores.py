@@ -6,7 +6,7 @@ from typing import NamedTuple
 from sift.api.ids import CollectionId, DocumentId
 from sift.domain.codec.shape import Shape
 from sift.domain.text.notes import note
-from sift.storage.database import BATCHES, Batches, Connection, Reading, Writing, WritingDocuments, rows, run
+from sift.storage.database import BATCHES, Batches, Connection, Reading, Writing, WritingDocuments, rows, run, run_each
 from sift.storage.documents import add_documents, kept, put_source
 from sift.storage.forgetting import delete_documents, delete_sources
 from sift.storage.keywords import writing_documents
@@ -64,25 +64,66 @@ def opened_store(folder: Path, collection: int, shape: Shape) -> Generator[Conne
         yield connection
 
 
-TEXTS = """SELECT c.id AS chunk, c.document AS document, d.title AS title,
-                  substr(d.text, c.start + 1, c.length) AS text, d.meta AS meta
-           FROM chunks c JOIN keyword_documents d ON d.id = c.document ORDER BY c.id"""
+PLACED = """SELECT c.id AS chunk, c.document AS document, d.title AS title, d.meta AS meta
+            FROM chunks c JOIN keyword_documents d ON d.id = c.document ORDER BY c.id"""
 ORACLE = """CREATE VIRTUAL TABLE temp.oracle USING fts5(title, text, meta, tokenize='unicode61 remove_diacritics 2')"""
-FILLED = """INSERT INTO temp.oracle(rowid, title, text, meta)
-            SELECT c.id, d.title, substr(d.text, c.start + 1, c.length), d.meta
-            FROM chunks c JOIN keyword_documents d ON d.id = c.document"""
+FILLED = "INSERT INTO temp.oracle(rowid, title, text, meta) VALUES (?, ?, ?, ?)"
+
+
+class Block(NamedTuple):
+    document: int
+    text: str
+
+
+class Span(NamedTuple):
+    id: int
+    document: int
+    start: int
+    length: int
+
+
+class Placed(NamedTuple):
+    chunk: int
+    document: int
+    title: str
+    meta: str | None
+
+
+def chunk_texts(transaction: Reading) -> dict[int, str]:
+    whole: dict[int, list[str]] = {}
+    for block in rows(transaction, Block, "SELECT document, text FROM texts ORDER BY document, block"):
+        whole.setdefault(block.document, []).append(block.text)
+    joined = {document: "".join(parts) for document, parts in whole.items()}
+    spans = rows(transaction, Span, "SELECT id, document, start, length FROM chunks ORDER BY id")
+    return {span.id: joined.get(span.document, "")[span.start : span.start + span.length] for span in spans}
 
 
 def texts(transaction: Reading) -> list[Text]:
-    return rows(transaction, Text, TEXTS)
+    cut = chunk_texts(transaction)
+    return [
+        Text(each.chunk, each.document, each.title, cut[each.chunk], each.meta)
+        for each in rows(transaction, Placed, PLACED)
+    ]
 
 
 def instances(transaction: Reading) -> list[Instance]:
     as_writer = Writing(transaction.connection)
     run(as_writer, ORACLE)
-    run(as_writer, FILLED)
+    run_each(as_writer, FILLED, [(each.chunk, each.title, each.text, each.meta) for each in texts(transaction)])
     run(as_writer, "CREATE VIRTUAL TABLE temp.instances USING fts5vocab(temp, oracle, instance)")
     found = rows(transaction, Instance, "SELECT term, doc, col, offset FROM temp.instances ORDER BY doc, col, offset")
     run(as_writer, "DROP TABLE temp.instances")
     run(as_writer, "DROP TABLE temp.oracle")
     return found
+
+
+class ChunkVector(NamedTuple):
+    chunk: int
+    vector: bytes
+
+
+def vectors_by_text(transaction: Reading) -> dict[str, bytes]:
+    cut = chunk_texts(transaction)
+    return {
+        cut[each.chunk]: each.vector for each in rows(transaction, ChunkVector, "SELECT chunk, vector FROM vectors")
+    }

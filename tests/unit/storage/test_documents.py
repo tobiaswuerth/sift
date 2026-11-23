@@ -39,6 +39,7 @@ from sift.storage.documents import (
 from sift.storage.forgetting import delete_documents, delete_sources
 from sift.storage.keywords import writing_documents
 from sift.storage.store import create_store, open_store
+from sift.storage.texts import text_of
 
 COLLECTION = CollectionId(2)
 NOTE = (
@@ -120,13 +121,8 @@ def test_a_document_is_stored_with_its_chunks_links_and_names(store: sqlite3.Con
     with reading(store) as transaction:
         found = stored(transaction, "People/Hans Müller.md")
         assert found is not None
-        assert (found.id, found.key, found.digest, found.title, found.text) == (
-            identity,
-            "",
-            document.digest,
-            "Hans",
-            document.text,
-        )
+        assert (found.id, found.key, found.digest, found.title) == (identity, "", document.digest, "Hans")
+        assert text_of(transaction, found.id) == document.text
         assert fields_of(found.fields) == {"aliases": ["Hansi"], "org": "[[Acme AG]]"}
         chunk = document.chunks[0]
         assert chunks_of(transaction, identity) == [
@@ -217,7 +213,7 @@ def test_a_source_holds_one_document_of_each_key(store: sqlite3.Connection) -> N
         ),
         ("INSERT INTO sources(path, modified_ns, size) VALUES ('a', 'yesterday', 1)", "cannot store TEXT value"),
         (
-            "INSERT INTO documents(source, key, digest, title, fields, text) VALUES (:source, 'k', 'd', 't', '{', 'x')",
+            "INSERT INTO documents(source, key, digest, title, fields) VALUES (:source, 'k', 'd', 't', '{')",
             "CHECK constraint failed",
         ),
     ],

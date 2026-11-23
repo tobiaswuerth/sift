@@ -9,7 +9,8 @@ from sift.app.searching import Open, Ranked, ScoredChunk, Searching, despite_los
 from sift.domain.query import fields as shown
 from sift.domain.rank.works import one_per_work, work_of_fields
 from sift.domain.text.kinds import public_id
-from sift.storage.documents import fields_by_document, passages, texts
+from sift.storage.documents import fields_by_document, passages
+from sift.storage.texts import TextSpan, spans_text
 
 WIDER = 2
 
@@ -24,7 +25,8 @@ class Retrieved:
 def read(one: Searching, chunks: Sequence[int], scores: Mapping[int, float], *, whole: bool) -> list[Retrieved]:
     held = passages(one.transaction, [ChunkId(chunk) for chunk in chunks])
     documents = sorted({passage.document for passage in held.values()})
-    text = texts(one.transaction, documents) if whole else {}
+    spans = [TextSpan(passage.document, passage.start, passage.length) for passage in held.values()]
+    text: list[str | None] = [*spans_text(one.transaction, spans)] if whole else [None] * len(spans)
     fields = fields_by_document(one.transaction, documents)
     return [
         Retrieved(
@@ -34,11 +36,11 @@ def read(one: Searching, chunks: Sequence[int], scores: Mapping[int, float], *, 
                 passage.title,
                 f"{passage.first_line}-{passage.last_line}",
                 scores[chunk],
-                text[passage.document][passage.start : passage.start + passage.length] if whole else None,
+                cut,
             ),
             fields.get(passage.document, {}),
         )
-        for chunk, passage in held.items()
+        for (chunk, passage), cut in zip(held.items(), text, strict=True)
     ]
 
 

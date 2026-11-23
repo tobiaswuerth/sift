@@ -1,11 +1,12 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
 from sift.api.errors import StoreUnavailableError
 from sift.storage.database import Reading, Writing, rows, run
 
-type Migration = tuple[str, ...]
+type Step = str | Callable[[Writing], None]
+type Migration = tuple[Step, ...]
 
 
 class Version(NamedTuple):
@@ -23,13 +24,20 @@ def newer(path: Path, found: int, known: int) -> StoreUnavailableError:
     )
 
 
+def _taken(transaction: Writing, step: Step) -> None:
+    if isinstance(step, str):
+        run(transaction, step)
+    else:
+        step(transaction)
+
+
 def migrated(transaction: Writing, migrations: Sequence[Migration], path: Path) -> int:
     start = version(transaction)
     if start > len(migrations):
         raise newer(path, start, len(migrations))
     for migration in migrations[start:]:
-        for statement in migration:
-            run(transaction, statement)
+        for step in migration:
+            _taken(transaction, step)
     if start < len(migrations):
         run(transaction, f"PRAGMA user_version = {len(migrations)}")
     return start

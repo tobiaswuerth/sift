@@ -25,6 +25,7 @@ from sift.storage.database import (
 )
 from sift.storage.keyword_meta import keyword_meta
 from sift.storage.migrations import Migration, migrated, newer, version
+from sift.storage.texts import BLOCK, texts_cut
 
 LAYOUT: tuple[Migration, ...] = (
     (
@@ -177,6 +178,23 @@ LAYOUT: tuple[Migration, ...] = (
            BEGIN INSERT OR IGNORE INTO unembedded(chunk) VALUES (OLD.chunk); END""",
     ),
     ("ALTER TABLE keyword_segments DROP COLUMN tokens",),
+    (
+        f"""CREATE TABLE texts(
+            document INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            block INTEGER NOT NULL CHECK (block >= 0),
+            first_line INTEGER NOT NULL CHECK (first_line >= 1),
+            text TEXT NOT NULL CHECK (length(text) BETWEEN 1 AND {BLOCK}),
+            PRIMARY KEY(document, block)
+        ) STRICT""",
+        texts_cut,
+        "DROP VIEW keyword_documents",
+        "ALTER TABLE documents DROP COLUMN text",
+        """CREATE VIEW keyword_documents AS
+           SELECT d.id AS id, d.title AS title,
+                  (SELECT group_concat(j.atom, ' ') FROM json_tree(d.fields) j
+                   WHERE j.atom IS NOT NULL AND j.fullkey <> '$.title') AS meta
+           FROM documents d""",
+    ),
 )
 NUMBERED_TABLES = ("documents", "chunks")
 FILE_SUFFIXES = ("", "-wal", "-shm")

@@ -24,6 +24,7 @@ from sift.storage.database import Batches, reading, rows
 from sift.storage.documents import stored
 from sift.storage.keywords import settle
 from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
+from sift.storage.texts import text_of
 from tests.damage import damage_table
 from tests.files import write
 from tests.later import LATER
@@ -309,8 +310,8 @@ def test_a_file_s_documents_are_stored_whole(home: Path) -> None:
     store = open_store(Path(shown.store), CollectionId(1))
     with contextlib.closing(store) as connection, reading(connection) as transaction:
         found = stored(transaction, "robots/brush.md")
-    assert found is not None
-    assert found.text == "# Brush\n\nSee [[rl]].\n"
+        assert found is not None
+        assert text_of(transaction, found.id) == "# Brush\n\nSee [[rl]].\n"
 
 
 def test_merges_too_large_for_a_write_run_as_their_own_phase(home: Path, notes: Path) -> None:

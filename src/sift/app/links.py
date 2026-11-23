@@ -1,4 +1,5 @@
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -24,8 +25,8 @@ from sift.domain.text.kinds import public_id
 from sift.domain.text.links import name_key
 from sift.domain.text.resolving import LEADING, Linking, Resolution, link_path, linking_lines
 from sift.storage.database import Reading
-from sift.storage.documents import texts
 from sift.storage.links import LinkRow, Titled, links_out, titled
+from sift.storage.texts import line_at
 
 LINKING_SHOWN = 5
 FURTHER = 2
@@ -95,14 +96,20 @@ def _shown_out(each: Out, names: dict[int, Titled], collection: str) -> LinkOut:
     )
 
 
-def _shown_in(each: In, names: dict[int, Titled], text: str, collection: str) -> LinkIn:
-    lines = linking_lines([Linking(row.line, row.field, row.target) for row in each.rows], text)
+def _shown_in(each: In, names: dict[int, Titled], held: Mapping[int, str], collection: str) -> LinkIn:
+    lines = linking_lines([Linking(row.line, row.field, row.target) for row in each.rows], held)
     return LinkIn(
         _id(collection, names[each.document]),
         names[each.document].title,
         tuple(LinkingLine(*line) for line in lines),
         None if each.through is None else _id(collection, names[each.through]),
     )
+
+
+def _lines(transaction: Reading, each: In) -> dict[int, str]:
+    return {
+        number: line_at(transaction, DocumentId(each.document), number) for number in {row.line for row in each.rows}
+    }
 
 
 def _links(transaction: Reading, found: Note, request: ShowLinks) -> Links:
@@ -113,14 +120,12 @@ def _links(transaction: Reading, found: Note, request: ShowLinks) -> Links:
     documents += [at for each in out or () for at in (*each.how.documents, each.through) if at is not None]
     documents += [at for each in into or () for at in (each.document, each.through) if at is not None]
     names = titled(transaction, documents)
-    whole = texts(transaction, [DocumentId(each.document) for each in into or ()])
+    held = {each.document: _lines(transaction, each) for each in into or ()}
     return Links(
         _id(collection, names[document]),
         names[document].title,
         None if out is None else tuple(_shown_out(each, names, collection) for each in out),
-        None
-        if into is None
-        else tuple(_shown_in(each, names, whole[DocumentId(each.document)], collection) for each in into),
+        None if into is None else tuple(_shown_in(each, names, held[each.document], collection) for each in into),
     )
 
 

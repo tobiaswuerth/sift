@@ -6,11 +6,12 @@ from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound
 from sift.api.errors import InvalidRequestError, NotFoundError, SiftError
 from sift.domain.query import fields as shown
 from sift.domain.text.kinds import public_id, split_keyed_path
-from sift.domain.text.lines import line_range, lines_of
+from sift.domain.text.lines import line_range, refuse_past_end
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Reading
 from sift.storage.documents import Stored, fields_of, paths_named, stored
 from sift.storage.store import read_store
+from sift.storage.texts import LinesRead, lines_between, text_of
 
 MOST_LISTED = 5
 SEPARATOR = "/"
@@ -72,10 +73,12 @@ def _document(known: Sequence[Collection], id_: str, request: GetDocuments) -> D
     chosen, relative = place(known, id_)
     with read_store(chosen.store, chosen.id) as transaction:
         found = resolved_at(transaction, id_, relative, absolute=Path(id_).is_absolute())
+        read = lines_between(transaction, found.id, *span) if span else LinesRead(text_of(transaction, found.id), 0)
     whole = public_id(chosen.name, found.path, found.key)
-    text = lines_of(found.text, *span, whole) if span else found.text
+    if span:
+        refuse_past_end(whole, read.total, first=span[0])
     fields = shown.picked(fields_of(found.fields), request.fields) if request.fields else None
-    return DocumentText(whole, found.title, text, fields)
+    return DocumentText(whole, found.title, read.text, fields)
 
 
 def documents(home: Path, request: GetDocuments) -> Documents:

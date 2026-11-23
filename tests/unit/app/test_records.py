@@ -12,7 +12,6 @@ from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError
 from sift.api.events import Event, Noted
 from sift.api.filters import written
-from sift.api.ids import DocumentId
 from sift.api.indexing import IndexCollections, Indexed
 from sift.api.search import SearchKeywords
 from sift.app.collections import add, status
@@ -28,9 +27,10 @@ from sift.storage.catalog import known_collections
 from sift.storage.database import reading
 from sift.storage.documents import counts
 from sift.storage.store import open_store
-from sift.storage.vectors import held_vectors, left
+from sift.storage.vectors import left
 from tests.files import jsonl, write
 from tests.homes import text_of
+from tests.keyword_stores import vectors_by_text
 from tests.later import later
 from tests.models import Hashed
 
@@ -109,12 +109,11 @@ def test_a_record_whose_fields_alone_changed_keeps_its_vector(papers: Path, tmp_
     embed(papers, EmbedCollections(), lambda _: None, Hashed())
     (one,) = known_collections(papers)
     with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
-        before = held_vectors(transaction, [DocumentId(n) for n in range(1, 4)])
+        before = vectors_by_text(transaction)
     write(tmp_path / "arxiv" / "2021" / "2021-01.jsonl", jsonl([PAPERS[0], {**PAPERS[1], "year": 2022}]))
     assert indexed(papers).changed == 1
     with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
-        after = held_vectors(transaction, [DocumentId(n) for n in range(1, 5)])
-        assert (left(transaction), sorted(after)) == (0, sorted(before))
+        assert (left(transaction), vectors_by_text(transaction)) == (0, before)
 
 
 def test_lines_without_a_record_are_skipped_and_said(tmp_path: Path) -> None:

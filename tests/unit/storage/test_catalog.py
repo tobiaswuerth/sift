@@ -226,9 +226,7 @@ def test_a_store_holding_documents_is_never_taken(tmp_path: Path, home: Path, ca
     create_store(held, CollectionId(7))
     with contextlib.closing(open_store(held, CollectionId(7))) as connection:
         connection.execute("INSERT INTO sources(path, modified_ns, size) VALUES ('a.md', 1, 1)")
-        connection.execute(
-            "INSERT INTO documents(source, key, digest, title, fields, text) VALUES (1, '', 'd', 'a', '{}', 'a')"
-        )
+        connection.execute("INSERT INTO documents(source, key, digest, title, fields) VALUES (1, '', 'd', 'a', '{}')")
     with pytest.raises(InvalidRequestError, match="exists already"):
         add_collection(catalog, home, NewCollection(folder(tmp_path, "notes"), store=held))
 

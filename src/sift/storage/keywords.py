@@ -34,8 +34,9 @@ from sift.storage.database import (
 from sift.storage.keyword_merges import Totals, merged_once, planned, settled
 from sift.storage.keyword_meta import FINGERPRINT_KEY, SHAPE_KEY, THROUGH_KEY, fingerprint
 from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
+from sift.storage.texts import TextSpan, spans_text
 
-DOCUMENTS = "SELECT id, title, meta, text FROM keyword_documents WHERE id IN (SELECT value FROM json_each(?))"
+DOCUMENTS = "SELECT id, title, meta FROM keyword_documents WHERE id IN (SELECT value FROM json_each(?))"
 REMAKE_REMEDY = "run sift index to remake it"
 STALE = "the store's keyword index is of another version of sift"
 UNFINISHED = "the store's keyword index is not yet wholly remade"
@@ -52,11 +53,10 @@ class Span(NamedTuple):
     length: int
 
 
-class ChunkToIndex(NamedTuple):
+class Named(NamedTuple):
     id: int
     title: str
     meta: str | None
-    text: str
 
 
 class Range(NamedTuple):
@@ -114,15 +114,12 @@ def _tokens(streams: Sequence[Sequence[str]]) -> int:
 
 def _streams(transaction: Reading, spans: Sequence[Span]) -> list[list[str]]:
     wanted = json.dumps(sorted({span.document for span in spans}))
-    documents = {held.id: held for held in rows(transaction, ChunkToIndex, DOCUMENTS, (wanted,))}
+    documents = {held.id: held for held in rows(transaction, Named, DOCUMENTS, (wanted,))}
     named = {key: (tokens(held.title), tokens(held.meta or "")) for key, held in documents.items()}
+    cut = spans_text(transaction, [TextSpan(span.document, span.start, span.length) for span in spans])
     return [
-        stream(
-            named[span.document][0],
-            tokens(documents[span.document].text[span.start : span.start + span.length]),
-            named[span.document][1],
-        )
-        for span in spans
+        stream(named[span.document][0], tokens(text), named[span.document][1])
+        for span, text in zip(spans, cut, strict=True)
     ]
 
 

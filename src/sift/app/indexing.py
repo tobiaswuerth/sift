@@ -8,7 +8,6 @@ from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase,
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import chosen_or_active
 from sift.app.filing import READERS, Job, Limits, Readers, Tally
-from sift.app.kept_vectors import vectors_held, vectors_kept
 from sift.app.problems import problems
 from sift.app.records import stored_records
 from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan, most_read, recorded
@@ -29,6 +28,7 @@ from sift.storage.documents import (
     unreadable,
 )
 from sift.storage.forgetting import delete_documents, delete_sources
+from sift.storage.kept_vectors import vectors_held, vectors_kept
 from sift.storage.keywords import remade, remake_started, settle, writing_documents
 from sift.storage.store import connected
 
@@ -98,9 +98,9 @@ def _file_stored(transaction: WritingDocuments, path: str, stat: Stat, read: Fil
     new = [each for each in read.documents if each.key not in held]
     gone = [held[key].id for key in held.keys() - {each.key for each in read.documents}]
     replaced = [held[each.key].id for each in changed]
-    vectors = vectors_held(transaction, replaced)
+    vectors_held(transaction, replaced)
     delete_documents(transaction, [*gone, *replaced])
-    vectors_kept(transaction, add_documents(transaction, source, path, [*changed, *new]), vectors)
+    vectors_kept(transaction, add_documents(transaction, source, path, [*changed, *new]))
     if read.problems:
         mark_unreadable(transaction, path, PROBLEMS_APART.join(read.problems), read_again=False)
     return Tally(added=len(new), changed=len(changed), removed=len(gone))

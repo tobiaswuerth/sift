@@ -6,7 +6,7 @@ import pytest
 
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId
-from sift.storage.database import Batches, WritingDocuments, reading, rows, run, writing
+from sift.storage.database import Batches, reading, rows, run, writing
 from sift.storage.keyword_lists import frequencies
 from sift.storage.keywords import REMAKE_REMEDY, current, remade, remake_started
 from sift.storage.store import LAYOUT, create_store, open_store
@@ -18,7 +18,7 @@ from tests.keyword_indexes import (
     chunk_tokens,
     staled,
 )
-from tests.keyword_stores import SMALL, applied, changed, opened_store
+from tests.keyword_stores import SMALL, applied, opened_store
 
 
 def test_an_index_of_another_version_takes_no_writes_until_remade_a_batch_at_a_time() -> None:
@@ -70,7 +70,24 @@ def test_a_store_of_the_layout_before_the_keyword_index_gets_one_when_remade() -
             writing(connection) as transaction,
         ):
             run(transaction, "DELETE FROM meta WHERE key LIKE 'keyword%'")
-            changed(WritingDocuments(connection), "a.md", ("tags: [old]\n", "Old", "kept from before"))
+            run(transaction, "INSERT INTO sources(id, path, modified_ns, size) VALUES (1, 'a.md', 0, 0)")
+            body = "# Old\n\nkept from before\n"
+            run(
+                transaction,
+                (
+                    "INSERT INTO documents(source, key, digest, title, fields, text) "
+                    "VALUES (1, '', 'd', 'Old', '{\"tags\": [\"old\"]}', ?)"
+                ),
+                (body,),
+            )
+            run(
+                transaction,
+                (
+                    "INSERT INTO chunks(document, first_line, last_line, start, length) "
+                    "SELECT id, 1, 3, 0, ? FROM documents"
+                ),
+                (len(body.strip()),),
+            )
         with contextlib.closing(open_store(path, CollectionId(3))) as connection:
             assert remake_started(connection) == 1
             assert list(remade(connection)) == [1]

@@ -1,5 +1,5 @@
 import posixpath
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -94,10 +94,9 @@ def around(text: str, target: str) -> str:
     return (ELLIPSIS if start else "") + content[start:end] + (ELLIPSIS if end < len(content) else "")
 
 
-def linking_lines(links: Sequence[Linking], text: str) -> list[tuple[int, str | None, str]]:
-    every = text.split("\n")
+def linking_lines(links: Sequence[Linking], lines: Mapping[int, str]) -> list[tuple[int, str | None, str]]:
     found: dict[int, tuple[int, str | None, str]] = {}
     for link in links:
         if link.line not in found:
-            found[link.line] = (link.line, link.field, around(every[link.line - 1], link.target))
+            found[link.line] = (link.line, link.field, around(lines[link.line], link.target))
     return list(found.values())

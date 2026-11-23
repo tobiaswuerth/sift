@@ -8,6 +8,7 @@ from sift.domain.errors import DamagedError
 from sift.domain.text.links import names
 from sift.domain.text.notes import Document
 from sift.storage.database import Reading, Writing, WritingDocuments, first, inserted, rows, run, run_each
+from sift.storage.texts import put_text
 
 SourceId = NewType("SourceId", int)
 
@@ -32,7 +33,6 @@ class Stored(NamedTuple):
     digest: str
     title: str
     fields: str
-    text: str
 
 
 class StoredChunk(NamedTuple):
@@ -88,10 +88,11 @@ def _add(transaction: Writing, source: SourceId, path: str, document: Document) 
     identity = DocumentId(
         inserted(
             transaction,
-            "INSERT INTO documents(source, key, digest, title, fields, text) VALUES (?, ?, ?, ?, ?, ?)",
-            (source, document.key, document.digest, document.title, fields_json(document.fields), document.text),
+            "INSERT INTO documents(source, key, digest, title, fields) VALUES (?, ?, ?, ?, ?)",
+            (source, document.key, document.digest, document.title, fields_json(document.fields)),
         )
     )
+    put_text(transaction, identity, (document.text,))
     run_each(
         transaction,
         "INSERT INTO chunks(document, first_line, last_line, start, length) VALUES (?, ?, ?, ?, ?)",
@@ -125,7 +126,7 @@ def stored(transaction: Reading, path: str, key: str = "") -> Stored | None:
     return first(
         transaction,
         Stored,
-        """SELECT d.id, s.path, d.key, d.digest, d.title, d.fields, d.text
+        """SELECT d.id, s.path, d.key, d.digest, d.title, d.fields
            FROM documents d JOIN sources s ON s.id = d.source WHERE s.path = ? AND d.key = ?""",
         (path, key),
     )
@@ -160,11 +161,6 @@ class Passage(NamedTuple):
     length: int
 
 
-class TextRow(NamedTuple):
-    id: DocumentId
-    text: str
-
-
 PASSAGES = """SELECT c.id, d.id, s.path, d.key, d.title, c.first_line, c.last_line, c.start, c.length
               FROM chunks c JOIN documents d ON d.id = c.document JOIN sources s ON s.id = d.source
               WHERE c.id IN (SELECT value FROM json_each(?))"""
@@ -194,11 +190,6 @@ class ChunkOwner(NamedTuple):
 def documents_of(transaction: Reading, chunks: Sequence[int]) -> dict[int, int]:
     sql = "SELECT id, document FROM chunks WHERE id IN (SELECT value FROM json_each(?))"
     return {found.chunk: found.document for found in rows(transaction, ChunkOwner, sql, (json.dumps(list(chunks)),))}
-
-
-def texts(transaction: Reading, documents: Sequence[DocumentId]) -> dict[DocumentId, str]:
-    sql = "SELECT id, text FROM documents WHERE id IN (SELECT value FROM json_each(?))"
-    return {found.id: found.text for found in rows(transaction, TextRow, sql, (json.dumps(list(documents)),))}
 
 
 class Unreadable(NamedTuple):

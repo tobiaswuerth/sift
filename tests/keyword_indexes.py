@@ -11,7 +11,7 @@ from sift.domain.text.tokens import tokens
 from sift.storage.database import Batches, Connection, Reading, reading, rows, run, writing
 from sift.storage.keyword_lists import blocks, dead_within, frequencies, parts, positions, segments
 from sift.storage.keywords import totals
-from tests.keyword_stores import COLUMNS, Instance, Round, instances
+from tests.keyword_stores import COLUMNS, Instance, Round, instances, texts
 
 WORDS = ("alpha", "beta", "Gamma", "δέλτα", "x-ray", "naïve")
 
@@ -110,21 +110,10 @@ class Average(NamedTuple):
     average: float
 
 
-class ChunkText(NamedTuple):
-    id: int
-    title: str
-    meta: str | None
-    text: str
-
-
-CHUNK_TEXTS = """SELECT c.id, d.title, d.meta, substr(d.text, c.start + 1, c.length)
-                 FROM chunks AS c JOIN keyword_documents AS d ON d.id = c.document"""
-
-
 def chunk_tokens(transaction: Reading) -> dict[int, int]:
     return {
-        chunk.id: len(tokens(chunk.title)) + len(tokens(chunk.text)) + len(tokens(chunk.meta or ""))
-        for chunk in rows(transaction, ChunkText, CHUNK_TEXTS)
+        chunk.chunk: len(tokens(chunk.title)) + len(tokens(chunk.text)) + len(tokens(chunk.meta or ""))
+        for chunk in texts(transaction)
     }
 
 

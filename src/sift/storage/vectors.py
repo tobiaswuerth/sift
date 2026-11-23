@@ -1,5 +1,4 @@
 import json
-from collections.abc import Sequence
 from typing import NamedTuple, cast
 
 import numpy as np
@@ -11,6 +10,7 @@ from sift.domain.arrays import STORED_HALF, Ids, among, ascending, distinct, int
 from sift.domain.codec.codes import MOST_BITS, Bits, Halves, code_bytes, codes, width_of
 from sift.domain.errors import DamagedError
 from sift.storage.database import Count, IdRow, Reading, Value, Writing, first, rows, run, run_each
+from sift.storage.texts import TextSpan, spans_text
 
 MODEL_KEY, WIDTH_KEY = "vector_model", "vector_width"
 PENDING = """SELECT c.id, c.document, c.start, c.length,
@@ -18,14 +18,7 @@ PENDING = """SELECT c.id, c.document, c.start, c.length,
              FROM unembedded u JOIN chunks c ON c.id = u.chunk
              WHERE u.chunk > ?
              ORDER BY u.chunk LIMIT ?"""
-TEXTS = "SELECT id, title, text FROM documents WHERE id IN (SELECT value FROM json_each(?))"
-HELD = """SELECT c.id, c.document, c.start, c.length,
-                 c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document), v.vector, k.bits
-          FROM chunks c JOIN vectors v ON v.chunk = c.id JOIN codes k ON k.chunk = c.id
-          WHERE c.document IN (SELECT value FROM json_each(?)) ORDER BY c.id"""
-PLACED = """SELECT c.id, c.document, c.start, c.length,
-                   c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document)
-            FROM chunks c WHERE c.document IN (SELECT value FROM json_each(?)) ORDER BY c.id"""
+TITLES = "SELECT id, title FROM documents WHERE id IN (SELECT value FROM json_each(?))"
 CODES = "SELECT chunk, bits FROM codes ORDER BY chunk"
 HELD_META = "SELECT value FROM meta WHERE key = ? AND (SELECT vectors FROM counts) > 0"
 READ = 65_536
@@ -55,10 +48,9 @@ class Waiting(NamedTuple):
     first: int
 
 
-class TitledText(NamedTuple):
+class TitleRow(NamedTuple):
     id: int
     title: str
-    text: str
 
 
 class VectorRow(NamedTuple):
@@ -80,58 +72,15 @@ def width_held(transaction: Reading) -> int | None:
     return None if found is None else int(found)
 
 
-def _cut(transaction: Reading, spans: Sequence[Waiting]) -> list[Pending]:
-    wanted = json.dumps(sorted({each.document for each in spans}))
-    texts = {held.id: held for held in rows(transaction, TitledText, TEXTS, (wanted,))}
-    return [
-        Pending(
-            each.chunk,
-            texts[each.document].title,
-            texts[each.document].text[each.start : each.start + each.length],
-            bool(each.first),
-        )
-        for each in spans
-    ]
-
-
 def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
-    return _cut(transaction, rows(transaction, Waiting, PENDING, (after, most)))
-
-
-def placed_chunks(transaction: Reading, documents: Sequence[DocumentId]) -> list[Pending]:
-    return _cut(transaction, rows(transaction, Waiting, PLACED, (json.dumps(list(documents)),)))
-
-
-class VectorSpan(NamedTuple):
-    chunk: ChunkId
-    document: DocumentId
-    start: int
-    length: int
-    first: int
-    vector: bytes
-    bits: bytes
-
-
-class HeldVector(NamedTuple):
-    title: str
-    text: str
-    first: bool
-    vector: bytes
-    bits: bytes
-
-
-def held_vectors(transaction: Reading, documents: Sequence[DocumentId]) -> list[HeldVector]:
-    found = rows(transaction, VectorSpan, HELD, (json.dumps(list(documents)),))
-    cut = _cut(transaction, [Waiting(*each[:5]) for each in found])
+    spans = rows(transaction, Waiting, PENDING, (after, most))
+    wanted = json.dumps(sorted({each.document for each in spans}))
+    titles = {held.id: held.title for held in rows(transaction, TitleRow, TITLES, (wanted,))}
+    cut = spans_text(transaction, [TextSpan(each.document, each.start, each.length) for each in spans])
     return [
-        HeldVector(read.title, read.text, read.first, each.vector, each.bits)
-        for read, each in zip(cut, found, strict=True)
+        Pending(each.chunk, titles[each.document], text, bool(each.first))
+        for each, text in zip(spans, cut, strict=True)
     ]
-
-
-def copy_vectors(transaction: Writing, copies: Sequence[tuple[ChunkId, bytes, bytes]]) -> None:
-    run_each(transaction, "INSERT INTO vectors(chunk, vector) VALUES (?, ?)", [(c, v) for c, v, _ in copies])
-    run_each(transaction, "INSERT INTO codes(chunk, bits) VALUES (?, ?)", [(c, b) for c, _, b in copies])
 
 
 def documents_embedded(transaction: Reading) -> int:

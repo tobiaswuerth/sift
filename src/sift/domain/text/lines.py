@@ -1,7 +1,6 @@
 import re
 
 from sift.api.errors import InvalidRequestError
-from sift.domain.text.markdown import LINE
 from sift.domain.text.wording import counted
 
 RANGE = re.compile(r"([1-9][0-9]*)(?:-([1-9][0-9]*))?")
@@ -16,9 +15,7 @@ def line_range(written: str) -> tuple[int, int]:
     return first, last
 
 
-def lines_of(text: str, first: int, last: int, name: str) -> str:
-    every = [found.group() for found in LINE.finditer(text)]
-    if first > len(every):
-        said = f"{name} has {counted(len(every), 'line')}; line {first} is past its end"
-        raise InvalidRequestError(said, f"ask for lines 1 to {len(every)} at most")
-    return "".join(every[first - 1 : last])
+def refuse_past_end(name: str, total: int, *, first: int) -> None:
+    if first > total:
+        said = f"{name} has {counted(total, 'line')}; line {first} is past its end"
+        raise InvalidRequestError(said, f"ask for lines 1 to {total} at most")

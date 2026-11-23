@@ -26,7 +26,7 @@ PAPERS: dict[str, Fields] = {
 
 
 SOURCE = "INSERT INTO sources(id, path, modified_ns, size) VALUES (?, ?, 0, 0)"
-DOCUMENT = "INSERT INTO documents(id, source, key, digest, title, fields, text) VALUES (?, ?, '', '', '', ?, '')"
+DOCUMENT = "INSERT INTO documents(id, source, key, digest, title, fields) VALUES (?, ?, '', '', '', ?)"
 CHUNK = "INSERT INTO chunks(id, document, first_line, last_line, start, length) VALUES (?, ?, 1, 1, 0, 0)"
 
 

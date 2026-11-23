@@ -7,7 +7,6 @@ from sift.api.collections import AddCollection, UnreadableFile
 from sift.api.embedding import EmbedCollections
 from sift.api.events import Event, Noted
 from sift.api.filters import written
-from sift.api.ids import DocumentId
 from sift.api.indexing import IndexCollections, Indexed
 from sift.api.search import SearchKeywords
 from sift.app.collections import add
@@ -19,8 +18,9 @@ from sift.domain.text.documents import Conversion, Unread
 from sift.ingest.documents import convert
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
-from sift.storage.vectors import held_vectors, left
+from sift.storage.vectors import left
 from tests.homes import text_of, unreadable_files
+from tests.keyword_stores import vectors_by_text
 from tests.later import later
 from tests.mails import PARAGRAPH, mail_bytes, message, only, sample
 from tests.models import Hashed
@@ -137,11 +137,13 @@ def test_a_changed_mail_keeps_its_unchanged_attachments_and_their_vectors(post: 
     embed(post, EmbedCollections(), lambda _: None, Hashed())
     (one,) = known_collections(post)
     with read_store(one.store, one.id) as transaction:
-        before = held_vectors(transaction, [DocumentId(2)])
+        before = vectors_by_text(transaction)
     _offer(tmp_path / "mail", body="Other words.")
     assert indexed(post) == Indexed(files=1, added=0, changed=1, removed=0, unreadable=0)
     with read_store(one.store, one.id) as transaction:
-        assert (held_vectors(transaction, [DocumentId(2)]), left(transaction)) == (before, 1)
+        after = vectors_by_text(transaction)
+        assert (len(after), left(transaction)) == (len(before) - 1, 1)
+        assert all(before[text] == vector for text, vector in after.items())
     _offer(tmp_path / "mail", attached=b"%PDF-1.4 broken")
     said: list[Event] = []
     assert indexed(post, said=said) == Indexed(files=1, added=0, changed=1, removed=1, unreadable=1)
