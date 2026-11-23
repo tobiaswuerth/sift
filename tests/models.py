@@ -7,6 +7,7 @@ import numpy as np
 from sift.domain.codec.codes import Floats, Halves
 
 BROKEN = "unembeddable"
+DIRECTIONLESS = "directionless"
 
 
 def _word(word: str, width: int) -> Floats:
@@ -18,6 +19,8 @@ def _vector(text: str, width: int) -> Floats:
     words = text.lower().split()
     if BROKEN in words:
         return np.full(width, np.nan, np.float32)
+    if DIRECTIONLESS in words:
+        return np.zeros(width, np.float32)
     summed = np.sum([_word(word, width) for word in words], axis=0) if words else np.ones(width, np.float32)
     return (summed / np.linalg.norm(summed)).astype(np.float32)
 

@@ -1,3 +1,4 @@
+import tracemalloc
 from typing import cast
 
 import numpy as np
@@ -10,6 +11,9 @@ from sift.domain.arrays import Ids, floats, ints
 from sift.domain.codec.codes import Bits, Floats, Halves, codes
 from sift.retrieval.vector.nearest import SCAN_SHARE, SHORTLIST, Coded, Exact, Near, Reads, coded, nearest
 from tests.allowed import Chosen
+
+RECALL_AT_10 = 0.75
+BYTES_A_CODE = 16
 
 
 def unit(values: NDArray[np.float64]) -> Floats:
@@ -83,6 +87,32 @@ def test_the_shortlist_by_codes_finds_more_of_the_nearest_the_more_it_rescores()
     assert recall == sorted(recall)
     assert recall[2] >= 0.9
     assert recall[3] == 1.0
+
+
+def test_the_codes_find_the_nearest_among_many_more_codes_than_are_scored_exactly() -> None:
+    held, exact = stores(9, [200_000], 64)
+    rng = np.random.default_rng(10)
+    rows = exact[0][1].astype(np.float64)
+    picked = ints(rng.integers(200_000, size=20))
+    queries = [unit(rows[at : at + 1].reshape(-1) + 0.04 * rng.normal(size=64)) for at in picked]
+    found = [{near.chunk for near in nearest(held, query, 10, Reads(reader(exact)), rescore=1000)} for query in queries]
+    recall = np.mean(
+        [len(each & {near.chunk for near in brute(exact, q, 10)}) / 10 for each, q in zip(found, queries, strict=True)]
+    )
+    assert recall >= RECALL_AT_10
+
+
+def test_a_scan_without_a_filter_holds_a_few_bytes_a_code_beside_the_codes() -> None:
+    held, exact = stores(11, [200_000], 64)
+    query = unit(np.random.default_rng(12).normal(size=64))
+    nearest(held, query, 10, Reads(reader(exact)), rescore=50)
+    tracemalloc.start()
+    try:
+        nearest(held, query, 10, Reads(reader(exact)), rescore=50)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < BYTES_A_CODE * 200_000
 
 
 def exact_stores(seed: int, sizes: list[int], width: int) -> tuple[list[Coded], list[tuple[Ids, Halves]]]:

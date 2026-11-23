@@ -150,6 +150,19 @@ LAYOUT: tuple[Migration, ...] = (
         """CREATE TRIGGER vectors_replaced AFTER UPDATE OF vector ON vectors
            BEGIN UPDATE counts SET vector_changes = vector_changes + 1; END""",
     ),
+    (
+        "CREATE TABLE unembedded(chunk INTEGER PRIMARY KEY) STRICT",
+        "INSERT INTO unembedded(chunk) SELECT id FROM chunks WHERE id NOT IN (SELECT chunk FROM vectors)",
+        """CREATE TRIGGER chunks_unembedded AFTER INSERT ON chunks
+           BEGIN INSERT INTO unembedded(chunk) VALUES (NEW.id); END""",
+        """CREATE TRIGGER chunks_gone_unembedded AFTER DELETE ON chunks
+           BEGIN DELETE FROM unembedded WHERE chunk = OLD.id; END""",
+        """CREATE TRIGGER vectors_embedded AFTER INSERT ON vectors
+           BEGIN DELETE FROM unembedded WHERE chunk = NEW.chunk; END""",
+        """CREATE TRIGGER vectors_forgotten AFTER DELETE ON vectors
+           WHEN EXISTS (SELECT 1 FROM chunks WHERE id = OLD.chunk)
+           BEGIN INSERT OR IGNORE INTO unembedded(chunk) VALUES (OLD.chunk); END""",
+    ),
 )
 NUMBERED_TABLES = ("documents", "chunks")
 FILE_SUFFIXES = ("", "-wal", "-shm")

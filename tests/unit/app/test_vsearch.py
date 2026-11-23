@@ -20,7 +20,7 @@ from sift.domain.errors import DamagedError
 from sift.storage.database import Reading
 from sift.storage.vectors import EMBED_REMEDY, documents_embedded, vectors_of
 from tests.damage import damage_table
-from tests.models import BROKEN, Hashed
+from tests.models import BROKEN, DIRECTIONLESS, Hashed
 
 LONG = "\n\n".join(["Pruning skips ranges that cannot win. " * 20] * 8)
 
@@ -91,6 +91,7 @@ def test_the_query_is_embedded_as_a_query(home: Path) -> None:
         (SearchVectors("halo", k=0), "asks for no result"),
         (SearchVectors("halo", k=10_001), "more than 10,000 results"),
         (SearchVectors(f"a {BROKEN} query"), "the model gave no vector for the query"),
+        (SearchVectors(f"a {DIRECTIONLESS} query"), "the model gave the query no direction"),
     ],
 )
 def test_a_query_that_cannot_be_searched_is_refused(home: Path, request_: SearchVectors, refusal: str) -> None:

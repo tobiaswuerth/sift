@@ -1,3 +1,4 @@
+import contextlib
 import tempfile
 import tracemalloc
 from pathlib import Path
@@ -7,10 +8,12 @@ import numpy as np
 import pytest
 
 from sift.api.errors import StoreUnavailableError
+from sift.api.ids import CollectionId
 from sift.domain.arrays import Ids, first, ints, last
 from sift.domain.codec.codes import Halves, codes
 from sift.domain.errors import DamagedError
 from sift.storage.database import Connection, reading, rows, run, writing
+from sift.storage.store import LAYOUT, open_store
 from sift.storage.vectors import (
     Kept,
     changes,
@@ -71,6 +74,58 @@ def test_chunks_without_a_vector_are_pending_with_their_title_and_whether_they_c
             assert waiting[-1].title == "Beta"
             assert waiting[-1].first is True
             assert pending(transaction, waiting[0].chunk, 1) == waiting[1:2]
+
+
+def test_chunks_waiting_for_vectors_are_found_without_looking_at_those_embedded() -> None:
+    many: Round = {f"{n:04}.md": ("", "T", f"w{n}") for n in range(2000)}
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [many])
+        ids = chunk_ids(connection, 5000)
+        with writing(connection) as transaction:
+            put_vectors(transaction, ids, vectors(len(ids)), "m")
+        applied(connection, [{"new.md": ("", "New", "fresh words")}])
+        ticks: list[int] = []
+
+        def tick() -> int:
+            ticks.append(1)
+            return 0
+
+        connection.set_progress_handler(tick, 100)
+        with reading(connection) as transaction:
+            (waiting,) = pending(transaction, 0, 1024)
+        connection.set_progress_handler(None, 0)
+        assert waiting.title == "New"
+        assert len(ticks) < 20
+
+
+def test_chunks_wait_for_vectors_again_once_forgotten_and_not_once_gone() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [NOTES])
+        ids = chunk_ids(connection)
+        with writing(connection) as transaction:
+            put_vectors(transaction, ids, vectors(len(ids)), "m")
+        applied(connection, [{"a.md": None}])
+        with reading(connection) as transaction:
+            assert pending(transaction, 0, 1000) == []
+        with writing(connection) as transaction:
+            forget_vectors(transaction)
+        with reading(connection) as transaction:
+            assert [row.title for row in pending(transaction, 0, 1000)] == ["Beta"]
+
+
+def test_a_store_of_the_layout_before_lists_the_chunks_without_vectors_once_opened() -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        with opened_store(Path(folder), 3, SMALL) as connection:
+            applied(connection, [NOTES])
+            ids = chunk_ids(connection)
+            with writing(connection) as transaction:
+                put_vectors(transaction, ids[::2], vectors(len(ids[::2])), "m")
+                for trigger in ("chunks_unembedded", "chunks_gone_unembedded", "vectors_embedded", "vectors_forgotten"):
+                    run(transaction, f"DROP TRIGGER {trigger}")
+                run(transaction, "DROP TABLE unembedded")
+                run(transaction, f"PRAGMA user_version = {len(LAYOUT) - 1}")
+        with contextlib.closing(open_store(Path(folder) / "3.sqlite", CollectionId(3))) as connection:
+            assert ints(chunk_ids(connection)) == ints(ids[1::2])
 
 
 def test_vectors_go_with_their_chunks_and_a_broken_or_gone_chunk_gets_none() -> None:
@@ -207,6 +262,7 @@ def test_codes_are_read_in_batches_into_arrays_made_once() -> None:
         with writing(connection) as transaction:
             put_vectors(transaction, ids, vectors(len(ids), 2048), "m")
         with reading(connection) as transaction:
+            codes_of(transaction, read=100)
             tracemalloc.start()
             found, bits = codes_of(transaction, read=100)
             peak = tracemalloc.get_traced_memory()[1]

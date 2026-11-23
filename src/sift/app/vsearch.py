@@ -80,6 +80,8 @@ def query_vector(models: Models, text: str) -> Floats:
     vector = models.encode([text], query=True).astype(np.float32).reshape(-1)
     if not bool(np.isfinite(vector).all()):
         raise InvalidRequestError("the model gave no vector for the query", QUERY_REMEDY)
+    if not bool(vector.any()):
+        raise InvalidRequestError("the model gave the query no direction to be near to", QUERY_REMEDY)
     return vector
 
 

@@ -1,5 +1,5 @@
 import json
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -8,14 +8,14 @@ from sift.api.errors import StoreUnavailableError
 from sift.domain.arrays import STORED_HALF, Ids, among, ascending, distinct, ints
 from sift.domain.codec.codes import MOST_BITS, Bits, Halves, code_bytes, codes, width_of
 from sift.domain.errors import DamagedError
-from sift.storage.database import Reading, Writing, batches, first, rows, run, run_each
+from sift.storage.database import Reading, Writing, first, rows, run, run_each
 
 MODEL_KEY, WIDTH_KEY = "vector_model", "vector_width"
 PENDING = """SELECT c.id, c.document, c.start, c.length,
                     c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document)
-             FROM chunks c
-             WHERE c.id > ? AND NOT EXISTS (SELECT 1 FROM vectors v WHERE v.chunk = c.id)
-             ORDER BY c.id LIMIT ?"""
+             FROM unembedded u JOIN chunks c ON c.id = u.chunk
+             WHERE u.chunk > ?
+             ORDER BY u.chunk LIMIT ?"""
 TEXTS = "SELECT id, title, text FROM documents WHERE id IN (SELECT value FROM json_each(?))"
 CODES = "SELECT chunk, bits FROM codes ORDER BY chunk"
 HELD_META = "SELECT value FROM meta WHERE key = ? AND (SELECT vectors FROM counts) > 0"
@@ -53,11 +53,6 @@ class Text(NamedTuple):
 
 class Value(NamedTuple):
     value: str
-
-
-class CodeRow(NamedTuple):
-    chunk: int
-    bits: bytes
 
 
 class VectorRow(NamedTuple):
@@ -108,7 +103,7 @@ def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
 
 
 def documents_embedded(transaction: Reading) -> int:
-    sql = "SELECT count(DISTINCT c.document) FROM vectors v JOIN chunks c ON c.id = v.chunk"
+    sql = "SELECT count(DISTINCT c.document) FROM codes k JOIN chunks c ON c.id = k.chunk"
     (found,) = rows(transaction, Count, sql)
     return found.n
 
@@ -191,11 +186,12 @@ def codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, Bits]:
     size = code_bytes(width_held(transaction) or 0)
     ids, bits = np.empty(held.n, np.int64), np.empty((held.n, size), np.uint8)
     done = 0
-    for batch in batches(transaction, CodeRow, CODES, size=read):
-        if done + len(batch) > held.n or any(len(row.bits) != size for row in batch):
+    cursor = transaction.connection.execute(CODES)
+    while batch := cast("list[tuple[int, bytes]]", cursor.fetchmany(read)):
+        if done + len(batch) > held.n or any(len(row[1]) != size for row in batch):
             raise DamagedError(DAMAGED_CODES)
-        ids[done : done + len(batch)] = [row.chunk for row in batch]
-        bits[done : done + len(batch)] = np.frombuffer(b"".join(row.bits for row in batch), np.uint8).reshape(-1, size)
+        ids[done : done + len(batch)] = np.fromiter((row[0] for row in batch), np.int64, len(batch))
+        bits[done : done + len(batch)] = np.frombuffer(b"".join(row[1] for row in batch), np.uint8).reshape(-1, size)
         done += len(batch)
     if done != held.n:
         raise DamagedError(DAMAGED_CODES)

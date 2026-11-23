@@ -64,37 +64,52 @@ def coded(ids: Ids, bits: Bits, width: int) -> Coded:
     return Coded(ids, bits, words(bits), width)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class Measured:
     distance: NDArray[np.uint16]
     ids: Ids
-    owners: Ids
-    rows: Ids
+    sizes: tuple[int, ...]
+
+    def owners(self, at: Ids) -> Ids:
+        return np.searchsorted(np.cumsum(self.sizes), at, side="right").astype(np.int64)
+
+    def rows(self, at: Ids) -> Ids:
+        starts = np.concatenate([np.zeros(1, np.int64), np.cumsum(self.sizes)[:-1]])
+        return at - starts[self.owners(at)]
+
+
+def _joined[T: np.generic](parts: list[NDArray[T]], empty: NDArray[T]) -> NDArray[T]:
+    return parts[0] if len(parts) == 1 else np.concatenate([empty, *parts])
 
 
 def _measured(held: Sequence[Coded], query: Floats) -> Measured:
     asked = code_of(query)
     return Measured(
-        np.concatenate([np.zeros(0, np.uint16), *(distances(each.words, asked) for each in held)]),
-        np.concatenate([np.zeros(0, np.int64), *(each.ids for each in held)]),
-        np.repeat(np.arange(len(held)), [len(each.ids) for each in held]),
-        np.concatenate([np.zeros(0, np.int64), *(np.arange(len(each.ids)) for each in held)]),
+        _joined([distances(each.words, asked) for each in held], np.zeros(0, np.uint16)),
+        _joined([each.ids for each in held], np.zeros(0, np.int64)),
+        tuple(len(each.ids) for each in held),
     )
 
 
-def _nearest_of(found: Measured, among: Ids, want: int) -> Candidates:
-    distance, ids = found.distance[among], found.ids[among]
-    if len(among) > want:
-        cutoff = int(np.searchsorted(np.cumsum(np.bincount(distance)), want))
-        close = np.flatnonzero(distance <= cutoff)
-        among = among[close[np.lexsort((ids[close], distance[close]))[:want]]]
-    return Candidates(found.ids[among], found.owners[among], found.rows[among])
+def _candidates(found: Measured, at: Ids) -> Candidates:
+    return Candidates(found.ids[at], found.owners(at), found.rows(at))
+
+
+def _nearest_of(found: Measured, among: Ids | None, want: int) -> Candidates:
+    distance = found.distance if among is None else found.distance[among]
+    if len(distance) <= want:
+        return _candidates(found, np.arange(len(distance)) if among is None else among)
+    cutoff = int(np.searchsorted(np.cumsum(np.bincount(distance)), want))
+    close = np.flatnonzero(distance <= cutoff)
+    at = close if among is None else among[close]
+    return _candidates(found, at[np.lexsort((found.ids[at], distance[close]))[:want]])
 
 
 def _let(found: Measured, chosen: Ids, allowed: Sequence[AllowedChunks | None]) -> Mask:
     let = np.ones(len(chosen), np.bool_)
+    owners = found.owners(chosen)
     for store, each in enumerate(allowed):
-        mine = np.flatnonzero(np.equal(found.owners[chosen], store))
+        mine = np.flatnonzero(np.equal(owners, store))
         if each is not None and len(mine):
             let[mine] = each.checked(found.ids[chosen[mine]])
     return let
@@ -102,10 +117,12 @@ def _let(found: Measured, chosen: Ids, allowed: Sequence[AllowedChunks | None]) 
 
 def _listed(held: Sequence[Coded], found: Measured, allowed: Sequence[AllowedChunks | None]) -> Ids:
     let = np.ones(len(found.ids), np.bool_)
+    start = 0
     for store, each in enumerate(allowed):
+        size = found.sizes[store]
         if each is not None:
-            mine = np.equal(found.owners, store)
-            let[mine] = np.isin(held[store].ids, each.listed())
+            let[start : start + size] = np.isin(held[store].ids, each.listed())
+        start += size
     return np.flatnonzero(let)
 
 
@@ -130,8 +147,7 @@ def _passing(held: Sequence[Coded], found: Measured, want: int, allowed: Sequenc
 
 def _shortlist(held: Sequence[Coded], query: Floats, want: int, allowed: Sequence[AllowedChunks | None]) -> Candidates:
     found = _measured(held, query)
-    every = np.arange(len(found.ids))
-    among = _passing(held, found, want, allowed) if any(each is not None for each in allowed) else every
+    among = _passing(held, found, want, allowed) if any(each is not None for each in allowed) else None
     return _nearest_of(found, among, want)
 
 
