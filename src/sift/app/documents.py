@@ -7,7 +7,7 @@ from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound
 from sift.api.errors import InvalidRequestError, NotFoundError, SiftError
 from sift.domain.query import fields as shown
 from sift.domain.text.lines import line_range, lines_of
-from sift.domain.text.records import record_path, split_record_path
+from sift.domain.text.records import public_id, split_record_path
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Reading, reading
 from sift.storage.documents import Stored, fields_of, paths_named, stored
@@ -76,7 +76,7 @@ def _document(known: Sequence[Collection], id_: str, request: GetDocuments) -> D
         reading(connection) as transaction,
     ):
         found = resolved_at(transaction, id_, relative, absolute=Path(id_).is_absolute())
-    whole = f"{chosen.name}/{record_path(found.path, found.key)}"
+    whole = public_id(chosen.name, found.path, found.key)
     text = lines_of(found.text, *span, whole) if span else found.text
     fields = shown.picked(fields_of(found.fields), request.fields) if request.fields else None
     return DocumentText(whole, found.title, text, fields)

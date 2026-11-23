@@ -20,7 +20,7 @@ KEYED = """SELECT l.document, s.path, l.field, l.line, l.kind, l.target, l.key, 
            FROM links l JOIN documents d ON d.id = l.document JOIN sources s ON s.id = d.source
            WHERE l.key = :key AND (:field IS NULL OR l.field = :field) ORDER BY l.document, l.ordinal"""
 KEYS = "SELECT DISTINCT key FROM names WHERE document = ? ORDER BY key"
-TITLED = """SELECT d.id, s.path, d.title FROM documents d JOIN sources s ON s.id = d.source
+TITLED = """SELECT d.id, s.path, d.key, d.title FROM documents d JOIN sources s ON s.id = d.source
             WHERE d.id IN (SELECT value FROM json_each(?))"""
 DOUBTFUL = """SELECT l.document, s.path, l.field, l.line, l.kind, l.target, l.key, l.fragment, l.shown
               FROM links l JOIN documents d ON d.id = l.document JOIN sources s ON s.id = d.source
@@ -58,6 +58,7 @@ class Count(NamedTuple):
 class Titled(NamedTuple):
     document: int
     path: str
+    key: str
     title: str
 
 

@@ -1,5 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 
 from sift.api.errors import InvalidRequestError, StoreUnavailableError
@@ -19,6 +20,7 @@ from sift.api.search import Unsearched
 from sift.app.collections import chosen_or_active
 from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, linking, note_of, read_in, unresolved_links
 from sift.app.searching import checked_k
+from sift.domain.text.records import public_id
 from sift.domain.text.resolving import LEADING, Linking, Resolution, link_path, linking_lines, stem
 from sift.storage.database import Reading
 from sift.storage.documents import texts
@@ -72,31 +74,35 @@ def _in(resolver: Resolver, document: int, request: ShowLinks) -> list[In]:
     return found[: request.k]
 
 
+def _id(collection: str, row: Titled) -> str:
+    return public_id(collection, row.path, row.key)
+
+
 def _shown_out(each: Out, names: dict[int, Titled], collection: str) -> LinkOut:
     row, how = each.row, each.how
     leads = how.via in LEADING
     first = names[how.documents[0]] if leads else None
-    ambiguous = tuple(f"{collection}/{names[at].path}" for at in how.documents[:AMBIGUOUS_SHOWN]) if not leads else ()
+    ambiguous = tuple(_id(collection, names[at]) for at in how.documents[:AMBIGUOUS_SHOWN]) if not leads else ()
     return LinkOut(
         row.line,
         row.target,
         row.field,
         row.fragment,
         str(how.via),
-        None if first is None else f"{collection}/{first.path}",
+        None if first is None else _id(collection, first),
         None if first is None else first.title,
         ambiguous,
-        None if each.through is None else f"{collection}/{names[each.through].path}",
+        None if each.through is None else _id(collection, names[each.through]),
     )
 
 
 def _shown_in(each: In, names: dict[int, Titled], text: str, collection: str) -> LinkIn:
     lines = linking_lines([Linking(row.line, row.field, row.target) for row in each.rows], text)
     return LinkIn(
-        f"{collection}/{names[each.document].path}",
+        _id(collection, names[each.document]),
         names[each.document].title,
         tuple(LinkingLine(*line) for line in lines),
-        None if each.through is None else f"{collection}/{names[each.through].path}",
+        None if each.through is None else _id(collection, names[each.through]),
     )
 
 
@@ -110,7 +116,7 @@ def _links(transaction: Reading, found: Note, request: ShowLinks) -> Links:
     names = titled(transaction, documents)
     whole = texts(transaction, [DocumentId(each.document) for each in into or ()])
     return Links(
-        f"{collection}/{names[document].path}",
+        _id(collection, names[document]),
         names[document].title,
         None if out is None else tuple(_shown_out(each, names, collection) for each in out),
         None
@@ -134,7 +140,7 @@ class Gone:
     documents: dict[int, None]
 
 
-def _unresolved(transaction: Reading) -> list[tuple[str, list[str]]]:
+def _unresolved(collection: str, transaction: Reading) -> list[tuple[str, list[str]]]:
     targets: dict[str, Gone] = {}
     for row in unresolved_links(transaction):
         gone = targets.setdefault(stem(link_path(row.path, row.kind, row.target)), Gone(Counter(), {}))
@@ -144,7 +150,7 @@ def _unresolved(transaction: Reading) -> list[tuple[str, list[str]]]:
     return [
         (
             min(gone.written.items(), key=lambda each: (-each[1], each[0]))[0],
-            sorted(names[document].path for document in gone.documents),
+            sorted(_id(collection, names[document]) for document in gone.documents),
         )
         for gone in targets.values()
     ]
@@ -156,7 +162,7 @@ def unresolved(home: Path, request: ListUnresolved) -> Unresolved:
     passed: list[Unsearched] = []
     for one in chosen_or_active(home, () if request.collection is None else (request.collection,)):
         try:
-            found += [(target, [f"{one.name}/{path}" for path in paths]) for target, paths in read_in(one, _unresolved)]
+            found += read_in(one, partial(_unresolved, one.name))
         except StoreUnavailableError as error:
             passed.append(Unsearched(one.name, error.message, error.remedy))
     ranked = sorted(found, key=lambda each: (-len(each[1]), each[0]))[: request.k]

@@ -86,6 +86,10 @@ def record_path(path: str, key: str) -> str:
     return f"{path}{RECORD_MARK}{key}" if key else path
 
 
+def public_id(collection: str, path: str, key: str) -> str:
+    return f"{collection}/{record_path(path, key)}"
+
+
 def split_record_path(relative: str) -> tuple[str, str]:
     at = relative.find(RECORD_MARK)
     while at >= 0:

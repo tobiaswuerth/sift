@@ -8,6 +8,7 @@ from sift.api.search import Unsearched
 from sift.app.documents import place, resolved_at
 from sift.app.documents import unknown as documents_unknown
 from sift.domain.text.links import LinkKind, link_target, name_key
+from sift.domain.text.records import public_id
 from sift.domain.text.resolving import LEADING, Candidate, Resolution, Via, link_path, resolved, stem
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Reading, reading
@@ -55,6 +56,7 @@ class Named:
 class Match:
     collection: Collection
     path: str
+    key: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,18 +86,19 @@ def _named(transaction: Reading, name: str) -> list[int]:
 def _matches(one: Collection, name: str) -> list[Match]:
     def read(transaction: Reading) -> list[Match]:
         found = _named(transaction, name)
-        return [Match(one, path) for path in sorted(each.path for each in titled(transaction, found).values())]
+        held = sorted(titled(transaction, found).values(), key=lambda each: (each.path, each.key))
+        return [Match(one, each.path, each.key) for each in held]
 
     return read_in(one, read)
 
 
 def whole(match: Match) -> str:
-    return f"{match.collection.name}/{match.path}"
+    return public_id(match.collection.name, match.path, match.key)
 
 
 def at_path(match: Match) -> Note:
     def find(transaction: Reading) -> int:
-        found = stored(transaction, match.path)
+        found = stored(transaction, match.path, match.key)
         if found is None:
             raise documents_unknown(whole(match))
         return found.id

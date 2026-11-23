@@ -11,9 +11,8 @@ from sift.api.search import MOST_HITS, Hit, Options, SearchResult, Unsearched
 from sift.app.collections import chosen_or_active
 from sift.app.linked import LeftOut, Narrowing, condition_in, narrowing
 from sift.domain.query import fields as shown
-from sift.domain.rank.hybrid import work_of
-from sift.domain.rank.works import one_per_work
-from sift.domain.text.records import record_path
+from sift.domain.rank.works import one_per_work, work_of_fields
+from sift.domain.text.records import public_id
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
 from sift.storage.documents import fields_by_document, passages, texts
@@ -185,14 +184,14 @@ def _read[S](
         chunk: Seen(
             chunk,
             Hit(
-                f"{one.collection.name}/{record_path(passage.path, passage.key)}",
+                public_id(one.collection.name, passage.path, passage.key),
                 passage.title,
                 f"{passage.first_line}-{passage.last_line}",
                 scores[chunk],
                 None if request.compact else whole[passage.document][passage.start : passage.start + passage.length],
                 fields=fields.get(passage.document) if shown else None,
             ),
-            work_of(fields.get(passage.document, {}).get("doi")),
+            work_of_fields(fields.get(passage.document, {})),
         )
         for chunk, passage in held.items()
     }

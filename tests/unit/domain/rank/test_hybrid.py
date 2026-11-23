@@ -5,7 +5,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.domain.rank.hybrid import blend, named, passage, standing_out, words, work_of
+from sift.domain.rank.hybrid import blend, named, passage, standing_out, words
 
 
 def test_words_are_lowercase_without_stopwords_or_single_latin_letters() -> None:
@@ -62,22 +62,6 @@ def test_the_results_standing_out_end_five_after_the_largest_drop(scores: list[f
 @given(st.lists(st.floats(-100, 100), max_size=40).map(lambda found: sorted(found, reverse=True)))
 def test_the_cut_keeps_one_result_at_least_and_never_more_than_there_are(scores: list[float]) -> None:
     assert min(1, len(scores)) <= standing_out(scores) <= len(scores)
-
-
-@pytest.mark.parametrize(
-    "doi, work",
-    [
-        ("10.1000/ABC", "10.1000/abc"),
-        ("https://doi.org/10.1000/abc", "10.1000/abc"),
-        ("http://dx.doi.org/10.1000/abc", "10.1000/abc"),
-        ("doi: 10.1000/abc ", "10.1000/abc"),
-        ("arXiv:2101.00001", None),
-        (12, None),
-        (None, None),
-    ],
-)
-def test_a_work_is_known_by_its_doi_however_it_is_written(doi: object, work: str | None) -> None:
-    assert work_of(doi) == work
 
 
 def test_a_cosine_not_known_counts_as_the_mean_of_the_others_neither_bonus_nor_penalty() -> None:

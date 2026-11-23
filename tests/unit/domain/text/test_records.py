@@ -4,7 +4,15 @@ import pytest
 
 from sift.api.fields import FieldValue
 from sift.domain.text.notes import Document
-from sift.domain.text.records import NO_CHOICE, Chosen, Skipped, record_of, record_path, split_record_path
+from sift.domain.text.records import (
+    NO_CHOICE,
+    Chosen,
+    Skipped,
+    public_id,
+    record_of,
+    record_path,
+    split_record_path,
+)
 
 
 def read(value: object, chosen: Chosen = NO_CHOICE, line: int = 1) -> Document:
@@ -106,3 +114,4 @@ def test_a_record_s_digest_is_its_line_s() -> None:
 def test_a_record_s_path_names_its_file_and_its_key(path: str, key: str, written: str) -> None:
     assert record_path(path, key) == written
     assert split_record_path(written) == (path, key)
+    assert public_id("c", path, key) == f"c/{written}"

@@ -28,9 +28,9 @@ from sift.domain.codec.codes import Floats
 from sift.domain.query.expressions import NOTHING, Expression
 from sift.domain.query.grammar import parsed
 from sift.domain.rank.best import Best
-from sift.domain.rank.hybrid import blend, named, passage, standing_out, words, work_of
-from sift.domain.rank.works import one_per_work
-from sift.domain.text.records import record_path
+from sift.domain.rank.hybrid import blend, named, passage, standing_out, words
+from sift.domain.rank.works import one_per_work, work_of_fields
+from sift.domain.text.records import public_id
 from sift.inference.models import Models
 from sift.retrieval.keyword.lists import opened
 from sift.retrieval.keyword.search import TUNING, never
@@ -95,7 +95,7 @@ def _read(one: searching.Searching[Both], chunks: Sequence[int], request: Search
         Candidate(
             chunk,
             Hit(
-                f"{one.collection.name}/{record_path(each.path, each.key)}",
+                public_id(one.collection.name, each.path, each.key),
                 each.title,
                 f"{each.first_line}-{each.last_line}",
                 0.0,
@@ -169,7 +169,7 @@ def _first_of_each(ranked: list[Candidate]) -> list[Candidate]:
 
 
 def _work(each: Candidate) -> str | None:
-    return work_of(each.fields.get("doi"))
+    return work_of_fields(each.fields)
 
 
 def _copied(best: Candidate, copy: Candidate) -> Candidate:

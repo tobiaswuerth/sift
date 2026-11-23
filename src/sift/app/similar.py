@@ -15,7 +15,7 @@ from sift.app.linked import LeftOut
 from sift.app.notes import Note, note_of, read_in
 from sift.app.vsearch import ASKED, Asked, alike, answered_near, held_within, itself
 from sift.domain.codec.codes import Floats
-from sift.domain.rank.hybrid import work_of
+from sift.domain.rank.works import work_of_fields
 from sift.storage.database import Reading
 from sift.storage.documents import chunks_of, fields_by_document
 from sift.storage.vectors import model_of, vectors_of
@@ -44,7 +44,7 @@ def _like(note: Note, whole: str, transaction: Reading) -> Like:
         raise InvalidRequestError(
             f"{whole!r} has no direction to be near to: its passages cancel out", NO_DIRECTION_REMEDY
         )
-    work = work_of(fields_by_document(transaction, [document]).get(document, {}).get("doi"))
+    work = work_of_fields(fields_by_document(transaction, [document]).get(document, {}))
     return Like(mean / length, model, work)
 
 

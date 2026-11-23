@@ -50,8 +50,6 @@ COSINE_WEIGHT = 0.5
 ADAPTIVE_SHARE = 0.9
 ADAPTIVE_BUFFER = 5
 FEWEST_TO_CUT = 3
-DOI_LINKS = tuple(f"{scheme}{host}doi.org/" for scheme in ("https://", "http://") for host in ("", "www.", "dx."))
-DOI_PREFIXES = (*DOI_LINKS, "doi:")
 
 type Scores = NDArray[np.float64]
 type Flags = NDArray[np.bool_]
@@ -93,12 +91,3 @@ def standing_out(scores: Sequence[float]) -> int:
     if not considered.max() > 0:
         return len(scores)
     return min(len(scores), int(considered.argmax()) + 1 + ADAPTIVE_BUFFER)
-
-
-def work_of(doi: object) -> str | None:
-    if not isinstance(doi, str):
-        return None
-    value = doi.strip().lower()
-    for prefix in DOI_PREFIXES:
-        value = value.removeprefix(prefix).strip()
-    return value if value.startswith("10.") else None
