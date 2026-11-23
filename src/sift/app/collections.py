@@ -29,7 +29,7 @@ from sift.storage.catalog import (
 from sift.storage.database import reading
 from sift.storage.documents import counts, unreadable
 from sift.storage.links import links_held
-from sift.storage.store import open_store, stored_bytes, unavailable_if_damaged
+from sift.storage.store import open_store, stored_bytes, unavailable_if_unusable
 
 OBSIDIAN = ".obsidian"
 FIELD_REMEDY = "name the field, e.g. --text-fields title,abstract"
@@ -73,7 +73,7 @@ def chosen_or_active(home: Path, names: Sequence[str]) -> tuple[Collection, ...]
 def _contents(one: Collection, *, listed: bool) -> Counted | Unavailable:
     try:
         with (
-            unavailable_if_damaged(one.store),
+            unavailable_if_unusable(one.store),
             closing(open_store(one.store, one.id)) as connection,
             reading(connection) as transaction,
         ):

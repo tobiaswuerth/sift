@@ -11,7 +11,7 @@ from sift.domain.text.records import record_path, split_record_path
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Reading, reading
 from sift.storage.documents import Stored, fields_of, paths_named, stored
-from sift.storage.store import open_store, unavailable_if_damaged
+from sift.storage.store import open_store, unavailable_if_unusable
 
 MOST_LISTED = 5
 SEPARATOR = "/"
@@ -71,7 +71,7 @@ def _document(known: Sequence[Collection], id_: str, request: GetDocuments) -> D
     span = line_range(request.lines) if request.lines is not None else None
     chosen, relative = place(known, id_)
     with (
-        unavailable_if_damaged(chosen.store),
+        unavailable_if_unusable(chosen.store),
         closing(open_store(chosen.store, chosen.id)) as connection,
         reading(connection) as transaction,
     ):

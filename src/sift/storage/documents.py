@@ -4,6 +4,7 @@ from typing import NamedTuple, NewType, cast
 
 from sift.api.fields import Fields
 from sift.api.ids import ChunkId, DocumentId
+from sift.domain.errors import DamagedError
 from sift.domain.text.links import names
 from sift.domain.text.notes import Document
 from sift.storage.database import Reading, Writing, WritingDocuments, first, inserted, rows, run, run_each
@@ -56,7 +57,10 @@ def fields_json(fields: Fields) -> str:
 
 
 def fields_of(written: str) -> Fields:
-    return cast("Fields", json.loads(written))
+    read = cast("object", json.loads(written))
+    if not isinstance(read, dict):
+        raise DamagedError("a document's front matter is no mapping")
+    return cast("Fields", read)
 
 
 def sources(transaction: Reading) -> dict[str, Source]:

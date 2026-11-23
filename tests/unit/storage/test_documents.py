@@ -10,6 +10,7 @@ import pytest
 
 from sift.api.fields import FieldValue
 from sift.api.ids import ChunkId, CollectionId, DocumentId, first_row
+from sift.domain.errors import DamagedError
 from sift.domain.plan.indexing import MOST_TEXT_BYTES
 from sift.domain.text.links import LinkKind, NameKind
 from sift.domain.text.notes import Document, note
@@ -244,6 +245,12 @@ def record(key: str) -> Document:
 def kept_counts(connection: sqlite3.Connection) -> Counts:
     with reading(connection) as transaction:
         return counts(transaction)
+
+
+@pytest.mark.parametrize("written", ["[]", '"text"', "7"])
+def test_front_matter_that_is_no_mapping_is_damage(written: str) -> None:
+    with pytest.raises(DamagedError, match="no mapping"):
+        fields_of(written)
 
 
 def test_the_largest_document_fits_a_row_sqlite_stores(store: sqlite3.Connection) -> None:

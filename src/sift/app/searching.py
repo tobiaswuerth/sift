@@ -18,7 +18,7 @@ from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
 from sift.storage.documents import fields_by_document, passages, texts
 from sift.storage.passing import Passing
-from sift.storage.store import open_store, unavailable_if_damaged
+from sift.storage.store import open_store, unavailable_if_unusable
 
 WIDER = 2
 FEW_REMEDY = "ask for one result or more, e.g. -k 10"
@@ -60,7 +60,7 @@ class Kept[S]:
         if each not in self.searching:
             return None
         try:
-            with unavailable_if_damaged(each.collection.store):
+            with unavailable_if_unusable(each.collection.store):
                 return work()
         except StoreUnavailableError as error:
             self.dropped(each, error)
@@ -106,7 +106,7 @@ def collections_of(home: Path, name: str | None) -> tuple[Collection, ...]:
 
 def _searching[S](one: Collection, asked: Narrowing, hold: Hold[S]) -> Searching[S] | None:
     resources = ExitStack()
-    with unavailable_if_damaged(one.store):
+    with unavailable_if_unusable(one.store):
         try:
             connection = resources.enter_context(closing(open_store(one.store, one.id)))
             transaction = resources.enter_context(reading(connection))

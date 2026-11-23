@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import NamedTuple, cast
 
 from sift.api.collections import TitleFrom
-from sift.api.errors import InvalidRequestError, NotFoundError
+from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.ids import CollectionId
 from sift.domain.text.records import NO_CHOICE, Chosen
 from sift.storage.database import Reading, Writing, connect, inserted, reading, rows, writing
@@ -69,31 +69,49 @@ def choices_json(choices: Choices) -> str:
     return json.dumps({"title_from": choices.title_from.value, "follow_links": choices.follow_links, **chosen})
 
 
-def _named(value: object) -> str | None:
-    return value if isinstance(value, str) else None
+def _named(value: object, key: str) -> str | None:
+    if value is None or isinstance(value, str):
+        return value
+    raise TypeError(f"{key} is no text")
 
 
 def _names(value: object) -> tuple[str, ...]:
-    held = cast("list[object]", value) if isinstance(value, list) else []
+    held = cast("list[object]", value) if isinstance(value, list) else None
+    if held is None or not all(isinstance(each, str) for each in held):
+        raise TypeError("text_fields is no list of texts")
     return tuple(each for each in held if isinstance(each, str))
 
 
+def _flag(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError("follow_links is neither true nor false")
+    return value
+
+
 def choices_of(written: str) -> Choices:
-    document = cast("dict[str, object]", json.loads(written))
+    read = cast("object", json.loads(written))
+    if not isinstance(read, dict):
+        raise TypeError("they are no mapping")
+    document = cast("dict[str, object]", read)
     records = Chosen(
-        _named(document.get("id_field")), _named(document.get("title_field")), _names(document.get("text_fields"))
+        _named(document.get("id_field"), "id_field"),
+        _named(document.get("title_field"), "title_field"),
+        _names(document.get("text_fields", [])),
     )
     return Choices(
         title_from=TitleFrom(document.get("title_from", TitleFrom.HEADING.value)),
-        follow_links=document.get("follow_links") is True,
+        follow_links=_flag(document.get("follow_links", False)),
         records=records,
     )
 
 
 def _collection(row: Row) -> Collection:
-    return Collection(
-        CollectionId(row.id), row.name, Path(row.folder), Path(row.store), bool(row.active), choices_of(row.choices)
-    )
+    try:
+        choices = choices_of(row.choices)
+    except (ValueError, TypeError) as error:
+        said = f"the catalog's choices for {row.name} were written by a newer sift or damaged: {error}"
+        raise StoreUnavailableError(said, "upgrade sift") from None
+    return Collection(CollectionId(row.id), row.name, Path(row.folder), Path(row.store), bool(row.active), choices)
 
 
 def _up_to_date(connection: sqlite3.Connection, path: Path) -> None:

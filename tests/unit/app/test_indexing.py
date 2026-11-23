@@ -1,6 +1,7 @@
 import contextlib
 import os
 import shutil
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
@@ -278,6 +279,23 @@ def test_indexing_where_there_is_no_catalog_makes_none(home: Path) -> None:
     with pytest.raises(NotFoundError, match="no collection is named 'notes'"):
         indexed(home, "notes")
     assert not home.exists()
+
+
+@pytest.mark.usefixtures("notes")
+def test_a_store_that_cannot_be_written_is_passed_over_and_the_next_collection_indexed(
+    home: Path, tmp_path: Path
+) -> None:
+    write(tmp_path / "more" / "a.md", "# A\n")
+    add(home, AddCollection(str(tmp_path / "more")))
+    store = home / "collections" / "notes.sqlite"
+    store.chmod(stat.S_IREAD)
+    try:
+        found = {each.name: each.outcome for each in indexed(home).collections}
+    finally:
+        store.chmod(stat.S_IREAD | stat.S_IWRITE)
+    assert isinstance(found["more"], Indexed)
+    assert isinstance(found["notes"], Skipped)
+    assert found["notes"].reason.startswith(f"the store {store.resolve()} cannot be written")
 
 
 def test_a_nul_in_a_file_is_stored_as_a_replacement_character(home: Path, notes: Path) -> None:

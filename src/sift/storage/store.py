@@ -1,7 +1,8 @@
 import sqlite3
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from types import MappingProxyType
 from typing import NamedTuple, NoReturn
 
 from sift.api.errors import StoreUnavailableError
@@ -155,6 +156,22 @@ FILE_SUFFIXES = ("", "-wal", "-shm")
 DATA_SUFFIXES = ("", "-wal")
 MISSING_REMEDY = "connect the drive it lies on, or remove the collection"
 DAMAGED_REMEDY = "remove the collection, then add its folder and index it again"
+BUSY = ("another sift is writing to the store {path}", "wait for it to finish, then run sift again")
+NOT_WRITABLE = (
+    "the store {path} cannot be written: {error}",
+    "see that its drive is connected and writable and that the file is not read-only",
+)
+UNUSABLE: Mapping[int, tuple[str, str]] = MappingProxyType(
+    {
+        sqlite3.SQLITE_BUSY: BUSY,
+        sqlite3.SQLITE_LOCKED: BUSY,
+        sqlite3.SQLITE_FULL: ("the disk holding the store {path} is full", "free space on it, then run sift again"),
+        sqlite3.SQLITE_READONLY: NOT_WRITABLE,
+        sqlite3.SQLITE_CANTOPEN: NOT_WRITABLE,
+        sqlite3.SQLITE_PERM: NOT_WRITABLE,
+        sqlite3.SQLITE_IOERR: ("the store {path} could not be read or written: {error}", "check the drive it lies on"),
+    }
+)
 
 
 class Held(NamedTuple):
@@ -214,13 +231,17 @@ def create_store(
 
 
 def _raise_for(path: Path, error: sqlite3.DatabaseError) -> NoReturn:
-    if primary_code(error) in DAMAGED:
+    code = primary_code(error)
+    if code in DAMAGED:
         raise StoreUnavailableError(f"the store {path} is damaged: {error}", DAMAGED_REMEDY) from None
+    if code in UNUSABLE:
+        said, remedy = UNUSABLE[code]
+        raise StoreUnavailableError(said.format(path=path, error=error), remedy) from None
     raise error
 
 
 @contextmanager
-def unavailable_if_damaged(path: Path) -> Generator[None]:
+def unavailable_if_unusable(path: Path) -> Generator[None]:
     try:
         yield
     except sqlite3.DatabaseError as error:

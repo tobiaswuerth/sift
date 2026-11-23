@@ -75,7 +75,7 @@ def require_sqlite(version: tuple[int, int, int]) -> None:
         )
 
 
-def connect(path: Path, *, create: bool) -> sqlite3.Connection:
+def connect(path: Path, *, create: bool, timeout: float = BUSY_TIMEOUT_SECONDS) -> sqlite3.Connection:
     require_sqlite(sqlite3.sqlite_version_info)
     if create:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +84,7 @@ def connect(path: Path, *, create: bool) -> sqlite3.Connection:
     connection = sqlite3.connect(
         uri(path.resolve(), "rwc" if create else "rw"),
         uri=True,
-        timeout=BUSY_TIMEOUT_SECONDS,
+        timeout=timeout,
         isolation_level=None,
         check_same_thread=False,
     )

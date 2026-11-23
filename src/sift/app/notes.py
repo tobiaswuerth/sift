@@ -13,7 +13,7 @@ from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Reading, reading
 from sift.storage.documents import stored
 from sift.storage.links import LinkRow, doubtful, keys_of, links_into, links_keyed, named, titled
-from sift.storage.store import open_store, unavailable_if_damaged
+from sift.storage.store import open_store, unavailable_if_unusable
 
 AMBIGUOUS_SHOWN = 5
 AMBIGUOUS_REMEDY = "give the note's whole id, as sift get takes it"
@@ -65,7 +65,7 @@ class Matches:
 
 def read_in[T](one: Collection, read: Callable[[Reading], T]) -> T:
     with (
-        unavailable_if_damaged(one.store),
+        unavailable_if_unusable(one.store),
         closing(open_store(one.store, one.id)) as connection,
         reading(connection) as transaction,
     ):

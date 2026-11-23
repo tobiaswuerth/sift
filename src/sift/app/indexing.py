@@ -29,7 +29,7 @@ from sift.storage.documents import (
     unreadable,
 )
 from sift.storage.keywords import remade, remake_started, settle, writing_documents
-from sift.storage.store import open_store, unavailable_if_damaged
+from sift.storage.store import open_store, unavailable_if_unusable
 
 FOLDER_MISSING_REMEDY = "connect the drive it lies on"
 OUT_OF_REACH_REMEDY = "see that its folder and its store can be read, then index it again"
@@ -182,7 +182,7 @@ def _settled(connection: Connection, report: Reporter, batches: Batches) -> None
 def _indexed(one: Collection, report: Reporter, limits: Limits, readers: Readers) -> CollectionIndexed:
     report(CollectionStarted(one.name, str(one.folder)))
     try:
-        with unavailable_if_damaged(one.store), closing(open_store(one.store, one.id)) as connection:
+        with unavailable_if_unusable(one.store), closing(open_store(one.store, one.id)) as connection:
             _remade(connection, report, limits.batches)
             if not one.folder.is_dir():
                 return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)

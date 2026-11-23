@@ -2,7 +2,7 @@ import contextlib
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import pytest
 
@@ -18,7 +18,7 @@ from sift.storage.store import (
     delete_store,
     open_store,
     stored_bytes,
-    unavailable_if_damaged,
+    unavailable_if_unusable,
 )
 from tests.damage import damage_table
 
@@ -167,7 +167,7 @@ def test_damage_found_after_a_store_opened_is_said_as_that_of_a_store(tmp_path: 
     damage_table(path, "sources")
     with (
         pytest.raises(StoreUnavailableError, match="damaged") as refused,
-        unavailable_if_damaged(path),
+        unavailable_if_unusable(path),
         opened(path) as connection,
         reading(connection) as transaction,
     ):
@@ -180,11 +180,40 @@ def test_an_error_that_is_no_damage_stays_the_error_it_is(tmp_path: Path) -> Non
     create_store(path, COLLECTION)
     with (
         pytest.raises(sqlite3.OperationalError, match="no such table"),
-        unavailable_if_damaged(path),
+        unavailable_if_unusable(path),
         opened(path) as connection,
         reading(connection) as transaction,
     ):
         first(transaction, Value, "SELECT value FROM absent")
+
+
+def test_a_store_another_writer_holds_is_unavailable_with_a_way_out(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    with opened(path) as holder, writing(holder):
+        with (
+            pytest.raises(StoreUnavailableError, match="another sift is writing to the store") as refused,
+            unavailable_if_unusable(path),
+            contextlib.closing(connect(path, create=False, timeout=0.05)) as waiting,
+            writing(waiting),
+        ):
+            pass
+        assert refused.value.remedy == "wait for it to finish, then run sift again"
+
+
+def test_a_store_on_a_full_disk_is_unavailable_with_a_way_out(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    with opened(path) as connection:
+        (pages,) = cast("tuple[int]", connection.execute("PRAGMA page_count").fetchone())
+        connection.execute(f"PRAGMA max_page_count = {pages}")
+        with (
+            pytest.raises(StoreUnavailableError, match=r"the disk holding the store .* is full") as refused,
+            unavailable_if_unusable(path),
+            writing(connection) as transaction,
+        ):
+            run(transaction, "INSERT INTO meta(key, value) VALUES ('filler', ?)", ("x" * 100_000,))
+    assert refused.value.remedy == "free space on it, then run sift again"
 
 
 def test_a_store_of_an_older_layout_is_brought_up_to_this_one_when_opened(tmp_path: Path) -> None:

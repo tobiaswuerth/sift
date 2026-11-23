@@ -16,7 +16,7 @@ from sift.domain.text.embedding import embedded
 from sift.inference.models import Models
 from sift.storage.catalog import Collection
 from sift.storage.database import Connection, reading, writing
-from sift.storage.store import open_store, unavailable_if_damaged
+from sift.storage.store import open_store, unavailable_if_unusable
 from sift.storage.vectors import Kept, Pending, forget_vectors, left, pending, put_vectors, refuse_model
 
 RESET_ALL_REMEDY = "run sift embed --reset without naming collections"
@@ -95,7 +95,7 @@ def _embedded(one: Collection, work: Work, failed: Failed) -> CollectionEmbedded
     if one.id in failed:
         return _skipped(one, work.report, failed[one.id])
     try:
-        with unavailable_if_damaged(one.store), closing(open_store(one.store, one.id)) as connection:
+        with unavailable_if_unusable(one.store), closing(open_store(one.store, one.id)) as connection:
             return CollectionEmbedded(one.name, _filled(connection, work))
     except StoreUnavailableError as error:
         return _skipped(one, work.report, error)
@@ -104,7 +104,7 @@ def _embedded(one: Collection, work: Work, failed: Failed) -> CollectionEmbedded
 def _forgotten(one: Collection) -> StoreUnavailableError | None:
     try:
         with (
-            unavailable_if_damaged(one.store),
+            unavailable_if_unusable(one.store),
             closing(open_store(one.store, one.id)) as connection,
             writing(connection) as transaction,
         ):

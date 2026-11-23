@@ -97,6 +97,21 @@ def test_choices_are_kept(tmp_path: Path, home: Path, catalog: sqlite3.Connectio
         assert collection(transaction, "plain").choices == Choices(title_from=TitleFrom.HEADING, follow_links=False)
 
 
+@pytest.mark.parametrize(
+    "choices",
+    ['{"title_from": "future"}', '{"follow_links": "yes"}', '{"text_fields": "body"}', '{"id_field": 7}', "[]"],
+)
+def test_choices_this_sift_cannot_read_name_their_collection_and_ask_for_an_upgrade(
+    tmp_path: Path, home: Path, catalog: sqlite3.Connection, choices: str
+) -> None:
+    add_collection(catalog, home, NewCollection(folder(tmp_path, "vault")))
+    with writing(catalog) as transaction:
+        run(transaction, "UPDATE collections SET choices = ?", (choices,))
+    with pytest.raises(StoreUnavailableError, match="the catalog's choices for vault") as refused:
+        known(catalog)
+    assert refused.value.remedy == "upgrade sift"
+
+
 def test_collections_are_listed_by_name(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
     for name in ("b", "a", "c"):
         add_collection(catalog, home, NewCollection(folder(tmp_path, name)))
