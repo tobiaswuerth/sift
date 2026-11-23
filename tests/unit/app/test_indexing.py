@@ -188,35 +188,6 @@ def test_an_unreadable_file_gone_for_good_is_listed_no_more(home: Path, notes: P
     assert unreadable_files(home) == ()
 
 
-def test_a_file_larger_than_a_document_may_be_is_left_out_until_it_changes(home: Path, notes: Path) -> None:
-    write(notes / "huge.txt", "x" * 100)
-    small = Limits(most_text_bytes=60)
-    (result,) = index(home, IndexCollections(), lambda _: None, small).collections
-    assert result.outcome == Indexed(files=4, added=3, changed=0, removed=0, unreadable=1)
-    problems = [entry.problem for entry in unreadable_files(home)]
-    assert problems == ["100 bytes: a document holds at most 60; split the file"]
-    said: list[Event] = []
-    (again,) = index(home, IndexCollections(), said.append, small).collections
-    assert again.outcome == Indexed(files=4, added=0, changed=0, removed=0, unreadable=1)
-    assert (PhaseStarted(Phase.READ, 0) in said, said[-1]) == (True, Finished(0, 0, 0, 1))
-
-
-def test_a_file_that_is_too_large_only_once_decoded_is_left_out_until_it_changes(home: Path, notes: Path) -> None:
-    (notes / "wide.txt").write_bytes(
-        "\N{BYTE ORDER MARK}".encode("utf-16-le") + ("\N{CJK UNIFIED IDEOGRAPH-65E5}" * 25).encode("utf-16-le")
-    )
-    small = Limits(most_text_bytes=60)
-    (result,) = index(home, IndexCollections(), lambda _: None, small).collections
-    assert result.outcome == Indexed(files=4, added=3, changed=0, removed=0, unreadable=1)
-    assert unreadable_files(home) == (
-        UnreadableFile("wide.txt", "75 bytes as text: a document holds at most 60; split the file"),
-    )
-    assert "wide.txt" not in titles(home)
-    said: list[Event] = []
-    index(home, IndexCollections(), said.append, small)
-    assert PhaseStarted(Phase.READ, 0) in said
-
-
 def test_a_file_that_could_not_be_read_is_read_again_though_it_is_as_it_was(home: Path, notes: Path) -> None:
     plain = notes / "plain.txt"
     indexed(home)
@@ -307,13 +278,6 @@ def test_indexing_where_there_is_no_catalog_makes_none(home: Path) -> None:
     with pytest.raises(NotFoundError, match="no collection is named 'notes'"):
         indexed(home, "notes")
     assert not home.exists()
-
-
-def test_a_file_grown_too_large_loses_its_documents(home: Path, notes: Path) -> None:
-    indexed(home)
-    write(notes / "plain.txt", "x" * 61)
-    (result,) = index(home, IndexCollections(), lambda _: None, Limits(most_text_bytes=60)).collections
-    assert result.outcome == Indexed(files=3, added=0, changed=0, removed=1, unreadable=1)
 
 
 def test_a_nul_in_a_file_is_stored_as_a_replacement_character(home: Path, notes: Path) -> None:

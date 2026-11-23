@@ -8,13 +8,12 @@ from sift.api.errors import StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import chosen_or_active
-from sift.app.filing import Job, Limits, Lines, Tally
+from sift.app.filing import READERS, Job, Limits, Readers, Tally
 from sift.app.problems import problems
 from sift.app.records import stored_records
 from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan
 from sift.domain.text.notes import Document, note
 from sift.domain.text.records import RECORD_FILES
-from sift.ingest.records import lines_of
 from sift.ingest.scan import scan
 from sift.storage.catalog import Collection
 from sift.storage.database import Batches, Connection, WritingDocuments, reading
@@ -46,20 +45,22 @@ class Refused:
     read_again: bool
 
 
-def _too_large(size: int, limits: Limits, measured: str = "bytes") -> Refused:
+def _too_large(size: str, limits: Limits, measured: str = "bytes") -> Refused:
     most = limits.most_text_bytes
-    return Refused(f"{size:,} {measured}: a document holds at most {most:,}; split the file", read_again=False)
+    return Refused(f"{size} {measured}: a document holds at most {most:,}; split the file", read_again=False)
 
 
 def _read(job: Job, path: str) -> Document | Refused:
+    most = job.limits.most_text_bytes
     try:
-        raw = (job.collection.folder / path).read_bytes()
+        raw = job.readers.whole(job.collection.folder / path, most)
     except OSError as error:
         return Refused(error.strerror or str(error), read_again=True)
+    if len(raw) > most:
+        return _too_large(f"more than {most:,}", job.limits)
     document = note(raw, posixpath.basename(path), job.collection.choices.title_from)
-    most = job.limits.most_text_bytes
     if MOST_BYTES_A_BYTE_DECODES_TO * len(raw) > most and (size := len(document.text.encode())) > most:
-        return _too_large(size, job.limits, "bytes as text")
+        return _too_large(f"{size:,}", job.limits, "bytes as text")
     return document
 
 
@@ -93,7 +94,7 @@ def _dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
         removed = delete_sources(transaction, plan.drop)
         clear_unreadable(transaction, plan.forget)
         large = [
-            _refused(transaction, path, files[path], _too_large(files[path].size, job.limits))
+            _refused(transaction, path, files[path], _too_large(f"{files[path].size:,}", job.limits))
             for path in plan.too_large
         ]
     return sum(large, Tally(removed=removed))
@@ -178,14 +179,14 @@ def _settled(connection: Connection, report: Reporter, batches: Batches) -> None
         report(PhaseDone(done))
 
 
-def _indexed(one: Collection, report: Reporter, limits: Limits, lines: Lines) -> CollectionIndexed:
+def _indexed(one: Collection, report: Reporter, limits: Limits, readers: Readers) -> CollectionIndexed:
     report(CollectionStarted(one.name, str(one.folder)))
     try:
         with unavailable_if_damaged(one.store), closing(open_store(one.store, one.id)) as connection:
             _remade(connection, report, limits.batches)
             if not one.folder.is_dir():
                 return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)
-            return CollectionIndexed(one.name, _synced(Job(one, connection, report, limits, lines)))
+            return CollectionIndexed(one.name, _synced(Job(one, connection, report, limits, readers)))
     except StoreUnavailableError as error:
         return _skipped(one, report, error.message, error.remedy)
     except OSError as error:
@@ -193,7 +194,7 @@ def _indexed(one: Collection, report: Reporter, limits: Limits, lines: Lines) ->
 
 
 def index(
-    home: Path, request: IndexCollections, report: Reporter, limits: Limits = LIMITS, lines: Lines = lines_of
+    home: Path, request: IndexCollections, report: Reporter, limits: Limits = LIMITS, readers: Readers = READERS
 ) -> IndexResult:
     chosen = chosen_or_active(home, request.names)
-    return IndexResult(tuple(_indexed(one, report, limits, lines) for one in chosen))
+    return IndexResult(tuple(_indexed(one, report, limits, readers) for one in chosen))

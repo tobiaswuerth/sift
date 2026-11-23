@@ -19,6 +19,8 @@ from sift.api.filters import Filter, Operator, gathered, written
         ("date created >= 2024-05", Filter("date created", Operator.AT_LEAST, ("2024-05",))),
         ("note=a=b", Filter("note", Operator.ANY, ("a=b",))),
         ('tags=[1, "a"]', Filter("tags", Operator.ANY, (1, "a"))),
+        ("org=[[Acme AG]]", Filter("org", Operator.ANY, ("[[Acme AG]]",))),
+        ("n=" + "[" * 5000, Filter("n", Operator.ANY, ("[" * 5000,))),
     ],
 )
 def test_a_filter_is_written_as_a_field_an_operator_and_a_value_read_as_json_if_it_is(

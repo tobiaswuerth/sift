@@ -41,6 +41,10 @@ CLOCK_IN_A_TEST = (
     "a clock in a test, which passes or fails by the machine and its load: count what costs the time "
     "(calls, characters looked at, rows read), or pass a clock in"
 )
+RECURSION_CAUGHT = (
+    "RecursionError caught: the interpreter's depth limit decides, and the work done before it is lost; "
+    "bound the depth yourself before descending, and refuse what is deeper"
+)
 REMEDY = "Each finding names its fix."
 
 
@@ -119,6 +123,14 @@ def databases_left_open(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, call.lineno, LEFT_OPEN)
 
 
+def recursion_caught(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler) and node.type is not None:
+            caught = node.type.elts if isinstance(node.type, ast.Tuple) else [node.type]
+            if any(ast.unparse(each).split(".")[-1] == "RecursionError" for each in caught):
+                yield Finding(path, node.lineno, RECURSION_CAUGHT)
+
+
 def idioms(path: str, source: str) -> tuple[Finding, ...]:
     tree = ast.parse(source)
     in_tests, in_sift = path.startswith("tests/"), path.startswith("src/sift/")
@@ -126,6 +138,7 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *invisible_characters(path, source),
         *numbered_placeholders(path, tree),
         *(() if in_tests else banned_methods(path, tree)),
+        *(() if in_tests else recursion_caught(path, tree)),
         *(io_in_the_core(path, tree) if path.startswith(CORE) else ()),
         *(exits_outside_interfaces(path, tree) if in_sift and not path.startswith(INTERFACES) else ()),
         *(environment_outside_settings(path, tree) if in_sift and path != SETTINGS else ()),

@@ -41,11 +41,11 @@ class Skips:
         return f"{self.count:,} line{'s' if self.count != 1 else ''} skipped ({shown}{more})"
 
 
-def _records(lines: Iterable[tuple[int, str]], chosen: Chosen, most: int) -> Iterator[Line]:
+def _records(lines: Iterable[tuple[int, str | Skipped]], chosen: Chosen, most: int) -> Iterator[Line]:
     for number, line in lines:
         if not line:
             continue
-        found = record_of(line, number, chosen)
+        found = line if isinstance(line, Skipped) else record_of(line, number, chosen)
         if isinstance(found, Document) and (size := len(found.text.encode())) > most:
             yield number, Skipped(number, f"{size:,} bytes as text, more than the {most:,} a document holds")
         else:
@@ -82,7 +82,7 @@ def _batch(
 
 def stored_records(job: Job, path: str, stat: Stat, chosen: Chosen) -> Tally:
     limits, tally, skips = job.limits, Tally(), Skips()
-    lines = job.lines(job.collection.folder / path)
+    lines = job.readers.lines(job.collection.folder / path, limits.most_text_bytes)
     with writing_documents(job.connection, limits.batches) as transaction:
         source = put_source(transaction, path, stat.modified_ns, stat.size)
         nothing_taken(transaction)

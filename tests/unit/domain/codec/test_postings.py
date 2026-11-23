@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 from sift.domain.arrays import ints
 from sift.domain.codec.postings import (
     BLOCK_HEAD,
+    MOST_INFLATED_BYTES,
     PACKED,
     RANGES_HEAD,
     RAW,
@@ -220,6 +221,16 @@ def test_lengths_packed_far_larger_than_their_block_are_never_unpacked_whole() -
     finally:
         tracemalloc.stop()
     assert peak < 1 << 20
+
+
+def test_a_list_that_unpacks_to_more_than_any_list_holds_is_refused_once_it_has_unpacked_that_far() -> None:
+    packing = zlib.compressobj()
+    piece = bytes(1 << 20)
+    packed = b"".join(packing.compress(piece) for _ in range((MOST_INFLATED_BYTES >> 20) + 1)) + packing.flush()
+    with pytest.raises(DamagedError, match="unpacks to more than"):
+        ranges_of(packed)
+    with pytest.raises(DamagedError, match="unpacks to more than"):
+        blocked(PACKED + packed)
 
 
 def test_ranges_out_of_order_or_too_far_apart_are_refused() -> None:

@@ -141,5 +141,14 @@ def test_a_clock_is_found_in_tests_alone(source: str) -> None:
     assert problems("tests/a.py", "import datetime\nfrom . import timetable\n") == []
 
 
+@pytest.mark.parametrize(
+    "handler", ["except RecursionError:", "except (ValueError, RecursionError):", "except builtins.RecursionError:"]
+)
+def test_catching_recursion_error_is_found_outside_tests(handler: str) -> None:
+    source = f"try:\n    f()\n{handler}\n    pass\n"
+    assert problems("src/sift/domain/a.py", source) == [check_idioms.RECURSION_CAUGHT]
+    assert problems("tests/a.py", source) == []
+
+
 def test_the_repository_keeps_the_idioms() -> None:
     assert check_idioms.main([]) == 0

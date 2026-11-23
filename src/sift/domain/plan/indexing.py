@@ -6,7 +6,7 @@ from typing import NamedTuple
 from sift.domain.text.records import RECORD_FILES
 
 MOST_TIME = 2**63 - 1
-MOST_TEXT_BYTES = 1_000_000_000
+MOST_TEXT_BYTES = 64 << 20
 ROOT = ""
 NONE_UNREADABLE: Mapping[str, bool] = MappingProxyType({})
 

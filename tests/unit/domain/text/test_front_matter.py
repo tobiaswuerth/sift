@@ -1,13 +1,13 @@
 import json
 from collections.abc import Iterator
-from typing import final, override
+from typing import SupportsIndex, final, override
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.api.fields import Fields, FieldValue
-from sift.domain.text.front_matter import PARSE, TAKES, Brackets, Kind, entries, front_matter, read_on
+from sift.domain.text.front_matter import PARSE, TAKES, Brackets, Kind, entries, front_matter, read_on, value
 from sift.domain.text.json_values import MOST_DEPTH, depth
 
 
@@ -143,6 +143,32 @@ def test_each_line_of_a_list_in_brackets_is_looked_at_once_for_the_bracket_that_
     found = entries(lines)
     assert [(entry.kind, len(below)) for entry, below in found.values()] == [(Kind.FLOW, items + 1), (Kind.PLAIN, 0)]
     assert 0 < sum(looked) <= sum(map(len, lines))
+
+
+def test_a_list_nested_deeper_than_lists_in_brackets_go_is_kept_as_written_after_few_looks() -> None:
+    looked: list[int] = []
+
+    @final
+    class Text(str):
+        __slots__ = ()
+
+        @override
+        def __getitem__(self, key: SupportsIndex | slice, /) -> str:
+            return Text(super().__getitem__(key))
+
+        @override
+        def strip(self, chars: str | None = None, /) -> str:
+            return Text(super().strip(chars))
+
+        @override
+        def __iter__(self) -> Iterator[str]:
+            looked.append(len(self))
+            return super().__iter__()
+
+    nested = "[a, " * 2000 + "b" + "]" * 2000
+    assert value(Text(nested)) == nested
+    assert sum(looked) <= 3 * len(nested)
+    assert value("[a, [b, [c]], 'd']") == ["a", ["b", ["c"]], "d"]
 
 
 @given(st.text(st.sampled_from("ab[]{},'\" \t"), max_size=30), st.text(st.sampled_from("ab[]{},'\" \t"), max_size=30))

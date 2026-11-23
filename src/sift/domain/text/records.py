@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from sift.api.fields import Fields, FieldValue
 from sift.domain.text.chunks import chunks
-from sift.domain.text.json_values import json_value
+from sift.domain.text.json_values import NestedTooDeeplyError, json_value
 from sift.domain.text.markdown import heading, one_line
 from sift.domain.text.notes import Document, digest, storable
 
@@ -70,7 +70,7 @@ def record(found: Mapping[str, FieldValue], line: int, chosen: Chosen) -> Docume
 def record_of(line: str, number: int, chosen: Chosen) -> Document | Skipped:
     try:
         value = json_value(line)
-    except RecursionError:
+    except NestedTooDeeplyError:
         return Skipped(number, "nested too deeply")
     except ValueError:
         return Skipped(number, "not JSON")

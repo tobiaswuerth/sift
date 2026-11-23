@@ -25,6 +25,7 @@ BEST_BYTES = 1
 LOW_BITS = 0x7F
 MORE = 0x80
 MOST_BYTES = 9
+MOST_INFLATED_BYTES = 64 << 20
 
 
 def _sound(*, holds: bool, problem: str) -> None:
@@ -49,10 +50,15 @@ def _wrapped(body: bytes) -> bytes:
 
 
 def _inflated(data: bytes) -> bytes:
+    unpacking = zlib.decompressobj()
     try:
-        return zlib.decompress(data)
+        found = unpacking.decompress(data, MOST_INFLATED_BYTES + 1)
     except zlib.error as error:
         raise DamagedError(f"a packed list does not unpack: {error}") from None
+    _sound(
+        holds=unpacking.eof, problem=f"a packed list unpacks to more than {MOST_INFLATED_BYTES:,} bytes, or ends early"
+    )
+    return found
 
 
 def _inflated_to(data: bytes, size: int) -> bytes:

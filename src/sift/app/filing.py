@@ -4,6 +4,9 @@ from pathlib import Path
 
 from sift.api.events import Reporter
 from sift.domain.plan.indexing import MOST_TEXT_BYTES
+from sift.domain.text.records import Skipped
+from sift.ingest.files import at_most
+from sift.ingest.records import lines_of
 from sift.storage.catalog import Collection
 from sift.storage.database import BATCHES, Batches, Connection
 
@@ -27,7 +30,17 @@ class Tally:
         return Tally(self.added + other.added, self.changed + other.changed, self.removed + other.removed)
 
 
-type Lines = Callable[[Path], Iterator[tuple[int, str]]]
+type Lines = Callable[[Path, int], Iterator[tuple[int, str | Skipped]]]
+type Whole = Callable[[Path, int], bytes]
+
+
+@dataclass(frozen=True, slots=True)
+class Readers:
+    lines: Lines = lines_of
+    whole: Whole = at_most
+
+
+READERS = Readers()
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,4 +49,4 @@ class Job:
     connection: Connection
     report: Reporter
     limits: Limits
-    lines: Lines
+    readers: Readers

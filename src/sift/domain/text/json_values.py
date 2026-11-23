@@ -12,7 +12,7 @@ LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 REPLACEMENT = "\N{REPLACEMENT CHARACTER}"
 
 
-class NestedTooDeeplyError(RecursionError):
+class NestedTooDeeplyError(ValueError):
     pass
 
 
@@ -21,15 +21,31 @@ def _number(text: str) -> float | str:
     return number if math.isfinite(number) else text
 
 
+def deeper_than(text: str, most: int) -> bool:
+    if text.count("[") + text.count("{") <= most:
+        return False
+    level, in_string, escaped = 0, False, False
+    for character in text:
+        if escaped:
+            escaped = False
+        elif in_string:
+            escaped, in_string = character == "\\", character != '"'
+        elif character == '"':
+            in_string = True
+        elif character in "[{":
+            level += 1
+            if level > most:
+                return True
+        elif character in "]}":
+            level -= 1
+    return False
+
+
 def json_value(text: str) -> FieldValue:
-    value = cast("FieldValue", json.loads(text, parse_constant=str, parse_float=_number))
-    if text.count("[") + text.count("{") > MOST_DEPTH and depth(value) > MOST_DEPTH:
+    if deeper_than(text, MOST_DEPTH):
         raise NestedTooDeeplyError(f"nested more than {MOST_DEPTH} deep")
+    value = cast("FieldValue", json.loads(text, parse_constant=str, parse_float=_number))
     return without_lone_surrogates(value) if ESCAPED_SURROGATE.search(text) else value
-
-
-def is_list(value: FieldValue) -> bool:
-    return isinstance(value, Sequence) and not isinstance(value, str)
 
 
 def inside(value: FieldValue) -> Sequence[FieldValue] | None:
@@ -50,11 +66,27 @@ def depth(value: FieldValue) -> int:
     return deepest
 
 
-def without_lone_surrogates(value: FieldValue) -> FieldValue:
+def _cleaned(value: FieldValue) -> FieldValue:
     if isinstance(value, str):
         return LONE_SURROGATE.sub(REPLACEMENT, value)
     if isinstance(value, Mapping):
-        return {LONE_SURROGATE.sub(REPLACEMENT, key): without_lone_surrogates(item) for key, item in value.items()}
+        return {LONE_SURROGATE.sub(REPLACEMENT, key): item for key, item in value.items()}
     if isinstance(value, Sequence):
-        return [without_lone_surrogates(item) for item in value]
+        return list(value)
     return value
+
+
+def without_lone_surrogates(value: FieldValue) -> FieldValue:
+    top = _cleaned(value)
+    todo = [top]
+    while todo:
+        held = todo.pop()
+        if isinstance(held, dict):
+            for key, item in held.items():
+                held[key] = cleaned = _cleaned(item)
+                todo.append(cleaned)
+        elif isinstance(held, list):
+            for at, item in enumerate(held):
+                held[at] = cleaned = _cleaned(item)
+                todo.append(cleaned)
+    return top

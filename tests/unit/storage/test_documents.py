@@ -10,6 +10,7 @@ import pytest
 
 from sift.api.fields import FieldValue
 from sift.api.ids import ChunkId, CollectionId, DocumentId, first_row
+from sift.domain.plan.indexing import MOST_TEXT_BYTES
 from sift.domain.text.links import LinkKind, NameKind
 from sift.domain.text.notes import Document, note
 from sift.storage.database import reading, rows, run, writing
@@ -243,6 +244,12 @@ def record(key: str) -> Document:
 def kept_counts(connection: sqlite3.Connection) -> Counts:
     with reading(connection) as transaction:
         return counts(transaction)
+
+
+def test_the_largest_document_fits_a_row_sqlite_stores(store: sqlite3.Connection) -> None:
+    most_characters_as_utf8, text_and_fields = 4, 2
+    largest_row = MOST_TEXT_BYTES * most_characters_as_utf8 * text_and_fields
+    assert largest_row < store.getlimit(sqlite3.SQLITE_LIMIT_LENGTH)
 
 
 def test_the_store_keeps_count_of_its_documents_and_chunks_as_they_come_and_go(store: sqlite3.Connection) -> None:

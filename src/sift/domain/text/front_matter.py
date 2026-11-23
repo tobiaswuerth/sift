@@ -5,7 +5,7 @@ from enum import Enum, auto
 from types import MappingProxyType
 
 from sift.api.fields import Fields, FieldValue
-from sift.domain.text.json_values import MOST_DEPTH, depth, inside, is_list, json_value
+from sift.domain.text.json_values import MOST_DEPTH, deeper_than, depth, inside, json_value
 
 BLOCK = re.compile(r"\A---[ \t]*\r?\n(?:(.*?)\r?\n)??---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 LIST_ITEM = re.compile(r"[ \t]*-[ \t]+(.*)")
@@ -13,6 +13,7 @@ AT_THE_MARGIN = frozenset({"-", "]", "}", "],", "},"})
 BLOCK_SCALAR = re.compile(r"([|>])[+-]?[1-9]?[+-]?(?:[ \t]+#.*)?")
 WIKILINK = re.compile(r"\[\[[^\[\]\n]*\]\]")
 CLOSERS = frozenset({"", "]", "}"})
+MOST_FLOW_NESTING = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,13 +85,10 @@ def flow_items(text: str) -> list[str] | None:
 
 def value(text: str) -> FieldValue:
     try:
-        try:
-            return json_value(text)
-        except ValueError:
-            listed = flow_list(text)
-            return text.strip("'\"") if listed is None else listed
-    except RecursionError:
-        return text
+        return json_value(text)
+    except ValueError:
+        listed = None if deeper_than(text, MOST_FLOW_NESTING) else flow_list(text)
+        return text.strip("'\"") if listed is None else listed
 
 
 def flow_list(text: str) -> list[FieldValue] | None:
@@ -208,8 +206,6 @@ PARSE: Mapping[Kind, Callable[[Entry, Sequence[str]], Parsed]] = MappingProxyTyp
 def _shallow_enough(found: FieldValue, written: FieldValue) -> FieldValue:
     if depth(found) <= MOST_DEPTH:
         return found
-    if not (is_list(found) and is_list(written)):
-        return written
     pairs = zip(inside(found) or (), inside(written) or (), strict=True)
     return [item if depth(item) < MOST_DEPTH else text for item, text in pairs]
 

@@ -16,7 +16,7 @@ from sift.api.search import SearchKeywords
 from sift.app.collections import add, status
 from sift.app.documents import documents
 from sift.app.embedding import embed
-from sift.app.filing import Limits, Lines
+from sift.app.filing import Limits, Lines, Readers
 from sift.app.indexing import index
 from sift.app.search import search
 from sift.ingest.records import lines_of
@@ -48,7 +48,7 @@ def indexed(
     home: Path, limits: Limits | None = None, said: list[Event] | None = None, lines: Lines = lines_of
 ) -> Indexed:
     heard: list[Event] = [] if said is None else said
-    (one,) = index(home, IndexCollections(), heard.append, limits or Limits(), lines).collections
+    (one,) = index(home, IndexCollections(), heard.append, limits or Limits(), Readers(lines=lines)).collections
     assert isinstance(one.outcome, Indexed)
     return one.outcome
 
@@ -164,17 +164,20 @@ def test_a_large_file_is_stored_a_batch_at_a_time_as_it_is_read(tmp_path: Path) 
 
 
 def test_a_record_longer_than_a_document_may_be_is_skipped_and_files_in_utf_16_are_read(tmp_path: Path) -> None:
-    write(tmp_path / "c" / "r.jsonl", jsonl([{"id": 1, "text": "x" * 50}, {"id": 2, "text": "short"}]))
+    lines = [json.dumps({"id": 1, "text": "x" * 50}), '{"id": 2, "text": "' + "\N{EURO SIGN}" * 15 + '"}']
+    write(tmp_path / "c" / "r.jsonl", "\n".join([*lines, json.dumps({"id": 3, "text": "short"})]) + "\n")
     (tmp_path / "c" / "wide.jsonl").write_bytes(jsonl([{"id": "w", "text": "wide text"}]).encode("utf-16"))
     home = tmp_path / "home"
     add(home, AddCollection(str(tmp_path / "c")))
     said: list[Event] = []
     indexed(home, Limits(most_text_bytes=40), said)
-    assert found(home, "short OR wide") == ["c/r.jsonl#2", "c/wide.jsonl#w"]
-    assert any(isinstance(each, Noted) and "line 1: 50 bytes as text" in each.text for each in said)
+    assert found(home, "short OR wide") == ["c/r.jsonl#3", "c/wide.jsonl#w"]
+    (noted,) = [each.text for each in said if isinstance(each, Noted)]
+    assert "line 1: longer than the 40 characters a line may hold" in noted
+    assert "line 2: 45 bytes as text, more than the 40 a document holds" in noted
 
 
-def broken(_path: Path) -> Iterator[tuple[int, str]]:
+def broken(_path: Path, _most: int) -> Iterator[tuple[int, str]]:
     yield 1, json.dumps({"id": "new", "text": "half read"})
     raise OSError(5, "the drive went away")
 

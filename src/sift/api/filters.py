@@ -8,6 +8,7 @@ from sift.api.errors import InvalidRequestError
 
 type FilterValue = str | int | float | bool
 
+MOST_BRACKETS = 64
 WRITTEN = re.compile(r"(\w[^=<>!]*)(>=|<=|!=|=|<|>)(.*)", re.DOTALL)
 FILTER_REMEDY = "write KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06"
 
@@ -40,6 +41,8 @@ def _scalar(value: object) -> bool:
 
 
 def _values(text: str, value: str) -> tuple[FilterValue, ...]:
+    if value.count("[") + value.count("{") > MOST_BRACKETS:
+        return (value,)
     try:
         read = cast("object", json.loads(value))
     except ValueError:

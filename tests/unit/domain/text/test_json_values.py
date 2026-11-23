@@ -1,7 +1,14 @@
 import pytest
 
 from sift.api.fields import FieldValue
-from sift.domain.text.json_values import MOST_DEPTH, NestedTooDeeplyError, depth, json_value, without_lone_surrogates
+from sift.domain.text.json_values import (
+    MOST_DEPTH,
+    NestedTooDeeplyError,
+    depth,
+    inside,
+    json_value,
+    without_lone_surrogates,
+)
 
 
 @pytest.mark.parametrize(
@@ -24,6 +31,24 @@ def test_json_nested_deeper_than_sqlite_stores_is_refused() -> None:
     assert depth(json_value("[" * MOST_DEPTH + "]" * MOST_DEPTH)) == MOST_DEPTH
     with pytest.raises(NestedTooDeeplyError, match=f"more than {MOST_DEPTH}"):
         json_value("[" * (MOST_DEPTH + 1) + "]" * (MOST_DEPTH + 1))
+
+
+def test_json_too_deep_is_refused_as_a_value_error_before_python_parses_it() -> None:
+    assert issubclass(NestedTooDeeplyError, ValueError)
+    with pytest.raises(NestedTooDeeplyError, match=f"more than {MOST_DEPTH}"):
+        json_value("[" * 100_000)
+    brackets = "[" * 2000
+    assert json_value(f'["\\"{brackets}"]') == [f'"{brackets}']
+
+
+def test_a_lone_surrogate_is_replaced_at_the_deepest_level_sqlite_stores() -> None:
+    nesting = MOST_DEPTH - 1
+    found = json_value("[" * nesting + '"\\ud800"' + "]" * nesting)
+    for _ in range(nesting):
+        held = inside(found)
+        assert held is not None
+        (found,) = held
+    assert found == "\N{REPLACEMENT CHARACTER}"
 
 
 def test_what_is_no_json_is_a_value_error() -> None:

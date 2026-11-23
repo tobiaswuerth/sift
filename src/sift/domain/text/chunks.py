@@ -35,9 +35,9 @@ def cuts(line: str) -> Iterator[tuple[int, int]]:
 
 
 def pieces(text: str, first_line: int) -> Iterator[Piece]:
-    lines: list[str] = LINE.findall(text)
+    lines, looked = itertools.tee(found.group() for found in LINE.finditer(text))
     start = 0
-    for number, (line, prose) in enumerate(zip(lines, outside_code(lines), strict=True), first_line):
+    for number, (line, prose) in enumerate(zip(lines, outside_code(looked), strict=True), first_line):
         heading = prose and "#" in line and HEADING.match(line) is not None
         if len(line) <= MOST_CHARACTERS:
             yield Piece(number, start, len(line), heading)
