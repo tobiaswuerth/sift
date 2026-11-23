@@ -95,21 +95,15 @@ def alike[S](kept: searching.Kept[S], held_of: Callable[[S], Held], model: str, 
 
 def _nearest[S](
     kept: searching.Kept[S], held_of: Callable[[S], Held], query: Floats, want: int, read: Read
-) -> tuple[Near, ...] | None:
+) -> tuple[Near, ...]:
     held = list(kept.searching)
-    lost: list[bool] = []
 
     def exact(store: int, chunks: Ids) -> Exact:
         each = held[store]
-        found = None if lost else kept.guarded(each, partial(read, each.transaction, chunks))
-        if found is None:
-            lost.append(True)
-            return np.zeros(0, np.int64), np.zeros((0, 0), np.float16)
-        return found
+        return kept.guarded(each, partial(read, each.transaction, chunks))
 
-    allowed = [_guarded(kept, each, held_of(each.held).allowed, lost) for each in held]
-    found = nearest([held_of(each.held).coded for each in held], query, want, Reads(exact, allowed), rescore=want)
-    return None if lost else found
+    allowed = [_guarded(kept, each, held_of(each.held).allowed) for each in held]
+    return nearest([held_of(each.held).coded for each in held], query, want, Reads(exact, allowed), rescore=want)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,37 +111,23 @@ class Guarded[S]:
     kept: searching.Kept[S]
     each: searching.Searching[S]
     allowed: AllowedChunks
-    lost: list[bool]
 
     def checked(self, ids: Ids) -> Mask:
-        found = None if self.lost else self.kept.guarded(self.each, partial(self.allowed.checked, ids))
-        if found is None:
-            self.lost.append(True)
-            return np.zeros(len(ids), np.bool_)
-        return found
+        return self.kept.guarded(self.each, partial(self.allowed.checked, ids))
 
     def listed(self) -> Ids:
-        found = None if self.lost else self.kept.guarded(self.each, self.allowed.listed)
-        if found is None:
-            self.lost.append(True)
-            return np.zeros(0, np.int64)
-        return found
+        return self.kept.guarded(self.each, self.allowed.listed)
 
 
-def _guarded[S](
-    kept: searching.Kept[S], each: searching.Searching[S], allowed: Passing | None, lost: list[bool]
-) -> Guarded[S] | None:
-    return None if allowed is None else Guarded(kept, each, allowed, lost)
+def _guarded[S](kept: searching.Kept[S], each: searching.Searching[S], allowed: Passing | None) -> Guarded[S] | None:
+    return None if allowed is None else Guarded(kept, each, allowed)
 
 
-def _owned[S](kept: searching.Kept[S], near: tuple[Near, ...]) -> dict[int, int] | None:
+def _owned[S](kept: searching.Kept[S], near: tuple[Near, ...]) -> dict[int, int]:
     owners: dict[int, int] = {}
     for one in list(kept.searching):
         mine = [each.chunk for each in near if owner(each.chunk) == one.collection.id]
-        found = kept.guarded(one, partial(documents_of, one.transaction, mine)) if mine else {}
-        if found is None:
-            return None
-        owners |= found
+        owners |= kept.guarded(one, partial(documents_of, one.transaction, mine)) if mine else {}
     return owners
 
 
@@ -158,32 +138,21 @@ def _best(wanted: Best, near: tuple[Near, ...], owners: dict[int, int]) -> tuple
     return tuple(Near(chunk, score) for chunk, score in ranked(offered(wanted, chunks, documents, scores)))
 
 
-def _documents[S](kept: searching.Kept[S], count: Callable[[Reading], int]) -> int | None:
-    total = 0
-    for one in list(kept.searching):
-        found = kept.guarded(one, partial(count, one.transaction))
-        if found is None:
-            return None
-        total += found
-    return total
+def _documents[S](kept: searching.Kept[S], count: Callable[[Reading], int]) -> int:
+    return sum(kept.guarded(one, partial(count, one.transaction)) for one in list(kept.searching))
 
 
 def near[S](
     kept: searching.Kept[S], held_of: Callable[[S], Held], wanted: Best, query: Floats, asked: Asked
-) -> tuple[Near, ...] | None:
+) -> tuple[Near, ...]:
     chunks = sum(len(held_of(each.held).coded.ids) for each in kept.searching)
     want, documents = max(asked.rescore, wanted.k), None
     while True:
         found = _nearest(kept, held_of, query, want, asked.read)
-        owners = None if found is None else _owned(kept, found)
-        if found is None or owners is None:
-            return None
-        best = _best(wanted, found, owners)
+        best = _best(wanted, found, _owned(kept, found))
         if len(best) >= wanted.k or want >= chunks or len(found) < want:
             return best
         documents = _documents(kept, asked.count) if documents is None else documents
-        if documents is None:
-            return None
         if len(best) >= documents:
             return best
         want *= WIDER
@@ -193,18 +162,15 @@ def itself(held: Held) -> Held:
     return held
 
 
-def _round(kept: Kept, request: Options, query: Floats, asked: Asked, wanted: int) -> searching.Round | None:
-    found = near(kept, itself, Best(wanted, not request.all_passages), query, asked)
-    return None if found is None else searching.Round(found)
+def _round(kept: Kept, request: Options, query: Floats, asked: Asked, wanted: int) -> searching.Round:
+    return searching.Round(near(kept, itself, Best(wanted, not request.all_passages), query, asked))
 
 
 def answered_near(
     kept: Kept, request: Options, query: Floats, asked: Asked, copy_of: str | None = None
 ) -> list[tuple[int, Hit]]:
-    while True:
-        found = searching.answered(kept, partial(_round, kept, request, query, asked), request, copy_of)
-        if found is not None:
-            return found[0]
+    rank = partial(_round, kept, request, query, asked)
+    return searching.despite_losses(partial(searching.answered, kept, rank, request, copy_of))[0]
 
 
 def vsearch(home: Path, request: SearchVectors, models: Models, asked: Asked = ASKED) -> SearchResult:

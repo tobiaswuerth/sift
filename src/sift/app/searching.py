@@ -41,6 +41,11 @@ class Searching[S]:
     resources: ExitStack
 
 
+class StoreLostError(Exception):
+    def __init__(self, collection: str) -> None:
+        super().__init__(f"the store of {collection} was lost while searched")
+
+
 @dataclass(slots=True)
 class Kept[S]:
     searching: list[Searching[S]] = field(default_factory=list[Searching[S]])
@@ -56,15 +61,25 @@ class Kept[S]:
         abandon(each.transaction)
         each.resources.close()
 
-    def guarded[T](self, each: Searching[S], work: Callable[[], T]) -> T | None:
-        if each not in self.searching:
-            return None
+    def guarded[T](self, each: Searching[S], work: Callable[[], T]) -> T:
         try:
             with unavailable_if_unusable(each.collection.store):
                 return work()
         except StoreUnavailableError as error:
             self.dropped(each, error)
-            return None
+            raise StoreLostError(each.collection.name) from error
+
+    def closed(self) -> None:
+        for one in list(self.searching):
+            self.guarded(one, one.resources.close)
+
+
+def despite_losses[T](work: Callable[[], T]) -> T:
+    while True:
+        try:
+            return work()
+        except StoreLostError:
+            continue
 
 
 def checked_k(k: int) -> None:
@@ -193,15 +208,12 @@ def _work(each: Seen) -> str | None:
 
 def hits[S](
     kept: Kept[S], found: Sequence[Scored], request: Options, copy_of: str | None = None
-) -> list[tuple[int, Hit]] | None:
+) -> list[tuple[int, Hit]]:
     scores = {each.chunk: each.score for each in found}
     read_all: dict[int, Seen] = {}
     for one in list(kept.searching):
         mine = [ChunkId(each.chunk) for each in found if owner(each.chunk) == one.collection.id]
-        read = kept.guarded(one, partial(_read, one, mine, scores, request)) if mine else {}
-        if read is None:
-            return None
-        read_all |= read
+        read_all |= kept.guarded(one, partial(_read, one, mine, scores, request)) if mine else {}
     seen = [read_all[each.chunk] for each in found if copy_of is None or read_all[each.chunk].work != copy_of]
     works = seen if request.all_passages else one_per_work(seen, _work, _copied)
     return [(each.chunk, each.hit) for each in works]
@@ -213,17 +225,15 @@ def always() -> bool:
 
 def answered[S](
     kept: Kept[S],
-    rank: Callable[[int], Rounded | None],
+    rank: Callable[[int], Rounded],
     request: Options,
     copy_of: str | None = None,
     more: Callable[[], bool] = always,
-) -> tuple[list[tuple[int, Hit]], bool] | None:
+) -> tuple[list[tuple[int, Hit]], bool]:
     wanted = request.k
     while True:
         found = rank(wanted)
-        shown = None if found is None else hits(kept, found.found, request, copy_of)
-        if found is None or shown is None:
-            return None
+        shown = hits(kept, found.found, request, copy_of)
         if len(shown) >= request.k or len(found.found) < wanted or found.cut:
             return presented(shown[: request.k], request), found.cut
         if not more():
@@ -232,8 +242,7 @@ def answered[S](
 
 
 def result[S](kept: Kept[S], answered: Sequence[tuple[int, Hit]], *, partial: bool) -> SearchResult:
-    for one in list(kept.searching):
-        kept.guarded(one, one.resources.close)
+    despite_losses(kept.closed)
     live = {one.collection.id for one in kept.searching}
     found = tuple(hit for chunk, hit in answered if owner(chunk) in live)
     return SearchResult(found, len(kept.searching) + kept.ruled_out, tuple(kept.unsearched), partial=partial)

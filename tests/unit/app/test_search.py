@@ -258,6 +258,20 @@ def test_a_store_lost_while_its_passages_are_read_weighs_on_no_score(home: Path,
     assert [each.collection for each in result.unsearched] == ["notes"]
 
 
+def test_two_stores_lost_in_one_search_leave_the_third_to_answer(home: Path, tmp_path: Path) -> None:
+    _more(home, tmp_path)
+    write(tmp_path / "third" / "halo.md", "# Halo third\n\nhalo\n")
+    add(home, AddCollection(str(tmp_path / "third")))
+    indexed(home)
+    alone = search(home, SearchKeywords("halo", collection="more")).hits
+    _changed(home / "collections" / "notes.sqlite", "DELETE FROM keyword_lengths")
+    damage_table(home / "collections" / "third.sqlite", "sources")
+    result = search(home, SearchKeywords("halo"))
+    assert result.hits == alone
+    assert sorted(each.collection for each in result.unsearched) == ["notes", "third"]
+    assert result.searched == 1
+
+
 def test_a_keyword_index_of_another_version_is_passed_over_until_indexed_again(home: Path) -> None:
     _changed(home / "collections" / "notes.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
     (said,) = search(home, SearchKeywords("halo")).unsearched

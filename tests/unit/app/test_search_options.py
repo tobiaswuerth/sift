@@ -2,7 +2,6 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from sift.api.collections import AddCollection
@@ -18,11 +17,10 @@ from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.search import search
-from sift.app.vsearch import Asked, Exact, Guarded, vsearch
+from sift.app.vsearch import Asked, Exact, vsearch
 from sift.domain.arrays import Ids
 from sift.storage.database import Reading
 from sift.storage.vectors import documents_embedded, vectors_of
-from tests.allowed import Chosen
 from tests.damage import damage_table
 from tests.models import Hashed
 
@@ -173,24 +171,30 @@ def test_a_store_lost_while_its_filter_is_checked_or_listed_is_passed_over(tmp_p
     assert all(hit.id.startswith("second/even/") for hit in found.hits)
 
 
-def test_once_a_store_is_lost_no_other_store_is_checked_or_listed_for_that_round(home: Path) -> None:
-    chosen = Chosen(np.zeros(0, np.int64))
-    with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, searching.narrowed(home, SearchKeywords("x")), lambda _one, _allowed: None)
-        guarded = Guarded(kept, kept.searching[0], chosen, [True])
-        assert guarded.listed().tolist() == []
-        assert guarded.checked(np.array([1, 2], np.int64)).tolist() == [False, False]
-    assert (chosen.asked, chosen.listings) == ([], [])
+def _gone() -> None:
+    raise StoreUnavailableError("gone", None)
 
 
-def test_work_on_a_store_already_dropped_is_not_done(home: Path) -> None:
-    done: list[bool] = []
+def test_work_that_loses_its_store_drops_it_says_why_and_ends_the_round(home: Path) -> None:
     with ExitStack() as cleanup:
         kept = searching.opened(cleanup, searching.narrowed(home, SearchKeywords("x")), lambda _one, _allowed: None)
         (each,) = kept.searching
-        kept.dropped(each, StoreUnavailableError("gone", None))
-        assert kept.guarded(each, lambda: done.append(True)) is None
-    assert done == []
+        with pytest.raises(searching.StoreLostError):
+            kept.guarded(each, _gone)
+        assert kept.searching == []
+        assert [(one.collection, one.message) for one in kept.unsearched] == [(each.collection.name, "gone")]
+
+
+def test_a_round_runs_again_after_each_store_it_loses() -> None:
+    losses = [searching.StoreLostError("first"), searching.StoreLostError("second")]
+
+    def work() -> int:
+        if losses:
+            raise losses.pop()
+        return 3
+
+    assert searching.despite_losses(work) == 3
+    assert losses == []
 
 
 def test_a_filter_keeps_a_document_of_many_passages_whose_ids_are_not_its_passages_ids(tmp_path: Path) -> None:

@@ -18,7 +18,6 @@ from sift.retrieval.keyword.search import (
     TUNING,
     Expired,
     Found,
-    Planned,
     Prepared,
     Tuning,
     found_in,
@@ -79,22 +78,18 @@ def keywords(transaction: Reading, allowed: Passing | None) -> Keywords:
 
 def found[S](
     kept: searching.Kept[S], keywords_of: Callable[[S], Keywords], wanted: Wanted, expression: Expression
-) -> Ranked | None:
+) -> Ranked:
     if expression == NOTHING:
         return Ranked((), cut=False)
-    plans: list[tuple[searching.Searching[S], Planned]] = []
-    for one in [one for one in kept.searching if expression not in keywords_of(one.held).prepared]:
-        plan = kept.guarded(one, partial(planned, keywords_of(one.held).store, expression))
-        if plan is None:
-            return None
-        plans.append((one, plan))
+    plans = [
+        (one, kept.guarded(one, partial(planned, keywords_of(one.held).store, expression)))
+        for one in kept.searching
+        if expression not in keywords_of(one.held).prepared
+    ]
     refuse_reading_too_much([plan for _, plan in plans], wanted.tuning)
     for one, plan in plans:
         store = keywords_of(one.held)
-        held = kept.guarded(one, partial(prepared, plan, allowed=store.allowed))
-        if held is None:
-            return None
-        store.prepared[expression] = held
+        store.prepared[expression] = kept.guarded(one, partial(prepared, plan, allowed=store.allowed))
     ready = [(one, keywords_of(one.held).prepared[expression]) for one in kept.searching]
     query = query_of(expression, [held for _, held in ready])
     if query is None:
@@ -102,8 +97,6 @@ def found[S](
     best, cut = Best(wanted.k, wanted.by_document), False
     for one, held in ready:
         after = kept.guarded(one, partial(searched, held, query, best, wanted.tuning, wanted.expired))
-        if after is None:
-            return None
         best, cut = after.best, cut or after.cut
     return Ranked(found_in(best), cut)
 
@@ -112,23 +105,22 @@ def _itself(store: Keywords) -> Keywords:
     return store
 
 
-def _searched(kept: Kept, asked: Asked) -> Ranked | None:
+def _searched(kept: Kept, asked: Asked) -> Ranked:
     first = found(kept, _itself, asked.wanted, asked.expression)
-    if first is None or first.found or asked.looser is None:
+    if first.found or asked.looser is None:
         return first
     return found(kept, _itself, asked.wanted, asked.looser)
 
 
-def _ranked(kept: Kept, asked: Asked, wanted: int) -> Ranked | None:
+def _ranked(kept: Kept, asked: Asked, wanted: int) -> Ranked:
     return _searched(kept, replace(asked, wanted=replace(asked.wanted, k=wanted)))
 
 
 def _answered(kept: Kept, asked: Asked) -> tuple[list[tuple[int, Hit]], bool]:
-    while True:
-        more = partial(_in_time, asked.wanted.expired)
-        found = searching.answered(kept, partial(_ranked, kept, asked), asked.request, more=more)
-        if found is not None:
-            return found
+    more = partial(_in_time, asked.wanted.expired)
+    return searching.despite_losses(
+        partial(searching.answered, kept, partial(_ranked, kept, asked), asked.request, more=more)
+    )
 
 
 def _in_time(expired: Expired) -> bool:

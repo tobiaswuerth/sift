@@ -79,15 +79,11 @@ def _any_word(text: str) -> Expression:
     return parsed(" OR ".join(f'"{word}"' for word in found_words)) if found_words else NOTHING
 
 
-def _candidates(kept: Kept, request: SearchHybrid, query: Floats | None, asked: Asked) -> list[int] | None:
+def _candidates(kept: Kept, request: SearchHybrid, query: Floats | None, asked: Asked) -> list[int]:
     wanted = max(request.candidates, request.k)
     by_document = not request.all_passages
     keyword = found(kept, _keywords, Wanted(wanted, by_document, TUNING, never), _any_word(request.query))
-    if keyword is None:
-        return None
     semantic = near(kept, _vectors, Best(wanted, by_document), query, asked) if query is not None else ()
-    if semantic is None:
-        return None
     return list(dict.fromkeys([each.chunk for each in keyword.found] + [each.chunk for each in semantic]))
 
 
@@ -119,8 +115,9 @@ def _cosines(one: searching.Searching[Both], chunks: Sequence[int], query: Float
 
 
 def _gathered(
-    kept: Kept, chunks: list[int], query: Floats | None, asked: Asked, request: SearchHybrid
-) -> tuple[list[Candidate], dict[int, float]] | None:
+    kept: Kept, query: Floats | None, asked: Asked, request: SearchHybrid
+) -> tuple[list[Candidate], dict[int, float]]:
+    chunks = _candidates(kept, request, query, asked)
     candidates: list[Candidate] = []
     cosines: dict[int, float] = {}
     for one in list(kept.searching):
@@ -128,15 +125,11 @@ def _gathered(
         if not mine:
             continue
         read = kept.guarded(one, partial(_read, one, mine, request))
-        if read is None:
-            return None
         near_by = (
             {}
             if query is None or not len(one.held.vectors.coded.ids)
             else kept.guarded(one, partial(_cosines, one, mine, query, asked))
         )
-        if near_by is None:
-            return None
         candidates += read
         cosines |= near_by
     return candidates, cosines
@@ -202,17 +195,12 @@ def _answered(kept: Kept, request: SearchHybrid, models: Models, asked: Asked) -
     )
     if query is not None:
         alike(kept, _vectors, models.name, query)
-    while True:
-        chunks = _candidates(kept, request, query, asked)
-        gathered = None if chunks is None else _gathered(kept, chunks, query, asked, request)
-        if gathered is None:
-            continue
-        candidates, cosines = gathered
-        if not candidates:
-            return []
-        ranked = _ordered(request, candidates, _scored(models, request, candidates, cosines))
-        answered = [(each.chunk, replace(each.hit, text=None) if request.compact else each.hit) for each in ranked]
-        return searching.presented(answered, request)
+    candidates, cosines = searching.despite_losses(partial(_gathered, kept, query, asked, request))
+    if not candidates:
+        return []
+    ranked = _ordered(request, candidates, _scored(models, request, candidates, cosines))
+    answered = [(each.chunk, replace(each.hit, text=None) if request.compact else each.hit) for each in ranked]
+    return searching.presented(answered, request)
 
 
 def _checked(request: SearchHybrid) -> None:
