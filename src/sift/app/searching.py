@@ -7,7 +7,8 @@ from typing import Protocol
 import numpy as np
 
 from sift.api.errors import InvalidRequestError, StoreUnavailableError
-from sift.api.search import MOST_HITS, Options, Unsearched
+from sift.api.search import Options, Unsearched
+from sift.api.validated import validated
 from sift.app.collections import chosen_or_active
 from sift.app.linked import LeftOut, Narrowing, condition_in, narrowing
 from sift.domain.query import fields as shown
@@ -22,8 +23,6 @@ from sift.storage.passing import Passing
 from sift.storage.store import open_store, unavailable_if_unusable
 from sift.storage.vectors import EMBED_REMEDY, codes_of, left, model_of, width_held
 
-FEW_REMEDY = "ask for one result or more, e.g. 10"
-MANY_REMEDY = f"ask for {MOST_HITS:,} results at most, and narrow the query to reach the rest"
 UNEMBEDDED_REMEDY = "run sift embed"
 EMPTY_QUERY = "an empty query finds nothing"
 
@@ -118,15 +117,8 @@ def despite_losses[T](work: Callable[[], T]) -> T:
             continue
 
 
-def checked_k(k: int) -> None:
-    if k < 1:
-        raise InvalidRequestError(f"{k:,} asks for no result", FEW_REMEDY, "k")
-    if k > MOST_HITS:
-        raise InvalidRequestError(f"{k:,} results are more than the {MOST_HITS:,} a search gives", MANY_REMEDY, "k")
-
-
 def checked(request: Options) -> None:
-    checked_k(request.k)
+    validated(request)
     shown.checked(request.fields, request.sort)
 
 

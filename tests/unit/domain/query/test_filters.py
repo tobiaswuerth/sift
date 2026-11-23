@@ -19,19 +19,21 @@ def test_nothing_asked_restricts_nothing_and_a_path_alone_restricts_by_path() ->
 
 
 @pytest.mark.parametrize(
-    "filters, refusal",
+    "field, operator, values, refusal",
     [
-        ([one("", ANY, 1)], "names no field"),
-        ([one("year", ANY)], "'year' has no value"),
-        ([one("year", Operator.ABOVE, 1, 2)], "'year' takes one value"),
-        ([one("year", ANY, 10**30)], "too large"),
-        ([one("year", Operator.ABOVE, float("nan"))], "no finite number"),
+        ("", ANY, (1,), "names no field"),
+        ("year", ANY, (), "'year' has no value"),
+        ("year", Operator.ABOVE, (1, 2), "'year' takes one value"),
+        ("year", ANY, (10**30,), "too large"),
+        ("year", Operator.ABOVE, (float("nan"),), "no finite number"),
     ],
 )
-def test_a_filter_that_cannot_be_asked_is_refused_saying_how_to_filter(filters: list[Filter], refusal: str) -> None:
+def test_a_filter_that_cannot_be_asked_is_refused_where_it_is_made(
+    field: str, operator: Operator, values: tuple[FilterValue, ...], refusal: str
+) -> None:
     with pytest.raises(InvalidRequestError, match=refusal) as refused:
-        condition(None, filters, reads_quotes=True)
-    assert refused.value.remedy is not None
+        one(field, operator, *values)
+    assert (refused.value.field, bool(refused.value.remedy)) == ("filters", True)
 
 
 def test_a_field_name_with_a_quote_is_refused_where_sqlite_reads_none() -> None:

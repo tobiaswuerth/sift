@@ -24,9 +24,16 @@ def loaded(home: Path, *argv: str) -> str:
 
 def test_a_command_loads_what_it_needs_alone(settings: Settings, notes: Path) -> None:
     indexed_notes(settings, notes)
-    for argv in (("--help",), ("--version",), ("status",), ("get", "notes/rl.md"), ("add", str(notes))):
+    for argv in (
+        ("--help",),
+        ("--version",),
+        ("status",),
+        ("get", "notes/rl.md"),
+        ("add", str(notes)),
+        ("links", "rl"),
+    ):
         assert loaded(settings.home, *argv) == "['sift']\n", argv
-    for argv in (("search", "brush"), ("index",), ("links", "rl"), ("mentions", "notes/rl.md")):
+    for argv in (("search", "brush"), ("index",), ("mentions", "notes/rl.md")):
         assert loaded(settings.home, *argv) == "['numpy', 'sift']\n", argv
 
 

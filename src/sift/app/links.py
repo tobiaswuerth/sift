@@ -3,7 +3,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
-from sift.api.errors import InvalidRequestError, StoreUnavailableError
+from sift.api.errors import StoreUnavailableError
 from sift.api.ids import DocumentId
 from sift.api.links import (
     Direction,
@@ -17,9 +17,9 @@ from sift.api.links import (
     Unresolved,
 )
 from sift.api.search import Unsearched
+from sift.api.validated import validated
 from sift.app.collections import chosen_or_active
 from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, linking, note_of, read_in, unresolved_links
-from sift.app.searching import checked_k
 from sift.domain.text.records import public_id
 from sift.domain.text.resolving import LEADING, Linking, Resolution, link_path, linking_lines, stem
 from sift.storage.database import Reading
@@ -27,9 +27,7 @@ from sift.storage.documents import texts
 from sift.storage.links import LinkRow, Titled, links_out, titled
 
 LINKING_SHOWN = 5
-DEPTHS = (1, 2)
 FURTHER = 2
-DEPTH_REMEDY = "follow links one step, or two: 1 or 2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,9 +124,7 @@ def _links(transaction: Reading, found: Note, request: ShowLinks) -> Links:
 
 
 def links(home: Path, request: ShowLinks) -> Links:
-    checked_k(request.k)
-    if request.depth not in DEPTHS:
-        raise InvalidRequestError(f"{request.depth} steps are neither 1 nor 2", DEPTH_REMEDY, "depth")
+    validated(request)
     named = note_of(home, request.id)
     shown = read_in(named.note.collection, lambda transaction: _links(transaction, named.note, request))
     return replace(shown, unsearched=named.unsearched)
@@ -157,7 +153,7 @@ def _unresolved(collection: str, transaction: Reading) -> list[tuple[str, list[s
 
 
 def unresolved(home: Path, request: ListUnresolved) -> Unresolved:
-    checked_k(request.k)
+    validated(request)
     found: list[tuple[str, list[str]]] = []
     passed: list[Unsearched] = []
     for one in chosen_or_active(home, request.collections):

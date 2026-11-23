@@ -116,7 +116,6 @@ def test_the_sort_orders_the_k_best_not_every_match(home: Path) -> None:
 @pytest.mark.parametrize(
     "request_, refusal",
     [
-        (SearchKeywords("pigment", filters=(Filter("year", Operator.ABOVE, (1, 2)),)), "takes one value"),
         (SearchKeywords("pigment", sort="-"), "names no field to sort by"),
         (SearchKeywords("pigment", fields=("",)), "names no field"),
     ],

@@ -1,5 +1,4 @@
 import json
-import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -51,12 +50,14 @@ def _refused(problem: str, remedy: str = FILTER_REMEDY) -> InvalidRequestError:
     return InvalidRequestError(problem, remedy)
 
 
-def json_path(field: str, *, reads_quotes: bool) -> str:
-    if not field:
-        raise _refused("a filter names no field")
+def _refuse_unreadable(field: str, *, reads_quotes: bool) -> None:
     if '"' in field and not reads_quotes:
         problem = f"the field {field!r} holds a double quote, which this SQLite reads in no field's name"
         raise _refused(problem, QUOTE_REMEDY)
+
+
+def json_path(field: str, *, reads_quotes: bool) -> str:
+    _refuse_unreadable(field, reads_quotes=reads_quotes)
     return "$." + json.dumps(field, ensure_ascii=False)
 
 
@@ -72,16 +73,9 @@ def forms(value: FilterValue) -> list[SpecValue]:
     return [value, float(value)] if DECIMAL.fullmatch(value) else [value]
 
 
-def _checked(each: Filter) -> None:
-    if not each.values:
-        raise _refused(f"the filter on {each.field!r} has no value")
-    if each.operator not in SETS and len(each.values) > 1:
-        raise _refused(f"the range on {each.field!r} takes one value, not {len(each.values)}")
-    for value in each.values:
-        if isinstance(value, int) and not isinstance(value, bool) and not -SQLITE_INT <= value < SQLITE_INT:
-            raise _refused(f"the filter on {each.field!r}: {value} is too large")
-        if isinstance(value, float) and not math.isfinite(value):
-            raise _refused(f"the filter on {each.field!r}: {value} is no finite number")
+def readable(filters: Sequence[Filter], *, reads_quotes: bool) -> None:
+    for each in filters:
+        _refuse_unreadable(each.field, reads_quotes=reads_quotes)
 
 
 def _plain(value: object) -> bool:
@@ -136,8 +130,6 @@ def condition(
     linked: Linked = UNLINKED,
 ) -> Condition | None:
     asked = gathered(tuple(filters))
-    for each in asked:
-        _checked(each)
     if not path and not asked and linked.within is None and not linked.without:
         return None
     groups = [

@@ -91,8 +91,8 @@ def test_the_query_is_embedded_as_a_query(home: Path) -> None:
     "request_, refusal",
     [
         (SearchVectors("   "), "an empty query finds nothing"),
-        (SearchVectors("halo", k=0), "asks for no result"),
-        (SearchVectors("halo", k=10_001), "more than the 10,000 a search gives"),
+        (SearchVectors("halo", k=0), "0 is outside 1 to 10,000"),
+        (SearchVectors("halo", k=10_001), "10,001 is outside 1 to 10,000"),
         (SearchVectors(f"a {BROKEN} query"), "the model gave no vector for the query"),
         (SearchVectors(f"a {DIRECTIONLESS} query"), "the model gave the query no direction"),
     ],

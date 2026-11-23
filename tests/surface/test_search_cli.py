@@ -224,7 +224,7 @@ def test_status_of_a_store_that_is_gone_fails_and_json_may_come_before_the_comma
 def test_a_refused_value_is_said_with_the_flag_that_gave_it(settings: Settings, notes: Path) -> None:
     searched_notes(settings, notes)
     code, _, err = ran(settings, "search", "brush", "-k", "0")
-    assert (code, err.splitlines()[0]) == (2, "error  -k: 0 asks for no result")
+    assert (code, err.splitlines()[0]) == (2, "error  -k: 0 is outside 1 to 10,000")
     code, out, _ = ran(settings, "search", "brush", "-k", "0", "--json")
     said = cast("dict[str, dict[str, str]]", json.loads(out))["error"]
-    assert (said["message"], said["field"]) == ("0 asks for no result", "k")
+    assert (said["message"], said["field"]) == ("0 is outside 1 to 10,000", "k")

@@ -143,7 +143,10 @@ def test_a_note_is_named_by_its_id_or_as_links_name_it(people: Path, tmp_path: P
 
 @pytest.mark.parametrize(
     "request_, refusal",
-    [(ShowLinks("v/Orgs/Acme AG.md", depth=3), "neither 1 nor 2"), (ShowLinks("x", k=0), "no result")],
+    [
+        (ShowLinks("v/Orgs/Acme AG.md", depth=3), "3 is outside 1 to 2"),
+        (ShowLinks("x", k=0), "0 is outside 1 to 10,000"),
+    ],
 )
 def test_links_asked_otherwise_are_refused(people: Path, request_: ShowLinks, refusal: str) -> None:
     with pytest.raises(InvalidRequestError, match=refusal):

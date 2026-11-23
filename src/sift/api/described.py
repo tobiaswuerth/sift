@@ -13,6 +13,12 @@ class Place:
 
 
 @dataclass(frozen=True, slots=True)
+class Bounds:
+    low: int
+    high: int
+
+
+@dataclass(frozen=True, slots=True)
 class Short:
     letter: str
 

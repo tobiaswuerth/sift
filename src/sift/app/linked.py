@@ -7,7 +7,7 @@ from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailable
 from sift.api.filters import Filter
 from sift.api.search import Options
 from sift.app.notes import NOTE_REMEDY, Note, Resolver, linking, note_of, read_in, target_of, written
-from sift.domain.query.filters import Condition, Linked, LinkFilter, condition, linkings
+from sift.domain.query.filters import Condition, Linked, LinkFilter, condition, linkings, readable
 from sift.domain.text.resolving import LEADING
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading
@@ -108,7 +108,7 @@ def narrowing(
     home: Path, request: Options, scope: tuple[Collection, ...], left_out: LeftOut | None = None
 ) -> Narrowing:
     quotes = reads_quotes()
-    condition(request.path, request.filters, reads_quotes=quotes)
+    readable(request.filters, reads_quotes=quotes)
     links_to = tuple(_linked_to(home, scope, each) for each in request.links_to) if request.links_to else None
     linked_from = tuple(_linking_from(home, each) for each in request.linked_from) if request.linked_from else None
     kept = _kept(scope, links_to, linked_from)

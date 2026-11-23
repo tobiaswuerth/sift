@@ -29,9 +29,7 @@ def test_a_filter_is_written_as_a_field_an_operator_and_a_value_read_as_json_if_
     assert written(text) == expected
 
 
-@pytest.mark.parametrize(
-    "text", ["year", "=2024", "year=", ">=5", "year=null", "year=[]", "year>=[1, 2]", 'a={"b": 1}']
-)
+@pytest.mark.parametrize("text", ["year", "=2024", "year=", ">=5", "year=null", "year=[]", 'a={"b": 1}'])
 def test_a_filter_written_otherwise_is_refused_saying_how_to_write_one(text: str) -> None:
     with pytest.raises(InvalidRequestError, match="KEY=VALUE") as refused:
         written(text)

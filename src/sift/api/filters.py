@@ -1,4 +1,5 @@
 import json
+import math
 import re
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -9,6 +10,7 @@ from sift.api.errors import InvalidRequestError
 type FilterValue = str | int | float | bool
 
 MOST_BRACKETS = 64
+MOST_INTEGER = 2**63
 WRITTEN = re.compile(r"(\w[^=<>!]*)(>=|<=|!=|=|<|>)(.*)", re.DOTALL)
 FILTER_REMEDY = "write KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06"
 
@@ -30,6 +32,23 @@ class Filter:
     field: str
     operator: Operator
     values: tuple[FilterValue, ...]
+
+    def __post_init__(self) -> None:
+        if not self.field:
+            raise _wrong("a filter names no field")
+        if not self.values:
+            raise _wrong(f"the filter on {self.field!r} has no value")
+        if self.operator not in SETS and len(self.values) > 1:
+            raise _wrong(f"the range on {self.field!r} takes one value, not {len(self.values)}")
+        for value in self.values:
+            if isinstance(value, int) and not isinstance(value, bool) and not -MOST_INTEGER <= value < MOST_INTEGER:
+                raise _wrong(f"the filter on {self.field!r}: {value} is too large")
+            if isinstance(value, float) and not math.isfinite(value):
+                raise _wrong(f"the filter on {self.field!r}: {value} is no finite number")
+
+
+def _wrong(problem: str) -> InvalidRequestError:
+    return InvalidRequestError(problem, FILTER_REMEDY, "filters")
 
 
 def _refused(text: str, problem: str) -> InvalidRequestError:
@@ -60,10 +79,7 @@ def written(text: str) -> Filter:
     field, operator, value = found[1].strip(), Operator(found[2]), found[3].strip()
     if not value:
         raise _refused(text, "it gives no value")
-    values = _values(text, value)
-    if operator not in SETS and len(values) > 1:
-        raise _refused(text, "a range takes one value")
-    return Filter(field, operator, values)
+    return Filter(field, operator, _values(text, value))
 
 
 def gathered(filters: tuple[Filter, ...]) -> tuple[Filter, ...]:

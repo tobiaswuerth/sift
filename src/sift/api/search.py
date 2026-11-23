@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Annotated
 
-from sift.api.described import Help, Read, Short
+from sift.api.described import Bounds, Help, Read, Short
 from sift.api.fields import FIELDS, Fields, listed, one
 from sift.api.filters import Filter, written
 
@@ -38,7 +38,9 @@ def _filter(text: str) -> tuple[Filter, ...]:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Options:
-    k: Annotated[int, Help(f"how many results, at most {MOST_HITS:,} (default: 10)"), Short("k")] = 10
+    k: Annotated[
+        int, Help(f"how many results, at most {MOST_HITS:,} (default: 10)"), Short("k"), Bounds(1, MOST_HITS)
+    ] = 10
     collections: Annotated[
         tuple[str, ...],
         Help("search this collection; several: each of them (default: every active one)"),
@@ -71,7 +73,7 @@ class SearchVectors(Options):
 @dataclass(frozen=True, slots=True)
 class SearchHybrid(Options):
     query: Annotated[str, Help("a question, or a description of what to find")]
-    candidates: Annotated[int, Help(CANDIDATES)] = 40
+    candidates: Annotated[int, Help(CANDIDATES), Bounds(1, MOST_HITS)] = 40
     adaptive: Annotated[bool, Help(ADAPTIVE)] = False
 
 
