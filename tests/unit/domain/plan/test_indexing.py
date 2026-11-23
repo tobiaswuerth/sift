@@ -1,15 +1,19 @@
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.plan.indexing import (
     MOST_TEXT_BYTES,
     MOST_TIME,
+    RACY,
     Found,
     IndexPlan,
     Stat,
     batches,
     index_plan,
+    recorded,
     stored_time,
+    within,
 )
 
 A, B = Stat(1, 10), Stat(2, 20)
@@ -153,3 +157,37 @@ def test_a_batch_holds_at_most_so_many_files_and_bytes_unless_one_file_is_more(
     for batch in found:
         assert 0 < len(batch) <= most_files
         assert len(batch) == 1 or sum(stats[path].size for path in batch) <= most_bytes
+
+
+def test_a_file_changed_within_the_clock_s_grain_of_the_scan_is_recorded_to_be_read_again() -> None:
+    scanned = 100 * 10**9
+    fresh, settled = Stat(scanned - 10**9, 5), Stat(scanned - 3 * 10**9, 7)
+    assert recorded({"fresh.md": fresh, "settled.md": settled}, scanned) == {
+        "fresh.md": Stat(RACY, 5),
+        "settled.md": settled,
+    }
+    assert index_plan(Found({"fresh.md": fresh}), {"fresh.md": Stat(RACY, 5)}).read == ("fresh.md",)
+
+
+def _in_any_before(paths: frozenset[str], folders: tuple[str, ...]) -> frozenset[str]:
+    return frozenset(path for path in paths for folder in folders if folder == "" or path.startswith(folder))
+
+
+@given(
+    st.lists(st.lists(st.sampled_from("abc"), min_size=1, max_size=4).map("/".join), max_size=30),
+    st.lists(
+        st.lists(st.sampled_from("abc"), max_size=3).map(lambda parts: "".join(f"{part}/" for part in parts)),
+        max_size=8,
+    ),
+)
+def test_the_files_within_folders_are_those_found_by_their_prefix(paths: list[str], folders: list[str]) -> None:
+    files = frozenset(f"{path}.md" for path in paths)
+    assert within(files, tuple(folders)) == _in_any_before(files, tuple(folders))
+
+
+@pytest.mark.timeout(10)
+def test_a_plan_of_many_empty_folders_and_many_gone_files_costs_their_depth() -> None:
+    empty = tuple(f"f{n}/" for n in range(2_000))
+    known = {f"g{n}/x{n}.md": A for n in range(20_000)}
+    plan = index_plan(Found({"a.md": A}, empty_folders=empty), known)
+    assert (len(plan.drop), plan.emptied) == (20_000, ())

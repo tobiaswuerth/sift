@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -25,6 +26,7 @@ SETTINGS = (
 
 type Parameters = Sequence[object] | Mapping[str, object]
 type Connection = sqlite3.Connection
+PRIVATE_FOLDER, PRIVATE_FILE = 0o700, 0o600
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,10 +77,19 @@ def require_sqlite(version: tuple[int, int, int]) -> None:
         )
 
 
+def private_folder(folder: Path) -> None:
+    folder.mkdir(mode=PRIVATE_FOLDER, parents=True, exist_ok=True)
+
+
+def private_file(path: Path) -> None:
+    os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, PRIVATE_FILE))
+
+
 def connect(path: Path, *, create: bool, timeout: float = BUSY_TIMEOUT_SECONDS) -> sqlite3.Connection:
     require_sqlite(sqlite3.sqlite_version_info)
     if create:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        private_folder(path.parent)
+        os.close(os.open(path, os.O_CREAT | os.O_WRONLY, PRIVATE_FILE))
     elif not path.is_file():
         raise FileNotFoundError(path)
     connection = sqlite3.connect(

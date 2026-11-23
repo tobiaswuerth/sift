@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import NamedTuple
@@ -6,6 +6,8 @@ from typing import NamedTuple
 from sift.domain.text.records import RECORD_FILES
 
 MOST_TIME = 2**63 - 1
+RACY = -1
+GRAIN_NS = 2 * 10**9
 MOST_TEXT_BYTES = 64 << 20
 ROOT = ""
 NONE_UNREADABLE: Mapping[str, bool] = MappingProxyType({})
@@ -41,18 +43,31 @@ class IndexPlan:
     unchanged: int
 
 
-def _in_folder(path: str, folder: str) -> bool:
-    return folder == ROOT or path.startswith(folder)
+def recorded(files: Mapping[str, Stat], scanned_ns: int) -> dict[str, Stat]:
+    return {
+        path: Stat(RACY, stat.size) if stat.modified_ns >= scanned_ns - GRAIN_NS else stat
+        for path, stat in files.items()
+    }
 
 
-def _in_any(paths: frozenset[str], folders: tuple[str, ...]) -> frozenset[str]:
-    return frozenset(path for path in paths for folder in folders if _in_folder(path, folder))
+def folders_of(path: str) -> Iterator[str]:
+    yield ROOT
+    at = path.find("/")
+    while at >= 0:
+        yield path[: at + 1]
+        at = path.find("/", at + 1)
+
+
+def within(paths: frozenset[str], folders: tuple[str, ...]) -> frozenset[str]:
+    held = frozenset(folders)
+    return frozenset(path for path in paths if any(folder in held for folder in folders_of(path)))
 
 
 def _emptied(found: Found, gone: frozenset[str]) -> tuple[str, ...]:
     if not found.files and not found.outside:
         return (ROOT,) if gone else ()
-    return tuple(sorted(folder for folder in found.empty_folders if _in_any(gone, (folder,))))
+    touched = {folder for path in gone for folder in folders_of(path)}
+    return tuple(sorted(folder for folder in found.empty_folders if folder in touched))
 
 
 def _too_large(path: str, stat: Stat, most_text_bytes: int) -> bool:
@@ -68,10 +83,10 @@ def index_plan(
     again = {path for path, read_again in unreadable.items() if read_again}
     to_read = sorted(path for path, stat in found.files.items() if known.get(path) != stat or path in again)
     unseen = frozenset(known.keys() - found.files.keys())
-    kept = _in_any(unseen, found.unlisted_folders) | (unseen & set(found.unlisted_files))
+    kept = within(unseen, found.unlisted_folders) | (unseen & set(found.unlisted_files))
     gone = unseen - kept
     emptied = _emptied(found, gone)
-    left_as_indexed = _in_any(gone, emptied)
+    left_as_indexed = within(gone, emptied)
     still_there = found.files.keys() | kept | left_as_indexed | set(found.unlisted_files)
     return IndexPlan(
         read=tuple(path for path in to_read if not _too_large(path, found.files[path], most_text_bytes)),

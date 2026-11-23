@@ -6,9 +6,10 @@ from sift.api.collections import AddCollection, Counted, ShowStatus, UnreadableF
 from sift.api.events import Event, Finished, Phase, PhaseStarted
 from sift.api.indexing import IndexCollections, Indexed
 from sift.app.collections import add, status
-from sift.app.filing import READERS, Limits, Readers
+from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
 from tests.files import write
+from tests.later import LATER, later
 
 SMALL = Limits(most_text_bytes=60)
 TOO_LARGE = "a document holds at most 60; split the file"
@@ -29,7 +30,7 @@ def notes(tmp_path: Path, home: Path) -> Path:
     return root
 
 
-def indexed(home: Path, limits: Limits = SMALL, readers: Readers = READERS, said: list[Event] | None = None) -> Indexed:
+def indexed(home: Path, limits: Limits = SMALL, readers: Readers = LATER, said: list[Event] | None = None) -> Indexed:
     heard: list[Event] = [] if said is None else said
     (result,) = index(home, IndexCollections(), heard.append, limits, readers).collections
     assert isinstance(result.outcome, Indexed)
@@ -76,6 +77,8 @@ def test_a_file_grown_too_large_after_the_scan_is_read_no_further_than_the_limit
         asked.append(most)
         return b"x" * (most + 1)
 
-    assert indexed(home, readers=Readers(whole=grown)) == Indexed(files=3, added=0, changed=0, removed=0, unreadable=3)
+    assert indexed(home, readers=Readers(whole=grown, clock=later)) == Indexed(
+        files=3, added=0, changed=0, removed=0, unreadable=3
+    )
     assert asked == [60, 60, 60]
     assert {entry.problem for entry in unreadable_files(home)} == {f"more than 60 bytes: {TOO_LARGE}"}

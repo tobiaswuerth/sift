@@ -129,7 +129,10 @@ def command_of(name: str) -> Command:
 def _placed(settings: Settings, written: str) -> str:
     if not written:
         raise argparse.ArgumentTypeError("an empty path names nothing")
-    return str(whole_path(written, settings.user, settings.cwd))
+    try:
+        return str(whole_path(written, settings.user, settings.cwd))
+    except InvalidRequestError as error:
+        raise argparse.ArgumentTypeError(f"{error.message}: {error.remedy}") from None
 
 
 def _is_text(argument: str) -> bool:
@@ -257,5 +260,11 @@ def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO
     return found.code
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    raise SystemExit(run(sys.argv[1:] if argv is None else argv, from_environment(), sys.stdout, sys.stderr))
+def main(argv: Sequence[str] | None = None, read_settings: Callable[[], Settings] = from_environment) -> None:
+    try:
+        settings = read_settings()
+    except InvalidRequestError as error:
+        refused = failure(error, PLAIN)
+        say(sys.stderr, refused.messages)
+        raise SystemExit(refused.code) from None
+    raise SystemExit(run(sys.argv[1:] if argv is None else argv, settings, sys.stdout, sys.stderr))

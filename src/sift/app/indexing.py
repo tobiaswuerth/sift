@@ -11,7 +11,7 @@ from sift.app.collections import chosen_or_active
 from sift.app.filing import READERS, Job, Limits, Readers, Tally
 from sift.app.problems import problems
 from sift.app.records import stored_records
-from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan
+from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan, recorded
 from sift.domain.text.notes import Document, note
 from sift.domain.text.records import RECORD_FILES
 from sift.ingest.scan import scan
@@ -135,12 +135,13 @@ def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Ta
 
 def _synced(job: Job) -> Indexed:
     job.report(PhaseStarted(Phase.SCAN, None))
+    started = job.readers.clock()
     scanned = scan(
         job.collection.folder,
         follow_links=job.collection.choices.follow_links,
         progress=lambda found: job.report(Advanced(found)),
     )
-    files = scanned.found.files
+    files = recorded(scanned.found.files, started)
     job.report(PhaseDone(len(files)))
     with reading(job.connection) as transaction:
         known = {path: Stat(source.modified_ns, source.size) for path, source in sources(transaction).items()}

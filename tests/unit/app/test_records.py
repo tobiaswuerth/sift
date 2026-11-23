@@ -24,6 +24,7 @@ from sift.storage.catalog import known_collections
 from sift.storage.database import reading
 from sift.storage.store import open_store
 from sift.storage.vectors import left
+from tests.later import later
 from tests.models import Hashed
 
 PAPERS: list[dict[str, object]] = [
@@ -48,7 +49,9 @@ def indexed(
     home: Path, limits: Limits | None = None, said: list[Event] | None = None, lines: Lines = lines_of
 ) -> Indexed:
     heard: list[Event] = [] if said is None else said
-    (one,) = index(home, IndexCollections(), heard.append, limits or Limits(), Readers(lines=lines)).collections
+    (one,) = index(
+        home, IndexCollections(), heard.append, limits or Limits(), Readers(lines=lines, clock=later)
+    ).collections
     assert isinstance(one.outcome, Indexed)
     return one.outcome
 

@@ -9,7 +9,18 @@ from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.domain.codec.shape import SHAPE, Shape
 from sift.domain.errors import DamagedError
-from sift.storage.database import DAMAGED, Value, connect, first, primary_code, reading, run_each, writing
+from sift.storage.database import (
+    DAMAGED,
+    Value,
+    connect,
+    first,
+    primary_code,
+    private_file,
+    private_folder,
+    reading,
+    run_each,
+    writing,
+)
 from sift.storage.keyword_meta import keyword_meta
 from sift.storage.migrations import Migration, migrated, newer, version
 
@@ -230,8 +241,8 @@ def _made(path: Path, collection: CollectionId, layout: Sequence[Migration], sha
 def create_store(
     path: Path, collection: CollectionId, layout: Sequence[Migration] = LAYOUT, shape: Shape = SHAPE
 ) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.open("xb").close()
+    private_folder(path.parent)
+    private_file(path)
     try:
         _made(path, collection, layout, shape)
     except BaseException:

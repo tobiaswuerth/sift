@@ -1,4 +1,6 @@
 import contextlib
+import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,8 +17,11 @@ from sift.api.collections import (
 )
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.ids import CollectionId
+from sift.api.indexing import IndexCollections
 from sift.app.collections import add, status
+from sift.app.indexing import index
 from sift.domain.text.notes import note
+from sift.storage.database import PRIVATE_FILE, PRIVATE_FOLDER
 from sift.storage.documents import add_documents, put_source
 from sift.storage.keywords import writing_documents
 from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
@@ -135,3 +140,16 @@ def test_status_says_why_a_store_cannot_be_read(tmp_path: Path, home: Path) -> N
     Path(added.store).unlink()
     (only,) = status(home, ShowStatus()).collections
     assert only.contents == Unavailable(f"the store is missing: {added.store}", MISSING_REMEDY)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_the_home_its_stores_and_their_logs_are_the_user_s_alone(tmp_path: Path) -> None:
+    home, folder = tmp_path / "home", tmp_path / "notes"
+    folder.mkdir()
+    (folder / "a.md").write_text("# A\n", encoding="utf-8")
+    add(home, AddCollection(str(folder)))
+    index(home, IndexCollections(), lambda _: None)
+    for path in (home, home / "collections"):
+        assert stat.S_IMODE(path.stat().st_mode) == PRIVATE_FOLDER, path
+    files = [home / "catalog.sqlite", *sorted((home / "collections").glob("notes.sqlite*"))]
+    assert all(stat.S_IMODE(path.stat().st_mode) == PRIVATE_FILE for path in files), files

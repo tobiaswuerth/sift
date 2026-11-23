@@ -123,12 +123,14 @@ def test_status_and_add_answer_in_json_when_asked(settings: Settings, notes: Pat
 
 
 def test_a_path_is_taken_from_the_user_s_folder_or_the_current_one(settings: Settings) -> None:
-    for place in (settings.user / "notes", settings.cwd / "papers"):
+    user = settings.user
+    assert user is not None
+    for place in (user / "notes", settings.cwd / "papers"):
         place.mkdir()
     assert ran(settings, "add", "~/notes")[0] == 0
     assert ran(settings, "add", "papers")[0] == 0
     shown = ran(settings, "status")[1]
-    assert str((settings.user / "notes").resolve()) in shown
+    assert str((user / "notes").resolve()) in shown
     assert str((settings.cwd / "papers").resolve()) in shown
 
 

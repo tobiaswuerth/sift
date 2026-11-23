@@ -9,13 +9,15 @@ from typing import NamedTuple
 import pytest
 
 from sift.api.collections import AddCollection, Counted, ShowStatus, TitleFrom, UnreadableFile
+from sift.api.documents import GetDocuments
 from sift.api.errors import NotFoundError
 from sift.api.events import Advanced, CollectionStarted, Event, Finished, Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.ids import CollectionId
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import add, status
-from sift.app.filing import Limits
-from sift.app.indexing import FOLDER_MISSING_REMEDY, OUT_OF_REACH_REMEDY, index
+from sift.app.documents import documents
+from sift.app.filing import Limits, Readers
+from sift.app.indexing import FOLDER_MISSING_REMEDY, LIMITS, OUT_OF_REACH_REMEDY, index
 from sift.app.problems import EMPTY_INSIDE, EMPTY_INSIDE_REMEDY, LEFT_AS_INDEXED
 from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows
@@ -23,6 +25,7 @@ from sift.storage.documents import stored
 from sift.storage.keywords import settle
 from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
 from tests.damage import damage_table
+from tests.later import LATER
 
 
 def write(path: Path, text: str) -> Path:
@@ -48,7 +51,7 @@ def notes(tmp_path: Path, home: Path) -> Path:
 
 
 def indexed(home: Path, *names: str, report: Callable[[Event], None] = lambda _: None) -> IndexResult:
-    return index(home, IndexCollections(names), report)
+    return index(home, IndexCollections(names), report, LIMITS, LATER)
 
 
 def outcome(home: Path, *names: str) -> Indexed | Skipped:
@@ -375,3 +378,15 @@ def segments(store: Path) -> int:
     with contextlib.closing(open_store(store, CollectionId(1))) as connection, reading(connection) as transaction:
         (found,) = rows(transaction, Count, "SELECT count(*) FROM keyword_segments")
         return found.n
+
+
+def test_a_file_rewritten_within_the_grain_of_its_scan_is_read_again(home: Path, notes: Path) -> None:
+    tick = notes / "tick.md"
+    write(tick, "# Tick\n\nalpha\n")
+    stamp = tick.stat().st_mtime_ns
+    index(home, IndexCollections(), lambda _: None, LIMITS, Readers(clock=lambda: stamp))
+    write(tick, "# Tick\n\nomega\n")
+    os.utime(tick, ns=(stamp, stamp))
+    index(home, IndexCollections(), lambda _: None, LIMITS, LATER)
+    (found,) = documents(home, GetDocuments(("notes/tick.md",))).found
+    assert "omega" in found.text

@@ -1,3 +1,4 @@
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,7 @@ type ReadWhole = Callable[[Path, int], bytes]
 class Readers:
     lines: Lines = lines_of
     whole: ReadWhole = at_most
+    clock: Callable[[], int] = time.time_ns
 
 
 READERS = Readers()
