@@ -1,11 +1,13 @@
 import json
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from sift.api.errors import InvalidRequestError
 from sift.api.filters import FILTER_REMEDY, SETS, Filter, FilterValue, Operator, gathered
+from sift.domain.text.links import link_target
 
 type SpecValue = str | int | float | bool | list[SpecValue] | dict[str, SpecValue] | None
 
@@ -19,6 +21,17 @@ QUOTE_REMEDY = "name the field without a double quote, or use a Python whose SQL
 class Condition:
     path: str | None
     fields: str
+    within: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Linking:
+    field: str
+    operator: Operator
+    target: str
+
+
+UNLINKED: Mapping[Linking, Sequence[int]] = MappingProxyType({})
 
 
 def _refused(problem: str, remedy: str = FILTER_REMEDY) -> InvalidRequestError:
@@ -69,23 +82,50 @@ def _range(each: Filter) -> SpecValue:
     return {"op": str(each.operator), "text": text, "len": len(value) if text else 0, "value": value}
 
 
-def _group(field: str, filters: list[Filter], *, reads_quotes: bool) -> SpecValue:
+def _linkings(each: Filter) -> list[Linking]:
+    targets = [link_target(value) for value in each.values if isinstance(value, str)] if each.operator in SETS else []
+    return [Linking(each.field, each.operator, target) for target in targets if target is not None]
+
+
+def linkings(filters: Sequence[Filter]) -> tuple[Linking, ...]:
+    return tuple(dict.fromkeys(found for each in gathered(tuple(filters)) for found in _linkings(each)))
+
+
+def _linked(filters: list[Filter], operator: Operator, linked: Mapping[Linking, Sequence[int]]) -> SpecValue:
+    found = [linked.get(each, ()) for one in filters if one.operator is operator for each in _linkings(one)]
+    return list[SpecValue](sorted({document for documents in found for document in documents})) if found else None
+
+
+def _group(
+    field: str, filters: list[Filter], linked: Mapping[Linking, Sequence[int]], *, reads_quotes: bool
+) -> SpecValue:
+    ranges = [_range(each) for each in filters if each.operator not in SETS]
     return {
         "path": json_path(field, reads_quotes=reads_quotes),
         "any": _held(filters, Operator.ANY),
         "none": _held(filters, Operator.NONE),
-        "ranges": [_range(each) for each in filters if each.operator not in SETS],
+        "ranges": ranges,
+        "linked_any": None if ranges else _linked(filters, Operator.ANY, linked),
+        "linked_none": _linked(filters, Operator.NONE, linked),
     }
 
 
-def condition(path: str | None, filters: Sequence[Filter], *, reads_quotes: bool) -> Condition | None:
+def condition(
+    path: str | None,
+    filters: Sequence[Filter],
+    *,
+    reads_quotes: bool,
+    linked: Mapping[Linking, Sequence[int]] = UNLINKED,
+    within: Sequence[int] | None = None,
+) -> Condition | None:
     asked = gathered(tuple(filters))
     for each in asked:
         _checked(each)
-    if not path and not asked:
+    if not path and not asked and within is None:
         return None
     groups = [
-        _group(field, [each for each in asked if each.field == field], reads_quotes=reads_quotes)
+        _group(field, [each for each in asked if each.field == field], linked, reads_quotes=reads_quotes)
         for field in dict.fromkeys(each.field for each in asked)
     ]
-    return Condition(path or None, json.dumps(groups, ensure_ascii=False))
+    kept = None if within is None else json.dumps(sorted(set(within)))
+    return Condition(path or None, json.dumps(groups, ensure_ascii=False), kept)

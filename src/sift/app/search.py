@@ -9,8 +9,8 @@ from pathlib import Path
 from sift.api.errors import InvalidRequestError
 from sift.api.search import Hit, SearchKeywords, SearchResult
 from sift.app import searching
+from sift.app.linked import Narrowing
 from sift.domain.query.expressions import NOTHING, Expression
-from sift.domain.query.filters import Condition
 from sift.domain.query.grammar import parsed, relaxed
 from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Opened, opened
@@ -26,6 +26,7 @@ from sift.retrieval.keyword.search import (
     query_of,
     searched,
 )
+from sift.storage.catalog import Collection
 from sift.storage.database import Reading
 from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
@@ -59,7 +60,7 @@ class Asked:
     expression: Expression
     looser: Expression | None
     wanted: Wanted
-    condition: Condition | None
+    narrowing: Narrowing
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,9 +69,9 @@ class Ranked:
     cut: bool
 
 
-def keywords(asked: Condition | None, transaction: Reading) -> Keywords:
+def keywords(asked: Narrowing, one: Collection, transaction: Reading) -> Keywords:
     refuse_stale(transaction)
-    return Keywords(opened(transaction), searching.allowed(transaction, asked))
+    return Keywords(opened(transaction), searching.allowed(asked, one, transaction))
 
 
 def found[S](
@@ -125,18 +126,19 @@ def _expired(budget: float | None, clock: Clock) -> Expired:
     return lambda: clock() > until
 
 
-def _asked(request: SearchKeywords, clock: Clock, tuning: Tuning) -> Asked:
-    condition = searching.checked(request)
+def _asked(home: Path, request: SearchKeywords, clock: Clock, tuning: Tuning) -> Asked:
+    searching.checked(request)
     wanted = Wanted(request.k, not request.all_passages, tuning, _expired(request.budget, clock))
-    return Asked(request, parsed(request.query), relaxed(request.query), wanted, condition)
+    expression, looser = parsed(request.query), relaxed(request.query)
+    return Asked(request, expression, looser, wanted, searching.narrowed(home, request))
 
 
 def search(
     home: Path, request: SearchKeywords, clock: Clock = time.perf_counter, tuning: Tuning = TUNING
 ) -> SearchResult:
-    asked = _asked(request, clock, tuning)
-    collections = searching.collections_of(home, request.collection)
+    asked = _asked(home, request, clock, tuning)
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, collections, partial(keywords, asked.condition))
+        narrowing = asked.narrowing
+        kept = searching.opened(cleanup, narrowing.collections, partial(keywords, narrowing), narrowing.ruled_out)
         answered, cut = _answered(kept, asked)
         return searching.result(kept, answered, partial=cut)

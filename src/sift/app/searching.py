@@ -9,12 +9,12 @@ from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.ids import ChunkId, owner
 from sift.api.search import MOST_HITS, Hit, Options, SearchResult, Unsearched
 from sift.app.collections import chosen_or_active
+from sift.app.linked import Narrowing, condition_in, narrowing
 from sift.domain.query import fields as shown
-from sift.domain.query.filters import Condition, condition
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
 from sift.storage.documents import fields_by_document, passages, texts
-from sift.storage.passing import Passing, reads_quotes
+from sift.storage.passing import Passing
 from sift.storage.store import open_store, unavailable_if_damaged
 
 FEW_REMEDY = "ask for one result or more, e.g. -k 10"
@@ -41,6 +41,7 @@ class Searching[S]:
 class Kept[S]:
     searching: list[Searching[S]] = field(default_factory=list[Searching[S]])
     unsearched: list[Unsearched] = field(default_factory=list[Unsearched])
+    ruled_out: int = 0
 
     def said(self, collection: Collection, error: StoreUnavailableError) -> None:
         self.unsearched.append(Unsearched(collection.name, error.message, error.remedy))
@@ -69,14 +70,18 @@ def checked_k(k: int) -> None:
         raise InvalidRequestError(f"-k {k:,} asks for more than {MOST_HITS:,} results", MANY_REMEDY)
 
 
-def checked(request: Options) -> Condition | None:
+def checked(request: Options) -> None:
     checked_k(request.k)
     shown.checked(request.fields, request.sort)
-    return condition(request.path, request.filters, reads_quotes=reads_quotes())
 
 
-def allowed(transaction: Reading, asked: Condition | None) -> Passing | None:
-    return None if asked is None else Passing(transaction, asked)
+def narrowed(home: Path, request: Options) -> Narrowing:
+    return narrowing(home, request, collections_of(home, request.collection))
+
+
+def allowed(asked: Narrowing, one: Collection, transaction: Reading) -> Passing | None:
+    found = condition_in(asked, one, transaction)
+    return None if found is None else Passing(transaction, found)
 
 
 def fielded(request: Options) -> bool:
@@ -97,20 +102,22 @@ def collections_of(home: Path, name: str | None) -> tuple[Collection, ...]:
     return chosen_or_active(home, () if name is None else (name,))
 
 
-def _searching[S](one: Collection, hold: Callable[[Reading], S]) -> Searching[S]:
+def _searching[S](one: Collection, hold: Callable[[Collection, Reading], S]) -> Searching[S]:
     resources = ExitStack()
     with unavailable_if_damaged(one.store):
         try:
             connection = resources.enter_context(closing(open_store(one.store, one.id)))
             transaction = resources.enter_context(reading(connection))
-            return Searching(one, transaction, hold(transaction), resources)
+            return Searching(one, transaction, hold(one, transaction), resources)
         except BaseException:
             resources.close()
             raise
 
 
-def opened[S](cleanup: ExitStack, collections: Sequence[Collection], hold: Callable[[Reading], S]) -> Kept[S]:
-    kept = Kept[S]()
+def opened[S](
+    cleanup: ExitStack, collections: Sequence[Collection], hold: Callable[[Collection, Reading], S], ruled_out: int = 0
+) -> Kept[S]:
+    kept = Kept[S](ruled_out=ruled_out)
     for one in collections:
         try:
             each = _searching(one, hold)
@@ -159,4 +166,4 @@ def result[S](kept: Kept[S], answered: Sequence[tuple[int, Hit]], *, partial: bo
         kept.guarded(one, one.resources.close)
     live = {one.collection.id for one in kept.searching}
     found = tuple(hit for chunk, hit in answered if owner(chunk) in live)
-    return SearchResult(found, len(kept.searching), tuple(kept.unsearched), partial=partial)
+    return SearchResult(found, len(kept.searching) + kept.ruled_out, tuple(kept.unsearched), partial=partial)

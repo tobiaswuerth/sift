@@ -16,6 +16,9 @@ INTO = """SELECT l.document, s.path, l.field, l.line, l.kind, l.target, l.key, l
           WHERE l.key IN (SELECT value FROM json_each(:keys)) AND l.document != :document
             AND (:field IS NULL OR l.field = :field)
           ORDER BY s.path, l.line, l.ordinal"""
+KEYED = """SELECT l.document, s.path, l.field, l.line, l.kind, l.target, l.key, l.fragment, l.shown
+           FROM links l JOIN documents d ON d.id = l.document JOIN sources s ON s.id = d.source
+           WHERE l.key = :key AND (:field IS NULL OR l.field = :field) ORDER BY l.document, l.ordinal"""
 KEYS = "SELECT DISTINCT key FROM names WHERE document = ? ORDER BY key"
 TITLED = """SELECT d.id, s.path, d.title FROM documents d JOIN sources s ON s.id = d.source
             WHERE d.id IN (SELECT value FROM json_each(?))"""
@@ -67,6 +70,10 @@ def _links(found: list[LinkRow]) -> list[LinkRow]:
 
 def links_out(transaction: Reading, document: int, field: str | None) -> list[LinkRow]:
     return _links(rows(transaction, LinkRow, OUT, {"document": document, "field": field}))
+
+
+def links_keyed(transaction: Reading, key: str, field: str | None) -> list[LinkRow]:
+    return _links(rows(transaction, LinkRow, KEYED, {"key": key, "field": field}))
 
 
 def keys_of(transaction: Reading, document: int) -> list[str]:

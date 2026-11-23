@@ -9,7 +9,8 @@ from sift.api.indexing import IndexCollections
 from sift.api.links import Direction, LinkIn, LinkingLine, LinkOut, ListUnresolved, ShowLinks, Target
 from sift.app.collections import add
 from sift.app.indexing import index
-from sift.app.links import at_path, links, unresolved
+from sift.app.links import links, unresolved
+from sift.app.notes import Match, at_path
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading
 from sift.storage.store import open_store
@@ -201,11 +202,13 @@ def test_a_damaged_store_is_passed_over_by_names_and_unresolved_saying_so(people
     found = unresolved(people, ListUnresolved())
     assert found.targets == (Target("Contract", 1, ("v/Meetings/Offer.md",)),)
     assert [each.collection for each in found.unsearched] == ["w"]
-    with pytest.raises(NotFoundError, match="not searched, store unavailable: w"):
+    with pytest.raises(NotFoundError, match=r"; not searched: w: the store .* is damaged") as refused:
         links(people, ShowLinks("Nowhere"))
+    assert refused.value.remedy is not None
+    assert refused.value.remedy.endswith("; take the id from a search result, or `sift status`")
     write(tmp_path / "v" / "Other" / "Acme AG.md", "# Acme AG again\n")
     index(people, IndexCollections(names=("v",)), lambda _: None)
-    with pytest.raises(InvalidRequestError, match=r"Acme AG\.md; not searched, store unavailable: w"):
+    with pytest.raises(InvalidRequestError, match=r"Acme AG\.md; not searched: w: the store .* is damaged"):
         links(people, ShowLinks("Acme AG"))
 
 
@@ -229,6 +232,16 @@ def test_a_name_holding_more_than_one_link_names_no_note(people: Path, written: 
 def test_a_note_found_by_name_is_read_again_at_its_path_alone(people: Path) -> None:
     (one,) = known_collections(people)
     with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
-        assert at_path("v/Orgs/Acme AG.md")(transaction) > 0
+        assert at_path(Match(one, "Orgs/Acme AG.md")).find(transaction) > 0
         with pytest.raises(NotFoundError, match=r"unknown document 'v/Acme AG\.md'"):
-            at_path("v/Acme AG.md")(transaction)
+            at_path(Match(one, "Acme AG.md")).find(transaction)
+
+
+def test_every_store_a_name_was_not_looked_up_in_is_named(people: Path, tmp_path: Path) -> None:
+    for name in ("w", "x"):
+        vault(tmp_path, {"y.md": "# Y\n"}, name)
+        store = people / "collections" / f"{name}.sqlite"
+        store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
+    with pytest.raises(NotFoundError, match=r"not searched: w: .*; not searched: x: "):
+        links(people, ShowLinks("Nowhere"))
+    assert [each.collection for each in links(people, ShowLinks("Acme AG")).unsearched] == ["w", "x"]

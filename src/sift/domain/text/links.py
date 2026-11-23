@@ -206,3 +206,9 @@ def aliases(fields: Fields) -> list[str]:
 def names(path: str, fields: Fields) -> tuple[Name, ...]:
     own = Name(name_key(path.rsplit("/", 1)[-1]), NameKind.NAME)
     return tuple(sorted({own, *(Name(name_key(alias), NameKind.ALIAS) for alias in aliases(fields))}))
+
+
+def link_target(text: str) -> str | None:
+    written = text.strip()
+    found = in_line(written, 1) if WIKILINK.fullmatch(written) else []
+    return found[0].target if found else None

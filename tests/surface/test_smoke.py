@@ -40,14 +40,26 @@ def narrowed_searches_run(home: Path) -> None:
 
 def links_run(home: Path) -> None:
     linked = sift(home, "links", "notes/rl.md", "--direction", "both")
-    assert linked.stdout.split("\n")[1:3] == ["     3  brush  ->  notes/sub/brush.md", "     3  Gone  ->  unresolved"]
+    assert linked.stdout.split("\n")[1:4] == [
+        "     2  see: brush  ->  notes/sub/brush.md",
+        "     6  brush  ->  notes/sub/brush.md",
+        "     6  Gone  ->  unresolved",
+    ]
     assert sift(home, "unresolved").stdout == "1  Gone  notes/rl.md\n"
+    linking = ("search", "learning OR brush", "--json", "--compact")
+    assert [hit["id"] for hit in hits_of(sift(home, *linking, "--links-to", "brush"))] == ["notes/rl.md"]
+    assert [hit["id"] for hit in hits_of(sift(home, *linking, "--linked-from", "notes/rl.md"))] == [
+        "notes/sub/brush.md"
+    ]
+    assert [hit["id"] for hit in hits_of(sift(home, *linking, "-f", "see=[[sub/brush]]"))] == ["notes/rl.md"]
 
 
 def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path: Path) -> None:
     home, notes = tmp_path / "home", tmp_path / "Notizen Müller"
     (notes / "sub").mkdir(parents=True)
-    (notes / "rl.md").write_bytes(b"# Reward shaping\n\nSpeeds up learning. See [[brush]], [[Gone]].\n")
+    (notes / "rl.md").write_bytes(
+        b'---\nsee: "[[brush]]"\n---\n# Reward shaping\n\nSpeeds up learning. See [[brush]], [[Gone]].\n'
+    )
     (notes / "sub" / "brush.md").write_bytes(b"# Brush\n")
     (notes / "huge.txt").write_bytes(b"x")
 
@@ -71,10 +83,10 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     one = sift(home, "get", "notes/brush.md")
     assert (one.returncode, one.stdout, one.stderr) == (0, "# Brush\n", "")
     lines = sift(home, "get", str(notes / "rl.md"), "notes/sub/brush.md", "--lines", "1")
-    assert lines.stdout == "==> notes/rl.md <==\n# Reward shaping\n\n==> notes/sub/brush.md <==\n# Brush\n"
+    assert lines.stdout == "==> notes/rl.md <==\n---\n\n==> notes/sub/brush.md <==\n# Brush\n"
 
     found = sift(home, "search", "learning", "-k", "1")
-    assert (found.returncode, found.stdout.split("\n")[1]) == (0, " " * 9 + "notes/rl.md:1-3")
+    assert (found.returncode, found.stdout.split("\n")[1]) == (0, " " * 9 + "notes/rl.md:4-6")
     assert found.stderr.startswith("1 result  \N{MIDDLE DOT}  keyword  \N{MIDDLE DOT}  1 collection")
     assert json.loads(sift(home, "search", '"speeds up"', "--json").stdout)["hits"][0]["id"] == "notes/rl.md"
     timed = cast("dict[str, object]", json.loads(sift(home, "search", "speed*", "--budget", "5", "--json").stdout))

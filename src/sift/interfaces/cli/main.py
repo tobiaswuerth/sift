@@ -18,7 +18,7 @@ from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.events import Reporter
 from sift.api.indexing import IndexCollections, IndexResult, Skipped
 from sift.api.links import Links, ListUnresolved, ShowLinks, Unresolved
-from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
+from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app import collections, documents, embedding, indexing, links, query, search, vsearch
 from sift.inference.loading import Deferred, deferred
 from sift.interfaces.cli import shown
@@ -92,12 +92,20 @@ def _get(context: Context, request: GetDocuments) -> Documents:
     return documents.documents(context.settings.home, request)
 
 
+def _found(answer: SearchResult, context: Context, started: float, kind: str) -> Shown:
+    seconds = context.clock() - started
+    found = (
+        Shown((as_json(answer),), ())
+        if context.json
+        else shown.hits(answer, seconds, context.platform, context.style, kind)
+    )
+    return found._replace(failed=_some_unread(answer))
+
+
 def _search(namespace: argparse.Namespace, context: Context) -> Shown:
     started = context.clock()
     answer = search.search(context.settings.home, request_of(SearchKeywords, namespace), context.clock)
-    if context.json:
-        return Shown((as_json(answer),), (), failed=bool(answer.unsearched))
-    return shown.hits(answer, context.clock() - started, context.platform, context.style)
+    return _found(answer, context, started, "keyword")
 
 
 def _models(context: Context) -> Deferred:
@@ -112,17 +120,13 @@ def _vsearch(namespace: argparse.Namespace, context: Context) -> Shown:
     started = context.clock()
     request = request_of(SearchVectors, namespace)
     answer = vsearch.vsearch(context.settings.home, request, _models(context))
-    if context.json:
-        return Shown((as_json(answer),), (), failed=bool(answer.unsearched))
-    return shown.hits(answer, context.clock() - started, context.platform, context.style, "semantic")
+    return _found(answer, context, started, "semantic")
 
 
 def _query(namespace: argparse.Namespace, context: Context) -> Shown:
     started = context.clock()
     answer = query.query(context.settings.home, request_of(SearchHybrid, namespace), _models(context))
-    if context.json:
-        return Shown((as_json(answer),), (), failed=bool(answer.unsearched))
-    return shown.hits(answer, context.clock() - started, context.platform, context.style, "hybrid")
+    return _found(answer, context, started, "hybrid")
 
 
 def _links(context: Context, request: ShowLinks) -> Links:
@@ -137,7 +141,7 @@ def _some_skipped(result: IndexResult | EmbedResult) -> bool:
     return any(isinstance(each.outcome, Skipped) for each in result.collections)
 
 
-def _some_unread(found: Links | Unresolved) -> bool:
+def _some_unread(found: SearchResult | Links | Unresolved) -> bool:
     return bool(found.unsearched)
 
 

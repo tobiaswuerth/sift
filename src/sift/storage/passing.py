@@ -14,10 +14,15 @@ from sift.storage.documents import documents_of
 QUOTED_NAME = ('{"a\\"b": 1}', '$."a\\"b"')
 CHUNKS_OF = "SELECT id FROM chunks WHERE document IN (SELECT value FROM json_each(?)) ORDER BY id"
 PASSING = """
-WITH asked(id) AS (SELECT value FROM json_each(:documents) UNION ALL SELECT id FROM documents WHERE :documents IS NULL),
+WITH asked(id) AS (
+  SELECT value FROM json_each(:documents)
+  WHERE :within IS NULL OR value IN (SELECT value FROM json_each(:within))
+  UNION ALL SELECT value FROM json_each(:within) WHERE :documents IS NULL
+  UNION ALL SELECT id FROM documents WHERE :documents IS NULL AND :within IS NULL),
 groups AS MATERIALIZED (
   SELECT g.key AS grp, json_extract(g.value, '$.path') AS field, json_extract(g.value, '$.any') AS any_of,
-         json_extract(g.value, '$.none') AS none_of, json_array_length(g.value, '$.ranges') AS ranged
+         json_extract(g.value, '$.none') AS none_of, json_array_length(g.value, '$.ranges') AS ranged,
+         json_extract(g.value, '$.linked_any') AS linked_any, json_extract(g.value, '$.linked_none') AS linked_none
   FROM json_each(:fields) g),
 bounds AS MATERIALIZED (
   SELECT g.key AS grp, json_extract(r.value, '$.op') AS op, json_extract(r.value, '$.text') AS text,
@@ -50,7 +55,9 @@ WHERE (:path IS NULL OR s.path GLOB :path)
                    WHEN '>' THEN CAST(v.value AS REAL) > b.value
                    ELSE CAST(v.value AS REAL) >= b.value END
                END)))
+       OR d.id IN (SELECT value FROM json_each(g.linked_any))
       )
+      AND d.id NOT IN (SELECT value FROM json_each(g.linked_none))
       AND (g.none_of IS NULL
            OR NOT EXISTS (SELECT 1 FROM json_each(d.fields, g.field) v
                           WHERE v.value IN (SELECT value FROM json_each(g.none_of))))
@@ -79,7 +86,7 @@ def reads_quotes() -> bool:
 
 def documents_passing(transaction: Reading, condition: Condition, documents: Ids | None) -> Ids:
     asked = None if documents is None else json.dumps(ints(documents))
-    parameters = {"documents": asked, "path": condition.path, "fields": condition.fields}
+    parameters = {"documents": asked, "path": condition.path, "fields": condition.fields, "within": condition.within}
     return np.fromiter((row.id for row in streamed(transaction, Row, PASSING, parameters)), np.int64)
 
 

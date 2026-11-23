@@ -25,10 +25,19 @@ FILTERS = (
     "repeat for more: values of one key asked alike mean any (=) or none (!=) of them"
 )
 SORT = "order the k found by a front matter field, e.g. created, or --sort=-created for the newest first"
+LINKS_TO = (
+    'only documents linking this note: its id, or its name as links write it, e.g. "Acme AG"; '
+    "repeat for documents linking any of several"
+)
+LINKED_FROM = "only documents this note links to, named as for --links-to; repeat for any of several"
 
 
 def _filter(text: str) -> tuple[Filter, ...]:
     return (written(text),)
+
+
+def _note(text: str) -> tuple[str, ...]:
+    return (text,)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -41,6 +50,8 @@ class Options:
     filters: Annotated[tuple[Filter, ...], Help(FILTERS), Short("-f"), Read(_filter)] = ()
     fields: Annotated[tuple[str, ...], Help(FIELDS), Read(listed)] = ()
     sort: Annotated[str | None, Help(SORT)] = None
+    links_to: Annotated[tuple[str, ...], Help(LINKS_TO), Read(_note)] = ()
+    linked_from: Annotated[tuple[str, ...], Help(LINKED_FROM), Read(_note)] = ()
     all_passages: Annotated[bool, Help("every passage found, not only each document's best")] = False
     compact: Annotated[bool, Help("leave out the text of each passage")] = False
 

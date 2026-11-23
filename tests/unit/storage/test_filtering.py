@@ -1,13 +1,14 @@
 import contextlib
 import json
 import sqlite3
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 
 from sift.api.fields import Fields
 from sift.api.filters import Filter, FilterValue, Operator
 from sift.domain.arrays import ints
-from sift.domain.query.filters import condition
+from sift.domain.query.filters import UNLINKED, Linking, condition
 from sift.storage.database import Reading
 from sift.storage.passing import Passing
 
@@ -20,8 +21,14 @@ PAPERS: dict[str, Fields] = {
 }
 
 
-def passing(documents: dict[str, Fields], filters: list[Filter], path: str | None = None) -> list[str]:
-    found = condition(path, filters, reads_quotes=True)
+def passing(
+    documents: dict[str, Fields],
+    filters: list[Filter],
+    path: str | None = None,
+    linked: Mapping[Linking, Sequence[int]] = UNLINKED,
+    within: Sequence[int] | None = None,
+) -> list[str]:
+    found = condition(path, filters, reads_quotes=True, linked=linked, within=within)
     with contextlib.closing(sqlite3.connect(":memory:")) as database:
         database.execute("CREATE TABLE sources (id INTEGER PRIMARY KEY, path TEXT)")
         database.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, source INTEGER, fields TEXT)")
@@ -125,3 +132,23 @@ def test_any_field_name_is_addressed_and_odd_numbers_break_nothing() -> None:
     assert passing(odd, [one("date created", Operator.AT_LEAST, "2024-05")]) == ["cited"]
     assert passing(odd, [one('say "hi"', ANY, "yes")]) == ["cited"]
     assert passing(odd, [one("score", ANY, "NaN")]) == ["odd"]
+
+
+def test_documents_linking_a_note_pass_its_wikilink_value_and_fail_its_negation() -> None:
+    acme, not_acme = Linking("year", ANY, "Acme"), Linking("year", NONE, "Acme")
+    assert passing(PAPERS, [one("year", ANY, 2023, "[[Acme]]")], linked={acme: [3]}) == ["rl.md", "typed.md"]
+    assert passing(PAPERS, [one("year", ANY, "[[Acme]]")], linked={acme: []}) == []
+    assert passing(PAPERS, [one("year", NONE, "[[Acme]]")], linked={not_acme: [0]}) == [
+        "record.md",
+        "rl.md",
+        "typed.md",
+    ]
+    ranged = [one("year", ANY, "[[Acme]]"), one("year", Operator.ABOVE, 2000)]
+    assert passing(PAPERS, ranged, linked={acme: [1]}) == []
+
+
+def test_a_search_kept_to_some_documents_passes_only_those() -> None:
+    assert passing(PAPERS, [], within=[2, 0]) == ["brush.md", "record.md"]
+    assert passing(PAPERS, [one("year", ANY, 2024)], within=[2, 1]) == ["record.md"]
+    assert passing(PAPERS, [], "b*", within=[2]) == []
+    assert passing(PAPERS, [], within=[]) == []

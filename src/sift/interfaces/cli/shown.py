@@ -173,7 +173,7 @@ def hits(result: SearchResult, seconds: float, platform: str, style: Style, kind
     scores = max((len(f"{hit.score:.2f}") for hit in result.hits), default=0)
     lines = [line for rank, hit in enumerate(result.hits, 1) for line in _hit(rank, hit, ranks, scores)]
     problems = _unsearched(result.unsearched, style)
-    return Shown(tuple(lines), (*problems, _footer(result, seconds, style, kind)), failed=bool(result.unsearched))
+    return Shown(tuple(lines), (*problems, _footer(result, seconds, style, kind)))
 
 
 def failure(error: SiftError | OSError, style: Style) -> Shown:

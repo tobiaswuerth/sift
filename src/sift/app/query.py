@@ -11,6 +11,7 @@ from sift.api.fields import Fields, FieldValue
 from sift.api.ids import ChunkId, owner
 from sift.api.search import MOST_HITS, Hit, SearchHybrid, SearchResult
 from sift.app import searching
+from sift.app.linked import Narrowing
 from sift.app.search import Keywords, Wanted, found
 from sift.app.vsearch import (
     ASKED,
@@ -26,13 +27,13 @@ from sift.app.vsearch import (
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.codes import Floats
 from sift.domain.query.expressions import NOTHING, Expression
-from sift.domain.query.filters import Condition
 from sift.domain.query.grammar import parsed
 from sift.domain.rank.best import Best
 from sift.domain.rank.hybrid import blend, named, passage, standing_out, words, work_of
 from sift.inference.models import Models
 from sift.retrieval.keyword.lists import opened
 from sift.retrieval.keyword.search import TUNING, never
+from sift.storage.catalog import Collection
 from sift.storage.database import Reading
 from sift.storage.documents import fields_by_document, passages, texts
 from sift.storage.keywords import refuse_stale
@@ -57,10 +58,10 @@ class Candidate:
 type Kept = searching.Kept[Both]
 
 
-def _both(model: str, asked: Condition | None, transaction: Reading) -> Both:
+def _both(model: str, asked: Narrowing, one: Collection, transaction: Reading) -> Both:
     refuse_stale(transaction)
     vectors = embedded_by(model, transaction)
-    allowed = searching.allowed(transaction, asked)
+    allowed = searching.allowed(asked, one, transaction)
     held = no_vectors() if vectors is None else vectors
     return Both(Keywords(opened(transaction), allowed), replace(held, allowed=allowed))
 
@@ -221,19 +222,19 @@ def _answered(kept: Kept, request: SearchHybrid, models: Models, asked: Asked) -
         return searching.presented(answered, request)
 
 
-def _checked(request: SearchHybrid) -> Condition | None:
-    condition = searching.checked(request)
+def _checked(request: SearchHybrid) -> None:
+    searching.checked(request)
     if not request.query.strip():
         raise InvalidRequestError("an empty query finds nothing", EMPTY_REMEDY)
     if not 1 <= request.candidates <= MOST_HITS:
         said = f"--candidates {request.candidates:,} is outside 1 to {MOST_HITS:,}"
         raise InvalidRequestError(said, CANDIDATES_REMEDY)
-    return condition
 
 
 def query(home: Path, request: SearchHybrid, models: Models, asked: Asked = ASKED) -> SearchResult:
-    condition = _checked(request)
-    collections = searching.collections_of(home, request.collection)
+    _checked(request)
+    narrowing = searching.narrowed(home, request)
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, collections, partial(_both, models.name, condition))
+        hold = partial(_both, models.name, narrowing)
+        kept = searching.opened(cleanup, narrowing.collections, hold, narrowing.ruled_out)
         return searching.result(kept, _answered(kept, request, models, asked), partial=False)

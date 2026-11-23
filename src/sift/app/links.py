@@ -1,7 +1,5 @@
 from collections import Counter
-from collections.abc import Callable
-from contextlib import closing
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
@@ -19,138 +17,17 @@ from sift.api.links import (
 )
 from sift.api.search import Unsearched
 from sift.app.collections import chosen_or_active
-from sift.app.documents import place, resolved_at
-from sift.app.documents import unknown as documents_unknown
+from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, by_id, by_name, linking, read_in
 from sift.app.searching import checked_k
-from sift.domain.text.links import WIKILINK, LinkKind, in_line, name_key
-from sift.domain.text.resolving import (
-    LEADING,
-    Candidate,
-    Linking,
-    Resolution,
-    Via,
-    link_path,
-    linking_lines,
-    resolved,
-    stem,
-)
-from sift.storage.catalog import Collection, known_collections
-from sift.storage.database import Reading, reading
-from sift.storage.documents import stored, texts
-from sift.storage.links import LinkRow, Titled, doubtful, keys_of, links_into, links_out, named, titled
-from sift.storage.store import open_store, unavailable_if_damaged
+from sift.domain.text.resolving import LEADING, Linking, Resolution, Via, link_path, linking_lines, stem
+from sift.storage.database import Reading
+from sift.storage.documents import texts
+from sift.storage.links import LinkRow, Titled, doubtful, links_out, titled
 
-AMBIGUOUS_SHOWN = 5
 LINKING_SHOWN = 5
 DEPTHS = (1, 2)
 FURTHER = 2
 DEPTH_REMEDY = "follow links one step, or two: --depth 1 or --depth 2"
-AMBIGUOUS_REMEDY = "give the note's whole id, as sift get takes it"
-
-type Candidates = tuple[list[Candidate], list[Candidate]]
-
-
-@dataclass(slots=True)
-class Resolver:
-    transaction: Reading
-    seen: dict[str, Candidates] = field(default_factory=dict[str, Candidates])
-
-    def _named(self, key: str) -> Candidates:
-        if key not in self.seen:
-            self.seen[key] = named(self.transaction, key)
-        return self.seen[key]
-
-    def of(self, row: LinkRow) -> Resolution:
-        return resolved(row.path, row.kind, row.target, *self._named(row.key))
-
-    def of_name(self, target: str) -> Resolution:
-        return resolved(None, LinkKind.WIKILINK, target, *self._named(name_key(target.rsplit("/", 1)[-1])))
-
-
-type Find = Callable[[Reading], int]
-
-
-@dataclass(frozen=True, slots=True)
-class Note:
-    collection: Collection
-    find: Find
-
-
-def _reading[T](one: Collection, read: Callable[[Reading], T]) -> T:
-    with (
-        unavailable_if_damaged(one.store),
-        closing(open_store(one.store, one.id)) as connection,
-        reading(connection) as transaction,
-    ):
-        return read(transaction)
-
-
-def target_of(id_: str) -> str:
-    written = id_.strip()
-    found = in_line(written, 1) if WIKILINK.fullmatch(written) else []
-    return found[0].target if found else written
-
-
-def _named(transaction: Reading, name: str) -> list[int]:
-    found = Resolver(transaction).of_name(name)
-    return list(found.documents) if found.via is not Via.UNRESOLVED else []
-
-
-def _matches(one: Collection, name: str) -> list[str]:
-    def read(transaction: Reading) -> list[str]:
-        found = _named(transaction, name)
-        return sorted(f"{one.name}/{each.path}" for each in titled(transaction, found).values())
-
-    return _reading(one, read)
-
-
-def at_path(whole: str) -> Find:
-    path = whole.split("/", 1)[1]
-
-    def find(transaction: Reading) -> int:
-        found = stored(transaction, path)
-        if found is None:
-            raise documents_unknown(whole)
-        return found.id
-
-    return find
-
-
-@dataclass(frozen=True, slots=True)
-class Named:
-    note: Note
-    unsearched: tuple[Unsearched, ...]
-
-
-def _passed(message: str, unsearched: list[Unsearched]) -> str:
-    names = ", ".join(each.collection for each in unsearched)
-    return f"{message}; not searched, store unavailable: {names}" if unsearched else message
-
-
-def _by_name(home: Path, id_: str, unknown: NotFoundError) -> Named:
-    name, passed = target_of(id_), list[Unsearched]()
-    found: list[tuple[Collection, str]] = []
-    for one in chosen_or_active(home, ()):
-        try:
-            found += [(one, whole) for whole in _matches(one, name)]
-        except StoreUnavailableError as error:
-            passed.append(Unsearched(one.name, error.message, error.remedy))
-    if not found:
-        raise NotFoundError(_passed(unknown.message, passed), unknown.remedy)
-    if len(found) > 1:
-        listed = ", ".join(sorted(whole for _, whole in found)[:AMBIGUOUS_SHOWN])
-        more = ", ..." if len(found) > AMBIGUOUS_SHOWN else ""
-        raise InvalidRequestError(_passed(f"{id_!r} names several notes: {listed}{more}", passed), AMBIGUOUS_REMEDY)
-    return Named(Note(found[0][0], at_path(found[0][1])), tuple(passed))
-
-
-def _by_id(home: Path, id_: str) -> Note:
-    chosen, relative = place(known_collections(home), id_)
-
-    def find(transaction: Reading) -> int:
-        return resolved_at(transaction, id_, relative, absolute=Path(id_).is_absolute()).id
-
-    return Note(chosen, find)
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,23 +59,13 @@ class In:
     through: int | None
 
 
-def _linking(resolver: Resolver, document: int, wanted: str | None) -> dict[int, list[LinkRow]]:
-    keys = keys_of(resolver.transaction, document)
-    found: dict[int, list[LinkRow]] = {}
-    for row in links_into(resolver.transaction, keys, document, wanted):
-        how = resolver.of(row)
-        if how.via in LEADING and how.documents == (document,):
-            found.setdefault(row.document, []).append(row)
-    return found
-
-
 def _in(resolver: Resolver, document: int, request: ShowLinks) -> list[In]:
-    first = _linking(resolver, document, request.field)
+    first = linking(resolver, document, request.field)
     found = [In(source, rows, None) for source, rows in first.items()]
     if request.depth == FURTHER:
         seen = {document, *first}
         for step in first:
-            for source, rows in _linking(resolver, step, request.field).items():
+            for source, rows in linking(resolver, step, request.field).items():
                 if source not in seen:
                     seen.add(source)
                     found.append(In(source, rows, step))
@@ -257,11 +124,11 @@ def links(home: Path, request: ShowLinks) -> Links:
     if request.depth not in DEPTHS:
         raise InvalidRequestError(f"--depth {request.depth} is neither 1 nor 2", DEPTH_REMEDY)
     try:
-        found = _by_id(home, request.id)
-        return _reading(found.collection, lambda transaction: _links(transaction, found, request))
+        found = by_id(home, request.id)
+        return read_in(found.collection, lambda transaction: _links(transaction, found, request))
     except NotFoundError as unknown:
-        named = _by_name(home, request.id, unknown)
-        shown = _reading(named.note.collection, lambda transaction: _links(transaction, named.note, request))
+        named = by_name(chosen_or_active(home, ()), request.id, unknown)
+        shown = read_in(named.note.collection, lambda transaction: _links(transaction, named.note, request))
         return replace(shown, unsearched=named.unsearched)
 
 
@@ -295,9 +162,7 @@ def unresolved(home: Path, request: ListUnresolved) -> Unresolved:
     passed: list[Unsearched] = []
     for one in chosen_or_active(home, () if request.collection is None else (request.collection,)):
         try:
-            found += [
-                (target, [f"{one.name}/{path}" for path in paths]) for target, paths in _reading(one, _unresolved)
-            ]
+            found += [(target, [f"{one.name}/{path}" for path in paths]) for target, paths in read_in(one, _unresolved)]
         except StoreUnavailableError as error:
             passed.append(Unsearched(one.name, error.message, error.remedy))
     ranked = sorted(found, key=lambda each: (-len(each[1]), each[0]))[: request.k]
