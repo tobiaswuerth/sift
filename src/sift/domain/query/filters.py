@@ -14,6 +14,7 @@ SQLITE_INT = 2**63
 WHOLE = re.compile(r"-?[0-9]+")
 DECIMAL = re.compile(r"-?[0-9]+\.[0-9]+")
 NONE_WITHIN = "[]"
+PATH_REMEDY = "write the folders of a path in a collection with / between them"
 QUOTE_REMEDY = "name the field without a double quote, or use a Python whose SQLite is 3.47 or newer"
 
 
@@ -63,11 +64,11 @@ def json_path(field: str, *, reads_quotes: bool) -> str:
 
 def forms(value: FilterValue) -> list[SpecValue]:
     if isinstance(value, bool):
-        return [int(value), "true" if value else "false"]
+        return ["true" if value else "false"]
     if not isinstance(value, str):
         return [value, json.dumps(value)]
     if value in ("true", "false"):
-        return [value, int(value == "true")]
+        return [value]
     if WHOLE.fullmatch(value) and -SQLITE_INT <= int(value) < SQLITE_INT:
         return [value, int(value)]
     return [value, float(value)] if DECIMAL.fullmatch(value) else [value]
@@ -129,6 +130,8 @@ def condition(
     reads_quotes: bool,
     linked: Linked = UNLINKED,
 ) -> Condition | None:
+    if path is not None and "\\" in path:
+        raise InvalidRequestError(f"{path!r} holds a backslash", PATH_REMEDY, "path")
     asked = gathered(tuple(filters))
     if not path and not asked and linked.within is None and not linked.without:
         return None

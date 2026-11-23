@@ -59,6 +59,12 @@ def tests(session: nox.Session) -> None:
 
 
 @nox.session(python=OLDEST)
+def explore(session: nox.Session) -> None:
+    synced(session)
+    session.run("pytest", "-q", "-n", "auto", "--hypothesis-profile=explore", "--hypothesis-show-statistics")
+
+
+@nox.session(python=OLDEST)
 def lowest(session: nox.Session) -> None:
     session.install("--resolution=lowest-direct", "--group=dev", "-e", ".")
     session.run("pytest", "-q", "-n", "auto")

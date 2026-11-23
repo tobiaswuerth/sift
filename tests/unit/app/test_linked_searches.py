@@ -1,4 +1,3 @@
-from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,15 +18,11 @@ from sift.app.notes import Note, read_in
 from sift.app.query import query
 from sift.app.search import search
 from sift.app.vsearch import vsearch
+from tests.files import write
 from tests.models import Hashed
 
 OFFER, ACME = "vault/Offer.md", "vault/Orgs/Acme AG.md"
 ANNA, HANS = "vault/People/Anna Keller.md", "vault/People/Hans Müller.md"
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def collection(tmp_path: Path, home: Path, name: str, files: dict[str, str]) -> None:
@@ -206,12 +201,8 @@ def test_an_ambiguous_link_and_a_link_by_another_path_lead_to_no_note_named(link
 
 
 def test_a_store_no_document_of_can_pass_the_links_is_not_searched(linked: Path) -> None:
-    narrowing = searching.narrowed(
-        linked, SearchKeywords("note", links_to=("Hans Müller",), linked_from=("Anna Keller",))
-    )
-    with ExitStack() as cleanup:
-        stores = searching.opened(cleanup, narrowing, searching.Wants(keywords=True))
-        assert (stores.searching, stores.ruled_out) == ([], 2)
+    result = search(linked, SearchKeywords("note", links_to=("Hans Müller",), linked_from=("Anna Keller",)))
+    assert (result.hits, result.searched, result.ruled_out) == ((), 0, 2)
 
 
 def test_a_note_gone_before_its_store_is_read_lets_no_document_through(linked: Path) -> None:

@@ -1,16 +1,20 @@
 import contextlib
 import json
 import sqlite3
+import tempfile
 from collections.abc import Generator
+from pathlib import Path
 
 import numpy as np
 
 from sift.api.fields import Fields
 from sift.api.filters import Filter, FilterValue, Operator
+from sift.api.ids import CollectionId
 from sift.domain.arrays import ints
 from sift.domain.query.filters import UNLINKED, Linked, LinkFilter, condition
 from sift.storage.database import Reading
 from sift.storage.passing import Passing
+from sift.storage.store import create_store, open_store
 
 ANY, NONE = Operator.ANY, Operator.NONE
 PAPERS: dict[str, Fields] = {
@@ -21,17 +25,22 @@ PAPERS: dict[str, Fields] = {
 }
 
 
+SOURCE = "INSERT INTO sources(id, path, modified_ns, size) VALUES (?, ?, 0, 0)"
+DOCUMENT = "INSERT INTO documents(id, source, key, digest, title, fields, text) VALUES (?, ?, '', '', '', ?, '')"
+CHUNK = "INSERT INTO chunks(id, document, first_line, last_line, start, length) VALUES (?, ?, 1, 1, 0, 0)"
+
+
 @contextlib.contextmanager
 def stored(documents: dict[str, Fields]) -> Generator[sqlite3.Connection]:
-    with contextlib.closing(sqlite3.connect(":memory:")) as database:
-        database.execute("CREATE TABLE sources (id INTEGER PRIMARY KEY, path TEXT)")
-        database.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, source INTEGER, fields TEXT)")
-        database.execute("CREATE TABLE chunks (id INTEGER PRIMARY KEY, document INTEGER)")
-        for at, (name, fields) in enumerate(documents.items()):
-            database.execute("INSERT INTO sources VALUES (?, ?)", (at, name))
-            database.execute("INSERT INTO documents VALUES (?, ?, ?)", (at, at, json.dumps(fields)))
-            database.execute("INSERT INTO chunks VALUES (?, ?)", (at, at))
-        yield database
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "1.sqlite"
+        create_store(path, CollectionId(1))
+        with contextlib.closing(open_store(path, CollectionId(1))) as database:
+            for at, (name, fields) in enumerate(documents.items()):
+                database.execute(SOURCE, (at, name))
+                database.execute(DOCUMENT, (at, at, json.dumps(fields)))
+                database.execute(CHUNK, (at, at))
+            yield database
 
 
 def passing(
@@ -110,7 +119,7 @@ def test_a_number_range_passes_over_text_without_a_number_and_a_text_range_over_
         "era": {"year": "-50 BC"},
         "spaced": {"year": " 1985"},
     }
-    assert passing(years, [one("year", Operator.BELOW, 2000)]) == ["dated", "era", "spaced"]
+    assert passing(years, [one("year", Operator.BELOW, 2000)]) == ["dated", "spaced"]
     made: dict[str, Fields] = {
         "dated": {"c": "2025-03"},
         "nested": {"c": [["2025"]]},
@@ -118,6 +127,29 @@ def test_a_number_range_passes_over_text_without_a_number_and_a_text_range_over_
         "number": {"c": 2025},
     }
     assert passing(made, [one("c", Operator.ABOVE, "2024")]) == ["dated", "number"]
+
+
+def test_whole_numbers_compare_exactly_and_text_is_a_number_only_when_written_as_a_decimal() -> None:
+    big: dict[str, Fields] = {"over": {"n": 2**53 + 1}, "at": {"n": 2**53}}
+    assert passing(big, [one("n", Operator.ABOVE, 2**53)]) == ["over"]
+    written: dict[str, Fields] = {
+        "endless": {"n": "1e999"},
+        "hex": {"n": "0x10"},
+        "signed": {"n": " -7.5 "},
+        "two dots": {"n": "1.2.3"},
+        "two signs": {"n": "--3"},
+    }
+    assert passing(written, [one("n", Operator.ABOVE, 5)]) == []
+    assert passing(written, [one("n", Operator.BELOW, 5)]) == ["signed"]
+
+
+def test_yes_and_no_match_the_words_true_and_false_alone() -> None:
+    flags: dict[str, Fields] = {"no": {"flag": False}, "zero": {"flag": 0}, "yes": {"flag": True}, "one": {"flag": 1}}
+    assert passing(flags, [one("flag", ANY, "0")]) == ["zero"]
+    assert passing(flags, [one("flag", ANY, "false")]) == ["no"]
+    assert passing(flags, [one("flag", ANY, 1)]) == ["one"]
+    assert passing(flags, [one("flag", NONE, "true")]) == ["no", "one", "zero"]
+    assert passing(flags, [one("flag", Operator.ABOVE, 0)]) == ["one"]
 
 
 def test_a_range_on_a_list_needs_one_element_within_it_all() -> None:

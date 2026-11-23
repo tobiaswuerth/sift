@@ -22,9 +22,9 @@ CODES = "SELECT chunk, bits FROM codes ORDER BY chunk"
 HELD_META = "SELECT value FROM meta WHERE key = ? AND (SELECT vectors FROM counts) > 0"
 READ = 65_536
 MATRIX = 2
-EMBED_REMEDY = "run sift embed --reset to embed every collection with {model}"
+EMBED_REMEDY = "run sift embed with reset to embed every collection with {model}"
 DAMAGED_CODES = "the store's codes do not match its vectors"
-CODES_REMEDY = "run sift embed --reset, which embeds every collection again"
+CODES_REMEDY = "run sift embed with reset, which embeds every collection again"
 
 
 class Pending(NamedTuple):

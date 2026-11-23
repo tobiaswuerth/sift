@@ -8,7 +8,7 @@ from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.fields import listed
-from sift.api.filters import Filter, Operator
+from sift.api.filters import Filter, Operator, written
 from sift.api.indexing import IndexCollections
 from sift.api.search import SORT, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app import searching
@@ -23,15 +23,11 @@ from sift.domain.arrays import Ids
 from sift.storage.database import Reading
 from sift.storage.vectors import documents_embedded, vectors_of
 from tests.damage import damage_table
+from tests.files import write
 from tests.models import Hashed
 
 DAYS = ("2023-11-30", "2024-02-10", "2024-06-15", "2024-12-31", "2025-03-01")
 ANY, NONE = Operator.ANY, Operator.NONE
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 @pytest.fixture
@@ -228,3 +224,13 @@ def test_once_a_store_is_lost_no_other_store_is_read_for_that_round(tmp_path: Pa
     found = vsearch(home, SearchVectors("pigment binder", k=3), Hashed(), Rescoring(3, read))
     assert [each.collection for each in found.unsearched] == ["first"]
     assert len(reads) == 2
+
+
+def test_a_filter_matches_text_however_its_accents_were_composed(tmp_path: Path) -> None:
+    root, home = tmp_path / "cafes", tmp_path / "cafes-home"
+    write(root / "decomposed.md", "---\nplace: Ro\u0308sterei\n---\n# Beans\n\nRoasted beans.\n")
+    add(home, AddCollection(str(root)))
+    index(home, IndexCollections(), lambda _: None)
+    for asked in ("place=R\u00f6sterei", "place=Ro\u0308sterei"):
+        result = search(home, SearchKeywords("beans", filters=(written(asked),)))
+        assert [hit.id for hit in result.hits] == ["cafes/decomposed.md"]

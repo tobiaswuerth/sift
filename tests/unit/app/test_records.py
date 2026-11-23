@@ -1,5 +1,5 @@
 import json
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator
 from contextlib import closing
 from itertools import islice
 from pathlib import Path
@@ -28,6 +28,7 @@ from sift.storage.database import reading
 from sift.storage.documents import counts
 from sift.storage.store import open_store
 from sift.storage.vectors import left
+from tests.files import jsonl, write
 from tests.later import later
 from tests.models import Hashed
 
@@ -38,15 +39,6 @@ PAPERS: list[dict[str, object]] = [
 ]
 BRUSH, SHAPING = "arxiv/2021/2021-01.jsonl#2101.00001", "arxiv/2021/2021-01.jsonl#2101.00002"
 STRINGS = "arxiv/1999/1999-01.jsonl#hep-th/9901001"
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-def jsonl(records: Sequence[Mapping[str, object]]) -> str:
-    return "".join(json.dumps(each) + "\n" for each in records)
 
 
 def indexed(

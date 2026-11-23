@@ -13,14 +13,10 @@ from sift.app.documents import documents
 from sift.app.indexing import index
 from sift.app.links import links
 from sift.app.mentions import mentions
+from tests.files import write
 
 HANS, ACME = "vault/People/Hans Müller.md", "vault/Orgs/Acme AG.md"
 ACME_LINK = '"[[Acme AG]]"'
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def collection(tmp_path: Path, home: Path, name: str, files: dict[str, str]) -> None:

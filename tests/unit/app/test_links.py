@@ -14,13 +14,9 @@ from sift.app.notes import NOTE_REMEDY, Note
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading
 from sift.storage.store import open_store
+from tests.files import write
 
 LONG = "word " * 100
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def vault(tmp_path: Path, files: dict[str, str], name: str = "v") -> Path:

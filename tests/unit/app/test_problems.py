@@ -2,11 +2,12 @@ from pathlib import Path
 from types import MappingProxyType
 
 from sift.api.events import Noted
-from sift.app.problems import EMPTY_INSIDE_REMEDY, LEFT_AS_INDEXED, counted, problems
+from sift.app.problems import counted, problems
 from sift.domain.plan.indexing import Found, Stat, index_plan
 from sift.ingest.scan import Scanned
 
 A = Stat(1, 1)
+KEPT = "kept as indexed, as a drive not mounted and a folder being filled anew look so"
 
 
 def said(scanned: Scanned, known: dict[str, Stat]) -> tuple[Noted, ...]:
@@ -44,10 +45,8 @@ def test_linked_folders_are_left_out_and_said() -> None:
 
 
 def test_a_folder_left_empty_keeps_what_it_held_and_says_so() -> None:
-    assert said(Scanned(Found({})), {"a.md": A}) == (
-        Noted(LEFT_AS_INDEXED.format(files="1 file", folder=Path("/data/notes"))),
-    )
-    assert LEFT_AS_INDEXED.startswith("none of its {files} is left in {folder}: kept as indexed")
+    folder = Path("/data/notes")
+    assert said(Scanned(Found({})), {"a.md": A}) == (Noted(f"none of its 1 file is left in {folder}: {KEPT}"),)
 
 
 def test_a_folder_inside_left_empty_keeps_what_it_held_and_says_how_to_let_it_go() -> None:
@@ -55,7 +54,7 @@ def test_a_folder_inside_left_empty_keeps_what_it_held_and_says_how_to_let_it_go
     assert said(Scanned(found), {"a.md": A, "archive/b.md": A, "archive/deep/c.md": A}) == (
         Noted(
             "archive/ is empty: 2 files once in it kept as indexed, as a drive not mounted looks so",
-            EMPTY_INSIDE_REMEDY,
+            "connect the drive, or delete the empty folder to let them go",
         ),
     )
 

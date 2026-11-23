@@ -25,13 +25,8 @@ from sift.storage.documents import stored
 from sift.storage.keywords import settle
 from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
 from tests.damage import damage_table
+from tests.files import write
 from tests.later import LATER
-
-
-def write(path: Path, text: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
 
 
 @pytest.fixture

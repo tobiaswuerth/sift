@@ -1,6 +1,7 @@
 import json
 import math
 import re
+import unicodedata
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import cast
@@ -73,7 +74,7 @@ def _values(text: str, value: str) -> tuple[FilterValue, ...]:
 
 
 def written(text: str) -> Filter:
-    found = WRITTEN.fullmatch(text)
+    found = WRITTEN.fullmatch(unicodedata.normalize("NFC", text))
     if found is None:
         raise _refused(text, "it names no field and operator")
     field, operator, value = found[1].strip(), Operator(found[2]), found[3].strip()

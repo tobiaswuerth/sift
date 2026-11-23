@@ -17,17 +17,13 @@ from sift.app.indexing import index
 from sift.app.search import search
 from sift.app.similar import similar
 from sift.app.vsearch import vsearch
+from tests.files import write
 from tests.models import Hashed
 
 ROBOTS = "Robots clean floors with brushes.\n"
 VACUUM = "A robot vacuum cleans floors.\n"
 ZEROED = """UPDATE vectors SET vector = zeroblob(length(vector)) WHERE chunk IN (
   SELECT c.id FROM chunks c JOIN documents d ON d.id = c.document JOIN sources s ON s.id = d.source WHERE s.path = ?)"""
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def collection(tmp_path: Path, home: Path, name: str, files: dict[str, str]) -> None:

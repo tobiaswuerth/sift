@@ -19,14 +19,10 @@ from sift.domain.codec.codes import Floats, Halves
 from sift.storage.catalog import CATALOG
 from sift.storage.vectors import EMBED_REMEDY
 from tests.damage import damage_table
+from tests.files import write
 from tests.models import BROKEN, Hashed
 
 LONG = "\n\n".join(["Pruning skips what cannot win. " * 20] * 8)
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def counted(store: Path, sql: str) -> int:

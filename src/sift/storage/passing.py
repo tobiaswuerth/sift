@@ -42,7 +42,8 @@ WHERE (:path IS NULL OR s.path GLOB :path)
       (g.any_of IS NULL AND g.ranged = 0
        OR EXISTS (
          SELECT 1 FROM json_each(d.fields, g.field) v
-         WHERE (g.any_of IS NULL OR v.value IN (SELECT value FROM json_each(g.any_of)))
+         WHERE (g.any_of IS NULL OR (CASE v.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE v.value END)
+                                     IN (SELECT value FROM json_each(g.any_of)))
            AND NOT EXISTS (
              SELECT 1 FROM bounds b
              WHERE b.grp = g.grp AND NOT (
@@ -52,9 +53,16 @@ WHERE (:path IS NULL OR s.path GLOB :path)
                  WHEN '<=' THEN substr(v.value, 1, b.len) <= b.value
                  WHEN '>' THEN substr(v.value, 1, b.len) > b.value
                  ELSE substr(v.value, 1, b.len) >= b.value END
-               ELSE (v.type IN ('integer', 'real', 'true', 'false')
-                     OR (v.type = 'text' AND (ltrim(v.value) GLOB '[0-9]*' OR ltrim(v.value) GLOB '[-+.][0-9]*'
-                                              OR ltrim(v.value) GLOB '[-+].[0-9]*')))
+               WHEN v.type = 'integer' AND typeof(b.value) = 'integer' THEN CASE b.op
+                 WHEN '<' THEN v.value < b.value
+                 WHEN '<=' THEN v.value <= b.value
+                 WHEN '>' THEN v.value > b.value
+                 ELSE v.value >= b.value END
+               ELSE (v.type IN ('integer', 'real')
+                     OR (v.type = 'text' AND ltrim(trim(v.value), '+-') GLOB '*[0-9]*'
+                         AND ltrim(trim(v.value), '+-') NOT GLOB '*[^0-9.]*'
+                         AND ltrim(trim(v.value), '+-') NOT GLOB '*.*.*'
+                         AND length(trim(v.value)) - length(ltrim(trim(v.value), '+-')) <= 1))
                  AND CASE b.op
                    WHEN '<' THEN CAST(v.value AS REAL) < b.value
                    WHEN '<=' THEN CAST(v.value AS REAL) <= b.value
@@ -66,7 +74,8 @@ WHERE (:path IS NULL OR s.path GLOB :path)
       AND NOT EXISTS (SELECT 1 FROM linked l WHERE l.grp = g.grp AND l.kind = 'none' AND l.id = d.id)
       AND (g.none_of IS NULL
            OR NOT EXISTS (SELECT 1 FROM json_each(d.fields, g.field) v
-                          WHERE v.value IN (SELECT value FROM json_each(g.none_of))))
+                          WHERE (CASE v.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE v.value END)
+                                IN (SELECT value FROM json_each(g.none_of))))
     )
   )
 """

@@ -23,14 +23,10 @@ from sift.domain.errors import DamagedError
 from sift.storage.database import Reading
 from sift.storage.vectors import EMBED_REMEDY, documents_embedded, vectors_of
 from tests.damage import damage_table
+from tests.files import write
 from tests.models import BROKEN, DIRECTIONLESS, Hashed
 
 LONG = "\n\n".join(["Pruning skips ranges that cannot win. " * 20] * 8)
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def changed(store: Path, sql: str) -> None:

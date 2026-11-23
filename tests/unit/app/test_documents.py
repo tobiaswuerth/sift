@@ -11,13 +11,9 @@ from sift.app.documents import documents
 from sift.app.indexing import index
 from sift.storage.store import DAMAGED_REMEDY
 from tests.damage import damage_table
+from tests.files import write
 
 UNKNOWN = "take the id from a search result"
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 @pytest.fixture

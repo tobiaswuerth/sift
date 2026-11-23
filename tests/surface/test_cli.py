@@ -15,6 +15,7 @@ from sift.interfaces.console.text import table
 from sift.interfaces.console.units import size
 from sift.settings import Settings
 from tests.surface.commands import indexed_notes, ran
+from tests.surface.process import sift
 
 
 @final
@@ -26,18 +27,6 @@ class Refusing(io.TextIOWrapper):
     @override
     def write(self, s: str, /) -> int:
         raise self.error
-
-
-def sift(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-m", "sift", *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-        timeout=60,
-        env={**os.environ, "SIFT_HOME": str(home), "PYTHONIOENCODING": "utf-8"},
-    )
 
 
 def test_version_names_the_installed_release(tmp_path: Path) -> None:

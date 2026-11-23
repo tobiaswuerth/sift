@@ -1,10 +1,11 @@
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
+import unicodedata
+from collections.abc import Callable, Mapping, Sequence
 from typing import cast
 
-from sift.api.fields import FieldValue
+from sift.api.fields import Fields, FieldValue
 
 MOST_DEPTH = 999
 ESCAPED_SURROGATE = re.compile(r"\\u[dD][89a-fA-F]")
@@ -73,27 +74,43 @@ def depth(value: FieldValue) -> int:
     return deepest
 
 
-def _cleaned(value: FieldValue) -> FieldValue:
+def _changed(value: FieldValue, change: Callable[[str], str]) -> FieldValue:
     if isinstance(value, str):
-        return LONE_SURROGATE.sub(REPLACEMENT, value)
+        return change(value)
     if isinstance(value, Mapping):
-        return {LONE_SURROGATE.sub(REPLACEMENT, key): item for key, item in value.items()}
+        return {change(key): item for key, item in value.items()}
     if isinstance(value, Sequence):
         return list(value)
     return value
 
 
-def without_lone_surrogates(value: FieldValue) -> FieldValue:
-    top = _cleaned(value)
+def strings_changed(value: FieldValue, change: Callable[[str], str]) -> FieldValue:
+    top = _changed(value, change)
     todo = [top]
     while todo:
         held = todo.pop()
         if isinstance(held, dict):
             for key, item in held.items():
-                held[key] = cleaned = _cleaned(item)
-                todo.append(cleaned)
+                held[key] = changed = _changed(item, change)
+                todo.append(changed)
         elif isinstance(held, list):
             for at, item in enumerate(held):
-                held[at] = cleaned = _cleaned(item)
-                todo.append(cleaned)
+                held[at] = changed = _changed(item, change)
+                todo.append(changed)
     return top
+
+
+def _whole_characters(text: str) -> str:
+    return LONE_SURROGATE.sub(REPLACEMENT, text)
+
+
+def without_lone_surrogates(value: FieldValue) -> FieldValue:
+    return strings_changed(value, _whole_characters)
+
+
+def _composed(text: str) -> str:
+    return unicodedata.normalize("NFC", text)
+
+
+def composed_fields(fields: Fields) -> Fields:
+    return {_composed(name): strings_changed(value, _composed) for name, value in fields.items()}

@@ -58,7 +58,7 @@ RECURSION_CAUGHT = (
     "bound the depth yourself before descending, and refuse what is deeper"
 )
 FLAG = re.compile(r"(?<![\w-])(?:--[a-z][a-z-]*|-[kcf])(?![\w-])")
-COMMAND = re.compile(r"\b(?:sift|uv) [a-z]")
+INSTALLER = re.compile(r"\buv [a-z]")
 FLAG_OUTSIDE = "CLI syntax outside sift.interfaces: say what to do, and let the interface name its flag"
 REMEDY = "Each finding names its fix."
 
@@ -175,7 +175,7 @@ def recursion_caught(path: str, tree: ast.Module) -> Iterator[Finding]:
 
 
 def _flagged(text: str) -> bool:
-    return bool(FLAG.search(text)) and not COMMAND.search(text)
+    return bool(FLAG.search(text)) and not INSTALLER.search(text)
 
 
 def flags_outside_interfaces(path: str, tree: ast.Module) -> Iterator[Finding]:

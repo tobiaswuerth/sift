@@ -58,3 +58,10 @@ def test_a_search_kept_to_some_documents_asks_for_a_condition() -> None:
     left = condition(None, [], reads_quotes=True, linked=Linked(without=[2]))
     assert left is not None
     assert (left.within, left.without) == (None, "[2]")
+
+
+def test_a_path_written_with_backslashes_is_refused_with_how_to_write_it() -> None:
+    with pytest.raises(InvalidRequestError, match="holds a backslash") as refused:
+        condition("2024\\*", (), reads_quotes=True)
+    remedy = "write the folders of a path in a collection with / between them"
+    assert (refused.value.remedy, refused.value.field) == (remedy, "path")

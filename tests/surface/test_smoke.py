@@ -1,30 +1,54 @@
 import json
-import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import cast
 
+from sift.interfaces.cli.arguments import Argument, How, arguments
+from sift.interfaces.cli.main import ENTRIES
+from tests.surface import process
 from tests.tiny_model import tiny_model, tiny_reranker
+
+RAN: list[tuple[str, ...]] = []
+FLAGGED = (How.OPTION, How.SWITCH, How.READ)
+LISTED = (How.ANY, How.SOME)
 
 
 def sift(home: Path, *args: str, model: str = "", reranker: str = "") -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-m", "sift", *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-        timeout=180,
-        env={
-            **os.environ,
-            "SIFT_HOME": str(home),
-            "PYTHONIOENCODING": "utf-8",
-            "NO_COLOR": "1",
-            "SIFT_EMBED_MODEL": model,
-            "SIFT_RERANK_MODEL": reranker,
-        },
-    )
+    RAN.append(args)
+    return process.sift(home, *args, model=model, reranker=reranker)
+
+
+def _forms(argument: Argument) -> frozenset[str]:
+    return frozenset({f"--{argument.name.replace('_', '-')}", *([argument.short] if argument.short else [])})
+
+
+def _given(forms: frozenset[str], argvs: list[tuple[str, ...]]) -> bool:
+    return any(word.split("=", 1)[0] in forms for argv in argvs for word in argv)
+
+
+def unexercised(ran: list[tuple[str, ...]]) -> list[str]:
+    missing: list[str] = []
+    for name, entry in ENTRIES.items():
+        argvs = [argv for argv in ran if argv[:1] == (name,)]
+        for argument in arguments(entry.request):
+            if argument.how in FLAGGED and not _given(_forms(argument), argvs):
+                missing.append(f"{name} {min(_forms(argument), key=len)}")
+            if argument.how in LISTED and not any(len(argv) > 1 and not argv[1].startswith("-") for argv in argvs):
+                missing.append(f"{name} {argument.name.upper()}")
+        if not _given(frozenset({"--json"}), argvs):
+            missing.append(f"{name} --json")
+    return missing if _given(frozenset({"--color"}), ran) else [*missing, "--color"]
+
+
+type Answer = dict[str, object]
+
+
+def answer(ran: subprocess.CompletedProcess[str]) -> Answer:
+    return cast("Answer", json.loads(ran.stdout))
+
+
+def listed(ran: subprocess.CompletedProcess[str], key: str) -> list[Answer]:
+    return cast("list[Answer]", answer(ran)[key])
 
 
 def hits_of(ran: subprocess.CompletedProcess[str]) -> list[dict[str, object]]:
@@ -76,6 +100,58 @@ def links_run(home: Path) -> None:
     assert [hit["id"] for hit in hits_of(sift(home, *linking, "-f", "see=[[sub/brush]]"))] == ["notes/rl.md"]
 
 
+def records_run(home: Path, notes: Path, model: str) -> None:
+    papers = notes / "papers"
+    papers.mkdir()
+    (papers / "p.jsonl").write_bytes(b'{"key": "p1", "headline": "Brush strokes", "body": "learning to paint"}\n')
+    chosen = ("--id-field", "key", "--title-field", "headline", "--text-fields", "body", "--title-from", "heading")
+    added = sift(
+        home,
+        "add",
+        str(papers),
+        "--name",
+        "papers",
+        "--store",
+        str(home / "kept" / "papers.sqlite"),
+        "--nested",
+        "--follow-links",
+        *chosen,
+        "--json",
+    )
+    assert (added.returncode, answer(added)["name"]) == (0, "papers")
+    assert sift(home, "index", "papers", "--json").returncode == 0
+    (record,) = listed(sift(home, "get", "papers/p.jsonl#p1", "--json"), "found")
+    assert (record["title"], record["text"]) == ("Brush strokes", "# Brush strokes\n\nlearning to paint")
+    embedded = sift(home, "embed", "papers", "--reset", "--json", model=model)
+    refused = cast("Answer", answer(embedded)["error"])
+    assert (embedded.returncode, refused["field"]) == (2, "reset")
+    assert sift(home, "embed", "--reset", "--json", model=model).returncode == 0
+
+
+def every_option_run(home: Path, model: str, reranker: str) -> None:
+    narrowed = ("-k", "2", "-c", "notes", "--path", "*", "-f", "see!=x", "--fields", "*", "--sort=-see")
+    linked = ("--links-to", "brush", "--linked-from", "notes/rl.md", "--all-passages", "--compact", "--json")
+    for asked in (
+        ("search", "brush OR learning", *narrowed, *linked, "--budget", "5"),
+        ("vsearch", "learning", *narrowed, *linked),
+        ("query", "learning", *narrowed, *linked, "--candidates", "5", "--adaptive"),
+        ("similar", "notes/rl.md", *narrowed, *linked),
+        ("mentions", "notes/sub/brush.md", *narrowed, *linked, "--also", "Pinsel"),
+    ):
+        ran = sift(home, *asked, model=model, reranker=reranker)
+        assert (asked[0], ran.returncode, ran.stderr) == (asked[0], 0, "")
+        answered = cast("dict[str, int]", answer(ran))
+        assert answered["searched"] + answered["ruled_out"] == 1
+    linking = sift(
+        home, "links", "notes/rl.md", "--direction", "out", "--depth", "2", "--field", "see", "-k", "5", "--json"
+    )
+    assert len(listed(linking, "out")) == 1
+    unresolved = sift(home, "unresolved", "-c", "notes", "-k", "5", "--json")
+    assert len(listed(unresolved, "targets")) == 1
+    coloured = sift(home, "index", "notes", "--color", "always")
+    assert "\x1b[" in coloured.stderr
+
+
 def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path: Path) -> None:
     home, notes = tmp_path / "home", tmp_path / "Notizen Müller"
     (notes / "sub").mkdir(parents=True)
@@ -111,13 +187,26 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     assert cast("list[dict[str, object]]", timed["hits"])[0]["id"] == "notes/rl.md"
     narrowed_searches_run(home)
     links_run(home)
+    model, reranker = models_run(home, tmp_path / "models")
 
-    reranker = str(tiny_reranker(tmp_path / "models"))
-    model = str(tiny_model(tmp_path / "models"))
+    missing = sift(home, "get", "notes/gone.md")
+    assert (missing.returncode, missing.stdout) == (1, "")
+    assert missing.stderr.startswith("error  notes/gone.md: unknown document")
+    assert sift(home, "frobnicate").returncode == 2
+    assert sift(home, "--help").stdout.startswith("usage: sift")
+    every_option_run(home, model, reranker)
+    records_run(home, notes, model)
+    assert unexercised(RAN) == []
+
+
+def models_run(home: Path, models: Path) -> tuple[str, str]:
+    reranker = str(tiny_reranker(models))
+    model = str(tiny_model(models))
     embedded = sift(home, "embed", model=model)
     assert (embedded.returncode, embedded.stdout) == (0, "")
     assert "  embed          3 chunks" in embedded.stderr
-    assert "Loading" not in embedded.stderr
+    assert "  load           1 model " in embedded.stderr
+    assert ("%|" in embedded.stderr, "it/s]" in embedded.stderr) == (False, False)
     near = sift(home, "vsearch", "learning", "-k", "1", "--json", model=model)
     assert len(cast("dict[str, list[object]]", json.loads(near.stdout))["hits"]) == 1
     assert "  load           1 model " in near.stderr
@@ -128,9 +217,4 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     assert (asked.returncode, asked.stdout.split("\n")[1].strip().startswith("notes/")) == (0, True)
     assert asked.stderr.startswith("  load           2 models ")
     assert asked.stderr.splitlines()[-1].startswith("1 result  \N{MIDDLE DOT}  hybrid  \N{MIDDLE DOT}  1 collection")
-
-    missing = sift(home, "get", "notes/gone.md")
-    assert (missing.returncode, missing.stdout) == (1, "")
-    assert missing.stderr.startswith("error  notes/gone.md: unknown document")
-    assert sift(home, "frobnicate").returncode == 2
-    assert sift(home, "--help").stdout.startswith("usage: sift")
+    return model, reranker

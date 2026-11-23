@@ -158,7 +158,9 @@ def test_a_flag_of_the_command_line_outside_the_interfaces_is_found() -> None:
     flagged = ["CLI syntax outside sift.interfaces: say what to do, and let the interface name its flag"]
     assert problems("src/sift/app/a.py", 'X = "ask for fewer, e.g. -k 10"\n') == flagged
     assert problems("src/sift/app/a.py", 'X = f"--budget {b} leaves no time"\n') == flagged
-    assert problems("src/sift/app/a.py", 'X = "run sift embed --reset"\nY = "a -created sort, a k-means"\n') == []
+    assert problems("src/sift/app/a.py", 'X = "run sift embed --reset"\n') == flagged
+    allowed = 'X = "run sift embed with reset"\nY = "a -created sort, a k-means"\nZ = "uv tool install --reinstall a"\n'
+    assert problems("src/sift/app/a.py", allowed) == []
     assert problems("src/sift/interfaces/cli/a.py", 'X = "-k 10"\n') == []
 
 

@@ -34,7 +34,13 @@ def test_in_a_terminal_the_running_phase_is_drawn_again_in_place() -> None:
 
 
 def test_progress_is_drawn_at_most_ten_times_a_second() -> None:
-    assert "  read           1 files" not in written(redraw=True)
+    assert (
+        "  read           1 file " in written(redraw=False),
+        "  read           1 file " in written(redraw=True),
+    ) == (
+        False,
+        False,
+    )
 
 
 def test_a_finished_line_takes_the_place_of_the_running_one() -> None:

@@ -119,7 +119,10 @@ def test_positions_are_of_the_whole_text_from_the_offset_given() -> None:
     assert (chunk.first_line, chunk.start, chunk.length) == (4, 20, 4)
 
 
-lines = st.text(st.sampled_from("ab #`~>-\t"), max_size=200).map(lambda line: line + "\n")
+WRITTEN = st.sampled_from("ab #`~>-\t\r\u00e9\u2028\u0085")
+lines = st.one_of(st.text(WRITTEN, max_size=200), st.text(WRITTEN, min_size=3000, max_size=3200)).map(
+    lambda line: line + "\n"
+)
 
 
 @given(st.lists(lines, max_size=80).map("".join), st.integers(1, 50))

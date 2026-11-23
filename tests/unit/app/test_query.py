@@ -26,14 +26,10 @@ from sift.domain.errors import DamagedError
 from sift.storage.database import Reading
 from sift.storage.vectors import EMBED_REMEDY, vectors_of
 from tests.damage import damage_table
+from tests.files import write
 from tests.models import Hashed
 
 LONG = "\n\n".join(["Pruning skips ranges that cannot win. " * 20] * 8)
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def collection(home: Path, root: Path, *, embedded: bool = True) -> None:
@@ -47,7 +43,7 @@ def collection(home: Path, root: Path, *, embedded: bool = True) -> None:
 def home(tmp_path: Path) -> Path:
     root = tmp_path / "notes"
     write(root / "pruning.md", f"# Block-Max Pruning\n\nRanges are scored best bound first.\n\n## More\n\n{LONG}\n")
-    write(root / "halo.md", "---\nauthor: Vera Rubin\ndoi: 10.1000/halo\n---\n# Halo\n\nDark matter halo models.\n")
+    write(root / "halo.md", "---\nauthor: Ada Quill\ndoi: 10.1000/halo\n---\n# Halo\n\nDark matter halo models.\n")
     write(
         root / "matter.md",
         "---\ntags: [cosmology, physics]\nseen: {by: nobody}\n---\n# Matter\n\nDark matter, and matter again.\n",
@@ -85,10 +81,10 @@ def test_copies_of_one_work_widen_the_candidates_until_k_works_are_found(tmp_pat
 
 def test_the_reranker_reads_the_title_the_front_matter_the_query_names_and_the_text(home: Path) -> None:
     models = Hashed()
-    query(home, SearchHybrid("papers by Rubin on halo models"), models)
+    query(home, SearchHybrid("papers by Quill on halo models"), models)
     ((asked, shown),) = models.reranked
-    assert asked == "papers by Rubin on halo models"
-    assert "Halo\nVera Rubin 10.1000/halo\n\n# Halo\n\nDark matter halo models." in shown
+    assert asked == "papers by Quill on halo models"
+    assert "Halo\nAda Quill 10.1000/halo\n\n# Halo\n\nDark matter halo models." in shown
     assert "Matter\n\n# Matter\n\nDark matter, and matter again." in shown
 
 

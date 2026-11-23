@@ -15,11 +15,7 @@ from sift.app.links import links
 from sift.app.mentions import mentions
 from sift.app.search import search
 from sift.app.similar import similar
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+from tests.files import write
 
 
 @pytest.fixture

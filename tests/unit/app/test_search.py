@@ -21,13 +21,9 @@ from sift.retrieval.keyword.search import Tuning
 from sift.storage.keywords import REMAKE_REMEDY, TAKEN_OVER_REMEDY
 from sift.storage.store import DAMAGED_REMEDY, LAYOUT, MISSING_REMEDY, create_store, delete_store
 from tests.damage import damage_table
+from tests.files import write
 
 LONG = "\n\n".join(["Pruning skips what cannot win. " * 20] * 8)
-
-
-def write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
 
 
 def indexed(home: Path) -> None:

@@ -7,7 +7,7 @@ from sift.api.fields import Fields
 from sift.domain.text.chunks import Chunk, chunks
 from sift.domain.text.decoding import file_text
 from sift.domain.text.front_matter import FrontMatter, front_matter
-from sift.domain.text.json_values import REPLACEMENT
+from sift.domain.text.json_values import REPLACEMENT, composed_fields
 from sift.domain.text.links import MARKDOWN, Link, links
 from sift.domain.text.markdown import heading, one_line
 
@@ -63,7 +63,7 @@ def _chunks_of(text: str, head: FrontMatter | None, first_line: int) -> tuple[Ch
 def note(raw: bytes, name: str, title_from: TitleFrom = TitleFrom.HEADING) -> Document:
     text = file_text(raw)
     head = front_matter(text)
-    fields: Fields = head.fields if head else {}
+    fields: Fields = composed_fields(head.fields) if head else {}
     end = head.end if head else 0
     first_line = 1 + text.count("\n", 0, end)
     found = links(text, end, first_line) if name.lower().endswith(MARKDOWN) else ()

@@ -22,7 +22,8 @@ It runs every check a change must pass, stops at the first that fails, and CI ru
 (pre-commit hooks and import contracts; it refuses files git neither tracks nor ignores), `types` (basedpyright for
 Linux, macOS and Windows), `tests-3.12` and `tests-3.15` (100% line and branch coverage of `sift` and `tools`),
 `lowest` (the lowest versions sift allows), `package` (the wheel and sdist hold the tracked sources and nothing
-else, and the installed commands run). One session: `uv run --only-group gate nox -s types`.
+else, and the installed commands run). One session: `uv run --only-group gate nox -s types`. Before a release,
+`nox -s explore` runs the property tests with fresh random examples, 2,000 each; the gate runs them derandomized.
 
 ## Rules the checks hold
 

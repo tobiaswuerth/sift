@@ -11,6 +11,7 @@ import pytest
 from sift.domain.plan.indexing import MOST_TIME, Stat, index_plan
 from sift.ingest.files import Identity
 from sift.ingest.scan import HIDDEN_SYSTEM, NAMED_AS_RECORD, DirEntry, LinkChecks, Listing, Scanned, scan
+from tests.files import write
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,12 +91,6 @@ def listing(folders: Mapping[str, Listed]) -> Listing:
         return listed(folder)
 
     return opened
-
-
-def write(path: Path, text: str = "x") -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
 
 
 @pytest.fixture

@@ -20,7 +20,7 @@ from sift.storage.database import Connection, reading, writing
 from sift.storage.store import open_store, unavailable_if_unusable
 from sift.storage.vectors import Pending, VectorsPut, forget_vectors, left, pending, put_vectors, refuse_model
 
-RESET_ALL_REMEDY = "run sift embed --reset without naming collections"
+RESET_ALL_REMEDY = "run sift embed with reset, naming no collection"
 BROKEN_REMEDY = "run sift embed again; if they stay, the model fails on their text"
 
 

@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from sift.interfaces.cli.main import Host, run
 from sift.settings import Settings
 from tests.surface.commands import indexed_notes, ran
@@ -29,8 +31,8 @@ def test_search_ranks_passages_with_where_they_are_and_says_what_it_searched(set
     code, out, err = ticking(settings, "search", "shaping OR brush", "-k", "5")
     lines = out.split("\n")
     assert code == 0
-    assert lines[:3] == [f"1  {lines[0][3:7]}  Brush", "         notes/robots/brush.md:1-1", "         # Brush"]
-    assert lines[3] == f"2  {lines[3][3:7]}  Reward shaping"
+    assert lines[:3] == ["1  3.01  Brush", "         notes/robots/brush.md:1-1", "         # Brush"]
+    assert lines[3] == "2  1.17  Reward shaping"
     assert lines[4] == "         notes/rl.md:1-4"
     assert lines[5].startswith("         # Reward shaping Reward shaping speeds up learning. x x")
     assert lines[5].endswith(" ...")
@@ -48,7 +50,7 @@ def test_search_answers_in_json_when_asked(settings: Settings, notes: Path) -> N
                 "id": "notes/robots/brush.md",
                 "title": "Brush",
                 "lines": "1-1",
-                "score": json.loads(out)["hits"][0]["score"],
+                "score": pytest.approx(3.00625, rel=1e-5),
                 "text": None,
                 "also": [],
                 "fields": None,
