@@ -135,8 +135,9 @@ def test_only_the_chunks_allowed_are_found_as_many_as_asked_for(seed: int) -> No
             allowed = [np.array(sorted(c for c, (d, _) in store.items() if d in kept), np.int64) for store in held]
             expression, k = random_expression(rng, phrases), rng.choice([1, 3, 10])
             by_document = rng.random() < 0.7
+            owners = np.array(sorted(kept), np.int64)
             each = [
-                prepared(store, expression, allowed=Chosen(chunks))
+                prepared(store, expression, allowed=Chosen(chunks, owners))
                 for store, chunks in zip(stores, allowed, strict=True)
             ]
             query = query_of(expression, each)

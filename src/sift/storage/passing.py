@@ -6,7 +6,7 @@ from typing import NamedTuple, cast
 
 import numpy as np
 
-from sift.domain.arrays import Ids, Mask, ints
+from sift.domain.arrays import Ascending, Ids, Mask, among, ints
 from sift.domain.query.filters import Condition
 from sift.storage.database import Reading, rows, streamed
 from sift.storage.documents import documents_of
@@ -56,7 +56,6 @@ WHERE (:path IS NULL OR s.path GLOB :path)
                           WHERE v.value IN (SELECT value FROM json_each(g.none_of))))
     )
   )
-ORDER BY d.id
 """
 
 
@@ -92,8 +91,9 @@ class Passing:
     passed: Mask = field(default_factory=_no_mask)
     every: Ids | None = None
 
-    def _documents(self, documents: Ids) -> Mask:
-        new = np.setdiff1d(documents, self.seen)
+    def documents(self, documents: Ids) -> Mask:
+        asked = np.unique(documents)
+        new = asked[~among(asked, Ascending(self.seen))]
         if len(new):
             held = np.concatenate([self.seen, new])
             order = np.argsort(held, kind="stable")
@@ -103,10 +103,10 @@ class Passing:
 
     def checked(self, ids: Ids) -> Mask:
         owners = documents_of(self.transaction, ints(ids))
-        known = np.array([chunk in owners for chunk in ints(ids)], np.bool_)
-        documents = np.array([owners.get(chunk, -1) for chunk in ints(ids)], np.int64)
+        documents = np.fromiter((owners.get(chunk, -1) for chunk in ints(ids)), np.int64, len(ids))
+        known = documents >= 0
         let = np.zeros(len(ids), np.bool_)
-        let[known] = self._documents(documents[known])
+        let[known] = self.documents(documents[known])
         return let
 
     def listed(self) -> Ids:

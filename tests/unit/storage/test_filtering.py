@@ -2,6 +2,8 @@ import contextlib
 import json
 import sqlite3
 
+import numpy as np
+
 from sift.api.fields import Fields
 from sift.api.filters import Filter, FilterValue, Operator
 from sift.domain.arrays import ints
@@ -31,7 +33,11 @@ def passing(documents: dict[str, Fields], filters: list[Filter], path: str | Non
             database.execute("INSERT INTO chunks VALUES (?, ?)", (at, at))
         if found is None:
             return sorted(names)
-        return sorted(names[chunk] for chunk in ints(Passing(Reading(database), found).listed()))
+        listed = sorted(names[chunk] for chunk in ints(Passing(Reading(database), found).listed()))
+        every = np.arange(len(names), dtype=np.int64)[::-1]
+        let = Passing(Reading(database), found).checked(every)
+        assert sorted(names[chunk] for chunk in ints(every[let])) == listed
+        return listed
 
 
 def one(field: str, operator: Operator, *values: FilterValue) -> Filter:

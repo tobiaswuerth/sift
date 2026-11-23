@@ -9,7 +9,7 @@ from sift.domain.query.expressions import Expression, Leaf, Prefix, Term, leaves
 from sift.domain.rank.best import Best, offered, ranked
 from sift.domain.rank.bm25 import Scores, idf
 from sift.domain.rank.boolean import counted, may_hold
-from sift.retrieval.allowed import Allowed
+from sift.retrieval.allowed import AllowedDocuments
 from sift.retrieval.keyword.leaves import materialized
 from sift.retrieval.keyword.lists import Opened, Postings, Stored, owners, stored
 from sift.retrieval.keyword.scoring import Query, Scored, bounds, merged_within, scored, within
@@ -50,16 +50,17 @@ class Pass:
     store: Opened
     query: Query
     lists: Mapping[Leaf, Scored]
-    allowed: Allowed | None
+    allowed: AllowedDocuments | None
 
 
 def _offer(work: Pass, best: Best, places: Ids, scores: Scores) -> Best:
-    if work.allowed is not None:
-        keep = work.allowed.checked(places)
-        places, scores = places[keep], scores[keep]
     if not len(places):
         return best
-    return offered(best, places, owners(work.store, places), scores)
+    held = owners(work.store, places)
+    if work.allowed is not None:
+        keep = work.allowed.documents(held)
+        places, held, scores = places[keep], held[keep], scores[keep]
+    return offered(best, places, held, scores)
 
 
 def _lazy(work: Pass, threshold: float) -> list[Leaf]:
@@ -176,11 +177,11 @@ class Prepared:
     store: Opened
     lists: Lists
     df: Mapping[Leaf, int]
-    allowed: Allowed | None = None
+    allowed: AllowedDocuments | None = None
 
 
 def prepared(
-    store: Opened, expression: Expression, tuning: Tuning = TUNING, *, allowed: Allowed | None = None
+    store: Opened, expression: Expression, tuning: Tuning = TUNING, *, allowed: AllowedDocuments | None = None
 ) -> Prepared:
     unique = tuple(dict.fromkeys(leaves(expression)))
     lists = stored(store, _tokens(unique))

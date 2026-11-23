@@ -19,7 +19,7 @@ from sift.domain.codec.codes import (
     width_of,
     words,
 )
-from sift.retrieval.allowed import Allowed
+from sift.retrieval.allowed import AllowedChunks
 
 RESCORE = 1000
 SHORTLIST = 10
@@ -33,7 +33,7 @@ type Exact = Callable[[int, Ids], tuple[Ids, Halves]]
 @dataclass(frozen=True, slots=True)
 class Reads:
     exact: Exact
-    allowed: Sequence[Allowed | None] = ()
+    allowed: Sequence[AllowedChunks | None] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +91,7 @@ def _nearest_of(found: Measured, among: Ids, want: int) -> Candidates:
     return Candidates(found.ids[among], found.owners[among], found.rows[among])
 
 
-def _let(found: Measured, chosen: Ids, allowed: Sequence[Allowed | None]) -> Mask:
+def _let(found: Measured, chosen: Ids, allowed: Sequence[AllowedChunks | None]) -> Mask:
     let = np.ones(len(chosen), np.bool_)
     for store, each in enumerate(allowed):
         mine = np.flatnonzero(np.equal(found.owners[chosen], store))
@@ -100,7 +100,7 @@ def _let(found: Measured, chosen: Ids, allowed: Sequence[Allowed | None]) -> Mas
     return let
 
 
-def _listed(held: Sequence[Coded], found: Measured, allowed: Sequence[Allowed | None]) -> Ids:
+def _listed(held: Sequence[Coded], found: Measured, allowed: Sequence[AllowedChunks | None]) -> Ids:
     let = np.ones(len(found.ids), np.bool_)
     for store, each in enumerate(allowed):
         if each is not None:
@@ -109,13 +109,13 @@ def _listed(held: Sequence[Coded], found: Measured, allowed: Sequence[Allowed | 
     return np.flatnonzero(let)
 
 
-def _passing(held: Sequence[Coded], found: Measured, want: int, allowed: Sequence[Allowed | None]) -> Ids:
+def _passing(held: Sequence[Coded], found: Measured, want: int, allowed: Sequence[AllowedChunks | None]) -> Ids:
     within = np.cumsum(np.bincount(found.distance, minlength=1))
     counts = ints(within)
     kept: list[Ids] = [np.zeros(0, np.int64)]
     passed, low, n = 0, 0, want
     while n <= SCAN_SHARE * len(found.ids):
-        high = min(int(np.searchsorted(within, n)), len(within) - 1)
+        high = int(np.searchsorted(within, n))
         band = np.flatnonzero(
             np.logical_and(np.greater_equal(found.distance, low), np.less_equal(found.distance, high))
         )
@@ -128,7 +128,7 @@ def _passing(held: Sequence[Coded], found: Measured, want: int, allowed: Sequenc
     return _listed(held, found, allowed)
 
 
-def _shortlist(held: Sequence[Coded], query: Floats, want: int, allowed: Sequence[Allowed | None]) -> Candidates:
+def _shortlist(held: Sequence[Coded], query: Floats, want: int, allowed: Sequence[AllowedChunks | None]) -> Candidates:
     found = _measured(held, query)
     every = np.arange(len(found.ids))
     among = _passing(held, found, want, allowed) if any(each is not None for each in allowed) else every

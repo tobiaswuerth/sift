@@ -1,23 +1,27 @@
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError
+from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.fields import listed
 from sift.api.filters import Filter, Operator
 from sift.api.indexing import IndexCollections
 from sift.api.search import SORT, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
+from sift.app import searching
 from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.search import search
-from sift.app.vsearch import Asked, vsearch
+from sift.app.vsearch import Asked, Guarded, vsearch
 from sift.storage.database import Reading
 from sift.storage.vectors import documents_embedded, vectors_of
+from tests.allowed import Chosen
 from tests.damage import damage_table
 from tests.models import Hashed
 
@@ -166,3 +170,23 @@ def test_a_store_lost_while_its_filter_is_checked_or_listed_is_passed_over(tmp_p
     assert [each.collection for each in found.unsearched] == ["first"]
     assert found.hits
     assert all(hit.id.startswith("second/even/") for hit in found.hits)
+
+
+def test_once_a_store_is_lost_no_other_store_is_checked_or_listed_for_that_round(home: Path) -> None:
+    chosen = Chosen(np.zeros(0, np.int64))
+    with ExitStack() as cleanup:
+        kept = searching.opened(cleanup, searching.collections_of(home, None), lambda _: None)
+        guarded = Guarded(kept, kept.searching[0], chosen, [True])
+        assert guarded.listed().tolist() == []
+        assert guarded.checked(np.array([1, 2], np.int64)).tolist() == [False, False]
+    assert (chosen.asked, chosen.listings) == ([], [])
+
+
+def test_work_on_a_store_already_dropped_is_not_done(home: Path) -> None:
+    done: list[bool] = []
+    with ExitStack() as cleanup:
+        kept = searching.opened(cleanup, searching.collections_of(home, None), lambda _: None)
+        (each,) = kept.searching
+        kept.dropped(each, StoreUnavailableError("gone", None))
+        assert kept.guarded(each, lambda: done.append(True)) is None
+    assert done == []

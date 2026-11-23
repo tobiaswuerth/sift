@@ -53,6 +53,8 @@ def test_the_chunks_a_condition_lets_through_are_checked_once_and_listed_in_orde
         assert len(allowed.seen) == 3
         assert allowed.checked(np.array([long[0], 10**15], np.int64)).tolist() == [True, False]
         assert allowed.listed().tolist() == sorted(long)
+        documents = np.array([ids["notes/plain.md"], ids["papers/long.md"], ids["papers/long.md"]], np.int64)
+        assert allowed.documents(documents).tolist() == [False, True, True]
         assert allowed.listed() is allowed.listed()
     assert len(long) > 1
 

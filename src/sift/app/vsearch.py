@@ -15,6 +15,7 @@ from sift.domain.codec.codes import Floats, Halves
 from sift.domain.query.filters import Condition
 from sift.domain.rank.best import Best, offered, ranked
 from sift.inference.models import Models
+from sift.retrieval.allowed import AllowedChunks
 from sift.retrieval.vector.nearest import RESCORE, Coded, Near, Reads, coded, nearest
 from sift.storage.database import Reading
 from sift.storage.documents import documents_of
@@ -114,18 +115,18 @@ def _nearest[S](
 class Guarded[S]:
     kept: searching.Kept[S]
     each: searching.Searching[S]
-    allowed: Passing
+    allowed: AllowedChunks
     lost: list[bool]
 
     def checked(self, ids: Ids) -> Mask:
-        found = self.kept.guarded(self.each, partial(self.allowed.checked, ids))
+        found = None if self.lost else self.kept.guarded(self.each, partial(self.allowed.checked, ids))
         if found is None:
             self.lost.append(True)
             return np.zeros(len(ids), np.bool_)
         return found
 
     def listed(self) -> Ids:
-        found = self.kept.guarded(self.each, self.allowed.listed)
+        found = None if self.lost else self.kept.guarded(self.each, self.allowed.listed)
         if found is None:
             self.lost.append(True)
             return np.zeros(0, np.int64)
