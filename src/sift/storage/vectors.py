@@ -5,6 +5,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sift.api.errors import StoreUnavailableError
+from sift.api.ids import ChunkId, DocumentId
 from sift.domain.arrays import STORED_HALF, Ids, among, ascending, distinct, ints
 from sift.domain.codec.codes import MOST_BITS, Bits, Halves, code_bytes, codes, width_of
 from sift.domain.errors import DamagedError
@@ -27,7 +28,7 @@ CODES_REMEDY = "run sift embed --reset, which embeds every collection again"
 
 
 class Pending(NamedTuple):
-    chunk: int
+    chunk: ChunkId
     title: str
     text: str
     first: bool
@@ -39,8 +40,8 @@ class VectorsPut(NamedTuple):
 
 
 class Waiting(NamedTuple):
-    chunk: int
-    document: int
+    chunk: ChunkId
+    document: DocumentId
     start: int
     length: int
     first: int
@@ -53,7 +54,7 @@ class ChunkText(NamedTuple):
 
 
 class VectorRow(NamedTuple):
-    chunk: int
+    chunk: ChunkId
     vector: bytes
 
 

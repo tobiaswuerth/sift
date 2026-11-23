@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
+from sift.api.ids import DocumentId
 from sift.api.search import Unsearched
 from sift.app.documents import place, resolved_at
 from sift.app.documents import unknown as documents_unknown
@@ -56,7 +57,7 @@ class Note:
     def name(self) -> str:
         return PurePosixPath(self.path).stem
 
-    def find(self, transaction: Reading) -> int:
+    def find(self, transaction: Reading) -> DocumentId:
         found = stored(transaction, self.path, self.key)
         if found is None:
             raise documents_unknown(self.id)
@@ -141,9 +142,9 @@ def _by_id(home: Path, spec: str) -> Note:
     return read_in(chosen, read)
 
 
-def linking(resolver: Resolver, document: int, wanted: str | None) -> dict[int, list[LinkRow]]:
+def linking(resolver: Resolver, document: DocumentId, wanted: str | None) -> dict[DocumentId, list[LinkRow]]:
     keys = keys_of(resolver.transaction, document)
-    found: dict[int, list[LinkRow]] = {}
+    found: dict[DocumentId, list[LinkRow]] = {}
     for row in links_into(resolver.transaction, keys, document, wanted):
         how = resolver.of(row)
         if how.via in LEADING and how.documents == (document,):
@@ -151,7 +152,7 @@ def linking(resolver: Resolver, document: int, wanted: str | None) -> dict[int, 
     return found
 
 
-def written(transaction: Reading, target: str, wanted: str | None) -> set[int]:
+def written(transaction: Reading, target: str, wanted: str | None) -> set[DocumentId]:
     want = stem(target.lstrip("/"))
     rows = links_keyed(transaction, name_key(target.rsplit("/", 1)[-1]), wanted)
     return {row.document for row in rows if stem(link_path(row.path, row.kind, row.target)) == want}

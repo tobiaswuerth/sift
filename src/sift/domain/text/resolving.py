@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
+from sift.api.ids import DocumentId
 from sift.domain.text.links import MARKDOWN, LinkKind, folded
 
 RELATIVE = ("./", "../")
@@ -23,14 +24,14 @@ LEADING = frozenset({Via.PATH, Via.NAME, Via.ALIAS})
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
-    document: int
+    document: DocumentId
     path: str
 
 
 @dataclass(frozen=True, slots=True)
 class Resolution:
     via: Via
-    documents: tuple[int, ...]
+    documents: tuple[DocumentId, ...]
 
 
 UNRESOLVED = Resolution(Via.UNRESOLVED, ())

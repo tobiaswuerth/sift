@@ -47,7 +47,7 @@ MOST_ROW = (1 << 63) - 1
 
 class Span(NamedTuple):
     id: int
-    document: int
+    document: DocumentId
     start: int
     length: int
 

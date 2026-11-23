@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from sift.api.ids import ChunkId, DocumentId
 from sift.domain.arrays import Ascending, Ids, Scores, among, distinct, ints
 from sift.domain.query.expressions import Expression, Leaf, Phrase, Prefix, Term, leaves
 from sift.domain.rank.best import Best, may_reach, offered, ranked
@@ -40,8 +41,8 @@ class Searched:
 
 @dataclass(frozen=True, slots=True)
 class FoundChunk:
-    chunk: int
-    document: int
+    chunk: ChunkId
+    document: DocumentId
     score: float
 
 
@@ -251,7 +252,7 @@ def searched(held: Prepared, query: Query, best: Best, tuning: Tuning = TUNING, 
 
 def found_in(best: Best) -> tuple[FoundChunk, ...]:
     return tuple(
-        FoundChunk(chunk, document, score)
+        FoundChunk(ChunkId(chunk), DocumentId(document), score)
         for (chunk, score), document in zip(ranked(best), ints(best.documents), strict=True)
     )
 

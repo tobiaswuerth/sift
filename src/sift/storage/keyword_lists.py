@@ -4,6 +4,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from sift.api.ids import DocumentId
 from sift.domain.arrays import Ids
 from sift.storage.database import Reading, rows
 
@@ -58,7 +59,7 @@ class Volume(NamedTuple):
 
 class Owner(NamedTuple):
     id: int
-    document: int
+    document: DocumentId
 
 
 class LengthsRow(NamedTuple):

@@ -2,6 +2,7 @@ import json
 from collections.abc import Sequence
 from typing import NamedTuple
 
+from sift.api.ids import DocumentId
 from sift.domain.text.links import LinkKind, NameKind
 from sift.domain.text.resolving import Candidate
 from sift.storage.database import Count, KeyRow, Reading, rows
@@ -31,12 +32,12 @@ DOUBTFUL = """SELECT l.document, s.path, l.field, l.line, l.kind, l.target, l.ke
 
 class NameRow(NamedTuple):
     kind: str
-    document: int
+    document: DocumentId
     path: str
 
 
 class LinkRow(NamedTuple):
-    document: int
+    document: DocumentId
     path: str
     field: str | None
     line: int
@@ -48,7 +49,7 @@ class LinkRow(NamedTuple):
 
 
 class Titled(NamedTuple):
-    document: int
+    document: DocumentId
     path: str
     key: str
     title: str
@@ -65,7 +66,7 @@ def _links(found: list[LinkRow]) -> list[LinkRow]:
     return [each._replace(kind=LinkKind(each.kind)) for each in found]
 
 
-def links_out(transaction: Reading, document: int, field: str | None) -> list[LinkRow]:
+def links_out(transaction: Reading, document: DocumentId, field: str | None) -> list[LinkRow]:
     return _links(rows(transaction, LinkRow, OUT, {"document": document, "field": field}))
 
 
@@ -78,11 +79,11 @@ def links_keyed(transaction: Reading, key: str, field: str | None) -> list[LinkR
     return _links(rows(transaction, LinkRow, KEYED, {"key": key, "field": field}))
 
 
-def keys_of(transaction: Reading, document: int) -> list[str]:
+def keys_of(transaction: Reading, document: DocumentId) -> list[str]:
     return [each.key for each in rows(transaction, KeyRow, KEYS, (document,))]
 
 
-def links_into(transaction: Reading, keys: Sequence[str], document: int, field: str | None) -> list[LinkRow]:
+def links_into(transaction: Reading, keys: Sequence[str], document: DocumentId, field: str | None) -> list[LinkRow]:
     asked = {"keys": json.dumps(list(keys)), "document": document, "field": field}
     return _links(rows(transaction, LinkRow, INTO, asked))
 

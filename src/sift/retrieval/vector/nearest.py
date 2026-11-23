@@ -5,6 +5,7 @@ from typing import NamedTuple
 import numpy as np
 from numpy.typing import NDArray
 
+from sift.api.ids import ChunkId
 from sift.domain.arrays import Ids, Mask, ascending, distinct, floats, ints
 from sift.domain.codec.codes import (
     MOST_BITS,
@@ -45,7 +46,7 @@ class Coded:
 
 
 class Near(NamedTuple):
-    chunk: int
+    chunk: ChunkId
     score: float
 
 
@@ -186,4 +187,5 @@ def nearest(held: Sequence[Coded], query: Floats, k: int, reads: Reads, rescore:
         scored.append(rows.astype(np.float32) @ query if len(ids) else np.zeros(0, np.float32))
     ids, scores = np.concatenate(found), np.concatenate(scored)
     order = np.lexsort((ids, -scores))[:k]
-    return tuple(Near(chunk, score) for chunk, score in zip(ints(ids[order]), floats(scores[order]), strict=True))
+    paired = zip(ints(ids[order]), floats(scores[order]), strict=True)
+    return tuple(Near(ChunkId(chunk), score) for chunk, score in paired)

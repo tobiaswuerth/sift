@@ -74,7 +74,7 @@ def test_a_search_out_of_time_returns_the_best_it_found_scored_exactly(seed: int
         assert (exact.cut, cut.cut) == (False, True)
         assert 0 < len(cut.best.chunks) <= len(exact.best.chunks)
         scores = dict(zip(ints(exact.best.chunks), floats(exact.best.scores), strict=True))
-        everything = {each.chunk: each.score for each in search(stores, Term("w0"), 10_000)}
+        everything = {int(each.chunk): each.score for each in search(stores, Term("w0"), 10_000)}
         assert all(
             everything[chunk] == score
             for chunk, score in zip(ints(cut.best.chunks), floats(cut.best.scores), strict=True)

@@ -16,7 +16,7 @@ WIDER = 2
 
 @dataclass(frozen=True, slots=True)
 class Retrieved:
-    chunk: int
+    chunk: ChunkId
     hit: Hit
     fields: Fields
 

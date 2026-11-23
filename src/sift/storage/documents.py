@@ -187,8 +187,8 @@ def fields_by_document(transaction: Reading, documents: Sequence[int]) -> dict[i
 
 
 class ChunkOwner(NamedTuple):
-    chunk: int
-    document: int
+    chunk: ChunkId
+    document: DocumentId
 
 
 def documents_of(transaction: Reading, chunks: Sequence[int]) -> dict[int, int]:

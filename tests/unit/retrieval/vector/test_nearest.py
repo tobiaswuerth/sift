@@ -7,6 +7,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from numpy.typing import NDArray
 
+from sift.api.ids import ChunkId
 from sift.domain.arrays import Ids, floats, ints
 from sift.domain.codec.codes import Bits, Floats, Halves, codes
 from sift.retrieval.vector.nearest import SCAN_SHARE, SHORTLIST, Coded, ExactRead, Near, Reads, coded, nearest
@@ -40,7 +41,7 @@ def brute(exact: list[tuple[Ids, Halves]], query: Floats, k: int) -> list[Near]:
     ids = np.concatenate([each for each, _ in exact])
     scores = np.concatenate([rows.astype(np.float32) @ query for _, rows in exact])
     order = np.lexsort((ids, -scores))[:k]
-    return [Near(chunk, score) for chunk, score in zip(ints(ids[order]), floats(scores[order]), strict=True)]
+    return [Near(ChunkId(chunk), score) for chunk, score in zip(ints(ids[order]), floats(scores[order]), strict=True)]
 
 
 def reader(exact: list[tuple[Ids, Halves]]) -> ExactRead:
@@ -140,7 +141,9 @@ def staged(exact: list[tuple[Ids, Halves]], query: Floats, k: int, rescore: int)
     best = short[np.lexsort((ids[short], -by_bits))[:want]]
     scores = rows[best] @ query
     order = best[np.lexsort((ids[best], -scores))[:k]]
-    return [Near(chunk, score) for chunk, score in zip(ints(ids[order]), floats(rows[order] @ query), strict=True)]
+    return [
+        Near(ChunkId(chunk), score) for chunk, score in zip(ints(ids[order]), floats(rows[order] @ query), strict=True)
+    ]
 
 
 @settings(max_examples=40, deadline=None)

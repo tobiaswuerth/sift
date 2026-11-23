@@ -34,10 +34,10 @@ FURTHER = 2
 class Out:
     row: LinkRow
     how: Resolution
-    through: int | None
+    through: DocumentId | None
 
 
-def _out(resolver: Resolver, document: int, request: ShowLinks) -> list[Out]:
+def _out(resolver: Resolver, document: DocumentId, request: ShowLinks) -> list[Out]:
     first = [Out(row, resolver.of(row), None) for row in links_out(resolver.transaction, document, request.field)]
     found = list(first)
     if request.depth == FURTHER:
@@ -54,12 +54,12 @@ def _out(resolver: Resolver, document: int, request: ShowLinks) -> list[Out]:
 
 @dataclass(frozen=True, slots=True)
 class In:
-    document: int
+    document: DocumentId
     rows: list[LinkRow]
-    through: int | None
+    through: DocumentId | None
 
 
-def _in(resolver: Resolver, document: int, request: ShowLinks) -> list[In]:
+def _in(resolver: Resolver, document: DocumentId, request: ShowLinks) -> list[In]:
     first = linking(resolver, document, request.field)
     found = [In(source, rows, None) for source, rows in first.items()]
     if request.depth == FURTHER:

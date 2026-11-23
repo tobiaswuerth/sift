@@ -5,6 +5,7 @@ from types import MappingProxyType
 
 from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.filters import Filter
+from sift.api.ids import DocumentId
 from sift.api.search import Options
 from sift.app.notes import NOTE_REMEDY, Note, Resolver, linking, note_of, read_in, target_of, written
 from sift.domain.query.filters import Condition, Linked, LinkFilter, condition, linkings, readable
@@ -118,7 +119,7 @@ def narrowing(
     )
 
 
-def _document(note: Note | None, one: Collection, transaction: Reading) -> int | None:
+def _document(note: Note | None, one: Collection, transaction: Reading) -> DocumentId | None:
     if note is None or note.collection.id != one.id:
         return None
     try:
@@ -127,14 +128,14 @@ def _document(note: Note | None, one: Collection, transaction: Reading) -> int |
         return None
 
 
-def _into(resolver: Resolver, one: Collection, pointed: Pointed, field: str | None) -> set[int]:
+def _into(resolver: Resolver, one: Collection, pointed: Pointed, field: str | None) -> set[DocumentId]:
     if pointed.note is None:
         return written(resolver.transaction, pointed.target, field)
     document = _document(pointed.note, one, resolver.transaction)
     return set() if document is None else set(linking(resolver, document, field))
 
 
-def _out_of(resolver: Resolver, one: Collection, pointed: Pointed) -> set[int]:
+def _out_of(resolver: Resolver, one: Collection, pointed: Pointed) -> set[DocumentId]:
     document = _document(pointed.note, one, resolver.transaction)
     if document is None:
         return set()
@@ -142,8 +143,8 @@ def _out_of(resolver: Resolver, one: Collection, pointed: Pointed) -> set[int]:
     return {how.documents[0] for how in map(resolver.of, rows) if how.via in LEADING} - {document}
 
 
-def _within(found: Narrowing, one: Collection, resolver: Resolver) -> list[int] | None:
-    kept: set[int] | None = None
+def _within(found: Narrowing, one: Collection, resolver: Resolver) -> list[DocumentId] | None:
+    kept: set[DocumentId] | None = None
     if found.links_to is not None:
         kept = {document for each in found.links_to for document in _into(resolver, one, each, None)}
     if found.linked_from is not None:
@@ -152,7 +153,7 @@ def _within(found: Narrowing, one: Collection, resolver: Resolver) -> list[int] 
     return None if kept is None else sorted(kept)
 
 
-def _left_out(left_out: LeftOut | None, one: Collection, resolver: Resolver) -> list[int]:
+def _left_out(left_out: LeftOut | None, one: Collection, resolver: Resolver) -> list[DocumentId]:
     if left_out is None:
         return []
     document = _document(left_out.note, one, resolver.transaction)

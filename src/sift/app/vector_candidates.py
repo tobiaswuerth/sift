@@ -5,7 +5,7 @@ from functools import partial
 import numpy as np
 
 from sift.api.errors import InvalidRequestError, StoreUnavailableError
-from sift.api.ids import owner
+from sift.api.ids import ChunkId, owner
 from sift.api.search import Hit, Options
 from sift.app import hits
 from sift.app.searching import Open, Ranked, Searching, despite_losses
@@ -94,7 +94,7 @@ def _best(wanted: Best, near: tuple[Near, ...], owners: dict[int, int]) -> tuple
     chunks = np.array([each.chunk for each in near], np.int64)
     documents = np.array([owners[each.chunk] for each in near], np.int64)
     scores = np.array([each.score for each in near], np.float64)
-    return tuple(Near(chunk, score) for chunk, score in ranked(offered(wanted, chunks, documents, scores)))
+    return tuple(Near(ChunkId(chunk), score) for chunk, score in ranked(offered(wanted, chunks, documents, scores)))
 
 
 def _documents(stores: Open, count: Callable[[Reading], int]) -> int:
