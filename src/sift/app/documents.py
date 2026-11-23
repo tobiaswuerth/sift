@@ -5,10 +5,11 @@ from pathlib import Path
 
 from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound
 from sift.api.errors import InvalidRequestError, NotFoundError, SiftError
+from sift.domain.query import fields as shown
 from sift.domain.text.lines import line_range, lines_of
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Reading, reading
-from sift.storage.documents import Stored, paths_named, stored
+from sift.storage.documents import Stored, fields_of, paths_named, stored
 from sift.storage.store import open_store, unavailable_if_damaged
 
 MOST_LISTED = 5
@@ -65,7 +66,8 @@ def _resolved(transaction: Reading, id_: str, relative: str, *, absolute: bool) 
     return found
 
 
-def _document(known: Sequence[Collection], id_: str, span: tuple[int, int] | None) -> DocumentText:
+def _document(known: Sequence[Collection], id_: str, request: GetDocuments) -> DocumentText:
+    span = line_range(request.lines) if request.lines is not None else None
     chosen, relative = _place(known, id_)
     with (
         unavailable_if_damaged(chosen.store),
@@ -74,17 +76,21 @@ def _document(known: Sequence[Collection], id_: str, span: tuple[int, int] | Non
     ):
         found = _resolved(transaction, id_, relative, absolute=Path(id_).is_absolute())
     whole = f"{chosen.name}/{found.path}"
-    return DocumentText(whole, found.title, lines_of(found.text, *span, whole) if span else found.text)
+    text = lines_of(found.text, *span, whole) if span else found.text
+    fields = shown.picked(fields_of(found.fields), request.fields) if request.fields else None
+    return DocumentText(whole, found.title, text, fields)
 
 
 def documents(home: Path, request: GetDocuments) -> Documents:
-    span = line_range(request.lines) if request.lines is not None else None
+    shown.checked(request.fields, None)
+    if request.lines is not None:
+        line_range(request.lines)
     known = known_collections(home)
     found: list[DocumentText] = []
     unfound: list[Unfound] = []
     for id_ in request.ids:
         try:
-            found.append(_document(known, id_, span))
+            found.append(_document(known, id_, request))
         except SiftError as error:
             unfound.append(Unfound(id_, error.message, error.remedy))
     return Documents(tuple(found), tuple(unfound))

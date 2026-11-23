@@ -27,6 +27,17 @@ def sift(home: Path, *args: str, model: str = "", reranker: str = "") -> subproc
     )
 
 
+def hits_of(ran: subprocess.CompletedProcess[str]) -> list[dict[str, object]]:
+    return cast("dict[str, list[dict[str, object]]]", json.loads(ran.stdout))["hits"]
+
+
+def narrowed_searches_run(home: Path) -> None:
+    options = ("--path", "sub/*", "-f", "year!=1999", "--fields", "*", "--sort=-year", "--json")
+    narrowed = hits_of(sift(home, "search", "brush OR learning", *options))
+    assert [(hit["id"], hit["fields"]) for hit in narrowed] == [("notes/sub/brush.md", {})]
+    assert sift(home, "get", "notes/brush.md", "--fields", "*").stdout == "# Brush\n"
+
+
 def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path: Path) -> None:
     home, notes = tmp_path / "home", tmp_path / "Notizen Müller"
     (notes / "sub").mkdir(parents=True)
@@ -63,6 +74,7 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     timed = cast("dict[str, object]", json.loads(sift(home, "search", "speed*", "--budget", "5", "--json").stdout))
     assert timed["partial"] is False
     assert cast("list[dict[str, object]]", timed["hits"])[0]["id"] == "notes/rl.md"
+    narrowed_searches_run(home)
 
     reranker = str(tiny_reranker(tmp_path / "models"))
     model = str(tiny_model(tmp_path / "models"))
@@ -72,6 +84,8 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     assert "Loading" not in embedded.stderr
     near = sift(home, "vsearch", "learning", "-k", "1", "--json", model=model)
     assert len(cast("dict[str, list[object]]", json.loads(near.stdout))["hits"]) == 1
+    kept = sift(home, "vsearch", "learning", "--path", "sub/*", "--json", model=model)
+    assert [hit["id"] for hit in hits_of(kept)] == ["notes/sub/brush.md"]
     asked = sift(home, "query", "reward shaping", "-k", "1", model=model, reranker=reranker)
     assert (asked.returncode, asked.stdout.split("\n")[1].strip().startswith("notes/")) == (0, True)
     assert asked.stderr.startswith("1 result  \N{MIDDLE DOT}  hybrid  \N{MIDDLE DOT}  1 collection")

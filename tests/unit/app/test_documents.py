@@ -132,3 +132,15 @@ def test_without_any_collection_every_id_is_unknown(tmp_path: Path) -> None:
     result = documents(tmp_path / "empty", GetDocuments(("notes/rl.md",)))
     assert [missing.message for missing in result.unfound] == ["unknown document 'notes/rl.md'"]
     assert not (tmp_path / "empty").exists()
+
+
+def test_the_front_matter_asked_for_comes_with_each_document(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "notes" / "dated.md", "---\ncreated: 2024-06-15\nrank: 2\n---\n# Dated\n\nText.\n")
+    index(home, IndexCollections(), lambda _: None)
+    (found,) = documents(home, GetDocuments(("notes/dated.md",), fields=("rank", "missing"))).found
+    assert found.fields == {"rank": 2}
+    (every,) = documents(home, GetDocuments(("notes/dated.md",), fields=("*",))).found
+    assert every.fields == {"created": "2024-06-15", "rank": 2}
+    assert documents(home, GetDocuments(("notes/dated.md",))).found[0].fields is None
+    with pytest.raises(InvalidRequestError, match="names no field"):
+        documents(home, GetDocuments(("notes/dated.md",), fields=("",)))

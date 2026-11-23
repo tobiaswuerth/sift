@@ -11,7 +11,7 @@ from sift.api.fields import Fields, FieldValue
 from sift.api.ids import ChunkId, owner
 from sift.api.search import MOST_HITS, Hit, SearchHybrid, SearchResult
 from sift.app import searching
-from sift.app.search import Wanted, found
+from sift.app.search import Keywords, Wanted, found
 from sift.app.vsearch import (
     ASKED,
     QUERY_REMEDY,
@@ -26,12 +26,14 @@ from sift.app.vsearch import (
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.codes import Floats
 from sift.domain.query.expressions import NOTHING, Expression
+from sift.domain.query.filters import Condition
 from sift.domain.query.grammar import parsed
 from sift.domain.rank.best import Best
 from sift.domain.rank.hybrid import blend, named, passage, standing_out, words, work_of
 from sift.inference.models import Models
-from sift.retrieval.keyword.lists import Opened, opened
+from sift.retrieval.keyword.lists import opened
 from sift.retrieval.keyword.search import TUNING, never
+from sift.retrieval.vector.nearest import within
 from sift.storage.database import Reading
 from sift.storage.documents import fields_by_document, passages, texts
 from sift.storage.keywords import refuse_stale
@@ -42,7 +44,7 @@ CANDIDATES_REMEDY = f"ask for 1 to {MOST_HITS:,} candidates; fewer than -k are r
 
 @dataclass(frozen=True, slots=True)
 class Both:
-    keywords: Opened
+    keywords: Keywords
     vectors: Held
 
 
@@ -56,13 +58,15 @@ class Candidate:
 type Kept = searching.Kept[Both]
 
 
-def _both(model: str, transaction: Reading) -> Both:
+def _both(model: str, asked: Condition | None, transaction: Reading) -> Both:
     refuse_stale(transaction)
     vectors = embedded_by(model, transaction)
-    return Both(opened(transaction), no_vectors() if vectors is None else vectors)
+    allowed = searching.allowed(transaction, asked)
+    held = no_vectors() if vectors is None else vectors
+    return Both(Keywords(opened(transaction), allowed), held if allowed is None else Held(within(held.coded, allowed)))
 
 
-def _keywords(both: Both) -> Opened:
+def _keywords(both: Both) -> Keywords:
     return both.keywords
 
 
@@ -87,7 +91,7 @@ def _candidates(kept: Kept, request: SearchHybrid, query: Floats | None, asked: 
     return list(dict.fromkeys([each.chunk for each in keyword.found] + [each.chunk for each in semantic]))
 
 
-def _read(one: searching.Searching[Both], chunks: Sequence[int]) -> list[Candidate]:
+def _read(one: searching.Searching[Both], chunks: Sequence[int], request: SearchHybrid) -> list[Candidate]:
     held_passages = passages(one.transaction, [ChunkId(chunk) for chunk in chunks])
     documents = sorted({each.document for each in held_passages.values()})
     whole, fields = texts(one.transaction, documents), fields_by_document(one.transaction, documents)
@@ -100,6 +104,7 @@ def _read(one: searching.Searching[Both], chunks: Sequence[int]) -> list[Candida
                 f"{each.first_line}-{each.last_line}",
                 0.0,
                 whole[each.document][each.start : each.start + each.length],
+                fields=fields[each.document] if searching.fielded(request) else None,
             ),
             fields[each.document],
         )
@@ -114,7 +119,7 @@ def _cosines(one: searching.Searching[Both], chunks: Sequence[int], query: Float
 
 
 def _gathered(
-    kept: Kept, chunks: list[int], query: Floats | None, asked: Asked
+    kept: Kept, chunks: list[int], query: Floats | None, asked: Asked, request: SearchHybrid
 ) -> tuple[list[Candidate], dict[int, float]] | None:
     candidates: list[Candidate] = []
     cosines: dict[int, float] = {}
@@ -122,7 +127,7 @@ def _gathered(
         mine = [chunk for chunk in chunks if owner(chunk) == one.collection.id]
         if not mine:
             continue
-        read = kept.guarded(one, partial(_read, one, mine))
+        read = kept.guarded(one, partial(_read, one, mine, request))
         if read is None:
             return None
         near_by = (
@@ -206,28 +211,30 @@ def _answered(kept: Kept, request: SearchHybrid, models: Models, asked: Asked) -
         alike(kept, _vectors, models.name, query)
     while True:
         chunks = _candidates(kept, request, query, asked)
-        gathered = None if chunks is None else _gathered(kept, chunks, query, asked)
+        gathered = None if chunks is None else _gathered(kept, chunks, query, asked, request)
         if gathered is None:
             continue
         candidates, cosines = gathered
         if not candidates:
             return []
         ranked = _ordered(request, candidates, _scored(models, request, candidates, cosines))
-        return [(each.chunk, replace(each.hit, text=None) if request.compact else each.hit) for each in ranked]
+        answered = [(each.chunk, replace(each.hit, text=None) if request.compact else each.hit) for each in ranked]
+        return searching.presented(answered, request)
 
 
-def _checked(request: SearchHybrid) -> None:
-    searching.checked_k(request.k)
+def _checked(request: SearchHybrid) -> Condition | None:
+    condition = searching.checked(request)
     if not request.query.strip():
         raise InvalidRequestError("an empty query finds nothing", EMPTY_REMEDY)
     if not 1 <= request.candidates <= MOST_HITS:
         said = f"--candidates {request.candidates:,} is outside 1 to {MOST_HITS:,}"
         raise InvalidRequestError(said, CANDIDATES_REMEDY)
+    return condition
 
 
 def query(home: Path, request: SearchHybrid, models: Models, asked: Asked = ASKED) -> SearchResult:
-    _checked(request)
+    condition = _checked(request)
     collections = searching.collections_of(home, request.collection)
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, collections, partial(_both, models.name))
+        kept = searching.opened(cleanup, collections, partial(_both, models.name, condition))
         return searching.result(kept, _answered(kept, request, models, asked), partial=False)

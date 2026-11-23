@@ -12,9 +12,10 @@ from sift.api.search import Hit, SearchResult, SearchVectors
 from sift.app import searching
 from sift.domain.arrays import Ids
 from sift.domain.codec.codes import Floats, Halves
+from sift.domain.query.filters import Condition
 from sift.domain.rank.best import Best, offered, ranked
 from sift.inference.models import Models
-from sift.retrieval.vector.nearest import RESCORE, Coded, Near, coded, nearest
+from sift.retrieval.vector.nearest import RESCORE, Coded, Near, coded, nearest, within
 from sift.storage.database import Reading
 from sift.storage.documents import documents_of
 from sift.storage.vectors import EMBED_REMEDY, codes_of, documents_embedded, left, model_of, vectors_of, width_held
@@ -67,6 +68,12 @@ def held(model: str, transaction: Reading) -> Held:
     if left(transaction):
         raise StoreUnavailableError("it holds no vectors yet", UNEMBEDDED_REMEDY)
     return no_vectors()
+
+
+def held_within(model: str, asked: Condition | None, transaction: Reading) -> Held:
+    found = held(model, transaction)
+    allowed = searching.allowed(transaction, asked)
+    return found if allowed is None else Held(within(found.coded, allowed))
 
 
 def query_vector(models: Models, text: str) -> Floats:
@@ -158,18 +165,18 @@ def _itself(held: Held) -> Held:
 def _answered(kept: Kept, request: SearchVectors, query: Floats, asked: Asked) -> list[tuple[int, Hit]]:
     while True:
         found = near(kept, _itself, Best(request.k, not request.all_passages), query, asked)
-        shown = None if found is None else searching.hits(kept, found, compact=request.compact)
+        shown = None if found is None else searching.hits(kept, found, request)
         if shown is not None:
             return shown
 
 
 def vsearch(home: Path, request: SearchVectors, models: Models, asked: Asked = ASKED) -> SearchResult:
-    searching.checked_k(request.k)
+    condition = searching.checked(request)
     if not request.query.strip():
         raise InvalidRequestError("an empty query finds nothing", EMPTY_REMEDY)
     collections = searching.collections_of(home, request.collection)
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, collections, partial(held, models.name))
+        kept = searching.opened(cleanup, collections, partial(held_within, models.name, condition))
         if not any(len(each.held.coded.ids) for each in kept.searching):
             return searching.result(kept, (), partial=False)
         query = query_vector(models, request.query)

@@ -104,3 +104,8 @@ def nearest(held: Sequence[Coded], query: Floats, k: int, exact: Exact, rescore:
     ids, scores = np.concatenate(found), np.concatenate(scored)
     order = np.lexsort((ids, -scores))[:k]
     return tuple(Near(chunk, score) for chunk, score in zip(ints(ids[order]), floats(scores[order]), strict=True))
+
+
+def within(held: Coded, allowed: Ids) -> Coded:
+    keep = np.isin(held.ids, allowed)
+    return coded(held.ids[keep], held.bits[keep], held.width)

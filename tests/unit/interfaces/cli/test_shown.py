@@ -163,3 +163,19 @@ def test_a_hit_names_its_copies_in_other_collections_under_its_place() -> None:
         "         also more/copy.md, papers/halo.md",
     )
     assert " hybrid " in shown.messages[-1]
+
+
+def test_a_hit_shows_the_front_matter_asked_for_under_its_place() -> None:
+    hit = Hit("notes/halo.md", "Halo", "1-3", 3.25, None, fields={"created": "2024-06-15", "tags": ["a", "é"], "n": 2})
+    shown = hits(SearchResult((hit,), 1, ()), 0.25, "linux", PLAIN)
+    assert shown.results == (
+        "1  3.25  Halo",
+        "         notes/halo.md:1-3",
+        '         created: 2024-06-15  tags: ["a", "é"]  n: 2',
+    )
+    assert len(hits(SearchResult((dataclasses.replace(hit, fields={}),), 1, ()), 0.25, "linux", PLAIN).results) == 2
+
+
+def test_a_document_shows_the_front_matter_asked_for_before_its_text() -> None:
+    found = DocumentText("notes/a.md", "A", "# A\n", fields={"rank": 2, "tags": ["x"]})
+    assert documents(Documents((found,), ()), "linux", PLAIN).results == ("rank: 2", 'tags: ["x"]', "", "# A")

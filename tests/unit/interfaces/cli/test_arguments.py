@@ -6,8 +6,9 @@ from typing import Annotated
 import pytest
 
 from sift.api.collections import AddCollection, ShowStatus, TitleFrom
-from sift.api.described import Help, Short
+from sift.api.described import Help, Read, Short
 from sift.api.documents import GetDocuments
+from sift.api.errors import InvalidRequestError
 from sift.api.indexing import IndexCollections
 from sift.interfaces.cli.arguments import options, request_of
 
@@ -104,6 +105,34 @@ class FilledList:
     names: Annotated[tuple[str, ...], Help("names")] = ("a",)
 
 
+def numbers(text: str) -> tuple[int, ...]:
+    if not text.replace(",", "").isdigit():
+        raise InvalidRequestError(f"{text!r} holds no numbers alone", "write numbers parted by commas, e.g. 1,2")
+    return tuple(int(each) for each in text.split(","))
+
+
+@dataclass(frozen=True, slots=True)
+class Tagged:
+    tags: Annotated[tuple[int, ...], Help("numbers"), Short("-t"), Read(numbers)] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ReadAlone:
+    tag: Annotated[str, Help("a tag"), Read(numbers)] = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ReadFilled:
+    tags: Annotated[tuple[int, ...], Help("numbers"), Read(numbers)] = (1,)
+
+
+def test_a_list_read_by_a_function_is_an_option_given_as_often_as_wanted() -> None:
+    assert parsed(Tagged, []) == Tagged()
+    assert parsed(Tagged, ["-t", "1,2", "--tags", "3"]) == Tagged((1, 2, 3))
+    with pytest.raises(InvalidRequestError, match="'x' holds no numbers"):
+        parsed(Tagged, ["-t", "x"])
+
+
 @pytest.mark.parametrize(
     "request_type, refusal",
     [
@@ -116,6 +145,8 @@ class FilledList:
         (Undescribed, "Undescribed.name: no Help"),
         (OnByDefault, "OnByDefault.loud: a switch is off by default"),
         (OptionalWithAValue, "OptionalWithAValue.name: an option that may be left out has no default but None"),
+        (ReadAlone, "ReadAlone.tag: only a list is read by a function"),
+        (ReadFilled, r"ReadFilled.tags: a list read by a function has no default but \(\)"),
     ],
 )
 def test_a_field_the_command_line_cannot_take_is_refused(request_type: type[object], refusal: str) -> None:

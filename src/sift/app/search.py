@@ -9,7 +9,9 @@ from pathlib import Path
 from sift.api.errors import InvalidRequestError
 from sift.api.search import Hit, SearchKeywords, SearchResult
 from sift.app import searching
+from sift.domain.arrays import Ids
 from sift.domain.query.expressions import NOTHING, Expression
+from sift.domain.query.filters import Condition
 from sift.domain.query.grammar import parsed, relaxed
 from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Opened, opened
@@ -34,7 +36,13 @@ BUDGET_REMEDY = "give the seconds the search may take, e.g. --budget 0.5"
 type Clock = Callable[[], float]
 
 
-type Kept = searching.Kept[Opened]
+@dataclass(frozen=True, slots=True)
+class Keywords:
+    store: Opened
+    allowed: Ids | None
+
+
+type Kept = searching.Kept[Keywords]
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +59,7 @@ class Asked:
     expression: Expression
     looser: Expression | None
     wanted: Wanted
+    condition: Condition | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,19 +68,20 @@ class Ranked:
     cut: bool
 
 
-def _opened(transaction: Reading) -> Opened:
+def keywords(asked: Condition | None, transaction: Reading) -> Keywords:
     refuse_stale(transaction)
-    return opened(transaction)
+    return Keywords(opened(transaction), searching.allowed(transaction, asked))
 
 
 def found[S](
-    kept: searching.Kept[S], opened_of: Callable[[S], Opened], wanted: Wanted, expression: Expression
+    kept: searching.Kept[S], keywords_of: Callable[[S], Keywords], wanted: Wanted, expression: Expression
 ) -> Ranked | None:
     if expression == NOTHING:
         return Ranked((), cut=False)
     ready: list[tuple[searching.Searching[S], Prepared]] = []
     for one in list(kept.searching):
-        held = kept.guarded(one, partial(prepared, opened_of(one.held), expression))
+        store = keywords_of(one.held)
+        held = kept.guarded(one, partial(prepared, store.store, expression, wanted.tuning, allowed=store.allowed))
         if held is None:
             return None
         ready.append((one, held))
@@ -87,7 +97,7 @@ def found[S](
     return Ranked(found_in(best), cut)
 
 
-def _itself(store: Opened) -> Opened:
+def _itself(store: Keywords) -> Keywords:
     return store
 
 
@@ -101,7 +111,7 @@ def _searched(kept: Kept, asked: Asked) -> Ranked | None:
 def _answered(kept: Kept, asked: Asked) -> tuple[list[tuple[int, Hit]], bool]:
     while True:
         ranked = _searched(kept, asked)
-        hits = None if ranked is None else searching.hits(kept, ranked.found, compact=asked.request.compact)
+        hits = None if ranked is None else searching.hits(kept, ranked.found, asked.request)
         if ranked is not None and hits is not None:
             return hits, ranked.cut
 
@@ -116,9 +126,9 @@ def _expired(budget: float | None, clock: Clock) -> Expired:
 
 
 def _asked(request: SearchKeywords, clock: Clock, tuning: Tuning) -> Asked:
-    searching.checked_k(request.k)
+    condition = searching.checked(request)
     wanted = Wanted(request.k, not request.all_passages, tuning, _expired(request.budget, clock))
-    return Asked(request, parsed(request.query), relaxed(request.query), wanted)
+    return Asked(request, parsed(request.query), relaxed(request.query), wanted, condition)
 
 
 def search(
@@ -127,6 +137,6 @@ def search(
     asked = _asked(request, clock, tuning)
     collections = searching.collections_of(home, request.collection)
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, collections, _opened)
+        kept = searching.opened(cleanup, collections, partial(keywords, asked.condition))
         answered, cut = _answered(kept, asked)
         return searching.result(kept, answered, partial=cut)

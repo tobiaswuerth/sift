@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ascending, Ids, among, distinct, ints
+from sift.domain.arrays import Ascending, Ids, among, ascending, distinct, ints
 from sift.domain.query.expressions import Expression, Leaf, Prefix, Term, leaves
 from sift.domain.rank.best import Best, offered, ranked
 from sift.domain.rank.bm25 import Scores, idf
@@ -49,9 +49,13 @@ class Pass:
     store: Opened
     query: Query
     lists: Mapping[Leaf, Scored]
+    allowed: Ascending | None
 
 
 def _offer(work: Pass, best: Best, places: Ids, scores: Scores) -> Best:
+    if work.allowed is not None:
+        keep = among(places, work.allowed)
+        places, scores = places[keep], scores[keep]
     if not len(places):
         return best
     return offered(best, places, owners(work.store, places), scores)
@@ -171,9 +175,10 @@ class Prepared:
     store: Opened
     lists: Lists
     df: Mapping[Leaf, int]
+    allowed: Ascending | None = None
 
 
-def prepared(store: Opened, expression: Expression, tuning: Tuning = TUNING) -> Prepared:
+def prepared(store: Opened, expression: Expression, tuning: Tuning = TUNING, *, allowed: Ids | None = None) -> Prepared:
     unique = tuple(dict.fromkeys(leaves(expression)))
     lists = stored(store, _tokens(unique))
     terms = frequencies(store.transaction, [leaf.text for leaf in unique if isinstance(leaf, Term)])
@@ -185,7 +190,7 @@ def prepared(store: Opened, expression: Expression, tuning: Tuning = TUNING) -> 
         else:
             postings = materialized(store, leaf, lists, tuning.most_prefix)
             found[leaf], df[leaf] = postings, len(postings[0])
-    return Prepared(store, found, df)
+    return Prepared(store, found, df, None if allowed is None else ascending(allowed))
 
 
 def query_of(expression: Expression, each: Sequence[Prepared]) -> Query | None:
@@ -202,7 +207,7 @@ def query_of(expression: Expression, each: Sequence[Prepared]) -> Query | None:
 
 def searched(held: Prepared, query: Query, best: Best, tuning: Tuning = TUNING, expired: Expired = never) -> Searched:
     lists = {leaf: scored(held.store, query, held.lists[leaf]) for leaf in query.leaves}
-    return _searched(Pass(held.store, query, lists), best, tuning, expired)
+    return _searched(Pass(held.store, query, lists, held.allowed), best, tuning, expired)
 
 
 def found_in(best: Best) -> tuple[Found, ...]:

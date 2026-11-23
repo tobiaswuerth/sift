@@ -3,13 +3,14 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from sift.domain.arrays import last
+from sift.domain.arrays import ints, last
 from sift.domain.codec.segments import Shape
 from sift.domain.plan.segments import Policy
 from sift.domain.query.expressions import NOTHING, And, Or, Term
 from sift.domain.query.grammar import parsed
+from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Ranged, stored
-from sift.retrieval.keyword.search import Tuning, search
+from sift.retrieval.keyword.search import Tuning, found_in, prepared, query_of, search, searched
 from sift.storage.database import BATCHES, Batches
 from tests.keyword_searches import (
     MERGING,
@@ -120,3 +121,26 @@ def test_a_segment_rewritten_after_a_later_one_is_still_found_in_chunk_order() -
         assert [segment.id for segment in store.segments] != sorted(segment.id for segment in store.segments)
         for expression in (Term("w1"), Term("w2"), Term("w3")):
             same(search(stores, expression, 10), brute(held, expression, 30, by_document=True), 10, expression)
+
+
+@settings(max_examples=3)
+@given(seed=SEEDS)
+def test_only_the_chunks_allowed_are_found_as_many_as_asked_for(seed: int) -> None:
+    rng = Draws(np.random.default_rng(seed))
+    with collections([[prose(rng, 50)], [prose(rng, 30)]]) as (stores, held):
+        phrases = phrases_in(held)
+        for _ in range(20):
+            kept = {document for store in held for _, (document, _) in store.items() if rng.random() < 0.3}
+            allowed = [np.array(sorted(c for c, (d, _) in store.items() if d in kept), np.int64) for store in held]
+            expression, k = random_expression(rng, phrases), rng.choice([1, 3, 10])
+            by_document = rng.random() < 0.7
+            each = [prepared(store, expression, allowed=chunks) for store, chunks in zip(stores, allowed, strict=True)]
+            query = query_of(expression, each)
+            assert query is not None
+            best = Best(k, by_document)
+            for held_store in each:
+                best = searched(held_store, query, best).best
+            got = found_in(best)
+            every = brute(held, expression, 10**6, by_document=by_document)
+            chosen = {chunk for each in allowed for chunk in ints(each)}
+            same(got, [(chunk, score) for chunk, score in every if chunk in chosen], k, expression)

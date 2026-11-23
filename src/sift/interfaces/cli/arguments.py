@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum, StrEnum
 from typing import Annotated, cast, get_args, get_origin, get_type_hints
 
-from sift.api.described import Help, Place, Short
+from sift.api.described import Help, Place, Read, Short
 
 type Placed = Callable[[str], str]
 
@@ -20,6 +20,7 @@ class How(Enum):
     POSITION = "position"
     OPTION = "option"
     SWITCH = "switch"
+    READ = "read"
     ANY = "*"
     SOME = "+"
 
@@ -33,6 +34,7 @@ class Argument:
     how: How
     short: str | None = None
     default: object = None
+    read: Read | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +43,7 @@ class Described:
     help: Help
     place: bool
     short: str | None
+    read: Read | None
 
 
 def _refused(request: type[object], name: str, problem: str) -> TypeError:
@@ -53,7 +56,8 @@ def _described(request: type[object], name: str, hint: object) -> Described:
     if not found:
         raise _refused(request, name, "no Help")
     short = next((part.flag for part in metadata if isinstance(part, Short)), None)
-    return Described(kind, found[0], any(isinstance(part, Place) for part in metadata), short)
+    read = next((part for part in metadata if isinstance(part, Read)), None)
+    return Described(kind, found[0], any(isinstance(part, Place) for part in metadata), short, read)
 
 
 def _left_out(kind: object) -> object | None:
@@ -76,7 +80,18 @@ def _choices(kind: object) -> type[StrEnum] | None:
     return kind if isinstance(kind, type) and issubclass(kind, StrEnum) else None
 
 
-def _how(request: type[object], name: str, kind: object, default: object) -> How:
+def _read(request: type[object], name: str, kind: object, default: object) -> How:
+    if get_origin(kind) is not tuple:
+        raise _refused(request, name, "only a list is read by a function")
+    if default != ():
+        raise _refused(request, name, "a list read by a function has no default but ()")
+    return How.READ
+
+
+def _how(request: type[object], name: str, described: Described, default: object) -> How:
+    kind = described.kind
+    if described.read is not None:
+        return _read(request, name, kind, default)
     absent = default is dataclasses.MISSING
     if kind is bool:
         if default is not False:
@@ -96,14 +111,16 @@ def _how(request: type[object], name: str, kind: object, default: object) -> How
 def _argument(request: type[object], field: dataclasses.Field[object], hint: object) -> Argument:
     described = _described(request, field.name, hint)
     kind, default = described.kind, field.default
-    how = _how(request, field.name, kind, default)
-    taken = (_left_out(kind) or kind) if how is How.OPTION else str if how in (How.ANY, How.SOME) else kind
+    how = _how(request, field.name, described, default)
+    taken = (_left_out(kind) or kind) if how is How.OPTION else str if how in (How.ANY, How.SOME, How.READ) else kind
     if how is not How.SWITCH and taken not in PLAIN_KINDS and _choices(taken) is None:
         raise _refused(request, field.name, f"the command line takes no {_named(kind)}")
-    if described.short is not None and how is not How.OPTION:
+    if described.short is not None and how not in (How.OPTION, How.READ):
         raise _refused(request, field.name, "only an option given by name has a short flag")
     given = None if default is dataclasses.MISSING else default
-    return Argument(field.name, taken, described.help.text, described.place, how, described.short, given)
+    return Argument(
+        field.name, taken, described.help.text, described.place, how, described.short, given, described.read
+    )
 
 
 def arguments(request: type[object]) -> tuple[Argument, ...]:
@@ -137,6 +154,8 @@ def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placed) -> 
     choices = _choices(argument.kind)
     if argument.how is How.SWITCH:
         parser.add_argument(long, action="store_true", help=argument.help)
+    elif argument.how is How.READ:
+        parser.add_argument(*named, dest=argument.name, action="append", help=argument.help)
     elif argument.how in (How.ANY, How.SOME):
         parser.add_argument(
             argument.name, nargs=argument.how.value, type=_converter(argument, place), help=argument.help
@@ -164,6 +183,8 @@ def options(parser: argparse.ArgumentParser, request: type[object], place: Place
 def _value(argument: Argument, given: object) -> object:
     if argument.how in (How.ANY, How.SOME):
         return tuple(cast("list[str]", given))
+    if argument.read is not None:
+        return tuple(item for text in cast("list[str] | None", given) or () for item in argument.read.each(text))
     choices = _choices(argument.kind)
     return choices(given) if choices is not None and isinstance(given, str) else given
 

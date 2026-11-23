@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 
 
@@ -14,3 +15,8 @@ class Place:
 @dataclass(frozen=True, slots=True)
 class Short:
     flag: str
+
+
+@dataclass(frozen=True, slots=True)
+class Read:
+    each: Callable[[str], tuple[object, ...]]

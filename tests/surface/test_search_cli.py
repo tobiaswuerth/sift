@@ -1,6 +1,7 @@
 import io
 import json
 from pathlib import Path
+from typing import cast
 
 from sift.interfaces.cli.main import Host, run
 from sift.settings import Settings
@@ -50,6 +51,7 @@ def test_search_answers_in_json_when_asked(settings: Settings, notes: Path) -> N
                 "score": json.loads(out)["hits"][0]["score"],
                 "text": None,
                 "also": [],
+                "fields": None,
             }
         ],
         "searched": 1,
@@ -98,3 +100,23 @@ def test_a_budget_of_no_time_is_refused(settings: Settings, notes: Path) -> None
     code, out, err = ran(settings, "search", "brush", "--budget", "0")
     assert (code, out) == (1, "")
     assert "--budget 0.0 leaves no time to search" in err
+
+
+def test_search_keeps_to_front_matter_and_paths_shows_it_and_orders_by_it(settings: Settings, notes: Path) -> None:
+    searched_notes(settings, notes)
+    for name, year in (("a", 2023), ("b", 2024), ("c", 2022)):
+        (notes / "papers").mkdir(exist_ok=True)
+        text = f"---\nyear: {year}\n---\n# {name}\n\nbrush\n"
+        (notes / "papers" / f"{name}.md").write_text(text, encoding="utf-8")
+    assert ran(settings, "index")[0] == 0
+    argv = ("search", "brush", "-f", "year>=2023", "--path", "papers/*", "--fields", "year", "--sort=-year", "--json")
+    code, out, _ = ran(settings, *argv, "--compact")
+    found = cast("list[dict[str, object]]", json.loads(out)["hits"])
+    assert code == 0
+    assert [(hit["id"], hit["fields"]) for hit in found] == [
+        ("notes/papers/b.md", {"year": 2024}),
+        ("notes/papers/a.md", {"year": 2023}),
+    ]
+    code, out, err = ran(settings, "search", "brush", "-f", "year")
+    assert (code, out) == (1, "")
+    assert err.startswith("error  the filter 'year' is no KEY=VALUE")

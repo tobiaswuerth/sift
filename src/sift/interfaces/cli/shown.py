@@ -1,10 +1,12 @@
+import json
 import textwrap
 from typing import NamedTuple
 
 from sift.api.collections import CollectionAdded, CollectionStatus, Counted, Status, TitleFrom
-from sift.api.documents import Documents
+from sift.api.documents import Documents, DocumentText
 from sift.api.embedding import EmbedResult
 from sift.api.errors import SiftError
+from sift.api.fields import Fields, FieldValue
 from sift.api.indexing import IndexResult
 from sift.api.search import Hit, SearchResult
 from sift.interfaces.console.progress import DOT
@@ -103,10 +105,15 @@ def _text(text: str) -> tuple[str, ...]:
     return (text.removesuffix("\n"),) if text else ()
 
 
+def _document(found: DocumentText) -> tuple[str, ...]:
+    held = tuple(printable(f"{key}: {_value(value)}") for key, value in (found.fields or {}).items())
+    return (*held, "", *_text(found.text)) if held else _text(found.text)
+
+
 def documents(result: Documents, _platform: str, style: Style) -> Shown:
     if len(result.found) == 1 and not result.unfound:
-        return Shown(_text(result.found[0].text), ())
-    shown = [line for found in result.found for line in (f"==> {printable(found.id)} <==", *_text(found.text), "")]
+        return Shown(_document(result.found[0]), ())
+    shown = [line for found in result.found for line in (f"==> {printable(found.id)} <==", *_document(found), "")]
     messages = [
         line
         for unfound in result.unfound
@@ -122,12 +129,21 @@ def _passage(text: str) -> str:
     return printable(textwrap.shorten(" ".join(text.split()), SNIPPET_CHARACTERS, placeholder=" ..."))
 
 
+def _value(value: FieldValue) -> str:
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def _fields(fields: Fields) -> str:
+    return printable("  ".join(f"{key}: {_value(value)}" for key, value in fields.items()))
+
+
 def _hit(rank: int, hit: Hit, ranks: int, scores: int) -> tuple[str, ...]:
     indent = " " * (ranks + scores + 2 * len(GAP))
     head = f"{rank:>{ranks}}{GAP}{hit.score:>{scores}.2f}{GAP}{printable(hit.title)}"
     text = (f"{indent}{_passage(hit.text)}",) if hit.text else ()
     also = (f"{indent}also {', '.join(printable(each) for each in hit.also)}",) if hit.also else ()
-    return (head, f"{indent}{printable(hit.id)}:{hit.lines}", *also, *text)
+    fields = (f"{indent}{_fields(hit.fields)}",) if hit.fields else ()
+    return (head, f"{indent}{printable(hit.id)}:{hit.lines}", *also, *fields, *text)
 
 
 def _footer(result: SearchResult, seconds: float, style: Style, kind: str) -> str:
