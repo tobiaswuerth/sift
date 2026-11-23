@@ -18,7 +18,7 @@ from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolv
 from sift.api.search import Hit, SearchResult, Unsearched
 from sift.interfaces.cli.shown.collections import added, status
 from sift.interfaces.cli.shown.documents import documents
-from sift.interfaces.cli.shown.indexing import indexed
+from sift.interfaces.cli.shown.indexing import said_as_it_went
 from sift.interfaces.cli.shown.links import links as shown_links
 from sift.interfaces.cli.shown.links import unresolved as shown_unresolved
 from sift.interfaces.cli.shown.outcome import FAILED, USAGE, Shown, failure
@@ -127,8 +127,8 @@ def test_status_of_no_collection_says_how_to_add_one() -> None:
 
 def test_indexing_says_what_it_did_as_it_goes_and_nothing_after() -> None:
     result = IndexResult((CollectionIndexed("notes", Indexed(3, 3, 0, 0, 0)),))
-    assert indexed(result, "linux", PLAIN) == Shown((), ())
-    assert indexed(IndexResult(()), "linux", PLAIN) == EMPTY
+    assert said_as_it_went(result, "linux", PLAIN) == Shown((), ())
+    assert said_as_it_went(IndexResult(()), "linux", PLAIN) == EMPTY
 
 
 def test_one_document_is_printed_as_its_text() -> None:

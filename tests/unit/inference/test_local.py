@@ -21,14 +21,12 @@ from sift.inference.local import (
 )
 from sift.inference.models import Models
 from tests.models import Hashed
-from tests.tiny_model import POSITIONS, WIDTH, tiny_model, tiny_prompted, tiny_reranker, tiny_routed, tiny_static
+from tests.tiny_model import POSITIONS, WIDTH, tiny_models, tiny_prompted, tiny_routed, tiny_static
 
 
 @pytest.fixture(scope="module")
 def tiny(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    folder = tmp_path_factory.mktemp("models")
-    tiny_reranker(folder)
-    return tiny_model(folder)
+    return tiny_models(tmp_path_factory.mktemp("models"))
 
 
 def test_a_model_from_a_folder_embeds_texts_as_normalised_halves_in_their_order(tiny: Path) -> None:

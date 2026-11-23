@@ -11,6 +11,7 @@ from sift.domain.codec.shape import SHAPE, Shape
 from sift.domain.errors import DamagedError
 from sift.storage.database import (
     DAMAGED,
+    Reading,
     Value,
     connect,
     first,
@@ -316,3 +317,15 @@ def open_store(path: Path, collection: CollectionId, layout: Sequence[Migration]
             _raise_for(path, error)
         raise
     return connection
+
+
+@contextmanager
+def connected(path: Path, collection: CollectionId) -> Generator[sqlite3.Connection]:
+    with unavailable_if_unusable(path), closing(open_store(path, collection)) as connection:
+        yield connection
+
+
+@contextmanager
+def read_store(path: Path, collection: CollectionId) -> Generator[Reading]:
+    with connected(path, collection) as connection, reading(connection) as transaction:
+        yield transaction

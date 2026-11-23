@@ -9,14 +9,12 @@ import pytest
 
 from sift.settings import Settings
 from tests.surface.commands import indexed_notes, ran
-from tests.tiny_model import tiny_model, tiny_reranker
+from tests.tiny_model import tiny_models
 
 
 @pytest.fixture(scope="module")
 def tiny(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    folder = tmp_path_factory.mktemp("models")
-    tiny_reranker(folder)
-    return tiny_model(folder)
+    return tiny_models(tmp_path_factory.mktemp("models"))
 
 
 @pytest.fixture

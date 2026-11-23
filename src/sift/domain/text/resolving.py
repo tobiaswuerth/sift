@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from sift.api.ids import DocumentId
-from sift.domain.text.links import MARKDOWN, LinkKind, folded
+from sift.domain.text.links import LinkKind, folded, name_key
 
 RELATIVE = ("./", "../")
 LINE_CHARS = 300
@@ -37,11 +37,6 @@ class Resolution:
 UNRESOLVED = Resolution(Via.UNRESOLVED, ())
 
 
-def stem(path: str) -> str:
-    base, extension = posixpath.splitext(path)
-    return folded(base if extension.lower() in MARKDOWN else path)
-
-
 def link_path(source: str, kind: LinkKind, target: str) -> str:
     if kind is LinkKind.MARKDOWN or target.startswith(RELATIVE):
         return posixpath.normpath(posixpath.join(posixpath.dirname(source), target))
@@ -55,8 +50,8 @@ def _one(via: Via, found: Sequence[Candidate]) -> Resolution:
 
 
 def _by_path(path: str, named: Sequence[Candidate]) -> Resolution:
-    found = [each for each in named if stem(each.path) == stem(path)]
-    found = found or [each for each in named if stem(each.path).endswith("/" + stem(path))]
+    found = [each for each in named if name_key(each.path) == name_key(path)]
+    found = found or [each for each in named if name_key(each.path).endswith("/" + name_key(path))]
     return _one(Via.PATH, found) if found else UNRESOLVED
 
 
@@ -65,8 +60,8 @@ def resolved(
 ) -> Resolution:
     relative = target.startswith(RELATIVE)
     if (relative or kind is LinkKind.MARKDOWN) and source is not None:
-        at = stem(link_path(source, kind, target))
-        found = [each for each in named if stem(each.path) == at]
+        at = name_key(link_path(source, kind, target))
+        found = [each for each in named if name_key(each.path) == at]
         if found:
             return _one(Via.PATH, found)
     if relative:

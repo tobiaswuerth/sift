@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Protocol
 
 from sift.domain.plan.indexing import Found, Stat, stored_time
+from sift.domain.text.decoding import encodable
 from sift.domain.text.notes import TEXT_FILES
 from sift.domain.text.records import RECORD_FILES, split_record_path
 from sift.ingest.files import CHANGED, ChangedError, Identity, identity_at, own_identity_at
@@ -79,14 +80,6 @@ def _reason(error: OSError) -> str:
     return error.strerror or str(error)
 
 
-def _storable(relative: str) -> bool:
-    try:
-        relative.encode()
-    except UnicodeEncodeError:
-        return False
-    return True
-
-
 def _system(entry: DirEntry) -> bool:
     return sys.platform == "win32" and entry.stat().st_file_attributes & HIDDEN_SYSTEM == HIDDEN_SYSTEM
 
@@ -128,7 +121,7 @@ def _file(entry: DirEntry, relative: str, seen: _Seen, guard: _Guard | None) -> 
         return
     if not stat.S_ISREG(found.st_mode):
         return
-    if not _storable(relative):
+    if not encodable(relative):
         seen.unnamed.append(relative.encode(errors="backslashreplace").decode())
         return
     if split_record_path(relative)[1]:

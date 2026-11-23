@@ -2,7 +2,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from sift.api.events import Noted
-from sift.app.problems import counted, problems
+from sift.app.problems import problems
 from sift.domain.plan.indexing import Found, Stat, index_plan
 from sift.ingest.scan import Scanned
 
@@ -66,7 +66,3 @@ def test_a_folder_inside_left_empty_keeps_what_it_held_and_says_how_to_let_it_go
             "connect the drive, or delete the empty folder to let them go",
         ),
     )
-
-
-def test_counts_are_written_with_their_noun() -> None:
-    assert [counted(n, "file") for n in (0, 1, 2, 12_345)] == ["0 files", "1 file", "2 files", "12,345 files"]

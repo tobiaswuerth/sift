@@ -4,32 +4,25 @@ from pathlib import Path
 
 import pytest
 
-from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.filters import written
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindSimilar
 from sift.api.search import SearchKeywords, SearchResult, SearchVectors
-from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.search import search
 from sift.app.similar import similar
 from sift.app.vsearch import vsearch
 from tests.files import write
+from tests.homes import collection
 from tests.models import Hashed
 
 ROBOTS = "Robots clean floors with brushes.\n"
 VACUUM = "A robot vacuum cleans floors.\n"
 ZEROED = """UPDATE vectors SET vector = zeroblob(length(vector)) WHERE chunk IN (
   SELECT c.id FROM chunks c JOIN documents d ON d.id = c.document JOIN sources s ON s.id = d.source WHERE s.path = ?)"""
-
-
-def collection(tmp_path: Path, home: Path, name: str, files: dict[str, str]) -> None:
-    for path, text in files.items():
-        write(tmp_path / name / path, text)
-    add(home, AddCollection(str(tmp_path / name)))
 
 
 @pytest.fixture

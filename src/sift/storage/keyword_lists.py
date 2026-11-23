@@ -4,7 +4,6 @@ from typing import NamedTuple
 
 import numpy as np
 
-from sift.api.ids import DocumentId
 from sift.domain.arrays import Ids
 from sift.storage.database import Reading, rows
 
@@ -54,11 +53,6 @@ class Frequency(NamedTuple):
 class Volume(NamedTuple):
     words: int
     passages: int
-
-
-class Owner(NamedTuple):
-    id: int
-    document: DocumentId
 
 
 class LengthsRow(NamedTuple):
@@ -137,8 +131,3 @@ def lengths(transaction: Reading, segment: int, numbers: Sequence[int]) -> list[
     sql = """SELECT block, lengths FROM keyword_lengths
              WHERE segment = ? AND block IN (SELECT value FROM json_each(?)) ORDER BY block"""
     return rows(transaction, LengthsRow, sql, (segment, json.dumps(list(numbers))))
-
-
-def owners(transaction: Reading, chunks: Ids) -> dict[int, int]:
-    sql = "SELECT id, document FROM chunks WHERE id IN (SELECT value FROM json_each(?))"
-    return {found.id: found.document for found in rows(transaction, Owner, sql, (json.dumps(chunks.tolist()),))}

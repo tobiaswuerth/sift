@@ -21,7 +21,8 @@ from sift.app.vector_candidates import ExactRows, Rescoring
 from sift.app.vsearch import vsearch
 from sift.domain.arrays import Ids
 from sift.storage.database import Reading
-from sift.storage.vectors import documents_embedded, vectors_of
+from sift.storage.vectors import vectors_of
+from tests.counting import DocumentCounts
 from tests.damage import damage_table
 from tests.files import write
 from tests.models import Hashed
@@ -125,15 +126,10 @@ def test_options_that_cannot_be_followed_are_refused_saying_how(
 
 
 def test_a_filter_letting_few_documents_through_ends_the_semantic_search_once_they_are_found(home: Path) -> None:
-    counted: list[int] = []
-
-    def count(transaction: Reading) -> int:
-        counted.append(documents_embedded(transaction))
-        return counted[-1]
-
+    count = DocumentCounts()
     one = (Filter("rank", ANY, (1,)),)
     found = vsearch(home, SearchVectors("pigment", k=5, filters=one), Hashed(), Rescoring(1, vectors_of, count))
-    assert (days(found), counted) == (["2024-02-10"], [])
+    assert (days(found), count.counted) == (["2024-02-10"], [])
 
 
 def test_no_fields_written_asks_for_none() -> None:

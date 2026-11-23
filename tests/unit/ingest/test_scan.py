@@ -11,7 +11,7 @@ import pytest
 from sift.domain.plan.indexing import MOST_TIME, Stat, index_plan
 from sift.ingest.files import CHANGED, Identity
 from sift.ingest.scan import HIDDEN_SYSTEM, DirEntry, LinkChecks, Listing, Scanned, scan
-from tests.files import write
+from tests.files import linked, write
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,13 +312,6 @@ def test_a_file_whose_path_reads_as_a_record_s_id_is_named_not_read(tmp_path: Pa
     scanned = scan(tmp_path, follow_links=False)
     assert (paths(scanned), sorted(scanned.named_as_records)) == (["a.jsonl"], ["a.jsonl#k.md", "b.NDJSON#x/c.md"])
     assert index_plan(scanned.found, {"a.jsonl#k.md": Stat(1, 1)}).drop == ("a.jsonl#k.md",)
-
-
-def linked(link: Path, target: str, *, folder: bool = False) -> None:
-    try:
-        link.symlink_to(target, target_is_directory=folder)
-    except OSError as refused:
-        pytest.skip(f"this system makes no symbolic links: {refused}")
 
 
 def test_a_link_stepping_up_past_a_linked_folder_is_left_out_whichever_way_the_system_reads_it(

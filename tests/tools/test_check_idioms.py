@@ -244,3 +244,17 @@ def test_a_name_bound_once_is_followed_to_what_it_names() -> None:
 def test_a_sift_module_changed_through_its_namespace_or_in_a_tuple_is_found(change: str) -> None:
     source = f"from sift.interfaces.console import live\n{change}\n"
     assert check_idioms.PATCHED in problems("tests/a.py", source)
+
+
+def test_a_document_s_text_cut_in_sql_is_found_in_sift_alone() -> None:
+    cut = 'X = "SELECT substr(d.text, c.start + 1, c.length) FROM chunks c"\n'
+    assert problems("src/sift/storage/a.py", cut) == [check_idioms.TEXT_CUT_IN_SQL]
+    assert problems("src/sift/storage/a.py", 'X = "SELECT substr(path, 2), text FROM sources"\n') == []
+    assert problems("tests/a.py", cut) == []
+
+
+def test_a_store_is_opened_by_hand_in_sift_storage_alone() -> None:
+    source = "from sift.storage.store import open_store\n\nopen_store(path, 1)\n"
+    assert problems("src/sift/app/a.py", source) == [check_idioms.STORE_OPENED_BY_HAND]
+    assert problems("src/sift/storage/a.py", source) == []
+    assert problems("tests/a.py", source) == []

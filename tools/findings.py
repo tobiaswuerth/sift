@@ -22,6 +22,10 @@ def files(roots: Iterable[str], suffixes: tuple[str, ...]) -> Iterator[Path]:
             yield from sorted(path for path in root.rglob("*") if path.is_file() and path.suffix in suffixes)
 
 
+def sources(roots: Iterable[str]) -> dict[str, str]:
+    return {path.as_posix(): path.read_text(encoding="utf-8") for path in files(roots, (".py",))}
+
+
 def found(check: Check, roots: Iterable[str], suffixes: tuple[str, ...] = (".py",)) -> tuple[Finding, ...]:
     return tuple(
         finding

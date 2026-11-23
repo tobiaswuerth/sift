@@ -3,8 +3,8 @@ from collections.abc import Sequence
 import pytest
 
 from sift.api.ids import DocumentId
-from sift.domain.text.links import LinkKind
-from sift.domain.text.resolving import UNRESOLVED, Candidate, Resolution, Via, link_path, resolved, stem
+from sift.domain.text.links import LinkKind, name_key
+from sift.domain.text.resolving import UNRESOLVED, Candidate, Resolution, Via, link_path, resolved
 
 
 def candidate(at: int, path: str) -> Candidate:
@@ -64,7 +64,7 @@ def test_a_link_resolves_as_obsidian_resolves_it(
 
 
 def test_paths_compare_folded_and_a_note_s_without_its_extension() -> None:
-    assert stem("Hans Mu\N{COMBINING DIAERESIS}ller.MD") == stem("hans müller") == "hans müller"
-    assert stem("notes.txt") == "notes.txt"
+    assert name_key("Hans Mu\N{COMBINING DIAERESIS}ller.MD") == name_key("hans müller") == "hans müller"
+    assert name_key("notes.txt") == "notes.txt"
     assert link_path("Notes/Plan.md", MARKDOWN, "../People/Hans.md") == "People/Hans.md"
     assert link_path("Notes/Plan.md", WIKI, "/People/Hans") == "People/Hans"

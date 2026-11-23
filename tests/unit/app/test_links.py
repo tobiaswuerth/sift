@@ -14,6 +14,7 @@ from sift.app.notes import NOTE_REMEDY, Note
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading
 from sift.storage.store import open_store
+from tests.damage import damage_pages
 from tests.files import write
 
 LONG = "word " * 100
@@ -194,7 +195,7 @@ def test_a_name_many_notes_answer_to_names_a_few_of_them(tmp_path: Path) -> None
 def test_a_damaged_store_is_passed_over_by_names_and_unresolved_saying_so(people: Path, tmp_path: Path) -> None:
     vault(tmp_path, {"x.md": "[[Nowhere]]"}, "w")
     store = people / "collections" / "w.sqlite"
-    store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
+    damage_pages(store)
     named = links(people, ShowLinks("Acme AG"))
     assert (named.id, [each.collection for each in named.unsearched]) == ("v/Orgs/Acme AG.md", ["w"])
     assert links(people, ShowLinks("v/Orgs/Acme AG.md")).unsearched == ()
@@ -240,7 +241,7 @@ def test_every_store_a_name_was_not_looked_up_in_is_named(people: Path, tmp_path
     for name in ("w", "x"):
         vault(tmp_path, {"y.md": "# Y\n"}, name)
         store = people / "collections" / f"{name}.sqlite"
-        store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
+        damage_pages(store)
     with pytest.raises(NotFoundError, match=r"not searched: w: .*; not searched: x: "):
         links(people, ShowLinks("Nowhere"))
     assert [each.collection for each in links(people, ShowLinks("Acme AG")).unsearched] == ["w", "x"]

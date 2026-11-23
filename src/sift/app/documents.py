@@ -1,6 +1,5 @@
 import os
 from collections.abc import Sequence
-from contextlib import closing
 from pathlib import Path, PurePath
 
 from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound
@@ -9,9 +8,9 @@ from sift.domain.query import fields as shown
 from sift.domain.text.lines import line_range, lines_of
 from sift.domain.text.records import public_id, split_record_path
 from sift.storage.catalog import Collection, known_collections
-from sift.storage.database import Reading, reading
+from sift.storage.database import Reading
 from sift.storage.documents import Stored, fields_of, paths_named, stored
-from sift.storage.store import open_store, unavailable_if_unusable
+from sift.storage.store import read_store
 
 MOST_LISTED = 5
 SEPARATOR = "/"
@@ -71,11 +70,7 @@ def resolved_at(transaction: Reading, id_: str, relative: str, *, absolute: bool
 def _document(known: Sequence[Collection], id_: str, request: GetDocuments) -> DocumentText:
     span = line_range(request.lines) if request.lines is not None else None
     chosen, relative = place(known, id_)
-    with (
-        unavailable_if_unusable(chosen.store),
-        closing(open_store(chosen.store, chosen.id)) as connection,
-        reading(connection) as transaction,
-    ):
+    with read_store(chosen.store, chosen.id) as transaction:
         found = resolved_at(transaction, id_, relative, absolute=Path(id_).is_absolute())
     whole = public_id(chosen.name, found.path, found.key)
     text = lines_of(found.text, *span, whole) if span else found.text

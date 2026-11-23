@@ -10,7 +10,7 @@ type KeptVectors = Mapping[str, tuple[bytes, bytes]]
 
 def vectors_held(transaction: Reading, documents: Sequence[DocumentId]) -> KeptVectors:
     return {
-        embedded(each.title, each.text, first=bool(each.first)): (each.vector, each.bits)
+        embedded(each.title, each.text, first=each.first): (each.vector, each.bits)
         for each in held_vectors(transaction, documents)
     }
 
@@ -19,5 +19,5 @@ def vectors_kept(transaction: Writing, documents: Sequence[DocumentId], held: Ke
     if not held:
         return
     placed = placed_chunks(transaction, documents)
-    keys = ((each.id, embedded(each.title, each.text, first=bool(each.first))) for each in placed)
+    keys = ((each.chunk, embedded(each.title, each.text, first=each.first)) for each in placed)
     copy_vectors(transaction, [(chunk, *held[key]) for chunk, key in keys if key in held])

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from sift.api.events import Noted
 from sift.domain.plan.indexing import ROOT, IndexPlan, folders_of
+from sift.domain.text.wording import counted
 from sift.ingest.scan import Scanned
 
 MOST_NAMED = 3
@@ -14,10 +15,6 @@ LEFT_AS_INDEXED = (
 EMPTY_INSIDE = "{folder} is empty: {files} once in it kept as indexed, as a drive not mounted looks so"
 NAMED_AS_RECORD_REMEDY = "rename them: a # after .jsonl or .ndjson names a record"
 EMPTY_INSIDE_REMEDY = "connect the drive, or delete the empty folder to let them go"
-
-
-def counted(n: int, noun: str) -> str:
-    return f"{n:,} {noun}{'' if n == 1 else 's'}"
 
 
 def _named(paths: tuple[str, ...]) -> str:

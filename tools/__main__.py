@@ -1,7 +1,17 @@
 import sys
 from types import MappingProxyType
 
-from tools import check_dead, check_idioms, check_names, check_package, check_prose, check_shape, check_text, fts5_table
+from tools import (
+    check_dead,
+    check_idioms,
+    check_names,
+    check_package,
+    check_prose,
+    check_shape,
+    check_text,
+    check_twins,
+    fts5_table,
+)
 
 CHECKS = MappingProxyType(
     {
@@ -13,6 +23,7 @@ CHECKS = MappingProxyType(
         "prose": check_prose.main,
         "shape": check_shape.main,
         "text": check_text.main,
+        "twins": check_twins.main,
     }
 )
 

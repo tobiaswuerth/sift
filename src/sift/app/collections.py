@@ -26,10 +26,9 @@ from sift.storage.catalog import (
     named,
     open_catalog,
 )
-from sift.storage.database import reading
 from sift.storage.documents import counts, unreadable
 from sift.storage.links import links_held
-from sift.storage.store import open_store, stored_bytes, unavailable_if_unusable
+from sift.storage.store import read_store, stored_bytes
 
 OBSIDIAN = ".obsidian"
 FIELD_REMEDY = "name the field, e.g. abstract"
@@ -72,11 +71,7 @@ def chosen_or_active(home: Path, names: Sequence[str]) -> tuple[Collection, ...]
 
 def _contents(one: Collection, *, listed: bool) -> Counted | Unavailable:
     try:
-        with (
-            unavailable_if_unusable(one.store),
-            closing(open_store(one.store, one.id)) as connection,
-            reading(connection) as transaction,
-        ):
+        with read_store(one.store, one.id) as transaction:
             kept, failed = counts(transaction), unreadable(transaction)
             linked, gone = links_held(transaction), len(unresolved_links(transaction))
     except StoreUnavailableError as error:

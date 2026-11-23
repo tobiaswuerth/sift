@@ -20,7 +20,7 @@ from sift.app.search import search
 from sift.retrieval.keyword.search import Tuning
 from sift.storage.keywords import REMAKE_REMEDY, TAKEN_OVER_REMEDY
 from sift.storage.store import DAMAGED_REMEDY, LAYOUT, MISSING_REMEDY, create_store, delete_store
-from tests.damage import damage_table
+from tests.damage import changed, damage_table
 from tests.files import write
 
 LONG = "\n\n".join(["Pruning skips what cannot win. " * 20] * 8)
@@ -197,11 +197,6 @@ def _more(home: Path, tmp_path: Path) -> None:
     indexed(home)
 
 
-def _changed(store: Path, sql: str) -> None:
-    with contextlib.closing(sqlite3.connect(store)) as database, database:
-        database.execute(sql)
-
-
 @pytest.mark.parametrize(
     "sql, query",
     [
@@ -215,7 +210,7 @@ def test_a_keyword_index_whose_data_is_damaged_is_passed_over_and_the_others_sea
     home: Path, tmp_path: Path, sql: str, query: str
 ) -> None:
     _more(home, tmp_path)
-    _changed(home / "collections" / "notes.sqlite", sql)
+    changed(home / "collections" / "notes.sqlite", sql)
     result = search(home, SearchKeywords(query))
     (said,) = result.unsearched
     assert (said.collection, said.remedy) == ("notes", DAMAGED_REMEDY)
@@ -226,7 +221,7 @@ def test_a_keyword_index_whose_data_is_damaged_is_passed_over_and_the_others_sea
 def test_a_store_lost_while_searched_weighs_on_no_score(home: Path, tmp_path: Path) -> None:
     _more(home, tmp_path)
     alone = search(home, SearchKeywords("halo", collections=("more",))).hits
-    _changed(home / "collections" / "notes.sqlite", "DELETE FROM keyword_lengths")
+    changed(home / "collections" / "notes.sqlite", "DELETE FROM keyword_lengths")
     result = search(home, SearchKeywords("halo"))
     assert result.hits == alone
     assert [each.collection for each in result.unsearched] == ["notes"]
@@ -236,7 +231,7 @@ def test_a_store_lost_in_the_looser_search_weighs_on_no_score(home: Path, tmp_pa
     _more(home, tmp_path)
     alone = search(home, SearchKeywords("halo pruning", collections=("more",))).hits
     assert search(home, SearchKeywords("halo AND pruning")).hits == ()
-    _changed(
+    changed(
         home / "collections" / "notes.sqlite",
         "DELETE FROM chunks WHERE document = (SELECT id FROM documents WHERE title = 'Halo')",
     )
@@ -260,7 +255,7 @@ def test_two_stores_lost_in_one_search_leave_the_third_to_answer(home: Path, tmp
     add(home, AddCollection(str(tmp_path / "third")))
     indexed(home)
     alone = search(home, SearchKeywords("halo", collections=("more",))).hits
-    _changed(home / "collections" / "notes.sqlite", "DELETE FROM keyword_lengths")
+    changed(home / "collections" / "notes.sqlite", "DELETE FROM keyword_lengths")
     damage_table(home / "collections" / "third.sqlite", "sources")
     result = search(home, SearchKeywords("halo"))
     assert result.hits == alone
@@ -269,7 +264,7 @@ def test_two_stores_lost_in_one_search_leave_the_third_to_answer(home: Path, tmp
 
 
 def test_a_keyword_index_of_another_version_is_passed_over_until_indexed_again(home: Path) -> None:
-    _changed(home / "collections" / "notes.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
+    changed(home / "collections" / "notes.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
     (said,) = search(home, SearchKeywords("halo")).unsearched
     assert (said.collection, said.remedy) == ("notes", REMAKE_REMEDY)
     indexed(home)
@@ -294,7 +289,7 @@ def test_a_keyword_index_of_another_version_is_passed_over_until_indexed_again(h
 def test_a_keyword_index_being_remade_is_passed_over_saying_by_whom(
     home: Path, marked: str, said: str, remedy: str
 ) -> None:
-    _changed(home / "collections" / "notes.sqlite", marked)
+    changed(home / "collections" / "notes.sqlite", marked)
     (unsearched,) = search(home, SearchKeywords("halo")).unsearched
     assert (unsearched.message, unsearched.remedy) == (said, remedy)
     indexed(home)
@@ -302,7 +297,7 @@ def test_a_keyword_index_being_remade_is_passed_over_saying_by_whom(
 
 
 def test_an_index_of_another_version_is_remade_by_indexing_even_with_its_folder_gone(home: Path, notes: Path) -> None:
-    _changed(home / "collections" / "notes.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
+    changed(home / "collections" / "notes.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
     notes.rename(notes.with_name("gone"))
     said: list[Event] = []
     (outcome,) = index(home, IndexCollections(), said.append).collections
@@ -320,7 +315,7 @@ def test_an_empty_collection_of_another_version_is_current_once_indexed(home: Pa
     (tmp_path / "empty").mkdir()
     add(home, AddCollection(str(tmp_path / "empty")))
     indexed(home)
-    _changed(home / "collections" / "empty.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
+    changed(home / "collections" / "empty.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
     indexed(home)
     assert search(home, SearchKeywords("halo", collections=("empty",))) == SearchResult((), 1, ())
 

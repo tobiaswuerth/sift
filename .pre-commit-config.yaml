@@ -57,6 +57,12 @@ repos:
         language: python
         pass_filenames: false
         always_run: true
+      - id: twins
+        name: no function written twice
+        entry: python -m tools twins
+        language: python
+        pass_filenames: false
+        always_run: true
 
   - repo: https://github.com/abravalheri/validate-pyproject
     rev: '0.26'

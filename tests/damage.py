@@ -4,6 +4,11 @@ from pathlib import Path
 from typing import cast
 
 
+def changed(store: Path, sql: str) -> None:
+    with contextlib.closing(sqlite3.connect(store)) as database, database:
+        database.execute(sql)
+
+
 def damage_table(store: Path, table: str) -> None:
     with contextlib.closing(sqlite3.connect(store)) as database:
         found = cast(
@@ -17,3 +22,7 @@ def damage_table(store: Path, table: str) -> None:
     start = (root - 1) * size
     raw[start : start + size] = b"\xff" * size
     store.write_bytes(bytes(raw))
+
+
+def damage_pages(store: Path) -> None:
+    store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])

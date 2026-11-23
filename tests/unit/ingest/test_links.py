@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from sift.ingest.links import collapsed, link_target, plain
-from tests.files import write
+from tests.files import linked, write
 
 
 @pytest.mark.parametrize(
@@ -20,7 +20,7 @@ def test_a_link_s_target_is_read_without_the_long_path_prefix(written: str, mean
 
 def test_only_a_link_has_a_target(tmp_path: Path) -> None:
     file, link = write(tmp_path / "a.md", "x"), tmp_path / "b.md"
-    link.symlink_to("a.md")
+    linked(link, "a.md")
     assert (link_target(file), link_target(link)) == (None, "a.md")
 
 

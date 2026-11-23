@@ -34,6 +34,8 @@ threads more workers made the suite slower (35 s on 8, 101 s on 32).
 - `sift.api` and `sift.domain` hold pure functions and immutable values: no I/O, no result of a call left unused.
   Module-level values are immutable everywhere; no module has more than 400 lines, no class more than 10 methods
   (`python -m tools shape`, the import contracts, basedpyright).
+- Every name of sift is used in sift, and no function is written twice, in sift, its tools or its tests: what two
+  places need is kept where both can import it (`python -m tools dead`, `python -m tools twins`).
 - Packages import only those below them: interfaces, app, retrieval and ingest, storage and inference, domain, api.
   No module imports one that imports it (`[tool.importlinter]` in `pyproject.toml`).
 - Tests pass fakes and values in; `monkeypatch` is not used, and no test reads a clock: what costs time is counted

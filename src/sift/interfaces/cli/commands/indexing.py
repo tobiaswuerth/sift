@@ -24,7 +24,7 @@ def _some_skipped(result: IndexResult | EmbedResult) -> bool:
 
 COMMANDS = MappingProxyType(
     {
-        "index": command(IndexCollections, _index, shown.indexed, _some_skipped),
-        "embed": command(EmbedCollections, _embed, shown.embedded, _some_skipped),
+        "index": command(IndexCollections, _index, shown.said_as_it_went, _some_skipped),
+        "embed": command(EmbedCollections, _embed, shown.said_as_it_went, _some_skipped),
     }
 )

@@ -20,7 +20,6 @@ from sift.storage.database import Reading
 from sift.storage.documents import chunks_of, fields_by_document
 from sift.storage.vectors import model_of, vectors_of
 
-EMBED_REMEDY = "run sift embed"
 NO_DIRECTION_REMEDY = "start from another document, or search its words with sift vsearch"
 
 
@@ -37,7 +36,7 @@ def _like(note: Note, whole: str, transaction: Reading) -> Like:
     _, vectors = vectors_of(transaction, chunks)
     model = model_of(transaction)
     if not len(vectors) or model is None:
-        raise InvalidRequestError(f"{whole!r} has no vectors yet", EMBED_REMEDY)
+        raise InvalidRequestError(f"{whole!r} has no vectors yet", searching.UNEMBEDDED_REMEDY)
     mean = vectors.astype(np.float32).mean(axis=0)
     length = float(np.linalg.norm(mean))
     if not np.isfinite(length) or length == 0:

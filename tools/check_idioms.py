@@ -35,6 +35,10 @@ HANDLE_MAKERS = frozenset({"src/sift/storage/database.py", "src/sift/storage/key
 HANDLES = frozenset({"Writing", "WritingDocuments"})
 HANDLE_MADE = "a write handle made by hand: open one with writing() or writing_documents()"
 STORAGE = "src/sift/storage/"
+STORE_OPENED_BY_HAND = (
+    "a store opened by hand outside sift.storage: open it with connected() or read_store(), "
+    "which close it and say why a store cannot be used"
+)
 SQL_CALLS = frozenset({"execute", "executemany", "executescript"})
 RAW_SQL = "SQL run on a transaction's connection outside sift.storage: add a storage function and call it"
 NUMBERED = (
@@ -56,6 +60,11 @@ CLOCK_IN_A_TEST = (
 RECURSION_CAUGHT = (
     "RecursionError caught: the interpreter's depth limit decides, and the work done before it is lost; "
     "bound the depth yourself before descending, and refuse what is deeper"
+)
+TEXT_CUT = re.compile(r"substr\(\s*(?:\w+\.)?text\b", re.IGNORECASE)
+TEXT_CUT_IN_SQL = (
+    "a document's text cut in SQL, which walks it from its start for every chunk: "
+    "read the text once and cut its spans in Python"
 )
 FLAG = re.compile(r"(?<![\w-])(?:--[a-z][a-z-]*|-[kcf])(?![\w-])")
 INSTALLER = re.compile(r"\buv [a-z]")
@@ -199,10 +208,22 @@ def flags_outside_interfaces(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, node.lineno, FLAG_OUTSIDE)
 
 
+def text_cut_in_sql(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and TEXT_CUT.search(node.value):
+            yield Finding(path, node.lineno, TEXT_CUT_IN_SQL)
+
+
 def handles_made(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and ast.unparse(node.func).rsplit(".", 1)[-1] in HANDLES:
             yield Finding(path, node.lineno, HANDLE_MADE)
+
+
+def stores_opened_by_hand(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and ast.unparse(node.func).rsplit(".", 1)[-1] == "open_store":
+            yield Finding(path, node.lineno, STORE_OPENED_BY_HAND)
 
 
 def raw_sql(path: str, tree: ast.Module) -> Iterator[Finding]:
@@ -230,6 +251,8 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *(environment_outside_settings(path, tree) if in_sift and path != SETTINGS else ()),
         *(handles_made(path, tree) if in_sift and path not in HANDLE_MAKERS else ()),
         *(raw_sql(path, tree) if in_sift and not path.startswith(STORAGE) else ()),
+        *(stores_opened_by_hand(path, tree) if in_sift and not path.startswith(STORAGE) else ()),
+        *(text_cut_in_sql(path, tree) if in_sift else ()),
         *(patching(path, tree) if in_tests else ()),
         *(sift_patched(path, tree) if in_tests else ()),
         *(clocks(path, tree) if in_tests else ()),

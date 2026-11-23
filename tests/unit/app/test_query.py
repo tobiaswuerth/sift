@@ -1,5 +1,3 @@
-import contextlib
-import sqlite3
 import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -25,7 +23,7 @@ from sift.domain.codec.codes import Floats, Halves
 from sift.domain.errors import DamagedError
 from sift.storage.database import Reading
 from sift.storage.vectors import EMBED_REMEDY, vectors_of
-from tests.damage import damage_table
+from tests.damage import changed, damage_pages, damage_table
 from tests.files import write
 from tests.models import Hashed
 
@@ -122,11 +120,6 @@ def test_a_collection_not_embedded_gives_keyword_candidates_alone(tmp_path: Path
     result = query(home, SearchHybrid("comets"), models)
     assert [hit.id for hit in result.hits] == ["plain/a.md"]
     assert (result.unsearched, models.asked) == ((), [])
-
-
-def changed(store: Path, sql: str) -> None:
-    with contextlib.closing(sqlite3.connect(store)) as database, database:
-        database.execute(sql)
 
 
 def damaged_keywords(store: Path) -> None:
@@ -291,7 +284,7 @@ def test_loading_counts_the_models_a_question_needs(home: Path, tmp_path: Path) 
 
 def test_nothing_loads_when_no_store_is_left_to_search(home: Path) -> None:
     store = home / "collections" / "notes.sqlite"
-    store.write_bytes(bytes([255]) * 4096 + store.read_bytes()[4096:])
+    damage_pages(store)
     said: list[Event] = []
     result = query(home, SearchHybrid("halo"), Hashed(), report=said.append)
     assert (result.hits, said) == ((), [])

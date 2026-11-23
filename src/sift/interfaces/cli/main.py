@@ -17,6 +17,7 @@ from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
+from sift.domain.text.decoding import encodable
 from sift.interfaces.cli.arguments import flags, options
 from sift.interfaces.cli.context import Command, Commands, Context
 from sift.interfaces.cli.shown.outcome import FAILED, Shown, failure
@@ -135,14 +136,6 @@ def _placed(settings: Settings, written: str) -> str:
         raise argparse.ArgumentTypeError(f"{error.message}: {error.remedy}") from None
 
 
-def _is_text(argument: str) -> bool:
-    try:
-        argument.encode()
-    except UnicodeEncodeError:
-        return False
-    return True
-
-
 def parser(settings: Settings) -> argparse.ArgumentParser:
     built = Parser(prog="sift", description=DESCRIPTION)
     built.add_argument("--version", action=VersionAction)
@@ -210,7 +203,7 @@ def _ran(
 ) -> Shown | int:
     out, err = streams
     platform = host.platform
-    if (odd := next((argument for argument in argv if not _is_text(argument)), None)) is not None:
+    if (odd := next((argument for argument in argv if not encodable(argument)), None)) is not None:
         return failure(InvalidRequestError(f"an argument is no text: {odd!r}", NO_TEXT_REMEDY), PLAIN)
     built = parser(settings)
     namespace = _parsed(built, argv, out, err)

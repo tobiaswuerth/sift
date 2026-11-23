@@ -1,6 +1,5 @@
 import re
 from collections.abc import Callable, Sequence
-from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -11,12 +10,12 @@ from sift.app.documents import place, resolved_at
 from sift.app.documents import unknown as documents_unknown
 from sift.domain.text.links import LinkKind, link_target, name_key
 from sift.domain.text.records import public_id
-from sift.domain.text.resolving import LEADING, Candidate, Resolution, Via, link_path, resolved, stem
+from sift.domain.text.resolving import LEADING, Candidate, Resolution, Via, link_path, resolved
 from sift.storage.catalog import Collection, known_collections
-from sift.storage.database import Reading, reading
+from sift.storage.database import Reading
 from sift.storage.documents import stored
 from sift.storage.links import LinkRow, doubtful, keys_of, links_into, links_keyed, named, titled
-from sift.storage.store import open_store, unavailable_if_unusable
+from sift.storage.store import read_store
 
 AMBIGUOUS_SHOWN = 5
 NAME_END = re.compile(r"[#|]")
@@ -77,11 +76,7 @@ class Matches:
 
 
 def read_in[T](one: Collection, read: Callable[[Reading], T]) -> T:
-    with (
-        unavailable_if_unusable(one.store),
-        closing(open_store(one.store, one.id)) as connection,
-        reading(connection) as transaction,
-    ):
+    with read_store(one.store, one.id) as transaction:
         return read(transaction)
 
 
@@ -153,9 +148,9 @@ def linking(resolver: Resolver, document: DocumentId, wanted: str | None) -> dic
 
 
 def written(transaction: Reading, target: str, wanted: str | None) -> set[DocumentId]:
-    want = stem(target.lstrip("/"))
+    want = name_key(target.lstrip("/"))
     rows = links_keyed(transaction, name_key(target.rsplit("/", 1)[-1]), wanted)
-    return {row.document for row in rows if stem(link_path(row.path, row.kind, row.target)) == want}
+    return {row.document for row in rows if name_key(link_path(row.path, row.kind, row.target)) == want}
 
 
 def unresolved_links(transaction: Reading) -> list[LinkRow]:

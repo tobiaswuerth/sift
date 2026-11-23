@@ -1,5 +1,5 @@
 from collections.abc import Callable, Sequence
-from contextlib import ExitStack, closing
+from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
@@ -20,7 +20,7 @@ from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
 from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
-from sift.storage.store import open_store, unavailable_if_unusable
+from sift.storage.store import connected, unavailable_if_unusable
 from sift.storage.vectors import EMBED_REMEDY, codes_of, left, model_of, width_held
 
 UNEMBEDDED_REMEDY = "run sift embed"
@@ -166,7 +166,7 @@ def _searching(one: Collection, asked: Narrowing, wants: Wants) -> Searching | N
     resources = ExitStack()
     with unavailable_if_unusable(one.store):
         try:
-            connection = resources.enter_context(closing(open_store(one.store, one.id)))
+            connection = resources.enter_context(connected(one.store, one.id))
             transaction = resources.enter_context(reading(connection))
             found = condition_in(asked, one, transaction)
             if found is not None and found.lets_none:

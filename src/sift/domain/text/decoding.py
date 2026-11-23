@@ -1,5 +1,7 @@
 from types import MappingProxyType
 
+from sift.domain.text.json_values import LONE_SURROGATE
+
 UTF32_MARKS = (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")
 UTF16_MARKS = (b"\xff\xfe", b"\xfe\xff")
 ESCAPED_BYTES = range(0xDC80, 0xDD00)
@@ -31,3 +33,7 @@ def encoding_of(start: bytes) -> tuple[str, str]:
 
 def ansi(text: str) -> str:
     return text.translate(ANSI)
+
+
+def encodable(text: str) -> bool:
+    return LONE_SURROGATE.search(text) is None

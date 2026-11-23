@@ -1,4 +1,5 @@
-import pytest
+from typing import SupportsIndex, final, override
+
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -185,9 +186,28 @@ def test_the_files_within_folders_are_those_found_by_their_prefix(paths: list[st
     assert within(files, tuple(folders)) == _in_any_before(files, tuple(folders))
 
 
-@pytest.mark.timeout(10)
 def test_a_plan_of_many_empty_folders_and_many_gone_files_costs_their_depth() -> None:
-    empty = tuple(f"f{n}/" for n in range(2_000))
-    known = {f"g{n}/x{n}.md": A for n in range(20_000)}
+    looked: list[int] = []
+
+    @final
+    class Counted(str):
+        __slots__ = ()
+
+        @override
+        def find(self, sub: str, start: SupportsIndex | None = None, end: SupportsIndex | None = None, /) -> int:
+            looked.append(1)
+            return super().find(sub, start, end)
+
+        @override
+        def startswith(
+            self, prefix: str | tuple[str, ...], start: SupportsIndex | None = None, end: SupportsIndex | None = None, /
+        ) -> bool:
+            looked.append(1)
+            return super().startswith(prefix, start, end)
+
+    empty = tuple(f"f{n}/" for n in range(200))
+    known: dict[str, Stat] = {Counted(f"g{n}/x{n}.md"): A for n in range(2_000)}
     plan = index_plan(Found({"a.md": A}, empty_folders=empty), known)
-    assert (len(plan.drop), plan.emptied) == (20_000, ())
+    assert (len(plan.drop), plan.emptied) == (2_000, ())
+    walks, folders_a_path = 3, 2
+    assert 0 < len(looked) <= walks * folders_a_path * len(known)

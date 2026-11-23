@@ -8,6 +8,7 @@ from sift.app.kept_vectors import vectors_held, vectors_kept
 from sift.domain.plan.indexing import RACY, Stat
 from sift.domain.text.notes import Document
 from sift.domain.text.records import Chosen, SkippedLine, record_of
+from sift.domain.text.wording import counted
 from sift.ingest.files import Identity
 from sift.storage.database import WritingDocuments
 from sift.storage.documents import (
@@ -40,7 +41,7 @@ class Skips:
             return None
         shown = "; ".join(f"line {each.line}: {each.why}" for each in self.first)
         more = "; ..." if self.count > len(self.first) else ""
-        return f"{self.count:,} line{'s' if self.count != 1 else ''} skipped ({shown}{more})"
+        return f"{counted(self.count, 'line')} skipped ({shown}{more})"
 
 
 def _records(lines: Iterable[tuple[int, str | SkippedLine]], chosen: Chosen, most: int) -> Iterator[Line]:

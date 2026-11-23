@@ -1,6 +1,5 @@
 import posixpath
 from collections.abc import Mapping
-from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,7 +29,7 @@ from sift.storage.documents import (
 )
 from sift.storage.forgetting import delete_documents, delete_sources
 from sift.storage.keywords import remade, remake_started, settle, writing_documents
-from sift.storage.store import open_store, unavailable_if_unusable
+from sift.storage.store import connected
 
 FOLDER_MISSING_REMEDY = "connect the drive it lies on"
 OUT_OF_REACH_REMEDY = "see that its folder and its store can be read, then index it again"
@@ -91,9 +90,9 @@ def _document_stored(transaction: WritingDocuments, path: str, stat: Stat, read:
     if before is not None and before.digest == read.digest:
         delete_documents(transaction, gone)
         return Tally(removed=len(gone))
-    held = vectors_held(transaction, [before.id] if before else [])
+    vectors = vectors_held(transaction, [before.id] if before else [])
     delete_documents(transaction, [*gone, *([before.id] if before else [])])
-    vectors_kept(transaction, add_documents(transaction, source, path, [read]), held)
+    vectors_kept(transaction, add_documents(transaction, source, path, [read]), vectors)
     return Tally(added=int(before is None), changed=int(before is not None), removed=len(gone))
 
 
@@ -183,7 +182,7 @@ def _settled(connection: Connection, report: Reporter, batches: Batches) -> None
 def _indexed(one: Collection, report: Reporter, limits: Limits, readers: Readers) -> CollectionIndexed:
     report(CollectionStarted(one.name, str(one.folder)))
     try:
-        with unavailable_if_unusable(one.store), closing(open_store(one.store, one.id)) as connection:
+        with connected(one.store, one.id) as connection:
             _remade(connection, report, limits.batches)
             if not one.folder.is_dir():
                 return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)

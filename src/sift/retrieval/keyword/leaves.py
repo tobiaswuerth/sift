@@ -7,6 +7,7 @@ from sift.api.errors import InvalidRequestError
 from sift.domain.arrays import Ascending, Ids, among, ascending, distinct, last
 from sift.domain.query.expressions import Phrase, Prefix
 from sift.domain.rank.phrases import merged, phrase_counts
+from sift.domain.text.wording import counted
 from sift.retrieval.keyword.lists import (
     Opened,
     PostingArrays,
@@ -66,10 +67,6 @@ def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]]) -
     return candidates[found], counts[found]
 
 
-def _counted(n: int, what: str) -> str:
-    return f"{n:,} {what}{'s' * (n != 1)}"
-
-
 def _prefix(store: Opened, prefix: Prefix) -> PostingArrays:
     terms = expansions(store.transaction, prefix.text)
     lists = stored(store, terms)
@@ -93,8 +90,8 @@ def _written(leaf: Phrase | Prefix) -> str:
 def refused(reads: Mapping[Phrase | Prefix, int], total: int, most: int) -> NoReturn:
     widest, passages = max(reads.items(), key=lambda each: each[1])
     remedy = PREFIX_REMEDY if isinstance(widest, Prefix) else PHRASE_REMEDY
-    whole = "" if total == passages else f"; with the rest of the query, {_counted(total, 'passage')}"
+    whole = "" if total == passages else f"; with the rest of the query, {counted(total, 'passage')}"
     raise InvalidRequestError(
-        f"{_written(widest)} reads {_counted(passages, 'passage')}{whole}, more than the {most:,} a search reads",
+        f"{_written(widest)} reads {counted(passages, 'passage')}{whole}, more than the {most:,} a search reads",
         remedy,
     )

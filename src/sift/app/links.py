@@ -20,8 +20,9 @@ from sift.api.search import Unsearched
 from sift.api.validated import validated
 from sift.app.collections import chosen_or_active
 from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, linking, note_of, read_in, unresolved_links
+from sift.domain.text.links import name_key
 from sift.domain.text.records import public_id
-from sift.domain.text.resolving import LEADING, Linking, Resolution, link_path, linking_lines, stem
+from sift.domain.text.resolving import LEADING, Linking, Resolution, link_path, linking_lines
 from sift.storage.database import Reading
 from sift.storage.documents import texts
 from sift.storage.links import LinkRow, Titled, links_out, titled
@@ -139,7 +140,7 @@ class Gone:
 def _unresolved(collection: str, transaction: Reading) -> list[tuple[str, list[str]]]:
     targets: dict[str, Gone] = {}
     for row in unresolved_links(transaction):
-        gone = targets.setdefault(stem(link_path(row.path, row.kind, row.target)), Gone(Counter(), {}))
+        gone = targets.setdefault(name_key(link_path(row.path, row.kind, row.target)), Gone(Counter(), {}))
         gone.written[row.target] += 1
         gone.documents[row.document] = None
     names = titled(transaction, [document for gone in targets.values() for document in gone.documents])

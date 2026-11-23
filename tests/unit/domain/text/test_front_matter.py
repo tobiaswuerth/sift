@@ -122,32 +122,7 @@ def test_a_list_in_brackets_over_many_lines_is_read_whole() -> None:
     assert fields(f"---\n{block}\n---\n")["tags"] == [f"item{i}" for i in range(items)]
 
 
-def test_each_line_of_a_list_in_brackets_is_looked_at_once_for_the_bracket_that_closes_it() -> None:
-    looked: list[int] = []
-
-    @final
-    class Line(str):
-        __slots__ = ()
-
-        @override
-        def strip(self, chars: str | None = None, /) -> str:
-            return Line(super().strip(chars))
-
-        @override
-        def __iter__(self) -> Iterator[str]:
-            looked.append(len(self))
-            return super().__iter__()
-
-    items = 2000
-    lines = [Line("tags: ["), *(Line(f"  item{i},") for i in range(items)), Line("]"), Line("year: 2024")]
-    found = entries(lines)
-    assert [(entry.kind, len(below)) for entry, below in found.values()] == [(Kind.FLOW, items + 1), (Kind.PLAIN, 0)]
-    assert 0 < sum(looked) <= sum(map(len, lines))
-
-
-def test_a_list_nested_deeper_than_lists_in_brackets_go_is_kept_as_written_after_few_looks() -> None:
-    looked: list[int] = []
-
+def looked_at(looked: list[int]) -> type[str]:
     @final
     class Text(str):
         __slots__ = ()
@@ -165,8 +140,23 @@ def test_a_list_nested_deeper_than_lists_in_brackets_go_is_kept_as_written_after
             looked.append(len(self))
             return super().__iter__()
 
+    return Text
+
+
+def test_each_line_of_a_list_in_brackets_is_looked_at_once_for_the_bracket_that_closes_it() -> None:
+    looked: list[int] = []
+    line = looked_at(looked)
+    items = 2000
+    lines = [line("tags: ["), *(line(f"  item{i},") for i in range(items)), line("]"), line("year: 2024")]
+    found = entries(lines)
+    assert [(entry.kind, len(below)) for entry, below in found.values()] == [(Kind.FLOW, items + 1), (Kind.PLAIN, 0)]
+    assert 0 < sum(looked) <= sum(map(len, lines))
+
+
+def test_a_list_nested_deeper_than_lists_in_brackets_go_is_kept_as_written_after_few_looks() -> None:
+    looked: list[int] = []
     nested = "[a, " * 2000 + "b" + "]" * 2000
-    assert value(Text(nested)) == nested
+    assert value(looked_at(looked)(nested)) == nested
     assert sum(looked) <= 3 * len(nested)
     assert value("[a, [b, [c]], 'd']") == ["a", ["b", ["c"]], "d"]
 

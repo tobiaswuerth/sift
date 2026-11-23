@@ -8,19 +8,21 @@ import numpy as np
 import pytest
 
 from sift.api.errors import StoreUnavailableError
-from sift.api.ids import CollectionId
+from sift.api.ids import CollectionId, DocumentId
 from sift.domain.arrays import Ids, first, ints, last
 from sift.domain.codec.codes import Halves, codes
 from sift.domain.errors import DamagedError
-from sift.storage.database import Connection, Reading, reading, rows, run, writing
+from sift.storage.database import Connection, IdRow, Reading, reading, rows, run, writing
 from sift.storage.store import LAYOUT, open_store
 from sift.storage.vectors import (
     VectorsPut,
     codes_of,
     forget_vectors,
+    held_vectors,
     left,
     model_of,
     pending,
+    placed_chunks,
     put_vectors,
     vectors_of,
     width_held,
@@ -333,3 +335,23 @@ def test_a_chunk_given_two_vectors_is_refused() -> None:
         ids = chunk_ids(connection)
         with writing(connection) as transaction, pytest.raises(ValueError, match="more than one vector"):
             put_vectors(transaction, np.append(ids, ids[:1]), vectors(len(ids) + 1), "m")
+
+
+def test_chunks_placed_and_vectors_held_hold_the_text_pending_chunks_hold() -> None:
+    notes: Round = {"a.md": ("", "Alpha", "thrée 😀 x " * 3000), "b.md": ("", "Beta", "🎉 two")}
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [notes])
+        with reading(connection) as transaction:
+            waiting = pending(transaction, 0, 1000)
+            documents = [DocumentId(each.id) for each in rows(transaction, IdRow, "SELECT id FROM documents")]
+            assert placed_chunks(transaction, documents) == waiting
+            assert held_vectors(transaction, documents) == []
+        matrix = vectors(len(waiting))
+        with writing(connection) as transaction:
+            put_vectors(transaction, np.array([each.chunk for each in waiting], np.int64), matrix, "m")
+        with reading(connection) as transaction:
+            held = held_vectors(transaction, documents)
+        assert [(each.title, each.text, each.first) for each in held] == [
+            (each.title, each.text, each.first) for each in waiting
+        ]
+        assert b"".join(each.vector for each in held) == matrix.tobytes()

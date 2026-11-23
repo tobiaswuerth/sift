@@ -2,27 +2,23 @@ from pathlib import Path
 
 import pytest
 
-from sift.api.collections import AddCollection, Counted, ShowStatus
+from sift.api.collections import Counted, ShowStatus
 from sift.api.documents import GetDocuments
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, ShowLinks
 from sift.api.search import SearchResult
-from sift.app.collections import add, status
+from sift.app.collections import status
 from sift.app.documents import documents
 from sift.app.indexing import index
 from sift.app.links import links
 from sift.app.mentions import mentions
+from tests.damage import damage_pages
 from tests.files import write
+from tests.homes import collection
 
 HANS, ACME = "vault/People/Hans Müller.md", "vault/Orgs/Acme AG.md"
 ACME_LINK = '"[[Acme AG]]"'
-
-
-def collection(tmp_path: Path, home: Path, name: str, files: dict[str, str]) -> None:
-    for path, text in files.items():
-        write(tmp_path / name / path, text)
-    add(home, AddCollection(str(tmp_path / name)))
 
 
 @pytest.fixture
@@ -103,7 +99,7 @@ def test_a_store_a_name_could_not_be_looked_up_in_is_said(named: Path, tmp_path:
     collection(tmp_path, named, "other", {"x.md": "Hans Müller again.\n"})
     index(named, IndexCollections(), lambda _: None)
     store = named / "collections" / "other.sqlite"
-    store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
+    damage_pages(store)
     found = mentions(named, FindMentions("Hans Mueller", collections=("work",)))
     assert (ids(found), [each.collection for each in found.unsearched]) == (["work/contract.md"], ["other"])
     every = mentions(named, FindMentions("Hans Mueller"))

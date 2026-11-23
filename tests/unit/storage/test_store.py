@@ -14,9 +14,11 @@ from sift.storage.store import (
     DAMAGED_REMEDY,
     LAYOUT,
     MISSING_REMEDY,
+    connected,
     create_store,
     delete_store,
     open_store,
+    read_store,
     stored_bytes,
     unavailable_if_unusable,
 )
@@ -234,3 +236,19 @@ def test_a_store_of_another_collection_is_not_brought_up_to_this_layout(tmp_path
         open_store(tmp_path / "s.sqlite", COLLECTION, later)
     with opened(tmp_path / "s.sqlite", CollectionId(3)) as connection, reading(connection) as transaction:
         assert first(transaction, Value, "PRAGMA user_version") == Value(len(LAYOUT))
+
+
+def test_a_store_connected_or_read_is_closed_after_and_says_why_it_cannot_be_used(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    with connected(path, COLLECTION) as connection, writing(connection) as transaction:
+        run(transaction, "INSERT INTO sources(path, modified_ns, size) VALUES ('a.md', 1, 1)")
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+    with read_store(path, COLLECTION) as reading_it:
+        assert first(reading_it, Value, "SELECT count(*) FROM sources") == Value(1)
+    damage_table(path, "sources")
+    with pytest.raises(StoreUnavailableError, match="damaged"), read_store(path, COLLECTION) as reading_it:
+        first(reading_it, Value, "SELECT max(size) FROM sources")
+    with pytest.raises(StoreUnavailableError, match="missing"), connected(tmp_path / "gone.sqlite", COLLECTION):
+        pass

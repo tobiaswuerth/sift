@@ -55,6 +55,11 @@ def tiny_model(folder: Path) -> Path:
     return made
 
 
+def tiny_models(folder: Path) -> Path:
+    tiny_reranker(folder)
+    return tiny_model(folder)
+
+
 def tiny_static(folder: Path) -> Path:
     tokenizer = Tokenizer(WordLevel(VOCABULARY, "[UNK]"))
     tokenizer.pre_tokenizer = Whitespace()

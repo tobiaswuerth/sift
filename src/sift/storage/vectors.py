@@ -19,15 +19,13 @@ PENDING = """SELECT c.id, c.document, c.start, c.length,
              WHERE u.chunk > ?
              ORDER BY u.chunk LIMIT ?"""
 TEXTS = "SELECT id, title, text FROM documents WHERE id IN (SELECT value FROM json_each(?))"
-HELD = """SELECT d.title, substr(d.text, c.start + 1, c.length),
-                  c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document), v.vector, k.bits
-           FROM chunks c JOIN documents d ON d.id = c.document
-           JOIN vectors v ON v.chunk = c.id JOIN codes k ON k.chunk = c.id
-           WHERE c.document IN (SELECT value FROM json_each(?))"""
-PLACED = """SELECT c.id, d.title, substr(d.text, c.start + 1, c.length),
+HELD = """SELECT c.id, c.document, c.start, c.length,
+                 c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document), v.vector, k.bits
+          FROM chunks c JOIN vectors v ON v.chunk = c.id JOIN codes k ON k.chunk = c.id
+          WHERE c.document IN (SELECT value FROM json_each(?)) ORDER BY c.id"""
+PLACED = """SELECT c.id, c.document, c.start, c.length,
                    c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document)
-            FROM chunks c JOIN documents d ON d.id = c.document
-            WHERE c.document IN (SELECT value FROM json_each(?))"""
+            FROM chunks c WHERE c.document IN (SELECT value FROM json_each(?)) ORDER BY c.id"""
 CODES = "SELECT chunk, bits FROM codes ORDER BY chunk"
 HELD_META = "SELECT value FROM meta WHERE key = ? AND (SELECT vectors FROM counts) > 0"
 READ = 65_536
@@ -57,7 +55,7 @@ class Waiting(NamedTuple):
     first: int
 
 
-class ChunkText(NamedTuple):
+class TitledText(NamedTuple):
     id: int
     title: str
     text: str
@@ -82,10 +80,9 @@ def width_held(transaction: Reading) -> int | None:
     return None if found is None else int(found)
 
 
-def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
-    waiting = rows(transaction, Waiting, PENDING, (after, most))
-    wanted = json.dumps(sorted({each.document for each in waiting}))
-    texts = {held.id: held for held in rows(transaction, ChunkText, TEXTS, (wanted,))}
+def _cut(transaction: Reading, spans: Sequence[Waiting]) -> list[Pending]:
+    wanted = json.dumps(sorted({each.document for each in spans}))
+    texts = {held.id: held for held in rows(transaction, TitledText, TEXTS, (wanted,))}
     return [
         Pending(
             each.chunk,
@@ -93,31 +90,43 @@ def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
             texts[each.document].text[each.start : each.start + each.length],
             bool(each.first),
         )
-        for each in waiting
+        for each in spans
     ]
 
 
-class HeldVector(NamedTuple):
-    title: str
-    text: str
+def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
+    return _cut(transaction, rows(transaction, Waiting, PENDING, (after, most)))
+
+
+def placed_chunks(transaction: Reading, documents: Sequence[DocumentId]) -> list[Pending]:
+    return _cut(transaction, rows(transaction, Waiting, PLACED, (json.dumps(list(documents)),)))
+
+
+class VectorSpan(NamedTuple):
+    chunk: ChunkId
+    document: DocumentId
+    start: int
+    length: int
     first: int
     vector: bytes
     bits: bytes
 
 
-class PlacedChunk(NamedTuple):
-    id: ChunkId
+class HeldVector(NamedTuple):
     title: str
     text: str
-    first: int
+    first: bool
+    vector: bytes
+    bits: bytes
 
 
 def held_vectors(transaction: Reading, documents: Sequence[DocumentId]) -> list[HeldVector]:
-    return rows(transaction, HeldVector, HELD, (json.dumps(list(documents)),))
-
-
-def placed_chunks(transaction: Reading, documents: Sequence[DocumentId]) -> list[PlacedChunk]:
-    return rows(transaction, PlacedChunk, PLACED, (json.dumps(list(documents)),))
+    found = rows(transaction, VectorSpan, HELD, (json.dumps(list(documents)),))
+    cut = _cut(transaction, [Waiting(*each[:5]) for each in found])
+    return [
+        HeldVector(read.title, read.text, read.first, each.vector, each.bits)
+        for read, each in zip(cut, found, strict=True)
+    ]
 
 
 def copy_vectors(transaction: Writing, copies: Sequence[tuple[ChunkId, bytes, bytes]]) -> None:

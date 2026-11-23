@@ -2,6 +2,7 @@ import textwrap
 
 from sift.api.fields import Fields
 from sift.api.search import Hit, SearchResult
+from sift.domain.text.wording import counted
 from sift.interfaces.cli.shown.outcome import Shown, empty, unsearched_lines, value_text
 from sift.interfaces.console.progress import DOT
 from sift.interfaces.console.style import Style
@@ -34,9 +35,9 @@ def _hit(rank: int, hit: Hit, ranks: int, scores: int) -> tuple[str, ...]:
 
 
 def _footer(result: SearchResult, seconds: float, style: Style, kind: str) -> str:
-    found = f"{len(result.hits):,} result{'s' * (len(result.hits) != 1)}" if result.hits else "no matches"
+    found = counted(len(result.hits), "result") if result.hits else "no matches"
     ruled_out = f", {result.ruled_out} ruled out by the links" if result.ruled_out else ""
-    searched = f"{result.searched} collection{'s' * (result.searched != 1)}{ruled_out}"
+    searched = f"{counted(result.searched, 'collection')}{ruled_out}"
     separator = f"{GAP}{DOT[0] if style.unicode else DOT[1]}{GAP}"
     partial = ("partial: better matches may be missing",) if result.partial else ()
     return separator.join((found, kind, *partial, searched, duration(seconds)))

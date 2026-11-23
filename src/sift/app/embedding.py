@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from contextlib import closing
 from dataclasses import dataclass
 from functools import cache, partial
 from pathlib import Path
@@ -14,10 +13,11 @@ from sift.api.indexing import Skipped
 from sift.app.collections import chosen, chosen_or_active
 from sift.app.loading import prepared
 from sift.domain.text.embedding import embedded
+from sift.domain.text.wording import counted
 from sift.inference.models import Models
 from sift.storage.catalog import Collection
 from sift.storage.database import Connection, reading, writing
-from sift.storage.store import open_store, unavailable_if_unusable
+from sift.storage.store import connected
 from sift.storage.vectors import Pending, VectorsPut, forget_vectors, left, pending, put_vectors, refuse_model
 
 RESET_ALL_REMEDY = "run sift embed with reset, naming no collection"
@@ -41,10 +41,6 @@ class Work:
     models: Models
     embedding: Embedding
     ready: Callable[[], None]
-
-
-def _counted(n: int, what: str) -> str:
-    return f"{n:,} {what}{'s' * (n != 1)}"
 
 
 def _waiting(connection: Connection, after: int, most: int) -> list[Pending]:
@@ -74,7 +70,7 @@ def _filled(connection: Connection, work: Work) -> Embedded:
         report(Advanced(stored + broken))
     report(PhaseDone(stored))
     if broken:
-        report(Noted(f"{_counted(broken, 'chunk')} could not be embedded: the model gave no vector", BROKEN_REMEDY))
+        report(Noted(f"{counted(broken, 'chunk')} could not be embedded: the model gave no vector", BROKEN_REMEDY))
     return Embedded(stored, broken)
 
 
@@ -88,7 +84,7 @@ def _embedded(one: Collection, work: Work, failed: Failed) -> CollectionEmbedded
     if one.id in failed:
         return _skipped(one, work.report, failed[one.id])
     try:
-        with unavailable_if_unusable(one.store), closing(open_store(one.store, one.id)) as connection:
+        with connected(one.store, one.id) as connection:
             return CollectionEmbedded(one.name, _filled(connection, work))
     except StoreUnavailableError as error:
         return _skipped(one, work.report, error)
@@ -96,11 +92,7 @@ def _embedded(one: Collection, work: Work, failed: Failed) -> CollectionEmbedded
 
 def _forgotten(one: Collection) -> StoreUnavailableError | None:
     try:
-        with (
-            unavailable_if_unusable(one.store),
-            closing(open_store(one.store, one.id)) as connection,
-            writing(connection) as transaction,
-        ):
+        with connected(one.store, one.id) as connection, writing(connection) as transaction:
             forget_vectors(transaction)
     except StoreUnavailableError as error:
         return StoreUnavailableError(f"its vectors could not be forgotten: {error.message}", error.remedy)
