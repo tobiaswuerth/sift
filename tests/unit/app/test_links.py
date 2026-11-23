@@ -172,3 +172,39 @@ def test_links_stay_in_their_collection(tmp_path: Path) -> None:
     vault(tmp_path, {"Shared.md": "# Shared\n"}, "second")
     assert leads(links(home, ShowLinks("first/a.md")).out) == [("Shared", "unresolved")]
     assert unresolved(home, ListUnresolved("first")).targets == (Target("Shared", 1, ("first/a.md",)),)
+
+
+def test_a_note_named_as_a_link_writes_it_with_a_heading_or_shown_text_is_found(people: Path) -> None:
+    assert links(people, ShowLinks("[[Acme AG|Acme]]")).id == "v/Orgs/Acme AG.md"
+    assert links(people, ShowLinks("[[Acme AG#Team]]")).id == "v/Orgs/Acme AG.md"
+    with pytest.raises(NotFoundError):
+        links(people, ShowLinks("[[Acme AG"))
+
+
+def test_a_name_many_notes_answer_to_names_a_few_of_them(tmp_path: Path) -> None:
+    home = vault(tmp_path, {f"{n}/Same.md": "" for n in range(7)})
+    with pytest.raises(InvalidRequestError, match=r"names several notes: v/0/Same.md, .*v/4/Same.md, \.\.\."):
+        links(home, ShowLinks("Same"))
+
+
+def test_a_damaged_store_is_passed_over_by_names_and_unresolved_saying_so(people: Path, tmp_path: Path) -> None:
+    vault(tmp_path, {"x.md": "[[Nowhere]]"}, "w")
+    store = people / "collections" / "w.sqlite"
+    store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
+    assert links(people, ShowLinks("Acme AG")).id == "v/Orgs/Acme AG.md"
+    found = unresolved(people, ListUnresolved())
+    assert found.targets == (Target("Contract", 1, ("v/Meetings/Offer.md",)),)
+    assert [each.collection for each in found.unsearched] == ["w"]
+    with pytest.raises(NotFoundError, match="passed over: w"):
+        links(people, ShowLinks("Nowhere"))
+
+
+def test_the_cut_at_k_and_a_field_hold_for_the_second_step_too(people: Path) -> None:
+    further = links(people, ShowLinks("v/Meetings/Notes.md", depth=2, k=3)).out or ()
+    assert [(each.target, each.through) for each in further] == [
+        ("Offer", None),
+        ("Offer", None),
+        ("Hans Mueller", "v/Meetings/Offer.md"),
+    ]
+    org = links(people, ShowLinks("v/Orgs/Acme AG.md", Direction.IN, depth=2, field="org")).into or ()
+    assert [(each.id, each.through) for each in org] == [("v/People/Hans Müller.md", None)]

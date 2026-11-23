@@ -137,6 +137,10 @@ def _some_skipped(result: IndexResult | EmbedResult) -> bool:
     return any(isinstance(each.outcome, Skipped) for each in result.collections)
 
 
+def _some_unread(found: Unresolved) -> bool:
+    return bool(found.unsearched)
+
+
 def _some_unfound(found: Documents) -> bool:
     return bool(found.unfound)
 
@@ -160,7 +164,11 @@ COMMANDS = MappingProxyType(
         "get": command("print documents by their ids", GetDocuments, _get, shown.documents, _some_unfound),
         "links": command("the links of a note: those it holds, and those into it", ShowLinks, _links, shown.links),
         "unresolved": command(
-            "link targets no note answers to yet, most linked first", ListUnresolved, _unresolved, shown.unresolved
+            "link targets no note answers to yet, most linked first",
+            ListUnresolved,
+            _unresolved,
+            shown.unresolved,
+            _some_unread,
         ),
         "status": command(
             "show each collection: its folder and what its store holds", ShowStatus, _status, shown.status

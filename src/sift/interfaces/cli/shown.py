@@ -9,7 +9,7 @@ from sift.api.errors import SiftError
 from sift.api.fields import Fields, FieldValue
 from sift.api.indexing import IndexResult
 from sift.api.links import LinkIn, LinkOut, Links, Unresolved
-from sift.api.search import Hit, SearchResult
+from sift.api.search import Hit, SearchResult, Unsearched
 from sift.interfaces.console.progress import DOT
 from sift.interfaces.console.shell import command
 from sift.interfaces.console.style import Style, Tone
@@ -155,20 +155,24 @@ def _footer(result: SearchResult, seconds: float, style: Style, kind: str) -> st
     return separator.join((found, kind, *partial, searched, duration(seconds)))
 
 
+def _unsearched(unsearched: tuple[Unsearched, ...], style: Style) -> tuple[str, ...]:
+    return tuple(
+        line
+        for each in unsearched
+        for line in (
+            labelled("error", f"{each.collection}: {each.message}", Tone.ERROR, style),
+            *_fix(each.remedy, style),
+        )
+    )
+
+
 def hits(result: SearchResult, seconds: float, platform: str, style: Style, kind: str = "keyword") -> Shown:
     if not result.searched and not result.unsearched:
         return _empty(platform, style)
     ranks = len(str(len(result.hits)))
     scores = max((len(f"{hit.score:.2f}") for hit in result.hits), default=0)
     lines = [line for rank, hit in enumerate(result.hits, 1) for line in _hit(rank, hit, ranks, scores)]
-    problems = [
-        line
-        for each in result.unsearched
-        for line in (
-            labelled("error", f"{each.collection}: {each.message}", Tone.ERROR, style),
-            *_fix(each.remedy, style),
-        )
-    ]
+    problems = _unsearched(result.unsearched, style)
     return Shown(tuple(lines), (*problems, _footer(result, seconds, style, kind)), failed=bool(result.unsearched))
 
 
@@ -218,11 +222,13 @@ def links(result: Links, _platform: str, _style: Style) -> Shown:
     return Shown(tuple(printable(line) for line in (*out, *into)), ())
 
 
-def unresolved(result: Unresolved, _platform: str, _style: Style) -> Shown:
+def unresolved(result: Unresolved, _platform: str, style: Style) -> Shown:
+    problems = _unsearched(result.unsearched, style)
     if not result.targets:
-        return Shown((), (labelled("nothing", "every link leads to a note"),))
+        nothing = () if result.unsearched else (labelled("nothing", "every link leads to a note"),)
+        return Shown((), (*problems, *nothing), failed=bool(result.unsearched))
     rows = [
         (f"{each.documents:,}", each.target, ", ".join(each.ids) + (", ..." if each.documents > len(each.ids) else ""))
         for each in result.targets
     ]
-    return Shown(table(rows, frozenset({0})), ())
+    return Shown(table(rows, frozenset({0})), problems, failed=bool(result.unsearched))

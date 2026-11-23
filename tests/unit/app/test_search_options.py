@@ -190,3 +190,17 @@ def test_work_on_a_store_already_dropped_is_not_done(home: Path) -> None:
         kept.dropped(each, StoreUnavailableError("gone", None))
         assert kept.guarded(each, lambda: done.append(True)) is None
     assert done == []
+
+
+def test_a_filter_keeps_a_document_of_many_passages_whose_ids_are_not_its_passages_ids(tmp_path: Path) -> None:
+    root = tmp_path / "notes"
+    for n in range(5):
+        write(root / f"a{n}.md", f"# Filler {n}\n\nPigment {n}.\n")
+    sections = "".join(f"## Part {n}\n\n{'Pigment and binder. ' * 40}\n\n" for n in range(12))
+    write(root / "z.md", f"---\nrank: 9\n---\n# Long\n\n{sections}")
+    home = tmp_path / "home"
+    add(home, AddCollection(str(root)))
+    index(home, IndexCollections(), lambda _: None)
+    nine = (Filter("rank", ANY, (9,)),)
+    found = search(home, SearchKeywords("pigment", k=3, all_passages=True, filters=nine))
+    assert [hit.id for hit in found.hits] == ["notes/z.md"] * 3

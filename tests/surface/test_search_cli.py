@@ -120,3 +120,12 @@ def test_search_keeps_to_front_matter_and_paths_shows_it_and_orders_by_it(settin
     code, out, err = ran(settings, "search", "brush", "-f", "year")
     assert (code, out) == (1, "")
     assert err.startswith("error  the filter 'year' is no KEY=VALUE")
+
+
+def test_unresolved_fails_if_a_collection_could_not_be_read_however_it_answers(settings: Settings, notes: Path) -> None:
+    searched_notes(settings, notes)
+    (settings.home / "collections" / "notes.sqlite").unlink()
+    code, out, err = ran(settings, "unresolved")
+    assert (code, out) == (1, "")
+    assert err.startswith("error  notes: the store is missing: ")
+    assert ran(settings, "unresolved", "--json")[0] == 1

@@ -3,6 +3,7 @@ from enum import StrEnum
 from typing import Annotated
 
 from sift.api.described import Help, Short
+from sift.api.search import Unsearched
 
 NOTE = 'a note: its id, as sift get takes it, or its name as links write it, e.g. "Acme AG"'
 LINKS_K = "at most this many links each way (default: 50)"
@@ -77,3 +78,4 @@ class Target:
 @dataclass(frozen=True, slots=True)
 class Unresolved:
     targets: tuple[Target, ...]
+    unsearched: tuple[Unsearched, ...] = ()

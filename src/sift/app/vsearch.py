@@ -100,7 +100,7 @@ def _nearest[S](
 
     def exact(store: int, chunks: Ids) -> Exact:
         each = held[store]
-        found = kept.guarded(each, partial(read, each.transaction, chunks))
+        found = None if lost else kept.guarded(each, partial(read, each.transaction, chunks))
         if found is None:
             lost.append(True)
             return np.zeros(0, np.int64), np.zeros((0, 0), np.float16)

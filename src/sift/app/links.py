@@ -4,7 +4,7 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sift.api.errors import InvalidRequestError, NotFoundError
+from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.ids import DocumentId
 from sift.api.links import (
     Direction,
@@ -17,10 +17,11 @@ from sift.api.links import (
     Target,
     Unresolved,
 )
+from sift.api.search import Unsearched
 from sift.app.collections import chosen_or_active
 from sift.app.documents import place, resolved_at
 from sift.app.searching import checked_k
-from sift.domain.text.links import LinkKind, name_key
+from sift.domain.text.links import LinkKind, in_line, name_key
 from sift.domain.text.resolving import (
     LEADING,
     Candidate,
@@ -65,10 +66,13 @@ class Resolver:
         return resolved(None, LinkKind.WIKILINK, target, *self._named(name_key(target.rsplit("/", 1)[-1])))
 
 
+type Find = Callable[[Reading], int]
+
+
 @dataclass(frozen=True, slots=True)
 class Note:
     collection: Collection
-    document: int
+    find: Find
 
 
 def _reading[T](one: Collection, read: Callable[[Reading], T]) -> T:
@@ -80,37 +84,60 @@ def _reading[T](one: Collection, read: Callable[[Reading], T]) -> T:
         return read(transaction)
 
 
-def _by_id(home: Path, id_: str) -> Note:
-    chosen, relative = place(known_collections(home), id_)
-
-    def found(transaction: Reading) -> int:
-        return resolved_at(transaction, id_, relative, absolute=Path(id_).is_absolute()).id
-
-    return Note(chosen, _reading(chosen, found))
+def target_of(id_: str) -> str:
+    written = id_.strip()
+    found = in_line(written, 1)
+    whole = len(found) == 1 and written.startswith(("[[", "![[")) and written.endswith("]]")
+    return found[0].target if whole else written
 
 
-def _matches(one: Collection, name: str) -> list[int]:
-    found = _reading(one, lambda transaction: Resolver(transaction).of_name(name))
+def _named(transaction: Reading, name: str) -> list[int]:
+    found = Resolver(transaction).of_name(name)
     return list(found.documents) if found.via is not Via.UNRESOLVED else []
 
 
-def _whole(each: Note) -> str:
-    path = _reading(each.collection, lambda transaction: titled(transaction, [each.document])[each.document].path)
-    return f"{each.collection.name}/{path}"
+def _matches(one: Collection, name: str) -> list[str]:
+    def read(transaction: Reading) -> list[str]:
+        found = _named(transaction, name)
+        return sorted(f"{one.name}/{each.path}" for each in titled(transaction, found).values())
+
+    return _reading(one, read)
 
 
-def note(home: Path, id_: str) -> Note:
-    try:
-        return _by_id(home, id_)
-    except NotFoundError as unknown:
-        name = id_.strip().removeprefix("[[").removesuffix("]]")
-        found = [Note(one, document) for one in chosen_or_active(home, ()) for document in _matches(one, name)]
-        if not found:
-            raise unknown from None
-        if len(found) > 1:
-            listed = ", ".join(sorted(_whole(each) for each in found)[:AMBIGUOUS_SHOWN])
-            raise InvalidRequestError(f"{id_!r} names several notes: {listed}", AMBIGUOUS_REMEDY) from None
-        return found[0]
+def _at(whole: str) -> Find:
+    path = whole.split("/", 1)[1]
+
+    def find(transaction: Reading) -> int:
+        return resolved_at(transaction, whole, path, absolute=False).id
+
+    return find
+
+
+def _by_name(home: Path, id_: str, unknown: NotFoundError) -> Note:
+    name, passed = target_of(id_), list[str]()
+    found: list[tuple[Collection, str]] = []
+    for one in chosen_or_active(home, ()):
+        try:
+            found += [(one, whole) for whole in _matches(one, name)]
+        except StoreUnavailableError:
+            passed.append(one.name)
+    if not found:
+        said = f"{unknown.message}; passed over: {', '.join(passed)}" if passed else unknown.message
+        raise NotFoundError(said, unknown.remedy)
+    if len(found) > 1:
+        listed = ", ".join(sorted(whole for _, whole in found)[:AMBIGUOUS_SHOWN])
+        more = ", ..." if len(found) > AMBIGUOUS_SHOWN else ""
+        raise InvalidRequestError(f"{id_!r} names several notes: {listed}{more}", AMBIGUOUS_REMEDY)
+    return Note(found[0][0], _at(found[0][1]))
+
+
+def _by_id(home: Path, id_: str) -> Note:
+    chosen, relative = place(known_collections(home), id_)
+
+    def find(transaction: Reading) -> int:
+        return resolved_at(transaction, id_, relative, absolute=Path(id_).is_absolute()).id
+
+    return Note(chosen, find)
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,17 +221,17 @@ def _shown_in(each: In, names: dict[int, Titled], text: str, collection: str) ->
 
 
 def _links(transaction: Reading, found: Note, request: ShowLinks) -> Links:
-    resolver, collection = Resolver(transaction), found.collection.name
-    out = _out(resolver, found.document, request) if request.direction is not Direction.IN else None
-    into = _in(resolver, found.document, request) if request.direction is not Direction.OUT else None
-    documents = [found.document]
+    resolver, collection, document = Resolver(transaction), found.collection.name, found.find(transaction)
+    out = _out(resolver, document, request) if request.direction is not Direction.IN else None
+    into = _in(resolver, document, request) if request.direction is not Direction.OUT else None
+    documents = [document]
     documents += [at for each in out or () for at in (*each.how.documents, each.through) if at is not None]
     documents += [at for each in into or () for at in (each.document, each.through) if at is not None]
     names = titled(transaction, documents)
     whole = texts(transaction, [DocumentId(each.document) for each in into or ()])
     return Links(
-        f"{collection}/{names[found.document].path}",
-        names[found.document].title,
+        f"{collection}/{names[document].path}",
+        names[document].title,
         None if out is None else tuple(_shown_out(each, names, collection) for each in out),
         None
         if into is None
@@ -216,8 +243,12 @@ def links(home: Path, request: ShowLinks) -> Links:
     checked_k(request.k)
     if request.depth not in DEPTHS:
         raise InvalidRequestError(f"--depth {request.depth} is neither 1 nor 2", DEPTH_REMEDY)
-    found = note(home, request.id)
-    return _reading(found.collection, lambda transaction: _links(transaction, found, request))
+    try:
+        found = _by_id(home, request.id)
+        return _reading(found.collection, lambda transaction: _links(transaction, found, request))
+    except NotFoundError as unknown:
+        named = _by_name(home, request.id, unknown)
+        return _reading(named.collection, lambda transaction: _links(transaction, named, request))
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,10 +277,15 @@ def _unresolved(transaction: Reading) -> list[tuple[str, list[str]]]:
 
 def unresolved(home: Path, request: ListUnresolved) -> Unresolved:
     checked_k(request.k)
-    found = [
-        (target, [f"{one.name}/{path}" for path in paths])
-        for one in chosen_or_active(home, () if request.collection is None else (request.collection,))
-        for target, paths in _reading(one, _unresolved)
-    ]
+    found: list[tuple[str, list[str]]] = []
+    passed: list[Unsearched] = []
+    for one in chosen_or_active(home, () if request.collection is None else (request.collection,)):
+        try:
+            found += [
+                (target, [f"{one.name}/{path}" for path in paths]) for target, paths in _reading(one, _unresolved)
+            ]
+        except StoreUnavailableError as error:
+            passed.append(Unsearched(one.name, error.message, error.remedy))
     ranked = sorted(found, key=lambda each: (-len(each[1]), each[0]))[: request.k]
-    return Unresolved(tuple(Target(target, len(ids), tuple(sorted(ids)[:LINKING_SHOWN])) for target, ids in ranked))
+    targets = tuple(Target(target, len(ids), tuple(sorted(ids)[:LINKING_SHOWN])) for target, ids in ranked)
+    return Unresolved(targets, tuple(passed))

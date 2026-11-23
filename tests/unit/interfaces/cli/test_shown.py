@@ -13,7 +13,7 @@ from sift.api.documents import Documents, DocumentText, Unfound
 from sift.api.errors import NotFoundError, StoreUnavailableError
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
-from sift.api.search import Hit, SearchResult
+from sift.api.search import Hit, SearchResult, Unsearched
 from sift.interfaces.cli.shown import Shown, added, documents, failure, hits, indexed, status
 from sift.interfaces.cli.shown import links as shown_links
 from sift.interfaces.cli.shown import unresolved as shown_unresolved
@@ -212,3 +212,12 @@ def test_unresolved_targets_show_how_many_link_them_and_a_few_of_those() -> None
     found = Unresolved((Target("Missing", 7, ("v/a.md", "v/b.md")), Target("Gone", 1, ("v/c.md",))))
     assert shown_unresolved(found, "linux", PLAIN).results == ("7  Missing  v/a.md, v/b.md, ...", "1  Gone     v/c.md")
     assert shown_unresolved(Unresolved(()), "linux", PLAIN).messages == ("nothing  every link leads to a note",)
+
+
+def test_unresolved_targets_of_a_store_that_could_not_be_read_are_said_to_be_missing() -> None:
+    found = Unresolved((Target("Gone", 1, ("v/c.md",)),), (Unsearched("w", "the store is damaged", "run sift index"),))
+    shown_found = shown_unresolved(found, "linux", PLAIN)
+    assert shown_found.failed
+    assert shown_found.messages[0] == "error  w: the store is damaged"
+    alone = shown_unresolved(Unresolved((), found.unsearched), "linux", PLAIN)
+    assert (alone.results, alone.failed, len(alone.messages)) == ((), True, 2)
