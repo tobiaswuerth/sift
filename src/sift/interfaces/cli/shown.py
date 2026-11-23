@@ -56,14 +56,21 @@ def added(result: CollectionAdded, platform: str, style: Style) -> Shown:
     )
 
 
-def _row(collection: CollectionStatus, *, unreadable: bool) -> tuple[str, ...]:
+def _row(collection: CollectionStatus, *, linked: bool, unreadable: bool) -> tuple[str, ...]:
     held = collection.contents
-    numbers = (
-        (f"{held.documents:,}", f"{held.chunks:,}", size(held.stored_bytes), *((f"{held.unreadable:,}",) * unreadable))
-        if isinstance(held, Counted)
-        else (NONE,) * (len(STATUS_HEADER) - 2 + unreadable)
+    if not isinstance(held, Counted):
+        return (collection.name, collection.folder, *(NONE,) * (len(STATUS_HEADER) - 2 + 2 * linked + unreadable))
+    links = (f"{held.links:,}", f"{held.unresolved:,}") if linked else ()
+    unread = (f"{held.unreadable:,}",) if unreadable else ()
+    return (
+        collection.name,
+        collection.folder,
+        f"{held.documents:,}",
+        f"{held.chunks:,}",
+        size(held.stored_bytes),
+        *links,
+        *unread,
     )
-    return (collection.name, collection.folder, *numbers)
 
 
 def _problems(collection: CollectionStatus, style: Style) -> tuple[str, ...]:
@@ -87,9 +94,10 @@ def status(result: Status, platform: str, style: Style) -> Shown:
     if not result.collections:
         return _empty(platform, style)
     unreadable = any(isinstance(each.contents, Counted) and each.contents.unreadable for each in result.collections)
-    header = (*STATUS_HEADER, *(("unreadable",) * unreadable))
+    linked = any(isinstance(each.contents, Counted) and each.contents.links for each in result.collections)
+    header = (*STATUS_HEADER, *(("links", "unresolved") if linked else ()), *(("unreadable",) * unreadable))
     numbers = frozenset(range(2, len(header)))
-    rows = (header, *(_row(each, unreadable=unreadable) for each in result.collections))
+    rows = (header, *(_row(each, linked=linked, unreadable=unreadable) for each in result.collections))
     messages = tuple(line for each in result.collections for line in _problems(each, style))
     return Shown((*table(rows, numbers), *_unreadable_files(result)), messages)
 

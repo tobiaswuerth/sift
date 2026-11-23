@@ -17,12 +17,12 @@ from sift.api.links import (
 )
 from sift.api.search import Unsearched
 from sift.app.collections import chosen_or_active
-from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, by_id, by_name, linking, read_in
+from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, by_id, by_name, linking, read_in, unresolved_links
 from sift.app.searching import checked_k
-from sift.domain.text.resolving import LEADING, Linking, Resolution, Via, link_path, linking_lines, stem
+from sift.domain.text.resolving import LEADING, Linking, Resolution, link_path, linking_lines, stem
 from sift.storage.database import Reading
 from sift.storage.documents import texts
-from sift.storage.links import LinkRow, Titled, doubtful, links_out, titled
+from sift.storage.links import LinkRow, Titled, links_out, titled
 
 LINKING_SHOWN = 5
 DEPTHS = (1, 2)
@@ -139,13 +139,11 @@ class Gone:
 
 
 def _unresolved(transaction: Reading) -> list[tuple[str, list[str]]]:
-    resolver = Resolver(transaction)
     targets: dict[str, Gone] = {}
-    for row in doubtful(transaction):
-        if resolver.of(row).via is Via.UNRESOLVED:
-            gone = targets.setdefault(stem(link_path(row.path, row.kind, row.target)), Gone(Counter(), {}))
-            gone.written[row.target] += 1
-            gone.documents[row.document] = None
+    for row in unresolved_links(transaction):
+        gone = targets.setdefault(stem(link_path(row.path, row.kind, row.target)), Gone(Counter(), {}))
+        gone.written[row.target] += 1
+        gone.documents[row.document] = None
     names = titled(transaction, [document for gone in targets.values() for document in gone.documents])
     return [
         (

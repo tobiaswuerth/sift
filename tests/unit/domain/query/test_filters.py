@@ -2,7 +2,7 @@ import pytest
 
 from sift.api.errors import InvalidRequestError
 from sift.api.filters import Filter, FilterValue, Operator
-from sift.domain.query.filters import Linking, condition, linkings
+from sift.domain.query.filters import Linked, Linking, condition, linkings
 
 ANY = Operator.ANY
 
@@ -50,6 +50,9 @@ def test_wikilink_values_of_any_and_none_are_the_links_to_follow() -> None:
 
 
 def test_a_search_kept_to_some_documents_asks_for_a_condition() -> None:
-    asked = condition(None, [], reads_quotes=True, within=[3, 1, 3])
+    asked = condition(None, [], reads_quotes=True, linked=Linked(within=[3, 1, 3]))
     assert asked is not None
-    assert (asked.path, asked.within) == (None, "[1, 3]")
+    assert (asked.path, asked.within, asked.without) == (None, "[1, 3]", None)
+    left = condition(None, [], reads_quotes=True, linked=Linked(without=[2]))
+    assert left is not None
+    assert (left.within, left.without) == (None, "[2]")

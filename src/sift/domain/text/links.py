@@ -190,7 +190,7 @@ def links(text: str, body_start: int, body_first_line: int) -> tuple[Link, ...]:
     return (*_front_matter_links(text[:body_start]), *body)
 
 
-def _each(found: FieldValue) -> Sequence[FieldValue]:
+def each_of(found: FieldValue) -> Sequence[FieldValue]:
     return found if isinstance(found, Sequence) and not isinstance(found, str) else (found,)
 
 
@@ -198,7 +198,7 @@ def aliases(fields: Fields) -> list[str]:
     return [
         alias.strip()
         for field in ALIAS_FIELDS
-        for alias in _each(fields.get(field))
+        for alias in each_of(fields.get(field))
         if isinstance(alias, str) and alias.strip()
     ]
 

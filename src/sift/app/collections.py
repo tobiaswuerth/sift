@@ -14,6 +14,7 @@ from sift.api.collections import (
     UnreadableFile,
 )
 from sift.api.errors import StoreUnavailableError
+from sift.app.notes import unresolved_links
 from sift.storage.catalog import (
     Choices,
     Collection,
@@ -25,6 +26,7 @@ from sift.storage.catalog import (
 )
 from sift.storage.database import reading
 from sift.storage.documents import counts, unreadable
+from sift.storage.links import links_held
 from sift.storage.store import open_store, stored_bytes, unavailable_if_damaged
 
 OBSIDIAN = ".obsidian"
@@ -65,10 +67,11 @@ def _contents(one: Collection, *, listed: bool) -> Counted | Unavailable:
             reading(connection) as transaction,
         ):
             kept, failed = counts(transaction), unreadable(transaction)
+            linked, gone = links_held(transaction), len(unresolved_links(transaction))
     except StoreUnavailableError as error:
         return Unavailable(error.message, error.remedy)
     files = tuple(UnreadableFile(entry.path, entry.problem) for entry in failed) if listed else ()
-    return Counted(kept.documents, kept.chunks, stored_bytes(one.store), len(failed), files)
+    return Counted(kept.documents, kept.chunks, stored_bytes(one.store), len(failed), files, linked, gone)
 
 
 def _status(one: Collection, *, listed: bool) -> CollectionStatus:

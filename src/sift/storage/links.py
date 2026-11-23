@@ -51,6 +51,10 @@ class Key(NamedTuple):
     key: str
 
 
+class Count(NamedTuple):
+    held: int
+
+
 class Titled(NamedTuple):
     document: int
     path: str
@@ -70,6 +74,11 @@ def _links(found: list[LinkRow]) -> list[LinkRow]:
 
 def links_out(transaction: Reading, document: int, field: str | None) -> list[LinkRow]:
     return _links(rows(transaction, LinkRow, OUT, {"document": document, "field": field}))
+
+
+def links_held(transaction: Reading) -> int:
+    (found,) = rows(transaction, Count, "SELECT count(*) AS held FROM links")
+    return found.held
 
 
 def links_keyed(transaction: Reading, key: str, field: str | None) -> list[LinkRow]:

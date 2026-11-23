@@ -22,6 +22,7 @@ class Condition:
     path: str | None
     fields: str
     within: str | None = None
+    without: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +32,14 @@ class Linking:
     target: str
 
 
-UNLINKED: Mapping[Linking, Sequence[int]] = MappingProxyType({})
+@dataclass(frozen=True, slots=True)
+class Linked:
+    values: Mapping[Linking, Sequence[int]] = MappingProxyType({})
+    within: Sequence[int] | None = None
+    without: Sequence[int] = ()
+
+
+UNLINKED = Linked()
 
 
 def _refused(problem: str, remedy: str = FILTER_REMEDY) -> InvalidRequestError:
@@ -115,17 +123,17 @@ def condition(
     filters: Sequence[Filter],
     *,
     reads_quotes: bool,
-    linked: Mapping[Linking, Sequence[int]] = UNLINKED,
-    within: Sequence[int] | None = None,
+    linked: Linked = UNLINKED,
 ) -> Condition | None:
     asked = gathered(tuple(filters))
     for each in asked:
         _checked(each)
-    if not path and not asked and within is None:
+    if not path and not asked and linked.within is None and not linked.without:
         return None
     groups = [
-        _group(field, [each for each in asked if each.field == field], linked, reads_quotes=reads_quotes)
+        _group(field, [each for each in asked if each.field == field], linked.values, reads_quotes=reads_quotes)
         for field in dict.fromkeys(each.field for each in asked)
     ]
-    kept = None if within is None else json.dumps(sorted(set(within)))
-    return Condition(path or None, json.dumps(groups, ensure_ascii=False), kept)
+    kept = None if linked.within is None else json.dumps(sorted(set(linked.within)))
+    left = json.dumps(sorted(set(linked.without))) if linked.without else None
+    return Condition(path or None, json.dumps(groups, ensure_ascii=False), kept, left)

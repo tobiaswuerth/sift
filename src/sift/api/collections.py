@@ -68,6 +68,8 @@ class Counted:
     stored_bytes: int
     unreadable: int
     unreadable_files: tuple[UnreadableFile, ...]
+    links: int = 0
+    unresolved: int = 0
     state: Literal["counted"] = "counted"
 
 

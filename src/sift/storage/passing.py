@@ -30,6 +30,7 @@ bounds AS MATERIALIZED (
   FROM json_each(:fields) g, json_each(g.value, '$.ranges') r)
 SELECT d.id FROM asked a JOIN documents d ON d.id = a.id JOIN sources s ON s.id = d.source
 WHERE (:path IS NULL OR s.path GLOB :path)
+  AND d.id NOT IN (SELECT value FROM json_each(:without))
   AND NOT EXISTS (
     SELECT 1 FROM groups g
     WHERE NOT (
@@ -86,7 +87,13 @@ def reads_quotes() -> bool:
 
 def documents_passing(transaction: Reading, condition: Condition, documents: Ids | None) -> Ids:
     asked = None if documents is None else json.dumps(ints(documents))
-    parameters = {"documents": asked, "path": condition.path, "fields": condition.fields, "within": condition.within}
+    parameters = {
+        "documents": asked,
+        "path": condition.path,
+        "fields": condition.fields,
+        "within": condition.within,
+        "without": condition.without,
+    }
     return np.fromiter((row.id for row in streamed(transaction, Row, PASSING, parameters)), np.int64)
 
 

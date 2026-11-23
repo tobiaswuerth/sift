@@ -12,7 +12,7 @@ from sift.domain.text.resolving import LEADING, Candidate, Resolution, Via, link
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Reading, reading
 from sift.storage.documents import stored
-from sift.storage.links import LinkRow, keys_of, links_into, links_keyed, named, titled
+from sift.storage.links import LinkRow, doubtful, keys_of, links_into, links_keyed, named, titled
 from sift.storage.store import open_store, unavailable_if_damaged
 
 AMBIGUOUS_SHOWN = 5
@@ -159,3 +159,8 @@ def written(transaction: Reading, target: str, wanted: str | None) -> set[int]:
     want = stem(target.lstrip("/"))
     rows = links_keyed(transaction, name_key(target.rsplit("/", 1)[-1]), wanted)
     return {row.document for row in rows if stem(link_path(row.path, row.kind, row.target)) == want}
+
+
+def unresolved_links(transaction: Reading) -> list[LinkRow]:
+    resolver = Resolver(transaction)
+    return [row for row in doubtful(transaction) if resolver.of(row).via is Via.UNRESOLVED]

@@ -2,11 +2,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated
 
-from sift.api.described import Help, Short
-from sift.api.search import Unsearched
+from sift.api.described import Help, Read, Short
+from sift.api.fields import listed
+from sift.api.search import Options, Unsearched
 
 NOTE = 'a note: its id, as sift get takes it, or its name as links write it, e.g. "Acme AG"'
 LINKS_K = "at most this many links each way (default: 50)"
+ALSO = "front matter fields whose values name the note too, comma-separated, e.g. emails"
 
 
 class Direction(StrEnum):
@@ -80,3 +82,9 @@ class Target:
 class Unresolved:
     targets: tuple[Target, ...]
     unsearched: tuple[Unsearched, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class FindMentions(Options):
+    id: Annotated[str, Help(NOTE)]
+    also: Annotated[tuple[str, ...], Help(ALSO), Read(listed)] = ()

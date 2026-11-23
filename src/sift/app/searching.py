@@ -10,6 +10,7 @@ from sift.api.ids import ChunkId, owner
 from sift.api.search import MOST_HITS, Hit, Options, SearchResult, Unsearched
 from sift.app.collections import chosen_or_active
 from sift.app.linked import Narrowing, condition_in, narrowing
+from sift.app.notes import Note
 from sift.domain.query import fields as shown
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
@@ -75,8 +76,8 @@ def checked(request: Options) -> None:
     shown.checked(request.fields, request.sort)
 
 
-def narrowed(home: Path, request: Options) -> Narrowing:
-    return narrowing(home, request, collections_of(home, request.collection))
+def narrowed(home: Path, request: Options, unlinked: Note | None = None) -> Narrowing:
+    return narrowing(home, request, collections_of(home, request.collection), unlinked)
 
 
 def allowed(asked: Narrowing, one: Collection, transaction: Reading) -> Passing | None:

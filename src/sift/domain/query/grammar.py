@@ -204,3 +204,9 @@ def relaxed(query: str) -> Expression | None:
         return None
     expression, _ = _joined(Or, [(leaf_of(word), 1, 0) for word in words])
     return None if expression == NOTHING else expression
+
+
+def any_phrase(texts: Sequence[str]) -> Expression:
+    found = tuple(dict.fromkeys(leaf_of(Word(text, quoted=True)) for text in texts))
+    expression, _ = _joined(Or, [(leaf, 1, 0) for leaf in found])
+    return expression

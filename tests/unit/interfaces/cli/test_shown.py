@@ -88,6 +88,15 @@ def test_status_is_a_table_whose_numbers_align_and_whose_problems_are_said_besid
     )
 
 
+def test_status_counts_links_where_a_collection_holds_any() -> None:
+    linked = dataclasses.replace(NOTES, contents=Counted(1, 2, 3_000, 0, (), links=3_249, unresolved=7))
+    assert status(Status("/h", (linked, STATUS.collections[1])), "linux", PLAIN).results == (
+        "collection   folder        documents  chunks    size  links  unresolved",
+        "notes        /data/notes           1       2  3.0 kB  3,249           7",
+        "Papers-日本  /data/papers          -       -       -      -           -",
+    )
+
+
 def test_status_counts_unreadable_files_and_lists_them_when_asked() -> None:
     failed = (UnreadableFile("huge.txt", "too large"), UnreadableFile("locked.md", "Permission denied"))
     counted = dataclasses.replace(NOTES, contents=Counted(1, 2, 3_000, 2, failed))

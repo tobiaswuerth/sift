@@ -6,7 +6,7 @@ from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailable
 from sift.api.filters import Filter
 from sift.api.search import Options, Unsearched
 from sift.app.notes import Note, Resolver, at_path, by_id, linking, matches, passed, read_in, target_of, written
-from sift.domain.query.filters import Condition, Linking, condition, linkings
+from sift.domain.query.filters import Condition, Linked, Linking, condition, linkings
 from sift.domain.text.resolving import LEADING
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading
@@ -33,6 +33,7 @@ class Narrowing:
     linkings: tuple[Linking, ...]
     links_to: tuple[Pointed, ...] | None
     linked_from: tuple[Pointed, ...] | None
+    unlinked: Note | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +98,7 @@ def _kept(
     return tuple(one for one in scope if one.name in names)
 
 
-def narrowing(home: Path, request: Options, scope: tuple[Collection, ...]) -> Narrowing:
+def narrowing(home: Path, request: Options, scope: tuple[Collection, ...], unlinked: Note | None = None) -> Narrowing:
     quotes = reads_quotes()
     condition(request.path, request.filters, reads_quotes=quotes)
     links_to = tuple(_linked_to(home, scope, each) for each in request.links_to) if request.links_to else None
@@ -114,6 +115,7 @@ def narrowing(home: Path, request: Options, scope: tuple[Collection, ...]) -> Na
         linkings(request.filters),
         links_to,
         linked_from,
+        unlinked,
     )
 
 
@@ -153,8 +155,15 @@ def _within(found: Narrowing, one: Collection, resolver: Resolver) -> list[int] 
     return None if kept is None else sorted(kept)
 
 
+def _left_out(note: Note | None, one: Collection, resolver: Resolver) -> list[int]:
+    if note is None or note.collection.id != one.id:
+        return []
+    document = note.find(resolver.transaction)
+    return [document, *linking(resolver, document, None)]
+
+
 def condition_in(found: Narrowing, one: Collection, transaction: Reading) -> Condition | None:
     resolver = Resolver(transaction)
-    linked = {each: sorted(_following(resolver, each)) for each in found.linkings}
-    within = _within(found, one, resolver)
-    return condition(found.path, found.filters, reads_quotes=found.reads_quotes, linked=linked, within=within)
+    values = {each: sorted(_following(resolver, each)) for each in found.linkings}
+    linked = Linked(values, _within(found, one, resolver), _left_out(found.unlinked, one, resolver))
+    return condition(found.path, found.filters, reads_quotes=found.reads_quotes, linked=linked)

@@ -113,6 +113,8 @@ def test_status_and_add_answer_in_json_when_asked(settings: Settings, notes: Pat
                     "stored_bytes": store.stat().st_size,
                     "unreadable": 0,
                     "unreadable_files": [],
+                    "links": 0,
+                    "unresolved": 0,
                     "state": "counted",
                 },
             }

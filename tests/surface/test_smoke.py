@@ -46,6 +46,8 @@ def links_run(home: Path) -> None:
         "     6  Gone  ->  unresolved",
     ]
     assert sift(home, "unresolved").stdout == "1  Gone  notes/rl.md\n"
+    mentioned = sift(home, "mentions", "notes/sub/brush.md", "--json", "--compact")
+    assert [hit["id"] for hit in hits_of(mentioned)] == ["notes/huge.txt"]
     linking = ("search", "learning OR brush", "--json", "--compact")
     assert [hit["id"] for hit in hits_of(sift(home, *linking, "--links-to", "brush"))] == ["notes/rl.md"]
     assert [hit["id"] for hit in hits_of(sift(home, *linking, "--linked-from", "notes/rl.md"))] == [
@@ -61,7 +63,7 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
         b'---\nsee: "[[brush]]"\n---\n# Reward shaping\n\nSpeeds up learning. See [[brush]], [[Gone]].\n'
     )
     (notes / "sub" / "brush.md").write_bytes(b"# Brush\n")
-    (notes / "huge.txt").write_bytes(b"x")
+    (notes / "huge.txt").write_bytes(b"A brush stroke.")
 
     added = sift(home, "add", str(notes), "--name", "notes")
     assert (added.returncode, added.stdout) == (0, "")
@@ -75,7 +77,12 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
 
     status = sift(home, "status")
     assert (status.returncode, status.stderr) == (0, "")
-    assert status.stdout.split("\n")[1].split()[-4:-2] == ["3", "3"]
+    header, row = status.stdout.split("\n")[:2]
+    assert (header.split()[-2:], row.split()[-6:-4], row.split()[-2:]) == (
+        ["links", "unresolved"],
+        ["3", "3"],
+        ["3", "1"],
+    )
     listed = sift(home, "status", "notes", "--unreadable", "--json")
     assert '"unreadable_files": []' in listed.stdout
     assert json.loads(listed.stdout)

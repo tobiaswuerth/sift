@@ -7,7 +7,7 @@ from functools import partial
 from pathlib import Path
 
 from sift.api.errors import InvalidRequestError
-from sift.api.search import Hit, SearchKeywords, SearchResult
+from sift.api.search import Hit, Options, SearchKeywords, SearchResult
 from sift.app import searching
 from sift.app.linked import Narrowing
 from sift.domain.query.expressions import NOTHING, Expression
@@ -56,7 +56,7 @@ class Wanted:
 
 @dataclass(frozen=True, slots=True)
 class Asked:
-    request: SearchKeywords
+    request: Options
     expression: Expression
     looser: Expression | None
     wanted: Wanted
@@ -136,7 +136,10 @@ def _asked(home: Path, request: SearchKeywords, clock: Clock, tuning: Tuning) ->
 def search(
     home: Path, request: SearchKeywords, clock: Clock = time.perf_counter, tuning: Tuning = TUNING
 ) -> SearchResult:
-    asked = _asked(home, request, clock, tuning)
+    return searched_as(_asked(home, request, clock, tuning))
+
+
+def searched_as(asked: Asked) -> SearchResult:
     with ExitStack() as cleanup:
         narrowing = asked.narrowing
         kept = searching.opened(cleanup, narrowing.collections, partial(keywords, narrowing), narrowing.ruled_out)
