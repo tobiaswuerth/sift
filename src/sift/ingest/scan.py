@@ -9,6 +9,7 @@ from typing import Protocol
 
 from sift.domain.plan.indexing import Found, Stat, stored_time
 from sift.domain.text.notes import TEXT_FILES
+from sift.domain.text.records import RECORD_FILES
 
 SKIPPED_FOLDERS = frozenset({"node_modules", "__pycache__"})
 GONE = (FileNotFoundError, NotADirectoryError)
@@ -127,7 +128,7 @@ def _taken(entry: Entry, relative: str, seen: _Seen, folders: list[tuple[str, st
         if entry.is_dir(follow_symlinks=False):
             if _folder_taken(entry):
                 folders.append((entry.path, f"{relative}{entry.name}/"))
-        elif PurePath(entry.name).suffix.lower() in TEXT_FILES:
+        elif PurePath(entry.name).suffix.lower() in (*TEXT_FILES, *RECORD_FILES):
             _file(entry, relative + entry.name, seen, outside_of)
     except OSError as error:
         _unreached(seen, relative + entry.name, error)

@@ -13,7 +13,8 @@ from sift.api.events import Advanced, CollectionStarted, Event, Finished, Noted,
 from sift.api.ids import CollectionId
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import add, status
-from sift.app.indexing import FOLDER_MISSING_REMEDY, OUT_OF_REACH_REMEDY, Limits, index
+from sift.app.filing import Limits
+from sift.app.indexing import FOLDER_MISSING_REMEDY, OUT_OF_REACH_REMEDY, index
 from sift.app.problems import EMPTY_INSIDE, EMPTY_INSIDE_REMEDY, LEFT_AS_INDEXED
 from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows

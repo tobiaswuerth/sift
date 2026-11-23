@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import NamedTuple
 
+from sift.domain.text.records import RECORD_FILES
+
 MOST_TIME = 2**63 - 1
 MOST_TEXT_BYTES = 1_000_000_000
 ROOT = ""
@@ -53,6 +55,10 @@ def _emptied(found: Found, gone: frozenset[str]) -> tuple[str, ...]:
     return tuple(sorted(folder for folder in found.empty_folders if _in_any(gone, (folder,))))
 
 
+def _too_large(path: str, stat: Stat, most_text_bytes: int) -> bool:
+    return stat.size > most_text_bytes and not path.lower().endswith(RECORD_FILES)
+
+
 def index_plan(
     found: Found,
     known: Mapping[str, Stat],
@@ -68,8 +74,8 @@ def index_plan(
     left_as_indexed = _in_any(gone, emptied)
     still_there = found.files.keys() | kept | left_as_indexed | set(found.unlisted_files)
     return IndexPlan(
-        read=tuple(path for path in to_read if found.files[path].size <= most_text_bytes),
-        too_large=tuple(path for path in to_read if found.files[path].size > most_text_bytes),
+        read=tuple(path for path in to_read if not _too_large(path, found.files[path], most_text_bytes)),
+        too_large=tuple(path for path in to_read if _too_large(path, found.files[path], most_text_bytes)),
         drop=tuple(sorted(gone - left_as_indexed)),
         kept=tuple(sorted(kept)),
         left_as_indexed=tuple(sorted(left_as_indexed)),

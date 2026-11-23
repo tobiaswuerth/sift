@@ -13,6 +13,7 @@ from sift.app.linked import LeftOut, Narrowing, condition_in, narrowing
 from sift.domain.query import fields as shown
 from sift.domain.rank.hybrid import work_of
 from sift.domain.rank.works import one_per_work
+from sift.domain.text.records import record_path
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
 from sift.storage.documents import fields_by_document, passages, texts
@@ -169,7 +170,7 @@ def _read[S](
         chunk: Seen(
             chunk,
             Hit(
-                f"{one.collection.name}/{passage.path}",
+                f"{one.collection.name}/{record_path(passage.path, passage.key)}",
                 passage.title,
                 f"{passage.first_line}-{passage.last_line}",
                 scores[chunk],

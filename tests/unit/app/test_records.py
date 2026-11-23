@@ -1,0 +1,190 @@
+import json
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import closing
+from pathlib import Path
+
+import pytest
+
+from sift.api.collections import AddCollection, Counted, ShowStatus
+from sift.api.documents import GetDocuments
+from sift.api.embedding import EmbedCollections
+from sift.api.errors import InvalidRequestError
+from sift.api.events import Event, Noted
+from sift.api.filters import written
+from sift.api.indexing import IndexCollections, Indexed
+from sift.api.search import SearchKeywords
+from sift.app.collections import add, status
+from sift.app.documents import documents
+from sift.app.embedding import embed
+from sift.app.filing import Limits, Lines
+from sift.app.indexing import index
+from sift.app.search import search
+from sift.ingest.records import lines_of
+from sift.storage.catalog import known_collections
+from sift.storage.database import reading
+from sift.storage.store import open_store
+from sift.storage.vectors import left
+from tests.models import Hashed
+
+PAPERS: list[dict[str, object]] = [
+    {"id": "2101.00001", "title": "Brush stroke planning", "abstract": "A robot plans brush strokes.", "year": 2021},
+    {"id": "2101.00002", "title": "Reward shaping", "abstract": "Shaping speeds up learning.", "year": 2021},
+    {"id": "hep-th/9901001", "title": "String junctions", "abstract": "Heterotic strings and junctions.", "year": 1999},
+]
+BRUSH, SHAPING = "arxiv/2021/2021-01.jsonl#2101.00001", "arxiv/2021/2021-01.jsonl#2101.00002"
+STRINGS = "arxiv/1999/1999-01.jsonl#hep-th/9901001"
+
+
+def write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def jsonl(records: Sequence[Mapping[str, object]]) -> str:
+    return "".join(json.dumps(each) + "\n" for each in records)
+
+
+def indexed(
+    home: Path, limits: Limits | None = None, said: list[Event] | None = None, lines: Lines = lines_of
+) -> Indexed:
+    heard: list[Event] = [] if said is None else said
+    (one,) = index(home, IndexCollections(), heard.append, limits or Limits(), lines).collections
+    assert isinstance(one.outcome, Indexed)
+    return one.outcome
+
+
+def found(home: Path, query: str, filters: tuple[str, ...] = ()) -> list[str]:
+    asked = SearchKeywords(query, k=20, filters=tuple(map(written, filters)))
+    return sorted(hit.id for hit in search(home, asked).hits)
+
+
+def text_of(home: Path, id_: str) -> str:
+    (one,) = documents(home, GetDocuments((id_,))).found
+    return one.text
+
+
+@pytest.fixture
+def papers(tmp_path: Path) -> Path:
+    root, home = tmp_path / "arxiv", tmp_path / "home"
+    write(root / "2021" / "2021-01.jsonl", jsonl(PAPERS[:2]))
+    write(root / "1999" / "1999-01.jsonl", jsonl(PAPERS[2:]))
+    write(root / "notes.md", "# Notes\n\nA Markdown file in the same collection.\n")
+    add(home, AddCollection(str(root)))
+    indexed(home)
+    return home
+
+
+def test_each_line_of_a_json_lines_file_is_a_document_named_by_its_file_and_id(papers: Path) -> None:
+    assert found(papers, "brush") == [BRUSH]
+    assert text_of(papers, BRUSH) == "# Brush stroke planning\n\nA robot plans brush strokes."
+    assert found(papers, "strings") == [STRINGS]
+    assert found(papers, "learning OR strokes OR junctions", ("year=1999",)) == [STRINGS]
+    (shown,) = documents(papers, GetDocuments((BRUSH,), fields=("year", "authors"))).found
+    assert shown.fields == {"year": 2021}
+
+
+def test_only_changed_records_are_stored_again_and_gone_ones_leave(papers: Path, tmp_path: Path) -> None:
+    root = tmp_path / "arxiv"
+    changed = [PAPERS[0], {**PAPERS[1], "abstract": "Shaping is now different."}, {"id": "2101.00003", "text": "New."}]
+    write(root / "2021" / "2021-01.jsonl", jsonl(changed))
+    again = indexed(papers)
+    assert (again.added, again.changed, again.removed) == (1, 1, 0)
+    assert text_of(papers, SHAPING) == "# Reward shaping\n\nShaping is now different."
+    assert found(papers, "speeds") == []
+    write(root / "2021" / "2021-01.jsonl", jsonl(PAPERS[:1]))
+    write(root / "1999" / "1999-01.jsonl", "")
+    gone = indexed(papers)
+    assert (gone.added, gone.changed, gone.removed) == (0, 0, 3)
+    assert found(papers, "junctions OR shaping OR new") == []
+    unchanged = indexed(papers)
+    assert (unchanged.added, unchanged.changed, unchanged.removed) == (0, 0, 0)
+
+
+def test_vectors_of_unchanged_records_are_kept(papers: Path, tmp_path: Path) -> None:
+    embed(papers, EmbedCollections(), lambda _: None, Hashed())
+    write(tmp_path / "arxiv" / "2021" / "2021-01.jsonl", jsonl([PAPERS[0], {**PAPERS[1], "abstract": "New text."}]))
+    indexed(papers)
+    (one,) = known_collections(papers)
+    with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
+        assert left(transaction) == 1
+
+
+def test_lines_without_a_record_are_skipped_and_said(tmp_path: Path) -> None:
+    lines = ["{not json", "[1, 2]", json.dumps({"id": 1}), json.dumps({"id": 2, "text": "kept"}), ""]
+    lines += [json.dumps({"id": 2, "text": "again"}), json.dumps({"id": "a\x00b", "text": "nul"})]
+    lines += [json.dumps({"id": "a\ufffdb", "text": "same key"}), "[]"]
+    write(tmp_path / "c" / "r.jsonl", "\n".join(lines) + "\n")
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    said: list[Event] = []
+    indexed(home, said=said)
+    assert found(home, "kept OR again OR nul OR same") == ["c/r.jsonl#2", "c/r.jsonl#a\ufffdb"]
+    assert text_of(home, "c/r.jsonl#a\ufffdb") == "nul"
+    (noted,) = [each for each in said if isinstance(each, Noted)]
+    assert noted.text.startswith("r.jsonl: 6 lines skipped (line 1: not JSON; line 2: not an object; line 3: no text")
+    assert noted.text.endswith("; ...)")
+    (contents,) = [each.contents for each in status(home, ShowStatus(unreadable=True)).collections]
+    assert isinstance(contents, Counted)
+    assert [(each.path, each.problem) for each in contents.unreadable_files] == [("r.jsonl", noted.text[9:])]
+
+
+def test_fields_may_be_chosen_when_the_collection_is_added(tmp_path: Path) -> None:
+    write(tmp_path / "c" / "qa.jsonl", json.dumps({"key": "q1", "q": "Why?", "a": "Because.", "text": "not this"}))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c"), id_field="key", title_field="q", text_fields=("q", "a")))
+    indexed(home)
+    assert text_of(home, "c/qa.jsonl#q1") == "# Why?\n\nWhy?\n\nBecause."
+
+
+@pytest.mark.parametrize("id_field, title_field, text_fields", [(None, None, ("",)), (" ", None, ()), (None, "", ())])
+def test_a_field_chosen_must_be_named(
+    tmp_path: Path, id_field: str | None, title_field: str | None, text_fields: tuple[str, ...]
+) -> None:
+    (tmp_path / "c").mkdir()
+    asked = AddCollection(str(tmp_path / "c"), id_field=id_field, title_field=title_field, text_fields=text_fields)
+    with pytest.raises(InvalidRequestError, match="field"):
+        add(tmp_path / "home", asked)
+
+
+def test_a_large_file_is_stored_a_batch_at_a_time_as_it_is_read(tmp_path: Path) -> None:
+    records = [{"id": n % 9, "text": f"record {n}"} for n in range(12)]
+    write(tmp_path / "c" / "big.jsonl", jsonl(records))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    small = Limits(most_records_a_write=4)
+    said: list[Event] = []
+    first = indexed(home, small, said)
+    assert (first.added, first.removed) == (9, 0)
+    assert text_of(home, "c/big.jsonl#3") == "record 3"
+    assert any(isinstance(each, Noted) and "line 10: id 0 used twice" in each.text for each in said)
+    write(tmp_path / "c" / "big.jsonl", jsonl([*records[:5], {"id": 5, "text": "changed"}]))
+    second = indexed(home, small)
+    assert (second.added, second.changed, second.removed) == (0, 1, 3)
+    assert text_of(home, "c/big.jsonl#5") == "changed"
+
+
+def test_a_record_longer_than_a_document_may_be_is_skipped_and_files_in_utf_16_are_read(tmp_path: Path) -> None:
+    write(tmp_path / "c" / "r.jsonl", jsonl([{"id": 1, "text": "x" * 50}, {"id": 2, "text": "short"}]))
+    (tmp_path / "c" / "wide.jsonl").write_bytes(jsonl([{"id": "w", "text": "wide text"}]).encode("utf-16"))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    said: list[Event] = []
+    indexed(home, Limits(most_text_bytes=40), said)
+    assert found(home, "short OR wide") == ["c/r.jsonl#2", "c/wide.jsonl#w"]
+    assert any(isinstance(each, Noted) and "line 1: 50 bytes as text" in each.text for each in said)
+
+
+def broken(_path: Path) -> Iterator[tuple[int, str]]:
+    yield 1, json.dumps({"id": "new", "text": "half read"})
+    raise OSError(5, "the drive went away")
+
+
+def test_a_file_that_cannot_be_read_to_its_end_stores_nothing_of_it(papers: Path, tmp_path: Path) -> None:
+    write(tmp_path / "arxiv" / "2021" / "2021-01.jsonl", jsonl([{"id": "new", "text": "half read"}]))
+    indexed(papers, lines=broken)
+    assert found(papers, "brush OR half") == [BRUSH]
+    (contents,) = [each.contents for each in status(papers, ShowStatus(unreadable=True)).collections]
+    assert isinstance(contents, Counted)
+    assert [(each.path, each.problem) for each in contents.unreadable_files] == [
+        ("2021/2021-01.jsonl", "the drive went away")
+    ]

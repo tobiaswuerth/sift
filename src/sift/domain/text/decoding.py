@@ -19,3 +19,15 @@ def decoded(raw: bytes) -> str:
 
 def file_text(raw: bytes) -> str:
     return decoded(raw).replace("\r\n", "\n")
+
+
+def encoding_of(start: bytes) -> tuple[str, str]:
+    if start.startswith(UTF32_MARKS):
+        return "utf-32", "replace"
+    if start.startswith(UTF16_MARKS):
+        return "utf-16", "replace"
+    return "utf-8-sig", "surrogateescape"
+
+
+def ansi(text: str) -> str:
+    return text.translate(ANSI)

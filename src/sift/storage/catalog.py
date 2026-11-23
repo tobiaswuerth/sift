@@ -11,6 +11,7 @@ from typing import NamedTuple, cast
 from sift.api.collections import TitleFrom
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.ids import CollectionId
+from sift.domain.text.records import NO_CHOICE, Chosen
 from sift.storage.database import Reading, Writing, connect, inserted, reading, rows, writing
 from sift.storage.migrations import Migration, migrated, version
 from sift.storage.store import create_store, delete_store
@@ -37,6 +38,7 @@ LAYOUT: tuple[Migration, ...] = (
 class Choices:
     title_from: TitleFrom = TitleFrom.HEADING
     follow_links: bool = False
+    records: Chosen = NO_CHOICE
 
 
 DEFAULT_CHOICES = Choices()
@@ -62,14 +64,29 @@ class Row(NamedTuple):
 
 
 def choices_json(choices: Choices) -> str:
-    return json.dumps({"title_from": choices.title_from.value, "follow_links": choices.follow_links})
+    records = choices.records
+    chosen = {"id_field": records.id, "title_field": records.title, "text_fields": list(records.text)}
+    return json.dumps({"title_from": choices.title_from.value, "follow_links": choices.follow_links, **chosen})
+
+
+def _named(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _names(value: object) -> tuple[str, ...]:
+    held = cast("list[object]", value) if isinstance(value, list) else []
+    return tuple(each for each in held if isinstance(each, str))
 
 
 def choices_of(written: str) -> Choices:
     document = cast("dict[str, object]", json.loads(written))
+    records = Chosen(
+        _named(document.get("id_field")), _named(document.get("title_field")), _names(document.get("text_fields"))
+    )
     return Choices(
         title_from=TitleFrom(document.get("title_from", TitleFrom.HEADING.value)),
         follow_links=document.get("follow_links") is True,
+        records=records,
     )
 
 

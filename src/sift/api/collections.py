@@ -2,7 +2,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from sift.api.described import Help, Place
+from sift.api.described import Help, Place, Read
+from sift.api.fields import listed
 
 
 class TitleFrom(StrEnum):
@@ -13,6 +14,12 @@ class TitleFrom(StrEnum):
 FOLLOW_LINKS = (
     "read the files that are links to outside the folder too, which are left out otherwise: a link may lead to any "
     "file of this machine"
+)
+ID_FIELD = "JSON Lines: the field holding each record's id (default: id or _id, else the line number)"
+TITLE_FIELD = "JSON Lines: the field holding the title (default: title, name, headline or subject)"
+TEXT_FIELDS = (
+    "JSON Lines: the fields whose text a record's document holds, comma-separated "
+    "(default: text, content, body, abstract, description or summary, else the longest string)"
 )
 TITLE_FROM = (
     "a note's title, unless its front matter sets one: its first heading, or its file name as Obsidian does "
@@ -37,6 +44,9 @@ class AddCollection:
         Help("add a folder inside a collection, or one that holds a collection, though their files are indexed twice"),
     ] = False
     follow_links: Annotated[bool, Help(FOLLOW_LINKS)] = False
+    id_field: Annotated[str | None, Help(ID_FIELD)] = None
+    title_field: Annotated[str | None, Help(TITLE_FIELD)] = None
+    text_fields: Annotated[tuple[str, ...], Help(TEXT_FIELDS), Read(listed)] = ()
 
 
 @dataclass(frozen=True, slots=True)

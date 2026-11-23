@@ -58,7 +58,8 @@ def test_each_argument_says_what_it_is_for() -> None:
     options(parser, AddCollection, whole)
     shown = " ".join(parser.format_help().split())
     usage = (
-        "sift add [-h] [--name NAME] [--store STORE] [--title-from {heading,name}] [--nested] [--follow-links] folder"
+        "sift add [-h] [--name NAME] [--store STORE] [--title-from {heading,name}] [--nested] [--follow-links]"
+        " [--id-field ID_FIELD] [--title-field TITLE_FIELD] [--text-fields TEXT_FIELDS] folder"
     )
     assert usage in shown
     assert "folder the folder whose files the collection holds" in shown

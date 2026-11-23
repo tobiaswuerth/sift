@@ -30,6 +30,7 @@ from sift.domain.query.grammar import parsed
 from sift.domain.rank.best import Best
 from sift.domain.rank.hybrid import blend, named, passage, standing_out, words, work_of
 from sift.domain.rank.works import one_per_work
+from sift.domain.text.records import record_path
 from sift.inference.models import Models
 from sift.retrieval.keyword.lists import opened
 from sift.retrieval.keyword.search import TUNING, never
@@ -98,7 +99,7 @@ def _read(one: searching.Searching[Both], chunks: Sequence[int], request: Search
         Candidate(
             chunk,
             Hit(
-                f"{one.collection.name}/{each.path}",
+                f"{one.collection.name}/{record_path(each.path, each.key)}",
                 each.title,
                 f"{each.first_line}-{each.last_line}",
                 0.0,

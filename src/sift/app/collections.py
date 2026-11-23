@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 
 from sift.api.collections import (
@@ -13,8 +14,9 @@ from sift.api.collections import (
     Unavailable,
     UnreadableFile,
 )
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.app.notes import unresolved_links
+from sift.domain.text.records import Chosen
 from sift.storage.catalog import (
     Choices,
     Collection,
@@ -30,18 +32,27 @@ from sift.storage.links import links_held
 from sift.storage.store import open_store, stored_bytes, unavailable_if_damaged
 
 OBSIDIAN = ".obsidian"
+FIELD_REMEDY = "name the field, e.g. --text-fields title,abstract"
+
+
+def _field(name: str | None, option: str) -> str | None:
+    if name is not None and not name.strip():
+        raise InvalidRequestError(f"{option} names no field", FIELD_REMEDY)
+    return name
 
 
 def add(home: Path, request: AddCollection) -> CollectionAdded:
     folder = Path(request.folder)
     vault = (folder / OBSIDIAN).is_dir()
     title_from = request.title_from or (TitleFrom.NAME if vault else TitleFrom.HEADING)
+    records = Chosen(_field(request.id_field, "--id-field"), _field(request.title_field, "--title-field"))
+    records = replace(records, text=tuple(_field(each, "--text-fields") or "" for each in request.text_fields))
     new = NewCollection(
         folder,
         request.name,
         Path(request.store) if request.store else None,
         nested=request.nested,
-        choices=Choices(title_from, follow_links=request.follow_links),
+        choices=Choices(title_from, follow_links=request.follow_links, records=records),
     )
     with closing(open_catalog(home)) as catalog:
         added = add_collection(catalog, home, new)

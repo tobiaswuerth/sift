@@ -8,12 +8,16 @@ from sift.api.errors import StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import chosen_or_active
+from sift.app.filing import Job, Limits, Lines, Tally
 from sift.app.problems import problems
-from sift.domain.plan.indexing import MOST_TEXT_BYTES, IndexPlan, Stat, batches, index_plan
+from sift.app.records import stored_records
+from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan
 from sift.domain.text.notes import Document, note
+from sift.domain.text.records import RECORD_FILES
+from sift.ingest.records import lines_of
 from sift.ingest.scan import scan
 from sift.storage.catalog import Collection
-from sift.storage.database import BATCHES, Batches, Connection, WritingDocuments, reading
+from sift.storage.database import Batches, Connection, WritingDocuments, reading
 from sift.storage.documents import (
     add_documents,
     clear_unreadable,
@@ -33,39 +37,13 @@ OUT_OF_REACH_REMEDY = "see that its folder and its store can be read, then index
 MOST_BYTES_A_BYTE_DECODES_TO = 3
 
 
-@dataclass(frozen=True, slots=True)
-class Limits:
-    most_text_bytes: int = MOST_TEXT_BYTES
-    most_files_a_write: int = 1000
-    most_bytes_a_write: int = 64 << 20
-    batches: Batches = BATCHES
-
-
 LIMITS = Limits()
-
-
-@dataclass(frozen=True, slots=True)
-class Tally:
-    added: int = 0
-    changed: int = 0
-    removed: int = 0
-
-    def __add__(self, other: "Tally") -> "Tally":
-        return Tally(self.added + other.added, self.changed + other.changed, self.removed + other.removed)
 
 
 @dataclass(frozen=True, slots=True)
 class Refused:
     problem: str
     read_again: bool
-
-
-@dataclass(frozen=True, slots=True)
-class Job:
-    collection: Collection
-    connection: Connection
-    report: Reporter
-    limits: Limits
 
 
 def _too_large(size: int, limits: Limits, measured: str = "bytes") -> Refused:
@@ -121,9 +99,22 @@ def _dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
     return sum(large, Tally(removed=removed))
 
 
+def _records_stored(job: Job, path: str, stat: Stat) -> Tally:
+    try:
+        return stored_records(job, path, stat, job.collection.choices.records)
+    except OSError as error:
+        with writing_documents(job.connection, job.limits.batches) as transaction:
+            return _refused(transaction, path, stat, Refused(error.strerror or str(error), read_again=True))
+
+
 def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
     tally, done, limits = Tally(), 0, job.limits
-    for batch in batches(plan.read, files, limits.most_files_a_write, limits.most_bytes_a_write):
+    whole = tuple(path for path in plan.read if not path.lower().endswith(RECORD_FILES))
+    for path in (path for path in plan.read if path.lower().endswith(RECORD_FILES)):
+        tally += _records_stored(job, path, files[path])
+        done += 1
+        job.report(Advanced(done))
+    for batch in batches(whole, files, limits.most_files_a_write, limits.most_bytes_a_write):
         read: list[tuple[str, Document | Refused]] = []
         for path in batch:
             read.append((path, _read(job, path)))
@@ -187,19 +178,22 @@ def _settled(connection: Connection, report: Reporter, batches: Batches) -> None
         report(PhaseDone(done))
 
 
-def _indexed(one: Collection, report: Reporter, limits: Limits) -> CollectionIndexed:
+def _indexed(one: Collection, report: Reporter, limits: Limits, lines: Lines) -> CollectionIndexed:
     report(CollectionStarted(one.name, str(one.folder)))
     try:
         with unavailable_if_damaged(one.store), closing(open_store(one.store, one.id)) as connection:
             _remade(connection, report, limits.batches)
             if not one.folder.is_dir():
                 return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)
-            return CollectionIndexed(one.name, _synced(Job(one, connection, report, limits)))
+            return CollectionIndexed(one.name, _synced(Job(one, connection, report, limits, lines)))
     except StoreUnavailableError as error:
         return _skipped(one, report, error.message, error.remedy)
     except OSError as error:
         return _skipped(one, report, f"it is out of reach ({error.strerror or error})", OUT_OF_REACH_REMEDY)
 
 
-def index(home: Path, request: IndexCollections, report: Reporter, limits: Limits = LIMITS) -> IndexResult:
-    return IndexResult(tuple(_indexed(one, report, limits) for one in chosen_or_active(home, request.names)))
+def index(
+    home: Path, request: IndexCollections, report: Reporter, limits: Limits = LIMITS, lines: Lines = lines_of
+) -> IndexResult:
+    chosen = chosen_or_active(home, request.names)
+    return IndexResult(tuple(_indexed(one, report, limits, lines) for one in chosen))

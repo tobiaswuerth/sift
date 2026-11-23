@@ -18,7 +18,6 @@ from sift.domain.codec.codes import Floats
 from sift.domain.rank.hybrid import work_of
 from sift.storage.database import Reading
 from sift.storage.documents import chunks_of, fields_by_document
-from sift.storage.links import titled
 from sift.storage.vectors import model_of, vectors_of
 
 EMBED_REMEDY = "run sift embed"
@@ -31,9 +30,8 @@ class Like:
     work: str | None
 
 
-def _like(note: Note, transaction: Reading) -> Like:
+def _like(note: Note, whole: str, transaction: Reading) -> Like:
     document = note.find(transaction)
-    whole = f"{note.collection.name}/{titled(transaction, [document])[document].path}"
     chunks = np.array([each.id for each in chunks_of(transaction, DocumentId(document))], np.int64)
     _, vectors = vectors_of(transaction, chunks)
     model = model_of(transaction)
@@ -50,7 +48,7 @@ def _like(note: Note, transaction: Reading) -> Like:
 def similar(home: Path, request: FindSimilar, asked: Asked = ASKED) -> SearchResult:
     searching.checked(request)
     named = note_of(home, chosen_or_active(home, ()), request.id)
-    like = read_in(named.note.collection, partial(_like, named.note))
+    like = read_in(named.note.collection, partial(_like, named.note, request.id))
     narrowing = searching.narrowed(home, request, LeftOut(named.note, linking=False))
     with ExitStack() as cleanup:
         kept = searching.opened(cleanup, narrowing, partial(held_within, like.model))
