@@ -16,7 +16,7 @@ MOST_LISTED = 5
 SEPARATOR = "/"
 
 
-def _unknown(id_: str) -> NotFoundError:
+def unknown(id_: str) -> NotFoundError:
     return NotFoundError(f"unknown document {id_!r}", "take the id from a search result, or `sift status`")
 
 
@@ -36,7 +36,7 @@ def holding(known: Sequence[Collection], full: Path) -> tuple[Collection, str] |
     return held(full) or held(full.parent.resolve() / full.name)
 
 
-def _place(known: Sequence[Collection], id_: str) -> tuple[Collection, str]:
+def place(known: Sequence[Collection], id_: str) -> tuple[Collection, str]:
     if Path(id_).is_absolute():
         found = holding(known, Path(os.path.normpath(id_)))
     else:
@@ -44,11 +44,11 @@ def _place(known: Sequence[Collection], id_: str) -> tuple[Collection, str]:
         chosen = next((one for one in known if one.name.casefold() == name.casefold()), None)
         found = (chosen, relative) if chosen else None
     if found is None or not found[1]:
-        raise _unknown(id_)
+        raise unknown(id_)
     return found
 
 
-def _resolved(transaction: Reading, id_: str, relative: str, *, absolute: bool) -> Stored:
+def resolved_at(transaction: Reading, id_: str, relative: str, *, absolute: bool) -> Stored:
     exact = stored(transaction, relative)
     if exact is not None:
         return exact
@@ -62,19 +62,19 @@ def _resolved(transaction: Reading, id_: str, relative: str, *, absolute: bool) 
         raise InvalidRequestError(f"{id_!r} matches {listed}", "give the whole id")
     found = stored(transaction, matches[0]) if len(matches) == 1 else None
     if found is None:
-        raise _unknown(id_)
+        raise unknown(id_)
     return found
 
 
 def _document(known: Sequence[Collection], id_: str, request: GetDocuments) -> DocumentText:
     span = line_range(request.lines) if request.lines is not None else None
-    chosen, relative = _place(known, id_)
+    chosen, relative = place(known, id_)
     with (
         unavailable_if_damaged(chosen.store),
         closing(open_store(chosen.store, chosen.id)) as connection,
         reading(connection) as transaction,
     ):
-        found = _resolved(transaction, id_, relative, absolute=Path(id_).is_absolute())
+        found = resolved_at(transaction, id_, relative, absolute=Path(id_).is_absolute())
     whole = f"{chosen.name}/{found.path}"
     text = lines_of(found.text, *span, whole) if span else found.text
     fields = shown.picked(fields_of(found.fields), request.fields) if request.fields else None

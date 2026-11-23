@@ -17,8 +17,9 @@ from sift.api.embedding import EmbedCollections, EmbedResult
 from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.events import Reporter
 from sift.api.indexing import IndexCollections, IndexResult, Skipped
+from sift.api.links import Links, ListUnresolved, ShowLinks, Unresolved
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
-from sift.app import collections, documents, embedding, indexing, query, search, vsearch
+from sift.app import collections, documents, embedding, indexing, links, query, search, vsearch
 from sift.inference.loading import Deferred, deferred
 from sift.interfaces.cli import shown
 from sift.interfaces.cli.arguments import options, request_of
@@ -124,6 +125,14 @@ def _query(namespace: argparse.Namespace, context: Context) -> Shown:
     return shown.hits(answer, context.clock() - started, context.platform, context.style, "hybrid")
 
 
+def _links(context: Context, request: ShowLinks) -> Links:
+    return links.links(context.settings.home, request)
+
+
+def _unresolved(context: Context, request: ListUnresolved) -> Unresolved:
+    return links.unresolved(context.settings.home, request)
+
+
 def _some_skipped(result: IndexResult | EmbedResult) -> bool:
     return any(isinstance(each.outcome, Skipped) for each in result.collections)
 
@@ -149,6 +158,10 @@ COMMANDS = MappingProxyType(
         ),
         "vsearch": Command("find passages near a query in meaning", SearchVectors, _vsearch),
         "get": command("print documents by their ids", GetDocuments, _get, shown.documents, _some_unfound),
+        "links": command("the links of a note: those it holds, and those into it", ShowLinks, _links, shown.links),
+        "unresolved": command(
+            "link targets no note answers to yet, most linked first", ListUnresolved, _unresolved, shown.unresolved
+        ),
         "status": command(
             "show each collection: its folder and what its store holds", ShowStatus, _status, shown.status
         ),

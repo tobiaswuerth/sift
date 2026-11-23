@@ -38,10 +38,16 @@ def narrowed_searches_run(home: Path) -> None:
     assert sift(home, "get", "notes/brush.md", "--fields", "*").stdout == "# Brush\n"
 
 
+def links_run(home: Path) -> None:
+    linked = sift(home, "links", "notes/rl.md", "--direction", "both")
+    assert linked.stdout.split("\n")[1:3] == ["     3  brush  ->  notes/sub/brush.md", "     3  Gone  ->  unresolved"]
+    assert sift(home, "unresolved").stdout == "1  Gone  notes/rl.md\n"
+
+
 def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path: Path) -> None:
     home, notes = tmp_path / "home", tmp_path / "Notizen Müller"
     (notes / "sub").mkdir(parents=True)
-    (notes / "rl.md").write_bytes(b"# Reward shaping\n\nSpeeds up learning.\n")
+    (notes / "rl.md").write_bytes(b"# Reward shaping\n\nSpeeds up learning. See [[brush]], [[Gone]].\n")
     (notes / "sub" / "brush.md").write_bytes(b"# Brush\n")
     (notes / "huge.txt").write_bytes(b"x")
 
@@ -75,6 +81,7 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     assert timed["partial"] is False
     assert cast("list[dict[str, object]]", timed["hits"])[0]["id"] == "notes/rl.md"
     narrowed_searches_run(home)
+    links_run(home)
 
     reranker = str(tiny_reranker(tmp_path / "models"))
     model = str(tiny_model(tmp_path / "models"))

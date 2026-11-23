@@ -12,8 +12,11 @@ from sift.api.collections import (
 from sift.api.documents import Documents, DocumentText, Unfound
 from sift.api.errors import NotFoundError, StoreUnavailableError
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
+from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
 from sift.api.search import Hit, SearchResult
 from sift.interfaces.cli.shown import Shown, added, documents, failure, hits, indexed, status
+from sift.interfaces.cli.shown import links as shown_links
+from sift.interfaces.cli.shown import unresolved as shown_unresolved
 from sift.interfaces.console.style import PLAIN, Style
 
 ADDED = CollectionAdded(
@@ -179,3 +182,33 @@ def test_a_hit_shows_the_front_matter_asked_for_under_its_place() -> None:
 def test_a_document_shows_the_front_matter_asked_for_before_its_text() -> None:
     found = DocumentText("notes/a.md", "A", "# A\n", fields={"rank": 2, "tags": ["x"]})
     assert documents(Documents((found,), ()), "linux", PLAIN).results == ("rank: 2", 'tags: ["x"]', "", "# A")
+
+
+def test_links_show_where_each_leads_and_the_lines_linking_in() -> None:
+    found = Links(
+        "v/Offer.md",
+        "Offer",
+        (
+            LinkOut(3, "Hans", "org", "Team", "alias", "v/Hans.md", "Hans", (), None),
+            LinkOut(4, "Dup", None, None, "ambiguous", None, None, ("v/A/Dup.md", "v/B/Dup.md"), None),
+            LinkOut(5, "Gone", None, None, "unresolved", None, None, (), "v/Notes.md"),
+        ),
+        (LinkIn("v/Notes.md", "Notes", (LinkingLine(3, None, "[[Offer]] again"),), None),),
+    )
+    assert shown_links(found, "linux", PLAIN).results == (
+        "Offer (v/Offer.md) links to:",
+        "     3  org: Hans#Team  ->  v/Hans.md (alias)",
+        "     4  Dup  ->  ambiguous: v/A/Dup.md, v/B/Dup.md",
+        "     5  Gone  ->  unresolved  (through v/Notes.md)",
+        "Linking to Offer (v/Offer.md):",
+        "  v/Notes.md  Notes",
+        "     3  [[Offer]] again",
+    )
+    alone = Links("v/A.md", "A", (), None)
+    assert shown_links(alone, "linux", PLAIN).results == ("A (v/A.md) links to: nothing",)
+
+
+def test_unresolved_targets_show_how_many_link_them_and_a_few_of_those() -> None:
+    found = Unresolved((Target("Missing", 7, ("v/a.md", "v/b.md")), Target("Gone", 1, ("v/c.md",))))
+    assert shown_unresolved(found, "linux", PLAIN).results == ("7  Missing  v/a.md, v/b.md, ...", "1  Gone     v/c.md")
+    assert shown_unresolved(Unresolved(()), "linux", PLAIN).messages == ("nothing  every link leads to a note",)
