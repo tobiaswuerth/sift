@@ -150,6 +150,14 @@ def test_catching_recursion_error_is_found_outside_tests(handler: str) -> None:
     assert problems("tests/a.py", source) == []
 
 
+def test_catching_recursion_error_named_in_a_tuple_of_the_module_is_found() -> None:
+    named = "INNER: tuple[type[Exception], ...] = (KeyError, RecursionError)\nCAUGHT = (ValueError, INNER)\n"
+    source = f"{named}try:\n    f()\nexcept CAUGHT:\n    pass\nexcept INNER as error:\n    pass\n"
+    assert problems("src/sift/domain/a.py", source) == [check_idioms.RECURSION_CAUGHT] * 2
+    looped = "A = (B,)\nB = (A, ValueError)\ntry:\n    f()\nexcept A:\n    pass\n"
+    assert problems("src/sift/domain/a.py", looped) == []
+
+
 def test_the_repository_keeps_the_idioms() -> None:
     assert check_idioms.main([]) == 0
 

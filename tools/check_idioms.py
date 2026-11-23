@@ -190,12 +190,39 @@ def databases_left_open(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, call.lineno, LEFT_OPEN)
 
 
+def _named_tuples(tree: ast.Module) -> dict[str, list[ast.expr]]:
+    found: dict[str, list[ast.expr]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Tuple):
+            names = [target.id for target in node.targets if isinstance(target, ast.Name)]
+            found.update(dict.fromkeys(names, node.value.elts))
+        elif (
+            isinstance(node, ast.AnnAssign) and isinstance(node.value, ast.Tuple) and isinstance(node.target, ast.Name)
+        ):
+            found[node.target.id] = node.value.elts
+    return found
+
+
+def _caught(node: ast.expr, named: dict[str, list[ast.expr]], seen: frozenset[str]) -> Iterator[str]:
+    if isinstance(node, ast.Tuple):
+        for each in node.elts:
+            yield from _caught(each, named, seen)
+    elif isinstance(node, ast.Name) and node.id in named:
+        for each in () if node.id in seen else named[node.id]:
+            yield from _caught(each, named, seen | {node.id})
+    else:
+        yield ast.unparse(node).split(".")[-1]
+
+
 def recursion_caught(path: str, tree: ast.Module) -> Iterator[Finding]:
+    named = _named_tuples(tree)
     for node in ast.walk(tree):
-        if isinstance(node, ast.ExceptHandler) and node.type is not None:
-            caught = node.type.elts if isinstance(node.type, ast.Tuple) else [node.type]
-            if any(ast.unparse(each).split(".")[-1] == "RecursionError" for each in caught):
-                yield Finding(path, node.lineno, RECURSION_CAUGHT)
+        if (
+            isinstance(node, ast.ExceptHandler)
+            and node.type is not None
+            and "RecursionError" in _caught(node.type, named, frozenset())
+        ):
+            yield Finding(path, node.lineno, RECURSION_CAUGHT)
 
 
 def _flagged(text: str) -> bool:

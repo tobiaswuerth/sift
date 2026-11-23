@@ -19,12 +19,15 @@ from sift.domain.text.json_values import LONE_SURROGATE, REPLACEMENT, composed_f
 from sift.domain.text.kinds import CONTROL, FileKind, kind_of
 from sift.domain.text.markdown import one_line
 from sift.domain.text.notes import Document, digest, file_stem, storable
+from sift.ingest.nesting import nesting
 
 ADDRESSES = ("from", "to", "cc")
 IDS = ("message-id", "in-reply-to")
 NO_CHARSETS = frozenset({"idna", "punycode", "undefined", "unicode-escape", "raw-unicode-escape"})
 SAYS_NOTHING = frozenset({"ascii", "utf-8"})
-UNREADABLE = (MessageError, ValueError, LookupError, IndexError, AttributeError, NameError, RecursionError)
+UNREADABLE = (MessageError, ValueError, LookupError, IndexError, AttributeError, NameError)
+MOST_NESTED = 50
+NESTED_TOO_DEEPLY = f"its parts nest more than {MOST_NESTED} deep"
 ATTACHED = frozenset({FileKind.NOTE, FileKind.DOCUMENT, FileKind.MAIL})
 ATTACHED_MAIL = "message/rfc822"
 FOLDERS = re.compile(r"[\\/]")
@@ -281,6 +284,8 @@ def _read(raw: bytes, name: str, convert: Convert) -> Mail:
 
 def mail(raw: bytes, name: str, convert: Convert) -> Mail | Unread:
     try:
+        if nesting(raw, MOST_NESTED) > MOST_NESTED:
+            return Unread(NESTED_TOO_DEEPLY)
         return _read(raw, name, convert)
     except UNREADABLE as error:
         return Unread(str(error))

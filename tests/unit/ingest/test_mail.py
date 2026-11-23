@@ -7,10 +7,10 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.text.decoding import encodable
-from sift.domain.text.documents import Conversion, FileRead, Unread
+from sift.domain.text.documents import FileRead, Unread
 from sift.ingest.mail import as_utf8, in_charset, mail, plain
 from sift.ingest.readers import unique
-from tests.mails import PARAGRAPH, mail_bytes, message, nested_parts, only, read, read_file, sample
+from tests.mails import PARAGRAPH, atoms, failing, mail_bytes, message, only, read, read_file, sample
 
 NO_CHARSET = b"Content-Type:multipart/;boundary=b\r--b\nContent-Type:charset=\x00"
 OCTETS = "application/octet-stream"
@@ -21,10 +21,6 @@ ATTACHED_TEXT = "Content-Disposition: attachment; filename=note.txt\r\n"
 def _part(charset: str, disposition: str, text: bytes) -> bytes:
     head = f"--b\r\nContent-Type: text/plain; charset={charset}\r\n{disposition}"
     return head.encode() + b"Content-Transfer-Encoding: 8bit\r\n\r\n" + text + b"\r\n"
-
-
-def _failing(_raw: bytes, _name: str) -> Conversion:
-    return Unread("Parsing error: HTML conversion failed: Internal panic: begin > end (2 > 0)")
 
 
 def test_a_mail_is_a_document_of_its_headers_and_its_plain_text() -> None:
@@ -288,7 +284,7 @@ def test_html_the_converter_fails_on_is_read_as_its_words() -> None:
         "<p>Prices for <b>2027</b> &amp; later.</p><ul><li>One</li><li>Two</li></ul><script>run()</script>"
         "</body></html>"
     )
-    found = read_file(mail_bytes(message(body=None, html=html, headers={"Subject": "Offer"})), "a.eml", _failing)
+    found = read_file(mail_bytes(message(body=None, html=html, headers={"Subject": "Offer"})), "a.eml", failing)
     assert found.documents[0].text.endswith("Offer\n\nPrices for 2027 & later.\n\nOne\n\nTwo")
     said = (
         "its HTML: read as plain text, as converting it failed (Parsing error: HTML conversion failed: Internal "
@@ -297,26 +293,8 @@ def test_html_the_converter_fails_on_is_read_as_its_words() -> None:
     assert found.problems == (said,)
 
 
-@pytest.mark.parametrize("depth", [1_000, 5_000])
-def test_a_mail_nested_deeper_than_python_s_parser_reaches_is_unread(depth: int) -> None:
-    found = mail(nested_parts(depth), "a.eml", _failing)
-    assert isinstance(found, Unread)
-    assert found.problem.startswith("maximum recursion depth exceeded")
-
-
-def test_mail_attached_deeper_than_python_s_parser_reaches_is_unread() -> None:
-    inner = b"Subject: 0\r\n\r\nbottom\r\n"
-    for level in range(1, 200):
-        head = b'Subject: %d\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="c%d"\r\n\r\n' % (
-            level,
-            level,
-        )
-        inner = head + b"--c%d\r\nContent-Type: message/rfc822\r\n\r\n" % level + inner + b"\r\n--c%d--\r\n" % level
-    assert isinstance(mail(inner, "a.eml", _failing), Unread)
-
-
 def test_a_mail_whose_charset_names_no_charset_is_unread_with_what_python_said() -> None:
-    assert mail(NO_CHARSET, "a.eml", _failing) == Unread("embedded null character")
+    assert mail(NO_CHARSET, "a.eml", failing) == Unread("embedded null character")
 
 
 @pytest.mark.parametrize(
@@ -329,20 +307,13 @@ def test_a_mail_whose_charset_names_no_charset_is_unread_with_what_python_said()
     ],
 )
 def test_headers_python_s_parser_failed_on_leave_a_mail_read_or_unread_by_python_s_version(raw: bytes) -> None:
-    found = mail(raw, "a.eml", _failing)
+    found = mail(raw, "a.eml", failing)
     assert isinstance(found, Unread) or found.document.title == "a"
-
-
-HEADERS = (b"From: ", b"To: ", b"Cc: ", b"Subject: ", b"Date: ", b"Message-ID: ", b"Content-Type: ")
-VALUES = (b"message/rfc822", b"multipart/mixed; boundary=b", b"text/plain; charset=", b"utf-7", b"+2D0-", b"x")
-MARKS = (b"=?utf-8?q?", b"?=", b"<", b">", b"@", b",", b";", b":", b'"', b"(", b")", b"[", b"]", b"\\", b" ")
-LINES = (b"\r\n", b"\r\n\r\n", b"--b\r\n", b"--b--", b"\xff", b"\x00", b"Content-Transfer-Encoding: base64")
-atoms = st.sampled_from((*HEADERS, *VALUES, *MARKS, *LINES, b"Content-Disposition: attachment; filename=a.md"))
 
 
 @given(st.lists(atoms, max_size=40).map(b"".join))
 def test_any_mail_is_read_or_unread_and_what_is_read_can_be_stored(raw: bytes) -> None:
-    found = read(raw, "a.eml", _failing)
+    found = read(raw, "a.eml", failing)
     if isinstance(found, FileRead):
         for each in found.documents:
             assert encodable(each.text)

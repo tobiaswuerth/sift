@@ -18,6 +18,7 @@ from sift.app.search import search
 from sift.domain.text.documents import Conversion, Converted, Unread
 from sift.ingest.documents import convert
 from sift.ingest.files import Identity
+from sift.ingest.mail import NESTED_TOO_DEEPLY
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
 from sift.storage.vectors import left
@@ -167,8 +168,7 @@ def test_a_mail_too_deep_to_parse_is_unreadable_and_the_rest_is_indexed(tmp_path
     (root / "deep.eml").write_bytes(nested_parts(1_000))
     add(home, AddCollection(str(root)))
     assert indexed(home) == Indexed(files=2, added=1, changed=0, removed=0, unreadable=1)
-    (listed,) = unreadable_files(home)
-    assert (listed.path, listed.problem.startswith("maximum recursion depth exceeded")) == ("deep.eml", True)
+    assert [(each.path, each.problem) for each in unreadable_files(home)] == [("deep.eml", NESTED_TOO_DEEPLY)]
 
 
 def test_a_mail_and_its_attachments_are_documents_found_and_filtered_by_their_ids(post: Path) -> None:
