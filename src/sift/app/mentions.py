@@ -4,7 +4,6 @@ from sift.api.errors import InvalidRequestError
 from sift.api.links import FindMentions
 from sift.api.search import SearchResult
 from sift.app import hits, searching
-from sift.app.collections import chosen_or_active
 from sift.app.keyword_candidates import Wanted, keyword_result
 from sift.app.linked import LeftOut
 from sift.app.notes import Note, note_of, read_in
@@ -33,7 +32,7 @@ def mentions(home: Path, request: FindMentions, tuning: Tuning = TUNING) -> Sear
     for field in request.also:
         if not field.strip():
             raise InvalidRequestError(f"--also names front matter fields, e.g. emails, not {field!r}", ALSO_REMEDY)
-    named = note_of(home, chosen_or_active(home, ()), request.id)
+    named = note_of(home, request.id)
     expression = any_phrase(phrases(_names(named.note, request.also)))
     if words_in(expression) > MOST_WORDS:
         remedy = "name fewer fields with --also" if request.also else "give it fewer or shorter names"

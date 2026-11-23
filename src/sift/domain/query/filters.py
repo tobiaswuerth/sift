@@ -84,9 +84,14 @@ def _checked(each: Filter) -> None:
             raise _refused(f"the filter on {each.field!r}: {value} is no finite number")
 
 
+def _plain(value: object) -> bool:
+    return not isinstance(value, str) or link_target(value) is None
+
+
 def _held(filters: list[Filter], operator: Operator) -> SpecValue:
-    found = [form for each in filters if each.operator is operator for value in each.values for form in forms(value)]
-    return list(dict.fromkeys(found)) if found else None
+    asked = [each for each in filters if each.operator is operator]
+    found = [form for each in asked for value in each.values if _plain(value) for form in forms(value)]
+    return list(dict.fromkeys(found)) if asked else None
 
 
 def _range(each: Filter) -> SpecValue:

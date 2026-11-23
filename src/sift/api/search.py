@@ -98,3 +98,4 @@ class SearchResult:
     searched: int
     unsearched: tuple[Unsearched, ...]
     partial: bool = False
+    ruled_out: int = 0

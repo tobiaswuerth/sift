@@ -120,7 +120,7 @@ def test_similar_needs_the_document_embedded(papers: Path, tmp_path: Path) -> No
         similar(papers, FindSimilar("arxiv/new.md"))
     assert refused.value.remedy is not None
     assert "sift embed" in refused.value.remedy
-    with pytest.raises(NotFoundError, match="unknown document"):
+    with pytest.raises(NotFoundError, match="no note or document"):
         similar(papers, FindSimilar("arxiv/missing.md"))
 
 

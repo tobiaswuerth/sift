@@ -10,7 +10,7 @@ from sift.api.links import Direction, LinkIn, LinkingLine, LinkOut, ListUnresolv
 from sift.app.collections import add
 from sift.app.indexing import index
 from sift.app.links import links, unresolved
-from sift.app.notes import Match, at_path
+from sift.app.notes import NOTE_REMEDY, Note
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading
 from sift.storage.store import open_store
@@ -133,7 +133,7 @@ def test_links_keep_to_a_field_go_two_steps_and_stop_at_k(people: Path) -> None:
 def test_a_note_is_named_by_its_id_or_as_links_name_it(people: Path, tmp_path: Path) -> None:
     assert links(people, ShowLinks("Hans Mueller")).id == "v/People/Hans Müller.md"
     assert links(people, ShowLinks("[[Acme AG]]")).id == "v/Orgs/Acme AG.md"
-    with pytest.raises(NotFoundError, match="unknown document"):
+    with pytest.raises(NotFoundError, match="no note or document"):
         links(people, ShowLinks("Nobody"))
     write(tmp_path / "v" / "Other" / "Acme AG.md", "# Acme AG again\n")
     index(people, IndexCollections(), lambda _: None)
@@ -205,7 +205,7 @@ def test_a_damaged_store_is_passed_over_by_names_and_unresolved_saying_so(people
     with pytest.raises(NotFoundError, match=r"; not searched: w: the store .* is damaged") as refused:
         links(people, ShowLinks("Nowhere"))
     assert refused.value.remedy is not None
-    assert refused.value.remedy.endswith("; take the id from a search result, or `sift status`")
+    assert refused.value.remedy.endswith(f"; {NOTE_REMEDY}")
     write(tmp_path / "v" / "Other" / "Acme AG.md", "# Acme AG again\n")
     index(people, IndexCollections(names=("v",)), lambda _: None)
     with pytest.raises(InvalidRequestError, match=r"Acme AG\.md; not searched: w: the store .* is damaged"):
@@ -225,16 +225,16 @@ def test_the_cut_at_k_and_a_field_hold_for_the_second_step_too(people: Path) -> 
 
 @pytest.mark.parametrize("written", ["[[Acme AG]] b]]", "[[Acme AG]]]]", "[[Acme AG]] [[Offer]]"])
 def test_a_name_holding_more_than_one_link_names_no_note(people: Path, written: str) -> None:
-    with pytest.raises(NotFoundError, match="unknown document"):
+    with pytest.raises(NotFoundError, match="no note or document"):
         links(people, ShowLinks(written))
 
 
 def test_a_note_found_by_name_is_read_again_at_its_path_alone(people: Path) -> None:
     (one,) = known_collections(people)
     with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
-        assert at_path(Match(one, "Orgs/Acme AG.md")).find(transaction) > 0
+        assert Note(one, "Orgs/Acme AG.md").find(transaction) > 0
         with pytest.raises(NotFoundError, match=r"unknown document 'v/Acme AG\.md'"):
-            at_path(Match(one, "Acme AG.md")).find(transaction)
+            Note(one, "Acme AG.md").find(transaction)
 
 
 def test_every_store_a_name_was_not_looked_up_in_is_named(people: Path, tmp_path: Path) -> None:

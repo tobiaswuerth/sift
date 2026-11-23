@@ -2,7 +2,7 @@ import re
 from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.search import Unsearched
@@ -20,9 +20,9 @@ from sift.storage.store import open_store, unavailable_if_unusable
 AMBIGUOUS_SHOWN = 5
 NAME_END = re.compile(r"[#|]")
 AMBIGUOUS_REMEDY = "give the note's whole id, as sift get takes it"
+NOTE_REMEDY = 'name a note by its id, as sift get takes it, or as links name it, e.g. "Acme AG"'
 
 type NameCandidates = tuple[list[Candidate], list[Candidate]]
-type Find = Callable[[Reading], int]
 
 
 @dataclass(slots=True)
@@ -45,7 +45,22 @@ class Resolver:
 @dataclass(frozen=True, slots=True)
 class Note:
     collection: Collection
-    find: Find
+    path: str
+    key: str = ""
+
+    @property
+    def id(self) -> str:
+        return public_id(self.collection.name, self.path, self.key)
+
+    @property
+    def name(self) -> str:
+        return PurePosixPath(self.path).stem
+
+    def find(self, transaction: Reading) -> int:
+        found = stored(transaction, self.path, self.key)
+        if found is None:
+            raise documents_unknown(self.id)
+        return found.id
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,15 +70,8 @@ class NamedNote:
 
 
 @dataclass(frozen=True, slots=True)
-class Match:
-    collection: Collection
-    path: str
-    key: str = ""
-
-
-@dataclass(frozen=True, slots=True)
 class Matches:
-    found: tuple[Match, ...]
+    found: tuple[Note, ...]
     unsearched: tuple[Unsearched, ...]
 
 
@@ -85,27 +93,13 @@ def _named(transaction: Reading, name: str) -> list[int]:
     return list(found.documents) if found.via is not Via.UNRESOLVED else []
 
 
-def _matches(one: Collection, name: str) -> list[Match]:
-    def read(transaction: Reading) -> list[Match]:
+def _matches(one: Collection, name: str) -> list[Note]:
+    def read(transaction: Reading) -> list[Note]:
         found = _named(transaction, name)
         held = sorted(titled(transaction, found).values(), key=lambda each: (each.path, each.key))
-        return [Match(one, each.path, each.key) for each in held]
+        return [Note(one, each.path, each.key) for each in held]
 
     return read_in(one, read)
-
-
-def whole(match: Match) -> str:
-    return public_id(match.collection.name, match.path, match.key)
-
-
-def at_path(match: Match) -> Note:
-    def find(transaction: Reading) -> int:
-        found = stored(transaction, match.path, match.key)
-        if found is None:
-            raise documents_unknown(whole(match))
-        return found.id
-
-    return Note(match.collection, find)
 
 
 def passed(message: str, unsearched: Sequence[Unsearched]) -> str:
@@ -119,35 +113,32 @@ def _remedy(remedy: str | None, unsearched: Sequence[Unsearched]) -> str | None:
 
 def matches(collections: Sequence[Collection], id_: str) -> Matches:
     name, unread = target_of(id_), list[Unsearched]()
-    found: list[Match] = []
+    found: list[Note] = []
     for one in collections:
         try:
             found += _matches(one, name)
         except StoreUnavailableError as error:
             unread.append(Unsearched(one.name, error.message, error.remedy))
     if len(found) > 1:
-        listed = ", ".join(sorted(map(whole, found))[:AMBIGUOUS_SHOWN])
+        listed = ", ".join(sorted(each.id for each in found)[:AMBIGUOUS_SHOWN])
         more = ", ..." if len(found) > AMBIGUOUS_SHOWN else ""
         said = passed(f"{id_!r} names several notes: {listed}{more}", unread)
         raise InvalidRequestError(said, _remedy(AMBIGUOUS_REMEDY, unread))
     return Matches(tuple(found), tuple(unread))
 
 
-def by_name(collections: Sequence[Collection], id_: str, unknown: NotFoundError) -> NamedNote:
-    found = matches(collections, id_)
-    if not found.found:
-        raise NotFoundError(passed(unknown.message, found.unsearched), _remedy(unknown.remedy, found.unsearched))
-    (match,) = found.found
-    return NamedNote(at_path(match), found.unsearched)
+def unknown_note(spec: str, unsearched: Sequence[Unsearched]) -> NotFoundError:
+    return NotFoundError(passed(f"no note or document {spec!r}", unsearched), _remedy(NOTE_REMEDY, unsearched))
 
 
-def by_id(home: Path, id_: str) -> Note:
-    chosen, relative = place(known_collections(home), id_)
+def _by_id(home: Path, spec: str) -> Note:
+    chosen, relative = place(known_collections(home), spec)
 
-    def find(transaction: Reading) -> int:
-        return resolved_at(transaction, id_, relative, absolute=Path(id_).is_absolute()).id
+    def read(transaction: Reading) -> Note:
+        found = resolved_at(transaction, spec, relative, absolute=Path(spec).is_absolute())
+        return Note(chosen, found.path, found.key)
 
-    return Note(chosen, find)
+    return read_in(chosen, read)
 
 
 def linking(resolver: Resolver, document: int, wanted: str | None) -> dict[int, list[LinkRow]]:
@@ -171,10 +162,12 @@ def unresolved_links(transaction: Reading) -> list[LinkRow]:
     return [row for row in doubtful(transaction) if resolver.of(row).via is Via.UNRESOLVED]
 
 
-def note_of(home: Path, collections: Sequence[Collection], id_: str) -> NamedNote:
+def note_of(home: Path, spec: str) -> NamedNote:
     try:
-        note = by_id(home, id_)
-        read_in(note.collection, note.find)
-    except NotFoundError as unknown:
-        return by_name(collections, id_, unknown)
-    return NamedNote(note, ())
+        return NamedNote(_by_id(home, spec), ())
+    except NotFoundError:
+        found = matches(tuple(one for one in known_collections(home) if one.active), spec)
+    if not found.found:
+        raise unknown_note(spec, found.unsearched)
+    (note,) = found.found
+    return NamedNote(note, found.unsearched)

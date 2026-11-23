@@ -6,7 +6,7 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError, NotFoundError
+from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.filters import Filter, written
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
@@ -15,7 +15,7 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.linked import condition_in
-from sift.app.notes import Match, at_path, read_in
+from sift.app.notes import Note, read_in
 from sift.app.query import query
 from sift.app.search import search
 from sift.app.vsearch import vsearch
@@ -82,7 +82,8 @@ def notes(
 
 def test_a_search_keeps_to_the_documents_linking_a_note(linked: Path) -> None:
     assert notes(linked, links_to=("Acme AG",)) == [HANS]
-    assert search(linked, SearchKeywords("note", links_to=("Acme AG",))).searched == 2
+    found = search(linked, SearchKeywords("note", links_to=("Acme AG",)))
+    assert (found.searched, found.ruled_out) == (1, 1)
     assert notes(linked, links_to=("[[Acme AG]]",)) == [HANS]
     assert notes(linked, links_to=(ACME,), collection="vault") == [HANS]
     assert notes(linked, links_to=("Hans Müller",)) == [OFFER, ACME, ANNA]
@@ -99,10 +100,10 @@ def test_a_search_keeps_to_the_documents_a_note_links(linked: Path) -> None:
 @pytest.mark.parametrize(
     "links_to, linked_from, refusal",
     [
-        (("Nobody",), (), "no note 'Nobody' in the index, and no link to one"),
-        (("vault/Nobody.md",), (), "no note 'vault/Nobody.md' in the index, and no link to one"),
+        (("Nobody",), (), "no note or document 'Nobody'"),
+        (("vault/Nobody.md",), (), "no note or document 'vault/Nobody.md'"),
         ((" ",), (), "--links-to takes a note's id or name, not ' '"),
-        ((), ("Wartungsvertrag 2027",), "no note 'Wartungsvertrag 2027' in the index"),
+        ((), ("Wartungsvertrag 2027",), "no note or document 'Wartungsvertrag 2027'"),
         ((), ("",), "--linked-from takes a note's id or name, not ''"),
     ],
 )
@@ -113,16 +114,15 @@ def test_notes_no_document_answers_to_are_refused(
         notes(linked, links_to=links_to, linked_from=linked_from)
 
 
-def test_a_name_several_notes_answer_to_is_chosen_by_collection(linked: Path, tmp_path: Path) -> None:
+def test_a_name_several_notes_answer_to_is_refused_whichever_collections_are_searched(
+    linked: Path, tmp_path: Path
+) -> None:
     write(tmp_path / "work" / "Acme AG.md", "Note: another Acme.\n")
     index(linked, IndexCollections(), lambda _: None)
-    with pytest.raises(InvalidRequestError, match=r"names several notes: vault/Orgs/Acme AG\.md, work/Acme AG\.md"):
-        notes(linked, links_to=("Acme AG",))
-    assert notes(linked, links_to=("Acme AG",), collection="vault") == [HANS]
-    write(tmp_path / "work" / "Sub" / "Acme AG.md", "Note: a third.\n")
-    index(linked, IndexCollections(), lambda _: None)
-    with pytest.raises(InvalidRequestError, match=r"names several notes: work/Acme AG\.md, work/Sub/Acme AG\.md"):
-        notes(linked, links_to=("Acme AG",), collection="work")
+    for collection in (None, "vault", "work"):
+        with pytest.raises(InvalidRequestError, match=r"names several notes: vault/Orgs/Acme AG\.md, work/Acme AG\.md"):
+            notes(linked, links_to=("Acme AG",), collection=collection)
+    assert notes(linked, links_to=(ACME,), collection="vault") == [HANS]
 
 
 def test_notes_of_several_collections_keep_a_search_to_their_links_in_each(linked: Path) -> None:
@@ -136,7 +136,7 @@ def test_a_store_that_cannot_be_read_while_notes_are_looked_up_is_said_to_be_uns
     for links_to in (("Wartungsvertrag 2027",), ("Acme AG",)):
         found = search(linked, SearchKeywords("note", links_to=links_to))
         assert [each.collection for each in found.unsearched] == ["work"]
-    with pytest.raises(NotFoundError, match="no note 'Nobody' in the index; not searched: work: "):
+    with pytest.raises(NotFoundError, match="no note or document 'Nobody'; not searched: work: "):
         notes(linked, linked_from=("Nobody",))
 
 
@@ -189,15 +189,15 @@ def test_a_note_named_by_id_keeps_other_collections_closed(linked: Path) -> None
     store = linked / "collections" / "work.sqlite"
     store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
     found = search(linked, SearchKeywords("note", links_to=(ACME,)))
-    assert ([hit.id for hit in found.hits], found.searched, found.unsearched) == ([HANS], 2, ())
+    assert ([hit.id for hit in found.hits], found.searched, found.ruled_out, found.unsearched) == ([HANS], 1, 1, ())
 
 
-def test_a_note_named_by_id_in_a_store_that_cannot_be_read_leaves_the_store_unsearched(linked: Path) -> None:
+def test_a_note_named_by_id_in_a_store_that_cannot_be_read_is_the_lookup_s_error(linked: Path) -> None:
     store = linked / "collections" / "work.sqlite"
     store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
     for links_to, linked_from in ((("work/contract.md",), ()), ((), ("work/Plan.md",))):
-        found = search(linked, SearchKeywords("note", links_to=links_to, linked_from=linked_from))
-        assert (found.hits, [each.collection for each in found.unsearched]) == ((), ["work"])
+        with pytest.raises(StoreUnavailableError, match="is damaged"):
+            search(linked, SearchKeywords("note", links_to=links_to, linked_from=linked_from))
 
 
 def test_an_ambiguous_link_and_a_link_by_another_path_lead_to_no_note_named(linked: Path) -> None:
@@ -219,7 +219,7 @@ def test_a_note_gone_before_its_store_is_read_lets_no_document_through(linked: P
     assert narrowing.links_to is not None
     (pointed,) = narrowing.links_to
     assert pointed.note is not None
-    gone = replace(narrowing, links_to=(replace(pointed, note=at_path(Match(pointed.note.collection, "Gone.md"))),))
+    gone = replace(narrowing, links_to=(replace(pointed, note=Note(pointed.note.collection, "Gone.md")),))
     (vault,) = gone.collections
     found = read_in(vault, lambda transaction: condition_in(gone, vault, transaction))
     assert found is not None

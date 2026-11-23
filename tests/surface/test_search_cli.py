@@ -57,6 +57,7 @@ def test_search_answers_in_json_when_asked(settings: Settings, notes: Path) -> N
         "searched": 1,
         "unsearched": [],
         "partial": False,
+        "ruled_out": 0,
     }
 
 

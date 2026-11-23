@@ -85,7 +85,7 @@ def test_a_note_is_mentioned_by_every_name_it_has(tmp_path: Path) -> None:
 
 
 def test_mentions_of_what_is_no_note_or_by_no_field_are_refused(named: Path) -> None:
-    with pytest.raises(NotFoundError, match="unknown document 'Nobody'"):
+    with pytest.raises(NotFoundError, match="no note or document 'Nobody'"):
         mentions(named, FindMentions("Nobody"))
     for blank in ("", " "):
         with pytest.raises(InvalidRequestError, match=r"--also names front matter fields, e\.g\. emails, not "):

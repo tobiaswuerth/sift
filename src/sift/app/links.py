@@ -129,7 +129,7 @@ def links(home: Path, request: ShowLinks) -> Links:
     checked_k(request.k)
     if request.depth not in DEPTHS:
         raise InvalidRequestError(f"--depth {request.depth} is neither 1 nor 2", DEPTH_REMEDY)
-    named = note_of(home, chosen_or_active(home, ()), request.id)
+    named = note_of(home, request.id)
     shown = read_in(named.note.collection, lambda transaction: _links(transaction, named.note, request))
     return replace(shown, unsearched=named.unsearched)
 

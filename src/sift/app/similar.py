@@ -10,7 +10,6 @@ from sift.api.ids import DocumentId
 from sift.api.links import FindSimilar
 from sift.api.search import SearchResult
 from sift.app import hits, searching
-from sift.app.collections import chosen_or_active
 from sift.app.linked import LeftOut
 from sift.app.notes import Note, note_of, read_in
 from sift.app.searching import Wants
@@ -51,7 +50,7 @@ def _like(note: Note, whole: str, transaction: Reading) -> Like:
 
 def similar(home: Path, request: FindSimilar, asked: Rescoring = RESCORING) -> SearchResult:
     searching.checked(request)
-    named = note_of(home, chosen_or_active(home, ()), request.id)
+    named = note_of(home, request.id)
     like = read_in(named.note.collection, partial(_like, named.note, request.id))
     narrowing = searching.narrowed(home, request, LeftOut(named.note, linking=False))
     with ExitStack() as cleanup:

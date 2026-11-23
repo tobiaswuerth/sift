@@ -162,7 +162,8 @@ def _hit(rank: int, hit: Hit, ranks: int, scores: int) -> tuple[str, ...]:
 
 def _footer(result: SearchResult, seconds: float, style: Style, kind: str) -> str:
     found = f"{len(result.hits):,} result{'s' * (len(result.hits) != 1)}" if result.hits else "no matches"
-    searched = f"{result.searched} collection{'s' * (result.searched != 1)}"
+    ruled_out = f", {result.ruled_out} ruled out by the links" if result.ruled_out else ""
+    searched = f"{result.searched} collection{'s' * (result.searched != 1)}{ruled_out}"
     separator = f"{GAP}{DOT[0] if style.unicode else DOT[1]}{GAP}"
     partial = ("partial: better matches may be missing",) if result.partial else ()
     return separator.join((found, kind, *partial, searched, duration(seconds)))
@@ -180,7 +181,7 @@ def _unsearched(unsearched: tuple[Unsearched, ...], style: Style) -> tuple[str, 
 
 
 def hits(result: SearchResult, seconds: float, platform: str, style: Style, kind: str = "keyword") -> Shown:
-    if not result.searched and not result.unsearched:
+    if not result.searched and not result.ruled_out and not result.unsearched:
         return _empty(platform, style)
     ranks = len(str(len(result.hits)))
     scores = max((len(_score(hit.score)) for hit in result.hits), default=0)

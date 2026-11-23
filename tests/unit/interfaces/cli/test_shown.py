@@ -171,6 +171,14 @@ def test_a_partial_search_says_better_matches_may_be_missing() -> None:
     assert "partial" not in hits(dataclasses.replace(found, partial=False), 0.25, "linux", PLAIN).messages[0]
 
 
+def test_stores_ruled_out_by_the_links_are_said_apart_from_those_searched() -> None:
+    dot = "  \N{MIDDLE DOT}  "
+    found = SearchResult((), 1, (), ruled_out=2)
+    said = dot.join(("no matches", "keyword", "1 collection, 2 ruled out by the links", "0.2 s"))
+    assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
+    assert hits(dataclasses.replace(found, searched=0), 0.25, "linux", PLAIN).messages[0].startswith("no matches")
+
+
 def test_a_hit_names_its_copies_in_other_collections_under_its_place() -> None:
     hit = Hit("notes/halo.md", "Halo", "1-3", 3.25, None, ("more/copy.md", "papers/halo.md"))
     shown = hits(SearchResult((hit,), 3, ()), 0.25, "linux", PLAIN, "hybrid")

@@ -100,7 +100,8 @@ def result(stores: Open, answered: Sequence[tuple[int, Hit]], *, partial: bool) 
     despite_losses(stores.closed)
     live = {one.collection.id for one in stores.searching}
     found = tuple(hit for chunk, hit in answered if owner(chunk) in live)
-    return SearchResult(found, len(stores.searching) + stores.ruled_out, tuple(stores.unsearched), partial=partial)
+    searched, unsearched = len(stores.searching), tuple(stores.unsearched)
+    return SearchResult(found, searched, unsearched, partial=partial, ruled_out=stores.ruled_out)
 
 
 def also_unsearched(found: SearchResult, more: Sequence[Unsearched]) -> SearchResult:

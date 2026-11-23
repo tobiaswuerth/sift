@@ -1,11 +1,12 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.filters import Filter
-from sift.api.search import Options, Unsearched
-from sift.app.notes import Note, Resolver, at_path, by_id, linking, matches, passed, read_in, target_of, written
+from sift.api.search import Options
+from sift.app.notes import NOTE_REMEDY, Note, Resolver, linking, note_of, read_in, target_of, written
 from sift.domain.query.filters import Condition, Linked, LinkFilter, condition, linkings
 from sift.domain.text.resolving import LEADING
 from sift.storage.catalog import Collection
@@ -13,11 +14,10 @@ from sift.storage.database import Reading
 from sift.storage.links import links_out
 from sift.storage.passing import reads_quotes
 
-NOTE_REMEDY = 'name a note by its id, as sift get takes it, or as links name it, e.g. "Acme AG"'
-
 
 @dataclass(frozen=True, slots=True)
 class Pointed:
+    spec: str
     note: Note | None
     target: str
     where: frozenset[str]
@@ -36,16 +36,10 @@ class Narrowing:
     path: str | None
     filters: tuple[Filter, ...]
     reads_quotes: bool
-    linkings: tuple[LinkFilter, ...]
+    linkings: Mapping[LinkFilter, Pointed]
     links_to: tuple[Pointed, ...] | None
     linked_from: tuple[Pointed, ...] | None
     left_out: LeftOut | None
-
-
-@dataclass(frozen=True, slots=True)
-class Looked:
-    note: Note | None
-    unsearched: tuple[Unsearched, ...]
 
 
 def _checked(spec: str, option: str) -> str:
@@ -61,57 +55,47 @@ def _held(one: Collection, target: str) -> bool:
         return True
 
 
-def _there(note: Note) -> bool:
-    try:
-        read_in(note.collection, note.find)
-    except NotFoundError:
-        return False
-    except StoreUnavailableError:
-        return True
-    return True
-
-
-def _by_id(home: Path, spec: str) -> Note | None:
-    try:
-        note = by_id(home, spec)
-    except NotFoundError:
-        return None
-    return note if _there(note) else None
-
-
-def _note(home: Path, scope: Sequence[Collection], spec: str) -> Looked:
-    note = _by_id(home, spec)
-    if note is not None:
-        return Looked(note, ())
-    found = matches(scope, spec)
-    return Looked(at_path(found.found[0]) if found.found else None, found.unsearched)
-
-
-def _unread(looked: Looked) -> frozenset[str]:
-    return frozenset(each.collection for each in looked.unsearched)
+def _found(home: Path, spec: str) -> Pointed:
+    named = note_of(home, spec)
+    where = frozenset({named.note.collection.name, *(each.collection for each in named.unsearched)})
+    return Pointed(spec, named.note, target_of(spec), where)
 
 
 def _linked_to(home: Path, scope: Sequence[Collection], spec: str) -> Pointed:
-    target, looked = target_of(spec), _note(home, scope, _checked(spec, "--links-to"))
-    if looked.note is not None:
-        return Pointed(looked.note, target, frozenset({looked.note.collection.name}) | _unread(looked))
-    held = frozenset(one.name for one in scope if _held(one, target))
-    if not held:
-        raise NotFoundError(f"no note {spec!r} in the index, and no link to one", NOTE_REMEDY)
-    return Pointed(None, target, held)
+    try:
+        return _found(home, _checked(spec, "--links-to"))
+    except NotFoundError:
+        target = target_of(spec)
+        held = frozenset(one.name for one in scope if _held(one, target))
+        if not held:
+            raise
+        return Pointed(spec, None, target, held)
 
 
-def _linking_from(home: Path, scope: Sequence[Collection], spec: str) -> Pointed:
-    looked = _note(home, scope, _checked(spec, "--linked-from"))
-    if looked.note is None:
-        said = passed(f"no note {spec!r} in the index", looked.unsearched)
-        raise NotFoundError(said, NOTE_REMEDY)
-    return Pointed(looked.note, target_of(spec), frozenset({looked.note.collection.name}) | _unread(looked))
+def _linking_from(home: Path, spec: str) -> Pointed:
+    return _found(home, _checked(spec, "--linked-from"))
+
+
+def _filtered(home: Path, each: LinkFilter) -> Pointed:
+    try:
+        return _found(home, each.target)
+    except NotFoundError:
+        return Pointed(each.target, None, each.target, frozenset())
+
+
+def _reachable(scope: tuple[Collection, ...], pointed: Sequence[Pointed]) -> None:
+    names = {one.name for one in scope}
+    for each in pointed:
+        if each.note is not None and not each.where & names:
+            name = each.note.collection.name
+            said = f"{each.spec!r} is a note of {name}, and links stay within their collection"
+            raise InvalidRequestError(said, f"search the collection {name}, or every collection")
 
 
 def _kept(
     scope: tuple[Collection, ...], links_to: tuple[Pointed, ...] | None, linked_from: tuple[Pointed, ...] | None
 ) -> tuple[Collection, ...]:
+    _reachable(scope, (*(links_to or ()), *(linked_from or ())))
     names = {one.name for one in scope}
     if links_to is not None:
         names &= {name for each in links_to for name in each.where}
@@ -126,28 +110,12 @@ def narrowing(
     quotes = reads_quotes()
     condition(request.path, request.filters, reads_quotes=quotes)
     links_to = tuple(_linked_to(home, scope, each) for each in request.links_to) if request.links_to else None
-    linked_from = (
-        tuple(_linking_from(home, scope, each) for each in request.linked_from) if request.linked_from else None
-    )
+    linked_from = tuple(_linking_from(home, each) for each in request.linked_from) if request.linked_from else None
     kept = _kept(scope, links_to, linked_from)
+    filtered = MappingProxyType({each: _filtered(home, each) for each in linkings(request.filters)})
     return Narrowing(
-        kept,
-        len(scope) - len(kept),
-        request.path,
-        request.filters,
-        quotes,
-        linkings(request.filters),
-        links_to,
-        linked_from,
-        left_out,
+        kept, len(scope) - len(kept), request.path, request.filters, quotes, filtered, links_to, linked_from, left_out
     )
-
-
-def _following(resolver: Resolver, each: LinkFilter) -> set[int]:
-    how = resolver.of_name(each.target)
-    if how.via in LEADING:
-        return set(linking(resolver, how.documents[0], each.field))
-    return written(resolver.transaction, each.target, each.field)
 
 
 def _document(note: Note | None, one: Collection, transaction: Reading) -> int | None:
@@ -159,11 +127,11 @@ def _document(note: Note | None, one: Collection, transaction: Reading) -> int |
         return None
 
 
-def _into(resolver: Resolver, one: Collection, pointed: Pointed) -> set[int]:
+def _into(resolver: Resolver, one: Collection, pointed: Pointed, field: str | None) -> set[int]:
     if pointed.note is None:
-        return written(resolver.transaction, pointed.target, None)
+        return written(resolver.transaction, pointed.target, field)
     document = _document(pointed.note, one, resolver.transaction)
-    return set() if document is None else set(linking(resolver, document, None))
+    return set() if document is None else set(linking(resolver, document, field))
 
 
 def _out_of(resolver: Resolver, one: Collection, pointed: Pointed) -> set[int]:
@@ -177,7 +145,7 @@ def _out_of(resolver: Resolver, one: Collection, pointed: Pointed) -> set[int]:
 def _within(found: Narrowing, one: Collection, resolver: Resolver) -> list[int] | None:
     kept: set[int] | None = None
     if found.links_to is not None:
-        kept = {document for each in found.links_to for document in _into(resolver, one, each)}
+        kept = {document for each in found.links_to for document in _into(resolver, one, each, None)}
     if found.linked_from is not None:
         to = {document for each in found.linked_from for document in _out_of(resolver, one, each)}
         kept = to if kept is None else kept & to
@@ -185,14 +153,16 @@ def _within(found: Narrowing, one: Collection, resolver: Resolver) -> list[int] 
 
 
 def _left_out(left_out: LeftOut | None, one: Collection, resolver: Resolver) -> list[int]:
-    document = None if left_out is None else _document(left_out.note, one, resolver.transaction)
-    if left_out is None or document is None:
+    if left_out is None:
         return []
+    document = _document(left_out.note, one, resolver.transaction)
+    if document is None:
+        return sorted(written(resolver.transaction, left_out.note.name, None)) if left_out.linking else []
     return [document, *linking(resolver, document, None)] if left_out.linking else [document]
 
 
 def condition_in(found: Narrowing, one: Collection, transaction: Reading) -> Condition | None:
     resolver = Resolver(transaction)
-    values = {each: sorted(_following(resolver, each)) for each in found.linkings}
+    values = {each: sorted(_into(resolver, one, pointed, each.field)) for each, pointed in found.linkings.items()}
     linked = Linked(values, _within(found, one, resolver), _left_out(found.left_out, one, resolver))
     return condition(found.path, found.filters, reads_quotes=found.reads_quotes, linked=linked)
