@@ -176,7 +176,7 @@ def test_a_store_lost_while_its_filter_is_checked_or_listed_is_passed_over(tmp_p
 def test_once_a_store_is_lost_no_other_store_is_checked_or_listed_for_that_round(home: Path) -> None:
     chosen = Chosen(np.zeros(0, np.int64))
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, searching.collections_of(home, None), lambda _one, _transaction: None)
+        kept = searching.opened(cleanup, searching.narrowed(home, SearchKeywords("x")), lambda _one, _allowed: None)
         guarded = Guarded(kept, kept.searching[0], chosen, [True])
         assert guarded.listed().tolist() == []
         assert guarded.checked(np.array([1, 2], np.int64)).tolist() == [False, False]
@@ -186,7 +186,7 @@ def test_once_a_store_is_lost_no_other_store_is_checked_or_listed_for_that_round
 def test_work_on_a_store_already_dropped_is_not_done(home: Path) -> None:
     done: list[bool] = []
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, searching.collections_of(home, None), lambda _one, _transaction: None)
+        kept = searching.opened(cleanup, searching.narrowed(home, SearchKeywords("x")), lambda _one, _allowed: None)
         (each,) = kept.searching
         kept.dropped(each, StoreUnavailableError("gone", None))
         assert kept.guarded(each, lambda: done.append(True)) is None

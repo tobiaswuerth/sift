@@ -55,14 +55,30 @@ def _held(one: Collection, target: str) -> bool:
         return True
 
 
-def _note(home: Path, scope: Sequence[Collection], spec: str) -> Looked:
+def _there(note: Note) -> bool:
     try:
-        note = by_id(home, spec)
         read_in(note.collection, note.find)
     except NotFoundError:
-        found = matches(scope, spec)
-        return Looked(at_path(found.found[0]) if found.found else None, found.unsearched)
-    return Looked(note, ())
+        return False
+    except StoreUnavailableError:
+        return True
+    return True
+
+
+def _by_id(home: Path, spec: str) -> Note | None:
+    try:
+        note = by_id(home, spec)
+    except NotFoundError:
+        return None
+    return note if _there(note) else None
+
+
+def _note(home: Path, scope: Sequence[Collection], spec: str) -> Looked:
+    note = _by_id(home, spec)
+    if note is not None:
+        return Looked(note, ())
+    found = matches(scope, spec)
+    return Looked(at_path(found.found[0]) if found.found else None, found.unsearched)
 
 
 def _unread(looked: Looked) -> frozenset[str]:
@@ -126,22 +142,27 @@ def _following(resolver: Resolver, each: Linking) -> set[int]:
     return written(resolver.transaction, each.target, each.field)
 
 
-def _here(one: Collection, pointed: Pointed) -> bool:
-    return pointed.note is not None and pointed.note.collection.id == one.id
+def _document(note: Note | None, one: Collection, transaction: Reading) -> int | None:
+    if note is None or note.collection.id != one.id:
+        return None
+    try:
+        return note.find(transaction)
+    except NotFoundError:
+        return None
 
 
 def _into(resolver: Resolver, one: Collection, pointed: Pointed) -> set[int]:
     if pointed.note is None:
         return written(resolver.transaction, pointed.target, None)
-    if not _here(one, pointed):
-        return set()
-    return set(linking(resolver, pointed.note.find(resolver.transaction), None))
+    document = _document(pointed.note, one, resolver.transaction)
+    return set() if document is None else set(linking(resolver, document, None))
 
 
 def _out_of(resolver: Resolver, one: Collection, pointed: Pointed) -> set[int]:
-    if pointed.note is None or not _here(one, pointed):
+    document = _document(pointed.note, one, resolver.transaction)
+    if document is None:
         return set()
-    rows = links_out(resolver.transaction, pointed.note.find(resolver.transaction), None)
+    rows = links_out(resolver.transaction, document, None)
     return {how.documents[0] for how in map(resolver.of, rows) if how.via in LEADING}
 
 
@@ -156,10 +177,8 @@ def _within(found: Narrowing, one: Collection, resolver: Resolver) -> list[int] 
 
 
 def _left_out(note: Note | None, one: Collection, resolver: Resolver) -> list[int]:
-    if note is None or note.collection.id != one.id:
-        return []
-    document = note.find(resolver.transaction)
-    return [document, *linking(resolver, document, None)]
+    document = _document(note, one, resolver.transaction)
+    return [] if document is None else [document, *linking(resolver, document, None)]
 
 
 def condition_in(found: Narrowing, one: Collection, transaction: Reading) -> Condition | None:

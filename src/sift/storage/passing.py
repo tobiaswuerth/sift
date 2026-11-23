@@ -21,9 +21,15 @@ WITH asked(id) AS (
   UNION ALL SELECT id FROM documents WHERE :documents IS NULL AND :within IS NULL),
 groups AS MATERIALIZED (
   SELECT g.key AS grp, json_extract(g.value, '$.path') AS field, json_extract(g.value, '$.any') AS any_of,
-         json_extract(g.value, '$.none') AS none_of, json_array_length(g.value, '$.ranges') AS ranged,
-         json_extract(g.value, '$.linked_any') AS linked_any, json_extract(g.value, '$.linked_none') AS linked_none
+         json_extract(g.value, '$.none') AS none_of, json_array_length(g.value, '$.ranges') AS ranged
   FROM json_each(:fields) g),
+linked AS MATERIALIZED (
+  SELECT g.key AS grp, 'any' AS kind, CAST(l.value AS INTEGER) AS id
+  FROM json_each(:fields) g, json_each(g.value, '$.linked_any') l
+  WHERE l.type = 'integer'
+  UNION ALL
+  SELECT g.key, 'none', CAST(l.value AS INTEGER) FROM json_each(:fields) g, json_each(g.value, '$.linked_none') l
+  WHERE l.type = 'integer'),
 bounds AS MATERIALIZED (
   SELECT g.key AS grp, json_extract(r.value, '$.op') AS op, json_extract(r.value, '$.text') AS text,
          json_extract(r.value, '$.len') AS len, json_extract(r.value, '$.value') AS value
@@ -56,9 +62,9 @@ WHERE (:path IS NULL OR s.path GLOB :path)
                    WHEN '>' THEN CAST(v.value AS REAL) > b.value
                    ELSE CAST(v.value AS REAL) >= b.value END
                END)))
-       OR d.id IN (SELECT value FROM json_each(g.linked_any))
+       OR EXISTS (SELECT 1 FROM linked l WHERE l.grp = g.grp AND l.kind = 'any' AND l.id = d.id)
       )
-      AND d.id NOT IN (SELECT value FROM json_each(g.linked_none))
+      AND NOT EXISTS (SELECT 1 FROM linked l WHERE l.grp = g.grp AND l.kind = 'none' AND l.id = d.id)
       AND (g.none_of IS NULL
            OR NOT EXISTS (SELECT 1 FROM json_each(d.fields, g.field) v
                           WHERE v.value IN (SELECT value FROM json_each(g.none_of))))

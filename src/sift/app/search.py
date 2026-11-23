@@ -26,7 +26,6 @@ from sift.retrieval.keyword.search import (
     query_of,
     searched,
 )
-from sift.storage.catalog import Collection
 from sift.storage.database import Reading
 from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
@@ -69,9 +68,9 @@ class Ranked:
     cut: bool
 
 
-def keywords(asked: Narrowing, one: Collection, transaction: Reading) -> Keywords:
+def keywords(transaction: Reading, allowed: Passing | None) -> Keywords:
     refuse_stale(transaction)
-    return Keywords(opened(transaction), searching.allowed(asked, one, transaction))
+    return Keywords(opened(transaction), allowed)
 
 
 def found[S](
@@ -141,7 +140,6 @@ def search(
 
 def searched_as(asked: Asked) -> SearchResult:
     with ExitStack() as cleanup:
-        narrowing = asked.narrowing
-        kept = searching.opened(cleanup, narrowing.collections, partial(keywords, narrowing), narrowing.ruled_out)
+        kept = searching.opened(cleanup, asked.narrowing, keywords)
         answered, cut = _answered(kept, asked)
         return searching.result(kept, answered, partial=cut)

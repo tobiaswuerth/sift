@@ -1,3 +1,5 @@
+from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -8,9 +10,12 @@ from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.filters import Filter, written
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
+from sift.app import searching
 from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
+from sift.app.linked import condition_in
+from sift.app.notes import Match, at_path, read_in
 from sift.app.query import query
 from sift.app.search import search
 from sift.app.vsearch import vsearch
@@ -41,12 +46,18 @@ def linked(tmp_path: Path) -> Path:
         "vault",
         {
             "People/Hans Müller.md": hans,
-            "People/Anna Keller.md": "Note: Anna works with [[Hans Müller]].\n",
+            "People/Anna Keller.md": "Note: Anna works with [[Hans Müller]] on [[Dup]].\n",
+            "A/Dup.md": "Note: one.\n",
+            "B/Dup.md": "Note: two.\n",
             "Orgs/Acme AG.md": "Note: a customer, run by [[Hans Müller]].\n",
             "Offer.md": "Note: an offer for [[Hans Mueller]], see [[Wartungsvertrag 2027]].\n",
         },
     )
-    work = {"contract.md": "Note: Hans Müller signed for Acme AG.\n", "Plan.md": "Note: see [[contract]].\n"}
+    work = {
+        "contract.md": "Note: Hans Müller signed for Acme AG.\n",
+        "Plan.md": "Note: see [[contract]].\n",
+        "old.md": "Note: see [[Archive/Wartungsvertrag 2027]].\n",
+    }
     collection(tmp_path, home, "work", work)
     index(home, IndexCollections(), lambda _: None)
     return home
@@ -172,3 +183,44 @@ def test_a_wikilink_filter_value_matches_a_link_to_the_note_however_written(orgs
     assert filtered(orgs, 'org=["[[beta.md]]", "Acme AG"]') == ["d", "f", "h"]
     assert filtered(orgs, "client=[[Acme]]") == ["g"]
     assert filtered(orgs, "org=[[Acme AG]]", "org!=[[Beta]]") == ["a", "b", "c", "e"]
+
+
+def test_a_note_named_by_id_keeps_other_collections_closed(linked: Path) -> None:
+    store = linked / "collections" / "work.sqlite"
+    store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
+    found = search(linked, SearchKeywords("note", links_to=(ACME,)))
+    assert ([hit.id for hit in found.hits], found.searched, found.unsearched) == ([HANS], 2, ())
+
+
+def test_a_note_named_by_id_in_a_store_that_cannot_be_read_leaves_the_store_unsearched(linked: Path) -> None:
+    store = linked / "collections" / "work.sqlite"
+    store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
+    found = search(linked, SearchKeywords("note", links_to=("work/contract.md",)))
+    assert (found.hits, [each.collection for each in found.unsearched]) == ((), ["work"])
+
+
+def test_an_ambiguous_link_and_a_link_by_another_path_lead_to_no_note_named(linked: Path) -> None:
+    assert notes(linked, linked_from=("Anna Keller",)) == [HANS]
+    assert notes(linked, links_to=("Wartungsvertrag 2027",)) == [OFFER]
+
+
+def test_a_store_no_document_of_can_pass_the_links_is_not_searched(linked: Path) -> None:
+    narrowing = searching.narrowed(
+        linked, SearchKeywords("note", links_to=("Hans Müller",), linked_from=("Anna Keller",))
+    )
+    held: list[str] = []
+    with ExitStack() as cleanup:
+        kept = searching.opened(cleanup, narrowing, lambda _transaction, _allowed: held.append("held"))
+        assert (kept.searching, held, kept.ruled_out) == ([], [], 2)
+
+
+def test_a_note_gone_before_its_store_is_read_lets_no_document_through(linked: Path) -> None:
+    narrowing = searching.narrowed(linked, SearchKeywords("note", links_to=("Acme AG",)))
+    assert narrowing.links_to is not None
+    (pointed,) = narrowing.links_to
+    assert pointed.note is not None
+    gone = replace(narrowing, links_to=(replace(pointed, note=at_path(Match(pointed.note.collection, "Gone.md"))),))
+    (vault,) = gone.collections
+    found = read_in(vault, lambda transaction: condition_in(gone, vault, transaction))
+    assert found is not None
+    assert found.within == "[]"

@@ -11,7 +11,6 @@ from sift.api.fields import Fields, FieldValue
 from sift.api.ids import ChunkId, owner
 from sift.api.search import MOST_HITS, Hit, SearchHybrid, SearchResult
 from sift.app import searching
-from sift.app.linked import Narrowing
 from sift.app.search import Keywords, Wanted, found
 from sift.app.vsearch import (
     ASKED,
@@ -33,10 +32,10 @@ from sift.domain.rank.hybrid import blend, named, passage, standing_out, words, 
 from sift.inference.models import Models
 from sift.retrieval.keyword.lists import opened
 from sift.retrieval.keyword.search import TUNING, never
-from sift.storage.catalog import Collection
 from sift.storage.database import Reading
 from sift.storage.documents import fields_by_document, passages, texts
 from sift.storage.keywords import refuse_stale
+from sift.storage.passing import Passing
 
 EMPTY_REMEDY = "ask a question, e.g. sift query 'how dark matter halos form'"
 CANDIDATES_REMEDY = f"ask for 1 to {MOST_HITS:,} candidates; fewer than -k are raised to -k"
@@ -58,10 +57,9 @@ class Candidate:
 type Kept = searching.Kept[Both]
 
 
-def _both(model: str, asked: Narrowing, one: Collection, transaction: Reading) -> Both:
+def _both(model: str, transaction: Reading, allowed: Passing | None) -> Both:
     refuse_stale(transaction)
     vectors = embedded_by(model, transaction)
-    allowed = searching.allowed(asked, one, transaction)
     held = no_vectors() if vectors is None else vectors
     return Both(Keywords(opened(transaction), allowed), replace(held, allowed=allowed))
 
@@ -235,6 +233,5 @@ def query(home: Path, request: SearchHybrid, models: Models, asked: Asked = ASKE
     _checked(request)
     narrowing = searching.narrowed(home, request)
     with ExitStack() as cleanup:
-        hold = partial(_both, models.name, narrowing)
-        kept = searching.opened(cleanup, narrowing.collections, hold, narrowing.ruled_out)
+        kept = searching.opened(cleanup, narrowing, partial(_both, models.name))
         return searching.result(kept, _answered(kept, request, models, asked), partial=False)

@@ -1,6 +1,7 @@
 import contextlib
 import json
 import sqlite3
+from collections.abc import Generator
 
 import numpy as np
 
@@ -20,19 +21,25 @@ PAPERS: dict[str, Fields] = {
 }
 
 
-def passing(
-    documents: dict[str, Fields], filters: list[Filter], path: str | None = None, linked: Linked = UNLINKED
-) -> list[str]:
-    found = condition(path, filters, reads_quotes=True, linked=linked)
+@contextlib.contextmanager
+def stored(documents: dict[str, Fields]) -> Generator[sqlite3.Connection]:
     with contextlib.closing(sqlite3.connect(":memory:")) as database:
         database.execute("CREATE TABLE sources (id INTEGER PRIMARY KEY, path TEXT)")
         database.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, source INTEGER, fields TEXT)")
         database.execute("CREATE TABLE chunks (id INTEGER PRIMARY KEY, document INTEGER)")
-        names = list(documents)
         for at, (name, fields) in enumerate(documents.items()):
             database.execute("INSERT INTO sources VALUES (?, ?)", (at, name))
             database.execute("INSERT INTO documents VALUES (?, ?, ?)", (at, at, json.dumps(fields)))
             database.execute("INSERT INTO chunks VALUES (?, ?)", (at, at))
+        yield database
+
+
+def passing(
+    documents: dict[str, Fields], filters: list[Filter], path: str | None = None, linked: Linked = UNLINKED
+) -> list[str]:
+    found = condition(path, filters, reads_quotes=True, linked=linked)
+    names = list(documents)
+    with stored(documents) as database:
         if found is None:
             return sorted(names)
         listed = sorted(names[chunk] for chunk in ints(Passing(Reading(database), found).listed()))
@@ -152,3 +159,26 @@ def test_a_search_kept_to_some_documents_passes_only_those() -> None:
 def test_documents_left_out_never_pass() -> None:
     assert passing(PAPERS, [], linked=Linked(without=[0, 3])) == ["record.md", "rl.md"]
     assert passing(PAPERS, [one("year", ANY, 2024)], linked=Linked(within=[0, 2], without=[0])) == ["record.md"]
+
+
+def steps(documents: dict[str, Fields], filters: list[Filter], linked: Linked = UNLINKED) -> int:
+    found = condition(None, filters, reads_quotes=True, linked=linked)
+    assert found is not None
+    ticks: list[int] = []
+
+    def tick() -> int:
+        ticks.append(1)
+        return 0
+
+    with stored(documents) as database:
+        database.set_progress_handler(tick, 1000)
+        Passing(Reading(database), found).listed()
+    return len(ticks)
+
+
+def test_documents_linking_a_note_cost_about_what_a_plain_value_costs() -> None:
+    many: dict[str, Fields] = {f"{n}.md": {"org": f"o{n % 7}"} for n in range(3000)}
+    half = list(range(0, 3000, 2))
+    plain = steps(many, [one("org", ANY, "o1")])
+    assert steps(many, [one("org", ANY, "[[Acme]]")], Linked({Linking("org", ANY, "Acme"): half})) < 3 * plain
+    assert steps(many, [one("org", NONE, "[[Acme]]")], Linked({Linking("org", NONE, "Acme"): half})) < 3 * plain

@@ -10,14 +10,12 @@ from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.ids import owner
 from sift.api.search import Hit, SearchResult, SearchVectors
 from sift.app import searching
-from sift.app.linked import Narrowing
 from sift.domain.arrays import Ids, Mask
 from sift.domain.codec.codes import Floats, Halves
 from sift.domain.rank.best import Best, offered, ranked
 from sift.inference.models import Models
 from sift.retrieval.allowed import AllowedChunks
 from sift.retrieval.vector.nearest import RESCORE, Coded, Near, Reads, coded, nearest
-from sift.storage.catalog import Collection
 from sift.storage.database import Reading
 from sift.storage.documents import documents_of
 from sift.storage.passing import Passing
@@ -74,8 +72,8 @@ def held(model: str, transaction: Reading) -> Held:
     return no_vectors()
 
 
-def held_within(model: str, asked: Narrowing, one: Collection, transaction: Reading) -> Held:
-    return replace(held(model, transaction), allowed=searching.allowed(asked, one, transaction))
+def held_within(model: str, transaction: Reading, allowed: Passing | None) -> Held:
+    return replace(held(model, transaction), allowed=allowed)
 
 
 def query_vector(models: Models, text: str) -> Floats:
@@ -207,8 +205,7 @@ def vsearch(home: Path, request: SearchVectors, models: Models, asked: Asked = A
         raise InvalidRequestError("an empty query finds nothing", EMPTY_REMEDY)
     narrowing = searching.narrowed(home, request)
     with ExitStack() as cleanup:
-        hold = partial(held_within, models.name, narrowing)
-        kept = searching.opened(cleanup, narrowing.collections, hold, narrowing.ruled_out)
+        kept = searching.opened(cleanup, narrowing, partial(held_within, models.name))
         if not any(len(each.held.coded.ids) for each in kept.searching):
             return searching.result(kept, (), partial=False)
         query = query_vector(models, request.query)

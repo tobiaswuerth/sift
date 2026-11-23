@@ -80,9 +80,7 @@ def narrowed(home: Path, request: Options, unlinked: Note | None = None) -> Narr
     return narrowing(home, request, collections_of(home, request.collection), unlinked)
 
 
-def allowed(asked: Narrowing, one: Collection, transaction: Reading) -> Passing | None:
-    found = condition_in(asked, one, transaction)
-    return None if found is None else Passing(transaction, found)
+type Hold[S] = Callable[[Reading, Passing | None], S]
 
 
 def fielded(request: Options) -> bool:
@@ -103,27 +101,33 @@ def collections_of(home: Path, name: str | None) -> tuple[Collection, ...]:
     return chosen_or_active(home, () if name is None else (name,))
 
 
-def _searching[S](one: Collection, hold: Callable[[Collection, Reading], S]) -> Searching[S]:
+def _searching[S](one: Collection, asked: Narrowing, hold: Hold[S]) -> Searching[S] | None:
     resources = ExitStack()
     with unavailable_if_damaged(one.store):
         try:
             connection = resources.enter_context(closing(open_store(one.store, one.id)))
             transaction = resources.enter_context(reading(connection))
-            return Searching(one, transaction, hold(one, transaction), resources)
+            found = condition_in(asked, one, transaction)
+            if found is not None and found.lets_none:
+                resources.close()
+                return None
+            allowed = None if found is None else Passing(transaction, found)
+            return Searching(one, transaction, hold(transaction, allowed), resources)
         except BaseException:
             resources.close()
             raise
 
 
-def opened[S](
-    cleanup: ExitStack, collections: Sequence[Collection], hold: Callable[[Collection, Reading], S], ruled_out: int = 0
-) -> Kept[S]:
-    kept = Kept[S](ruled_out=ruled_out)
-    for one in collections:
+def opened[S](cleanup: ExitStack, asked: Narrowing, hold: Hold[S]) -> Kept[S]:
+    kept = Kept[S](ruled_out=asked.ruled_out)
+    for one in asked.collections:
         try:
-            each = _searching(one, hold)
+            each = _searching(one, asked, hold)
         except StoreUnavailableError as error:
             kept.said(one, error)
+            continue
+        if each is None:
+            kept.ruled_out += 1
             continue
         cleanup.callback(each.resources.close)
         kept.searching.append(each)
