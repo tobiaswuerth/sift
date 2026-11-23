@@ -1,3 +1,4 @@
+import os
 import shutil
 from pathlib import Path
 
@@ -14,6 +15,8 @@ PYTHONS = ("3.12", "3.13", "3.14", "3.15")
 PLATFORMS = ("Linux", "Darwin", "Windows")
 BUILD_CONSTRAINTS = ".github/requirements-build.txt"
 TWINE = "twine@7.0.0"
+MOST_WORKERS = 8
+WORKERS = str(min(MOST_WORKERS, os.cpu_count() or 1))
 
 
 def synced(session: nox.Session, *also: str) -> None:
@@ -55,19 +58,19 @@ def types(session: nox.Session) -> None:
 @nox.session(python=PYTHONS)
 def tests(session: nox.Session) -> None:
     synced(session)
-    session.run("pytest", "-q", "-n", "auto", "--cov", "--durations=10")
+    session.run("pytest", "-q", "-n", WORKERS, "--cov", "--durations=10")
 
 
 @nox.session(python=OLDEST)
 def explore(session: nox.Session) -> None:
     synced(session)
-    session.run("pytest", "-q", "-n", "auto", "--hypothesis-profile=explore", "--hypothesis-show-statistics")
+    session.run("pytest", "-q", "-n", WORKERS, "--hypothesis-profile=explore", "--hypothesis-show-statistics")
 
 
 @nox.session(python=OLDEST)
 def lowest(session: nox.Session) -> None:
     session.install("--resolution=lowest-direct", "--group=dev", "-e", ".")
-    session.run("pytest", "-q", "-n", "auto")
+    session.run("pytest", "-q", "-n", WORKERS)
 
 
 @nox.session(python=OLDEST)

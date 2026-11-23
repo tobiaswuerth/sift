@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
+READ_AT_ONCE = 1 << 20
 CHANGED = "changed while it was indexed; it is read again at the next index"
 
 
@@ -38,5 +39,10 @@ def opened(path: Path, scanned: Identity | None) -> Generator[BinaryIO]:
 
 
 def at_most(path: Path, most: int, scanned: Identity | None) -> bytes:
+    read: list[bytes] = []
+    left = most + 1
     with opened(path, scanned) as raw:
-        return raw.read(most + 1)
+        while left and (part := raw.read(min(left, READ_AT_ONCE))):
+            read.append(part)
+            left -= len(part)
+    return b"".join(read)

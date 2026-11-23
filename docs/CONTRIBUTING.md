@@ -24,6 +24,8 @@ Linux, macOS and Windows), `tests-3.12` and `tests-3.15` (100% line and branch c
 `lowest` (the lowest versions sift allows), `package` (the wheel and sdist hold the tracked sources and nothing
 else, and the installed commands run). One session: `uv run --only-group gate nox -s types`. Before a release,
 `nox -s explore` runs the property tests with fresh random examples, 2,000 each; the gate runs them derandomized.
+Tests run on at most 8 workers: each worker imports every test module, the model libraries among them, and on 32
+threads more workers made the suite slower (35 s on 8, 101 s on 32).
 
 ## Rules the checks hold
 

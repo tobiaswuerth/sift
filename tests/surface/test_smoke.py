@@ -1,5 +1,7 @@
 import json
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import cast
 
@@ -100,48 +102,47 @@ def links_run(home: Path) -> None:
     assert [hit["id"] for hit in hits_of(sift(home, *linking, "-f", "see=[[sub/brush]]"))] == ["notes/rl.md"]
 
 
-def records_run(home: Path, notes: Path, model: str) -> None:
-    papers = notes / "papers"
-    papers.mkdir()
-    (papers / "p.jsonl").write_bytes(b'{"key": "p1", "headline": "Brush strokes", "body": "learning to paint"}\n')
-    chosen = ("--id-field", "key", "--title-field", "headline", "--text-fields", "body", "--title-from", "heading")
-    added = sift(
-        home,
-        "add",
-        str(papers),
-        "--name",
-        "papers",
-        "--store",
-        str(home / "kept" / "papers.sqlite"),
-        "--nested",
-        "--follow-links",
-        *chosen,
-        "--json",
+def notes_in(notes: Path) -> Path:
+    (notes / "sub").mkdir(parents=True)
+    (notes / "rl.md").write_bytes(
+        b'---\nsee: "[[brush]]"\n---\n# Reward shaping\n\nSpeeds up learning. See [[brush]], [[Gone]].\n'
     )
-    assert (added.returncode, answer(added)["name"]) == (0, "papers")
-    assert sift(home, "index", "papers", "--json").returncode == 0
-    (record,) = listed(sift(home, "get", "papers/p.jsonl#p1", "--json"), "found")
-    assert (record["title"], record["text"]) == ("Brush strokes", "# Brush strokes\n\nlearning to paint")
-    embedded = sift(home, "embed", "papers", "--reset", "--json", model=model)
-    refused = cast("Answer", answer(embedded)["error"])
-    assert (embedded.returncode, refused["field"]) == (2, "reset")
-    assert sift(home, "embed", "--reset", "--json", model=model).returncode == 0
+    (notes / "sub" / "brush.md").write_bytes(b"# Brush\n")
+    (notes / "huge.txt").write_bytes(b"A brush stroke.")
+    return notes
 
 
-def every_option_run(home: Path, model: str, reranker: str) -> None:
-    narrowed = ("-k", "2", "-c", "notes", "--path", "*", "-f", "see!=x", "--fields", "*", "--sort=-see")
-    linked = ("--links-to", "brush", "--linked-from", "notes/rl.md", "--all-passages", "--compact", "--json")
-    for asked in (
-        ("search", "brush OR learning", *narrowed, *linked, "--budget", "5"),
-        ("vsearch", "learning", *narrowed, *linked),
-        ("query", "learning", *narrowed, *linked, "--candidates", "5", "--adaptive"),
-        ("similar", "notes/rl.md", *narrowed, *linked),
-        ("mentions", "notes/sub/brush.md", *narrowed, *linked, "--also", "Pinsel"),
-    ):
-        ran = sift(home, *asked, model=model, reranker=reranker)
-        assert (asked[0], ran.returncode, ran.stderr) == (asked[0], 0, "")
-        answered = cast("dict[str, int]", answer(ran))
-        assert answered["searched"] + answered["ruled_out"] == 1
+def indexed(home: Path, notes: Path) -> None:
+    added = sift(home, "add", str(notes), "--name", "notes")
+    assert (added.returncode, added.stdout) == (0, "")
+    assert added.stderr.split("\n")[0] == f"added  notes  {notes.resolve()}"
+    done = sift(home, "index")
+    assert (done.returncode, done.stdout) == (0, "")
+    assert "  done  +3  ~0  -0  " in done.stderr
+
+
+def plain_run(home: Path, notes: Path) -> None:
+    indexed(home, notes)
+    assert sift(home, "index", "notes", "--json").stdout.count('"added": 0') == 1
+    status_run(home)
+    one = sift(home, "get", "notes/brush.md")
+    assert (one.returncode, one.stdout, one.stderr) == (0, "# Brush\n", "")
+    lines = sift(home, "get", str(notes / "rl.md"), "notes/sub/brush.md", "--lines", "1")
+    assert lines.stdout == "==> notes/rl.md <==\n---\n\n==> notes/sub/brush.md <==\n# Brush\n"
+    found = sift(home, "search", "learning", "-k", "1")
+    assert (found.returncode, found.stdout.split("\n")[1]) == (0, " " * 9 + "notes/rl.md:4-6")
+    assert found.stderr.startswith("1 result  \N{MIDDLE DOT}  keyword  \N{MIDDLE DOT}  1 collection")
+    assert json.loads(sift(home, "search", '"speeds up"', "--json").stdout)["hits"][0]["id"] == "notes/rl.md"
+    timed = cast("dict[str, object]", json.loads(sift(home, "search", "speed*", "--budget", "5", "--json").stdout))
+    assert timed["partial"] is False
+    assert cast("list[dict[str, object]]", timed["hits"])[0]["id"] == "notes/rl.md"
+    narrowed_searches_run(home)
+    links_run(home)
+    missing = sift(home, "get", "notes/gone.md")
+    assert (missing.returncode, missing.stdout) == (1, "")
+    assert missing.stderr.startswith("error  notes/gone.md: unknown document")
+    assert sift(home, "frobnicate").returncode == 2
+    assert sift(home, "--help").stdout.startswith("usage: sift")
     linking = sift(
         home, "links", "notes/rl.md", "--direction", "out", "--depth", "2", "--field", "see", "-k", "5", "--json"
     )
@@ -152,56 +153,8 @@ def every_option_run(home: Path, model: str, reranker: str) -> None:
     assert "\x1b[" in coloured.stderr
 
 
-def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path: Path) -> None:
-    home, notes = tmp_path / "home", tmp_path / "Notizen Müller"
-    (notes / "sub").mkdir(parents=True)
-    (notes / "rl.md").write_bytes(
-        b'---\nsee: "[[brush]]"\n---\n# Reward shaping\n\nSpeeds up learning. See [[brush]], [[Gone]].\n'
-    )
-    (notes / "sub" / "brush.md").write_bytes(b"# Brush\n")
-    (notes / "huge.txt").write_bytes(b"A brush stroke.")
-
-    added = sift(home, "add", str(notes), "--name", "notes")
-    assert (added.returncode, added.stdout) == (0, "")
-    assert added.stderr.split("\n")[0] == f"added  notes  {notes.resolve()}"
-
-    indexed = sift(home, "index")
-    assert (indexed.returncode, indexed.stdout) == (0, "")
-    assert "  done  +3  ~0  -0  " in indexed.stderr
-
-    assert sift(home, "index", "notes", "--json").stdout.count('"added": 0') == 1
-
-    status_run(home)
-
-    one = sift(home, "get", "notes/brush.md")
-    assert (one.returncode, one.stdout, one.stderr) == (0, "# Brush\n", "")
-    lines = sift(home, "get", str(notes / "rl.md"), "notes/sub/brush.md", "--lines", "1")
-    assert lines.stdout == "==> notes/rl.md <==\n---\n\n==> notes/sub/brush.md <==\n# Brush\n"
-
-    found = sift(home, "search", "learning", "-k", "1")
-    assert (found.returncode, found.stdout.split("\n")[1]) == (0, " " * 9 + "notes/rl.md:4-6")
-    assert found.stderr.startswith("1 result  \N{MIDDLE DOT}  keyword  \N{MIDDLE DOT}  1 collection")
-    assert json.loads(sift(home, "search", '"speeds up"', "--json").stdout)["hits"][0]["id"] == "notes/rl.md"
-    timed = cast("dict[str, object]", json.loads(sift(home, "search", "speed*", "--budget", "5", "--json").stdout))
-    assert timed["partial"] is False
-    assert cast("list[dict[str, object]]", timed["hits"])[0]["id"] == "notes/rl.md"
-    narrowed_searches_run(home)
-    links_run(home)
-    model, reranker = models_run(home, tmp_path / "models")
-
-    missing = sift(home, "get", "notes/gone.md")
-    assert (missing.returncode, missing.stdout) == (1, "")
-    assert missing.stderr.startswith("error  notes/gone.md: unknown document")
-    assert sift(home, "frobnicate").returncode == 2
-    assert sift(home, "--help").stdout.startswith("usage: sift")
-    every_option_run(home, model, reranker)
-    records_run(home, notes, model)
-    assert unexercised(RAN) == []
-
-
-def models_run(home: Path, models: Path) -> tuple[str, str]:
-    reranker = str(tiny_reranker(models))
-    model = str(tiny_model(models))
+def models_run(home: Path, notes: Path, model: str, reranker: str) -> None:
+    indexed(home, notes)
     embedded = sift(home, "embed", model=model)
     assert (embedded.returncode, embedded.stdout) == (0, "")
     assert "  embed          3 chunks" in embedded.stderr
@@ -217,4 +170,54 @@ def models_run(home: Path, models: Path) -> tuple[str, str]:
     assert (asked.returncode, asked.stdout.split("\n")[1].strip().startswith("notes/")) == (0, True)
     assert asked.stderr.startswith("  load           2 models ")
     assert asked.stderr.splitlines()[-1].startswith("1 result  \N{MIDDLE DOT}  hybrid  \N{MIDDLE DOT}  1 collection")
-    return model, reranker
+
+
+def options_run(home: Path, notes: Path, model: str, reranker: str) -> None:
+    indexed(home, notes)
+    assert sift(home, "embed", model=model).returncode == 0
+    narrowed = ("-k", "2", "-c", "notes", "--path", "*", "-f", "see!=x", "--fields", "*", "--sort=-see")
+    linked = ("--links-to", "brush", "--linked-from", "notes/rl.md", "--all-passages", "--compact", "--json")
+    for asked in (
+        ("search", "brush OR learning", *narrowed, *linked, "--budget", "5"),
+        ("vsearch", "learning", *narrowed, *linked),
+        ("query", "learning", *narrowed, *linked, "--candidates", "5", "--adaptive"),
+        ("similar", "notes/rl.md", *narrowed, *linked),
+        ("mentions", "notes/sub/brush.md", *narrowed, *linked, "--also", "Pinsel"),
+    ):
+        ran = sift(home, *asked, model=model, reranker=reranker)
+        assert (asked[0], ran.returncode, ran.stderr) == (asked[0], 0, "")
+        answered = cast("dict[str, int]", answer(ran))
+        assert answered["searched"] + answered["ruled_out"] == 1
+
+
+def records_run(home: Path, notes: Path, model: str) -> None:
+    indexed(home, notes)
+    papers = notes / "papers"
+    papers.mkdir()
+    (papers / "p.jsonl").write_bytes(b'{"key": "p1", "headline": "Brush strokes", "body": "learning to paint"}\n')
+    chosen = ("--id-field", "key", "--title-field", "headline", "--text-fields", "body", "--title-from", "heading")
+    store = ("--store", str(home / "kept" / "papers.sqlite"), "--nested", "--follow-links")
+    added = sift(home, "add", str(papers), "--name", "papers", *store, *chosen, "--json")
+    assert (added.returncode, answer(added)["name"]) == (0, "papers")
+    assert sift(home, "index", "papers", "--json").returncode == 0
+    (record,) = listed(sift(home, "get", "papers/p.jsonl#p1", "--json"), "found")
+    assert (record["title"], record["text"]) == ("Brush strokes", "# Brush strokes\n\nlearning to paint")
+    embedded = sift(home, "embed", "papers", "--reset", "--json", model=model)
+    refused = cast("Answer", answer(embedded)["error"])
+    assert (embedded.returncode, refused["field"]) == (2, "reset")
+    assert sift(home, "embed", "--reset", "--json", model=model).returncode == 0
+
+
+def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path: Path) -> None:
+    notes = notes_in(tmp_path / "Notizen Müller")
+    model, reranker = str(tiny_model(tmp_path / "models")), str(tiny_reranker(tmp_path / "models"))
+    runs = (
+        partial(plain_run, tmp_path / "plain", notes),
+        partial(models_run, tmp_path / "models-home", notes, model, reranker),
+        partial(options_run, tmp_path / "options", notes, model, reranker),
+        partial(records_run, tmp_path / "records", notes_in(tmp_path / "Papiere"), model),
+    )
+    with ThreadPoolExecutor(len(runs)) as pool:
+        for running in [pool.submit(run) for run in runs]:
+            running.result()
+    assert unexercised(RAN) == []
