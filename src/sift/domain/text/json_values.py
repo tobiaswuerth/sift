@@ -21,6 +21,13 @@ def _number(text: str) -> float | str:
     return number if math.isfinite(number) else text
 
 
+def _integer(text: str) -> int | str:
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+
 def deeper_than(text: str, most: int) -> bool:
     if text.count("[") + text.count("{") <= most:
         return False
@@ -44,7 +51,7 @@ def deeper_than(text: str, most: int) -> bool:
 def json_value(text: str) -> FieldValue:
     if deeper_than(text, MOST_DEPTH):
         raise NestedTooDeeplyError(f"nested more than {MOST_DEPTH} deep")
-    value = cast("FieldValue", json.loads(text, parse_constant=str, parse_float=_number))
+    value = cast("FieldValue", json.loads(text, parse_constant=str, parse_float=_number, parse_int=_integer))
     return without_lone_surrogates(value) if ESCAPED_SURROGATE.search(text) else value
 
 

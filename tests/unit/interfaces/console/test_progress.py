@@ -31,7 +31,7 @@ def test_a_run_leaves_a_line_a_phase_and_one_that_sums_it_up() -> None:
         "notes  /data/notes",
         "  scan      12,431 files                 0.4 s",
         "  read       1,208 files       310/s     3.9 s",
-        "  done  +1,102  ~106  -14  \N{MIDDLE DOT}  3 unreadable  \N{MIDDLE DOT}  4.3 s",
+        "  done  +1,102  ~106  -14  \N{MIDDLE DOT}  3 with problems  \N{MIDDLE DOT}  4.3 s",
         "        sift status notes --unreadable",
     ]
 
@@ -61,7 +61,7 @@ def test_a_note_while_a_phase_runs_is_said_and_the_phase_still_ends_in_its_row()
 def test_without_unicode_the_glyphs_are_ascii() -> None:
     ascii_only = Style(unicode=False)
     view, lines = replayed(RUN, Looks(ascii_only, "linux"))
-    assert " | 3 unreadable | " in lines[3].replace("  ", " ")
+    assert " | 3 with problems | " in lines[3].replace("  ", " ")
     running, _ = replayed(RUN[:5], Looks(ascii_only, "linux"))
     assert "########--------  50%" in (running_line(running, 1.0, 100, ascii_only) or "")
     assert view.running is None
@@ -71,7 +71,7 @@ def test_with_colour_labels_and_secondary_parts_are_painted() -> None:
     lines = replayed(RUN, Looks(Style(colour=True), "linux"))[1]
     assert lines[0] == "\x1b[1mnotes\x1b[0m  \x1b[2m/data/notes\x1b[0m"
     assert lines[3].startswith("  \x1b[32mdone\x1b[0m  ")
-    assert "\x1b[33m3 unreadable\x1b[0m" in lines[3]
+    assert "\x1b[33m3 with problems\x1b[0m" in lines[3]
 
 
 def test_a_note_says_what_happened_and_how_to_fix_it() -> None:

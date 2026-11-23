@@ -19,6 +19,7 @@ from sift.app.embedding import embed
 from sift.app.filing import Limits, Lines, Readers
 from sift.app.indexing import index
 from sift.app.search import search
+from sift.ingest.files import Identity
 from sift.ingest.records import lines_of
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading
@@ -180,7 +181,7 @@ def test_a_record_longer_than_a_document_may_be_is_skipped_and_files_in_utf_16_a
     assert "line 2: 45 bytes as text, more than the 40 a document holds" in noted
 
 
-def broken(_path: Path, _most: int) -> Iterator[tuple[int, str]]:
+def broken(_path: Path, _most: int, _scanned: Identity | None) -> Iterator[tuple[int, str]]:
     yield 1, json.dumps({"id": "new", "text": "half read"})
     raise OSError(5, "the drive went away")
 

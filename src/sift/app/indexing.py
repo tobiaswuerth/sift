@@ -14,6 +14,7 @@ from sift.app.records import stored_records
 from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan, recorded
 from sift.domain.text.notes import Document, note
 from sift.domain.text.records import RECORD_FILES
+from sift.ingest.files import Identity
 from sift.ingest.scan import scan
 from sift.storage.catalog import Collection
 from sift.storage.database import Batches, Connection, WritingDocuments, reading
@@ -49,10 +50,10 @@ def _too_large(size: str, limits: Limits, measured: str = "bytes") -> Refused:
     return Refused(f"{size} {measured}: a document holds at most {most:,}; split the file", read_again=False)
 
 
-def _read(job: Job, path: str) -> Document | Refused:
+def _read(job: Job, path: str, scanned: Identity | None) -> Document | Refused:
     most = job.limits.most_text_bytes
     try:
-        raw = job.readers.whole(job.collection.folder / path, most)
+        raw = job.readers.whole(job.collection.folder / path, most, scanned)
     except OSError as error:
         return Refused(error.strerror or str(error), read_again=True)
     if len(raw) > most:
@@ -105,25 +106,25 @@ def _dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
     return sum(large, Tally(removed=removed))
 
 
-def _records_stored(job: Job, path: str, stat: Stat) -> Tally:
+def _records_stored(job: Job, path: str, stat: Stat, scanned: Identity | None) -> Tally:
     try:
-        return stored_records(job, path, stat, job.collection.choices.records)
+        return stored_records(job, path, stat, job.collection.choices.records, scanned)
     except OSError as error:
         with writing_documents(job.connection, job.limits.batches) as transaction:
             return _refused(transaction, path, stat, Refused(error.strerror or str(error), read_again=True))
 
 
-def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
+def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat], identities: Mapping[str, Identity]) -> Tally:
     tally, done, limits = Tally(), 0, job.limits
     whole = tuple(path for path in plan.read if not path.lower().endswith(RECORD_FILES))
     for path in (path for path in plan.read if path.lower().endswith(RECORD_FILES)):
-        tally += _records_stored(job, path, files[path])
+        tally += _records_stored(job, path, files[path], identities.get(path))
         done += 1
         job.report(Advanced(done))
     for batch in batches(whole, files, limits.most_files_a_write, limits.most_bytes_a_write):
         read: list[tuple[str, Document | Refused]] = []
         for path in batch:
-            read.append((path, _read(job, path)))
+            read.append((path, _read(job, path, identities.get(path))))
             done += 1
             job.report(Advanced(done))
         with writing_documents(job.connection, job.limits.batches) as transaction:
@@ -150,7 +151,7 @@ def _synced(job: Job) -> Indexed:
     for said in problems(job.collection.folder, scanned, plan, frozenset(known)):
         job.report(said)
     job.report(PhaseStarted(Phase.READ, len(plan.read)))
-    tally = _dropped(job, plan, files) + _read_and_stored(job, plan, files)
+    tally = _dropped(job, plan, files) + _read_and_stored(job, plan, files, scanned.identities)
     job.report(PhaseDone(len(plan.read)))
     _settled(job.connection, job.report, job.limits.batches)
     with reading(job.connection) as transaction:

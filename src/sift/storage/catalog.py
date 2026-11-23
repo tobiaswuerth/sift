@@ -14,7 +14,7 @@ from sift.api.ids import CollectionId
 from sift.domain.text.records import NO_CHOICE, Chosen
 from sift.storage.database import Reading, Writing, connect, inserted, reading, rows, writing
 from sift.storage.migrations import Migration, migrated, version
-from sift.storage.store import create_store, delete_store
+from sift.storage.store import abandoned, create_store, delete_store
 
 CATALOG = "catalog.sqlite"
 STORES = "collections"
@@ -208,7 +208,7 @@ def refusal(wanted: Placed, known: tuple[Collection, ...]) -> InvalidRequestErro
         return InvalidRequestError(f"{wanted.name!r} is no collection name", remedy)
     if clash := next(filter(None, (_clash(wanted, other) for other in known)), None):
         return clash
-    if wanted.store.exists():
+    if wanted.store.exists() and not abandoned(wanted.store):
         return InvalidRequestError(f"{wanted.store} exists already", "move it away, or choose another place for it")
     return None
 
@@ -239,6 +239,8 @@ def add_collection(connection: sqlite3.Connection, home: Path, new: NewCollectio
     try:
         with writing(connection) as transaction:
             identity = _registered(transaction, wanted, new.choices)
+            if wanted.store.exists():
+                delete_store(wanted.store)
             create_store(wanted.store, identity)
             created = True
     except BaseException:

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from sift.domain.text.decoding import ansi, encoding_of
 from sift.domain.text.records import SkippedLine
+from sift.ingest.files import Identity, opened
 
 MARK_BYTES = 4
 LINE_END = "\r\n"
@@ -15,8 +16,8 @@ def _rest_skipped(text: io.TextIOWrapper, most: int) -> None:
         part = text.readline(most + 1)
 
 
-def lines_of(path: Path, most: int) -> Iterator[tuple[int, str | SkippedLine]]:
-    with path.open("rb") as raw:
+def lines_of(path: Path, most: int, scanned: Identity | None) -> Iterator[tuple[int, str | SkippedLine]]:
+    with opened(path, scanned) as raw:
         encoding, errors = encoding_of(raw.read(MARK_BYTES))
         raw.seek(0)
         with io.TextIOWrapper(raw, encoding=encoding, errors=errors, newline="\n") as text:

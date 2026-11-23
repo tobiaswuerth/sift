@@ -53,6 +53,9 @@ def problems(folder: Path, scanned: Scanned, plan: IndexPlan, known: AbstractSet
     if found.outside:
         outside = counted(len(found.outside), "file")
         said.append(Noted(f"{outside} linked to outside the folder left out: {_named(found.outside)}"))
+    if scanned.linked_folders:
+        linked = counted(len(scanned.linked_folders), "linked folder")
+        said.append(Noted(f"{linked} left out: {_named(scanned.linked_folders)}"))
     said.extend(_emptied(folder, left, emptied) for emptied in plan.emptied)
     if scanned.unnamed:
         unnamed = counted(len(scanned.unnamed), "file")

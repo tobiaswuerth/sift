@@ -6,7 +6,7 @@ from pathlib import Path
 from sift.api.events import Reporter
 from sift.domain.plan.indexing import MOST_TEXT_BYTES
 from sift.domain.text.records import SkippedLine
-from sift.ingest.files import at_most
+from sift.ingest.files import Identity, at_most
 from sift.ingest.records import lines_of
 from sift.storage.catalog import Collection
 from sift.storage.database import BATCHES, Batches, Connection
@@ -31,8 +31,8 @@ class Tally:
         return Tally(self.added + other.added, self.changed + other.changed, self.removed + other.removed)
 
 
-type Lines = Callable[[Path, int], Iterator[tuple[int, str | SkippedLine]]]
-type ReadWhole = Callable[[Path, int], bytes]
+type Lines = Callable[[Path, int, Identity | None], Iterator[tuple[int, str | SkippedLine]]]
+type ReadWhole = Callable[[Path, int, Identity | None], bytes]
 
 
 @dataclass(frozen=True, slots=True)

@@ -23,7 +23,7 @@ from sift.storage.catalog import (
     store_path,
 )
 from sift.storage.database import connect, reading, rows, run, writing
-from sift.storage.store import open_store
+from sift.storage.store import create_store, open_store
 
 
 class Version(NamedTuple):
@@ -189,6 +189,31 @@ def test_a_store_never_takes_a_file_there_already(tmp_path: Path, home: Path, ca
     with pytest.raises(InvalidRequestError, match="exists already"):
         add_collection(catalog, home, NewCollection(folder(tmp_path, "notes"), store=taken))
     assert (known(catalog), taken.read_bytes()) == ((), b"someone's")
+
+
+def test_a_store_an_add_left_behind_without_documents_is_made_anew(
+    tmp_path: Path, home: Path, catalog: sqlite3.Connection
+) -> None:
+    left = tmp_path / "left.sqlite"
+    create_store(left, CollectionId(7))
+    added = add_collection(catalog, home, NewCollection(folder(tmp_path, "notes"), store=left))
+    with contextlib.closing(open_store(left, added.id)) as connection:
+        assert connection.execute("SELECT count(*) FROM documents").fetchone() == (0,)
+    empty = tmp_path / "empty.sqlite"
+    empty.write_bytes(b"")
+    assert add_collection(catalog, home, NewCollection(folder(tmp_path, "more"), store=empty)).name == "more"
+
+
+def test_a_store_holding_documents_is_never_taken(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
+    held = tmp_path / "held.sqlite"
+    create_store(held, CollectionId(7))
+    with contextlib.closing(open_store(held, CollectionId(7))) as connection:
+        connection.execute("INSERT INTO sources(path, modified_ns, size) VALUES ('a.md', 1, 1)")
+        connection.execute(
+            "INSERT INTO documents(source, key, digest, title, fields, text) VALUES (1, '', 'd', 'a', '{}', 'a')"
+        )
+    with pytest.raises(InvalidRequestError, match="exists already"):
+        add_collection(catalog, home, NewCollection(folder(tmp_path, "notes"), store=held))
 
 
 def test_the_store_of_a_collection_on_a_missing_drive_is_not_given_away(

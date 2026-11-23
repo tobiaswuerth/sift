@@ -8,6 +8,7 @@ from sift.api.indexing import IndexCollections, Indexed
 from sift.app.collections import add, status
 from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
+from sift.ingest.files import CHANGED, Identity, at_most
 from tests.files import write
 from tests.later import LATER, later
 
@@ -73,7 +74,7 @@ def test_a_file_grown_too_large_loses_its_documents(home: Path, notes: Path) -> 
 def test_a_file_grown_too_large_after_the_scan_is_read_no_further_than_the_limit(home: Path) -> None:
     asked: list[int] = []
 
-    def grown(_path: Path, most: int) -> bytes:
+    def grown(_path: Path, most: int, _scanned: Identity | None) -> bytes:
         asked.append(most)
         return b"x" * (most + 1)
 
@@ -82,3 +83,21 @@ def test_a_file_grown_too_large_after_the_scan_is_read_no_further_than_the_limit
     )
     assert asked == [60, 60, 60]
     assert {entry.problem for entry in unreadable_files(home)} == {f"more than 60 bytes: {TOO_LARGE}"}
+
+
+def test_a_file_swapped_after_the_scan_is_not_read_but_read_again_at_the_next_index(
+    home: Path, notes: Path, tmp_path: Path
+) -> None:
+    other = write(tmp_path / "other.md", "# Elsewhere\n\nswapped in\n")
+
+    def swapped(path: Path, most: int, scanned: Identity | None) -> bytes:
+        if path.name == "rl.md":
+            other.replace(path)
+        return at_most(path, most, scanned)
+
+    assert indexed(home, readers=Readers(whole=swapped, clock=later)) == Indexed(
+        files=3, added=2, changed=0, removed=0, unreadable=1
+    )
+    assert unreadable_files(home) == (UnreadableFile("rl.md", CHANGED),)
+    assert indexed(home) == Indexed(files=3, added=1, changed=0, removed=0, unreadable=0)
+    assert (notes / "rl.md").read_text(encoding="utf-8").startswith("# Elsewhere")

@@ -7,6 +7,7 @@ from sift.app.filing import Job, Tally
 from sift.domain.plan.indexing import Stat
 from sift.domain.text.notes import Document
 from sift.domain.text.records import Chosen, SkippedLine, record_of
+from sift.ingest.files import Identity
 from sift.storage.database import WritingDocuments
 from sift.storage.documents import (
     SourceId,
@@ -81,9 +82,9 @@ def _batch(
     return Tally(added=len(new), changed=len(changed)), skipped
 
 
-def stored_records(job: Job, path: str, stat: Stat, chosen: Chosen) -> Tally:
+def stored_records(job: Job, path: str, stat: Stat, chosen: Chosen, scanned: Identity | None) -> Tally:
     limits, tally, skips = job.limits, Tally(), Skips()
-    lines = job.readers.lines(job.collection.folder / path, limits.most_text_bytes)
+    lines = job.readers.lines(job.collection.folder / path, limits.most_text_bytes, scanned)
     with writing_documents(job.connection, limits.batches) as transaction:
         source = put_source(transaction, path, stat.modified_ns, stat.size)
         nothing_taken(transaction)

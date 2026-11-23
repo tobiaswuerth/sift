@@ -1,6 +1,6 @@
 import sqlite3
 from collections.abc import Generator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn
@@ -200,6 +200,15 @@ UNUSABLE: Mapping[int, tuple[str, str]] = MappingProxyType(
 
 def _files(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
     return [file for file in (Path(f"{path}{suffix}") for suffix in suffixes) if file.is_file()]
+
+
+def abandoned(path: Path) -> bool:
+    try:
+        with closing(connect(path, create=False)) as connection:
+            tables = connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'documents'")
+            return tables.fetchone() is None or connection.execute("SELECT 1 FROM documents").fetchone() is None
+    except sqlite3.DatabaseError:
+        return False
 
 
 def delete_store(path: Path) -> None:

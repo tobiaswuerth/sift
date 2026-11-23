@@ -1,5 +1,6 @@
 import os
 import stat
+import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -10,10 +11,13 @@ from typing import Protocol
 from sift.domain.plan.indexing import Found, Stat, stored_time
 from sift.domain.text.notes import TEXT_FILES
 from sift.domain.text.records import RECORD_FILES
+from sift.ingest.files import Identity, identity_at
+from sift.ingest.links import LinkTarget, lands_within, link_target
 
 SKIPPED_FOLDERS = frozenset({"node_modules", "__pycache__"})
 GONE = (FileNotFoundError, NotADirectoryError)
 PROGRESS_EVERY = 1000
+HIDDEN_SYSTEM = stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM
 
 
 class DirEntry(Protocol):
@@ -32,10 +36,27 @@ type Progress = Callable[[int], None]
 
 
 @dataclass(frozen=True, slots=True)
+class LinkChecks:
+    target: LinkTarget = link_target
+    identity: Callable[[Path], Identity] = identity_at
+
+
+LINK_CHECKS = LinkChecks()
+
+
+@dataclass(frozen=True, slots=True)
+class _Guard:
+    root: Path
+    checks: LinkChecks
+
+
+@dataclass(frozen=True, slots=True)
 class Scanned:
     found: Found
     unnamed: tuple[str, ...] = ()
     refusals: Mapping[str, str] = field(default_factory=dict[str, str])
+    identities: Mapping[str, Identity] = field(default_factory=dict[str, Identity])
+    linked_folders: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -47,6 +68,8 @@ class _Seen:
     unnamed: list[str] = field(default_factory=list[str])
     refusals: dict[str, str] = field(default_factory=dict[str, str])
     empty_folders: list[str] = field(default_factory=list[str])
+    linked_folders: list[str] = field(default_factory=list[str])
+    identities: dict[str, Identity] = field(default_factory=dict[str, Identity])
 
 
 def _reason(error: OSError) -> str:
@@ -61,8 +84,12 @@ def _storable(relative: str) -> bool:
     return True
 
 
+def _system(entry: DirEntry) -> bool:
+    return sys.platform == "win32" and entry.stat().st_file_attributes & HIDDEN_SYSTEM == HIDDEN_SYSTEM
+
+
 def _folder_taken(entry: DirEntry) -> bool:
-    return not entry.name.startswith(".") and entry.name not in SKIPPED_FOLDERS and not entry.is_junction()
+    return not entry.name.startswith(".") and entry.name not in SKIPPED_FOLDERS and not _system(entry)
 
 
 def _unreached(seen: _Seen, relative: str, error: OSError) -> None:
@@ -70,41 +97,37 @@ def _unreached(seen: _Seen, relative: str, error: OSError) -> None:
     seen.refusals[relative] = _reason(error)
 
 
-def _leads_outside(entry: DirEntry, outside_of: Path | None) -> bool:
-    return outside_of is not None and entry.is_symlink() and not Path(entry.path).resolve().is_relative_to(outside_of)
+def _leads_outside(entry: DirEntry, relative: str, guard: _Guard | None) -> bool:
+    return guard is not None and entry.is_symlink() and not lands_within(relative, guard.root, guard.checks.target)
 
 
-def _broken_link(entry: DirEntry, relative: str, seen: _Seen, outside_of: Path | None, error: OSError) -> None:
-    if _leads_outside(entry, outside_of):
-        seen.outside.append(relative)
-    elif entry.is_symlink():
-        _unreached(seen, relative, error)
-
-
-def _file(entry: DirEntry, relative: str, seen: _Seen, outside_of: Path | None) -> None:
+def _file(entry: DirEntry, relative: str, seen: _Seen, guard: _Guard | None) -> None:
     try:
+        if _leads_outside(entry, relative, guard):
+            seen.outside.append(relative)
+            return
         found = entry.stat()
+        identity = None if guard is None else guard.checks.identity(Path(entry.path))
     except GONE as error:
-        _broken_link(entry, relative, seen, outside_of, error)
+        if entry.is_symlink():
+            _unreached(seen, relative, error)
         return
     except OSError as error:
         _unreached(seen, relative, error)
         return
     if not stat.S_ISREG(found.st_mode):
         return
-    if _leads_outside(entry, outside_of):
-        seen.outside.append(relative)
-    elif not _storable(relative):
+    if not _storable(relative):
         seen.unnamed.append(relative.encode(errors="backslashreplace").decode())
-    else:
-        seen.files[relative] = Stat(stored_time(found.st_mtime_ns), found.st_size)
+        return
+    seen.files[relative] = Stat(stored_time(found.st_mtime_ns), found.st_size)
+    if identity is not None:
+        seen.identities[relative] = identity
 
 
 def _listed(folder: str, relative: str, listing: Listing, seen: _Seen) -> Iterator[DirEntry]:
     try:
         entries = listing(folder)
-    except GONE:
-        return
     except OSError as error:
         seen.unlisted_folders.append(relative)
         seen.refusals[relative] = _reason(error)
@@ -123,15 +146,15 @@ def _listed(folder: str, relative: str, listing: Listing, seen: _Seen) -> Iterat
         seen.empty_folders.append(relative)
 
 
-def _taken(
-    entry: DirEntry, relative: str, seen: _Seen, folders: list[tuple[str, str]], outside_of: Path | None
-) -> None:
+def _taken(entry: DirEntry, relative: str, seen: _Seen, folders: list[tuple[str, str]], guard: _Guard | None) -> None:
     try:
         if entry.is_dir(follow_symlinks=False):
-            if _folder_taken(entry):
+            if entry.is_junction():
+                seen.linked_folders.append(f"{relative}{entry.name}/")
+            elif _folder_taken(entry):
                 folders.append((entry.path, f"{relative}{entry.name}/"))
         elif PurePath(entry.name).suffix.lower() in (*TEXT_FILES, *RECORD_FILES):
-            _file(entry, relative + entry.name, seen, outside_of)
+            _file(entry, relative + entry.name, seen, guard)
     except OSError as error:
         _unreached(seen, relative + entry.name, error)
         seen.unlisted_folders.append(f"{relative}{entry.name}/")
@@ -139,14 +162,19 @@ def _taken(
 
 
 def scan(
-    root: Path, *, follow_links: bool, listing: Listing = os.scandir, progress: Progress = lambda _: None
+    root: Path,
+    *,
+    follow_links: bool,
+    listing: Listing = os.scandir,
+    links: LinkChecks = LINK_CHECKS,
+    progress: Progress = lambda _: None,
 ) -> Scanned:
-    seen, outside_of = _Seen(), None if follow_links else root.resolve()
+    seen, guard = _Seen(), None if follow_links else _Guard(root.resolve(), links)
     folders, looked_at = [(str(root), "")], 0
     while folders:
         folder, relative = folders.pop()
         for entry in _listed(folder, relative, listing, seen):
-            _taken(entry, relative, seen, folders, outside_of)
+            _taken(entry, relative, seen, folders, guard)
             looked_at += 1
             if looked_at % PROGRESS_EVERY == 0:
                 progress(len(seen.files))
@@ -157,4 +185,10 @@ def scan(
         tuple(seen.outside),
         tuple(seen.empty_folders),
     )
-    return Scanned(found, tuple(seen.unnamed), MappingProxyType(seen.refusals))
+    return Scanned(
+        found,
+        tuple(seen.unnamed),
+        MappingProxyType(seen.refusals),
+        MappingProxyType(seen.identities),
+        tuple(seen.linked_folders),
+    )

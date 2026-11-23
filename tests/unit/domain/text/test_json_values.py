@@ -16,6 +16,7 @@ from sift.domain.text.json_values import (
     [
         ("1.5", 1.5),
         ("1e400", "1e400"),
+        ("9" * 5000, "9" * 5000),
         ("NaN", "NaN"),
         ("[Infinity, -Infinity]", ["Infinity", "-Infinity"]),
         ('{"a": [1, "b", null, true]}', {"a": [1, "b", None, True]}),

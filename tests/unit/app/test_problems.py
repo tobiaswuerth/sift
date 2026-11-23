@@ -37,6 +37,12 @@ def test_links_left_out_and_names_that_are_no_text_are_counted_with_a_few_named(
     )
 
 
+def test_linked_folders_are_left_out_and_said() -> None:
+    assert said(Scanned(Found({"a.md": A}), linked_folders=("loop/",)), {}) == (
+        Noted("1 linked folder left out: loop/"),
+    )
+
+
 def test_a_folder_left_empty_keeps_what_it_held_and_says_so() -> None:
     assert said(Scanned(Found({})), {"a.md": A}) == (
         Noted(LEFT_AS_INDEXED.format(files="1 file", folder=Path("/data/notes"))),

@@ -77,7 +77,7 @@ def _done(finished: Finished, view: View, now: float, looks: Looks) -> tuple[str
     style = looks.style
     parts = [f"+{finished.added:,}  ~{finished.changed:,}  -{finished.removed:,}"]
     if finished.unreadable:
-        parts.append(paint(f"{finished.unreadable:,} unreadable", Tone.WARNING, style))
+        parts.append(paint(f"{finished.unreadable:,} with problems", Tone.WARNING, style))
     parts.append(duration(now - view.started))
     line = _label("done", Tone.DONE, style) + f"  {_glyph(DOT, style)}  ".join(parts)
     if not finished.unreadable:

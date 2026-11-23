@@ -1,7 +1,7 @@
 import os
 from collections.abc import Sequence
 from contextlib import closing
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound
 from sift.api.errors import InvalidRequestError, NotFoundError, SiftError
@@ -34,7 +34,8 @@ def holding(known: Sequence[Collection], full: Path) -> tuple[Collection, str] |
             None,
         )
 
-    return held(full) or held(full.parent.resolve() / full.name)
+    anchored = any(PurePath(chosen.folder.anchor) == PurePath(full.anchor) for chosen in known)
+    return held(full) or (held(full.parent.resolve() / full.name) if anchored else None)
 
 
 def place(known: Sequence[Collection], id_: str) -> tuple[Collection, str]:

@@ -100,6 +100,11 @@ def test_a_document_is_read_by_its_file_s_absolute_path_in_any_case(tmp_path: Pa
         assert unfound(home, str(outside)).message.startswith("unknown document")
 
 
+def test_an_absolute_id_on_a_share_no_collection_lies_on_is_unknown(home: Path) -> None:
+    elsewhere = str(Path("//host.invalid/share/notes/rl.md"))
+    assert unfound(home, elsewhere).message == f"unknown document {elsewhere!r}"
+
+
 def test_several_documents_are_read_at_once_and_those_not_found_said(home: Path) -> None:
     result = documents(home, GetDocuments(("notes/rl.md", "notes/gone.md", "notes/brush.md")))
     assert [found.id for found in result.found] == ["notes/rl.md", "notes/robots/brush.md"]
