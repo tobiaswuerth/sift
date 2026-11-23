@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
@@ -7,13 +7,13 @@ import numpy as np
 import torch
 from huggingface_hub.utils import enable_progress_bars
 from sentence_transformers import CrossEncoder, SentenceTransformer
-from sentence_transformers.sentence_transformer.modules import StaticEmbedding
+from sentence_transformers.sentence_transformer.modules import Transformer
 from transformers import PreTrainedTokenizerBase
 from transformers.utils import logging as transformers_logging
 
 from sift.api.errors import ModelUnavailableError
 from sift.domain.codec.codes import Floats, Halves
-from sift.inference.accelerator import Device, Found, chosen, emptied, nvidia, too_large
+from sift.inference.accelerator import Device, Found, chosen, emptied, host_full, nvidia, too_large
 from sift.inference.batches import Attempt, Shape, in_batches
 from sift.inference.hub import RERANK_MODEL, hub, pinned
 
@@ -44,7 +44,7 @@ class Embedder(Capped, Protocol):
     @property
     def tokenizer(self) -> object: ...
 
-    def __getitem__(self, index: int, /) -> object: ...
+    def modules(self) -> Iterator[object]: ...
 
     def get_embedding_dimension(self) -> int | None: ...
 
@@ -97,13 +97,17 @@ def _capped[T: Capped](model: T) -> T:
     return model
 
 
-def _uncapped(model: Embedder) -> bool:
-    return isinstance(model[0], StaticEmbedding)
+def _reading_capped(model: Embedder) -> Embedder:
+    for module in model.modules():
+        if isinstance(module, Transformer):
+            _capped(module)
+    return model
 
 
 def unloaded(name: str, error: BaseException, device: str) -> ModelUnavailableError:
     said = str(error).strip().split("\n")[0] or type(error).__name__
-    remedy = FULL_REMEDIES.get(device, SMALLER_REMEDY) if too_large(error) else UNLOADED_REMEDY
+    full = SMALLER_REMEDY if host_full(error) else FULL_REMEDIES.get(device, SMALLER_REMEDY)
+    remedy = full if too_large(error) else UNLOADED_REMEDY
     return ModelUnavailableError(f"the model {name} could not be loaded: {said}", remedy)
 
 
@@ -121,9 +125,8 @@ def _embedder(name: str, device: Device) -> Loaded:
         model = SentenceTransformer(
             repository, device=device.name, revision=revision, model_kwargs={"dtype": device.dtype}
         )
-        held = cast("Embedder", model)
-        capped = held if _uncapped(held) else _capped(held)
-        return Loaded(capped, width_of(name, capped.get_embedding_dimension()))
+        held = _reading_capped(cast("Embedder", model))
+        return Loaded(held, width_of(name, held.get_embedding_dimension()))
 
     return _loading(name, device, load)
 

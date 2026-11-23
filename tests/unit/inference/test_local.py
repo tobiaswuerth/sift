@@ -6,12 +6,13 @@ import numpy as np
 import pytest
 import torch
 from sentence_transformers import SentenceTransformer
+from sentence_transformers.sentence_transformer.modules import Transformer
 
 from sift.api.errors import ModelUnavailableError
 from sift.inference.local import UNLOADED_REMEDY, Embedder, Local, local, unloaded, width_of
 from sift.inference.models import Models
 from tests.models import Hashed
-from tests.tiny_model import POSITIONS, WIDTH, tiny_model, tiny_prompted, tiny_reranker, tiny_static
+from tests.tiny_model import POSITIONS, WIDTH, tiny_model, tiny_prompted, tiny_reranker, tiny_routed, tiny_static
 
 
 @pytest.fixture(scope="module")
@@ -114,9 +115,20 @@ def test_a_model_too_large_for_the_memory_left_says_so_not_to_check_the_network(
     assert full.message == "the model owner/model could not be loaded: CUDA out of memory. Tried to allocate 2.00 GiB"
     assert full.remedy is not None
     assert "CUDA_VISIBLE_DEVICES" in full.remedy
-    for device in ("cpu", "mps"):
+    for device in ("cpu", "mps", "cuda"):
         remedy = unloaded("owner/model", MemoryError(), device).remedy
         assert remedy is not None
         assert "smaller model" in remedy
         assert "CUDA" not in remedy
+    apple = unloaded("owner/model", RuntimeError("MPS backend out of memory (MPS allocated: 9 GiB)"), "mps").remedy
+    assert apple is not None
+    assert "CUDA" not in apple
     assert unloaded("owner/model", OSError("401 Client Error\nmore"), "cuda").remedy == UNLOADED_REMEDY
+
+
+def test_a_model_routing_queries_to_static_embeddings_caps_only_what_reads_tokens(tmp_path: Path) -> None:
+    models = Local(str(tiny_routed(tmp_path)))
+    assert models.encode(["dark matter"], query=True).shape == (1, WIDTH)
+    assert models.encode(["dark matter"], query=False).shape == (1, WIDTH)
+    assert models.embedder is not None
+    assert [each.max_seq_length for each in models.embedder.model.modules() if isinstance(each, Transformer)] == [1024]

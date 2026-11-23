@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from sentence_transformers import SentenceTransformer
+from sentence_transformers.base.modules.router import Router
 from sentence_transformers.sentence_transformer.modules import Pooling, StaticEmbedding, Transformer
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
@@ -72,4 +73,19 @@ def tiny_prompted(folder: Path, positions: int) -> Path:
         prompts={"query": "halo ", "document": "pruning "},
     )
     model.save(str(made))
+    return made
+
+
+def tiny_routed(folder: Path) -> Path:
+    raw, made = _vocabulary(folder / "routed-raw", 2048), folder / "routed"
+    config = _config()
+    config.max_position_embeddings = 2048
+    saved(BertModel(config)).save_pretrained(raw)
+    tokenizer = Tokenizer(WordLevel(VOCABULARY, "[UNK]"))
+    tokenizer.pre_tokenizer = Whitespace()
+    router = Router.for_query_document(
+        query_modules=[StaticEmbedding(tokenizer, embedding_dim=WIDTH)],
+        document_modules=[Transformer(str(raw), max_seq_length=2048), Pooling(WIDTH)],
+    )
+    SentenceTransformer(modules=[router]).save(str(made))
     return made

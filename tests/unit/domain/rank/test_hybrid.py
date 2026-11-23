@@ -1,3 +1,5 @@
+import unicodedata
+
 import numpy as np
 import pytest
 from hypothesis import given
@@ -85,3 +87,9 @@ def test_a_cosine_not_known_counts_as_the_mean_of_the_others_neither_bonus_nor_p
     assert np.allclose(unknown, blend(rerank, np.array([0.9, 0.6, 0.3, 0.6]), names))
     assert unknown[1] == pytest.approx(2.0)
     assert np.allclose(blend(rerank, np.full(4, np.nan), names), rerank)
+
+
+def test_words_are_those_the_keyword_index_holds_however_the_text_is_composed() -> None:
+    decomposed = unicodedata.normalize("NFD", "Résumé of Zürich, İstanbul and snake_case")
+    assert words(decomposed) == ["resume", "zurich", "istanbul", "snake", "case"]
+    assert named(["Zürich"], frozenset(words(decomposed))) == ["Zürich"]

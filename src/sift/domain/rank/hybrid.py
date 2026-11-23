@@ -1,10 +1,11 @@
 import math
-import re
 import unicodedata
 from collections.abc import Sequence
 
 import numpy as np
 from numpy.typing import NDArray
+
+from sift.domain.text.tokens import tokens
 
 STOPWORDS = frozenset(
     (
@@ -45,7 +46,6 @@ STOPWORDS = frozenset(
         "with",
     )
 )
-WORD = re.compile(r"\w+")
 COSINE_WEIGHT = 0.5
 ADAPTIVE_SHARE = 0.9
 ADAPTIVE_BUFFER = 5
@@ -63,8 +63,7 @@ def _latin_letter(character: str) -> bool:
 
 
 def words(text: str) -> list[str]:
-    found: list[str] = WORD.findall(text.lower())
-    return [w for w in found if w not in STOPWORDS and w.strip("_") and not (len(w) == 1 and _latin_letter(w))]
+    return [w for w in tokens(text) if w not in STOPWORDS and not (len(w) == 1 and _latin_letter(w))]
 
 
 def named(values: Sequence[str], asked: frozenset[str]) -> list[str]:

@@ -1,5 +1,6 @@
 import contextlib
 import sqlite3
+import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -249,3 +250,13 @@ class Overflowing(Hashed):
 def test_a_reranker_giving_no_score_is_refused_not_ranked_at_random(home: Path) -> None:
     with pytest.raises(InvalidRequestError, match="the reranker gave no score"):
         query(home, SearchHybrid("dark matter halo models"), Overflowing())
+
+
+def test_a_question_written_decomposed_finds_what_its_words_name(tmp_path: Path) -> None:
+    root = tmp_path / "plain"
+    write(root / "a.md", "# Café\n\nThe résumé of Zürich.\n")
+    write(root / "b.md", "# B\n\nNothing here.\n")
+    home = tmp_path / "home"
+    collection(home, root, embedded=False)
+    result = query(home, SearchHybrid(unicodedata.normalize("NFD", "Zürich résumé")), Hashed())
+    assert [hit.id for hit in result.hits] == ["plain/a.md"]
