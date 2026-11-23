@@ -87,3 +87,14 @@ def test_a_file_without_prose_passes_in_silence(tmp_path: Path, capsys: pytest.C
 
 def test_the_repository_holds_no_prose() -> None:
     assert check_prose.main([]) == 0
+
+
+@pytest.mark.parametrize("source", ['f"why {x}"\n', 'b"why"\n', '("why", "because")\n', '_ = "why"\n'])
+def test_prose_in_any_other_form_of_statement_is_found(source: str) -> None:
+    (found,) = prose("a.py", source)
+    assert found.kind in {"prose", "docstring"}
+
+
+@pytest.mark.parametrize("source", ["class P:\n    ...\n", "(...,)\n", "()\n", "_ = 1\n"])
+def test_an_ellipsis_an_empty_tuple_and_values_are_no_prose(source: str) -> None:
+    assert prose("a.py", source) == ()

@@ -9,7 +9,6 @@ class Head(NamedTuple):
     first: int
     last: int
     chunks: int
-    tokens: int
     average: float
 
 
@@ -17,8 +16,8 @@ def segment_added(transaction: Writing, head: Head) -> int:
     (made,) = rows(
         transaction,
         IdRow,
-        """INSERT INTO keyword_segments(first, last, chunks, dead, tokens, average)
-           VALUES (?, ?, ?, 0, ?, ?) RETURNING id""",
+        """INSERT INTO keyword_segments(first, last, chunks, dead, average)
+           VALUES (?, ?, ?, 0, ?) RETURNING id""",
         head,
     )
     return made.id

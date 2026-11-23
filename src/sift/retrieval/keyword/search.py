@@ -255,18 +255,3 @@ def found_in(best: Best) -> tuple[FoundChunk, ...]:
         FoundChunk(ChunkId(chunk), DocumentId(document), score)
         for (chunk, score), document in zip(ranked(best), ints(best.documents), strict=True)
     )
-
-
-def search(
-    stores: Sequence[Opened], expression: Expression, k: int, *, by_document: bool = True, tuning: Tuning = TUNING
-) -> tuple[FoundChunk, ...]:
-    plans = [planned(store, expression) for store in stores]
-    refuse_reading_too_much(plans, tuning)
-    each = [prepared(plan) for plan in plans]
-    query = query_of(expression, each)
-    if query is None:
-        return ()
-    best = Best(k, by_document)
-    for held in each:
-        best = searched(held, query, best, tuning).best
-    return found_in(best)

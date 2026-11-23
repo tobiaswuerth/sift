@@ -1,10 +1,11 @@
 import sys
 from types import MappingProxyType
 
-from tools import check_idioms, check_names, check_package, check_prose, check_shape, check_text, fts5_table
+from tools import check_dead, check_idioms, check_names, check_package, check_prose, check_shape, check_text, fts5_table
 
 CHECKS = MappingProxyType(
     {
+        "dead": check_dead.main,
         "fts5": fts5_table.main,
         "idioms": check_idioms.main,
         "names": check_names.main,

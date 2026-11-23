@@ -111,8 +111,11 @@ def test_a_segment_written_after_deletions_averages_the_live_chunks() -> None:
             assert rows(transaction, Sized, "SELECT sum(chunks), sum(dead) FROM keyword_segments")[0].dead > 0
         applied(connection, [{"c.md": ("", "c", "three")}], Batches(merging=Policy(dead_share=0.99)))
         with reading(connection) as transaction:
-            made = rows(transaction, Average, "SELECT chunks, tokens, average FROM keyword_segments ORDER BY first")
-        assert made[-1].average == pytest.approx((tokens + made[-1].tokens) / (live.chunks + made[-1].chunks))
+            made = rows(
+                transaction, Average, "SELECT first, last, chunks, average FROM keyword_segments ORDER BY first"
+            )
+            added = totals(transaction).tokens - tokens
+        assert made[-1].average == pytest.approx((tokens + added) / (live.chunks + made[-1].chunks))
 
 
 def test_a_store_of_the_highest_collections_takes_writes() -> None:

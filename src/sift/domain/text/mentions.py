@@ -1,13 +1,14 @@
 import posixpath
 import unicodedata
 from collections.abc import Sequence
+from types import MappingProxyType
 
 from sift.api.fields import Fields
 from sift.domain.text.links import WIKILINK, aliases, each_of
 from sift.domain.text.tokens import tokens
 
 MENTION_CHARS = 3
-UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss"})
+UMLAUTS = MappingProxyType(str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss"}))
 
 
 def names(path: str, key: str, title: str, fields: Fields, also: Sequence[str]) -> list[str]:

@@ -13,7 +13,7 @@ type SpecValue = str | int | float | bool | list[SpecValue] | dict[str, SpecValu
 SQLITE_INT = 2**63
 WHOLE = re.compile(r"-?[0-9]+")
 DECIMAL = re.compile(r"-?[0-9]+\.[0-9]+")
-NONE_WITHIN = json.dumps([])
+NONE_WITHIN = "[]"
 QUOTE_REMEDY = "name the field without a double quote, or use a Python whose SQLite is 3.47 or newer"
 
 

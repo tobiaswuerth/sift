@@ -12,13 +12,14 @@ from sift.domain.errors import DamagedError
 from sift.domain.query.expressions import And, Or, Phrase, Prefix, Term
 from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Ranged, opened, stored
-from sift.retrieval.keyword.search import Tuning, planned, prepared, query_of, search, searched
+from sift.retrieval.keyword.search import Tuning, planned, prepared, query_of, searched
 from sift.storage.database import rows
 from tests.keyword_searches import (
     SEEDS,
     Draws,
     collections,
     prose,
+    search,
 )
 
 

@@ -12,11 +12,16 @@ ARRAY_TYPES = frozenset({"NDArray", "Ids", "Mask", "Scores", "Floats", "Halves",
 MUTABLE_FACTORIES = frozenset(
     {"list", "dict", "set", "bytearray", "defaultdict", "OrderedDict", "deque", "Counter", "ChainMap"}
 )
-MUTABLE_DISPLAYS = (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp)
+IMMUTABLE_TYPES = frozenset(
+    {"frozenset", "tuple", "MappingProxyType", "str", "int", "float", "bytes", "bool", "range", "Path", "PurePosixPath"}
+)
+IMMUTABLE_FACTORIES = IMMUTABLE_TYPES | frozenset(
+    {"compile", "Struct", "NewType", "TypeVar", "dtype", "hexdigest", "read_only"}
+)
 REMEDY = (
     "Split what grew too large by responsibility. Hold module values in immutable types (tuple, frozenset, "
-    "MappingProxyType). In sift.api and sift.domain a class is a frozen slotted dataclass, a NamedTuple, an Enum, "
-    "a Protocol or an error."
+    "MappingProxyType, an array made read_only), or make them in a function whose return type is one. "
+    "In sift.api and sift.domain a class is a frozen slotted dataclass, a NamedTuple, an Enum, a Protocol or an error."
 )
 
 
@@ -44,16 +49,42 @@ def _name(node: ast.expr) -> str:
             return ""
 
 
-def _is_mutable(value: ast.expr) -> bool:
-    return isinstance(value, MUTABLE_DISPLAYS) or (
-        isinstance(value, ast.Call) and _name(value.func) in MUTABLE_FACTORIES
+def _returning_immutables(tree: ast.Module) -> frozenset[str]:
+    return frozenset(
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.returns is not None and _name(node.returns) in IMMUTABLE_TYPES
     )
 
 
+def _made_immutable(call: ast.Call, trusted: frozenset[str]) -> bool:
+    name = _name(call.func)
+    if name in IMMUTABLE_FACTORIES or (isinstance(call.func, ast.Name) and name in trusted):
+        return True
+    return name[:1].isupper() and name not in MUTABLE_FACTORIES
+
+
+def _immutable(value: ast.expr, trusted: frozenset[str]) -> bool:
+    match value:
+        case ast.Constant() | ast.Name() | ast.Attribute() | ast.Lambda() | ast.JoinedStr() | ast.Subscript():
+            return True
+        case ast.Tuple(elts=items):
+            return all(_immutable(item, trusted) for item in items)
+        case ast.Starred(value=inner) | ast.UnaryOp(operand=inner):
+            return _immutable(inner, trusted)
+        case ast.BinOp(left=left, right=right) | ast.IfExp(body=left, orelse=right):
+            return _immutable(left, trusted) and _immutable(right, trusted)
+        case ast.Call():
+            return _made_immutable(value, trusted)
+        case _:
+            return False
+
+
 def mutable_module_values(path: str, tree: ast.Module) -> Iterator[Finding]:
+    trusted = _returning_immutables(tree)
     for node in tree.body:
         value = node.value if isinstance(node, ast.Assign | ast.AnnAssign) else None
-        if value is not None and _is_mutable(value):
+        if value is not None and not _immutable(value, trusted):
             yield Finding(path, node.lineno, "mutable value at module level")
 
 

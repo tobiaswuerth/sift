@@ -12,7 +12,7 @@ from sift.domain.query.expressions import NOTHING, And, Or, Term
 from sift.domain.query.grammar import parsed
 from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Ranged, stored
-from sift.retrieval.keyword.search import Tuning, found_in, planned, prepared, query_of, search, searched
+from sift.retrieval.keyword.search import Tuning, found_in, planned, prepared, query_of, searched
 from sift.storage.database import BATCHES, Batches
 from tests.allowed import Chosen
 from tests.keyword_searches import (
@@ -27,6 +27,7 @@ from tests.keyword_searches import (
     prose,
     random_expression,
     same,
+    search,
 )
 from tests.keyword_stores import SMALL, Content, Round
 

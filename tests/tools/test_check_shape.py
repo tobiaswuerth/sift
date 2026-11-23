@@ -23,16 +23,54 @@ def test_a_class_may_have_up_to_the_most_methods() -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ["[]", "{}", "{1}", "[x for x in y]", "{x: 1 for x in y}", "{x for x in y}", "dict()", "collections.deque()"],
+    [
+        "[]",
+        "{}",
+        "{1}",
+        "[x for x in y]",
+        "{x: 1 for x in y}",
+        "{x for x in y}",
+        "dict()",
+        "collections.deque()",
+        'str.maketrans("a", "b")',
+        "np.zeros(3)",
+        "f()",
+        "A | {1}",
+        "(1, [])",
+    ],
 )
 def test_a_mutable_module_value_is_found(value: str) -> None:
     assert problems("src/sift/a.py", f"X = {value}\n") == ["mutable value at module level"]
     assert problems("tools/a.py", f"X: object = {value}\n") == ["mutable value at module level"]
 
 
-@pytest.mark.parametrize("value", ["()", "frozenset({1})", "MappingProxyType({})", "re.compile('a')", "1", "f()"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "()",
+        "frozenset({1})",
+        "MappingProxyType({})",
+        "re.compile('a')",
+        "1",
+        "-1 << 2",
+        "(*A, 'b')",
+        "np.dtype('<u4')",
+        "range(3)",
+        "read_only(np.zeros(3))",
+        "Limits()",
+        "A if B else 'c'",
+        "f'{A}'",
+    ],
+)
 def test_an_immutable_module_value_passes(value: str) -> None:
     assert problems("src/sift/a.py", f"X = {value}\nY: int\n") == []
+
+
+def test_a_value_from_a_function_of_the_module_returning_an_immutable_type_passes() -> None:
+    source = (
+        "def f() -> tuple[int, ...]:\n    return ()\n\n\ndef g() -> list[int]:\n    return []\n\n\nX = f()\nY = g()\n"
+    )
+    assert problems("src/sift/a.py", source) == ["mutable value at module level"]
 
 
 def test_values_inside_functions_and_in_tests_may_be_mutable() -> None:

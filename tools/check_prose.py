@@ -31,10 +31,31 @@ def comments(path: str, source: str) -> Iterator[Prose]:
             yield Prose(path, token.start[0], "comment", token.string)
 
 
+def _said(value: ast.expr) -> bool:
+    match value:
+        case ast.Constant(value=str() | bytes()) | ast.JoinedStr():
+            return True
+        case ast.Tuple(elts=[*items]) if items:
+            return all(isinstance(item, ast.Constant) and item.value is not Ellipsis for item in items)
+        case _:
+            return False
+
+
+def _statement(node: ast.AST) -> ast.expr | None:
+    match node:
+        case ast.Expr(value=value) | ast.Assign(targets=[ast.Name(id="_")], value=value) if _said(value):
+            return value
+        case _:
+            return None
+
+
 def strings_as_statements(path: str, source: str) -> Iterator[Prose]:
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            yield Prose(path, node.lineno, "docstring", node.value.value.strip().split("\n", 1)[0])
+        said = _statement(node)
+        if isinstance(said, ast.Constant) and isinstance(said.value, str):
+            yield Prose(path, said.lineno, "docstring", said.value.strip().split("\n", 1)[0])
+        elif said is not None:
+            yield Prose(path, said.lineno, "prose", ast.unparse(said))
 
 
 def prose(path: str, source: str) -> tuple[Prose, ...]:

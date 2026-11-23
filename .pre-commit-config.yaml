@@ -51,6 +51,12 @@ repos:
         language: python
         pass_filenames: false
         always_run: true
+      - id: dead
+        name: every name of sift used in sift
+        entry: python -m tools dead
+        language: python
+        pass_filenames: false
+        always_run: true
 
   - repo: https://github.com/abravalheri/validate-pyproject
     rev: '0.26'

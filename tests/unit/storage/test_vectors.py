@@ -12,11 +12,10 @@ from sift.api.ids import CollectionId
 from sift.domain.arrays import Ids, first, ints, last
 from sift.domain.codec.codes import Halves, codes
 from sift.domain.errors import DamagedError
-from sift.storage.database import Connection, reading, rows, run, writing
+from sift.storage.database import Connection, Reading, reading, rows, run, writing
 from sift.storage.store import LAYOUT, open_store
 from sift.storage.vectors import (
     VectorsPut,
-    changes,
     codes_of,
     forget_vectors,
     left,
@@ -123,7 +122,8 @@ def test_a_store_of_the_layout_before_lists_the_chunks_without_vectors_once_open
                 for trigger in ("chunks_unembedded", "chunks_gone_unembedded", "vectors_embedded", "vectors_forgotten"):
                     run(transaction, f"DROP TRIGGER {trigger}")
                 run(transaction, "DROP TABLE unembedded")
-                run(transaction, f"PRAGMA user_version = {len(LAYOUT) - 1}")
+                run(transaction, "ALTER TABLE keyword_segments ADD COLUMN tokens INTEGER NOT NULL DEFAULT 0")
+                run(transaction, f"PRAGMA user_version = {len(LAYOUT) - 2}")
         with contextlib.closing(open_store(Path(folder) / "3.sqlite", CollectionId(3))) as connection:
             assert ints(chunk_ids(connection)) == ints(ids[1::2])
 
@@ -172,6 +172,15 @@ def test_a_vector_not_of_the_stores_width_is_damage() -> None:
             run(transaction, "UPDATE vectors SET vector = x'0000' WHERE chunk = ?", (int(last(ids)),))
         with reading(connection) as transaction, pytest.raises(DamagedError, match="not of its 16 dimensions"):
             vectors_of(transaction, ids)
+
+
+class Changes(NamedTuple):
+    vector_changes: int
+
+
+def changes(transaction: Reading) -> int:
+    (found,) = rows(transaction, Changes, "SELECT vector_changes FROM counts")
+    return found.vector_changes
 
 
 def test_a_vector_put_again_replaces_its_code_and_marks_a_change() -> None:

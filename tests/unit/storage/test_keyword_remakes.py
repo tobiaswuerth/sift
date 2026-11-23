@@ -15,6 +15,7 @@ from tests.keyword_indexes import (
     TWO,
     Average,
     checked,
+    chunk_tokens,
     staled,
 )
 from tests.keyword_stores import SMALL, applied, changed, opened_store
@@ -31,9 +32,13 @@ def test_an_index_of_another_version_takes_no_writes_until_remade_a_batch_at_a_t
         assert list(remade(connection, TWO)) == [2, 4, 6, 7]
         with reading(connection) as transaction:
             assert current(transaction)
-            made = rows(transaction, Average, "SELECT chunks, tokens, average FROM keyword_segments ORDER BY first")
+            made = rows(
+                transaction, Average, "SELECT first, last, chunks, average FROM keyword_segments ORDER BY first"
+            )
+            counted = chunk_tokens(transaction)
+        held = [sum(n for chunk, n in counted.items() if m.first <= chunk <= m.last) for m in made]
         assert [each.average for each in made] == pytest.approx(
-            [sum(m.tokens for m in made[: n + 1]) / sum(m.chunks for m in made[: n + 1]) for n in range(len(made))]
+            [sum(held[: n + 1]) / sum(m.chunks for m in made[: n + 1]) for n in range(len(made))]
         )
         assert remake_started(connection) == 0
         applied(connection, [{"x.md": ("", "X", "four")}])

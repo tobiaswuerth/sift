@@ -174,6 +174,7 @@ LAYOUT: tuple[Migration, ...] = (
            WHEN EXISTS (SELECT 1 FROM chunks WHERE id = OLD.chunk)
            BEGIN INSERT OR IGNORE INTO unembedded(chunk) VALUES (OLD.chunk); END""",
     ),
+    ("ALTER TABLE keyword_segments DROP COLUMN tokens",),
 )
 NUMBERED_TABLES = ("documents", "chunks")
 FILE_SUFFIXES = ("", "-wal", "-shm")

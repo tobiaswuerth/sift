@@ -4,6 +4,7 @@ import unicodedata
 from collections.abc import Iterator
 from types import MappingProxyType
 
+from tools.canonical import canonical
 from tools.findings import PYTHON_ROOTS, Finding, found, report
 
 CORE = ("src/sift/api/", "src/sift/domain/")
@@ -24,7 +25,18 @@ SEEN = frozenset({" "})
 LOOKS_LIKE_DAMAGE = frozenset({"\N{REPLACEMENT CHARACTER}"})
 NUMBERED_PLACEHOLDER = re.compile(r"\?[0-9]")
 IO_BUILTINS = frozenset({"open", "input", "print"})
-EXITS = frozenset({"SystemExit", "exit", "quit"})
+IO_CALLS = IO_BUILTINS | frozenset(f"builtins.{name}" for name in IO_BUILTINS)
+EXITS = frozenset({"SystemExit", "exit", "quit", "sys.exit", "builtins.exit", "builtins.quit", "builtins.SystemExit"})
+NOW = frozenset({"datetime.datetime.now", "datetime.datetime.today", "datetime.datetime.utcnow", "datetime.date.today"})
+CLOCK_READ = "the clock read outside sift.interfaces: take the time as a value, and let the interface read the clock"
+PATCHED = "a sift module or class changed by a test: pass a fake, a value or an environment in instead"
+SETTERS = frozenset({"setattr", "delattr", "builtins.setattr", "builtins.delattr"})
+HANDLE_MAKERS = frozenset({"src/sift/storage/database.py", "src/sift/storage/keywords.py"})
+HANDLES = frozenset({"Writing", "WritingDocuments"})
+HANDLE_MADE = "a write handle made by hand: open one with writing() or writing_documents()"
+STORAGE = "src/sift/storage/"
+SQL_CALLS = frozenset({"execute", "executemany", "executescript"})
+RAW_SQL = "SQL run on a transaction's connection outside sift.storage: add a storage function and call it"
 NUMBERED = (
     "a numbered SQL placeholder, which Python 3.12.0 to 3.12.3 take for a named one: "
     "bind by name from a dict, or give each plain ? its own value"
@@ -77,14 +89,42 @@ def numbered_placeholders(path: str, tree: ast.Module) -> Iterator[Finding]:
 
 def io_in_the_core(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in IO_BUILTINS:
-            yield Finding(path, node.lineno, f"{node.func.id}() in the core: return the value and let the caller act")
+        if isinstance(node, ast.Call) and (called := ast.unparse(node.func)) in IO_CALLS:
+            yield Finding(path, node.lineno, f"{called}() in the core: return the value and let the caller act")
 
 
 def exits_outside_interfaces(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id in EXITS:
-            yield Finding(path, node.lineno, f"{node.id} outside sift.interfaces: raise a SiftError")
+        if isinstance(node, ast.Name | ast.Attribute) and (named := ast.unparse(node)) in EXITS:
+            yield Finding(path, node.lineno, f"{named} outside sift.interfaces: raise a SiftError")
+
+
+def clock_read(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and ast.unparse(node) in NOW:
+            yield Finding(path, node.lineno, CLOCK_READ)
+
+
+def _of_sift(node: ast.expr) -> bool:
+    return isinstance(node, ast.Attribute) and ast.unparse(node.value).split(".")[0] == "sift"
+
+
+def _changed(node: ast.AST) -> list[ast.expr]:
+    match node:
+        case ast.Assign(targets=targets) | ast.Delete(targets=targets):
+            return targets
+        case ast.AugAssign(target=target) | ast.AnnAssign(target=target):
+            return [target]
+        case ast.Call(func=func, args=[owner, ast.Constant(value=str(name)), *_]) if ast.unparse(func) in SETTERS:
+            return [ast.Attribute(owner, name, ast.Store())]
+        case _:
+            return []
+
+
+def sift_patched(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if any(map(_of_sift, _changed(node))):
+            yield Finding(path, getattr(node, "lineno", 1), PATCHED)
 
 
 def patching(path: str, tree: ast.Module) -> Iterator[Finding]:
@@ -144,19 +184,39 @@ def flags_outside_interfaces(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, node.lineno, FLAG_OUTSIDE)
 
 
+def handles_made(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and ast.unparse(node.func).rsplit(".", 1)[-1] in HANDLES:
+            yield Finding(path, node.lineno, HANDLE_MADE)
+
+
+def raw_sql(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        match node:
+            case ast.Attribute(attr=called, value=ast.Attribute(attr="connection")) if called in SQL_CALLS:
+                yield Finding(path, node.lineno, RAW_SQL)
+            case _:
+                pass
+
+
 def idioms(path: str, source: str) -> tuple[Finding, ...]:
-    tree = ast.parse(source)
+    tree = canonical(ast.parse(source))
     in_tests, in_sift = path.startswith("tests/"), path.startswith("src/sift/")
+    outside_interfaces = in_sift and not path.startswith(INTERFACES)
     return (
         *invisible_characters(path, source),
         *numbered_placeholders(path, tree),
         *(() if in_tests else banned_methods(path, tree)),
         *(() if in_tests else recursion_caught(path, tree)),
         *(io_in_the_core(path, tree) if path.startswith(CORE) else ()),
-        *(exits_outside_interfaces(path, tree) if in_sift and not path.startswith(INTERFACES) else ()),
-        *(flags_outside_interfaces(path, tree) if in_sift and not path.startswith(INTERFACES) else ()),
+        *(exits_outside_interfaces(path, tree) if outside_interfaces else ()),
+        *(flags_outside_interfaces(path, tree) if outside_interfaces else ()),
+        *(clock_read(path, tree) if outside_interfaces or in_tests else ()),
         *(environment_outside_settings(path, tree) if in_sift and path != SETTINGS else ()),
+        *(handles_made(path, tree) if in_sift and path not in HANDLE_MAKERS else ()),
+        *(raw_sql(path, tree) if in_sift and not path.startswith(STORAGE) else ()),
         *(patching(path, tree) if in_tests else ()),
+        *(sift_patched(path, tree) if in_tests else ()),
         *(clocks(path, tree) if in_tests else ()),
         *(databases_left_open(path, tree) if in_tests else ()),
     )

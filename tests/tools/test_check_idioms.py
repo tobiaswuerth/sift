@@ -160,3 +160,68 @@ def test_a_flag_of_the_command_line_outside_the_interfaces_is_found() -> None:
     assert problems("src/sift/app/a.py", 'X = f"--budget {b} leaves no time"\n') == flagged
     assert problems("src/sift/app/a.py", 'X = "run sift embed --reset"\nY = "a -created sort, a k-means"\n') == []
     assert problems("src/sift/interfaces/cli/a.py", 'X = "-k 10"\n') == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from sift.interfaces.console import live\nlive.REDRAW_SECONDS = 0\n",
+        "import sift.interfaces.console.live as shown\nshown.REDRAW_SECONDS += 1\n",
+        "from sift.app import filing\nsetattr(filing, 'READERS', None)\n",
+        "from sift.app.filing import Readers\ndel Readers.lines\n",
+    ],
+)
+def test_a_test_that_changes_a_sift_module_or_class_is_found(source: str) -> None:
+    assert check_idioms.PATCHED in problems("tests/a.py", source)
+
+
+def test_a_test_may_change_what_it_made() -> None:
+    assert problems("tests/a.py", "from sift.app.filing import Readers\nheld = Readers()\nheld.x = 1\n") == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import datetime\ndatetime.datetime.now()\n",
+        "from datetime import datetime\ndatetime.utcnow()\n",
+        "import datetime as when\nwhen.date.today()\n",
+    ],
+)
+def test_reading_the_clock_is_found_outside_the_interfaces(source: str) -> None:
+    assert problems("src/sift/app/a.py", source) == [check_idioms.CLOCK_READ]
+    assert problems("tests/a.py", source) == [check_idioms.CLOCK_READ]
+    assert problems("src/sift/interfaces/a.py", source) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import os as o\no.environ\n",
+        "import os\ngetattr(os, 'environ')\n",
+        "import os as o\ngetattr(o, 'getenv')('A')\n",
+    ],
+)
+def test_the_environment_read_through_an_alias_is_found(source: str) -> None:
+    assert problems("src/sift/app/a.py", source) == [check_idioms.ENVIRONMENT_READ]
+
+
+def test_an_alias_hides_no_database_left_open_and_no_exit_or_print() -> None:
+    assert problems("tests/a.py", "import sqlite3 as s\ns.connect(':memory:')\n") == [check_idioms.LEFT_OPEN]
+    assert problems("src/sift/app/a.py", "from sys import exit as leave\nleave(1)\n") == [
+        "sys.exit outside sift.interfaces: raise a SiftError"
+    ]
+    assert problems("src/sift/domain/a.py", "import builtins\nbuiltins.print(1)\n") == [
+        "builtins.print() in the core: return the value and let the caller act"
+    ]
+
+
+def test_a_write_handle_is_made_in_the_storage_modules_alone() -> None:
+    source = "from sift.storage.database import Writing\n\nWriting(connection)\n"
+    assert problems("src/sift/app/a.py", source) == [check_idioms.HANDLE_MADE]
+    assert problems("src/sift/storage/database.py", source) == []
+
+
+def test_sql_on_a_transaction_s_connection_runs_in_sift_storage_alone() -> None:
+    source = "transaction.connection.execute('SELECT 1')\n"
+    assert problems("src/sift/app/a.py", source) == [check_idioms.RAW_SQL]
+    assert problems("src/sift/storage/a.py", source) == []

@@ -127,7 +127,7 @@ def _streams(transaction: Reading, spans: Sequence[Span]) -> list[list[str]]:
 
 
 def _added(transaction: Writing, written: Segment) -> None:
-    head = Head(written.first, written.last, written.chunks, written.tokens, written.average)
+    head = Head(written.first, written.last, written.chunks, written.average)
     made = segment_added(transaction, head)
     postings_added(transaction, made, written.postings)
     lengths_added(transaction, made, written.lengths)

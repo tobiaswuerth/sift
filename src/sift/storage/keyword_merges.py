@@ -6,7 +6,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from sift.domain.arrays import Ascending, Ids, among, first, firsts, ints, last, run_starts, total
+from sift.domain.arrays import Ascending, Ids, among, first, firsts, ints, last, run_starts
 from sift.domain.codec.postings import blocked_all, lengths_of, positions_all, with_lengths
 from sift.domain.codec.segments import Lists, postings_of
 from sift.domain.codec.shape import Shape
@@ -135,7 +135,7 @@ def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shap
     lengths = _lengths(transaction, merged, live, shape.lengths_shift)
     (held,) = rows(transaction, Totals, HELD)
     average = held.tokens / held.chunks
-    made = segment_added(transaction, Head(first(live), last(live), len(live), total(lengths), average))
+    made = segment_added(transaction, Head(first(live), last(live), len(live), average))
     dead = _ids(transaction, "SELECT chunk FROM keyword_dead WHERE chunk BETWEEN ? AND ? ORDER BY chunk", low, high)
     listed = _listed(transaction, merged, shape.block)
     for batch in batched(listed, transaction.batches):

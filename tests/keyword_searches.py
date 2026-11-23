@@ -13,8 +13,19 @@ from hypothesis import strategies as st
 from sift.domain.codec.shape import Shape
 from sift.domain.plan.segments import Policy
 from sift.domain.query.expressions import And, Expression, Leaf, Not, Or, Phrase, Prefix, Term
+from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Opened, opened
-from sift.retrieval.keyword.search import FoundChunk
+from sift.retrieval.keyword.search import (
+    TUNING,
+    FoundChunk,
+    Tuning,
+    found_in,
+    planned,
+    prepared,
+    query_of,
+    refuse_reading_too_much,
+    searched,
+)
 from sift.storage.database import BATCHES, Batches, Connection, reading
 from tests.keyword_stores import COLUMNS, SMALL, Content, Round, applied, instances, opened_store, texts
 
@@ -235,3 +246,18 @@ def fts5_ranked(held: Chunks, query: str, k: int) -> list[tuple[int, float]]:
                  JOIN owners o ON o.chunk = t.rowid WHERE t MATCH ?)
                  SELECT chunk, max(score) FROM p GROUP BY document ORDER BY 2 DESC, 1 LIMIT ?"""
         return cast("list[tuple[int, float]]", db.execute(sql, (query, k)).fetchall())
+
+
+def search(
+    stores: Sequence[Opened], expression: Expression, k: int, *, by_document: bool = True, tuning: Tuning = TUNING
+) -> tuple[FoundChunk, ...]:
+    plans = [planned(store, expression) for store in stores]
+    refuse_reading_too_much(plans, tuning)
+    each = [prepared(plan) for plan in plans]
+    query = query_of(expression, each)
+    if query is None:
+        return ()
+    best = Best(k, by_document)
+    for held in each:
+        best = searched(held, query, best, tuning).best
+    return found_in(best)

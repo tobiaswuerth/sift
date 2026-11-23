@@ -8,7 +8,7 @@ from sift.domain.text.tokens import tokens
 
 SPACES = frozenset(" \t\n\r\f\v\x1c\x1d\x1e\x1f\N{NULL}")
 QUOTE, OPEN, CLOSE, STAR = '"', "(", ")", "*"
-OUTSIDE_WORDS = SPACES | {QUOTE, OPEN, CLOSE}
+OUTSIDE_WORDS = SPACES | frozenset({QUOTE, OPEN, CLOSE})
 AND, OR, NOT = "AND", "OR", "NOT"
 OPERATORS = frozenset({AND, OR, NOT})
 NEAR = "NEAR"

@@ -146,10 +146,6 @@ def named(known: Sequence[Collection], name: str) -> Collection:
     raise NotFoundError(f"no collection is named {name!r}", remedy)
 
 
-def collection(transaction: Reading, name: str) -> Collection:
-    return named(collections(transaction), name)
-
-
 def known_collections(home: Path) -> tuple[Collection, ...]:
     if not (home / CATALOG).is_file():
         return ()

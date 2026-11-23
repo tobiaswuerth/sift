@@ -3,6 +3,8 @@ from typing import cast
 import numpy as np
 from numpy.typing import NDArray
 
+from sift.domain.arrays import read_only
+
 type Floats = NDArray[np.float32]
 type Halves = NDArray[np.float16]
 type Bits = NDArray[np.uint8]
@@ -12,7 +14,7 @@ type Distances = NDArray[np.uint16]
 WORD_BYTES = 8
 MOST_BITS = int(np.iinfo(np.uint16).max)
 SCANNED = 8 << 20
-BYTE_BITS = np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).astype(np.float32)
+BYTE_BITS = read_only(np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).astype(np.float32))
 
 
 def width_of(values: NDArray[np.generic]) -> int:

@@ -15,7 +15,6 @@ from sift.storage.catalog import (
     Collection,
     NewCollection,
     add_collection,
-    collection,
     collections,
     known_collections,
     named,
@@ -93,8 +92,10 @@ def test_choices_are_kept(tmp_path: Path, home: Path, catalog: sqlite3.Connectio
     add_collection(catalog, home, NewCollection(folder(tmp_path, "vault"), choices=chosen))
     add_collection(catalog, home, NewCollection(folder(tmp_path, "plain")))
     with reading(catalog) as transaction:
-        assert collection(transaction, "vault").choices == chosen
-        assert collection(transaction, "plain").choices == Choices(title_from=TitleFrom.HEADING, follow_links=False)
+        assert named(collections(transaction), "vault").choices == chosen
+        assert named(collections(transaction), "plain").choices == Choices(
+            title_from=TitleFrom.HEADING, follow_links=False
+        )
 
 
 @pytest.mark.parametrize(
@@ -120,12 +121,12 @@ def test_collections_are_listed_by_name(tmp_path: Path, home: Path, catalog: sql
 
 def test_an_unknown_collection_names_those_there_are(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
     with pytest.raises(NotFoundError) as missing, reading(catalog) as transaction:
-        collection(transaction, "notes")
+        named(collections(transaction), "notes")
     assert missing.value.remedy == "add a folder as a collection first"
     add_collection(catalog, home, NewCollection(folder(tmp_path, "papers")))
     add_collection(catalog, home, NewCollection(folder(tmp_path, "mail")))
     with pytest.raises(NotFoundError, match="no collection is named 'notes'") as missing, reading(catalog) as tx:
-        collection(tx, "notes")
+        named(collections(tx), "notes")
     assert missing.value.remedy == "the collections are: mail, papers"
 
 
@@ -242,8 +243,8 @@ def test_an_id_is_never_given_twice(tmp_path: Path, home: Path, catalog: sqlite3
 def test_a_collection_is_found_by_its_name_in_any_case(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
     add_collection(catalog, home, NewCollection(folder(tmp_path, "x"), name="Bücher"))
     with reading(catalog) as transaction:
-        assert collection(transaction, "BÜCHER").name == "Bücher"
-        assert collection(transaction, "bücher").name == "Bücher"
+        assert named(collections(transaction), "BÜCHER").name == "Bücher"
+        assert named(collections(transaction), "bücher").name == "Bücher"
 
 
 def test_collections_are_listed_by_name_whatever_its_case(

@@ -72,11 +72,6 @@ def width_held(transaction: Reading) -> int | None:
     return None if found is None else int(found)
 
 
-def changes(transaction: Reading) -> int:
-    (found,) = rows(transaction, Count, "SELECT vector_changes FROM counts")
-    return found.n
-
-
 def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
     waiting = rows(transaction, Waiting, PENDING, (after, most))
     wanted = json.dumps(sorted({each.document for each in waiting}))
