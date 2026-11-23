@@ -9,7 +9,6 @@ from pathlib import Path
 from sift.api.errors import InvalidRequestError
 from sift.api.search import Hit, SearchKeywords, SearchResult
 from sift.app import searching
-from sift.domain.arrays import Ids
 from sift.domain.query.expressions import NOTHING, Expression
 from sift.domain.query.filters import Condition
 from sift.domain.query.grammar import parsed, relaxed
@@ -29,6 +28,7 @@ from sift.retrieval.keyword.search import (
 )
 from sift.storage.database import Reading
 from sift.storage.keywords import refuse_stale
+from sift.storage.passing import Passing
 
 BUDGET_REMEDY = "give the seconds the search may take, e.g. --budget 0.5"
 
@@ -39,7 +39,7 @@ type Clock = Callable[[], float]
 @dataclass(frozen=True, slots=True)
 class Keywords:
     store: Opened
-    allowed: Ids | None
+    allowed: Passing | None
 
 
 type Kept = searching.Kept[Keywords]

@@ -24,7 +24,7 @@ FILTERS = (
     "only documents whose front matter passes: KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06; "
     "repeat for more: values of one key asked alike mean any (=) or none (!=) of them"
 )
-SORT = "order the k found by a front matter field, e.g. created, or -created for the newest first"
+SORT = "order the k found by a front matter field, e.g. created, or --sort=-created for the newest first"
 
 
 def _filter(text: str) -> tuple[Filter, ...]:

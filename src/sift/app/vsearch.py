@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
@@ -10,14 +10,15 @@ from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.ids import owner
 from sift.api.search import Hit, SearchResult, SearchVectors
 from sift.app import searching
-from sift.domain.arrays import Ids
+from sift.domain.arrays import Ids, Mask
 from sift.domain.codec.codes import Floats, Halves
 from sift.domain.query.filters import Condition
 from sift.domain.rank.best import Best, offered, ranked
 from sift.inference.models import Models
-from sift.retrieval.vector.nearest import RESCORE, Coded, Near, coded, nearest, within
+from sift.retrieval.vector.nearest import RESCORE, Coded, Near, Reads, coded, nearest
 from sift.storage.database import Reading
 from sift.storage.documents import documents_of
+from sift.storage.passing import Passing
 from sift.storage.vectors import EMBED_REMEDY, codes_of, documents_embedded, left, model_of, vectors_of, width_held
 
 EMPTY_REMEDY = "say what to find, e.g. sift vsearch 'how dark matter halos form'"
@@ -32,6 +33,7 @@ type Read = Callable[[Reading, Ids], Exact]
 @dataclass(frozen=True, slots=True)
 class Held:
     coded: Coded
+    allowed: Passing | None = None
 
 
 type Kept = searching.Kept[Held]
@@ -71,9 +73,7 @@ def held(model: str, transaction: Reading) -> Held:
 
 
 def held_within(model: str, asked: Condition | None, transaction: Reading) -> Held:
-    found = held(model, transaction)
-    allowed = searching.allowed(transaction, asked)
-    return found if allowed is None else Held(within(found.coded, allowed))
+    return replace(held(model, transaction), allowed=searching.allowed(transaction, asked))
 
 
 def query_vector(models: Models, text: str) -> Floats:
@@ -105,8 +105,37 @@ def _nearest[S](
             return np.zeros(0, np.int64), np.zeros((0, 0), np.float16)
         return found
 
-    found = nearest([held_of(each.held).coded for each in held], query, want, exact, rescore=want)
+    allowed = [_guarded(kept, each, held_of(each.held).allowed, lost) for each in held]
+    found = nearest([held_of(each.held).coded for each in held], query, want, Reads(exact, allowed), rescore=want)
     return None if lost else found
+
+
+@dataclass(frozen=True, slots=True)
+class Guarded[S]:
+    kept: searching.Kept[S]
+    each: searching.Searching[S]
+    allowed: Passing
+    lost: list[bool]
+
+    def checked(self, ids: Ids) -> Mask:
+        found = self.kept.guarded(self.each, partial(self.allowed.checked, ids))
+        if found is None:
+            self.lost.append(True)
+            return np.zeros(len(ids), np.bool_)
+        return found
+
+    def listed(self) -> Ids:
+        found = self.kept.guarded(self.each, self.allowed.listed)
+        if found is None:
+            self.lost.append(True)
+            return np.zeros(0, np.int64)
+        return found
+
+
+def _guarded[S](
+    kept: searching.Kept[S], each: searching.Searching[S], allowed: Passing | None, lost: list[bool]
+) -> Guarded[S] | None:
+    return None if allowed is None else Guarded(kept, each, allowed, lost)
 
 
 def _owned[S](kept: searching.Kept[S], near: tuple[Near, ...]) -> dict[int, int] | None:
@@ -148,7 +177,7 @@ def near[S](
         if found is None or owners is None:
             return None
         best = _best(wanted, found, owners)
-        if len(best) >= wanted.k or want >= chunks:
+        if len(best) >= wanted.k or want >= chunks or len(found) < want:
             return best
         documents = _documents(kept, asked.count) if documents is None else documents
         if documents is None:

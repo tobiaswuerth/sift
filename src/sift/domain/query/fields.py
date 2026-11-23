@@ -8,7 +8,7 @@ TITLE = "title"
 FIELDS_REMEDY = 'name front matter fields parted by commas, e.g. --fields url,created, or "*" for all'
 SORT_REMEDY = "name a front matter field, e.g. --sort created, or --sort=-created for the newest first"
 
-type Key = tuple[int, float, str]
+type Key = tuple[int, int | float, str]
 
 
 def checked(fields: Sequence[str], sort: str | None) -> None:
@@ -26,7 +26,7 @@ def picked(held: Fields, asked: Sequence[str]) -> Fields:
 
 def _key(value: FieldValue) -> Key:
     if isinstance(value, int | float):
-        return (0, float(value), "")
+        return (0, value, "")
     return (1, 0.0, str(value))
 
 

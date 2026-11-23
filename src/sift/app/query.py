@@ -33,7 +33,6 @@ from sift.domain.rank.hybrid import blend, named, passage, standing_out, words, 
 from sift.inference.models import Models
 from sift.retrieval.keyword.lists import opened
 from sift.retrieval.keyword.search import TUNING, never
-from sift.retrieval.vector.nearest import within
 from sift.storage.database import Reading
 from sift.storage.documents import fields_by_document, passages, texts
 from sift.storage.keywords import refuse_stale
@@ -63,7 +62,7 @@ def _both(model: str, asked: Condition | None, transaction: Reading) -> Both:
     vectors = embedded_by(model, transaction)
     allowed = searching.allowed(transaction, asked)
     held = no_vectors() if vectors is None else vectors
-    return Both(Keywords(opened(transaction), allowed), held if allowed is None else Held(within(held.coded, allowed)))
+    return Both(Keywords(opened(transaction), allowed), replace(held, allowed=allowed))
 
 
 def _keywords(both: Both) -> Keywords:

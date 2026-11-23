@@ -8,4 +8,4 @@ FIELDS = 'front matter to show, comma-separated, e.g. "url,created"; "*" for all
 
 
 def listed(text: str) -> tuple[str, ...]:
-    return tuple(name.strip() for name in text.split(","))
+    return tuple(name.strip() for name in text.split(",")) if text.strip() else ()

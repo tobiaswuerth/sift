@@ -6,15 +6,19 @@ import pytest
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError
+from sift.api.fields import listed
 from sift.api.filters import Filter, Operator
 from sift.api.indexing import IndexCollections
-from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
+from sift.api.search import SORT, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.search import search
-from sift.app.vsearch import vsearch
+from sift.app.vsearch import Asked, vsearch
+from sift.storage.database import Reading
+from sift.storage.vectors import documents_embedded, vectors_of
+from tests.damage import damage_table
 from tests.models import Hashed
 
 DAYS = ("2023-11-30", "2024-02-10", "2024-06-15", "2024-12-31", "2025-03-01")
@@ -119,3 +123,46 @@ def test_options_that_cannot_be_followed_are_refused_saying_how(
     with pytest.raises(InvalidRequestError, match=refusal) as refused:
         search(home, request_)
     assert refused.value.remedy is not None
+
+
+def test_a_filter_letting_few_documents_through_ends_the_semantic_search_once_they_are_found(home: Path) -> None:
+    counted: list[int] = []
+
+    def count(transaction: Reading) -> int:
+        counted.append(documents_embedded(transaction))
+        return counted[-1]
+
+    one = (Filter("rank", ANY, (1,)),)
+    found = vsearch(home, SearchVectors("pigment", k=5, filters=one), Hashed(), Asked(1, vectors_of, count))
+    assert (days(found), counted) == (["2024-02-10"], [])
+
+
+def test_no_fields_written_asks_for_none() -> None:
+    assert listed("") == ()
+    assert listed(" url, created ") == ("url", "created")
+    assert "--sort=-created" in SORT
+
+
+def many(tmp_path: Path, name: str, notes: int) -> Path:
+    root = tmp_path / name
+    for n in range(notes):
+        write(root / ("even" if n % 2 == 0 else "odd") / f"{n}.md", f"# Note {n}\n\nPigment {n} and binder.\n")
+    return root
+
+
+@pytest.mark.parametrize("notes", [400, 6])
+def test_a_store_lost_while_its_filter_is_checked_or_listed_is_passed_over(tmp_path: Path, notes: int) -> None:
+    home = tmp_path / "home"
+    for name in ("first", "second"):
+        add(home, AddCollection(str(many(tmp_path, name, notes))))
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    request = SearchVectors("pigment binder", k=3, path="even/*")
+    kept = vsearch(home, request, Hashed(), Asked(3, vectors_of))
+    assert len(kept.hits) == 3
+    assert all("/even/" in hit.id for hit in kept.hits)
+    damage_table(home / "collections" / "first.sqlite", "documents")
+    found = vsearch(home, request, Hashed(), Asked(3, vectors_of))
+    assert [each.collection for each in found.unsearched] == ["first"]
+    assert found.hits
+    assert all(hit.id.startswith("second/even/") for hit in found.hits)

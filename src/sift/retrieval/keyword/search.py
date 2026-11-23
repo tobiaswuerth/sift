@@ -4,11 +4,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ascending, Ids, among, ascending, distinct, ints
+from sift.domain.arrays import Ascending, Ids, among, distinct, ints
 from sift.domain.query.expressions import Expression, Leaf, Prefix, Term, leaves
 from sift.domain.rank.best import Best, offered, ranked
 from sift.domain.rank.bm25 import Scores, idf
 from sift.domain.rank.boolean import counted, may_hold
+from sift.retrieval.allowed import Allowed
 from sift.retrieval.keyword.leaves import materialized
 from sift.retrieval.keyword.lists import Opened, Postings, Stored, owners, stored
 from sift.retrieval.keyword.scoring import Query, Scored, bounds, merged_within, scored, within
@@ -49,12 +50,12 @@ class Pass:
     store: Opened
     query: Query
     lists: Mapping[Leaf, Scored]
-    allowed: Ascending | None
+    allowed: Allowed | None
 
 
 def _offer(work: Pass, best: Best, places: Ids, scores: Scores) -> Best:
     if work.allowed is not None:
-        keep = among(places, work.allowed)
+        keep = work.allowed.checked(places)
         places, scores = places[keep], scores[keep]
     if not len(places):
         return best
@@ -175,10 +176,12 @@ class Prepared:
     store: Opened
     lists: Lists
     df: Mapping[Leaf, int]
-    allowed: Ascending | None = None
+    allowed: Allowed | None = None
 
 
-def prepared(store: Opened, expression: Expression, tuning: Tuning = TUNING, *, allowed: Ids | None = None) -> Prepared:
+def prepared(
+    store: Opened, expression: Expression, tuning: Tuning = TUNING, *, allowed: Allowed | None = None
+) -> Prepared:
     unique = tuple(dict.fromkeys(leaves(expression)))
     lists = stored(store, _tokens(unique))
     terms = frequencies(store.transaction, [leaf.text for leaf in unique if isinstance(leaf, Term)])
@@ -190,7 +193,7 @@ def prepared(store: Opened, expression: Expression, tuning: Tuning = TUNING, *, 
         else:
             postings = materialized(store, leaf, lists, tuning.most_prefix)
             found[leaf], df[leaf] = postings, len(postings[0])
-    return Prepared(store, found, df, None if allowed is None else ascending(allowed))
+    return Prepared(store, found, df, allowed)
 
 
 def query_of(expression: Expression, each: Sequence[Prepared]) -> Query | None:

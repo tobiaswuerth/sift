@@ -9,13 +9,12 @@ from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.ids import ChunkId, owner
 from sift.api.search import MOST_HITS, Hit, Options, SearchResult, Unsearched
 from sift.app.collections import chosen_or_active
-from sift.domain.arrays import Ids
 from sift.domain.query import fields as shown
 from sift.domain.query.filters import Condition, condition
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
 from sift.storage.documents import fields_by_document, passages, texts
-from sift.storage.passing import chunks_passing, reads_quotes
+from sift.storage.passing import Passing, reads_quotes
 from sift.storage.store import open_store, unavailable_if_damaged
 
 FEW_REMEDY = "ask for one result or more, e.g. -k 10"
@@ -30,7 +29,7 @@ class Scored(Protocol):
     def score(self) -> float: ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class Searching[S]:
     collection: Collection
     transaction: Reading
@@ -53,6 +52,8 @@ class Kept[S]:
         each.resources.close()
 
     def guarded[T](self, each: Searching[S], work: Callable[[], T]) -> T | None:
+        if each not in self.searching:
+            return None
         try:
             with unavailable_if_damaged(each.collection.store):
                 return work()
@@ -74,8 +75,8 @@ def checked(request: Options) -> Condition | None:
     return condition(request.path, request.filters, reads_quotes=reads_quotes())
 
 
-def allowed(transaction: Reading, asked: Condition | None) -> Ids | None:
-    return None if asked is None else chunks_passing(transaction, asked)
+def allowed(transaction: Reading, asked: Condition | None) -> Passing | None:
+    return None if asked is None else Passing(transaction, asked)
 
 
 def fielded(request: Options) -> bool:

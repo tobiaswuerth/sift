@@ -7,7 +7,7 @@ from sift.api.filters import Filter, FilterValue, Operator
 from sift.domain.arrays import ints
 from sift.domain.query.filters import condition
 from sift.storage.database import Reading
-from sift.storage.passing import chunks_passing
+from sift.storage.passing import Passing
 
 ANY, NONE = Operator.ANY, Operator.NONE
 PAPERS: dict[str, Fields] = {
@@ -31,7 +31,7 @@ def passing(documents: dict[str, Fields], filters: list[Filter], path: str | Non
             database.execute("INSERT INTO chunks VALUES (?, ?)", (at, at))
         if found is None:
             return sorted(names)
-        return sorted(names[chunk] for chunk in ints(chunks_passing(Reading(database), found)))
+        return sorted(names[chunk] for chunk in ints(Passing(Reading(database), found).listed()))
 
 
 def one(field: str, operator: Operator, *values: FilterValue) -> Filter:
