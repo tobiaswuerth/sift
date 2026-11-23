@@ -1,5 +1,7 @@
+from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
+from functools import cache, partial
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +34,14 @@ EMBEDDING = Embedding()
 type Failed = dict[CollectionId, StoreUnavailableError]
 
 
+@dataclass(frozen=True, slots=True)
+class Work:
+    report: Reporter
+    models: Models
+    embedding: Embedding
+    ready: Callable[[], None]
+
+
 def _prepared(models: Models, report: Reporter) -> None:
     report(PhaseStarted(Phase.LOAD, None))
     notices = models.prepare()
@@ -55,17 +65,18 @@ def _written(connection: Connection, models: Models, waiting: list[Pending]) -> 
         return put_vectors(transaction, np.array([each.chunk for each in waiting], np.int64), matrix, models.name)
 
 
-def _filled(connection: Connection, report: Reporter, models: Models, embedding: Embedding) -> Embedded:
+def _filled(connection: Connection, work: Work) -> Embedded:
+    report = work.report
     with reading(connection) as transaction:
-        refuse_model(transaction, models.name)
+        refuse_model(transaction, work.models.name)
         total = left(transaction)
     if not total:
         return Embedded(0, 0)
-    _prepared(models, report)
+    work.ready()
     report(PhaseStarted(Phase.EMBED, total))
     stored, broken, after = 0, 0, 0
-    while waiting := _waiting(connection, after, embedding.chunks_a_write):
-        kept = _written(connection, models, waiting)
+    while waiting := _waiting(connection, after, work.embedding.chunks_a_write):
+        kept = _written(connection, work.models, waiting)
         stored, broken, after = stored + kept.stored, broken + len(kept.broken), waiting[-1].chunk
         report(Advanced(stored + broken))
     report(PhaseDone(stored))
@@ -79,17 +90,15 @@ def _skipped(one: Collection, report: Reporter, error: StoreUnavailableError) ->
     return CollectionEmbedded(one.name, Skipped(error.message, error.remedy))
 
 
-def _embedded(
-    one: Collection, report: Reporter, models: Models, embedding: Embedding, failed: Failed
-) -> CollectionEmbedded:
-    report(CollectionStarted(one.name, str(one.folder)))
+def _embedded(one: Collection, work: Work, failed: Failed) -> CollectionEmbedded:
+    work.report(CollectionStarted(one.name, str(one.folder)))
     if one.id in failed:
-        return _skipped(one, report, failed[one.id])
+        return _skipped(one, work.report, failed[one.id])
     try:
         with unavailable_if_damaged(one.store), closing(open_store(one.store, one.id)) as connection:
-            return CollectionEmbedded(one.name, _filled(connection, report, models, embedding))
+            return CollectionEmbedded(one.name, _filled(connection, work))
     except StoreUnavailableError as error:
-        return _skipped(one, report, error)
+        return _skipped(one, work.report, error)
 
 
 def _forgotten(one: Collection) -> StoreUnavailableError | None:
@@ -105,8 +114,8 @@ def _forgotten(one: Collection) -> StoreUnavailableError | None:
     return None
 
 
-def _reset(home: Path, report: Reporter, models: Models, embedding_now: tuple[Collection, ...]) -> Failed:
-    _prepared(models, report)
+def _reset(home: Path, report: Reporter, ready: Callable[[], None], embedding_now: tuple[Collection, ...]) -> Failed:
+    ready()
     known = chosen(home, ())
     failed = {one.id: error for one in known if (error := _forgotten(one)) is not None}
     now = {one.id for one in embedding_now}
@@ -123,5 +132,6 @@ def embed(
     if request.reset and request.names:
         raise InvalidRequestError("--reset embeds every collection again, as all share one model", RESET_ALL_REMEDY)
     chosen_now = chosen_or_active(home, request.names)
-    failed = _reset(home, report, models, chosen_now) if request.reset else {}
-    return EmbedResult(tuple(_embedded(one, report, models, embedding, failed) for one in chosen_now))
+    work = Work(report, models, embedding, cache(partial(_prepared, models, report)))
+    failed = _reset(home, report, work.ready, chosen_now) if request.reset else {}
+    return EmbedResult(tuple(_embedded(one, work, failed) for one in chosen_now))

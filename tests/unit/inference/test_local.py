@@ -110,8 +110,13 @@ def test_a_reranker_reading_fewer_than_1024_tokens_reads_passages_cut_to_its_len
 
 
 def test_a_model_too_large_for_the_memory_left_says_so_not_to_check_the_network() -> None:
-    full = unloaded("owner/model", torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB"))
+    full = unloaded("owner/model", torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB"), "cuda")
     assert full.message == "the model owner/model could not be loaded: CUDA out of memory. Tried to allocate 2.00 GiB"
     assert full.remedy is not None
     assert "CUDA_VISIBLE_DEVICES" in full.remedy
-    assert unloaded("owner/model", OSError("401 Client Error\nmore")).remedy == UNLOADED_REMEDY
+    for device in ("cpu", "mps"):
+        remedy = unloaded("owner/model", MemoryError(), device).remedy
+        assert remedy is not None
+        assert "smaller model" in remedy
+        assert "CUDA" not in remedy
+    assert unloaded("owner/model", OSError("401 Client Error\nmore"), "cuda").remedy == UNLOADED_REMEDY

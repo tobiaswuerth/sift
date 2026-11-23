@@ -1,11 +1,13 @@
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Protocol, cast
 
 import numpy as np
 import torch
 from huggingface_hub.utils import enable_progress_bars
 from sentence_transformers import CrossEncoder, SentenceTransformer
+from sentence_transformers.sentence_transformer.modules import StaticEmbedding
 from transformers import PreTrainedTokenizerBase
 from transformers.utils import logging as transformers_logging
 
@@ -20,7 +22,10 @@ RERANK_BATCH = 16
 UNLOADED_REMEDY = (
     "check the network and the name in SIFT_EMBED_MODEL or SIFT_RERANK_MODEL; for a gated model, log in: hf auth login"
 )
-FULL_REMEDY = "free the GPU's memory others hold, or set CUDA_VISIBLE_DEVICES=-1 to run the models on the CPU"
+SMALLER_REMEDY = "free memory others hold, or name a smaller model in SIFT_EMBED_MODEL or SIFT_RERANK_MODEL"
+FULL_REMEDIES = MappingProxyType(
+    {"cuda": "free the GPU's memory others hold, or set CUDA_VISIBLE_DEVICES=-1 to run the models on the CPU"}
+)
 
 
 class Tokenizer(Protocol):
@@ -38,6 +43,8 @@ class Capped(Protocol):
 class Embedder(Capped, Protocol):
     @property
     def tokenizer(self) -> object: ...
+
+    def __getitem__(self, index: int, /) -> object: ...
 
     def get_embedding_dimension(self) -> int | None: ...
 
@@ -86,24 +93,25 @@ def _device() -> Device:
 
 
 def _capped[T: Capped](model: T) -> T:
-    try:
-        model.max_seq_length = min(model.max_seq_length or MOST_TOKENS, MOST_TOKENS)
-    except AttributeError:
-        return model
+    model.max_seq_length = min(model.max_seq_length or MOST_TOKENS, MOST_TOKENS)
     return model
 
 
-def unloaded(name: str, error: BaseException) -> ModelUnavailableError:
-    said = str(error).strip().split("\n")[0]
-    remedy = FULL_REMEDY if too_large(error) else UNLOADED_REMEDY
+def _uncapped(model: Embedder) -> bool:
+    return isinstance(model[0], StaticEmbedding)
+
+
+def unloaded(name: str, error: BaseException, device: str) -> ModelUnavailableError:
+    said = str(error).strip().split("\n")[0] or type(error).__name__
+    remedy = FULL_REMEDIES.get(device, SMALLER_REMEDY) if too_large(error) else UNLOADED_REMEDY
     return ModelUnavailableError(f"the model {name} could not be loaded: {said}", remedy)
 
 
-def _loading[T](name: str, load: Callable[[], T]) -> T:
+def _loading[T](name: str, device: Device, load: Callable[[], T]) -> T:
     try:
         return load()
-    except (OSError, ValueError, RuntimeError) as error:
-        raise unloaded(name, error) from error
+    except (OSError, ValueError, RuntimeError, MemoryError) as error:
+        raise unloaded(name, error, device.name) from error
 
 
 def _embedder(name: str, device: Device) -> Loaded:
@@ -113,10 +121,11 @@ def _embedder(name: str, device: Device) -> Loaded:
         model = SentenceTransformer(
             repository, device=device.name, revision=revision, model_kwargs={"dtype": device.dtype}
         )
-        held = _capped(cast("Embedder", model))
-        return Loaded(held, width_of(name, held.get_embedding_dimension()))
+        held = cast("Embedder", model)
+        capped = held if _uncapped(held) else _capped(held)
+        return Loaded(capped, width_of(name, capped.get_embedding_dimension()))
 
-    return _loading(name, load)
+    return _loading(name, device, load)
 
 
 def _ranker(name: str, device: Device) -> Ranker:
@@ -126,7 +135,7 @@ def _ranker(name: str, device: Device) -> Ranker:
         model = CrossEncoder(repository, device=device.name, revision=revision, model_kwargs={"dtype": device.dtype})
         return _capped(cast("Ranker", model))
 
-    return _loading(name, load)
+    return _loading(name, device, load)
 
 
 def _counting(tokenizer: object) -> Tokenizer:

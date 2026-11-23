@@ -13,7 +13,7 @@ LEAST_BUDGET = 2 * GIB
 BATCH = 64
 GPU_THREADS = 1
 CPU_THREADS = torch.get_num_threads()
-OUT_OF_MEMORY = ("out of memory", "CUBLAS_STATUS_ALLOC_FAILED")
+OUT_OF_MEMORY = ("out of memory", "CUBLAS_STATUS_ALLOC_FAILED", "not enough memory", "paging file is too small")
 CUDA_FIX = "uv tool install --reinstall --torch-backend auto sift-rag"
 UNBUILT = f"an NVIDIA GPU is there, but this PyTorch has no CUDA: the models run on the CPU; to use it: {CUDA_FIX}"
 HIDDEN = "PyTorch can use no NVIDIA GPU here (see CUDA_VISIBLE_DEVICES and the driver): the models run on the CPU"
@@ -98,7 +98,7 @@ def nvidia() -> bool:
 
 
 def too_large(error: BaseException) -> bool:
-    return isinstance(error, torch.OutOfMemoryError) or any(sign in str(error) for sign in OUT_OF_MEMORY)
+    return isinstance(error, (torch.OutOfMemoryError, MemoryError)) or any(sign in str(error) for sign in OUT_OF_MEMORY)
 
 
 def emptied(device: Device, caches: Mapping[str, Callable[[], None]] = CACHES) -> None:

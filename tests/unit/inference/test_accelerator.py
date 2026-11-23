@@ -88,6 +88,9 @@ def test_out_of_memory_is_told_from_other_failures() -> None:
     assert too_large(RuntimeError("MPS backend out of memory (MPS allocated: 9 GiB)"))
     assert too_large(RuntimeError("CUDA error: out of memory"))
     assert too_large(RuntimeError("CUBLAS_STATUS_ALLOC_FAILED when calling cublasCreate"))
+    assert too_large(RuntimeError("DefaultCPUAllocator: not enough memory: you tried to allocate 8 GiB"))
+    assert too_large(OSError("[WinError 1455] The paging file is too small for this operation to complete"))
+    assert too_large(MemoryError())
     assert not too_large(RuntimeError("shapes do not match"))
 
 

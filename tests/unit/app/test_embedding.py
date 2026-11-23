@@ -219,3 +219,15 @@ def test_a_store_a_reset_could_not_clear_is_skipped_saying_why(home: Path) -> No
     assert len([event for event in said if isinstance(event, Noted)]) == 1
     assert outcome.outcome.reason.startswith("its vectors could not be forgotten: ")
     assert "damaged" in outcome.outcome.reason
+
+
+@pytest.mark.parametrize("reset", [False, True])
+def test_the_model_loads_once_however_many_collections_wait(home: Path, tmp_path: Path, *, reset: bool) -> None:
+    write(tmp_path / "more" / "comets.md", "# Comets\n\nIce and dust.\n")
+    add(home, AddCollection(str(tmp_path / "more")))
+    index(home, IndexCollections(), lambda _: None)
+    said: list[Event] = []
+    models = Hashed()
+    embed(home, EmbedCollections(reset=reset), said.append, models)
+    assert models.prepared == [True]
+    assert [event for event in said if isinstance(event, PhaseStarted)].count(PhaseStarted(Phase.LOAD, None)) == 1

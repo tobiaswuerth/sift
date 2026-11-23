@@ -48,9 +48,9 @@ def test_a_batch_too_large_for_memory_is_halved_until_it_fits_freeing_memory_eac
     found = in_batches(
         ["a"] * 5, [1] * 5, Shape(2, 8), Attempt(run, too_large, lambda: freed.append(sys.exc_info()[1]))
     )
-    assert sizes == [5, 4, 2, 2, 1]
+    assert sizes == [5, 2, 2, 1]
     assert (found.rows.shape, found.batch) == ((5, 2), 2)
-    assert freed == [None, None]
+    assert freed == [None]
 
 
 def test_other_failures_and_a_single_text_too_large_are_raised() -> None:
@@ -69,3 +69,16 @@ def test_other_failures_and_a_single_text_too_large_are_raised() -> None:
 
 def test_no_texts_are_no_rows() -> None:
     assert in_batches([], [], Shape(3, 4), Attempt(lengths, too_large, lambda: None)).rows.shape == (0, 3)
+
+
+def test_a_part_smaller_than_the_batch_is_halved_from_its_own_size() -> None:
+    sizes: list[int] = []
+
+    def run(texts: list[str]) -> Floats:
+        sizes.append(len(texts))
+        if len(texts) > 1:
+            raise TooLargeError
+        return lengths(texts)
+
+    found = in_batches(["a", "b"], [1, 1], Shape(2, 64), Attempt(run, too_large, lambda: None))
+    assert (sizes, found.batch) == ([2, 1, 1], 1)

@@ -12,7 +12,17 @@ from sift.api.ids import ChunkId, owner
 from sift.api.search import MOST_HITS, Hit, SearchHybrid, SearchResult
 from sift.app import searching
 from sift.app.search import Wanted, found
-from sift.app.vsearch import ASKED, Asked, Held, alike, embedded_by, near, no_vectors, query_vector
+from sift.app.vsearch import (
+    ASKED,
+    QUERY_REMEDY,
+    Asked,
+    Held,
+    alike,
+    embedded_by,
+    near,
+    no_vectors,
+    query_vector,
+)
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.codes import Floats
 from sift.domain.query.expressions import NOTHING, Expression
@@ -144,6 +154,8 @@ def _scored(models: Models, request: SearchHybrid, candidates: list[Candidate], 
         for each, found_names in zip(candidates, names, strict=True)
     ]
     rerank = models.rerank(request.query, shown).astype(np.float64)
+    if not bool(np.isfinite(rerank).all()):
+        raise InvalidRequestError("the reranker gave no score for some passages", QUERY_REMEDY)
     cosine = np.array([cosines.get(each.chunk, np.nan) for each in candidates], np.float64)
     return blend(rerank, cosine, np.array([bool(found_names) for found_names in names], np.bool_)).astype(np.float32)
 

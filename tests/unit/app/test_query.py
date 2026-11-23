@@ -1,8 +1,11 @@
 import contextlib
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import override
 
+import numpy as np
 import pytest
 
 from sift.api.collections import AddCollection
@@ -16,7 +19,7 @@ from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.vsearch import Asked
 from sift.domain.arrays import Ids, floats
-from sift.domain.codec.codes import Halves
+from sift.domain.codec.codes import Floats, Halves
 from sift.domain.errors import DamagedError
 from sift.storage.database import Reading
 from sift.storage.vectors import EMBED_REMEDY, vectors_of
@@ -234,3 +237,15 @@ def test_a_passage_not_embedded_yet_keeps_the_reranker_s_score_as_it_is(home: Pa
     (alone,) = floats(Hashed().rerank(asked, ["Halo again\n\n# Halo again\n\nDark matter halo models."]))
     assert hits["more/halo.md"] == alone
     assert hits["notes/halo.md"] > alone
+
+
+@dataclass(frozen=True, slots=True)
+class Overflowing(Hashed):
+    @override
+    def rerank(self, query: str, texts: Sequence[str]) -> Floats:
+        return Hashed.rerank(self, query, texts) + np.float32(np.nan)
+
+
+def test_a_reranker_giving_no_score_is_refused_not_ranked_at_random(home: Path) -> None:
+    with pytest.raises(InvalidRequestError, match="the reranker gave no score"):
+        query(home, SearchHybrid("dark matter halo models"), Overflowing())
