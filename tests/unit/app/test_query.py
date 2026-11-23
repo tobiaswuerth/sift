@@ -18,7 +18,7 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.query import query
-from sift.app.vsearch import Asked
+from sift.app.vector_candidates import Rescoring
 from sift.domain.arrays import Ids, floats
 from sift.domain.codec.codes import Floats, Halves
 from sift.domain.errors import DamagedError
@@ -68,6 +68,18 @@ def test_keyword_and_semantic_candidates_are_reranked_each_document_once(home: P
     assert len({hit.id for hit in result.hits}) == len(result.hits) == 3
     assert result.hits[0].text == "# Halo\n\nDark matter halo models."
     assert [hit.score for hit in result.hits] == sorted((hit.score for hit in result.hits), reverse=True)
+
+
+def test_copies_of_one_work_widen_the_candidates_until_k_works_are_found(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    for name in ("a", "b", "c"):
+        for n in range(4):
+            text = f"---\ndoi: 10.1000/w{n}\n---\n# Work {n}\n\n{'quasar ' * (4 - n)}light.\n"
+            write(tmp_path / name / f"w{n}.md", text)
+        collection(home, tmp_path / name)
+    found = query(home, SearchHybrid("quasar", k=4, candidates=4), Hashed())
+    assert len(found.hits) == 4
+    assert [len(hit.also) for hit in found.hits] == [2, 2, 2, 2]
 
 
 def test_the_reranker_reads_the_title_the_front_matter_the_query_names_and_the_text(home: Path) -> None:
@@ -169,7 +181,7 @@ def test_a_store_lost_while_the_cosines_of_its_candidates_are_read_is_passed_ove
             raise DamagedError("a vector is unreadable")
         return vectors_of(transaction, chunks)
 
-    result = query(home, SearchHybrid("dark matter halo models"), Hashed(), Asked(1000, reading))
+    result = query(home, SearchHybrid("dark matter halo models"), Hashed(), Rescoring(1000, reading))
     assert len(result.unsearched) == 1
     assert result.hits
 

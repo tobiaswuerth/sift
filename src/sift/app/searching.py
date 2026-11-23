@@ -1,30 +1,33 @@
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack, closing
 from dataclasses import dataclass, field, replace
-from functools import partial
 from pathlib import Path
 from typing import Protocol
 
+import numpy as np
+
 from sift.api.errors import InvalidRequestError, StoreUnavailableError
-from sift.api.ids import ChunkId, owner
-from sift.api.search import MOST_HITS, Hit, Options, SearchResult, Unsearched
+from sift.api.search import MOST_HITS, Options, Unsearched
 from sift.app.collections import chosen_or_active
 from sift.app.linked import LeftOut, Narrowing, condition_in, narrowing
 from sift.domain.query import fields as shown
-from sift.domain.rank.works import one_per_work, work_of_fields
-from sift.domain.text.records import public_id
+from sift.domain.query.expressions import Expression
+from sift.retrieval.keyword import lists
+from sift.retrieval.keyword.search import Prepared
+from sift.retrieval.vector.nearest import Coded, coded
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
-from sift.storage.documents import fields_by_document, passages, texts
+from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
 from sift.storage.store import open_store, unavailable_if_unusable
+from sift.storage.vectors import EMBED_REMEDY, codes_of, left, model_of, width_held
 
-WIDER = 2
 FEW_REMEDY = "ask for one result or more, e.g. -k 10"
 MANY_REMEDY = f"ask for {MOST_HITS:,} results at most, and narrow the query to reach the rest"
+UNEMBEDDED_REMEDY = "run sift embed"
 
 
-class Scored(Protocol):
+class ScoredChunk(Protocol):
     @property
     def chunk(self) -> int: ...
 
@@ -32,11 +35,38 @@ class Scored(Protocol):
     def score(self) -> float: ...
 
 
+@dataclass(frozen=True, slots=True)
+class Ranked:
+    found: Sequence[ScoredChunk]
+    cut: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Keywords:
+    store: lists.Opened
+    allowed: Passing | None
+    prepared: dict[Expression, Prepared] = field(default_factory=dict[Expression, Prepared])
+
+
+@dataclass(frozen=True, slots=True)
+class Vectors:
+    coded: Coded
+    allowed: Passing | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Wants:
+    keywords: bool = False
+    model: str | None = None
+    vectors_required: bool = False
+
+
 @dataclass(frozen=True, slots=True, eq=False)
-class Searching[S]:
+class Searching:
     collection: Collection
     transaction: Reading
-    held: S
+    keywords: Keywords | None
+    vectors: Vectors | None
     resources: ExitStack
 
 
@@ -46,21 +76,21 @@ class StoreLostError(Exception):
 
 
 @dataclass(slots=True)
-class Kept[S]:
-    searching: list[Searching[S]] = field(default_factory=list[Searching[S]])
+class Open:
+    searching: list[Searching] = field(default_factory=list[Searching])
     unsearched: list[Unsearched] = field(default_factory=list[Unsearched])
     ruled_out: int = 0
 
     def said(self, collection: Collection, error: StoreUnavailableError) -> None:
         self.unsearched.append(Unsearched(collection.name, error.message, error.remedy))
 
-    def dropped(self, each: Searching[S], error: StoreUnavailableError) -> None:
+    def dropped(self, each: Searching, error: StoreUnavailableError) -> None:
         self.searching.remove(each)
         self.said(each.collection, error)
         abandon(each.transaction)
         each.resources.close()
 
-    def guarded[T](self, each: Searching[S], work: Callable[[], T]) -> T:
+    def guarded[T](self, each: Searching, work: Callable[[], T]) -> T:
         try:
             with unavailable_if_unusable(each.collection.store):
                 return work()
@@ -71,6 +101,12 @@ class Kept[S]:
     def closed(self) -> None:
         for one in list(self.searching):
             self.guarded(one, one.resources.close)
+
+    def keyworded(self) -> list[tuple[Searching, Keywords]]:
+        return [(one, one.keywords) for one in self.searching if one.keywords is not None]
+
+    def embedded(self) -> list[tuple[Searching, Vectors]]:
+        return [(one, one.vectors) for one in self.searching if one.vectors is not None]
 
 
 def despite_losses[T](work: Callable[[], T]) -> T:
@@ -93,32 +129,46 @@ def checked(request: Options) -> None:
     shown.checked(request.fields, request.sort)
 
 
-def narrowed(home: Path, request: Options, left_out: LeftOut | None = None) -> Narrowing:
-    return narrowing(home, request, collections_of(home, request.collection), left_out)
-
-
-type Hold[S] = Callable[[Reading, Passing | None], S]
-
-
-def fielded(request: Options) -> bool:
-    return bool(request.fields) or request.sort is not None
-
-
-def presented(answered: Sequence[tuple[int, Hit]], request: Options) -> list[tuple[int, Hit]]:
-    held = [hit.fields or {} for _, hit in answered]
-    order = range(len(answered)) if request.sort is None else shown.order(held, request.sort)
-    wanted = request.fields
-    return [
-        (answered[at][0], replace(answered[at][1], fields=shown.picked(held[at], wanted) if wanted else None))
-        for at in order
-    ]
-
-
 def collections_of(home: Path, name: str | None) -> tuple[Collection, ...]:
     return chosen_or_active(home, () if name is None else (name,))
 
 
-def _searching[S](one: Collection, asked: Narrowing, hold: Hold[S]) -> Searching[S] | None:
+def narrowed(home: Path, request: Options, left_out: LeftOut | None = None) -> Narrowing:
+    return narrowing(home, request, collections_of(home, request.collection), left_out)
+
+
+def no_vectors() -> Vectors:
+    return Vectors(coded(np.zeros(0, np.int64), np.zeros((0, 0), np.uint8), 0))
+
+
+def embedded_by(model: str, transaction: Reading) -> Vectors | None:
+    found = model_of(transaction)
+    if found is None:
+        return None
+    if found != model:
+        raise StoreUnavailableError(f"its vectors are of {found}, not of {model}", EMBED_REMEDY.format(model=model))
+    ids, bits = codes_of(transaction)
+    return Vectors(coded(ids, bits, width_held(transaction) or 0))
+
+
+def _vectors(model: str, transaction: Reading, wants: Wants) -> Vectors:
+    found = embedded_by(model, transaction)
+    if found is not None:
+        return found
+    if wants.vectors_required and left(transaction):
+        raise StoreUnavailableError("it holds no vectors yet", UNEMBEDDED_REMEDY)
+    return no_vectors()
+
+
+def _held(transaction: Reading, allowed: Passing | None, wants: Wants) -> tuple[Keywords | None, Vectors | None]:
+    if wants.keywords:
+        refuse_stale(transaction)
+    keywords = Keywords(lists.opened(transaction), allowed) if wants.keywords else None
+    vectors = None if wants.model is None else replace(_vectors(wants.model, transaction, wants), allowed=allowed)
+    return keywords, vectors
+
+
+def _searching(one: Collection, asked: Narrowing, wants: Wants) -> Searching | None:
     resources = ExitStack()
     with unavailable_if_unusable(one.store):
         try:
@@ -129,124 +179,23 @@ def _searching[S](one: Collection, asked: Narrowing, hold: Hold[S]) -> Searching
                 resources.close()
                 return None
             allowed = None if found is None else Passing(transaction, found)
-            return Searching(one, transaction, hold(transaction, allowed), resources)
+            return Searching(one, transaction, *_held(transaction, allowed, wants), resources)
         except BaseException:
             resources.close()
             raise
 
 
-def opened[S](cleanup: ExitStack, asked: Narrowing, hold: Hold[S]) -> Kept[S]:
-    kept = Kept[S](ruled_out=asked.ruled_out)
+def opened(cleanup: ExitStack, asked: Narrowing, wants: Wants) -> Open:
+    held = Open(ruled_out=asked.ruled_out)
     for one in asked.collections:
         try:
-            each = _searching(one, asked, hold)
+            each = _searching(one, asked, wants)
         except StoreUnavailableError as error:
-            kept.said(one, error)
+            held.said(one, error)
             continue
         if each is None:
-            kept.ruled_out += 1
+            held.ruled_out += 1
             continue
         cleanup.callback(each.resources.close)
-        kept.searching.append(each)
-    return kept
-
-
-@dataclass(frozen=True, slots=True)
-class Seen:
-    chunk: int
-    hit: Hit
-    work: str | None
-
-
-class Rounded(Protocol):
-    @property
-    def found(self) -> Sequence[Scored]: ...
-
-    @property
-    def cut(self) -> bool: ...
-
-
-@dataclass(frozen=True, slots=True)
-class Round:
-    found: Sequence[Scored]
-    cut: bool = False
-
-
-def _read[S](
-    one: Searching[S], chunks: Sequence[ChunkId], scores: Mapping[int, float], request: Options
-) -> dict[int, Seen]:
-    held = passages(one.transaction, chunks)
-    documents = sorted({passage.document for passage in held.values()})
-    whole = {} if request.compact else texts(one.transaction, documents)
-    fields = fields_by_document(one.transaction, documents)
-    shown = fielded(request)
-    return {
-        chunk: Seen(
-            chunk,
-            Hit(
-                public_id(one.collection.name, passage.path, passage.key),
-                passage.title,
-                f"{passage.first_line}-{passage.last_line}",
-                scores[chunk],
-                None if request.compact else whole[passage.document][passage.start : passage.start + passage.length],
-                fields=fields.get(passage.document) if shown else None,
-            ),
-            work_of_fields(fields.get(passage.document, {})),
-        )
-        for chunk, passage in held.items()
-    }
-
-
-def _copied(best: Seen, copy: Seen) -> Seen:
-    return replace(best, hit=replace(best.hit, also=(*best.hit.also, copy.hit.id)))
-
-
-def _work(each: Seen) -> str | None:
-    return each.work
-
-
-def hits[S](
-    kept: Kept[S], found: Sequence[Scored], request: Options, copy_of: str | None = None
-) -> list[tuple[int, Hit]]:
-    scores = {each.chunk: each.score for each in found}
-    read_all: dict[int, Seen] = {}
-    for one in list(kept.searching):
-        mine = [ChunkId(each.chunk) for each in found if owner(each.chunk) == one.collection.id]
-        read_all |= kept.guarded(one, partial(_read, one, mine, scores, request)) if mine else {}
-    seen = [read_all[each.chunk] for each in found if copy_of is None or read_all[each.chunk].work != copy_of]
-    works = seen if request.all_passages else one_per_work(seen, _work, _copied)
-    return [(each.chunk, each.hit) for each in works]
-
-
-def always() -> bool:
-    return True
-
-
-def answered[S](
-    kept: Kept[S],
-    rank: Callable[[int], Rounded],
-    request: Options,
-    copy_of: str | None = None,
-    more: Callable[[], bool] = always,
-) -> tuple[list[tuple[int, Hit]], bool]:
-    wanted = request.k
-    while True:
-        found = rank(wanted)
-        shown = hits(kept, found.found, request, copy_of)
-        if len(shown) >= request.k or len(found.found) < wanted or found.cut:
-            return presented(shown[: request.k], request), found.cut
-        if not more():
-            return presented(shown, request), True
-        wanted *= WIDER
-
-
-def result[S](kept: Kept[S], answered: Sequence[tuple[int, Hit]], *, partial: bool) -> SearchResult:
-    despite_losses(kept.closed)
-    live = {one.collection.id for one in kept.searching}
-    found = tuple(hit for chunk, hit in answered if owner(chunk) in live)
-    return SearchResult(found, len(kept.searching) + kept.ruled_out, tuple(kept.unsearched), partial=partial)
-
-
-def also_unsearched(found: SearchResult, more: Sequence[Unsearched]) -> SearchResult:
-    said = {each.collection for each in found.unsearched}
-    return replace(found, unsearched=(*found.unsearched, *(each for each in more if each.collection not in said)))
+        held.searching.append(each)
+    return held

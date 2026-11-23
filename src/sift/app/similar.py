@@ -9,11 +9,12 @@ from sift.api.errors import InvalidRequestError
 from sift.api.ids import DocumentId
 from sift.api.links import FindSimilar
 from sift.api.search import SearchResult
-from sift.app import searching
+from sift.app import hits, searching
 from sift.app.collections import chosen_or_active
 from sift.app.linked import LeftOut
 from sift.app.notes import Note, note_of, read_in
-from sift.app.vsearch import ASKED, Asked, alike, answered_near, held_within, itself
+from sift.app.searching import Wants
+from sift.app.vector_candidates import RESCORING, Rescoring, alike, nearest_hits
 from sift.domain.codec.codes import Floats
 from sift.domain.rank.works import work_of_fields
 from sift.storage.database import Reading
@@ -48,13 +49,13 @@ def _like(note: Note, whole: str, transaction: Reading) -> Like:
     return Like(mean / length, model, work)
 
 
-def similar(home: Path, request: FindSimilar, asked: Asked = ASKED) -> SearchResult:
+def similar(home: Path, request: FindSimilar, asked: Rescoring = RESCORING) -> SearchResult:
     searching.checked(request)
     named = note_of(home, chosen_or_active(home, ()), request.id)
     like = read_in(named.note.collection, partial(_like, named.note, request.id))
     narrowing = searching.narrowed(home, request, LeftOut(named.note, linking=False))
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, narrowing, partial(held_within, like.model))
-        alike(kept, itself, like.model, like.query)
-        found = searching.result(kept, answered_near(kept, request, like.query, asked, like.work), partial=False)
-    return searching.also_unsearched(found, named.unsearched)
+        stores = searching.opened(cleanup, narrowing, Wants(model=like.model, vectors_required=True))
+        alike(stores, like.model, like.query)
+        found = hits.result(stores, nearest_hits(stores, request, like.query, asked, like.work), partial=False)
+    return hits.also_unsearched(found, named.unsearched)

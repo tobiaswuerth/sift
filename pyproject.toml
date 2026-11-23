@@ -185,6 +185,11 @@ type = "acyclic_siblings"
 ancestors = ["sift", "sift.**"]
 
 [[tool.importlinter.contracts]]
+name = "The searches share engines and hits, never each other"
+type = "independence"
+modules = ["sift.app.search", "sift.app.vsearch", "sift.app.query", "sift.app.mentions", "sift.app.similar"]
+
+[[tool.importlinter.contracts]]
 name = "The core performs no I/O"
 type = "forbidden"
 source_modules = ["sift.api", "sift.domain"]

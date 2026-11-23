@@ -17,7 +17,8 @@ from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.search import search
-from sift.app.vsearch import Asked, Exact, vsearch
+from sift.app.vector_candidates import ExactRows, Rescoring
+from sift.app.vsearch import vsearch
 from sift.domain.arrays import Ids
 from sift.storage.database import Reading
 from sift.storage.vectors import documents_embedded, vectors_of
@@ -136,7 +137,7 @@ def test_a_filter_letting_few_documents_through_ends_the_semantic_search_once_th
         return counted[-1]
 
     one = (Filter("rank", ANY, (1,)),)
-    found = vsearch(home, SearchVectors("pigment", k=5, filters=one), Hashed(), Asked(1, vectors_of, count))
+    found = vsearch(home, SearchVectors("pigment", k=5, filters=one), Hashed(), Rescoring(1, vectors_of, count))
     assert (days(found), counted) == (["2024-02-10"], [])
 
 
@@ -161,11 +162,11 @@ def test_a_store_lost_while_its_filter_is_checked_or_listed_is_passed_over(tmp_p
     index(home, IndexCollections(), lambda _: None)
     embed(home, EmbedCollections(), lambda _: None, Hashed())
     request = SearchVectors("pigment binder", k=3, path="even/*")
-    kept = vsearch(home, request, Hashed(), Asked(3, vectors_of))
+    kept = vsearch(home, request, Hashed(), Rescoring(3, vectors_of))
     assert len(kept.hits) == 3
     assert all("/even/" in hit.id for hit in kept.hits)
     damage_table(home / "collections" / "first.sqlite", "documents")
-    found = vsearch(home, request, Hashed(), Asked(3, vectors_of))
+    found = vsearch(home, request, Hashed(), Rescoring(3, vectors_of))
     assert [each.collection for each in found.unsearched] == ["first"]
     assert found.hits
     assert all(hit.id.startswith("second/even/") for hit in found.hits)
@@ -177,7 +178,7 @@ def _gone() -> None:
 
 def test_work_that_loses_its_store_drops_it_says_why_and_ends_the_round(home: Path) -> None:
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, searching.narrowed(home, SearchKeywords("x")), lambda _one, _allowed: None)
+        kept = searching.opened(cleanup, searching.narrowed(home, SearchKeywords("x")), searching.Wants())
         (each,) = kept.searching
         with pytest.raises(searching.StoreLostError):
             kept.guarded(each, _gone)
@@ -219,12 +220,12 @@ def test_once_a_store_is_lost_no_other_store_is_read_for_that_round(tmp_path: Pa
     embed(home, EmbedCollections(), lambda _: None, Hashed())
     reads: list[int] = []
 
-    def read(transaction: Reading, chunks: Ids) -> Exact:
+    def read(transaction: Reading, chunks: Ids) -> ExactRows:
         reads.append(len(chunks))
         if len(reads) == 1:
             raise StoreUnavailableError("the store is damaged", None)
         return vectors_of(transaction, chunks)
 
-    found = vsearch(home, SearchVectors("pigment binder", k=3), Hashed(), Asked(3, read))
+    found = vsearch(home, SearchVectors("pigment binder", k=3), Hashed(), Rescoring(3, read))
     assert [each.collection for each in found.unsearched] == ["first"]
     assert len(reads) == 2

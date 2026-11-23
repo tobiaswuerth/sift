@@ -209,10 +209,9 @@ def test_a_store_no_document_of_can_pass_the_links_is_not_searched(linked: Path)
     narrowing = searching.narrowed(
         linked, SearchKeywords("note", links_to=("Hans Müller",), linked_from=("Anna Keller",))
     )
-    held: list[str] = []
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, narrowing, lambda _transaction, _allowed: held.append("held"))
-        assert (kept.searching, held, kept.ruled_out) == ([], [], 2)
+        stores = searching.opened(cleanup, narrowing, searching.Wants(keywords=True))
+        assert (stores.searching, stores.ruled_out) == ([], 2)
 
 
 def test_a_note_gone_before_its_store_is_read_lets_no_document_through(linked: Path) -> None:
