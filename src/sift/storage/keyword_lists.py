@@ -56,10 +56,6 @@ class Volume(NamedTuple):
     passages: int
 
 
-class Chunk(NamedTuple):
-    id: int
-
-
 class Owner(NamedTuple):
     id: int
     document: int
@@ -75,14 +71,14 @@ def segments(transaction: Reading) -> list[SegmentRow]:
     return rows(transaction, SegmentRow, sql)
 
 
-class Listed(NamedTuple):
+class IdsRow(NamedTuple):
     ids: str
 
 
 def dead_within(transaction: Reading, low: int, high: int) -> Ids:
     sql = """SELECT json_group_array(chunk) FROM
              (SELECT chunk FROM keyword_dead WHERE chunk BETWEEN ? AND ? ORDER BY chunk)"""
-    (found,) = rows(transaction, Listed, sql, (low, high))
+    (found,) = rows(transaction, IdsRow, sql, (low, high))
     return np.array(json.loads(found.ids), np.int64)
 
 

@@ -6,7 +6,7 @@ from sift.api.events import Noted
 from sift.app.filing import Job, Tally
 from sift.domain.plan.indexing import Stat
 from sift.domain.text.notes import Document
-from sift.domain.text.records import Chosen, Skipped, record_of
+from sift.domain.text.records import Chosen, SkippedLine, record_of
 from sift.storage.database import WritingDocuments
 from sift.storage.documents import (
     SourceId,
@@ -21,15 +21,15 @@ from sift.storage.taken import keyed, nothing_taken, take, untaken
 
 SHOWN = 5
 
-type Line = tuple[int, Document | Skipped]
+type Line = tuple[int, Document | SkippedLine]
 
 
 @dataclass(frozen=True, slots=True)
 class Skips:
     count: int = 0
-    first: tuple[Skipped, ...] = ()
+    first: tuple[SkippedLine, ...] = ()
 
-    def __add__(self, more: Sequence[Skipped]) -> "Skips":
+    def __add__(self, more: Sequence[SkippedLine]) -> "Skips":
         shown = tuple(sorted((*self.first, *more), key=lambda each: each.line)[:SHOWN])
         return Skips(self.count + len(more), shown)
 
@@ -41,35 +41,35 @@ class Skips:
         return f"{self.count:,} line{'s' if self.count != 1 else ''} skipped ({shown}{more})"
 
 
-def _records(lines: Iterable[tuple[int, str | Skipped]], chosen: Chosen, most: int) -> Iterator[Line]:
+def _records(lines: Iterable[tuple[int, str | SkippedLine]], chosen: Chosen, most: int) -> Iterator[Line]:
     for number, line in lines:
         if not line:
             continue
-        found = line if isinstance(line, Skipped) else record_of(line, number, chosen)
+        found = line if isinstance(line, SkippedLine) else record_of(line, number, chosen)
         if isinstance(found, Document) and (size := len(found.text.encode())) > most:
-            yield number, Skipped(number, f"{size:,} bytes as text, more than the {most:,} a document holds")
+            yield number, SkippedLine(number, f"{size:,} bytes as text, more than the {most:,} a document holds")
         else:
             yield number, found
 
 
-def _firsts(read: Sequence[Line], new: frozenset[str]) -> tuple[list[Document], list[Skipped]]:
+def _firsts(read: Sequence[Line], new: frozenset[str]) -> tuple[list[Document], list[SkippedLine]]:
     kept: list[Document] = []
-    skipped: list[Skipped] = []
+    skipped: list[SkippedLine] = []
     used: set[str] = set()
     for number, each in read:
-        if isinstance(each, Skipped):
+        if isinstance(each, SkippedLine):
             skipped.append(each)
         elif each.key in new and each.key not in used:
             used.add(each.key)
             kept.append(each)
         else:
-            skipped.append(Skipped(number, f"id {each.key} used twice"))
+            skipped.append(SkippedLine(number, f"id {each.key} used twice"))
     return kept, skipped
 
 
 def _batch(
     transaction: WritingDocuments, source: SourceId, path: str, read: Sequence[Line]
-) -> tuple[Tally, list[Skipped]]:
+) -> tuple[Tally, list[SkippedLine]]:
     keys = [each.key for _, each in read if isinstance(each, Document)]
     documents, skipped = _firsts(read, take(transaction, keys))
     held = keyed(transaction, source, [each.key for each in documents])

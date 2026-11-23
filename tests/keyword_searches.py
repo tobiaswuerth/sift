@@ -14,7 +14,7 @@ from sift.domain.codec.segments import Shape
 from sift.domain.plan.segments import Policy
 from sift.domain.query.expressions import And, Expression, Leaf, Not, Or, Phrase, Prefix, Term
 from sift.retrieval.keyword.lists import Opened, opened
-from sift.retrieval.keyword.search import Found
+from sift.retrieval.keyword.search import FoundChunk
 from sift.storage.database import BATCHES, Batches, Connection, reading
 from tests.keyword_stores import COLUMNS, SMALL, Content, Round, applied, instances, opened_store, texts
 
@@ -156,7 +156,7 @@ def by_score_then_chunk(ranked: list[tuple[int, float]]) -> list[tuple[int, floa
     return [each for group in groups for each in sorted(group)]
 
 
-def same(got: tuple[Found, ...], more: list[tuple[int, float]], k: int, query: object) -> None:
+def same(got: tuple[FoundChunk, ...], more: list[tuple[int, float]], k: int, query: object) -> None:
     want = by_score_then_chunk(more)[:k]
     assert len(got) == len(want), query
     assert np.allclose([each.score for each in got], [score for _, score in want], rtol=1e-9), (query, got, want)

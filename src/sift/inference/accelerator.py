@@ -42,7 +42,7 @@ class Cuda(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class Found:
+class Hardware:
     mps: bool
     nvidia: bool
     cuda_build: str | None
@@ -88,13 +88,13 @@ def _on_cuda(cuda: Cuda) -> Device:
     return Device("cuda", dtype, threads=GPU_THREADS)
 
 
-def _unused(found: Found) -> str | None:
+def _unused(found: Hardware) -> str | None:
     if not found.nvidia:
         return None
     return UNBUILT if found.cuda_build is None else HIDDEN
 
 
-def chosen(cuda: Cuda, found: Found) -> Device:
+def chosen(cuda: Cuda, found: Hardware) -> Device:
     if cuda.is_available():
         return _on_cuda(cuda)
     if found.mps:

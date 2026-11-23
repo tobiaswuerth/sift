@@ -4,7 +4,7 @@ from typing import NamedTuple
 
 from sift.domain.text.links import LinkKind, NameKind
 from sift.domain.text.resolving import Candidate
-from sift.storage.database import Reading, rows
+from sift.storage.database import Count, KeyRow, Reading, rows
 
 NAMED = """SELECT n.kind, d.id, s.path FROM names n JOIN documents d ON d.id = n.document
            JOIN sources s ON s.id = d.source WHERE n.key = ? ORDER BY s.path"""
@@ -29,7 +29,7 @@ DOUBTFUL = """SELECT l.document, s.path, l.field, l.line, l.kind, l.target, l.ke
               ORDER BY l.document, l.ordinal"""
 
 
-class Named(NamedTuple):
+class NameRow(NamedTuple):
     kind: str
     document: int
     path: str
@@ -47,14 +47,6 @@ class LinkRow(NamedTuple):
     shown: str | None
 
 
-class Key(NamedTuple):
-    key: str
-
-
-class Count(NamedTuple):
-    held: int
-
-
 class Titled(NamedTuple):
     document: int
     path: str
@@ -63,7 +55,7 @@ class Titled(NamedTuple):
 
 
 def named(transaction: Reading, key: str) -> tuple[list[Candidate], list[Candidate]]:
-    found = rows(transaction, Named, NAMED, (key,))
+    found = rows(transaction, NameRow, NAMED, (key,))
     by_name = [Candidate(each.document, each.path) for each in found if each.kind == NameKind.NAME]
     by_alias = [Candidate(each.document, each.path) for each in found if each.kind == NameKind.ALIAS]
     return by_name, by_alias
@@ -79,7 +71,7 @@ def links_out(transaction: Reading, document: int, field: str | None) -> list[Li
 
 def links_held(transaction: Reading) -> int:
     (found,) = rows(transaction, Count, "SELECT count(*) AS held FROM links")
-    return found.held
+    return found.n
 
 
 def links_keyed(transaction: Reading, key: str, field: str | None) -> list[LinkRow]:
@@ -87,7 +79,7 @@ def links_keyed(transaction: Reading, key: str, field: str | None) -> list[LinkR
 
 
 def keys_of(transaction: Reading, document: int) -> list[str]:
-    return [each.key for each in rows(transaction, Key, KEYS, (document,))]
+    return [each.key for each in rows(transaction, KeyRow, KEYS, (document,))]
 
 
 def links_into(transaction: Reading, keys: Sequence[str], document: int, field: str | None) -> list[LinkRow]:

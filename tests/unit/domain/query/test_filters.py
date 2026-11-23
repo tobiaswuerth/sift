@@ -2,7 +2,7 @@ import pytest
 
 from sift.api.errors import InvalidRequestError
 from sift.api.filters import Filter, FilterValue, Operator
-from sift.domain.query.filters import Linked, Linking, condition, linkings
+from sift.domain.query.filters import Linked, LinkFilter, condition, linkings
 
 ANY = Operator.ANY
 
@@ -46,7 +46,7 @@ def test_wikilink_values_of_any_and_none_are_the_links_to_follow() -> None:
         one("org", ANY, "[[Acme AG]]"),
         one("year", Operator.ABOVE, "[[2024]]"),
     ]
-    assert linkings(asked) == (Linking("org", ANY, "Acme AG"), Linking("org", Operator.NONE, "Beta"))
+    assert linkings(asked) == (LinkFilter("org", ANY, "Acme AG"), LinkFilter("org", Operator.NONE, "Beta"))
 
 
 def test_a_search_kept_to_some_documents_asks_for_a_condition() -> None:

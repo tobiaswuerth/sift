@@ -7,7 +7,7 @@ from sift.domain.text.notes import Document
 from sift.domain.text.records import (
     NO_CHOICE,
     Chosen,
-    Skipped,
+    SkippedLine,
     public_id,
     record_of,
     record_path,
@@ -84,7 +84,7 @@ def test_a_record_without_an_id_is_named_by_its_line_and_fields_may_be_chosen() 
     ],
 )
 def test_a_line_without_a_record_says_why(line: str, why: str) -> None:
-    assert record_of(line, 3, NO_CHOICE) == Skipped(3, why)
+    assert record_of(line, 3, NO_CHOICE) == SkippedLine(3, why)
 
 
 def test_what_sqlite_cannot_store_is_made_storable() -> None:

@@ -10,7 +10,7 @@ type Run = Callable[[list[str]], Floats]
 
 
 @dataclass(frozen=True, slots=True)
-class Shape:
+class BatchShape:
     width: int
     batch: int
 
@@ -28,7 +28,7 @@ class Batched:
     batch: int
 
 
-def in_batches(texts: Sequence[str], lengths: Sequence[int], shape: Shape, attempt: Attempt) -> Batched:
+def in_batches(texts: Sequence[str], lengths: Sequence[int], shape: BatchShape, attempt: Attempt) -> Batched:
     order = np.argsort(-np.array(lengths, np.int64), kind="stable")
     rows, batch = np.empty((len(texts), shape.width), np.float32), shape.batch
     start = 0

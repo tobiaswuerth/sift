@@ -4,14 +4,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ascending, Ids, among, distinct, ints
+from sift.domain.arrays import Ascending, Ids, Scores, among, distinct, ints
 from sift.domain.query.expressions import Expression, Leaf, Phrase, Prefix, Term, leaves
 from sift.domain.rank.best import Best, may_reach, offered, ranked
-from sift.domain.rank.bm25 import Scores, idf
+from sift.domain.rank.bm25 import idf
 from sift.domain.rank.boolean import counted, may_hold
 from sift.retrieval.allowed import AllowedDocuments
 from sift.retrieval.keyword.leaves import materialized, reads_of, refused
-from sift.retrieval.keyword.lists import Opened, Postings, Stored, owners, stored
+from sift.retrieval.keyword.lists import Opened, PostingArrays, StoredList, owners, stored
 from sift.retrieval.keyword.scoring import Query, Scored, bounds, merged_within, scored, within
 from sift.storage.keyword_lists import frequencies
 
@@ -39,7 +39,7 @@ class Searched:
 
 
 @dataclass(frozen=True, slots=True)
-class Found:
+class FoundChunk:
     chunk: int
     document: int
     score: float
@@ -184,13 +184,13 @@ def _tokens(unique: Sequence[Leaf]) -> list[str]:
     return sorted({token for each in found for token in ((each,) if isinstance(each, str) else each)})
 
 
-type Lists = dict[Leaf, list[Stored] | Postings]
+type ReadLists = dict[Leaf, list[StoredList] | PostingArrays]
 
 
 @dataclass(frozen=True, slots=True)
 class Prepared:
     store: Opened
-    lists: Lists
+    lists: ReadLists
     df: Mapping[Leaf, int]
     allowed: AllowedDocuments | None = None
 
@@ -199,7 +199,7 @@ class Prepared:
 class Planned:
     store: Opened
     leaves: tuple[Leaf, ...]
-    lists: dict[str, list[Stored]]
+    lists: dict[str, list[StoredList]]
     reads: Mapping[Phrase | Prefix, int]
 
 
@@ -221,7 +221,7 @@ def refuse_reading_too_much(plans: Sequence[Planned], tuning: Tuning = TUNING) -
 def prepared(plan: Planned, *, allowed: AllowedDocuments | None = None) -> Prepared:
     store, lists = plan.store, plan.lists
     terms = frequencies(store.transaction, [leaf.text for leaf in plan.leaves if isinstance(leaf, Term)])
-    found: Lists = {}
+    found: ReadLists = {}
     df: dict[Leaf, int] = {}
     for leaf in plan.leaves:
         if isinstance(leaf, Term):
@@ -249,16 +249,16 @@ def searched(held: Prepared, query: Query, best: Best, tuning: Tuning = TUNING, 
     return _searched(Pass(held.store, query, lists, held.allowed), best, tuning, expired)
 
 
-def found_in(best: Best) -> tuple[Found, ...]:
+def found_in(best: Best) -> tuple[FoundChunk, ...]:
     return tuple(
-        Found(chunk, document, score)
+        FoundChunk(chunk, document, score)
         for (chunk, score), document in zip(ranked(best), ints(best.documents), strict=True)
     )
 
 
 def search(
     stores: Sequence[Opened], expression: Expression, k: int, *, by_document: bool = True, tuning: Tuning = TUNING
-) -> tuple[Found, ...]:
+) -> tuple[FoundChunk, ...]:
     plans = [planned(store, expression) for store in stores]
     refuse_reading_too_much(plans, tuning)
     each = [prepared(plan) for plan in plans]

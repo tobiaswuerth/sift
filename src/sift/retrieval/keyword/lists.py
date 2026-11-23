@@ -37,8 +37,8 @@ class Ranged:
     ids: Ascending
 
 
-type Stored = Whole | Ranged
-type Postings = tuple[Ids, Ids]
+type StoredList = Whole | Ranged
+type PostingArrays = tuple[Ids, Ids]
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +61,7 @@ class Opened:
     tokens: int
     dead: dict[int, Ascending] = field(default_factory=dict[int, Ascending])
     lengths: dict[int, Dense] = field(default_factory=dict[int, Dense])
-    blocks: dict[tuple[int, str, int], Postings] = field(default_factory=dict[tuple[int, str, int], Postings])
+    blocks: dict[tuple[int, str, int], PostingArrays] = field(default_factory=dict[tuple[int, str, int], PostingArrays])
 
 
 def opened(transaction: Reading) -> Opened:
@@ -79,7 +79,7 @@ def _dead(store: Opened, segment: int) -> Ascending:
     return store.dead[segment]
 
 
-def live(store: Opened, segment: int, places: Ids, counts: Ids) -> Postings:
+def live(store: Opened, segment: int, places: Ids, counts: Ids) -> PostingArrays:
     dead = _dead(store, segment)
     if not len(dead.values):
         return places, counts
@@ -87,8 +87,8 @@ def live(store: Opened, segment: int, places: Ids, counts: Ids) -> Postings:
     return places[kept], counts[kept]
 
 
-def stored(store: Opened, terms: list[str]) -> dict[str, list[Stored]]:
-    found: dict[str, list[Stored]] = {term: [] for term in terms}
+def stored(store: Opened, terms: list[str]) -> dict[str, list[StoredList]]:
+    found: dict[str, list[StoredList]] = {term: [] for term in terms}
     parts = keyword_lists.parts(store.transaction, terms)
     whole = [part for part in parts if not part.ranged]
     places, counts, bounds = blocked_all([part.data for part in whole])
@@ -125,7 +125,7 @@ def _one[T](found: list[T], what: str) -> T:
     return found[0]
 
 
-def _block(store: Opened, held: Ranged, number: int) -> Postings:
+def _block(store: Opened, held: Ranged, number: int) -> PostingArrays:
     key = (held.segment, held.term, number)
     if key not in store.blocks:
         row = _one(keyword_lists.blocks(store.transaction, held.segment, held.term, [number]), "a block of postings")
@@ -145,7 +145,7 @@ def _indexes(held: Ranged, chosen: Ids) -> Ids:
     return slices(held.ranges.starts[chosen], held.ranges.ends[chosen])
 
 
-def _at(store: Opened, held: Ranged, indexes: Ids) -> Postings:
+def _at(store: Opened, held: Ranged, indexes: Ids) -> PostingArrays:
     numbers = indexes // store.shape.block
     places, counts = np.empty(len(indexes), np.int64), np.empty(len(indexes), np.int64)
     for start, end in _runs(numbers):
@@ -156,11 +156,11 @@ def _at(store: Opened, held: Ranged, indexes: Ids) -> Postings:
     return places, counts
 
 
-def postings_in(store: Opened, held: Ranged, chosen: Ids) -> Postings:
+def postings_in(store: Opened, held: Ranged, chosen: Ids) -> PostingArrays:
     return live(store, held.segment, *_at(store, held, _indexes(held, chosen)))
 
 
-def everything(store: Opened, held: Stored) -> Postings:
+def everything(store: Opened, held: StoredList) -> PostingArrays:
     if isinstance(held, Whole):
         return live(store, held.segment, held.places, held.counts)
     return postings_in(store, held, np.arange(len(held.ranges.ids)))
@@ -254,7 +254,7 @@ def joined(parts: list[tuple[Ids, Ids, Ids]]) -> tuple[Ids, Ids, Ids]:
     return np.concatenate(places), np.concatenate(counts), np.concatenate(positions)
 
 
-def positions_at(store: Opened, held: Stored, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
+def positions_at(store: Opened, held: StoredList, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
     if isinstance(held, Whole):
         return _positions_whole(store, held, wanted)
     return _positions_ranged(store, held, wanted)

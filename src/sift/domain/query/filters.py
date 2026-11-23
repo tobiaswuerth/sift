@@ -31,7 +31,7 @@ class Condition:
 
 
 @dataclass(frozen=True, slots=True)
-class Linking:
+class LinkFilter:
     field: str
     operator: Operator
     target: str
@@ -39,7 +39,7 @@ class Linking:
 
 @dataclass(frozen=True, slots=True)
 class Linked:
-    values: Mapping[Linking, Sequence[int]] = MappingProxyType({})
+    values: Mapping[LinkFilter, Sequence[int]] = MappingProxyType({})
     within: Sequence[int] | None = None
     without: Sequence[int] = ()
 
@@ -95,22 +95,22 @@ def _range(each: Filter) -> SpecValue:
     return {"op": str(each.operator), "text": text, "len": len(value) if text else 0, "value": value}
 
 
-def _linkings(each: Filter) -> list[Linking]:
+def _linkings(each: Filter) -> list[LinkFilter]:
     targets = [link_target(value) for value in each.values if isinstance(value, str)] if each.operator in SETS else []
-    return [Linking(each.field, each.operator, target) for target in targets if target is not None]
+    return [LinkFilter(each.field, each.operator, target) for target in targets if target is not None]
 
 
-def linkings(filters: Sequence[Filter]) -> tuple[Linking, ...]:
+def linkings(filters: Sequence[Filter]) -> tuple[LinkFilter, ...]:
     return tuple(dict.fromkeys(found for each in gathered(tuple(filters)) for found in _linkings(each)))
 
 
-def _linked(filters: list[Filter], operator: Operator, linked: Mapping[Linking, Sequence[int]]) -> SpecValue:
+def _linked(filters: list[Filter], operator: Operator, linked: Mapping[LinkFilter, Sequence[int]]) -> SpecValue:
     found = [linked.get(each, ()) for one in filters if one.operator is operator for each in _linkings(one)]
     return list[SpecValue](sorted({document for documents in found for document in documents})) if found else None
 
 
 def _group(
-    field: str, filters: list[Filter], linked: Mapping[Linking, Sequence[int]], *, reads_quotes: bool
+    field: str, filters: list[Filter], linked: Mapping[LinkFilter, Sequence[int]], *, reads_quotes: bool
 ) -> SpecValue:
     ranges = [_range(each) for each in filters if each.operator not in SETS]
     return {

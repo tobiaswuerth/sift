@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from sift.domain.plan.indexing import MOST_TIME, Stat
-from sift.ingest.scan import Entry, Listing, Scanned, scan
+from sift.ingest.scan import DirEntry, Listing, Scanned, scan
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,20 +42,20 @@ class Fake:
 
 @dataclass(frozen=True, slots=True)
 class Breaking:
-    entries: tuple[Entry, ...]
+    entries: tuple[DirEntry, ...]
     error: OSError
 
-    def __iter__(self) -> Iterator[Entry]:
+    def __iter__(self) -> Iterator[DirEntry]:
         yield from self.entries
         raise self.error
 
 
-type Listed = Iterable[Entry] | OSError
+type Listed = Iterable[DirEntry] | OSError
 
 
 def listing(folders: Mapping[str, Listed]) -> Listing:
     @contextmanager
-    def listed(folder: str) -> Generator[Iterable[Entry]]:
+    def listed(folder: str) -> Generator[Iterable[DirEntry]]:
         given = folders.get(folder)
         if given is None:
             with os.scandir(folder) as real:
@@ -65,7 +65,7 @@ def listing(folders: Mapping[str, Listed]) -> Listing:
             raise given
         yield given
 
-    def opened(folder: str) -> AbstractContextManager[Iterable[Entry]]:
+    def opened(folder: str) -> AbstractContextManager[Iterable[DirEntry]]:
         given = folders.get(folder)
         if isinstance(given, OSError):
             raise given

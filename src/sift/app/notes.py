@@ -19,16 +19,16 @@ from sift.storage.store import open_store, unavailable_if_unusable
 AMBIGUOUS_SHOWN = 5
 AMBIGUOUS_REMEDY = "give the note's whole id, as sift get takes it"
 
-type Candidates = tuple[list[Candidate], list[Candidate]]
+type NameCandidates = tuple[list[Candidate], list[Candidate]]
 type Find = Callable[[Reading], int]
 
 
 @dataclass(slots=True)
 class Resolver:
     transaction: Reading
-    seen: dict[str, Candidates] = field(default_factory=dict[str, Candidates])
+    seen: dict[str, NameCandidates] = field(default_factory=dict[str, NameCandidates])
 
-    def _named(self, key: str) -> Candidates:
+    def _named(self, key: str) -> NameCandidates:
         if key not in self.seen:
             self.seen[key] = named(self.transaction, key)
         return self.seen[key]
@@ -47,7 +47,7 @@ class Note:
 
 
 @dataclass(frozen=True, slots=True)
-class Named:
+class NamedNote:
     note: Note
     unsearched: tuple[Unsearched, ...]
 
@@ -131,12 +131,12 @@ def matches(collections: Sequence[Collection], id_: str) -> Matches:
     return Matches(tuple(found), tuple(unread))
 
 
-def by_name(collections: Sequence[Collection], id_: str, unknown: NotFoundError) -> Named:
+def by_name(collections: Sequence[Collection], id_: str, unknown: NotFoundError) -> NamedNote:
     found = matches(collections, id_)
     if not found.found:
         raise NotFoundError(passed(unknown.message, found.unsearched), _remedy(unknown.remedy, found.unsearched))
     (match,) = found.found
-    return Named(at_path(match), found.unsearched)
+    return NamedNote(at_path(match), found.unsearched)
 
 
 def by_id(home: Path, id_: str) -> Note:
@@ -169,10 +169,10 @@ def unresolved_links(transaction: Reading) -> list[LinkRow]:
     return [row for row in doubtful(transaction) if resolver.of(row).via is Via.UNRESOLVED]
 
 
-def note_of(home: Path, collections: Sequence[Collection], id_: str) -> Named:
+def note_of(home: Path, collections: Sequence[Collection], id_: str) -> NamedNote:
     try:
         note = by_id(home, id_)
         read_in(note.collection, note.find)
     except NotFoundError as unknown:
         return by_name(collections, id_, unknown)
-    return Named(note, ())
+    return NamedNote(note, ())

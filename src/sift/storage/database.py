@@ -127,6 +127,22 @@ def writing(connection: sqlite3.Connection) -> Generator[Writing]:
         raise
 
 
+class Count(NamedTuple):
+    n: int
+
+
+class Value(NamedTuple):
+    value: str
+
+
+class IdRow(NamedTuple):
+    id: int
+
+
+class KeyRow(NamedTuple):
+    key: str
+
+
 def rows[R: NamedTuple](transaction: Reading, shape: type[R], sql: str, parameters: Parameters = ()) -> list[R]:
     fetched = cast("list[tuple[object, ...]]", transaction.connection.execute(sql, parameters).fetchall())
     return [shape._make(row) for row in fetched]

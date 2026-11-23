@@ -25,7 +25,7 @@ NO_CHOICE = Chosen()
 
 
 @dataclass(frozen=True, slots=True)
-class Skipped:
+class SkippedLine:
     line: int
     why: str
 
@@ -67,18 +67,18 @@ def record(found: Mapping[str, FieldValue], line: int, chosen: Chosen) -> Docume
     return Document(storable(named), "", storable(title or heading(body) or named), fields, text, chunks(text), ())
 
 
-def record_of(line: str, number: int, chosen: Chosen) -> Document | Skipped:
+def record_of(line: str, number: int, chosen: Chosen) -> Document | SkippedLine:
     try:
         value = json_value(line)
     except NestedTooDeeplyError:
-        return Skipped(number, "nested too deeply")
+        return SkippedLine(number, "nested too deeply")
     except ValueError:
-        return Skipped(number, "not JSON")
+        return SkippedLine(number, "not JSON")
     if not isinstance(value, Mapping):
-        return Skipped(number, "not an object")
+        return SkippedLine(number, "not an object")
     found = record(value, number, chosen)
     if found is None:
-        return Skipped(number, "no text")
+        return SkippedLine(number, "no text")
     return Document(found.key, digest(line.encode()), found.title, found.fields, found.text, found.chunks, ())
 
 

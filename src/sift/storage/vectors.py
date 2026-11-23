@@ -8,7 +8,7 @@ from sift.api.errors import StoreUnavailableError
 from sift.domain.arrays import STORED_HALF, Ids, among, ascending, distinct, ints
 from sift.domain.codec.codes import MOST_BITS, Bits, Halves, code_bytes, codes, width_of
 from sift.domain.errors import DamagedError
-from sift.storage.database import Reading, Writing, first, rows, run, run_each
+from sift.storage.database import Count, IdRow, Reading, Value, Writing, first, rows, run, run_each
 
 MODEL_KEY, WIDTH_KEY = "vector_model", "vector_width"
 PENDING = """SELECT c.id, c.document, c.start, c.length,
@@ -33,7 +33,7 @@ class Pending(NamedTuple):
     first: bool
 
 
-class Kept(NamedTuple):
+class VectorsPut(NamedTuple):
     stored: int
     broken: tuple[int, ...]
 
@@ -46,27 +46,15 @@ class Waiting(NamedTuple):
     first: int
 
 
-class Text(NamedTuple):
+class ChunkText(NamedTuple):
     id: int
     title: str
     text: str
 
 
-class Value(NamedTuple):
-    value: str
-
-
 class VectorRow(NamedTuple):
     chunk: int
     vector: bytes
-
-
-class Count(NamedTuple):
-    n: int
-
-
-class Chunk(NamedTuple):
-    id: int
 
 
 def _meta(transaction: Reading, key: str) -> str | None:
@@ -91,7 +79,7 @@ def changes(transaction: Reading) -> int:
 def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
     waiting = rows(transaction, Waiting, PENDING, (after, most))
     wanted = json.dumps(sorted({each.document for each in waiting}))
-    texts = {held.id: held for held in rows(transaction, Text, TEXTS, (wanted,))}
+    texts = {held.id: held for held in rows(transaction, ChunkText, TEXTS, (wanted,))}
     return [
         Pending(
             each.chunk,
@@ -142,13 +130,13 @@ def _refuse_another(transaction: Writing, model: str, width: int) -> None:
         )
 
 
-def put_vectors(transaction: Writing, chunks: Ids, matrix: Halves, model: str) -> Kept:
+def put_vectors(transaction: Writing, chunks: Ids, matrix: Halves, model: str) -> VectorsPut:
     _checked(chunks, matrix)
     _refuse_another(transaction, model, width_of(matrix))
     wanted = json.dumps(ints(chunks))
     sql = "SELECT id FROM chunks WHERE id IN (SELECT value FROM json_each(?))"
     there = among(
-        chunks, ascending(np.array([found.id for found in rows(transaction, Chunk, sql, (wanted,))], np.int64))
+        chunks, ascending(np.array([found.id for found in rows(transaction, IdRow, sql, (wanted,))], np.int64))
     )
     intact = np.isfinite(matrix).all(axis=1)
     kept, rows_kept = ints(chunks[there & intact]), matrix[there & intact]
@@ -168,7 +156,7 @@ def put_vectors(transaction: Writing, chunks: Ids, matrix: Halves, model: str) -
         "INSERT OR REPLACE INTO codes(chunk, bits) VALUES (?, ?)",
         zip(kept, _rows(codes(rows_kept.astype(np.float32))), strict=True),
     )
-    return Kept(len(kept), tuple(ints(chunks[there & ~intact])))
+    return VectorsPut(len(kept), tuple(ints(chunks[there & ~intact])))
 
 
 def _rows(matrix: NDArray[np.generic]) -> list[bytes]:

@@ -3,8 +3,9 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
-type Scores = NDArray[np.float64]
-type Counts = NDArray[np.int64]
+from sift.domain.arrays import Scores
+
+type TermCounts = NDArray[np.int64]
 
 K1, B = 1.2, 0.75
 TOP = K1 + 1
@@ -17,7 +18,7 @@ def idf(chunks: int, df: int) -> float:
     return value if value > 0 else LEAST_IDF
 
 
-def term_scores(tf: Counts, lengths: Counts, average: float) -> Scores:
+def term_scores(tf: TermCounts, lengths: TermCounts, average: float) -> Scores:
     counts = tf.astype(np.float64)
     return counts * TOP / (counts + K1 * (1 - B + B * lengths / average))
 

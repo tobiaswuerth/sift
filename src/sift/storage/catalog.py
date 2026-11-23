@@ -54,7 +54,7 @@ class Collection:
     choices: Choices
 
 
-class Row(NamedTuple):
+class CollectionRow(NamedTuple):
     id: int
     name: str
     folder: str
@@ -105,7 +105,7 @@ def choices_of(written: str) -> Choices:
     )
 
 
-def _collection(row: Row) -> Collection:
+def _collection(row: CollectionRow) -> Collection:
     try:
         choices = choices_of(row.choices)
     except (ValueError, TypeError) as error:
@@ -134,7 +134,7 @@ def open_catalog(home: Path) -> sqlite3.Connection:
 
 
 def collections(transaction: Reading) -> tuple[Collection, ...]:
-    found = rows(transaction, Row, "SELECT id, name, folder, store, active, choices FROM collections")
+    found = rows(transaction, CollectionRow, "SELECT id, name, folder, store, active, choices FROM collections")
     return tuple(sorted(map(_collection, found), key=lambda known: (known.name.casefold(), known.name)))
 
 

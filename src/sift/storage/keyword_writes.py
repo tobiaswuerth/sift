@@ -1,12 +1,8 @@
 from collections.abc import Mapping, Sequence
 from typing import NamedTuple
 
-from sift.domain.codec.segments import Long, Postings
-from sift.storage.database import Writing, rows, run_each
-
-
-class Identity(NamedTuple):
-    id: int
+from sift.domain.codec.segments import LongPostings, Postings
+from sift.storage.database import IdRow, Writing, rows, run_each
 
 
 class Head(NamedTuple):
@@ -20,7 +16,7 @@ class Head(NamedTuple):
 def segment_added(transaction: Writing, head: Head) -> int:
     (made,) = rows(
         transaction,
-        Identity,
+        IdRow,
         """INSERT INTO keyword_segments(first, last, chunks, dead, tokens, average)
            VALUES (?, ?, ?, 0, ?, ?) RETURNING id""",
         head,
@@ -34,7 +30,7 @@ def postings_added(transaction: Writing, segment: int, postings: Sequence[Postin
         "INSERT INTO keyword_postings(segment, term, chunks, postings, positions, ranges) VALUES (?, ?, ?, ?, ?, ?)",
         [
             (segment, p.term, p.chunks, None, None, p.held.ranges)
-            if isinstance(p.held, Long)
+            if isinstance(p.held, LongPostings)
             else (segment, p.term, p.chunks, p.held.postings, p.held.positions, None)
             for p in postings
         ],
@@ -45,7 +41,7 @@ def postings_added(transaction: Writing, segment: int, postings: Sequence[Postin
         [
             (segment, p.term, number, part.postings, part.positions)
             for p in postings
-            if isinstance(p.held, Long)
+            if isinstance(p.held, LongPostings)
             for number, part in enumerate(p.held.blocks)
         ],
     )

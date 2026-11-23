@@ -15,7 +15,7 @@ from sift.domain.errors import DamagedError
 from sift.storage.database import Connection, reading, rows, run, writing
 from sift.storage.store import LAYOUT, open_store
 from sift.storage.vectors import (
-    Kept,
+    VectorsPut,
     changes,
     codes_of,
     forget_vectors,
@@ -51,7 +51,7 @@ def test_vectors_are_kept_with_their_codes_and_counted() -> None:
         ids = chunk_ids(connection)
         matrix = vectors(len(ids))
         with writing(connection) as transaction:
-            assert put_vectors(transaction, ids, matrix, "model-a") == Kept(len(ids), ())
+            assert put_vectors(transaction, ids, matrix, "model-a") == VectorsPut(len(ids), ())
         with reading(connection) as transaction:
             found, held = vectors_of(transaction, ids[::-1])
             assert ints(found) == ints(ids)
@@ -136,7 +136,7 @@ def test_vectors_go_with_their_chunks_and_a_broken_or_gone_chunk_gets_none() -> 
         matrix[0, 3] = np.nan
         with writing(connection) as transaction:
             kept = put_vectors(transaction, np.append(ids, last(ids) + 99), np.vstack([matrix, matrix[:1]]), "m")
-            assert kept == Kept(len(ids) - 1, (first(ids),))
+            assert kept == VectorsPut(len(ids) - 1, (first(ids),))
         applied(connection, [{"b.md": None}])
         with reading(connection) as transaction:
             (counted,) = rows(transaction, Count, "SELECT vectors FROM counts")
@@ -276,7 +276,7 @@ def test_a_store_given_only_broken_vectors_holds_no_model() -> None:
         applied(connection, [NOTES])
         ids = chunk_ids(connection)
         with writing(connection) as transaction:
-            assert put_vectors(transaction, ids[:1], np.full((1, 16), np.nan, np.float16), "m") == Kept(
+            assert put_vectors(transaction, ids[:1], np.full((1, 16), np.nan, np.float16), "m") == VectorsPut(
                 0, (first(ids),)
             )
         with reading(connection) as transaction:

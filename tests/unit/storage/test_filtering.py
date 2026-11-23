@@ -8,7 +8,7 @@ import numpy as np
 from sift.api.fields import Fields
 from sift.api.filters import Filter, FilterValue, Operator
 from sift.domain.arrays import ints
-from sift.domain.query.filters import UNLINKED, Linked, Linking, condition
+from sift.domain.query.filters import UNLINKED, Linked, LinkFilter, condition
 from sift.storage.database import Reading
 from sift.storage.passing import Passing
 
@@ -137,7 +137,7 @@ def test_any_field_name_is_addressed_and_odd_numbers_break_nothing() -> None:
 
 
 def test_documents_linking_a_note_pass_its_wikilink_value_and_fail_its_negation() -> None:
-    acme, not_acme = Linking("year", ANY, "Acme"), Linking("year", NONE, "Acme")
+    acme, not_acme = LinkFilter("year", ANY, "Acme"), LinkFilter("year", NONE, "Acme")
     assert passing(PAPERS, [one("year", ANY, 2023, "[[Acme]]")], linked=Linked({acme: [3]})) == ["rl.md", "typed.md"]
     assert passing(PAPERS, [one("year", ANY, "[[Acme]]")], linked=Linked({acme: []})) == []
     assert passing(PAPERS, [one("year", NONE, "[[Acme]]")], linked=Linked({not_acme: [0]})) == [
@@ -180,5 +180,5 @@ def test_documents_linking_a_note_cost_about_what_a_plain_value_costs() -> None:
     many: dict[str, Fields] = {f"{n}.md": {"org": f"o{n % 7}"} for n in range(3000)}
     half = list(range(0, 3000, 2))
     plain = steps(many, [one("org", ANY, "o1")])
-    assert steps(many, [one("org", ANY, "[[Acme]]")], Linked({Linking("org", ANY, "Acme"): half})) < 3 * plain
-    assert steps(many, [one("org", NONE, "[[Acme]]")], Linked({Linking("org", NONE, "Acme"): half})) < 3 * plain
+    assert steps(many, [one("org", ANY, "[[Acme]]")], Linked({LinkFilter("org", ANY, "Acme"): half})) < 3 * plain
+    assert steps(many, [one("org", NONE, "[[Acme]]")], Linked({LinkFilter("org", NONE, "Acme"): half})) < 3 * plain

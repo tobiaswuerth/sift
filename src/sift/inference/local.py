@@ -14,8 +14,8 @@ from transformers.utils import logging as transformers_logging
 
 from sift.api.errors import ModelUnavailableError
 from sift.domain.codec.codes import Floats, Halves
-from sift.inference.accelerator import Device, Found, chosen, emptied, host_full, nvidia, too_large
-from sift.inference.batches import Attempt, Shape, in_batches
+from sift.inference.accelerator import Device, Hardware, chosen, emptied, host_full, nvidia, too_large
+from sift.inference.batches import Attempt, BatchShape, in_batches
 from sift.inference.hub import RERANK_MODEL, hub, pinned
 
 MOST_TOKENS = 1024
@@ -88,7 +88,7 @@ def width_of(name: str, found: int | None) -> int:
 def _device() -> Device:
     transformers_logging.disable_progress_bar()
     enable_progress_bars()
-    found = Found(torch.backends.mps.is_available(), nvidia(), torch.version.cuda)
+    found = Hardware(torch.backends.mps.is_available(), nvidia(), torch.version.cuda)
     device = chosen(torch.cuda, found)
     torch.set_num_threads(device.threads)
     return device
@@ -227,7 +227,7 @@ class Local:
         def run(part: list[str]) -> Floats:
             return _run(loaded.model, part, query=query)
 
-        shape = Shape(loaded.width, self.batch or device.batch)
+        shape = BatchShape(loaded.width, self.batch or device.batch)
         lengths = _lengths(loaded.model.tokenizer, list(texts))
         found = within_memory(self.model, device.name, partial(in_batches, texts, lengths, shape, self._attempt(run)))
         self.batch = found.batch
@@ -239,7 +239,7 @@ class Local:
         def run(part: list[str]) -> Floats:
             return _scored(ranker, query, part)
 
-        shape = Shape(1, self.rerank_batch)
+        shape = BatchShape(1, self.rerank_batch)
         lengths = _lengths(ranker.tokenizer, list(texts))
         attempts = partial(in_batches, texts, lengths, shape, self._attempt(run))
         found = within_memory(self.reranker, self._on().name, attempts)

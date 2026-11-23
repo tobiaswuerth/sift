@@ -3,13 +3,13 @@ from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType
-from typing import NamedTuple, NoReturn
+from typing import NoReturn
 
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.domain.codec.segments import SHAPE, Shape
 from sift.domain.errors import DamagedError
-from sift.storage.database import DAMAGED, connect, first, primary_code, reading, run_each, writing
+from sift.storage.database import DAMAGED, Value, connect, first, primary_code, reading, run_each, writing
 from sift.storage.keywords import keyword_meta
 from sift.storage.migrations import Migration, migrated, newer, version
 
@@ -187,10 +187,6 @@ UNUSABLE: Mapping[int, tuple[str, str]] = MappingProxyType(
 )
 
 
-class Held(NamedTuple):
-    value: str
-
-
 def _files(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
     return [file for file in (Path(f"{path}{suffix}") for suffix in suffixes) if file.is_file()]
 
@@ -270,7 +266,7 @@ def _checked(connection: sqlite3.Connection, path: Path, collection: CollectionI
             raise StoreUnavailableError(f"{path} is no store of sift", DAMAGED_REMEDY)
         if found > len(layout):
             raise newer(path, found, len(layout))
-        held = first(transaction, Held, "SELECT value FROM meta WHERE key = 'collection'")
+        held = first(transaction, Value, "SELECT value FROM meta WHERE key = 'collection'")
     if held is None or held.value != str(collection):
         owner = "no collection" if held is None else f"collection {held.value}"
         raise StoreUnavailableError(f"{path} is the store of {owner}, not of collection {collection}", DAMAGED_REMEDY)

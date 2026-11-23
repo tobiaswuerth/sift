@@ -11,7 +11,7 @@ from sift.domain.codec.postings import blocked_all, lengths_of, positions_all, w
 from sift.domain.codec.segments import Lists, Shape, postings_of
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Held, Policy, merges
-from sift.storage.database import Batches, Reading, WritingDocuments, rows, run, streamed
+from sift.storage.database import Batches, IdRow, Reading, WritingDocuments, rows, run, streamed
 from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
 
 SHORT = """SELECT :rank, term, -1, chunks, length(postings) + length(positions), postings, positions
@@ -29,7 +29,7 @@ DROPPED = (
 )
 
 
-class Placed(NamedTuple):
+class PlacedSegment(NamedTuple):
     id: int
     first: int
     last: int
@@ -37,7 +37,7 @@ class Placed(NamedTuple):
     dead: int
 
 
-class Listed(NamedTuple):
+class MergedTerm(NamedTuple):
     rank: int
     term: str
     number: int
@@ -47,11 +47,7 @@ class Listed(NamedTuple):
     positions: bytes
 
 
-class Chunk(NamedTuple):
-    id: int
-
-
-class LengthsRow(NamedTuple):
+class SegmentLengths(NamedTuple):
     segment: int
     block: int
     lengths: bytes
@@ -63,24 +59,24 @@ class Totals(NamedTuple):
 
 
 def _ids(transaction: WritingDocuments, sql: str, low: int, high: int) -> Ids:
-    return np.fromiter((found.id for found in streamed(transaction, Chunk, sql, (low, high))), np.int64)
+    return np.fromiter((found.id for found in streamed(transaction, IdRow, sql, (low, high))), np.int64)
 
 
-def _order(row: Listed) -> tuple[str, int, int]:
+def _order(row: MergedTerm) -> tuple[str, int, int]:
     return row.term, row.rank, row.number
 
 
-def _listed(transaction: WritingDocuments, merged: Sequence[Placed], block: int) -> Iterator[Listed]:
+def _listed(transaction: WritingDocuments, merged: Sequence[PlacedSegment], block: int) -> Iterator[MergedTerm]:
     streams = [
-        streamed(transaction, Listed, sql, {"rank": rank, "segment": each.id, "block": block})
+        streamed(transaction, MergedTerm, sql, {"rank": rank, "segment": each.id, "block": block})
         for rank, each in enumerate(merged)
         for sql in (SHORT, BLOCKS)
     ]
     return heapq.merge(*streams, key=_order)
 
 
-def batched(listed: Iterator[Listed], batches: Batches) -> Iterator[list[Listed]]:
-    batch: list[Listed] = []
+def batched(listed: Iterator[MergedTerm], batches: Batches) -> Iterator[list[MergedTerm]]:
+    batch: list[MergedTerm] = []
     volume = size = 0
     for _, rows_of_term in itertools.groupby(listed, key=lambda row: row.term):
         held = list(rows_of_term)
@@ -94,10 +90,10 @@ def batched(listed: Iterator[Listed], batches: Batches) -> Iterator[list[Listed]
         yield batch
 
 
-def _lengths(transaction: WritingDocuments, merged: Sequence[Placed], live: Ids, shift: int) -> Ids:
+def _lengths(transaction: WritingDocuments, merged: Sequence[PlacedSegment], live: Ids, shift: int) -> Ids:
     dense = {
         (row.segment, row.block): lengths_of(row.lengths, shift)
-        for row in rows(transaction, LengthsRow, LENGTHS, (json.dumps([each.id for each in merged]),))
+        for row in rows(transaction, SegmentLengths, LENGTHS, (json.dumps([each.id for each in merged]),))
     }
     starts = np.array([each.first for each in merged], np.int64)
     owners = np.array([each.id for each in merged], np.int64)[np.searchsorted(starts, live, side="right") - 1]
@@ -112,7 +108,7 @@ def _lengths(transaction: WritingDocuments, merged: Sequence[Placed], live: Ids,
     return found
 
 
-def _lists(listed: Sequence[Listed], dead: Ids, live: Ids, lengths: Ids) -> Lists:
+def _lists(listed: Sequence[MergedTerm], dead: Ids, live: Ids, lengths: Ids) -> Lists:
     places, counts, bounds = blocked_all([row.postings for row in listed])
     positions = positions_all([row.positions for row in listed], counts)
     names = sorted({row.term for row in listed})
@@ -129,7 +125,7 @@ def _lists(listed: Sequence[Listed], dead: Ids, live: Ids, lengths: Ids) -> List
     return Lists(terms, tuple(starts), places, counts, positions, lengths[at])
 
 
-def _merged(transaction: WritingDocuments, merged: Sequence[Placed], shape: Shape) -> None:
+def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shape: Shape) -> None:
     low, high = merged[0].first, merged[-1].last
     named = json.dumps([each.id for each in merged])
     live = _ids(transaction, "SELECT id FROM chunks WHERE id BETWEEN ? AND ? ORDER BY id", low, high)
@@ -150,12 +146,12 @@ def _merged(transaction: WritingDocuments, merged: Sequence[Placed], shape: Shap
         run(transaction, sql, (named,))
 
 
-def _plan(transaction: Reading, policy: Policy) -> list[list[Placed]]:
-    held = rows(transaction, Placed, "SELECT id, first, last, chunks, dead FROM keyword_segments ORDER BY first")
+def _plan(transaction: Reading, policy: Policy) -> list[list[PlacedSegment]]:
+    held = rows(transaction, PlacedSegment, "SELECT id, first, last, chunks, dead FROM keyword_segments ORDER BY first")
     return [[held[at] for at in each] for each in merges([Held(each.chunks, each.dead) for each in held], policy)]
 
 
-def _planned(transaction: WritingDocuments) -> list[list[Placed]]:
+def _planned(transaction: WritingDocuments) -> list[list[PlacedSegment]]:
     return _plan(transaction, transaction.batches.merging)
 
 
@@ -163,7 +159,7 @@ def planned(transaction: Reading, policy: Policy) -> bool:
     return bool(_plan(transaction, policy))
 
 
-def _live(merged: Sequence[Placed]) -> int:
+def _live(merged: Sequence[PlacedSegment]) -> int:
     return sum(each.chunks - each.dead for each in merged)
 
 

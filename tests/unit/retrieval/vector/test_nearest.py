@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 
 from sift.domain.arrays import Ids, floats, ints
 from sift.domain.codec.codes import Bits, Floats, Halves, codes
-from sift.retrieval.vector.nearest import SCAN_SHARE, SHORTLIST, Coded, Exact, Near, Reads, coded, nearest
+from sift.retrieval.vector.nearest import SCAN_SHARE, SHORTLIST, Coded, ExactRead, Near, Reads, coded, nearest
 from tests.allowed import Chosen
 
 RECALL_AT_10 = 0.75
@@ -43,7 +43,7 @@ def brute(exact: list[tuple[Ids, Halves]], query: Floats, k: int) -> list[Near]:
     return [Near(chunk, score) for chunk, score in zip(ints(ids[order]), floats(scores[order]), strict=True)]
 
 
-def reader(exact: list[tuple[Ids, Halves]]) -> Exact:
+def reader(exact: list[tuple[Ids, Halves]]) -> ExactRead:
     def read(store: int, chunks: Ids) -> tuple[Ids, Halves]:
         ids, rows = exact[store]
         at = np.searchsorted(ids, chunks)

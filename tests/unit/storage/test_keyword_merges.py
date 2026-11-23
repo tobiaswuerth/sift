@@ -10,7 +10,7 @@ from sift.domain.codec.segments import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows, run, writing
-from sift.storage.keyword_merges import Listed, batched
+from sift.storage.keyword_merges import MergedTerm, batched
 from sift.storage.keywords import TAKEN_OVER_REMEDY, remade, remake_started, settle
 from tests.keyword_indexes import (
     LONG,
@@ -129,7 +129,7 @@ def test_merges_that_fit_a_write_run_though_a_larger_one_waits() -> None:
 
 
 def test_merges_batch_by_bytes_as_well_as_by_postings() -> None:
-    listed = [Listed(0, term, 0, 3, 10, b"", b"") for term in ("a", "a", "b", "c")]
+    listed = [MergedTerm(0, term, 0, 3, 10, b"", b"") for term in ("a", "a", "b", "c")]
     by_terms = [[row.term for row in batch] for batch in batched(iter(listed), Batches(bytes_a_merge=1))]
     assert by_terms == [["a", "a"], ["b"], ["c"]]
     assert len(list(batched(iter(listed), Batches(postings_a_merge=3)))) == 3

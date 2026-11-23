@@ -8,15 +8,15 @@ from sift.inference.hub import pinned
 from sift.inference.models import Models
 
 
-class Local(Protocol):
+class LocalLoader(Protocol):
     def local(self, model: str, reranker: str) -> Models: ...
 
 
-def _as_local(module: object) -> Local:
-    return cast("Local", module)
+def _as_local(module: object) -> LocalLoader:
+    return cast("LocalLoader", module)
 
 
-def _local_module() -> Local:
+def _local_module() -> LocalLoader:
     return _as_local(import_module("sift.inference.local"))
 
 

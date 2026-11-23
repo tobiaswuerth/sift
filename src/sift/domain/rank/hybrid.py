@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import numpy as np
 from numpy.typing import NDArray
 
+from sift.domain.arrays import Scores
 from sift.domain.text.tokens import tokens
 
 STOPWORDS = frozenset(
@@ -51,7 +52,6 @@ ADAPTIVE_SHARE = 0.9
 ADAPTIVE_BUFFER = 5
 FEWEST_TO_CUT = 3
 
-type Scores = NDArray[np.float64]
 type Flags = NDArray[np.bool_]
 
 

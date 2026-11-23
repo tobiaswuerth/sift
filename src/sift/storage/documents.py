@@ -20,7 +20,7 @@ class Source(NamedTuple):
     size: int
 
 
-class Kept(NamedTuple):
+class KeptDocument(NamedTuple):
     id: DocumentId
     key: str
     digest: str
@@ -68,19 +68,15 @@ def sources(transaction: Reading) -> dict[str, Source]:
     return {source.path: source for source in found}
 
 
-class Identity(NamedTuple):
+class SourceRow(NamedTuple):
     id: SourceId
 
 
 def put_source(transaction: Writing, path: str, modified_ns: int, size: int) -> SourceId:
     sql = """INSERT INTO sources(path, modified_ns, size) VALUES (?, ?, ?)
              ON CONFLICT(path) DO UPDATE SET modified_ns = excluded.modified_ns, size = excluded.size RETURNING id"""
-    (written,) = rows(transaction, Identity, sql, (path, modified_ns, size))
+    (written,) = rows(transaction, SourceRow, sql, (path, modified_ns, size))
     return written.id
-
-
-class Count(NamedTuple):
-    n: int
 
 
 class Owned(NamedTuple):
@@ -101,8 +97,10 @@ def delete_sources(transaction: WritingDocuments, paths: Sequence[str]) -> int:
     return len(held)
 
 
-def kept(transaction: Reading, source: SourceId) -> list[Kept]:
-    return rows(transaction, Kept, "SELECT id, key, digest FROM documents WHERE source = ? ORDER BY id", (source,))
+def kept(transaction: Reading, source: SourceId) -> list[KeptDocument]:
+    return rows(
+        transaction, KeptDocument, "SELECT id, key, digest FROM documents WHERE source = ? ORDER BY id", (source,)
+    )
 
 
 def _add(transaction: Writing, source: SourceId, path: str, document: Document) -> DocumentId:
@@ -190,7 +188,7 @@ class Passage(NamedTuple):
     length: int
 
 
-class Text(NamedTuple):
+class TextRow(NamedTuple):
     id: DocumentId
     text: str
 
@@ -204,7 +202,7 @@ def passages(transaction: Reading, chunks: Sequence[ChunkId]) -> dict[ChunkId, P
     return {found.chunk: found for found in rows(transaction, Passage, PASSAGES, (json.dumps(list(chunks)),))}
 
 
-class Written(NamedTuple):
+class FieldsRow(NamedTuple):
     id: int
     fields: str
 
@@ -212,7 +210,7 @@ class Written(NamedTuple):
 def fields_by_document(transaction: Reading, documents: Sequence[int]) -> dict[int, Fields]:
     sql = "SELECT id, fields FROM documents WHERE id IN (SELECT value FROM json_each(?))"
     return {
-        found.id: fields_of(found.fields) for found in rows(transaction, Written, sql, (json.dumps(list(documents)),))
+        found.id: fields_of(found.fields) for found in rows(transaction, FieldsRow, sql, (json.dumps(list(documents)),))
     }
 
 
@@ -228,7 +226,7 @@ def documents_of(transaction: Reading, chunks: Sequence[int]) -> dict[int, int]:
 
 def texts(transaction: Reading, documents: Sequence[DocumentId]) -> dict[DocumentId, str]:
     sql = "SELECT id, text FROM documents WHERE id IN (SELECT value FROM json_each(?))"
-    return {found.id: found.text for found in rows(transaction, Text, sql, (json.dumps(list(documents)),))}
+    return {found.id: found.text for found in rows(transaction, TextRow, sql, (json.dumps(list(documents)),))}
 
 
 class Unreadable(NamedTuple):

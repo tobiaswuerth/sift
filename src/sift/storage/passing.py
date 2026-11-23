@@ -2,13 +2,13 @@ import json
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass, field
-from typing import NamedTuple, cast
+from typing import cast
 
 import numpy as np
 
 from sift.domain.arrays import Ascending, Ids, Mask, among, ints
 from sift.domain.query.filters import Condition
-from sift.storage.database import Reading, rows, streamed
+from sift.storage.database import IdRow, Reading, rows, streamed
 from sift.storage.documents import documents_of
 
 QUOTED_NAME = ('{"a\\"b": 1}', '$."a\\"b"')
@@ -71,10 +71,6 @@ WHERE (:path IS NULL OR s.path GLOB :path)
 """
 
 
-class Row(NamedTuple):
-    id: int
-
-
 def _none() -> Ids:
     return np.zeros(0, np.int64)
 
@@ -98,7 +94,7 @@ def documents_passing(transaction: Reading, condition: Condition, documents: Ids
         "within": condition.within,
         "without": condition.without,
     }
-    return np.fromiter((row.id for row in streamed(transaction, Row, PASSING, parameters)), np.int64)
+    return np.fromiter((row.id for row in streamed(transaction, IdRow, PASSING, parameters)), np.int64)
 
 
 @dataclass(slots=True)
@@ -130,6 +126,6 @@ class Passing:
     def listed(self) -> Ids:
         if self.every is None:
             documents = documents_passing(self.transaction, self.condition, None)
-            chunks = rows(self.transaction, Row, CHUNKS_OF, (json.dumps(ints(documents)),))
+            chunks = rows(self.transaction, IdRow, CHUNKS_OF, (json.dumps(ints(documents)),))
             self.every = np.array([row.id for row in chunks], np.int64)
         return self.every

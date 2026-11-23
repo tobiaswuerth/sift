@@ -9,7 +9,7 @@ from typing import Annotated, cast, get_args, get_origin, get_type_hints
 
 from sift.api.described import Help, Place, Read, Short
 
-type Placed = Callable[[str], str]
+type Placing = Callable[[str], str]
 
 PLAIN_KINDS = (str, int, float)
 WHOLE_NUMBER = re.compile("-?[0-9]{1,18}")
@@ -142,13 +142,13 @@ def _decimal(written: str) -> float:
     return float(written)
 
 
-def _converter(argument: Argument, place: Placed) -> Callable[[str], object]:
+def _converter(argument: Argument, place: Placing) -> Callable[[str], object]:
     if argument.place:
         return place
     return _whole if argument.kind is int else _decimal if argument.kind is float else str
 
 
-def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placed) -> None:
+def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placing) -> None:
     long = f"--{argument.name.replace('_', '-')}"
     named = [long] if argument.short is None else [argument.short, long]
     choices = _choices(argument.kind)
@@ -175,7 +175,7 @@ def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placed) -> 
         parser.add_argument(argument.name, type=_converter(argument, place), help=argument.help)
 
 
-def options(parser: argparse.ArgumentParser, request: type[object], place: Placed) -> None:
+def options(parser: argparse.ArgumentParser, request: type[object], place: Placing) -> None:
     for argument in arguments(request):
         _add(parser, argument, place)
 

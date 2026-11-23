@@ -17,7 +17,7 @@ from sift.inference.models import Models
 from sift.storage.catalog import Collection
 from sift.storage.database import Connection, reading, writing
 from sift.storage.store import open_store, unavailable_if_unusable
-from sift.storage.vectors import Kept, Pending, forget_vectors, left, pending, put_vectors, refuse_model
+from sift.storage.vectors import Pending, VectorsPut, forget_vectors, left, pending, put_vectors, refuse_model
 
 RESET_ALL_REMEDY = "run sift embed --reset without naming collections"
 BROKEN_REMEDY = "run sift embed again; if they stay, the model fails on their text"
@@ -59,7 +59,7 @@ def _waiting(connection: Connection, after: int, most: int) -> list[Pending]:
         return pending(transaction, after, most)
 
 
-def _written(connection: Connection, models: Models, waiting: list[Pending]) -> Kept:
+def _written(connection: Connection, models: Models, waiting: list[Pending]) -> VectorsPut:
     matrix = models.encode([embedded(each.title, each.text, first=each.first) for each in waiting], query=False)
     with writing(connection) as transaction:
         return put_vectors(transaction, np.array([each.chunk for each in waiting], np.int64), matrix, models.name)

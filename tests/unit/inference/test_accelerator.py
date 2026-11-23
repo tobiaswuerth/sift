@@ -5,9 +5,9 @@ import pynvml
 import pytest
 import torch
 
-from sift.inference.accelerator import CACHES, CPU, CUDA_FIX, GIB, Device, Found, budget, chosen, emptied, too_large
+from sift.inference.accelerator import CACHES, CPU, CUDA_FIX, GIB, Device, Hardware, budget, chosen, emptied, too_large
 
-NONE = Found(mps=False, nvidia=False, cuda_build=None)
+NONE = Hardware(mps=False, nvidia=False, cuda_build=None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,12 +84,12 @@ def test_a_gpu_others_fill_leaves_sift_on_the_cpu_saying_so_and_holding_no_conte
 
 def test_without_a_cuda_gpu_an_apple_one_or_the_cpu_is_chosen_saying_why_an_nvidia_one_sits_unused() -> None:
     absent = FakeCuda(0, 0, available=False)
-    assert chosen(absent, Found(mps=True, nvidia=False, cuda_build=None)) == Device("mps", torch.float32)
+    assert chosen(absent, Hardware(mps=True, nvidia=False, cuda_build=None)) == Device("mps", torch.float32)
     assert chosen(absent, NONE) == CPU
-    unbuilt = chosen(absent, Found(mps=False, nvidia=True, cuda_build=None)).notice
+    unbuilt = chosen(absent, Hardware(mps=False, nvidia=True, cuda_build=None)).notice
     assert unbuilt is not None
     assert unbuilt.endswith(CUDA_FIX)
-    hidden = chosen(absent, Found(mps=False, nvidia=True, cuda_build="12.6")).notice
+    hidden = chosen(absent, Hardware(mps=False, nvidia=True, cuda_build="12.6")).notice
     assert hidden is not None
     assert "CUDA_VISIBLE_DEVICES" in hidden
 

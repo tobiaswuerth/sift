@@ -18,7 +18,7 @@ from sift.storage.database import reading, rows, run, writing
 from sift.storage.documents import (
     PATHS_NAMED,
     Counts,
-    Kept,
+    KeptDocument,
     SourceId,
     StoredChunk,
     Unreadable,
@@ -172,7 +172,10 @@ def test_the_documents_of_a_source_are_listed_with_their_digests(store: sqlite3.
     first, second = (dataclasses.replace(note(text, "d.jsonl"), key=key) for text, key in ((b"a", "1"), (b"b", "2")))
     source, ids = added(store, "d.jsonl", first, second)
     with reading(store) as transaction:
-        assert kept(transaction, source) == [Kept(ids[0], "1", first.digest), Kept(ids[1], "2", second.digest)]
+        assert kept(transaction, source) == [
+            KeptDocument(ids[0], "1", first.digest),
+            KeptDocument(ids[1], "2", second.digest),
+        ]
 
 
 def test_deleting_a_document_deletes_all_that_is_its(store: sqlite3.Connection) -> None:

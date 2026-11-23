@@ -16,7 +16,7 @@ GONE = (FileNotFoundError, NotADirectoryError)
 PROGRESS_EVERY = 1000
 
 
-class Entry(Protocol):
+class DirEntry(Protocol):
     @property
     def name(self) -> str: ...
     @property
@@ -27,7 +27,7 @@ class Entry(Protocol):
     def stat(self) -> os.stat_result: ...
 
 
-type Listing = Callable[[str], AbstractContextManager[Iterable[Entry]]]
+type Listing = Callable[[str], AbstractContextManager[Iterable[DirEntry]]]
 type Progress = Callable[[int], None]
 
 
@@ -61,7 +61,7 @@ def _storable(relative: str) -> bool:
     return True
 
 
-def _folder_taken(entry: Entry) -> bool:
+def _folder_taken(entry: DirEntry) -> bool:
     return not entry.name.startswith(".") and entry.name not in SKIPPED_FOLDERS and not entry.is_junction()
 
 
@@ -70,18 +70,18 @@ def _unreached(seen: _Seen, relative: str, error: OSError) -> None:
     seen.refusals[relative] = _reason(error)
 
 
-def _leads_outside(entry: Entry, outside_of: Path | None) -> bool:
+def _leads_outside(entry: DirEntry, outside_of: Path | None) -> bool:
     return outside_of is not None and entry.is_symlink() and not Path(entry.path).resolve().is_relative_to(outside_of)
 
 
-def _broken_link(entry: Entry, relative: str, seen: _Seen, outside_of: Path | None, error: OSError) -> None:
+def _broken_link(entry: DirEntry, relative: str, seen: _Seen, outside_of: Path | None, error: OSError) -> None:
     if _leads_outside(entry, outside_of):
         seen.outside.append(relative)
     elif entry.is_symlink():
         _unreached(seen, relative, error)
 
 
-def _file(entry: Entry, relative: str, seen: _Seen, outside_of: Path | None) -> None:
+def _file(entry: DirEntry, relative: str, seen: _Seen, outside_of: Path | None) -> None:
     try:
         found = entry.stat()
     except GONE as error:
@@ -100,7 +100,7 @@ def _file(entry: Entry, relative: str, seen: _Seen, outside_of: Path | None) -> 
         seen.files[relative] = Stat(stored_time(found.st_mtime_ns), found.st_size)
 
 
-def _listed(folder: str, relative: str, listing: Listing, seen: _Seen) -> Iterator[Entry]:
+def _listed(folder: str, relative: str, listing: Listing, seen: _Seen) -> Iterator[DirEntry]:
     try:
         entries = listing(folder)
     except GONE:
@@ -123,7 +123,9 @@ def _listed(folder: str, relative: str, listing: Listing, seen: _Seen) -> Iterat
         seen.empty_folders.append(relative)
 
 
-def _taken(entry: Entry, relative: str, seen: _Seen, folders: list[tuple[str, str]], outside_of: Path | None) -> None:
+def _taken(
+    entry: DirEntry, relative: str, seen: _Seen, folders: list[tuple[str, str]], outside_of: Path | None
+) -> None:
     try:
         if entry.is_dir(follow_symlinks=False):
             if _folder_taken(entry):

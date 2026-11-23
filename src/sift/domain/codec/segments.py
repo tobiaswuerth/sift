@@ -41,22 +41,22 @@ SHAPE = Shape()
 
 
 @dataclass(frozen=True, slots=True)
-class Short:
+class ShortPostings:
     postings: bytes
     positions: bytes
 
 
 @dataclass(frozen=True, slots=True)
-class Long:
+class LongPostings:
     ranges: bytes
-    blocks: tuple[Short, ...]
+    blocks: tuple[ShortPostings, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class Postings:
     term: str
     chunks: int
-    held: Short | Long
+    held: ShortPostings | LongPostings
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,11 +117,13 @@ def postings_of(lists: Lists, average: float, shape: Shape = SHAPE) -> tuple[Pos
     written: list[Postings] = []
     for term, (start, stop) in zip(lists.terms, itertools.pairwise([*lists.starts, end]), strict=True):
         if stop - start < shape.long:
-            held: Short | Long = Short(*next(parts))
+            held: ShortPostings | LongPostings = ShortPostings(*next(parts))
         else:
-            blocks = tuple(Short(*next(parts)) for _ in range(start, stop, shape.block))
+            blocks = tuple(ShortPostings(*next(parts)) for _ in range(start, stop, shape.block))
             here = slice(start, stop)
-            held = Long(_ranges(lists.ids[here], lists.counts[here], lists.lengths[here], average, shape), blocks)
+            held = LongPostings(
+                _ranges(lists.ids[here], lists.counts[here], lists.lengths[here], average, shape), blocks
+            )
         written.append(Postings(term, stop - start, held))
     return tuple(written)
 

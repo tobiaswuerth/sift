@@ -3,10 +3,20 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ids, Mask, among, first, last
+from sift.domain.arrays import Ids, Mask, Scores, among, first, last
 from sift.domain.query.expressions import And, Expression, Leaf, Or, Phrase, Prefix, Term
-from sift.domain.rank.bm25 import TOP, Scores, slack, term_scores, unquantized
-from sift.retrieval.keyword.lists import Opened, Postings, Ranged, Stored, Whole, lengths_at, live, postings_in, slices
+from sift.domain.rank.bm25 import TOP, slack, term_scores, unquantized
+from sift.retrieval.keyword.lists import (
+    Opened,
+    PostingArrays,
+    Ranged,
+    StoredList,
+    Whole,
+    lengths_at,
+    live,
+    postings_in,
+    slices,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +68,7 @@ def _exact(store: Opened, places: Ids, counts: Ids, average: float) -> Exact:
     return Exact(places >> store.shape.range_shift, places, scores)
 
 
-def scored(store: Opened, query: Query, found: list[Stored] | Postings) -> Scored:
+def scored(store: Opened, query: Query, found: list[StoredList] | PostingArrays) -> Scored:
     if isinstance(found, tuple):
         places, counts = found
         return Scored((_exact(store, places, counts, query.average),), (), len(places))

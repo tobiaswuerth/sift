@@ -1,7 +1,7 @@
 import tracemalloc
 from pathlib import Path
 
-from sift.domain.text.records import Skipped
+from sift.domain.text.records import SkippedLine
 from sift.ingest.records import lines_of
 
 MOST = 10
@@ -21,11 +21,11 @@ def test_a_line_longer_than_a_line_may_be_is_skipped(tmp_path: Path) -> None:
     found = list(lines_of(path, MOST))
     assert found == [
         (1, "first"),
-        (2, Skipped(2, why)),
+        (2, SkippedLine(2, why)),
         (3, exact),
-        (4, Skipped(4, why)),
+        (4, SkippedLine(4, why)),
         (5, "last"),
-        (6, Skipped(6, why)),
+        (6, SkippedLine(6, why)),
     ]
 
 

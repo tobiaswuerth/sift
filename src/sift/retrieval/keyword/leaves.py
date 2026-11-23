@@ -9,8 +9,8 @@ from sift.domain.query.expressions import Phrase, Prefix
 from sift.domain.rank.phrases import merged, phrase_counts
 from sift.retrieval.keyword.lists import (
     Opened,
-    Postings,
-    Stored,
+    PostingArrays,
+    StoredList,
     Whole,
     everything,
     joined,
@@ -24,29 +24,29 @@ PREFIX_REMEDY = "write more of the word before the *"
 PHRASE_REMEDY = "add a rarer word to the phrase, or search its words without quotes"
 
 
-def _all_of(store: Opened, lists: list[Stored]) -> Postings:
+def _all_of(store: Opened, lists: list[StoredList]) -> PostingArrays:
     parts = [everything(store, held) for held in lists]
     places = np.concatenate([np.zeros(0, np.int64), *(p for p, _ in parts)])
     counts = np.concatenate([np.zeros(0, np.int64), *(c for _, c in parts)])
     return merged(places, counts)
 
 
-def _size(lists: list[Stored]) -> int:
+def _size(lists: list[StoredList]) -> int:
     return sum(len(held.places) if isinstance(held, Whole) else last(held.ranges.ends) for held in lists)
 
 
-def _within(store: Opened, held: Stored, candidates: Ids) -> Ids:
+def _within(store: Opened, held: StoredList, candidates: Ids) -> Ids:
     if isinstance(held, Whole):
         return held.places
     chosen = np.flatnonzero(among(held.ranges.ids, distinct(Ascending(candidates >> store.shape.range_shift))))
     return postings_in(store, held, chosen)[0]
 
 
-def _rarest_first(phrase: Phrase, lists: dict[str, list[Stored]]) -> list[str]:
+def _rarest_first(phrase: Phrase, lists: dict[str, list[StoredList]]) -> list[str]:
     return sorted(set(phrase.tokens), key=lambda token: (_size(lists[token]), token))
 
 
-def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[Stored]]) -> Postings:
+def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]]) -> PostingArrays:
     order = _rarest_first(phrase, lists)
     candidates = _all_of(store, lists[order[0]])[0]
     for token in order[1:]:
@@ -70,17 +70,17 @@ def _counted(n: int, what: str) -> str:
     return f"{n:,} {what}{'s' * (n != 1)}"
 
 
-def _prefix(store: Opened, prefix: Prefix) -> Postings:
+def _prefix(store: Opened, prefix: Prefix) -> PostingArrays:
     terms = expansions(store.transaction, prefix.text)
     lists = stored(store, terms)
     return _all_of(store, [held for term in terms for held in lists[term]])
 
 
-def materialized(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[Stored]]) -> Postings:
+def materialized(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[StoredList]]) -> PostingArrays:
     return _phrase(store, leaf, lists) if isinstance(leaf, Phrase) else _prefix(store, leaf)
 
 
-def reads_of(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[Stored]]) -> int:
+def reads_of(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[StoredList]]) -> int:
     if isinstance(leaf, Prefix):
         return volume(store.transaction, leaf.text).passages
     return _size(lists[_rarest_first(leaf, lists)[0]])

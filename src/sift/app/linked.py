@@ -6,7 +6,7 @@ from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailable
 from sift.api.filters import Filter
 from sift.api.search import Options, Unsearched
 from sift.app.notes import Note, Resolver, at_path, by_id, linking, matches, passed, read_in, target_of, written
-from sift.domain.query.filters import Condition, Linked, Linking, condition, linkings
+from sift.domain.query.filters import Condition, Linked, LinkFilter, condition, linkings
 from sift.domain.text.resolving import LEADING
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading
@@ -36,7 +36,7 @@ class Narrowing:
     path: str | None
     filters: tuple[Filter, ...]
     reads_quotes: bool
-    linkings: tuple[Linking, ...]
+    linkings: tuple[LinkFilter, ...]
     links_to: tuple[Pointed, ...] | None
     linked_from: tuple[Pointed, ...] | None
     left_out: LeftOut | None
@@ -143,7 +143,7 @@ def narrowing(
     )
 
 
-def _following(resolver: Resolver, each: Linking) -> set[int]:
+def _following(resolver: Resolver, each: LinkFilter) -> set[int]:
     how = resolver.of_name(each.target)
     if how.via in LEADING:
         return set(linking(resolver, how.documents[0], each.field))

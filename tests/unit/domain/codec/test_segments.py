@@ -8,7 +8,7 @@ from hypothesis import strategies as st
 
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.postings import blocked, lengths_of, positions_of, ranges_of
-from sift.domain.codec.segments import GAP, Long, Postings, Shape, Short, segment, stream
+from sift.domain.codec.segments import GAP, LongPostings, Postings, Shape, ShortPostings, segment, stream
 from sift.domain.rank.bm25 import term_scores, unquantized
 
 SMALL = Shape(range_shift=2, block=2, long=3, lengths_shift=3)
@@ -17,7 +17,7 @@ chunks = st.lists(st.tuples(words, words, words), min_size=1, max_size=25)
 
 
 def decoded(held: Postings) -> tuple[list[int], list[int], list[int]]:
-    parts = held.held.blocks if isinstance(held.held, Long) else (held.held,)
+    parts = held.held.blocks if isinstance(held.held, LongPostings) else (held.held,)
     ids: list[int] = []
     counts: list[int] = []
     positions: list[int] = []
@@ -64,8 +64,8 @@ def test_the_ranges_of_a_long_list_bound_every_score_in_them(columns: list[tuple
     streams = [stream(*each) for each in columns]
     lengths = np.array([sum(token != GAP for token in s) for s in streams])
     for held in segment(ids, streams, average=3.0, shape=SMALL).postings:
-        if not isinstance(held.held, Long):
-            assert isinstance(held.held, Short)
+        if not isinstance(held.held, LongPostings):
+            assert isinstance(held.held, ShortPostings)
             assert held.chunks < SMALL.long
             continue
         assert held.chunks >= SMALL.long

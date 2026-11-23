@@ -33,6 +33,12 @@ repos:
         language: python
         pass_filenames: false
         always_run: true
+      - id: names
+        name: a class or type name means one thing
+        entry: python -m tools names
+        language: python
+        pass_filenames: false
+        always_run: true
       - id: idioms
         name: banned idioms
         entry: python -m tools idioms

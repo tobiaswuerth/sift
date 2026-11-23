@@ -27,12 +27,12 @@ CODES_AXES = 2
 SCAN_SHARE = 0.2
 MARGIN = 1.25
 
-type Exact = Callable[[int, Ids], tuple[Ids, Halves]]
+type ExactRead = Callable[[int, Ids], tuple[Ids, Halves]]
 
 
 @dataclass(frozen=True, slots=True)
 class Reads:
-    exact: Exact
+    exact: ExactRead
     allowed: Sequence[AllowedChunks | None] = ()
 
 

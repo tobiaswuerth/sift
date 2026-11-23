@@ -19,7 +19,9 @@ from sift.storage.database import (
     BATCHES,
     Batches,
     Connection,
+    Count,
     Reading,
+    Value,
     Writing,
     WritingDocuments,
     reading,
@@ -28,7 +30,7 @@ from sift.storage.database import (
     run_each,
     writing,
 )
-from sift.storage.keyword_merges import merged_once, planned, settled
+from sift.storage.keyword_merges import Totals, merged_once, planned, settled
 from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
 
 SHAPE_KEY, THROUGH_KEY, FINGERPRINT_KEY = "keyword_shape", "keywords_through", "keyword_fingerprint"
@@ -46,10 +48,6 @@ DIGITS = re.compile("[0-9]{1,19}")
 MOST_ROW = (1 << 63) - 1
 
 
-class Value(NamedTuple):
-    value: str
-
-
 class Span(NamedTuple):
     id: int
     document: int
@@ -57,26 +55,17 @@ class Span(NamedTuple):
     length: int
 
 
-class Held(NamedTuple):
+class ChunkToIndex(NamedTuple):
     id: int
     title: str
     meta: str | None
     text: str
 
 
-class Totals(NamedTuple):
-    chunks: int
-    tokens: int
-
-
 class Range(NamedTuple):
     id: int
     first: int
     last: int
-
-
-class Count(NamedTuple):
-    n: int
 
 
 def fingerprint(transaction: Reading) -> str:
@@ -141,7 +130,7 @@ def _tokens(streams: Sequence[Sequence[str]]) -> int:
 
 def _streams(transaction: Reading, spans: Sequence[Span]) -> list[list[str]]:
     wanted = json.dumps(sorted({span.document for span in spans}))
-    documents = {held.id: held for held in rows(transaction, Held, DOCUMENTS, (wanted,))}
+    documents = {held.id: held for held in rows(transaction, ChunkToIndex, DOCUMENTS, (wanted,))}
     named = {key: (tokens(held.title), tokens(held.meta or "")) for key, held in documents.items()}
     return [
         stream(
