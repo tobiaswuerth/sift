@@ -38,6 +38,26 @@ def narrowed_searches_run(home: Path) -> None:
     assert sift(home, "get", "notes/brush.md", "--fields", "*").stdout == "# Brush\n"
 
 
+def status_run(home: Path) -> None:
+    status = sift(home, "status")
+    assert (status.returncode, status.stderr) == (0, "")
+    header, row = status.stdout.split("\n")[:2]
+    assert (header.split()[-2:], row.split()[-6:-4], row.split()[-2:]) == (
+        ["links", "unresolved"],
+        ["3", "3"],
+        ["3", "1"],
+    )
+    listed = sift(home, "status", "notes", "--unreadable", "--json")
+    assert '"unreadable_files": []' in listed.stdout
+    assert json.loads(listed.stdout)
+
+
+def similar_run(home: Path) -> None:
+    alike = sift(home, "similar", "notes/rl.md", "--json", "--compact")
+    assert (alike.returncode, alike.stderr) == (0, "")
+    assert sorted(str(hit["id"]) for hit in hits_of(alike)) == ["notes/huge.txt", "notes/sub/brush.md"]
+
+
 def links_run(home: Path) -> None:
     linked = sift(home, "links", "notes/rl.md", "--direction", "both")
     assert linked.stdout.split("\n")[1:4] == [
@@ -75,17 +95,7 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
 
     assert sift(home, "index", "notes", "--json").stdout.count('"added": 0') == 1
 
-    status = sift(home, "status")
-    assert (status.returncode, status.stderr) == (0, "")
-    header, row = status.stdout.split("\n")[:2]
-    assert (header.split()[-2:], row.split()[-6:-4], row.split()[-2:]) == (
-        ["links", "unresolved"],
-        ["3", "3"],
-        ["3", "1"],
-    )
-    listed = sift(home, "status", "notes", "--unreadable", "--json")
-    assert '"unreadable_files": []' in listed.stdout
-    assert json.loads(listed.stdout)
+    status_run(home)
 
     one = sift(home, "get", "notes/brush.md")
     assert (one.returncode, one.stdout, one.stderr) == (0, "# Brush\n", "")
@@ -110,6 +120,7 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     assert "Loading" not in embedded.stderr
     near = sift(home, "vsearch", "learning", "-k", "1", "--json", model=model)
     assert len(cast("dict[str, list[object]]", json.loads(near.stdout))["hits"]) == 1
+    similar_run(home)
     kept = sift(home, "vsearch", "learning", "--path", "sub/*", "--json", model=model)
     assert [hit["id"] for hit in hits_of(kept)] == ["notes/sub/brush.md"]
     asked = sift(home, "query", "reward shaping", "-k", "1", model=model, reranker=reranker)

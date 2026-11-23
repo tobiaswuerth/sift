@@ -24,6 +24,12 @@ class Pointed:
 
 
 @dataclass(frozen=True, slots=True)
+class LeftOut:
+    note: Note
+    linking: bool
+
+
+@dataclass(frozen=True, slots=True)
 class Narrowing:
     collections: tuple[Collection, ...]
     ruled_out: int
@@ -33,7 +39,7 @@ class Narrowing:
     linkings: tuple[Linking, ...]
     links_to: tuple[Pointed, ...] | None
     linked_from: tuple[Pointed, ...] | None
-    mentioned: Note | None
+    left_out: LeftOut | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +120,9 @@ def _kept(
     return tuple(one for one in scope if one.name in names)
 
 
-def narrowing(home: Path, request: Options, scope: tuple[Collection, ...], mentioned: Note | None = None) -> Narrowing:
+def narrowing(
+    home: Path, request: Options, scope: tuple[Collection, ...], left_out: LeftOut | None = None
+) -> Narrowing:
     quotes = reads_quotes()
     condition(request.path, request.filters, reads_quotes=quotes)
     links_to = tuple(_linked_to(home, scope, each) for each in request.links_to) if request.links_to else None
@@ -131,7 +139,7 @@ def narrowing(home: Path, request: Options, scope: tuple[Collection, ...], menti
         linkings(request.filters),
         links_to,
         linked_from,
-        mentioned,
+        left_out,
     )
 
 
@@ -176,13 +184,15 @@ def _within(found: Narrowing, one: Collection, resolver: Resolver) -> list[int] 
     return None if kept is None else sorted(kept)
 
 
-def _left_out(note: Note | None, one: Collection, resolver: Resolver) -> list[int]:
-    document = _document(note, one, resolver.transaction)
-    return [] if document is None else [document, *linking(resolver, document, None)]
+def _left_out(left_out: LeftOut | None, one: Collection, resolver: Resolver) -> list[int]:
+    document = None if left_out is None else _document(left_out.note, one, resolver.transaction)
+    if left_out is None or document is None:
+        return []
+    return [document, *linking(resolver, document, None)] if left_out.linking else [document]
 
 
 def condition_in(found: Narrowing, one: Collection, transaction: Reading) -> Condition | None:
     resolver = Resolver(transaction)
     values = {each: sorted(_following(resolver, each)) for each in found.linkings}
-    linked = Linked(values, _within(found, one, resolver), _left_out(found.mentioned, one, resolver))
+    linked = Linked(values, _within(found, one, resolver), _left_out(found.left_out, one, resolver))
     return condition(found.path, found.filters, reads_quotes=found.reads_quotes, linked=linked)

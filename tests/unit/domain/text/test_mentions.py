@@ -1,8 +1,5 @@
-import pytest
-
-from sift.api.errors import InvalidRequestError
 from sift.domain.query.expressions import NOTHING, Or, Phrase, Term
-from sift.domain.query.grammar import any_phrase
+from sift.domain.query.grammar import any_phrase, words_in
 from sift.domain.text.mentions import names, phrases
 
 
@@ -38,6 +35,6 @@ def test_a_name_written_with_combining_marks_is_looked_for_without_umlauts_too()
     assert phrases([decomposed]) == (decomposed, "Hans Mueller")
 
 
-def test_names_of_more_words_than_a_query_takes_are_refused() -> None:
-    with pytest.raises(InvalidRequestError, match="more than 1,000 words"):
-        any_phrase([f"name{n} word" for n in range(501)])
+def test_the_words_of_names_are_counted_as_a_query_s() -> None:
+    assert words_in(any_phrase([f"name{n} word" for n in range(501)])) == 1002
+    assert words_in(any_phrase(["one", "two words", "one"])) == 3

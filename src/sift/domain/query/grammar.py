@@ -190,13 +190,13 @@ def parsed(query: str) -> Expression:
     expression, _, at = _any(items, 0, 0)
     if at < len(items):
         raise _refused('a ")" closes nothing')
-    return _within_words(expression, "ask with fewer words")
-
-
-def _within_words(expression: Expression, remedy: str) -> Expression:
-    if sum(len(leaf.tokens) if isinstance(leaf, Phrase) else 1 for leaf in leaves(expression)) > MOST_WORDS:
-        raise _refused(f"it holds more than {MOST_WORDS:,} words", remedy)
+    if words_in(expression) > MOST_WORDS:
+        raise _refused(f"it holds more than {MOST_WORDS:,} words", "ask with fewer words")
     return expression
+
+
+def words_in(expression: Expression) -> int:
+    return sum(len(leaf.tokens) if isinstance(leaf, Phrase) else 1 for leaf in leaves(expression))
 
 
 def relaxed(query: str) -> Expression | None:
@@ -213,4 +213,4 @@ def relaxed(query: str) -> Expression | None:
 def any_phrase(texts: Sequence[str]) -> Expression:
     found = tuple(dict.fromkeys(leaf_of(Word(text, quoted=True)) for text in texts))
     expression, _ = _joined(Or, [(leaf, 1, 0) for leaf in found])
-    return _within_words(expression, "name fewer fields with --also")
+    return expression

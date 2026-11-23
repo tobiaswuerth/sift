@@ -12,7 +12,7 @@ from hypothesis import strategies as st
 from sift.api.errors import InvalidRequestError
 from sift.domain.arrays import Mask, ints
 from sift.domain.query.expressions import NOTHING, And, Expression, Leaf, Not, Or, Phrase, Prefix, Term, leaves
-from sift.domain.query.grammar import MOST_DEPTH, MOST_WORDS, parsed, relaxed
+from sift.domain.query.grammar import MOST_DEPTH, MOST_WORDS, parsed, relaxed, words_in
 from sift.domain.rank.boolean import counted, may_hold
 
 DASH = "\N{EN DASH}"
@@ -213,3 +213,7 @@ def test_nothing_is_never_searched_for() -> None:
         counted(NOTHING, {})
     with pytest.raises(ValueError, match="nothing is searched for"):
         may_hold(NOTHING, {})
+
+
+def test_a_query_of_as_many_words_as_allowed_is_read() -> None:
+    assert words_in(parsed("a " * MOST_WORDS)) == MOST_WORDS

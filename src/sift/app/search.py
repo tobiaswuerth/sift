@@ -2,7 +2,7 @@ import math
 import time
 from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
@@ -108,12 +108,15 @@ def _searched(kept: Kept, asked: Asked) -> Ranked | None:
     return found(kept, _itself, asked.wanted, asked.looser)
 
 
+def _ranked(kept: Kept, asked: Asked, wanted: int) -> Ranked | None:
+    return _searched(kept, replace(asked, wanted=replace(asked.wanted, k=wanted)))
+
+
 def _answered(kept: Kept, asked: Asked) -> tuple[list[tuple[int, Hit]], bool]:
     while True:
-        ranked = _searched(kept, asked)
-        hits = None if ranked is None else searching.hits(kept, ranked.found, asked.request)
-        if ranked is not None and hits is not None:
-            return hits, ranked.cut
+        found = searching.answered(kept, partial(_ranked, kept, asked), asked.request)
+        if found is not None:
+            return found
 
 
 def _expired(budget: float | None, clock: Clock) -> Expired:

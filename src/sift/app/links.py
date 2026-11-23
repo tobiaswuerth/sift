@@ -2,7 +2,7 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.ids import DocumentId
 from sift.api.links import (
     Direction,
@@ -17,7 +17,7 @@ from sift.api.links import (
 )
 from sift.api.search import Unsearched
 from sift.app.collections import chosen_or_active
-from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, by_id, by_name, linking, read_in, unresolved_links
+from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, linking, note_of, read_in, unresolved_links
 from sift.app.searching import checked_k
 from sift.domain.text.resolving import LEADING, Linking, Resolution, link_path, linking_lines, stem
 from sift.storage.database import Reading
@@ -123,13 +123,9 @@ def links(home: Path, request: ShowLinks) -> Links:
     checked_k(request.k)
     if request.depth not in DEPTHS:
         raise InvalidRequestError(f"--depth {request.depth} is neither 1 nor 2", DEPTH_REMEDY)
-    try:
-        found = by_id(home, request.id)
-        return read_in(found.collection, lambda transaction: _links(transaction, found, request))
-    except NotFoundError as unknown:
-        named = by_name(chosen_or_active(home, ()), request.id, unknown)
-        shown = read_in(named.note.collection, lambda transaction: _links(transaction, named.note, request))
-        return replace(shown, unsearched=named.unsearched)
+    named = note_of(home, chosen_or_active(home, ()), request.id)
+    shown = read_in(named.note.collection, lambda transaction: _links(transaction, named.note, request))
+    return replace(shown, unsearched=named.unsearched)
 
 
 @dataclass(frozen=True, slots=True)

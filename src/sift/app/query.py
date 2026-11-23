@@ -29,6 +29,7 @@ from sift.domain.query.expressions import NOTHING, Expression
 from sift.domain.query.grammar import parsed
 from sift.domain.rank.best import Best
 from sift.domain.rank.hybrid import blend, named, passage, standing_out, words, work_of
+from sift.domain.rank.works import one_per_work
 from sift.inference.models import Models
 from sift.retrieval.keyword.lists import opened
 from sift.retrieval.keyword.search import TUNING, never
@@ -173,19 +174,12 @@ def _first_of_each(ranked: list[Candidate]) -> list[Candidate]:
     return kept
 
 
-def _one_per_work(ranked: list[Candidate]) -> list[Candidate]:
-    kept: list[Candidate] = []
-    first: dict[str, int] = {}
-    for each in ranked:
-        work = work_of(each.fields.get("doi"))
-        if work is not None and work in first:
-            better = kept[first[work]]
-            kept[first[work]] = replace(better, hit=replace(better.hit, also=(*better.hit.also, each.hit.id)))
-            continue
-        if work is not None:
-            first[work] = len(kept)
-        kept.append(each)
-    return kept
+def _work(each: Candidate) -> str | None:
+    return work_of(each.fields.get("doi"))
+
+
+def _copied(best: Candidate, copy: Candidate) -> Candidate:
+    return replace(best, hit=replace(best.hit, also=(*best.hit.also, copy.hit.id)))
 
 
 def _ordered(request: SearchHybrid, candidates: list[Candidate], scores: Floats) -> list[Candidate]:
@@ -194,7 +188,7 @@ def _ordered(request: SearchHybrid, candidates: list[Candidate], scores: Floats)
     ranked = [replace(candidates[at], hit=replace(candidates[at].hit, score=round(rounded[at], 4))) for at in order]
     if not request.all_passages:
         ranked = _first_of_each(ranked)
-        ranked = _one_per_work(ranked)
+        ranked = one_per_work(ranked, _work, _copied)
     ranked = ranked[: request.k]
     return ranked[: standing_out([each.hit.score for each in ranked])] if request.adaptive else ranked
 

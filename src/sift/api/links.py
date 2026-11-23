@@ -8,6 +8,7 @@ from sift.api.search import Options, Unsearched
 
 NOTE = 'a note: its id, as sift get takes it, or its name as links write it, e.g. "Acme AG"'
 LINKS_K = "at most this many links each way (default: 50)"
+DOCUMENT = 'a document: its id, as sift get takes it, or a note\'s name as links write it, e.g. "Acme AG"'
 ALSO = "front matter fields whose values name the note too, comma-separated, e.g. emails"
 
 
@@ -88,3 +89,8 @@ class Unresolved:
 class FindMentions(Options):
     id: Annotated[str, Help(NOTE)]
     also: Annotated[tuple[str, ...], Help(ALSO), Read(listed)] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class FindSimilar(Options):
+    id: Annotated[str, Help(DOCUMENT)]

@@ -1,4 +1,3 @@
-from dataclasses import replace
 from pathlib import Path
 
 from sift.api.errors import InvalidRequestError
@@ -6,9 +5,10 @@ from sift.api.links import FindMentions
 from sift.api.search import SearchResult
 from sift.app import searching
 from sift.app.collections import chosen_or_active
+from sift.app.linked import LeftOut
 from sift.app.notes import Note, note_of, read_in
 from sift.app.search import Asked, Wanted, searched_as
-from sift.domain.query.grammar import any_phrase
+from sift.domain.query.grammar import MOST_WORDS, any_phrase, words_in
 from sift.domain.text.mentions import names, phrases
 from sift.retrieval.keyword.search import TUNING, Tuning, never
 from sift.storage.database import Reading
@@ -35,8 +35,11 @@ def mentions(home: Path, request: FindMentions, tuning: Tuning = TUNING) -> Sear
             raise InvalidRequestError(f"--also names front matter fields, e.g. emails, not {field!r}", ALSO_REMEDY)
     named = note_of(home, chosen_or_active(home, ()), request.id)
     expression = any_phrase(phrases(_names(named.note, request.also)))
+    if words_in(expression) > MOST_WORDS:
+        remedy = "name fewer fields with --also" if request.also else "give it fewer aliases"
+        raise InvalidRequestError(f"the note's names hold more than {MOST_WORDS:,} words", remedy)
     wanted = Wanted(request.k, not request.all_passages, tuning, never)
-    found = searched_as(Asked(request, expression, None, wanted, searching.narrowed(home, request, named.note)))
-    said = {each.collection for each in found.unsearched}
-    passed = tuple(each for each in named.unsearched if each.collection not in said)
-    return replace(found, unsearched=(*found.unsearched, *passed))
+    found = searched_as(
+        Asked(request, expression, None, wanted, searching.narrowed(home, request, LeftOut(named.note, linking=True)))
+    )
+    return searching.also_unsearched(found, named.unsearched)

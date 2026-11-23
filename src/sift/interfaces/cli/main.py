@@ -17,9 +17,9 @@ from sift.api.embedding import EmbedCollections, EmbedResult
 from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.events import Reporter
 from sift.api.indexing import IndexCollections, IndexResult, Skipped
-from sift.api.links import FindMentions, Links, ListUnresolved, ShowLinks, Unresolved
+from sift.api.links import FindMentions, FindSimilar, Links, ListUnresolved, ShowLinks, Unresolved
 from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
-from sift.app import collections, documents, embedding, indexing, links, mentions, query, search, vsearch
+from sift.app import collections, documents, embedding, indexing, links, mentions, query, search, similar, vsearch
 from sift.inference.loading import Deferred, deferred
 from sift.interfaces.cli import shown
 from sift.interfaces.cli.arguments import options, request_of
@@ -135,6 +135,12 @@ def _mentions(namespace: argparse.Namespace, context: Context) -> Shown:
     return _found(answer, context, started, "keyword")
 
 
+def _similar(namespace: argparse.Namespace, context: Context) -> Shown:
+    started = context.clock()
+    answer = similar.similar(context.settings.home, request_of(FindSimilar, namespace))
+    return _found(answer, context, started, "semantic")
+
+
 def _links(context: Context, request: ShowLinks) -> Links:
     return links.links(context.settings.home, request)
 
@@ -172,6 +178,7 @@ COMMANDS = MappingProxyType(
         ),
         "vsearch": Command("find passages near a query in meaning", SearchVectors, _vsearch),
         "get": command("print documents by their ids", GetDocuments, _get, shown.documents, _some_unfound),
+        "similar": Command("find documents near one in meaning, by its own vectors", FindSimilar, _similar),
         "mentions": Command("find documents naming a note without linking to it", FindMentions, _mentions),
         "links": command(
             "the links of a note: those it holds, and those into it", ShowLinks, _links, shown.links, _some_unread

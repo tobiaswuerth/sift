@@ -106,6 +106,20 @@ def test_a_store_a_name_could_not_be_looked_up_in_is_said(named: Path, tmp_path:
     store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
     found = mentions(named, FindMentions("Hans Mueller", collection="work"))
     assert (ids(found), [each.collection for each in found.unsearched]) == (["work/contract.md"], ["other"])
+    every = mentions(named, FindMentions("Hans Mueller"))
+    assert [each.collection for each in every.unsearched] == ["other"]
+
+
+def test_a_note_named_by_more_words_than_a_query_takes_is_refused_saying_why(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    many = ", ".join(f"name{n} word" for n in range(501))
+    collection(tmp_path, home, "v", {"Long.md": f"---\naliases: [{many}]\nmails: [a@example.com]\n---\n"})
+    index(home, IndexCollections(), lambda _: None)
+    for also, remedy in (((), "give it fewer aliases"), (("mails",), "name fewer fields with --also")):
+        with pytest.raises(InvalidRequestError, match="the note's names hold more than 1,000 words") as refused:
+            mentions(home, FindMentions("v/Long.md", also=also))
+        assert refused.value.remedy is not None
+        assert remedy in refused.value.remedy
 
 
 def test_status_counts_the_links_of_each_collection_and_those_leading_nowhere(named: Path, tmp_path: Path) -> None:

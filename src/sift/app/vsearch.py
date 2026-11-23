@@ -8,7 +8,7 @@ import numpy as np
 
 from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.ids import owner
-from sift.api.search import Hit, SearchResult, SearchVectors
+from sift.api.search import Hit, Options, SearchResult, SearchVectors
 from sift.app import searching
 from sift.domain.arrays import Ids, Mask
 from sift.domain.codec.codes import Floats, Halves
@@ -187,16 +187,22 @@ def near[S](
         want *= WIDER
 
 
-def _itself(held: Held) -> Held:
+def itself(held: Held) -> Held:
     return held
 
 
-def _answered(kept: Kept, request: SearchVectors, query: Floats, asked: Asked) -> list[tuple[int, Hit]]:
+def _round(kept: Kept, request: Options, query: Floats, asked: Asked, wanted: int) -> searching.Round | None:
+    found = near(kept, itself, Best(wanted, not request.all_passages), query, asked)
+    return None if found is None else searching.Round(found)
+
+
+def answered_near(
+    kept: Kept, request: Options, query: Floats, asked: Asked, copy_of: str | None = None
+) -> list[tuple[int, Hit]]:
     while True:
-        found = near(kept, _itself, Best(request.k, not request.all_passages), query, asked)
-        shown = None if found is None else searching.hits(kept, found, request)
-        if shown is not None:
-            return shown
+        found = searching.answered(kept, partial(_round, kept, request, query, asked), request, copy_of)
+        if found is not None:
+            return found[0]
 
 
 def vsearch(home: Path, request: SearchVectors, models: Models, asked: Asked = ASKED) -> SearchResult:
@@ -209,5 +215,5 @@ def vsearch(home: Path, request: SearchVectors, models: Models, asked: Asked = A
         if not any(len(each.held.coded.ids) for each in kept.searching):
             return searching.result(kept, (), partial=False)
         query = query_vector(models, request.query)
-        alike(kept, _itself, models.name, query)
-        return searching.result(kept, _answered(kept, request, query, asked), partial=False)
+        alike(kept, itself, models.name, query)
+        return searching.result(kept, answered_near(kept, request, query, asked), partial=False)
