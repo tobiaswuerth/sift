@@ -8,8 +8,6 @@ from sift.domain.text.json_values import NestedTooDeeplyError, composed_fields, 
 from sift.domain.text.markdown import heading, one_line
 from sift.domain.text.notes import Document, digest, storable
 
-RECORD_FILES = (".jsonl", ".ndjson")
-RECORD_MARK = "#"
 ID_FIELDS = ("id", "_id")
 TITLE_FIELDS = ("title", "name", "headline", "subject")
 TEXT_FIELDS = ("text", "content", "body", "abstract", "description", "summary")
@@ -98,20 +96,3 @@ def record_of(line: str, number: int, chosen: Chosen) -> Document | SkippedLine:
     if isinstance(found, SkippedLine):
         return found
     return Document(found.key, digest(line.encode()), found.title, found.fields, found.text, found.chunks, ())
-
-
-def record_path(path: str, key: str) -> str:
-    return f"{path}{RECORD_MARK}{key}" if key else path
-
-
-def public_id(collection: str, path: str, key: str) -> str:
-    return f"{collection}/{record_path(path, key)}"
-
-
-def split_record_path(relative: str) -> tuple[str, str]:
-    at = relative.find(RECORD_MARK)
-    while at >= 0:
-        if relative[:at].lower().endswith(RECORD_FILES):
-            return relative[:at], relative[at + 1 :]
-        at = relative.find(RECORD_MARK, at + 1)
-    return relative, ""

@@ -8,8 +8,8 @@ from sift.api.ids import DocumentId
 from sift.api.search import Unsearched
 from sift.app.documents import place, resolved_at
 from sift.app.documents import unknown as documents_unknown
+from sift.domain.text.kinds import public_id
 from sift.domain.text.links import LinkKind, link_target, name_key
-from sift.domain.text.records import public_id
 from sift.domain.text.resolving import LEADING, Candidate, Resolution, Via, link_path, resolved
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Reading

@@ -3,14 +3,24 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import NamedTuple
 
-from sift.domain.text.records import RECORD_FILES
+from sift.domain.text.kinds import CONVERTED, kind_of, streamed
 
 MOST_TIME = 2**63 - 1
 RACY = -1
 GRAIN_NS = 2 * 10**9
 MOST_TEXT_BYTES = 64 << 20
+MOST_FILE_BYTES = 1 << 30
 ROOT = ""
 NONE_UNREADABLE: Mapping[str, bool] = MappingProxyType({})
+
+
+@dataclass(frozen=True, slots=True)
+class Sizes:
+    text: int = MOST_TEXT_BYTES
+    file: int = MOST_FILE_BYTES
+
+
+SIZES = Sizes()
 
 
 class Stat(NamedTuple):
@@ -70,14 +80,18 @@ def _emptied(found: Found, gone: frozenset[str]) -> tuple[str, ...]:
     return tuple(sorted(folder for folder in found.empty_folders if folder in touched))
 
 
-def _too_large(path: str, stat: Stat, most_text_bytes: int) -> bool:
-    return stat.size > most_text_bytes and not path.lower().endswith(RECORD_FILES)
+def most_read(path: str, sizes: Sizes) -> int:
+    return sizes.file if kind_of(path) in CONVERTED else sizes.text
+
+
+def _too_large(path: str, stat: Stat, sizes: Sizes) -> bool:
+    return not streamed(path) and stat.size > most_read(path, sizes)
 
 
 def index_plan(
     found: Found,
     known: Mapping[str, Stat],
-    most_text_bytes: int = MOST_TEXT_BYTES,
+    sizes: Sizes = SIZES,
     unreadable: Mapping[str, bool] = NONE_UNREADABLE,
 ) -> IndexPlan:
     again = {path for path, read_again in unreadable.items() if read_again}
@@ -89,8 +103,8 @@ def index_plan(
     left_as_indexed = within(gone, emptied)
     still_there = found.files.keys() | kept | left_as_indexed | set(found.unlisted_files)
     return IndexPlan(
-        read=tuple(path for path in to_read if not _too_large(path, found.files[path], most_text_bytes)),
-        too_large=tuple(path for path in to_read if _too_large(path, found.files[path], most_text_bytes)),
+        read=tuple(path for path in to_read if not _too_large(path, found.files[path], sizes)),
+        too_large=tuple(path for path in to_read if _too_large(path, found.files[path], sizes)),
         drop=tuple(sorted(gone - left_as_indexed)),
         kept=tuple(sorted(kept)),
         left_as_indexed=tuple(sorted(left_as_indexed)),

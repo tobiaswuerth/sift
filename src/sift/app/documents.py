@@ -5,8 +5,8 @@ from pathlib import Path, PurePath
 from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound
 from sift.api.errors import InvalidRequestError, NotFoundError, SiftError
 from sift.domain.query import fields as shown
+from sift.domain.text.kinds import public_id, split_keyed_path
 from sift.domain.text.lines import line_range, lines_of
-from sift.domain.text.records import public_id, split_record_path
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Reading
 from sift.storage.documents import Stored, fields_of, paths_named, stored
@@ -50,7 +50,7 @@ def place(known: Sequence[Collection], id_: str) -> tuple[Collection, str]:
 
 
 def resolved_at(transaction: Reading, id_: str, relative: str, *, absolute: bool) -> Stored:
-    exact = stored(transaction, relative) or stored(transaction, *split_record_path(relative))
+    exact = stored(transaction, relative) or stored(transaction, *split_keyed_path(relative))
     if exact is not None:
         return exact
     candidates = paths_named(transaction, relative.rsplit(SEPARATOR, 1)[-1])

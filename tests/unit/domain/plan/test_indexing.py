@@ -9,9 +9,11 @@ from sift.domain.plan.indexing import (
     RACY,
     Found,
     IndexPlan,
+    Sizes,
     Stat,
     batches,
     index_plan,
+    most_read,
     recorded,
     stored_time,
     within,
@@ -102,6 +104,18 @@ def test_a_file_larger_than_a_document_may_be_is_left_out_unread() -> None:
     assert index_plan(Found({"huge.txt": huge}), {"huge.txt": huge}).too_large == ()
 
 
+def test_a_file_converted_to_text_may_be_larger_than_its_text_and_records_have_no_limit() -> None:
+    sizes = Sizes(text=10, file=100)
+    files = {
+        f"{name}.{kind}": Stat(1, size)
+        for kind in ("md", "pdf", "eml", "jsonl")
+        for name, size in (("a", 50), ("b", 101))
+    }
+    plan = index_plan(Found(files), {}, sizes)
+    assert plan.too_large == ("a.md", "b.eml", "b.md", "b.pdf")
+    assert [most_read(path, sizes) for path in ("a.md", "a.pdf", "a.eml")] == [10, 100, 100]
+
+
 def test_a_time_past_what_the_store_counts_to_is_held_at_its_end() -> None:
     assert [stored_time(t) for t in (-(2**64), -5, 0, 2**70)] == [-MOST_TIME, -5, 0, MOST_TIME]
 
@@ -111,14 +125,14 @@ stats = st.builds(Stat, st.integers(0, 3), st.integers(0, 3))
 listings = st.dictionaries(paths, stats, max_size=8)
 
 
-folders_there = st.lists(st.sampled_from(["", "a/", "b/", "a"]), max_size=2).map(tuple)
+folders_there = st.lists(st.sampled_from(["", "a/", "b/", "a/b/"]), max_size=2).map(tuple)
 founds = st.builds(
     Found,
     listings,
     folders_there,
     st.lists(paths, max_size=2).map(tuple),
     st.just(tuple[str, ...]()),
-    st.lists(st.sampled_from(["a/", "b/", "a"]), max_size=2).map(tuple),
+    st.lists(st.sampled_from(["a/", "b/", "a/b/"]), max_size=2).map(tuple),
 )
 
 

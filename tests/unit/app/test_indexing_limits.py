@@ -2,14 +2,15 @@ from pathlib import Path
 
 import pytest
 
-from sift.api.collections import AddCollection, Counted, ShowStatus, UnreadableFile
+from sift.api.collections import AddCollection, UnreadableFile
 from sift.api.events import Event, Finished, Phase, PhaseStarted
 from sift.api.indexing import IndexCollections, Indexed
-from sift.app.collections import add, status
+from sift.app.collections import add
 from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
 from sift.ingest.files import CHANGED, Identity, at_most
 from tests.files import write
+from tests.homes import unreadable_files
 from tests.later import LATER, later
 
 SMALL = Limits(most_text_bytes=60)
@@ -36,12 +37,6 @@ def indexed(home: Path, limits: Limits = SMALL, readers: Readers = LATER, said: 
     (result,) = index(home, IndexCollections(), heard.append, limits, readers).collections
     assert isinstance(result.outcome, Indexed)
     return result.outcome
-
-
-def unreadable_files(home: Path) -> tuple[UnreadableFile, ...]:
-    (shown,) = status(home, ShowStatus(unreadable=True)).collections
-    assert isinstance(shown.contents, Counted)
-    return shown.contents.unreadable_files
 
 
 def test_a_file_larger_than_a_document_may_be_is_left_out_until_it_changes(home: Path, notes: Path) -> None:

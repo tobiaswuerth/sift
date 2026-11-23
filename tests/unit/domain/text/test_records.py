@@ -9,10 +9,7 @@ from sift.domain.text.records import (
     NOT_A_KEY,
     Chosen,
     SkippedLine,
-    public_id,
     record_of,
-    record_path,
-    split_record_path,
 )
 
 
@@ -117,19 +114,3 @@ def test_a_record_s_digest_is_its_line_s() -> None:
     one, other = read({"id": 1, "text": "a"}), read({"id": 1, "text": "b"})
     assert one.digest != other.digest
     assert read({"id": 1, "text": "a"}).digest == one.digest
-
-
-@pytest.mark.parametrize(
-    "path, key, written",
-    [
-        ("a.md", "", "a.md"),
-        ("data.jsonl", "2101.00001", "data.jsonl#2101.00001"),
-        ("x/d.NDJSON", "hep-th/9901001#2", "x/d.NDJSON#hep-th/9901001#2"),
-        ("a#b.md", "", "a#b.md"),
-        ("c#d.jsonl", "1", "c#d.jsonl#1"),
-    ],
-)
-def test_a_record_s_path_names_its_file_and_its_key(path: str, key: str, written: str) -> None:
-    assert record_path(path, key) == written
-    assert split_record_path(written) == (path, key)
-    assert public_id("c", path, key) == f"c/{written}"

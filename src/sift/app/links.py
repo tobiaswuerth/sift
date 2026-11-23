@@ -20,8 +20,8 @@ from sift.api.search import Unsearched
 from sift.api.validated import validated
 from sift.app.collections import chosen_or_active
 from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, linking, note_of, read_in, unresolved_links
+from sift.domain.text.kinds import public_id
 from sift.domain.text.links import name_key
-from sift.domain.text.records import public_id
 from sift.domain.text.resolving import LEADING, Linking, Resolution, link_path, linking_lines
 from sift.storage.database import Reading
 from sift.storage.documents import texts

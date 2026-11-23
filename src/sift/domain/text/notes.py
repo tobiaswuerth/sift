@@ -11,7 +11,6 @@ from sift.domain.text.json_values import REPLACEMENT, composed_fields
 from sift.domain.text.links import MARKDOWN, Link, links
 from sift.domain.text.markdown import heading, one_line
 
-TEXT_FILES = (".md", ".markdown", ".txt")
 NUL = "\N{NULL}"
 
 

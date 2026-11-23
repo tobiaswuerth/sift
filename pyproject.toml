@@ -19,6 +19,7 @@ dependencies = [
     "pillow>=13",  # embeddinggemma-2 takes images too, so transformers needs Pillow even for text
     "torchvision>=0.28",  # and torchvision; it must match torch (0.28 is 2.13's)
     "nvidia-ml-py>=12",  # free GPU memory as nvidia-smi sees it, which CUDA overstates on Windows
+    "xberg>=1.3",  # PDF, office files, e-books and web pages as Markdown
 ]
 keywords = [
     "rag",
@@ -95,6 +96,16 @@ dev = [
     "pytest-timeout==2.4.0",
     "pytest-xdist==3.8.0",
 ]
+
+# Every version locked has wheels for the platforms CI runs on, and the same version runs on each: Xberg 1.3.9 has
+# none for Windows.
+[tool.uv]
+required-environments = [
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+constraint-dependencies = ["xberg!=1.3.9"]
 
 [tool.uv.build-backend]
 module-name = "sift"
@@ -246,6 +257,28 @@ source_modules = [
     "sift.inference.models",
 ]
 forbidden_modules = ["torch", "transformers", "sentence_transformers", "pynvml"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "The document converter only where documents are converted"
+type = "forbidden"
+source_modules = [
+    "sift.api",
+    "sift.domain",
+    "sift.storage",
+    "sift.retrieval",
+    "sift.inference",
+    "sift.app",
+    "sift.interfaces",
+    "sift.ingest.documents",
+    "sift.ingest.files",
+    "sift.ingest.links",
+    "sift.ingest.mail",
+    "sift.ingest.readers",
+    "sift.ingest.records",
+    "sift.ingest.scan",
+]
+forbidden_modules = ["xberg"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]

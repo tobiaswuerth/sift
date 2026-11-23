@@ -8,7 +8,7 @@ from sift.api.search import Hit, Options, SearchResult, Unsearched
 from sift.app.searching import Open, Ranked, ScoredChunk, Searching, despite_losses
 from sift.domain.query import fields as shown
 from sift.domain.rank.works import one_per_work, work_of_fields
-from sift.domain.text.records import public_id
+from sift.domain.text.kinds import public_id
 from sift.storage.documents import fields_by_document, passages, texts
 
 WIDER = 2

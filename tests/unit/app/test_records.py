@@ -30,6 +30,7 @@ from sift.storage.documents import counts
 from sift.storage.store import open_store
 from sift.storage.vectors import held_vectors, left
 from tests.files import jsonl, write
+from tests.homes import text_of
 from tests.later import later
 from tests.models import Hashed
 
@@ -56,11 +57,6 @@ def indexed(
 def found(home: Path, query: str, filters: tuple[str, ...] = ()) -> list[str]:
     asked = SearchKeywords(query, k=20, filters=tuple(map(written, filters)))
     return sorted(hit.id for hit in search(home, asked).hits)
-
-
-def text_of(home: Path, id_: str) -> str:
-    (one,) = documents(home, GetDocuments((id_,))).found
-    return one.text
 
 
 @pytest.fixture

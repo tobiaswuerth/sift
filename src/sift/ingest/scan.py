@@ -4,14 +4,13 @@ import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from pathlib import Path, PurePath
+from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol
 
 from sift.domain.plan.indexing import Found, Stat, stored_time
 from sift.domain.text.decoding import encodable
-from sift.domain.text.notes import TEXT_FILES
-from sift.domain.text.records import RECORD_FILES, split_record_path
+from sift.domain.text.kinds import kind_of, split_keyed_path
 from sift.ingest.files import CHANGED, ChangedError, Identity, identity_at, own_identity_at
 from sift.ingest.links import LinkTarget, lands_within, link_target
 
@@ -124,7 +123,7 @@ def _file(entry: DirEntry, relative: str, seen: _Seen, guard: _Guard | None) -> 
     if not encodable(relative):
         seen.unnamed.append(relative.encode(errors="backslashreplace").decode())
         return
-    if split_record_path(relative)[1]:
+    if split_keyed_path(relative)[1]:
         seen.named_as_records.append(relative)
         return
     seen.files[relative] = Stat(stored_time(found.st_mtime_ns), found.st_size)
@@ -160,7 +159,7 @@ def _taken(entry: DirEntry, relative: str, seen: _Seen, folders: list[tuple[str,
                 seen.linked_folders.append(f"{relative}{entry.name}/")
             elif _folder_taken(entry):
                 folders.append((entry.path, f"{relative}{entry.name}/"))
-        elif PurePath(entry.name).suffix.lower() in (*TEXT_FILES, *RECORD_FILES):
+        elif kind_of(entry.name) is not None:
             _file(entry, relative + entry.name, seen, guard)
     except OSError as error:
         _unreached(seen, relative + entry.name, error)

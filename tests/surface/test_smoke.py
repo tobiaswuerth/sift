@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -7,6 +8,7 @@ from typing import cast
 
 from sift.interfaces.cli.arguments import Argument, How, arguments
 from sift.interfaces.cli.main import ENTRIES
+from tests.mails import WORD, mail_bytes, message, sample
 from tests.surface import process
 from tests.tiny_model import tiny_model, tiny_reranker
 
@@ -208,6 +210,22 @@ def records_run(home: Path, notes: Path, model: str) -> None:
     assert sift(home, "embed", "--reset", "--json", model=model).returncode == 0
 
 
+def documents_run(home: Path, folder: Path) -> None:
+    folder.mkdir()
+    shutil.copy(sample(".pdf"), folder / "pigments.pdf")
+    attached = [("contract.docx", sample(".docx").read_bytes(), WORD)]
+    (folder / "offer.eml").write_bytes(mail_bytes(message(headers={"Subject": "Offer"}, attachments=attached)))
+    (folder / "broken.pdf").write_bytes(b"%PDF-1.4 the rest is missing")
+    assert sift(home, "add", str(folder), "--name", "docs").returncode == 0
+    done = sift(home, "index")
+    assert (done.returncode, "  done  +3  ~0  -0  " in done.stderr) == (0, True)
+    found = [str(hit["id"]) for hit in hits_of(sift(home, "search", "Kubelka-Munk", "--json"))]
+    assert sorted(found) == ["docs/offer.eml#contract.docx", "docs/pigments.pdf"]
+    assert sift(home, "get", "docs/offer.eml#contract.docx").stdout.startswith("# Kubelka-Munk theory\n")
+    listing = sift(home, "status", "docs", "--unreadable", "--json").stdout
+    assert '"path": "broken.pdf"' in listing
+
+
 def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path: Path) -> None:
     notes = notes_in(tmp_path / "Notizen Müller")
     model, reranker = str(tiny_model(tmp_path / "models")), str(tiny_reranker(tmp_path / "models"))
@@ -216,6 +234,7 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
         partial(models_run, tmp_path / "models-home", notes, model, reranker),
         partial(options_run, tmp_path / "options", notes, model, reranker),
         partial(records_run, tmp_path / "records", notes_in(tmp_path / "Papiere"), model),
+        partial(documents_run, tmp_path / "documents", tmp_path / "Dokumente"),
     )
     with ThreadPoolExecutor(len(runs)) as pool:
         for running in [pool.submit(run) for run in runs]:
