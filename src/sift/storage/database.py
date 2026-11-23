@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import stat
 from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -26,7 +27,7 @@ SETTINGS = (
 
 type Parameters = Sequence[object] | Mapping[str, object]
 type Connection = sqlite3.Connection
-PRIVATE_FOLDER, PRIVATE_FILE = 0o700, 0o600
+PRIVATE_FOLDER, PRIVATE_FILE, SHARED = 0o700, 0o600, 0o077
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,10 @@ def require_sqlite(version: tuple[int, int, int]) -> None:
         )
 
 
+def kept_private(path: Path) -> None:
+    path.chmod(stat.S_IMODE(path.stat().st_mode) & ~SHARED)
+
+
 def private_folder(folder: Path) -> None:
     folder.mkdir(mode=PRIVATE_FOLDER, parents=True, exist_ok=True)
 
@@ -92,6 +97,7 @@ def connect(path: Path, *, create: bool, timeout: float = BUSY_TIMEOUT_SECONDS) 
         os.close(os.open(path, os.O_CREAT | os.O_WRONLY, PRIVATE_FILE))
     elif not path.is_file():
         raise FileNotFoundError(path)
+    kept_private(path)
     connection = sqlite3.connect(
         uri(path.resolve(), "rwc" if create else "rw"),
         uri=True,

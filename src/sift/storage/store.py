@@ -3,7 +3,7 @@ from collections.abc import Generator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from pathlib import Path
 from types import MappingProxyType
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
@@ -19,6 +19,7 @@ from sift.storage.database import (
     private_folder,
     reading,
     run_each,
+    uri,
     writing,
 )
 from sift.storage.keyword_meta import keyword_meta
@@ -203,13 +204,17 @@ def _files(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
     return [file for file in (Path(f"{path}{suffix}") for suffix in suffixes) if file.is_file()]
 
 
-def abandoned(path: Path) -> bool:
+LEFT_BY_ADD = """SELECT (SELECT value FROM meta WHERE key = 'collection') = ?
+                        AND NOT EXISTS (SELECT 1 FROM documents)"""
+
+
+def left_by_add(path: Path, collection: CollectionId) -> bool:
     try:
-        with closing(connect(path, create=False)) as connection:
-            tables = connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'documents'")
-            return tables.fetchone() is None or connection.execute("SELECT 1 FROM documents").fetchone() is None
+        with closing(sqlite3.connect(uri(path.resolve(), "ro"), uri=True)) as connection:
+            (left,) = cast("tuple[int | None]", connection.execute(LEFT_BY_ADD, (str(collection),)).fetchone())
     except sqlite3.DatabaseError:
         return False
+    return left == 1
 
 
 def delete_store(path: Path) -> None:

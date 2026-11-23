@@ -153,3 +153,20 @@ def test_the_home_its_stores_and_their_logs_are_the_user_s_alone(tmp_path: Path)
         assert stat.S_IMODE(path.stat().st_mode) == PRIVATE_FOLDER, path
     files = [home / "catalog.sqlite", *sorted((home / "collections").glob("notes.sqlite*"))]
     assert all(stat.S_IMODE(path.stat().st_mode) == PRIVATE_FILE for path in files), files
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_a_home_and_stores_others_could_read_are_made_the_user_s_when_opened(tmp_path: Path) -> None:
+    home, folder = tmp_path / "home", tmp_path / "notes"
+    folder.mkdir()
+    (folder / "a.md").write_text("# A\n", encoding="utf-8")
+    add(home, AddCollection(str(folder)))
+    for path, shared in (
+        (home, 0o755),
+        (home / "catalog.sqlite", 0o644),
+        (home / "collections" / "notes.sqlite", 0o644),
+    ):
+        path.chmod(shared)
+    index(home, IndexCollections(), lambda _: None)
+    assert stat.S_IMODE(home.stat().st_mode) == PRIVATE_FOLDER
+    assert {stat.S_IMODE(path.stat().st_mode) for path in home.rglob("*.sqlite")} == {PRIVATE_FILE}

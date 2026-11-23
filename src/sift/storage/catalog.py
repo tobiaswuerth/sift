@@ -12,9 +12,9 @@ from sift.api.collections import TitleFrom
 from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.ids import CollectionId
 from sift.domain.text.records import NO_CHOICE, Chosen
-from sift.storage.database import Reading, Writing, connect, inserted, reading, rows, writing
+from sift.storage.database import Reading, Writing, connect, inserted, kept_private, reading, rows, writing
 from sift.storage.migrations import Migration, migrated, version
-from sift.storage.store import abandoned, create_store, delete_store
+from sift.storage.store import create_store, delete_store, left_by_add
 
 CATALOG = "catalog.sqlite"
 STORES = "collections"
@@ -32,6 +32,7 @@ LAYOUT: tuple[Migration, ...] = (
         ) STRICT""",
     ),
 )
+STORE_TAKEN_REMEDY = "move it away, or choose another place for it"
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +126,7 @@ def _up_to_date(connection: sqlite3.Connection, path: Path) -> None:
 def open_catalog(home: Path) -> sqlite3.Connection:
     path = home / CATALOG
     connection = connect(path, create=True)
+    kept_private(home)
     try:
         _up_to_date(connection, path)
     except BaseException:
@@ -204,8 +206,6 @@ def refusal(wanted: Placed, known: tuple[Collection, ...]) -> InvalidRequestErro
         return InvalidRequestError(f"{wanted.name!r} is no collection name", remedy)
     if clash := next(filter(None, (_clash(wanted, other) for other in known)), None):
         return clash
-    if wanted.store.exists() and not abandoned(wanted.store):
-        return InvalidRequestError(f"{wanted.store} exists already", "move it away, or choose another place for it")
     return None
 
 
@@ -229,14 +229,21 @@ def _registered(transaction: Writing, wanted: Placed, choices: Choices) -> Colle
     )
 
 
+def _cleared(store: Path, identity: CollectionId) -> None:
+    if not store.exists():
+        return
+    if not left_by_add(store, identity):
+        raise InvalidRequestError(f"{store} exists already", STORE_TAKEN_REMEDY)
+    delete_store(store)
+
+
 def add_collection(connection: sqlite3.Connection, home: Path, new: NewCollection) -> Collection:
     wanted = placed(home, new)
     created = False
     try:
         with writing(connection) as transaction:
             identity = _registered(transaction, wanted, new.choices)
-            if wanted.store.exists():
-                delete_store(wanted.store)
+            _cleared(wanted.store, identity)
             create_store(wanted.store, identity)
             created = True
     except BaseException:

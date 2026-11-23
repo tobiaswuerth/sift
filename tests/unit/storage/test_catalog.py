@@ -196,13 +196,29 @@ def test_a_store_an_add_left_behind_without_documents_is_made_anew(
     tmp_path: Path, home: Path, catalog: sqlite3.Connection
 ) -> None:
     left = tmp_path / "left.sqlite"
-    create_store(left, CollectionId(7))
+    create_store(left, CollectionId(1))
     added = add_collection(catalog, home, NewCollection(folder(tmp_path, "notes"), store=left))
     with contextlib.closing(open_store(left, added.id)) as connection:
         assert connection.execute("SELECT count(*) FROM documents").fetchone() == (0,)
-    empty = tmp_path / "empty.sqlite"
-    empty.write_bytes(b"")
-    assert add_collection(catalog, home, NewCollection(folder(tmp_path, "more"), store=empty)).name == "more"
+
+
+@pytest.mark.parametrize("kind", ["another program's", "empty", "another collection's"])
+def test_a_file_no_add_of_this_collection_left_is_never_taken(
+    tmp_path: Path, home: Path, catalog: sqlite3.Connection, kind: str
+) -> None:
+    taken = tmp_path / "taken.sqlite"
+    if kind == "another program's":
+        with contextlib.closing(sqlite3.connect(taken)) as database:
+            database.execute("CREATE TABLE bookmarks(url TEXT)")
+            database.commit()
+    elif kind == "empty":
+        taken.write_bytes(b"")
+    else:
+        create_store(taken, CollectionId(7))
+    before = taken.read_bytes()
+    with pytest.raises(InvalidRequestError, match="exists already"):
+        add_collection(catalog, home, NewCollection(folder(tmp_path, "notes"), store=taken))
+    assert (taken.read_bytes(), known(catalog)) == (before, ())
 
 
 def test_a_store_holding_documents_is_never_taken(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
