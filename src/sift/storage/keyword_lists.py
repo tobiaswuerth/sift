@@ -75,9 +75,15 @@ def segments(transaction: Reading) -> list[SegmentRow]:
     return rows(transaction, SegmentRow, sql)
 
 
-def dead(transaction: Reading) -> Ids:
-    found = rows(transaction, Chunk, "SELECT chunk FROM keyword_dead ORDER BY chunk")
-    return np.array([chunk.id for chunk in found], np.int64)
+class Listed(NamedTuple):
+    ids: str
+
+
+def dead_within(transaction: Reading, low: int, high: int) -> Ids:
+    sql = """SELECT json_group_array(chunk) FROM
+             (SELECT chunk FROM keyword_dead WHERE chunk BETWEEN ? AND ? ORDER BY chunk)"""
+    (found,) = rows(transaction, Listed, sql, (low, high))
+    return np.array(json.loads(found.ids), np.int64)
 
 
 def frequencies(transaction: Reading, terms: Sequence[str]) -> dict[str, int]:

@@ -8,7 +8,7 @@ from sift.domain.arrays import ints
 from sift.domain.codec.postings import blocked, positions_of
 from sift.domain.plan.segments import Held, Policy, merges
 from sift.storage.database import Batches, Connection, Reading, reading, rows, run, writing
-from sift.storage.keyword_lists import blocks, dead, frequencies, parts, positions, segments
+from sift.storage.keyword_lists import blocks, dead_within, frequencies, parts, positions, segments
 from sift.storage.keywords import totals
 from tests.keyword_stores import COLUMNS, Instance, Round, instances
 
@@ -48,7 +48,7 @@ def expected(found: list[Instance]) -> Places:
 
 
 def stored(transaction: Reading) -> Places:
-    gone = set(ints(dead(transaction)))
+    gone = set(ints(dead_within(transaction, 0, 2**63 - 1)))
     every = sorted({row.term for row in rows(transaction, Term, "SELECT DISTINCT term FROM keyword_postings")})
     held: Places = {}
     for part in parts(transaction, every):
@@ -91,7 +91,7 @@ def checked(connection: Connection) -> None:
         held = segments(transaction)
         live = {chunk for chunks in want.values() for chunk in chunks}
         assert all(sum(s.first <= chunk <= s.last for s in held) == 1 for chunk in live)
-        gone = ints(dead(transaction))
+        gone = ints(dead_within(transaction, 0, 2**63 - 1))
         for each in rows(transaction, Kept, "SELECT first, last, chunks, dead FROM keyword_segments"):
             assert each.dead == sum(each.first <= chunk <= each.last for chunk in gone) < each.chunks
 

@@ -91,6 +91,17 @@ def test_a_prefix_of_words_in_more_passages_than_a_search_reads_is_refused() -> 
         assert refused.value.remedy == "write more of the word before the *"
 
 
+def test_the_gone_chunks_of_a_segment_are_read_only_when_a_search_reads_that_segment() -> None:
+    first: Round = {f"n{n}.md": ("", "N", "w1") for n in range(4)}
+    with collections([[first, {"m.md": ("", "M", "w2")}, {"n0.md": None}]]) as (stores, _):
+        (store,) = stores
+        assert len(store.segments) == 2
+        assert len(search(stores, Term("w2"), 10)) == 1
+        assert [len(each.values) for each in store.dead.values()] == [0]
+        assert len(search(stores, Term("w1"), 10)) == 3
+        assert sorted(len(each.values) for each in store.dead.values()) == [0, 1]
+
+
 def test_segments_that_overlap_are_damage() -> None:
     with collections([[{"a.md": ("", "A", "w1")}, {"b.md": ("", "B", "w1")}]]) as (stores, _):
         connection = stores[0].transaction.connection

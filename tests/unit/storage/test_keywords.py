@@ -9,7 +9,7 @@ from sift.domain.codec.segments import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows, run, writing
-from sift.storage.keyword_lists import dead, expansions, frequencies, segments
+from sift.storage.keyword_lists import dead_within, expansions, frequencies, segments
 from sift.storage.keywords import totals
 from tests.keyword_indexes import (
     Average,
@@ -76,7 +76,7 @@ def test_a_segment_of_chunks_all_gone_goes_with_them() -> None:
         applied(connection, [{"a.md": ("", "a", "one two")}, {"b.md": ("", "b", "three")}, {"a.md": None}])
         with reading(connection) as transaction:
             (left,) = segments(transaction)
-            assert dead(transaction).tolist() == []
+            assert dead_within(transaction, 0, 2**63 - 1).tolist() == []
             assert frequencies(transaction, ["one", "three"]) == {"three": 1}
             assert left.chunks == 1
 

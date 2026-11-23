@@ -39,6 +39,14 @@ def _level(live: int, policy: Policy) -> float:
     return math.log(max(live, policy.floor), policy.factor)
 
 
+def _fitting(live: Sequence[int], window: range, most: int) -> range | None:
+    held, stop = 0, window.start
+    while stop < window.stop and held + live[stop] <= most:
+        held += live[stop]
+        stop += 1
+    return range(window.start, stop) if stop - window.start >= FEWEST_JOINED else None
+
+
 def _by_level(live: Sequence[int], policy: Policy) -> list[range]:
     levels = [_level(n, policy) for n in live]
     found: list[range] = []
@@ -47,12 +55,12 @@ def _by_level(live: Sequence[int], policy: Policy) -> list[range]:
         bottom = max(max(levels[start:]) - policy.span, _level(policy.floor, policy))
         upto = max(at for at in range(start, len(live)) if levels[at] >= bottom)
         while start + policy.factor <= upto + 1:
-            run = range(start, start + policy.factor)
-            if sum(live[at] for at in run) <= policy.most:
+            run = _fitting(live, range(start, start + policy.factor), policy.most)
+            if run is None:
+                start += 1
+            else:
                 found.append(run)
                 start = run.stop
-            else:
-                start += 1
         start = upto + 1
     return found
 

@@ -63,7 +63,7 @@ def scored(store: Opened, query: Query, found: list[Stored] | Postings) -> Score
         places, counts = found
         return Scored((_exact(store, places, counts, query.average),), (), len(places))
     exact = tuple(
-        _exact(store, *live(store, held.places, held.counts), query.average)
+        _exact(store, *live(store, held.segment, held.places, held.counts), query.average)
         for held in found
         if isinstance(held, Whole)
     )

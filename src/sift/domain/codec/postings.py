@@ -7,7 +7,7 @@ from typing import NamedTuple, cast
 import numpy as np
 from numpy.typing import NDArray
 
-from sift.domain.arrays import Ids, after, first, ints, largest, last, run_starts, sums_at, total
+from sift.domain.arrays import STORED_U32, Ids, after, first, ints, largest, last, run_starts, sums_at, total
 from sift.domain.errors import DamagedError
 
 type Bytes = NDArray[np.uint8]
@@ -106,7 +106,7 @@ def _gaps(ids: Ids, bounds: Sequence[int]) -> bytes:
     inside[np.array(bounds[1:-1], np.int64) - 1] = False
     if len(gaps) and inside.any() and (gaps[inside].min() < 1 or largest(gaps[inside]) >= MOST_GAP):
         raise ValueError("ids not ascending, or more than 2**32 apart: more than a block holds")
-    return gaps.astype(np.uint32).tobytes()
+    return gaps.astype(STORED_U32).tobytes()
 
 
 def _position_gaps(positions: Ids, counts: Ids) -> Ids:
@@ -158,7 +158,7 @@ def blocked_all(each: Sequence[bytes]) -> tuple[Ids, Ids, list[int]]:
     steps = np.empty(total(held), np.int64)
     inside = np.ones(len(steps), np.bool_)
     inside[firsts_at] = False
-    steps[inside] = np.frombuffer(b"".join(gaps), np.uint32)
+    steps[inside] = np.frombuffer(b"".join(gaps), STORED_U32)
     _sound(holds=bool((steps[inside] >= 1).all()), problem="a block holds ids out of order")
     steps[firsts_at] = starts
     summed = np.cumsum(steps)
@@ -191,7 +191,7 @@ def ranged(ids: Ids, counts: Ids, best: Bytes) -> bytes:
     steps = np.diff(ids)
     if len(steps) and (steps.min() < 1 or largest(steps) >= MOST_GAP):
         raise ValueError("ranges not ascending, or more than 2**32 apart: more than ranges hold")
-    gaps = steps.astype(np.uint32).tobytes()
+    gaps = steps.astype(STORED_U32).tobytes()
     return zlib.compress(head + gaps + (counts - 1).astype(np.uint8).tobytes() + best.astype(np.uint8).tobytes(), LEVEL)
 
 
@@ -201,7 +201,7 @@ def ranges_of(data: bytes) -> Ranges:
     size = RANGES_HEAD.size + GAP_BYTES * (n - 1) + (COUNT_BYTES + BEST_BYTES) * n
     _sound(holds=n >= 1 and len(raw) == size, problem="ranges hold other than their head says")
     at = RANGES_HEAD.size
-    found = _ascending(head, np.frombuffer(raw, np.uint32, n - 1, at))
+    found = _ascending(head, np.frombuffer(raw, STORED_U32, n - 1, at))
     at += GAP_BYTES * (n - 1)
     ends = np.cumsum(np.frombuffer(raw, np.uint8, n, at).astype(np.int64) + 1)
     best = np.frombuffer(raw, np.uint8, n, at + n).copy()
@@ -213,7 +213,7 @@ def with_lengths(ids: Ids, lengths: Ids, shift: int) -> dict[int, bytes]:
     cuts = ints(np.append(run_starts(blocks), len(ids)))
     written: dict[int, bytes] = {}
     for start, end in itertools.pairwise(cuts):
-        dense = np.zeros(1 << shift, np.uint32)
+        dense = np.zeros(1 << shift, STORED_U32)
         dense[ids[start:end] & ((1 << shift) - 1)] = lengths[start:end]
         written[first(blocks[start:])] = zlib.compress(dense.tobytes(), LEVEL)
     return written
@@ -221,4 +221,4 @@ def with_lengths(ids: Ids, lengths: Ids, shift: int) -> dict[int, bytes]:
 
 def lengths_of(data: bytes, shift: int) -> Ids:
     raw = _inflated_to(data, LENGTH_BYTES << shift)
-    return np.frombuffer(raw, np.uint32).astype(np.int64)
+    return np.frombuffer(raw, STORED_U32).astype(np.int64)

@@ -5,7 +5,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sift.api.errors import StoreUnavailableError
-from sift.domain.arrays import Ids, among, ascending, distinct, ints
+from sift.domain.arrays import STORED_HALF, Ids, among, ascending, distinct, ints
 from sift.domain.codec.codes import MOST_BITS, Bits, Halves, code_bytes, codes, width_of
 from sift.domain.errors import DamagedError
 from sift.storage.database import Reading, Writing, batches, first, rows, run, run_each
@@ -165,7 +165,7 @@ def put_vectors(transaction: Writing, chunks: Ids, matrix: Halves, model: str) -
     run_each(
         transaction,
         "INSERT INTO vectors(chunk, vector) VALUES (?, ?) ON CONFLICT(chunk) DO UPDATE SET vector = excluded.vector",
-        zip(kept, _rows(rows_kept), strict=True),
+        zip(kept, _rows(rows_kept.astype(STORED_HALF)), strict=True),
     )
     run_each(
         transaction,
@@ -213,4 +213,5 @@ def vectors_of(transaction: Reading, chunks: Ids) -> tuple[Ids, Halves]:
     if any(len(row.vector) != 2 * width for row in found):
         raise DamagedError(f"a vector of the store is not of its {width:,} dimensions")
     ids = np.fromiter((row.chunk for row in found), np.int64, len(found))
-    return ids, np.frombuffer(b"".join(row.vector for row in found), np.float16).reshape(len(found), width)
+    stored = np.frombuffer(b"".join(row.vector for row in found), STORED_HALF)
+    return ids, stored.astype(np.float16).reshape(len(found), width)

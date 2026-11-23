@@ -4,6 +4,9 @@ from typing import cast
 import numpy as np
 from numpy.typing import NDArray
 
+STORED_U32 = np.dtype("<u4")
+STORED_HALF = np.dtype("<f2")
+
 type Ids = NDArray[np.int64]
 type Mask = NDArray[np.bool_]
 type Scores = NDArray[np.float64]

@@ -6,7 +6,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.domain.plan.segments import POLICY, Held, Policy, merges
+from sift.domain.plan.segments import FEWEST_JOINED, POLICY, Held, Policy, merges
 
 SMALL = Policy(factor=3, floor=10, most=500)
 
@@ -50,7 +50,7 @@ def test_merges_are_disjoint_runs_of_neighbours_none_larger_than_the_most(segmen
     assert [run.start for run in runs] == sorted(run.start for run in runs)
     for run in runs:
         live = sum(segments[i].chunks - segments[i].dead for i in run)
-        assert len(run) == 1 or (len(run) == policy.factor and live <= policy.most)
+        assert len(run) == 1 or (FEWEST_JOINED <= len(run) <= policy.factor and live <= policy.most)
 
 
 @given(st.lists(held, max_size=60))
@@ -77,7 +77,17 @@ def test_fewer_neighbours_of_a_level_than_the_factor_stay_and_as_many_merge() ->
     assert merges([Held(5, 0)] * 9) == ()
     assert merges([Held(5, 0)] * 10) == (range(10),)
     assert merges([Held(50_000, 0), *[Held(5, 0)] * 10]) == (range(1, 11),)
-    assert merges([Held(500, 0)] * 10, Policy(floor=10, most=4_000)) == ()
+    assert merges([Held(500, 0)] * 10, Policy(floor=10, most=4_000)) == (range(8),)
+    assert merges([Held(3_000, 0)] * 10, Policy(floor=10, most=4_000)) == ()
+
+
+def test_segments_appended_far_beyond_the_most_a_merge_writes_settle_near_it() -> None:
+    segments: list[Held] = []
+    for _ in range(1_200):
+        segments, _, _ = settled([*segments, Held(50_000, 0)], POLICY)
+    levels = math.ceil(math.log(POLICY.most / POLICY.floor, POLICY.factor))
+    assert sum(each.chunks for each in segments) == 1_200 * 50_000
+    assert len(segments) <= 1_200 * 50_000 // POLICY.most + POLICY.factor * levels
 
 
 @pytest.mark.parametrize(

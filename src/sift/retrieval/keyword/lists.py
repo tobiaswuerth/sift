@@ -57,9 +57,9 @@ class Opened:
     transaction: Reading
     shape: Shape
     segments: tuple[SegmentRow, ...]
-    dead: Ascending
     chunks: int
     tokens: int
+    dead: dict[int, Ascending] = field(default_factory=dict[int, Ascending])
     lengths: dict[int, Dense] = field(default_factory=dict[int, Dense])
     blocks: dict[tuple[int, str, int], Postings] = field(default_factory=dict[tuple[int, str, int], Postings])
 
@@ -69,14 +69,21 @@ def opened(transaction: Reading) -> Opened:
     found = tuple(keyword_lists.segments(transaction))
     if any(before.last >= after.first for before, after in itertools.pairwise(found)):
         raise DamagedError("segments of the keyword index overlap")
-    dead = Ascending(keyword_lists.dead(transaction))
-    return Opened(transaction, shape_of(transaction), found, dead, held.chunks, held.tokens)
+    return Opened(transaction, shape_of(transaction), found, held.chunks, held.tokens)
 
 
-def live(store: Opened, places: Ids, counts: Ids) -> Postings:
-    if not len(store.dead.values):
+def _dead(store: Opened, segment: int) -> Ascending:
+    if segment not in store.dead:
+        held = _one([each for each in store.segments if each.id == segment], "a segment")
+        store.dead[segment] = Ascending(keyword_lists.dead_within(store.transaction, held.first, held.last))
+    return store.dead[segment]
+
+
+def live(store: Opened, segment: int, places: Ids, counts: Ids) -> Postings:
+    dead = _dead(store, segment)
+    if not len(dead.values):
         return places, counts
-    kept = ~among(places, store.dead)
+    kept = ~among(places, dead)
     return places[kept], counts[kept]
 
 
@@ -150,12 +157,12 @@ def _at(store: Opened, held: Ranged, indexes: Ids) -> Postings:
 
 
 def postings_in(store: Opened, held: Ranged, chosen: Ids) -> Postings:
-    return live(store, *_at(store, held, _indexes(held, chosen)))
+    return live(store, held.segment, *_at(store, held, _indexes(held, chosen)))
 
 
 def everything(store: Opened, held: Stored) -> Postings:
     if isinstance(held, Whole):
-        return live(store, held.places, held.counts)
+        return live(store, held.segment, held.places, held.counts)
     return postings_in(store, held, np.arange(len(held.ranges.ids)))
 
 
