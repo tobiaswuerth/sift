@@ -2,6 +2,7 @@ import contextlib
 import itertools
 import re
 import sqlite3
+import tracemalloc
 from collections.abc import Generator
 from pathlib import Path
 from typing import NamedTuple
@@ -78,6 +79,18 @@ def test_a_text_is_cut_into_whole_blocks_numbered_with_the_line_they_start_in(te
     assert all(0 < len(block) <= BLOCK for _, _, block in found)
     assert [line for _, line, _ in found] == [1 + text.count("\n", 0, number * BLOCK) for number, _, _ in found]
     assert found == list(blocks([text]))
+
+
+def test_a_text_in_one_piece_is_cut_without_copying_what_is_left_of_it() -> None:
+    text = "a" * (16 << 20)
+    tracemalloc.start()
+    try:
+        cut = sum(len(block) for _, _, block in blocks((text,)))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert cut == len(text)
+    assert peak < 4 * BLOCK
 
 
 @given(long_texts, st.data())

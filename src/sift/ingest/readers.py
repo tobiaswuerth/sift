@@ -11,13 +11,15 @@ from sift.ingest.mail import Attachment, mail
 MAIL_DEPTH = 3
 
 
-def unique(name: str, taken: set[str]) -> str:
+def unique(name: str, taken: dict[str, int]) -> str:
     stem, extension = posixpath.splitext(name)
-    key, number = name, 1
+    named = folded(name)
+    key, number = name, taken.get(named, 1)
     while folded(key) in taken:
         number += 1
         key = f"{stem} ({number}){extension}"
-    taken.add(folded(key))
+    taken[named] = number
+    taken.setdefault(folded(key), 1)
     return key
 
 
@@ -37,7 +39,7 @@ def _mail(raw: bytes, name: str, title_from: TitleFrom, convert: Convert, depth:
         return found
     documents: list[Document] = [found.document]
     problems = list(found.problems)
-    taken: set[str] = set()
+    taken: dict[str, int] = {}
     for attached in found.attachments:
         read = _attachment(attached, title_from, convert, depth)
         if read is None:

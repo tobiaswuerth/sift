@@ -16,7 +16,7 @@ from sift.domain.text.chunks import chunks
 from sift.domain.text.decoding import decoded
 from sift.domain.text.documents import Convert, Unread
 from sift.domain.text.json_values import LONE_SURROGATE, REPLACEMENT, composed_fields
-from sift.domain.text.kinds import FileKind, kind_of
+from sift.domain.text.kinds import CONTROL, FileKind, kind_of
 from sift.domain.text.markdown import one_line
 from sift.domain.text.notes import Document, digest, file_stem, storable
 
@@ -24,12 +24,13 @@ ADDRESSES = ("from", "to", "cc")
 IDS = ("message-id", "in-reply-to")
 NO_CHARSETS = frozenset({"idna", "punycode", "undefined", "unicode-escape", "raw-unicode-escape"})
 SAYS_NOTHING = frozenset({"ascii", "utf-8"})
-UNREADABLE = (MessageError, ValueError, LookupError, IndexError, AttributeError, NameError)
+UNREADABLE = (MessageError, ValueError, LookupError, IndexError, AttributeError, NameError, RecursionError)
 ATTACHED = frozenset({FileKind.NOTE, FileKind.DOCUMENT, FileKind.MAIL})
 ATTACHED_MAIL = "message/rfc822"
 FOLDERS = re.compile(r"[\\/]")
 HTML_NAME = "mail.html"
 NOT_NAMES = frozenset({"", ".", ".."})
+NAME_DASH = "-"
 UNNAMED_MAIL = "message"
 HIDDEN = frozenset({"head", "script", "style", "template"})
 BLOCKS = frozenset(
@@ -216,11 +217,11 @@ def attached_mail(part: MIMEPart) -> MIMEPart | None:
 def attachment_name(part: MIMEPart) -> str | None:
     name = FOLDERS.split(part.get_filename() or "")[-1].strip()
     if name not in NOT_NAMES:
-        return name
+        return CONTROL.sub(NAME_DASH, name)
     inner = attached_mail(part)
     if inner is None:
         return None
-    subject = FOLDERS.sub("-", str(inner.get("subject") or "")).strip(" .")
+    subject = CONTROL.sub(NAME_DASH, FOLDERS.sub(NAME_DASH, str(inner.get("subject") or ""))).strip(" .")
     return f"{subject or UNNAMED_MAIL}.eml"
 
 

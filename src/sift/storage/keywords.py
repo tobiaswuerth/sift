@@ -113,22 +113,26 @@ def _tokens(streams: Sequence[Sequence[str]]) -> int:
     return sum(map(len, streams)) - 2 * len(streams)
 
 
-def _streams(transaction: Reading, spans: Sequence[Span]) -> list[list[str]]:
+def _streams(transaction: Reading, spans: Sequence[Span]) -> Iterator[list[str]]:
     wanted = json.dumps(sorted({span.document for span in spans}))
     documents = {held.id: held for held in rows(transaction, Named, DOCUMENTS, (wanted,))}
     named = {key: (tokens(held.title), tokens(held.meta or "")) for key, held in documents.items()}
     seen: dict[str, str] = {}
-    found: list[list[str]] = []
     for at in range(0, len(spans), TEXTS_AT_ONCE):
         part = spans[at : at + TEXTS_AT_ONCE]
         cut = spans_text(transaction, [TextSpan(span.document, span.start, span.length) for span in part])
-        found += [
-            stream(
-                named[span.document][0], [seen.setdefault(each, each) for each in tokens(text)], named[span.document][1]
-            )
-            for span, text in zip(part, cut, strict=True)
-        ]
-    return found
+        for span, text in zip(part, cut, strict=True):
+            title, meta = named[span.document]
+            yield stream(title, [seen.setdefault(each, each) for each in tokens(text)], meta)
+
+
+def _up_to(streams: Iterator[list[str]], most: int) -> Iterator[list[str]]:
+    held = 0
+    for each in streams:
+        yield each
+        held += len(each)
+        if held >= most:
+            return
 
 
 def _added(transaction: Writing, written: Segment) -> None:
@@ -167,7 +171,8 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
     )
     if not spans:
         return 0
-    streams = _streams(transaction, spans)
+    streams = list(_up_to(_streams(transaction, spans), transaction.batches.tokens_a_segment))
+    spans = spans[: len(streams)]
     (indexed,) = rows(transaction, Count, "SELECT coalesce(sum(chunks - dead), 0) FROM keyword_segments")
     average = (totals(transaction).tokens + _tokens(streams)) / (indexed.n + len(spans))
     written = segment(np.array([span.id for span in spans], np.int64), streams, average, shape)
@@ -201,8 +206,12 @@ def _forget(transaction: Writing, documents: Sequence[DocumentId]) -> None:
            WHERE document IN (SELECT value FROM json_each(?)) AND id <= ? ORDER BY id""",
         (json.dumps(list(documents)), _through(transaction)),
     )
-    streams = _streams(transaction, spans)
-    _uncounted(transaction, Counter(token for each in streams for token in set(each) - {GAP}), _tokens(streams))
+    gone: Counter[str] = Counter()
+    held = 0
+    for each in _streams(transaction, spans):
+        gone.update(set(each) - {GAP})
+        held += _tokens((each,))
+    _uncounted(transaction, gone, held)
     dead = [span.id for span in spans]
     run(transaction, "INSERT INTO keyword_dead(chunk) SELECT value FROM json_each(?)", (json.dumps(dead),))
     run_each(

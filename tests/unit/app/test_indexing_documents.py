@@ -21,10 +21,11 @@ from sift.ingest.files import Identity
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
 from sift.storage.vectors import left
+from tests.files import write
 from tests.homes import text_of, unreadable_files
 from tests.keyword_stores import vectors_by_text
 from tests.later import later
-from tests.mails import PARAGRAPH, mail_bytes, message, only, sample
+from tests.mails import PARAGRAPH, mail_bytes, message, nested_parts, only, sample
 from tests.models import Hashed
 
 PDF = "application/pdf"
@@ -158,6 +159,16 @@ def test_an_attachment_too_large_to_describe_is_left_out_and_its_mail_kept(post:
     (problem,) = [event.text for event in said if isinstance(event, Noted)]
     assert problem == f"offer.eml: contract.pdf: {too_large_to_describe('contract.pdf')}"
     assert found_ids(post) == ["mail/offer.eml"]
+
+
+def test_a_mail_too_deep_to_parse_is_unreadable_and_the_rest_is_indexed(tmp_path: Path) -> None:
+    root, home = tmp_path / "mail", tmp_path / "home"
+    write(root / "a.md", "# A\n\nwords\n")
+    (root / "deep.eml").write_bytes(nested_parts(1_000))
+    add(home, AddCollection(str(root)))
+    assert indexed(home) == Indexed(files=2, added=1, changed=0, removed=0, unreadable=1)
+    (listed,) = unreadable_files(home)
+    assert (listed.path, listed.problem.startswith("maximum recursion depth exceeded")) == ("deep.eml", True)
 
 
 def test_a_mail_and_its_attachments_are_documents_found_and_filtered_by_their_ids(post: Path) -> None:

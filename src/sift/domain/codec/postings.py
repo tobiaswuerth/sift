@@ -76,7 +76,7 @@ def _unwrapped(data: bytes) -> bytes:
     return _inflated(data[1:]) if data[:1] == PACKED else data[1:]
 
 
-def varints(values: Ids) -> tuple[bytes, list[int]]:
+def varints(values: Ids) -> tuple[bytes, Ids]:
     sizes = np.ones(len(values), np.int64)
     for k in range(1, MOST_BYTES):
         sizes += values >= 1 << (7 * k)
@@ -85,7 +85,7 @@ def varints(values: Ids) -> tuple[bytes, list[int]]:
     place = np.arange(len(each)) - np.repeat(starts, sizes)
     more = (place < np.repeat(sizes, sizes) - 1).astype(np.int64) * MORE
     written = (((each >> (7 * place)) & LOW_BITS) | more).astype(np.uint8).tobytes()
-    return written, ints(after(0, np.cumsum(sizes)))
+    return written, after(0, np.cumsum(sizes))
 
 
 def numbers(data: bytes) -> Ids:
@@ -121,15 +121,16 @@ def encoded(ids: Ids, counts: Ids, positions: Ids, bounds: Sequence[int]) -> Enc
     gaps = _gaps(ids, bounds)
     counted, at_count = varints(counts)
     placed, at_place = varints(_position_gaps(positions, counts))
-    by_posting = ints(after(0, np.cumsum(counts)))
-    listed = ints(ids)
+    cut = np.array(bounds, np.int64)
+    counts_at, places_at = ints(at_count[cut]), ints(at_place[after(0, np.cumsum(counts))[cut]])
+    firsts_of = ints(ids[cut[:-1]])
     postings: list[bytes] = []
     held: list[bytes] = []
-    for start, end in itertools.pairwise(bounds):
-        head = BLOCK_HEAD.pack(listed[start], end - start)
-        body = gaps[GAP_BYTES * start : GAP_BYTES * (end - 1)] + counted[at_count[start] : at_count[end]]
+    for n, (start, end) in enumerate(itertools.pairwise(bounds)):
+        head = BLOCK_HEAD.pack(firsts_of[n], end - start)
+        body = gaps[GAP_BYTES * start : GAP_BYTES * (end - 1)] + counted[counts_at[n] : counts_at[n + 1]]
         postings.append(_wrapped(head + body))
-        held.append(_wrapped(placed[at_place[by_posting[start]] : at_place[by_posting[end]]]))
+        held.append(_wrapped(placed[places_at[n] : places_at[n + 1]]))
     return Encoded(tuple(postings), tuple(held))
 
 

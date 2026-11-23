@@ -47,6 +47,12 @@ def message(
     return found
 
 
+def nested_parts(depth: int) -> bytes:
+    opened = (b'Content-Type: multipart/mixed; boundary="b%d"\r\n\r\n--b%d\r\n' % (n, n) for n in range(depth))
+    closed = (b"--b%d--\r\n" % n for n in reversed(range(depth)))
+    return b"".join((b"Subject: deep\r\nMIME-Version: 1.0\r\n", *opened, b"\r\nwords\r\n", *closed))
+
+
 def mail_bytes(found: EmailMessage) -> bytes:
     return found.as_bytes(policy=policy.SMTP)
 

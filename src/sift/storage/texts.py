@@ -49,15 +49,20 @@ class LinesRead:
 
 
 def blocks(pieces: Iterable[str]) -> Iterator[tuple[int, int, str]]:
-    held, number, line = "", 0, 1
+    held: list[str] = []
+    size, number, line = 0, 0, 1
     for piece in pieces:
-        held += piece
-        while len(held) >= BLOCK:
-            block, held = held[:BLOCK], held[BLOCK:]
+        at = 0
+        while len(piece) - at >= BLOCK - size:
+            end = at + BLOCK - size
+            block = "".join((*held, piece[at:end]))
             yield number, line, block
-            number, line = number + 1, line + block.count(NEWLINE)
+            held, size, at, number, line = [], 0, end, number + 1, line + block.count(NEWLINE)
+        if at < len(piece):
+            held.append(piece[at:])
+            size += len(piece) - at
     if held:
-        yield number, line, held
+        yield number, line, "".join(held)
 
 
 def put_text(transaction: Writing, document: DocumentId, pieces: Iterable[str]) -> None:

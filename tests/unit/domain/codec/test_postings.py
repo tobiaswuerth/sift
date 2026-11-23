@@ -9,7 +9,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from numpy.typing import NDArray
 
-from sift.domain.arrays import ints
+from sift.domain.arrays import ints, last
 from sift.domain.codec.postings import (
     BLOCK_HEAD,
     MOST_INFLATED_BYTES,
@@ -97,7 +97,20 @@ def test_ids_of_separate_lists_may_go_down_between_them() -> None:
 def test_numbers_come_back_from_their_varints(values: list[int]) -> None:
     written, offsets = varints(np.array(values, np.int64))
     assert ints(numbers(written)) == values
-    assert offsets[-1] == len(written)
+    assert last(offsets) == len(written)
+
+
+def test_encoding_holds_no_object_for_each_position() -> None:
+    lists, each = 20_000, 50
+    counts, ids = np.full(lists, each, np.int64), np.arange(1, lists + 1, dtype=np.int64)
+    positions = np.tile(np.arange(each, dtype=np.int64) * 3, lists)
+    tracemalloc.start()
+    try:
+        encoded(ids, counts, positions, [*range(0, lists, 128), lists])
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 80 * len(positions)
 
 
 @pytest.mark.parametrize("value, size", [(0, 1), (127, 1), (128, 2), ((1 << 14) - 1, 2), (1 << 14, 3)])

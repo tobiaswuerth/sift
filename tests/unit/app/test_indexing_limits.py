@@ -7,17 +7,24 @@ from pathlib import Path
 import pytest
 
 from sift.api.collections import AddCollection
+from sift.api.embedding import EmbedCollections
 from sift.api.events import Event, Finished, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections, Indexed
 from sift.app.collections import add
+from sift.app.embedding import embed
 from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
 from sift.ingest.files import CHANGED, Identity, pieces_of
+from sift.storage.catalog import known_collections
 from sift.storage.database import Batches
+from sift.storage.documents import stored
+from sift.storage.store import read_store
+from sift.storage.vectors import left
 from tests.files import write
 from tests.homes import text_of, unreadable_files
 from tests.later import LATER, later
 from tests.mails import sample
+from tests.models import Hashed
 
 SMALL = Limits(most_file_bytes=2000)
 TOO_LARGE = "sift reads documents of at most 2,000 bytes; split the file"
@@ -114,17 +121,24 @@ def test_a_note_that_cannot_be_read_to_its_end_keeps_what_it_held_and_is_read_ag
     assert indexed(home) == Indexed(files=3, added=0, changed=1, removed=0, unreadable=0)
 
 
-def test_a_note_touched_but_unchanged_is_left_as_it_was(home: Path, notes: Path) -> None:
+def _kept_note(home: Path) -> tuple[int, int]:
+    (one,) = known_collections(home)
+    with read_store(one.store, one.id) as transaction:
+        found = stored(transaction, "rl.md")
+        assert found is not None
+        return found.id, left(transaction)
+
+
+def test_a_note_touched_but_unchanged_is_left_as_it_was_its_vectors_too(home: Path, notes: Path) -> None:
     indexed(home)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    identity, unembedded = _kept_note(home)
     write(notes / "rl.md", "# Reward shaping\n\nReward shaping speeds up learning.\n")
     assert indexed(home) == Indexed(files=3, added=0, changed=0, removed=0, unreadable=0)
+    assert _kept_note(home) == (identity, unembedded) == (identity, 0)
 
 
-def test_a_note_of_any_size_is_read_in_pieces_in_bounded_memory(home: Path, notes: Path) -> None:
-    line = "Reward shaping speeds up learning, and brushes paint strokes.\n"
-    count = (24 << 20) // len(line)
-    (notes / "large.md").write_text("# Large\n\n" + line * count + "the last word is ultramarine\n", encoding="utf-8")
-    small = Batches(chunks_a_segment=100, postings_a_merge=1000, bytes_a_merge=64 << 10, chunks_a_settle=2000)
+def _read_peak(home: Path, limits: Limits) -> int:
     phases: list[Phase] = []
     peaks: dict[Phase, int] = {}
 
@@ -140,8 +154,21 @@ def test_a_note_of_any_size_is_read_in_pieces_in_bounded_memory(home: Path, note
 
     tracemalloc.start()
     try:
-        index(home, IndexCollections(), measured, Limits(batches=small), LATER)
+        index(home, IndexCollections(), measured, limits, LATER)
     finally:
         tracemalloc.stop()
-    assert peaks[Phase.READ] < 16 << 20
-    assert text_of(home, "notes/large.md").endswith("the last word is ultramarine\n")
+    return peaks[Phase.READ]
+
+
+@pytest.mark.parametrize("ending", ["\n", " "])
+def test_a_note_of_any_size_is_read_and_replaced_in_memory_its_size_does_not_raise(
+    home: Path, notes: Path, ending: str
+) -> None:
+    line = "Reward shaping speeds up learning, and brushes paint strokes." + ending
+    text = "# Large\n\n" + line * ((12 << 20) // len(line)) + "the last word is ultramarine\n"
+    (notes / "large.md").write_text(text, encoding="utf-8")
+    small = Batches(tokens_a_segment=50_000, postings_a_merge=1000, bytes_a_merge=64 << 10, chunks_a_settle=2000)
+    assert _read_peak(home, Limits(batches=small)) < 16 << 20
+    (notes / "large.md").write_text(text + "and then cobalt\n", encoding="utf-8")
+    assert _read_peak(home, Limits(batches=small)) < 16 << 20
+    assert text_of(home, "notes/large.md").endswith("ultramarine\nand then cobalt\n")

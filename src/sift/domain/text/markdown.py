@@ -8,7 +8,7 @@ FENCE = re.compile(r"((?:[ \t]*>)*[ \t]*)(`{3,}|~{3,})")
 LIST_INDENT = 4
 LINE_BREAKS = re.compile(r"[\r\n]+")
 NEWLINE = "\n"
-MOST_LINE = 1 << 26
+MOST_LINE = 1 << 20
 
 
 class TextLine(NamedTuple):

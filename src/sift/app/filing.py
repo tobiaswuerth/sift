@@ -7,9 +7,8 @@ from pathlib import Path
 from sift.api.events import Reporter
 from sift.domain.plan.indexing import MOST_FILE_BYTES
 from sift.domain.text.documents import Convert
-from sift.domain.text.markdown import MOST_LINE
 from sift.domain.text.notes import Document
-from sift.domain.text.records import SkippedLine
+from sift.domain.text.records import MOST_RECORD_CHARACTERS, SkippedLine
 from sift.ingest.documents import convert
 from sift.ingest.files import Identity, at_most, pieces_of
 from sift.ingest.records import lines_of
@@ -20,7 +19,7 @@ from sift.storage.documents import MOST_DESCRIPTION_BYTES, description_bytes
 
 @dataclass(frozen=True, slots=True)
 class Limits:
-    most_record_characters: int = MOST_LINE
+    most_record_characters: int = MOST_RECORD_CHARACTERS
     most_file_bytes: int = MOST_FILE_BYTES
     most_description_bytes: int = MOST_DESCRIPTION_BYTES
     most_files_a_write: int = 1000

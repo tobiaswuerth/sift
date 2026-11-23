@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import final, override
 
 import pytest
 from hypothesis import given
@@ -8,7 +9,8 @@ from hypothesis import strategies as st
 from sift.domain.text.decoding import encodable
 from sift.domain.text.documents import Conversion, FileRead, Unread
 from sift.ingest.mail import as_utf8, in_charset, mail, plain
-from tests.mails import PARAGRAPH, mail_bytes, message, only, read, read_file, sample
+from sift.ingest.readers import unique
+from tests.mails import PARAGRAPH, mail_bytes, message, nested_parts, only, read, read_file, sample
 
 NO_CHARSET = b"Content-Type:multipart/;boundary=b\r--b\nContent-Type:charset=\x00"
 OCTETS = "application/octet-stream"
@@ -184,6 +186,33 @@ def test_attachments_sift_reads_are_documents_of_their_own_named_once_each() -> 
     assert pdf.digest != letter.digest
 
 
+def test_names_taken_are_made_unique_with_a_few_looks_a_name() -> None:
+    looked: list[int] = []
+
+    @final
+    class Counted(dict[str, int]):
+        __hash__ = None
+
+        @override
+        def __contains__(self, key: object, /) -> bool:
+            looked.append(1)
+            return super().__contains__(key)
+
+    taken = Counted()
+    names = [unique(name, taken) for name in ("a (3).txt", *["A.txt"] * 2_000)]
+    assert names[:5] == ["a (3).txt", "A.txt", "A (2).txt", "A (4).txt", "A (5).txt"]
+    assert len({name.casefold() for name in names}) == len(names)
+    assert len(looked) <= 3 * len(names)
+
+
+def test_control_characters_in_an_attachment_s_name_are_dashes() -> None:
+    disposition = b"Content-Disposition: attachment; filename*=utf-8''a%00b%0Ac%7F.md\r\n"
+    raw = MIXED + b"--b\r\nContent-Type: text/markdown\r\n" + disposition + b"\r\n# A\r\n--b--\r\n"
+    found = read_file(raw, "m.eml")
+    assert [each.key for each in found.documents] == ["", "a-b-c-.md"]
+    assert found.documents[0].fields["attachments"] == ["a-b-c-.md"]
+
+
 def test_an_attachment_named_like_an_extension_or_not_named_is_passed_over() -> None:
     dotted = read_file(mail_bytes(message(attachments=[(".md", b"# Dot\n", "text/markdown")])), "a.eml")
     assert ([each.key for each in dotted.documents], dotted.documents[0].fields["attachments"]) == ([""], [".md"])
@@ -266,6 +295,24 @@ def test_html_the_converter_fails_on_is_read_as_its_words() -> None:
         "panic: begin > end (2 > 0))"
     )
     assert found.problems == (said,)
+
+
+@pytest.mark.parametrize("depth", [1_000, 5_000])
+def test_a_mail_nested_deeper_than_python_s_parser_reaches_is_unread(depth: int) -> None:
+    found = mail(nested_parts(depth), "a.eml", _failing)
+    assert isinstance(found, Unread)
+    assert found.problem.startswith("maximum recursion depth exceeded")
+
+
+def test_mail_attached_deeper_than_python_s_parser_reaches_is_unread() -> None:
+    inner = b"Subject: 0\r\n\r\nbottom\r\n"
+    for level in range(1, 200):
+        head = b'Subject: %d\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="c%d"\r\n\r\n' % (
+            level,
+            level,
+        )
+        inner = head + b"--c%d\r\nContent-Type: message/rfc822\r\n\r\n" % level + inner + b"\r\n--c%d--\r\n" % level
+    assert isinstance(mail(inner, "a.eml", _failing), Unread)
 
 
 def test_a_mail_whose_charset_names_no_charset_is_unread_with_what_python_said() -> None:

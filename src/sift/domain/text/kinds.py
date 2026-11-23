@@ -1,4 +1,5 @@
 import posixpath
+import re
 from collections.abc import Mapping
 from enum import Enum, auto
 from types import MappingProxyType
@@ -27,6 +28,7 @@ STREAMED = frozenset({FileKind.RECORDS})
 KEYED = frozenset({FileKind.RECORDS, FileKind.MAIL})
 CONVERTED = frozenset({FileKind.DOCUMENT, FileKind.MAIL})
 KEY_MARK = "#"
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def kind_of(path: str) -> FileKind | None:

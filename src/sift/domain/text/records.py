@@ -1,17 +1,17 @@
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from sift.api.fields import FieldValue
 from sift.domain.text.chunks import chunks
 from sift.domain.text.json_values import NestedTooDeeplyError, composed_fields, json_value
+from sift.domain.text.kinds import CONTROL
 from sift.domain.text.markdown import heading, one_line
 from sift.domain.text.notes import Document, digest, storable
 
+MOST_RECORD_CHARACTERS = 64 << 20
 ID_FIELDS = ("id", "_id")
 TITLE_FIELDS = ("title", "name", "headline", "subject")
 TEXT_FIELDS = ("text", "content", "body", "abstract", "description", "summary")
-CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 NOT_A_KEY = "its id is no text or whole number"
 
 
