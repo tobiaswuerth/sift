@@ -1,7 +1,12 @@
+import itertools
+
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from sift.api.collections import TitleFrom
-from sift.domain.text.notes import Document, file_stem, note
+from sift.domain.text.decoding import text_pieces
+from sift.domain.text.notes import Document, digest, document_of, file_stem, note, read_note
 
 
 def written(text: str, name: str = "file.md", title_from: TitleFrom = TitleFrom.HEADING) -> Document:
@@ -137,3 +142,19 @@ def test_a_nul_is_kept_as_a_replacement_character_of_the_same_length() -> None:
     assert (document.title, document.text) == (replaced.title, replaced.text)
     assert document.title == "Num\N{REPLACEMENT CHARACTER}bers"
     assert document.chunks == replaced.chunks
+
+
+MARKED = st.sampled_from(["a", "#", " ", "\n", "\r", "-", ":", "[", "]", "(", ")", "`", "~", ">", "|", "\N{NULL}", "é"])
+notes_written = st.one_of(
+    st.text(MARKED, max_size=300),
+    st.tuples(st.text(MARKED, max_size=80), st.text(MARKED, max_size=300)).map(
+        lambda both: f"---\n{both[0]}\n---\n{both[1]}"
+    ),
+).map(str.encode)
+
+
+@given(notes_written, st.lists(st.integers(0, 400), max_size=5), st.sampled_from(["n.md", "n.txt"]))
+def test_a_note_read_in_pieces_is_the_note_read_whole(raw: bytes, at: list[int], name: str) -> None:
+    edges = [0, *sorted(min(each, len(raw)) for each in at), len(raw)]
+    parts = [raw[start:end] for start, end in itertools.pairwise(edges)]
+    assert document_of(read_note(text_pieces(parts), name), digest(raw)) == note(raw, name)

@@ -4,16 +4,14 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.plan.indexing import (
-    MOST_TEXT_BYTES,
+    MOST_FILE_BYTES,
     MOST_TIME,
     RACY,
     Found,
     IndexPlan,
-    Sizes,
     Stat,
     batches,
     index_plan,
-    most_read,
     recorded,
     stored_time,
     within,
@@ -97,23 +95,21 @@ def test_a_folder_of_links_alone_left_out_is_no_folder_emptied() -> None:
     assert (plan.drop, plan.left_as_indexed) == (("link.md",), ())
 
 
-def test_a_file_larger_than_a_document_may_be_is_left_out_unread() -> None:
-    huge, full = Stat(1, MOST_TEXT_BYTES + 1), Stat(1, MOST_TEXT_BYTES)
-    plan = index_plan(Found({"huge.txt": huge, "full.txt": full}), {})
-    assert (plan.read, plan.too_large) == (("full.txt",), ("huge.txt",))
-    assert index_plan(Found({"huge.txt": huge}), {"huge.txt": huge}).too_large == ()
+def test_a_document_larger_than_sift_reads_is_left_out_unread_until_it_changes() -> None:
+    huge, full = Stat(1, MOST_FILE_BYTES + 1), Stat(1, MOST_FILE_BYTES)
+    plan = index_plan(Found({"huge.pdf": huge, "full.pdf": full}), {})
+    assert (plan.read, plan.too_large) == (("full.pdf",), ("huge.pdf",))
+    assert index_plan(Found({"huge.pdf": huge}), {"huge.pdf": huge}).too_large == ()
 
 
-def test_a_file_converted_to_text_may_be_larger_than_its_text_and_records_have_no_limit() -> None:
-    sizes = Sizes(text=10, file=100)
+def test_only_files_converted_to_text_have_a_limit_notes_and_records_are_read_in_pieces() -> None:
     files = {
         f"{name}.{kind}": Stat(1, size)
-        for kind in ("md", "pdf", "eml", "jsonl")
-        for name, size in (("a", 50), ("b", 101))
+        for kind in ("md", "txt", "pdf", "eml", "jsonl")
+        for name, size in (("a", 100), ("b", 101))
     }
-    plan = index_plan(Found(files), {}, sizes)
-    assert plan.too_large == ("a.md", "b.eml", "b.md", "b.pdf")
-    assert [most_read(path, sizes) for path in ("a.md", "a.pdf", "a.eml")] == [10, 100, 100]
+    plan = index_plan(Found(files), {}, most_file_bytes=100)
+    assert plan.too_large == ("b.eml", "b.pdf")
 
 
 def test_a_time_past_what_the_store_counts_to_is_held_at_its_end() -> None:

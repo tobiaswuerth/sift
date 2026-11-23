@@ -1,10 +1,17 @@
+import codecs
+import itertools
+import re
+from collections.abc import Iterable, Iterator
 from types import MappingProxyType
 
 from sift.domain.text.json_values import LONE_SURROGATE
 
+MARK_BYTES = 4
+NEWLINE, WINDOWS_NEWLINE, CARRIAGE_RETURN = "\n", "\r\n", "\r"
 UTF32_MARKS = (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")
 UTF16_MARKS = (b"\xff\xfe", b"\xfe\xff")
 ESCAPED_BYTES = range(0xDC80, 0xDD00)
+ESCAPED = re.compile("[\udc80-\udcff]")
 ANSI = MappingProxyType({point: bytes([point - 0xDC00]).decode("cp1252", "replace") for point in ESCAPED_BYTES})
 
 
@@ -19,8 +26,32 @@ def decoded(raw: bytes) -> str:
         return raw.decode("utf-8-sig", "surrogateescape").translate(ANSI)
 
 
-def file_text(raw: bytes) -> str:
-    return decoded(raw).replace("\r\n", "\n")
+def _newlines(held: str) -> tuple[str, str]:
+    kept = CARRIAGE_RETURN if held.endswith(CARRIAGE_RETURN) else ""
+    return held[: len(held) - len(kept)].replace(WINDOWS_NEWLINE, NEWLINE), kept
+
+
+def _as_ansi(text: str) -> str:
+    return ansi(text) if ESCAPED.search(text) else text
+
+
+def text_pieces(raw: Iterable[bytes]) -> Iterator[str]:
+    parts = iter(raw)
+    start = b""
+    for part in parts:
+        start += part
+        if len(start) >= MARK_BYTES:
+            break
+    encoding, errors = encoding_of(start)
+    decoder = codecs.getincrementaldecoder(encoding)(errors)
+    held = ""
+    for part in itertools.chain((start,), parts):
+        piece, held = _newlines(held + _as_ansi(decoder.decode(part)))
+        if piece:
+            yield piece
+    last = (held + _as_ansi(decoder.decode(b"", final=True))).replace(WINDOWS_NEWLINE, NEWLINE)
+    if last:
+        yield last
 
 
 def encoding_of(start: bytes) -> tuple[str, str]:

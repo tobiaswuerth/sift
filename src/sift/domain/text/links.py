@@ -7,7 +7,6 @@ from enum import StrEnum
 from urllib.parse import unquote
 
 from sift.api.fields import Fields, FieldValue
-from sift.domain.text.markdown import prose
 
 MARKDOWN = (".md", ".markdown")
 NOT_READ = frozenset(
@@ -167,7 +166,7 @@ def in_line(line: str, number: int, field: str | None = None) -> list[Link]:
     return [link for _, link in sorted(found, key=lambda item: item[0]) if link]
 
 
-def _front_matter_links(head: str) -> Iterator[Link]:
+def front_matter_links(head: str) -> Iterator[Link]:
     field: str | None = None
     for number, line in enumerate(head.split("\n")[:-1], 1):
         name, colon, rest = line.partition(":")
@@ -176,18 +175,6 @@ def _front_matter_links(head: str) -> Iterator[Link]:
         written = rest if starts else line
         if field and "[[" in written and not written.lstrip().startswith("#"):
             yield from in_line(written, number, field)
-
-
-def links(text: str, body_start: int, body_first_line: int) -> tuple[Link, ...]:
-    if "[[" not in text and "](" not in text:
-        return ()
-    body = (
-        link
-        for number, line in prose(text[body_start:], body_first_line)
-        if "[[" in line or "](" in line
-        for link in in_line(line, number)
-    )
-    return (*_front_matter_links(text[:body_start]), *body)
 
 
 def each_of(found: FieldValue) -> Sequence[FieldValue]:

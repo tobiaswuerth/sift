@@ -1,12 +1,14 @@
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import NamedTuple, NewType, cast
 
 from sift.api.fields import Fields
 from sift.api.ids import ChunkId, DocumentId
 from sift.domain.errors import DamagedError
-from sift.domain.text.links import names
-from sift.domain.text.notes import Document
+from sift.domain.text.chunks import Chunk
+from sift.domain.text.links import Link, names
+from sift.domain.text.notes import Document, NotePart, NoteRead
 from sift.storage.database import Reading, Writing, WritingDocuments, first, inserted, rows, run, run_each
 from sift.storage.texts import put_text
 
@@ -84,36 +86,86 @@ def kept(transaction: Reading, source: SourceId) -> list[KeptDocument]:
     )
 
 
-def _add(transaction: Writing, source: SourceId, path: str, document: Document) -> DocumentId:
-    identity = DocumentId(
-        inserted(
-            transaction,
-            "INSERT INTO documents(source, key, digest, title, fields) VALUES (?, ?, ?, ?, ?)",
-            (source, document.key, document.digest, document.title, fields_json(document.fields)),
-        )
-    )
-    put_text(transaction, identity, (document.text,))
+CHUNK_ROW = "INSERT INTO chunks(document, first_line, last_line, start, length) VALUES (?, ?, ?, ?, ?)"
+LINK_ROW = """INSERT INTO links(document, ordinal, field, line, kind, target, key, fragment, shown)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+NAME_ROW = "INSERT INTO names(key, document, kind) VALUES (?, ?, ?)"
+DOCUMENT_ROW = "INSERT INTO documents(source, key, digest, title, fields) VALUES (?, ?, ?, ?, ?)"
+WRITTEN_AT_ONCE = 1000
+
+
+def _chunks_put(transaction: Writing, identity: DocumentId, chunks: Sequence[Chunk]) -> None:
+    run_each(transaction, CHUNK_ROW, [(identity, c.first_line, c.last_line, c.start, c.length) for c in chunks])
+
+
+def _links_put(transaction: Writing, identity: DocumentId, links: Sequence[Link], first: int) -> None:
     run_each(
         transaction,
-        "INSERT INTO chunks(document, first_line, last_line, start, length) VALUES (?, ?, ?, ?, ?)",
-        [(identity, c.first_line, c.last_line, c.start, c.length) for c in document.chunks],
-    )
-    run_each(
-        transaction,
-        """INSERT INTO links(document, ordinal, field, line, kind, target, key, fragment, shown)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        LINK_ROW,
         [
             (identity, ordinal, link.field, link.line, link.kind, link.target, link.key, link.fragment, link.shown)
-            for ordinal, link in enumerate(document.links)
+            for ordinal, link in enumerate(links, first)
         ],
     )
+
+
+def _names_put(transaction: Writing, identity: DocumentId, path: str, fields: Fields) -> None:
+    run_each(transaction, NAME_ROW, [(name.key, identity, name.kind) for name in names(path, fields)])
+
+
+def _add(transaction: Writing, source: SourceId, path: str, document: Document) -> DocumentId:
+    row = (source, document.key, document.digest, document.title, fields_json(document.fields))
+    identity = DocumentId(inserted(transaction, DOCUMENT_ROW, row))
+    put_text(transaction, identity, (document.text,))
+    _chunks_put(transaction, identity, document.chunks)
+    _links_put(transaction, identity, document.links, 0)
     if not document.key:
-        run_each(
-            transaction,
-            "INSERT INTO names(key, document, kind) VALUES (?, ?, ?)",
-            [(name.key, identity, name.kind) for name in names(path, document.fields)],
-        )
+        _names_put(transaction, identity, path, document.fields)
     return identity
+
+
+@dataclass(slots=True)
+class _Streamed:
+    transaction: Writing
+    identity: DocumentId
+    chunks: list[Chunk] = field(default_factory=list[Chunk])
+    links: list[Link] = field(default_factory=list[Link])
+    linked: int = 0
+    title: str = ""
+
+    def flushed(self) -> None:
+        _chunks_put(self.transaction, self.identity, self.chunks)
+        _links_put(self.transaction, self.identity, self.links, self.linked)
+        self.linked += len(self.links)
+        self.chunks, self.links = [], []
+
+    def texts(self, parts: Iterable[NotePart]) -> Iterator[str]:
+        for part in parts:
+            match part:
+                case str():
+                    yield part
+                case Chunk():
+                    self.chunks.append(part)
+                case Link():
+                    self.links.append(part)
+                case _:
+                    self.title = part.title
+            if len(self.chunks) + len(self.links) >= WRITTEN_AT_ONCE:
+                self.flushed()
+
+
+def add_streamed(transaction: WritingDocuments, source: SourceId, path: str, read: NoteRead) -> DocumentId:
+    identity = DocumentId(inserted(transaction, DOCUMENT_ROW, (source, "", "", "", fields_json(read.fields))))
+    _names_put(transaction, identity, path, read.fields)
+    streamed = _Streamed(transaction, identity)
+    put_text(transaction, identity, streamed.texts(read.parts))
+    streamed.flushed()
+    run(transaction, "UPDATE documents SET title = ? WHERE id = ?", (streamed.title, identity))
+    return identity
+
+
+def set_digest(transaction: WritingDocuments, document: DocumentId, digested: str) -> None:
+    run(transaction, "UPDATE documents SET digest = ? WHERE id = ?", (digested, document))
 
 
 def add_documents(

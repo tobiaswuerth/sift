@@ -1,15 +1,13 @@
 import pytest
 
-from sift.domain.text.front_matter import front_matter
-from sift.domain.text.links import Link, LinkKind, Name, NameKind, aliases, links, name_key, names
+from sift.domain.text.links import Link, LinkKind, Name, NameKind, aliases, name_key, names
+from sift.domain.text.notes import note
 
 type Found = tuple[str | None, int, LinkKind, str, str | None, str | None]
 
 
 def found(text: str) -> list[Link]:
-    head = front_matter(text)
-    end = head.end if head else 0
-    return list(links(text, end, 1 + text.count("\n", 0, end)))
+    return list(note(text.encode(), "n.md").links)
 
 
 def written(text: str) -> list[Found]:

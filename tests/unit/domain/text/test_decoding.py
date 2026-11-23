@@ -1,10 +1,11 @@
 import codecs
 import cProfile
+import itertools
 
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from sift.domain.text.decoding import decoded, encodable, encoding_of, file_text
+from sift.domain.text.decoding import decoded, encodable, encoding_of, text_pieces
 
 MARKS_OF_OTHER_ENCODINGS = (b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")
 BYTE_ORDER_MARK = "\N{ZERO WIDTH NO-BREAK SPACE}"
@@ -50,7 +51,20 @@ def test_only_text_that_is_no_utf8_is_passed_through_character_by_character() ->
 
 
 def test_a_file_s_lines_end_in_newlines_alone() -> None:
-    assert file_text(b"a\r\nb\rc\n") == "a\nb\rc\n"
+    assert "".join(text_pieces([b"a\r", b"\nb\rc\n"])) == "a\nb\rc\n"
+    assert list(text_pieces([])) == []
+
+
+@given(
+    st.binary(max_size=40).map(lambda raw: raw.replace(b"x", b"\r\n")),
+    st.sampled_from([b"", b"\xef\xbb\xbf", *MARKS_OF_OTHER_ENCODINGS]),
+    st.lists(st.integers(0, 50), max_size=6),
+)
+def test_a_file_read_in_pieces_reads_as_it_reads_whole(raw: bytes, mark: bytes, cuts: list[int]) -> None:
+    whole = mark + raw
+    edges = [0, *sorted(min(cut, len(whole)) for cut in cuts), len(whole)]
+    parts = [whole[start:end] for start, end in itertools.pairwise(edges)]
+    assert "".join(text_pieces(parts)) == decoded(whole).replace("\r\n", "\n")
 
 
 def test_the_encoding_of_a_file_read_line_by_line_is_told_by_its_first_bytes() -> None:

@@ -44,6 +44,7 @@ TAKEN_OVER = "another sift began remaking this keyword index for itself and has 
 TAKEN_OVER_REMEDY = "run sift index from one sift only: sifts whose SQLite renders numbers apart remake it in turn"
 DIGITS = re.compile("[0-9]{1,19}")
 MOST_ROW = (1 << 63) - 1
+TEXTS_AT_ONCE = 1000
 
 
 class Span(NamedTuple):
@@ -116,11 +117,18 @@ def _streams(transaction: Reading, spans: Sequence[Span]) -> list[list[str]]:
     wanted = json.dumps(sorted({span.document for span in spans}))
     documents = {held.id: held for held in rows(transaction, Named, DOCUMENTS, (wanted,))}
     named = {key: (tokens(held.title), tokens(held.meta or "")) for key, held in documents.items()}
-    cut = spans_text(transaction, [TextSpan(span.document, span.start, span.length) for span in spans])
-    return [
-        stream(named[span.document][0], tokens(text), named[span.document][1])
-        for span, text in zip(spans, cut, strict=True)
-    ]
+    seen: dict[str, str] = {}
+    found: list[list[str]] = []
+    for at in range(0, len(spans), TEXTS_AT_ONCE):
+        part = spans[at : at + TEXTS_AT_ONCE]
+        cut = spans_text(transaction, [TextSpan(span.document, span.start, span.length) for span in part])
+        found += [
+            stream(
+                named[span.document][0], [seen.setdefault(each, each) for each in tokens(text)], named[span.document][1]
+            )
+            for span, text in zip(part, cut, strict=True)
+        ]
+    return found
 
 
 def _added(transaction: Writing, written: Segment) -> None:

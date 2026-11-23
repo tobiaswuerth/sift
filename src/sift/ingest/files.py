@@ -1,7 +1,8 @@
 import os
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import BinaryIO
 
@@ -36,6 +37,12 @@ def opened(path: Path, scanned: Identity | None) -> Generator[BinaryIO]:
         if scanned is not None and Identity(found.st_dev, found.st_ino) != scanned:
             raise ChangedError(CHANGED)
         yield raw
+
+
+@contextmanager
+def pieces_of(path: Path, scanned: Identity | None) -> Generator[Iterator[bytes]]:
+    with opened(path, scanned) as raw:
+        yield iter(partial(raw.read, READ_AT_ONCE), b"")
 
 
 def at_most(path: Path, most: int, scanned: Identity | None) -> bytes:

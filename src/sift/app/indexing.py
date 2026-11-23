@@ -1,5 +1,5 @@
 import posixpath
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -7,12 +7,13 @@ from sift.api.errors import StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import chosen_or_active
-from sift.app.filing import READERS, Job, Limits, Readers, Tally
+from sift.app.filing import READERS, Job, Limits, Readers, Refused, Tally
 from sift.app.problems import problems
 from sift.app.records import stored_records
-from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan, most_read, recorded
+from sift.app.streamed import stored_note
+from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan, recorded
 from sift.domain.text.documents import FileRead, Unread
-from sift.domain.text.kinds import streamed
+from sift.domain.text.kinds import FileKind, kind_of, streamed
 from sift.ingest.files import Identity
 from sift.ingest.readers import read_whole
 from sift.ingest.scan import scan
@@ -34,43 +35,26 @@ from sift.storage.store import connected
 
 FOLDER_MISSING_REMEDY = "connect the drive it lies on"
 OUT_OF_REACH_REMEDY = "see that its folder and its store can be read, then index it again"
-MOST_BYTES_A_CHARACTER_ENCODES_TO = 4
 PROBLEMS_APART = "; "
 
 
 LIMITS = Limits()
 
 
-@dataclass(frozen=True, slots=True)
-class Refused:
-    problem: str
-    read_again: bool
-
-
-def _too_large(size: str, most: int, measured: str = "bytes") -> Refused:
-    return Refused(f"{size} {measured}: a document holds at most {most:,}; split the file", read_again=False)
-
-
-def _largest_text(read: FileRead, most: int) -> int | None:
-    for each in read.documents:
-        if MOST_BYTES_A_CHARACTER_ENCODES_TO * len(each.text) > most and (size := len(each.text.encode())) > most:
-            return size
-    return None
+def _too_large(size: int, most: int) -> Refused:
+    return Refused(f"{size:,} bytes: sift reads documents of at most {most:,} bytes; split the file", read_again=False)
 
 
 def _read(job: Job, path: str, scanned: Identity | None) -> FileRead | Refused:
-    most, most_text = most_read(path, job.limits.sizes), job.limits.most_text_bytes
+    most = job.limits.most_file_bytes
     try:
         raw = job.readers.whole(job.collection.folder / path, most, scanned)
     except OSError as error:
         return Refused(error.strerror or str(error), read_again=True)
     if len(raw) > most:
-        return _too_large(f"more than {most:,}", most)
+        return _too_large(len(raw), most)
     read = read_whole(raw, posixpath.basename(path), job.collection.choices.title_from, job.readers.convert)
-    if isinstance(read, Unread):
-        return Refused(read.problem, read_again=False)
-    size = _largest_text(read, most_text)
-    return read if size is None else _too_large(f"{size:,}", most_text, "bytes as text")
+    return Refused(read.problem, read_again=False) if isinstance(read, Unread) else read
 
 
 def _refused(transaction: WritingDocuments, path: str, stat: Stat, refused: Refused) -> Tally:
@@ -107,38 +91,61 @@ def _file_stored(transaction: WritingDocuments, path: str, stat: Stat, read: Fil
 
 
 def _dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
+    most = job.limits.most_file_bytes
     with writing_documents(job.connection, job.limits.batches) as transaction:
         removed = delete_sources(transaction, plan.drop)
         clear_unreadable(transaction, plan.forget)
         large = [
-            _refused(
-                transaction, path, files[path], _too_large(f"{files[path].size:,}", most_read(path, job.limits.sizes))
-            )
-            for path in plan.too_large
+            _refused(transaction, path, files[path], _too_large(files[path].size, most)) for path in plan.too_large
         ]
     return sum(large, Tally(removed=removed))
 
 
+@dataclass(slots=True)
+class _Progress:
+    job: Job
+    done: int = 0
+
+    def advanced(self) -> None:
+        self.done += 1
+        self.job.report(Advanced(self.done))
+
+
+def _batch_stored(
+    job: Job, batch: Sequence[str], files: Mapping[str, Stat], identities: Mapping[str, Identity], progress: _Progress
+) -> Tally:
+    tally = Tally()
+    read: list[tuple[str, FileRead | Refused]] = []
+    for path in (path for path in batch if kind_of(path) is not FileKind.NOTE):
+        read.append((path, _read(job, path, identities.get(path))))
+        progress.advanced()
+    with writing_documents(job.connection, job.limits.batches) as transaction:
+        whole = [path for path, outcome in read if _whole(outcome)]
+        for path, outcome in read:
+            tally += _stored(transaction, path, files[path], outcome)
+        for path in (path for path in batch if kind_of(path) is FileKind.NOTE):
+            match stored_note(job, transaction, path, files[path], identities.get(path)):
+                case Tally() as stored:
+                    tally += stored
+                    whole.append(path)
+                case refused:
+                    tally += _refused(transaction, path, files[path], refused)
+            progress.advanced()
+        clear_unreadable(transaction, whole)
+    for path, outcome in read:
+        if isinstance(outcome, FileRead) and outcome.problems:
+            job.report(Noted(f"{path}: {PROBLEMS_APART.join(outcome.problems)}"))
+    return tally
+
+
 def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat], identities: Mapping[str, Identity]) -> Tally:
-    tally, done, limits = Tally(), 0, job.limits
-    whole = tuple(path for path in plan.read if not streamed(path))
+    tally, limits, progress = Tally(), job.limits, _Progress(job)
     for path in (path for path in plan.read if streamed(path)):
         tally += stored_records(job, path, files[path], job.collection.choices.records, identities.get(path))
-        done += 1
-        job.report(Advanced(done))
+        progress.advanced()
+    whole = tuple(path for path in plan.read if not streamed(path))
     for batch in batches(whole, files, limits.most_files_a_write, limits.most_bytes_a_write):
-        read: list[tuple[str, FileRead | Refused]] = []
-        for path in batch:
-            read.append((path, _read(job, path, identities.get(path))))
-            done += 1
-            job.report(Advanced(done))
-        with writing_documents(job.connection, job.limits.batches) as transaction:
-            for path, outcome in read:
-                tally += _stored(transaction, path, files[path], outcome)
-            clear_unreadable(transaction, [path for path, outcome in read if _whole(outcome)])
-        for path, outcome in read:
-            if isinstance(outcome, FileRead) and outcome.problems:
-                job.report(Noted(f"{path}: {PROBLEMS_APART.join(outcome.problems)}"))
+        tally += _batch_stored(job, batch, files, identities, progress)
     return tally
 
 
@@ -159,7 +166,7 @@ def _synced(job: Job) -> Indexed:
     with reading(job.connection) as transaction:
         known = {path: Stat(source.modified_ns, source.size) for path, source in sources(transaction).items()}
         marks = {entry.path: bool(entry.read_again) for entry in unreadable(transaction)}
-    plan = index_plan(scanned.found, known, job.limits.sizes, marks)
+    plan = index_plan(scanned.found, known, job.limits.most_file_bytes, marks)
     for said in problems(job.collection.folder, scanned, plan, frozenset(known)):
         job.report(said)
     job.report(PhaseStarted(Phase.READ, len(plan.read)))

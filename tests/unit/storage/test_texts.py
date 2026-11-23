@@ -1,5 +1,6 @@
 import contextlib
 import itertools
+import re
 import sqlite3
 from collections.abc import Generator
 from pathlib import Path
@@ -11,7 +12,6 @@ from hypothesis import strategies as st
 
 from sift.api.ids import CollectionId, DocumentId
 from sift.domain.errors import DamagedError
-from sift.domain.text.markdown import LINE
 from sift.storage.database import Reading, Writing, reading, rows, run, writing
 from sift.storage.store import LAYOUT, create_store, open_store
 from sift.storage.texts import (
@@ -28,6 +28,7 @@ from sift.storage.texts import (
 )
 
 DOCUMENT = DocumentId(7)
+LINE = re.compile(r"[^\n]*\n|[^\n]+")
 
 
 def _texts_table() -> str:

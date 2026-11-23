@@ -193,6 +193,19 @@ def run_each(transaction: Writing, sql: str, each: Iterable[Parameters]) -> None
     transaction.connection.executemany(sql, each)
 
 
+def save_point(transaction: Writing) -> None:
+    run(transaction, "SAVEPOINT written")
+
+
+def back_to_save_point(transaction: Writing) -> None:
+    run(transaction, "ROLLBACK TO written")
+    run(transaction, "RELEASE written")
+
+
+def past_save_point(transaction: Writing) -> None:
+    run(transaction, "RELEASE written")
+
+
 def inserted(transaction: Writing, sql: str, parameters: Parameters = ()) -> int:
     cursor = transaction.connection.execute(sql, parameters)
     if cursor.rowcount != 1 or cursor.lastrowid is None:

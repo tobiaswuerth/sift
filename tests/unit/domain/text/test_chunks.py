@@ -5,7 +5,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.domain.text.chunks import MOST_CHARACTERS, chunks, cuts
+from sift.domain.text.chunks import MOST_CHARACTERS, chunked, chunks, cuts
+from sift.domain.text.markdown import text_lines, with_prose
 
 
 def pieces(text: str, first_line: int = 1) -> list[tuple[int, int, str]]:
@@ -138,3 +139,20 @@ def test_chunks_are_stripped_spans_of_their_lines_in_order_within_the_limit(text
     covered = {line for chunk in found for line in range(chunk.first_line, chunk.last_line + 1)}
     written = {number for number, line in enumerate(text.split("\n"), first_line) if line.strip()}
     assert written <= covered
+
+
+PLAIN = st.sampled_from(["a", "b", " ", "\n", "\N{GRINNING FACE}"])
+long_runs = st.lists(st.tuples(PLAIN, st.integers(1, 7000)), max_size=6).map(
+    lambda found: "".join(character * count for character, count in found)
+)
+
+
+@given(long_runs, st.integers(5, 9000), st.lists(st.integers(0, 40_000), max_size=4))
+def test_lines_read_in_fragments_are_cut_into_the_chunks_whole_lines_are(text: str, most: int, at: list[int]) -> None:
+    edges = [0, *sorted(min(each, len(text)) for each in at), len(text)]
+    pieces = [text[start:end] for start, end in itertools.pairwise(edges)]
+    lines = list(text_lines(pieces, 1, 0, most))
+    assert "".join(line.text for line in lines) == text
+    assert all(line.start == sum(len(each.text) for each in lines[:index]) for index, line in enumerate(lines))
+    assert all(len(line.text) <= most or line.whole for line in lines)
+    assert tuple(chunked(with_prose(lines))) == chunks(text)

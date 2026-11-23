@@ -11,9 +11,10 @@ import pytest
 from sift.api.fields import FieldValue
 from sift.api.ids import ChunkId, CollectionId, DocumentId, first_row
 from sift.domain.errors import DamagedError
-from sift.domain.plan.indexing import MOST_TEXT_BYTES
+from sift.domain.text.decoding import text_pieces
 from sift.domain.text.links import LinkKind, NameKind
-from sift.domain.text.notes import Document, note
+from sift.domain.text.markdown import MOST_LINE
+from sift.domain.text.notes import MOST_HEAD, Document, note, read_note
 from sift.storage.database import reading, rows, run, writing
 from sift.storage.documents import (
     PATHS_NAMED,
@@ -23,6 +24,7 @@ from sift.storage.documents import (
     StoredChunk,
     Unreadable,
     add_documents,
+    add_streamed,
     chunks_of,
     clear_unreadable,
     counts,
@@ -32,6 +34,7 @@ from sift.storage.documents import (
     mark_unreadable,
     paths_named,
     put_source,
+    set_digest,
     sources,
     stored,
     unreadable,
@@ -39,7 +42,7 @@ from sift.storage.documents import (
 from sift.storage.forgetting import delete_documents, delete_sources
 from sift.storage.keywords import writing_documents
 from sift.storage.store import create_store, open_store
-from sift.storage.texts import text_of
+from sift.storage.texts import BLOCK, text_of
 
 COLLECTION = CollectionId(2)
 NOTE = (
@@ -100,6 +103,42 @@ def added(connection: sqlite3.Connection, path: str, *documents: Document) -> tu
     with writing_documents(connection) as transaction:
         source = put_source(transaction, path, 10, 20)
         return source, add_documents(transaction, source, path, documents)
+
+
+class DocumentRow(NamedTuple):
+    key: str
+    digest: str
+    title: str
+    fields: str
+
+
+def held(connection: sqlite3.Connection, identity: DocumentId) -> tuple[object, ...]:
+    with reading(connection) as transaction:
+        row = rows(
+            transaction, DocumentRow, "SELECT key, digest, title, fields FROM documents WHERE id = ?", (identity,)
+        )
+        spans = [(c.first_line, c.last_line, c.start, c.length) for c in chunks_of(transaction, identity)]
+        links = rows(transaction, LinkRow, LINKS_OF, (identity,))
+        named = rows(
+            transaction, NameRow, "SELECT key, kind FROM names WHERE document = ? ORDER BY key, kind", (identity,)
+        )
+        return row, text_of(transaction, identity), spans, links, named
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [NOTE, b"---\ntitle: Front\n---\n", b"".join(b"[[n%d]]\n" % n for n in range(1500)) + b"# Late\n\nlast words\n"],
+)
+def test_a_note_stored_as_it_is_read_is_stored_as_the_note_read_whole(store: sqlite3.Connection, raw: bytes) -> None:
+    whole = note(raw, "Hans.md")
+    _, (first,) = added(store, "People/Hans.md", whole)
+    before = held(store, first)
+    with writing_documents(store) as transaction:
+        delete_documents(transaction, [first])
+        source = put_source(transaction, "People/Hans.md", 10, 20)
+        second = add_streamed(transaction, source, "People/Hans.md", read_note(text_pieces((raw,)), "Hans.md"))
+        set_digest(transaction, second, whole.digest)
+    assert held(store, second) == before
 
 
 def test_a_source_is_written_once_and_then_updated(store: sqlite3.Connection) -> None:
@@ -251,9 +290,9 @@ def test_front_matter_that_is_no_mapping_is_damage(written: str) -> None:
         fields_of(written)
 
 
-def test_the_largest_document_fits_a_row_sqlite_stores(store: sqlite3.Connection) -> None:
-    most_characters_as_utf8, text_and_fields = 4, 2
-    largest_row = MOST_TEXT_BYTES * most_characters_as_utf8 * text_and_fields
+def test_the_largest_row_of_a_note_or_record_fits_a_row_sqlite_stores(store: sqlite3.Connection) -> None:
+    most_characters_as_utf8, title_and_fields = 4, 2
+    largest_row = max(BLOCK, MOST_LINE, MOST_HEAD) * most_characters_as_utf8 * title_and_fields
     assert largest_row < store.getlimit(sqlite3.SQLITE_LIMIT_LENGTH)
 
 

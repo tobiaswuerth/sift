@@ -179,18 +179,19 @@ def test_a_large_file_is_stored_a_batch_at_a_time_as_it_is_read(tmp_path: Path) 
     assert text_of(home, "c/big.jsonl#5") == "changed"
 
 
-def test_a_record_longer_than_a_document_may_be_is_skipped_and_files_in_utf_16_are_read(tmp_path: Path) -> None:
+def test_a_record_longer_than_a_line_may_be_is_skipped_and_files_in_utf_16_are_read(tmp_path: Path) -> None:
     lines = [json.dumps({"id": 1, "text": "x" * 50}), '{"id": 2, "text": "' + "\N{EURO SIGN}" * 15 + '"}']
     write(tmp_path / "c" / "r.jsonl", "\n".join([*lines, json.dumps({"id": 3, "text": "short"})]) + "\n")
     (tmp_path / "c" / "wide.jsonl").write_bytes(jsonl([{"id": "w", "text": "wide text"}]).encode("utf-16"))
     home = tmp_path / "home"
     add(home, AddCollection(str(tmp_path / "c")))
     said: list[Event] = []
-    indexed(home, Limits(most_text_bytes=40), said)
+    indexed(home, Limits(most_record_characters=40), said)
     assert found(home, "short OR wide") == ["c/r.jsonl#3", "c/wide.jsonl#w"]
     (noted,) = [each.text for each in said if isinstance(each, Noted)]
     assert "line 1: longer than the 40 characters a line may hold" in noted
-    assert "line 2: 45 bytes as text, more than the 40 a document holds" in noted
+    assert "line 2" not in noted
+    assert text_of(home, "c/r.jsonl#2") == "\N{EURO SIGN}" * 15
 
 
 def broken(path: Path, most: int, scanned: Identity | None) -> Iterator[tuple[int, str | SkippedLine]]:

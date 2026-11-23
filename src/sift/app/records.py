@@ -44,15 +44,10 @@ class Skips:
         return f"{counted(self.count, 'line')} skipped ({shown}{more})"
 
 
-def _records(lines: Iterable[tuple[int, str | SkippedLine]], chosen: Chosen, most: int) -> Iterator[Line]:
+def _records(lines: Iterable[tuple[int, str | SkippedLine]], chosen: Chosen) -> Iterator[Line]:
     for number, line in lines:
-        if not line:
-            continue
-        found = line if isinstance(line, SkippedLine) else record_of(line, number, chosen)
-        if isinstance(found, Document) and (size := len(found.text.encode())) > most:
-            yield number, SkippedLine(number, f"{size:,} bytes as text, more than the {most:,} a document holds")
-        else:
-            yield number, found
+        if line:
+            yield number, line if isinstance(line, SkippedLine) else record_of(line, number, chosen)
 
 
 def _firsts(read: Sequence[Line], new: frozenset[str]) -> tuple[list[Document], list[SkippedLine]]:
@@ -104,12 +99,12 @@ def _finished(job: Job, path: str, stat: Stat, source: SourceId, skips: Skips) -
 
 def stored_records(job: Job, path: str, stat: Stat, chosen: Chosen, scanned: Identity | None) -> Tally:
     limits, tally, skips = job.limits, Tally(), Skips()
-    lines = job.readers.lines(job.collection.folder / path, limits.most_text_bytes, scanned)
+    lines = job.readers.lines(job.collection.folder / path, limits.most_record_characters, scanned)
     with writing_documents(job.connection, limits.batches) as transaction:
         source = put_source(transaction, path, RACY, stat.size)
         nothing_taken(transaction)
     try:
-        for read in batched(_records(lines, chosen, limits.most_text_bytes), limits.most_records_a_write):
+        for read in batched(_records(lines, chosen), limits.most_records_a_write):
             with writing_documents(job.connection, limits.batches) as transaction:
                 done, skipped = _batch(transaction, source, path, read)
             tally, skips = tally + done, skips + skipped

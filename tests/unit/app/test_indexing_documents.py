@@ -16,6 +16,7 @@ from sift.app.indexing import index
 from sift.app.search import search
 from sift.domain.text.documents import Conversion, Unread
 from sift.ingest.documents import convert
+from sift.ingest.files import Identity
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
 from sift.storage.vectors import left
@@ -115,14 +116,13 @@ def test_a_document_that_stops_converting_loses_its_document(library: Path) -> N
     assert unreadable_files(library) == (UnreadableFile("pigments.pdf", "the converter failed: index out of bounds"),)
 
 
-def test_a_file_or_its_text_larger_than_a_document_may_be_is_left_out(library: Path) -> None:
-    assert indexed(library, Limits(most_text_bytes=100, most_file_bytes=2000)).unreadable == 3
-    text = len(only(sample(".pdf").read_bytes(), "pigments.pdf").text.encode())
-    assert {each.path: each.problem for each in unreadable_files(library)} == {
-        "pigments.docx": "36,749 bytes: a document holds at most 2,000; split the file",
-        "pigments.pdf": f"{text:,} bytes as text: a document holds at most 100; split the file",
-        "pigments.xlsx": "5,073 bytes: a document holds at most 2,000; split the file",
-    }
+def test_a_document_that_cannot_be_read_is_read_again_at_the_next_index(library: Path) -> None:
+    def locked(_path: Path, _most: int, _scanned: Identity | None) -> bytes:
+        raise PermissionError(13, "Permission denied")
+
+    assert indexed(library, readers=Readers(whole=locked, clock=later)).unreadable == 3
+    assert {each.problem for each in unreadable_files(library)} == {"Permission denied"}
+    assert indexed(library) == Indexed(files=3, added=3, changed=0, removed=0, unreadable=0)
 
 
 def test_a_mail_and_its_attachments_are_documents_found_and_filtered_by_their_ids(post: Path) -> None:
