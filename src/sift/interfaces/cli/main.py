@@ -28,6 +28,7 @@ from sift.interfaces.console.live import Live
 from sift.interfaces.console.progress import Looks
 from sift.interfaces.console.streams import ReaderLeftError, columns, is_terminal, let_go, say, utf8, write_results
 from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal, style_of
+from sift.interfaces.console.text import printable_json, printable_text
 from sift.interfaces.console.windows import console, escapes_work
 from sift.settings import Settings, from_environment, whole_path
 
@@ -58,7 +59,7 @@ class Command:
 
 
 def as_json(answer: Answer) -> str:
-    return json.dumps(dataclasses.asdict(answer), ensure_ascii=False, indent=2)
+    return printable_json(json.dumps(dataclasses.asdict(answer), ensure_ascii=False, indent=2))
 
 
 def command[R, A: Answer](
@@ -289,7 +290,7 @@ def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO
         found = _ran(argv, settings, (out, err), host)
         if isinstance(found, int):
             return found
-        write_results(out, found.results)
+        write_results(out, map(printable_text, found.results) if is_terminal(out) else found.results)
     except ReaderLeftError as left:
         let_go(left.stream)
         return FAILED

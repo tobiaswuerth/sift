@@ -348,6 +348,27 @@ class Terminal(io.TextIOWrapper):
         return True
 
 
+def test_in_a_terminal_a_document_cannot_steer_it_and_its_json_never_can(
+    settings: Settings, notes: Path, tmp_path: Path
+) -> None:
+    text = "# Steer\n\nclip\x1b]52;c;aGk=\x07 \N{RIGHT-TO-LEFT OVERRIDE}x\tend\n"
+    (notes / "steer.md").write_text(text, encoding="utf-8")
+    indexed_notes(settings, notes)
+    assert ran(settings, "index")[0] == 0
+    with Terminal((tmp_path / "out").open("w+b"), encoding="utf-8", newline="\n") as out:
+        assert run(["get", "notes/steer.md"], settings, out, io.StringIO()) == 0
+        out.flush()
+        shown = (tmp_path / "out").read_bytes().decode()
+    assert shown == "# Steer\n\nclip\\x1b]52;c;aGk=\\x07 \\u202ex\tend\n"
+    piped = io.StringIO()
+    assert run(["get", "notes/steer.md"], settings, piped, io.StringIO()) == 0
+    assert piped.getvalue() == text
+    as_json = io.StringIO()
+    assert run(["get", "notes/steer.md", "--json"], settings, as_json, io.StringIO()) == 0
+    assert "\N{RIGHT-TO-LEFT OVERRIDE}" not in as_json.getvalue()
+    assert json.loads(as_json.getvalue())["found"][0]["text"] == text
+
+
 def test_in_a_terminal_the_running_phase_is_drawn_in_place_and_cleared(
     settings: Settings, notes: Path, tmp_path: Path
 ) -> None:

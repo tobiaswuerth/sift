@@ -182,6 +182,11 @@ def test_a_hit_names_its_copies_in_other_collections_under_its_place() -> None:
     assert " hybrid " in shown.messages[-1]
 
 
+def test_a_score_too_small_for_two_decimals_is_shown_in_full() -> None:
+    found = SearchResult((Hit("n/a.md", "A", "1-1", 1.6e-06, None), Hit("n/b.md", "B", "1-1", 0.0, None)), 1, ())
+    assert hits(found, 0.25, "linux", PLAIN).results[::2] == ("1  1.6e-06  A", "2     0.00  B")
+
+
 def test_a_hit_shows_the_front_matter_asked_for_under_its_place() -> None:
     hit = Hit("notes/halo.md", "Halo", "1-3", 3.25, None, fields={"created": "2024-06-15", "tags": ["a", "é"], "n": 2})
     shown = hits(SearchResult((hit,), 1, ()), 0.25, "linux", PLAIN)

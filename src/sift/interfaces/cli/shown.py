@@ -20,6 +20,7 @@ STATUS_HEADER = ("collection", "folder", "documents", "chunks", "size")
 UNREADABLE_HEADER = ("collection", "file", "problem")
 NONE = "-"
 SNIPPET_CHARACTERS = 200
+SMALLEST_SHOWN = 0.005
 
 
 class Shown(NamedTuple):
@@ -146,9 +147,13 @@ def _fields(fields: Fields) -> str:
     return printable("  ".join(f"{key}: {_value(value)}" for key, value in fields.items()))
 
 
+def _score(score: float) -> str:
+    return f"{score:.2f}" if score == 0 or abs(score) >= SMALLEST_SHOWN else f"{score:.1e}"
+
+
 def _hit(rank: int, hit: Hit, ranks: int, scores: int) -> tuple[str, ...]:
     indent = " " * (ranks + scores + 2 * len(GAP))
-    head = f"{rank:>{ranks}}{GAP}{hit.score:>{scores}.2f}{GAP}{printable(hit.title)}"
+    head = f"{rank:>{ranks}}{GAP}{_score(hit.score):>{scores}}{GAP}{printable(hit.title)}"
     text = (f"{indent}{_passage(hit.text)}",) if hit.text else ()
     also = (f"{indent}also {', '.join(printable(each) for each in hit.also)}",) if hit.also else ()
     fields = (f"{indent}{_fields(hit.fields)}",) if hit.fields else ()
@@ -178,7 +183,7 @@ def hits(result: SearchResult, seconds: float, platform: str, style: Style, kind
     if not result.searched and not result.unsearched:
         return _empty(platform, style)
     ranks = len(str(len(result.hits)))
-    scores = max((len(f"{hit.score:.2f}") for hit in result.hits), default=0)
+    scores = max((len(_score(hit.score)) for hit in result.hits), default=0)
     lines = [line for rank, hit in enumerate(result.hits, 1) for line in _hit(rank, hit, ranks, scores)]
     problems = _unsearched(result.unsearched, style)
     return Shown(tuple(lines), (*problems, _footer(result, seconds, style, kind)))
