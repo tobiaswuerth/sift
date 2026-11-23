@@ -42,15 +42,18 @@ class Kept[S]:
     def said(self, collection: Collection, error: StoreUnavailableError) -> None:
         self.unsearched.append(Unsearched(collection.name, error.message, error.remedy))
 
+    def dropped(self, each: Searching[S], error: StoreUnavailableError) -> None:
+        self.searching.remove(each)
+        self.said(each.collection, error)
+        abandon(each.transaction)
+        each.resources.close()
+
     def guarded[T](self, each: Searching[S], work: Callable[[], T]) -> T | None:
         try:
             with unavailable_if_damaged(each.collection.store):
                 return work()
         except StoreUnavailableError as error:
-            self.searching.remove(each)
-            self.said(each.collection, error)
-            abandon(each.transaction)
-            each.resources.close()
+            self.dropped(each, error)
             return None
 
 

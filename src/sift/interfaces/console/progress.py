@@ -104,7 +104,7 @@ def shown(view: View, event: Event, now: float, looks: Looks) -> tuple[View, tup
             lines = () if running is None else (_row(running, event.count, now, looks.style),)
             return replace(view, running=None), lines
         case Noted():
-            return view, _noted(event, looks.style)
+            return replace(view, running=None), _noted(event, looks.style)
         case _:
             return replace(view, running=None), _done(event, view, now, looks)
 

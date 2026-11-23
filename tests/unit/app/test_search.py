@@ -276,7 +276,7 @@ def test_a_keyword_index_of_another_version_is_passed_over_until_indexed_again(h
         ),
         (
             "UPDATE meta SET value = 'remaking other' WHERE key = 'keyword_fingerprint'",
-            "another sift is remaking this keyword index for itself",
+            "another sift began remaking this keyword index for itself and has not finished",
             TAKEN_OVER_REMEDY,
         ),
     ],

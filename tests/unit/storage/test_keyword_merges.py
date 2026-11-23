@@ -155,10 +155,10 @@ def test_settling_or_writing_while_another_sift_remakes_the_index_for_itself_say
         applied(connection, [{"a.md": ("", "a", "one two")}])
         with writing(connection) as transaction:
             run(transaction, "UPDATE meta SET value = 'remaking other' WHERE key = 'keyword_fingerprint'")
-        with pytest.raises(StoreUnavailableError, match="another sift is remaking") as refused:
+        with pytest.raises(StoreUnavailableError, match="another sift began remaking") as refused:
             list(settle(connection))
         assert refused.value.remedy == TAKEN_OVER_REMEDY
-        with pytest.raises(StoreUnavailableError, match="another sift is remaking"):
+        with pytest.raises(StoreUnavailableError, match="another sift began remaking"):
             applied(connection, [{"b.md": ("", "b", "three")}])
 
 

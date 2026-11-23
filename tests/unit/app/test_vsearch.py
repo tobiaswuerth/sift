@@ -1,6 +1,7 @@
 import contextlib
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -13,7 +14,10 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.vsearch import UNEMBEDDED_REMEDY, vsearch
-from sift.storage.vectors import EMBED_REMEDY
+from sift.domain.arrays import Ids
+from sift.domain.codec.codes import Halves
+from sift.storage.database import Reading
+from sift.storage.vectors import EMBED_REMEDY, vectors_of
 from tests.damage import damage_table
 from tests.models import BROKEN, Hashed
 
@@ -174,3 +178,42 @@ def test_a_store_lost_while_rescoring_leaves_the_nearest_of_the_rest(home: Path,
     changed(home / "collections" / "notes.sqlite", "UPDATE vectors SET vector = x'00'")
     found = vsearch(home, SearchVectors("# halo dark matter halo models.", k=1), Hashed(), rescore=1)
     assert [hit.id for hit in found.hits] == ["more/halo.md"]
+
+
+def test_once_every_document_is_found_no_more_vectors_are_read(tmp_path: Path) -> None:
+    root = tmp_path / "parts"
+    for name, word in (("alpha", "comets"), ("beta", "glaciers")):
+        sections = "".join(f"## Part {n}\n\n{f'About {word} and more {word}. ' * 120}\n\n" for n in range(20))
+        write(root / f"{name}.md", f"# {name}\n\n{sections}")
+    home = tmp_path / "home"
+    add(home, AddCollection(str(root)))
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    read: list[int] = []
+
+    def counted(transaction: Reading, chunks: Ids) -> tuple[Ids, Halves]:
+        read.append(len(chunks))
+        return vectors_of(transaction, chunks)
+
+    found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), rescore=1, read=counted)
+    assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]
+    assert 0 < max(read) < chunks_in(home / "collections" / "parts.sqlite")
+
+
+def chunks_in(store: Path) -> int:
+    with contextlib.closing(sqlite3.connect(store)) as database:
+        (found,) = cast("tuple[int]", database.execute("SELECT count(*) FROM chunks").fetchone())
+        return found
+
+
+def test_documents_without_vectors_leave_fewer_than_k_and_the_search_ends(tmp_path: Path) -> None:
+    root = tmp_path / "notes"
+    write(root / "a.md", "# A\n\nComets and glaciers.\n")
+    write(root / "b.md", "# B\n\nGlaciers alone.\n")
+    write(root / "c.md", f"# C\n\nAn {BROKEN} note.\n")
+    home = tmp_path / "home"
+    add(home, AddCollection(str(root)))
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    found = vsearch(home, SearchVectors("glaciers", k=3), Hashed(), rescore=1)
+    assert sorted(hit.id for hit in found.hits) == ["notes/a.md", "notes/b.md"]
