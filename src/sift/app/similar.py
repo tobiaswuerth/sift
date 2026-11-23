@@ -24,7 +24,7 @@ EMBED_REMEDY = "run sift embed"
 NO_DIRECTION_REMEDY = "start from another document, or search its words with sift vsearch"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Like:
     query: Floats
     model: str

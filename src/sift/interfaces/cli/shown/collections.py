@@ -1,4 +1,4 @@
-from sift.api.collections import CollectionAdded, CollectionStatus, Counted, Status, TitleFrom
+from sift.api.collections import CollectionAdded, CollectionStatus, Counted, Status, TitleFrom, Unavailable
 from sift.interfaces.cli.shown.outcome import Shown, empty, fix, next_step
 from sift.interfaces.console.style import Style, Tone
 from sift.interfaces.console.text import labelled, table
@@ -25,10 +25,7 @@ def added(result: CollectionAdded, platform: str, style: Style) -> Shown:
     )
 
 
-def _row(collection: CollectionStatus, *, linked: bool, unreadable: bool) -> tuple[str, ...]:
-    held = collection.contents
-    if not isinstance(held, Counted):
-        return (collection.name, collection.folder, *(NONE,) * (len(STATUS_HEADER) - 2 + 2 * linked + unreadable))
+def _counted(collection: CollectionStatus, held: Counted, *, linked: bool, unreadable: bool) -> tuple[str, ...]:
     links = (f"{held.links:,}", f"{held.unresolved:,}") if linked else ()
     unread = (f"{held.unreadable:,}",) if unreadable else ()
     return (
@@ -42,11 +39,24 @@ def _row(collection: CollectionStatus, *, linked: bool, unreadable: bool) -> tup
     )
 
 
+def _row(collection: CollectionStatus, *, linked: bool, unreadable: bool) -> tuple[str, ...]:
+    match collection.contents:
+        case Counted() as held:
+            return _counted(collection, held, linked=linked, unreadable=unreadable)
+        case _:
+            return (collection.name, collection.folder, *(NONE,) * (len(STATUS_HEADER) - 2 + 2 * linked + unreadable))
+
+
+def _unavailable(name: str, held: Unavailable, style: Style) -> tuple[str, ...]:
+    return (labelled("error", f"{name}: {held.message}", Tone.ERROR, style), *fix(held.remedy, style))
+
+
 def _problems(collection: CollectionStatus, style: Style) -> tuple[str, ...]:
-    held = collection.contents
-    if isinstance(held, Counted):
-        return ()
-    return (labelled("error", f"{collection.name}: {held.message}", Tone.ERROR, style), *fix(held.remedy, style))
+    match collection.contents:
+        case Counted():
+            return ()
+        case _ as held:
+            return _unavailable(collection.name, held, style)
 
 
 def _unreadable_files(result: Status) -> tuple[str, ...]:

@@ -19,7 +19,7 @@ from sift.retrieval.keyword.lists import (
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Exact:
     ranges: Ids
     places: Ids

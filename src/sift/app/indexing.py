@@ -74,8 +74,14 @@ def _refused(transaction: WritingDocuments, path: str, stat: Stat, refused: Refu
 
 
 def _stored(transaction: WritingDocuments, path: str, stat: Stat, read: Document | Refused) -> Tally:
-    if isinstance(read, Refused):
-        return _refused(transaction, path, stat, read)
+    match read:
+        case Refused():
+            return _refused(transaction, path, stat, read)
+        case _:
+            return _document_stored(transaction, path, stat, read)
+
+
+def _document_stored(transaction: WritingDocuments, path: str, stat: Stat, read: Document) -> Tally:
     source = put_source(transaction, path, stat.modified_ns, stat.size)
     held = {document.key: document for document in kept(transaction, source)}
     before = held.pop(read.key, None)

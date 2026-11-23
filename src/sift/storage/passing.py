@@ -99,7 +99,7 @@ def documents_passing(transaction: Reading, condition: Condition, documents: Ids
     return np.fromiter((row.id for row in streamed(transaction, IdRow, PASSING, parameters)), np.int64)
 
 
-@dataclass(slots=True)
+@dataclass(eq=False, slots=True)
 class Passing:
     transaction: Reading
     condition: Condition

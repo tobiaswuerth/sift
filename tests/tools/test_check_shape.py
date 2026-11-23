@@ -76,3 +76,10 @@ def test_other_classes_are_found_in_the_core_alone(source: str) -> None:
 
 def test_the_repository_has_its_shape() -> None:
     assert check_shape.main([]) == 0
+
+
+def test_a_dataclass_holding_arrays_compares_none() -> None:
+    held = "@dataclass(frozen=True, slots=True)\nclass Held:\n    ids: Ids\n"
+    assert problems("src/sift/a.py", held) == ["class Held holds arrays and compares them: eq=False"]
+    assert problems("src/sift/a.py", held.replace("frozen=True", "eq=False, frozen=True")) == []
+    assert problems("src/sift/a.py", "@dataclass(frozen=True, slots=True)\nclass Held:\n    n: int\n") == []

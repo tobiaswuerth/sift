@@ -21,7 +21,7 @@ from sift.storage.keyword_lists import SegmentRow
 from sift.storage.keywords import shape_of, totals
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Whole:
     segment: int
     term: str
@@ -29,7 +29,7 @@ class Whole:
     counts: Ids
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Ranged:
     segment: int
     term: str
@@ -41,7 +41,7 @@ type StoredList = Whole | Ranged
 type PostingArrays = tuple[Ids, Ids]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Dense:
     numbers: Ids
     table: NDArray[np.uint32]
@@ -52,7 +52,7 @@ class Dense:
         return self.order[np.searchsorted(self.blocks.values, blocks)]
 
 
-@dataclass(slots=True)
+@dataclass(eq=False, slots=True)
 class Opened:
     transaction: Reading
     shape: Shape

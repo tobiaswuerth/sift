@@ -56,7 +56,7 @@ def maxima_at(values: Scores, starts: Ids) -> Scores:
     return cast("Scores", np.maximum.reduceat(values, starts))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Ascending:
     values: Ids
 

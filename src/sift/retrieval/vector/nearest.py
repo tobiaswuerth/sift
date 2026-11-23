@@ -36,7 +36,7 @@ class Reads:
     allowed: Sequence[AllowedChunks | None] = ()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Coded:
     ids: Ids
     bits: Bits
@@ -49,7 +49,7 @@ class Near(NamedTuple):
     score: float
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Candidates:
     ids: Ids
     owners: Ids

@@ -8,6 +8,7 @@ MOST_METHODS = 10
 CORE = ("src/sift/api/", "src/sift/domain/")
 VALUE_BASES = frozenset({"NamedTuple", "Enum", "StrEnum", "IntEnum", "Flag", "IntFlag", "Protocol"})
 ERROR_SUFFIXES = ("Error", "Exception")
+ARRAY_TYPES = frozenset({"NDArray", "Ids", "Mask", "Scores", "Floats", "Halves", "Bits", "Ascending", "Coded"})
 MUTABLE_FACTORIES = frozenset(
     {"list", "dict", "set", "bytearray", "defaultdict", "OrderedDict", "deque", "Counter", "ChainMap"}
 )
@@ -82,11 +83,35 @@ def classes_that_are_no_values(path: str, tree: ast.Module) -> Iterator[Finding]
             yield Finding(path, node.lineno, f"class {node.name} is no frozen slotted dataclass or value type")
 
 
+def _names_in(node: ast.expr) -> set[str]:
+    return {each.id for each in ast.walk(node) if isinstance(each, ast.Name)}
+
+
+def _compares(node: ast.ClassDef) -> bool:
+    for decorator in node.decorator_list:
+        if isinstance(decorator, ast.Call) and _name(decorator.func) == "dataclass":
+            options = {keyword.arg: keyword.value for keyword in decorator.keywords}
+            found = options.get("eq")
+            return not (isinstance(found, ast.Constant) and found.value is False)
+    return False
+
+
+def arrays_compared(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and _compares(node):
+            held = {
+                name for item in node.body if isinstance(item, ast.AnnAssign) for name in _names_in(item.annotation)
+            }
+            if held & ARRAY_TYPES:
+                yield Finding(path, node.lineno, f"class {node.name} holds arrays and compares them: eq=False")
+
+
 def shape(path: str, source: str) -> tuple[Finding, ...]:
     tree = ast.parse(source)
     return (
         *too_long(path, source),
         *too_many_methods(path, tree),
+        *(arrays_compared(path, tree) if path.startswith("src/") else ()),
         *(() if path.startswith("tests/") else mutable_module_values(path, tree)),
         *(classes_that_are_no_values(path, tree) if path.startswith(CORE) else ()),
     )

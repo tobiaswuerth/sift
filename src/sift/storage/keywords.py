@@ -14,6 +14,7 @@ from sift.domain.arrays import ints
 from sift.domain.codec.segments import GAP, Segment, segment, stream
 from sift.domain.codec.shape import SHAPE, Shape
 from sift.domain.errors import DamagedError
+from sift.domain.plan.keyword_state import KeywordState, keyword_state, remaking
 from sift.domain.text.tokens import tokens
 from sift.storage.database import (
     BATCHES,
@@ -36,7 +37,6 @@ from sift.storage.keyword_writes import Head, lengths_added, postings_added, seg
 
 DOCUMENTS = "SELECT id, title, meta, text FROM keyword_documents WHERE id IN (SELECT value FROM json_each(?))"
 REMAKE_REMEDY = "run sift index to remake it"
-REMAKING = "remaking "
 STALE = "the store's keyword index is of another version of sift"
 UNFINISHED = "the store's keyword index is not yet wholly remade"
 TAKEN_OVER = "another sift began remaking this keyword index for itself and has not finished"
@@ -245,10 +245,10 @@ def remake_started(connection: Connection) -> int:
             return 0
     with writing(connection) as transaction:
         made = fingerprint(transaction)
-        found = _meta(transaction, FINGERPRINT_KEY)
-        if found not in {made, REMAKING + made}:
-            _anew(transaction, REMAKING + made)
-        return 0 if found == made or _done_if_whole(transaction, made) else _left(transaction)
+        state = keyword_state(_meta(transaction, FINGERPRINT_KEY), made)
+        if state not in (KeywordState.CURRENT, KeywordState.REMAKING):
+            _anew(transaction, remaking(made))
+        return 0 if state is KeywordState.CURRENT or _done_if_whole(transaction, made) else _left(transaction)
 
 
 def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
@@ -256,10 +256,11 @@ def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
     whole = False
     while not whole:
         with writing(connection) as transaction:
-            made, found = fingerprint(transaction), _meta(transaction, FINGERPRINT_KEY)
-            if found == made:
+            made = fingerprint(transaction)
+            state = keyword_state(_meta(transaction, FINGERPRINT_KEY), made)
+            if state is KeywordState.CURRENT:
                 return
-            if found != REMAKING + made:
+            if state is not KeywordState.REMAKING:
                 raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
             held, shape = WritingDocuments(connection, batches), shape_of(transaction)
             done += _index_new(held, shape)
@@ -269,14 +270,15 @@ def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
 
 
 def refuse_stale(transaction: Reading) -> None:
-    made = fingerprint(transaction)
-    found = _meta(transaction, FINGERPRINT_KEY)
-    if found == REMAKING + made:
-        raise StoreUnavailableError(UNFINISHED, REMAKE_REMEDY)
-    if found is not None and found.startswith(REMAKING):
-        raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
-    if found != made:
-        raise StoreUnavailableError(STALE, REMAKE_REMEDY)
+    match keyword_state(_meta(transaction, FINGERPRINT_KEY), fingerprint(transaction)):
+        case KeywordState.CURRENT:
+            return
+        case KeywordState.REMAKING:
+            raise StoreUnavailableError(UNFINISHED, REMAKE_REMEDY)
+        case KeywordState.TAKEN_OVER:
+            raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
+        case _:
+            raise StoreUnavailableError(STALE, REMAKE_REMEDY)
 
 
 def settle(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:

@@ -48,7 +48,7 @@ class Keywords:
     prepared: dict[Expression, Prepared] = field(default_factory=dict[Expression, Prepared])
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Vectors:
     coded: Coded
     allowed: Passing | None = None

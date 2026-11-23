@@ -31,7 +31,7 @@ class Postings:
     held: ShortPostings | LongPostings
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Lists:
     terms: tuple[str, ...]
     starts: tuple[int, ...]

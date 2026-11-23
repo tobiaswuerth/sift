@@ -57,13 +57,14 @@ def _firsts(read: Sequence[Line], new: frozenset[str]) -> tuple[list[Document], 
     skipped: list[SkippedLine] = []
     used: set[str] = set()
     for number, each in read:
-        if isinstance(each, SkippedLine):
-            skipped.append(each)
-        elif each.key in new and each.key not in used:
-            used.add(each.key)
-            kept.append(each)
-        else:
-            skipped.append(SkippedLine(number, f"id {each.key} used twice"))
+        match each:
+            case SkippedLine():
+                skipped.append(each)
+            case Document() if each.key in new and each.key not in used:
+                used.add(each.key)
+                kept.append(each)
+            case _:
+                skipped.append(SkippedLine(number, f"id {each.key} used twice"))
     return kept, skipped
 
 

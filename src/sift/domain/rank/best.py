@@ -15,7 +15,7 @@ def _no_scores() -> Scores:
     return np.zeros(0)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Best:
     k: int
     by_document: bool = True

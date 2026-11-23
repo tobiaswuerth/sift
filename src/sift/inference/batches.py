@@ -22,7 +22,7 @@ class Attempt:
     freed: Callable[[], None]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Batched:
     rows: Floats
     batch: int

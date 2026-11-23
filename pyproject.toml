@@ -150,6 +150,7 @@ pythonVersion = "3.12"
 typeCheckingMode = "recommended"
 reportAny = "error"
 reportExplicitAny = "error"
+reportMatchNotExhaustive = "error"
 reportUnusedCallResult = false  # off where calls are made for their effect; on in the core, below, where none is
 
 [[tool.basedpyright.executionEnvironments]]
@@ -222,16 +223,28 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "SQLite only in storage and retrieval"
+name = "SQLite only in storage"
 type = "forbidden"
-source_modules = ["sift.api", "sift.domain", "sift.ingest", "sift.inference", "sift.app", "sift.interfaces"]
+source_modules = ["sift.api", "sift.domain", "sift.ingest", "sift.inference", "sift.retrieval", "sift.app", "sift.interfaces"]
 forbidden_modules = ["sqlite3"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
-name = "Model libraries only in inference"
+name = "Model libraries only where models run and devices are chosen"
 type = "forbidden"
-source_modules = ["sift.api", "sift.domain", "sift.storage", "sift.retrieval", "sift.ingest", "sift.app", "sift.interfaces"]
+source_modules = [
+    "sift.api",
+    "sift.domain",
+    "sift.storage",
+    "sift.retrieval",
+    "sift.ingest",
+    "sift.app",
+    "sift.interfaces",
+    "sift.inference.batches",
+    "sift.inference.hub",
+    "sift.inference.loading",
+    "sift.inference.models",
+]
 forbidden_modules = ["torch", "transformers", "sentence_transformers", "pynvml"]
 allow_indirect_imports = true
 
