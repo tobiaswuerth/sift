@@ -125,7 +125,7 @@ def test_collections_are_searched_together_and_one_alone_when_named(home: Path, 
     embed(home, EmbedCollections(("more",)), lambda _: None, Hashed())
     together = ids(home, SearchVectors("dark matter halo models", k=2))
     assert set(together) == {"notes/halo.md", "more/halo.md"}
-    assert ids(home, SearchVectors("dark matter halo models", k=2, collection="more")) == ["more/halo.md"]
+    assert ids(home, SearchVectors("dark matter halo models", k=2, collections=("more",))) == ["more/halo.md"]
 
 
 def test_a_store_whose_vectors_are_damaged_is_passed_over_and_the_rest_searched(home: Path, tmp_path: Path) -> None:
@@ -141,7 +141,7 @@ def test_a_store_whose_vectors_are_damaged_is_passed_over_and_the_rest_searched(
 def test_a_store_lost_while_its_hits_are_read_is_passed_over(home: Path, tmp_path: Path, table: str) -> None:
     more(home, tmp_path)
     embed(home, EmbedCollections(("more",)), lambda _: None, Hashed())
-    alone = vsearch(home, SearchVectors("dark matter halo models", collection="more"), Hashed()).hits
+    alone = vsearch(home, SearchVectors("dark matter halo models", collections=("more",)), Hashed()).hits
     damage_table(home / "collections" / "notes.sqlite", table)
     result = vsearch(home, SearchVectors("dark matter halo models"), Hashed())
     assert result.hits == alone
@@ -151,9 +151,9 @@ def test_a_store_lost_while_its_hits_are_read_is_passed_over(home: Path, tmp_pat
 def test_the_query_is_not_embedded_when_nothing_could_be_searched(home: Path, tmp_path: Path) -> None:
     models = Hashed()
     with pytest.raises(NotFoundError):
-        vsearch(home, SearchVectors("halo", collection="nowhere"), models)
+        vsearch(home, SearchVectors("halo", collections=("nowhere",)), models)
     more(home, tmp_path)
-    assert vsearch(home, SearchVectors("halo", collection="more"), models).hits == ()
+    assert vsearch(home, SearchVectors("halo", collections=("more",)), models).hits == ()
     assert models.asked == []
 
 

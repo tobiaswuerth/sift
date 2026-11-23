@@ -48,7 +48,7 @@ def ids(home: Path, request: SearchKeywords) -> list[str]:
 def test_a_note_is_the_same_note_whichever_collections_are_searched(home: Path) -> None:
     assert ids(home, SearchKeywords("widgets", links_to=("Acme",))) == ["A/Hub.md"]
     with pytest.raises(InvalidRequestError, match=r"'Acme' is a note of A, and links stay within their collection"):
-        search(home, SearchKeywords("widgets", collection="B", links_to=("Acme",)))
+        search(home, SearchKeywords("widgets", collections=("B",), links_to=("Acme",)))
 
 
 def test_a_store_ruled_out_by_the_links_is_counted_apart_from_those_searched(home: Path) -> None:

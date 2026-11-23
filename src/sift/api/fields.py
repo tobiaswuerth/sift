@@ -7,5 +7,9 @@ type Fields = Mapping[str, FieldValue]
 FIELDS = 'front matter to show, comma-separated, e.g. "url,created"; "*" for all'
 
 
+def one(text: str) -> tuple[str, ...]:
+    return (text,)
+
+
 def listed(text: str) -> tuple[str, ...]:
     return tuple(name.strip() for name in text.split(",")) if text.strip() else ()

@@ -105,7 +105,7 @@ def test_documents_like_one_are_found_by_the_mean_of_its_vectors(papers: Path) -
 
 def test_similar_takes_what_searches_take(papers: Path) -> None:
     asked = FindSimilar(
-        "arxiv/robots.md", collection="openalex", compact=True, fields=("doi",), filters=(written("doi!=10.1/x"),)
+        "arxiv/robots.md", collections=("openalex",), compact=True, fields=("doi",), filters=(written("doi!=10.1/x"),)
     )
     found = similar(papers, asked)
     assert sorted(ids(found)) == ["openalex/W2.md", "openalex/W3.md"]

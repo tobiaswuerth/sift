@@ -57,7 +57,7 @@ def _next(words: tuple[str, ...], platform: str, style: Style) -> str:
     return labelled("next", command(words, platform), Tone.SECONDARY, style)
 
 
-def _empty(platform: str, style: Style) -> Shown:
+def empty(platform: str, style: Style) -> Shown:
     return Shown((), (labelled("empty", "no collections yet"), _next(("sift", "add", "FOLDER"), platform, style)))
 
 
@@ -113,7 +113,7 @@ def _unreadable_files(result: Status) -> tuple[str, ...]:
 
 def status(result: Status, platform: str, style: Style) -> Shown:
     if not result.collections:
-        return _empty(platform, style)
+        return empty(platform, style)
     unreadable = any(isinstance(each.contents, Counted) and each.contents.unreadable for each in result.collections)
     linked = any(isinstance(each.contents, Counted) and each.contents.links for each in result.collections)
     header = (*STATUS_HEADER, *(("links", "unresolved") if linked else ()), *(("unreadable",) * unreadable))
@@ -124,11 +124,11 @@ def status(result: Status, platform: str, style: Style) -> Shown:
 
 
 def indexed(result: IndexResult, platform: str, style: Style) -> Shown:
-    return _empty(platform, style) if not result.collections else Shown((), ())
+    return empty(platform, style) if not result.collections else Shown((), ())
 
 
 def embedded(result: EmbedResult, platform: str, style: Style) -> Shown:
-    return _empty(platform, style) if not result.collections else Shown((), ())
+    return empty(platform, style) if not result.collections else Shown((), ())
 
 
 def _text(text: str) -> tuple[str, ...]:
@@ -202,7 +202,7 @@ def _unsearched(unsearched: tuple[Unsearched, ...], style: Style) -> tuple[str, 
 
 def hits(result: SearchResult, seconds: float, platform: str, style: Style, kind: str = "keyword") -> Shown:
     if not result.searched and not result.ruled_out and not result.unsearched:
-        return _empty(platform, style)
+        return empty(platform, style)
     ranks = len(str(len(result.hits)))
     scores = max((len(_score(hit.score)) for hit in result.hits), default=0)
     lines = [line for rank, hit in enumerate(result.hits, 1) for line in _hit(rank, hit, ranks, scores)]

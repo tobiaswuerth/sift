@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import Annotated
 
 from sift.api.described import Help, Read, Short
-from sift.api.fields import listed
+from sift.api.fields import listed, one
 from sift.api.search import Options, Unsearched
 
 NOTE = 'a note: its id, as sift get takes it, or its name as links write it, e.g. "Acme AG"'
@@ -68,7 +68,9 @@ class Links:
 
 @dataclass(frozen=True, slots=True)
 class ListUnresolved:
-    collection: Annotated[str | None, Help("this collection alone (default: every active one)"), Short("-c")] = None
+    collections: Annotated[
+        tuple[str, ...], Help("this collection; again for more (default: every active one)"), Short("-c"), Read(one)
+    ] = ()
     k: Annotated[int, Help("at most this many targets (default: 50)"), Short("-k")] = 50
 
 

@@ -189,3 +189,33 @@ def test_a_mistaken_argument_exits_2_with_a_fix_and_no_usage_block(settings: Set
     code, _, err = ran(settings, "search", "brush", "--sort", "-year")
     assert code == 2
     assert "a value that starts with a dash is written --sort=-value; see sift search --help" in err
+
+
+def test_an_option_given_twice_is_refused_and_collections_may_be_given_again(settings: Settings, notes: Path) -> None:
+    searched_notes(settings, notes)
+    code, _, err = ran(settings, "search", "brush", "-k", "2", "-k", "3")
+    assert (code, err.splitlines()[0]) == (2, "error  argument -k/--k: given twice: give it once")
+    other = notes.parent / "other"
+    other.mkdir()
+    (other / "brush.md").write_text("# Brush again\n", encoding="utf-8")
+    assert ran(settings, "add", str(other))[0] == 0
+    assert ran(settings, "index")[0] == 0
+    code, out, _ = ran(settings, "search", "brush", "-c", "notes", "-c", "other", "--json")
+    found = cast("dict[str, list[dict[str, str]]]", json.loads(out))["hits"]
+    assert (code, sorted(hit["id"] for hit in found)) == (0, ["notes/robots/brush.md", "other/brush.md"])
+
+
+def test_with_no_collection_every_command_that_reads_one_says_how_to_add_one(settings: Settings) -> None:
+    empty = "empty  no collections yet\n next  sift add FOLDER\n"
+    for argv in (("get", "a/b.md"), ("links", "A"), ("unresolved",), ("mentions", "A"), ("similar", "a/b.md")):
+        assert ran(settings, *argv) == (0, "", empty)
+
+
+def test_status_of_a_store_that_is_gone_fails_and_json_may_come_before_the_command(
+    settings: Settings, notes: Path
+) -> None:
+    indexed_notes(settings, notes)
+    code, out, _ = ran(settings, "--json", "status")
+    assert (code, cast("dict[str, str]", json.loads(out))["home"]) == (0, str(settings.home))
+    (settings.home / "collections" / "notes.sqlite").unlink()
+    assert ran(settings, "status")[0] == 1

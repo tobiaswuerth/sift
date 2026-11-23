@@ -2,10 +2,10 @@ import argparse
 import dataclasses
 import re
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum, StrEnum
-from typing import Annotated, cast, get_args, get_origin, get_type_hints
+from typing import Annotated, cast, get_args, get_origin, get_type_hints, override
 
 from sift.api.described import Help, Place, Read, Short
 
@@ -44,6 +44,22 @@ class Described:
     place: bool
     short: str | None
     read: Read | None
+
+
+class Once(argparse.Action):
+    @override
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[object] | None,
+        option_string: str | None = None,
+    ) -> None:
+        given = f"given {self.dest}"
+        if getattr(namespace, given, False):
+            raise argparse.ArgumentError(self, "given twice: give it once")
+        setattr(namespace, given, True)
+        setattr(namespace, self.dest, values)
 
 
 def _refused(request: type[object], name: str, problem: str) -> TypeError:
@@ -164,13 +180,15 @@ def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placing) ->
         offered = [str(member) for member in choices]
         if argument.how is How.OPTION:
             parser.add_argument(
-                *named, dest=argument.name, choices=offered, default=argument.default, help=argument.help
+                *named, dest=argument.name, action=Once, choices=offered, default=argument.default, help=argument.help
             )
         else:
             parser.add_argument(argument.name, choices=offered, help=argument.help)
     elif argument.how is How.OPTION:
         converted = _converter(argument, place)
-        parser.add_argument(*named, dest=argument.name, type=converted, default=argument.default, help=argument.help)
+        parser.add_argument(
+            *named, dest=argument.name, action=Once, type=converted, default=argument.default, help=argument.help
+        )
     else:
         parser.add_argument(argument.name, type=_converter(argument, place), help=argument.help)
 

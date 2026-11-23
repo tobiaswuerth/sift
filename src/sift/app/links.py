@@ -160,7 +160,7 @@ def unresolved(home: Path, request: ListUnresolved) -> Unresolved:
     checked_k(request.k)
     found: list[tuple[str, list[str]]] = []
     passed: list[Unsearched] = []
-    for one in chosen_or_active(home, () if request.collection is None else (request.collection,)):
+    for one in chosen_or_active(home, request.collections):
         try:
             found += read_in(one, partial(_unresolved, one.name))
         except StoreUnavailableError as error:

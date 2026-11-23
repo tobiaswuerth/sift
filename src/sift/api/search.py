@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from sift.api.described import Help, Read, Short
-from sift.api.fields import FIELDS, Fields, listed
+from sift.api.fields import FIELDS, Fields, listed, one
 from sift.api.filters import Filter, written
 
 MOST_HITS = 10_000
@@ -36,22 +36,21 @@ def _filter(text: str) -> tuple[Filter, ...]:
     return (written(text),)
 
 
-def _note(text: str) -> tuple[str, ...]:
-    return (text,)
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Options:
     k: Annotated[int, Help(f"how many results, at most {MOST_HITS:,} (default: 10)"), Short("-k")] = 10
-    collection: Annotated[str | None, Help("search this collection alone (default: every active one)"), Short("-c")] = (
-        None
-    )
+    collections: Annotated[
+        tuple[str, ...],
+        Help("search this collection; again for more (default: every active one)"),
+        Short("-c"),
+        Read(one),
+    ] = ()
     path: Annotated[str | None, Help(PATH)] = None
     filters: Annotated[tuple[Filter, ...], Help(FILTERS), Short("-f"), Read(_filter)] = ()
     fields: Annotated[tuple[str, ...], Help(FIELDS), Read(listed)] = ()
     sort: Annotated[str | None, Help(SORT)] = None
-    links_to: Annotated[tuple[str, ...], Help(LINKS_TO), Read(_note)] = ()
-    linked_from: Annotated[tuple[str, ...], Help(LINKED_FROM), Read(_note)] = ()
+    links_to: Annotated[tuple[str, ...], Help(LINKS_TO), Read(one)] = ()
+    linked_from: Annotated[tuple[str, ...], Help(LINKED_FROM), Read(one)] = ()
     all_passages: Annotated[
         bool, Help("every passage found, not only each document's best, and copies of one work apart")
     ] = False

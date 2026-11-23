@@ -71,11 +71,11 @@ def notes(
     home: Path,
     links_to: tuple[str, ...] = (),
     linked_from: tuple[str, ...] = (),
-    collection: str | None = None,
+    collections: tuple[str, ...] = (),
     filters: tuple[Filter, ...] = (),
 ) -> list[str]:
     asked = SearchKeywords(
-        "note", k=20, links_to=links_to, linked_from=linked_from, collection=collection, filters=filters
+        "note", k=20, links_to=links_to, linked_from=linked_from, collections=collections, filters=filters
     )
     return ids(search(home, asked))
 
@@ -85,7 +85,7 @@ def test_a_search_keeps_to_the_documents_linking_a_note(linked: Path) -> None:
     found = search(linked, SearchKeywords("note", links_to=("Acme AG",)))
     assert (found.searched, found.ruled_out) == (1, 1)
     assert notes(linked, links_to=("[[Acme AG]]",)) == [HANS]
-    assert notes(linked, links_to=(ACME,), collection="vault") == [HANS]
+    assert notes(linked, links_to=(ACME,), collections=("vault",)) == [HANS]
     assert notes(linked, links_to=("Hans Müller",)) == [OFFER, ACME, ANNA]
     assert notes(linked, links_to=("Acme AG", "Wartungsvertrag 2027")) == [OFFER, HANS]
 
@@ -119,10 +119,10 @@ def test_a_name_several_notes_answer_to_is_refused_whichever_collections_are_sea
 ) -> None:
     write(tmp_path / "work" / "Acme AG.md", "Note: another Acme.\n")
     index(linked, IndexCollections(), lambda _: None)
-    for collection in (None, "vault", "work"):
+    for collections in ((), ("vault",), ("work",)):
         with pytest.raises(InvalidRequestError, match=r"names several notes: vault/Orgs/Acme AG\.md, work/Acme AG\.md"):
-            notes(linked, links_to=("Acme AG",), collection=collection)
-    assert notes(linked, links_to=(ACME,), collection="vault") == [HANS]
+            notes(linked, links_to=("Acme AG",), collections=collections)
+    assert notes(linked, links_to=(ACME,), collections=("vault",)) == [HANS]
 
 
 def test_notes_of_several_collections_keep_a_search_to_their_links_in_each(linked: Path) -> None:

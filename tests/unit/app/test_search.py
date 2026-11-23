@@ -140,9 +140,9 @@ def test_one_collection_is_searched_when_named(home: Path, tmp_path: Path) -> No
     add(home, AddCollection(str(tmp_path / "more")))
     indexed(home)
     assert set(ids(home, SearchKeywords("halo"))) == {"notes/halo.md", "more/halo.md"}
-    assert ids(home, SearchKeywords("halo", collection="more")) == ["more/halo.md"]
+    assert ids(home, SearchKeywords("halo", collections=("more",))) == ["more/halo.md"]
     with pytest.raises(NotFoundError):
-        search(home, SearchKeywords("halo", collection="nope"))
+        search(home, SearchKeywords("halo", collections=("nope",)))
 
 
 def test_a_collection_never_indexed_keeps_no_other_from_being_searched(home: Path, tmp_path: Path) -> None:
@@ -229,7 +229,7 @@ def test_a_keyword_index_whose_data_is_damaged_is_passed_over_and_the_others_sea
 
 def test_a_store_lost_while_searched_weighs_on_no_score(home: Path, tmp_path: Path) -> None:
     _more(home, tmp_path)
-    alone = search(home, SearchKeywords("halo", collection="more")).hits
+    alone = search(home, SearchKeywords("halo", collections=("more",))).hits
     _changed(home / "collections" / "notes.sqlite", "DELETE FROM keyword_lengths")
     result = search(home, SearchKeywords("halo"))
     assert result.hits == alone
@@ -238,7 +238,7 @@ def test_a_store_lost_while_searched_weighs_on_no_score(home: Path, tmp_path: Pa
 
 def test_a_store_lost_in_the_looser_search_weighs_on_no_score(home: Path, tmp_path: Path) -> None:
     _more(home, tmp_path)
-    alone = search(home, SearchKeywords("halo pruning", collection="more")).hits
+    alone = search(home, SearchKeywords("halo pruning", collections=("more",))).hits
     assert search(home, SearchKeywords("halo AND pruning")).hits == ()
     _changed(
         home / "collections" / "notes.sqlite",
@@ -251,7 +251,7 @@ def test_a_store_lost_in_the_looser_search_weighs_on_no_score(home: Path, tmp_pa
 
 def test_a_store_lost_while_its_passages_are_read_weighs_on_no_score(home: Path, tmp_path: Path) -> None:
     _more(home, tmp_path)
-    alone = search(home, SearchKeywords("halo", collection="more")).hits
+    alone = search(home, SearchKeywords("halo", collections=("more",))).hits
     damage_table(home / "collections" / "notes.sqlite", "sources")
     result = search(home, SearchKeywords("halo"))
     assert result.hits == alone
@@ -263,7 +263,7 @@ def test_two_stores_lost_in_one_search_leave_the_third_to_answer(home: Path, tmp
     write(tmp_path / "third" / "halo.md", "# Halo third\n\nhalo\n")
     add(home, AddCollection(str(tmp_path / "third")))
     indexed(home)
-    alone = search(home, SearchKeywords("halo", collection="more")).hits
+    alone = search(home, SearchKeywords("halo", collections=("more",))).hits
     _changed(home / "collections" / "notes.sqlite", "DELETE FROM keyword_lengths")
     damage_table(home / "collections" / "third.sqlite", "sources")
     result = search(home, SearchKeywords("halo"))
@@ -326,7 +326,7 @@ def test_an_empty_collection_of_another_version_is_current_once_indexed(home: Pa
     indexed(home)
     _changed(home / "collections" / "empty.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
     indexed(home)
-    assert search(home, SearchKeywords("halo", collection="empty")) == SearchResult((), 1, ())
+    assert search(home, SearchKeywords("halo", collections=("empty",))) == SearchResult((), 1, ())
 
 
 def test_a_search_out_of_time_looks_no_further_for_more_works(tmp_path: Path) -> None:

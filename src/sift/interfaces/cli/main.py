@@ -12,7 +12,7 @@ from importlib.metadata import version
 from types import MappingProxyType
 from typing import ClassVar, NoReturn, Protocol, TextIO, cast, override
 
-from sift.api.collections import AddCollection, CollectionAdded, ShowStatus, Status
+from sift.api.collections import AddCollection, CollectionAdded, ShowStatus, Status, Unavailable
 from sift.api.documents import Documents, GetDocuments
 from sift.api.embedding import EmbedCollections, EmbedResult
 from sift.api.errors import InvalidRequestError, SiftError
@@ -38,6 +38,9 @@ DESCRIPTION = "Fast local search over your documents and notes."
 NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
 ONE_VALUE = re.compile(r"argument (\S+?)(?:/\S+)?: expected one argument")
 STOPPED_WRITING = "stopped: what was written so far is kept"
+NEED_COLLECTIONS = frozenset({"get", "similar", "mentions", "links", "unresolved"})
+JSON_HELP = "answer in JSON"
+COLOR_HELP = "colour what sift says"
 WRITERS = frozenset({"index", "embed"})
 
 
@@ -191,6 +194,10 @@ def _some_unfound(found: Documents) -> bool:
     return bool(found.unfound)
 
 
+def _some_unavailable(found: Status) -> bool:
+    return any(isinstance(each.contents, Unavailable) for each in found.collections)
+
+
 COMMANDS = MappingProxyType(
     {
         "add": command("add a folder as a collection", AddCollection, _add, shown.added),
@@ -221,7 +228,11 @@ COMMANDS = MappingProxyType(
             _some_unread,
         ),
         "status": command(
-            "show each collection: its folder and what its store holds", ShowStatus, _status, shown.status
+            "show each collection: its folder and what its store holds",
+            ShowStatus,
+            _status,
+            shown.status,
+            _some_unavailable,
         ),
     }
 )
@@ -244,12 +255,14 @@ def _is_text(argument: str) -> bool:
 def parser(settings: Settings) -> argparse.ArgumentParser:
     built = Parser(prog="sift", description=DESCRIPTION)
     built.add_argument("--version", action="version", version=f"sift {version('sift-rag')}")
+    built.add_argument("--json", action="store_true", help=JSON_HELP)
+    built.add_argument("--color", choices=list(Colour), default=Colour.AUTO, help=COLOR_HELP)
     commands = built.add_subparsers(dest="command", metavar="COMMAND")
     for name, each in COMMANDS.items():
         chosen = commands.add_parser(name, help=each.help, description=each.help)
         options(chosen, each.request, partial(_placed, settings))
-        chosen.add_argument("--json", action="store_true", help="answer in JSON")
-        chosen.add_argument("--color", choices=list(Colour), default=Colour.AUTO, help="colour what sift says")
+        chosen.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=JSON_HELP)
+        chosen.add_argument("--color", choices=list(Colour), default=argparse.SUPPRESS, help=COLOR_HELP)
     return built
 
 
@@ -320,6 +333,8 @@ def _ran(
     live = _live(err, settings, style, platform, host.clock)
     try:
         context = Context(settings, platform, given["json"] is True, style, live, host.clock)
+        if chosen in NEED_COLLECTIONS and not collections.chosen(settings.home, ()):
+            return shown.empty(platform, style)
         with ticking(live.tick):
             return COMMANDS[chosen].run(namespace, context)
     except (SiftError, OSError) as error:

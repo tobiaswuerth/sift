@@ -135,12 +135,8 @@ def checked_query(query: str, remedy: str) -> None:
         raise InvalidRequestError(EMPTY_QUERY, remedy)
 
 
-def collections_of(home: Path, name: str | None) -> tuple[Collection, ...]:
-    return chosen_or_active(home, () if name is None else (name,))
-
-
 def narrowed(home: Path, request: Options, left_out: LeftOut | None = None) -> Narrowing:
-    return narrowing(home, request, collections_of(home, request.collection), left_out)
+    return narrowing(home, request, chosen_or_active(home, request.collections), left_out)
 
 
 def no_vectors() -> Vectors:

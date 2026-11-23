@@ -56,7 +56,7 @@ def test_documents_naming_a_note_without_linking_it_are_found(named: Path) -> No
     assert ids(mentions(named, FindMentions(HANS))) == ["work/contract.md"]
     assert ids(mentions(named, FindMentions(ACME))) == ["vault/Offer.md", "work/contract.md"]
     assert ids(mentions(named, FindMentions("Hans Mueller"))) == ["work/contract.md"]
-    assert ids(mentions(named, FindMentions(HANS, collection="vault"))) == []
+    assert ids(mentions(named, FindMentions(HANS, collections=("vault",)))) == []
     (hit,) = mentions(named, FindMentions(HANS)).hits
     assert hit.text is not None
     assert "Hans Müller" in hit.text
@@ -108,7 +108,7 @@ def test_a_store_a_name_could_not_be_looked_up_in_is_said(named: Path, tmp_path:
     index(named, IndexCollections(), lambda _: None)
     store = named / "collections" / "other.sqlite"
     store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
-    found = mentions(named, FindMentions("Hans Mueller", collection="work"))
+    found = mentions(named, FindMentions("Hans Mueller", collections=("work",)))
     assert (ids(found), [each.collection for each in found.unsearched]) == (["work/contract.md"], ["other"])
     every = mentions(named, FindMentions("Hans Mueller"))
     assert [each.collection for each in every.unsearched] == ["other"]

@@ -176,7 +176,7 @@ def test_links_stay_in_their_collection(tmp_path: Path) -> None:
     home = vault(tmp_path, {"a.md": "[[Shared]]"}, "first")
     vault(tmp_path, {"Shared.md": "# Shared\n"}, "second")
     assert leads(links(home, ShowLinks("first/a.md")).out) == [("Shared", "unresolved")]
-    assert unresolved(home, ListUnresolved("first")).targets == (Target("Shared", 1, ("first/a.md",)),)
+    assert unresolved(home, ListUnresolved(("first",))).targets == (Target("Shared", 1, ("first/a.md",)),)
 
 
 def test_a_note_named_as_a_link_writes_it_with_a_heading_or_shown_text_is_found(people: Path) -> None:
