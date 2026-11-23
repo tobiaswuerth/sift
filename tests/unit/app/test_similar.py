@@ -130,3 +130,11 @@ def test_a_document_whose_vectors_point_nowhere_is_refused(papers: Path) -> None
         database.execute(ZEROED, ("soup.md",))
     with pytest.raises(InvalidRequestError, match=r"'arxiv/soup\.md' has no direction to be near to"):
         similar(papers, FindSimilar("arxiv/soup.md"))
+
+
+def test_a_document_linking_the_note_is_still_alike(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    collection(tmp_path, home, "v", {"Robots.md": ROBOTS, "Mop.md": f"{ROBOTS}See [[Robots]].\n", "soup.md": "Soup.\n"})
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    assert ids(similar(home, FindSimilar("v/Robots.md", k=1))) == ["v/Mop.md"]

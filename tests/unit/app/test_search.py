@@ -103,7 +103,7 @@ def test_words_no_passage_holds_together_find_passages_with_any_of_them(home: Pa
     assert ids(home, SearchKeywords("zzz")) == []
 
 
-@pytest.mark.parametrize("query", ["", "   ", "\N{EN DASH}"])
+@pytest.mark.parametrize("query", ["\N{EN DASH}", "-- ,"])
 def test_a_query_of_no_word_finds_nothing(home: Path, query: str) -> None:
     assert search(home, SearchKeywords(query)).hits == ()
 
@@ -357,3 +357,9 @@ def test_a_search_out_of_time_says_it_is_partial_and_keeps_what_it_found(tmp_pat
     assert 0 < len(cut.hits) < 300
     whole = search(home, dataclasses.replace(request, budget=None), tuning=Tuning(first_batch=1))
     assert (whole.partial, len(whole.hits)) == (False, 300)
+
+
+@pytest.mark.parametrize("query", ["", " ", "\t\n"])
+def test_an_empty_query_is_refused(home: Path, query: str) -> None:
+    with pytest.raises(InvalidRequestError, match="an empty query finds nothing"):
+        search(home, SearchKeywords(query))

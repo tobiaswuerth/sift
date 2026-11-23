@@ -25,6 +25,7 @@ from sift.storage.vectors import EMBED_REMEDY, codes_of, left, model_of, width_h
 FEW_REMEDY = "ask for one result or more, e.g. -k 10"
 MANY_REMEDY = f"ask for {MOST_HITS:,} results at most, and narrow the query to reach the rest"
 UNEMBEDDED_REMEDY = "run sift embed"
+EMPTY_QUERY = "an empty query finds nothing"
 
 
 class ScoredChunk(Protocol):
@@ -127,6 +128,11 @@ def checked_k(k: int) -> None:
 def checked(request: Options) -> None:
     checked_k(request.k)
     shown.checked(request.fields, request.sort)
+
+
+def checked_query(query: str, remedy: str) -> None:
+    if not query.strip():
+        raise InvalidRequestError(EMPTY_QUERY, remedy)
 
 
 def collections_of(home: Path, name: str | None) -> tuple[Collection, ...]:

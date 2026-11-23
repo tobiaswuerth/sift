@@ -171,7 +171,7 @@ def _out_of(resolver: Resolver, one: Collection, pointed: Pointed) -> set[int]:
     if document is None:
         return set()
     rows = links_out(resolver.transaction, document, None)
-    return {how.documents[0] for how in map(resolver.of, rows) if how.via in LEADING}
+    return {how.documents[0] for how in map(resolver.of, rows) if how.via in LEADING} - {document}
 
 
 def _within(found: Narrowing, one: Collection, resolver: Resolver) -> list[int] | None:

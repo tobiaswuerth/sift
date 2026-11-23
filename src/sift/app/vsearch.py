@@ -1,7 +1,6 @@
 from contextlib import ExitStack
 from pathlib import Path
 
-from sift.api.errors import InvalidRequestError
 from sift.api.search import SearchResult, SearchVectors
 from sift.app import hits, searching
 from sift.app.searching import Wants
@@ -13,8 +12,7 @@ EMPTY_REMEDY = "say what to find, e.g. sift vsearch 'how dark matter halos form'
 
 def vsearch(home: Path, request: SearchVectors, models: Models, asked: Rescoring = RESCORING) -> SearchResult:
     searching.checked(request)
-    if not request.query.strip():
-        raise InvalidRequestError("an empty query finds nothing", EMPTY_REMEDY)
+    searching.checked_query(request.query, EMPTY_REMEDY)
     narrowing = searching.narrowed(home, request)
     with ExitStack() as cleanup:
         stores = searching.opened(cleanup, narrowing, Wants(model=models.name, vectors_required=True))

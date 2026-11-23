@@ -272,3 +272,8 @@ def test_a_question_written_decomposed_finds_what_its_words_name(tmp_path: Path)
     collection(home, root, embedded=False)
     result = query(home, SearchHybrid(unicodedata.normalize("NFD", "Zürich résumé")), Hashed())
     assert [hit.id for hit in result.hits] == ["plain/a.md"]
+
+
+def test_scores_are_given_as_reckoned_and_rounded_only_where_shown(home: Path) -> None:
+    result = query(home, SearchHybrid("dark matter halo models", k=5), Hashed())
+    assert any(hit.score != round(hit.score, 4) for hit in result.hits)

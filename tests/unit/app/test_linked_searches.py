@@ -224,3 +224,21 @@ def test_a_note_gone_before_its_store_is_read_lets_no_document_through(linked: P
     found = read_in(vault, lambda transaction: condition_in(gone, vault, transaction))
     assert found is not None
     assert found.within == "[]"
+
+
+def test_a_note_linking_itself_is_left_out_of_its_own_links_both_ways(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    collection(
+        tmp_path, home, "loop", {"Loop.md": "Note: see [[Loop]] and [[Other]].\n", "Other.md": "Note: [[Loop]].\n"}
+    )
+    index(home, IndexCollections(), lambda _: None)
+    assert notes(home, links_to=("Loop",)) == ["loop/Other.md"]
+    assert notes(home, linked_from=("Loop",)) == ["loop/Other.md"]
+
+
+@pytest.mark.parametrize(
+    "written", ["Acme AG#Intro", "Acme AG|the firm", "Acme AG#Intro|the firm", "[[Acme AG#Intro|x]]"]
+)
+def test_a_note_named_with_a_heading_or_shown_text_is_the_note(linked: Path, written: str) -> None:
+    assert notes(linked, links_to=(written,)) == [HANS]
+    assert notes(linked, linked_from=(written.replace("Acme AG", "Hans Müller"),)) == [ACME]

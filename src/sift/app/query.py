@@ -110,8 +110,8 @@ def _first_of_each(ranked: list[Retrieved]) -> list[Retrieved]:
 
 def _ordered(request: SearchHybrid, candidates: list[Retrieved], scores: Floats) -> list[Retrieved]:
     order = ints(np.lexsort((np.array([each.chunk for each in candidates], np.int64), -scores)))
-    rounded = floats(scores)
-    ranked = [replace(candidates[at], hit=replace(candidates[at].hit, score=round(rounded[at], 4))) for at in order]
+    held = floats(scores)
+    ranked = [replace(candidates[at], hit=replace(candidates[at].hit, score=held[at])) for at in order]
     return ranked if request.all_passages else hits.one_each(_first_of_each(ranked))
 
 
@@ -142,8 +142,7 @@ def _answered(stores: Open, request: SearchHybrid, models: Models, asked: Rescor
 
 def _checked(request: SearchHybrid) -> None:
     searching.checked(request)
-    if not request.query.strip():
-        raise InvalidRequestError("an empty query finds nothing", EMPTY_REMEDY)
+    searching.checked_query(request.query, EMPTY_REMEDY)
     if not 1 <= request.candidates <= MOST_HITS:
         said = f"--candidates {request.candidates:,} is outside 1 to {MOST_HITS:,}"
         raise InvalidRequestError(said, CANDIDATES_REMEDY)

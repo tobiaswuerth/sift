@@ -11,6 +11,7 @@ from sift.domain.query.grammar import parsed, relaxed
 from sift.retrieval.keyword.search import TUNING, Expired, Tuning, never
 
 BUDGET_REMEDY = "give the seconds the search may take, e.g. --budget 0.5"
+EMPTY_REMEDY = "say what to find, e.g. sift search 'dark matter halo'"
 
 
 type Clock = Callable[[], float]
@@ -29,6 +30,7 @@ def search(
     home: Path, request: SearchKeywords, clock: Clock = time.perf_counter, tuning: Tuning = TUNING
 ) -> SearchResult:
     searching.checked(request)
+    searching.checked_query(request.query, EMPTY_REMEDY)
     wanted = Wanted(request.k, not request.all_passages, tuning, _expired(request.budget, clock))
     expression, looser = parsed(request.query), relaxed(request.query)
     return keyword_result(searching.narrowed(home, request), request, wanted, expression, looser)

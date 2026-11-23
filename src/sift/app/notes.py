@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ from sift.storage.links import LinkRow, doubtful, keys_of, links_into, links_key
 from sift.storage.store import open_store, unavailable_if_unusable
 
 AMBIGUOUS_SHOWN = 5
+NAME_END = re.compile(r"[#|]")
 AMBIGUOUS_REMEDY = "give the note's whole id, as sift get takes it"
 
 type NameCandidates = tuple[list[Candidate], list[Candidate]]
@@ -75,7 +77,7 @@ def read_in[T](one: Collection, read: Callable[[Reading], T]) -> T:
 
 
 def target_of(id_: str) -> str:
-    return link_target(id_) or id_.strip()
+    return link_target(id_) or NAME_END.split(id_, maxsplit=1)[0].strip()
 
 
 def _named(transaction: Reading, name: str) -> list[int]:

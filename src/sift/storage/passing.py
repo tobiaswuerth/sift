@@ -2,6 +2,7 @@ import json
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass, field
+from functools import cache
 from typing import cast
 
 import numpy as np
@@ -79,6 +80,7 @@ def _no_mask() -> Mask:
     return np.zeros(0, np.bool_)
 
 
+@cache
 def reads_quotes() -> bool:
     with closing(sqlite3.connect(":memory:")) as database:
         (found,) = cast("tuple[object]", database.execute("SELECT json_extract(?, ?)", QUOTED_NAME).fetchone())
