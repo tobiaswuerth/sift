@@ -1,3 +1,4 @@
+import errno
 from dataclasses import dataclass, field
 
 import pynvml
@@ -83,6 +84,10 @@ def test_without_a_cuda_gpu_an_apple_one_or_the_cpu_is_chosen_saying_why_an_nvid
     assert "CUDA_VISIBLE_DEVICES" in hidden
 
 
+class LocalizedError(OSError):
+    winerror: int = 14
+
+
 def test_out_of_memory_is_told_from_other_failures() -> None:
     assert too_large(torch.OutOfMemoryError("CUDA out of memory"))
     assert too_large(RuntimeError("MPS backend out of memory (MPS allocated: 9 GiB)"))
@@ -91,6 +96,10 @@ def test_out_of_memory_is_told_from_other_failures() -> None:
     assert too_large(RuntimeError("DefaultCPUAllocator: not enough memory: you tried to allocate 8 GiB"))
     assert too_large(OSError("[WinError 1455] The paging file is too small for this operation to complete"))
     assert too_large(MemoryError())
+    assert too_large(OSError(errno.ENOMEM, "Cannot allocate memory"))
+    assert too_large(OSError("[WinError 8] Not enough memory resources are available to process this command"))
+    assert too_large(LocalizedError("Nicht genügend Arbeitsspeicher verfügbar"))
+    assert not too_large(OSError(errno.ENOENT, "No such file or directory"))
     assert not too_large(RuntimeError("shapes do not match"))
 
 

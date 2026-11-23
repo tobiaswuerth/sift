@@ -1,3 +1,4 @@
+import errno
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ GPU_THREADS = 1
 CPU_THREADS = torch.get_num_threads()
 DEVICE_FULL = ("out of memory", "CUBLAS_STATUS_ALLOC_FAILED")
 HOST_FULL = ("not enough memory", "paging file is too small")
+HOST_FULL_WINDOWS = frozenset({8, 14, 1455})
 CUDA_FIX = "uv tool install --reinstall --torch-backend auto sift-rag"
 UNBUILT = f"an NVIDIA GPU is there, but this PyTorch has no CUDA: the models run on the CPU; to use it: {CUDA_FIX}"
 HIDDEN = "PyTorch can use no NVIDIA GPU here (see CUDA_VISIBLE_DEVICES and the driver): the models run on the CPU"
@@ -98,8 +100,14 @@ def nvidia() -> bool:
     return shutil.which("nvidia-smi") is not None
 
 
+def _host_full_code(error: BaseException) -> bool:
+    code: object = getattr(error, "winerror", None)
+    return isinstance(error, OSError) and (error.errno == errno.ENOMEM or code in HOST_FULL_WINDOWS)
+
+
 def host_full(error: BaseException) -> bool:
-    return isinstance(error, MemoryError) or any(sign in str(error) for sign in HOST_FULL)
+    said = str(error).lower()
+    return isinstance(error, MemoryError) or _host_full_code(error) or any(sign in said for sign in HOST_FULL)
 
 
 def too_large(error: BaseException) -> bool:
