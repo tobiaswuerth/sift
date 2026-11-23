@@ -3,7 +3,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from sift.inference.hub import EMBED_MODEL
+
 HOME = "SIFT_HOME"
+EMBED_MODEL_VARIABLE = "SIFT_EMBED_MODEL"
 NO_COLOR = "NO_COLOR"
 TERM = "TERM"
 DUMB = "dumb"
@@ -18,6 +21,7 @@ class Settings:
     cwd: Path
     no_color: bool = False
     dumb: bool = False
+    embed_model: str = EMBED_MODEL
 
 
 def whole_path(written: str, user: Path, cwd: Path) -> Path:
@@ -35,6 +39,7 @@ def parsed(environment: Mapping[str, str], user: Path, cwd: Path) -> Settings:
         cwd=cwd,
         no_color=bool(environment.get(NO_COLOR)),
         dumb=environment.get(TERM) == DUMB,
+        embed_model=environment.get(EMBED_MODEL_VARIABLE) or EMBED_MODEL,
     )
 
 

@@ -13,11 +13,13 @@ from typing import ClassVar, Protocol, TextIO, cast
 
 from sift.api.collections import AddCollection, CollectionAdded, ShowStatus, Status
 from sift.api.documents import Documents, GetDocuments
+from sift.api.embedding import EmbedCollections, EmbedResult
 from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.events import Reporter
 from sift.api.indexing import IndexCollections, IndexResult, Skipped
-from sift.api.search import SearchKeywords
-from sift.app import collections, documents, indexing, search
+from sift.api.search import SearchKeywords, SearchVectors
+from sift.app import collections, documents, embedding, indexing, search, vsearch
+from sift.inference.loading import deferred
 from sift.interfaces.cli import shown
 from sift.interfaces.cli.arguments import options, request_of
 from sift.interfaces.cli.shown import Shown
@@ -97,7 +99,20 @@ def _search(namespace: argparse.Namespace, context: Context) -> Shown:
     return shown.hits(answer, context.clock() - started, context.platform, context.style)
 
 
-def _some_skipped(result: IndexResult) -> bool:
+def _embed(context: Context, request: EmbedCollections) -> EmbedResult:
+    return embedding.embed(context.settings.home, request, context.report, deferred(context.settings.embed_model))
+
+
+def _vsearch(namespace: argparse.Namespace, context: Context) -> Shown:
+    started = context.clock()
+    request = request_of(SearchVectors, namespace)
+    answer = vsearch.vsearch(context.settings.home, request, deferred(context.settings.embed_model))
+    if context.json:
+        return Shown((as_json(answer),), (), failed=bool(answer.unsearched))
+    return shown.hits(answer, context.clock() - started, context.platform, context.style, "semantic")
+
+
+def _some_skipped(result: IndexResult | EmbedResult) -> bool:
     return any(isinstance(each.outcome, Skipped) for each in result.collections)
 
 
@@ -112,6 +127,14 @@ COMMANDS = MappingProxyType(
             "read what is new or changed in collections", IndexCollections, _index, shown.indexed, _some_skipped
         ),
         "search": Command("find passages by their words, ranked by BM25", SearchKeywords, _search),
+        "embed": command(
+            "embed passages for semantic search, with the model SIFT_EMBED_MODEL names",
+            EmbedCollections,
+            _embed,
+            shown.embedded,
+            _some_skipped,
+        ),
+        "vsearch": Command("find passages near a query in meaning", SearchVectors, _vsearch),
         "get": command("print documents by their ids", GetDocuments, _get, shown.documents, _some_unfound),
         "status": command(
             "show each collection: its folder and what its store holds", ShowStatus, _status, shown.status

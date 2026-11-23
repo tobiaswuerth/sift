@@ -5,8 +5,10 @@ import sys
 from pathlib import Path
 from typing import cast
 
+from tests.tiny_model import tiny_model
 
-def sift(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
+
+def sift(home: Path, *args: str, model: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "sift", *args],
         capture_output=True,
@@ -14,7 +16,13 @@ def sift(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         check=False,
         timeout=60,
-        env={**os.environ, "SIFT_HOME": str(home), "PYTHONIOENCODING": "utf-8", "NO_COLOR": "1"},
+        env={
+            **os.environ,
+            "SIFT_HOME": str(home),
+            "PYTHONIOENCODING": "utf-8",
+            "NO_COLOR": "1",
+            "SIFT_EMBED_MODEL": model,
+        },
     )
 
 
@@ -54,6 +62,14 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     timed = cast("dict[str, object]", json.loads(sift(home, "search", "speed*", "--budget", "5", "--json").stdout))
     assert timed["partial"] is False
     assert cast("list[dict[str, object]]", timed["hits"])[0]["id"] == "notes/rl.md"
+
+    model = str(tiny_model(tmp_path / "models"))
+    embedded = sift(home, "embed", model=model)
+    assert (embedded.returncode, embedded.stdout) == (0, "")
+    assert "  embed          3 chunks" in embedded.stderr
+    assert "Loading" not in embedded.stderr
+    near = sift(home, "vsearch", "learning", "-k", "1", "--json", model=model)
+    assert len(cast("dict[str, list[object]]", json.loads(near.stdout))["hits"]) == 1
 
     missing = sift(home, "get", "notes/gone.md")
     assert (missing.returncode, missing.stdout) == (1, "")

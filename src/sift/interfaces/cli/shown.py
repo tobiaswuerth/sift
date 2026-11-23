@@ -3,6 +3,7 @@ from typing import NamedTuple
 
 from sift.api.collections import CollectionAdded, CollectionStatus, Counted, Status, TitleFrom
 from sift.api.documents import Documents
+from sift.api.embedding import EmbedResult
 from sift.api.errors import SiftError
 from sift.api.indexing import IndexResult
 from sift.api.search import Hit, SearchResult
@@ -94,6 +95,10 @@ def indexed(result: IndexResult, platform: str, style: Style) -> Shown:
     return _empty(platform, style) if not result.collections else Shown((), ())
 
 
+def embedded(result: EmbedResult, platform: str, style: Style) -> Shown:
+    return _empty(platform, style) if not result.collections else Shown((), ())
+
+
 def _text(text: str) -> tuple[str, ...]:
     return (text.removesuffix("\n"),) if text else ()
 
@@ -124,15 +129,15 @@ def _hit(rank: int, hit: Hit, ranks: int, scores: int) -> tuple[str, ...]:
     return (head, f"{indent}{printable(hit.id)}:{hit.lines}", *text)
 
 
-def _footer(result: SearchResult, seconds: float, style: Style) -> str:
+def _footer(result: SearchResult, seconds: float, style: Style, kind: str) -> str:
     found = f"{len(result.hits):,} result{'s' * (len(result.hits) != 1)}" if result.hits else "no matches"
     searched = f"{result.searched} collection{'s' * (result.searched != 1)}"
     separator = f"{GAP}{DOT[0] if style.unicode else DOT[1]}{GAP}"
     partial = ("partial: better matches may be missing",) if result.partial else ()
-    return separator.join((found, "keyword", *partial, searched, duration(seconds)))
+    return separator.join((found, kind, *partial, searched, duration(seconds)))
 
 
-def hits(result: SearchResult, seconds: float, platform: str, style: Style) -> Shown:
+def hits(result: SearchResult, seconds: float, platform: str, style: Style, kind: str = "keyword") -> Shown:
     if not result.searched and not result.unsearched:
         return _empty(platform, style)
     ranks = len(str(len(result.hits)))
@@ -146,7 +151,7 @@ def hits(result: SearchResult, seconds: float, platform: str, style: Style) -> S
             *_fix(each.remedy, style),
         )
     ]
-    return Shown(tuple(lines), (*problems, _footer(result, seconds, style)), failed=bool(result.unsearched))
+    return Shown(tuple(lines), (*problems, _footer(result, seconds, style, kind)), failed=bool(result.unsearched))
 
 
 def failure(error: SiftError | OSError, style: Style) -> Shown:

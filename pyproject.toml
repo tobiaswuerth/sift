@@ -13,6 +13,12 @@ authors = [{ name = "Tobias Würth" }]
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
+    "torch>=2.13",  # older releases have advisories known against them
+    "sentence-transformers>=6.1",  # the module layout embeddinggemma-2 is saved in
+    "transformers>=5.18",  # the first release with embeddinggemma-2
+    "pillow>=13",  # embeddinggemma-2 takes images too, so transformers needs Pillow even for text
+    "torchvision>=0.28",  # and torchvision; it must match torch (0.28 is 2.13's)
+    "nvidia-ml-py>=12",  # free GPU memory as nvidia-smi sees it, which CUDA overstates on Windows
 ]
 keywords = [
     "rag",
@@ -92,6 +98,17 @@ dev = [
 
 [tool.uv.build-backend]
 module-name = "sift"
+
+# The lock, and so the gate and CI, take PyTorch's CPU builds: the tests need no GPU, and the CUDA builds weigh
+# gigabytes. An installed sift takes whatever build its installer picks (`--torch-backend auto` picks the GPU's).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 120
@@ -210,7 +227,7 @@ allow_indirect_imports = true
 name = "Model libraries only in inference"
 type = "forbidden"
 source_modules = ["sift.api", "sift.domain", "sift.storage", "sift.retrieval", "sift.ingest", "sift.app", "sift.interfaces"]
-forbidden_modules = ["torch", "transformers", "sentence_transformers"]
+forbidden_modules = ["torch", "transformers", "sentence_transformers", "pynvml"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]

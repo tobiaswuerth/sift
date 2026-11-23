@@ -81,7 +81,19 @@ def package(session: nox.Session) -> None:
     (sdist,) = map(str, dist.glob("*.tar.gz"))
     session.run("uv", "tool", "run", TWINE, "check", "--strict", wheel, sdist, external=True)
     versions = {
-        said(session, "uv", "tool", "run", "--quiet", "--isolated", "--from", wheel, name, "--version")
+        said(
+            session,
+            "uv",
+            "tool",
+            "run",
+            "--quiet",
+            "--isolated",
+            "--torch-backend=cpu",
+            "--from",
+            wheel,
+            name,
+            "--version",
+        )
         for name in ("sift", "sift-rag")
     }
     session.run("python", "-m", "tools", "package", str(dist), "\n".join(sorted(versions)))
