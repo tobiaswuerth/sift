@@ -174,7 +174,7 @@ def test_a_reset_cut_short_is_finished_by_embedding_again(home: Path, tmp_path: 
     other = Hashed(name="other-model", width=32)
     with pytest.raises(KeyboardInterrupt):
         embed(home, EmbedCollections(reset=True), lambda _: None, Stopping(other, 0))
-    assert other.prepared == [True]
+    assert other.prepared
     resumed = embed(home, EmbedCollections(), lambda _: None, other).collections
     assert {each.name: each.outcome for each in resumed} == {
         "more": Embedded(1, 0),

@@ -107,6 +107,12 @@ def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
     ]
 
 
+def documents_embedded(transaction: Reading) -> int:
+    sql = "SELECT count(DISTINCT c.document) FROM vectors v JOIN chunks c ON c.id = v.chunk"
+    (found,) = rows(transaction, Count, sql)
+    return found.n
+
+
 def left(transaction: Reading) -> int:
     (found,) = rows(transaction, Count, "SELECT chunks - vectors FROM counts")
     return found.n

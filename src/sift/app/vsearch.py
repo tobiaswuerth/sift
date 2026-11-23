@@ -16,8 +16,8 @@ from sift.domain.rank.best import Best, offered, ranked
 from sift.inference.models import Models
 from sift.retrieval.vector.nearest import RESCORE, Coded, Near, coded, nearest
 from sift.storage.database import Reading
-from sift.storage.documents import counts, documents_of
-from sift.storage.vectors import EMBED_REMEDY, codes_of, left, model_of, vectors_of, width_held
+from sift.storage.documents import documents_of
+from sift.storage.vectors import EMBED_REMEDY, codes_of, documents_embedded, left, model_of, vectors_of, width_held
 
 EMPTY_REMEDY = "say what to find, e.g. sift vsearch 'how dark matter halos form'"
 UNEMBEDDED_REMEDY = "run sift embed"
@@ -56,7 +56,7 @@ def _held(model: str, transaction: Reading) -> Held:
     if found != model:
         raise StoreUnavailableError(f"its vectors are of {found}, not of {model}", EMBED_REMEDY.format(model=model))
     ids, bits = codes_of(transaction)
-    return Held(coded(ids, bits, width_held(transaction) or 0), counts(transaction).documents)
+    return Held(coded(ids, bits, width_held(transaction) or 0), documents_embedded(transaction))
 
 
 def _query(models: Models, text: str) -> Floats:
@@ -112,7 +112,7 @@ def _best(request: SearchVectors, near: tuple[Near, ...], owners: dict[int, int]
 def _ranked(kept: Kept, request: SearchVectors, query: Floats, asked: Asked) -> tuple[Near, ...] | None:
     chunks = sum(len(each.held.coded.ids) for each in kept.searching)
     documents = sum(each.held.documents for each in kept.searching)
-    enough = min(request.k, chunks if request.all_passages else documents)
+    enough = min(request.k, documents)
     want = max(asked.rescore, request.k)
     while True:
         near = _nearest(kept, query, want, asked.read)

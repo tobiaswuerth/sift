@@ -206,14 +206,26 @@ def chunks_in(store: Path) -> int:
         return found
 
 
-def test_documents_without_vectors_leave_fewer_than_k_and_the_search_ends(tmp_path: Path) -> None:
-    root = tmp_path / "notes"
-    write(root / "a.md", "# A\n\nComets and glaciers.\n")
-    write(root / "b.md", "# B\n\nGlaciers alone.\n")
-    write(root / "c.md", f"# C\n\nAn {BROKEN} note.\n")
+@pytest.mark.parametrize("third", ["", f"# C\n\nAn {BROKEN} note.\n", "# C\n\nIndexed, not embedded yet.\n"])
+def test_documents_without_vectors_do_not_keep_the_search_widening(tmp_path: Path, third: str) -> None:
+    root = tmp_path / "parts"
+    for name, word in (("alpha", "comets"), ("beta", "glaciers")):
+        sections = "".join(f"## Part {n}\n\n{f'About {word} and more {word}. ' * 120}\n\n" for n in range(20))
+        write(root / f"{name}.md", f"# {name}\n\n{sections}")
     home = tmp_path / "home"
     add(home, AddCollection(str(root)))
+    if third != "# C\n\nIndexed, not embedded yet.\n":
+        write(root / "c.md", third)
     index(home, IndexCollections(), lambda _: None)
     embed(home, EmbedCollections(), lambda _: None, Hashed())
-    found = vsearch(home, SearchVectors("glaciers", k=3), Hashed(), rescore=1)
-    assert sorted(hit.id for hit in found.hits) == ["notes/a.md", "notes/b.md"]
+    write(root / "c.md", third)
+    index(home, IndexCollections(), lambda _: None)
+    read: list[int] = []
+
+    def counted(transaction: Reading, chunks: Ids) -> tuple[Ids, Halves]:
+        read.append(len(chunks))
+        return vectors_of(transaction, chunks)
+
+    found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), rescore=1, read=counted)
+    assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]
+    assert 0 < max(read) < chunks_in(home / "collections" / "parts.sqlite") - 1

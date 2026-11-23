@@ -7,6 +7,7 @@ import numpy as np
 from sift.api.embedding import CollectionEmbedded, EmbedCollections, Embedded, EmbedResult
 from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Noted, Phase, PhaseDone, PhaseStarted, Reporter
+from sift.api.ids import CollectionId
 from sift.api.indexing import Skipped
 from sift.app.collections import chosen, chosen_or_active
 from sift.domain.text.embedding import embedded
@@ -28,7 +29,7 @@ class Embedding:
 EMBEDDING = Embedding()
 
 
-type Failed = dict[str, StoreUnavailableError]
+type Failed = dict[CollectionId, StoreUnavailableError]
 
 
 def _counted(n: int, what: str) -> str:
@@ -52,6 +53,7 @@ def _filled(connection: Connection, report: Reporter, models: Models, embedding:
         total = left(transaction)
     if not total:
         return Embedded(0, 0)
+    models.prepare()
     report(PhaseStarted(Phase.EMBED, total))
     stored, broken, after = 0, 0, 0
     while waiting := _waiting(connection, after, embedding.chunks_a_write):
@@ -73,8 +75,8 @@ def _embedded(
     one: Collection, report: Reporter, models: Models, embedding: Embedding, failed: Failed
 ) -> CollectionEmbedded:
     report(CollectionStarted(one.name, str(one.folder)))
-    if one.name in failed:
-        return _skipped(one, report, failed[one.name])
+    if one.id in failed:
+        return _skipped(one, report, failed[one.id])
     try:
         with unavailable_if_damaged(one.store), closing(open_store(one.store, one.id)) as connection:
             return CollectionEmbedded(one.name, _filled(connection, report, models, embedding))
@@ -97,11 +99,13 @@ def _forgotten(one: Collection) -> StoreUnavailableError | None:
 
 def _reset(home: Path, report: Reporter, models: Models, embedding_now: tuple[Collection, ...]) -> Failed:
     models.prepare()
-    failed = {one.name: error for one in chosen(home, ()) if (error := _forgotten(one)) is not None}
-    for one in chosen(home, ()):
-        if one.name in failed and one not in embedding_now:
+    known = chosen(home, ())
+    failed = {one.id: error for one in known if (error := _forgotten(one)) is not None}
+    now = {one.id for one in embedding_now}
+    for one in known:
+        if one.id in failed and one.id not in now:
             report(CollectionStarted(one.name, str(one.folder)))
-            report(Noted(failed[one.name].message, failed[one.name].remedy))
+            report(Noted(failed[one.id].message, failed[one.id].remedy))
     return failed
 
 
