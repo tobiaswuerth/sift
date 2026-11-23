@@ -2,7 +2,7 @@ import math
 import time
 from collections.abc import Callable
 from contextlib import ExitStack
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 
@@ -18,12 +18,15 @@ from sift.retrieval.keyword.search import (
     TUNING,
     Expired,
     Found,
+    Planned,
     Prepared,
     Tuning,
     found_in,
     never,
+    planned,
     prepared,
     query_of,
+    refuse_reading_too_much,
     searched,
 )
 from sift.storage.database import Reading
@@ -40,6 +43,7 @@ type Clock = Callable[[], float]
 class Keywords:
     store: Opened
     allowed: Passing | None
+    prepared: dict[Expression, Prepared] = field(default_factory=dict[Expression, Prepared])
 
 
 type Kept = searching.Kept[Keywords]
@@ -78,13 +82,20 @@ def found[S](
 ) -> Ranked | None:
     if expression == NOTHING:
         return Ranked((), cut=False)
-    ready: list[tuple[searching.Searching[S], Prepared]] = []
-    for one in list(kept.searching):
+    plans: list[tuple[searching.Searching[S], Planned]] = []
+    for one in [one for one in kept.searching if expression not in keywords_of(one.held).prepared]:
+        plan = kept.guarded(one, partial(planned, keywords_of(one.held).store, expression))
+        if plan is None:
+            return None
+        plans.append((one, plan))
+    refuse_reading_too_much([plan for _, plan in plans], wanted.tuning)
+    for one, plan in plans:
         store = keywords_of(one.held)
-        held = kept.guarded(one, partial(prepared, store.store, expression, wanted.tuning, allowed=store.allowed))
+        held = kept.guarded(one, partial(prepared, plan, allowed=store.allowed))
         if held is None:
             return None
-        ready.append((one, held))
+        store.prepared[expression] = held
+    ready = [(one, keywords_of(one.held).prepared[expression]) for one in kept.searching]
     query = query_of(expression, [held for _, held in ready])
     if query is None:
         return Ranked((), cut=False)
@@ -114,9 +125,14 @@ def _ranked(kept: Kept, asked: Asked, wanted: int) -> Ranked | None:
 
 def _answered(kept: Kept, asked: Asked) -> tuple[list[tuple[int, Hit]], bool]:
     while True:
-        found = searching.answered(kept, partial(_ranked, kept, asked), asked.request)
+        more = partial(_in_time, asked.wanted.expired)
+        found = searching.answered(kept, partial(_ranked, kept, asked), asked.request, more=more)
         if found is not None:
             return found
+
+
+def _in_time(expired: Expired) -> bool:
+    return not expired()
 
 
 def _expired(budget: float | None, clock: Clock) -> Expired:

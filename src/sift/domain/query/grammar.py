@@ -14,6 +14,8 @@ OPERATORS = frozenset({AND, OR, NOT})
 NEAR = "NEAR"
 MOST_DEPTH = 100
 MOST_WORDS = 1000
+MOST_QUERY_CHARS = 100_000
+JOINS = "+"
 FEWEST_RELAXED = 2
 SURROGATE = re.compile(f"[{chr(0xD800)}-{chr(0xDFFF)}]")
 WORDLIKE = re.compile(r"\w")
@@ -61,6 +63,10 @@ def _bare(query: str, at: int) -> tuple[Lexeme, int]:
 
 
 def lexemes(query: str) -> tuple[Lexeme, ...]:
+    if len(query) > MOST_QUERY_CHARS:
+        raise _refused(
+            f"it holds {len(query):,} characters, more than {MOST_QUERY_CHARS:,} characters", "ask in fewer words"
+        )
     found: list[Lexeme] = []
     at = 0
     while at < len(query):
@@ -73,6 +79,10 @@ def lexemes(query: str) -> tuple[Lexeme, ...]:
             at += 1
             continue
         lexeme, at = _quoted(query, at) if character == QUOTE else _bare(query, at)
+        if isinstance(lexeme, Word) and lexeme.quoted and query.startswith(STAR, at):
+            lexeme, at = Word(lexeme.text + STAR, quoted=False), at + 1
+        if lexeme == Word(JOINS, quoted=False):
+            raise _refused("+ joins nothing here", 'put the words of a phrase in quotes, e.g. "dark matter"')
         found.append(lexeme)
     return tuple(found)
 

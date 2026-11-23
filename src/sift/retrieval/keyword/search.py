@@ -5,12 +5,12 @@ from dataclasses import dataclass
 import numpy as np
 
 from sift.domain.arrays import Ascending, Ids, among, distinct, ints
-from sift.domain.query.expressions import Expression, Leaf, Prefix, Term, leaves
-from sift.domain.rank.best import Best, offered, ranked
+from sift.domain.query.expressions import Expression, Leaf, Phrase, Prefix, Term, leaves
+from sift.domain.rank.best import Best, may_reach, offered, ranked
 from sift.domain.rank.bm25 import Scores, idf
 from sift.domain.rank.boolean import counted, may_hold
 from sift.retrieval.allowed import AllowedDocuments
-from sift.retrieval.keyword.leaves import materialized
+from sift.retrieval.keyword.leaves import materialized, reads_of, refused
 from sift.retrieval.keyword.lists import Opened, Postings, Stored, owners, stored
 from sift.retrieval.keyword.scoring import Query, Scored, bounds, merged_within, scored, within
 from sift.storage.keyword_lists import frequencies
@@ -20,7 +20,7 @@ from sift.storage.keyword_lists import frequencies
 class Tuning:
     first_batch: int = 16
     most_batch: int = 4096
-    most_prefix: int = 10_000_000
+    most_read: int = 10_000_000
 
 
 TUNING = Tuning()
@@ -67,11 +67,19 @@ def _lazy(work: Pass, threshold: float) -> list[Leaf]:
     lazy: list[Leaf] = []
     total = 0.0
     for leaf in sorted(work.query.leaves, key=work.query.most) if work.query.flat else ():
-        if total + work.query.most(leaf) >= threshold:
+        if may_reach(np.array([total + work.query.most(leaf)]), threshold).all():
             break
         lazy.append(leaf)
         total += work.query.most(leaf)
     return lazy
+
+
+def _summed(query: Query, held: Mapping[Leaf, Scores], size: int) -> Scores:
+    total = np.zeros(size)
+    for leaf in query.leaves:
+        if leaf in held:
+            total = total + query.bounding[leaf] * held[leaf]
+    return total
 
 
 def _held_at(found: dict[Leaf, list[tuple[Ids, Scores]]]) -> tuple[Ids, dict[Leaf, Scores]]:
@@ -87,19 +95,24 @@ def _held_at(found: dict[Leaf, list[tuple[Ids, Scores]]]) -> tuple[Ids, dict[Lea
     return places, held
 
 
-def _with_lazy(work: Pass, best: Best, places: Ids, acc: Scores, lazy: list[Leaf]) -> tuple[Ids, Scores]:
+def _with_lazy(
+    work: Pass, best: Best, places: Ids, held: dict[Leaf, Scores], lazy: list[Leaf]
+) -> tuple[Ids, dict[Leaf, Scores]]:
     query, shift = work.query, work.store.shape.range_shift
     lazy = sorted(lazy, key=query.most, reverse=True)
+    acc = _summed(query, held, len(places))
     for n, leaf in enumerate(lazy):
-        near = np.flatnonzero(acc + sum(query.most(other) for other in lazy[n:]) >= best.threshold)
-        places, acc = places[near], acc[near]
+        near = np.flatnonzero(may_reach(acc + sum(query.most(other) for other in lazy[n:]), best.threshold))
+        places, acc, held = places[near], acc[near], {key: value[near] for key, value in held.items()}
+        found = np.zeros(len(places))
         ranges = distinct(Ascending(places >> shift)).values
         for here, scores in within(work.store, query, work.lists[leaf], ranges) if len(ranges) else ():
             at = np.minimum(np.searchsorted(here, places), len(here) - 1)
             hit = np.flatnonzero(among(places, Ascending(here)))
-            acc[hit] += query.bounding[leaf] * scores[at[hit]]
-    keep = np.flatnonzero((acc >= best.threshold) & (acc > 0))
-    return places[keep], acc[keep]
+            found[hit] = scores[at[hit]]
+        held[leaf] = found
+        acc = acc + query.bounding[leaf] * found
+    return places, held
 
 
 def _all_of(work: Pass, best: Best, group: Ids) -> Best:
@@ -115,7 +128,7 @@ def _all_of(work: Pass, best: Best, group: Ids) -> Best:
         at = np.minimum(np.searchsorted(here, places), max(len(here) - 1, 0))
         hit = np.flatnonzero(among(places, Ascending(here)))
         places, held = places[hit], {key: value[hit] for key, value in held.items()} | {leaf: scores[at[hit]]}
-    acc = sum((query.bounding[leaf] * scores for leaf, scores in held.items()), np.zeros(len(places)))
+    acc = _summed(query, held, len(places))
     keep = np.flatnonzero(acc >= best.threshold)
     return _offer(work, best, places[keep], acc[keep])
 
@@ -131,8 +144,10 @@ def _scored_group(work: Pass, best: Best, group: Ids) -> Best:
         return best
     places, held = _held_at(found)
     if query.flat:
-        acc = sum((query.bounding[leaf] * held[leaf] for leaf in eager), np.zeros(len(places)))
-        return _offer(work, best, *_with_lazy(work, best, places, acc, lazy))
+        places, held = _with_lazy(work, best, places, held, lazy)
+        acc = _summed(query, held, len(places))
+        keep = np.flatnonzero((acc >= best.threshold) & (acc > 0))
+        return _offer(work, best, places[keep], acc[keep])
     holds, counting = counted(query.expression, {leaf: scores > 0 for leaf, scores in held.items()})
     acc = np.zeros(len(places))
     for leaf, where in counting:
@@ -147,7 +162,7 @@ def _searched(work: Pass, best: Best, tuning: Tuning, expired: Expired) -> Searc
     remaining, bound = candidates + first, bound[candidates]
     batch, began = tuning.first_batch, False
     while len(remaining):
-        beat = bound >= best.threshold
+        beat = may_reach(bound, best.threshold)
         remaining, bound = remaining[beat], bound[beat]
         if began and len(remaining) and len(best.chunks) and expired():
             return Searched(best, cut=True)
@@ -180,19 +195,39 @@ class Prepared:
     allowed: AllowedDocuments | None = None
 
 
-def prepared(
-    store: Opened, expression: Expression, tuning: Tuning = TUNING, *, allowed: AllowedDocuments | None = None
-) -> Prepared:
+@dataclass(frozen=True, slots=True)
+class Planned:
+    store: Opened
+    leaves: tuple[Leaf, ...]
+    lists: dict[str, list[Stored]]
+    reads: Mapping[Phrase | Prefix, int]
+
+
+def planned(store: Opened, expression: Expression) -> Planned:
     unique = tuple(dict.fromkeys(leaves(expression)))
     lists = stored(store, _tokens(unique))
-    terms = frequencies(store.transaction, [leaf.text for leaf in unique if isinstance(leaf, Term)])
+    reads = {leaf: reads_of(store, leaf, lists) for leaf in unique if isinstance(leaf, Phrase | Prefix)}
+    return Planned(store, unique, lists, reads)
+
+
+def refuse_reading_too_much(plans: Sequence[Planned], tuning: Tuning = TUNING) -> None:
+    reads: Counter[Phrase | Prefix] = Counter()
+    for plan in plans:
+        reads.update(plan.reads)
+    if (total := reads.total()) > tuning.most_read:
+        refused(reads, total, tuning.most_read)
+
+
+def prepared(plan: Planned, *, allowed: AllowedDocuments | None = None) -> Prepared:
+    store, lists = plan.store, plan.lists
+    terms = frequencies(store.transaction, [leaf.text for leaf in plan.leaves if isinstance(leaf, Term)])
     found: Lists = {}
     df: dict[Leaf, int] = {}
-    for leaf in unique:
+    for leaf in plan.leaves:
         if isinstance(leaf, Term):
             found[leaf], df[leaf] = lists[leaf.text], terms.get(leaf.text, 0)
         else:
-            postings = materialized(store, leaf, lists, tuning.most_prefix)
+            postings = materialized(store, leaf, lists)
             found[leaf], df[leaf] = postings, len(postings[0])
     return Prepared(store, found, df, allowed)
 
@@ -224,7 +259,9 @@ def found_in(best: Best) -> tuple[Found, ...]:
 def search(
     stores: Sequence[Opened], expression: Expression, k: int, *, by_document: bool = True, tuning: Tuning = TUNING
 ) -> tuple[Found, ...]:
-    each = [prepared(store, expression, tuning) for store in stores]
+    plans = [planned(store, expression) for store in stores]
+    refuse_reading_too_much(plans, tuning)
+    each = [prepared(plan) for plan in plans]
     query = query_of(expression, each)
     if query is None:
         return ()

@@ -2,7 +2,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from sift.domain.arrays import Ids, Scores, firsts, floats, ints
+from sift.domain.arrays import Ids, Mask, Scores, firsts, floats, ints
+
+ROUNDING = 1e-9
 
 
 def _none() -> Ids:
@@ -28,6 +30,10 @@ class Best:
     @property
     def threshold(self) -> float:
         return floats(self.scores[-1:])[0] if len(self.scores) >= self.k else 0.0
+
+
+def may_reach(bound: Scores, threshold: float) -> Mask:
+    return bound * (1 + ROUNDING) >= threshold
 
 
 def offered(best: Best, chunks: Ids, documents: Ids, scores: Scores) -> Best:

@@ -1,3 +1,5 @@
+import itertools
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -10,7 +12,7 @@ from sift.domain.query.expressions import NOTHING, And, Or, Term
 from sift.domain.query.grammar import parsed
 from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Ranged, stored
-from sift.retrieval.keyword.search import Tuning, found_in, prepared, query_of, search, searched
+from sift.retrieval.keyword.search import Tuning, found_in, planned, prepared, query_of, search, searched
 from sift.storage.database import BATCHES, Batches
 from tests.allowed import Chosen
 from tests.keyword_searches import (
@@ -19,6 +21,7 @@ from tests.keyword_searches import (
     Draws,
     brute,
     collections,
+    fts5_query,
     fts5_ranked,
     phrases_in,
     prose,
@@ -26,6 +29,20 @@ from tests.keyword_searches import (
     same,
 )
 from tests.keyword_stores import SMALL, Content, Round
+
+
+def test_passages_of_equal_score_keep_the_order_of_their_chunks_however_the_search_is_batched() -> None:
+    notes: Round = {f"s{n:03}.md": ("", "T", "alpha beta gamma") for n in range(30)}
+    notes |= {f"f{n:03}.md": ("", "U", "alpha zeta eta") for n in range(12)}
+    notes |= {f"g{n:03}.md": ("", "V", "beta theta") for n in range(2)}
+    notes |= {f"h{n:03}.md": ("", "W", "omega theta") for n in range(60)}
+    words = ["alpha", "beta", "gamma"]
+    with collections([[notes]], SMALL) as (stores, _):
+        for first_batch in (1, 2, 4096):
+            for order in itertools.permutations(words):
+                found = search(stores, Or(tuple(map(Term, order))), 10, tuning=Tuning(first_batch=first_batch))
+                assert len({each.score for each in found}) == 1
+                assert [each.chunk & 0xFF_FFFF_FFFF for each in found] == list(range(1, 11))
 
 
 @settings(max_examples=6)
@@ -53,6 +70,27 @@ def test_across_collections_with_their_statistics_as_one(seed: int) -> None:
         for _ in range(25):
             expression, k = random_expression(rng, phrases), rng.choice([1, 10, 30])
             same(search(stores, expression, k), brute(held, expression, k + 20, by_document=True), k, expression)
+
+
+@settings(max_examples=3)
+@given(seed=SEEDS)
+def test_nested_queries_score_as_fts5_scores_them(seed: int) -> None:
+    rng = Draws(np.random.default_rng(seed))
+    with collections([[prose(rng, 60)]]) as (stores, held):
+        phrases = phrases_in(held)
+        for _ in range(40):
+            expression = random_expression(rng, phrases)
+            want = fts5_ranked(held[0], fts5_query(expression), 30)
+            same(search(stores, expression, 10), want, min(10, len(want)), fts5_query(expression))
+
+
+def test_a_list_long_enough_for_ranges_in_the_default_shape_finds_what_scoring_every_chunk_finds() -> None:
+    notes: Round = {f"n{n:05}.md": ("", "N", f"w1 w{2 + n % 7}") for n in range(5000)}
+    with collections([[notes]], Shape()) as (stores, held):
+        (store,) = stores
+        assert any(isinstance(each, Ranged) for each in stored(store, ["w1"])["w1"])
+        for expression in (Term("w1"), Or((Term("w1"), Term("w3"))), And((Term("w1"), Term("w4")))):
+            same(search(stores, expression, 10), brute(held, expression, 40, by_document=True), 10, expression)
 
 
 @pytest.mark.parametrize(
@@ -137,7 +175,7 @@ def test_only_the_chunks_allowed_are_found_as_many_as_asked_for(seed: int) -> No
             by_document = rng.random() < 0.7
             owners = np.array(sorted(kept), np.int64)
             each = [
-                prepared(store, expression, allowed=Chosen(chunks, owners))
+                prepared(planned(store, expression), allowed=Chosen(chunks, owners))
                 for store, chunks in zip(stores, allowed, strict=True)
             ]
             query = query_of(expression, each)

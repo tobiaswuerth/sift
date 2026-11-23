@@ -12,7 +12,7 @@ from hypothesis import strategies as st
 from sift.api.errors import InvalidRequestError
 from sift.domain.arrays import Mask, ints
 from sift.domain.query.expressions import NOTHING, And, Expression, Leaf, Not, Or, Phrase, Prefix, Term, leaves
-from sift.domain.query.grammar import MOST_DEPTH, MOST_WORDS, parsed, relaxed, words_in
+from sift.domain.query.grammar import MOST_DEPTH, MOST_QUERY_CHARS, MOST_WORDS, parsed, relaxed, words_in
 from sift.domain.rank.boolean import counted, may_hold
 
 DASH = "\N{EN DASH}"
@@ -73,6 +73,8 @@ a, b, c = Term("a"), Term("b"), Term("c")
         (f"a AND {DASH}", NOTHING),
         (f"{DASH} NOT a", NOTHING),
         (f"{DASH}*", NOTHING),
+        ('"dark"*', Prefix("dark")),
+        ('a "b"* c', And((a, Prefix("b"), c))),
     ],
 )
 def test_a_query_is_read_as_fts5_reads_it_where_both_read_it(query: str, expression: Expression) -> None:
@@ -100,7 +102,9 @@ def test_a_query_is_read_as_fts5_reads_it_where_both_read_it(query: str, express
         ("*", "* ends a prefix"),
         ("a**", "* ends a prefix"),
         ("first-sta*", "a prefix is one word"),
-        ('"dark mat"*', "* ends a prefix"),
+        ('"dark mat"*', "a prefix is one word"),
+        ("a + b", "+ joins nothing here"),
+        ("x" * (MOST_QUERY_CHARS + 1), f"more than {MOST_QUERY_CHARS:,} characters"),
         ("(" * (MOST_DEPTH + 1) + "a" + ")" * (MOST_DEPTH + 1), "parentheses nested more than"),
         ("a" + " NOT a" * (MOST_DEPTH + 1), "it nests more than"),
     ],
@@ -151,23 +155,26 @@ def pick[T](rng: np.random.Generator, items: Sequence[T]) -> T:
 def random_query(rng: np.random.Generator, depth: int = 0) -> str:
     if depth > 2 or rng.random() < 0.3:
         words = [pick(rng, "abcdefx" + DASH) for _ in range(pick(rng, [1, 1, 2]))]
-        return " ".join(f'"{word}"' if rng.random() < 0.3 else word for word in words)
+        written = [f'"{word}"' if rng.random() < 0.3 else word for word in words]
+        return pick(rng, [" ", " ", " + "]).join(each + ("*" if rng.random() < 0.2 else "") for each in written)
     left, right = random_query(rng, depth + 1), random_query(rng, depth + 1)
     left = f"({left})" if rng.random() < 0.3 else left
     right = f"({right})" if rng.random() < 0.3 else right
     return f"{left} {pick(rng, ['AND', 'OR', 'NOT'])} {right}"
 
 
-@settings(max_examples=1)
+@settings(max_examples=3)
 @given(st.integers(0, 2**32 - 1))
 def test_random_queries_match_what_fts5_matches(seed: int) -> None:
     rng = np.random.default_rng(seed)
-    present: dict[Leaf, Mask] = {Term(word): mask(*(word in row.split() for row in ROWS)) for word in "abcdefx"}
+    held = {word: mask(*(word in row.split() for row in ROWS)) for word in "abcdefx"}
+    present: dict[Leaf, Mask] = {Term(word): found for word, found in held.items()}
+    present |= {Prefix(word): found for word, found in held.items()}
     compared = 0
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("CREATE VIRTUAL TABLE t USING fts5(x, tokenize='unicode61 remove_diacritics 2')")
         db.executemany("INSERT INTO t(rowid, x) VALUES (?, ?)", list(enumerate(ROWS, 1)))
-        for _ in range(400):
+        for _ in range(500):
             query = random_query(rng)
             try:
                 matched = cast(
@@ -176,7 +183,10 @@ def test_random_queries_match_what_fts5_matches(seed: int) -> None:
                 want = {row for (row,) in matched}
             except sqlite3.OperationalError:
                 continue
-            expression = parsed(query)
+            try:
+                expression = parsed(query)
+            except InvalidRequestError:
+                continue
             found = (
                 set[int]()
                 if expression == NOTHING

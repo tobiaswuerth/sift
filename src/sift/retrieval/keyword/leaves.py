@@ -1,3 +1,6 @@
+from collections.abc import Mapping
+from typing import NoReturn
+
 import numpy as np
 
 from sift.api.errors import InvalidRequestError
@@ -16,6 +19,9 @@ from sift.retrieval.keyword.lists import (
     stored,
 )
 from sift.storage.keyword_lists import expansions, volume
+
+PREFIX_REMEDY = "write more of the word before the *"
+PHRASE_REMEDY = "add a rarer word to the phrase, or search its words without quotes"
 
 
 def _all_of(store: Opened, lists: list[Stored]) -> Postings:
@@ -36,8 +42,12 @@ def _within(store: Opened, held: Stored, candidates: Ids) -> Ids:
     return postings_in(store, held, chosen)[0]
 
 
+def _rarest_first(phrase: Phrase, lists: dict[str, list[Stored]]) -> list[str]:
+    return sorted(set(phrase.tokens), key=lambda token: (_size(lists[token]), token))
+
+
 def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[Stored]]) -> Postings:
-    order = sorted(set(phrase.tokens), key=lambda token: _size(lists[token]))
+    order = _rarest_first(phrase, lists)
     candidates = _all_of(store, lists[order[0]])[0]
     for token in order[1:]:
         if not len(candidates):
@@ -60,18 +70,31 @@ def _counted(n: int, what: str) -> str:
     return f"{n:,} {what}{'s' * (n != 1)}"
 
 
-def _prefix(store: Opened, prefix: Prefix, most: int) -> Postings:
-    held = volume(store.transaction, prefix.text)
-    if held.passages > most:
-        words, passages = _counted(held.words, "word"), _counted(held.passages, "passage")
-        raise InvalidRequestError(
-            f"{prefix.text}* stands for {words} in {passages}, more than a search reads",
-            "write more of the word before the *",
-        )
+def _prefix(store: Opened, prefix: Prefix) -> Postings:
     terms = expansions(store.transaction, prefix.text)
     lists = stored(store, terms)
     return _all_of(store, [held for term in terms for held in lists[term]])
 
 
-def materialized(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[Stored]], most_prefix: int) -> Postings:
-    return _phrase(store, leaf, lists) if isinstance(leaf, Phrase) else _prefix(store, leaf, most_prefix)
+def materialized(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[Stored]]) -> Postings:
+    return _phrase(store, leaf, lists) if isinstance(leaf, Phrase) else _prefix(store, leaf)
+
+
+def reads_of(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[Stored]]) -> int:
+    if isinstance(leaf, Prefix):
+        return volume(store.transaction, leaf.text).passages
+    return _size(lists[_rarest_first(leaf, lists)[0]])
+
+
+def _written(leaf: Phrase | Prefix) -> str:
+    return f"{leaf.text}*" if isinstance(leaf, Prefix) else f'"{" ".join(leaf.tokens)}"'
+
+
+def refused(reads: Mapping[Phrase | Prefix, int], total: int, most: int) -> NoReturn:
+    widest, passages = max(reads.items(), key=lambda each: each[1])
+    remedy = PREFIX_REMEDY if isinstance(widest, Prefix) else PHRASE_REMEDY
+    whole = "" if total == passages else f"; with the rest of the query, {_counted(total, 'passage')}"
+    raise InvalidRequestError(
+        f"{_written(widest)} reads {_counted(passages, 'passage')}{whole}, more than the {most:,} a search reads",
+        remedy,
+    )

@@ -207,8 +207,16 @@ def hits[S](
     return [(each.chunk, each.hit) for each in works]
 
 
+def always() -> bool:
+    return True
+
+
 def answered[S](
-    kept: Kept[S], rank: Callable[[int], Rounded | None], request: Options, copy_of: str | None = None
+    kept: Kept[S],
+    rank: Callable[[int], Rounded | None],
+    request: Options,
+    copy_of: str | None = None,
+    more: Callable[[], bool] = always,
 ) -> tuple[list[tuple[int, Hit]], bool] | None:
     wanted = request.k
     while True:
@@ -218,6 +226,8 @@ def answered[S](
             return None
         if len(shown) >= request.k or len(found.found) < wanted or found.cut:
             return presented(shown[: request.k], request), found.cut
+        if not more():
+            return presented(shown, request), True
         wanted *= WIDER
 
 

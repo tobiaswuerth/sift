@@ -145,15 +145,22 @@ def leaves_of(expression: Expression) -> list[Leaf]:
 TIE = 1e-12
 
 
+def by_score_then_chunk(ranked: list[tuple[int, float]]) -> list[tuple[int, float]]:
+    ordered = sorted(ranked, key=lambda each: (-each[1], each[0]))
+    groups: list[list[tuple[int, float]]] = []
+    for each in ordered:
+        if groups and abs(groups[-1][0][1] - each[1]) <= TIE * abs(each[1]):
+            groups[-1].append(each)
+        else:
+            groups.append([each])
+    return [each for group in groups for each in sorted(group)]
+
+
 def same(got: tuple[Found, ...], more: list[tuple[int, float]], k: int, query: object) -> None:
-    want = more[:k]
+    want = by_score_then_chunk(more)[:k]
     assert len(got) == len(want), query
     assert np.allclose([each.score for each in got], [score for _, score in want], rtol=1e-9), (query, got, want)
-    ranked = dict(more)
-    for each, (chunk, score) in zip(got, want, strict=True):
-        if each.chunk != chunk:
-            assert each.chunk in ranked, (query, got, want)
-            assert abs(ranked[each.chunk] - score) <= TIE * abs(score), (query, got, want)
+    assert [each.chunk for each in got] == [chunk for chunk, _ in want], (query, got, want)
 
 
 def random_expression(rng: Draws, phrases: list[tuple[str, ...]], depth: int = 0) -> Expression:
@@ -169,6 +176,23 @@ def random_expression(rng: Draws, phrases: list[tuple[str, ...]], depth: int = 0
         return Not(random_expression(rng, phrases, depth + 1), random_expression(rng, phrases, depth + 1))
     parts = tuple(random_expression(rng, phrases, depth + 1) for _ in range(rng.randint(2, 3)))
     return And(parts) if kind == "and" else Or(parts)
+
+
+def fts5_query(expression: Expression) -> str:
+    match expression:
+        case Term(text):
+            return f'"{text}"'
+        case Phrase(tokens):
+            return f'"{" ".join(tokens)}"'
+        case Prefix(text):
+            return f"{text}*"
+        case Not(kept, dropped):
+            return f"({fts5_query(kept)} NOT {fts5_query(dropped)})"
+        case And(parts) | Or(parts):
+            joined = " AND " if isinstance(expression, And) else " OR "
+            return "(" + joined.join(map(fts5_query, parts)) + ")"
+        case _:
+            raise AssertionError(expression)
 
 
 def phrases_in(stores: Sequence[Chunks]) -> list[tuple[str, ...]]:
