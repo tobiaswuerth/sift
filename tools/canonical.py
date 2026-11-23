@@ -1,5 +1,6 @@
 import ast
 import copy
+from collections import Counter
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast, final, override
@@ -17,17 +18,47 @@ def aliases(tree: ast.Module) -> Mapping[str, str]:
     return MappingProxyType(found)
 
 
+def _dotted(node: ast.expr) -> bool:
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return isinstance(node, ast.Name)
+
+
+def bindings(tree: ast.Module) -> Mapping[str, str]:
+    assigned = [node for node in ast.walk(tree) if isinstance(node, ast.Assign | ast.AnnAssign | ast.AugAssign)]
+    stored = Counter(
+        each.id
+        for node in assigned
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        for each in ast.walk(target)
+        if isinstance(each, ast.Name)
+    )
+    return MappingProxyType(
+        {
+            target.id: ast.unparse(node.value)
+            for node in assigned
+            if isinstance(node, ast.Assign) and len(node.targets) == 1
+            for target in node.targets
+            if isinstance(target, ast.Name) and stored[target.id] == 1 and _dotted(node.value)
+        }
+    )
+
+
 @final
 class _Resolved(ast.NodeTransformer):
     def __init__(self, names: Mapping[str, str]) -> None:
         self.names = names
+        self.resolving: set[str] = set()
 
     @override
     def visit_Name(self, node: ast.Name) -> ast.expr:
         dotted = self.names.get(node.id)
-        if dotted is None or not isinstance(node.ctx, ast.Load):
+        if dotted is None or not isinstance(node.ctx, ast.Load) or node.id in self.resolving:
             return node
-        return ast.copy_location(ast.parse(dotted, mode="eval").body, node)
+        self.resolving.add(node.id)
+        resolved = cast("ast.expr", self.visit(ast.parse(dotted, mode="eval").body))
+        self.resolving.discard(node.id)
+        return ast.copy_location(resolved, node)
 
     @override
     def visit_Call(self, node: ast.Call) -> ast.expr:
@@ -41,5 +72,13 @@ class _Resolved(ast.NodeTransformer):
                 return node
 
 
+def _resolved(tree: ast.Module, names: Mapping[str, str]) -> ast.Module:
+    return ast.fix_missing_locations(cast("ast.Module", _Resolved(names).visit(copy.deepcopy(tree))))
+
+
+def imports_resolved(tree: ast.Module) -> ast.Module:
+    return _resolved(tree, aliases(tree))
+
+
 def canonical(tree: ast.Module) -> ast.Module:
-    return ast.fix_missing_locations(cast("ast.Module", _Resolved(aliases(tree)).visit(copy.deepcopy(tree))))
+    return _resolved(tree, {**bindings(tree), **aliases(tree)})

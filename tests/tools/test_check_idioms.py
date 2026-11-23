@@ -227,3 +227,20 @@ def test_sql_on_a_transaction_s_connection_runs_in_sift_storage_alone() -> None:
     source = "transaction.connection.execute('SELECT 1')\n"
     assert problems("src/sift/app/a.py", source) == [check_idioms.RAW_SQL]
     assert problems("src/sift/storage/a.py", source) == []
+
+
+def test_a_name_bound_once_is_followed_to_what_it_names() -> None:
+    assert problems("src/sift/app/a.py", "held = transaction.connection\nheld.execute('x')\n") == [check_idioms.RAW_SQL]
+    assert problems("src/sift/domain/a.py", "say = print\nsay(1)\n") == [
+        "print() in the core: return the value and let the caller act"
+    ]
+    assert problems("src/sift/app/a.py", "a = b\nb = a\na.execute('x')\n") == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["vars(live)['REDRAW_SECONDS'] = 0", "live.__dict__['REDRAW_SECONDS'] = 0", "live.REDRAW_SECONDS, n = 0, 1"],
+)
+def test_a_sift_module_changed_through_its_namespace_or_in_a_tuple_is_found(change: str) -> None:
+    source = f"from sift.interfaces.console import live\n{change}\n"
+    assert check_idioms.PATCHED in problems("tests/a.py", source)

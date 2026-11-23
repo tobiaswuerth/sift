@@ -34,6 +34,8 @@ def test_a_class_may_have_up_to_the_most_methods() -> None:
         "collections.deque()",
         'str.maketrans("a", "b")',
         "np.zeros(3)",
+        "SimpleNamespace()",
+        "queue.Queue()",
         "f()",
         "A | {1}",
         "(1, [])",
@@ -57,7 +59,6 @@ def test_a_mutable_module_value_is_found(value: str) -> None:
         "np.dtype('<u4')",
         "range(3)",
         "read_only(np.zeros(3))",
-        "Limits()",
         "A if B else 'c'",
         "f'{A}'",
     ],
@@ -121,3 +122,11 @@ def test_a_dataclass_holding_arrays_compares_none() -> None:
     assert problems("src/sift/a.py", held) == ["class Held holds arrays and compares them: eq=False"]
     assert problems("src/sift/a.py", held.replace("frozen=True", "eq=False, frozen=True")) == []
     assert problems("src/sift/a.py", "@dataclass(frozen=True, slots=True)\nclass Held:\n    n: int\n") == []
+
+
+def test_a_class_of_sift_or_a_value_class_of_the_module_makes_a_module_value() -> None:
+    imported = "from sift.app.filing import Limits\n\nX = Limits()\n"
+    defined = "@dataclass(frozen=True, slots=True)\nclass C:\n    n: int\n\n\nX = C(1)\n"
+    mutable = "class D:\n    n: int\n\n\nX = D()\n"
+    assert (problems("src/sift/a.py", imported), problems("src/sift/a.py", defined)) == ([], [])
+    assert problems("src/sift/a.py", mutable) == ["mutable value at module level"]

@@ -1,11 +1,13 @@
 import ast
 from collections.abc import Iterator
 
+from tools.canonical import aliases
 from tools.findings import PYTHON_ROOTS, Finding, found, report
 
 MOST_LINES = 400
 MOST_METHODS = 10
 CORE = ("src/sift/api/", "src/sift/domain/")
+SIFT = "sift."
 VALUE_BASES = frozenset({"NamedTuple", "Enum", "StrEnum", "IntEnum", "Flag", "IntFlag", "Protocol"})
 ERROR_SUFFIXES = ("Error", "Exception")
 ARRAY_TYPES = frozenset({"NDArray", "Ids", "Mask", "Scores", "Floats", "Halves", "Bits", "Ascending", "Coded"})
@@ -50,18 +52,24 @@ def _name(node: ast.expr) -> str:
 
 
 def _returning_immutables(tree: ast.Module) -> frozenset[str]:
-    return frozenset(
+    functions = (
         node.name
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.returns is not None and _name(node.returns) in IMMUTABLE_TYPES
     )
+    values = (
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and (_is_frozen_slotted_dataclass(node) or any(map(_is_value_base, node.bases)))
+    )
+    imported = (name for name, whole in aliases(tree).items() if whole.startswith(SIFT) and name[:1].isupper())
+    return frozenset((*functions, *values, *imported))
 
 
 def _made_immutable(call: ast.Call, trusted: frozenset[str]) -> bool:
     name = _name(call.func)
-    if name in IMMUTABLE_FACTORIES or (isinstance(call.func, ast.Name) and name in trusted):
-        return True
-    return name[:1].isupper() and name not in MUTABLE_FACTORIES
+    return name in IMMUTABLE_FACTORIES or (isinstance(call.func, ast.Name) and name in trusted)
 
 
 def _immutable(value: ast.expr, trusted: frozenset[str]) -> bool:

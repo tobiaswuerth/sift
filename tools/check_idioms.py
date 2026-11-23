@@ -109,12 +109,27 @@ def _of_sift(node: ast.expr) -> bool:
     return isinstance(node, ast.Attribute) and ast.unparse(node.value).split(".")[0] == "sift"
 
 
+def _owned(target: ast.expr) -> list[ast.expr]:
+    match target:
+        case ast.Tuple(elts=items) | ast.List(elts=items) | ast.Starred(value=ast.Tuple(elts=items)):
+            return [owned for item in items for owned in _owned(item)]
+        case ast.Starred(value=inner):
+            return _owned(inner)
+        case (
+            ast.Subscript(value=ast.Call(func=ast.Name(id="vars"), args=[owner]))
+            | ast.Subscript(value=ast.Attribute(attr="__dict__", value=owner))
+        ):
+            return [ast.Attribute(owner, "item", ast.Store())]
+        case _:
+            return [target]
+
+
 def _changed(node: ast.AST) -> list[ast.expr]:
     match node:
         case ast.Assign(targets=targets) | ast.Delete(targets=targets):
-            return targets
+            return [owned for target in targets for owned in _owned(target)]
         case ast.AugAssign(target=target) | ast.AnnAssign(target=target):
-            return [target]
+            return _owned(target)
         case ast.Call(func=func, args=[owner, ast.Constant(value=str(name)), *_]) if ast.unparse(func) in SETTERS:
             return [ast.Attribute(owner, name, ast.Store())]
         case _:

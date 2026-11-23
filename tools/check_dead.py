@@ -4,7 +4,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path, PurePosixPath
 from typing import cast
 
-from tools.canonical import canonical
+from tools.canonical import imports_resolved
 from tools.findings import Finding, files, report
 
 SOURCE = "src/sift"
@@ -37,7 +37,7 @@ def _protocol_members(tree: ast.Module) -> Iterator[str]:
 
 
 def _references(module: str, tree: ast.Module) -> Iterator[str]:
-    for node in ast.walk(canonical(tree)):
+    for node in ast.walk(imports_resolved(tree)):
         match node:
             case ast.ImportFrom(module=str(source), names=names, level=0):
                 yield from (f"{source}.{alias.name}" for alias in names)

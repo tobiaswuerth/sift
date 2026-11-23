@@ -4,6 +4,7 @@ from sift.api.fields import FieldValue
 from sift.domain.text.json_values import (
     MOST_DEPTH,
     NestedTooDeeplyError,
+    composed_fields,
     depth,
     inside,
     json_value,
@@ -77,3 +78,11 @@ def test_lone_surrogates_are_replaced_in_every_string_however_nested() -> None:
         1,
         ["\N{REPLACEMENT CHARACTER}", {"\N{REPLACEMENT CHARACTER}": None}],
     ]
+
+
+def test_field_names_and_texts_are_composed_and_names_alike_once_composed_kept_apart() -> None:
+    nfd, nfc = "Ro\u0308st", "R\u00f6st"
+    assert composed_fields({nfd: [nfd]}) == {nfc: [nfc]}
+    assert composed_fields({nfd: 1, nfc: 2}) == {nfd: 1, nfc: 2}
+    above, below = "e\u0302\u0323", "e\u0323\u0302"
+    assert composed_fields({above: 1, below: 2}) == {"\u1ec7": 1, below: 2}

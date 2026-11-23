@@ -113,4 +113,10 @@ def _composed(text: str) -> str:
 
 
 def composed_fields(fields: Fields) -> Fields:
-    return {_composed(name): strings_changed(value, _composed) for name, value in fields.items()}
+    taken = {name for name in fields if _composed(name) == name}
+    found: dict[str, FieldValue] = {}
+    for name, value in fields.items():
+        key = name if _composed(name) in taken else _composed(name)
+        taken.add(key)
+        found[key] = strings_changed(value, _composed)
+    return found
