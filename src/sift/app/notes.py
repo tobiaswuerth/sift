@@ -164,3 +164,12 @@ def written(transaction: Reading, target: str, wanted: str | None) -> set[int]:
 def unresolved_links(transaction: Reading) -> list[LinkRow]:
     resolver = Resolver(transaction)
     return [row for row in doubtful(transaction) if resolver.of(row).via is Via.UNRESOLVED]
+
+
+def note_of(home: Path, collections: Sequence[Collection], id_: str) -> Named:
+    try:
+        note = by_id(home, id_)
+        read_in(note.collection, note.find)
+    except NotFoundError as unknown:
+        return by_name(collections, id_, unknown)
+    return Named(note, ())

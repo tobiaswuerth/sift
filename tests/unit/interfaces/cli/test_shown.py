@@ -97,6 +97,11 @@ def test_status_counts_links_where_a_collection_holds_any() -> None:
     )
 
 
+def test_status_counts_links_where_none_leads_nowhere() -> None:
+    linked = dataclasses.replace(NOTES, contents=Counted(1, 2, 3_000, 0, (), links=5, unresolved=0))
+    assert status(Status("/h", (linked,)), "linux", PLAIN).results[0].split()[-2:] == ["links", "unresolved"]
+
+
 def test_status_counts_unreadable_files_and_lists_them_when_asked() -> None:
     failed = (UnreadableFile("huge.txt", "too large"), UnreadableFile("locked.md", "Permission denied"))
     counted = dataclasses.replace(NOTES, contents=Counted(1, 2, 3_000, 2, failed))

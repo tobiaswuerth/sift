@@ -1,5 +1,6 @@
 import posixpath
 import re
+import unicodedata
 from collections.abc import Sequence
 
 from sift.api.fields import Fields
@@ -21,5 +22,6 @@ def _named(variant: str) -> bool:
 
 
 def phrases(found: Sequence[str]) -> tuple[str, ...]:
-    variants = (" ".join(variant.split()) for name in found for variant in (name, name.translate(UMLAUTS)))
+    written = ((name, unicodedata.normalize("NFC", name).translate(UMLAUTS)) for name in found)
+    variants = (" ".join(variant.split()) for pair in written for variant in pair)
     return tuple(dict.fromkeys(variant for variant in variants if _named(variant)))

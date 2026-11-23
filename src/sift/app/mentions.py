@@ -1,11 +1,12 @@
+from dataclasses import replace
 from pathlib import Path
 
-from sift.api.errors import InvalidRequestError, NotFoundError
+from sift.api.errors import InvalidRequestError
 from sift.api.links import FindMentions
 from sift.api.search import SearchResult
 from sift.app import searching
 from sift.app.collections import chosen_or_active
-from sift.app.notes import Note, by_id, by_name, read_in
+from sift.app.notes import Note, note_of, read_in
 from sift.app.search import Asked, Wanted, searched_as
 from sift.domain.query.grammar import any_phrase
 from sift.domain.text.mentions import names, phrases
@@ -15,15 +16,6 @@ from sift.storage.documents import fields_by_document
 from sift.storage.links import titled
 
 ALSO_REMEDY = "name each field, e.g. --also emails,phone"
-
-
-def _found(home: Path, id_: str) -> Note:
-    try:
-        note = by_id(home, id_)
-        read_in(note.collection, note.find)
-    except NotFoundError as unknown:
-        return by_name(chosen_or_active(home, ()), id_, unknown).note
-    return note
 
 
 def _names(note: Note, also: tuple[str, ...]) -> list[str]:
@@ -41,7 +33,10 @@ def mentions(home: Path, request: FindMentions, tuning: Tuning = TUNING) -> Sear
     for field in request.also:
         if not field.strip():
             raise InvalidRequestError(f"--also names front matter fields, e.g. emails, not {field!r}", ALSO_REMEDY)
-    note = _found(home, request.id)
-    expression = any_phrase(phrases(_names(note, request.also)))
+    named = note_of(home, chosen_or_active(home, ()), request.id)
+    expression = any_phrase(phrases(_names(named.note, request.also)))
     wanted = Wanted(request.k, not request.all_passages, tuning, never)
-    return searched_as(Asked(request, expression, None, wanted, searching.narrowed(home, request, note)))
+    found = searched_as(Asked(request, expression, None, wanted, searching.narrowed(home, request, named.note)))
+    said = {each.collection for each in found.unsearched}
+    passed = tuple(each for each in named.unsearched if each.collection not in said)
+    return replace(found, unsearched=(*found.unsearched, *passed))

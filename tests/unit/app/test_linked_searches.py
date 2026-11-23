@@ -195,8 +195,9 @@ def test_a_note_named_by_id_keeps_other_collections_closed(linked: Path) -> None
 def test_a_note_named_by_id_in_a_store_that_cannot_be_read_leaves_the_store_unsearched(linked: Path) -> None:
     store = linked / "collections" / "work.sqlite"
     store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
-    found = search(linked, SearchKeywords("note", links_to=("work/contract.md",)))
-    assert (found.hits, [each.collection for each in found.unsearched]) == ((), ["work"])
+    for links_to, linked_from in ((("work/contract.md",), ()), ((), ("work/Plan.md",))):
+        found = search(linked, SearchKeywords("note", links_to=links_to, linked_from=linked_from))
+        assert (found.hits, [each.collection for each in found.unsearched]) == ((), ["work"])
 
 
 def test_an_ambiguous_link_and_a_link_by_another_path_lead_to_no_note_named(linked: Path) -> None:

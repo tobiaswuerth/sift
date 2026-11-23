@@ -87,8 +87,25 @@ def test_a_note_is_mentioned_by_every_name_it_has(tmp_path: Path) -> None:
 def test_mentions_of_what_is_no_note_or_by_no_field_are_refused(named: Path) -> None:
     with pytest.raises(NotFoundError, match="unknown document 'Nobody'"):
         mentions(named, FindMentions("Nobody"))
-    with pytest.raises(InvalidRequestError, match=r"--also names front matter fields, e\.g\. emails, not ''"):
-        mentions(named, FindMentions(HANS, also=("",)))
+    for blank in ("", " "):
+        with pytest.raises(InvalidRequestError, match=r"--also names front matter fields, e\.g\. emails, not "):
+            mentions(named, FindMentions(HANS, also=(blank,)))
+
+
+def test_a_name_that_starts_like_an_id_is_looked_up_as_a_name(named: Path, tmp_path: Path) -> None:
+    write(tmp_path / "vault" / "work" / "Plan.md", "Plan of the work.\n")
+    write(tmp_path / "vault" / "Notes.md", "Read the work/Plan today.\n")
+    index(named, IndexCollections(), lambda _: None)
+    assert ids(mentions(named, FindMentions("work/Plan"))) == ["vault/Notes.md"]
+
+
+def test_a_store_a_name_could_not_be_looked_up_in_is_said(named: Path, tmp_path: Path) -> None:
+    collection(tmp_path, named, "other", {"x.md": "Hans Müller again.\n"})
+    index(named, IndexCollections(), lambda _: None)
+    store = named / "collections" / "other.sqlite"
+    store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
+    found = mentions(named, FindMentions("Hans Mueller", collection="work"))
+    assert (ids(found), [each.collection for each in found.unsearched]) == (["work/contract.md"], ["other"])
 
 
 def test_status_counts_the_links_of_each_collection_and_those_leading_nowhere(named: Path, tmp_path: Path) -> None:

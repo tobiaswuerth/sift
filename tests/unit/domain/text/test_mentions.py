@@ -1,3 +1,6 @@
+import pytest
+
+from sift.api.errors import InvalidRequestError
 from sift.domain.query.expressions import NOTHING, Or, Phrase, Term
 from sift.domain.query.grammar import any_phrase
 from sift.domain.text.mentions import names, phrases
@@ -23,3 +26,18 @@ def test_phrases_are_asked_as_any_of_them_once_each() -> None:
     assert any_phrase(["Hans Müller", "hans muller", "Acme"]) == Or((Phrase(("hans", "muller")), Term("acme")))
     assert any_phrase(["Acme"]) == Term("acme")
     assert any_phrase(["..."]) == NOTHING
+
+
+def test_names_of_three_characters_capitals_and_links_inside_are_looked_for() -> None:
+    assert phrases(["Bob", "Öl", "Meeting with [[Bob]]"]) == ("Bob", "Oel", "Meeting with [[Bob]]")
+    assert phrases(["Köln", "ÄÖÜ ß"]) == ("Köln", "Koeln", "ÄÖÜ ß", "AeOeUe ss")
+
+
+def test_a_name_written_with_combining_marks_is_looked_for_without_umlauts_too() -> None:
+    decomposed = "Hans Mu" + chr(0x308) + "ller"
+    assert phrases([decomposed]) == (decomposed, "Hans Mueller")
+
+
+def test_names_of_more_words_than_a_query_takes_are_refused() -> None:
+    with pytest.raises(InvalidRequestError, match="more than 1,000 words"):
+        any_phrase([f"name{n} word" for n in range(501)])

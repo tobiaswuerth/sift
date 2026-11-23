@@ -76,8 +76,8 @@ def checked(request: Options) -> None:
     shown.checked(request.fields, request.sort)
 
 
-def narrowed(home: Path, request: Options, unlinked: Note | None = None) -> Narrowing:
-    return narrowing(home, request, collections_of(home, request.collection), unlinked)
+def narrowed(home: Path, request: Options, mentioned: Note | None = None) -> Narrowing:
+    return narrowing(home, request, collections_of(home, request.collection), mentioned)
 
 
 type Hold[S] = Callable[[Reading, Passing | None], S]

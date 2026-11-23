@@ -26,10 +26,8 @@ groups AS MATERIALIZED (
 linked AS MATERIALIZED (
   SELECT g.key AS grp, 'any' AS kind, CAST(l.value AS INTEGER) AS id
   FROM json_each(:fields) g, json_each(g.value, '$.linked_any') l
-  WHERE l.type = 'integer'
   UNION ALL
-  SELECT g.key, 'none', CAST(l.value AS INTEGER) FROM json_each(:fields) g, json_each(g.value, '$.linked_none') l
-  WHERE l.type = 'integer'),
+  SELECT g.key, 'none', CAST(l.value AS INTEGER) FROM json_each(:fields) g, json_each(g.value, '$.linked_none') l),
 bounds AS MATERIALIZED (
   SELECT g.key AS grp, json_extract(r.value, '$.op') AS op, json_extract(r.value, '$.text') AS text,
          json_extract(r.value, '$.len') AS len, json_extract(r.value, '$.value') AS value

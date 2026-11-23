@@ -33,7 +33,7 @@ class Narrowing:
     linkings: tuple[Linking, ...]
     links_to: tuple[Pointed, ...] | None
     linked_from: tuple[Pointed, ...] | None
-    unlinked: Note | None
+    mentioned: Note | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +114,7 @@ def _kept(
     return tuple(one for one in scope if one.name in names)
 
 
-def narrowing(home: Path, request: Options, scope: tuple[Collection, ...], unlinked: Note | None = None) -> Narrowing:
+def narrowing(home: Path, request: Options, scope: tuple[Collection, ...], mentioned: Note | None = None) -> Narrowing:
     quotes = reads_quotes()
     condition(request.path, request.filters, reads_quotes=quotes)
     links_to = tuple(_linked_to(home, scope, each) for each in request.links_to) if request.links_to else None
@@ -131,7 +131,7 @@ def narrowing(home: Path, request: Options, scope: tuple[Collection, ...], unlin
         linkings(request.filters),
         links_to,
         linked_from,
-        unlinked,
+        mentioned,
     )
 
 
@@ -184,5 +184,5 @@ def _left_out(note: Note | None, one: Collection, resolver: Resolver) -> list[in
 def condition_in(found: Narrowing, one: Collection, transaction: Reading) -> Condition | None:
     resolver = Resolver(transaction)
     values = {each: sorted(_following(resolver, each)) for each in found.linkings}
-    linked = Linked(values, _within(found, one, resolver), _left_out(found.unlinked, one, resolver))
+    linked = Linked(values, _within(found, one, resolver), _left_out(found.mentioned, one, resolver))
     return condition(found.path, found.filters, reads_quotes=found.reads_quotes, linked=linked)
