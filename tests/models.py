@@ -31,10 +31,15 @@ class Hashed:
     width: int = 48
     asked: list[tuple[tuple[str, ...], bool]] = field(default_factory=list[tuple[tuple[str, ...], bool]])
     prepared: list[bool] = field(default_factory=list[bool])
+    ranker_prepared: list[bool] = field(default_factory=list[bool])
     reranked: list[tuple[str, tuple[str, ...]]] = field(default_factory=list[tuple[str, tuple[str, ...]]])
 
     def prepare(self) -> tuple[str, ...]:
         self.prepared.append(True)
+        return ()
+
+    def prepare_ranker(self) -> tuple[str, ...]:
+        self.ranker_prepared.append(True)
         return ()
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:

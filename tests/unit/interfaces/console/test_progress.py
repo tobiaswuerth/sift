@@ -50,11 +50,12 @@ def test_more_done_than_counted_at_the_start_fills_the_bar_and_leaves_no_time() 
     assert running_line(view, 1.0, 100, PLAIN) == f"  read       1,500 files   {bar} 100%  2,500/s"
 
 
-def test_a_note_while_a_phase_runs_ends_the_phase_without_a_row() -> None:
-    view, lines = replayed((*RUN[:5], (2.0, Noted("the store is damaged", "remove the collection"))))
+def test_a_note_while_a_phase_runs_is_said_and_the_phase_still_ends_in_its_row() -> None:
+    noted = (2.0, Noted("the store is damaged", "remove the collection"))
+    view, lines = replayed((*RUN[:5], noted, (4.3, PhaseDone(1_208))))
     assert view.running is None
-    assert lines[-2:] == ["  note  the store is damaged", "  fix   remove the collection"]
-    assert not [line for line in lines if line.startswith("  read")]
+    assert lines[-3:-1] == ["  note  the store is damaged", "  fix   remove the collection"]
+    assert lines[-1].startswith("  read       1,208 files")
 
 
 def test_without_unicode_the_glyphs_are_ascii() -> None:

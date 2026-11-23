@@ -8,6 +8,7 @@ import pytest
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError
+from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchVectors, Unsearched
 from sift.app.collections import add
@@ -310,3 +311,16 @@ def test_documents_are_counted_once_however_often_the_search_widens(tmp_path: Pa
 
     found = vsearch(home, SearchVectors("quokka wombat", k=3), Hashed(), Rescoring(1, vectors_of, count))
     assert (len(found.hits), counted) == (3, [6])
+
+
+def test_the_model_s_loading_is_said_only_when_a_vector_is_needed(home: Path, tmp_path: Path) -> None:
+    said: list[Event] = []
+    vsearch(home, SearchVectors("halo"), Hashed(), report=said.append)
+    assert said == [PhaseStarted(Phase.LOAD, None), PhaseDone(1)]
+    bare = tmp_path / "bare"
+    write(tmp_path / "plain" / "a.md", "# A\n\nComets.\n")
+    add(bare, AddCollection(str(tmp_path / "plain")))
+    index(bare, IndexCollections(), lambda _: None)
+    quiet: list[Event] = []
+    vsearch(bare, SearchVectors("halo"), Hashed(), report=quiet.append)
+    assert quiet == []

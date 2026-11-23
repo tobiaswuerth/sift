@@ -120,12 +120,14 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     assert "Loading" not in embedded.stderr
     near = sift(home, "vsearch", "learning", "-k", "1", "--json", model=model)
     assert len(cast("dict[str, list[object]]", json.loads(near.stdout))["hits"]) == 1
+    assert "  load           1 model " in near.stderr
     similar_run(home)
     kept = sift(home, "vsearch", "learning", "--path", "sub/*", "--json", model=model)
     assert [hit["id"] for hit in hits_of(kept)] == ["notes/sub/brush.md"]
     asked = sift(home, "query", "reward shaping", "-k", "1", model=model, reranker=reranker)
     assert (asked.returncode, asked.stdout.split("\n")[1].strip().startswith("notes/")) == (0, True)
-    assert asked.stderr.startswith("1 result  \N{MIDDLE DOT}  hybrid  \N{MIDDLE DOT}  1 collection")
+    assert asked.stderr.startswith("  load           2 models ")
+    assert asked.stderr.splitlines()[-1].startswith("1 result  \N{MIDDLE DOT}  hybrid  \N{MIDDLE DOT}  1 collection")
 
     missing = sift(home, "get", "notes/gone.md")
     assert (missing.returncode, missing.stdout) == (1, "")

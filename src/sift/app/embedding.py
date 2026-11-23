@@ -12,6 +12,7 @@ from sift.api.events import Advanced, CollectionStarted, Noted, Phase, PhaseDone
 from sift.api.ids import CollectionId
 from sift.api.indexing import Skipped
 from sift.app.collections import chosen, chosen_or_active
+from sift.app.loading import prepared
 from sift.domain.text.embedding import embedded
 from sift.inference.models import Models
 from sift.storage.catalog import Collection
@@ -40,14 +41,6 @@ class Work:
     models: Models
     embedding: Embedding
     ready: Callable[[], None]
-
-
-def _prepared(models: Models, report: Reporter) -> None:
-    report(PhaseStarted(Phase.LOAD, None))
-    notices = models.prepare()
-    report(PhaseDone(1))
-    for notice in notices:
-        report(Noted(notice))
 
 
 def _counted(n: int, what: str) -> str:
@@ -132,6 +125,6 @@ def embed(
     if request.reset and request.names:
         raise InvalidRequestError("--reset embeds every collection again, as all share one model", RESET_ALL_REMEDY)
     chosen_now = chosen_or_active(home, request.names)
-    work = Work(report, models, embedding, cache(partial(_prepared, models, report)))
+    work = Work(report, models, embedding, cache(partial(prepared, report, (models.prepare,))))
     failed = _reset(home, report, work.ready, chosen_now) if request.reset else {}
     return EmbedResult(tuple(_embedded(one, work, failed) for one in chosen_now))

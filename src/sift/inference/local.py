@@ -216,10 +216,17 @@ class Local:
             self.ranker = _ranker(self.reranker, self._on())
         return self.ranker
 
-    def prepare(self) -> tuple[str, ...]:
-        self._embedding()
+    def _notices(self) -> tuple[str, ...]:
         notice = self._on().notice
         return () if notice is None else (notice,)
+
+    def prepare(self) -> tuple[str, ...]:
+        self._embedding()
+        return self._notices()
+
+    def prepare_ranker(self) -> tuple[str, ...]:
+        self._ranking()
+        return self._notices()
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         loaded, device = self._embedding(), self._on()

@@ -147,3 +147,26 @@ def test_links_of_a_note_named_while_a_collection_could_not_be_read_fail(
     assert err.startswith("error  other: the store is missing: ")
     assert ran(settings, "links", "Brush", "--json")[0] == 1
     assert ran(settings, "links", "notes/robots/brush.md")[0] == 0
+
+
+def _stopped() -> float:
+    raise KeyboardInterrupt
+
+
+def test_an_interrupt_says_what_was_kept_where_sift_writes_and_ends_with_130(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    for argv, said in ((("index",), "stopped: what was written so far is kept\n"), (("search", "brush"), "")):
+        out, err = io.StringIO(), io.StringIO()
+        assert run(argv, settings, out, err, Host(clock=_stopped)) == 130
+        assert (out.getvalue(), err.getvalue()) == ("", said)
+
+
+def test_a_stream_that_cannot_print_the_glyphs_gets_ascii_ones(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    raw = io.BytesIO()
+    err = io.TextIOWrapper(raw, encoding="cp1252")
+    assert run(("search", "brush"), settings, io.StringIO(), err) == 0
+    err.flush()
+    said = raw.getvalue().decode("utf-8")
+    assert "  |  keyword  |  " in said
+    assert "\N{MIDDLE DOT}" not in said

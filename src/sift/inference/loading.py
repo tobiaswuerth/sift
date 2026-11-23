@@ -38,6 +38,9 @@ class Deferred:
     def prepare(self) -> tuple[str, ...]:
         return self._built().prepare()
 
+    def prepare_ranker(self) -> tuple[str, ...]:
+        return self._built().prepare_ranker()
+
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         return self._built().encode(texts, query=query)
 

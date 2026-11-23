@@ -72,7 +72,7 @@ def test_the_fake_keeps_the_contract_the_local_models_keep(tiny: Path, make: Cal
     assert (scores.shape, scores.dtype) == ((3,), np.float32)
     assert bool(np.isfinite(scores).all())
     assert models.rerank("dark matter", []).shape == (0,)
-    models.prepare()
+    assert models.prepare() == models.prepare_ranker()
     assert models.name
 
 

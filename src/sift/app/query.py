@@ -7,12 +7,14 @@ from pathlib import Path
 import numpy as np
 
 from sift.api.errors import InvalidRequestError
+from sift.api.events import Reporter
 from sift.api.fields import FieldValue
 from sift.api.ids import owner
 from sift.api.search import MOST_HITS, Hit, SearchHybrid, SearchResult
 from sift.app import hits, searching
 from sift.app.hits import Retrieved, read
 from sift.app.keyword_candidates import Wanted, found
+from sift.app.loading import prepared, unreported
 from sift.app.searching import Open, Searching, Wants, despite_losses
 from sift.app.vector_candidates import QUERY_REMEDY, RESCORING, Rescoring, alike, near, query_vector
 from sift.domain.arrays import floats, ints
@@ -130,8 +132,14 @@ def _ranked(
         wanted = min(wanted * WIDER, MOST_HITS)
 
 
-def _answered(stores: Open, request: SearchHybrid, models: Models, asked: Rescoring) -> list[tuple[int, Hit]]:
-    query = query_vector(models, request.query) if any(map(_embedded, stores.searching)) else None
+def _answered(
+    stores: Open, request: SearchHybrid, models: Models, asked: Rescoring, report: Reporter
+) -> list[tuple[int, Hit]]:
+    if not stores.searching:
+        return []
+    embedded = any(map(_embedded, stores.searching))
+    prepared(report, (models.prepare, models.prepare_ranker) if embedded else (models.prepare_ranker,))
+    query = query_vector(models, request.query) if embedded else None
     if query is not None:
         alike(stores, models.name, query)
     ranked = _ranked(stores, request, models, query, asked)[: request.k]
@@ -148,9 +156,11 @@ def _checked(request: SearchHybrid) -> None:
         raise InvalidRequestError(said, CANDIDATES_REMEDY)
 
 
-def query(home: Path, request: SearchHybrid, models: Models, asked: Rescoring = RESCORING) -> SearchResult:
+def query(
+    home: Path, request: SearchHybrid, models: Models, asked: Rescoring = RESCORING, report: Reporter = unreported
+) -> SearchResult:
     _checked(request)
     narrowing = searching.narrowed(home, request)
     with ExitStack() as cleanup:
         stores = searching.opened(cleanup, narrowing, Wants(keywords=True, model=models.name))
-        return hits.result(stores, _answered(stores, request, models, asked), partial=False)
+        return hits.result(stores, _answered(stores, request, models, asked, report), partial=False)

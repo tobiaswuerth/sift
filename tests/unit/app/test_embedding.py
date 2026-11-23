@@ -159,6 +159,9 @@ class Stopping:
             raise RuntimeError("the model would not load")
         return self.models.prepare()
 
+    def prepare_ranker(self) -> tuple[str, ...]:
+        return self.models.prepare_ranker()
+
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         if not self.calls_left:
             raise KeyboardInterrupt

@@ -12,6 +12,7 @@ import pytest
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError
+from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchHybrid
 from sift.app.collections import add
@@ -277,3 +278,24 @@ def test_a_question_written_decomposed_finds_what_its_words_name(tmp_path: Path)
 def test_scores_are_given_as_reckoned_and_rounded_only_where_shown(home: Path) -> None:
     result = query(home, SearchHybrid("dark matter halo models", k=5), Hashed())
     assert any(hit.score != round(hit.score, 4) for hit in result.hits)
+
+
+def test_loading_counts_the_models_a_question_needs(home: Path, tmp_path: Path) -> None:
+    said: list[Event] = []
+    query(home, SearchHybrid("halo"), Hashed(), report=said.append)
+    assert said == [PhaseStarted(Phase.LOAD, None), PhaseDone(2)]
+    root = tmp_path / "plain"
+    write(root / "a.md", "# A\n\nComets and glaciers.\n")
+    plain = tmp_path / "plain_home"
+    collection(plain, root, embedded=False)
+    words: list[Event] = []
+    query(plain, SearchHybrid("comets"), Hashed(), report=words.append)
+    assert words == [PhaseStarted(Phase.LOAD, None), PhaseDone(1)]
+
+
+def test_nothing_loads_when_no_store_is_left_to_search(home: Path) -> None:
+    store = home / "collections" / "notes.sqlite"
+    store.write_bytes(bytes([255]) * 4096 + store.read_bytes()[4096:])
+    said: list[Event] = []
+    result = query(home, SearchHybrid("halo"), Hashed(), report=said.append)
+    assert (result.hits, said) == ((), [])

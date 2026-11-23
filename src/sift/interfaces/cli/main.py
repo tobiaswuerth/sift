@@ -24,7 +24,7 @@ from sift.inference.loading import Deferred, deferred
 from sift.interfaces.cli import shown
 from sift.interfaces.cli.arguments import options, request_of
 from sift.interfaces.cli.shown import Shown
-from sift.interfaces.console.live import Live
+from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
 from sift.interfaces.console.streams import ReaderLeftError, columns, is_terminal, let_go, say, utf8, write_results
 from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal, style_of
@@ -35,6 +35,16 @@ from sift.settings import Settings, from_environment, whole_path
 DONE, FAILED, USAGE, INTERRUPTED = 0, 1, 2, 130
 DESCRIPTION = "Fast local search over your documents and notes."
 NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
+STOPPED_WRITING = "stopped: what was written so far is kept"
+WRITERS = frozenset({"index", "embed"})
+
+
+class StoppedError(Exception):
+    said: str
+
+    def __init__(self, said: str) -> None:
+        super().__init__(said)
+        self.said = said
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,13 +130,14 @@ def _embed(context: Context, request: EmbedCollections) -> EmbedResult:
 def _vsearch(namespace: argparse.Namespace, context: Context) -> Shown:
     started = context.clock()
     request = request_of(SearchVectors, namespace)
-    answer = vsearch.vsearch(context.settings.home, request, _models(context))
+    answer = vsearch.vsearch(context.settings.home, request, _models(context), report=context.report)
     return _found(answer, context, started, "semantic")
 
 
 def _query(namespace: argparse.Namespace, context: Context) -> Shown:
     started = context.clock()
-    answer = query.query(context.settings.home, request_of(SearchHybrid, namespace), _models(context))
+    request = request_of(SearchHybrid, namespace)
+    answer = query.query(context.settings.home, request, _models(context), report=context.report)
     return _found(answer, context, started, "hybrid")
 
 
@@ -234,18 +245,21 @@ def _parsed(
             return stop.code if isinstance(stop.code, int) else USAGE
 
 
-def _style(err: TextIO | None, settings: Settings, choice: Colour) -> Style:
+def _encoding(stream: TextIO | None) -> str | None:
+    found: object = stream.encoding if stream is not None else None
+    return found if isinstance(found, str) else None
+
+
+def _style(err: TextIO | None, settings: Settings, choice: Colour, encoding: str | None) -> Style:
     terminal = is_terminal(err)
     escapes = terminal and err is not None and escapes_work(console(), err.fileno())
-    encoding: object = err.encoding if err is not None else None
-    stream = Terminal(terminal, escapes, encoding if isinstance(encoding, str) else None)
-    return style_of(stream, Asked(choice, settings.no_color, settings.dumb))
+    return style_of(Terminal(terminal, escapes, encoding), Asked(choice, settings.no_color, settings.dumb))
 
 
-def _live(err: TextIO | None, settings: Settings, style: Style, platform: str) -> Live:
+def _live(err: TextIO | None, settings: Settings, style: Style, platform: str, clock: Callable[[], float]) -> Live:
     redraw = is_terminal(err) and not settings.dumb
     width = partial(columns, err) if err is not None else lambda: 0
-    return Live(err, Looks(style, platform), redraw=redraw, columns=width, clock=time.perf_counter)
+    return Live(err, Looks(style, platform), redraw=redraw, columns=width, clock=clock)
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,7 +272,11 @@ HOST = Host()
 
 
 def _ran(
-    argv: Sequence[str], settings: Settings, streams: tuple[TextIO | None, TextIO | None], host: Host
+    argv: Sequence[str],
+    settings: Settings,
+    streams: tuple[TextIO | None, TextIO | None],
+    host: Host,
+    encoding: str | None,
 ) -> Shown | int:
     out, err = streams
     platform = host.platform
@@ -272,34 +290,43 @@ def _ran(
     chosen = given["command"]
     if not isinstance(chosen, str):
         return Shown((built.format_help().rstrip("\n"),), ())
-    style = _style(err, settings, Colour(str(given["color"])))
-    live = _live(err, settings, style, platform)
+    style = _style(err, settings, Colour(str(given["color"])), encoding)
+    live = _live(err, settings, style, platform, host.clock)
     try:
         context = Context(settings, platform, given["json"] is True, style, live, host.clock)
-        return COMMANDS[chosen].run(namespace, context)
+        with ticking(live.tick):
+            return COMMANDS[chosen].run(namespace, context)
     except (SiftError, OSError) as error:
         return shown.failure(error, style)
+    except KeyboardInterrupt:
+        if chosen in WRITERS:
+            raise StoppedError(STOPPED_WRITING) from None
+        raise
     finally:
         live.close()
 
 
 def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO | None, host: Host = HOST) -> int:
+    encoding = _encoding(err)
     for stream in (out, err):
         utf8(stream)
     try:
-        found = _ran(argv, settings, (out, err), host)
+        found = _ran(argv, settings, (out, err), host, encoding)
         if isinstance(found, int):
             return found
         write_results(out, map(printable_text, found.results) if is_terminal(out) else found.results)
+        say(err, found.messages)
     except ReaderLeftError as left:
         let_go(left.stream)
         return FAILED
     except OSError as error:
         say(err, shown.failure(error, PLAIN).messages)
         return FAILED
+    except StoppedError as stopped:
+        say(err, (stopped.said,))
+        return INTERRUPTED
     except KeyboardInterrupt:
         return INTERRUPTED
-    say(err, found.messages)
     return FAILED if found.failed else DONE
 
 
