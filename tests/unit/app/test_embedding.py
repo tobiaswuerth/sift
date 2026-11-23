@@ -20,6 +20,7 @@ from sift.storage.catalog import CATALOG
 from sift.storage.vectors import EMBED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
+from tests.later import LATER
 from tests.models import BROKEN, Hashed
 
 LONG = "\n\n".join(["Pruning skips what cannot win. " * 20] * 8)
@@ -230,3 +231,12 @@ def test_the_model_loads_once_however_many_collections_wait(home: Path, tmp_path
     embed(home, EmbedCollections(reset=reset), said.append, models)
     assert models.prepared == [True]
     assert [event for event in said if isinstance(event, PhaseStarted)].count(PhaseStarted(Phase.LOAD, None)) == 1
+
+
+def test_a_note_changed_in_one_chunk_needs_that_chunk_embedded_alone(home: Path, notes: Path) -> None:
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    pruning = notes / "pruning.md"
+    pruning.write_text(pruning.read_text(encoding="utf-8").replace("Ranges are", "Blocks are"), encoding="utf-8")
+    index(home, IndexCollections(), lambda _: None, readers=LATER)
+    assert chunks(home) > 2
+    assert counted(store(home), "SELECT chunks - vectors FROM counts") == 1

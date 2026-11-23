@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from typing import NamedTuple, cast
 
 import numpy as np
@@ -18,6 +19,15 @@ PENDING = """SELECT c.id, c.document, c.start, c.length,
              WHERE u.chunk > ?
              ORDER BY u.chunk LIMIT ?"""
 TEXTS = "SELECT id, title, text FROM documents WHERE id IN (SELECT value FROM json_each(?))"
+HELD = """SELECT d.title, substr(d.text, c.start + 1, c.length),
+                  c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document), v.vector, k.bits
+           FROM chunks c JOIN documents d ON d.id = c.document
+           JOIN vectors v ON v.chunk = c.id JOIN codes k ON k.chunk = c.id
+           WHERE c.document IN (SELECT value FROM json_each(?))"""
+PLACED = """SELECT c.id, d.title, substr(d.text, c.start + 1, c.length),
+                   c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document)
+            FROM chunks c JOIN documents d ON d.id = c.document
+            WHERE c.document IN (SELECT value FROM json_each(?))"""
 CODES = "SELECT chunk, bits FROM codes ORDER BY chunk"
 HELD_META = "SELECT value FROM meta WHERE key = ? AND (SELECT vectors FROM counts) > 0"
 READ = 65_536
@@ -85,6 +95,34 @@ def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
         )
         for each in waiting
     ]
+
+
+class HeldVector(NamedTuple):
+    title: str
+    text: str
+    first: int
+    vector: bytes
+    bits: bytes
+
+
+class PlacedChunk(NamedTuple):
+    id: ChunkId
+    title: str
+    text: str
+    first: int
+
+
+def held_vectors(transaction: Reading, documents: Sequence[DocumentId]) -> list[HeldVector]:
+    return rows(transaction, HeldVector, HELD, (json.dumps(list(documents)),))
+
+
+def placed_chunks(transaction: Reading, documents: Sequence[DocumentId]) -> list[PlacedChunk]:
+    return rows(transaction, PlacedChunk, PLACED, (json.dumps(list(documents)),))
+
+
+def copy_vectors(transaction: Writing, copies: Sequence[tuple[ChunkId, bytes, bytes]]) -> None:
+    run_each(transaction, "INSERT INTO vectors(chunk, vector) VALUES (?, ?)", [(c, v) for c, v, _ in copies])
+    run_each(transaction, "INSERT INTO codes(chunk, bits) VALUES (?, ?)", [(c, b) for c, _, b in copies])
 
 
 def documents_embedded(transaction: Reading) -> int:

@@ -9,6 +9,7 @@ from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase,
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import chosen_or_active
 from sift.app.filing import READERS, Job, Limits, Readers, Tally
+from sift.app.kept_vectors import vectors_held, vectors_kept
 from sift.app.problems import problems
 from sift.app.records import stored_records
 from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan, recorded
@@ -90,8 +91,9 @@ def _document_stored(transaction: WritingDocuments, path: str, stat: Stat, read:
     if before is not None and before.digest == read.digest:
         delete_documents(transaction, gone)
         return Tally(removed=len(gone))
+    held = vectors_held(transaction, [before.id] if before else [])
     delete_documents(transaction, [*gone, *([before.id] if before else [])])
-    add_documents(transaction, source, path, [read])
+    vectors_kept(transaction, add_documents(transaction, source, path, [read]), held)
     return Tally(added=int(before is None), changed=int(before is not None), removed=len(gone))
 
 

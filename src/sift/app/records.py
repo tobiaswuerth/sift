@@ -4,6 +4,7 @@ from itertools import batched
 
 from sift.api.events import Noted
 from sift.app.filing import Job, Tally
+from sift.app.kept_vectors import vectors_held, vectors_kept
 from sift.domain.plan.indexing import RACY, Stat
 from sift.domain.text.notes import Document
 from sift.domain.text.records import Chosen, SkippedLine, record_of
@@ -77,8 +78,11 @@ def _batch(
     held = keyed(transaction, source, [each.key for each in documents])
     changed = [each for each in documents if each.key in held and held[each.key].digest != each.digest]
     new = [each for each in documents if each.key not in held]
-    delete_documents(transaction, [held[each.key].id for each in changed])
-    add_documents(transaction, source, path, [*changed, *new])
+    gone = [held[each.key].id for each in changed]
+    vectors = vectors_held(transaction, gone)
+    delete_documents(transaction, gone)
+    added = add_documents(transaction, source, path, [*changed, *new])
+    vectors_kept(transaction, added[: len(changed)], vectors)
     return Tally(added=len(new), changed=len(changed)), skipped
 
 
