@@ -18,7 +18,8 @@ from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.search import search
-from sift.app.vsearch import Asked, Guarded, vsearch
+from sift.app.vsearch import Asked, Exact, Guarded, vsearch
+from sift.domain.arrays import Ids
 from sift.storage.database import Reading
 from sift.storage.vectors import documents_embedded, vectors_of
 from tests.allowed import Chosen
@@ -204,3 +205,22 @@ def test_a_filter_keeps_a_document_of_many_passages_whose_ids_are_not_its_passag
     nine = (Filter("rank", ANY, (9,)),)
     found = search(home, SearchKeywords("pigment", k=3, all_passages=True, filters=nine))
     assert [hit.id for hit in found.hits] == ["notes/z.md"] * 3
+
+
+def test_once_a_store_is_lost_no_other_store_is_read_for_that_round(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    for name in ("first", "second"):
+        add(home, AddCollection(str(many(tmp_path, name, 6))))
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    reads: list[int] = []
+
+    def read(transaction: Reading, chunks: Ids) -> Exact:
+        reads.append(len(chunks))
+        if len(reads) == 1:
+            raise StoreUnavailableError("the store is damaged", None)
+        return vectors_of(transaction, chunks)
+
+    found = vsearch(home, SearchVectors("pigment binder", k=3), Hashed(), Asked(3, read))
+    assert [each.collection for each in found.unsearched] == ["first"]
+    assert len(reads) == 2

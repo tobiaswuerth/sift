@@ -1,3 +1,4 @@
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,10 @@ from sift.api.indexing import IndexCollections
 from sift.api.links import Direction, LinkIn, LinkingLine, LinkOut, ListUnresolved, ShowLinks, Target
 from sift.app.collections import add
 from sift.app.indexing import index
-from sift.app.links import links, unresolved
+from sift.app.links import at_path, links, unresolved
+from sift.storage.catalog import known_collections
+from sift.storage.database import reading
+from sift.storage.store import open_store
 
 LONG = "word " * 100
 
@@ -191,12 +195,18 @@ def test_a_damaged_store_is_passed_over_by_names_and_unresolved_saying_so(people
     vault(tmp_path, {"x.md": "[[Nowhere]]"}, "w")
     store = people / "collections" / "w.sqlite"
     store.write_bytes(b"\xff" * 4096 + store.read_bytes()[4096:])
-    assert links(people, ShowLinks("Acme AG")).id == "v/Orgs/Acme AG.md"
+    named = links(people, ShowLinks("Acme AG"))
+    assert (named.id, [each.collection for each in named.unsearched]) == ("v/Orgs/Acme AG.md", ["w"])
+    assert links(people, ShowLinks("v/Orgs/Acme AG.md")).unsearched == ()
     found = unresolved(people, ListUnresolved())
     assert found.targets == (Target("Contract", 1, ("v/Meetings/Offer.md",)),)
     assert [each.collection for each in found.unsearched] == ["w"]
-    with pytest.raises(NotFoundError, match="passed over: w"):
+    with pytest.raises(NotFoundError, match="not searched, store unavailable: w"):
         links(people, ShowLinks("Nowhere"))
+    write(tmp_path / "v" / "Other" / "Acme AG.md", "# Acme AG again\n")
+    index(people, IndexCollections(names=("v",)), lambda _: None)
+    with pytest.raises(InvalidRequestError, match=r"Acme AG\.md; not searched, store unavailable: w"):
+        links(people, ShowLinks("Acme AG"))
 
 
 def test_the_cut_at_k_and_a_field_hold_for_the_second_step_too(people: Path) -> None:
@@ -208,3 +218,17 @@ def test_the_cut_at_k_and_a_field_hold_for_the_second_step_too(people: Path) -> 
     ]
     org = links(people, ShowLinks("v/Orgs/Acme AG.md", Direction.IN, depth=2, field="org")).into or ()
     assert [(each.id, each.through) for each in org] == [("v/People/Hans Müller.md", None)]
+
+
+@pytest.mark.parametrize("written", ["[[Acme AG]] b]]", "[[Acme AG]]]]", "[[Acme AG]] [[Offer]]"])
+def test_a_name_holding_more_than_one_link_names_no_note(people: Path, written: str) -> None:
+    with pytest.raises(NotFoundError, match="unknown document"):
+        links(people, ShowLinks(written))
+
+
+def test_a_note_found_by_name_is_read_again_at_its_path_alone(people: Path) -> None:
+    (one,) = known_collections(people)
+    with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
+        assert at_path("v/Orgs/Acme AG.md")(transaction) > 0
+        with pytest.raises(NotFoundError, match=r"unknown document 'v/Acme AG\.md'"):
+            at_path("v/Acme AG.md")(transaction)

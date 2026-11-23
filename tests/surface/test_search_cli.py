@@ -129,3 +129,20 @@ def test_unresolved_fails_if_a_collection_could_not_be_read_however_it_answers(s
     assert (code, out) == (1, "")
     assert err.startswith("error  notes: the store is missing: ")
     assert ran(settings, "unresolved", "--json")[0] == 1
+
+
+def test_links_of_a_note_named_while_a_collection_could_not_be_read_fail(
+    settings: Settings, notes: Path, tmp_path: Path
+) -> None:
+    searched_notes(settings, notes)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "x.md").write_text("# X\n", encoding="utf-8")
+    assert ran(settings, "add", str(other))[0] == 0
+    assert ran(settings, "index")[0] == 0
+    (settings.home / "collections" / "other.sqlite").unlink()
+    code, out, err = ran(settings, "links", "Brush")
+    assert (code, out) == (1, "Brush (notes/robots/brush.md) links to: nothing\n")
+    assert err.startswith("error  other: the store is missing: ")
+    assert ran(settings, "links", "Brush", "--json")[0] == 1
+    assert ran(settings, "links", "notes/robots/brush.md")[0] == 0

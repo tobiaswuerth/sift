@@ -60,6 +60,7 @@ class Links:
     title: str
     out: tuple[LinkOut, ...] | None
     into: tuple[LinkIn, ...] | None
+    unsearched: tuple[Unsearched, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -216,8 +216,13 @@ def test_unresolved_targets_show_how_many_link_them_and_a_few_of_those() -> None
 
 def test_unresolved_targets_of_a_store_that_could_not_be_read_are_said_to_be_missing() -> None:
     found = Unresolved((Target("Gone", 1, ("v/c.md",)),), (Unsearched("w", "the store is damaged", "run sift index"),))
-    shown_found = shown_unresolved(found, "linux", PLAIN)
-    assert shown_found.failed
-    assert shown_found.messages[0] == "error  w: the store is damaged"
+    assert shown_unresolved(found, "linux", PLAIN).messages[0] == "error  w: the store is damaged"
     alone = shown_unresolved(Unresolved((), found.unsearched), "linux", PLAIN)
-    assert (alone.results, alone.failed, len(alone.messages)) == ((), True, 2)
+    assert (alone.results, len(alone.messages)) == ((), 2)
+
+
+def test_links_of_a_note_found_while_a_store_could_not_be_read_say_so() -> None:
+    found = Links("v/A.md", "A", (), None, (Unsearched("w", "the store is damaged", "run sift index"),))
+    shown_found = shown_links(found, "linux", PLAIN)
+    assert shown_found.results == ("A (v/A.md) links to: nothing",)
+    assert shown_found.messages[0] == "error  w: the store is damaged"

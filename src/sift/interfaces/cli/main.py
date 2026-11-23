@@ -137,7 +137,7 @@ def _some_skipped(result: IndexResult | EmbedResult) -> bool:
     return any(isinstance(each.outcome, Skipped) for each in result.collections)
 
 
-def _some_unread(found: Unresolved) -> bool:
+def _some_unread(found: Links | Unresolved) -> bool:
     return bool(found.unsearched)
 
 
@@ -162,7 +162,9 @@ COMMANDS = MappingProxyType(
         ),
         "vsearch": Command("find passages near a query in meaning", SearchVectors, _vsearch),
         "get": command("print documents by their ids", GetDocuments, _get, shown.documents, _some_unfound),
-        "links": command("the links of a note: those it holds, and those into it", ShowLinks, _links, shown.links),
+        "links": command(
+            "the links of a note: those it holds, and those into it", ShowLinks, _links, shown.links, _some_unread
+        ),
         "unresolved": command(
             "link targets no note answers to yet, most linked first",
             ListUnresolved,

@@ -215,20 +215,20 @@ def _in(heading: str, found: tuple[LinkIn, ...]) -> tuple[str, ...]:
     return (f"{heading}:" if found else f"{heading}: nothing", *lines)
 
 
-def links(result: Links, _platform: str, _style: Style) -> Shown:
+def links(result: Links, _platform: str, style: Style) -> Shown:
     note = f"{result.title} ({result.id})"
     out = () if result.out is None else _out(f"{note} links to", result.out)
     into = () if result.into is None else _in(f"Linking to {note}", result.into)
-    return Shown(tuple(printable(line) for line in (*out, *into)), ())
+    return Shown(tuple(printable(line) for line in (*out, *into)), _unsearched(result.unsearched, style))
 
 
 def unresolved(result: Unresolved, _platform: str, style: Style) -> Shown:
     problems = _unsearched(result.unsearched, style)
     if not result.targets:
         nothing = () if result.unsearched else (labelled("nothing", "every link leads to a note"),)
-        return Shown((), (*problems, *nothing), failed=bool(result.unsearched))
+        return Shown((), (*problems, *nothing))
     rows = [
         (f"{each.documents:,}", each.target, ", ".join(each.ids) + (", ..." if each.documents > len(each.ids) else ""))
         for each in result.targets
     ]
-    return Shown(table(rows, frozenset({0})), problems, failed=bool(result.unsearched))
+    return Shown(table(rows, frozenset({0})), problems)
