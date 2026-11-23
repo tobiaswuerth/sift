@@ -12,10 +12,10 @@ from sift.storage.documents import (
     SourceId,
     add_documents,
     clear_unreadable,
-    delete_documents,
     mark_unreadable,
     put_source,
 )
+from sift.storage.forgetting import delete_documents
 from sift.storage.keywords import writing_documents
 from sift.storage.taken import keyed, nothing_taken, take, untaken
 

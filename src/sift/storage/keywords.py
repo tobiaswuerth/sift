@@ -1,5 +1,4 @@
 import dataclasses
-import hashlib
 import json
 import re
 from collections import Counter
@@ -12,9 +11,10 @@ import numpy as np
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, DocumentId, first_row
 from sift.domain.arrays import ints
-from sift.domain.codec.segments import FORMAT, GAP, SHAPE, Segment, Shape, segment, stream
+from sift.domain.codec.segments import GAP, Segment, segment, stream
+from sift.domain.codec.shape import SHAPE, Shape
 from sift.domain.errors import DamagedError
-from sift.domain.text.tokens import TABLE_DIGEST, tokens
+from sift.domain.text.tokens import tokens
 from sift.storage.database import (
     BATCHES,
     Batches,
@@ -31,13 +31,10 @@ from sift.storage.database import (
     writing,
 )
 from sift.storage.keyword_merges import Totals, merged_once, planned, settled
+from sift.storage.keyword_meta import FINGERPRINT_KEY, SHAPE_KEY, THROUGH_KEY, fingerprint
 from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
 
-SHAPE_KEY, THROUGH_KEY, FINGERPRINT_KEY = "keyword_shape", "keywords_through", "keyword_fingerprint"
 DOCUMENTS = "SELECT id, title, meta, text FROM keyword_documents WHERE id IN (SELECT value FROM json_each(?))"
-NUMBERS_PROBE = """SELECT coalesce(group_concat(j.atom, ' '), '') FROM json_tree(
-                       '[1e20, 0.1, 1.0, -0.0, 1.5e-7, 3.141592653589793, 12345678901234567890, true, false]') j
-                   WHERE j.atom IS NOT NULL"""
 REMAKE_REMEDY = "run sift index to remake it"
 REMAKING = "remaking "
 STALE = "the store's keyword index is of another version of sift"
@@ -66,19 +63,6 @@ class Range(NamedTuple):
     id: int
     first: int
     last: int
-
-
-def fingerprint(transaction: Reading) -> str:
-    (rendered,) = rows(transaction, Value, NUMBERS_PROBE)
-    return hashlib.blake2b(f"{FORMAT}|{TABLE_DIGEST}|{rendered.value}".encode(), digest_size=16).hexdigest()
-
-
-def keyword_meta(transaction: Reading, shape: Shape, start: int) -> tuple[tuple[str, str], ...]:
-    return (
-        (SHAPE_KEY, json.dumps(dataclasses.asdict(shape))),
-        (THROUGH_KEY, str(start)),
-        (FINGERPRINT_KEY, fingerprint(transaction)),
-    )
 
 
 def _meta(transaction: Reading, key: str) -> str | None:

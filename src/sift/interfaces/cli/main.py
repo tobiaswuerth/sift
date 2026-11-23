@@ -1,35 +1,30 @@
 import argparse
 import contextlib
-import dataclasses
-import json
 import re
 import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
-from importlib.metadata import version
+from importlib import import_module
 from types import MappingProxyType
-from typing import ClassVar, NoReturn, Protocol, TextIO, cast, override
+from typing import NoReturn, Protocol, TextIO, cast, override
 
-from sift.api.collections import AddCollection, CollectionAdded, ShowStatus, Status, Unavailable
-from sift.api.documents import Documents, GetDocuments
-from sift.api.embedding import EmbedCollections, EmbedResult
+from sift.api.collections import AddCollection, ShowStatus
+from sift.api.documents import GetDocuments
+from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, SiftError
-from sift.api.events import Reporter
-from sift.api.indexing import IndexCollections, IndexResult, Skipped
-from sift.api.links import FindMentions, FindSimilar, Links, ListUnresolved, ShowLinks, Unresolved
-from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
-from sift.app import collections, documents, embedding, indexing, links, mentions, query, search, similar, vsearch
-from sift.inference.loading import Deferred, deferred
-from sift.interfaces.cli import shown
-from sift.interfaces.cli.arguments import options, request_of
-from sift.interfaces.cli.shown import DONE, FAILED, Shown
+from sift.api.indexing import IndexCollections
+from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
+from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
+from sift.interfaces.cli.arguments import options
+from sift.interfaces.cli.context import Command, Commands, Context
+from sift.interfaces.cli.shown.outcome import FAILED, Shown, failure
 from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
 from sift.interfaces.console.streams import ReaderLeftError, columns, is_terminal, let_go, say, utf8, write_results
 from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal, style_of
-from sift.interfaces.console.text import printable_json, printable_text
+from sift.interfaces.console.text import printable_text
 from sift.interfaces.console.windows import console, escapes_work
 from sift.settings import Settings, from_environment, whole_path
 
@@ -38,10 +33,48 @@ DESCRIPTION = "Fast local search over your documents and notes."
 NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
 ONE_VALUE = re.compile(r"argument (\S+?)(?:/\S+)?: expected one argument")
 STOPPED_WRITING = "stopped: what was written so far is kept"
-NEED_COLLECTIONS = frozenset({"get", "similar", "mentions", "links", "unresolved"})
 JSON_HELP = "answer in JSON"
 COLOR_HELP = "colour what sift says"
+VERSION_HELP = "say which sift this is"
 WRITERS = frozenset({"index", "embed"})
+COMMANDS_PACKAGE = "sift.interfaces.cli.commands"
+
+
+@dataclass(frozen=True, slots=True)
+class CommandEntry:
+    help: str
+    request: type[object]
+    module: str
+
+
+ENTRIES = MappingProxyType(
+    {
+        "add": CommandEntry("add a folder as a collection", AddCollection, "collections"),
+        "index": CommandEntry("read what is new or changed in collections", IndexCollections, "indexing"),
+        "query": CommandEntry(
+            "find passages for a question: keyword and semantic, reranked", SearchHybrid, "searching"
+        ),
+        "search": CommandEntry("find passages by their words, ranked by BM25", SearchKeywords, "searching"),
+        "embed": CommandEntry(
+            "embed passages for semantic search, with the model SIFT_EMBED_MODEL names", EmbedCollections, "indexing"
+        ),
+        "vsearch": CommandEntry("find passages near a query in meaning", SearchVectors, "searching"),
+        "get": CommandEntry("print documents by their ids", GetDocuments, "collections"),
+        "similar": CommandEntry("find documents near one in meaning, by its own vectors", FindSimilar, "searching"),
+        "mentions": CommandEntry("find documents naming a note without linking to it", FindMentions, "searching"),
+        "links": CommandEntry("the links of a note: those it holds, and those into it", ShowLinks, "links"),
+        "unresolved": CommandEntry("link targets no note answers to yet, most linked first", ListUnresolved, "links"),
+        "status": CommandEntry("show each collection: its folder and what its store holds", ShowStatus, "collections"),
+    }
+)
+
+
+class Metadata(Protocol):
+    def version(self, distribution_name: str) -> str: ...
+
+
+def _as_metadata(module: object) -> Metadata:
+    return cast("Metadata", module)
 
 
 class UsageError(Exception):
@@ -60,6 +93,23 @@ class Parser(argparse.ArgumentParser):
         raise UsageError(message, self.prog)
 
 
+class VersionAction(argparse.Action):
+    def __init__(self, option_strings: Sequence[str], dest: str) -> None:
+        super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, help=VERSION_HELP)
+
+    @override
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[object] | None,
+        option_string: str | None = None,
+    ) -> None:
+        metadata = _as_metadata(import_module("importlib.metadata"))
+        write_results(sys.stdout, (f"sift {metadata.version('sift-rag')}",))
+        parser.exit()
+
+
 class StoppedError(Exception):
     said: str
 
@@ -68,174 +118,12 @@ class StoppedError(Exception):
         self.said = said
 
 
-@dataclass(frozen=True, slots=True)
-class Context:
-    settings: Settings
-    platform: str
-    json: bool
-    style: Style
-    report: Reporter
-    clock: Callable[[], float] = time.perf_counter
+def _as_commands(module: object) -> Commands:
+    return cast("Commands", module)
 
 
-class Answer(Protocol):
-    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[object]]]
-
-
-@dataclass(frozen=True, slots=True)
-class Command:
-    help: str
-    request: type[object]
-    run: Callable[[argparse.Namespace, Context], Shown]
-
-
-def as_json(answer: Answer) -> str:
-    return printable_json(json.dumps(dataclasses.asdict(answer), ensure_ascii=False, indent=2))
-
-
-def command[R, A: Answer](
-    help_text: str,
-    request: type[R],
-    act: Callable[[Context, R], A],
-    show: Callable[[A, str, Style], Shown],
-    failed: Callable[[A], bool] = lambda _: False,
-) -> Command:
-    def run(namespace: argparse.Namespace, context: Context) -> Shown:
-        answer = act(context, request_of(request, namespace))
-        found = Shown((as_json(answer),), ()) if context.json else show(answer, context.platform, context.style)
-        return found._replace(code=FAILED if failed(answer) else DONE)
-
-    return Command(help_text, request, run)
-
-
-def _add(context: Context, request: AddCollection) -> CollectionAdded:
-    return collections.add(context.settings.home, request)
-
-
-def _status(context: Context, request: ShowStatus) -> Status:
-    return collections.status(context.settings.home, request)
-
-
-def _index(context: Context, request: IndexCollections) -> IndexResult:
-    return indexing.index(context.settings.home, request, context.report)
-
-
-def _get(context: Context, request: GetDocuments) -> Documents:
-    return documents.documents(context.settings.home, request)
-
-
-def _found(answer: SearchResult, context: Context, started: float, kind: str) -> Shown:
-    seconds = context.clock() - started
-    found = (
-        Shown((as_json(answer),), ())
-        if context.json
-        else shown.hits(answer, seconds, context.platform, context.style, kind)
-    )
-    return found._replace(code=FAILED if _some_unread(answer) else DONE)
-
-
-def _search(namespace: argparse.Namespace, context: Context) -> Shown:
-    started = context.clock()
-    answer = search.search(context.settings.home, request_of(SearchKeywords, namespace), context.clock)
-    return _found(answer, context, started, "keyword")
-
-
-def _models(context: Context) -> Deferred:
-    return deferred(context.settings.embed_model, context.settings.rerank_model)
-
-
-def _embed(context: Context, request: EmbedCollections) -> EmbedResult:
-    return embedding.embed(context.settings.home, request, context.report, _models(context))
-
-
-def _vsearch(namespace: argparse.Namespace, context: Context) -> Shown:
-    started = context.clock()
-    request = request_of(SearchVectors, namespace)
-    answer = vsearch.vsearch(context.settings.home, request, _models(context), report=context.report)
-    return _found(answer, context, started, "semantic")
-
-
-def _query(namespace: argparse.Namespace, context: Context) -> Shown:
-    started = context.clock()
-    request = request_of(SearchHybrid, namespace)
-    answer = query.query(context.settings.home, request, _models(context), report=context.report)
-    return _found(answer, context, started, "hybrid")
-
-
-def _mentions(namespace: argparse.Namespace, context: Context) -> Shown:
-    started = context.clock()
-    answer = mentions.mentions(context.settings.home, request_of(FindMentions, namespace))
-    return _found(answer, context, started, "keyword")
-
-
-def _similar(namespace: argparse.Namespace, context: Context) -> Shown:
-    started = context.clock()
-    answer = similar.similar(context.settings.home, request_of(FindSimilar, namespace))
-    return _found(answer, context, started, "semantic")
-
-
-def _links(context: Context, request: ShowLinks) -> Links:
-    return links.links(context.settings.home, request)
-
-
-def _unresolved(context: Context, request: ListUnresolved) -> Unresolved:
-    return links.unresolved(context.settings.home, request)
-
-
-def _some_skipped(result: IndexResult | EmbedResult) -> bool:
-    return any(isinstance(each.outcome, Skipped) for each in result.collections)
-
-
-def _some_unread(found: SearchResult | Links | Unresolved) -> bool:
-    return bool(found.unsearched)
-
-
-def _some_unfound(found: Documents) -> bool:
-    return bool(found.unfound)
-
-
-def _some_unavailable(found: Status) -> bool:
-    return any(isinstance(each.contents, Unavailable) for each in found.collections)
-
-
-COMMANDS = MappingProxyType(
-    {
-        "add": command("add a folder as a collection", AddCollection, _add, shown.added),
-        "index": command(
-            "read what is new or changed in collections", IndexCollections, _index, shown.indexed, _some_skipped
-        ),
-        "query": Command("find passages for a question: keyword and semantic, reranked", SearchHybrid, _query),
-        "search": Command("find passages by their words, ranked by BM25", SearchKeywords, _search),
-        "embed": command(
-            "embed passages for semantic search, with the model SIFT_EMBED_MODEL names",
-            EmbedCollections,
-            _embed,
-            shown.embedded,
-            _some_skipped,
-        ),
-        "vsearch": Command("find passages near a query in meaning", SearchVectors, _vsearch),
-        "get": command("print documents by their ids", GetDocuments, _get, shown.documents, _some_unfound),
-        "similar": Command("find documents near one in meaning, by its own vectors", FindSimilar, _similar),
-        "mentions": Command("find documents naming a note without linking to it", FindMentions, _mentions),
-        "links": command(
-            "the links of a note: those it holds, and those into it", ShowLinks, _links, shown.links, _some_unread
-        ),
-        "unresolved": command(
-            "link targets no note answers to yet, most linked first",
-            ListUnresolved,
-            _unresolved,
-            shown.unresolved,
-            _some_unread,
-        ),
-        "status": command(
-            "show each collection: its folder and what its store holds",
-            ShowStatus,
-            _status,
-            shown.status,
-            _some_unavailable,
-        ),
-    }
-)
+def command_of(name: str) -> Command:
+    return _as_commands(import_module(f"{COMMANDS_PACKAGE}.{ENTRIES[name].module}")).COMMANDS[name]
 
 
 def _placed(settings: Settings, written: str) -> str:
@@ -254,11 +142,11 @@ def _is_text(argument: str) -> bool:
 
 def parser(settings: Settings) -> argparse.ArgumentParser:
     built = Parser(prog="sift", description=DESCRIPTION)
-    built.add_argument("--version", action="version", version=f"sift {version('sift-rag')}")
+    built.add_argument("--version", action=VersionAction)
     built.add_argument("--json", action="store_true", help=JSON_HELP)
     built.add_argument("--color", choices=list(Colour), default=Colour.AUTO, help=COLOR_HELP)
     commands = built.add_subparsers(dest="command", metavar="COMMAND")
-    for name, each in COMMANDS.items():
+    for name, each in ENTRIES.items():
         chosen = commands.add_parser(name, help=each.help, description=each.help)
         options(chosen, each.request, partial(_placed, settings))
         chosen.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=JSON_HELP)
@@ -281,7 +169,7 @@ def _parsed(
         except SystemExit as stop:
             return stop.code if isinstance(stop.code, int) else FAILED
         except UsageError as wrong:
-            return shown.failure(InvalidRequestError(wrong.message, _usage(wrong)), PLAIN, as_json="--json" in argv)
+            return failure(InvalidRequestError(wrong.message, _usage(wrong)), PLAIN, as_json="--json" in argv)
 
 
 def _encoding(stream: TextIO | None) -> str | None:
@@ -320,7 +208,7 @@ def _ran(
     out, err = streams
     platform = host.platform
     if (odd := next((argument for argument in argv if not _is_text(argument)), None)) is not None:
-        return shown.failure(InvalidRequestError(f"an argument is no text: {odd!r}", NO_TEXT_REMEDY), PLAIN)
+        return failure(InvalidRequestError(f"an argument is no text: {odd!r}", NO_TEXT_REMEDY), PLAIN)
     built = parser(settings)
     namespace = _parsed(built, argv, out, err)
     if isinstance(namespace, (int, Shown)):
@@ -333,12 +221,10 @@ def _ran(
     live = _live(err, settings, style, platform, host.clock)
     try:
         context = Context(settings, platform, given["json"] is True, style, live, host.clock)
-        if chosen in NEED_COLLECTIONS and not collections.chosen(settings.home, ()):
-            return shown.empty(platform, style)
         with ticking(live.tick):
-            return COMMANDS[chosen].run(namespace, context)
+            return command_of(chosen).run(namespace, context)
     except (SiftError, OSError) as error:
-        return shown.failure(error, style, as_json=given["json"] is True)
+        return failure(error, style, as_json=given["json"] is True)
     except KeyboardInterrupt:
         if chosen in WRITERS:
             raise StoppedError(STOPPED_WRITING) from None
@@ -361,7 +247,7 @@ def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO
         let_go(left.stream)
         return FAILED
     except OSError as error:
-        say(err, shown.failure(error, PLAIN).messages)
+        say(err, failure(error, PLAIN).messages)
         return FAILED
     except StoppedError as stopped:
         say(err, (stopped.said,))

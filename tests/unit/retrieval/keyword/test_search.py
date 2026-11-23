@@ -6,7 +6,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from sift.domain.arrays import ints, last
-from sift.domain.codec.segments import Shape
+from sift.domain.codec.shape import Shape
 from sift.domain.plan.segments import Policy
 from sift.domain.query.expressions import NOTHING, And, Or, Term
 from sift.domain.query.grammar import parsed

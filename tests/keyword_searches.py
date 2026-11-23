@@ -10,7 +10,7 @@ from typing import cast
 import numpy as np
 from hypothesis import strategies as st
 
-from sift.domain.codec.segments import Shape
+from sift.domain.codec.shape import Shape
 from sift.domain.plan.segments import Policy
 from sift.domain.query.expressions import And, Expression, Leaf, Not, Or, Phrase, Prefix, Term
 from sift.retrieval.keyword.lists import Opened, opened

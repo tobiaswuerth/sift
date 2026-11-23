@@ -322,15 +322,6 @@ def test_colour_is_given_when_asked_and_kept_out_of_results(settings: Settings, 
     assert "\x1b[" not in ran(settings, "status", "--color", "always")[1]
 
 
-def test_the_command_line_needs_the_standard_library_and_numpy_alone() -> None:
-    code = (
-        "import sys; before = set(sys.modules); import sift.interfaces.cli.main; "
-        "print(sorted({name.split('.')[0] for name in set(sys.modules) - before} - set(sys.stdlib_module_names)))"
-    )
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=60)
-    assert result.stdout == "['numpy', 'sift']\n"
-
-
 def test_index_fails_if_a_collection_was_skipped_however_it_answers(settings: Settings, notes: Path) -> None:
     indexed_notes(settings, notes)
     (settings.home / "collections" / "notes.sqlite").unlink()

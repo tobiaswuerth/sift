@@ -8,7 +8,6 @@ from sift.domain.errors import DamagedError
 from sift.domain.text.links import names
 from sift.domain.text.notes import Document
 from sift.storage.database import Reading, Writing, WritingDocuments, first, inserted, rows, run, run_each
-from sift.storage.keywords import forget
 
 SourceId = NewType("SourceId", int)
 
@@ -79,24 +78,6 @@ def put_source(transaction: Writing, path: str, modified_ns: int, size: int) -> 
     return written.id
 
 
-class Owned(NamedTuple):
-    id: DocumentId
-
-
-def delete_sources(transaction: WritingDocuments, paths: Sequence[str]) -> int:
-    chosen = (json.dumps(list(paths)),)
-    held = rows(
-        transaction,
-        Owned,
-        """SELECT id FROM documents
-           WHERE source IN (SELECT id FROM sources WHERE path IN (SELECT value FROM json_each(?)))""",
-        chosen,
-    )
-    forget(transaction, [document.id for document in held])
-    run(transaction, "DELETE FROM sources WHERE path IN (SELECT value FROM json_each(?))", chosen)
-    return len(held)
-
-
 def kept(transaction: Reading, source: SourceId) -> list[KeptDocument]:
     return rows(
         transaction, KeptDocument, "SELECT id, key, digest FROM documents WHERE source = ? ORDER BY id", (source,)
@@ -138,15 +119,6 @@ def add_documents(
     transaction: WritingDocuments, source: SourceId, path: str, documents: Sequence[Document]
 ) -> tuple[DocumentId, ...]:
     return tuple(_add(transaction, source, path, document) for document in documents)
-
-
-def delete_documents(transaction: WritingDocuments, documents: Sequence[DocumentId]) -> None:
-    forget(transaction, documents)
-    run(
-        transaction,
-        "DELETE FROM documents WHERE id IN (SELECT value FROM json_each(?))",
-        (json.dumps(list(documents)),),
-    )
 
 
 def stored(transaction: Reading, path: str, key: str = "") -> Stored | None:

@@ -15,7 +15,8 @@ from sift.api.embedding import CollectionEmbedded, Embedded, EmbedResult
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult, Skipped
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
 from sift.api.search import Hit, SearchResult, Unsearched
-from sift.interfaces.cli.main import Answer, as_json
+from sift.interfaces.cli.commands.making import as_json
+from sift.interfaces.cli.context import Answer
 
 SNAPSHOT = Path(__file__).with_name("json_contract.json")
 UNSEARCHED = Unsearched("papers", "the store is busy", "wait, then ask again")

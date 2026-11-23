@@ -8,7 +8,8 @@ import numpy as np
 
 from sift.domain.arrays import Ascending, Ids, among, first, firsts, ints, last, run_starts, total
 from sift.domain.codec.postings import blocked_all, lengths_of, positions_all, with_lengths
-from sift.domain.codec.segments import Lists, Shape, postings_of
+from sift.domain.codec.segments import Lists, postings_of
+from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Held, Policy, merges
 from sift.storage.database import Batches, IdRow, Reading, WritingDocuments, rows, run, streamed

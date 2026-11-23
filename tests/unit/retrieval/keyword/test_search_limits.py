@@ -7,7 +7,7 @@ from hypothesis import given, settings
 from sift.api.errors import InvalidRequestError
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.postings import encoded, ranged
-from sift.domain.codec.segments import Shape
+from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.query.expressions import And, Or, Phrase, Prefix, Term
 from sift.domain.rank.best import Best

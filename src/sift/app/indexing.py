@@ -20,14 +20,13 @@ from sift.storage.database import Batches, Connection, WritingDocuments, reading
 from sift.storage.documents import (
     add_documents,
     clear_unreadable,
-    delete_documents,
-    delete_sources,
     kept,
     mark_unreadable,
     put_source,
     sources,
     unreadable,
 )
+from sift.storage.forgetting import delete_documents, delete_sources
 from sift.storage.keywords import remade, remake_started, settle, writing_documents
 from sift.storage.store import open_store, unavailable_if_unusable
 

@@ -5,7 +5,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from sift.domain.codec.segments import Shape
+from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows, run, writing

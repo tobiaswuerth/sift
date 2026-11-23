@@ -8,7 +8,8 @@ from hypothesis import strategies as st
 
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.postings import blocked, lengths_of, positions_of, ranges_of
-from sift.domain.codec.segments import GAP, LongPostings, Postings, Shape, ShortPostings, segment, stream
+from sift.domain.codec.segments import GAP, LongPostings, Postings, ShortPostings, segment, stream
+from sift.domain.codec.shape import Shape
 from sift.domain.rank.bm25 import term_scores, unquantized
 
 SMALL = Shape(range_shift=2, block=2, long=3, lengths_shift=3)

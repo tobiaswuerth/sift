@@ -4,10 +4,11 @@ from pathlib import Path
 from typing import NamedTuple
 
 from sift.api.ids import CollectionId, DocumentId
-from sift.domain.codec.segments import Shape
+from sift.domain.codec.shape import Shape
 from sift.domain.text.notes import note
 from sift.storage.database import BATCHES, Batches, Connection, Reading, Writing, WritingDocuments, rows, run
-from sift.storage.documents import add_documents, delete_documents, delete_sources, kept, put_source
+from sift.storage.documents import add_documents, kept, put_source
+from sift.storage.forgetting import delete_documents, delete_sources
 from sift.storage.keywords import writing_documents
 from sift.storage.store import create_store, open_store
 

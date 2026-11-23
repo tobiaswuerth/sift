@@ -13,7 +13,7 @@ from sift.domain.codec.postings import (
     positions_of,
     ranges_of,
 )
-from sift.domain.codec.segments import Shape
+from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.storage import keyword_lists
 from sift.storage.database import Reading

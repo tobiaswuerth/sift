@@ -26,8 +26,6 @@ from sift.storage.documents import (
     chunks_of,
     clear_unreadable,
     counts,
-    delete_documents,
-    delete_sources,
     fields_json,
     fields_of,
     kept,
@@ -38,6 +36,7 @@ from sift.storage.documents import (
     stored,
     unreadable,
 )
+from sift.storage.forgetting import delete_documents, delete_sources
 from sift.storage.keywords import writing_documents
 from sift.storage.store import create_store, open_store
 

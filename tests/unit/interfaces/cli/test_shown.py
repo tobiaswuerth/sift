@@ -16,9 +16,13 @@ from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailable
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
 from sift.api.search import Hit, SearchResult, Unsearched
-from sift.interfaces.cli.shown import FAILED, USAGE, Shown, added, documents, failure, hits, indexed, status
-from sift.interfaces.cli.shown import links as shown_links
-from sift.interfaces.cli.shown import unresolved as shown_unresolved
+from sift.interfaces.cli.shown.collections import added, status
+from sift.interfaces.cli.shown.documents import documents
+from sift.interfaces.cli.shown.indexing import indexed
+from sift.interfaces.cli.shown.links import links as shown_links
+from sift.interfaces.cli.shown.links import unresolved as shown_unresolved
+from sift.interfaces.cli.shown.outcome import FAILED, USAGE, Shown, failure
+from sift.interfaces.cli.shown.searching import hits
 from sift.interfaces.console.style import PLAIN, Style
 
 ADDED = CollectionAdded(
