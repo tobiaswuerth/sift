@@ -27,6 +27,10 @@ class Hashed:
     name: str = "hashed-words"
     width: int = 48
     asked: list[tuple[tuple[str, ...], bool]] = field(default_factory=list[tuple[tuple[str, ...], bool]])
+    prepared: list[bool] = field(default_factory=list[bool])
+
+    def prepare(self) -> None:
+        self.prepared.append(True)
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         self.asked.append((tuple(texts), query))

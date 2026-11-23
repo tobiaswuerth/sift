@@ -1,5 +1,7 @@
 import contextlib
 import sqlite3
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -13,6 +15,7 @@ from sift.api.indexing import IndexCollections, Skipped
 from sift.app.collections import add
 from sift.app.embedding import BROKEN_REMEDY, Embedding, embed
 from sift.app.indexing import index
+from sift.domain.codec.codes import Halves
 from sift.storage.catalog import CATALOG
 from sift.storage.vectors import EMBED_REMEDY
 from tests.models import BROKEN, Hashed
@@ -86,7 +89,10 @@ def test_a_chunk_the_model_gives_no_vector_for_is_counted_and_stays_to_embed(hom
     said: list[Event] = []
     outcome = embed(home, EmbedCollections(), said.append, Hashed()).collections[0].outcome
     assert outcome == Embedded(chunks(home) - 1, 1)
-    assert said[-1] == Noted("1 chunk could not be embedded: the model gave no vector", BROKEN_REMEDY)
+    assert said[-2:] == [
+        PhaseDone(chunks(home) - 1),
+        Noted("1 chunk could not be embedded: the model gave no vector", BROKEN_REMEDY),
+    ]
     assert embed(home, EmbedCollections(), lambda _: None, Hashed()).collections[0].outcome == Embedded(0, 1)
 
 
@@ -136,3 +142,63 @@ def test_a_reset_says_which_store_it_could_not_clear(home: Path, tmp_path: Path)
     assert next(event.text for event in said if isinstance(event, Noted)).startswith(
         "its vectors could not be forgotten:"
     )
+
+
+@dataclass(slots=True)
+class Stopping:
+    models: Hashed
+    calls_left: int
+
+    @property
+    def name(self) -> str:
+        return self.models.name
+
+    def prepare(self) -> None:
+        if self.calls_left < 0:
+            raise RuntimeError("the model would not load")
+        self.models.prepare()
+
+    def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
+        if not self.calls_left:
+            raise KeyboardInterrupt
+        self.calls_left -= 1
+        return self.models.encode(texts, query=query)
+
+
+def test_a_reset_cut_short_is_finished_by_embedding_again(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "more" / "a.md", "# A\n\nAnother note.\n")
+    add(home, AddCollection(str(tmp_path / "more")))
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    other = Hashed(name="other-model", width=32)
+    with pytest.raises(KeyboardInterrupt):
+        embed(home, EmbedCollections(reset=True), lambda _: None, Stopping(other, 0))
+    assert other.prepared == [True]
+    resumed = embed(home, EmbedCollections(), lambda _: None, other).collections
+    assert {each.name: each.outcome for each in resumed} == {
+        "more": Embedded(1, 0),
+        "notes": Embedded(chunks(home), 0),
+    }
+
+
+def test_a_reset_whose_model_will_not_load_forgets_nothing(home: Path) -> None:
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    with pytest.raises(RuntimeError, match="would not load"):
+        embed(home, EmbedCollections(reset=True), lambda _: None, Stopping(Hashed(name="other-model"), -1))
+    assert counted(store(home), "SELECT count(*) FROM vectors") == chunks(home)
+
+
+def test_a_store_taken_by_another_model_midway_ends_its_phase_and_is_skipped(home: Path) -> None:
+    said: list[Event] = []
+
+    def taken(event: Event) -> None:
+        said.append(event)
+        if isinstance(event, Advanced) and event.done == 1:
+            stopping = Stopping(Hashed(name="other-model"), 1)
+            with pytest.raises(KeyboardInterrupt):
+                embed(home, EmbedCollections(reset=True), lambda _: None, stopping, Embedding(chunks_a_write=1))
+
+    (outcome,) = embed(home, EmbedCollections(), taken, Hashed(), Embedding(chunks_a_write=1)).collections
+    assert isinstance(outcome.outcome, Skipped)
+    assert outcome.outcome.reason == "the store holds vectors of other-model, not of hashed-words"
+    assert [type(event) for event in said if isinstance(event, (PhaseStarted, PhaseDone))] == [PhaseStarted, PhaseDone]

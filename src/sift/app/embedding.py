@@ -28,10 +28,10 @@ class Embedding:
 EMBEDDING = Embedding()
 
 
-@dataclass(frozen=True, slots=True)
-class Job:
-    embedding: Embedding
-    reset: bool
+@dataclass(slots=True)
+class Tally:
+    stored: int = 0
+    broken: int = 0
 
 
 def _counted(n: int, what: str) -> str:
@@ -43,6 +43,13 @@ def _waiting(connection: Connection, after: int, most: int) -> list[Pending]:
         return pending(transaction, after, most)
 
 
+def _written(connection: Connection, models: Models, waiting: list[Pending], tally: Tally) -> None:
+    matrix = models.encode([embedded(each.title, each.text, first=each.first) for each in waiting], query=False)
+    with writing(connection) as transaction:
+        kept = put_vectors(transaction, np.array([each.chunk for each in waiting], np.int64), matrix, models.name)
+    tally.stored, tally.broken = tally.stored + kept.stored, tally.broken + len(kept.broken)
+
+
 def _filled(connection: Connection, report: Reporter, models: Models, embedding: Embedding) -> Embedded:
     with reading(connection) as transaction:
         refuse_model(transaction, models.name)
@@ -50,43 +57,51 @@ def _filled(connection: Connection, report: Reporter, models: Models, embedding:
     if not total:
         return Embedded(0, 0)
     report(PhaseStarted(Phase.EMBED, total))
-    stored, broken, after = 0, 0, 0
-    while waiting := _waiting(connection, after, embedding.chunks_a_write):
-        matrix = models.encode([embedded(each.title, each.text, first=each.first) for each in waiting], query=False)
-        with writing(connection) as transaction:
-            kept = put_vectors(transaction, np.array([each.chunk for each in waiting], np.int64), matrix, models.name)
-        stored, broken, after = stored + kept.stored, broken + len(kept.broken), waiting[-1].chunk
-        report(Advanced(stored + broken))
-    report(PhaseDone(stored))
-    if broken:
-        report(Noted(f"{_counted(broken, 'chunk')} could not be embedded: the model gave no vector", BROKEN_REMEDY))
-    return Embedded(stored, broken)
-
-
-def _forgotten(connection: Connection) -> None:
-    with writing(connection) as transaction:
-        forget_vectors(transaction)
-
-
-def _aside(one: Collection, report: Reporter) -> None:
+    tally, after = Tally(), 0
     try:
-        with unavailable_if_damaged(one.store), closing(open_store(one.store, one.id)) as connection:
-            _forgotten(connection)
-    except StoreUnavailableError as error:
-        report(CollectionStarted(one.name, str(one.folder)))
-        report(Noted(f"its vectors could not be forgotten: {error.message}", error.remedy))
+        while waiting := _waiting(connection, after, embedding.chunks_a_write):
+            _written(connection, models, waiting, tally)
+            after = waiting[-1].chunk
+            report(Advanced(tally.stored + tally.broken))
+    finally:
+        report(PhaseDone(tally.stored))
+    if tally.broken:
+        report(
+            Noted(f"{_counted(tally.broken, 'chunk')} could not be embedded: the model gave no vector", BROKEN_REMEDY)
+        )
+    return Embedded(tally.stored, tally.broken)
 
 
-def _embedded(one: Collection, report: Reporter, models: Models, job: Job) -> CollectionEmbedded:
+def _embedded(one: Collection, report: Reporter, models: Models, embedding: Embedding) -> CollectionEmbedded:
     report(CollectionStarted(one.name, str(one.folder)))
     try:
         with unavailable_if_damaged(one.store), closing(open_store(one.store, one.id)) as connection:
-            if job.reset:
-                _forgotten(connection)
-            return CollectionEmbedded(one.name, _filled(connection, report, models, job.embedding))
+            return CollectionEmbedded(one.name, _filled(connection, report, models, embedding))
     except StoreUnavailableError as error:
         report(Noted(error.message, error.remedy))
         return CollectionEmbedded(one.name, Skipped(error.message, error.remedy))
+
+
+def _forgotten(one: Collection) -> StoreUnavailableError | None:
+    try:
+        with (
+            unavailable_if_damaged(one.store),
+            closing(open_store(one.store, one.id)) as connection,
+            writing(connection) as transaction,
+        ):
+            forget_vectors(transaction)
+    except StoreUnavailableError as error:
+        return error
+    return None
+
+
+def _reset(home: Path, report: Reporter, models: Models, embedding_now: tuple[Collection, ...]) -> None:
+    models.prepare()
+    for one in chosen(home, ()):
+        error = _forgotten(one)
+        if error is not None and one not in embedding_now:
+            report(CollectionStarted(one.name, str(one.folder)))
+            report(Noted(f"its vectors could not be forgotten: {error.message}", error.remedy))
 
 
 def embed(
@@ -96,8 +111,5 @@ def embed(
         raise InvalidRequestError("--reset embeds every collection again, as all share one model", RESET_ALL_REMEDY)
     chosen_now = chosen_or_active(home, request.names)
     if request.reset:
-        for one in chosen(home, ()):
-            if one not in chosen_now:
-                _aside(one, report)
-    job = Job(embedding, reset=request.reset)
-    return EmbedResult(tuple(_embedded(one, report, models, job) for one in chosen_now))
+        _reset(home, report, models, chosen_now)
+    return EmbedResult(tuple(_embedded(one, report, models, embedding) for one in chosen_now))

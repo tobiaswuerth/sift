@@ -44,6 +44,12 @@ def test_the_running_phase_is_one_line_with_a_bar_its_speed_and_the_time_left() 
     assert running_line(replayed(RUN[:3])[0], 0.5, 100, PLAIN) is None
 
 
+def test_more_done_than_counted_at_the_start_fills_the_bar_and_leaves_no_time() -> None:
+    view, _ = replayed((*RUN[:4], (1.0, Advanced(1_500))))
+    bar = "\N{BOX DRAWINGS HEAVY HORIZONTAL}" * 16
+    assert running_line(view, 1.0, 100, PLAIN) == f"  read       1,500 files   {bar} 100%  2,500/s"
+
+
 def test_without_unicode_the_glyphs_are_ascii() -> None:
     ascii_only = Style(unicode=False)
     view, lines = replayed(RUN, Looks(ascii_only, "linux"))

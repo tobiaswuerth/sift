@@ -15,18 +15,25 @@ from sift.inference.models import Models
 from sift.retrieval.vector.nearest import RESCORE, Coded, Near, coded, nearest
 from sift.storage.database import Reading
 from sift.storage.documents import documents_of
-from sift.storage.vectors import EMBED_REMEDY, codes_of, model_of, vectors_of, width_held
+from sift.storage.vectors import EMBED_REMEDY, codes_of, left, model_of, vectors_of, width_held
 
 EMPTY_REMEDY = "say what to find, e.g. sift vsearch 'how dark matter halos form'"
 UNEMBEDDED_REMEDY = "run sift embed"
 QUERY_REMEDY = "search again, or word the query otherwise"
+WIDER = 4
 
 type Kept = searching.Kept[Coded]
 type Exact = tuple[Ids, Halves]
 
 
+def _none() -> Coded:
+    return coded(np.zeros(0, np.int64), np.zeros((0, 0), np.uint8), 0)
+
+
 def _held(model: str, transaction: Reading) -> Coded:
     found = model_of(transaction)
+    if found is None and not left(transaction):
+        return _none()
     if found is None:
         raise StoreUnavailableError("it holds no vectors yet", UNEMBEDDED_REMEDY)
     if found != model:
@@ -36,12 +43,22 @@ def _held(model: str, transaction: Reading) -> Coded:
 
 
 def _query(models: Models, text: str) -> Floats:
-    if not text.strip():
-        raise InvalidRequestError("an empty query finds nothing", EMPTY_REMEDY)
     vector = models.encode([text], query=True).astype(np.float32).reshape(-1)
     if not bool(np.isfinite(vector).all()):
         raise InvalidRequestError("the model gave no vector for the query", QUERY_REMEDY)
     return vector
+
+
+def _unlike(model: str, width: int, one: searching.Searching[Coded]) -> None:
+    raise StoreUnavailableError(
+        f"its vectors have {one.held.width:,} dimensions, the query {width:,}", EMBED_REMEDY.format(model=model)
+    )
+
+
+def _alike(kept: Kept, model: str, query: Floats) -> None:
+    for one in list(kept.searching):
+        if len(one.held.ids) and one.held.width != len(query):
+            kept.guarded(one, partial(_unlike, model, len(query), one))
 
 
 def _nearest(kept: Kept, query: Floats, want: int) -> tuple[Near, ...] | None:
@@ -56,7 +73,7 @@ def _nearest(kept: Kept, query: Floats, want: int) -> tuple[Near, ...] | None:
             return np.zeros(0, np.int64), np.zeros((0, 0), np.float16)
         return found
 
-    found = nearest([each.held for each in held], query, want, exact)
+    found = nearest([each.held for each in held], query, want, exact, rescore=want)
     return None if lost else found
 
 
@@ -72,29 +89,44 @@ def _owned(kept: Kept, near: tuple[Near, ...]) -> dict[int, int] | None:
 
 
 def _best(request: SearchVectors, near: tuple[Near, ...], owners: dict[int, int]) -> tuple[Near, ...]:
-    kept = [each for each in near if each.chunk in owners]
-    chunks = np.array([each.chunk for each in kept], np.int64)
-    documents = np.array([owners[each.chunk] for each in kept], np.int64)
-    scores = np.array([each.score for each in kept], np.float64)
+    chunks = np.array([each.chunk for each in near], np.int64)
+    documents = np.array([owners[each.chunk] for each in near], np.int64)
+    scores = np.array([each.score for each in near], np.float64)
     best = offered(Best(request.k, not request.all_passages), chunks, documents, scores)
     return tuple(Near(chunk, score) for chunk, score in ranked(best))
 
 
-def _answered(kept: Kept, request: SearchVectors, query: Floats) -> list[tuple[int, Hit]]:
+def _ranked(kept: Kept, request: SearchVectors, query: Floats, rescore: int) -> tuple[Near, ...] | None:
+    held = sum(len(each.held.ids) for each in kept.searching)
+    want = max(rescore, request.k)
     while True:
-        near = _nearest(kept, query, max(RESCORE, request.k))
+        near = _nearest(kept, query, want)
         owners = None if near is None else _owned(kept, near)
         if near is None or owners is None:
-            continue
-        found = searching.hits(kept, _best(request, near, owners), compact=request.compact)
-        if found is not None:
-            return found
+            return None
+        best = _best(request, near, owners)
+        if len(best) >= request.k or len(near) < want or want >= held:
+            return best
+        want *= WIDER
 
 
-def vsearch(home: Path, request: SearchVectors, models: Models) -> SearchResult:
+def _answered(kept: Kept, request: SearchVectors, query: Floats, rescore: int) -> list[tuple[int, Hit]]:
+    while True:
+        found = _ranked(kept, request, query, rescore)
+        shown = None if found is None else searching.hits(kept, found, compact=request.compact)
+        if shown is not None:
+            return shown
+
+
+def vsearch(home: Path, request: SearchVectors, models: Models, rescore: int = RESCORE) -> SearchResult:
     searching.checked_k(request.k)
-    query = _query(models, request.query)
+    if not request.query.strip():
+        raise InvalidRequestError("an empty query finds nothing", EMPTY_REMEDY)
     collections = searching.collections_of(home, request.collection)
     with ExitStack() as cleanup:
         kept = searching.opened(cleanup, collections, partial(_held, models.name))
-        return searching.result(kept, _answered(kept, request, query), partial=False)
+        if not any(len(each.held.ids) for each in kept.searching):
+            return searching.result(kept, (), partial=False)
+        query = _query(models, request.query)
+        _alike(kept, models.name, query)
+        return searching.result(kept, _answered(kept, request, query, rescore), partial=False)

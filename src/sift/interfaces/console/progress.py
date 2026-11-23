@@ -109,8 +109,8 @@ def shown(view: View, event: Event, now: float, looks: Looks) -> tuple[View, tup
             return replace(view, running=None), _done(event, view, now, looks)
 
 
-def _bar(running: Running, total: int, style: Style) -> str:
-    filled = round(BAR * running.done / total) if total else BAR
+def _bar(done: int, total: int, style: Style) -> str:
+    filled = round(BAR * done / total) if total else BAR
     return _glyph(FILLED, style) * filled + _glyph(EMPTY, style) * (BAR - filled)
 
 
@@ -123,8 +123,9 @@ def running_line(view: View, now: float, columns: int, style: Style) -> str | No
         found = _counted(running.phase, running.done) if running.done else " " * (COUNT + 1 + UNIT)
         return fitted(f"{head}{found}{'':>{SPEED}}{duration(seconds):>{TIME}}", columns - 1)
     total, done = running.total, running.done
-    share = done / total if total else 1.0
+    within = min(done, total)
+    share = within / total if total else 1.0
     per_second = done / seconds if seconds > 0 else 0.0
-    left = f"{duration((total - done) / per_second)} left" if per_second else ""
-    progress = f"{_bar(running, total, style)} {share:>4.0%}{rate(done, seconds):>{SPEED}}  {left}"
+    left = f"{duration((total - within) / per_second)} left" if per_second and within < total else ""
+    progress = f"{_bar(within, total, style)} {share:>4.0%}{rate(done, seconds):>{SPEED}}  {left}"
     return fitted(f"{head}{_counted(running.phase, done)}{progress}".rstrip(), columns - 1)

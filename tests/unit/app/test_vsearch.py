@@ -6,7 +6,7 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError
+from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchVectors, Unsearched
 from sift.app.collections import add
@@ -137,3 +137,40 @@ def test_a_store_lost_while_its_hits_are_read_is_passed_over(home: Path, tmp_pat
     result = vsearch(home, SearchVectors("dark matter halo models"), Hashed())
     assert result.hits == alone
     assert [each.collection for each in result.unsearched] == ["notes"]
+
+
+def test_the_query_is_not_embedded_when_nothing_could_be_searched(home: Path, tmp_path: Path) -> None:
+    models = Hashed()
+    with pytest.raises(NotFoundError):
+        vsearch(home, SearchVectors("halo", collection="nowhere"), models)
+    more(home, tmp_path)
+    assert vsearch(home, SearchVectors("halo", collection="more"), models).hits == ()
+    assert models.asked == []
+
+
+def test_a_collection_without_passages_is_searched_as_empty(home: Path, tmp_path: Path) -> None:
+    (tmp_path / "empty").mkdir()
+    add(home, AddCollection(str(tmp_path / "empty")))
+    index(home, IndexCollections(), lambda _: None)
+    result = vsearch(home, SearchVectors("halo"), Hashed())
+    assert (result.searched, result.unsearched) == (2, ())
+
+
+def test_documents_of_many_passages_widen_the_search_until_k_documents_are_found(home: Path) -> None:
+    found = vsearch(home, SearchVectors("pruning skips ranges that cannot win", k=3), Hashed(), rescore=1)
+    assert len({hit.id for hit in found.hits}) == len(found.hits) == 3
+
+
+def test_a_collection_of_the_same_model_at_another_width_is_passed_over_saying_so(home: Path) -> None:
+    result = vsearch(home, SearchVectors("halo"), Hashed(width=32))
+    assert result.unsearched == (
+        Unsearched("notes", "its vectors have 48 dimensions, the query 32", EMBED_REMEDY.format(model="hashed-words")),
+    )
+
+
+def test_a_store_lost_while_rescoring_leaves_the_nearest_of_the_rest(home: Path, tmp_path: Path) -> None:
+    more(home, tmp_path)
+    embed(home, EmbedCollections(("more",)), lambda _: None, Hashed())
+    changed(home / "collections" / "notes.sqlite", "UPDATE vectors SET vector = x'00'")
+    found = vsearch(home, SearchVectors("# halo dark matter halo models.", k=1), Hashed(), rescore=1)
+    assert [hit.id for hit in found.hits] == ["more/halo.md"]
