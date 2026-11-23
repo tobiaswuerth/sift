@@ -38,6 +38,15 @@ def test_links_left_out_and_names_that_are_no_text_are_counted_with_a_few_named(
     )
 
 
+def test_files_named_as_records_are_left_out_with_how_to_rename_them() -> None:
+    assert said(Scanned(Found({}), named_as_records=("a.jsonl#k.md",)), {}) == (
+        Noted(
+            "1 file left out, whose names read as a record's id: a.jsonl#k.md",
+            "rename them: a # after .jsonl or .ndjson names a record",
+        ),
+    )
+
+
 def test_linked_folders_are_left_out_and_said() -> None:
     assert said(Scanned(Found({"a.md": A}), linked_folders=("loop/",)), {}) == (
         Noted("1 linked folder left out: loop/"),

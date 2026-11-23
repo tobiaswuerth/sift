@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path, PurePath
 
 MOST_HOPS = 40
@@ -16,14 +16,31 @@ def link_target(path: Path) -> str | None:
     return plain(str(path.readlink())) if path.is_symlink() or path.is_junction() else None
 
 
-def _within(parts: tuple[str, ...], base: tuple[str, ...]) -> bool:
+def _within(parts: Sequence[str], base: tuple[str, ...]) -> bool:
     return len(parts) >= len(base) and all(
         PurePath(part) == PurePath(held) for part, held in zip(parts, base, strict=False)
     )
 
 
-def lands_within(relative: str, root: Path, target: LinkTarget = link_target) -> bool:
-    base = root.parts
+def collapsed(parts: Sequence[str]) -> tuple[str, ...] | None:
+    kept: list[str] = []
+    for part in parts:
+        if part != "..":
+            kept.append(part)
+        elif len(kept) > 1:
+            kept.pop()
+        else:
+            return None
+    return tuple(kept)
+
+
+def _spelled(written: PurePath, base: tuple[str, ...]) -> tuple[str, ...]:
+    if not written.anchor or _within(written.parts, base) or PurePath(written.anchor) != PurePath(base[0]):
+        return written.parts
+    return (*Path(written.parent).resolve().parts, written.name)
+
+
+def _lands_within(relative: str, base: tuple[str, ...], target: LinkTarget, *, textual: bool) -> bool:
     at, rest, hops = list(base), list(reversed(PurePath(relative).parts)), 0
     while rest:
         part = rest.pop()
@@ -37,8 +54,15 @@ def lands_within(relative: str, root: Path, target: LinkTarget = link_target) ->
         if pointed is None:
             continue
         written, hops = PurePath(pointed), hops + 1
-        if hops > MOST_HOPS or (written.anchor and not _within(written.parts, base)):
+        whole = _spelled(written, base) if written.anchor else (*at[:-1], *written.parts)
+        landed = collapsed(whole) if textual else whole
+        if hops > MOST_HOPS or landed is None or not _within(landed, base):
             return False
-        at = list(base) if written.anchor else at[:-1]
-        rest.extend(reversed(written.parts[len(base) :] if written.anchor else written.parts))
+        at = list(base)
+        rest.extend(reversed(landed[len(base) :]))
     return True
+
+
+def lands_within(relative: str, root: Path, target: LinkTarget = link_target) -> bool:
+    base = root.parts
+    return all(_lands_within(relative, base, target, textual=textual) for textual in (False, True))

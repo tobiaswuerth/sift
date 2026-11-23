@@ -23,6 +23,11 @@ def identity_at(path: Path) -> Identity:
     return Identity(found.st_dev, found.st_ino)
 
 
+def own_identity_at(path: Path) -> Identity:
+    found = path.stat(follow_symlinks=False)
+    return Identity(found.st_dev, found.st_ino)
+
+
 @contextmanager
 def opened(path: Path, scanned: Identity | None) -> Generator[BinaryIO]:
     with path.open("rb") as raw:

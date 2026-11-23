@@ -12,6 +12,7 @@ LEFT_AS_INDEXED = (
     "look so"
 )
 EMPTY_INSIDE = "{folder} is empty: {files} once in it kept as indexed, as a drive not mounted looks so"
+NAMED_AS_RECORD_REMEDY = "rename them: a # after .jsonl or .ndjson names a record"
 EMPTY_INSIDE_REMEDY = "connect the drive, or delete the empty folder to let them go"
 
 
@@ -53,6 +54,9 @@ def problems(folder: Path, scanned: Scanned, plan: IndexPlan, known: AbstractSet
     if found.outside:
         outside = counted(len(found.outside), "file")
         said.append(Noted(f"{outside} linked to outside the folder left out: {_named(found.outside)}"))
+    if scanned.named_as_records:
+        named, listed = counted(len(scanned.named_as_records), "file"), _named(scanned.named_as_records)
+        said.append(Noted(f"{named} left out, whose names read as a record's id: {listed}", NAMED_AS_RECORD_REMEDY))
     if scanned.linked_folders:
         linked = counted(len(scanned.linked_folders), "linked folder")
         said.append(Noted(f"{linked} left out: {_named(scanned.linked_folders)}"))

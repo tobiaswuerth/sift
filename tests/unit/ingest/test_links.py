@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from sift.ingest.links import link_target, plain
+from sift.ingest.links import collapsed, link_target, plain
 from tests.files import write
 
 
@@ -22,3 +22,8 @@ def test_only_a_link_has_a_target(tmp_path: Path) -> None:
     file, link = write(tmp_path / "a.md", "x"), tmp_path / "b.md"
     link.symlink_to("a.md")
     assert (link_target(file), link_target(link)) == (None, "a.md")
+
+
+def test_steps_up_are_collapsed_by_text_and_none_may_leave_the_drive() -> None:
+    assert collapsed(("/", "a", "b", "..", "c")) == ("/", "a", "c")
+    assert collapsed(("/", "a", "..", "..")) is None

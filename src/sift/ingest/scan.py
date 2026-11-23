@@ -11,14 +11,13 @@ from typing import Protocol
 from sift.domain.plan.indexing import Found, Stat, stored_time
 from sift.domain.text.notes import TEXT_FILES
 from sift.domain.text.records import RECORD_FILES, split_record_path
-from sift.ingest.files import Identity, identity_at
+from sift.ingest.files import CHANGED, ChangedError, Identity, identity_at, own_identity_at
 from sift.ingest.links import LinkTarget, lands_within, link_target
 
 SKIPPED_FOLDERS = frozenset({"node_modules", "__pycache__"})
 GONE = (FileNotFoundError, NotADirectoryError)
 PROGRESS_EVERY = 1000
 HIDDEN_SYSTEM = stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM
-NAMED_AS_RECORD = "its name reads as a record's id; rename it"
 
 
 class DirEntry(Protocol):
@@ -40,6 +39,7 @@ type Progress = Callable[[int], None]
 class LinkChecks:
     target: LinkTarget = link_target
     identity: Callable[[Path], Identity] = identity_at
+    own_identity: Callable[[Path], Identity] = own_identity_at
 
 
 LINK_CHECKS = LinkChecks()
@@ -58,6 +58,7 @@ class Scanned:
     refusals: Mapping[str, str] = field(default_factory=dict[str, str])
     identities: Mapping[str, Identity] = field(default_factory=dict[str, Identity])
     linked_folders: tuple[str, ...] = ()
+    named_as_records: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -70,6 +71,7 @@ class _Seen:
     refusals: dict[str, str] = field(default_factory=dict[str, str])
     empty_folders: list[str] = field(default_factory=list[str])
     linked_folders: list[str] = field(default_factory=list[str])
+    named_as_records: list[str] = field(default_factory=list[str])
     identities: dict[str, Identity] = field(default_factory=dict[str, Identity])
 
 
@@ -98,17 +100,25 @@ def _unreached(seen: _Seen, relative: str, error: OSError) -> None:
     seen.refusals[relative] = _reason(error)
 
 
-def _leads_outside(entry: DirEntry, relative: str, guard: _Guard | None) -> bool:
-    return guard is not None and entry.is_symlink() and not lands_within(relative, guard.root, guard.checks.target)
+def _guarded(entry: DirEntry, relative: str, guard: _Guard) -> Identity | None:
+    path = Path(entry.path)
+    if not entry.is_symlink():
+        return guard.checks.own_identity(path)
+    if not lands_within(relative, guard.root, guard.checks.target):
+        return None
+    identity = guard.checks.identity(path)
+    if not lands_within(relative, guard.root, guard.checks.target):
+        raise ChangedError(CHANGED)
+    return identity
 
 
 def _file(entry: DirEntry, relative: str, seen: _Seen, guard: _Guard | None) -> None:
     try:
-        if _leads_outside(entry, relative, guard):
+        identity = None if guard is None else _guarded(entry, relative, guard)
+        if guard is not None and identity is None:
             seen.outside.append(relative)
             return
         found = entry.stat()
-        identity = None if guard is None else guard.checks.identity(Path(entry.path))
     except GONE as error:
         if entry.is_symlink():
             _unreached(seen, relative, error)
@@ -122,8 +132,7 @@ def _file(entry: DirEntry, relative: str, seen: _Seen, guard: _Guard | None) -> 
         seen.unnamed.append(relative.encode(errors="backslashreplace").decode())
         return
     if split_record_path(relative)[1]:
-        seen.unlisted_files.append(relative)
-        seen.refusals[relative] = NAMED_AS_RECORD
+        seen.named_as_records.append(relative)
         return
     seen.files[relative] = Stat(stored_time(found.st_mtime_ns), found.st_size)
     if identity is not None:
@@ -196,4 +205,5 @@ def scan(
         MappingProxyType(seen.refusals),
         MappingProxyType(seen.identities),
         tuple(seen.linked_folders),
+        tuple(seen.named_as_records),
     )

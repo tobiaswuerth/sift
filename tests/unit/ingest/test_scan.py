@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from sift.domain.plan.indexing import MOST_TIME, Stat, index_plan
-from sift.ingest.files import Identity
-from sift.ingest.scan import HIDDEN_SYSTEM, NAMED_AS_RECORD, DirEntry, LinkChecks, Listing, Scanned, scan
+from sift.ingest.files import CHANGED, Identity
+from sift.ingest.scan import HIDDEN_SYSTEM, DirEntry, LinkChecks, Listing, Scanned, scan
 from tests.files import write
 
 
@@ -66,7 +66,7 @@ def links(targets: Mapping[str, str]) -> LinkChecks:
     def identity(path: Path) -> Identity:
         return Identity(1, len(path.parts))
 
-    return LinkChecks(target, identity)
+    return LinkChecks(target, identity, identity)
 
 
 FAKE = links({})
@@ -269,6 +269,8 @@ def test_a_long_scan_says_how_many_files_it_has_found_every_thousand_entries(tmp
         ({"a.md": "../x.md"}, ("a.md",)),
         ({"a.md": "b.md", "b.md": "a.md"}, ("a.md",)),
         ({"a.md": "sub/../b.md", "b.md": "sub/c.md"}, ()),
+        ({"a.md": "d/../../x.md", "d": "deep"}, ("a.md",)),
+        ({"a.md": "d/../x.md", "d": "far"}, ("a.md",)),
         ({"a.md": "root"}, ()),
     ],
 )
@@ -278,7 +280,7 @@ def test_a_link_is_followed_hop_by_hop_and_left_out_at_the_first_leading_outside
     root = tmp_path / "notes"
     root.mkdir()
     inside, far = root.resolve(), str(tmp_path / "far" / "x.md")
-    spelled = {"far": far, "root": str(inside / "c.md")}
+    spelled = {"far": far, "root": str(inside / "c.md"), "deep": str(inside / "p" / "q")}
     whole = {str(inside / path): spelled.get(target, target) for path, target in targets.items()}
     never_read = OSError(5, "a link leading outside was read")
     entries = [Fake("a.md", "a.md", symlink=True, refusal=never_read if outside else None)]
@@ -308,5 +310,49 @@ def test_a_file_whose_path_reads_as_a_record_s_id_is_named_not_read(tmp_path: Pa
     for name in ("a.jsonl#k.md", "b.NDJSON#x/c.md", "a.jsonl"):
         write(tmp_path / name)
     scanned = scan(tmp_path, follow_links=False)
-    assert (paths(scanned), sorted(scanned.found.unlisted_files)) == (["a.jsonl"], ["a.jsonl#k.md", "b.NDJSON#x/c.md"])
-    assert scanned.refusals["a.jsonl#k.md"] == NAMED_AS_RECORD
+    assert (paths(scanned), sorted(scanned.named_as_records)) == (["a.jsonl"], ["a.jsonl#k.md", "b.NDJSON#x/c.md"])
+    assert index_plan(scanned.found, {"a.jsonl#k.md": Stat(1, 1)}).drop == ("a.jsonl#k.md",)
+
+
+def linked(link: Path, target: str, *, folder: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=folder)
+    except OSError as refused:
+        pytest.skip(f"this system makes no symbolic links: {refused}")
+
+
+def test_a_link_stepping_up_past_a_linked_folder_is_left_out_whichever_way_the_system_reads_it(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "notes"
+    (root / "p" / "q").mkdir(parents=True)
+    write(tmp_path / "x.md", "outside")
+    linked(root / "d", str(root / "p" / "q"), folder=True)
+    linked(root / "f.md", "d/../../x.md")
+    assert scan(root, follow_links=False).found.outside == ("f.md",)
+
+
+def test_a_link_written_through_another_spelling_of_the_folder_stays_inside(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    write(real / "x.md", "inside")
+    linked(tmp_path / "alias", str(real), folder=True)
+    linked(real / "f.md", str(tmp_path / "alias" / "x.md"))
+    scanned = scan(real, follow_links=False)
+    assert (paths(scanned), scanned.found.outside) == (["f.md", "x.md"], ())
+
+
+def test_a_link_changed_while_it_was_checked_is_named_not_read(tmp_path: Path) -> None:
+    inside = tmp_path.resolve()
+    swapped: list[Path] = []
+
+    def target(path: Path) -> str | None:
+        return None if path != inside / "a.md" else str(tmp_path.parent / "far.md") if swapped else "b.md"
+
+    def identity(path: Path) -> Identity:
+        swapped.append(path)
+        return Identity(1, 1)
+
+    entries = [Fake("a.md", str(tmp_path / "a.md"), symlink=True)]
+    checks = LinkChecks(target, identity, identity)
+    scanned = scan(tmp_path, follow_links=False, links=checks, listing=listing({str(tmp_path): entries}))
+    assert (paths(scanned), scanned.found.unlisted_files, scanned.refusals["a.md"]) == ([], ("a.md",), CHANGED)
