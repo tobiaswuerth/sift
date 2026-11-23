@@ -52,7 +52,9 @@ class Options:
     sort: Annotated[str | None, Help(SORT)] = None
     links_to: Annotated[tuple[str, ...], Help(LINKS_TO), Read(_note)] = ()
     linked_from: Annotated[tuple[str, ...], Help(LINKED_FROM), Read(_note)] = ()
-    all_passages: Annotated[bool, Help("every passage found, not only each document's best")] = False
+    all_passages: Annotated[
+        bool, Help("every passage found, not only each document's best, and copies of one work apart")
+    ] = False
     compact: Annotated[bool, Help("leave out the text of each passage")] = False
 
 

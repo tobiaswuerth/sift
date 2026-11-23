@@ -3,12 +3,15 @@ from pathlib import Path
 import pytest
 
 from sift.api.collections import AddCollection, Counted, ShowStatus
+from sift.api.documents import GetDocuments
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.indexing import IndexCollections
-from sift.api.links import FindMentions
+from sift.api.links import FindMentions, ShowLinks
 from sift.api.search import SearchResult
 from sift.app.collections import add, status
+from sift.app.documents import documents
 from sift.app.indexing import index
+from sift.app.links import links
 from sift.app.mentions import mentions
 
 HANS, ACME = "vault/People/Hans Müller.md", "vault/Orgs/Acme AG.md"
@@ -81,7 +84,8 @@ def test_a_note_is_mentioned_by_every_name_it_has(tmp_path: Path) -> None:
     index(home, IndexCollections(), lambda _: None)
     assert ids(mentions(home, FindMentions("v/Jürg Bühler.md"))) == ["v/a.md", "v/b.md", "v/c.md", "v/d.md"]
     assert "v/e.md" in ids(mentions(home, FindMentions("v/Jürg Bühler.md", also=("emails",))))
-    assert mentions(home, FindMentions("v/AI.md")).hits == ()
+    with pytest.raises(InvalidRequestError, match=r"^the note's names are too short to search for: 'AI'$"):
+        mentions(home, FindMentions("v/AI.md"))
 
 
 def test_mentions_of_what_is_no_note_or_by_no_field_are_refused(named: Path) -> None:
@@ -129,3 +133,26 @@ def test_status_counts_the_links_of_each_collection_and_those_leading_nowhere(na
     assert isinstance(vault, Counted)
     assert isinstance(work, Counted)
     assert ((vault.links, vault.unresolved), (work.links, work.unresolved)) == ((4, 0), (3, 2))
+
+
+def test_a_name_of_one_letter_and_signs_is_too_short_and_one_with_umlauts_is_found_both_ways(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    files = {"C++.md": "", "Öl.md": "", "a.md": "Wrote C today.", "b.md": "Öl prices rose.", "c.md": "Oel prices fell."}
+    collection(tmp_path, home, "v", files)
+    index(home, IndexCollections(), lambda _: None)
+    with pytest.raises(InvalidRequestError, match=r"too short to search for: 'C[+][+]'"):
+        mentions(home, FindMentions("v/C++.md"))
+    assert ids(mentions(home, FindMentions("v/Öl.md"))) == ["v/b.md", "v/c.md"]
+
+
+def test_a_record_is_mentioned_by_its_title_and_its_id_is_read_back(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    records = '{"id": "p1", "title": "Graph Kernels Survey", "text": "On kernels."}\n'
+    records += '{"id": "p2", "title": "Other", "text": "More."}\n'
+    files = {"papers.jsonl": records, "x.md": "We read the Graph Kernels Survey.", "y.md": "Papers everywhere."}
+    collection(tmp_path, home, "R", files)
+    index(home, IndexCollections(), lambda _: None)
+    assert ids(mentions(home, FindMentions("R/papers.jsonl#p1"))) == ["R/x.md"]
+    assert links(home, ShowLinks("R/papers.jsonl#p1")).id == "R/papers.jsonl#p1"
+    (found,) = documents(home, GetDocuments(("R/papers.jsonl#p1",))).found
+    assert found.id == "R/papers.jsonl#p1"

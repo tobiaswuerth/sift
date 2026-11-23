@@ -1,19 +1,17 @@
+import re
 from collections.abc import Callable, Mapping, Sequence
+from urllib.parse import unquote
 
 from sift.api.fields import FieldValue
 
 DOI_FIELD = "doi"
-DOI_LINKS = tuple(f"{scheme}{host}doi.org/" for scheme in ("https://", "http://") for host in ("", "www.", "dx."))
-DOI_PREFIXES = (*DOI_LINKS, "doi:")
+DOI = re.compile(r"(?<!\d)10\.\d+(?:\.\d+)*/\S+")
+DOI_END = ".,;:)]}>\"'"
 
 
 def work_of(doi: object) -> str | None:
-    if not isinstance(doi, str):
-        return None
-    value = doi.strip().lower()
-    for prefix in DOI_PREFIXES:
-        value = value.removeprefix(prefix).strip()
-    return value if value.startswith("10.") else None
+    found = DOI.search(unquote(doi)) if isinstance(doi, str) else None
+    return found.group().lower().rstrip(DOI_END) if found else None
 
 
 def work_of_fields(fields: Mapping[str, FieldValue]) -> str | None:

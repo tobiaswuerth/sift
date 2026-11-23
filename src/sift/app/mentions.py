@@ -15,14 +15,14 @@ from sift.storage.documents import fields_by_document
 from sift.storage.links import titled
 
 ALSO_REMEDY = "name each field, e.g. --also emails,phone"
+SHORT_REMEDY = "give the note a longer alias, or name more of its fields to look for"
 
 
 def _names(note: Note, also: tuple[str, ...]) -> list[str]:
     def read(transaction: Reading) -> list[str]:
         document = note.find(transaction)
-        return names(
-            titled(transaction, [document])[document].path, fields_by_document(transaction, [document])[document], also
-        )
+        row = titled(transaction, [document])[document]
+        return names(row.path, row.key, row.title, fields_by_document(transaction, [document])[document], also)
 
     return read_in(note.collection, read)
 
@@ -33,7 +33,12 @@ def mentions(home: Path, request: FindMentions, tuning: Tuning = TUNING) -> Sear
         if not field.strip():
             raise InvalidRequestError(f"--also names front matter fields, e.g. emails, not {field!r}", ALSO_REMEDY)
     named = note_of(home, request.id)
-    expression = any_phrase(phrases(_names(named.note, request.also)))
+    found = _names(named.note, request.also)
+    looked_for = phrases(found)
+    if not looked_for:
+        said = ", ".join(map(repr, found))
+        raise InvalidRequestError(f"the note's names are too short to search for: {said}", SHORT_REMEDY)
+    expression = any_phrase(looked_for)
     if words_in(expression) > MOST_WORDS:
         remedy = "name fewer fields with --also" if request.also else "give it fewer or shorter names"
         raise InvalidRequestError(f"the note's names hold more than {MOST_WORDS:,} words", remedy)

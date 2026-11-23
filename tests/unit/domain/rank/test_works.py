@@ -38,3 +38,18 @@ def test_a_work_is_known_by_its_doi_however_it_is_written(doi: object, work: str
 
 def test_a_work_is_known_by_the_doi_field_alone() -> None:
     assert work_of_fields({"DOI": "10.1000/abc", "id": "10.1000/abc"}) is None
+
+
+@pytest.mark.parametrize(
+    "doi",
+    [
+        "doi: https://doi.org/10.1000/X",
+        "doi.org/10.1000/x",
+        "https://doi.org/10.1000%2Fx",
+        "10.1000/x.",
+        "(10.1000/X)",
+        "https://dx.doi.org/10.1000/x;",
+    ],
+)
+def test_a_doi_is_found_however_it_is_prefixed_quoted_or_ended(doi: str) -> None:
+    assert work_of(doi) == "10.1000/x"
