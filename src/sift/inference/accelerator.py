@@ -22,6 +22,11 @@ UNBUILT = f"an NVIDIA GPU is there, but this PyTorch has no CUDA: the models run
 HIDDEN = "PyTorch can use no NVIDIA GPU here (see CUDA_VISIBLE_DEVICES and the driver): the models run on the CPU"
 
 
+class Properties(Protocol):
+    @property
+    def total_memory(self) -> int: ...
+
+
 class Cuda(Protocol):
     def is_available(self) -> bool: ...
 
@@ -30,6 +35,8 @@ class Cuda(Protocol):
     def mem_get_info(self, device: int) -> tuple[int, int]: ...
 
     def device_memory_used(self, device: int) -> int: ...
+
+    def get_device_properties(self, device: int) -> Properties: ...
 
     def set_per_process_memory_fraction(self, fraction: float, device: int) -> None: ...
 
@@ -62,12 +69,12 @@ def budget(free: int, total: int) -> int | None:
 
 
 def _free(cuda: Cuda) -> tuple[int, int]:
-    free, total = cuda.mem_get_info(0)
+    total = cuda.get_device_properties(0).total_memory
     try:
         used = cuda.device_memory_used(0)
     except (ModuleNotFoundError, RuntimeError, OSError, pynvml.NVMLError):
-        return free, total
-    return min(free, total - used), total
+        return cuda.mem_get_info(0)
+    return total - used, total
 
 
 def _on_cuda(cuda: Cuda) -> Device:

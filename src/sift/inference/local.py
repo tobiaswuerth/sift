@@ -1,5 +1,6 @@
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from types import MappingProxyType
 from typing import Protocol, cast
 
@@ -19,6 +20,7 @@ from sift.inference.hub import RERANK_MODEL, hub, pinned
 
 MOST_TOKENS = 1024
 RERANK_BATCH = 16
+BROKEN_REMEDY = "check the name in SIFT_EMBED_MODEL or SIFT_RERANK_MODEL; if it is right, report this with the name"
 UNLOADED_REMEDY = (
     "check the network and the name in SIFT_EMBED_MODEL or SIFT_RERANK_MODEL; for a gated model, log in: hf auth login"
 )
@@ -104,11 +106,30 @@ def _reading_capped(model: Embedder) -> Embedder:
     return model
 
 
+def _first_line(error: BaseException) -> str:
+    return str(error).strip().split("\n")[0] or type(error).__name__
+
+
+def _full(error: BaseException, device: str) -> str:
+    return SMALLER_REMEDY if host_full(error) else FULL_REMEDIES.get(device, SMALLER_REMEDY)
+
+
 def unloaded(name: str, error: BaseException, device: str) -> ModelUnavailableError:
-    said = str(error).strip().split("\n")[0] or type(error).__name__
-    full = SMALLER_REMEDY if host_full(error) else FULL_REMEDIES.get(device, SMALLER_REMEDY)
-    remedy = full if too_large(error) else UNLOADED_REMEDY
-    return ModelUnavailableError(f"the model {name} could not be loaded: {said}", remedy)
+    if too_large(error):
+        remedy = _full(error, device)
+    else:
+        remedy = UNLOADED_REMEDY if isinstance(error, OSError) else BROKEN_REMEDY
+    return ModelUnavailableError(f"the model {name} could not be loaded: {_first_line(error)}", remedy)
+
+
+def within_memory[T](name: str, device: str, run: Callable[[], T]) -> T:
+    try:
+        return run()
+    except (RuntimeError, MemoryError, OSError) as error:
+        if not too_large(error):
+            raise
+        said = f"the model {name} ran out of memory on the {device}: {_first_line(error)}"
+        raise ModelUnavailableError(said, _full(error, device)) from error
 
 
 def _loading[T](name: str, device: Device, load: Callable[[], T]) -> T:
@@ -207,7 +228,8 @@ class Local:
             return _run(loaded.model, part, query=query)
 
         shape = Shape(loaded.width, self.batch or device.batch)
-        found = in_batches(texts, _lengths(loaded.model.tokenizer, list(texts)), shape, self._attempt(run))
+        lengths = _lengths(loaded.model.tokenizer, list(texts))
+        found = within_memory(self.model, device.name, partial(in_batches, texts, lengths, shape, self._attempt(run)))
         self.batch = found.batch
         return found.rows.astype(np.float16)
 
@@ -218,7 +240,9 @@ class Local:
             return _scored(ranker, query, part)
 
         shape = Shape(1, self.rerank_batch)
-        found = in_batches(texts, _lengths(ranker.tokenizer, list(texts)), shape, self._attempt(run))
+        lengths = _lengths(ranker.tokenizer, list(texts))
+        attempts = partial(in_batches, texts, lengths, shape, self._attempt(run))
+        found = within_memory(self.reranker, self._on().name, attempts)
         self.rerank_batch = found.batch
         return found.rows.reshape(-1)
 

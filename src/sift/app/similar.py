@@ -21,6 +21,7 @@ from sift.storage.documents import chunks_of, fields_by_document
 from sift.storage.vectors import model_of, vectors_of
 
 EMBED_REMEDY = "run sift embed"
+NO_DIRECTION_REMEDY = "start from another document, or search its words with sift vsearch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +41,9 @@ def _like(note: Note, whole: str, transaction: Reading) -> Like:
     mean = vectors.astype(np.float32).mean(axis=0)
     length = float(np.linalg.norm(mean))
     if not np.isfinite(length) or length == 0:
-        raise InvalidRequestError(f"{whole!r} has no direction to be near to", EMBED_REMEDY)
+        raise InvalidRequestError(
+            f"{whole!r} has no direction to be near to: its passages cancel out", NO_DIRECTION_REMEDY
+        )
     work = work_of(fields_by_document(transaction, [document]).get(document, {}).get("doi"))
     return Like(mean / length, model, work)
 

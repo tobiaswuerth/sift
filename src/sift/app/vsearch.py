@@ -23,7 +23,7 @@ from sift.storage.vectors import EMBED_REMEDY, codes_of, documents_embedded, lef
 
 EMPTY_REMEDY = "say what to find, e.g. sift vsearch 'how dark matter halos form'"
 UNEMBEDDED_REMEDY = "run sift embed"
-QUERY_REMEDY = "search again, or word the query otherwise"
+QUERY_REMEDY = "word the query otherwise; if the model keeps failing, report it with its name"
 WIDER = 4
 
 type Exact = tuple[Ids, Halves]

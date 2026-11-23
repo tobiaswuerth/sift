@@ -115,7 +115,7 @@ def test_a_note_named_by_more_words_than_a_query_takes_is_refused_saying_why(tmp
     many = ", ".join(f"name{n} word" for n in range(501))
     collection(tmp_path, home, "v", {"Long.md": f"---\naliases: [{many}]\nmails: [a@example.com]\n---\n"})
     index(home, IndexCollections(), lambda _: None)
-    for also, remedy in (((), "give it fewer aliases"), (("mails",), "name fewer fields with --also")):
+    for also, remedy in (((), "give it fewer or shorter names"), (("mails",), "name fewer fields with --also")):
         with pytest.raises(InvalidRequestError, match="the note's names hold more than 1,000 words") as refused:
             mentions(home, FindMentions("v/Long.md", also=also))
         assert refused.value.remedy is not None

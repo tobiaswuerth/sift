@@ -9,7 +9,16 @@ from sentence_transformers import SentenceTransformer
 from sentence_transformers.sentence_transformer.modules import Transformer
 
 from sift.api.errors import ModelUnavailableError
-from sift.inference.local import UNLOADED_REMEDY, Embedder, Local, local, unloaded, width_of
+from sift.inference.local import (
+    BROKEN_REMEDY,
+    UNLOADED_REMEDY,
+    Embedder,
+    Local,
+    local,
+    unloaded,
+    width_of,
+    within_memory,
+)
 from sift.inference.models import Models
 from tests.models import Hashed
 from tests.tiny_model import POSITIONS, WIDTH, tiny_model, tiny_prompted, tiny_reranker, tiny_routed, tiny_static
@@ -124,6 +133,24 @@ def test_a_model_too_large_for_the_memory_left_says_so_not_to_check_the_network(
     assert apple is not None
     assert "CUDA" not in apple
     assert unloaded("owner/model", OSError("401 Client Error\nmore"), "cuda").remedy == UNLOADED_REMEDY
+    assert unloaded("owner/model", ValueError("no kernel image is available"), "cuda").remedy == BROKEN_REMEDY
+
+
+def test_a_model_out_of_memory_while_it_runs_says_so_with_what_frees_it() -> None:
+    def full() -> int:
+        raise torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 1.00 GiB")
+
+    with pytest.raises(ModelUnavailableError, match="ran out of memory on the cuda") as refused:
+        within_memory("owner/model", "cuda", full)
+    assert refused.value.remedy is not None
+    assert "CUDA_VISIBLE_DEVICES" in refused.value.remedy
+
+    def broken() -> int:
+        raise RuntimeError("expected all tensors to be on the same device")
+
+    with pytest.raises(RuntimeError, match="same device"):
+        within_memory("owner/model", "cuda", broken)
+    assert within_memory("owner/model", "cpu", lambda: 7) == 7
 
 
 def test_a_model_routing_queries_to_static_embeddings_caps_only_what_reads_tokens(tmp_path: Path) -> None:

@@ -250,7 +250,7 @@ def test_codes_that_do_not_match_the_vectors_are_damage(damage: str) -> None:
         with writing(connection) as transaction:
             put_vectors(transaction, ids, vectors(len(ids)), "m")
             run(transaction, damage)
-        with reading(connection) as transaction, pytest.raises(DamagedError, match="codes do not match"):
+        with reading(connection) as transaction, pytest.raises(StoreUnavailableError, match="codes do not match"):
             codes_of(transaction, read=2)
 
 

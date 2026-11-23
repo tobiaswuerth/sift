@@ -1,5 +1,8 @@
 import re
+from pathlib import Path
 from types import MappingProxyType
+
+from sift.api.errors import ModelUnavailableError
 
 EMBED_MODEL = "google/embeddinggemma-2"
 RERANK_MODEL = "Alibaba-NLP/gte-reranker-modernbert-base"
@@ -14,7 +17,15 @@ REVISION = re.compile(r"[\w.-]+")
 
 
 def pinned(name: str) -> str:
-    return f"{name}@{PINNED[name]}" if name in PINNED else name
+    if name in PINNED:
+        return f"{name}@{PINNED[name]}"
+    repository, at, revision = name.rpartition("@")
+    if (at and REPOSITORY.fullmatch(repository) and REVISION.fullmatch(revision)) or Path(name).is_dir():
+        return name
+    raise ModelUnavailableError(
+        f"the model {name} names no revision, so its vectors could not be told from those of its next weights",
+        f"name a commit of it, e.g. {name}@<commit> from its page under Files and versions",
+    )
 
 
 def hub(name: str) -> tuple[str, str | None]:

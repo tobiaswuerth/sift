@@ -36,7 +36,7 @@ def mentions(home: Path, request: FindMentions, tuning: Tuning = TUNING) -> Sear
     named = note_of(home, chosen_or_active(home, ()), request.id)
     expression = any_phrase(phrases(_names(named.note, request.also)))
     if words_in(expression) > MOST_WORDS:
-        remedy = "name fewer fields with --also" if request.also else "give it fewer aliases"
+        remedy = "name fewer fields with --also" if request.also else "give it fewer or shorter names"
         raise InvalidRequestError(f"the note's names hold more than {MOST_WORDS:,} words", remedy)
     wanted = Wanted(request.k, not request.all_passages, tuning, never)
     found = searched_as(

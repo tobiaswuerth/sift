@@ -23,6 +23,7 @@ READ = 65_536
 MATRIX = 2
 EMBED_REMEDY = "run sift embed --reset to embed every collection with {model}"
 DAMAGED_CODES = "the store's codes do not match its vectors"
+CODES_REMEDY = "run sift embed --reset, which embeds every collection again"
 
 
 class Pending(NamedTuple):
@@ -189,12 +190,12 @@ def codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, Bits]:
     cursor = transaction.connection.execute(CODES)
     while batch := cast("list[tuple[int, bytes]]", cursor.fetchmany(read)):
         if done + len(batch) > held.n or any(len(row[1]) != size for row in batch):
-            raise DamagedError(DAMAGED_CODES)
+            raise StoreUnavailableError(DAMAGED_CODES, CODES_REMEDY)
         ids[done : done + len(batch)] = np.fromiter((row[0] for row in batch), np.int64, len(batch))
         bits[done : done + len(batch)] = np.frombuffer(b"".join(row[1] for row in batch), np.uint8).reshape(-1, size)
         done += len(batch)
     if done != held.n:
-        raise DamagedError(DAMAGED_CODES)
+        raise StoreUnavailableError(DAMAGED_CODES, CODES_REMEDY)
     return ids, bits
 
 

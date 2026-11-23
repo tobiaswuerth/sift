@@ -10,6 +10,11 @@ from sift.inference.accelerator import CACHES, CPU, CUDA_FIX, GIB, Device, Found
 NONE = Found(mps=False, nvidia=False, cuda_build=None)
 
 
+@dataclass(frozen=True, slots=True)
+class Properties:
+    total_memory: int
+
+
 @dataclass(slots=True)
 class FakeCuda:
     free: int
@@ -20,6 +25,7 @@ class FakeCuda:
     failure: Exception | None = None
     fractions: list[float] = field(default_factory=list[float])
     emulated: list[bool] = field(default_factory=list[bool])
+    contexts: list[int] = field(default_factory=list[int])
 
     def is_available(self) -> bool:
         return self.available
@@ -29,7 +35,7 @@ class FakeCuda:
         return self.bf16
 
     def mem_get_info(self, device: int) -> tuple[int, int]:
-        assert device == 0
+        self.contexts.append(device)
         return self.free, self.total
 
     def device_memory_used(self, device: int) -> int:
@@ -39,6 +45,10 @@ class FakeCuda:
         if self.used is None:
             raise pynvml.NVMLError(pynvml.NVML_ERROR_NOT_SUPPORTED)
         return self.used
+
+    def get_device_properties(self, device: int) -> Properties:
+        assert device == 0
+        return Properties(self.total)
 
     def set_per_process_memory_fraction(self, fraction: float, device: int) -> None:
         assert device == 0
@@ -54,21 +64,21 @@ def test_the_budget_is_what_others_leave_free_less_a_tenth_or_a_gib() -> None:
 def test_on_a_gpu_with_room_sift_caps_itself_at_its_budget_in_native_bfloat16() -> None:
     cuda = FakeCuda(free=20 * GIB, total=24 * GIB, used=6 * GIB)
     assert chosen(cuda, NONE) == Device("cuda", torch.bfloat16, threads=1)
-    assert cuda.fractions == [pytest.approx((18 - 2.4) / 24)]
+    assert (cuda.fractions, cuda.contexts) == ([pytest.approx((18 - 2.4) / 24)], [])
     assert cuda.emulated == [False]
-    assert chosen(FakeCuda(free=20 * GIB, total=24 * GIB, bf16=False), NONE).dtype == torch.float32
+    assert chosen(FakeCuda(free=20 * GIB, total=24 * GIB, used=0, bf16=False), NONE).dtype == torch.float32
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("driver not loaded"), FileNotFoundError("libnvidia-ml.so.1")])
 def test_without_nvml_cuda_s_own_figure_of_free_memory_counts(failure: Exception) -> None:
     cuda = FakeCuda(free=20 * GIB, total=24 * GIB, failure=failure)
-    assert chosen(cuda, NONE).name == "cuda"
+    assert (chosen(cuda, NONE).name, cuda.contexts) == ("cuda", [0])
 
 
-def test_a_gpu_others_fill_leaves_sift_on_the_cpu_saying_so() -> None:
+def test_a_gpu_others_fill_leaves_sift_on_the_cpu_saying_so_and_holding_no_context_on_it() -> None:
     cuda = FakeCuda(free=20 * GIB, total=24 * GIB, used=22 * GIB)
     found = chosen(cuda, NONE)
-    assert (found.name, cuda.fractions) == ("cpu", [])
+    assert (found.name, cuda.fractions, cuda.contexts) == ("cpu", [], [])
     assert found.notice == "only 2.0 GiB of the GPU's memory is free, too little: the models run on the CPU"
 
 
