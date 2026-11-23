@@ -10,7 +10,7 @@ from typing import Protocol
 
 from sift.domain.plan.indexing import Found, Stat, stored_time
 from sift.domain.text.notes import TEXT_FILES
-from sift.domain.text.records import RECORD_FILES
+from sift.domain.text.records import RECORD_FILES, split_record_path
 from sift.ingest.files import Identity, identity_at
 from sift.ingest.links import LinkTarget, lands_within, link_target
 
@@ -18,6 +18,7 @@ SKIPPED_FOLDERS = frozenset({"node_modules", "__pycache__"})
 GONE = (FileNotFoundError, NotADirectoryError)
 PROGRESS_EVERY = 1000
 HIDDEN_SYSTEM = stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM
+NAMED_AS_RECORD = "its name reads as a record's id; rename it"
 
 
 class DirEntry(Protocol):
@@ -119,6 +120,10 @@ def _file(entry: DirEntry, relative: str, seen: _Seen, guard: _Guard | None) -> 
         return
     if not _storable(relative):
         seen.unnamed.append(relative.encode(errors="backslashreplace").decode())
+        return
+    if split_record_path(relative)[1]:
+        seen.unlisted_files.append(relative)
+        seen.refusals[relative] = NAMED_AS_RECORD
         return
     seen.files[relative] = Stat(stored_time(found.st_mtime_ns), found.st_size)
     if identity is not None:

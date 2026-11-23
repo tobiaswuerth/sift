@@ -106,19 +106,11 @@ def _dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
     return sum(large, Tally(removed=removed))
 
 
-def _records_stored(job: Job, path: str, stat: Stat, scanned: Identity | None) -> Tally:
-    try:
-        return stored_records(job, path, stat, job.collection.choices.records, scanned)
-    except OSError as error:
-        with writing_documents(job.connection, job.limits.batches) as transaction:
-            return _refused(transaction, path, stat, Refused(error.strerror or str(error), read_again=True))
-
-
 def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat], identities: Mapping[str, Identity]) -> Tally:
     tally, done, limits = Tally(), 0, job.limits
     whole = tuple(path for path in plan.read if not path.lower().endswith(RECORD_FILES))
     for path in (path for path in plan.read if path.lower().endswith(RECORD_FILES)):
-        tally += _records_stored(job, path, files[path], identities.get(path))
+        tally += stored_records(job, path, files[path], job.collection.choices.records, identities.get(path))
         done += 1
         job.report(Advanced(done))
     for batch in batches(whole, files, limits.most_files_a_write, limits.most_bytes_a_write):

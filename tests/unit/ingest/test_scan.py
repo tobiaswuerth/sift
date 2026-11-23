@@ -10,7 +10,7 @@ import pytest
 
 from sift.domain.plan.indexing import MOST_TIME, Stat, index_plan
 from sift.ingest.files import Identity
-from sift.ingest.scan import HIDDEN_SYSTEM, DirEntry, LinkChecks, Listing, Scanned, scan
+from sift.ingest.scan import HIDDEN_SYSTEM, NAMED_AS_RECORD, DirEntry, LinkChecks, Listing, Scanned, scan
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,3 +307,11 @@ def test_folders_both_hidden_and_system_are_passed_over(tmp_path: Path) -> None:
     ]
     fake = listing({str(tmp_path): entries, "bin": [], "hidden": []})
     assert scan(tmp_path, follow_links=False, links=FAKE, listing=fake).found.empty_folders == ("hidden/",)
+
+
+def test_a_file_whose_path_reads_as_a_record_s_id_is_named_not_read(tmp_path: Path) -> None:
+    for name in ("a.jsonl#k.md", "b.NDJSON#x/c.md", "a.jsonl"):
+        write(tmp_path / name)
+    scanned = scan(tmp_path, follow_links=False)
+    assert (paths(scanned), sorted(scanned.found.unlisted_files)) == (["a.jsonl"], ["a.jsonl#k.md", "b.NDJSON#x/c.md"])
+    assert scanned.refusals["a.jsonl#k.md"] == NAMED_AS_RECORD

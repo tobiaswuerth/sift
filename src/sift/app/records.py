@@ -4,7 +4,7 @@ from itertools import batched
 
 from sift.api.events import Noted
 from sift.app.filing import Job, Tally
-from sift.domain.plan.indexing import Stat
+from sift.domain.plan.indexing import RACY, Stat
 from sift.domain.text.notes import Document
 from sift.domain.text.records import Chosen, SkippedLine, record_of
 from sift.ingest.files import Identity
@@ -82,22 +82,34 @@ def _batch(
     return Tally(added=len(new), changed=len(changed)), skipped
 
 
-def stored_records(job: Job, path: str, stat: Stat, chosen: Chosen, scanned: Identity | None) -> Tally:
-    limits, tally, skips = job.limits, Tally(), Skips()
-    lines = job.readers.lines(job.collection.folder / path, limits.most_text_bytes, scanned)
-    with writing_documents(job.connection, limits.batches) as transaction:
-        source = put_source(transaction, path, stat.modified_ns, stat.size)
-        nothing_taken(transaction)
-        for read in batched(_records(lines, chosen, limits.most_text_bytes), limits.most_records_a_write):
-            done, skipped = _batch(transaction, source, path, read)
-            tally, skips = tally + done, skips + skipped
+def _finished(job: Job, path: str, stat: Stat, source: SourceId, skips: Skips) -> int:
+    problem = skips.said()
+    with writing_documents(job.connection, job.limits.batches) as transaction:
         gone = untaken(transaction, source)
         delete_documents(transaction, gone)
-        problem = skips.said()
+        put_source(transaction, path, stat.modified_ns, stat.size)
         if problem is None:
             clear_unreadable(transaction, [path])
         else:
             mark_unreadable(transaction, path, problem, read_again=False)
     if problem is not None:
         job.report(Noted(f"{path}: {problem}"))
-    return tally + Tally(removed=len(gone))
+    return len(gone)
+
+
+def stored_records(job: Job, path: str, stat: Stat, chosen: Chosen, scanned: Identity | None) -> Tally:
+    limits, tally, skips = job.limits, Tally(), Skips()
+    lines = job.readers.lines(job.collection.folder / path, limits.most_text_bytes, scanned)
+    with writing_documents(job.connection, limits.batches) as transaction:
+        source = put_source(transaction, path, RACY, stat.size)
+        nothing_taken(transaction)
+    try:
+        for read in batched(_records(lines, chosen, limits.most_text_bytes), limits.most_records_a_write):
+            with writing_documents(job.connection, limits.batches) as transaction:
+                done, skipped = _batch(transaction, source, path, read)
+            tally, skips = tally + done, skips + skipped
+    except OSError as error:
+        with writing_documents(job.connection, limits.batches) as transaction:
+            mark_unreadable(transaction, path, error.strerror or str(error), read_again=True)
+        return tally
+    return tally + Tally(removed=_finished(job, path, stat, source, skips))

@@ -1,6 +1,7 @@
 import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import closing
+from itertools import islice
 from pathlib import Path
 
 import pytest
@@ -19,10 +20,12 @@ from sift.app.embedding import embed
 from sift.app.filing import Limits, Lines, Readers
 from sift.app.indexing import index
 from sift.app.search import search
+from sift.domain.text.records import SkippedLine
 from sift.ingest.files import Identity
 from sift.ingest.records import lines_of
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading
+from sift.storage.documents import counts
 from sift.storage.store import open_store
 from sift.storage.vectors import left
 from tests.later import later
@@ -123,7 +126,7 @@ def test_lines_without_a_record_are_skipped_and_said(tmp_path: Path) -> None:
     said: list[Event] = []
     indexed(home, said=said)
     assert found(home, "kept OR again OR nul OR same") == ["c/r.jsonl#2", "c/r.jsonl#a\ufffdb"]
-    assert text_of(home, "c/r.jsonl#a\ufffdb") == "nul"
+    assert text_of(home, "c/r.jsonl#a\ufffdb") == "same key"
     (noted,) = [each for each in said if isinstance(each, Noted)]
     assert noted.text.startswith("r.jsonl: 6 lines skipped (line 1: not JSON; line 2: not an object; line 3: no text")
     assert noted.text.endswith("; ...)")
@@ -157,8 +160,17 @@ def test_a_large_file_is_stored_a_batch_at_a_time_as_it_is_read(tmp_path: Path) 
     add(home, AddCollection(str(tmp_path / "c")))
     small = Limits(most_records_a_write=4)
     said: list[Event] = []
-    first = indexed(home, small, said)
-    assert (first.added, first.removed) == (9, 0)
+    held: list[int] = []
+
+    def counted(path: Path, most: int, scanned: Identity | None) -> Iterator[tuple[int, str | SkippedLine]]:
+        (one,) = known_collections(home)
+        for line in lines_of(path, most, scanned):
+            with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
+                held.append(counts(transaction).documents)
+            yield line
+
+    first = indexed(home, small, said, counted)
+    assert (first.added, first.removed, held[0], held[-1]) == (9, 0, 0, 8)
     assert text_of(home, "c/big.jsonl#3") == "record 3"
     assert any(isinstance(each, Noted) and "line 10: id 0 used twice" in each.text for each in said)
     write(tmp_path / "c" / "big.jsonl", jsonl([*records[:5], {"id": 5, "text": "changed"}]))
@@ -181,17 +193,20 @@ def test_a_record_longer_than_a_document_may_be_is_skipped_and_files_in_utf_16_a
     assert "line 2: 45 bytes as text, more than the 40 a document holds" in noted
 
 
-def broken(_path: Path, _most: int, _scanned: Identity | None) -> Iterator[tuple[int, str]]:
-    yield 1, json.dumps({"id": "new", "text": "half read"})
+def broken(path: Path, most: int, scanned: Identity | None) -> Iterator[tuple[int, str | SkippedLine]]:
+    yield from islice(lines_of(path, most, scanned), 2)
     raise OSError(5, "the drive went away")
 
 
-def test_a_file_that_cannot_be_read_to_its_end_stores_nothing_of_it(papers: Path, tmp_path: Path) -> None:
-    write(tmp_path / "arxiv" / "2021" / "2021-01.jsonl", jsonl([{"id": "new", "text": "half read"}]))
-    indexed(papers, lines=broken)
-    assert found(papers, "brush OR half") == [BRUSH]
-    (contents,) = [each.contents for each in status(papers, ShowStatus(unreadable=True)).collections]
+def test_a_file_that_cannot_be_read_to_its_end_keeps_what_was_read_and_is_read_again(tmp_path: Path) -> None:
+    write(tmp_path / "c" / "r.jsonl", jsonl([{"id": n, "text": f"part {n}"} for n in range(3)]))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    assert indexed(home, Limits(most_records_a_write=1), lines=broken).added == 2
+    assert found(home, "part") == ["c/r.jsonl#0", "c/r.jsonl#1"]
+    (contents,) = [each.contents for each in status(home, ShowStatus(unreadable=True)).collections]
     assert isinstance(contents, Counted)
-    assert [(each.path, each.problem) for each in contents.unreadable_files] == [
-        ("2021/2021-01.jsonl", "the drive went away")
-    ]
+    assert [(each.path, each.problem) for each in contents.unreadable_files] == [("r.jsonl", "the drive went away")]
+    again = indexed(home)
+    assert (again.added, again.changed, again.removed, again.unreadable) == (1, 0, 0, 0)
+    assert found(home, "part") == ["c/r.jsonl#0", "c/r.jsonl#1", "c/r.jsonl#2"]

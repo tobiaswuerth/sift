@@ -1,3 +1,4 @@
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -12,6 +13,8 @@ RECORD_MARK = "#"
 ID_FIELDS = ("id", "_id")
 TITLE_FIELDS = ("title", "name", "headline", "subject")
 TEXT_FIELDS = ("text", "content", "body", "abstract", "description", "summary")
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+NOT_A_KEY = "its id is no text or whole number"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,15 +55,30 @@ def _text_fields(found: Mapping[str, FieldValue], chosen: Chosen, taken: tuple[s
     return (max(strings)[1],) if strings else ()
 
 
-def record(found: Mapping[str, FieldValue], line: int, chosen: Chosen) -> Document | None:
+def _key(written: FieldValue, line: int) -> str | None:
+    match written:
+        case None | "":
+            return str(line)
+        case bool():
+            return None
+        case int():
+            return str(written)
+        case str() if not CONTROL.search(written):
+            return written
+        case _:
+            return None
+
+
+def record(found: Mapping[str, FieldValue], line: int, chosen: Chosen) -> Document | SkippedLine:
     id_field = chosen.id or next((name for name in ID_FIELDS if name in found), None)
-    key = found.get(id_field) if id_field else None
-    named = str(line) if key is None or key == "" else str(key)
+    named = _key(found.get(id_field) if id_field else None, line)
+    if named is None:
+        return SkippedLine(line, NOT_A_KEY)
     title_field = chosen.title or _first(found, TITLE_FIELDS)
     text_fields = _text_fields(found, chosen, (id_field, title_field))
     body = "\n\n".join(text for name in text_fields if (text := as_text(found.get(name))))
     if not body:
-        return None
+        return SkippedLine(line, "no text")
     title = one_line(as_text(found.get(title_field))) if title_field else ""
     text = storable(f"# {title}\n\n{body}" if title else body)
     fields: Fields = {name: value for name, value in found.items() if name not in text_fields}
@@ -77,8 +95,8 @@ def record_of(line: str, number: int, chosen: Chosen) -> Document | SkippedLine:
     if not isinstance(value, Mapping):
         return SkippedLine(number, "not an object")
     found = record(value, number, chosen)
-    if found is None:
-        return SkippedLine(number, "no text")
+    if isinstance(found, SkippedLine):
+        return found
     return Document(found.key, digest(line.encode()), found.title, found.fields, found.text, found.chunks, ())
 
 

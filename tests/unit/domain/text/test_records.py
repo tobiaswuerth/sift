@@ -6,6 +6,7 @@ from sift.api.fields import FieldValue
 from sift.domain.text.notes import Document
 from sift.domain.text.records import (
     NO_CHOICE,
+    NOT_A_KEY,
     Chosen,
     SkippedLine,
     public_id,
@@ -71,6 +72,23 @@ def test_a_record_without_an_id_is_named_by_its_line_and_fields_may_be_chosen() 
     found = read({"key": "q1", "q": "Why?", "a": "Because.", "text": "not this"}, chosen)
     assert (found.key, found.title, found.text) == ("q1", "Why?", "# Why?\n\nWhy?\n\nBecause.")
     assert found.fields == {"key": "q1", "text": "not this"}
+
+
+@pytest.mark.parametrize("key", [True, 1.5, [1], {"a": 1}, "a\nb", "a\x1bb", "\x85"])
+def test_an_id_that_is_no_text_or_whole_number_skips_its_line(key: FieldValue) -> None:
+    assert record_of(json.dumps({"id": key, "text": "x"}), 4, NO_CHOICE) == SkippedLine(4, NOT_A_KEY)
+
+
+def test_a_whole_number_and_its_text_are_the_same_id() -> None:
+    assert (
+        read({"id": 7, "text": "x"}).key,
+        read({"id": "7", "text": "x"}).key,
+        read({"id": -2, "text": "x"}).key,
+    ) == (
+        "7",
+        "7",
+        "-2",
+    )
 
 
 @pytest.mark.parametrize(

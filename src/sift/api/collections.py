@@ -15,7 +15,10 @@ FOLLOW_LINKS = (
     "read the files that are links to outside the folder too, which are left out otherwise: a link may lead to any "
     "file of this machine"
 )
-ID_FIELD = "JSON Lines: the field holding each record's id (default: id or _id, else the line number)"
+ID_FIELD = (
+    "JSON Lines: the field holding each record's id, a text or a whole number (default: id or _id, else the "
+    "line number, which changes when lines are added above)"
+)
 TITLE_FIELD = "JSON Lines: the field holding the title (default: title, name, headline or subject)"
 TEXT_FIELDS = (
     "JSON Lines: the fields whose text a record's document holds, comma-separated "
