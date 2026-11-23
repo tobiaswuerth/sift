@@ -1,18 +1,23 @@
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
+from sentence_transformers import SentenceTransformer
 
-from sift.inference.local import Local, local, width_of
+from sift.api.errors import ModelUnavailableError
+from sift.inference.local import Embedder, Local, local, width_of
 from sift.inference.models import Models
 from tests.models import Hashed
-from tests.tiny_model import WIDTH, tiny_model
+from tests.tiny_model import WIDTH, tiny_model, tiny_prompted, tiny_reranker, tiny_static
 
 
 @pytest.fixture(scope="module")
 def tiny(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return tiny_model(tmp_path_factory.mktemp("models"))
+    folder = tmp_path_factory.mktemp("models")
+    tiny_reranker(folder)
+    return tiny_model(folder)
 
 
 def test_a_model_from_a_folder_embeds_texts_as_normalised_halves_in_their_order(tiny: Path) -> None:
@@ -28,11 +33,11 @@ def test_a_model_from_a_folder_embeds_texts_as_normalised_halves_in_their_order(
 
 def test_the_model_loads_once_when_first_needed(tiny: Path) -> None:
     models = Local(str(tiny))
-    assert models.loaded is None
+    assert models.embedder is None
     models.prepare()
-    loaded = models.loaded
+    loaded = models.embedder
     models.encode(["halo"], query=True)
-    assert models.loaded is loaded
+    assert models.embedder is loaded
 
 
 def hashed(_: Path) -> Models:
@@ -40,7 +45,7 @@ def hashed(_: Path) -> Models:
 
 
 def local_in(folder: Path) -> Models:
-    return local(str(folder))
+    return local(str(folder), str(folder.parent / "reranker"))
 
 
 @pytest.mark.parametrize("make", [hashed, local_in])
@@ -52,6 +57,10 @@ def test_the_fake_keeps_the_contract_the_local_models_keep(tiny: Path, make: Cal
         assert rows.shape[0] == 3
         assert np.allclose(np.linalg.norm(rows.astype(np.float32), axis=1), 1, atol=1e-2)
         assert models.encode([], query=query).shape == (0, rows.shape[1])
+    scores = models.rerank("dark matter", ["dark matter halo", "pruning skips ranges", "halo"])
+    assert (scores.shape, scores.dtype) == ((3,), np.float32)
+    assert bool(np.isfinite(scores).all())
+    assert models.rerank("dark matter", []).shape == (0,)
     models.prepare()
     assert models.name
 
@@ -60,3 +69,32 @@ def test_a_model_that_says_not_how_wide_its_vectors_are_is_refused() -> None:
     assert width_of("m", 768) == 768
     with pytest.raises(ValueError, match="m says not how wide its vectors are"):
         width_of("m", None)
+
+
+def test_a_model_without_a_transformers_tokenizer_is_batched_by_characters(tmp_path: Path) -> None:
+    models = local(str(tiny_static(tmp_path)))
+    rows = models.encode(["dark matter", "halo"], query=False)
+    assert rows.shape == (2, WIDTH)
+
+
+def test_queries_and_documents_are_embedded_with_their_prompts_and_at_most_1024_tokens(tmp_path: Path) -> None:
+    folder = tiny_prompted(tmp_path, 2048)
+    models = Local(str(folder))
+    texts = ["dark matter", "skips ranges"]
+    queries, documents = models.encode(texts, query=True), models.encode(texts, query=False)
+    own = cast("Embedder", SentenceTransformer(str(folder)))
+    query = own.encode_query(texts, batch_size=2, normalize_embeddings=True, show_progress_bar=False)
+    document = own.encode_document(texts, batch_size=2, normalize_embeddings=True, show_progress_bar=False)
+    assert np.allclose(queries, np.asarray(query, np.float32), atol=1e-2)
+    assert np.allclose(documents, np.asarray(document, np.float32), atol=1e-2)
+    assert not np.allclose(queries, documents, atol=1e-2)
+    assert models.embedder is not None
+    assert models.embedder.model.max_seq_length == 1024
+
+
+def test_a_model_that_cannot_be_loaded_says_what_to_check(tmp_path: Path) -> None:
+    with pytest.raises(ModelUnavailableError, match="could not be loaded") as refused:
+        local(str(tmp_path / "missing")).prepare()
+    assert refused.value.remedy is not None
+    assert "SIFT_EMBED_MODEL" in refused.value.remedy
+    assert "\n" not in refused.value.message

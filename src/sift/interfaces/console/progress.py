@@ -8,7 +8,14 @@ from sift.interfaces.console.text import fitted, printable
 from sift.interfaces.console.units import duration, rate
 
 UNITS = MappingProxyType(
-    {Phase.REMAKE: "chunk", Phase.SCAN: "file", Phase.READ: "file", Phase.MERGE: "chunk", Phase.EMBED: "chunk"}
+    {
+        Phase.REMAKE: "chunk",
+        Phase.SCAN: "file",
+        Phase.READ: "file",
+        Phase.MERGE: "chunk",
+        Phase.EMBED: "chunk",
+        Phase.LOAD: "model",
+    }
 )
 RATED = frozenset({Phase.REMAKE, Phase.READ, Phase.MERGE, Phase.EMBED})
 INDENT = "  "

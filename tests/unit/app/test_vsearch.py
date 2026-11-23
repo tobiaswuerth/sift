@@ -13,11 +13,12 @@ from sift.api.search import SearchVectors, Unsearched
 from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
-from sift.app.vsearch import UNEMBEDDED_REMEDY, vsearch
+from sift.app.vsearch import UNEMBEDDED_REMEDY, Asked, vsearch
 from sift.domain.arrays import Ids
 from sift.domain.codec.codes import Halves
+from sift.domain.errors import DamagedError
 from sift.storage.database import Reading
-from sift.storage.vectors import EMBED_REMEDY, vectors_of
+from sift.storage.vectors import EMBED_REMEDY, documents_embedded, vectors_of
 from tests.damage import damage_table
 from tests.models import BROKEN, Hashed
 
@@ -161,7 +162,7 @@ def test_a_collection_without_passages_is_searched_as_empty(home: Path, tmp_path
 
 
 def test_documents_of_many_passages_widen_the_search_until_k_documents_are_found(home: Path) -> None:
-    found = vsearch(home, SearchVectors("pruning skips ranges that cannot win", k=3), Hashed(), rescore=1)
+    found = vsearch(home, SearchVectors("pruning skips ranges that cannot win", k=3), Hashed(), Asked(1, vectors_of))
     assert len({hit.id for hit in found.hits}) == len(found.hits) == 3
 
 
@@ -176,15 +177,20 @@ def test_a_store_lost_while_rescoring_leaves_the_nearest_of_the_rest(home: Path,
     more(home, tmp_path)
     embed(home, EmbedCollections(("more",)), lambda _: None, Hashed())
     changed(home / "collections" / "notes.sqlite", "UPDATE vectors SET vector = x'00'")
-    found = vsearch(home, SearchVectors("# halo dark matter halo models.", k=1), Hashed(), rescore=1)
+    found = vsearch(home, SearchVectors("# halo dark matter halo models.", k=1), Hashed(), Asked(1, vectors_of))
     assert [hit.id for hit in found.hits] == ["more/halo.md"]
 
 
-def test_once_every_document_is_found_no_more_vectors_are_read(tmp_path: Path) -> None:
+def parts(tmp_path: Path) -> Path:
     root = tmp_path / "parts"
     for name, word in (("alpha", "comets"), ("beta", "glaciers")):
         sections = "".join(f"## Part {n}\n\n{f'About {word} and more {word}. ' * 120}\n\n" for n in range(20))
         write(root / f"{name}.md", f"# {name}\n\n{sections}")
+    return root
+
+
+def test_once_every_document_is_found_no_more_vectors_are_read(tmp_path: Path) -> None:
+    root = parts(tmp_path)
     home = tmp_path / "home"
     add(home, AddCollection(str(root)))
     index(home, IndexCollections(), lambda _: None)
@@ -195,7 +201,7 @@ def test_once_every_document_is_found_no_more_vectors_are_read(tmp_path: Path) -
         read.append(len(chunks))
         return vectors_of(transaction, chunks)
 
-    found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), rescore=1, read=counted)
+    found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), Asked(1, counted))
     assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]
     assert 0 < max(read) < chunks_in(home / "collections" / "parts.sqlite")
 
@@ -208,10 +214,7 @@ def chunks_in(store: Path) -> int:
 
 @pytest.mark.parametrize("third", ["", f"# C\n\nAn {BROKEN} note.\n", "# C\n\nIndexed, not embedded yet.\n"])
 def test_documents_without_vectors_do_not_keep_the_search_widening(tmp_path: Path, third: str) -> None:
-    root = tmp_path / "parts"
-    for name, word in (("alpha", "comets"), ("beta", "glaciers")):
-        sections = "".join(f"## Part {n}\n\n{f'About {word} and more {word}. ' * 120}\n\n" for n in range(20))
-        write(root / f"{name}.md", f"# {name}\n\n{sections}")
+    root = parts(tmp_path)
     home = tmp_path / "home"
     add(home, AddCollection(str(root)))
     if third != "# C\n\nIndexed, not embedded yet.\n":
@@ -226,6 +229,58 @@ def test_documents_without_vectors_do_not_keep_the_search_widening(tmp_path: Pat
         read.append(len(chunks))
         return vectors_of(transaction, chunks)
 
-    found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), rescore=1, read=counted)
+    found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), Asked(1, counted))
     assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]
     assert 0 < max(read) < chunks_in(home / "collections" / "parts.sqlite") - 1
+
+
+def test_documents_are_counted_only_when_the_first_round_finds_too_few(home: Path) -> None:
+    counted: list[int] = []
+
+    def count(transaction: Reading) -> int:
+        counted.append(documents_embedded(transaction))
+        return counted[-1]
+
+    vsearch(home, SearchVectors("dark matter halo models", k=3), Hashed(), Asked(1000, vectors_of, count))
+    assert counted == []
+    vsearch(home, SearchVectors("pruning skips ranges that cannot win", k=3), Hashed(), Asked(1, vectors_of, count))
+    assert counted
+
+
+def test_a_first_round_holding_every_embedded_document_is_not_widened(tmp_path: Path) -> None:
+    root, home = parts(tmp_path), tmp_path / "home"
+    add(home, AddCollection(str(root)))
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    rescore = chunks_in(home / "collections" / "parts.sqlite") - 1
+    read: list[int] = []
+    counted: list[int] = []
+
+    def reading(transaction: Reading, chunks: Ids) -> tuple[Ids, Halves]:
+        read.append(len(chunks))
+        return vectors_of(transaction, chunks)
+
+    def count(transaction: Reading) -> int:
+        counted.append(documents_embedded(transaction))
+        return counted[-1]
+
+    found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), Asked(rescore, reading, count))
+    assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]
+    assert (read, counted) == ([rescore], [2])
+
+
+def test_a_store_lost_while_its_documents_are_counted_is_passed_over(home: Path, tmp_path: Path) -> None:
+    more(home, tmp_path)
+    embed(home, EmbedCollections(("more",)), lambda _: None, Hashed())
+    counted: list[int] = []
+
+    def count(transaction: Reading) -> int:
+        counted.append(1)
+        if len(counted) == 1:
+            raise DamagedError("the count of embedded documents is unreadable")
+        return documents_embedded(transaction)
+
+    request = SearchVectors("pruning skips ranges that cannot win", k=3)
+    found = vsearch(home, request, Hashed(), Asked(1, vectors_of, count))
+    assert len(found.unsearched) == 1
+    assert found.hits

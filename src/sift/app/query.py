@@ -1,0 +1,219 @@
+from collections.abc import Sequence
+from contextlib import ExitStack
+from dataclasses import dataclass, replace
+from functools import partial
+from pathlib import Path
+
+import numpy as np
+
+from sift.api.errors import InvalidRequestError, StoreUnavailableError
+from sift.api.fields import Fields, FieldValue
+from sift.api.ids import ChunkId, owner
+from sift.api.search import MOST_HITS, Hit, SearchHybrid, SearchResult
+from sift.app import searching
+from sift.app.search import Wanted, found
+from sift.app.vsearch import ASKED, Asked, Held, held, near, no_vectors, query_vector
+from sift.domain.arrays import floats, ints
+from sift.domain.codec.codes import Floats
+from sift.domain.query.expressions import NOTHING, Expression
+from sift.domain.query.grammar import parsed
+from sift.domain.rank.best import Best
+from sift.domain.rank.hybrid import blend, named, passage, standing_out, words, work_of
+from sift.inference.models import Models
+from sift.retrieval.keyword.lists import Opened, opened
+from sift.retrieval.keyword.search import TUNING, never
+from sift.storage.database import Reading
+from sift.storage.documents import fields_by_document, passages, texts
+from sift.storage.keywords import refuse_stale
+
+EMPTY_REMEDY = "ask a question, e.g. sift query 'how dark matter halos form'"
+CANDIDATES_REMEDY = f"ask for as many candidates as results or more, and {MOST_HITS:,} at most"
+
+
+@dataclass(frozen=True, slots=True)
+class Both:
+    keywords: Opened
+    vectors: Held
+
+
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    chunk: int
+    hit: Hit
+    fields: Fields
+
+
+type Kept = searching.Kept[Both]
+
+
+def _both(model: str, transaction: Reading) -> Both:
+    refuse_stale(transaction)
+    try:
+        vectors = held(model, transaction)
+    except StoreUnavailableError:
+        vectors = no_vectors()
+    return Both(opened(transaction), vectors)
+
+
+def _keywords(both: Both) -> Opened:
+    return both.keywords
+
+
+def _vectors(both: Both) -> Held:
+    return both.vectors
+
+
+def _any_word(text: str) -> Expression:
+    found_words = list(dict.fromkeys(words(text)))
+    return parsed(" OR ".join(f'"{word}"' for word in found_words)) if found_words else NOTHING
+
+
+def _candidates(kept: Kept, request: SearchHybrid, query: Floats | None, asked: Asked) -> list[int] | None:
+    wanted = max(request.candidates, request.k)
+    by_document = not request.all_passages
+    keyword = found(kept, _keywords, Wanted(wanted, by_document, TUNING, never), _any_word(request.query))
+    if keyword is None:
+        return None
+    semantic = near(kept, _vectors, Best(wanted, by_document), query, asked) if query is not None else ()
+    if semantic is None:
+        return None
+    return list(dict.fromkeys([each.chunk for each in keyword.found] + [each.chunk for each in semantic]))
+
+
+def _read(one: searching.Searching[Both], chunks: Sequence[int]) -> list[Candidate]:
+    held_passages = passages(one.transaction, [ChunkId(chunk) for chunk in chunks])
+    documents = sorted({each.document for each in held_passages.values()})
+    whole, fields = texts(one.transaction, documents), fields_by_document(one.transaction, documents)
+    return [
+        Candidate(
+            chunk,
+            Hit(
+                f"{one.collection.name}/{each.path}",
+                each.title,
+                f"{each.first_line}-{each.last_line}",
+                0.0,
+                whole[each.document][each.start : each.start + each.length],
+            ),
+            fields[each.document],
+        )
+        for chunk, each in held_passages.items()
+    ]
+
+
+def _cosines(one: searching.Searching[Both], chunks: Sequence[int], query: Floats, asked: Asked) -> dict[int, float]:
+    ids, rows = asked.read(one.transaction, np.array(chunks, np.int64))
+    scores = rows.astype(np.float32) @ query if len(ids) else np.zeros(0, np.float32)
+    return dict(zip(ints(ids), floats(scores), strict=True))
+
+
+def _gathered(
+    kept: Kept, chunks: list[int], query: Floats | None, asked: Asked
+) -> tuple[list[Candidate], dict[int, float]] | None:
+    candidates: list[Candidate] = []
+    cosines: dict[int, float] = {}
+    for one in list(kept.searching):
+        mine = [chunk for chunk in chunks if owner(chunk) == one.collection.id]
+        if not mine:
+            continue
+        read = kept.guarded(one, partial(_read, one, mine))
+        if read is None:
+            return None
+        near_by = {} if query is None else kept.guarded(one, partial(_cosines, one, mine, query, asked))
+        if near_by is None:
+            return None
+        candidates += read
+        cosines |= near_by
+    return candidates, cosines
+
+
+def _values(value: FieldValue) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [text for each in value for text in _values(each)]
+    return [] if value is None or isinstance(value, dict) else [str(value)]
+
+
+def _scored(models: Models, request: SearchHybrid, candidates: list[Candidate], cosines: dict[int, float]) -> Floats:
+    asked = frozenset(words(request.query))
+    names = [
+        named([text for key, value in each.fields.items() if key != "title" for text in _values(value)], asked)
+        for each in candidates
+    ]
+    shown = [
+        passage(each.hit.title, found_names, each.hit.text or "")
+        for each, found_names in zip(candidates, names, strict=True)
+    ]
+    rerank = models.rerank(request.query, shown).astype(np.float64)
+    cosine = np.array([cosines.get(each.chunk, 0.0) for each in candidates], np.float64)
+    return blend(rerank, cosine, np.array([bool(found_names) for found_names in names], np.bool_)).astype(np.float32)
+
+
+def _first_of_each(ranked: list[Candidate]) -> list[Candidate]:
+    seen: set[str] = set()
+    kept: list[Candidate] = []
+    for each in ranked:
+        if each.hit.id not in seen:
+            seen.add(each.hit.id)
+            kept.append(each)
+    return kept
+
+
+def _one_per_work(ranked: list[Candidate]) -> list[Candidate]:
+    kept: list[Candidate] = []
+    first: dict[str, int] = {}
+    for each in ranked:
+        work = work_of(each.fields.get("doi"))
+        if work is not None and work in first:
+            better = kept[first[work]]
+            kept[first[work]] = replace(better, hit=replace(better.hit, also=(*better.hit.also, each.hit.id)))
+            continue
+        if work is not None:
+            first[work] = len(kept)
+        kept.append(each)
+    return kept
+
+
+def _ordered(request: SearchHybrid, candidates: list[Candidate], scores: Floats) -> list[Candidate]:
+    order = ints(np.lexsort((np.array([each.chunk for each in candidates], np.int64), -scores)))
+    rounded = floats(scores)
+    ranked = [replace(candidates[at], hit=replace(candidates[at].hit, score=round(rounded[at], 4))) for at in order]
+    if not request.all_passages:
+        ranked = _first_of_each(ranked)
+        ranked = _one_per_work(ranked)
+    ranked = ranked[: request.k]
+    return ranked[: standing_out([each.hit.score for each in ranked])] if request.adaptive else ranked
+
+
+def _answered(kept: Kept, request: SearchHybrid, models: Models, asked: Asked) -> list[tuple[int, Hit]]:
+    query = (
+        query_vector(models, request.query)
+        if any(len(each.held.vectors.coded.ids) for each in kept.searching)
+        else None
+    )
+    while True:
+        chunks = _candidates(kept, request, query, asked)
+        gathered = None if chunks is None else _gathered(kept, chunks, query, asked)
+        if gathered is None:
+            continue
+        candidates, cosines = gathered
+        if not candidates:
+            return []
+        ranked = _ordered(request, candidates, _scored(models, request, candidates, cosines))
+        return [(each.chunk, replace(each.hit, text=None) if request.compact else each.hit) for each in ranked]
+
+
+def _checked(request: SearchHybrid) -> None:
+    searching.checked_k(request.k)
+    if not request.query.strip():
+        raise InvalidRequestError("an empty query finds nothing", EMPTY_REMEDY)
+    if not request.k <= request.candidates <= MOST_HITS:
+        raise InvalidRequestError(
+            f"--candidates {request.candidates:,} is fewer than -k or more than allowed", CANDIDATES_REMEDY
+        )
+
+
+def query(home: Path, request: SearchHybrid, models: Models, asked: Asked = ASKED) -> SearchResult:
+    _checked(request)
+    collections = searching.collections_of(home, request.collection)
+    with ExitStack() as cleanup:
+        kept = searching.opened(cleanup, collections, partial(_both, models.name))
+        return searching.result(kept, _answered(kept, request, models, asked), partial=False)

@@ -2,7 +2,13 @@ import re
 from types import MappingProxyType
 
 EMBED_MODEL = "google/embeddinggemma-2"
-PINNED = MappingProxyType({EMBED_MODEL: "f9972ac22e696a105c482202646979e33e4b5a1e"})
+RERANK_MODEL = "Alibaba-NLP/gte-reranker-modernbert-base"
+PINNED = MappingProxyType(
+    {
+        EMBED_MODEL: "f9972ac22e696a105c482202646979e33e4b5a1e",
+        RERANK_MODEL: "f7481e6055501a30fb19d090657df9ec1f79ab2c",
+    }
+)
 REPOSITORY = re.compile(r"\w[\w.-]*(/\w[\w.-]*)?")
 REVISION = re.compile(r"[\w.-]+")
 

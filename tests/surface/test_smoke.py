@@ -5,23 +5,24 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from tests.tiny_model import tiny_model
+from tests.tiny_model import tiny_model, tiny_reranker
 
 
-def sift(home: Path, *args: str, model: str = "") -> subprocess.CompletedProcess[str]:
+def sift(home: Path, *args: str, model: str = "", reranker: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "sift", *args],
         capture_output=True,
         text=True,
         encoding="utf-8",
         check=False,
-        timeout=60,
+        timeout=180,
         env={
             **os.environ,
             "SIFT_HOME": str(home),
             "PYTHONIOENCODING": "utf-8",
             "NO_COLOR": "1",
             "SIFT_EMBED_MODEL": model,
+            "SIFT_RERANK_MODEL": reranker,
         },
     )
 
@@ -63,6 +64,7 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     assert timed["partial"] is False
     assert cast("list[dict[str, object]]", timed["hits"])[0]["id"] == "notes/rl.md"
 
+    reranker = str(tiny_reranker(tmp_path / "models"))
     model = str(tiny_model(tmp_path / "models"))
     embedded = sift(home, "embed", model=model)
     assert (embedded.returncode, embedded.stdout) == (0, "")
@@ -70,6 +72,9 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
     assert "Loading" not in embedded.stderr
     near = sift(home, "vsearch", "learning", "-k", "1", "--json", model=model)
     assert len(cast("dict[str, list[object]]", json.loads(near.stdout))["hits"]) == 1
+    asked = sift(home, "query", "reward shaping", "-k", "1", model=model, reranker=reranker)
+    assert (asked.returncode, asked.stdout.split("\n")[1].strip().startswith("notes/")) == (0, True)
+    assert asked.stderr.startswith("1 result  \N{MIDDLE DOT}  hybrid  \N{MIDDLE DOT}  1 collection")
 
     missing = sift(home, "get", "notes/gone.md")
     assert (missing.returncode, missing.stdout) == (1, "")

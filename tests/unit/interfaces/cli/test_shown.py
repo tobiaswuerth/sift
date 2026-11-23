@@ -152,3 +152,14 @@ def test_a_partial_search_says_better_matches_may_be_missing() -> None:
     said = dot.join(("1 result", "keyword", "partial: better matches may be missing", "1 collection", "0.2 s"))
     assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
     assert "partial" not in hits(dataclasses.replace(found, partial=False), 0.25, "linux", PLAIN).messages[0]
+
+
+def test_a_hit_names_its_copies_in_other_collections_under_its_place() -> None:
+    hit = Hit("notes/halo.md", "Halo", "1-3", 3.25, None, ("more/copy.md", "papers/halo.md"))
+    shown = hits(SearchResult((hit,), 3, ()), 0.25, "linux", PLAIN, "hybrid")
+    assert shown.results == (
+        "1  3.25  Halo",
+        "         notes/halo.md:1-3",
+        "         also more/copy.md, papers/halo.md",
+    )
+    assert " hybrid " in shown.messages[-1]

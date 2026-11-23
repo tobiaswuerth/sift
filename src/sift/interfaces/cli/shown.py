@@ -126,7 +126,8 @@ def _hit(rank: int, hit: Hit, ranks: int, scores: int) -> tuple[str, ...]:
     indent = " " * (ranks + scores + 2 * len(GAP))
     head = f"{rank:>{ranks}}{GAP}{hit.score:>{scores}.2f}{GAP}{printable(hit.title)}"
     text = (f"{indent}{_passage(hit.text)}",) if hit.text else ()
-    return (head, f"{indent}{printable(hit.id)}:{hit.lines}", *text)
+    also = (f"{indent}also {', '.join(printable(each) for each in hit.also)}",) if hit.also else ()
+    return (head, f"{indent}{printable(hit.id)}:{hit.lines}", *also, *text)
 
 
 def _footer(result: SearchResult, seconds: float, style: Style, kind: str) -> str:

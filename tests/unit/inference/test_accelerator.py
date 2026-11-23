@@ -4,7 +4,9 @@ import pynvml
 import pytest
 import torch
 
-from sift.inference.accelerator import CPU, GIB, Device, budget, chosen, threads_for, too_large
+from sift.inference.accelerator import CACHES, CPU, CUDA_FIX, GIB, Device, Found, budget, chosen, emptied, too_large
+
+NONE = Found(mps=False, nvidia=False, cuda_build=None)
 
 
 @dataclass(slots=True)
@@ -14,12 +16,15 @@ class FakeCuda:
     used: int | None = None
     available: bool = True
     bf16: bool = True
+    failure: Exception | None = None
     fractions: list[float] = field(default_factory=list[float])
+    emulated: list[bool] = field(default_factory=list[bool])
 
     def is_available(self) -> bool:
         return self.available
 
-    def is_bf16_supported(self) -> bool:
+    def is_bf16_supported(self, *, including_emulation: bool = True) -> bool:
+        self.emulated.append(including_emulation)
         return self.bf16
 
     def mem_get_info(self, device: int) -> tuple[int, int]:
@@ -28,6 +33,8 @@ class FakeCuda:
 
     def device_memory_used(self, device: int) -> int:
         assert device == 0
+        if self.failure is not None:
+            raise self.failure
         if self.used is None:
             raise pynvml.NVMLError(pynvml.NVML_ERROR_NOT_SUPPORTED)
         return self.used
@@ -43,30 +50,51 @@ def test_the_budget_is_what_others_leave_free_less_a_tenth_or_a_gib() -> None:
     assert budget(int(2.9 * GIB), 8 * GIB) is None
 
 
-def test_on_a_gpu_with_room_sift_caps_itself_at_its_budget_in_bfloat16() -> None:
+def test_on_a_gpu_with_room_sift_caps_itself_at_its_budget_in_native_bfloat16() -> None:
     cuda = FakeCuda(free=20 * GIB, total=24 * GIB, used=6 * GIB)
-    assert chosen(cuda, mps=False) == Device("cuda", torch.bfloat16)
+    assert chosen(cuda, NONE) == Device("cuda", torch.bfloat16, threads=1)
     assert cuda.fractions == [pytest.approx((18 - 2.4) / 24)]
-    assert chosen(FakeCuda(free=20 * GIB, total=24 * GIB, bf16=False), mps=False).dtype == torch.float32
+    assert cuda.emulated == [False]
+    assert chosen(FakeCuda(free=20 * GIB, total=24 * GIB, bf16=False), NONE).dtype == torch.float32
 
 
-def test_a_gpu_others_fill_leaves_sift_on_the_cpu() -> None:
+@pytest.mark.parametrize("failure", [RuntimeError("driver not loaded"), FileNotFoundError("libnvidia-ml.so.1")])
+def test_without_nvml_cuda_s_own_figure_of_free_memory_counts(failure: Exception) -> None:
+    cuda = FakeCuda(free=20 * GIB, total=24 * GIB, failure=failure)
+    assert chosen(cuda, NONE).name == "cuda"
+
+
+def test_a_gpu_others_fill_leaves_sift_on_the_cpu_saying_so() -> None:
     cuda = FakeCuda(free=20 * GIB, total=24 * GIB, used=22 * GIB)
-    assert chosen(cuda, mps=False) == CPU
-    assert cuda.fractions == []
+    found = chosen(cuda, NONE)
+    assert (found.name, cuda.fractions) == ("cpu", [])
+    assert found.notice == "only 2.0 GiB of the GPU's memory is free, too little: the models run on the CPU"
 
 
-def test_without_a_gpu_an_apple_one_or_the_cpu_is_chosen() -> None:
-    assert chosen(FakeCuda(0, 0, available=False), mps=True) == Device("mps", torch.float32)
-    assert chosen(FakeCuda(0, 0, available=False), mps=False) == CPU
-
-
-def test_beside_a_gpu_pytorch_keeps_one_thread_and_on_the_cpu_one_a_core() -> None:
-    assert threads_for(Device("cuda", torch.bfloat16), 32) == 1
-    assert threads_for(CPU, 32) == 32
+def test_without_a_cuda_gpu_an_apple_one_or_the_cpu_is_chosen_saying_why_an_nvidia_one_sits_unused() -> None:
+    absent = FakeCuda(0, 0, available=False)
+    assert chosen(absent, Found(mps=True, nvidia=False, cuda_build=None)) == Device("mps", torch.float32)
+    assert chosen(absent, NONE) == CPU
+    unbuilt = chosen(absent, Found(mps=False, nvidia=True, cuda_build=None)).notice
+    assert unbuilt is not None
+    assert unbuilt.endswith(CUDA_FIX)
+    hidden = chosen(absent, Found(mps=False, nvidia=True, cuda_build="12.6")).notice
+    assert hidden is not None
+    assert "CUDA_VISIBLE_DEVICES" in hidden
 
 
 def test_out_of_memory_is_told_from_other_failures() -> None:
     assert too_large(torch.OutOfMemoryError("CUDA out of memory"))
     assert too_large(RuntimeError("MPS backend out of memory (MPS allocated: 9 GiB)"))
+    assert too_large(RuntimeError("CUDA error: out of memory"))
+    assert too_large(RuntimeError("CUBLAS_STATUS_ALLOC_FAILED when calling cublasCreate"))
     assert not too_large(RuntimeError("shapes do not match"))
+
+
+def test_after_running_out_of_memory_the_cache_of_the_device_alone_is_emptied() -> None:
+    emptied_on: list[str] = []
+    caches = {"cuda": lambda: emptied_on.append("cuda"), "mps": lambda: emptied_on.append("mps")}
+    emptied(Device("cuda", torch.bfloat16), caches)
+    emptied(CPU, caches)
+    assert emptied_on == ["cuda"]
+    assert (CACHES["cuda"], CACHES["mps"]) == (torch.cuda.empty_cache, torch.mps.empty_cache)

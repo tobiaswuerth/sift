@@ -32,6 +32,14 @@ EMBEDDING = Embedding()
 type Failed = dict[CollectionId, StoreUnavailableError]
 
 
+def _prepared(models: Models, report: Reporter) -> None:
+    report(PhaseStarted(Phase.LOAD, None))
+    notices = models.prepare()
+    report(PhaseDone(1))
+    for notice in notices:
+        report(Noted(notice))
+
+
 def _counted(n: int, what: str) -> str:
     return f"{n:,} {what}{'s' * (n != 1)}"
 
@@ -53,7 +61,7 @@ def _filled(connection: Connection, report: Reporter, models: Models, embedding:
         total = left(transaction)
     if not total:
         return Embedded(0, 0)
-    models.prepare()
+    _prepared(models, report)
     report(PhaseStarted(Phase.EMBED, total))
     stored, broken, after = 0, 0, 0
     while waiting := _waiting(connection, after, embedding.chunks_a_write):
@@ -98,7 +106,7 @@ def _forgotten(one: Collection) -> StoreUnavailableError | None:
 
 
 def _reset(home: Path, report: Reporter, models: Models, embedding_now: tuple[Collection, ...]) -> Failed:
-    models.prepare()
+    _prepared(models, report)
     known = chosen(home, ())
     failed = {one.id: error for one in known if (error := _forgotten(one)) is not None}
     now = {one.id for one in embedding_now}

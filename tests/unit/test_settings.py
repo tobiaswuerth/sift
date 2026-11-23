@@ -28,13 +28,17 @@ def test_colour_is_left_out_where_no_color_is_set_or_the_terminal_is_dumb(user: 
     assert not parsed({"TERM": "xterm-256color"}, user, cwd).dumb
 
 
-def test_the_embedding_model_is_embeddinggemma_unless_set(user: Path, cwd: Path) -> None:
+def test_the_models_are_embeddinggemma_and_gte_s_reranker_unless_set(user: Path, cwd: Path) -> None:
     assert parsed({}, user, cwd).embed_model == "google/embeddinggemma-2"
     assert parsed({"SIFT_EMBED_MODEL": "owner/model@v2"}, user, cwd).embed_model == "owner/model@v2"
+    assert parsed({}, user, cwd).rerank_model == "Alibaba-NLP/gte-reranker-modernbert-base"
+    assert parsed({"SIFT_RERANK_MODEL": "owner/ranker"}, user, cwd).rerank_model == "owner/ranker"
 
 
 def test_an_empty_variable_counts_as_unset(user: Path, cwd: Path) -> None:
-    assert parsed({"SIFT_HOME": "", "SIFT_EMBED_MODEL": ""}, user, cwd) == parsed({}, user, cwd)
+    assert parsed({"SIFT_HOME": "", "SIFT_EMBED_MODEL": "", "SIFT_RERANK_MODEL": ""}, user, cwd) == parsed(
+        {}, user, cwd
+    )
 
 
 @pytest.mark.parametrize(

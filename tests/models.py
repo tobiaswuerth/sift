@@ -28,9 +28,11 @@ class Hashed:
     width: int = 48
     asked: list[tuple[tuple[str, ...], bool]] = field(default_factory=list[tuple[tuple[str, ...], bool]])
     prepared: list[bool] = field(default_factory=list[bool])
+    reranked: list[tuple[str, tuple[str, ...]]] = field(default_factory=list[tuple[str, tuple[str, ...]]])
 
-    def prepare(self) -> None:
+    def prepare(self) -> tuple[str, ...]:
         self.prepared.append(True)
+        return ()
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         self.asked.append((tuple(texts), query))
@@ -39,3 +41,8 @@ class Hashed:
             .reshape(-1, self.width)
             .astype(np.float16)
         )
+
+    def rerank(self, query: str, texts: Sequence[str]) -> Floats:
+        self.reranked.append((query, tuple(texts)))
+        asked = set(query.lower().split())
+        return np.array([len(asked & set(text.lower().split())) for text in texts], np.float32)

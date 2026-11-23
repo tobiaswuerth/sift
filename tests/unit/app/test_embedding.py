@@ -15,7 +15,7 @@ from sift.api.indexing import IndexCollections, Skipped
 from sift.app.collections import add
 from sift.app.embedding import BROKEN_REMEDY, Embedding, embed
 from sift.app.indexing import index
-from sift.domain.codec.codes import Halves
+from sift.domain.codec.codes import Floats, Halves
 from sift.storage.catalog import CATALOG
 from sift.storage.vectors import EMBED_REMEDY
 from tests.damage import damage_table
@@ -64,7 +64,7 @@ def test_every_chunk_is_embedded_once_with_its_progress(home: Path) -> None:
     result = embed(home, EmbedCollections(), said.append, Hashed(), Embedding(chunks_a_write=2))
     total = chunks(home)
     assert result.collections == (CollectionEmbedded("notes", Embedded(total, 0)),)
-    assert said[1] == PhaseStarted(Phase.EMBED, total)
+    assert said[1:4] == [PhaseStarted(Phase.LOAD, None), PhaseDone(1), PhaseStarted(Phase.EMBED, total)]
     assert [event.done for event in said if isinstance(event, Advanced)] == [*range(2, total, 2), total]
     assert said[-1] == PhaseDone(total)
     assert counted(store(home), "SELECT count(*) FROM vectors") == total
@@ -154,16 +154,19 @@ class Stopping:
     def name(self) -> str:
         return self.models.name
 
-    def prepare(self) -> None:
+    def prepare(self) -> tuple[str, ...]:
         if self.calls_left < 0:
             raise RuntimeError("the model would not load")
-        self.models.prepare()
+        return self.models.prepare()
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         if not self.calls_left:
             raise KeyboardInterrupt
         self.calls_left -= 1
         return self.models.encode(texts, query=query)
+
+    def rerank(self, query: str, texts: Sequence[str]) -> Floats:
+        return self.models.rerank(query, texts)
 
 
 def test_a_reset_cut_short_is_finished_by_embedding_again(home: Path, tmp_path: Path) -> None:
@@ -202,7 +205,8 @@ def test_a_store_taken_by_another_model_midway_is_skipped_saying_so(home: Path) 
     (outcome,) = embed(home, EmbedCollections(), taken, Hashed(), Embedding(chunks_a_write=1)).collections
     assert isinstance(outcome.outcome, Skipped)
     assert outcome.outcome.reason == "the store holds vectors of other-model, not of hashed-words"
-    assert [type(event) for event in said if isinstance(event, (PhaseStarted, PhaseDone))] == [PhaseStarted]
+    assert [event for event in said if isinstance(event, PhaseStarted)][-1].phase is Phase.EMBED
+    assert not isinstance(said[-2], PhaseDone)
     assert said[-1] == Noted(outcome.outcome.reason, outcome.outcome.remedy)
 
 

@@ -18,3 +18,7 @@ class NotFoundError(SiftError):
 
 class StoreUnavailableError(SiftError):
     pass
+
+
+class ModelUnavailableError(SiftError):
+    pass

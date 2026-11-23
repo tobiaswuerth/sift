@@ -49,6 +49,7 @@ def test_search_answers_in_json_when_asked(settings: Settings, notes: Path) -> N
                 "lines": "1-1",
                 "score": json.loads(out)["hits"][0]["score"],
                 "text": None,
+                "also": [],
             }
         ],
         "searched": 1,

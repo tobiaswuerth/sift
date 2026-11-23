@@ -38,12 +38,19 @@ type Kept = searching.Kept[Opened]
 
 
 @dataclass(frozen=True, slots=True)
+class Wanted:
+    k: int
+    by_document: bool
+    tuning: Tuning
+    expired: Expired
+
+
+@dataclass(frozen=True, slots=True)
 class Asked:
     request: SearchKeywords
     expression: Expression
     looser: Expression | None
-    expired: Expired
-    tuning: Tuning
+    wanted: Wanted
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,30 +64,38 @@ def _opened(transaction: Reading) -> Opened:
     return opened(transaction)
 
 
-def _found(kept: Kept, asked: Asked, expression: Expression) -> Ranked | None:
-    ready: list[tuple[searching.Searching[Opened], Prepared]] = []
+def found[S](
+    kept: searching.Kept[S], opened_of: Callable[[S], Opened], wanted: Wanted, expression: Expression
+) -> Ranked | None:
+    if expression == NOTHING:
+        return Ranked((), cut=False)
+    ready: list[tuple[searching.Searching[S], Prepared]] = []
     for one in list(kept.searching):
-        held = kept.guarded(one, partial(prepared, one.held, expression))
+        held = kept.guarded(one, partial(prepared, opened_of(one.held), expression))
         if held is None:
             return None
         ready.append((one, held))
     query = query_of(expression, [held for _, held in ready])
     if query is None:
         return Ranked((), cut=False)
-    best, cut = Best(asked.request.k, not asked.request.all_passages), False
+    best, cut = Best(wanted.k, wanted.by_document), False
     for one, held in ready:
-        after = kept.guarded(one, partial(searched, held, query, best, asked.tuning, asked.expired))
+        after = kept.guarded(one, partial(searched, held, query, best, wanted.tuning, wanted.expired))
         if after is None:
             return None
         best, cut = after.best, cut or after.cut
     return Ranked(found_in(best), cut)
 
 
+def _itself(store: Opened) -> Opened:
+    return store
+
+
 def _searched(kept: Kept, asked: Asked) -> Ranked | None:
-    found = Ranked((), cut=False) if asked.expression == NOTHING else _found(kept, asked, asked.expression)
-    if found is None or found.found or asked.looser is None:
-        return found
-    return _found(kept, asked, asked.looser)
+    first = found(kept, _itself, asked.wanted, asked.expression)
+    if first is None or first.found or asked.looser is None:
+        return first
+    return found(kept, _itself, asked.wanted, asked.looser)
 
 
 def _answered(kept: Kept, asked: Asked) -> tuple[list[tuple[int, Hit]], bool]:
@@ -102,8 +117,8 @@ def _expired(budget: float | None, clock: Clock) -> Expired:
 
 def _asked(request: SearchKeywords, clock: Clock, tuning: Tuning) -> Asked:
     searching.checked_k(request.k)
-    expired = _expired(request.budget, clock)
-    return Asked(request, parsed(request.query), relaxed(request.query), expired, tuning)
+    wanted = Wanted(request.k, not request.all_passages, tuning, _expired(request.budget, clock))
+    return Asked(request, parsed(request.query), relaxed(request.query), wanted)
 
 
 def search(

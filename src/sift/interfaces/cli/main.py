@@ -17,9 +17,9 @@ from sift.api.embedding import EmbedCollections, EmbedResult
 from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.events import Reporter
 from sift.api.indexing import IndexCollections, IndexResult, Skipped
-from sift.api.search import SearchKeywords, SearchVectors
-from sift.app import collections, documents, embedding, indexing, search, vsearch
-from sift.inference.loading import deferred
+from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
+from sift.app import collections, documents, embedding, indexing, query, search, vsearch
+from sift.inference.loading import Deferred, deferred
 from sift.interfaces.cli import shown
 from sift.interfaces.cli.arguments import options, request_of
 from sift.interfaces.cli.shown import Shown
@@ -99,17 +99,29 @@ def _search(namespace: argparse.Namespace, context: Context) -> Shown:
     return shown.hits(answer, context.clock() - started, context.platform, context.style)
 
 
+def _models(context: Context) -> Deferred:
+    return deferred(context.settings.embed_model, context.settings.rerank_model)
+
+
 def _embed(context: Context, request: EmbedCollections) -> EmbedResult:
-    return embedding.embed(context.settings.home, request, context.report, deferred(context.settings.embed_model))
+    return embedding.embed(context.settings.home, request, context.report, _models(context))
 
 
 def _vsearch(namespace: argparse.Namespace, context: Context) -> Shown:
     started = context.clock()
     request = request_of(SearchVectors, namespace)
-    answer = vsearch.vsearch(context.settings.home, request, deferred(context.settings.embed_model))
+    answer = vsearch.vsearch(context.settings.home, request, _models(context))
     if context.json:
         return Shown((as_json(answer),), (), failed=bool(answer.unsearched))
     return shown.hits(answer, context.clock() - started, context.platform, context.style, "semantic")
+
+
+def _query(namespace: argparse.Namespace, context: Context) -> Shown:
+    started = context.clock()
+    answer = query.query(context.settings.home, request_of(SearchHybrid, namespace), _models(context))
+    if context.json:
+        return Shown((as_json(answer),), (), failed=bool(answer.unsearched))
+    return shown.hits(answer, context.clock() - started, context.platform, context.style, "hybrid")
 
 
 def _some_skipped(result: IndexResult | EmbedResult) -> bool:
@@ -126,6 +138,7 @@ COMMANDS = MappingProxyType(
         "index": command(
             "read what is new or changed in collections", IndexCollections, _index, shown.indexed, _some_skipped
         ),
+        "query": Command("find passages for a question: keyword and semantic, reranked", SearchHybrid, _query),
         "search": Command("find passages by their words, ranked by BM25", SearchKeywords, _search),
         "embed": command(
             "embed passages for semantic search, with the model SIFT_EMBED_MODEL names",
