@@ -88,7 +88,7 @@ class OptionalWithAValue:
 
 @dataclass(frozen=True, slots=True)
 class ShortPosition:
-    name: Annotated[str, Help("a name"), Short("-n")]
+    name: Annotated[str, Help("a name"), Short("n")]
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +114,7 @@ def numbers(text: str) -> tuple[int, ...]:
 
 @dataclass(frozen=True, slots=True)
 class Tagged:
-    tags: Annotated[tuple[int, ...], Help("numbers"), Short("-t"), Read(numbers)] = ()
+    tags: Annotated[tuple[int, ...], Help("numbers"), Short("t"), Read(numbers)] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,8 +158,8 @@ def test_a_field_the_command_line_cannot_take_is_refused(request_type: type[obje
 @dataclass(frozen=True, slots=True)
 class Counted:
     query: Annotated[str, Help("what to find")]
-    k: Annotated[int, Help("how many"), Short("-k")] = 10
-    order: Annotated[TitleFrom, Help("an order"), Short("-o")] = TitleFrom.NAME
+    k: Annotated[int, Help("how many"), Short("k")] = 10
+    order: Annotated[TitleFrom, Help("an order"), Short("o")] = TitleFrom.NAME
 
 
 def test_a_field_with_a_value_for_default_is_an_option_and_may_have_a_short_flag() -> None:

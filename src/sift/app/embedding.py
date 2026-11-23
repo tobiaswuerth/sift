@@ -123,7 +123,8 @@ def embed(
     home: Path, request: EmbedCollections, report: Reporter, models: Models, embedding: Embedding = EMBEDDING
 ) -> EmbedResult:
     if request.reset and request.names:
-        raise InvalidRequestError("--reset embeds every collection again, as all share one model", RESET_ALL_REMEDY)
+        said = "embeds every collection again, as all share one model"
+        raise InvalidRequestError(said, RESET_ALL_REMEDY, "reset")
     chosen_now = chosen_or_active(home, request.names)
     work = Work(report, models, embedding, cache(partial(prepared, report, (models.prepare,))))
     failed = _reset(home, report, work.ready, chosen_now) if request.reset else {}

@@ -100,7 +100,7 @@ def test_a_budget_of_no_time_is_refused(settings: Settings, notes: Path) -> None
     searched_notes(settings, notes)
     code, out, err = ran(settings, "search", "brush", "--budget", "0")
     assert (code, out) == (2, "")
-    assert "--budget 0.0 leaves no time to search" in err
+    assert "error  --budget: 0.0 seconds leave no time to search" in err
 
 
 def test_search_keeps_to_front_matter_and_paths_shows_it_and_orders_by_it(settings: Settings, notes: Path) -> None:
@@ -219,3 +219,12 @@ def test_status_of_a_store_that_is_gone_fails_and_json_may_come_before_the_comma
     assert (code, cast("dict[str, str]", json.loads(out))["home"]) == (0, str(settings.home))
     (settings.home / "collections" / "notes.sqlite").unlink()
     assert ran(settings, "status")[0] == 1
+
+
+def test_a_refused_value_is_said_with_the_flag_that_gave_it(settings: Settings, notes: Path) -> None:
+    searched_notes(settings, notes)
+    code, _, err = ran(settings, "search", "brush", "-k", "0")
+    assert (code, err.splitlines()[0]) == (2, "error  -k: 0 asks for no result")
+    code, out, _ = ran(settings, "search", "brush", "-k", "0", "--json")
+    said = cast("dict[str, dict[str, str]]", json.loads(out))["error"]
+    assert (said["message"], said["field"]) == ("0 asks for no result", "k")

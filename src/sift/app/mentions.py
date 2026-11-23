@@ -14,7 +14,7 @@ from sift.storage.database import Reading
 from sift.storage.documents import fields_by_document
 from sift.storage.links import titled
 
-ALSO_REMEDY = "name each field, e.g. --also emails,phone"
+ALSO_REMEDY = "name each field, e.g. emails and phone"
 SHORT_REMEDY = "give the note a longer alias, or name more of its fields to look for"
 
 
@@ -31,7 +31,8 @@ def mentions(home: Path, request: FindMentions, tuning: Tuning = TUNING) -> Sear
     searching.checked(request)
     for field in request.also:
         if not field.strip():
-            raise InvalidRequestError(f"--also names front matter fields, e.g. emails, not {field!r}", ALSO_REMEDY)
+            said = f"names front matter fields, e.g. emails, not {field!r}"
+            raise InvalidRequestError(said, ALSO_REMEDY, "also")
     named = note_of(home, request.id)
     found = _names(named.note, request.also)
     looked_for = phrases(found)
@@ -40,7 +41,7 @@ def mentions(home: Path, request: FindMentions, tuning: Tuning = TUNING) -> Sear
         raise InvalidRequestError(f"the note's names are too short to search for: {said}", SHORT_REMEDY)
     expression = any_phrase(looked_for)
     if words_in(expression) > MOST_WORDS:
-        remedy = "name fewer fields with --also" if request.also else "give it fewer or shorter names"
+        remedy = "name fewer fields to look for too" if request.also else "give it fewer or shorter names"
         raise InvalidRequestError(f"the note's names hold more than {MOST_WORDS:,} words", remedy)
     wanted = Wanted(request.k, not request.all_passages, tuning, never)
     narrowing = searching.narrowed(home, request, LeftOut(named.note, linking=True))

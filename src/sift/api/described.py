@@ -14,7 +14,7 @@ class Place:
 
 @dataclass(frozen=True, slots=True)
 class Short:
-    flag: str
+    letter: str
 
 
 @dataclass(frozen=True, slots=True)

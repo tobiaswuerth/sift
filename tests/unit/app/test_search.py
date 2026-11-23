@@ -118,9 +118,9 @@ def test_a_query_outside_the_grammar_says_how_to_write_one(home: Path) -> None:
 
 
 def test_k_counts_results_from_one_to_ten_thousand_and_is_held_to_the_most_there_are(home: Path) -> None:
-    with pytest.raises(InvalidRequestError, match="-k 0 asks for no result"):
+    with pytest.raises(InvalidRequestError, match=r"^0 asks for no result$"):
         search(home, SearchKeywords("halo", k=0))
-    with pytest.raises(InvalidRequestError, match="-k 10,001 asks for more than 10,000 results"):
+    with pytest.raises(InvalidRequestError, match="10,001 results are more than the 10,000 a search gives"):
         search(home, SearchKeywords("halo", k=10_001))
     assert ids(home, SearchKeywords("note", k=10_000)) == [f"notes/filler{n}.md" for n in range(8)]
 

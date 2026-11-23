@@ -22,7 +22,7 @@ from sift.storage.passing import Passing
 from sift.storage.store import open_store, unavailable_if_unusable
 from sift.storage.vectors import EMBED_REMEDY, codes_of, left, model_of, width_held
 
-FEW_REMEDY = "ask for one result or more, e.g. -k 10"
+FEW_REMEDY = "ask for one result or more, e.g. 10"
 MANY_REMEDY = f"ask for {MOST_HITS:,} results at most, and narrow the query to reach the rest"
 UNEMBEDDED_REMEDY = "run sift embed"
 EMPTY_QUERY = "an empty query finds nothing"
@@ -120,9 +120,9 @@ def despite_losses[T](work: Callable[[], T]) -> T:
 
 def checked_k(k: int) -> None:
     if k < 1:
-        raise InvalidRequestError(f"-k {k:,} asks for no result", FEW_REMEDY)
+        raise InvalidRequestError(f"{k:,} asks for no result", FEW_REMEDY, "k")
     if k > MOST_HITS:
-        raise InvalidRequestError(f"-k {k:,} asks for more than {MOST_HITS:,} results", MANY_REMEDY)
+        raise InvalidRequestError(f"{k:,} results are more than the {MOST_HITS:,} a search gives", MANY_REMEDY, "k")
 
 
 def checked(request: Options) -> None:
@@ -132,7 +132,7 @@ def checked(request: Options) -> None:
 
 def checked_query(query: str, remedy: str) -> None:
     if not query.strip():
-        raise InvalidRequestError(EMPTY_QUERY, remedy)
+        raise InvalidRequestError(EMPTY_QUERY, remedy, "query")
 
 
 def narrowed(home: Path, request: Options, left_out: LeftOut | None = None) -> Narrowing:

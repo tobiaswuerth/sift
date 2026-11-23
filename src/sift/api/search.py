@@ -22,14 +22,14 @@ BUDGET = (
 PATH = 'only documents whose path in the collection matches this glob, e.g. "2024/*"'
 FILTERS = (
     "only documents whose front matter passes: KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06; "
-    "repeat for more: values of one key asked alike mean any (=) or none (!=) of them"
+    "several: values of one key asked alike mean any (=) or none (!=) of them"
 )
-SORT = "order the k found by a front matter field, e.g. created, or --sort=-created for the newest first"
+SORT = "order the k found by a front matter field, e.g. created, or -created for the newest first"
 LINKS_TO = (
     'only documents linking this note: its id, or its name as links write it, e.g. "Acme AG"; '
-    "repeat for documents linking any of several"
+    "several: documents linking any of them"
 )
-LINKED_FROM = "only documents this note links to, named as for --links-to; repeat for any of several"
+LINKED_FROM = "only documents this note links to, named by its id or as links write it; several: any of them"
 
 
 def _filter(text: str) -> tuple[Filter, ...]:
@@ -38,15 +38,15 @@ def _filter(text: str) -> tuple[Filter, ...]:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Options:
-    k: Annotated[int, Help(f"how many results, at most {MOST_HITS:,} (default: 10)"), Short("-k")] = 10
+    k: Annotated[int, Help(f"how many results, at most {MOST_HITS:,} (default: 10)"), Short("k")] = 10
     collections: Annotated[
         tuple[str, ...],
-        Help("search this collection; again for more (default: every active one)"),
-        Short("-c"),
+        Help("search this collection; several: each of them (default: every active one)"),
+        Short("c"),
         Read(one),
     ] = ()
     path: Annotated[str | None, Help(PATH)] = None
-    filters: Annotated[tuple[Filter, ...], Help(FILTERS), Short("-f"), Read(_filter)] = ()
+    filters: Annotated[tuple[Filter, ...], Help(FILTERS), Short("f"), Read(_filter)] = ()
     fields: Annotated[tuple[str, ...], Help(FIELDS), Read(listed)] = ()
     sort: Annotated[str | None, Help(SORT)] = None
     links_to: Annotated[tuple[str, ...], Help(LINKS_TO), Read(one)] = ()

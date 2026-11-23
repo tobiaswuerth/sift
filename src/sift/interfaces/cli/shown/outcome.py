@@ -1,5 +1,6 @@
 import errno
 import json
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import NamedTuple
 
@@ -28,6 +29,7 @@ OS_REMEDIES = MappingProxyType(
     }
 )
 OS_REMEDY = "check the path and its permissions"
+NO_FLAGS: Mapping[str, str] = MappingProxyType({})
 
 
 class Shown(NamedTuple):
@@ -63,17 +65,22 @@ def unsearched_lines(unsearched: tuple[Unsearched, ...], style: Style) -> tuple[
     )
 
 
-def _error_json(kind: str, message: str, remedy: str) -> str:
-    said = {"error": {"kind": kind, "message": message, "remedy": remedy}}
+def _error_json(kind: str, message: str, remedy: str, field: str | None) -> str:
+    said = {"error": {"kind": kind, "message": message, "remedy": remedy, "field": field}}
     return printable_json(json.dumps(said, ensure_ascii=False, indent=2))
 
 
-def failure(error: SiftError | OSError, style: Style, *, as_json: bool = False) -> Shown:
+def failure(
+    error: SiftError | OSError, style: Style, *, as_json: bool = False, flags: Mapping[str, str] = NO_FLAGS
+) -> Shown:
     if isinstance(error, OSError):
         kind, message, remedy = "os", str(error), OS_REMEDIES.get(error.errno or 0, OS_REMEDY)
         code = FAILED
     else:
         kind, message, remedy = ERROR_KINDS[type(error)], error.message, error.remedy
         code = EXIT_CODES.get(type(error), FAILED)
-    lines = (labelled("error", message, Tone.ERROR, style), *fix(remedy, style))
-    return Shown((_error_json(kind, message, remedy),) if as_json else (), lines, code)
+    field = error.field if isinstance(error, InvalidRequestError) else None
+    flag = flags.get(field) if field is not None else None
+    said = message if flag is None else f"{flag}: {message}"
+    lines = (labelled("error", said, Tone.ERROR, style), *fix(remedy, style))
+    return Shown((_error_json(kind, message, remedy, field),) if as_json else (), lines, code)

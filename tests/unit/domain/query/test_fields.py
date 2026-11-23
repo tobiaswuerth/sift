@@ -23,8 +23,8 @@ def test_an_order_by_a_field_puts_numbers_before_text_and_those_without_it_last_
     "fields, sort, refusal",
     [
         (("url", ""), None, "names no field between two commas"),
-        ((), "-", "the sort names no field"),
-        ((), "", "the sort"),
+        ((), "-", "names no field to sort by"),
+        ((), "", "names no field to sort by"),
     ],
 )
 def test_fields_or_a_sort_naming_no_field_are_refused(fields: tuple[str, ...], sort: str | None, refusal: str) -> None:

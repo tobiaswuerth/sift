@@ -45,6 +45,9 @@ RECURSION_CAUGHT = (
     "RecursionError caught: the interpreter's depth limit decides, and the work done before it is lost; "
     "bound the depth yourself before descending, and refuse what is deeper"
 )
+FLAG = re.compile(r"(?<![\w-])(?:--[a-z][a-z-]*|-[kcf])(?![\w-])")
+COMMAND = re.compile(r"\b(?:sift|uv) [a-z]")
+FLAG_OUTSIDE = "CLI syntax outside sift.interfaces: say what to do, and let the interface name its flag"
 REMEDY = "Each finding names its fix."
 
 
@@ -131,6 +134,16 @@ def recursion_caught(path: str, tree: ast.Module) -> Iterator[Finding]:
                 yield Finding(path, node.lineno, RECURSION_CAUGHT)
 
 
+def _flagged(text: str) -> bool:
+    return bool(FLAG.search(text)) and not COMMAND.search(text)
+
+
+def flags_outside_interfaces(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and _flagged(node.value):
+            yield Finding(path, node.lineno, FLAG_OUTSIDE)
+
+
 def idioms(path: str, source: str) -> tuple[Finding, ...]:
     tree = ast.parse(source)
     in_tests, in_sift = path.startswith("tests/"), path.startswith("src/sift/")
@@ -141,6 +154,7 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *(() if in_tests else recursion_caught(path, tree)),
         *(io_in_the_core(path, tree) if path.startswith(CORE) else ()),
         *(exits_outside_interfaces(path, tree) if in_sift and not path.startswith(INTERFACES) else ()),
+        *(flags_outside_interfaces(path, tree) if in_sift and not path.startswith(INTERFACES) else ()),
         *(environment_outside_settings(path, tree) if in_sift and path != SETTINGS else ()),
         *(patching(path, tree) if in_tests else ()),
         *(clocks(path, tree) if in_tests else ()),

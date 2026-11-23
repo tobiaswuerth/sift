@@ -11,12 +11,20 @@ class SiftError(Exception):
         self.remedy = remedy
 
     @override
-    def __reduce__(self) -> tuple[type["SiftError"], tuple[str, str]]:
+    def __reduce__(self) -> tuple[type["SiftError"], tuple[str | None, ...]]:
         return type(self), (self.message, self.remedy)
 
 
 class InvalidRequestError(SiftError):
-    pass
+    field: str | None
+
+    def __init__(self, message: str, remedy: str, field: str | None = None) -> None:
+        super().__init__(message, remedy)
+        self.field = field
+
+    @override
+    def __reduce__(self) -> tuple[type["SiftError"], tuple[str | None, ...]]:
+        return type(self), (self.message, self.remedy, self.field)
 
 
 class NotFoundError(SiftError):

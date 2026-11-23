@@ -176,7 +176,9 @@ def test_a_failure_says_what_failed_and_how_to_fix_it() -> None:
 
 def test_a_failure_asked_for_in_json_is_json_too() -> None:
     found = failure(StoreUnavailableError("busy", "wait"), PLAIN, as_json=True)
-    assert json.loads(found.results[0]) == {"error": {"kind": "store_unavailable", "message": "busy", "remedy": "wait"}}
+    assert json.loads(found.results[0]) == {
+        "error": {"kind": "store_unavailable", "message": "busy", "remedy": "wait", "field": None}
+    }
     assert found.messages == ("error  busy", "  fix  wait")
     assert json.loads(failure(OSError(errno.ENOENT, "gone"), PLAIN, as_json=True).results[0])["error"]["kind"] == "os"
 

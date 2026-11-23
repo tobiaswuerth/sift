@@ -117,7 +117,7 @@ def test_the_sort_orders_the_k_best_not_every_match(home: Path) -> None:
     "request_, refusal",
     [
         (SearchKeywords("pigment", filters=(Filter("year", Operator.ABOVE, (1, 2)),)), "takes one value"),
-        (SearchKeywords("pigment", sort="-"), "sort names no field"),
+        (SearchKeywords("pigment", sort="-"), "names no field to sort by"),
         (SearchKeywords("pigment", fields=("",)), "names no field"),
     ],
 )
@@ -144,7 +144,7 @@ def test_a_filter_letting_few_documents_through_ends_the_semantic_search_once_th
 def test_no_fields_written_asks_for_none() -> None:
     assert listed("") == ()
     assert listed(" url, created ") == ("url", "created")
-    assert "--sort=-created" in SORT
+    assert "-created for the newest first" in SORT
 
 
 def many(tmp_path: Path, name: str, notes: int) -> Path:

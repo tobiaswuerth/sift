@@ -71,7 +71,7 @@ def _described(request: type[object], name: str, hint: object) -> Described:
     found = [part for part in metadata if isinstance(part, Help)]
     if not found:
         raise _refused(request, name, "no Help")
-    short = next((part.flag for part in metadata if isinstance(part, Short)), None)
+    short = next((f"-{part.letter}" for part in metadata if isinstance(part, Short)), None)
     read = next((part for part in metadata if isinstance(part, Read)), None)
     return Described(kind, found[0], any(isinstance(part, Place) for part in metadata), short, read)
 
@@ -191,6 +191,15 @@ def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placing) ->
         )
     else:
         parser.add_argument(argument.name, type=_converter(argument, place), help=argument.help)
+
+
+def flags(request: type[object]) -> dict[str, str]:
+    return {
+        argument.name: argument.short or f"--{argument.name.replace('_', '-')}"
+        if argument.how in (How.OPTION, How.SWITCH, How.READ)
+        else argument.name
+        for argument in arguments(request)
+    }
 
 
 def options(parser: argparse.ArgumentParser, request: type[object], place: Placing) -> None:

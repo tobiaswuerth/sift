@@ -5,17 +5,17 @@ from sift.api.fields import Fields, FieldValue
 
 EVERY = "*"
 TITLE = "title"
-FIELDS_REMEDY = 'name front matter fields parted by commas, e.g. --fields url,created, or "*" for all'
-SORT_REMEDY = "name a front matter field, e.g. --sort created, or --sort=-created for the newest first"
+FIELDS_REMEDY = 'name front matter fields, e.g. url and created, or "*" for all'
+SORT_REMEDY = "name a front matter field, e.g. created, or -created for the newest first"
 
 type Key = tuple[int, int | float, str]
 
 
 def checked(fields: Sequence[str], sort: str | None) -> None:
     if any(not name for name in fields):
-        raise InvalidRequestError(f"--fields {','.join(fields)!r} names no field between two commas", FIELDS_REMEDY)
+        raise InvalidRequestError(f"{','.join(fields)!r} names no field between two commas", FIELDS_REMEDY, "fields")
     if sort is not None and not sort.removeprefix("-"):
-        raise InvalidRequestError(f"--sort {sort!r}: the sort names no field", SORT_REMEDY)
+        raise InvalidRequestError(f"{sort!r} names no field to sort by", SORT_REMEDY, "sort")
 
 
 def picked(held: Fields, asked: Sequence[str]) -> Fields:

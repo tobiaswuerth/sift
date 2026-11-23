@@ -26,8 +26,8 @@ from sift.domain.rank.hybrid import blend, named, passage, standing_out, words
 from sift.inference.models import Models
 from sift.retrieval.keyword.search import TUNING, never
 
-EMPTY_REMEDY = "ask a question, e.g. sift query 'how dark matter halos form'"
-CANDIDATES_REMEDY = f"ask for 1 to {MOST_HITS:,} candidates; fewer than -k are raised to -k"
+EMPTY_REMEDY = "ask a question, e.g. how dark matter halos form"
+CANDIDATES_REMEDY = f"ask for 1 to {MOST_HITS:,} candidates; fewer than the results asked for are raised to them"
 WIDER = 2
 
 
@@ -152,8 +152,8 @@ def _checked(request: SearchHybrid) -> None:
     searching.checked(request)
     searching.checked_query(request.query, EMPTY_REMEDY)
     if not 1 <= request.candidates <= MOST_HITS:
-        said = f"--candidates {request.candidates:,} is outside 1 to {MOST_HITS:,}"
-        raise InvalidRequestError(said, CANDIDATES_REMEDY)
+        said = f"{request.candidates:,} candidates are outside 1 to {MOST_HITS:,}"
+        raise InvalidRequestError(said, CANDIDATES_REMEDY, "candidates")
 
 
 def query(

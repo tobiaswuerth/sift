@@ -17,7 +17,7 @@ from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
-from sift.interfaces.cli.arguments import options
+from sift.interfaces.cli.arguments import flags, options
 from sift.interfaces.cli.context import Command, Commands, Context
 from sift.interfaces.cli.shown.outcome import FAILED, Shown, failure
 from sift.interfaces.console.live import Live, ticking
@@ -224,7 +224,7 @@ def _ran(
         with ticking(live.tick):
             return command_of(chosen).run(namespace, context)
     except (SiftError, OSError) as error:
-        return failure(error, style, as_json=given["json"] is True)
+        return failure(error, style, as_json=given["json"] is True, flags=flags(ENTRIES[chosen].request))
     except KeyboardInterrupt:
         if chosen in WRITERS:
             raise StoppedError(STOPPED_WRITING) from None

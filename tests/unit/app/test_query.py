@@ -162,8 +162,8 @@ def test_a_store_lost_while_its_candidates_are_read_is_passed_over(
     [
         (SearchHybrid("   "), "an empty query finds nothing"),
         (SearchHybrid("halo", k=0), "asks for no result"),
-        (SearchHybrid("halo", candidates=0), "--candidates 0 is"),
-        (SearchHybrid("halo", candidates=10_001), "--candidates 10,001 is"),
+        (SearchHybrid("halo", candidates=0), "0 candidates are outside"),
+        (SearchHybrid("halo", candidates=10_001), "10,001 candidates are outside"),
     ],
 )
 def test_a_query_that_cannot_be_answered_is_refused(home: Path, request_: SearchHybrid, refusal: str) -> None:

@@ -9,7 +9,7 @@ from sift.app.searching import Wants
 from sift.app.vector_candidates import RESCORING, Rescoring, alike, nearest_hits, query_vector
 from sift.inference.models import Models
 
-EMPTY_REMEDY = "say what to find, e.g. sift vsearch 'how dark matter halos form'"
+EMPTY_REMEDY = "say what to find, e.g. how dark matter halos form"
 
 
 def vsearch(

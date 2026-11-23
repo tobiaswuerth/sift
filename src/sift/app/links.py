@@ -29,7 +29,7 @@ from sift.storage.links import LinkRow, Titled, links_out, titled
 LINKING_SHOWN = 5
 DEPTHS = (1, 2)
 FURTHER = 2
-DEPTH_REMEDY = "follow links one step, or two: --depth 1 or --depth 2"
+DEPTH_REMEDY = "follow links one step, or two: 1 or 2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +128,7 @@ def _links(transaction: Reading, found: Note, request: ShowLinks) -> Links:
 def links(home: Path, request: ShowLinks) -> Links:
     checked_k(request.k)
     if request.depth not in DEPTHS:
-        raise InvalidRequestError(f"--depth {request.depth} is neither 1 nor 2", DEPTH_REMEDY)
+        raise InvalidRequestError(f"{request.depth} steps are neither 1 nor 2", DEPTH_REMEDY, "depth")
     named = note_of(home, request.id)
     shown = read_in(named.note.collection, lambda transaction: _links(transaction, named.note, request))
     return replace(shown, unsearched=named.unsearched)

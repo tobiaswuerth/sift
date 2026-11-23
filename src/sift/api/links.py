@@ -26,7 +26,7 @@ class ShowLinks:
     )
     depth: Annotated[int, Help("2: also the notes one link further (default: 1)")] = 1
     field: Annotated[str | None, Help("only links in this front matter field")] = None
-    k: Annotated[int, Help(LINKS_K), Short("-k")] = 50
+    k: Annotated[int, Help(LINKS_K), Short("k")] = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,9 +69,12 @@ class Links:
 @dataclass(frozen=True, slots=True)
 class ListUnresolved:
     collections: Annotated[
-        tuple[str, ...], Help("this collection; again for more (default: every active one)"), Short("-c"), Read(one)
+        tuple[str, ...],
+        Help("this collection; several: each of them (default: every active one)"),
+        Short("c"),
+        Read(one),
     ] = ()
-    k: Annotated[int, Help("at most this many targets (default: 50)"), Short("-k")] = 50
+    k: Annotated[int, Help("at most this many targets (default: 50)"), Short("k")] = 50
 
 
 @dataclass(frozen=True, slots=True)

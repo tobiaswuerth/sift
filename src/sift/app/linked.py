@@ -42,9 +42,9 @@ class Narrowing:
     left_out: LeftOut | None
 
 
-def _checked(spec: str, option: str) -> str:
+def _checked(spec: str, field: str) -> str:
     if not spec.strip():
-        raise InvalidRequestError(f"{option} takes a note's id or name, not {spec!r}", NOTE_REMEDY)
+        raise InvalidRequestError(f"takes a note's id or name, not {spec!r}", NOTE_REMEDY, field)
     return spec
 
 
@@ -63,7 +63,7 @@ def _found(home: Path, spec: str) -> Pointed:
 
 def _linked_to(home: Path, scope: Sequence[Collection], spec: str) -> Pointed:
     try:
-        return _found(home, _checked(spec, "--links-to"))
+        return _found(home, _checked(spec, "links_to"))
     except NotFoundError:
         target = target_of(spec)
         held = frozenset(one.name for one in scope if _held(one, target))
@@ -73,7 +73,7 @@ def _linked_to(home: Path, scope: Sequence[Collection], spec: str) -> Pointed:
 
 
 def _linking_from(home: Path, spec: str) -> Pointed:
-    return _found(home, _checked(spec, "--linked-from"))
+    return _found(home, _checked(spec, "linked_from"))
 
 
 def _filtered(home: Path, each: LinkFilter) -> Pointed:

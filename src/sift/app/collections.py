@@ -32,12 +32,12 @@ from sift.storage.links import links_held
 from sift.storage.store import open_store, stored_bytes, unavailable_if_unusable
 
 OBSIDIAN = ".obsidian"
-FIELD_REMEDY = "name the field, e.g. --text-fields title,abstract"
+FIELD_REMEDY = "name the field, e.g. abstract"
 
 
-def _field(name: str | None, option: str) -> str | None:
+def _field(name: str | None, field: str) -> str | None:
     if name is not None and not name.strip():
-        raise InvalidRequestError(f"{option} names no field", FIELD_REMEDY)
+        raise InvalidRequestError("names no field", FIELD_REMEDY, field)
     return name
 
 
@@ -45,8 +45,8 @@ def add(home: Path, request: AddCollection) -> CollectionAdded:
     folder = Path(request.folder)
     vault = (folder / OBSIDIAN).is_dir()
     title_from = request.title_from or (TitleFrom.NAME if vault else TitleFrom.HEADING)
-    records = Chosen(_field(request.id_field, "--id-field"), _field(request.title_field, "--title-field"))
-    records = replace(records, text=tuple(_field(each, "--text-fields") or "" for each in request.text_fields))
+    records = Chosen(_field(request.id_field, "id_field"), _field(request.title_field, "title_field"))
+    records = replace(records, text=tuple(_field(each, "text_fields") or "" for each in request.text_fields))
     new = NewCollection(
         folder,
         request.name,

@@ -10,8 +10,8 @@ from sift.app.keyword_candidates import Wanted, keyword_result
 from sift.domain.query.grammar import parsed, relaxed
 from sift.retrieval.keyword.search import TUNING, Expired, Tuning, never
 
-BUDGET_REMEDY = "give the seconds the search may take, e.g. --budget 0.5"
-EMPTY_REMEDY = "say what to find, e.g. sift search 'dark matter halo'"
+BUDGET_REMEDY = "give the seconds the search may take, e.g. 0.5"
+EMPTY_REMEDY = "say what to find, e.g. dark matter halo"
 
 
 type Clock = Callable[[], float]
@@ -21,7 +21,7 @@ def _expired(budget: float | None, clock: Clock) -> Expired:
     if budget is None:
         return never
     if not math.isfinite(budget) or budget <= 0:
-        raise InvalidRequestError(f"--budget {budget} leaves no time to search", BUDGET_REMEDY)
+        raise InvalidRequestError(f"{budget} seconds leave no time to search", BUDGET_REMEDY, "budget")
     until = clock() + budget
     return lambda: clock() > until
 

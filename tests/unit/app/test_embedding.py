@@ -113,7 +113,7 @@ def test_a_collection_of_another_model_is_skipped_until_every_one_is_embedded_ag
             "the store holds vectors of hashed-words, not of other-model", EMBED_REMEDY.format(model="other-model")
         ),
     )
-    with pytest.raises(InvalidRequestError, match="--reset embeds every collection again"):
+    with pytest.raises(InvalidRequestError, match="embeds every collection again"):
         embed(home, EmbedCollections(("notes",), reset=True), lambda _: None, other)
     (redone,) = embed(home, EmbedCollections(reset=True), lambda _: None, other).collections
     assert redone == CollectionEmbedded("notes", Embedded(chunks(home), 0))
