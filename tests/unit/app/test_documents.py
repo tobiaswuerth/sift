@@ -12,7 +12,7 @@ from sift.app.indexing import index
 from sift.storage.store import DAMAGED_REMEDY
 from tests.damage import damage_table
 
-UNKNOWN = "take the id from a search result, or `sift status`"
+UNKNOWN = "take the id from a search result"
 
 
 def write(path: Path, text: str) -> None:

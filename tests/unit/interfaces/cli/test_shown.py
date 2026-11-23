@@ -1,4 +1,6 @@
 import dataclasses
+import errno
+import json
 
 from sift.api.collections import (
     CollectionAdded,
@@ -10,11 +12,11 @@ from sift.api.collections import (
     UnreadableFile,
 )
 from sift.api.documents import Documents, DocumentText, Unfound
-from sift.api.errors import NotFoundError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
 from sift.api.search import Hit, SearchResult, Unsearched
-from sift.interfaces.cli.shown import Shown, added, documents, failure, hits, indexed, status
+from sift.interfaces.cli.shown import FAILED, USAGE, Shown, added, documents, failure, hits, indexed, status
 from sift.interfaces.cli.shown import links as shown_links
 from sift.interfaces.cli.shown import unresolved as shown_unresolved
 from sift.interfaces.console.style import PLAIN, Style
@@ -155,12 +157,24 @@ def test_an_id_that_would_steer_the_terminal_heads_its_document_as_an_escape() -
 
 def test_a_failure_says_what_failed_and_how_to_fix_it() -> None:
     assert failure(NotFoundError("no collection is named 'x'", "the collections are: a"), PLAIN) == Shown(
-        (), ("error  no collection is named 'x'", "  fix  the collections are: a"), failed=True
+        (), ("error  no collection is named 'x'", "  fix  the collections are: a"), FAILED
     )
-    assert failure(StoreUnavailableError("busy"), PLAIN) == Shown((), ("error  busy",), failed=True)
-    assert failure(OSError(28, "No space left on device"), PLAIN) == Shown(
-        (), ("error  [Errno 28] No space left on device",), failed=True
+    assert failure(StoreUnavailableError("busy", "wait"), PLAIN) == Shown((), ("error  busy", "  fix  wait"), FAILED)
+    assert failure(OSError(errno.ENOSPC, "No space left on device"), PLAIN) == Shown(
+        (), ("error  [Errno 28] No space left on device", "  fix  free space on the disk"), FAILED
     )
+    assert (
+        failure(OSError(errno.EIO, "Input/output error"), PLAIN).messages[1]
+        == "  fix  check the path and its permissions"
+    )
+    assert failure(InvalidRequestError("-k 0 asks for no result", "ask for one"), PLAIN).code == USAGE
+
+
+def test_a_failure_asked_for_in_json_is_json_too() -> None:
+    found = failure(StoreUnavailableError("busy", "wait"), PLAIN, as_json=True)
+    assert json.loads(found.results[0]) == {"error": {"kind": "store_unavailable", "message": "busy", "remedy": "wait"}}
+    assert found.messages == ("error  busy", "  fix  wait")
+    assert json.loads(failure(OSError(errno.ENOENT, "gone"), PLAIN, as_json=True).results[0])["error"]["kind"] == "os"
 
 
 def test_a_partial_search_says_better_matches_may_be_missing() -> None:

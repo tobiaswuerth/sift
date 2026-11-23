@@ -1,11 +1,13 @@
+import errno
 import json
 import textwrap
+from types import MappingProxyType
 from typing import NamedTuple
 
 from sift.api.collections import CollectionAdded, CollectionStatus, Counted, Status, TitleFrom
 from sift.api.documents import Documents, DocumentText
 from sift.api.embedding import EmbedResult
-from sift.api.errors import SiftError
+from sift.api.errors import InvalidRequestError, ModelUnavailableError, NotFoundError, SiftError, StoreUnavailableError
 from sift.api.fields import Fields, FieldValue
 from sift.api.indexing import IndexResult
 from sift.api.links import LinkIn, LinkOut, Links, Unresolved
@@ -13,7 +15,7 @@ from sift.api.search import Hit, SearchResult, Unsearched
 from sift.interfaces.console.progress import DOT
 from sift.interfaces.console.shell import command
 from sift.interfaces.console.style import Style, Tone
-from sift.interfaces.console.text import GAP, labelled, printable, table
+from sift.interfaces.console.text import GAP, labelled, printable, printable_json, table
 from sift.interfaces.console.units import duration, size
 
 STATUS_HEADER = ("collection", "folder", "documents", "chunks", "size")
@@ -21,12 +23,30 @@ UNREADABLE_HEADER = ("collection", "file", "problem")
 NONE = "-"
 SNIPPET_CHARACTERS = 200
 SMALLEST_SHOWN = 0.005
+DONE, FAILED, USAGE = 0, 1, 2
+ERROR_KINDS: MappingProxyType[type[SiftError], str] = MappingProxyType(
+    {
+        InvalidRequestError: "invalid_request",
+        NotFoundError: "not_found",
+        StoreUnavailableError: "store_unavailable",
+        ModelUnavailableError: "model_unavailable",
+    }
+)
+EXIT_CODES: MappingProxyType[type[SiftError], int] = MappingProxyType({InvalidRequestError: USAGE})
+OS_REMEDIES = MappingProxyType(
+    {
+        errno.ENOENT: "check that the path exists",
+        errno.EACCES: "check that you may read and write the path",
+        errno.ENOSPC: "free space on the disk",
+    }
+)
+OS_REMEDY = "check the path and its permissions"
 
 
 class Shown(NamedTuple):
     results: tuple[str, ...]
     messages: tuple[str, ...]
-    failed: bool = False
+    code: int = DONE
 
 
 def _fix(remedy: str | None, style: Style) -> tuple[str, ...]:
@@ -190,10 +210,20 @@ def hits(result: SearchResult, seconds: float, platform: str, style: Style, kind
     return Shown(tuple(lines), (*problems, _footer(result, seconds, style, kind)))
 
 
-def failure(error: SiftError | OSError, style: Style) -> Shown:
+def _error_json(kind: str, message: str, remedy: str) -> str:
+    said = {"error": {"kind": kind, "message": message, "remedy": remedy}}
+    return printable_json(json.dumps(said, ensure_ascii=False, indent=2))
+
+
+def failure(error: SiftError | OSError, style: Style, *, as_json: bool = False) -> Shown:
     if isinstance(error, OSError):
-        return Shown((), (labelled("error", str(error), Tone.ERROR, style),), failed=True)
-    return Shown((), (labelled("error", error.message, Tone.ERROR, style), *_fix(error.remedy, style)), failed=True)
+        kind, message, remedy = "os", str(error), OS_REMEDIES.get(error.errno or 0, OS_REMEDY)
+        code = FAILED
+    else:
+        kind, message, remedy = ERROR_KINDS[type(error)], error.message, error.remedy
+        code = EXIT_CODES.get(type(error), FAILED)
+    lines = (labelled("error", message, Tone.ERROR, style), *_fix(remedy, style))
+    return Shown((_error_json(kind, message, remedy),) if as_json else (), lines, code)
 
 
 def _written(link: LinkOut) -> str:

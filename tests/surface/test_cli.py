@@ -135,7 +135,7 @@ def test_a_path_is_taken_from_the_user_s_folder_or_the_current_one(settings: Set
 def test_an_error_is_a_message_with_its_fix_and_no_traceback(settings: Settings, tmp_path: Path) -> None:
     gone = tmp_path / "gone"
     assert ran(settings, "add", str(gone)) == (
-        1,
+        2,
         "",
         f"error  {gone} is no folder\n  fix  give the folder whose files the collection holds\n",
     )
@@ -146,8 +146,8 @@ def test_an_error_of_the_system_is_a_message(settings: Settings, notes: Path) ->
     code, out, err = ran(settings, "add", str(notes))
     assert (code, out) == (1, "")
     assert err.startswith("error  [")
-    assert err.endswith("home'\n")
-    assert err.count("\n") == 1
+    assert err.endswith("home'\n  fix  check the path and its permissions\n")
+    assert err.count("\n") == 2
 
 
 def test_a_bug_keeps_its_traceback(settings: Settings, notes: Path) -> None:
@@ -193,7 +193,7 @@ def test_results_that_cannot_be_written_for_another_reason_are_an_error(settings
     ran(settings, "add", str(notes))
     err = io.StringIO()
     assert run(["status"], settings, Refusing(OSError(errno.ENOSPC, "No space left on device")), err) == 1
-    assert err.getvalue() == f"error  [Errno {errno.ENOSPC}] No space left on device\n"
+    assert err.getvalue() == f"error  [Errno {errno.ENOSPC}] No space left on device\n  fix  free space on the disk\n"
 
 
 def closed() -> TextIO:
@@ -222,7 +222,7 @@ def test_without_streams_a_command_runs(settings: Settings, notes: Path) -> None
 )
 def test_an_argument_that_is_no_text_is_refused_with_what_to_do(settings: Settings, argv: tuple[str, ...]) -> None:
     code, out, err = ran(settings, *argv)
-    assert (code, out) == (1, "")
+    assert (code, out) == (2, "")
     assert err.startswith("error  an argument is no text: '")
     assert "\\udce9" in err
     assert err.endswith("  fix  name files and folders in UTF-8, or rename this one\n")

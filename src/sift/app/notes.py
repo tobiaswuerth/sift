@@ -106,9 +106,9 @@ def passed(message: str, unsearched: Sequence[Unsearched]) -> str:
     return "; ".join([message, *(f"not searched: {each.collection}: {each.message}" for each in unsearched)])
 
 
-def _remedy(remedy: str | None, unsearched: Sequence[Unsearched]) -> str | None:
+def _remedy(remedy: str, unsearched: Sequence[Unsearched]) -> str:
     found = [each.remedy for each in unsearched if each.remedy is not None]
-    return "; ".join(dict.fromkeys([*found, remedy] if remedy is not None else found)) or None
+    return "; ".join(dict.fromkeys([*found, remedy]))
 
 
 def matches(collections: Sequence[Collection], id_: str) -> Matches:

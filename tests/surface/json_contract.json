@@ -1,0 +1,191 @@
+{
+  "add": {
+    "name": "notes",
+    "folder": "/data/notes",
+    "store": "/home/.sift/collections/notes.sqlite",
+    "title_from": "heading",
+    "vault": true,
+    "follow_links": false
+  },
+  "status": {
+    "home": "/home/.sift",
+    "collections": [
+      {
+        "name": "notes",
+        "folder": "/data/notes",
+        "store": "/home/.sift/collections/notes.sqlite",
+        "contents": {
+          "documents": 3,
+          "chunks": 7,
+          "stored_bytes": 4096,
+          "unreadable": 1,
+          "unreadable_files": [
+            {
+              "path": "bad.pdf",
+              "problem": "no text"
+            }
+          ],
+          "links": 2,
+          "unresolved": 1,
+          "state": "counted"
+        }
+      },
+      {
+        "name": "papers",
+        "folder": "/data/papers",
+        "store": "/home/.sift/collections/papers.sqlite",
+        "contents": {
+          "message": "gone",
+          "remedy": "add it",
+          "state": "unavailable"
+        }
+      }
+    ]
+  },
+  "index": {
+    "collections": [
+      {
+        "name": "notes",
+        "outcome": {
+          "files": 3,
+          "added": 1,
+          "changed": 1,
+          "removed": 0,
+          "unreadable": 1,
+          "state": "indexed"
+        }
+      },
+      {
+        "name": "papers",
+        "outcome": {
+          "message": "gone",
+          "remedy": "add it",
+          "state": "skipped"
+        }
+      }
+    ]
+  },
+  "embed": {
+    "collections": [
+      {
+        "name": "notes",
+        "outcome": {
+          "stored": 7,
+          "broken": 0,
+          "state": "embedded"
+        }
+      },
+      {
+        "name": "papers",
+        "outcome": {
+          "message": "gone",
+          "remedy": "add it",
+          "state": "skipped"
+        }
+      }
+    ]
+  },
+  "get": {
+    "found": [
+      {
+        "id": "notes/a.md",
+        "title": "A",
+        "text": "# A\n",
+        "fields": {
+          "year": 2024
+        }
+      }
+    ],
+    "unfound": [
+      {
+        "id": "notes/b.md",
+        "message": "unknown document 'notes/b.md'",
+        "remedy": "take the id from a search result"
+      }
+    ]
+  },
+  "search": {
+    "hits": [
+      {
+        "id": "notes/a.md",
+        "title": "A",
+        "lines": "1-2",
+        "score": 1.5,
+        "text": "# A",
+        "also": [
+          "copy/a.md"
+        ],
+        "fields": {
+          "year": 2024
+        }
+      }
+    ],
+    "searched": 1,
+    "unsearched": [
+      {
+        "collection": "papers",
+        "message": "the store is busy",
+        "remedy": "wait, then ask again"
+      }
+    ],
+    "partial": true,
+    "ruled_out": 1
+  },
+  "links": {
+    "id": "notes/a.md",
+    "title": "A",
+    "out": [
+      {
+        "line": 3,
+        "target": "B",
+        "field": "org",
+        "fragment": "Intro",
+        "via": "name",
+        "id": "notes/b.md",
+        "title": "B",
+        "ambiguous": [],
+        "through": null
+      }
+    ],
+    "into": [
+      {
+        "id": "notes/c.md",
+        "title": "C",
+        "lines": [
+          {
+            "line": 4,
+            "field": null,
+            "text": "see [[A]]"
+          }
+        ],
+        "through": null
+      }
+    ],
+    "unsearched": [
+      {
+        "collection": "papers",
+        "message": "the store is busy",
+        "remedy": "wait, then ask again"
+      }
+    ]
+  },
+  "unresolved": {
+    "targets": [
+      {
+        "target": "Missing",
+        "documents": 2,
+        "ids": [
+          "notes/a.md",
+          "notes/c.md"
+        ]
+      }
+    ],
+    "unsearched": [
+      {
+        "collection": "papers",
+        "message": "the store is busy",
+        "remedy": "wait, then ask again"
+      }
+    ]
+  }
+}

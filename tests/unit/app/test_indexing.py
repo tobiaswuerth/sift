@@ -152,7 +152,7 @@ def test_a_collection_whose_store_is_missing_is_skipped(home: Path) -> None:
     store.unlink()
     skipped = outcome(home)
     assert isinstance(skipped, Skipped)
-    assert (skipped.reason, skipped.remedy) == (f"the store is missing: {store}", MISSING_REMEDY)
+    assert (skipped.message, skipped.remedy) == (f"the store is missing: {store}", MISSING_REMEDY)
 
 
 def test_a_folder_left_without_any_file_keeps_its_documents_until_one_is_back(home: Path, notes: Path) -> None:
@@ -255,8 +255,8 @@ def test_a_store_damaged_where_indexing_reads_it_is_skipped_and_the_others_are_i
     damage_table(home / "collections" / "a.sqlite", "sources")
     damaged, sound = indexed(home).collections
     assert isinstance(damaged.outcome, Skipped)
-    assert (damaged.outcome.reason.startswith("the store "), damaged.outcome.remedy) == (True, DAMAGED_REMEDY)
-    assert "is damaged" in damaged.outcome.reason
+    assert (damaged.outcome.message.startswith("the store "), damaged.outcome.remedy) == (True, DAMAGED_REMEDY)
+    assert "is damaged" in damaged.outcome.message
     assert sound == CollectionIndexed("b", Indexed(1, 1, 0, 0, 0))
 
 
@@ -295,7 +295,7 @@ def test_a_store_that_cannot_be_written_is_passed_over_and_the_next_collection_i
         store.chmod(stat.S_IREAD | stat.S_IWRITE)
     assert isinstance(found["more"], Indexed)
     assert isinstance(found["notes"], Skipped)
-    assert found["notes"].reason.startswith(f"the store {store.resolve()} cannot be written")
+    assert found["notes"].message.startswith(f"the store {store.resolve()} cannot be written")
 
 
 def test_a_nul_in_a_file_is_stored_as_a_replacement_character(home: Path, notes: Path) -> None:

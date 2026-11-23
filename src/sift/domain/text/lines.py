@@ -19,5 +19,6 @@ def lines_of(text: str, first: int, last: int, name: str) -> str:
     every = [found.group() for found in LINE.finditer(text)]
     if first > len(every):
         noun = "line" if len(every) == 1 else "lines"
-        raise InvalidRequestError(f"{name} has {len(every)} {noun}; line {first} is past its end")
+        said = f"{name} has {len(every)} {noun}; line {first} is past its end"
+        raise InvalidRequestError(said, f"ask for lines 1 to {len(every)} at most")
     return "".join(every[first - 1 : last])

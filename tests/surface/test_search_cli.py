@@ -71,7 +71,7 @@ def test_a_search_without_matches_says_so(settings: Settings, notes: Path) -> No
 def test_a_query_outside_the_grammar_is_refused_with_how_to_write_one(settings: Settings, notes: Path) -> None:
     searched_notes(settings, notes)
     code, out, err = ran(settings, "search", "a AND")
-    assert (code, out) == (1, "")
+    assert (code, out) == (2, "")
     assert err.startswith("error  the query is not understood: it ends where words are missing\n  fix  write words")
 
 
@@ -99,7 +99,7 @@ def test_k_is_a_whole_number(settings: Settings) -> None:
 def test_a_budget_of_no_time_is_refused(settings: Settings, notes: Path) -> None:
     searched_notes(settings, notes)
     code, out, err = ran(settings, "search", "brush", "--budget", "0")
-    assert (code, out) == (1, "")
+    assert (code, out) == (2, "")
     assert "--budget 0.0 leaves no time to search" in err
 
 
@@ -119,7 +119,7 @@ def test_search_keeps_to_front_matter_and_paths_shows_it_and_orders_by_it(settin
         ("notes/papers/a.md", {"year": 2023}),
     ]
     code, out, err = ran(settings, "search", "brush", "-f", "year")
-    assert (code, out) == (1, "")
+    assert (code, out) == (2, "")
     assert err.startswith("error  the filter 'year' is no KEY=VALUE")
 
 
@@ -170,3 +170,22 @@ def test_a_stream_that_cannot_print_the_glyphs_gets_ascii_ones(settings: Setting
     said = raw.getvalue().decode("utf-8")
     assert "  |  keyword  |  " in said
     assert "\N{MIDDLE DOT}" not in said
+
+
+def test_an_error_asked_for_in_json_is_json_on_stdout(settings: Settings, notes: Path) -> None:
+    searched_notes(settings, notes)
+    code, out, err = ran(settings, "search", "brush", "-c", "nope", "--json")
+    said = cast("dict[str, dict[str, str]]", json.loads(out))["error"]
+    assert (code, said["kind"], said["message"]) == (1, "not_found", err.splitlines()[0].removeprefix("error  "))
+
+
+def test_a_mistaken_argument_exits_2_with_a_fix_and_no_usage_block(settings: Settings, notes: Path) -> None:
+    searched_notes(settings, notes)
+    for argv in (("search", "brush", "-k", "abc"), ("search", "brush", "-k", "0")):
+        code, out, err = ran(settings, *argv)
+        lines = err.splitlines()
+        assert (code, out, len(lines)) == (2, "", 2)
+        assert (lines[0].startswith("error  "), lines[1].startswith("  fix  ")) == (True, True)
+    code, _, err = ran(settings, "search", "brush", "--sort", "-year")
+    assert code == 2
+    assert "a value that starts with a dash is written --sort=-value; see sift search --help" in err

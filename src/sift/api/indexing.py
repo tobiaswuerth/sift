@@ -21,7 +21,7 @@ class Indexed:
 
 @dataclass(frozen=True, slots=True)
 class Skipped:
-    reason: str
+    message: str
     remedy: str | None
     state: Literal["skipped"] = "skipped"
 

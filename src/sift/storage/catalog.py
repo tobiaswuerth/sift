@@ -186,11 +186,13 @@ class Placed:
 def _clash(wanted: Placed, other: Collection) -> InvalidRequestError | None:
     mine, theirs = Path(_same(wanted.folder)), Path(_same(other.folder))
     if mine == theirs:
-        return InvalidRequestError(f"{wanted.folder} is the collection {other.name!r} already")
+        return InvalidRequestError(f"{wanted.folder} is the collection {other.name!r} already", "index it instead")
     if other.name.casefold() == wanted.name.casefold():
         return InvalidRequestError(f"a collection is named {other.name!r} already", "choose another name")
     if _same(other.store) == _same(wanted.store):
-        return InvalidRequestError(f"{wanted.store} is the store of the collection {other.name!r}")
+        return InvalidRequestError(
+            f"{wanted.store} is the store of the collection {other.name!r}", "give the new collection another name"
+        )
     if not wanted.nested and (mine.is_relative_to(theirs) or theirs.is_relative_to(mine)):
         where = "lies inside" if mine.is_relative_to(theirs) else "holds"
         return InvalidRequestError(

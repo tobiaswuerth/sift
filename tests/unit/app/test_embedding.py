@@ -207,10 +207,10 @@ def test_a_store_taken_by_another_model_midway_is_skipped_saying_so(home: Path) 
 
     (outcome,) = embed(home, EmbedCollections(), taken, Hashed(), Embedding(chunks_a_write=1)).collections
     assert isinstance(outcome.outcome, Skipped)
-    assert outcome.outcome.reason == "the store holds vectors of other-model, not of hashed-words"
+    assert outcome.outcome.message == "the store holds vectors of other-model, not of hashed-words"
     assert [event for event in said if isinstance(event, PhaseStarted)][-1].phase is Phase.EMBED
     assert not isinstance(said[-2], PhaseDone)
-    assert said[-1] == Noted(outcome.outcome.reason, outcome.outcome.remedy)
+    assert said[-1] == Noted(outcome.outcome.message, outcome.outcome.remedy)
 
 
 def test_a_store_a_reset_could_not_clear_is_skipped_saying_why(home: Path) -> None:
@@ -220,8 +220,8 @@ def test_a_store_a_reset_could_not_clear_is_skipped_saying_why(home: Path) -> No
     (outcome,) = embed(home, EmbedCollections(reset=True), said.append, Hashed(name="other-model")).collections
     assert isinstance(outcome.outcome, Skipped)
     assert len([event for event in said if isinstance(event, Noted)]) == 1
-    assert outcome.outcome.reason.startswith("its vectors could not be forgotten: ")
-    assert "damaged" in outcome.outcome.reason
+    assert outcome.outcome.message.startswith("its vectors could not be forgotten: ")
+    assert "damaged" in outcome.outcome.message
 
 
 @pytest.mark.parametrize("reset", [False, True])

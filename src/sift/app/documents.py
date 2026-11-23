@@ -18,7 +18,7 @@ SEPARATOR = "/"
 
 
 def unknown(id_: str) -> NotFoundError:
-    return NotFoundError(f"unknown document {id_!r}", "take the id from a search result, or `sift status`")
+    return NotFoundError(f"unknown document {id_!r}", "take the id from a search result")
 
 
 def holding(known: Sequence[Collection], full: Path) -> tuple[Collection, str] | None:

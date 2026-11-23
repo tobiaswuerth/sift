@@ -173,7 +173,7 @@ def test_a_store_lost_while_its_filter_is_checked_or_listed_is_passed_over(tmp_p
 
 
 def _gone() -> None:
-    raise StoreUnavailableError("gone", None)
+    raise StoreUnavailableError("gone", "add it again")
 
 
 def test_work_that_loses_its_store_drops_it_says_why_and_ends_the_round(home: Path) -> None:
@@ -223,7 +223,7 @@ def test_once_a_store_is_lost_no_other_store_is_read_for_that_round(tmp_path: Pa
     def read(transaction: Reading, chunks: Ids) -> ExactRows:
         reads.append(len(chunks))
         if len(reads) == 1:
-            raise StoreUnavailableError("the store is damaged", None)
+            raise StoreUnavailableError("the store is damaged", "add it again")
         return vectors_of(transaction, chunks)
 
     found = vsearch(home, SearchVectors("pigment binder", k=3), Hashed(), Rescoring(3, read))
