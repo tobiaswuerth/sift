@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from itertools import batched
 
 from sift.api.events import Noted
-from sift.app.filing import Job, Tally
+from sift.app.filing import Job, Tally, too_large_to_describe
 from sift.domain.plan.indexing import RACY, Stat
 from sift.domain.text.notes import Document
 from sift.domain.text.records import Chosen, SkippedLine, record_of
@@ -44,10 +44,17 @@ class Skips:
         return f"{counted(self.count, 'line')} skipped ({shown}{more})"
 
 
-def _records(lines: Iterable[tuple[int, str | SkippedLine]], chosen: Chosen) -> Iterator[Line]:
+def _described(found: Document | SkippedLine, number: int, most: int) -> Document | SkippedLine:
+    problem = too_large_to_describe(found, most) if isinstance(found, Document) else None
+    return found if problem is None else SkippedLine(number, problem)
+
+
+def _records(lines: Iterable[tuple[int, str | SkippedLine]], chosen: Chosen, most: int) -> Iterator[Line]:
     for number, line in lines:
-        if line:
-            yield number, line if isinstance(line, SkippedLine) else record_of(line, number, chosen)
+        if isinstance(line, SkippedLine):
+            yield number, line
+        elif line:
+            yield number, _described(record_of(line, number, chosen), number, most)
 
 
 def _firsts(read: Sequence[Line], new: frozenset[str]) -> tuple[list[Document], list[SkippedLine]]:
@@ -104,7 +111,7 @@ def stored_records(job: Job, path: str, stat: Stat, chosen: Chosen, scanned: Ide
         source = put_source(transaction, path, RACY, stat.size)
         nothing_taken(transaction)
     try:
-        for read in batched(_records(lines, chosen), limits.most_records_a_write):
+        for read in batched(_records(lines, chosen, limits.most_description_bytes), limits.most_records_a_write):
             with writing_documents(job.connection, limits.batches) as transaction:
                 done, skipped = _batch(transaction, source, path, read)
             tally, skips = tally + done, skips + skipped

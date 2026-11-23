@@ -7,7 +7,7 @@ from sift.api.errors import StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import chosen_or_active
-from sift.app.filing import READERS, Job, Limits, Readers, Refused, Tally
+from sift.app.filing import READERS, Job, Limits, Readers, Refused, Tally, too_large_to_describe
 from sift.app.problems import problems
 from sift.app.records import stored_records
 from sift.app.streamed import stored_note
@@ -54,7 +54,14 @@ def _read(job: Job, path: str, scanned: Identity | None) -> FileRead | Refused:
     if len(raw) > most:
         return _too_large(len(raw), most)
     read = read_whole(raw, posixpath.basename(path), job.collection.choices.title_from, job.readers.convert)
-    return Refused(read.problem, read_again=False) if isinstance(read, Unread) else read
+    return Refused(read.problem, read_again=False) if isinstance(read, Unread) else _described(read, job.limits)
+
+
+def _described(read: FileRead, limits: Limits) -> FileRead:
+    found = [(each, too_large_to_describe(each, limits.most_description_bytes)) for each in read.documents]
+    kept = tuple(each for each, problem in found if problem is None)
+    large = (f"{each.key}: {problem}" if each.key else problem for each, problem in found if problem is not None)
+    return FileRead(kept, (*read.problems, *large))
 
 
 def _refused(transaction: WritingDocuments, path: str, stat: Stat, refused: Refused) -> Tally:

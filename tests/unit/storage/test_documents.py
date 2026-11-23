@@ -17,6 +17,7 @@ from sift.domain.text.markdown import MOST_LINE
 from sift.domain.text.notes import MOST_HEAD, Document, note, read_note
 from sift.storage.database import reading, rows, run, writing
 from sift.storage.documents import (
+    MOST_DESCRIPTION_BYTES,
     PATHS_NAMED,
     Counts,
     KeptDocument,
@@ -28,6 +29,7 @@ from sift.storage.documents import (
     chunks_of,
     clear_unreadable,
     counts,
+    description_bytes,
     fields_json,
     fields_of,
     kept,
@@ -290,10 +292,17 @@ def test_front_matter_that_is_no_mapping_is_damage(written: str) -> None:
         fields_of(written)
 
 
-def test_the_largest_row_of_a_note_or_record_fits_a_row_sqlite_stores(store: sqlite3.Connection) -> None:
-    most_characters_as_utf8, title_and_fields = 4, 2
-    largest_row = max(BLOCK, MOST_LINE, MOST_HEAD) * most_characters_as_utf8 * title_and_fields
+def test_the_largest_row_fits_a_row_sqlite_stores(store: sqlite3.Connection) -> None:
+    most_characters_as_utf8, most_composed, digest_and_numbers = 4, 3, 1 << 10
+    note_title_and_fields = (MOST_LINE + MOST_HEAD * most_composed) * most_characters_as_utf8
+    assert note_title_and_fields <= MOST_DESCRIPTION_BYTES
+    largest_row = max(BLOCK * most_characters_as_utf8, MOST_DESCRIPTION_BYTES + digest_and_numbers)
     assert largest_row < store.getlimit(sqlite3.SQLITE_LIMIT_LENGTH)
+
+
+def test_a_document_is_described_by_its_name_title_and_fields_in_bytes() -> None:
+    described = dataclasses.replace(note(NOTE, "Hans.md"), key="Brief.pdf", title="Zürich", fields={"a": "é"})
+    assert description_bytes(described) == len("Brief.pdf") + len("Zürich".encode()) + len('{"a": "é"}'.encode())
 
 
 def test_the_store_keeps_count_of_its_documents_and_chunks_as_they_come_and_go(store: sqlite3.Connection) -> None:

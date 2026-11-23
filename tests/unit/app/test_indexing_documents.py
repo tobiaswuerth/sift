@@ -1,3 +1,4 @@
+import json
 import shutil
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from sift.app.embedding import embed
 from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
 from sift.app.search import search
-from sift.domain.text.documents import Conversion, Unread
+from sift.domain.text.documents import Conversion, Converted, Unread
 from sift.ingest.documents import convert
 from sift.ingest.files import Identity
 from sift.storage.catalog import known_collections
@@ -38,6 +39,10 @@ def indexed(
     ).collections
     assert isinstance(one.outcome, Indexed)
     return one.outcome
+
+
+def found_ids(home: Path) -> list[str]:
+    return found(home, "words OR offer")
 
 
 def found(home: Path, query: str, filters: tuple[str, ...] = ()) -> list[str]:
@@ -123,6 +128,36 @@ def test_a_document_that_cannot_be_read_is_read_again_at_the_next_index(library:
     assert indexed(library, readers=Readers(whole=locked, clock=later)).unreadable == 3
     assert {each.problem for each in unreadable_files(library)} == {"Permission denied"}
     assert indexed(library) == Indexed(files=3, added=3, changed=0, removed=0, unreadable=0)
+
+
+LONG_TITLE = "x" * 300
+LONG_FIELDS = json.dumps({"title": LONG_TITLE})
+
+
+def too_large_to_describe(name: str) -> str:
+    size = len(name) + len(LONG_TITLE) + len(LONG_FIELDS)
+    return f"{size:,} bytes of name, title and fields, more than the 200 a document holds"
+
+
+def long_titled_pdf(_raw: bytes, name: str) -> Conversion:
+    return Converted("words\n", {"title": LONG_TITLE} if name.endswith(".pdf") else {})
+
+
+def test_a_document_whose_title_and_fields_take_more_than_a_document_holds_is_left_out(library: Path) -> None:
+    readers = Readers(clock=later, convert=long_titled_pdf)
+    found = indexed(library, Limits(most_description_bytes=200), readers=readers)
+    assert found == Indexed(files=3, added=2, changed=0, removed=0, unreadable=1)
+    assert unreadable_files(library) == (UnreadableFile("pigments.pdf", too_large_to_describe("")),)
+
+
+def test_an_attachment_too_large_to_describe_is_left_out_and_its_mail_kept(post: Path) -> None:
+    said: list[Event] = []
+    readers = Readers(clock=later, convert=long_titled_pdf)
+    found = indexed(post, Limits(most_description_bytes=200), said, readers)
+    assert found == Indexed(files=1, added=1, changed=0, removed=0, unreadable=1)
+    (problem,) = [event.text for event in said if isinstance(event, Noted)]
+    assert problem == f"offer.eml: contract.pdf: {too_large_to_describe('contract.pdf')}"
+    assert found_ids(post) == ["mail/offer.eml"]
 
 
 def test_a_mail_and_its_attachments_are_documents_found_and_filtered_by_their_ids(post: Path) -> None:

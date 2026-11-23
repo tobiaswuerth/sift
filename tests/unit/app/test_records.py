@@ -194,6 +194,20 @@ def test_a_record_longer_than_a_line_may_be_is_skipped_and_files_in_utf_16_are_r
     assert text_of(home, "c/r.jsonl#2") == "\N{EURO SIGN}" * 15
 
 
+def test_a_record_whose_title_and_fields_take_more_than_a_document_holds_is_skipped(tmp_path: Path) -> None:
+    write(
+        tmp_path / "c" / "r.jsonl", jsonl([{"id": 1, "title": "x" * 300, "text": "long"}, {"id": 2, "text": "short"}])
+    )
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    said: list[Event] = []
+    assert indexed(home, Limits(most_description_bytes=200), said).added == 1
+    assert found(home, "long OR short") == ["c/r.jsonl#2"]
+    (noted,) = [each.text for each in said if isinstance(each, Noted)]
+    assert "line 1: " in noted
+    assert "bytes of name, title and fields, more than the 200 a document holds" in noted
+
+
 def broken(path: Path, most: int, scanned: Identity | None) -> Iterator[tuple[int, str | SkippedLine]]:
     yield from islice(lines_of(path, most, scanned), 2)
     raise OSError(5, "the drive went away")

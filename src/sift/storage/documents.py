@@ -13,6 +13,7 @@ from sift.storage.database import Reading, Writing, WritingDocuments, first, ins
 from sift.storage.texts import put_text
 
 SourceId = NewType("SourceId", int)
+MOST_DESCRIPTION_BYTES = 512 << 20
 
 
 class Source(NamedTuple):
@@ -55,6 +56,10 @@ def _plain(value: object) -> object:
 
 def fields_json(fields: Fields) -> str:
     return json.dumps(fields, ensure_ascii=False, allow_nan=False, default=_plain)
+
+
+def description_bytes(document: Document) -> int:
+    return sum(len(text.encode()) for text in (document.key, document.title, fields_json(document.fields)))
 
 
 def fields_of(written: str) -> Fields:

@@ -8,18 +8,21 @@ from sift.api.events import Reporter
 from sift.domain.plan.indexing import MOST_FILE_BYTES
 from sift.domain.text.documents import Convert
 from sift.domain.text.markdown import MOST_LINE
+from sift.domain.text.notes import Document
 from sift.domain.text.records import SkippedLine
 from sift.ingest.documents import convert
 from sift.ingest.files import Identity, at_most, pieces_of
 from sift.ingest.records import lines_of
 from sift.storage.catalog import Collection
 from sift.storage.database import BATCHES, Batches, Connection
+from sift.storage.documents import MOST_DESCRIPTION_BYTES, description_bytes
 
 
 @dataclass(frozen=True, slots=True)
 class Limits:
     most_record_characters: int = MOST_LINE
     most_file_bytes: int = MOST_FILE_BYTES
+    most_description_bytes: int = MOST_DESCRIPTION_BYTES
     most_files_a_write: int = 1000
     most_bytes_a_write: int = 64 << 20
     most_records_a_write: int = 2000
@@ -40,6 +43,11 @@ class Tally:
 class Refused:
     problem: str
     read_again: bool
+
+
+def too_large_to_describe(document: Document, most: int) -> str | None:
+    size = description_bytes(document)
+    return f"{size:,} bytes of name, title and fields, more than the {most:,} a document holds" if size > most else None
 
 
 type Lines = Callable[[Path, int, Identity | None], Iterator[tuple[int, str | SkippedLine]]]
