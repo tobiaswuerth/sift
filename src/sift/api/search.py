@@ -11,7 +11,8 @@ QUERY = (
 
 
 CANDIDATES = (
-    "passages each of keyword and semantic search hands the reranker, at least k and at most 10,000 (default: 40)"
+    "passages each of keyword and semantic search hands the reranker, raised to k if fewer, at most 10,000"
+    " (default: 40)"
 )
 ADAPTIVE = "only the results before the largest drop in score, and five more, instead of always k"
 BUDGET = (

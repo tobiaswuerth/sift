@@ -15,11 +15,11 @@ from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.vsearch import Asked
-from sift.domain.arrays import Ids
+from sift.domain.arrays import Ids, floats
 from sift.domain.codec.codes import Halves
 from sift.domain.errors import DamagedError
 from sift.storage.database import Reading
-from sift.storage.vectors import vectors_of
+from sift.storage.vectors import EMBED_REMEDY, vectors_of
 from tests.damage import damage_table
 from tests.models import Hashed
 
@@ -95,7 +95,7 @@ def test_copies_of_a_work_in_several_collections_are_one_result_naming_the_other
 def test_adaptive_keeps_the_results_that_stand_out(home: Path) -> None:
     every = query(home, SearchHybrid("dark matter halo models", k=9), Hashed()).hits
     standing = query(home, SearchHybrid("dark matter halo models", k=9, adaptive=True), Hashed()).hits
-    assert 1 <= len(standing) <= len(every)
+    assert 1 <= len(standing) < len(every)
     assert standing == every[: len(standing)]
 
 
@@ -145,8 +145,8 @@ def test_a_store_lost_while_its_candidates_are_read_is_passed_over(
     [
         (SearchHybrid("   "), "an empty query finds nothing"),
         (SearchHybrid("halo", k=0), "asks for no result"),
-        (SearchHybrid("halo", k=20, candidates=10), "fewer than -k"),
-        (SearchHybrid("halo", candidates=10_001), "more than allowed"),
+        (SearchHybrid("halo", candidates=0), "--candidates 0 is"),
+        (SearchHybrid("halo", candidates=10_001), "--candidates 10,001 is"),
     ],
 )
 def test_a_query_that_cannot_be_answered_is_refused(home: Path, request_: SearchHybrid, refusal: str) -> None:
@@ -200,3 +200,37 @@ def test_a_document_found_by_keywords_in_one_passage_and_by_meaning_in_another_i
     ((_, shown),) = models.reranked
     assert sum(each.startswith("Two\n") for each in shown) == 2
     assert [hit.id for hit in result.hits].count("zoo/two.md") == 1
+
+
+def test_fewer_candidates_than_results_are_raised_to_as_many(home: Path) -> None:
+    assert len(query(home, SearchHybrid("note", k=12, candidates=2), Hashed()).hits) == 9
+
+
+@pytest.mark.parametrize(
+    "other, said",
+    [
+        (Hashed(name="other-model"), "its vectors are of other-model, not of hashed-words"),
+        (Hashed(width=32), "its vectors have 32 dimensions, the query 48"),
+    ],
+)
+def test_a_collection_embedded_otherwise_is_passed_over_saying_so(
+    home: Path, tmp_path: Path, other: Hashed, said: str
+) -> None:
+    write(tmp_path / "more" / "halo.md", "# Halo again\n\nDark matter halo models.\n")
+    collection(home, tmp_path / "more", embedded=False)
+    embed(home, EmbedCollections(("more",)), lambda _: None, other)
+    result = query(home, SearchHybrid("dark matter halo models"), Hashed())
+    assert "more/halo.md" not in [hit.id for hit in result.hits]
+    ((unsearched),) = result.unsearched
+    assert (unsearched.collection, unsearched.message) == ("more", said)
+    assert unsearched.remedy == EMBED_REMEDY.format(model="hashed-words")
+
+
+def test_a_passage_not_embedded_yet_keeps_the_reranker_s_score_as_it_is(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "more" / "halo.md", "# Halo again\n\nDark matter halo models.\n")
+    collection(home, tmp_path / "more", embedded=False)
+    asked = "dark matter halo models"
+    hits = {hit.id: hit.score for hit in query(home, SearchHybrid(asked), Hashed()).hits}
+    (alone,) = floats(Hashed().rerank(asked, ["Halo again\n\n# Halo again\n\nDark matter halo models."]))
+    assert hits["more/halo.md"] == alone
+    assert hits["notes/halo.md"] > alone

@@ -78,8 +78,9 @@ def passage(title: str, names: Sequence[str], text: str) -> str:
 def blend(rerank: Scores, cosine: Scores, names: Flags, weight: float = COSINE_WEIGHT) -> Scores:
     if not len(rerank):
         return rerank
-    lifted = cosine.copy()
-    lifted[names] = cosine.max()
+    known = np.isfinite(cosine)
+    lifted = np.where(known, cosine, cosine[known].mean() if known.any() else 0.0)
+    lifted[names] = lifted.max()
     spread = float(rerank.std() / lifted.std()) if np.ptp(lifted) > 0 else 0.0
     return rerank + weight * spread * (lifted - lifted.mean())
 

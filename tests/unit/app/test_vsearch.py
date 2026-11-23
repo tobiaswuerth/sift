@@ -244,7 +244,7 @@ def test_documents_are_counted_only_when_the_first_round_finds_too_few(home: Pat
     vsearch(home, SearchVectors("dark matter halo models", k=3), Hashed(), Asked(1000, vectors_of, count))
     assert counted == []
     vsearch(home, SearchVectors("pruning skips ranges that cannot win", k=3), Hashed(), Asked(1, vectors_of, count))
-    assert counted
+    assert counted == [9]
 
 
 def test_a_first_round_holding_every_embedded_document_is_not_widened(tmp_path: Path) -> None:
@@ -284,3 +284,24 @@ def test_a_store_lost_while_its_documents_are_counted_is_passed_over(home: Path,
     found = vsearch(home, request, Hashed(), Asked(1, vectors_of, count))
     assert len(found.unsearched) == 1
     assert found.hits
+
+
+def test_documents_are_counted_once_however_often_the_search_widens(tmp_path: Path) -> None:
+    root, home = tmp_path / "zoo", tmp_path / "home"
+    write(
+        root / "long.md",
+        "# Long\n\n" + "".join(f"## Part {n}\n\n{'Quokka wombat numbat. ' * 60}\n\n" for n in range(40)),
+    )
+    for n in range(5):
+        write(root / f"filler{n}.md", f"# Filler {n}\n\nNothing {n}.\n")
+    add(home, AddCollection(str(root)))
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    counted: list[int] = []
+
+    def count(transaction: Reading) -> int:
+        counted.append(documents_embedded(transaction))
+        return counted[-1]
+
+    found = vsearch(home, SearchVectors("quokka wombat", k=3), Hashed(), Asked(1, vectors_of, count))
+    assert (len(found.hits), counted) == (3, [6])

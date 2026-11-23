@@ -10,6 +10,7 @@ from transformers import BertConfig, BertForSequenceClassification, BertModel, B
 
 WORDS = ("[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "dark", "matter", "halo", "models", "pruning", "skips", "ranges")
 WIDTH = 16
+POSITIONS = 64
 VOCABULARY = {word: at for at, word in enumerate(WORDS)}
 
 
@@ -28,13 +29,13 @@ def _config() -> BertConfig:
         num_hidden_layers=1,
         num_attention_heads=2,
         intermediate_size=32,
-        max_position_embeddings=64,
+        max_position_embeddings=POSITIONS,
     )
 
 
-def _vocabulary(folder: Path) -> Path:
+def _vocabulary(folder: Path, longest: int = POSITIONS) -> Path:
     folder.mkdir(parents=True)
-    saved(BertTokenizer(vocab=VOCABULARY)).save_pretrained(folder)
+    saved(BertTokenizer(vocab=VOCABULARY, model_max_length=longest)).save_pretrained(folder)
     return folder
 
 
@@ -47,18 +48,8 @@ def tiny_reranker(folder: Path) -> Path:
 
 
 def tiny_model(folder: Path) -> Path:
-    raw, made = folder / "raw", folder / "tiny"
-    raw.mkdir(parents=True)
-    config = BertConfig(
-        vocab_size=len(WORDS),
-        hidden_size=WIDTH,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        intermediate_size=32,
-        max_position_embeddings=64,
-    )
-    saved(BertModel(config)).save_pretrained(raw)
-    saved(BertTokenizer(vocab=VOCABULARY)).save_pretrained(raw)
+    raw, made = _vocabulary(folder / "raw"), folder / "tiny"
+    saved(BertModel(_config())).save_pretrained(raw)
     SentenceTransformer(modules=[Transformer(str(raw), max_seq_length=32), Pooling(WIDTH)]).save(str(made))
     return made
 
@@ -72,7 +63,7 @@ def tiny_static(folder: Path) -> Path:
 
 
 def tiny_prompted(folder: Path, positions: int) -> Path:
-    raw, made = _vocabulary(folder / f"prompted-raw-{positions}"), folder / f"prompted-{positions}"
+    raw, made = _vocabulary(folder / f"prompted-raw-{positions}", positions), folder / f"prompted-{positions}"
     config = _config()
     config.max_position_embeddings = positions
     saved(BertModel(config)).save_pretrained(raw)

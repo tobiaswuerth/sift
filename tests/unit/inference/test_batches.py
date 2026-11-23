@@ -1,3 +1,4 @@
+import sys
 from collections.abc import Sequence
 
 import numpy as np
@@ -36,7 +37,7 @@ def test_texts_are_run_longest_first_by_their_lengths_in_batches_and_come_back_i
 
 def test_a_batch_too_large_for_memory_is_halved_until_it_fits_freeing_memory_each_time() -> None:
     sizes: list[int] = []
-    freed: list[bool] = []
+    freed: list[BaseException | None] = []
 
     def run(texts: list[str]) -> Floats:
         sizes.append(len(texts))
@@ -44,9 +45,12 @@ def test_a_batch_too_large_for_memory_is_halved_until_it_fits_freeing_memory_eac
             raise TooLargeError
         return lengths(texts)
 
-    found = in_batches(["a"] * 5, [1] * 5, Shape(2, 8), Attempt(run, too_large, lambda: freed.append(True)))
+    found = in_batches(
+        ["a"] * 5, [1] * 5, Shape(2, 8), Attempt(run, too_large, lambda: freed.append(sys.exc_info()[1]))
+    )
     assert sizes == [5, 4, 2, 2, 1]
-    assert (found.rows.shape, found.batch, len(freed)) == ((5, 2), 2, 2)
+    assert (found.rows.shape, found.batch) == ((5, 2), 2)
+    assert freed == [None, None]
 
 
 def test_other_failures_and_a_single_text_too_large_are_raised() -> None:

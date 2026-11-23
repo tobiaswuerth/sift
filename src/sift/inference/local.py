@@ -20,21 +20,24 @@ RERANK_BATCH = 16
 UNLOADED_REMEDY = (
     "check the network and the name in SIFT_EMBED_MODEL or SIFT_RERANK_MODEL; for a gated model, log in: hf auth login"
 )
+FULL_REMEDY = "free the GPU's memory others hold, or set CUDA_VISIBLE_DEVICES=-1 to run the models on the CPU"
 
 
 class Tokenizer(Protocol):
     def __call__(self, texts: list[str], *, truncation: bool, max_length: int) -> Mapping[str, list[list[int]]]: ...
 
 
-class Embedder(Protocol):
-    @property
-    def tokenizer(self) -> object: ...
-
+class Capped(Protocol):
     @property
     def max_seq_length(self) -> int | None: ...
 
     @max_seq_length.setter
     def max_seq_length(self, value: int) -> None: ...
+
+
+class Embedder(Capped, Protocol):
+    @property
+    def tokenizer(self) -> object: ...
 
     def get_embedding_dimension(self) -> int | None: ...
 
@@ -47,7 +50,7 @@ class Embedder(Protocol):
     ) -> object: ...
 
 
-class Ranker(Protocol):
+class Ranker(Capped, Protocol):
     @property
     def tokenizer(self) -> object: ...
 
@@ -82,7 +85,7 @@ def _device() -> Device:
     return device
 
 
-def _capped(model: Embedder) -> Embedder:
+def _capped[T: Capped](model: T) -> T:
     try:
         model.max_seq_length = min(model.max_seq_length or MOST_TOKENS, MOST_TOKENS)
     except AttributeError:
@@ -90,12 +93,17 @@ def _capped(model: Embedder) -> Embedder:
     return model
 
 
+def unloaded(name: str, error: BaseException) -> ModelUnavailableError:
+    said = str(error).strip().split("\n")[0]
+    remedy = FULL_REMEDY if too_large(error) else UNLOADED_REMEDY
+    return ModelUnavailableError(f"the model {name} could not be loaded: {said}", remedy)
+
+
 def _loading[T](name: str, load: Callable[[], T]) -> T:
     try:
         return load()
     except (OSError, ValueError, RuntimeError) as error:
-        said = str(error).strip().split("\n")[0]
-        raise ModelUnavailableError(f"the model {name} could not be loaded: {said}", UNLOADED_REMEDY) from error
+        raise unloaded(name, error) from error
 
 
 def _embedder(name: str, device: Device) -> Loaded:
@@ -115,14 +123,8 @@ def _ranker(name: str, device: Device) -> Ranker:
     repository, revision = hub(name)
 
     def load() -> Ranker:
-        model = CrossEncoder(
-            repository,
-            device=device.name,
-            revision=revision,
-            model_kwargs={"dtype": device.dtype},
-            max_length=MOST_TOKENS,
-        )
-        return cast("Ranker", model)
+        model = CrossEncoder(repository, device=device.name, revision=revision, model_kwargs={"dtype": device.dtype})
+        return _capped(cast("Ranker", model))
 
     return _loading(name, load)
 

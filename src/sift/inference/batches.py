@@ -39,8 +39,9 @@ def in_batches(texts: Sequence[str], lengths: Sequence[int], shape: Shape, attem
         except Exception as error:
             if batch == 1 or not attempt.too_large(error):
                 raise
-            attempt.freed()
-            batch //= 2
+        else:
+            start += len(part)
             continue
-        start += len(part)
+        attempt.freed()
+        batch //= 2
     return Batched(rows, batch)

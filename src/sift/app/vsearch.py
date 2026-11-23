@@ -50,16 +50,23 @@ def no_vectors() -> Held:
     return Held(coded(np.zeros(0, np.int64), np.zeros((0, 0), np.uint8), 0))
 
 
-def held(model: str, transaction: Reading) -> Held:
+def embedded_by(model: str, transaction: Reading) -> Held | None:
     found = model_of(transaction)
-    if found is None and not left(transaction):
-        return no_vectors()
     if found is None:
-        raise StoreUnavailableError("it holds no vectors yet", UNEMBEDDED_REMEDY)
+        return None
     if found != model:
         raise StoreUnavailableError(f"its vectors are of {found}, not of {model}", EMBED_REMEDY.format(model=model))
     ids, bits = codes_of(transaction)
     return Held(coded(ids, bits, width_held(transaction) or 0))
+
+
+def held(model: str, transaction: Reading) -> Held:
+    found = embedded_by(model, transaction)
+    if found is not None:
+        return found
+    if left(transaction):
+        raise StoreUnavailableError("it holds no vectors yet", UNEMBEDDED_REMEDY)
+    return no_vectors()
 
 
 def query_vector(models: Models, text: str) -> Floats:
@@ -69,10 +76,10 @@ def query_vector(models: Models, text: str) -> Floats:
     return vector
 
 
-def _alike(kept: Kept, model: str, query: Floats) -> None:
+def alike[S](kept: searching.Kept[S], held_of: Callable[[S], Held], model: str, query: Floats) -> None:
     for one in list(kept.searching):
-        width = one.held.coded.width
-        if len(one.held.coded.ids) and width != len(query):
+        width = held_of(one.held).coded.width
+        if len(held_of(one.held).coded.ids) and width != len(query):
             said = f"its vectors have {width:,} dimensions, the query {len(query):,}"
             kept.dropped(one, StoreUnavailableError(said, EMBED_REMEDY.format(model=model)))
 
@@ -127,22 +134,20 @@ def near[S](
     kept: searching.Kept[S], held_of: Callable[[S], Held], wanted: Best, query: Floats, asked: Asked
 ) -> tuple[Near, ...] | None:
     chunks = sum(len(held_of(each.held).coded.ids) for each in kept.searching)
-    want, enough = max(asked.rescore, wanted.k), wanted.k
+    want, documents = max(asked.rescore, wanted.k), None
     while True:
         found = _nearest(kept, held_of, query, want, asked.read)
         owners = None if found is None else _owned(kept, found)
         if found is None or owners is None:
             return None
         best = _best(wanted, found, owners)
-        if len(best) >= enough or want >= chunks:
+        if len(best) >= wanted.k or want >= chunks:
             return best
-        if enough == wanted.k:
-            documents = _documents(kept, asked.count)
-            if documents is None:
-                return None
-            enough = min(wanted.k, documents)
-            if len(best) >= enough:
-                return best
+        documents = _documents(kept, asked.count) if documents is None else documents
+        if documents is None:
+            return None
+        if len(best) >= documents:
+            return best
         want *= WIDER
 
 
@@ -168,5 +173,5 @@ def vsearch(home: Path, request: SearchVectors, models: Models, asked: Asked = A
         if not any(len(each.held.coded.ids) for each in kept.searching):
             return searching.result(kept, (), partial=False)
         query = query_vector(models, request.query)
-        _alike(kept, models.name, query)
+        alike(kept, _itself, models.name, query)
         return searching.result(kept, _answered(kept, request, query, asked), partial=False)

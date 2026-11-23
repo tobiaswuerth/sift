@@ -4,13 +4,14 @@ from typing import cast
 
 import numpy as np
 import pytest
+import torch
 from sentence_transformers import SentenceTransformer
 
 from sift.api.errors import ModelUnavailableError
-from sift.inference.local import Embedder, Local, local, width_of
+from sift.inference.local import UNLOADED_REMEDY, Embedder, Local, local, unloaded, width_of
 from sift.inference.models import Models
 from tests.models import Hashed
-from tests.tiny_model import WIDTH, tiny_model, tiny_prompted, tiny_reranker, tiny_static
+from tests.tiny_model import POSITIONS, WIDTH, tiny_model, tiny_prompted, tiny_reranker, tiny_static
 
 
 @pytest.fixture(scope="module")
@@ -98,3 +99,19 @@ def test_a_model_that_cannot_be_loaded_says_what_to_check(tmp_path: Path) -> Non
     assert refused.value.remedy is not None
     assert "SIFT_EMBED_MODEL" in refused.value.remedy
     assert "\n" not in refused.value.message
+
+
+def test_a_reranker_reading_fewer_than_1024_tokens_reads_passages_cut_to_its_length(tiny: Path) -> None:
+    models = local(str(tiny), str(tiny.parent / "reranker"))
+    scores = models.rerank("dark matter", [" ".join(["halo"] * 200), "pruning"])
+    assert bool(np.isfinite(scores).all())
+    assert models.ranker is not None
+    assert models.ranker.max_seq_length == POSITIONS
+
+
+def test_a_model_too_large_for_the_memory_left_says_so_not_to_check_the_network() -> None:
+    full = unloaded("owner/model", torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB"))
+    assert full.message == "the model owner/model could not be loaded: CUDA out of memory. Tried to allocate 2.00 GiB"
+    assert full.remedy is not None
+    assert "CUDA_VISIBLE_DEVICES" in full.remedy
+    assert unloaded("owner/model", OSError("401 Client Error\nmore")).remedy == UNLOADED_REMEDY

@@ -76,3 +76,12 @@ def test_the_cut_keeps_one_result_at_least_and_never_more_than_there_are(scores:
 )
 def test_a_work_is_known_by_its_doi_however_it_is_written(doi: object, work: str | None) -> None:
     assert work_of(doi) == work
+
+
+def test_a_cosine_not_known_counts_as_the_mean_of_the_others_neither_bonus_nor_penalty() -> None:
+    rerank = np.array([3.0, 2.0, 1.0, 2.5])
+    names = np.zeros(4, np.bool_)
+    unknown = blend(rerank, np.array([0.9, np.nan, 0.3, np.nan]), names)
+    assert np.allclose(unknown, blend(rerank, np.array([0.9, 0.6, 0.3, 0.6]), names))
+    assert unknown[1] == pytest.approx(2.0)
+    assert np.allclose(blend(rerank, np.full(4, np.nan), names), rerank)

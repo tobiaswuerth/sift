@@ -6,13 +6,13 @@ from pathlib import Path
 
 import numpy as np
 
-from sift.api.errors import InvalidRequestError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError
 from sift.api.fields import Fields, FieldValue
 from sift.api.ids import ChunkId, owner
 from sift.api.search import MOST_HITS, Hit, SearchHybrid, SearchResult
 from sift.app import searching
 from sift.app.search import Wanted, found
-from sift.app.vsearch import ASKED, Asked, Held, held, near, no_vectors, query_vector
+from sift.app.vsearch import ASKED, Asked, Held, alike, embedded_by, near, no_vectors, query_vector
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.codes import Floats
 from sift.domain.query.expressions import NOTHING, Expression
@@ -27,7 +27,7 @@ from sift.storage.documents import fields_by_document, passages, texts
 from sift.storage.keywords import refuse_stale
 
 EMPTY_REMEDY = "ask a question, e.g. sift query 'how dark matter halos form'"
-CANDIDATES_REMEDY = f"ask for as many candidates as results or more, and {MOST_HITS:,} at most"
+CANDIDATES_REMEDY = f"ask for 1 to {MOST_HITS:,} candidates; fewer than -k are raised to -k"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,11 +48,8 @@ type Kept = searching.Kept[Both]
 
 def _both(model: str, transaction: Reading) -> Both:
     refuse_stale(transaction)
-    try:
-        vectors = held(model, transaction)
-    except StoreUnavailableError:
-        vectors = no_vectors()
-    return Both(opened(transaction), vectors)
+    vectors = embedded_by(model, transaction)
+    return Both(opened(transaction), no_vectors() if vectors is None else vectors)
 
 
 def _keywords(both: Both) -> Opened:
@@ -118,7 +115,11 @@ def _gathered(
         read = kept.guarded(one, partial(_read, one, mine))
         if read is None:
             return None
-        near_by = {} if query is None else kept.guarded(one, partial(_cosines, one, mine, query, asked))
+        near_by = (
+            {}
+            if query is None or not len(one.held.vectors.coded.ids)
+            else kept.guarded(one, partial(_cosines, one, mine, query, asked))
+        )
         if near_by is None:
             return None
         candidates += read
@@ -143,7 +144,7 @@ def _scored(models: Models, request: SearchHybrid, candidates: list[Candidate], 
         for each, found_names in zip(candidates, names, strict=True)
     ]
     rerank = models.rerank(request.query, shown).astype(np.float64)
-    cosine = np.array([cosines.get(each.chunk, 0.0) for each in candidates], np.float64)
+    cosine = np.array([cosines.get(each.chunk, np.nan) for each in candidates], np.float64)
     return blend(rerank, cosine, np.array([bool(found_names) for found_names in names], np.bool_)).astype(np.float32)
 
 
@@ -189,6 +190,8 @@ def _answered(kept: Kept, request: SearchHybrid, models: Models, asked: Asked) -
         if any(len(each.held.vectors.coded.ids) for each in kept.searching)
         else None
     )
+    if query is not None:
+        alike(kept, _vectors, models.name, query)
     while True:
         chunks = _candidates(kept, request, query, asked)
         gathered = None if chunks is None else _gathered(kept, chunks, query, asked)
@@ -205,10 +208,9 @@ def _checked(request: SearchHybrid) -> None:
     searching.checked_k(request.k)
     if not request.query.strip():
         raise InvalidRequestError("an empty query finds nothing", EMPTY_REMEDY)
-    if not request.k <= request.candidates <= MOST_HITS:
-        raise InvalidRequestError(
-            f"--candidates {request.candidates:,} is fewer than -k or more than allowed", CANDIDATES_REMEDY
-        )
+    if not 1 <= request.candidates <= MOST_HITS:
+        said = f"--candidates {request.candidates:,} is outside 1 to {MOST_HITS:,}"
+        raise InvalidRequestError(said, CANDIDATES_REMEDY)
 
 
 def query(home: Path, request: SearchHybrid, models: Models, asked: Asked = ASKED) -> SearchResult:
