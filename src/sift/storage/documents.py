@@ -9,17 +9,7 @@ from sift.domain.errors import DamagedError
 from sift.domain.text.chunks import Chunk
 from sift.domain.text.links import Link, names
 from sift.domain.text.notes import Document, NotePart, NoteRead
-from sift.storage.database import (
-    Reading,
-    Value,
-    Writing,
-    WritingDocuments,
-    first,
-    inserted,
-    rows,
-    run,
-    run_each,
-)
+from sift.storage.database import Reading, Writing, WritingDocuments, first, inserted, rows, run, run_each
 from sift.storage.texts import put_text
 
 SourceId = NewType("SourceId", int)
@@ -263,11 +253,14 @@ class Unreadable(NamedTuple):
     path: str
     problem: str
     read_again: int
+    skipped_under: str | None
 
 
-def mark_unreadable(transaction: Writing, path: str, problem: str, *, read_again: bool) -> None:
-    sql = "INSERT OR REPLACE INTO unreadable(path, problem, read_again) VALUES (?, ?, ?)"
-    run(transaction, sql, (path, problem, int(read_again)))
+def mark_unreadable(
+    transaction: Writing, path: str, problem: str, *, read_again: bool, skipped_under: str | None = None
+) -> None:
+    sql = "INSERT OR REPLACE INTO unreadable(path, problem, read_again, skipped_under) VALUES (?, ?, ?, ?)"
+    run(transaction, sql, (path, problem, int(read_again), skipped_under))
 
 
 def clear_unreadable(transaction: Writing, paths: Sequence[str]) -> None:
@@ -276,7 +269,8 @@ def clear_unreadable(transaction: Writing, paths: Sequence[str]) -> None:
 
 
 def unreadable(transaction: Reading) -> list[Unreadable]:
-    return rows(transaction, Unreadable, "SELECT path, problem, read_again FROM unreadable ORDER BY path")
+    sql = "SELECT path, problem, read_again, skipped_under FROM unreadable ORDER BY path"
+    return rows(transaction, Unreadable, sql)
 
 
 class Counts(NamedTuple):
@@ -289,9 +283,6 @@ def counts(transaction: Reading) -> Counts:
     return kept_counts
 
 
-SCANS_SKIPPED = "scans_skipped"
-
-
 class KeyDigest(NamedTuple):
     key: str
     digest: str
@@ -300,17 +291,3 @@ class KeyDigest(NamedTuple):
 def digests_of(transaction: Reading, path: str) -> dict[str, str]:
     sql = "SELECT d.key, d.digest FROM documents d JOIN sources s ON s.id = d.source WHERE s.path = ?"
     return {each.key: each.digest for each in rows(transaction, KeyDigest, sql, (path,))}
-
-
-def scans_skipped_under(transaction: Reading) -> str | None:
-    found = first(transaction, Value, "SELECT value FROM meta WHERE key = ?", (SCANS_SKIPPED,))
-    return None if found is None else found.value
-
-
-def scans_skipped(transaction: Writing, setting: str) -> None:
-    run(transaction, "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (SCANS_SKIPPED, setting))
-
-
-def unreadable_read_again(transaction: Writing) -> None:
-    run(transaction, "UPDATE unreadable SET read_again = 1")
-    run(transaction, "DELETE FROM meta WHERE key = ?", (SCANS_SKIPPED,))

@@ -195,6 +195,7 @@ LAYOUT: tuple[Migration, ...] = (
                    WHERE j.atom IS NOT NULL AND j.fullkey <> '$.title') AS meta
            FROM documents d""",
     ),
+    ("ALTER TABLE unreadable ADD COLUMN skipped_under TEXT CHECK (skipped_under IN ('off', 'auto'))",),
 )
 NUMBERED_TABLES = ("documents", "chunks")
 FILE_SUFFIXES = ("", "-wal", "-shm")

@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 
 from sift.api.errors import ModelUnavailableError
-from sift.domain.text.scans import LOOP_CHARACTERS
+from sift.domain.text.scans import LOOP_CHARACTERS, SHORTEST
 from sift.inference.accelerator import CPU, Device
 from sift.inference.hub import OCR_MODEL, PINNED
 from sift.inference.loading import ocr_module
@@ -117,15 +117,33 @@ def test_a_page_that_loops_is_read_again_with_a_repetition_penalty() -> None:
     assert model.generated[0] <= 2 + LOOP_CHARACTERS // len(" word7") + LOOP_STEP
 
 
+def _thin() -> Image.Image:
+    picture = Image.new("RGB", (SHORTEST - 1, 1540), "white")
+    picture.paste("black", (0, 100, 1, 200))
+    return picture
+
+
+@pytest.mark.parametrize("picture", [Image.new("RGB", (1089, 1540), "white"), _thin()], ids=["blank", "thin"])
+def test_a_page_of_one_colour_or_too_thin_for_the_model_is_no_text_the_model_is_not_asked(picture: Image.Image) -> None:
+    model = FakeModel()
+    assert (page_text(ocr_of(model), picture), model.generated) == ("", [])
+
+
 def test_a_loop_the_second_reading_does_not_better_is_cut() -> None:
     assert page_text(ocr_of(FakeModel(loop=True, loop_again=True)), a4()) == "word1089 word1540 word7"
 
 
-def test_a_model_out_of_memory_on_a_page_is_unavailable_saying_so() -> None:
+def test_a_model_out_of_memory_on_a_page_is_unavailable_saying_so_its_device_emptied_for_the_next() -> None:
     found = pages(scan())
     assert isinstance(found, Pages)
+    emptied: list[str] = []
     with pytest.raises(ModelUnavailableError, match="ran out of memory on the cpu"):
-        pages_text(ocr_of(FakeModel(full=True)), found.pictures)
+        pages_text(ocr_of(FakeModel(full=True)), found.pictures, {"cpu": lambda: emptied.append("cpu")})
+    assert emptied == ["cpu"]
+    assert pages_text(ocr_of(FakeModel()), found.pictures, {"cpu": lambda: emptied.append("again")}) == [
+        "word1089 word1540"
+    ]
+    assert emptied == ["cpu"]
 
 
 def test_the_model_loads_at_its_pinned_revision_onto_its_device_in_its_precision() -> None:

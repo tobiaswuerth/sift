@@ -5,16 +5,20 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from sift.domain.errors import DamagedError
 from sift.domain.text.notes import note
 from sift.domain.text.scans import (
     LOOP_LINES,
     OCR_FIELD,
+    SHORTEST,
     OcrSetting,
     looping,
     page_scale,
     read_scan,
     reads_more,
+    reads_skipped,
     without_loop,
+    worth_reading,
 )
 
 A4 = (595.2, 841.92)
@@ -65,6 +69,44 @@ def test_the_lines_of_a_loop_are_told_from_the_end_as_from_the_whole_page(text: 
 def test_the_setting_reads_more_from_off_to_auto_to_on() -> None:
     assert [reads_more(OcrSetting.AUTO, OcrSetting.OFF), reads_more(OcrSetting.ON, OcrSetting.AUTO)] == [True, True]
     assert [reads_more(OcrSetting.AUTO, OcrSetting.ON), reads_more(OcrSetting.AUTO, OcrSetting.AUTO)] == [False] * 2
+
+
+@pytest.mark.parametrize(
+    "now, skipped_under, again",
+    [
+        (OcrSetting.AUTO, "off", True),
+        (OcrSetting.ON, "auto", True),
+        (OcrSetting.AUTO, "auto", False),
+        (OcrSetting.OFF, "auto", False),
+        (OcrSetting.ON, None, False),
+    ],
+)
+def test_a_file_whose_scan_was_skipped_is_read_again_by_a_setting_that_reads_more(
+    now: OcrSetting, skipped_under: str | None, *, again: bool
+) -> None:
+    assert reads_skipped(now, skipped_under) is again
+
+
+def test_a_scan_skipped_under_a_setting_sift_knows_not_is_damage() -> None:
+    with pytest.raises(DamagedError, match="'sometimes'"):
+        reads_skipped(OcrSetting.ON, "sometimes")
+
+
+@pytest.mark.parametrize(
+    "width, height, darkest, lightest, worth",
+    [
+        (1089, 1540, 0, 255, True),
+        (SHORTEST, SHORTEST, 254, 255, True),
+        (SHORTEST - 1, 1540, 0, 255, False),
+        (1540, 2, 0, 255, False),
+        (1089, 1540, 255, 255, False),
+        (1089, 1540, 0, 0, False),
+    ],
+)
+def test_a_page_is_worth_reading_only_if_the_model_can_take_it_and_it_holds_more_than_one_colour(
+    width: int, height: int, darkest: int, lightest: int, *, worth: bool
+) -> None:
+    assert worth_reading(width, height, darkest, lightest) is worth
 
 
 def test_a_scan_read_takes_its_text_its_title_from_its_property_or_heading_and_names_the_model() -> None:

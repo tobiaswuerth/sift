@@ -84,11 +84,15 @@ def test_a_reader_that_comes_to_no_end_is_stopped_when_its_time_is_up() -> None:
     assert multiprocessing.active_children() == []
 
 
-def test_a_reader_that_raises_ends_the_reading_saying_which_file_and_what() -> None:
+def test_a_reader_that_raises_ends_the_reading_saying_which_file_and_what_its_traceback_above(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
     said = r"raise\.pdf raised an error in its process, ValueError: a reader's bug; its traceback is above"
     with pytest.raises(ReaderFailedError, match=said), sandboxed(misbehaving, PATIENT) as reading:
         _ = list(reading(asked("a.pdf", "raise.pdf")))
     assert multiprocessing.active_children() == []
+    shown = capfd.readouterr().err
+    assert ("Traceback (most recent call last):" in shown, "ValueError: a reader's bug" in shown) == (True, True)
 
 
 def test_a_process_ended_with_any_exit_code_costs_its_file_alone() -> None:

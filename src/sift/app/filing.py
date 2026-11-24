@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sift.api.events import Reporter
-from sift.app.scans import SCANNING, Scanning
+from sift.app.scans import SCANNING, ScanModel, Scanning
 from sift.domain.plan.indexing import MOST_FILE_BYTES
 from sift.domain.text.notes import Document
 from sift.domain.text.records import MOST_RECORD_CHARACTERS, SkippedLine
@@ -66,3 +66,4 @@ class Job:
     report: Reporter
     limits: Limits
     readers: Readers
+    ocr: ScanModel

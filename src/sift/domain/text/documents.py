@@ -8,6 +8,7 @@ from sift.domain.text.chunks import chunks
 from sift.domain.text.json_values import composed_fields
 from sift.domain.text.markdown import heading
 from sift.domain.text.notes import Document, digest, file_stem, storable, title_field
+from sift.domain.text.scans import OcrSetting
 
 NO_TEXT = "no text in it"
 SCANNED = ".pdf"
@@ -37,6 +38,7 @@ class FileRead:
     problems: tuple[str, ...] = ()
     scans: tuple[Scan, ...] = ()
     read_again: bool = False
+    skipped_under: OcrSetting | None = None
 
 
 @dataclass(frozen=True, slots=True)

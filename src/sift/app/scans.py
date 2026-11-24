@@ -64,17 +64,30 @@ def _available(scanning: Scanning) -> _Reader | ScanUnread:
 
 
 @dataclass(slots=True)
-class ScanRun:
+class ScanModel:
     scanning: Scanning
-    picturing: Picturing
-    report: Reporter
     held: _Reader | ScanUnread | None = None
-    skipped: bool = False
 
     def reader(self) -> _Reader | ScanUnread:
         if self.held is None:
             self.held = _available(self.scanning)
         return self.held
+
+    def loaded(self) -> bool:
+        return isinstance(self.held, _Reader)
+
+
+@dataclass(frozen=True, slots=True)
+class ScanRun:
+    model: ScanModel
+    picturing: Picturing
+    report: Reporter
+
+
+@dataclass(frozen=True, slots=True)
+class ScansRead:
+    read: FileRead
+    by_ocr: bool
 
 
 def _pages_said(found: Pages) -> str:
@@ -89,7 +102,7 @@ def _named(path: str, key: str) -> str:
 
 
 def _pictured(run: ScanRun, path: str, scan: Scan) -> Pages | ScanUnread:
-    asked = ToPicture(Path(path), len(scan.raw), scan.raw, run.scanning.most_pages)
+    asked = ToPicture(Path(path), len(scan.raw), scan.raw, run.model.scanning.most_pages)
     ((_, found),) = list(run.picturing([asked]))
     match found:
         case Pages():
@@ -101,7 +114,7 @@ def _pictured(run: ScanRun, path: str, scan: Scan) -> Pages | ScanUnread:
 
 
 def _scan_read(run: ScanRun, path: str, scan: Scan) -> Document | ScanUnread:
-    reader = run.reader()
+    reader = run.model.reader()
     if isinstance(reader, ScanUnread):
         return reader
     pictured = _pictured(run, path, scan)
@@ -118,18 +131,21 @@ def _scan_read(run: ScanRun, path: str, scan: Scan) -> Document | ScanUnread:
     return found
 
 
-def scans_read(run: ScanRun, path: str, read: FileRead, held: Mapping[str, str]) -> FileRead:
+def scans_read(run: ScanRun, path: str, read: FileRead, held: Mapping[str, str]) -> ScansRead:
     documents, problems, again = list(read.documents), list(read.problems), read.read_again
+    skipped = tried = False
     for scan in read.scans:
         key = scan.document.key
         if held.get(key) == scan.document.digest:
             documents.append(scan.document)
             continue
+        tried = True
         match _scan_read(run, path, scan):
             case ScanUnread() as unread:
                 problems.append(f"{key}: {unread.problem}" if key else unread.problem)
                 again |= unread.read_again
-                run.skipped |= unread.skipped
+                skipped |= unread.skipped
             case found:
                 documents.append(found)
-    return FileRead(tuple(documents), tuple(problems), (), again)
+    under = run.model.scanning.setting if skipped else None
+    return ScansRead(FileRead(tuple(documents), tuple(problems), (), again, under), tried and run.model.loaded())

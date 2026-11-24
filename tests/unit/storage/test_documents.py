@@ -23,23 +23,19 @@ from sift.storage.documents import (
     KeptDocument,
     SourceId,
     StoredChunk,
-    Unreadable,
     add_documents,
     add_streamed,
     chunks_of,
-    clear_unreadable,
     counts,
     description_bytes,
     fields_json,
     fields_of,
     kept,
-    mark_unreadable,
     paths_named,
     put_source,
     set_digest,
     sources,
     stored,
-    unreadable,
 )
 from sift.storage.forgetting import delete_documents, delete_sources
 from sift.storage.keywords import writing_documents
@@ -349,19 +345,6 @@ def test_a_source_s_name_follows_its_path_to_the_end(store: sqlite3.Connection) 
         added(store, path, note(b"x", path))
     with reading(store) as transaction:
         assert (paths_named(transaction, ""), paths_named(transaction, "plain")) == (["end/"], ["plain"])
-
-
-def test_unreadable_files_are_listed_with_their_problem_until_cleared(store: sqlite3.Connection) -> None:
-    with writing(store) as transaction:
-        mark_unreadable(transaction, "b.md", "denied", read_again=True)
-        mark_unreadable(transaction, "a.md", "denied", read_again=True)
-        mark_unreadable(transaction, "a.md", "too large", read_again=False)
-    with reading(store) as transaction:
-        assert unreadable(transaction) == [Unreadable("a.md", "too large", 0), Unreadable("b.md", "denied", 1)]
-    with writing(store) as transaction:
-        clear_unreadable(transaction, ["a.md", "gone.md"])
-    with reading(store) as transaction:
-        assert unreadable(transaction) == [Unreadable("b.md", "denied", 1)]
 
 
 class Step(NamedTuple):

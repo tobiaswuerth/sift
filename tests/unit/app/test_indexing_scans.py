@@ -12,14 +12,14 @@ import torch
 from sift.api.collections import AddCollection
 from sift.api.documents import GetDocuments
 from sift.api.errors import ModelUnavailableError
-from sift.api.events import Event, Noted
+from sift.api.events import Advanced, Event, Noted, Phase, PhaseStarted
 from sift.api.indexing import IndexCollections, Indexed
 from sift.app.collections import add
 from sift.app.documents import documents
 from sift.app.filing import Readers
 from sift.app.indexing import index
 from sift.app.scans import BUSY, FULL, NO_GPU, NO_TEXT_FOUND, NOT_LOADED, OFF, Scanning
-from sift.domain.text.documents import Conversion, Refused
+from sift.domain.text.documents import Conversion, Refused, Unread
 from sift.domain.text.scans import OCR_FIELD, PAGES, OcrSetting
 from sift.inference.accelerator import CPU, Device
 from sift.inference.hub import OCR_MODEL
@@ -49,9 +49,12 @@ class FakeOcr:
     words: Callable[[int], str] = lambda at: f"read page {at + 1}"
     read: list[int] = field(default_factory=list[int])
     loads: int = 0
+    devices: int = 0
+    interrupted_at: int | None = None
     stores: list[Path] = field(default_factory=list[Path])
 
     def ocr_device(self) -> Device:
+        self.devices += 1
         return self.device
 
     def loaded_ocr(self, device: Device) -> Ocr:
@@ -62,6 +65,8 @@ class FakeOcr:
 
     def pages_text(self, ocr: Ocr, pictures: Sequence[bytes]) -> list[str]:
         assert ocr.device == self.device
+        if len(self.read) == self.interrupted_at:
+            raise KeyboardInterrupt
         self.read.append(len(pictures))
         for store in self.stores:
             with contextlib.closing(sqlite3.connect(store, timeout=0)) as other:
@@ -75,10 +80,11 @@ class FakeOcr:
 @dataclass(slots=True)
 class Converting:
     names: list[str] = field(default_factory=list[str])
+    failing: tuple[str, ...] = ()
 
     def __call__(self, raw: bytes, name: str) -> Conversion:
         self.names.append(name)
-        return convert(raw, name)
+        return Unread("the converter failed") if name in self.failing else convert(raw, name)
 
 
 @pytest.fixture
@@ -221,6 +227,79 @@ def test_the_model_loads_once_however_many_scans_an_index_reads(home: Path, scan
     ocr = FakeOcr()
     assert indexed(home, scanning(ocr)).unreadable == 0
     assert (ocr.loads, sorted(ocr.read)) == (1, [1, 2])
+
+
+@pytest.mark.usefixtures("scans")
+def test_the_model_loads_once_an_index_however_many_collections_hold_scans(tmp_path: Path, home: Path) -> None:
+    more = tmp_path / "more"
+    more.mkdir()
+    (more / "scan.pdf").write_bytes(scan())
+    add(home, AddCollection(str(more)))
+    ocr = FakeOcr()
+    readers = Readers(clock=later, files=reading(converting=Converting()), scanning=scanning(ocr))
+    found = index(home, IndexCollections(), list[Event]().append, readers=readers).collections
+    assert [each.outcome for each in found] == [
+        Indexed(files=1, added=1, changed=0, removed=0, unreadable=0),
+        Indexed(files=2, added=2, changed=0, removed=0, unreadable=0),
+    ]
+    assert (ocr.loads, ocr.devices, ocr.read) == (1, 1, [1, 2])
+
+
+def test_a_scan_read_is_kept_though_the_index_stops_while_reading_the_next(home: Path, scans: Path) -> None:
+    (scans / "second.pdf").write_bytes(scan())
+    ocr = FakeOcr(interrupted_at=1)
+    with pytest.raises(KeyboardInterrupt):
+        indexed(home, scanning(ocr))
+    assert (text_of(home, "scans/scan.pdf"), text_of(home, "scans/second.pdf")) == (READ, None)
+    assert text_of(home, "scans/note.md") is not None
+    again = FakeOcr()
+    assert indexed(home, scanning(again)) == Indexed(files=3, added=1, changed=0, removed=0, unreadable=0)
+    assert again.read == [1]
+
+
+def test_a_scan_counts_as_read_once_its_text_is_stored(tmp_path: Path, home: Path) -> None:
+    alone = tmp_path / "alone"
+    alone.mkdir()
+    (alone / "scan.pdf").write_bytes(scan(pages=2))
+    add(home, AddCollection(str(alone)))
+    stored: list[bool] = []
+    reading_files = [False]
+
+    def seen(event: Event) -> None:
+        match event:
+            case PhaseStarted(phase=phase):
+                reading_files[0] = phase is Phase.READ
+            case Advanced() if reading_files[0]:
+                stored.append(text_of(home, "alone/scan.pdf") == READ)
+            case _:
+                pass
+
+    readers = Readers(clock=later, files=reading(converting=Converting()), scanning=scanning(FakeOcr()))
+    index(home, IndexCollections(), seen, readers=readers)
+    assert stored == [True]
+
+
+@pytest.mark.usefixtures("scans")
+def test_a_scan_skipped_by_an_index_stopped_after_its_write_is_read_once_the_setting_reads_more(home: Path) -> None:
+    def stopped(event: Event) -> None:
+        if isinstance(event, Noted) and event.text == f"scan.pdf: {OFF}":
+            raise KeyboardInterrupt
+
+    readers = Readers(clock=later, files=reading(converting=Converting()), scanning=scanning(FakeOcr(), OcrSetting.OFF))
+    with pytest.raises(KeyboardInterrupt):
+        index(home, IndexCollections(), stopped, readers=readers)
+    assert [each.problem for each in unreadable_files(home)] == [OFF]
+    assert indexed(home, scanning(FakeOcr())).unreadable == 0
+    assert text_of(home, "scans/scan.pdf") == READ
+
+
+def test_only_files_whose_scans_were_skipped_are_read_once_the_setting_reads_more(home: Path, scans: Path) -> None:
+    (scans / "contract.docx").write_bytes(b"not a document")
+    assert indexed(home, scanning(FakeOcr(), OcrSetting.OFF), converting=Converting(failing=("contract.docx",)))
+    assert [each.path for each in unreadable_files(home)] == ["contract.docx", "scan.pdf"]
+    converting = Converting(failing=("contract.docx",))
+    assert indexed(home, scanning(FakeOcr()), converting=converting).unreadable == 1
+    assert converting.names == ["scan.pdf"]
 
 
 def _painted(found: Pictured | Refused) -> Callable[[], contextlib.AbstractContextManager[Picturing]]:

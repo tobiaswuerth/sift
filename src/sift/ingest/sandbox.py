@@ -280,6 +280,7 @@ class _Pool[A: Request, B]:
             worker.began = True
             return None
         if isinstance(message, _Raised):
+            worker.task = None
             raise ReaderFailedError(
                 f"reading {task.asked.path} raised an error in its process, {message.error}; its traceback is above"
             )

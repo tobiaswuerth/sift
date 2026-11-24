@@ -1,5 +1,5 @@
 import io
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast, final, override
 
@@ -8,8 +8,9 @@ from PIL import Image
 from transformers import LightOnOcrForConditionalGeneration, LightOnOcrProcessor, StoppingCriteria, StoppingCriteriaList
 from transformers.utils import logging as transformers_logging
 
-from sift.domain.text.scans import looping, without_loop
-from sift.inference.accelerator import Device
+from sift.api.errors import ModelUnavailableError
+from sift.domain.text.scans import looping, without_loop, worth_reading
+from sift.inference.accelerator import CACHES, Device, emptied
 from sift.inference.hub import OCR_MODEL, hub
 from sift.inference.local import loading, this_device, within_memory
 
@@ -17,6 +18,7 @@ NEW_TOKENS = 4096
 LOOP_STEP = 16
 RETRY_PENALTY = 1.1
 COLOURS = "RGB"
+GREY = "L"
 DEFAULT_REVISION = "main"
 
 type Inputs = Mapping[str, torch.Tensor]
@@ -100,7 +102,14 @@ def _generated(ocr: Ocr, inputs: dict[str, torch.Tensor], penalty: float | None)
     return ocr.processor.decode(made[0, prompt:], skip_special_tokens=True)
 
 
+def _worth_reading(picture: Image.Image) -> bool:
+    darkest, lightest = cast("tuple[int, int]", picture.convert(GREY).getextrema())
+    return worth_reading(picture.width, picture.height, darkest, lightest)
+
+
 def page_text(ocr: Ocr, picture: Image.Image) -> str:
+    if not _worth_reading(picture):
+        return ""
     asked = [{"role": "user", "content": [{"type": "image", "image": picture}]}]
     inputs = ocr.processor.apply_chat_template(
         asked, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt"
@@ -112,12 +121,21 @@ def page_text(ocr: Ocr, picture: Image.Image) -> str:
     return without_loop(text)
 
 
-def pages_text(ocr: Ocr, pictures: Iterable[bytes]) -> list[str]:
-    def each(picture: bytes) -> str:
-        with Image.open(io.BytesIO(picture)) as opened:
-            return page_text(ocr, opened.convert(COLOURS))
+def _read(ocr: Ocr, picture: bytes) -> str:
+    with Image.open(io.BytesIO(picture)) as opened:
+        return page_text(ocr, opened.convert(COLOURS))
 
-    return [within_memory(OCR_MODEL, ocr.device.name, lambda held=picture: each(held)) for picture in pictures]
+
+def _within_memory(ocr: Ocr, picture: bytes, caches: Mapping[str, Callable[[], None]]) -> str:
+    try:
+        return within_memory(OCR_MODEL, ocr.device.name, lambda: _read(ocr, picture))
+    except ModelUnavailableError:
+        emptied(ocr.device, caches)
+        raise
+
+
+def pages_text(ocr: Ocr, pictures: Iterable[bytes], caches: Mapping[str, Callable[[], None]] = CACHES) -> list[str]:
+    return [_within_memory(ocr, picture, caches) for picture in pictures]
 
 
 def _pretrained_model(repository: str, /, *, dtype: torch.dtype, revision: str) -> object:

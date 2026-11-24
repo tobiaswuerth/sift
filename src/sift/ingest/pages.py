@@ -24,12 +24,19 @@ def _each_page(pdf: pypdfium2.PdfDocument, at: int) -> bytes:
         page.close()
 
 
+def _all_pages(pdf: pypdfium2.PdfDocument, most: int) -> Pictured:
+    try:
+        return Pages(tuple(_each_page(pdf, at) for at in range(min(len(pdf), most))), len(pdf))
+    except pypdfium2.PdfiumError as error:
+        return Unpictured(str(error))
+
+
 def pages(raw: bytes, most: int = PAGES) -> Pictured:
     try:
         pdf = pypdfium2.PdfDocument(raw)
     except pypdfium2.PdfiumError as error:
         return Unpictured(str(error))
     try:
-        return Pages(tuple(_each_page(pdf, at) for at in range(min(len(pdf), most))), len(pdf))
+        return _all_pages(pdf, most)
     finally:
         pdf.close()

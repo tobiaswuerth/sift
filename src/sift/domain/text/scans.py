@@ -2,12 +2,13 @@ from collections.abc import Sequence
 from dataclasses import replace
 from enum import Enum
 
+from sift.domain.errors import DamagedError
 from sift.domain.text.chunks import chunks
 from sift.domain.text.markdown import heading
 from sift.domain.text.notes import Document, storable, title_field
 
 PAGES = 50
-DPI, LONGEST = 200, 1540
+DPI, LONGEST, SHORTEST = 200, 1540, 28
 POINTS_AN_INCH = 72
 LOOP_LINES = 10
 LOOP_CHARACTERS, LOOP_PERIOD = 400, 60
@@ -30,6 +31,10 @@ def reads_more(now: OcrSetting, before: OcrSetting) -> bool:
 
 def page_scale(width: float, height: float) -> float:
     return min(DPI / POINTS_AN_INCH, LONGEST / max(width, height))
+
+
+def worth_reading(width: int, height: int, darkest: int, lightest: int) -> bool:
+    return min(width, height) >= SHORTEST and darkest < lightest
 
 
 def _repeated_tail(text: str) -> tuple[int, int] | None:
@@ -90,5 +95,12 @@ def read_scan(scan: Document, pages: Sequence[str], model: str) -> Document | No
     return replace(scan, title=storable(title), fields=fields, text=text, chunks=chunks(text))
 
 
-def setting_of(written: str) -> OcrSetting:
-    return next((each for each in OcrSetting if each.value == written), OcrSetting.OFF)
+def _setting_of(written: str) -> OcrSetting:
+    found = next((each for each in OcrSetting if each.value == written), None)
+    if found is None:
+        raise DamagedError(f"the store holds a scan left unread under SIFT_OCR {written!r}, which this sift knows not")
+    return found
+
+
+def reads_skipped(now: OcrSetting, skipped_under: str | None) -> bool:
+    return skipped_under is not None and reads_more(now, _setting_of(skipped_under))

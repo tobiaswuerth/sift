@@ -4,7 +4,7 @@ from PIL import Image
 
 from sift.ingest.pages import pages
 from sift.ingest.pictures import Pages, Unpictured
-from tests.scans import scan
+from tests.scans import blank_pdf, scan
 
 
 def sizes(found: Pages | Unpictured) -> tuple[int, list[tuple[int, int]]]:
@@ -19,3 +19,8 @@ def test_a_scan_s_first_pages_are_pictures_as_the_model_was_trained_on() -> None
 
 def test_a_pdf_that_cannot_be_opened_is_unpictured_saying_why() -> None:
     assert pages(b"%PDF-1.4 the rest is missing") == Unpictured("Failed to load document (PDFium: Data format error).")
+
+
+def test_a_pdf_with_a_page_that_cannot_be_loaded_is_unpictured_saying_why() -> None:
+    assert sizes(pages(blank_pdf([(595, 842), (1, 800)]))) == (2, [(1089, 1540), (2, 1540)])
+    assert pages(blank_pdf(missing=1)) == Unpictured("Failed to load page.")
