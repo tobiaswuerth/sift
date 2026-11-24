@@ -13,7 +13,7 @@ from typing import BinaryIO, cast
 import pytest
 
 from sift.api.collections import TitleFrom
-from sift.domain.text.documents import Refused
+from sift.domain.text.documents import Refused, stopped
 from sift.ingest.readers import ToRead, read_file
 from sift.ingest.sandbox import (
     ENDED,
@@ -61,13 +61,18 @@ def test_files_read_in_reader_processes_come_back_each_with_its_place() -> None:
     assert multiprocessing.active_children() == []
 
 
+def test_a_sandbox_asked_for_no_file_starts_no_reader_process() -> None:
+    with sandboxed(echoed, PATIENT, workers=3) as reading:
+        assert (list(reading([])), multiprocessing.active_children()) == ([], [])
+
+
 def test_a_reader_that_ends_its_process_costs_its_file_alone_and_its_process_is_replaced() -> None:
     with sandboxed(misbehaving, PATIENT, workers=2) as reading:
         found = dict(reading(asked("a.pdf", "crash.pdf", "b.pdf", "crash.pdf", "c.pdf")))
         again = dict(reading(asked("d.pdf")))
     assert found == {
         0: read("a.pdf"),
-        1: Refused(ENDED, read_again=False),
+        1: stopped(ENDED),
         2: read("b.pdf"),
         3: found[1],
         4: read("c.pdf"),
@@ -81,6 +86,14 @@ def test_a_reader_that_comes_to_no_end_is_stopped_when_its_time_is_up() -> None:
         found = dict(reading(asked("hang.pdf", "a.pdf", "b.pdf")))
     assert found == {0: came_to_no_end(2.0), 1: read("a.pdf"), 2: read("b.pdf")}
     assert came_to_no_end(2.0).problem == "its reader came to no end in 2 seconds"
+    assert multiprocessing.active_children() == []
+
+
+def test_a_reader_is_given_more_time_the_larger_its_file_is() -> None:
+    by_size = Patience(base_seconds=1.0, bytes_a_second=10.0)
+    with sandboxed(misbehaving, by_size, workers=1) as reading:
+        found = dict(reading(asked("hang.pdf")))
+    assert found == {0: came_to_no_end(2.0)}
     assert multiprocessing.active_children() == []
 
 
@@ -105,14 +118,14 @@ def test_a_reader_that_raised_and_will_not_end_is_stopped_when_its_time_to_end_i
 def test_a_process_ended_with_any_exit_code_costs_its_file_alone() -> None:
     with sandboxed(misbehaving, PATIENT, workers=1) as reading:
         found = dict(reading(asked("exit1.pdf", "a.pdf")))
-    assert found == {0: Refused(ENDED, read_again=False), 1: read("a.pdf")}
+    assert found == {0: stopped(ENDED), 1: read("a.pdf")}
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="a Windows pipe takes a message whole")
 def test_a_reader_that_ends_its_process_while_it_answers_costs_its_file_at_once() -> None:
     with sandboxed(misbehaving, HASTY, workers=1) as reading:
         found = dict(reading(asked("cut.pdf", "a.pdf")))
-    assert found == {0: Refused(ENDED, read_again=False), 1: read("a.pdf")}
+    assert found == {0: stopped(ENDED), 1: read("a.pdf")}
 
 
 def test_an_answer_larger_than_sift_takes_is_refused_as_the_file_s_problem() -> None:

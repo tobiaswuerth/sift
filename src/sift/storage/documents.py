@@ -254,13 +254,23 @@ class Unreadable(NamedTuple):
     problem: str
     read_again: int
     skipped_under: str | None
+    stopped_under: str | None
 
 
-def mark_unreadable(
-    transaction: Writing, path: str, problem: str, *, read_again: bool, skipped_under: str | None = None
-) -> None:
-    sql = "INSERT OR REPLACE INTO unreadable(path, problem, read_again, skipped_under) VALUES (?, ?, ?, ?)"
-    run(transaction, sql, (path, problem, int(read_again), skipped_under))
+MARKED = """INSERT OR REPLACE INTO unreadable(path, problem, read_again, skipped_under, stopped_under)
+            VALUES (?, ?, ?, ?, ?)"""
+
+
+@dataclass(frozen=True, slots=True)
+class Mark:
+    problem: str
+    read_again: bool
+    skipped_under: str | None = None
+    stopped_under: str | None = None
+
+
+def mark_unreadable(transaction: Writing, path: str, mark: Mark) -> None:
+    run(transaction, MARKED, (path, mark.problem, int(mark.read_again), mark.skipped_under, mark.stopped_under))
 
 
 def clear_unreadable(transaction: Writing, paths: Sequence[str]) -> None:
@@ -269,7 +279,7 @@ def clear_unreadable(transaction: Writing, paths: Sequence[str]) -> None:
 
 
 def unreadable(transaction: Reading) -> list[Unreadable]:
-    sql = "SELECT path, problem, read_again, skipped_under FROM unreadable ORDER BY path"
+    sql = "SELECT path, problem, read_again, skipped_under, stopped_under FROM unreadable ORDER BY path"
     return rows(transaction, Unreadable, sql)
 
 

@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeGuard
@@ -25,6 +25,8 @@ from sift.ingest.scan import Reach, scan
 from sift.storage.catalog import Collection
 from sift.storage.database import Batches, Connection, WritingDocuments, reading
 from sift.storage.documents import (
+    Mark,
+    Unreadable,
     add_documents,
     clear_unreadable,
     digests_of,
@@ -56,20 +58,27 @@ def _described(read: FileRead, limits: Limits) -> FileRead:
     return replace(read, documents=kept, problems=(*read.problems, *large))
 
 
-def _refused(transaction: WritingDocuments, path: str, stat: Stat, refused: Refused) -> Tally:
-    mark_unreadable(transaction, path, refused.problem, read_again=refused.read_again)
+def _refused(
+    transaction: WritingDocuments, path: str, stat: Stat, refused: Refused, release: Callable[[], str]
+) -> Tally:
+    under = release() if refused.stopped else None
+    mark_unreadable(transaction, path, Mark(refused.problem, refused.read_again, stopped_under=under))
     if refused.read_again:
         return Tally()
     source = put_source(transaction, path, stat.modified_ns, stat.size)
+    if refused.stopped:
+        return Tally()
     gone = [document.id for document in kept(transaction, source)]
     delete_documents(transaction, gone)
     return Tally(removed=len(gone))
 
 
-def _stored(transaction: WritingDocuments, path: str, stat: Stat, read: FileRead | Refused) -> Tally:
+def _stored(
+    transaction: WritingDocuments, path: str, stat: Stat, read: FileRead | Refused, release: Callable[[], str]
+) -> Tally:
     match read:
         case Refused():
-            return _refused(transaction, path, stat, read)
+            return _refused(transaction, path, stat, read, release)
         case _:
             return _file_stored(transaction, path, stat, read)
 
@@ -87,7 +96,7 @@ def _file_stored(transaction: WritingDocuments, path: str, stat: Stat, read: Fil
     if read.problems:
         under = None if read.skipped_under is None else read.skipped_under.value
         problem = PROBLEMS_APART.join(read.problems)
-        mark_unreadable(transaction, path, problem, read_again=read.read_again, skipped_under=under)
+        mark_unreadable(transaction, path, Mark(problem, read.read_again, skipped_under=under))
     return Tally(added=len(new), changed=len(changed), removed=len(gone))
 
 
@@ -96,7 +105,11 @@ def _dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
     with writing_documents(job.connection, job.limits.batches) as transaction:
         removed = delete_sources(transaction, plan.drop)
         clear_unreadable(transaction, plan.forget)
-        large = [_refused(transaction, path, files[path], too_large(files[path].size, most)) for path in plan.too_large]
+        release = job.readers.release
+        large = [
+            _refused(transaction, path, files[path], too_large(files[path].size, most), release)
+            for path in plan.too_large
+        ]
     return sum(large, Tally(removed=removed))
 
 
@@ -145,17 +158,18 @@ def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str
     job, files, tally = run.job, run.files, Tally()
     if not read and not notes:
         return tally
+    release = job.readers.release
     with writing_documents(job.connection, job.limits.batches) as transaction:
         whole = [path for path, outcome in read if _whole(outcome)]
         for path, outcome in read:
-            tally += _stored(transaction, path, files[path], outcome)
+            tally += _stored(transaction, path, files[path], outcome, release)
         for path in notes:
             match stored_note(job, transaction, path, files[path], run.identities.get(path)):
                 case Tally() as stored:
                     tally += stored
                     whole.append(path)
                 case refused:
-                    tally += _refused(transaction, path, files[path], refused)
+                    tally += _refused(transaction, path, files[path], refused, release)
             run.advanced()
         clear_unreadable(transaction, whole)
     for path, outcome in read:
@@ -199,6 +213,11 @@ def _whole(outcome: FileRead | Refused) -> bool:
     return isinstance(outcome, FileRead) and not outcome.problems
 
 
+def _read_again(readers: Readers, entry: Unreadable) -> bool:
+    stopped_before = entry.stopped_under is not None and entry.stopped_under != readers.release()
+    return bool(entry.read_again) or reads_skipped(readers.scanning.setting, entry.skipped_under) or stopped_before
+
+
 def _synced(job: Job, ignore: Ignore) -> Indexed:
     job.report(PhaseStarted(Phase.SCAN, None))
     started = job.readers.clock()
@@ -209,13 +228,9 @@ def _synced(job: Job, ignore: Ignore) -> Indexed:
     )
     files = recorded(scanned.found.files, started)
     job.report(PhaseDone(len(files)))
-    setting = job.readers.scanning.setting
     with reading(job.connection) as transaction:
         known = {path: Stat(source.modified_ns, source.size) for path, source in sources(transaction).items()}
-        marks = {
-            entry.path: bool(entry.read_again) or reads_skipped(setting, entry.skipped_under)
-            for entry in unreadable(transaction)
-        }
+        marks = {entry.path: _read_again(job.readers, entry) for entry in unreadable(transaction)}
     plan = index_plan(scanned.found, known, job.limits.most_file_bytes, marks, ignore)
     for said in problems(job.collection.folder, scanned, plan, frozenset(known)):
         job.report(said)

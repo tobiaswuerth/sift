@@ -277,6 +277,17 @@ def record(key: str) -> Document:
     return dataclasses.replace(note(b"x", "data.jsonl"), key=key)
 
 
+def test_documents_replaced_in_one_write_cost_a_bounded_number_of_statements_each(store: sqlite3.Connection) -> None:
+    source, _ = added(store, "data.jsonl", *[record(str(n)) for n in range(100)])
+    statements: list[str] = []
+    store.set_trace_callback(statements.append)
+    with writing_documents(store) as transaction:
+        delete_documents(transaction, [each.id for each in kept(transaction, source)])
+        add_documents(transaction, source, "data.jsonl", [record(str(n)) for n in range(100)])
+    store.set_trace_callback(None)
+    assert len(statements) <= 25 * 100
+
+
 def kept_counts(connection: sqlite3.Connection) -> Counts:
     with reading(connection) as transaction:
         return counts(transaction)

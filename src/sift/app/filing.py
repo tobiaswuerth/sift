@@ -1,7 +1,9 @@
+import functools
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
 
 from sift.api.events import Reporter
@@ -25,6 +27,7 @@ class Limits:
     most_files_a_write: int = 1000
     most_bytes_a_write: int = 64 << 20
     most_records_a_write: int = 2000
+    most_characters_a_write: int = 64 << 20
     batches: Batches = BATCHES
 
 
@@ -47,6 +50,14 @@ type Lines = Callable[[Path, int, Identity | None], Iterator[tuple[int, str | Sk
 type ReadPieces = Callable[[Path, Identity | None], AbstractContextManager[Iterable[bytes]]]
 
 
+DISTRIBUTION = "sift-rag"
+
+
+@functools.cache
+def installed() -> str:
+    return metadata.version(DISTRIBUTION)
+
+
 @dataclass(frozen=True, slots=True)
 class Readers:
     lines: Lines = lines_of
@@ -54,6 +65,7 @@ class Readers:
     clock: Callable[[], int] = time.time_ns
     files: OpenReading = sandboxed
     scanning: Scanning = SCANNING
+    release: Callable[[], str] = installed
 
 
 READERS = Readers()

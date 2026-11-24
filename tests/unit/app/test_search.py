@@ -2,6 +2,7 @@ import contextlib
 import dataclasses
 import itertools
 import sqlite3
+import stat
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,17 @@ def home(tmp_path: Path, notes: Path) -> Path:
 
 def ids(home: Path, request: SearchKeywords) -> list[str]:
     return [hit.id for hit in search(home, request).hits]
+
+
+def test_a_store_that_may_only_be_read_is_searched_and_left_as_it_was(home: Path) -> None:
+    store = home / "collections" / "notes.sqlite"
+    before = store.stat().st_mtime_ns
+    store.chmod(stat.S_IREAD)
+    try:
+        assert ids(home, SearchKeywords("halo")) == ["notes/halo.md"]
+    finally:
+        store.chmod(stat.S_IREAD | stat.S_IWRITE)
+    assert store.stat().st_mtime_ns == before
 
 
 def test_a_search_finds_each_document_by_its_best_passage_with_where_it_is(home: Path) -> None:

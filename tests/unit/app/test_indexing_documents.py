@@ -1,6 +1,7 @@
 import json
 import multiprocessing
 import shutil
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -16,17 +17,19 @@ from sift.app.embedding import embed
 from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
 from sift.app.search import search
-from sift.domain.text.documents import Conversion, Converted, Unread
+from sift.domain.text.documents import Conversion, Convert, Converted, Outcome, Unread, stopped
 from sift.ingest.documents import convert
 from sift.ingest.files import Identity
 from sift.ingest.mail import NESTED_TOO_DEEPLY
+from sift.ingest.readers import ToRead, read_file
+from sift.ingest.sandbox import ENDED
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
 from sift.storage.vector_meta import left
 from tests.files import write
 from tests.homes import text_of, unreadable_files
 from tests.keyword_stores import vectors_by_text
-from tests.later import later, reading
+from tests.later import in_process, later, reading
 from tests.mails import PARAGRAPH, mail_bytes, message, nested_parts, only, sample
 from tests.models import Hashed
 
@@ -93,6 +96,14 @@ def test_documents_are_indexed_as_markdown_and_found_by_their_text_and_propertie
     assert text_of(library, "library/pigments.docx") == only(sample(".docx").read_bytes(), "pigments.docx").text
 
 
+def counting(converted: list[str]) -> Convert:
+    def counted(raw: bytes, name: str) -> Conversion:
+        converted.append(name)
+        return convert(raw, name)
+
+    return counted
+
+
 def test_a_damaged_document_is_listed_not_read_again_until_it_changes_then_read(library: Path, tmp_path: Path) -> None:
     root = tmp_path / "library"
     (root / "broken.pdf").write_bytes(b"%PDF-1.4 the rest is missing")
@@ -101,12 +112,7 @@ def test_a_damaged_document_is_listed_not_read_again_until_it_changes_then_read(
     assert listed.path == "broken.pdf"
     assert listed.problem.startswith("Parsing error: ")
     converted: list[str] = []
-
-    def counted(raw: bytes, name: str) -> Conversion:
-        converted.append(name)
-        return convert(raw, name)
-
-    assert indexed(library, readers=Readers(clock=later, files=reading(converting=counted))).unreadable == 1
+    assert indexed(library, readers=Readers(clock=later, files=reading(converting=counting(converted)))).unreadable == 1
     assert converted == []
     shutil.copy(sample(".pdf"), root / "broken.pdf")
     assert indexed(library) == Indexed(files=4, added=1, changed=0, removed=0, unreadable=0)
@@ -122,6 +128,24 @@ def test_a_document_that_stops_converting_loses_its_document(library: Path) -> N
     (library.parent / "library" / "pigments.pdf").touch()
     assert indexed(library, readers=Readers(clock=later, files=reading(converting=failing))).removed == 1
     assert unreadable_files(library) == (UnreadableFile("pigments.pdf", "the converter failed: index out of bounds"),)
+
+
+def ending(asked: ToRead) -> Outcome:
+    return stopped(ENDED) if asked.path.name == "pigments.pdf" else read_file(asked)
+
+
+def test_a_document_whose_reader_was_stopped_keeps_what_it_held_until_another_sift_reads_it(library: Path) -> None:
+    indexed(library)
+    (library.parent / "library" / "pigments.pdf").touch()
+    assert indexed(library, readers=Readers(clock=later, files=partial(in_process, ending))).unreadable == 1
+    assert unreadable_files(library) == (UnreadableFile("pigments.pdf", ENDED),)
+    assert "library/pigments.pdf" in found(library, "absorbs scatters")
+    converted: list[str] = []
+    assert indexed(library, readers=Readers(clock=later, files=reading(converting=counting(converted)))).unreadable == 1
+    assert converted == []
+    after = Readers(clock=later, files=reading(converting=counting(converted)), release=lambda: "the sift after")
+    assert indexed(library, readers=after) == Indexed(files=3, added=0, changed=0, removed=0, unreadable=0)
+    assert (converted, unreadable_files(library)) == (["pigments.pdf"], ())
 
 
 def test_a_document_that_cannot_be_read_is_read_again_at_the_next_index(library: Path) -> None:

@@ -16,7 +16,7 @@ from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import NoReturn, Protocol, cast
 
-from sift.domain.text.documents import Outcome, Refused
+from sift.domain.text.documents import Outcome, Refused, stopped
 from sift.ingest.pictures import Pictured, ToPicture, picture
 from sift.ingest.readers import ToRead, read_file
 
@@ -87,7 +87,7 @@ class _Task[A]:
 
 
 def came_to_no_end(seconds: float) -> Refused:
-    return Refused(f"its reader came to no end in {seconds:,.0f} seconds", read_again=False)
+    return stopped(f"its reader came to no end in {seconds:,.0f} seconds")
 
 
 def too_large_an_answer(size: int, most: int) -> Refused:
@@ -270,7 +270,7 @@ class _Pool[A: Request, B]:
         if not began:
             reading.back(task)
             return None
-        return task.at, Refused(ENDED, read_again=False)
+        return task.at, stopped(ENDED)
 
     def _answer(self, number: int, message: object, reading: _Reading[A]) -> tuple[int, B | Refused] | None:
         worker = self.workers.get(number)

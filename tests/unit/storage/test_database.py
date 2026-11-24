@@ -8,6 +8,7 @@ import pytest
 from sift.api.errors import StoreUnavailableError
 from sift.storage.database import (
     MINIMUM_SQLITE,
+    WAL_LIMIT_BYTES,
     connect,
     first,
     inserted,
@@ -118,6 +119,27 @@ def test_a_reading_sees_the_database_as_it_was_when_it_began(tmp_path: Path) -> 
             assert rows(transaction, Item, "SELECT id, name FROM items") == []
         with reading(connection) as transaction:
             assert rows(transaction, Item, "SELECT id, name FROM items") == [Item(1, "a")]
+
+
+def log_size(path: Path) -> int:
+    return path.with_name(f"{path.name}-wal").stat().st_size
+
+
+def test_a_write_ahead_log_grown_while_read_shrinks_back_to_its_limit_once_the_reading_ends(tmp_path: Path) -> None:
+    path = tmp_path / "a.sqlite"
+    with database(path) as connection, contextlib.closing(connect(path, create=False)) as other:
+        with writing(connection) as transaction:
+            run(transaction, "CREATE TABLE blobs(data BLOB NOT NULL) STRICT")
+        with reading(other) as held:
+            assert rows(held, Item, "SELECT id, name FROM items") == []
+            for _ in range(24):
+                with writing(connection) as transaction:
+                    run(transaction, "INSERT INTO blobs(data) VALUES (randomblob(4000000))")
+            assert log_size(path) > WAL_LIMIT_BYTES
+        for _ in range(3):
+            with writing(connection) as transaction:
+                run(transaction, "INSERT INTO blobs(data) VALUES (x'00')")
+        assert log_size(path) <= WAL_LIMIT_BYTES
 
 
 def test_a_statement_s_changes_are_counted(tmp_path: Path) -> None:

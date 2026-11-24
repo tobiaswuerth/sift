@@ -216,6 +216,7 @@ LAYOUT: tuple[Migration, ...] = (
            BEGIN UPDATE counts SET vectors_written = vectors_written + 1; END""",
         "ALTER TABLE counts ADD COLUMN ordered_at INTEGER NOT NULL DEFAULT 0",
     ),
+    ("ALTER TABLE unreadable ADD COLUMN stopped_under TEXT",),
 )
 NUMBERED_TABLES = ("documents", "chunks")
 FILE_SUFFIXES = ("", "-wal", "-shm")

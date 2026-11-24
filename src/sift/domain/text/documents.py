@@ -45,6 +45,11 @@ class FileRead:
 class Refused:
     problem: str
     read_again: bool
+    stopped: bool = False
+
+
+def stopped(problem: str) -> Refused:
+    return Refused(problem, read_again=False, stopped=True)
 
 
 type Conversion = Converted | Unread

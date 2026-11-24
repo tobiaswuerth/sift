@@ -1,6 +1,5 @@
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from itertools import batched
 
 from sift.api.events import Noted
 from sift.app.filing import Job, Tally, too_large_to_describe
@@ -11,6 +10,7 @@ from sift.domain.text.wording import counted
 from sift.ingest.files import Identity
 from sift.storage.database import WritingDocuments
 from sift.storage.documents import (
+    Mark,
     SourceId,
     add_documents,
     clear_unreadable,
@@ -57,6 +57,24 @@ def _records(lines: Iterable[tuple[int, str | SkippedLine]], chosen: Chosen, mos
             yield number, _described(record_of(line, number, chosen), number, most)
 
 
+def _characters(line: Line) -> int:
+    _, found = line
+    return len(found.text) if isinstance(found, Document) else 0
+
+
+def _writes(read: Iterable[Line], most: int, most_characters: int) -> Iterator[list[Line]]:
+    batch: list[Line] = []
+    held = 0
+    for line in read:
+        batch.append(line)
+        held += _characters(line)
+        if len(batch) >= most or held >= most_characters:
+            yield batch
+            batch, held = [], 0
+    if batch:
+        yield batch
+
+
 def _firsts(read: Sequence[Line], new: frozenset[str]) -> tuple[list[Document], list[SkippedLine]]:
     kept: list[Document] = []
     skipped: list[SkippedLine] = []
@@ -98,7 +116,7 @@ def _finished(job: Job, path: str, stat: Stat, source: SourceId, skips: Skips) -
         if problem is None:
             clear_unreadable(transaction, [path])
         else:
-            mark_unreadable(transaction, path, problem, read_again=False)
+            mark_unreadable(transaction, path, Mark(problem, read_again=False))
     if problem is not None:
         job.report(Noted(f"{path}: {problem}"))
     return len(gone)
@@ -111,12 +129,13 @@ def stored_records(job: Job, path: str, stat: Stat, chosen: Chosen, scanned: Ide
         source = put_source(transaction, path, RACY, stat.size)
         nothing_taken(transaction)
     try:
-        for read in batched(_records(lines, chosen, limits.most_description_bytes), limits.most_records_a_write):
+        records = _records(lines, chosen, limits.most_description_bytes)
+        for read in _writes(records, limits.most_records_a_write, limits.most_characters_a_write):
             with writing_documents(job.connection, limits.batches) as transaction:
                 done, skipped = _batch(transaction, source, path, read)
             tally, skips = tally + done, skips + skipped
     except OSError as error:
         with writing_documents(job.connection, limits.batches) as transaction:
-            mark_unreadable(transaction, path, error.strerror or str(error), read_again=True)
+            mark_unreadable(transaction, path, Mark(error.strerror or str(error), read_again=True))
         return tally
     return tally + Tally(removed=_finished(job, path, stat, source, skips))

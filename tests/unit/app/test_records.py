@@ -1,6 +1,6 @@
 import json
-from collections.abc import Iterator
-from contextlib import closing
+from collections.abc import Generator, Iterator, Sequence
+from contextlib import closing, contextmanager
 from itertools import islice
 from pathlib import Path
 
@@ -20,9 +20,12 @@ from sift.app.embedding import embed
 from sift.app.filing import Limits, Lines, Readers
 from sift.app.indexing import index
 from sift.app.search import search
+from sift.domain.text.documents import Outcome
 from sift.domain.text.records import SkippedLine
 from sift.ingest.files import Identity
+from sift.ingest.readers import ToRead
 from sift.ingest.records import lines_of
+from sift.ingest.sandbox import FileReading, OpenReading
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading
 from sift.storage.documents import counts
@@ -153,6 +156,17 @@ def test_a_field_chosen_must_be_named(
         add(tmp_path / "home", asked)
 
 
+def counting(home: Path, held: list[int]) -> Lines:
+    def counted(path: Path, most: int, scanned: Identity | None) -> Iterator[tuple[int, str | SkippedLine]]:
+        (one,) = known_collections(home)
+        for line in lines_of(path, most, scanned):
+            with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
+                held.append(counts(transaction).documents)
+            yield line
+
+    return counted
+
+
 def test_a_large_file_is_stored_a_batch_at_a_time_as_it_is_read(tmp_path: Path) -> None:
     records = [{"id": n % 9, "text": f"record {n}"} for n in range(12)]
     write(tmp_path / "c" / "big.jsonl", jsonl(records))
@@ -161,15 +175,7 @@ def test_a_large_file_is_stored_a_batch_at_a_time_as_it_is_read(tmp_path: Path) 
     small = Limits(most_records_a_write=4)
     said: list[Event] = []
     held: list[int] = []
-
-    def counted(path: Path, most: int, scanned: Identity | None) -> Iterator[tuple[int, str | SkippedLine]]:
-        (one,) = known_collections(home)
-        for line in lines_of(path, most, scanned):
-            with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
-                held.append(counts(transaction).documents)
-            yield line
-
-    first = indexed(home, small, said, counted)
+    first = indexed(home, small, said, counting(home, held))
     assert (first.added, first.removed, held[0], held[-1]) == (9, 0, 0, 8)
     assert text_of(home, "c/big.jsonl#3") == "record 3"
     assert any(isinstance(each, Noted) and "line 10: id 0 used twice" in each.text for each in said)
@@ -177,6 +183,36 @@ def test_a_large_file_is_stored_a_batch_at_a_time_as_it_is_read(tmp_path: Path) 
     second = indexed(home, small)
     assert (second.added, second.changed, second.removed) == (0, 1, 3)
     assert text_of(home, "c/big.jsonl#5") == "changed"
+
+
+def watching(asked: list[str]) -> OpenReading:
+    @contextmanager
+    def opened() -> Generator[FileReading]:
+        def read(files: Sequence[ToRead]) -> Iterator[tuple[int, Outcome]]:
+            asked.extend(each.path.name for each in files)
+            return iter(())
+
+        yield read
+
+    return opened
+
+
+def test_a_file_of_records_however_large_is_read_here_and_given_to_no_reader_process(tmp_path: Path) -> None:
+    write(tmp_path / "c" / "big.jsonl", jsonl([{"id": n, "text": f"record {n}"} for n in range(500)]))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    asked: list[str] = []
+    (one,) = index(home, IndexCollections(), lambda _: None, Limits(), Readers(files=watching(asked))).collections
+    assert (one.outcome, asked) == (Indexed(files=1, added=500, changed=0, removed=0, unreadable=0), [])
+
+
+def test_a_write_of_long_records_ends_by_the_text_it_holds_as_well(tmp_path: Path) -> None:
+    write(tmp_path / "c" / "big.jsonl", jsonl([{"id": n, "text": "word " * 30} for n in range(6)]))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    held: list[int] = []
+    assert indexed(home, Limits(most_characters_a_write=100), lines=counting(home, held)).added == 6
+    assert held == [0, 1, 2, 3, 4, 5]
 
 
 def test_a_record_longer_than_a_line_may_be_is_skipped_and_files_in_utf_16_are_read(tmp_path: Path) -> None:
