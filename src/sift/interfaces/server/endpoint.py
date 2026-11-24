@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import cast
 
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
+from sift.api.events import Noted
 from sift.api.wire import decoded
-from sift.settings import Settings
+from sift.settings import ActSetting, Settings, acting_on
 from sift.storage.database import private_file, private_folder
 from sift.storage.store_files import WRITER_SUFFIX
 from sift.storage.writer import Holder, held_by
@@ -23,6 +24,8 @@ STARTING_REMEDY = "ask again in a moment; a home process serves only the user wh
 NO_OWN_FOLDER = "no folder of the user's own is known, to keep the home process's token in"
 NO_OWN_FOLDER_REMEDY = "set LOCALAPPDATA on Windows, XDG_STATE_HOME elsewhere, to an absolute folder"
 KEY_CHARACTERS = 32
+UNSHARED = "the home process uses {settings}"
+UNSHARED_REMEDY = "stop sift serve to use yours, or start it again with them"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,10 +34,18 @@ class Endpoint:
     pid: int
     token: str
     version: str
+    acting_on: tuple[ActSetting, ...] = ()
 
 
 def lock_of(home: Path) -> Path:
     return home / f"{SERVER}{WRITER_SUFFIX}"
+
+
+def unshared(endpoint: Endpoint, settings: Settings) -> tuple[Noted, ...]:
+    ours = acting_on(settings)
+    theirs = [each for each in endpoint.acting_on if each not in ours]
+    said = ", ".join(each.variable + (" unset" if each.value is None else f"={each.value}") for each in theirs)
+    return (Noted(UNSHARED.format(settings=said), UNSHARED_REMEDY),) if theirs else ()
 
 
 def endpoint_of(state: Path, home: Path) -> Path:

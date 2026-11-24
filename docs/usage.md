@@ -84,7 +84,7 @@ Everything sift keeps lies under `SIFT_HOME` (`~/.sift`):
 
 | Path | What | Lifecycle |
 |---|---|---|
-| `servers/KEY.json` | The port, process and token of the home process that serves a home (KEY from the home's path), readable by you only | Written by `sift serve` through `KEY.json.PID.part` for a moment, deleted when it stops; one a killed `sift serve` left is replaced by the next |
+| `servers/KEY.json` | The port, process, token and version of the home process that serves a home (KEY from the home's path), and the models, OCR and GPUs it uses, readable by you only | Written by `sift serve` through `KEY.json.PID.part` for a moment, deleted when it stops; one a killed `sift serve` left is replaced by the next |
 
 An index can lie anywhere else:
 

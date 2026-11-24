@@ -51,6 +51,21 @@ class Settings:
     state: Path | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ActSetting:
+    variable: str
+    value: str | None
+
+
+def acting_on(settings: Settings) -> tuple[ActSetting, ...]:
+    return (
+        ActSetting(EMBED_MODEL_VARIABLE, settings.embed_model),
+        ActSetting(RERANK_MODEL_VARIABLE, settings.rerank_model),
+        ActSetting(OCR_VARIABLE, settings.ocr.value),
+        ActSetting(GPUS_VARIABLE, settings.gpus),
+    )
+
+
 def whole_path(written: str, user: Path | None, cwd: Path) -> Path:
     path = Path(written)
     if path.parts[:1] == (USER,):

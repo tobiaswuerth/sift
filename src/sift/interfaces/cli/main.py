@@ -39,7 +39,7 @@ from sift.interfaces.console.streams import ReaderLeftError, columns, is_termina
 from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal, style_of
 from sift.interfaces.console.text import printable_text
 from sift.interfaces.console.windows import console, escapes_work
-from sift.interfaces.server.endpoint import Endpoint, found
+from sift.interfaces.server.endpoint import Endpoint, found, unshared
 from sift.settings import Settings, from_environment, whole_path
 
 if TYPE_CHECKING:
@@ -294,6 +294,8 @@ def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log:
     command = command_of(chosen.command)
     try:
         server = _server(settings, chosen.command)
+        for noted in () if server is None else unshared(server, settings):
+            told(noted)
         context = Context(settings, host.platform, chosen.json, chosen.style, told, host.clock, server)
         with ticking(told.tick):
             return command.run(chosen.namespace, context)

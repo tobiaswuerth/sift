@@ -2,6 +2,7 @@ import dataclasses
 import io
 from pathlib import Path
 
+from sift.domain.text.scans import OcrSetting
 from sift.interfaces.cli.main import STOPPED_WATCHING, Host, run
 from sift.settings import Settings
 from tests.serving import VERSION, counted, running
@@ -85,6 +86,20 @@ def test_a_home_process_of_another_sift_is_refused_saying_what_to_do(settings: S
         refused = ran(settings, "status")
     said = f"error  the home process runs sift 1.0.0, this is sift {VERSION}\n"
     assert refused == (1, "", said + "  fix  stop sift serve where it runs, and start it again with this sift\n")
+
+
+def test_a_setting_the_home_process_does_not_share_is_noted(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    off = dataclasses.replace(settings, ocr=OcrSetting.OFF)
+    alone = ran(settings, "status")
+    with running(off):
+        noted = [ran(each, "status") for each in (settings, dataclasses.replace(off, gpus="0"), off)]
+    fix = "  fix   stop sift serve to use yours, or start it again with them" + NEWLINE
+    assert noted == [
+        (alone[0], alone[1], "  note  the home process uses SIFT_OCR=off" + NEWLINE + fix + alone[2]),
+        (alone[0], alone[1], "  note  the home process uses CUDA_VISIBLE_DEVICES unset" + NEWLINE + fix + alone[2]),
+        alone,
+    ]
 
 
 def test_an_interrupt_while_watching_a_served_move_says_it_goes_on(settings: Settings, notes: Path) -> None:

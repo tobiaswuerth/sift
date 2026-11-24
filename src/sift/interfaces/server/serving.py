@@ -28,7 +28,7 @@ from sift.interfaces.server.endpoint import SERVER, SERVING, Endpoint, found, ow
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.heads import HeadsInTime
 from sift.interfaces.server.results import KeptResults
-from sift.settings import Settings
+from sift.settings import Settings, acting_on
 from sift.storage.database import private_folder
 from sift.storage.watching import HomeWatch
 from sift.storage.writer import sole_writer
@@ -150,7 +150,7 @@ def held(
     ):
         listed.unlink(missing_ok=True)
         port = cast("tuple[str, int]", bound.getsockname())[1]
-        endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version)
+        endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version, acting_on(settings))
         kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
         serving = Serving(settings, endpoint.token, *kept, writer, pool, how.alive_every, clock=how.clock)
         app = served_app(serving, how.handled)
