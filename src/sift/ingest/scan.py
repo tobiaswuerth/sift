@@ -8,6 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol
 
+from sift.domain.plan.ignore import NOTHING_LEFT_OUT, Ignore, left_out
 from sift.domain.plan.indexing import Found, Stat, stored_time
 from sift.domain.text.decoding import encodable
 from sift.domain.text.kinds import kind_of, split_keyed_path
@@ -46,6 +47,15 @@ LINK_CHECKS = LinkChecks()
 
 
 @dataclass(frozen=True, slots=True)
+class Reach:
+    follow_links: bool = False
+    ignore: Ignore = NOTHING_LEFT_OUT
+
+
+WITHIN = Reach()
+
+
+@dataclass(frozen=True, slots=True)
 class _Guard:
     root: Path
     checks: LinkChecks
@@ -73,6 +83,14 @@ class _Seen:
     linked_folders: list[str] = field(default_factory=list[str])
     named_as_records: list[str] = field(default_factory=list[str])
     identities: dict[str, Identity] = field(default_factory=dict[str, Identity])
+
+
+@dataclass(frozen=True, slots=True)
+class _Walk:
+    seen: _Seen
+    folders: list[tuple[str, str]]
+    guard: _Guard | None
+    ignore: Ignore
 
 
 def _reason(error: OSError) -> str:
@@ -152,35 +170,49 @@ def _listed(folder: str, relative: str, listing: Listing, seen: _Seen) -> Iterat
         seen.empty_folders.append(relative)
 
 
-def _taken(entry: DirEntry, relative: str, seen: _Seen, folders: list[tuple[str, str]], guard: _Guard | None) -> None:
+def _folder(entry: DirEntry, path: str, walk: _Walk) -> None:
+    if left_out(walk.ignore, path, folder=True):
+        return
+    if entry.is_junction():
+        walk.seen.linked_folders.append(f"{path}/")
+    elif _folder_taken(entry):
+        walk.folders.append((entry.path, f"{path}/"))
+
+
+def _untyped(path: str, walk: _Walk, error: OSError) -> None:
+    if not left_out(walk.ignore, path):
+        _unreached(walk.seen, path, error)
+    if not left_out(walk.ignore, path, folder=True):
+        walk.seen.unlisted_folders.append(f"{path}/")
+        walk.seen.refusals[f"{path}/"] = _reason(error)
+
+
+def _taken(entry: DirEntry, relative: str, walk: _Walk) -> None:
+    path = relative + entry.name
     try:
         if entry.is_dir(follow_symlinks=False):
-            if entry.is_junction():
-                seen.linked_folders.append(f"{relative}{entry.name}/")
-            elif _folder_taken(entry):
-                folders.append((entry.path, f"{relative}{entry.name}/"))
-        elif kind_of(entry.name) is not None:
-            _file(entry, relative + entry.name, seen, guard)
+            _folder(entry, path, walk)
+        elif kind_of(entry.name) is not None and not left_out(walk.ignore, path):
+            _file(entry, path, walk.seen, walk.guard)
     except OSError as error:
-        _unreached(seen, relative + entry.name, error)
-        seen.unlisted_folders.append(f"{relative}{entry.name}/")
-        seen.refusals[f"{relative}{entry.name}/"] = _reason(error)
+        _untyped(path, walk, error)
 
 
 def scan(
     root: Path,
+    reach: Reach = WITHIN,
     *,
-    follow_links: bool,
     listing: Listing = os.scandir,
     links: LinkChecks = LINK_CHECKS,
     progress: Progress = lambda _: None,
 ) -> Scanned:
-    seen, guard = _Seen(), None if follow_links else _Guard(root.resolve(), links)
+    seen, guard = _Seen(), None if reach.follow_links else _Guard(root.resolve(), links)
     folders, looked_at = [(str(root), "")], 0
+    walk = _Walk(seen, folders, guard, reach.ignore)
     while folders:
         folder, relative = folders.pop()
         for entry in _listed(folder, relative, listing, seen):
-            _taken(entry, relative, seen, folders, guard)
+            _taken(entry, relative, walk)
             looked_at += 1
             if looked_at % PROGRESS_EVERY == 0:
                 progress(len(seen.files))

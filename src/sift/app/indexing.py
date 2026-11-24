@@ -10,13 +10,15 @@ from sift.app.filing import READERS, Job, Limits, Readers, Tally, too_large_to_d
 from sift.app.problems import problems
 from sift.app.records import stored_records
 from sift.app.streamed import stored_note
+from sift.domain.plan.ignore import Ignore
 from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan, recorded
 from sift.domain.text.documents import FileRead, Outcome, Refused, too_large
 from sift.domain.text.kinds import FileKind, kind_of, streamed
 from sift.ingest.files import Identity
+from sift.ingest.ignore import IGNORE_FILE, ignore_at
 from sift.ingest.readers import ToRead
 from sift.ingest.sandbox import FileReading
-from sift.ingest.scan import scan
+from sift.ingest.scan import Reach, scan
 from sift.storage.catalog import Collection
 from sift.storage.database import Batches, Connection, WritingDocuments, reading
 from sift.storage.documents import (
@@ -35,6 +37,7 @@ from sift.storage.store import connected
 
 FOLDER_MISSING_REMEDY = "connect the drive it lies on"
 OUT_OF_REACH_REMEDY = "see that its folder and its store can be read, then index it again"
+IGNORE_REMEDY = f"make its {IGNORE_FILE} a file sift can read, or remove it, then index it again"
 PROBLEMS_APART = "; "
 
 
@@ -153,12 +156,12 @@ def _whole(outcome: FileRead | Refused) -> bool:
     return isinstance(outcome, FileRead) and not outcome.problems
 
 
-def _synced(job: Job) -> Indexed:
+def _synced(job: Job, ignore: Ignore) -> Indexed:
     job.report(PhaseStarted(Phase.SCAN, None))
     started = job.readers.clock()
     scanned = scan(
         job.collection.folder,
-        follow_links=job.collection.choices.follow_links,
+        Reach(job.collection.choices.follow_links, ignore),
         progress=lambda found: job.report(Advanced(found)),
     )
     files = recorded(scanned.found.files, started)
@@ -182,6 +185,15 @@ def _synced(job: Job) -> Indexed:
 def _skipped(skipped: Collection, report: Reporter, reason: str, remedy: str | None) -> CollectionIndexed:
     report(Noted(reason, remedy))
     return CollectionIndexed(skipped.name, Skipped(reason, remedy))
+
+
+def _ignoring(job: Job) -> CollectionIndexed:
+    try:
+        ignore = ignore_at(job.collection.folder)
+    except OSError as error:
+        reason = f"its {IGNORE_FILE} can't be read ({error.strerror or error})"
+        return _skipped(job.collection, job.report, reason, IGNORE_REMEDY)
+    return CollectionIndexed(job.collection.name, _synced(job, ignore))
 
 
 def _remade(connection: Connection, report: Reporter, batches: Batches) -> None:
@@ -212,7 +224,7 @@ def _indexed(one: Collection, report: Reporter, limits: Limits, readers: Readers
             _remade(connection, report, limits.batches)
             if not one.folder.is_dir():
                 return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)
-            return CollectionIndexed(one.name, _synced(Job(one, connection, report, limits, readers)))
+            return _ignoring(Job(one, connection, report, limits, readers))
     except StoreUnavailableError as error:
         return _skipped(one, report, error.message, error.remedy)
     except OSError as error:

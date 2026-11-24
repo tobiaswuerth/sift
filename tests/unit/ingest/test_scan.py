@@ -8,9 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from sift.domain.plan.ignore import ignore_of
 from sift.domain.plan.indexing import MOST_TIME, Stat, index_plan
 from sift.ingest.files import CHANGED, Identity
-from sift.ingest.scan import HIDDEN_SYSTEM, DirEntry, LinkChecks, Listing, Scanned, scan
+from sift.ingest.scan import HIDDEN_SYSTEM, DirEntry, LinkChecks, Listing, Reach, Scanned, scan
 from tests.files import linked, write
 
 
@@ -108,7 +109,7 @@ def paths(scanned: Scanned) -> list[str]:
 
 
 def test_text_and_markdown_files_are_found_but_in_hidden_and_vendor_folders(notes: Path) -> None:
-    assert paths(scan(notes, follow_links=False)) == [
+    assert paths(scan(notes)) == [
         ".notes.md",
         "UPPER.MD",
         "long.markdown",
@@ -121,32 +122,30 @@ def test_text_and_markdown_files_are_found_but_in_hidden_and_vendor_folders(note
 def test_a_file_is_found_with_its_time_and_size(notes: Path) -> None:
     write(notes / "rl.md", "four")
     found = (notes / "rl.md").stat()
-    assert scan(notes, follow_links=False).found.files["rl.md"] == Stat(found.st_mtime_ns, 4)
+    assert scan(notes).found.files["rl.md"] == Stat(found.st_mtime_ns, 4)
 
 
 def test_a_folder_gone_before_its_scan_holds_nothing_and_is_named_as_unlisted(tmp_path: Path) -> None:
-    scanned = scan(tmp_path / "missing", follow_links=False)
+    scanned = scan(tmp_path / "missing")
     assert (scanned.found.files, scanned.found.unlisted_folders) == ({}, ("",))
 
 
 def test_a_folder_that_cannot_be_listed_is_named(notes: Path) -> None:
     denied = PermissionError(13, "Access is denied")
-    scanned = scan(notes, follow_links=False, links=FAKE, listing=listing({str(notes / "robots"): denied}))
+    scanned = scan(notes, links=FAKE, listing=listing({str(notes / "robots"): denied}))
     assert (paths(scanned)[-1], scanned.found.unlisted_folders) == ("rl.md", ("robots/",))
-    assert scan(
-        notes, follow_links=False, links=FAKE, listing=listing({str(notes): denied})
-    ).found.unlisted_folders == ("",)
+    assert scan(notes, links=FAKE, listing=listing({str(notes): denied})).found.unlisted_folders == ("",)
 
 
 def test_a_listing_that_breaks_off_names_its_folder(notes: Path) -> None:
     broken = Breaking((), OSError(5, "Input/output error"))
-    scanned = scan(notes, follow_links=False, links=FAKE, listing=listing({str(notes / "robots"): broken}))
+    scanned = scan(notes, links=FAKE, listing=listing({str(notes / "robots"): broken}))
     assert scanned.found.unlisted_folders == ("robots/",)
 
 
 def test_a_folder_that_vanishes_while_scanned_keeps_what_it_held(notes: Path) -> None:
     for gone in (NotADirectoryError(20, "Not a directory"), FileNotFoundError(2, "No such file")):
-        scanned = scan(notes, follow_links=False, links=FAKE, listing=listing({str(notes / "robots"): gone}))
+        scanned = scan(notes, links=FAKE, listing=listing({str(notes / "robots"): gone}))
         assert ("robots/brush.md" not in scanned.found.files, scanned.found.unlisted_folders) == (True, ("robots/",))
         assert index_plan(scanned.found, {"robots/brush.md": Stat(1, 1)}).kept == ("robots/brush.md",)
 
@@ -159,7 +158,7 @@ def test_a_file_that_cannot_be_stated_is_named_and_one_gone_passed_over(tmp_path
         Fake("pipe.md", "pipe.md", mode=stat.S_IFIFO | 0o644),
         Fake("ok.md", "ok.md"),
     ]
-    scanned = scan(tmp_path, follow_links=False, links=FAKE, listing=listing({root: entries}))
+    scanned = scan(tmp_path, links=FAKE, listing=listing({root: entries}))
     assert (paths(scanned), scanned.found.unlisted_files) == (["ok.md"], ("denied.md",))
 
 
@@ -170,7 +169,7 @@ def test_no_junction_and_no_linked_folder_is_followed(tmp_path: Path) -> None:
         Fake("ok.md", "ok.md"),
     ]
     write(tmp_path / "elsewhere" / "outside.md")
-    scanned = scan(tmp_path, follow_links=False, links=FAKE, listing=listing({str(tmp_path): entries}))
+    scanned = scan(tmp_path, links=FAKE, listing=listing({str(tmp_path): entries}))
     assert (paths(scanned), scanned.linked_folders) == (["ok.md"], ("loop/",))
 
 
@@ -180,21 +179,21 @@ def test_a_file_linked_from_outside_the_folder_is_left_out_unless_links_are_foll
     entries = [Fake("notes.txt", str(root / "notes.txt"), symlink=True), Fake("again.md", "again.md", symlink=True)]
     fake, inside = listing({str(root): entries}), root.resolve()
     targets = links({str(inside / "notes.txt"): str(secret), str(inside / "again.md"): "rl.md"})
-    left = scan(root, follow_links=False, links=targets, listing=fake)
+    left = scan(root, links=targets, listing=fake)
     assert (paths(left), left.found.outside) == (["again.md"], ("notes.txt",))
-    followed = scan(root, follow_links=True, links=targets, listing=fake)
+    followed = scan(root, Reach(follow_links=True), links=targets, listing=fake)
     assert (paths(followed), followed.found.outside) == (["again.md", "notes.txt"], ())
 
 
 def test_a_file_name_that_is_no_text_is_named_apart(tmp_path: Path) -> None:
     entries = [Fake("r\udce9sum\udce9.md", "x"), Fake("ok.md", "ok.md")]
-    scanned = scan(tmp_path, follow_links=False, links=FAKE, listing=listing({str(tmp_path): entries}))
+    scanned = scan(tmp_path, links=FAKE, listing=listing({str(tmp_path): entries}))
     assert (paths(scanned), scanned.unnamed) == (["ok.md"], ("r\\udce9sum\\udce9.md",))
 
 
 def test_a_time_past_what_a_store_counts_to_is_held_at_its_end(tmp_path: Path) -> None:
     entries = [Fake("old.md", "old.md", modified_ns=-(2**70)), Fake("new.md", "new.md", modified_ns=2**70)]
-    files = scan(tmp_path, follow_links=False, links=FAKE, listing=listing({str(tmp_path): entries})).found.files
+    files = scan(tmp_path, links=FAKE, listing=listing({str(tmp_path): entries})).found.files
     assert (files["old.md"].modified_ns, files["new.md"].modified_ns) == (-MOST_TIME, MOST_TIME)
 
 
@@ -203,9 +202,7 @@ def test_a_link_to_a_folder_whose_name_begins_as_the_root_s_leads_outside(tmp_pa
     root.mkdir()
     entries = [Fake("a.md", "a.md", symlink=True)]
     targets = links({str(root.resolve() / "a.md"): str(sibling)})
-    assert scan(root, follow_links=False, links=targets, listing=listing({str(root): entries})).found.outside == (
-        "a.md",
-    )
+    assert scan(root, links=targets, listing=listing({str(root): entries})).found.outside == ("a.md",)
 
 
 def test_a_link_whose_file_is_out_of_reach_is_named_not_taken_for_gone(tmp_path: Path) -> None:
@@ -221,15 +218,15 @@ def test_a_link_whose_file_is_out_of_reach_is_named_not_taken_for_gone(tmp_path:
         str(inside / "inside.md"): str(inside / "elsewhere.md"),
         str(inside / "outside.md"): str(tmp_path / "drive" / "x.md"),
     }
-    left = scan(root, follow_links=False, links=links(targets), listing=fake)
+    left = scan(root, links=links(targets), listing=fake)
     assert (left.found.unlisted_files, left.found.outside, left.found.files) == (("inside.md",), ("outside.md",), {})
     assert left.refusals == {"inside.md": "No such file or directory"}
-    assert scan(root, follow_links=True, listing=fake).found.unlisted_files == ("inside.md", "outside.md")
+    assert scan(root, Reach(follow_links=True), listing=fake).found.unlisted_files == ("inside.md", "outside.md")
 
 
 def test_an_entry_whose_kind_cannot_be_told_is_named_as_a_file_and_as_a_folder(tmp_path: Path) -> None:
     entries = [Fake("odd", "odd", untyped=PermissionError(13, "Access is denied")), Fake("ok.md", "ok.md")]
-    scanned = scan(tmp_path, follow_links=False, links=FAKE, listing=listing({str(tmp_path): entries}))
+    scanned = scan(tmp_path, links=FAKE, listing=listing({str(tmp_path): entries}))
     assert (paths(scanned), scanned.found.unlisted_files, scanned.found.unlisted_folders) == (
         ["ok.md"],
         ("odd",),
@@ -244,20 +241,20 @@ def test_folders_inside_that_are_there_but_empty_are_named(notes: Path) -> None:
     fake = listing(
         {str(notes / "denied"): PermissionError(13, "Access is denied"), str(notes / "gone"): FileNotFoundError()}
     )
-    assert sorted(scan(notes, follow_links=False, links=FAKE, listing=fake).found.empty_folders) == [
+    assert sorted(scan(notes, links=FAKE, listing=fake).found.empty_folders) == [
         "archive/",
         "robots/none/",
     ]
 
 
 def test_an_empty_root_is_no_empty_folder_inside(tmp_path: Path) -> None:
-    assert scan(tmp_path, follow_links=False).found.empty_folders == ()
+    assert scan(tmp_path).found.empty_folders == ()
 
 
 def test_a_long_scan_says_how_many_files_it_has_found_every_thousand_entries(tmp_path: Path) -> None:
     entries = [Fake(f"{n}.md" if n % 2 else f"{n}.png", str(n)) for n in range(2500)]
     said: list[int] = []
-    scan(tmp_path, follow_links=False, links=FAKE, listing=listing({str(tmp_path): entries}), progress=said.append)
+    scan(tmp_path, links=FAKE, listing=listing({str(tmp_path): entries}), progress=said.append)
     assert said == [500, 1000]
 
 
@@ -284,15 +281,15 @@ def test_a_link_is_followed_hop_by_hop_and_left_out_at_the_first_leading_outside
     whole = {str(inside / path): spelled.get(target, target) for path, target in targets.items()}
     never_read = OSError(5, "a link leading outside was read")
     entries = [Fake("a.md", "a.md", symlink=True, refusal=never_read if outside else None)]
-    scanned = scan(root, follow_links=False, links=links(whole), listing=listing({str(root): entries}))
+    scanned = scan(root, links=links(whole), listing=listing({str(root): entries}))
     assert (scanned.found.outside, len(scanned.found.files)) == (outside, 1 - len(outside))
 
 
 def test_each_file_found_is_known_by_its_identity_unless_links_are_followed(notes: Path) -> None:
-    held = scan(notes, follow_links=False).identities
+    held = scan(notes).identities
     found = (notes / "rl.md").stat()
     assert (held["rl.md"], len(held)) == (Identity(found.st_dev, found.st_ino), 6)
-    assert scan(notes, follow_links=True).identities == {}
+    assert scan(notes, Reach(follow_links=True)).identities == {}
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="folders are hidden and system on Windows alone")
@@ -303,13 +300,13 @@ def test_folders_both_hidden_and_system_are_passed_over(tmp_path: Path) -> None:
         Fake("hidden", "hidden", folder=True, attributes=hidden),
     ]
     fake = listing({str(tmp_path): entries, "bin": [], "hidden": []})
-    assert scan(tmp_path, follow_links=False, links=FAKE, listing=fake).found.empty_folders == ("hidden/",)
+    assert scan(tmp_path, links=FAKE, listing=fake).found.empty_folders == ("hidden/",)
 
 
 def test_a_file_whose_path_reads_as_a_record_s_id_is_named_not_read(tmp_path: Path) -> None:
     for name in ("a.jsonl#k.md", "b.NDJSON#x/c.md", "a.jsonl"):
         write(tmp_path / name)
-    scanned = scan(tmp_path, follow_links=False)
+    scanned = scan(tmp_path)
     assert (paths(scanned), sorted(scanned.named_as_records)) == (["a.jsonl"], ["a.jsonl#k.md", "b.NDJSON#x/c.md"])
     assert index_plan(scanned.found, {"a.jsonl#k.md": Stat(1, 1)}).drop == ("a.jsonl#k.md",)
 
@@ -322,7 +319,7 @@ def test_a_link_stepping_up_past_a_linked_folder_is_left_out_whichever_way_the_s
     write(tmp_path / "x.md", "outside")
     linked(root / "d", str(root / "p" / "q"), folder=True)
     linked(root / "f.md", "d/../../x.md")
-    assert scan(root, follow_links=False).found.outside == ("f.md",)
+    assert scan(root).found.outside == ("f.md",)
 
 
 def test_a_link_written_through_another_spelling_of_the_folder_stays_inside(tmp_path: Path) -> None:
@@ -330,7 +327,7 @@ def test_a_link_written_through_another_spelling_of_the_folder_stays_inside(tmp_
     write(real / "x.md", "inside")
     linked(tmp_path / "alias", str(real), folder=True)
     linked(real / "f.md", str(tmp_path / "alias" / "x.md"))
-    scanned = scan(real, follow_links=False)
+    scanned = scan(real)
     assert (paths(scanned), scanned.found.outside) == (["f.md", "x.md"], ())
 
 
@@ -347,5 +344,40 @@ def test_a_link_changed_while_it_was_checked_is_named_not_read(tmp_path: Path) -
 
     entries = [Fake("a.md", str(tmp_path / "a.md"), symlink=True)]
     checks = LinkChecks(target, identity, identity)
-    scanned = scan(tmp_path, follow_links=False, links=checks, listing=listing({str(tmp_path): entries}))
+    scanned = scan(tmp_path, links=checks, listing=listing({str(tmp_path): entries}))
     assert (paths(scanned), scanned.found.unlisted_files, scanned.refusals["a.md"]) == ([], ("a.md",), CHANGED)
+
+
+def test_what_siftignore_names_is_left_out_and_a_folder_left_out_is_not_looked_into(notes: Path) -> None:
+    write(notes / "robots" / "deep" / "x.md")
+    denied = listing({str(notes / "robots"): PermissionError(13, "Access is denied")})
+    scanned = scan(notes, Reach(ignore=ignore_of(["plain.txt", "robots/"], caseless=False)), links=FAKE, listing=denied)
+    assert (paths(scanned), scanned.found.unlisted_folders) == ([".notes.md", "UPPER.MD", "long.markdown", "rl.md"], ())
+
+
+def test_a_file_in_a_folder_left_out_stays_out_though_taken_back(tmp_path: Path) -> None:
+    for name in ("private/keep.md", "x/private/a/b.md", "public/keep.md"):
+        write(tmp_path / name)
+    ignore = ignore_of(["private/", "!private/keep.md"], caseless=False)
+    assert paths(scan(tmp_path, Reach(ignore=ignore))) == ["public/keep.md"]
+
+
+def test_what_siftignore_leaves_out_is_named_for_nothing(tmp_path: Path) -> None:
+    denied = PermissionError(13, "Access is denied")
+    entries = [
+        Fake("loop", str(tmp_path), folder=True, junction=True),
+        Fake("denied.md", "denied.md", refusal=denied),
+        Fake("odd", "odd", untyped=denied),
+        Fake("ok.md", "ok.md"),
+    ]
+    ignore = ignore_of(["loop/", "denied.md", "odd"], caseless=False)
+    scanned = scan(tmp_path, Reach(ignore=ignore), links=FAKE, listing=listing({str(tmp_path): entries}))
+    assert (paths(scanned), scanned.linked_folders, scanned.found.unlisted_files) == (["ok.md"], (), ())
+    assert (scanned.found.unlisted_folders, scanned.refusals) == ((), {})
+
+
+def test_an_entry_of_untold_kind_left_out_as_a_file_alone_is_named_as_a_folder(tmp_path: Path) -> None:
+    entries = [Fake("odd.md", "odd.md", untyped=PermissionError(13, "Access is denied"))]
+    ignore = ignore_of(["*.md", "!*/"], caseless=False)
+    scanned = scan(tmp_path, Reach(ignore=ignore), links=FAKE, listing=listing({str(tmp_path): entries}))
+    assert (scanned.found.unlisted_files, scanned.found.unlisted_folders) == ((), ("odd.md/",))
