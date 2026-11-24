@@ -7,15 +7,25 @@ from typing import NamedTuple
 import numpy as np
 import pytest
 
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId
 from sift.domain.arrays import Ids, first, ints, last
 from sift.domain.codec.codes import Halves, codes
 from sift.domain.errors import DamagedError
+from sift.domain.text.embedding import RECIPE
 from sift.storage.database import Connection, Reading, reading, rows, run, run_each, writing
 from sift.storage.store import LAYOUT, create_store, open_store
-from sift.storage.vector_meta import left, model_of, width_held
-from sift.storage.vectors import VectorsPut, codes_of, forget_vectors, pending, put_vectors, vectors_of
+from sift.storage.vector_meta import left, model_of, recipe_of, width_held
+from sift.storage.vectors import (
+    VectorsPut,
+    codes_of,
+    forget_vectors,
+    pending,
+    put_vectors,
+    refuse_model,
+    refuse_recipe,
+    vectors_of,
+)
 from tests.keyword_stores import SMALL, Round, applied, chunk_texts, opened_store
 
 NOTES: Round = {"a.md": ("", "Alpha", "one two " * 2000), "b.md": ("", "Beta", "three")}
@@ -326,3 +336,25 @@ def test_a_chunk_given_two_vectors_is_refused() -> None:
         ids = chunk_ids(connection)
         with writing(connection) as transaction, pytest.raises(ValueError, match="more than one vector"):
             put_vectors(transaction, np.append(ids, ids[:1]), vectors(len(ids) + 1), "m")
+
+
+def test_vectors_sift_made_from_passages_another_way_are_refused_until_forgotten() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [NOTES])
+        ids = chunk_ids(connection)
+        with writing(connection) as transaction:
+            put_vectors(transaction, ids, vectors(len(ids)), "model-a")
+        with reading(connection) as transaction:
+            assert recipe_of(transaction) == str(RECIPE)
+        with writing(connection) as transaction:
+            run(transaction, "UPDATE meta SET value = '0' WHERE key = 'vector_recipe'")
+        refusal = rf"holds vectors sift made from passages another way \(recipe 0, now {RECIPE}\)"
+        for later in (refuse_model, refuse_recipe):
+            with pytest.raises(StoreUnavailableError, match=refusal) as refused, reading(connection) as transaction:
+                later(transaction, "model-a")
+            assert refused.value.code == Problem.OTHER_MODEL
+        with writing(connection) as transaction:
+            forget_vectors(transaction)
+        with reading(connection) as transaction:
+            assert (model_of(transaction), recipe_of(transaction)) == (None, None)
+            refuse_recipe(transaction, "model-a")

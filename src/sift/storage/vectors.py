@@ -9,9 +9,10 @@ from sift.api.ids import ChunkId, DocumentId
 from sift.domain.arrays import STORED_HALF, Ids, among, ascending, distinct, ints
 from sift.domain.codec.codes import MOST_BITS, Bits, Halves, code_bytes, codes, width_of
 from sift.domain.errors import DamagedError
+from sift.domain.text.embedding import RECIPE
 from sift.storage.database import Count, IdRow, Reading, Writing, rows, run, run_each
 from sift.storage.texts import TextSpan, spans_text
-from sift.storage.vector_meta import MODEL_KEY, WIDTH_KEY, model_of, width_held
+from sift.storage.vector_meta import MODEL_KEY, RECIPE_KEY, WIDTH_KEY, model_of, recipe_of, width_held
 
 PENDING = """SELECT c.id, c.document, c.start, c.length,
                     c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document)
@@ -85,6 +86,16 @@ def _checked(chunks: Ids, matrix: Halves) -> None:
         raise ValueError("a chunk was given more than one vector: give each chunk one")
 
 
+def refuse_recipe(transaction: Reading, model: str) -> None:
+    found = recipe_of(transaction)
+    if model_of(transaction) is not None and found != str(RECIPE):
+        raise StoreUnavailableError(
+            f"the store holds vectors sift made from passages another way (recipe {found or 'unknown'}, now {RECIPE})",
+            EMBED_REMEDY.format(model=model),
+            code=Problem.OTHER_MODEL,
+        )
+
+
 def refuse_model(transaction: Reading, model: str) -> None:
     found = model_of(transaction)
     if found not in {None, model}:
@@ -93,6 +104,7 @@ def refuse_model(transaction: Reading, model: str) -> None:
             EMBED_REMEDY.format(model=model),
             code=Problem.OTHER_MODEL,
         )
+    refuse_recipe(transaction, model)
 
 
 def _refuse_another(transaction: Writing, model: str, width: int) -> None:
@@ -120,7 +132,7 @@ def put_vectors(transaction: Writing, chunks: Ids, matrix: Halves, model: str) -
         run_each(
             transaction,
             "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-            [(MODEL_KEY, model), (WIDTH_KEY, str(width_of(matrix)))],
+            [(MODEL_KEY, model), (WIDTH_KEY, str(width_of(matrix))), (RECIPE_KEY, str(RECIPE))],
         )
     run_each(
         transaction,
@@ -143,7 +155,7 @@ def _rows(matrix: NDArray[np.generic]) -> list[bytes]:
 
 def forget_vectors(transaction: Writing) -> None:
     run(transaction, "DELETE FROM vectors")
-    run(transaction, "DELETE FROM meta WHERE key IN (?, ?)", (MODEL_KEY, WIDTH_KEY))
+    run(transaction, "DELETE FROM meta WHERE key IN (?, ?, ?)", (MODEL_KEY, WIDTH_KEY, RECIPE_KEY))
 
 
 def codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, Bits]:

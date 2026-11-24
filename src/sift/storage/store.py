@@ -219,7 +219,8 @@ LAYOUT: tuple[Migration, ...] = (
     ("ALTER TABLE unreadable ADD COLUMN stopped_under TEXT",),
 )
 NUMBERED_TABLES = ("documents", "chunks")
-FILE_SUFFIXES = ("", "-wal", "-shm")
+WRITER_SUFFIX = ".writer"
+FILE_SUFFIXES = ("", "-wal", "-shm", WRITER_SUFFIX, f"{WRITER_SUFFIX}-journal")
 DATA_SUFFIXES = ("", "-wal")
 MISSING_REMEDY = "connect the drive it lies on, or remove the collection"
 DAMAGED_REMEDY = "remove the collection, then add its folder and index it again"

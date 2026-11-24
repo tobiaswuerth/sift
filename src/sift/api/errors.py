@@ -17,6 +17,7 @@ class Problem(StrEnum):
     NOT_EMBEDDED = "not_embedded"
     OTHER_MODEL = "other_model"
     OUT_OF_TIME = "out_of_time"
+    BUSY = "busy"
     MODEL_UNAVAILABLE = "model_unavailable"
 
 

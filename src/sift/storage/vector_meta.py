@@ -1,6 +1,6 @@
 from sift.storage.database import Count, Reading, Value, first, rows
 
-MODEL_KEY, WIDTH_KEY = "vector_model", "vector_width"
+MODEL_KEY, WIDTH_KEY, RECIPE_KEY = "vector_model", "vector_width", "vector_recipe"
 HELD_META = "SELECT value FROM meta WHERE key = ? AND (SELECT vectors FROM counts) > 0"
 
 
@@ -11,6 +11,10 @@ def _meta(transaction: Reading, key: str) -> str | None:
 
 def model_of(transaction: Reading) -> str | None:
     return _meta(transaction, MODEL_KEY)
+
+
+def recipe_of(transaction: Reading) -> str | None:
+    return _meta(transaction, RECIPE_KEY)
 
 
 def width_held(transaction: Reading) -> int | None:

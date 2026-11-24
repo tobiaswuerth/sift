@@ -194,13 +194,16 @@ def test_a_reset_whose_model_will_not_load_forgets_nothing(home: Path) -> None:
 
 def test_a_store_taken_by_another_model_midway_is_skipped_saying_so(home: Path) -> None:
     said: list[Event] = []
+    busy: list[Skipped | Embedded] = []
 
     def taken(event: Event) -> None:
         said.append(event)
         if isinstance(event, Advanced) and event.done == 1:
-            stopping = Stopping(Hashed(name="other-model"), 1)
-            with pytest.raises(KeyboardInterrupt):
-                embed(home, EmbedCollections(reset=True), lambda _: None, stopping, Embedding(chunks_a_write=1))
+            other = embed(home, EmbedCollections(reset=True), lambda _: None, Hashed(name="other-model"))
+            busy.extend(each.outcome for each in other.collections)
+            with contextlib.closing(sqlite3.connect(store(home))) as database:
+                database.execute("UPDATE meta SET value = 'other-model' WHERE key = 'vector_model'")
+                database.commit()
 
     (outcome,) = embed(home, EmbedCollections(), taken, Hashed(), Embedding(chunks_a_write=1)).collections
     assert isinstance(outcome.outcome, Skipped)
@@ -208,6 +211,9 @@ def test_a_store_taken_by_another_model_midway_is_skipped_saying_so(home: Path) 
     assert [event for event in said if isinstance(event, PhaseStarted)][-1].phase is Phase.EMBED
     assert not isinstance(said[-2], PhaseDone)
     assert said[-1] == Noted(outcome.outcome.message, outcome.outcome.remedy)
+    (refused,) = busy
+    assert isinstance(refused, Skipped)
+    assert "another sift writes it now (sift embed, process " in refused.message
 
 
 def test_a_store_a_reset_could_not_clear_is_skipped_saying_why(home: Path) -> None:

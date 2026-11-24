@@ -1,3 +1,4 @@
+import hashlib
 import re
 from pathlib import Path
 from types import MappingProxyType
@@ -16,17 +17,43 @@ PINNED = MappingProxyType(
 )
 REPOSITORY = re.compile(r"\w[\w.-]*(/\w[\w.-]*)?")
 REVISION = re.compile(r"[\w.-]+")
+COMMIT = re.compile(r"[0-9a-f]{40}")
+STAMP_BYTES = 8
+MOVING = (
+    "a branch or tag moves, and a short commit may mean several, so its vectors could not be told from those of "
+    "other weights"
+)
+COMMIT_REMEDY = "name a commit of it, e.g. {name}@<commit> from its page under Files and versions"
+
+
+def _stamp(folder: Path) -> str:
+    stamped = hashlib.blake2b(digest_size=STAMP_BYTES)
+    for path in sorted(each for each in folder.rglob("*") if each.is_file()):
+        held = path.stat()
+        stamped.update(f"{path.relative_to(folder).as_posix()}\0{held.st_size}\0{held.st_mtime_ns}\0".encode())
+    return stamped.hexdigest()
+
+
+def _revision_refused(name: str, repository: str, revision: str) -> ModelUnavailableError:
+    said = f"the model {name} names {revision}, no whole commit: {MOVING}"
+    return ModelUnavailableError(said, COMMIT_REMEDY.format(name=repository))
 
 
 def pinned(name: str) -> str:
     if name in PINNED:
         return f"{name}@{PINNED[name]}"
+    folder = Path(name)
+    if folder.is_dir():
+        whole = folder.resolve()
+        return f"{whole}#{_stamp(whole)}"
     repository, at, revision = name.rpartition("@")
-    if (at and REPOSITORY.fullmatch(repository) and REVISION.fullmatch(revision)) or Path(name).is_dir():
+    if at and REPOSITORY.fullmatch(repository) and REVISION.fullmatch(revision):
+        if COMMIT.fullmatch(revision) is None:
+            raise _revision_refused(name, repository, revision)
         return name
     raise ModelUnavailableError(
-        f"the model {name} names no revision, so its vectors could not be told from those of its next weights",
-        f"name a commit of it, e.g. {name}@<commit> from its page under Files and versions",
+        f"the model {name} names no commit, so its vectors could not be told from those of its next weights",
+        COMMIT_REMEDY.format(name=name.rstrip("@")),
     )
 
 

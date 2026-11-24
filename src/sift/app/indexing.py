@@ -41,6 +41,7 @@ from sift.storage.kept_vectors import vectors_held, vectors_kept
 from sift.storage.keyword_order import order_due, ordered
 from sift.storage.keywords import remade, remake_started, settle, writing_documents
 from sift.storage.store import connected
+from sift.storage.writer import sole_writer
 
 FOLDER_MISSING_REMEDY = "connect the drive it lies on"
 OUT_OF_REACH_REMEDY = "see that its folder and its store can be read, then index it again"
@@ -292,7 +293,7 @@ def _settled(connection: Connection, report: Reporter, batches: Batches) -> None
 def _indexed(one: Collection, report: Reporter, limits: Limits, readers: Readers, ocr: ScanModel) -> CollectionIndexed:
     report(CollectionStarted(one.name, str(one.folder)))
     try:
-        with connected(one.store, one.id) as connection:
+        with sole_writer(one.store, "sift index"), connected(one.store, one.id) as connection:
             _remade(connection, report, limits.batches)
             _ordered(connection, report, limits.batches)
             if not one.folder.is_dir():

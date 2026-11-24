@@ -25,7 +25,7 @@ from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
 from sift.storage.store import connected, unavailable_if_unusable
 from sift.storage.vector_meta import left, model_of, width_held
-from sift.storage.vectors import EMBED_REMEDY, codes_of
+from sift.storage.vectors import EMBED_REMEDY, codes_of, refuse_recipe
 
 UNEMBEDDED_REMEDY = "run sift embed"
 EMPTY_QUERY = "an empty query finds nothing"
@@ -185,6 +185,7 @@ def embedded_by(model: str, transaction: Reading) -> Vectors | None:
     if found != model:
         said = f"its vectors are of {found}, not of {model}"
         raise StoreUnavailableError(said, EMBED_REMEDY.format(model=model), code=Problem.OTHER_MODEL)
+    refuse_recipe(transaction, model)
     ids, bits = codes_of(transaction)
     return Vectors(coded(ids, bits, width_held(transaction) or 0))
 

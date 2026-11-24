@@ -35,7 +35,7 @@ def tiny(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 def test_a_model_from_a_folder_embeds_texts_as_normalised_halves_in_their_order(tiny: Path) -> None:
     models = local(str(tiny))
-    assert models.name == str(tiny)
+    assert models.name.startswith(f"{tiny.resolve()}#")
     texts = ["dark matter halo models", "pruning", "skips ranges", "halo"]
     rows = models.encode(texts, query=False)
     assert (rows.shape, rows.dtype) == ((4, WIDTH), np.float16)

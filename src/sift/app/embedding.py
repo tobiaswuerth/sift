@@ -20,6 +20,7 @@ from sift.storage.database import Connection, reading, writing
 from sift.storage.store import connected
 from sift.storage.vector_meta import left
 from sift.storage.vectors import Pending, VectorsPut, forget_vectors, pending, put_vectors, refuse_model
+from sift.storage.writer import sole_writer
 
 RESET_ALL_REMEDY = "run sift embed with reset, naming no collection"
 BROKEN_REMEDY = "run sift embed again; if they stay, the model fails on their text"
@@ -85,7 +86,7 @@ def _embedded(one: Collection, work: Work, failed: Failed) -> CollectionEmbedded
     if one.id in failed:
         return _skipped(one, work.report, failed[one.id])
     try:
-        with connected(one.store, one.id) as connection:
+        with sole_writer(one.store, "sift embed"), connected(one.store, one.id) as connection:
             return CollectionEmbedded(one.name, _filled(connection, work))
     except StoreUnavailableError as error:
         return _skipped(one, work.report, error)
@@ -93,7 +94,11 @@ def _embedded(one: Collection, work: Work, failed: Failed) -> CollectionEmbedded
 
 def _forgotten(one: Collection) -> StoreUnavailableError | None:
     try:
-        with connected(one.store, one.id) as connection, writing(connection) as transaction:
+        with (
+            sole_writer(one.store, "sift embed"),
+            connected(one.store, one.id) as connection,
+            writing(connection) as transaction,
+        ):
             forget_vectors(transaction)
     except StoreUnavailableError as error:
         return StoreUnavailableError(f"its vectors could not be forgotten: {error.message}", error.remedy)
