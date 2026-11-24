@@ -3,7 +3,7 @@ import hashlib
 import json
 
 from sift.domain.codec.shape import FORMAT, Shape
-from sift.domain.text.tokens import TABLE_DIGEST
+from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, TABLE_DIGEST
 from sift.storage.database import Reading, Value, rows
 
 SHAPE_KEY, THROUGH_KEY, FINGERPRINT_KEY = "keyword_shape", "keywords_through", "keyword_fingerprint"
@@ -14,7 +14,8 @@ NUMBERS_PROBE = """SELECT coalesce(group_concat(j.atom, ' '), '') FROM json_tree
 
 def fingerprint(transaction: Reading) -> str:
     (rendered,) = rows(transaction, Value, NUMBERS_PROBE)
-    return hashlib.blake2b(f"{FORMAT}|{TABLE_DIGEST}|{rendered.value}".encode(), digest_size=16).hexdigest()
+    held = f"{FORMAT}|{TABLE_DIGEST}|{MOST_FIELD_CHARACTERS}|{rendered.value}"
+    return hashlib.blake2b(held.encode(), digest_size=16).hexdigest()
 
 
 def keyword_meta(transaction: Reading, shape: Shape, start: int) -> tuple[tuple[str, str], ...]:

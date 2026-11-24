@@ -4,7 +4,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from sift.domain.text.fts5_table import FOLDS, SEPARATORS
-from sift.domain.text.tokens import TRANSLATION, tokens
+from sift.domain.text.tokens import TRANSLATION, field_tokens, tokens
 from tools.fts5_table import fts5_tokens
 
 separators = [point for point, replaced in TRANSLATION.items() if replaced == " "]
@@ -42,3 +42,9 @@ def test_every_character_python_splits_at_is_a_separator() -> None:
 def test_the_table_is_of_spans_and_folds_alone() -> None:
     assert all(word.count("=") == 1 for word in " ".join(FOLDS).split())
     assert all("=" not in word for word in " ".join(SEPARATORS).split())
+
+
+def test_a_field_counts_its_tokens_up_to_its_cut_less_the_one_the_cut_may_split() -> None:
+    assert field_tokens("one two three", 100) == ["one", "two", "three"]
+    assert field_tokens("one two three", 13) == ["one", "two", "three"]
+    assert field_tokens("one two three!", 6) == ["one"]

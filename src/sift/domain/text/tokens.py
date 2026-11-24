@@ -7,6 +7,7 @@ from sift.domain.text.fts5_table import FOLDS, SEPARATORS
 
 ASCII_END = 0x80
 BYTES = 0x100
+MOST_FIELD_CHARACTERS = 1 << 20
 OUTSIDE_ASCII = re.compile(r"[^\x00-\x7f]+")
 
 
@@ -48,3 +49,8 @@ def tokens(text: str) -> list[str]:
     if text.isascii():
         return narrow.decode("ascii").split()
     return OUTSIDE_ASCII.sub(_outside_ascii, narrow.decode("utf-8", "surrogatepass")).split()
+
+
+def field_tokens(held: str, most: int = MOST_FIELD_CHARACTERS) -> list[str]:
+    found = tokens(held[:most])
+    return found[:-1] if len(held) > most else found

@@ -72,6 +72,8 @@ def _free(cuda: Cuda) -> tuple[int, int]:
     total = cuda.get_device_properties(0).total_memory
     try:
         used = cuda.device_memory_used(0)
+    except RecursionError:
+        raise
     except (ModuleNotFoundError, RuntimeError, OSError, pynvml.NVMLError):
         return cuda.mem_get_info(0)
     return total - used, total

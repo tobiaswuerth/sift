@@ -1,6 +1,10 @@
+import ast
+from collections.abc import Mapping
+
 import pytest
 
 from tools import check_idioms
+from tools.canonical import canonical
 from tools.check_idioms import idioms
 
 
@@ -150,12 +154,52 @@ def test_catching_recursion_error_is_found_outside_tests(handler: str) -> None:
     assert problems("tests/a.py", source) == []
 
 
+@pytest.mark.parametrize(
+    "handlers",
+    [
+        "except RuntimeError:\n    pass\n",
+        "except (ValueError, Exception) as error:\n    print(error)\n",
+        "except BaseException:\n    raise ValueError from None\n",
+        "except:\n    pass\n",
+    ],
+)
+def test_catching_recursion_error_as_one_of_its_bases_without_letting_it_through_is_found(handlers: str) -> None:
+    assert problems("src/sift/ingest/a.py", f"try:\n    f()\n{handlers}") == [check_idioms.RECURSION_CAUGHT]
+
+
+@pytest.mark.parametrize(
+    "handlers",
+    [
+        "except RecursionError:\n    raise\nexcept RuntimeError:\n    pass\n",
+        "except RuntimeError as error:\n    if not mine(error):\n        raise\n    print(error)\n",
+        "except BaseException:\n    close()\n    raise\n",
+        "except (ValueError, OSError):\n    pass\n",
+    ],
+)
+def test_catching_recursion_error_and_letting_it_through_passes(handlers: str) -> None:
+    assert problems("src/sift/ingest/a.py", f"try:\n    f()\n{handlers}") == []
+
+
 def test_catching_recursion_error_named_in_a_tuple_of_the_module_is_found() -> None:
     named = "INNER: tuple[type[Exception], ...] = (KeyError, RecursionError)\nCAUGHT = (ValueError, INNER)\n"
     source = f"{named}try:\n    f()\nexcept CAUGHT:\n    pass\nexcept INNER as error:\n    pass\n"
     assert problems("src/sift/domain/a.py", source) == [check_idioms.RECURSION_CAUGHT] * 2
     looped = "A = (B,)\nB = (A, ValueError)\ntry:\n    f()\nexcept A:\n    pass\n"
     assert problems("src/sift/domain/a.py", looped) == []
+
+
+def test_catching_recursion_error_named_in_a_tuple_of_another_module_is_found() -> None:
+    elsewhere = ast.parse("from sift.b import INNER\nCAUGHT = (ValueError, INNER)\nINNER_TOO = (RecursionError,)\n")
+    modules = {"sift.a": elsewhere, "sift.b": ast.parse("INNER = (KeyError, RecursionError)\n")}
+
+    def tuples_of(module: str) -> Mapping[str, list[ast.expr]]:
+        return check_idioms.module_tuples(modules[module]) if module in modules else {}
+
+    source = "from sift.a import CAUGHT\ntry:\n    f()\nexcept CAUGHT:\n    pass\nexcept xberg.XbergError:\n    pass\n"
+    tree = canonical(ast.parse(source))
+    found = list(check_idioms.recursion_caught("src/sift/c.py", tree, tuples_of))
+    assert [each.problem for each in found] == [check_idioms.RECURSION_CAUGHT]
+    assert check_idioms.first_party_tuples("sift.ingest.mail")["UNREADABLE"]
 
 
 def test_the_repository_keeps_the_idioms() -> None:

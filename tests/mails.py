@@ -81,7 +81,28 @@ def failing(_raw: bytes, _name: str) -> Conversion:
 
 
 HEADERS = (b"From: ", b"To: ", b"Cc: ", b"Subject: ", b"Date: ", b"Message-ID: ", b"Content-Type: ")
-VALUES = (b"message/rfc822", b"multipart/mixed; boundary=b", b"text/plain; charset=", b"utf-7", b"+2D0-", b"x")
+VALUES = (
+    b"message/rfc822",
+    b"message/delivery-status",
+    b"multipart/mixed; boundary=b",
+    b"multipart/mixed; boundary=c",
+    b"text/plain; charset=",
+    b"utf-7",
+    b"+2D0-",
+    b"x",
+)
 MARKS = (b"=?utf-8?q?", b"?=", b"<", b">", b"@", b",", b";", b":", b'"', b"(", b")", b"[", b"]", b"\\", b" ")
-LINES = (b"\r\n", b"\r\n\r\n", b"--b\r\n", b"--b--", b"\xff", b"\x00", b"Content-Transfer-Encoding: base64")
+LINES = (
+    b"\r\n",
+    b"\r\n\r\n",
+    b"\n",
+    b"\r",
+    b"--b\r\n",
+    b"--b--",
+    b"--c\r\n",
+    b"words\r\n",
+    b"\xff",
+    b"\x00",
+    b"Content-Transfer-Encoding: base64",
+)
 atoms = st.sampled_from((*HEADERS, *VALUES, *MARKS, *LINES, b"Content-Disposition: attachment; filename=a.md"))

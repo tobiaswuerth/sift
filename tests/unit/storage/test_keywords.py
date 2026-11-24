@@ -1,3 +1,4 @@
+import dataclasses
 import tempfile
 from pathlib import Path
 
@@ -8,16 +9,19 @@ from hypothesis import strategies as st
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Policy
-from sift.storage.database import Batches, reading, rows, run, writing
+from sift.domain.text.notes import note
+from sift.domain.text.tokens import MOST_FIELD_CHARACTERS
+from sift.storage.database import BATCHES, Batches, reading, rows, run, writing
+from sift.storage.documents import add_documents, put_source
 from sift.storage.keyword_lists import dead_within, expansions, frequencies, segments
-from sift.storage.keywords import totals
+from sift.storage.keywords import totals, writing_documents
 from tests.keyword_indexes import (
     Average,
     Sized,
     checked,
     rounds,
 )
-from tests.keyword_stores import SMALL, Round, applied, opened_store
+from tests.keyword_stores import SMALL, Round, applied, opened_store, written
 
 
 @settings(max_examples=40, deadline=None)
@@ -122,3 +126,22 @@ def test_a_store_of_the_highest_collections_takes_writes() -> None:
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 8_388_607, SMALL) as connection:
         applied(connection, [{"a.md": ("", "a", "one two")}, {"a.md": None}])
         checked(connection)
+
+
+def _tokens_with(title: str, about: str) -> int:
+    made = note(written("", "a", "ordinary words " * 400), "a.md")
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        with writing_documents(connection, BATCHES) as transaction:
+            source = put_source(transaction, "a.md", 0, 0)
+            add_documents(
+                transaction, source, "a.md", [dataclasses.replace(made, title=title, fields={"about": about})]
+            )
+        with reading(connection) as transaction:
+            return totals(transaction).tokens
+
+
+def test_a_document_s_title_and_fields_are_keywords_up_to_their_first_million_characters() -> None:
+    filler = "filler " * (MOST_FIELD_CHARACTERS // len("filler ") + 1)
+    longer = filler + "zebra " * 200_000
+    assert _tokens_with(filler, filler) == _tokens_with(longer, longer)
+    assert _tokens_with("a", "filler") < _tokens_with(filler, "filler") < _tokens_with(filler, filler)

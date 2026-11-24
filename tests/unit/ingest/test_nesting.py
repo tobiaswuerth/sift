@@ -52,6 +52,16 @@ STATUS = b"Content-Type: message/delivery-status\r\n\r\nReporting-MTA: dns; exam
 STATUS_MAIL = b"Content-Type: message/rfc822\r\n\r\nSubject: bounced\r\n--r--\r\n"
 DIGEST = b"Content-Type: multipart/digest; boundary=d\r\n\r\n--d\r\n\r\nSubject: one\r\n\r\nwords\r\n--d--\r\n"
 DOUBLED = b"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n--b--\r\nContent-Type: message/rfc822\r\n\r\nx\r\n"
+STATUS_HEAD = b"Content-Type: message/delivery-status\r\n\r\n"
+BLOCK_ENDED = b"Content-Type: multipart/mixed; boundary=x\r\n--x\r\nContent-Type: text/plain\r\n\r\nbody\r\n\r\n"
+BLOCKS_NESTED = (
+    b"Content-Type: multipart/mixed; boundary=y\r\n--y\r\nContent-Type: multipart/mixed; boundary=z\r\n--z\r\n"
+)
+
+
+def _in_status(levels: int, top: bytes = b"") -> bytes:
+    inner = b"".join(b"Content-Type: multipart/mixed; boundary=b%d\n--b%d\n" % (n, n) for n in range(levels))
+    return top + b"Content-Type: message/delivery-status\n\n" + inner + b"text\n"
 
 
 @pytest.mark.parametrize(
@@ -61,6 +71,10 @@ DOUBLED = b"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n--b--\r\nCon
         (REPORT + STATUS + STATUS_MAIL, 3, 3),
         (DOUBLED, 2, 2),
         (DOUBLED + b"--b\r\n--b", 2, 2),
+        (STATUS_HEAD + BLOCK_ENDED + BLOCKS_NESTED, 3, 3),
+        (STATUS_HEAD + STATUS_HEAD + BLOCKS_NESTED, 3, 3),
+        (_in_status(MOST_NESTED + 10), MOST_NESTED + 11, MOST_NESTED + 11),
+        (_in_status(MOST_NESTED + 10, REPORT), MOST_NESTED + 12, MOST_NESTED + 12),
     ],
 )
 def test_digests_reports_and_boundaries_in_a_row_are_measured_as_python_s_parser_reads_them(
@@ -69,6 +83,12 @@ def test_digests_reports_and_boundaries_in_a_row_are_measured_as_python_s_parser
     parsed = _parsed(raw)
     assert parsed is not None
     assert (nesting(raw, 1_000), _depth(parsed)) == (measured, made)
+
+
+@pytest.mark.parametrize("top", [b"", REPORT])
+@pytest.mark.parametrize("levels", [MOST_NESTED, 1_200])
+def test_parts_nested_in_a_delivery_status_deeper_than_sift_reads_are_unread(top: bytes, levels: int) -> None:
+    assert mail(_in_status(levels, top), "a.eml", failing) == Unread(NESTED_TOO_DEEPLY)
 
 
 def _parsed(raw: bytes) -> EmailMessage | None:

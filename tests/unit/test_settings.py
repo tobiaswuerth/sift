@@ -90,6 +90,12 @@ def _nowhere() -> Path:
     raise RuntimeError("Could not determine home directory.")
 
 
+def _too_deep() -> Path:
+    raise RecursionError("maximum recursion depth exceeded")
+
+
 def test_a_user_folder_that_cannot_be_found_is_none() -> None:
     assert user_folder(_nowhere) is None
+    with pytest.raises(RecursionError):
+        user_folder(_too_deep)
     assert user_folder() == Path.home()

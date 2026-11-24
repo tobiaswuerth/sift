@@ -132,9 +132,11 @@ def within_memory[T](name: str, device: str, run: Callable[[], T]) -> T:
         raise ModelUnavailableError(said, _full(error, device)) from error
 
 
-def _loading[T](name: str, device: Device, load: Callable[[], T]) -> T:
+def loading[T](name: str, device: Device, load: Callable[[], T]) -> T:
     try:
         return load()
+    except RecursionError:
+        raise
     except (OSError, ValueError, RuntimeError, MemoryError) as error:
         raise unloaded(name, error, device.name) from error
 
@@ -149,7 +151,7 @@ def _embedder(name: str, device: Device) -> Loaded:
         held = _reading_capped(cast("Embedder", model))
         return Loaded(held, width_of(name, held.get_embedding_dimension()))
 
-    return _loading(name, device, load)
+    return loading(name, device, load)
 
 
 def _ranker(name: str, device: Device) -> Ranker:
@@ -159,7 +161,7 @@ def _ranker(name: str, device: Device) -> Ranker:
         model = CrossEncoder(repository, device=device.name, revision=revision, model_kwargs={"dtype": device.dtype})
         return _capped(cast("Ranker", model))
 
-    return _loading(name, device, load)
+    return loading(name, device, load)
 
 
 def _counting(tokenizer: object) -> Tokenizer:

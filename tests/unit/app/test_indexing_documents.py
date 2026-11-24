@@ -1,4 +1,5 @@
 import json
+import multiprocessing
 import shutil
 from pathlib import Path
 
@@ -6,7 +7,7 @@ import pytest
 
 from sift.api.collections import AddCollection, UnreadableFile
 from sift.api.embedding import EmbedCollections
-from sift.api.events import Event, Noted
+from sift.api.events import Advanced, Event, Noted
 from sift.api.filters import written
 from sift.api.indexing import IndexCollections, Indexed
 from sift.api.search import SearchKeywords
@@ -197,3 +198,18 @@ def test_a_changed_mail_keeps_its_unchanged_attachments_and_their_vectors(post: 
     assert problem.startswith("offer.eml: contract.pdf: Parsing error: ")
     assert unreadable_files(post)[0].problem == problem.removeprefix("offer.eml: ")
     assert found(post, "offer") == ["mail/offer.eml"]
+
+
+def test_a_reader_process_that_ends_between_batches_costs_no_file(library: Path) -> None:
+    ended: list[int] = []
+
+    def ending_readers(event: Event) -> None:
+        if event == Advanced(1):
+            for child in multiprocessing.active_children():
+                child.kill()
+                child.join(60)
+                ended.append(child.exitcode or 0)
+
+    limits, readers = Limits(most_files_a_write=1), Readers(clock=later)
+    (one,) = index(library, IndexCollections(), ending_readers, limits, readers).collections
+    assert (one.outcome, len(ended)) == (Indexed(files=3, added=3, changed=0, removed=0, unreadable=0), 1)

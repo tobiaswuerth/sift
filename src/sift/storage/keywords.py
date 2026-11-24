@@ -15,7 +15,7 @@ from sift.domain.codec.segments import GAP, Segment, segment, stream
 from sift.domain.codec.shape import SHAPE, Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.keyword_state import KeywordState, keyword_state, remaking
-from sift.domain.text.tokens import tokens
+from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, field_tokens, tokens
 from sift.storage.database import (
     BATCHES,
     Batches,
@@ -36,7 +36,8 @@ from sift.storage.keyword_meta import FINGERPRINT_KEY, SHAPE_KEY, THROUGH_KEY, f
 from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
 from sift.storage.texts import TextSpan, spans_text
 
-DOCUMENTS = "SELECT id, title, meta FROM keyword_documents WHERE id IN (SELECT value FROM json_each(?))"
+DOCUMENTS = """SELECT id, substr(title, 1, ?) AS title, substr(meta, 1, ?) AS meta FROM keyword_documents
+               WHERE id IN (SELECT value FROM json_each(?))"""
 REMAKE_REMEDY = "run sift index to remake it"
 STALE = "the store's keyword index is of another version of sift"
 UNFINISHED = "the store's keyword index is not yet wholly remade"
@@ -115,8 +116,9 @@ def _tokens(streams: Sequence[Sequence[str]]) -> int:
 
 def _streams(transaction: Reading, spans: Sequence[Span]) -> Iterator[list[str]]:
     wanted = json.dumps(sorted({span.document for span in spans}))
-    documents = {held.id: held for held in rows(transaction, Named, DOCUMENTS, (wanted,))}
-    named = {key: (tokens(held.title), tokens(held.meta or "")) for key, held in documents.items()}
+    cut = MOST_FIELD_CHARACTERS + 1
+    documents = {held.id: held for held in rows(transaction, Named, DOCUMENTS, (cut, cut, wanted))}
+    named = {key: (field_tokens(held.title), field_tokens(held.meta or "")) for key, held in documents.items()}
     seen: dict[str, str] = {}
     for at in range(0, len(spans), TEXTS_AT_ONCE):
         part = spans[at : at + TEXTS_AT_ONCE]

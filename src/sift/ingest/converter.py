@@ -34,6 +34,8 @@ type Extract = Callable[[bytes, str], xberg.ExtractionResult]
 def converted(raw: bytes, name: str, extract: Extract = extracted) -> Conversion:
     try:
         result = extract(raw, name)
+    except RecursionError:
+        raise
     except (RuntimeError, xberg.XbergError) as error:
         return Unread(str(error))
     except BaseException as panic:

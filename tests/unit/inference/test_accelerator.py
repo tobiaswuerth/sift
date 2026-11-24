@@ -75,6 +75,11 @@ def test_without_nvml_cuda_s_own_figure_of_free_memory_counts(failure: Exception
     assert (chosen(cuda, NONE).name, cuda.contexts) == ("cuda", [0])
 
 
+def test_a_recursion_too_deep_while_memory_is_looked_at_is_no_missing_nvml() -> None:
+    with pytest.raises(RecursionError):
+        chosen(FakeCuda(free=20 * GIB, total=24 * GIB, failure=RecursionError("too deep")), NONE)
+
+
 def test_a_gpu_others_fill_leaves_sift_on_the_cpu_saying_so_and_holding_no_context_on_it() -> None:
     cuda = FakeCuda(free=20 * GIB, total=24 * GIB, used=22 * GIB)
     found = chosen(cuda, NONE)

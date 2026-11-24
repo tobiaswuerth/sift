@@ -1,17 +1,45 @@
 import multiprocessing
+import os
 import shutil
+import signal
+import socket
+import subprocess
+import sys
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
+from typing import BinaryIO, cast
 
 import pytest
 
 from sift.api.collections import TitleFrom
 from sift.domain.text.documents import Refused
 from sift.ingest.readers import ToRead, read_file
-from sift.ingest.sandbox import ENDED, FileReading, Patience, ReaderFailedError, came_to_no_end, sandboxed
+from sift.ingest.sandbox import (
+    ENDED,
+    FileReading,
+    Patience,
+    ReaderFailedError,
+    came_to_no_end,
+    reader_processes,
+    sandboxed,
+    usable_cpus,
+)
 from tests.later import in_process
 from tests.mails import mail_bytes, message, sample
-from tests.sandboxed import EndsWhenUnpickled, StuckWhenUnpickled, echoed, echoed_after, misbehaving
+from tests.sandboxed import (
+    LARGE,
+    EndsWhenUnpickled,
+    IdentityEndingWhenUnpickled,
+    StuckWhenUnpickled,
+    echoed,
+    echoed_after,
+    misbehaving,
+    pid_or_hang,
+)
+
+ROOT = Path(__file__).parents[3]
+WAITED_SECONDS = 60.0
 
 PATIENT = Patience(base_seconds=120.0, bytes_a_second=1e12)
 HASTY = Patience(base_seconds=2.0, bytes_a_second=1e12)
@@ -56,13 +84,124 @@ def test_a_reader_that_comes_to_no_end_is_stopped_when_its_time_is_up() -> None:
     assert multiprocessing.active_children() == []
 
 
-def test_a_reader_that_raises_ends_the_reading_saying_which_file() -> None:
-    with (
-        pytest.raises(ReaderFailedError, match=r"raise\.pdf raised an error"),
-        sandboxed(misbehaving, PATIENT) as reading,
-    ):
+def test_a_reader_that_raises_ends_the_reading_saying_which_file_and_what() -> None:
+    said = r"raise\.pdf raised an error in its process, ValueError: a reader's bug; its traceback is above"
+    with pytest.raises(ReaderFailedError, match=said), sandboxed(misbehaving, PATIENT) as reading:
         _ = list(reading(asked("a.pdf", "raise.pdf")))
     assert multiprocessing.active_children() == []
+
+
+def test_a_process_ended_with_any_exit_code_costs_its_file_alone() -> None:
+    with sandboxed(misbehaving, PATIENT, workers=1) as reading:
+        found = dict(reading(asked("exit1.pdf", "a.pdf")))
+    assert found == {0: Refused(ENDED, read_again=False), 1: read("a.pdf")}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a Windows pipe takes a message whole")
+def test_a_reader_that_ends_its_process_while_it_answers_costs_its_file_at_once() -> None:
+    with sandboxed(misbehaving, HASTY, workers=1) as reading:
+        found = dict(reading(asked("cut.pdf", "a.pdf")))
+    assert found == {0: Refused(ENDED, read_again=False), 1: read("a.pdf")}
+
+
+def test_an_answer_larger_than_sift_takes_is_refused_as_the_file_s_problem() -> None:
+    with sandboxed(misbehaving, PATIENT, workers=1, most_answer_bytes=LARGE // 2) as reading:
+        ((at, found),) = list(reading(asked("large.pdf")))
+    assert isinstance(found, Refused)
+    assert (at, found.problem.endswith("bytes, more than the 5,000 sift takes from one file")) == (0, True)
+
+
+def _ended(pid: int) -> None:
+    (child,) = [each for each in multiprocessing.active_children() if each.pid == pid]
+    child.kill()
+    child.join(WAITED_SECONDS)
+
+
+def test_a_reader_process_that_ends_while_it_waits_is_replaced() -> None:
+    with sandboxed(pid_or_hang, HASTY, workers=2) as reading:
+        answers = reading(asked("hang.pdf", "a.pdf"))
+        at, first = next(answers)
+        assert isinstance(first, Refused)
+        _ended(int(first.problem))
+        rest = dict(answers)
+        again = dict(reading(asked("b.pdf", "c.pdf")))
+    assert (at, rest, sorted(again)) == (1, {0: came_to_no_end(2.0)}, [0, 1])
+    assert multiprocessing.active_children() == []
+
+
+def test_files_given_to_reader_processes_that_ended_meanwhile_are_given_to_others() -> None:
+    with sandboxed(echoed, PATIENT, workers=2) as reading:
+        first = dict(reading(asked("a.pdf", "b.pdf")))
+        for child in multiprocessing.active_children():
+            _ended(child.pid or 0)
+        again = dict(reading(asked("c.pdf", "d.pdf")))
+    assert (first, again) == ({0: read("a.pdf"), 1: read("b.pdf")}, {0: read("c.pdf"), 1: read("d.pdf")})
+
+
+def test_a_file_whose_reader_processes_end_twice_before_they_begin_it_ends_the_reading() -> None:
+    doomed = ToRead(Path("a.pdf"), 10, 1 << 20, IdentityEndingWhenUnpickled(1, 1), TitleFrom.HEADING)
+    with (
+        pytest.raises(ReaderFailedError, match=r"reader processes ended twice before they began reading a\.pdf"),
+        sandboxed(echoed, PATIENT) as reading,
+    ):
+        _ = list(reading([doomed]))
+    assert multiprocessing.active_children() == []
+
+
+class InterruptError(Exception):
+    pass
+
+
+def interrupting(calls: int) -> Callable[[], float]:
+    made: list[int] = []
+
+    def clock() -> float:
+        made.append(1)
+        if len(made) == calls:
+            raise InterruptError
+        return 0.0
+
+    return clock
+
+
+def test_waiting_for_reader_processes_to_start_returns_to_python_every_second() -> None:
+    stuck = partial(echoed_after, StuckWhenUnpickled(multiprocessing.get_context("spawn").Event().wait))
+    late = Patience(start_seconds=30.0)
+    with pytest.raises(InterruptError), sandboxed(stuck, late, clock=interrupting(5)) as reading:
+        _ = list(reading(asked("a.pdf")))
+    assert multiprocessing.active_children() == []
+
+
+def _left_unsaid(said: BinaryIO) -> bytes:
+    try:
+        return said.read()
+    except ConnectionResetError:
+        return b""
+
+
+def test_reader_processes_end_with_the_process_that_started_them() -> None:
+    with socket.create_server(("127.0.0.1", 0)) as server:
+        server.settimeout(WAITED_SECONDS)
+        address = cast("tuple[str, int]", server.getsockname())
+        started = subprocess.Popen([sys.executable, "-m", "tests.orphaning", str(address[1])], cwd=ROOT)
+        connection = server.accept()[0]
+        with connection, connection.makefile("rb") as said:
+            connection.settimeout(WAITED_SECONDS)
+            pid = int(said.readline())
+            started.kill()
+            _ = started.wait(WAITED_SECONDS)
+            try:
+                left = _left_unsaid(said)
+            except TimeoutError:
+                os.kill(pid, signal.SIGTERM)
+                raise
+    assert left == b""
+
+
+@pytest.mark.parametrize("cpus, made", [(1, 1), (2, 1), (8, 7), (64, 30), (None, 1)])
+def test_reader_processes_are_one_less_than_the_cpus_this_process_may_use(cpus: int | None, made: int) -> None:
+    assert reader_processes(30, cpus) == made
+    assert 1 <= usable_cpus() <= (os.cpu_count() or 1)
 
 
 def _left_early(reading: FileReading) -> None:

@@ -9,11 +9,13 @@ from sentence_transformers import SentenceTransformer
 from sentence_transformers.sentence_transformer.modules import Transformer
 
 from sift.api.errors import ModelUnavailableError
+from sift.inference.accelerator import CPU
 from sift.inference.local import (
     BROKEN_REMEDY,
     UNLOADED_REMEDY,
     Embedder,
     Local,
+    loading,
     local,
     unloaded,
     width_of,
@@ -132,6 +134,16 @@ def test_a_model_too_large_for_the_memory_left_says_so_not_to_check_the_network(
     assert "CUDA" not in apple
     assert unloaded("owner/model", OSError("401 Client Error\nmore"), "cuda").remedy == UNLOADED_REMEDY
     assert unloaded("owner/model", ValueError("no kernel image is available"), "cuda").remedy == BROKEN_REMEDY
+
+
+def _too_deep() -> int:
+    raise RecursionError("maximum recursion depth exceeded")
+
+
+def test_a_recursion_too_deep_while_a_model_loads_is_no_model_unavailable() -> None:
+    with pytest.raises(RecursionError):
+        loading("owner/model", CPU, _too_deep)
+    assert loading("owner/model", CPU, lambda: 7) == 7
 
 
 def test_a_model_out_of_memory_while_it_runs_says_so_with_what_frees_it() -> None:

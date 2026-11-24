@@ -156,8 +156,13 @@ def test_a_panic_of_the_converter_leaves_the_document_unread_and_an_interrupt_st
     def mistaken(_raw: bytes, _name: str) -> ExtractionResult:
         raise TypeError("a bug")
 
+    def too_deep(_raw: bytes, _name: str) -> ExtractionResult:
+        raise RecursionError("maximum recursion depth exceeded")
+
     assert converted(b"%PDF", "a.pdf", panicking) == Unread("the converter failed: index out of bounds")
     with pytest.raises(KeyboardInterrupt):
         converted(b"%PDF", "a.pdf", interrupted)
     with pytest.raises(TypeError, match="a bug"):
         converted(b"%PDF", "a.pdf", mistaken)
+    with pytest.raises(RecursionError):
+        converted(b"%PDF", "a.pdf", too_deep)

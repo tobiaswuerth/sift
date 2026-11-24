@@ -1,7 +1,9 @@
 import ast
 import re
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
+from functools import cache
+from pathlib import Path
 from types import MappingProxyType
 
 from tools.canonical import canonical
@@ -57,10 +59,13 @@ CLOCK_IN_A_TEST = (
     "a clock in a test, which passes or fails by the machine and its load: count what costs the time "
     "(calls, characters looked at, rows read), or pass a clock in"
 )
+FIRST_PARTY = "src"
 RECURSION_CAUGHT = (
-    "RecursionError caught: the interpreter's depth limit decides, and the work done before it is lost; "
-    "bound the depth yourself before descending, and refuse what is deeper"
+    "RecursionError caught, by name or as a RuntimeError, Exception or BaseException: the interpreter's depth limit "
+    "decides, and the work done before it is lost; bound the depth yourself before descending, and let RecursionError "
+    "through: re-raise what is caught, or put `except RecursionError: raise` first"
 )
+RECURSION_AND_BASES = frozenset({"RecursionError", "RuntimeError", "Exception", "BaseException"})
 TEXT_CUT = re.compile(r"substr\(\s*(?:\w+\.)?text\b", re.IGNORECASE)
 TEXT_CUT_IN_SQL = (
     "a document's text cut in SQL, which walks it from its start for every chunk: "
@@ -190,6 +195,10 @@ def databases_left_open(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, call.lineno, LEFT_OPEN)
 
 
+type Tuples = Mapping[str, list[ast.expr]]
+type TuplesOf = Callable[[str], Tuples]
+
+
 def _named_tuples(tree: ast.Module) -> dict[str, list[ast.expr]]:
     found: dict[str, list[ast.expr]] = {}
     for node in tree.body:
@@ -203,26 +212,52 @@ def _named_tuples(tree: ast.Module) -> dict[str, list[ast.expr]]:
     return found
 
 
-def _caught(node: ast.expr, named: dict[str, list[ast.expr]], seen: frozenset[str]) -> Iterator[str]:
+def module_tuples(tree: ast.Module) -> Tuples:
+    return MappingProxyType(_named_tuples(canonical(tree)))
+
+
+@cache
+def first_party_tuples(module: str) -> Tuples:
+    path = Path(FIRST_PARTY, *module.split(".")).with_suffix(".py")
+    return module_tuples(ast.parse(path.read_text(encoding="utf-8"))) if path.is_file() else MappingProxyType({})
+
+
+def _caught(node: ast.expr, named: Tuples, tuples_of: TuplesOf, seen: frozenset[str]) -> Iterator[str]:
     if isinstance(node, ast.Tuple):
         for each in node.elts:
-            yield from _caught(each, named, seen)
-    elif isinstance(node, ast.Name) and node.id in named:
-        for each in () if node.id in seen else named[node.id]:
-            yield from _caught(each, named, seen | {node.id})
-    else:
-        yield ast.unparse(node).split(".")[-1]
+            yield from _caught(each, named, tuples_of, seen)
+        return
+    dotted = ast.unparse(node)
+    module, _, name = dotted.rpartition(".")
+    held = tuples_of(module) if module else named
+    if name not in held:
+        yield name
+        return
+    for each in () if dotted in seen else held[name]:
+        yield from _caught(each, held, tuples_of, seen | {dotted})
 
 
-def recursion_caught(path: str, tree: ast.Module) -> Iterator[Finding]:
+def _raises_again(handler: ast.ExceptHandler) -> bool:
+    return any(isinstance(node, ast.Raise) and node.exc is None for node in ast.walk(handler))
+
+
+def _caught_by(handler: ast.ExceptHandler, named: Tuples, tuples_of: TuplesOf) -> frozenset[str]:
+    if handler.type is None:
+        return frozenset({"BaseException"})
+    return frozenset(_caught(handler.type, named, tuples_of, frozenset()))
+
+
+def recursion_caught(path: str, tree: ast.Module, tuples_of: TuplesOf = first_party_tuples) -> Iterator[Finding]:
     named = _named_tuples(tree)
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.ExceptHandler)
-            and node.type is not None
-            and "RecursionError" in _caught(node.type, named, frozenset())
-        ):
-            yield Finding(path, node.lineno, RECURSION_CAUGHT)
+        if not isinstance(node, ast.Try | ast.TryStar):
+            continue
+        let_through = False
+        for handler in node.handlers:
+            caught, again = _caught_by(handler, named, tuples_of), _raises_again(handler)
+            if caught & RECURSION_AND_BASES and not (let_through or again):
+                yield Finding(path, handler.lineno, RECURSION_CAUGHT)
+            let_through = let_through or ("RecursionError" in caught and again)
 
 
 def _flagged(text: str) -> bool:

@@ -51,6 +51,8 @@ def _home(written: str | None, user: Path | None, cwd: Path) -> Path:
 def user_folder(home: Callable[[], Path] = Path.home) -> Path | None:
     try:
         return home()
+    except RecursionError:
+        raise
     except RuntimeError:
         return None
 
