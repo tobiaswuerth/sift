@@ -15,7 +15,7 @@ from sift.api.documents import Documents, DocumentText, Unfound
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
-from sift.api.search import Hit, SearchResult, Unsearched
+from sift.api.search import Hit, Left, SearchResult, Unsearched
 from sift.interfaces.cli.shown.collections import added, status
 from sift.interfaces.cli.shown.documents import documents
 from sift.interfaces.cli.shown.indexing import said_as_it_went
@@ -213,6 +213,14 @@ def test_a_partial_search_says_better_matches_may_be_missing() -> None:
     said = dot.join(("1 result", "keyword", "partial: better matches may be missing", "1 collection", "0.2 s"))
     assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
     assert "partial" not in hits(dataclasses.replace(found, partial=False), 0.25, "linux", PLAIN).messages[0]
+
+
+def test_what_a_search_left_out_of_a_collection_is_noted_with_its_remedy_before_the_count() -> None:
+    hit = Hit("notes/a.md", "notes", "a.md", "A", 1, 2, 1.5, None)
+    left = Left("notes", "3 of its passages hold no vector yet", "run sift embed", Problem.NOT_EMBEDDED)
+    messages = hits(SearchResult((hit,), 1, (), left_out=(left,)), 0.25, "linux", PLAIN).messages
+    assert messages[:2] == (" note  notes: 3 of its passages hold no vector yet", "  fix  run sift embed")
+    assert messages[2].startswith("1 result")
 
 
 def test_stores_ruled_out_by_the_links_are_said_apart_from_those_searched() -> None:

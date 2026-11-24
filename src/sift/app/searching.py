@@ -71,6 +71,7 @@ class Vectors:
     coded: Coded
     allowed: Passing | None = None
     unembedded: int = 0
+    unlike: StoreUnavailableError | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +111,12 @@ class Open:
         self.said(each.collection, error)
         abandon(each.transaction)
         each.resources.close()
+
+    def by_keywords_alone(self, each: Searching, error: StoreUnavailableError) -> None:
+        allowed = None if each.vectors is None else each.vectors.allowed
+        vectors = replace(no_vectors(), allowed=allowed, unlike=error)
+        self.searching[self.searching.index(each)] = replace(each, vectors=vectors)
+        self.left_out.append(keywords_alone(each.collection.name, error))
 
     def guarded[T](self, each: Searching, work: Callable[[], T]) -> T:
         try:
@@ -191,12 +198,17 @@ def embedded_by(model: str, transaction: Reading) -> Vectors | None:
 
 
 def _vectors(model: str, transaction: Reading, wants: Wants) -> Vectors:
-    found = embedded_by(model, transaction)
+    try:
+        found = embedded_by(model, transaction)
+    except StoreUnavailableError as error:
+        if wants.vectors_required or error.code is not Problem.OTHER_MODEL:
+            raise
+        return replace(no_vectors(), unlike=error)
     if found is not None:
-        return found
+        return replace(found, unembedded=left(transaction))
     if wants.vectors_required and left(transaction):
         raise StoreUnavailableError("it holds no vectors yet", UNEMBEDDED_REMEDY, code=Problem.NOT_EMBEDDED)
-    return no_vectors()
+    return replace(no_vectors(), unembedded=left(transaction))
 
 
 def _held(transaction: Reading, allowed: Passing | None, wants: Wants) -> tuple[Keywords | None, Vectors | None]:
@@ -205,13 +217,23 @@ def _held(transaction: Reading, allowed: Passing | None, wants: Wants) -> tuple[
     keywords = Keywords(lists.opened(transaction), allowed) if wants.keywords else None
     if wants.model is None:
         return keywords, None
-    return keywords, replace(_vectors(wants.model, transaction, wants), allowed=allowed, unembedded=left(transaction))
+    return keywords, replace(_vectors(wants.model, transaction, wants), allowed=allowed)
+
+
+def keywords_alone(collection: str, error: StoreUnavailableError) -> Left:
+    return Left(collection, f"{error.message}: searched by keyword alone", error.remedy, error.code)
 
 
 def _unembedded(collection: Collection, count: int) -> Left:
     holds, passed = ("holds", "it") if count == 1 else ("hold", "them")
     said = f"{count:,} of its passages {holds} no vector yet: a search by meaning passes {passed} over"
     return Left(collection.name, said, UNEMBEDDED_REMEDY, Problem.NOT_EMBEDDED)
+
+
+def _notes(collection: Collection, vectors: Vectors) -> list[Left]:
+    if vectors.unlike is not None:
+        return [keywords_alone(collection.name, vectors.unlike)]
+    return [_unembedded(collection, vectors.unembedded)] if vectors.unembedded else []
 
 
 def _out_of_time(held: Open, one: Collection, wants: Wants, expired: Expired) -> bool:
@@ -254,6 +276,6 @@ def opened(cleanup: ExitStack, asked: Narrowing, wants: Wants, expired: Expired 
             continue
         cleanup.callback(each.resources.close)
         held.searching.append(each)
-        if each.vectors is not None and each.vectors.unembedded:
-            held.left_out.append(_unembedded(one, each.vectors.unembedded))
+        if each.vectors is not None:
+            held.left_out += _notes(one, each.vectors)
     return held

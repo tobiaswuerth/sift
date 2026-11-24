@@ -47,13 +47,29 @@ def query_vector(models: Models, text: str) -> Floats:
     return vector
 
 
+def _unlike(stores: Open, model: str, query: Floats) -> list[tuple[Searching, StoreUnavailableError]]:
+    return [
+        (
+            one,
+            StoreUnavailableError(
+                f"its vectors have {vectors.coded.width:,} dimensions, the query {len(query):,}",
+                EMBED_REMEDY.format(model=model),
+                code=Problem.OTHER_MODEL,
+            ),
+        )
+        for one, vectors in stores.embedded()
+        if len(vectors.coded.ids) and vectors.coded.width != len(query)
+    ]
+
+
 def alike(stores: Open, model: str, query: Floats) -> None:
-    for one, vectors in stores.embedded():
-        width = vectors.coded.width
-        if len(vectors.coded.ids) and width != len(query):
-            said = f"its vectors have {width:,} dimensions, the query {len(query):,}"
-            refused = StoreUnavailableError(said, EMBED_REMEDY.format(model=model), code=Problem.OTHER_MODEL)
-            stores.dropped(one, refused)
+    for one, refused in _unlike(stores, model, query):
+        stores.dropped(one, refused)
+
+
+def alike_or_by_keywords(stores: Open, model: str, query: Floats) -> None:
+    for one, unlike in _unlike(stores, model, query):
+        stores.by_keywords_alone(one, unlike)
 
 
 @dataclass(frozen=True, slots=True)

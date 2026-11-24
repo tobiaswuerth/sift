@@ -6,7 +6,7 @@ from typing import NamedTuple
 
 from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.fields import FieldValue
-from sift.api.search import Unsearched
+from sift.api.search import Left, Unsearched
 from sift.api.wire import Json, encoded_error
 from sift.interfaces.console.shell import command
 from sift.interfaces.console.style import Style, Tone
@@ -53,6 +53,17 @@ def unsearched_lines(unsearched: tuple[Unsearched, ...], style: Style) -> tuple[
         for each in unsearched
         for line in (
             labelled("error", f"{each.collection}: {each.message}", Tone.ERROR, style),
+            *fix(each.remedy, style),
+        )
+    )
+
+
+def left_out_lines(left_out: tuple[Left, ...], style: Style) -> tuple[str, ...]:
+    return tuple(
+        line
+        for each in left_out
+        for line in (
+            labelled("note", f"{each.collection}: {each.message}", Tone.WARNING, style),
             *fix(each.remedy, style),
         )
     )

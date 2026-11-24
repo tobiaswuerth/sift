@@ -243,7 +243,6 @@ def _anew(transaction: Writing, made: str, start: int) -> None:
 
 
 def remake_above(transaction: Writing, place: int) -> None:
-    refuse_stale(transaction)
     _anew(transaction, remaking(fingerprint(transaction)), place)
 
 

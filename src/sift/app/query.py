@@ -16,7 +16,7 @@ from sift.app.hits import Retrieved, read
 from sift.app.keyword_candidates import Wanted, found
 from sift.app.loading import prepared
 from sift.app.searching import WATCHING, Open, Searching, Wants, Watching, despite_losses
-from sift.app.vector_candidates import QUERY_REMEDY, RESCORING, Rescoring, alike, near, query_vector
+from sift.app.vector_candidates import QUERY_REMEDY, RESCORING, Rescoring, alike_or_by_keywords, near, query_vector
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.codes import Floats
 from sift.domain.query.expressions import NOTHING, Expression
@@ -152,7 +152,7 @@ def _answered(stores: Open, asked: HybridAsked, report: Reporter) -> tuple[list[
     prepared(report, (models.prepare, models.prepare_ranker) if embedded else (models.prepare_ranker,))
     query = query_vector(models, request.query) if embedded else None
     if query is not None:
-        alike(stores, models.name, query)
+        alike_or_by_keywords(stores, models.name, query)
     ranked, cut = _ranked(stores, asked, query)
     held = ranked[: request.wanted]
     plain = [replace(each, hit=replace(each.hit, text=None)) for each in held] if request.compact else held

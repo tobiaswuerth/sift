@@ -307,8 +307,8 @@ def _indexed(one: Collection, report: Reporter, limits: Limits, readers: Readers
     report(CollectionStarted(one.name, str(one.folder)))
     try:
         with sole_writer(one.store, "sift index"), connected(one.store, one.id) as connection:
-            _remade(connection, report, limits.batches)
             _ordered(connection, report, limits.batches)
+            _remade(connection, report, limits.batches)
             if not one.folder.is_dir():
                 return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)
             return _ignoring(Job(one, connection, report, limits, readers, ocr))

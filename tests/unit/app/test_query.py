@@ -10,10 +10,10 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError
+from sift.api.errors import InvalidRequestError, Problem
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections
-from sift.api.search import SearchHybrid
+from sift.api.search import Left, SearchHybrid
 from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
@@ -236,17 +236,19 @@ def test_fewer_candidates_than_results_are_raised_to_as_many(home: Path) -> None
         (Hashed(width=32), "its vectors have 32 dimensions, the query 48"),
     ],
 )
-def test_a_collection_embedded_otherwise_is_passed_over_saying_so(
+def test_a_collection_embedded_otherwise_is_searched_by_keyword_alone_saying_so(
     home: Path, tmp_path: Path, other: Hashed, said: str
 ) -> None:
     write(tmp_path / "more" / "halo.md", "# Halo again\n\nDark matter halo models.\n")
     collection(home, tmp_path / "more", embedded=False)
     embed(home, EmbedCollections(("more",)), lambda _: None, other)
-    result = query(home, SearchHybrid("dark matter halo models"), Hashed())
-    assert "more/halo.md" not in [hit.id for hit in result.hits]
-    ((unsearched),) = result.unsearched
-    assert (unsearched.collection, unsearched.message) == ("more", said)
-    assert unsearched.remedy == EMBED_REMEDY.format(model="hashed-words")
+    asked = "dark matter halo models"
+    result = query(home, SearchHybrid(asked), Hashed())
+    (alone,) = floats(Hashed().rerank(asked, ["Halo again\n\n# Halo again\n\nDark matter halo models."]))
+    assert {hit.id: hit.score for hit in result.hits}["more/halo.md"] == alone
+    assert result.unsearched == ()
+    remedy = EMBED_REMEDY.format(model="hashed-words")
+    assert result.left_out == (Left("more", f"{said}: searched by keyword alone", remedy, Problem.OTHER_MODEL),)
 
 
 def test_a_passage_not_embedded_yet_keeps_the_reranker_s_score_as_it_is(home: Path, tmp_path: Path) -> None:

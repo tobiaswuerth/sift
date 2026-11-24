@@ -3,7 +3,7 @@ import textwrap
 from sift.api.fields import Fields
 from sift.api.search import Hit, SearchResult
 from sift.domain.text.wording import counted
-from sift.interfaces.cli.shown.outcome import Shown, empty, unsearched_lines, value_text
+from sift.interfaces.cli.shown.outcome import Shown, empty, left_out_lines, unsearched_lines, value_text
 from sift.interfaces.console.progress import DOT
 from sift.interfaces.console.style import Style
 from sift.interfaces.console.text import GAP, printable
@@ -50,4 +50,5 @@ def hits(result: SearchResult, seconds: float, platform: str, style: Style, kind
     scores = max((len(_score(hit.score)) for hit in result.hits), default=0)
     lines = [line for rank, hit in enumerate(result.hits, 1) for line in _hit(rank, hit, ranks, scores)]
     problems = unsearched_lines(result.unsearched, style)
-    return Shown(tuple(lines), (*problems, _footer(result, seconds, style, kind)))
+    notes = left_out_lines(result.left_out, style)
+    return Shown(tuple(lines), (*problems, *notes, _footer(result, seconds, style, kind)))

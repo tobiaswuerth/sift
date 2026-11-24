@@ -13,7 +13,7 @@ from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.search import search
 from sift.storage.catalog import known_collections
-from sift.storage.database import reading, rows
+from sift.storage.database import reading, rows, run, writing
 from sift.storage.store import connected
 from tests.files import write
 from tests.later import LATER
@@ -74,3 +74,16 @@ def test_an_index_orders_its_store_by_topic_once_its_chunks_got_codes_and_finds_
     assert found(home) == before
     assert PhaseStarted(Phase.ORDER, None) not in indexed(home)
     assert placed(home) == ordered
+
+
+def test_a_store_whose_keywords_are_stale_when_its_order_is_due_is_remade_once(home: Path) -> None:
+    indexed(home)
+    before = found(home)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    (one,) = known_collections(home)
+    with connected(one.store, one.id) as connection, writing(connection) as transaction:
+        run(transaction, "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
+    phases = [event.phase for event in indexed(home) if isinstance(event, PhaseStarted)]
+    assert phases[:2] == [Phase.ORDER, Phase.REMAKE]
+    assert phases.count(Phase.REMAKE) == 1
+    assert found(home) == before
