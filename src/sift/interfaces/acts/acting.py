@@ -29,6 +29,7 @@ class Act[R, A]:
     name: str
     request: type[R]
     run: Callable[[Acting, R], A]
+    writes: bool = False
 
 
 def answer_kind[R, A](act: Act[R, A]) -> type[A]:

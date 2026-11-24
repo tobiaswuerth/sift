@@ -57,7 +57,6 @@ SERVE = "serve"
 JSON_HELP = "answer in JSON"
 COLOR_HELP = "colour what sift says"
 VERSION_HELP = "say which sift this is"
-WRITERS = frozenset({"index", "embed"})
 COMMANDS_PACKAGE = "sift.interfaces.cli.commands"
 
 
@@ -292,17 +291,18 @@ def _server(settings: Settings, command: str) -> Endpoint | None:
 def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log: Log | None) -> Shown:
     told = live if log is None else heard_too(live, log, host.clock)
     server: Endpoint | None = None
+    command = command_of(chosen.command)
     try:
         server = _server(settings, chosen.command)
         context = Context(settings, host.platform, chosen.json, chosen.style, told, host.clock, server)
         with ticking(told.tick):
-            return command_of(chosen.command).run(chosen.namespace, context)
+            return command.run(chosen.namespace, context)
     except (SiftError, OSError) as error:
         return failure(error, chosen.style, as_json=chosen.json, flags=flags(ENTRIES[chosen.command].request))
     except KeyboardInterrupt:
         if log is not None:
             log.stopped()
-        if chosen.command in WRITERS:
+        if command.writes:
             raise StoppedError(STOPPED_WRITING if server is None else STOPPED_WATCHING) from None
         raise
     except Exception:

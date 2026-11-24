@@ -2,11 +2,12 @@ import dataclasses
 import io
 from pathlib import Path
 
-from sift.interfaces.cli.main import Host, run
+from sift.interfaces.cli.main import STOPPED_WATCHING, Host, run
 from sift.settings import Settings
 from tests.serving import VERSION, counted, running
 from tests.surface.commands import indexed_notes
 
+NEWLINE = "\n"
 ASKED = (
     ("status",),
     ("status", "--json"),
@@ -84,6 +85,14 @@ def test_a_home_process_of_another_sift_is_refused_saying_what_to_do(settings: S
         refused = ran(settings, "status")
     said = f"error  the home process runs sift 1.0.0, this is sift {VERSION}\n"
     assert refused == (1, "", said + "  fix  stop sift serve where it runs, and start it again with this sift\n")
+
+
+def test_an_interrupt_while_watching_a_served_move_says_it_goes_on(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    with running(settings):
+        out, err = io.StringIO(), io.StringIO()
+        assert run(("move", "notes", str(settings.cwd / "elsewhere")), settings, out, err, Host(clock=_stopped)) == 130
+    assert (out.getvalue(), err.getvalue()) == ("", STOPPED_WATCHING + NEWLINE)
 
 
 def test_an_interrupt_while_watching_the_home_process_leaves_the_command_to_it(settings: Settings, notes: Path) -> None:

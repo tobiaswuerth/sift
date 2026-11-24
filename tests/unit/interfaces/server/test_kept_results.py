@@ -151,7 +151,7 @@ def test_an_answer_found_while_the_home_is_written_is_not_kept(settings: Setting
         return SearchResult((), 0, ())
 
     ran = list[str]()
-    index = handled(Act("index", IndexCollections, writing), writes=True)[1]
+    index = handled(Act("index", IndexCollections, writing, writes=True))[1]
     blocked = {**answering([SearchResult((HIT,), 1, ())], ran), "index": index}
     with running(settings, blocked) as server:
         write_thread = threading.Thread(target=asked, args=(server, "index", {}))

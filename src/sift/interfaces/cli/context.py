@@ -32,6 +32,7 @@ class Answer(Protocol):
 @dataclass(frozen=True, slots=True)
 class Command:
     run: Callable[[argparse.Namespace, Context], Shown]
+    writes: bool = False
 
 
 class Commands(Protocol):

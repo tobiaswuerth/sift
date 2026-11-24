@@ -16,28 +16,26 @@ class Handled:
     alone: bool = False
 
 
-def handled[R, A](
-    act: Act[R, A], *, writes: bool = False, kept: bool = False, alone: bool = False
-) -> tuple[str, Handled]:
+def handled[R, A](act: Act[R, A], *, kept: bool = False, alone: bool = False) -> tuple[str, Handled]:
     def run(acting: Acting, data: object) -> A:
         return act.run(acting, decoded(act.request, data))
 
     def key(data: object) -> str:
         return json.dumps([act.name, encoded(decoded(act.request, data))], sort_keys=True)
 
-    return act.name, Handled(run, writes, key if kept else None, alone=alone)
+    return act.name, Handled(run, act.writes, key if kept else None, alone=alone)
 
 
 HANDLED: Mapping[str, Handled] = MappingProxyType(
     dict(
         (
-            handled(collections.ADD, writes=True),
-            handled(collections.REMOVE, writes=True, alone=True),
-            handled(collections.MOVE, writes=True, alone=True),
-            handled(collections.ACTIVATE, writes=True),
-            handled(collections.DEACTIVATE, writes=True),
-            handled(indexing.INDEX, writes=True),
-            handled(indexing.EMBED, writes=True),
+            handled(collections.ADD),
+            handled(collections.REMOVE, alone=True),
+            handled(collections.MOVE, alone=True),
+            handled(collections.ACTIVATE),
+            handled(collections.DEACTIVATE),
+            handled(indexing.INDEX),
+            handled(indexing.EMBED),
             handled(collections.STATUS),
             handled(collections.GET),
             handled(searching.SEARCH, kept=True),

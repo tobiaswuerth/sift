@@ -60,7 +60,7 @@ def command[R, A: Answer](
         found = Shown((as_json(answer),), ()) if context.json else show(answer, context.platform, context.style)
         return found._replace(code=FAILED if failed(answer) else DONE)
 
-    return Command(run)
+    return Command(run, writes=act.writes)
 
 
 def searched[R](act: Act[R, SearchResult], kind: str) -> Command:
@@ -84,4 +84,4 @@ def needing_collections(made: Command) -> Command:
             return empty(context.platform, context.style)
         return made.run(namespace, context)
 
-    return Command(run)
+    return Command(run, writes=made.writes)
