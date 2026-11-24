@@ -1,12 +1,16 @@
 import io
 import json
+import threading
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from sift.api.collections import Counted, ShowStatus
+from sift.app.collections import status
 from sift.interfaces.cli.main import Host, run
 from sift.settings import Settings
+from tests.files import write
 from tests.surface.commands import indexed_notes, ran
 
 
@@ -166,6 +170,34 @@ def test_an_interrupt_says_what_was_kept_where_sift_writes_and_ends_with_130(set
         out, err = io.StringIO(), io.StringIO()
         assert run(argv, settings, out, err, Host(clock=_stopped)) == 130
         assert (out.getvalue(), err.getvalue()) == ("", said)
+
+
+def documents_of(settings: Settings) -> int:
+    (one,) = status(settings.home, ShowStatus()).collections
+    return one.contents.documents if isinstance(one.contents, Counted) else 0
+
+
+def test_an_index_stopped_after_its_first_write_says_how_many_files_it_kept_and_what_next(
+    settings: Settings, tmp_path: Path
+) -> None:
+    for number in range(150):
+        write(tmp_path / "notes" / f"{number}.md", f"# Note {number}\n")
+    assert ran(settings, "add", str(tmp_path / "notes"))[0] == 0
+
+    written = list[int]()
+
+    def stopped_once_written() -> float:
+        if threading.current_thread() is threading.main_thread() and documents_of(settings):
+            if written:
+                raise KeyboardInterrupt
+            written.append(documents_of(settings))
+        return 0.0
+
+    err = io.StringIO()
+    assert run(("index",), settings, io.StringIO(), err, Host(clock=stopped_once_written)) == 130
+    said = "stopped: 100 files of notes are kept; the others are read again\n next  sift index notes\n"
+    assert (err.getvalue().endswith(said), documents_of(settings)) == (True, 100)
+    assert "+50  " in ran(settings, "index")[2]
 
 
 def test_a_stream_that_cannot_print_the_glyphs_gets_ascii_ones(settings: Settings, notes: Path) -> None:

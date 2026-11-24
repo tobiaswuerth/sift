@@ -2,7 +2,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TypeGuard
 
-from sift.api.events import Advanced, Noted
+from sift.api.events import Advanced, FilesKept, Noted
 from sift.app.filing import Job, Limits, Tally, too_large_to_describe
 from sift.app.records import stored_records
 from sift.app.scans import ScanRun, ScansRead, scans_read
@@ -100,10 +100,15 @@ class _Run:
     files: Mapping[str, Stat]
     identities: Mapping[str, Identity]
     done: int = 0
+    written: int = 0
 
     def advanced(self) -> None:
         self.done += 1
         self.job.report(Advanced(self.done))
+
+    def kept(self, files: int) -> None:
+        self.written += files
+        self.job.report(FilesKept(self.written))
 
     def asked(self, path: str) -> ToRead:
         job = self.job
@@ -164,6 +169,7 @@ def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str
                     tally += _refused(transaction, path, files[path], refused, release)
             run.advanced()
         clear_unreadable(transaction, whole)
+    run.kept(len(read) + len(notes))
     for path, outcome in read:
         if isinstance(outcome, FileRead) and outcome.problems:
             job.report(Noted(f"{path}: {PROBLEMS_APART.join(outcome.problems)}"))
@@ -193,10 +199,12 @@ def read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat], identi
     for path in (path for path in plan.read if streamed(path)):
         tally += stored_records(job, path, files[path], job.collection.choices.records, identities.get(path))
         run.advanced()
+        run.kept(1)
     whole = tuple(path for path in plan.read if not streamed(path))
     with job.readers.files() as read_files, job.readers.scanning.pictures() as picturing:
         scans = ScanRun(job.ocr, picturing, job.report)
-        for batch in batches(whole, files, limits.most_files_a_write, limits.most_bytes_a_write):
+        written = (limits.first_files_a_write, limits.most_files_a_write, limits.most_bytes_a_write)
+        for batch in batches(whole, files, *written):
             tally += _batch_stored(run, read_files, scans, batch)
     return tally
 

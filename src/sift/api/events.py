@@ -34,6 +34,11 @@ class Advanced:
 
 
 @dataclass(frozen=True, slots=True)
+class FilesKept:
+    files: int
+
+
+@dataclass(frozen=True, slots=True)
 class PhaseDone:
     count: int
 
@@ -58,10 +63,15 @@ class Listening:
     home: str
 
 
-type Event = CollectionStarted | PhaseStarted | Advanced | PhaseDone | Noted | Finished | Listening
+type Event = CollectionStarted | PhaseStarted | Advanced | FilesKept | PhaseDone | Noted | Finished | Listening
 type Reporter = Callable[[Event], None]
-type EventKind = type[CollectionStarted | PhaseStarted | Advanced | PhaseDone | Noted | Finished | Listening]
+type EventKind = type[
+    CollectionStarted | PhaseStarted | Advanced | FilesKept | PhaseDone | Noted | Finished | Listening
+]
 
 EVENT_KINDS: Mapping[str, EventKind] = MappingProxyType(
-    {kind.__name__: kind for kind in (CollectionStarted, PhaseStarted, Advanced, PhaseDone, Noted, Finished, Listening)}
+    {
+        kind.__name__: kind
+        for kind in (CollectionStarted, PhaseStarted, Advanced, FilesKept, PhaseDone, Noted, Finished, Listening)
+    }
 )

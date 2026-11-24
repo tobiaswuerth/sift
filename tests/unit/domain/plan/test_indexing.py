@@ -155,19 +155,21 @@ def test_a_plan_reads_drops_and_keeps_what_it_should(
 
 def test_files_are_read_in_batches_of_so_many_files_and_bytes() -> None:
     stats = {"a": Stat(0, 5), "b": Stat(0, 5), "c": Stat(0, 5), "big": Stat(0, 50), "d": Stat(0, 1)}
-    assert batches(["a", "b", "c", "big", "d"], stats, 2, 12) == (("a", "b"), ("c",), ("big",), ("d",))
-    assert batches([], stats, 2, 12) == ()
+    assert batches(["a", "b", "c", "big", "d"], stats, 2, 2, 12) == (("a", "b"), ("c",), ("big",), ("d",))
+    assert batches(["a", "b", "c", "big", "d"], stats, 1, 2, 12) == (("a",), ("b", "c"), ("big",), ("d",))
+    assert batches(["a", "b", "c"], stats, 5, 2, 12) == (("a", "b"), ("c",))
+    assert batches([], stats, 1, 2, 12) == ()
 
 
-@given(st.lists(st.integers(0, 20), max_size=30), st.integers(1, 5), st.integers(1, 30))
+@given(st.lists(st.integers(0, 20), max_size=30), st.integers(1, 5), st.integers(1, 5), st.integers(1, 30))
 def test_a_batch_holds_at_most_so_many_files_and_bytes_unless_one_file_is_more(
-    sizes: list[int], most_files: int, most_bytes: int
+    sizes: list[int], first_files: int, most_files: int, most_bytes: int
 ) -> None:
     stats = {str(n): Stat(0, size) for n, size in enumerate(sizes)}
-    found = batches(list(stats), stats, most_files, most_bytes)
+    found = batches(list(stats), stats, first_files, most_files, most_bytes)
     assert [path for batch in found for path in batch] == list(stats)
-    for batch in found:
-        assert 0 < len(batch) <= most_files
+    for at, batch in enumerate(found):
+        assert 0 < len(batch) <= (min(first_files, most_files) if at == 0 else most_files)
         assert len(batch) == 1 or sum(stats[path].size for path in batch) <= most_bytes
 
 

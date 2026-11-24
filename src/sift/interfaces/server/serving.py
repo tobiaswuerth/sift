@@ -4,6 +4,7 @@ import secrets
 import signal
 import socket
 import threading
+import time
 from collections.abc import Callable, Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -119,6 +120,7 @@ class Serve:
     handled: Mapping[str, Handled] = HANDLED
     alive_every: float = ALIVE_SECONDS
     grace_seconds: int = GRACE_SECONDS
+    clock: Callable[[], float] = time.perf_counter
 
 
 SERVE = Serve()
@@ -142,7 +144,7 @@ def held(
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version)
         kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
-        serving = Serving(settings, endpoint.token, *kept, writer, pool, how.alive_every)
+        serving = Serving(settings, endpoint.token, *kept, writer, pool, how.alive_every, clock=how.clock)
         app = served_app(serving, how.handled)
         config = uvicorn.Config(
             app, log_config=None, access_log=False, lifespan="off", timeout_graceful_shutdown=how.grace_seconds

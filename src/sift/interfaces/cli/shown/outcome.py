@@ -7,6 +7,8 @@ from sift.api.errors import InvalidRequestError, JobStoppedError, SiftError, sys
 from sift.api.fields import FieldValue
 from sift.api.search import Left, Unsearched
 from sift.api.wire import Json, encoded_error
+from sift.domain.text.wording import counted
+from sift.interfaces.console.progress import View
 from sift.interfaces.console.shell import command
 from sift.interfaces.console.style import Style, Tone
 from sift.interfaces.console.text import labelled, printable_json
@@ -16,6 +18,8 @@ EXIT_CODES: MappingProxyType[type[SiftError], int] = MappingProxyType(
     {InvalidRequestError: USAGE, JobStoppedError: INTERRUPTED}
 )
 NO_FLAGS: Mapping[str, str] = MappingProxyType({})
+STOPPED_WRITING = "stopped: what was written so far is kept"
+STOPPED_KEEPING = "stopped: {files} of {name} are kept; the others are read again"
 
 
 class Shown(NamedTuple):
@@ -30,6 +34,13 @@ def fix(remedy: str | None, style: Style) -> tuple[str, ...]:
 
 def next_step(words: tuple[str, ...], platform: str, style: Style) -> str:
     return labelled("next", command(words, platform), Tone.SECONDARY, style)
+
+
+def stopped_writing(view: View, platform: str, style: Style) -> tuple[str, ...]:
+    if view.kept is None:
+        return (STOPPED_WRITING,)
+    said = STOPPED_KEEPING.format(files=counted(view.kept, "file"), name=view.name)
+    return said, next_step(("sift", "index", view.name), platform, style)
 
 
 def empty(platform: str, style: Style) -> Shown:

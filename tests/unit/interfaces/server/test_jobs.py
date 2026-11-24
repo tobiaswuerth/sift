@@ -16,18 +16,9 @@ from sift.interfaces.server.endpoint import ENDPOINT, found
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import STOPPING, HomeServer, Serve, held, serve
 from sift.settings import Settings
-from tests.serving import Line, asked, last, running, streaming
+from tests.serving import Line, asked, last, running, streaming, until
 
 STEPS = 1_000_000
-
-
-def until(holds: Callable[[], bool]) -> bool:
-    waited = threading.Event()
-    for _ in range(3000):
-        if holds():
-            return True
-        waited.wait(0.01)
-    return False
 
 
 def endless(started: threading.Event, ended: list[str]) -> Callable[[Acting, object], object]:

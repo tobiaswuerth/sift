@@ -11,7 +11,17 @@ import pytest
 from sift.api.collections import AddCollection, Counted, ShowStatus, TitleFrom, UnreadableFile
 from sift.api.documents import GetDocuments
 from sift.api.errors import NotFoundError
-from sift.api.events import Advanced, CollectionStarted, Event, Finished, Noted, Phase, PhaseDone, PhaseStarted
+from sift.api.events import (
+    Advanced,
+    CollectionStarted,
+    Event,
+    FilesKept,
+    Finished,
+    Noted,
+    Phase,
+    PhaseDone,
+    PhaseStarted,
+)
 from sift.api.ids import CollectionId
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import add, status
@@ -93,6 +103,7 @@ def test_indexing_says_what_it_does_as_it_goes(home: Path, notes: Path) -> None:
         Advanced(1),
         Advanced(2),
         Advanced(3),
+        FilesKept(3),
         PhaseDone(3),
         Finished(3, 0, 0, 0),
     ]

@@ -112,14 +112,15 @@ def dropping(paths: Sequence[str]) -> IndexPlan:
 
 
 def batches(
-    paths: Sequence[str], stats: Mapping[str, Stat], most_files: int, most_bytes: int
+    paths: Sequence[str], stats: Mapping[str, Stat], first_files: int, most_files: int, most_bytes: int
 ) -> tuple[tuple[str, ...], ...]:
     done: list[tuple[str, ...]] = []
     batch: list[str] = []
     held = 0
     for path in paths:
         size = stats[path].size
-        if batch and (len(batch) == most_files or held + size > most_bytes):
+        files = min(first_files, most_files) if not done else most_files
+        if batch and (len(batch) == files or held + size > most_bytes):
             done.append(tuple(batch))
             batch, held = [], 0
         batch.append(path)

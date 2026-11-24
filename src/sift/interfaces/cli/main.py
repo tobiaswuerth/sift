@@ -32,7 +32,7 @@ from sift.interfaces.cli.arguments import arguments, flags, options
 from sift.interfaces.cli.context import Command, Commands, Context
 from sift.interfaces.cli.logs import FOLDER, LOGGED, Log, heard_too, kept
 from sift.interfaces.cli.notice import noticed
-from sift.interfaces.cli.shown.outcome import FAILED, INTERRUPTED, Shown, failure
+from sift.interfaces.cli.shown.outcome import FAILED, INTERRUPTED, Shown, failure, stopped_writing
 from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
 from sift.interfaces.console.streams import ReaderLeftError, columns, is_terminal, let_go, say, utf8, write_results
@@ -50,7 +50,6 @@ NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
 ONE_VALUE = re.compile(r"argument (\S+?)(?:/\S+)?: expected one argument")
 REQUIRED = "the following arguments are required: "
 OWN_FLAGS = frozenset({"--json", "--color", "-h", "--help"})
-STOPPED_WRITING = "stopped: what was written so far is kept"
 STOPPED_WATCHING = "stopped watching: the home process goes on with it; sift jobs lists it and stops it"
 OTHER_SIFT_REMEDY = "stop sift serve where it runs, and start it again with this sift"
 SERVE = "serve"
@@ -152,9 +151,9 @@ def _version() -> str:
 
 
 class StoppedError(Exception):
-    said: str
+    said: tuple[str, ...]
 
-    def __init__(self, said: str) -> None:
+    def __init__(self, said: tuple[str, ...]) -> None:
         super().__init__(said)
         self.said = said
 
@@ -304,7 +303,8 @@ def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log:
         if log is not None:
             log.stopped()
         if command.writes:
-            raise StoppedError(STOPPED_WRITING if server is None else STOPPED_WATCHING) from None
+            kept = stopped_writing(live.view, host.platform, chosen.style)
+            raise StoppedError(kept if server is None else (STOPPED_WATCHING,)) from None
         raise
     except Exception:
         if log is not None:
@@ -369,7 +369,7 @@ def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO
         say(err, failure(error, PLAIN).messages)
         return FAILED
     except StoppedError as stopped:
-        say(err, (stopped.said,))
+        say(err, stopped.said)
         return INTERRUPTED
     except KeyboardInterrupt:
         return INTERRUPTED

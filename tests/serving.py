@@ -2,7 +2,7 @@ import dataclasses
 import http.client
 import json
 import threading
-from collections.abc import Generator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from importlib.metadata import version
 from types import MappingProxyType
@@ -13,7 +13,7 @@ from sift.api.serving import ServeHome
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.app import ALIVE_SECONDS
 from sift.interfaces.server.handled import HANDLED, Handled
-from sift.interfaces.server.serving import HomeServer, Serve, held
+from sift.interfaces.server.serving import SERVE, HomeServer, Serve, held
 from sift.settings import Settings
 
 VERSION = version("sift-rag")
@@ -25,9 +25,10 @@ def running(
     handled: Mapping[str, Handled] = HANDLED,
     of: str = VERSION,
     alive_every: float = ALIVE_SECONDS,
+    clock: Callable[[], float] = SERVE.clock,
 ) -> Generator[HomeServer]:
-    heard = list[Event]()
-    with held(settings, ServeHome(port=0), of, heard.append, Serve(handled=handled, alive_every=alive_every)) as server:
+    heard, how = list[Event](), Serve(handled=handled, alive_every=alive_every, clock=clock)
+    with held(settings, ServeHome(port=0), of, heard.append, how) as server:
         thread = threading.Thread(target=server.server.run, kwargs={"sockets": [server.socket]}, daemon=True)
         thread.start()
         waited = threading.Event()
@@ -43,6 +44,15 @@ def running(
 
 
 type Line = dict[str, object]
+
+
+def until(holds: Callable[[], bool]) -> bool:
+    waited = threading.Event()
+    for _ in range(3000):
+        if holds():
+            return True
+        waited.wait(0.01)
+    return False
 
 
 def asked(

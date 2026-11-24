@@ -25,6 +25,7 @@ class Limits:
     most_record_characters: int = MOST_RECORD_CHARACTERS
     most_file_bytes: int = MOST_FILE_BYTES
     most_description_bytes: int = MOST_DESCRIPTION_BYTES
+    first_files_a_write: int = 100
     most_files_a_write: int = 1000
     most_bytes_a_write: int = 64 << 20
     most_records_a_write: int = 2000

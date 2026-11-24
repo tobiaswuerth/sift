@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import json
 import logging
+import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -30,6 +31,7 @@ from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.gate import Gate
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.jobs import HeldJob, Jobs
+from sift.interfaces.server.progress import Coalesced
 from sift.interfaces.server.results import KeptResults, Moment
 from sift.settings import Settings
 from sift.storage.catalog import known_collections
@@ -71,6 +73,7 @@ class Serving:
     alive_every: float = ALIVE_SECONDS
     gate: Gate = field(default_factory=Gate)
     jobs: Jobs = field(default_factory=Jobs)
+    clock: Callable[[], float] = time.perf_counter
 
 
 def _line(value: Json) -> bytes:
@@ -134,12 +137,12 @@ def _moment(serving: Serving) -> Moment:
     return Moment(serving.results.seen(), serving.watch.seen())
 
 
-def _read(serving: Serving, handled: Handled, data: object, report: Reporter, noted: list[Noted]) -> object:
+def _read(serving: Serving, handled: Handled, data: object, report: Reporter, noted: threading.Event) -> object:
     with serving.gate.shared(report):
         return _answered(serving, handled, data, report, noted)
 
 
-def _answered(serving: Serving, handled: Handled, data: object, report: Reporter, noted: list[Noted]) -> object:
+def _answered(serving: Serving, handled: Handled, data: object, report: Reporter, noted: threading.Event) -> object:
     if handled.kept is None:
         return handled.run(_acting(serving, report), data)
     key = handled.kept(data)
@@ -148,7 +151,7 @@ def _answered(serving: Serving, handled: Handled, data: object, report: Reporter
     if found is not None:
         return found
     answer = handled.run(_acting(serving, report), data)
-    if not noted:
+    if not noted.is_set():
         serving.results.keep(key, answer, before, _moment(serving))
     return answer
 
@@ -160,7 +163,7 @@ class _Sent:
     data: object
 
 
-def _answer(serving: Serving, asked: _Sent, report: Reporter, noted: list[Noted], job: HeldJob | None) -> object:
+def _answer(serving: Serving, asked: _Sent, report: Reporter, noted: threading.Event, job: HeldJob | None) -> object:
     if job is None:
         return _read(serving, asked.handled, asked.data, report, noted)
     serving.jobs.began(job)
@@ -171,13 +174,14 @@ def _answer(serving: Serving, asked: _Sent, report: Reporter, noted: list[Noted]
 class _Lines:
     loop: asyncio.AbstractEventLoop
     queue: "asyncio.Queue[tuple[bytes, ...]]"
+    gone: threading.Event
 
     def put(self, *lines: bytes) -> None:
-        if not self.loop.is_closed():
+        if not self.gone.is_set() and not self.loop.is_closed():
             self.loop.call_soon_threadsafe(self.queue.put_nowait, lines)
 
 
-def _final(serving: Serving, sent: _Sent, report: Reporter, noted: list[Noted], job: HeldJob | None) -> bytes:
+def _final(serving: Serving, sent: _Sent, report: Reporter, noted: threading.Event, job: HeldJob | None) -> bytes:
     started = time.perf_counter()
     try:
         answer = _answer(serving, sent, report, noted, job)
@@ -196,17 +200,18 @@ def _final(serving: Serving, sent: _Sent, report: Reporter, noted: list[Noted], 
 
 
 def _ran(serving: Serving, sent: _Sent, lines: _Lines, job: HeldJob | None) -> None:
-    noted: list[Noted] = []
+    noted = threading.Event()
 
-    def report(event: Event) -> None:
+    def said(event: Event) -> None:
         if isinstance(event, Noted):
-            noted.append(event)
+            noted.set()
         lines.put(_line({"event": type(event).__name__, "data": encoded(event)}))
 
-    final: tuple[bytes, ...] = ()
+    report, final = Coalesced(said, serving.clock), tuple[bytes, ...]()
     try:
         final = (_final(serving, sent, report, noted, job),)
     finally:
+        report.flush()
         if job is not None:
             serving.jobs.ended(job)
         lines.put(*final, END)
@@ -219,7 +224,7 @@ def _waiting(serving: Serving, job: HeldJob) -> Iterator[bytes]:
 
 
 async def _streamed(serving: Serving, name: str, handled: Handled, data: object) -> AsyncIterator[bytes]:
-    lines = _Lines(asyncio.get_running_loop(), asyncio.Queue())
+    lines = _Lines(asyncio.get_running_loop(), asyncio.Queue(), threading.Event())
     job = serving.jobs.queued(name) if handled.writes else None
     if job is not None:
         for line in _waiting(serving, job):
@@ -241,6 +246,7 @@ async def _streamed(serving: Serving, name: str, handled: Handled, data: object)
                 break
             getting = asyncio.ensure_future(lines.queue.get())
     finally:
+        lines.gone.set()
         getting.cancel()
         if job is not None and not ran.done():
             job.watched = False

@@ -5,6 +5,7 @@ from sift.api.events import (
     Advanced,
     CollectionStarted,
     Event,
+    FilesKept,
     Finished,
     Listening,
     Noted,
@@ -58,6 +59,7 @@ class View:
     collections: int = 0
     started: float = 0.0
     running: Running | None = None
+    kept: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,20 +118,26 @@ def _header(started: CollectionStarted, style: Style) -> str:
     return f"{paint(name, Tone.STRONG, style)}  {paint(folder, Tone.SECONDARY, style)}"
 
 
+def _progressed(view: View, event: Advanced | FilesKept) -> View:
+    if isinstance(event, FilesKept):
+        return replace(view, kept=event.files)
+    running = view.running
+    return view if running is None else replace(view, running=replace(running, done=event.done))
+
+
 def shown(view: View, event: Event, now: float, looks: Looks) -> tuple[View, tuple[str, ...]]:
     match event:
         case CollectionStarted():
             gap = ("",) if view.collections else ()
             return View(event.name, view.collections + 1, now), (*gap, _header(event, looks.style))
         case PhaseStarted():
-            return replace(view, running=Running(event.phase, event.total, 0, now)), ()
-        case Advanced():
-            running = view.running
-            return (view if running is None else replace(view, running=replace(running, done=event.done))), ()
+            return replace(view, running=Running(event.phase, event.total, 0, now), kept=None), ()
+        case Advanced() | FilesKept():
+            return _progressed(view, event), ()
         case PhaseDone():
             running = view.running
             lines = () if running is None else (_row(running, event.count, now, looks.style),)
-            return replace(view, running=None), lines
+            return replace(view, running=None, kept=None), lines
         case Noted() | Listening():
             return view, _said(event, looks.style)
         case _:
