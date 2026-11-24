@@ -1,9 +1,9 @@
 import argparse
-import dataclasses
 import json
 from collections.abc import Callable
 
 from sift.api.search import SearchResult
+from sift.api.wire import encoded
 from sift.app.collections import chosen
 from sift.interfaces.cli.arguments import request_of
 from sift.interfaces.cli.context import Answer, Command, Context
@@ -14,7 +14,7 @@ from sift.interfaces.console.text import printable_json
 
 
 def as_json(answer: Answer) -> str:
-    return printable_json(json.dumps(dataclasses.asdict(answer), ensure_ascii=False, indent=2))
+    return printable_json(json.dumps(encoded(answer), ensure_ascii=False, indent=2))
 
 
 def never(_: object) -> bool:

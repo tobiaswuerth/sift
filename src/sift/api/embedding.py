@@ -3,10 +3,11 @@ from typing import Annotated, Literal
 
 from sift.api.described import Help
 from sift.api.indexing import Skipped
+from sift.api.requests import Request
 
 
 @dataclass(frozen=True, slots=True)
-class EmbedCollections:
+class EmbedCollections(Request):
     names: Annotated[tuple[str, ...], Help("the collections to embed (default: every active one)")] = ()
     reset: Annotated[bool, Help("forget every collection's vectors and embed them again with the model now set")] = (
         False

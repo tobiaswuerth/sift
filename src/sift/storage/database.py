@@ -8,7 +8,7 @@ from pathlib import Path, PurePath
 from typing import NamedTuple, cast
 from urllib.parse import quote
 
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import Problem, StoreUnavailableError
 from sift.domain.plan.segments import POLICY, Policy
 
 BUSY_TIMEOUT_SECONDS = 30
@@ -76,6 +76,7 @@ def require_sqlite(version: tuple[int, int, int]) -> None:
         raise StoreUnavailableError(
             f"this Python was built with SQLite {found}, which lacks what sift's stores need",
             f"run sift on a Python with SQLite {needed} or newer, as uv, python.org and Homebrew install",
+            code=Problem.SQLITE_TOO_OLD,
         )
 
 

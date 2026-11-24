@@ -2,7 +2,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import Problem, StoreUnavailableError
 from sift.storage.database import Reading, Writing, rows, run
 
 type Step = str | Callable[[Writing], None]
@@ -20,7 +20,9 @@ def version(transaction: Reading) -> int:
 
 def newer(path: Path, found: int, known: int) -> StoreUnavailableError:
     return StoreUnavailableError(
-        f"{path} was written by a newer sift (layout {found}; this sift knows up to {known})", "upgrade sift"
+        f"{path} was written by a newer sift (layout {found}; this sift knows up to {known})",
+        "upgrade sift",
+        code=Problem.STORE_NEWER,
     )
 
 

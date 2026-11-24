@@ -14,8 +14,8 @@ from sift.api.search import MOST_HITS, Hit, SearchHybrid, SearchResult
 from sift.app import hits, searching
 from sift.app.hits import Retrieved, read
 from sift.app.keyword_candidates import Wanted, found
-from sift.app.loading import prepared, unreported
-from sift.app.searching import Open, Searching, Wants, despite_losses
+from sift.app.loading import prepared
+from sift.app.searching import WATCHING, Open, Searching, Wants, Watching, despite_losses
 from sift.app.vector_candidates import QUERY_REMEDY, RESCORING, Rescoring, alike, near, query_vector
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.codes import Floats
@@ -24,7 +24,7 @@ from sift.domain.query.grammar import parsed
 from sift.domain.rank.best import Best
 from sift.domain.rank.hybrid import blend, named, passage, words
 from sift.inference.models import Models
-from sift.retrieval.keyword.search import TUNING, never
+from sift.retrieval.keyword.search import TUNING, Expired
 
 EMPTY_REMEDY = "ask a question, e.g. how dark matter halos form"
 WIDER = 2
@@ -35,6 +35,7 @@ class Gathered:
     candidates: list[Retrieved]
     cosines: dict[int, float]
     full: bool
+    cut: bool
 
 
 def _any_word(text: str) -> Expression:
@@ -42,14 +43,27 @@ def _any_word(text: str) -> Expression:
     return parsed(" OR ".join(f'"{word}"' for word in found_words)) if found_words else NOTHING
 
 
-def _candidates(
-    stores: Open, request: SearchHybrid, query: Floats | None, asked: Rescoring, wanted: int
-) -> tuple[list[int], bool]:
-    by_document = not request.all_passages
-    keyword = found(stores, Wanted(wanted, by_document, TUNING, never), _any_word(request.query))
-    semantic = near(stores, Best(wanted, by_document), query, asked) if query is not None else ()
+@dataclass(frozen=True, slots=True)
+class HybridAsked:
+    request: SearchHybrid
+    models: Models
+    rescoring: Rescoring
+    expired: Expired
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateChunks:
+    chunks: list[int]
+    full: bool
+    cut: bool
+
+
+def _candidates(stores: Open, asked: HybridAsked, query: Floats | None, wanted: int) -> CandidateChunks:
+    by_document = not asked.request.all_passages
+    keyword = found(stores, Wanted(wanted, by_document, TUNING, asked.expired), _any_word(asked.request.query))
+    semantic = near(stores, Best(wanted, by_document), query, asked.rescoring) if query is not None else ()
     chunks = list(dict.fromkeys([each.chunk for each in keyword.found] + [each.chunk for each in semantic]))
-    return chunks, len(keyword.found) >= wanted or len(semantic) >= wanted
+    return CandidateChunks(chunks, len(keyword.found) >= wanted or len(semantic) >= wanted, keyword.cut)
 
 
 def _cosines(one: Searching, chunks: Sequence[int], query: Floats, asked: Rescoring) -> dict[int, float]:
@@ -62,18 +76,18 @@ def _embedded(one: Searching) -> bool:
     return one.vectors is not None and bool(len(one.vectors.coded.ids))
 
 
-def _gathered(stores: Open, query: Floats | None, asked: Rescoring, request: SearchHybrid, wanted: int) -> Gathered:
-    chunks, full = _candidates(stores, request, query, asked, wanted)
+def _gathered(stores: Open, query: Floats | None, asked: HybridAsked, wanted: int) -> Gathered:
+    found_now = _candidates(stores, asked, query, wanted)
     candidates: list[Retrieved] = []
     cosines: dict[int, float] = {}
     for one in list(stores.searching):
-        mine = [chunk for chunk in chunks if owner(chunk) == one.collection.id]
+        mine = [chunk for chunk in found_now.chunks if owner(chunk) == one.collection.id]
         if not mine:
             continue
         candidates += stores.guarded(one, partial(read, one, mine, dict.fromkeys(mine, 0.0), whole=True))
         if query is not None and _embedded(one):
-            cosines |= stores.guarded(one, partial(_cosines, one, mine, query, asked))
-    return Gathered(candidates, cosines, full)
+            cosines |= stores.guarded(one, partial(_cosines, one, mine, query, asked.rescoring))
+    return Gathered(candidates, cosines, found_now.full, found_now.cut)
 
 
 def _values(value: FieldValue) -> list[str]:
@@ -116,34 +130,33 @@ def _ordered(request: SearchHybrid, candidates: list[Retrieved], scores: Floats)
     return ranked if request.all_passages else hits.one_each(_first_of_each(ranked))
 
 
-def _ranked(
-    stores: Open, request: SearchHybrid, models: Models, query: Floats | None, asked: Rescoring
-) -> list[Retrieved]:
-    wanted = max(request.candidates, request.k)
+def _ranked(stores: Open, asked: HybridAsked, query: Floats | None) -> tuple[list[Retrieved], bool]:
+    request = asked.request
+    wanted = max(request.candidates, request.wanted)
     while True:
-        gathered = despite_losses(partial(_gathered, stores, query, asked, request, wanted))
+        gathered = despite_losses(partial(_gathered, stores, query, asked, wanted))
         if not gathered.candidates:
-            return []
-        scores = _scored(models, request, gathered.candidates, gathered.cosines)
+            return [], gathered.cut
+        scores = _scored(asked.models, request, gathered.candidates, gathered.cosines)
         ranked = _ordered(request, gathered.candidates, scores)
-        if len(ranked) >= request.k or not gathered.full or wanted >= MOST_HITS:
-            return ranked
+        if len(ranked) >= request.wanted or not gathered.full or gathered.cut or wanted >= MOST_HITS:
+            return ranked, gathered.cut
         wanted = min(wanted * WIDER, MOST_HITS)
 
 
-def _answered(
-    stores: Open, request: SearchHybrid, models: Models, asked: Rescoring, report: Reporter
-) -> list[tuple[int, Hit]]:
+def _answered(stores: Open, asked: HybridAsked, report: Reporter) -> tuple[list[tuple[int, Hit]], bool]:
+    request, models = asked.request, asked.models
     if not stores.searching:
-        return []
+        return [], False
     embedded = any(map(_embedded, stores.searching))
     prepared(report, (models.prepare, models.prepare_ranker) if embedded else (models.prepare_ranker,))
     query = query_vector(models, request.query) if embedded else None
     if query is not None:
         alike(stores, models.name, query)
-    ranked = _ranked(stores, request, models, query, asked)[: request.k]
-    plain = [replace(each, hit=replace(each.hit, text=None)) for each in ranked] if request.compact else ranked
-    return hits.presented(plain, request)
+    ranked, cut = _ranked(stores, asked, query)
+    held = ranked[: request.wanted]
+    plain = [replace(each, hit=replace(each.hit, text=None)) for each in held] if request.compact else held
+    return hits.presented(plain, request), cut
 
 
 def _checked(request: SearchHybrid) -> None:
@@ -152,10 +165,16 @@ def _checked(request: SearchHybrid) -> None:
 
 
 def query(
-    home: Path, request: SearchHybrid, models: Models, asked: Rescoring = RESCORING, report: Reporter = unreported
+    home: Path,
+    request: SearchHybrid,
+    models: Models,
+    asked: Rescoring = RESCORING,
+    watching: Watching = WATCHING,
 ) -> SearchResult:
     _checked(request)
+    expired = searching.expired_after(request.budget, watching.clock)
     narrowing = searching.narrowed(home, request)
     with ExitStack() as cleanup:
-        stores = searching.opened(cleanup, narrowing, Wants(keywords=True, model=models.name))
-        return hits.result(stores, _answered(stores, request, models, asked, report), partial=False)
+        stores = searching.opened(cleanup, narrowing, Wants(keywords=True, model=models.name), expired)
+        answered, cut = _answered(stores, HybridAsked(request, models, asked, expired), watching.report)
+        return hits.result(stores, answered, partial=cut)

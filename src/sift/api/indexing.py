@@ -2,10 +2,11 @@ from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from sift.api.described import Help
+from sift.api.requests import Request
 
 
 @dataclass(frozen=True, slots=True)
-class IndexCollections:
+class IndexCollections(Request):
     names: Annotated[tuple[str, ...], Help("the collections to index (default: every active one)")] = ()
 
 

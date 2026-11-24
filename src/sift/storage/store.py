@@ -5,7 +5,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn, cast
 
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.domain.codec.shape import SHAPE, Shape
 from sift.domain.errors import DamagedError
@@ -306,10 +306,14 @@ def create_store(
         raise
 
 
+def _damaged(path: Path, error: Exception) -> StoreUnavailableError:
+    return StoreUnavailableError(f"the store {path} is damaged: {error}", DAMAGED_REMEDY, code=Problem.STORE_DAMAGED)
+
+
 def _raise_for(path: Path, error: sqlite3.DatabaseError) -> NoReturn:
     code = primary_code(error)
     if code in DAMAGED:
-        raise StoreUnavailableError(f"the store {path} is damaged: {error}", DAMAGED_REMEDY) from None
+        raise _damaged(path, error) from None
     if code in UNUSABLE:
         said, remedy = UNUSABLE[code]
         raise StoreUnavailableError(said.format(path=path, error=error), remedy) from None
@@ -323,20 +327,21 @@ def unavailable_if_unusable(path: Path) -> Generator[None]:
     except sqlite3.DatabaseError as error:
         _raise_for(path, error)
     except DamagedError as error:
-        raise StoreUnavailableError(f"the store {path} is damaged: {error}", DAMAGED_REMEDY) from None
+        raise _damaged(path, error) from None
 
 
 def _checked(connection: sqlite3.Connection, path: Path, collection: CollectionId, layout: Sequence[Migration]) -> None:
     with reading(connection) as transaction:
         found = version(transaction)
         if found == 0:
-            raise StoreUnavailableError(f"{path} is no store of sift", DAMAGED_REMEDY)
+            raise StoreUnavailableError(f"{path} is no store of sift", DAMAGED_REMEDY, code=Problem.STORE_DAMAGED)
         if found > len(layout):
             raise newer(path, found, len(layout))
         held = first(transaction, Value, "SELECT value FROM meta WHERE key = 'collection'")
     if held is None or held.value != str(collection):
         owner = "no collection" if held is None else f"collection {held.value}"
-        raise StoreUnavailableError(f"{path} is the store of {owner}, not of collection {collection}", DAMAGED_REMEDY)
+        said = f"{path} is the store of {owner}, not of collection {collection}"
+        raise StoreUnavailableError(said, DAMAGED_REMEDY, code=Problem.STORE_DAMAGED)
     if found < len(layout):
         with writing(connection) as transaction:
             migrated(transaction, layout, path)
@@ -346,7 +351,9 @@ def open_store(path: Path, collection: CollectionId, layout: Sequence[Migration]
     try:
         connection = connect(path, create=False)
     except FileNotFoundError:
-        raise StoreUnavailableError(f"the store is missing: {path}", MISSING_REMEDY) from None
+        raise StoreUnavailableError(
+            f"the store is missing: {path}", MISSING_REMEDY, code=Problem.STORE_MISSING
+        ) from None
     except sqlite3.DatabaseError as error:
         _raise_for(path, error)
     try:

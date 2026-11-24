@@ -4,7 +4,7 @@ from functools import partial
 
 import numpy as np
 
-from sift.api.errors import InvalidRequestError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.ids import ChunkId, owner
 from sift.api.search import Hit, Options
 from sift.app import hits
@@ -51,7 +51,8 @@ def alike(stores: Open, model: str, query: Floats) -> None:
         width = vectors.coded.width
         if len(vectors.coded.ids) and width != len(query):
             said = f"its vectors have {width:,} dimensions, the query {len(query):,}"
-            stores.dropped(one, StoreUnavailableError(said, EMBED_REMEDY.format(model=model)))
+            refused = StoreUnavailableError(said, EMBED_REMEDY.format(model=model), code=Problem.OTHER_MODEL)
+            stores.dropped(one, refused)
 
 
 @dataclass(frozen=True, slots=True)

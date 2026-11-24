@@ -12,7 +12,7 @@ from sift.api.search import SearchResult
 from sift.app import hits, searching
 from sift.app.linked import LeftOut
 from sift.app.notes import Note, note_of, read_in
-from sift.app.searching import Wants
+from sift.app.searching import WATCHING, Wants, Watching
 from sift.app.vector_candidates import RESCORING, Rescoring, alike, nearest_hits
 from sift.domain.codec.codes import Floats
 from sift.domain.rank.works import work_of_fields
@@ -48,13 +48,16 @@ def _like(note: Note, whole: str, transaction: Reading) -> Like:
     return Like(mean / length, model, work)
 
 
-def similar(home: Path, request: FindSimilar, asked: Rescoring = RESCORING) -> SearchResult:
+def similar(
+    home: Path, request: FindSimilar, asked: Rescoring = RESCORING, watching: Watching = WATCHING
+) -> SearchResult:
     searching.checked(request)
+    expired = searching.expired_after(request.budget, watching.clock)
     named = note_of(home, request.id)
     like = read_in(named.note.collection, partial(_like, named.note, request.id))
     narrowing = searching.narrowed(home, request, LeftOut(named.note, linking=False))
     with ExitStack() as cleanup:
-        stores = searching.opened(cleanup, narrowing, Wants(model=like.model, vectors_required=True))
+        stores = searching.opened(cleanup, narrowing, Wants(model=like.model, vectors_required=True), expired)
         alike(stores, like.model, like.query)
         found = hits.result(stores, nearest_hits(stores, request, like.query, asked, like.work), partial=False)
     return hits.also_unsearched(found, named.unsearched)

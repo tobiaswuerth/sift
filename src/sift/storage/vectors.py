@@ -4,7 +4,7 @@ from typing import NamedTuple, cast
 import numpy as np
 from numpy.typing import NDArray
 
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import ChunkId, DocumentId
 from sift.domain.arrays import STORED_HALF, Ids, among, ascending, distinct, ints
 from sift.domain.codec.codes import MOST_BITS, Bits, Halves, code_bytes, codes, width_of
@@ -89,7 +89,9 @@ def refuse_model(transaction: Reading, model: str) -> None:
     found = model_of(transaction)
     if found not in {None, model}:
         raise StoreUnavailableError(
-            f"the store holds vectors of {found}, not of {model}", EMBED_REMEDY.format(model=model)
+            f"the store holds vectors of {found}, not of {model}",
+            EMBED_REMEDY.format(model=model),
+            code=Problem.OTHER_MODEL,
         )
 
 
@@ -98,7 +100,9 @@ def _refuse_another(transaction: Writing, model: str, width: int) -> None:
     held = width_held(transaction)
     if held not in {None, width}:
         raise StoreUnavailableError(
-            f"the store holds vectors of {held:,} dimensions, not of {width:,}", EMBED_REMEDY.format(model=model)
+            f"the store holds vectors of {held:,} dimensions, not of {width:,}",
+            EMBED_REMEDY.format(model=model),
+            code=Problem.OTHER_MODEL,
         )
 
 
@@ -150,12 +154,12 @@ def codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, Bits]:
     cursor = transaction.connection.execute(CODES)
     while batch := cast("list[tuple[int, bytes]]", cursor.fetchmany(read)):
         if done + len(batch) > held.n or any(len(row[1]) != size for row in batch):
-            raise StoreUnavailableError(DAMAGED_CODES, CODES_REMEDY)
+            raise StoreUnavailableError(DAMAGED_CODES, CODES_REMEDY, code=Problem.STORE_DAMAGED)
         ids[done : done + len(batch)] = np.fromiter((row[0] for row in batch), np.int64, len(batch))
         bits[done : done + len(batch)] = np.frombuffer(b"".join(row[1] for row in batch), np.uint8).reshape(-1, size)
         done += len(batch)
     if done != held.n:
-        raise StoreUnavailableError(DAMAGED_CODES, CODES_REMEDY)
+        raise StoreUnavailableError(DAMAGED_CODES, CODES_REMEDY, code=Problem.STORE_DAMAGED)
     return ids, bits
 
 

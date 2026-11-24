@@ -1,3 +1,4 @@
+import itertools
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import replace
@@ -7,7 +8,7 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.fields import listed
 from sift.api.filters import Filter, Operator, written
 from sift.api.indexing import IndexCollections
@@ -19,6 +20,7 @@ from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.search import search
+from sift.app.searching import Watching
 from sift.app.similar import similar
 from sift.app.vector_candidates import ExactRows, Rescoring
 from sift.app.vsearch import vsearch
@@ -98,6 +100,50 @@ def both_of(home: Path) -> Adapted:
 def like_of(home: Path) -> Adapted:
     asked = FindSimilar("notes/loose/plain.md", k=20)
     return similar(home, asked), similar(home, replace(asked, adaptive=True))
+
+
+Paged = Callable[[Path, int, int], SearchResult]
+
+
+def keywords_paged(home: Path, k: int, offset: int) -> SearchResult:
+    return search(home, SearchKeywords("pigment binder", k=k, offset=offset))
+
+
+def meaning_paged(home: Path, k: int, offset: int) -> SearchResult:
+    return vsearch(home, SearchVectors("pigment binder", k=k, offset=offset), Hashed())
+
+
+def both_paged(home: Path, k: int, offset: int) -> SearchResult:
+    return query(home, SearchHybrid("pigment binder", k=k, offset=offset), Hashed())
+
+
+def like_paged(home: Path, k: int, offset: int) -> SearchResult:
+    return similar(home, FindSimilar("notes/loose/plain.md", k=k, offset=offset))
+
+
+@pytest.mark.parametrize("found", [keywords_paged, meaning_paged, both_paged, like_paged])
+def test_every_search_pages_through_what_it_finds_as_one_search_of_them_all_would_order_it(
+    home: Path, found: Paged
+) -> None:
+    every = found(home, 20, 0).hits
+    assert len(every) >= 4
+    pages = [found(home, 2, offset).hits for offset in range(0, len(every), 2)]
+    assert [hit for page in pages for hit in page] == list(every)
+    assert found(home, 2, len(every)).hits == ()
+
+
+@pytest.mark.parametrize(
+    "asked, said",
+    [
+        (SearchKeywords("pigment", k=11, offset=9_990), "10,001 results"),
+        (SearchKeywords("pigment", offset=2, sort="created"), "a sorted search orders the best k alone"),
+        (SearchKeywords("pigment", offset=2, adaptive=True), "an adaptive search keeps what stands out"),
+    ],
+)
+def test_a_page_no_search_of_all_would_hold_is_refused(home: Path, asked: SearchKeywords, said: str) -> None:
+    with pytest.raises(InvalidRequestError, match=said) as refused:
+        search(home, asked)
+    assert refused.value.field == "offset"
 
 
 @pytest.mark.parametrize("found", [keywords_of, meaning_of, both_of, like_of])
@@ -290,3 +336,57 @@ def test_a_filter_matches_text_however_its_accents_were_composed(tmp_path: Path)
     for asked in ("place=R\u00f6sterei", "place=Ro\u0308sterei"):
         result = search(home, SearchKeywords("beans", filters=(written(asked),)))
         assert [hit.id for hit in result.hits] == ["cafes/decomposed.md"]
+
+
+def two_collections(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "papers" / "pigment.md", "# More pigment\n\nPigment and binder again.\n")
+    add(home, AddCollection(str(tmp_path / "papers")))
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+
+
+Timed = Callable[[Path, float | None, Callable[[], float]], SearchResult]
+
+
+def meaning_timed(home: Path, budget: float | None, clock: Callable[[], float]) -> SearchResult:
+    return vsearch(home, SearchVectors("pigment binder", budget=budget), Hashed(), watching=Watching(clock=clock))
+
+
+def both_timed(home: Path, budget: float | None, clock: Callable[[], float]) -> SearchResult:
+    return query(home, SearchHybrid("pigment binder", budget=budget), Hashed(), watching=Watching(clock=clock))
+
+
+def like_timed(home: Path, budget: float | None, clock: Callable[[], float]) -> SearchResult:
+    return similar(home, FindSimilar("notes/loose/plain.md", budget=budget), watching=Watching(clock=clock))
+
+
+def later() -> Callable[[], float]:
+    ticks = itertools.count(0.0, 10.0)
+    return lambda: next(ticks)
+
+
+@pytest.mark.parametrize("found", [meaning_timed, both_timed, like_timed])
+def test_a_search_by_meaning_out_of_time_leaves_the_stores_it_has_not_read_out_and_says_so(
+    home: Path, tmp_path: Path, found: Timed
+) -> None:
+    two_collections(home, tmp_path)
+    whole = found(home, None, later())
+    assert (whole.partial, whole.left_out, whole.searched) == (False, (), 2)
+    cut = found(home, 1.0, later())
+    assert (cut.partial, cut.searched) == (True, 1)
+    assert [(each.collection, each.code) for each in cut.left_out] == [("papers", Problem.OUT_OF_TIME)]
+    assert {hit.collection for hit in cut.hits} == {"notes"}
+
+
+def test_passages_without_vectors_are_said_to_be_passed_over_by_meaning(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "notes" / "loose" / "new.md", "# New pigment\n\nPigment and binder, new.\n")
+    index(home, IndexCollections(), lambda _: None)
+    for result in (vsearch(home, SearchVectors("pigment"), Hashed()), query(home, SearchHybrid("pigment"), Hashed())):
+        (note,) = result.left_out
+        assert (note.collection, note.code, note.message) == (
+            "notes",
+            Problem.NOT_EMBEDDED,
+            "1 of its passages holds no vector yet: a search by meaning passes it over",
+        )
+        assert note.remedy == "run sift embed"
+    assert search(home, SearchKeywords("pigment")).left_out == ()

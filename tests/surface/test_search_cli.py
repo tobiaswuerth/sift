@@ -48,8 +48,11 @@ def test_search_answers_in_json_when_asked(settings: Settings, notes: Path) -> N
         "hits": [
             {
                 "id": "notes/robots/brush.md",
+                "collection": "notes",
+                "path": "robots/brush.md",
                 "title": "Brush",
-                "lines": "1-1",
+                "first_line": 1,
+                "last_line": 1,
                 "score": pytest.approx(3.00625, rel=1e-5),
                 "text": None,
                 "also": [],
@@ -60,6 +63,7 @@ def test_search_answers_in_json_when_asked(settings: Settings, notes: Path) -> N
         "unsearched": [],
         "partial": False,
         "ruled_out": 0,
+        "left_out": [],
     }
 
 
@@ -196,7 +200,7 @@ def test_a_mistaken_argument_exits_2_with_a_fix_and_no_usage_block(settings: Set
 def test_an_option_given_twice_is_refused_and_collections_may_be_given_again(settings: Settings, notes: Path) -> None:
     searched_notes(settings, notes)
     code, _, err = ran(settings, "search", "brush", "-k", "2", "-k", "3")
-    assert (code, err.splitlines()[0]) == (2, "error  argument -k/--k: given twice: give it once")
+    assert (code, err.splitlines()[0]) == (2, "error  argument -k: given twice: give it once")
     other = notes.parent / "other"
     other.mkdir()
     (other / "brush.md").write_text("# Brush again\n", encoding="utf-8")

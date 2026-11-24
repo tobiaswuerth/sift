@@ -23,7 +23,7 @@ def sift(home: Path, *args: str, model: str = "", reranker: str = "") -> subproc
 
 
 def _forms(argument: Argument) -> frozenset[str]:
-    return frozenset({f"--{argument.name.replace('_', '-')}", *([argument.short] if argument.short else [])})
+    return frozenset(name for name in (argument.flag.long, argument.flag.short) if name is not None)
 
 
 def _given(forms: frozenset[str], argvs: list[tuple[str, ...]]) -> bool:
@@ -190,15 +190,27 @@ def options_run(home: Path, notes: Path, model: str, reranker: str) -> None:
     )
     for asked in (
         ("search", "brush OR learning", *narrowed, *linked, "--budget", "5"),
-        ("vsearch", "learning", *narrowed, *linked),
-        ("query", "learning", *narrowed, *linked, "--candidates", "5"),
-        ("similar", "notes/rl.md", *narrowed, *linked),
-        ("mentions", "notes/sub/brush.md", *narrowed, *linked, "--also", "Pinsel"),
+        ("vsearch", "learning", *narrowed, *linked, "--budget", "5"),
+        ("query", "learning", *narrowed, *linked, "--candidates", "5", "--budget", "5"),
+        ("similar", "notes/rl.md", *narrowed, *linked, "--budget", "5"),
+        ("mentions", "notes/sub/brush.md", *narrowed, *linked, "--also", "Pinsel", "--budget", "5"),
     ):
         ran = sift(home, *asked, model=model, reranker=reranker)
         assert (asked[0], ran.returncode, ran.stderr) == (asked[0], 0, "")
         answered = cast("dict[str, int]", answer(ran))
         assert answered["searched"] + answered["ruled_out"] == 1
+    for asked in (
+        ("search", "brush OR learning"),
+        ("vsearch", "learning"),
+        ("query", "learning"),
+        ("similar", "notes/rl.md"),
+        ("mentions", "notes/sub/brush.md"),
+    ):
+        first, second = (
+            sift(home, *asked, "-k", "1", "--offset", at, "--json", model=model, reranker=reranker) for at in "01"
+        )
+        assert (asked[0], first.returncode, second.returncode) == (asked[0], 0, 0)
+        assert hits_of(first) != hits_of(second) or not hits_of(second)
 
 
 def records_run(home: Path, notes: Path, model: str) -> None:

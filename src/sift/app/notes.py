@@ -3,9 +3,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.ids import DocumentId
-from sift.api.search import Unsearched
+from sift.api.search import Unsearched, unsearched
 from sift.app.documents import place, resolved_at
 from sift.app.documents import unknown as documents_unknown
 from sift.domain.text.kinds import public_id
@@ -114,7 +114,7 @@ def matches(collections: Sequence[Collection], id_: str) -> Matches:
         try:
             found += _matches(one, name)
         except StoreUnavailableError as error:
-            unread.append(Unsearched(one.name, error.message, error.remedy))
+            unread.append(unsearched(one.name, error))
     if len(found) > 1:
         listed = ", ".join(sorted(each.id for each in found)[:AMBIGUOUS_SHOWN])
         more = ", ..." if len(found) > AMBIGUOUS_SHOWN else ""
@@ -124,7 +124,8 @@ def matches(collections: Sequence[Collection], id_: str) -> Matches:
 
 
 def unknown_note(spec: str, unsearched: Sequence[Unsearched]) -> NotFoundError:
-    return NotFoundError(passed(f"no note or document {spec!r}", unsearched), _remedy(NOTE_REMEDY, unsearched))
+    said = passed(f"no note or document {spec!r}", unsearched)
+    return NotFoundError(said, _remedy(NOTE_REMEDY, unsearched), code=Problem.UNKNOWN_NOTE)
 
 
 def _by_id(home: Path, spec: str) -> Note:

@@ -34,8 +34,11 @@ def read(one: Searching, chunks: Sequence[int], scores: Mapping[int, float], *, 
             chunk,
             Hit(
                 public_id(one.collection.name, passage.path, passage.key),
+                one.collection.name,
+                passage.path,
                 passage.title,
-                f"{passage.first_line}-{passage.last_line}",
+                passage.first_line,
+                passage.last_line,
                 scores[chunk],
                 cut,
             ),
@@ -70,7 +73,8 @@ def hits(stores: Open, found: Sequence[ScoredChunk], request: Options, copy_of: 
 
 def presented(ranked: Sequence[Retrieved], request: Options) -> list[tuple[int, Hit]]:
     reads = ranked[: standing_out([each.hit.score for each in ranked])] if request.adaptive else ranked
-    order = range(len(reads)) if request.sort is None else shown.order([each.fields for each in reads], request.sort)
+    every = range(len(reads)) if request.sort is None else shown.order([each.fields for each in reads], request.sort)
+    order = every[request.offset :]
     wanted = request.fields
     return [
         (reads[at].chunk, replace(reads[at].hit, fields=shown.picked(reads[at].fields, wanted) if wanted else None))
@@ -89,12 +93,12 @@ def answered(
     copy_of: str | None = None,
     more: Callable[[], bool] = always,
 ) -> tuple[list[tuple[int, Hit]], bool]:
-    wanted = request.k
+    wanted = request.wanted
     while True:
         found = rank(wanted)
         held = hits(stores, found.found, request, copy_of)
-        if len(held) >= request.k or len(found.found) < wanted or found.cut:
-            return presented(held[: request.k], request), found.cut
+        if len(held) >= request.wanted or len(found.found) < wanted or found.cut:
+            return presented(held[: request.wanted], request), found.cut
         if not more():
             return presented(held, request), True
         wanted *= WIDER
@@ -104,8 +108,9 @@ def result(stores: Open, answered: Sequence[tuple[int, Hit]], *, partial: bool) 
     despite_losses(stores.closed)
     live = {one.collection.id for one in stores.searching}
     found = tuple(hit for chunk, hit in answered if owner(chunk) in live)
-    searched, unsearched = len(stores.searching), tuple(stores.unsearched)
-    return SearchResult(found, searched, unsearched, partial=partial, ruled_out=stores.ruled_out)
+    searched, unsearched, left_out = len(stores.searching), tuple(stores.unsearched), tuple(stores.left_out)
+    cut = partial or stores.cut
+    return SearchResult(found, searched, unsearched, partial=cut, ruled_out=stores.ruled_out, left_out=left_out)
 
 
 def also_unsearched(found: SearchResult, more: Sequence[Unsearched]) -> SearchResult:

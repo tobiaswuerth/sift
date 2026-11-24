@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import NamedTuple, cast
 
 from sift.api.collections import TitleFrom
-from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.ids import CollectionId
 from sift.domain.text.records import NO_CHOICE, Chosen
 from sift.storage.database import Reading, Writing, connect, inserted, kept_private, reading, rows, writing
@@ -111,7 +111,7 @@ def _collection(row: CollectionRow) -> Collection:
         choices = choices_of(row.choices)
     except (ValueError, TypeError) as error:
         said = f"the catalog's choices for {row.name} were written by a newer sift or damaged: {error}"
-        raise StoreUnavailableError(said, "upgrade sift") from None
+        raise StoreUnavailableError(said, "upgrade sift", code=Problem.STORE_NEWER) from None
     return Collection(CollectionId(row.id), row.name, Path(row.folder), Path(row.store), bool(row.active), choices)
 
 
@@ -145,7 +145,7 @@ def named(known: Sequence[Collection], name: str) -> Collection:
         return found
     there = ", ".join(one.name for one in known)
     remedy = f"the collections are: {there}" if there else "add a folder as a collection first"
-    raise NotFoundError(f"no collection is named {name!r}", remedy)
+    raise NotFoundError(f"no collection is named {name!r}", remedy, code=Problem.UNKNOWN_COLLECTION)
 
 
 def known_collections(home: Path) -> tuple[Collection, ...]:

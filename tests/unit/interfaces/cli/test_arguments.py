@@ -6,11 +6,13 @@ from typing import Annotated
 import pytest
 
 from sift.api.collections import AddCollection, ShowStatus, TitleFrom
-from sift.api.described import Help, Read, Short
+from sift.api.described import Help
 from sift.api.documents import GetDocuments
 from sift.api.errors import InvalidRequestError
+from sift.api.filters import Filter, written
 from sift.api.indexing import IndexCollections
-from sift.interfaces.cli.arguments import options, request_of
+from sift.api.search import SearchKeywords
+from sift.interfaces.cli.arguments import arguments, flags, options, request_of
 from sift.interfaces.cli.main import Parser, UsageError
 
 
@@ -89,7 +91,7 @@ class OptionalWithAValue:
 
 @dataclass(frozen=True, slots=True)
 class ShortPosition:
-    name: Annotated[str, Help("a name"), Short("n")]
+    k: Annotated[int, Help("how many")]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,32 +109,28 @@ class FilledList:
     names: Annotated[tuple[str, ...], Help("names")] = ("a",)
 
 
-def numbers(text: str) -> tuple[int, ...]:
-    if not text.replace(",", "").isdigit():
-        raise InvalidRequestError(f"{text!r} holds no numbers alone", "write numbers parted by commas, e.g. 1,2")
-    return tuple(int(each) for each in text.split(","))
-
-
 @dataclass(frozen=True, slots=True)
 class Tagged:
-    tags: Annotated[tuple[int, ...], Help("numbers"), Short("t"), Read(numbers)] = ()
+    filters: Annotated[tuple[Filter, ...], Help("conditions")] = ()
+    fields: Annotated[tuple[str, ...], Help("names")] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class ReadAlone:
-    tag: Annotated[str, Help("a tag"), Read(numbers)] = ""
+    filters: Annotated[str, Help("a condition")] = ""
 
 
 @dataclass(frozen=True, slots=True)
 class ReadFilled:
-    tags: Annotated[tuple[int, ...], Help("numbers"), Read(numbers)] = (1,)
+    fields: Annotated[tuple[str, ...], Help("names")] = ("url",)
 
 
 def test_a_list_read_by_a_function_is_an_option_given_as_often_as_wanted() -> None:
     assert parsed(Tagged, []) == Tagged()
-    assert parsed(Tagged, ["-t", "1,2", "--tags", "3"]) == Tagged((1, 2, 3))
-    with pytest.raises(InvalidRequestError, match="'x' holds no numbers"):
-        parsed(Tagged, ["-t", "x"])
+    given = ["-f", "year=2024", "--filter", "tags!=x", "--fields", "url,created", "--fields", "doi"]
+    assert parsed(Tagged, given) == Tagged((written("year=2024"), written("tags!=x")), ("url", "created", "doi"))
+    with pytest.raises(InvalidRequestError, match="'x' is no KEY=VALUE"):
+        parsed(Tagged, ["-f", "x"])
 
 
 @pytest.mark.parametrize(
@@ -143,12 +141,12 @@ def test_a_list_read_by_a_function_is_an_option_given_as_often_as_wanted() -> No
         (FilledList, r"FilledList.names: a list given by place has no default but \(\)"),
         (Ratio, "Ratio.ratio: the command line takes no complex"),
         (Either, r"Either.value: the command line takes no str \| int"),
-        (ShortPosition, "ShortPosition.name: only an option given by name has a short flag"),
+        (ShortPosition, "ShortPosition.k: only an option given by name has a short flag"),
         (Undescribed, "Undescribed.name: no Help"),
         (OnByDefault, "OnByDefault.loud: a switch is off by default"),
         (OptionalWithAValue, "OptionalWithAValue.name: an option that may be left out has no default but None"),
-        (ReadAlone, "ReadAlone.tag: only a list is read by a function"),
-        (ReadFilled, r"ReadFilled.tags: a list read by a function has no default but \(\)"),
+        (ReadAlone, "ReadAlone.filters: only a list is read by a function"),
+        (ReadFilled, r"ReadFilled.fields: a list read by a function has no default but \(\)"),
     ],
 )
 def test_a_field_the_command_line_cannot_take_is_refused(request_type: type[object], refusal: str) -> None:
@@ -159,20 +157,21 @@ def test_a_field_the_command_line_cannot_take_is_refused(request_type: type[obje
 @dataclass(frozen=True, slots=True)
 class Counted:
     query: Annotated[str, Help("what to find")]
-    k: Annotated[int, Help("how many"), Short("k")] = 10
-    order: Annotated[TitleFrom, Help("an order"), Short("o")] = TitleFrom.NAME
+    k: Annotated[int, Help("how many")] = 10
+    order: Annotated[TitleFrom, Help("an order")] = TitleFrom.NAME
 
 
 def test_a_field_with_a_value_for_default_is_an_option_and_may_have_a_short_flag() -> None:
     assert parsed(Counted, ["x"]) == Counted("x", 10, TitleFrom.NAME)
-    assert parsed(Counted, ["x", "-k", "3", "-o", "heading"]) == Counted("x", 3, TitleFrom.HEADING)
-    assert parsed(Counted, ["x", "--k", "4", "--order", "name"]) == Counted("x", 4, TitleFrom.NAME)
+    assert parsed(Counted, ["x", "-k", "3", "--order", "heading"]) == Counted("x", 3, TitleFrom.HEADING)
+    with pytest.raises(UsageError, match="unrecognized arguments: --k"):
+        parsed(Counted, ["x", "--k", "4"])
 
 
 @pytest.mark.parametrize("written", ["many", "1_000", " 3", "3.0", "+3", chr(0x663), "1" * 19, ""])
 def test_a_number_written_other_than_in_digits_alone_is_refused(written: str) -> None:
     with pytest.raises(UsageError, match="is no whole number: write up to 18 digits alone"):
-        parsed(Counted, ["x", f"--k={written}"])
+        parsed(Counted, ["x", f"-k={written}"])
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +193,7 @@ def test_a_decimal_written_otherwise_is_refused(written: str) -> None:
 
 
 def test_a_whole_number_may_be_negative_and_have_18_digits() -> None:
-    assert parsed(Counted, ["x", "--k=-3"]).k == -3
+    assert parsed(Counted, ["x", "-k=-3"]).k == -3
     assert parsed(Counted, ["x", "-k", "9" * 18]).k == int("9" * 18)
 
 
@@ -202,3 +201,53 @@ def test_paths_are_made_whole_by_the_function_given(tmp_path: Path) -> None:
     parser = argparse.ArgumentParser()
     options(parser, AddCollection, lambda text: str(tmp_path / text))
     assert request_of(AddCollection, parser.parse_args(["x"])).folder == str(tmp_path / "x")
+
+
+@dataclass(frozen=True, slots=True)
+class Clashing:
+    json: Annotated[bool, Help("clashes with --json")] = False
+
+
+@dataclass(frozen=True, slots=True)
+class Commanding:
+    command: Annotated[str, Help("clashes with the command's name")]
+
+
+@dataclass(frozen=True, slots=True)
+class TwiceMany:
+    first: Annotated[tuple[str, ...], Help("some")] = ()
+    second: Annotated[tuple[str, ...], Help("more")] = ()
+
+
+@pytest.mark.parametrize(
+    "request_type, refusal",
+    [
+        (Clashing, "Clashing.json: sift's own option is named so"),
+        (Commanding, "Commanding.command: sift's own option is named so"),
+        (TwiceMany, "TwiceMany.second: only one list is given by its places"),
+    ],
+)
+def test_a_request_the_command_line_would_misread_is_refused_when_its_parser_is_built(
+    request_type: type[object], refusal: str
+) -> None:
+    with pytest.raises(TypeError, match=refusal):
+        arguments(request_type)
+
+
+def test_the_flags_of_a_search_are_named_for_one_value_given_again() -> None:
+    assert flags(SearchKeywords) == {
+        "query": "query",
+        "k": "-k",
+        "collections": "--collection",
+        "path": "--path",
+        "filters": "--filter",
+        "fields": "--fields",
+        "sort": "--sort",
+        "links_to": "--links-to",
+        "linked_from": "--linked-from",
+        "all_passages": "--all-passages",
+        "compact": "--compact",
+        "adaptive": "--adaptive",
+        "offset": "--offset",
+        "budget": "--budget",
+    }

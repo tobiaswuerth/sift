@@ -1,4 +1,6 @@
+from collections.abc import Callable
 from contextlib import closing
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -141,13 +143,13 @@ def test_a_note_is_named_by_its_id_or_as_links_name_it(people: Path, tmp_path: P
 @pytest.mark.parametrize(
     "request_, refusal",
     [
-        (ShowLinks("v/Orgs/Acme AG.md", depth=3), "3 is outside 1 to 2"),
-        (ShowLinks("x", k=0), "0 is outside 1 to 10,000"),
+        (partial(ShowLinks, "v/Orgs/Acme AG.md", depth=3), "3 is outside 1 to 2"),
+        (partial(ShowLinks, "x", k=0), "0 is outside 1 to 10,000"),
     ],
 )
-def test_links_asked_otherwise_are_refused(people: Path, request_: ShowLinks, refusal: str) -> None:
+def test_links_asked_otherwise_are_refused(people: Path, request_: Callable[[], ShowLinks], refusal: str) -> None:
     with pytest.raises(InvalidRequestError, match=refusal):
-        links(people, request_)
+        links(people, request_())
 
 
 def test_link_targets_no_note_answers_to_are_listed_most_linked_first(tmp_path: Path) -> None:

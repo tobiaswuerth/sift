@@ -9,7 +9,7 @@ import pytest
 
 from sift.api.collections import AddCollection, Counted, ShowStatus
 from sift.api.documents import GetDocuments
-from sift.api.errors import InvalidRequestError, NotFoundError
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
 from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections, Skipped
@@ -68,7 +68,20 @@ def test_a_store_that_may_only_be_read_is_searched_and_left_as_it_was(home: Path
 def test_a_search_finds_each_document_by_its_best_passage_with_where_it_is(home: Path) -> None:
     result = search(home, SearchKeywords("halo"))
     assert result == SearchResult(
-        (Hit("notes/halo.md", "Halo", "4-6", result.hits[0].score, "# Halo\n\nDark matter halo models."),), 1, ()
+        (
+            Hit(
+                "notes/halo.md",
+                "notes",
+                "halo.md",
+                "Halo",
+                4,
+                6,
+                result.hits[0].score,
+                "# Halo\n\nDark matter halo models.",
+            ),
+        ),
+        1,
+        (),
     )
     assert result.hits[0].score > 0
     assert result.hits[0].score != round(result.hits[0].score, 4)
@@ -187,7 +200,7 @@ def test_a_store_that_cannot_be_read_is_passed_over_and_said(home: Path, tmp_pat
     assert [hit.id for hit in result.hits] == ["notes/halo.md"]
     assert result.searched == 1
     (missing,) = result.unsearched
-    assert dataclasses.replace(missing, message="") == Unsearched("more", "", MISSING_REMEDY)
+    assert dataclasses.replace(missing, message="") == Unsearched("more", "", MISSING_REMEDY, Problem.STORE_MISSING)
 
 
 @pytest.mark.parametrize("table", ["keyword_postings", "chunks", "keyword_segments", "sources"])

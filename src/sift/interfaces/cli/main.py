@@ -18,7 +18,7 @@ from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
 from sift.domain.text.decoding import encodable
-from sift.interfaces.cli.arguments import flags, options
+from sift.interfaces.cli.arguments import arguments, flags, options
 from sift.interfaces.cli.context import Command, Commands, Context
 from sift.interfaces.cli.shown.outcome import FAILED, Shown, failure
 from sift.interfaces.console.live import Live, ticking
@@ -33,6 +33,8 @@ INTERRUPTED = 130
 DESCRIPTION = "Fast local search over your documents and notes."
 NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
 ONE_VALUE = re.compile(r"argument (\S+?)(?:/\S+)?: expected one argument")
+REQUIRED = "the following arguments are required: "
+OWN_FLAGS = frozenset({"--json", "--color", "-h", "--help"})
 STOPPED_WRITING = "stopped: what was written so far is kept"
 JSON_HELP = "answer in JSON"
 COLOR_HELP = "colour what sift says"
@@ -139,14 +141,14 @@ def _placed(settings: Settings, written: str) -> str:
 
 
 def parser(settings: Settings) -> argparse.ArgumentParser:
-    built = Parser(prog="sift", description=DESCRIPTION)
+    built = Parser(prog="sift", description=DESCRIPTION, allow_abbrev=False)
     built.color = False
     built.add_argument("--version", action=VersionAction)
     built.add_argument("--json", action="store_true", help=JSON_HELP)
     built.add_argument("--color", choices=list(Colour), default=Colour.AUTO, help=COLOR_HELP)
     commands = built.add_subparsers(dest="command", metavar="COMMAND")
     for name, each in ENTRIES.items():
-        chosen = commands.add_parser(name, help=each.help, description=each.help)
+        chosen = commands.add_parser(name, help=each.help, description=each.help, allow_abbrev=False)
         chosen.color = False
         options(chosen, each.request, partial(_placed, settings))
         chosen.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=JSON_HELP)
@@ -154,10 +156,34 @@ def parser(settings: Settings) -> argparse.ArgumentParser:
     return built
 
 
-def _usage(wrong: UsageError) -> str:
+def asked_json(argv: Sequence[str]) -> bool:
+    given = list(argv)
+    return "--json" in (given[: given.index("--")] if "--" in given else given)
+
+
+def _known(command: str) -> frozenset[str]:
+    request = ENTRIES[command].request
+    found = {name for argument in arguments(request) for name in (argument.flag.short, argument.flag.long)}
+    return OWN_FLAGS | {name for name in found if name is not None}
+
+
+def _unknown_dashed(prog: str, argv: Sequence[str]) -> bool:
+    known = _known(prog.removeprefix("sift").strip())
+    words = list(argv)[: list(argv).index("--")] if "--" in argv else list(argv)
+    return any(word.startswith("-") and word.split("=", 1)[0] not in known for word in words)
+
+
+def _usage(wrong: UsageError, argv: Sequence[str]) -> str:
     asked = ONE_VALUE.fullmatch(wrong.message)
-    dashed = f"a value that starts with a dash is written {asked.group(1)}=-value; " if asked else ""
-    return f"{dashed}see {wrong.prog} --help"
+    if asked:
+        return f"a value that starts with a dash is written {asked.group(1)}=-value; see {wrong.prog} --help"
+    if wrong.message.startswith(REQUIRED) and _unknown_dashed(wrong.prog, argv):
+        return f"a value that starts with a dash goes after --, e.g. {wrong.prog} -- -value"
+    return f"see {wrong.prog} --help"
+
+
+def _refused_usage(wrong: UsageError, argv: Sequence[str]) -> Shown:
+    return failure(InvalidRequestError(wrong.message, _usage(wrong, argv)), PLAIN, as_json=asked_json(argv))
 
 
 def _parsed(
@@ -165,11 +191,16 @@ def _parsed(
 ) -> argparse.Namespace | Shown | int:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
-            return built.parse_args(argv)
+            namespace, extras = built.parse_known_args(argv)
         except SystemExit as stop:
             return stop.code if isinstance(stop.code, int) else FAILED
         except UsageError as wrong:
-            return failure(InvalidRequestError(wrong.message, _usage(wrong)), PLAIN, as_json="--json" in argv)
+            return _refused_usage(wrong, argv)
+    if extras:
+        chosen = cast("dict[str, object]", vars(namespace)).get("command")
+        prog = f"sift {chosen}" if isinstance(chosen, str) else "sift"
+        return _refused_usage(UsageError(f"unrecognized arguments: {' '.join(extras)}", prog), argv)
+    return namespace
 
 
 def _encoding(stream: TextIO | None) -> str | None:
@@ -208,7 +239,8 @@ def _ran(
     out, err = streams
     platform = host.platform
     if (odd := next((argument for argument in argv if not encodable(argument)), None)) is not None:
-        return failure(InvalidRequestError(f"an argument is no text: {odd!r}", NO_TEXT_REMEDY), PLAIN)
+        refused = InvalidRequestError(f"an argument is no text: {odd!r}", NO_TEXT_REMEDY)
+        return failure(refused, PLAIN, as_json=asked_json([each for each in argv if encodable(each)]))
     built = parser(settings)
     namespace = _parsed(built, argv, out, err)
     if isinstance(namespace, (int, Shown)):
@@ -258,10 +290,12 @@ def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO
 
 
 def main(argv: Sequence[str] | None = None, read_settings: Callable[[], Settings] = from_environment) -> None:
+    given = sys.argv[1:] if argv is None else argv
     try:
         settings = read_settings()
     except InvalidRequestError as error:
-        refused = failure(error, PLAIN)
+        refused = failure(error, PLAIN, as_json=asked_json(given))
+        write_results(sys.stdout, refused.results)
         say(sys.stderr, refused.messages)
         raise SystemExit(refused.code) from None
-    raise SystemExit(run(sys.argv[1:] if argv is None else argv, settings, sys.stdout, sys.stderr))
+    raise SystemExit(run(given, settings, sys.stdout, sys.stderr))

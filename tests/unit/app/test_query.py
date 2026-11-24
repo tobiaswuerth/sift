@@ -1,6 +1,7 @@
 import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import override
 
@@ -17,6 +18,7 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.query import query
+from sift.app.searching import Watching
 from sift.app.vector_candidates import Rescoring
 from sift.domain.arrays import Ids, floats
 from sift.domain.codec.codes import Floats, Halves
@@ -162,15 +164,17 @@ def test_a_store_lost_while_its_candidates_are_read_is_passed_over(
 @pytest.mark.parametrize(
     "request_, refusal",
     [
-        (SearchHybrid("   "), "an empty query finds nothing"),
-        (SearchHybrid("halo", k=0), "0 is outside 1 to 10,000"),
-        (SearchHybrid("halo", candidates=0), "0 is outside 1 to 10,000"),
-        (SearchHybrid("halo", candidates=10_001), "10,001 is outside 1 to 10,000"),
+        (partial(SearchHybrid, "   "), "an empty query finds nothing"),
+        (partial(SearchHybrid, "halo", k=0), "0 is outside 1 to 10,000"),
+        (partial(SearchHybrid, "halo", candidates=0), "0 is outside 1 to 10,000"),
+        (partial(SearchHybrid, "halo", candidates=10_001), "10,001 is outside 1 to 10,000"),
     ],
 )
-def test_a_query_that_cannot_be_answered_is_refused(home: Path, request_: SearchHybrid, refusal: str) -> None:
+def test_a_query_that_cannot_be_answered_is_refused(
+    home: Path, request_: Callable[[], SearchHybrid], refusal: str
+) -> None:
     with pytest.raises(InvalidRequestError, match=refusal):
-        query(home, request_, Hashed())
+        query(home, request_(), Hashed())
 
 
 def test_a_store_lost_while_the_cosines_of_its_candidates_are_read_is_passed_over(home: Path, tmp_path: Path) -> None:
@@ -284,14 +288,14 @@ def test_scores_are_given_as_reckoned_and_rounded_only_where_shown(home: Path) -
 
 def test_loading_counts_the_models_a_question_needs(home: Path, tmp_path: Path) -> None:
     said: list[Event] = []
-    query(home, SearchHybrid("halo"), Hashed(), report=said.append)
+    query(home, SearchHybrid("halo"), Hashed(), watching=Watching(report=said.append))
     assert said == [PhaseStarted(Phase.LOAD, None), PhaseDone(2)]
     root = tmp_path / "plain"
     write(root / "a.md", "# A\n\nComets and glaciers.\n")
     plain = tmp_path / "plain_home"
     collection(plain, root, embedded=False)
     words: list[Event] = []
-    query(plain, SearchHybrid("comets"), Hashed(), report=words.append)
+    query(plain, SearchHybrid("comets"), Hashed(), watching=Watching(report=words.append))
     assert words == [PhaseStarted(Phase.LOAD, None), PhaseDone(1)]
 
 
@@ -299,5 +303,5 @@ def test_nothing_loads_when_no_store_is_left_to_search(home: Path) -> None:
     store = home / "collections" / "notes.sqlite"
     damage_pages(store)
     said: list[Event] = []
-    result = query(home, SearchHybrid("halo"), Hashed(), report=said.append)
+    result = query(home, SearchHybrid("halo"), Hashed(), watching=Watching(report=said.append))
     assert (result.hits, said) == ((), [])

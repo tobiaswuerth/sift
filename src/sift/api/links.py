@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated
 
-from sift.api.described import Bounds, Help, Read, Short
-from sift.api.fields import listed, one
+from sift.api.described import Bounds, Help
+from sift.api.requests import Request
 from sift.api.search import MOST_HITS, Options, Unsearched
 
 NOTE = 'a note: its id, as sift get takes it, or its name as links write it, e.g. "Acme AG"'
@@ -19,14 +19,14 @@ class Direction(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class ShowLinks:
+class ShowLinks(Request):
     id: Annotated[str, Help(NOTE)]
     direction: Annotated[Direction, Help("out (default): the links it holds; in: those into it; or both")] = (
         Direction.OUT
     )
     depth: Annotated[int, Help("2: also the notes one link further (default: 1)"), Bounds(1, 2)] = 1
     field: Annotated[str | None, Help("only links in this front matter field")] = None
-    k: Annotated[int, Help(LINKS_K), Short("k"), Bounds(1, MOST_HITS)] = 50
+    k: Annotated[int, Help(LINKS_K), Bounds(1, MOST_HITS)] = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,14 +67,12 @@ class Links:
 
 
 @dataclass(frozen=True, slots=True)
-class ListUnresolved:
+class ListUnresolved(Request):
     collections: Annotated[
         tuple[str, ...],
         Help("this collection; several: each of them (default: every active one)"),
-        Short("c"),
-        Read(one),
     ] = ()
-    k: Annotated[int, Help("at most this many targets (default: 50)"), Short("k"), Bounds(1, MOST_HITS)] = 50
+    k: Annotated[int, Help("at most this many targets (default: 50)"), Bounds(1, MOST_HITS)] = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +91,7 @@ class Unresolved:
 @dataclass(frozen=True, slots=True)
 class FindMentions(Options):
     id: Annotated[str, Help(NOTE)]
-    also: Annotated[tuple[str, ...], Help(ALSO), Read(listed)] = ()
+    also: Annotated[tuple[str, ...], Help(ALSO)] = ()
 
 
 @dataclass(frozen=True, slots=True)

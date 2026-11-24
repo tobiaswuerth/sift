@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from sift.api.described import Help, Place, Read
-from sift.api.fields import listed
+from sift.api.described import Help, Place
+from sift.api.requests import Request
 
 
 class TitleFrom(StrEnum):
@@ -31,7 +31,7 @@ TITLE_FROM = (
 
 
 @dataclass(frozen=True, slots=True)
-class AddCollection:
+class AddCollection(Request):
     folder: Annotated[str, Help("the folder whose files the collection holds"), Place()]
     name: Annotated[str | None, Help("its name (default: the folder's)")] = None
     store: Annotated[
@@ -49,7 +49,7 @@ class AddCollection:
     follow_links: Annotated[bool, Help(FOLLOW_LINKS)] = False
     id_field: Annotated[str | None, Help(ID_FIELD)] = None
     title_field: Annotated[str | None, Help(TITLE_FIELD)] = None
-    text_fields: Annotated[tuple[str, ...], Help(TEXT_FIELDS), Read(listed)] = ()
+    text_fields: Annotated[tuple[str, ...], Help(TEXT_FIELDS)] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +63,7 @@ class CollectionAdded:
 
 
 @dataclass(frozen=True, slots=True)
-class ShowStatus:
+class ShowStatus(Request):
     names: Annotated[tuple[str, ...], Help("the collections to show (default: all)")] = ()
     unreadable: Annotated[bool, Help("list the files that could not be read, and why")] = False
 

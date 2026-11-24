@@ -12,7 +12,7 @@ from sift.api.collections import (
     UnreadableFile,
 )
 from sift.api.documents import Documents, DocumentText, Unfound
-from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
 from sift.api.search import Hit, SearchResult, Unsearched
@@ -155,7 +155,11 @@ def test_one_document_is_printed_as_its_text() -> None:
 
 def test_several_documents_are_headed_by_their_ids_and_those_not_found_said() -> None:
     found = (DocumentText("notes/a.md", "A", "# A\n"), DocumentText("notes/b.md", "B", "# B\n"))
-    unfound = (Unfound("notes/x.md", "unknown document 'notes/x.md'", "take the id from a search result"),)
+    unfound = (
+        Unfound(
+            "notes/x.md", "unknown document 'notes/x.md'", "take the id from a search result", Problem.UNKNOWN_DOCUMENT
+        ),
+    )
     assert documents(Documents(found, unfound), "linux", PLAIN) == Shown(
         ("==> notes/a.md <==", "# A", "", "==> notes/b.md <==", "# B"),
         ("error  notes/x.md: unknown document 'notes/x.md'", "  fix  take the id from a search result"),
@@ -191,14 +195,20 @@ def test_a_failure_says_what_failed_and_how_to_fix_it() -> None:
 def test_a_failure_asked_for_in_json_is_json_too() -> None:
     found = failure(StoreUnavailableError("busy", "wait"), PLAIN, as_json=True)
     assert json.loads(found.results[0]) == {
-        "error": {"kind": "store_unavailable", "message": "busy", "remedy": "wait", "field": None}
+        "error": {
+            "kind": "store_unavailable",
+            "code": "store_unavailable",
+            "message": "busy",
+            "remedy": "wait",
+            "field": None,
+        }
     }
     assert found.messages == ("error  busy", "  fix  wait")
     assert json.loads(failure(OSError(errno.ENOENT, "gone"), PLAIN, as_json=True).results[0])["error"]["kind"] == "os"
 
 
 def test_a_partial_search_says_better_matches_may_be_missing() -> None:
-    found = SearchResult((Hit("notes/a.md", "A", "1-2", 1.5, None),), 1, (), partial=True)
+    found = SearchResult((Hit("notes/a.md", "notes", "a.md", "A", 1, 2, 1.5, None),), 1, (), partial=True)
     dot = "  \N{MIDDLE DOT}  "
     said = dot.join(("1 result", "keyword", "partial: better matches may be missing", "1 collection", "0.2 s"))
     assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
@@ -214,7 +224,7 @@ def test_stores_ruled_out_by_the_links_are_said_apart_from_those_searched() -> N
 
 
 def test_a_hit_names_its_copies_in_other_collections_under_its_place() -> None:
-    hit = Hit("notes/halo.md", "Halo", "1-3", 3.25, None, ("more/copy.md", "papers/halo.md"))
+    hit = Hit("notes/halo.md", "notes", "halo.md", "Halo", 1, 3, 3.25, None, ("more/copy.md", "papers/halo.md"))
     shown = hits(SearchResult((hit,), 3, ()), 0.25, "linux", PLAIN, "hybrid")
     assert shown.results == (
         "1  3.25  Halo",
@@ -225,12 +235,24 @@ def test_a_hit_names_its_copies_in_other_collections_under_its_place() -> None:
 
 
 def test_a_score_too_small_for_two_decimals_is_shown_in_full() -> None:
-    found = SearchResult((Hit("n/a.md", "A", "1-1", 1.6e-06, None), Hit("n/b.md", "B", "1-1", 0.0, None)), 1, ())
+    found = SearchResult(
+        (Hit("n/a.md", "n", "a.md", "A", 1, 1, 1.6e-06, None), Hit("n/b.md", "n", "b.md", "B", 1, 1, 0.0, None)), 1, ()
+    )
     assert hits(found, 0.25, "linux", PLAIN).results[::2] == ("1  1.6e-06  A", "2     0.00  B")
 
 
 def test_a_hit_shows_the_front_matter_asked_for_under_its_place() -> None:
-    hit = Hit("notes/halo.md", "Halo", "1-3", 3.25, None, fields={"created": "2024-06-15", "tags": ["a", "é"], "n": 2})
+    hit = Hit(
+        "notes/halo.md",
+        "notes",
+        "halo.md",
+        "Halo",
+        1,
+        3,
+        3.25,
+        None,
+        fields={"created": "2024-06-15", "tags": ["a", "é"], "n": 2},
+    )
     shown = hits(SearchResult((hit,), 1, ()), 0.25, "linux", PLAIN)
     assert shown.results == (
         "1  3.25  Halo",
@@ -276,14 +298,19 @@ def test_unresolved_targets_show_how_many_link_them_and_a_few_of_those() -> None
 
 
 def test_unresolved_targets_of_a_store_that_could_not_be_read_are_said_to_be_missing() -> None:
-    found = Unresolved((Target("Gone", 1, ("v/c.md",)),), (Unsearched("w", "the store is damaged", "run sift index"),))
+    found = Unresolved(
+        (Target("Gone", 1, ("v/c.md",)),),
+        (Unsearched("w", "the store is damaged", "run sift index", Problem.STORE_DAMAGED),),
+    )
     assert shown_unresolved(found, "linux", PLAIN).messages[0] == "error  w: the store is damaged"
     alone = shown_unresolved(Unresolved((), found.unsearched), "linux", PLAIN)
     assert (alone.results, len(alone.messages)) == ((), 2)
 
 
 def test_links_of_a_note_found_while_a_store_could_not_be_read_say_so() -> None:
-    found = Links("v/A.md", "A", (), None, (Unsearched("w", "the store is damaged", "run sift index"),))
+    found = Links(
+        "v/A.md", "A", (), None, (Unsearched("w", "the store is damaged", "run sift index", Problem.STORE_DAMAGED),)
+    )
     shown_found = shown_links(found, "linux", PLAIN)
     assert shown_found.results == ("A (v/A.md) links to: nothing",)
     assert shown_found.messages[0] == "error  w: the store is damaged"

@@ -21,7 +21,7 @@ from sift.ingest.pictures import Pictured, ToPicture, picture
 from sift.ingest.readers import ToRead, read_file
 
 
-class Request(Protocol):
+class FileTask(Protocol):
     @property
     def path(self) -> Path: ...
 
@@ -199,7 +199,7 @@ def _settled(greeting: _Greeting, deadline: float, clock: Callable[[], float]) -
 
 
 @dataclass(slots=True)
-class _Reading[A: Request]:
+class _Reading[A: FileTask]:
     todo: deque[tuple[int, A]]
     again: set[int] = field(default_factory=set[int])
 
@@ -211,7 +211,7 @@ class _Reading[A: Request]:
 
 
 @dataclass(slots=True)
-class _Pool[A: Request, B]:
+class _Pool[A: FileTask, B]:
     read: Callable[[A], B]
     patience: Patience
     most: int
@@ -320,7 +320,7 @@ class _Pool[A: Request, B]:
 
 
 @contextmanager
-def _sandboxed[A: Request, B](
+def _sandboxed[A: FileTask, B](
     read: Callable[[A], B], patience: Patience, workers: int, clock: Callable[[], float], most_answer_bytes: int
 ) -> Generator[Answering[A, B]]:
     if workers < 1:

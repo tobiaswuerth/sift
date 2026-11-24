@@ -4,7 +4,7 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound
-from sift.api.errors import InvalidRequestError
+from sift.api.errors import InvalidRequestError, Problem
 from sift.api.indexing import IndexCollections
 from sift.app.collections import add
 from sift.app.documents import documents
@@ -84,7 +84,9 @@ def test_a_shortened_id_several_paths_end_in_asks_for_the_whole(home: Path) -> N
     "unknown", ["notes/C.md", "notes/rush.md", "notes/z/b/c.md", "notes/robots", "missing/rl.md", "notes/", "notes"]
 )
 def test_an_id_that_names_no_document_whole_is_unknown(home: Path, unknown: str) -> None:
-    assert unfound(home, unknown) == Unfound(unknown, f"unknown document {unknown!r}", UNKNOWN)
+    assert unfound(home, unknown) == Unfound(
+        unknown, f"unknown document {unknown!r}", UNKNOWN, Problem.UNKNOWN_DOCUMENT
+    )
 
 
 def test_a_document_is_read_by_its_file_s_absolute_path_in_any_case(tmp_path: Path, home: Path) -> None:

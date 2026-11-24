@@ -107,7 +107,8 @@
       {
         "id": "notes/b.md",
         "message": "unknown document 'notes/b.md'",
-        "remedy": "take the id from a search result"
+        "remedy": "take the id from a search result",
+        "code": "unknown_document"
       }
     ]
   },
@@ -115,8 +116,11 @@
     "hits": [
       {
         "id": "notes/a.md",
+        "collection": "notes",
+        "path": "a.md",
         "title": "A",
-        "lines": "1-2",
+        "first_line": 1,
+        "last_line": 2,
         "score": 1.5,
         "text": "# A",
         "also": [
@@ -132,11 +136,13 @@
       {
         "collection": "papers",
         "message": "the store is busy",
-        "remedy": "wait, then ask again"
+        "remedy": "wait, then ask again",
+        "code": "store_unavailable"
       }
     ],
     "partial": true,
-    "ruled_out": 1
+    "ruled_out": 1,
+    "left_out": []
   },
   "links": {
     "id": "notes/a.md",
@@ -172,7 +178,8 @@
       {
         "collection": "papers",
         "message": "the store is busy",
-        "remedy": "wait, then ask again"
+        "remedy": "wait, then ask again",
+        "code": "store_unavailable"
       }
     ]
   },
@@ -191,7 +198,8 @@
       {
         "collection": "papers",
         "message": "the store is busy",
-        "remedy": "wait, then ask again"
+        "remedy": "wait, then ask again",
+        "code": "store_unavailable"
       }
     ]
   }

@@ -35,13 +35,18 @@ class Filter:
     values: tuple[FilterValue, ...]
 
     def __post_init__(self) -> None:
-        if not self.field:
+        field, operator = cast("object", self.field), cast("object", self.operator)
+        if not isinstance(operator, Operator):
+            raise _wrong(f"the operator {operator!r} is no Operator: give one of {', '.join(Operator)}")
+        if not isinstance(field, str) or not field:
             raise _wrong("a filter names no field")
         if not self.values:
             raise _wrong(f"the filter on {self.field!r} has no value")
         if self.operator not in SETS and len(self.values) > 1:
             raise _wrong(f"the range on {self.field!r} takes one value, not {len(self.values)}")
-        for value in self.values:
+        for value in cast("tuple[object, ...]", self.values):
+            if not isinstance(value, str | int | float):
+                raise _wrong(f"the filter on {self.field!r}: {value!r} is no text, number, true or false")
             if isinstance(value, int) and not isinstance(value, bool) and not -MOST_INTEGER <= value < MOST_INTEGER:
                 raise _wrong(f"the filter on {self.field!r}: {value} is too large")
             if isinstance(value, float) and not math.isfinite(value):

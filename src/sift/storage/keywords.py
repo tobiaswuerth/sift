@@ -8,7 +8,7 @@ from typing import NamedTuple, cast
 
 import numpy as np
 
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId, DocumentId, first_row
 from sift.domain.arrays import ints
 from sift.domain.codec.segments import GAP, Segment, segment, stream
@@ -281,7 +281,7 @@ def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
             if state is KeywordState.CURRENT:
                 return
             if state is not KeywordState.REMAKING:
-                raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
+                raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY, code=Problem.KEYWORDS_REMADE)
             held, shape = WritingDocuments(connection, batches), shape_of(transaction)
             done += _index_new(held, shape)
             settled(held, shape)
@@ -294,11 +294,11 @@ def refuse_stale(transaction: Reading) -> None:
         case KeywordState.CURRENT:
             return
         case KeywordState.REMAKING:
-            raise StoreUnavailableError(UNFINISHED, REMAKE_REMEDY)
+            raise StoreUnavailableError(UNFINISHED, REMAKE_REMEDY, code=Problem.KEYWORDS_REMADE)
         case KeywordState.TAKEN_OVER:
-            raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY)
+            raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY, code=Problem.KEYWORDS_REMADE)
         case _:
-            raise StoreUnavailableError(STALE, REMAKE_REMEDY)
+            raise StoreUnavailableError(STALE, REMAKE_REMEDY, code=Problem.KEYWORDS_REMADE)
 
 
 def settle(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:

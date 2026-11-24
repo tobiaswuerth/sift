@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from pathlib import Path, PurePath
 
 from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound
-from sift.api.errors import InvalidRequestError, NotFoundError, SiftError
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem, SiftError
 from sift.domain.query import fields as shown
 from sift.domain.text.kinds import public_id, split_keyed_path
 from sift.domain.text.lines import line_range, refuse_past_end
@@ -18,7 +18,7 @@ SEPARATOR = "/"
 
 
 def unknown(id_: str) -> NotFoundError:
-    return NotFoundError(f"unknown document {id_!r}", "take the id from a search result")
+    return NotFoundError(f"unknown document {id_!r}", "take the id from a search result", code=Problem.UNKNOWN_DOCUMENT)
 
 
 def holding(known: Sequence[Collection], full: Path) -> tuple[Collection, str] | None:
@@ -92,5 +92,5 @@ def documents(home: Path, request: GetDocuments) -> Documents:
         try:
             found.append(_document(known, id_, request))
         except SiftError as error:
-            unfound.append(Unfound(id_, error.message, error.remedy))
+            unfound.append(Unfound(id_, error.message, error.remedy, error.code))
     return Documents(tuple(found), tuple(unfound))
