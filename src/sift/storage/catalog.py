@@ -34,6 +34,7 @@ from sift.storage.unusable import Unusable, unavailable_if_unusable
 CATALOG = "catalog.sqlite"
 CATALOG_DAMAGED_REMEDY = "move the catalog away, then add the folders again"
 THE_CATALOG = Unusable("the catalog", CATALOG_DAMAGED_REMEDY)
+WRITTEN_THROUGH = "PRAGMA synchronous = FULL"
 STORES = "collections"
 STORE_SUFFIX = ".sqlite"
 NAME = re.compile(r"\w[\w.-]*")
@@ -149,6 +150,7 @@ def open_catalog(home: Path, timeout: float = BUSY_TIMEOUT_SECONDS) -> sqlite3.C
     connection = connect(path, create=True, timeout=timeout)
     kept_private(home)
     try:
+        connection.execute(WRITTEN_THROUGH)
         _up_to_date(connection, path)
     except BaseException:
         connection.close()

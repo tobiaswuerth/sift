@@ -61,6 +61,11 @@ def test_the_catalog_lies_in_the_home_folder_and_records_its_layout(home: Path, 
         assert rows(transaction, Version, "PRAGMA user_version") == [Version(1)]
 
 
+def test_what_the_catalog_is_told_is_on_the_disk_once_told(catalog: sqlite3.Connection) -> None:
+    with reading(catalog) as transaction:
+        assert rows(transaction, Version, "PRAGMA synchronous") == [Version(2)]
+
+
 def test_a_catalog_of_a_newer_sift_asks_for_an_upgrade(home: Path) -> None:
     with contextlib.closing(connect(home / CATALOG, create=True)) as connection, writing(connection) as transaction:
         run(transaction, "PRAGMA user_version = 99")

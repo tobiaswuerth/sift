@@ -1,4 +1,6 @@
+import dataclasses
 import errno
+import os
 import sqlite3
 import stat
 from contextlib import closing
@@ -9,7 +11,7 @@ import pytest
 
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId
-from sift.storage.database import reading, rows, run, writing
+from sift.storage.database import read_only, reading, rows, run, writing
 from sift.storage.moving import Transfer, held_alone, transferred
 from sift.storage.store import create_store, open_store
 
@@ -116,3 +118,45 @@ def test_a_link_refused_for_another_reason_says_that_reason(tmp_path: Path) -> N
     with held_alone(path) as connection, pytest.raises(OSError, match="no link"):
         transferred(connection, path, tmp_path / "t.sqlite", lambda _done, _total: None, refusing(errno.ENOSPC))
     assert not (tmp_path / "t.sqlite").exists()
+
+
+def test_a_copy_the_new_place_cannot_take_names_the_new_place(tmp_path: Path) -> None:
+    path = store_of(tmp_path)
+    new = tmp_path / "other drive" / "s.sqlite"
+    how = dataclasses.replace(refusing(errno.EXDEV), copy_opened=read_only)
+    with held_alone(path) as connection, pytest.raises(StoreUnavailableError) as refused:
+        transferred(connection, path, new, lambda _done, _total: None, how)
+    assert refused.value.message.startswith(f"the copy {new} cannot be written: ")
+    assert refused.value.remedy == "see that its drive is connected and writable and that the file is not read-only"
+    assert list(new.parent.iterdir()) == []
+    assert len(held(path)) == 300
+
+
+@pytest.mark.parametrize("linked", [True, False])
+def test_the_folder_a_store_moves_into_is_written_through_before_the_move_ends(tmp_path: Path, *, linked: bool) -> None:
+    path = store_of(tmp_path)
+    new, seen = tmp_path / "elsewhere" / "s.sqlite", list[tuple[Path, list[str]]]()
+
+    def opened_folder(folder: Path) -> int | None:
+        seen.append((folder, sorted(file.name for file in folder.iterdir())))
+        return None
+
+    how = dataclasses.replace(Transfer() if linked else refusing(errno.EXDEV), opened_folder=opened_folder)
+    with held_alone(path) as connection:
+        transferred(connection, path, new, lambda _done, _total: None, how)
+    assert seen == [(new.parent, ["s.sqlite"])]
+
+
+def test_the_folder_written_through_is_closed_after(tmp_path: Path) -> None:
+    path, given = store_of(tmp_path), list[int]()
+
+    def opened_folder(_folder: Path) -> int:
+        given.append(os.open(tmp_path / "stand-in", os.O_RDWR | os.O_CREAT))
+        return given[-1]
+
+    with held_alone(path) as connection:
+        transferred(
+            connection, path, tmp_path / "t.sqlite", lambda _done, _total: None, Transfer(opened_folder=opened_folder)
+        )
+    with pytest.raises(OSError, match=r"Bad file descriptor|handle is invalid"):
+        os.fstat(given[0])
