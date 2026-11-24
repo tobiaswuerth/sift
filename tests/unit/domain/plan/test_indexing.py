@@ -3,6 +3,7 @@ from typing import SupportsIndex, final, override
 from hypothesis import given
 from hypothesis import strategies as st
 
+from sift.domain.plan.ignore import ignore_of
 from sift.domain.plan.indexing import (
     MOST_FILE_BYTES,
     MOST_TIME,
@@ -221,3 +222,15 @@ def test_a_plan_of_many_empty_folders_and_many_gone_files_costs_their_depth() ->
     assert (len(plan.drop), plan.emptied) == (2_000, ())
     walks, folders_a_path = 3, 2
     assert 0 < len(looked) <= walks * folders_a_path * len(known)
+
+
+def test_a_folder_whose_files_siftignore_leaves_out_is_no_folder_emptied() -> None:
+    plan = index_plan(Found({}, left_out=2), {"a.md": A, "b/c.md": B})
+    assert (plan.drop, plan.left_as_indexed, plan.emptied) == (("a.md", "b/c.md"), (), ())
+
+
+def test_what_siftignore_leaves_out_is_dropped_though_its_folder_could_not_be_listed() -> None:
+    known = {"docs/secret.md": A, "docs/kept.md": A, "rl.md": A, "private/x/y.md": B}
+    found = Found({"rl.md": A}, unlisted_folders=("docs/", "private/x/"))
+    plan = index_plan(found, known, ignore=ignore_of(["secret.md", "private/"], caseless=False))
+    assert (plan.kept, plan.drop) == (("docs/kept.md",), ("docs/secret.md", "private/x/y.md"))

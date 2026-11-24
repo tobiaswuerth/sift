@@ -1,4 +1,6 @@
 import os
+import stat
+import sys
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -30,12 +32,31 @@ def own_identity_at(path: Path) -> Identity:
     return Identity(found.st_dev, found.st_ino)
 
 
+def _reading() -> int:
+    return os.O_RDONLY | (os.O_BINARY if sys.platform == "win32" else os.O_NONBLOCK)
+
+
+def _changed(found: os.stat_result, scanned: Identity | None) -> bool:
+    return not stat.S_ISREG(found.st_mode) or (scanned is not None and Identity(found.st_dev, found.st_ino) != scanned)
+
+
+def _unchanged(held: int, scanned: Identity | None) -> int:
+    if _changed(os.fstat(held), scanned):
+        raise ChangedError(CHANGED)
+    return held
+
+
+def _file(held: int, scanned: Identity | None) -> BinaryIO:
+    try:
+        return os.fdopen(_unchanged(held, scanned), "rb")
+    except BaseException:
+        os.close(held)
+        raise
+
+
 @contextmanager
 def opened(path: Path, scanned: Identity | None) -> Generator[BinaryIO]:
-    with path.open("rb") as raw:
-        found = os.fstat(raw.fileno())
-        if scanned is not None and Identity(found.st_dev, found.st_ino) != scanned:
-            raise ChangedError(CHANGED)
+    with _file(os.open(path, _reading()), scanned) as raw:
         yield raw
 
 

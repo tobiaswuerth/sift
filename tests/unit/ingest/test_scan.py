@@ -359,7 +359,8 @@ def test_a_file_in_a_folder_left_out_stays_out_though_taken_back(tmp_path: Path)
     for name in ("private/keep.md", "x/private/a/b.md", "public/keep.md"):
         write(tmp_path / name)
     ignore = ignore_of(["private/", "!private/keep.md"], caseless=False)
-    assert paths(scan(tmp_path, Reach(ignore=ignore))) == ["public/keep.md"]
+    scanned = scan(tmp_path, Reach(ignore=ignore))
+    assert (paths(scanned), scanned.found.left_out) == (["public/keep.md"], 2)
 
 
 def test_what_siftignore_leaves_out_is_named_for_nothing(tmp_path: Path) -> None:

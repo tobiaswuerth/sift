@@ -1,3 +1,4 @@
+import os
 import stat
 import sys
 from pathlib import Path
@@ -21,7 +22,7 @@ def ignore_at(folder: Path, most: int = MOST_IGNORE_BYTES, *, platform: str = sy
     try:
         found = path.stat()
     except FileNotFoundError:
-        if path.is_symlink():
+        if os.path.lexists(path):
             raise
         return NOTHING_LEFT_OUT
     if not stat.S_ISREG(found.st_mode):

@@ -1,3 +1,6 @@
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -52,5 +55,16 @@ def test_a_siftignore_larger_than_sift_reads_cannot_be_read(tmp_path: Path) -> N
 
 def test_a_siftignore_linked_to_nothing_cannot_be_read(tmp_path: Path) -> None:
     linked(tmp_path / IGNORE_FILE, str(tmp_path / "gone"))
+    with pytest.raises(FileNotFoundError):
+        ignore_at(tmp_path)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are Windows'")
+def test_a_siftignore_that_is_a_junction_to_nothing_cannot_be_read(tmp_path: Path) -> None:
+    command, target = shutil.which("cmd"), tmp_path / "gone"
+    assert command is not None
+    target.mkdir()
+    _ = subprocess.run([command, "/c", "mklink", "/J", str(tmp_path / IGNORE_FILE), str(target)], check=True)
+    target.rmdir()
     with pytest.raises(FileNotFoundError):
         ignore_at(tmp_path)

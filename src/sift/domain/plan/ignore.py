@@ -1,4 +1,5 @@
 import re
+from bisect import bisect_left
 from collections.abc import Callable, Iterable, Sequence, Sized
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -7,6 +8,7 @@ from sift.domain.text.links import folded
 
 ANY_CHARACTER = "(?s:.)"
 NEGATIONS = ("!", "^")
+CLOSE = re.compile(r"\]")
 
 
 class _Wild(Enum):
@@ -94,11 +96,12 @@ def _names_from(group: Sequence[NameTest], names: Sequence[str], at: int) -> int
     return next((each for each in range(at, len(names) - len(group) + 1) if _names_at(group, names, each)), -1)
 
 
-def _class_end(pattern: str, start: int) -> int:
+def _class_end(pattern: str, start: int, closes: Sequence[int]) -> int:
     at = start + 1
     at += pattern[at : at + 1] in NEGATIONS
     at += pattern[at : at + 1] == "]"
-    return pattern.find("]", at)
+    found = bisect_left(closes, at)
+    return closes[found] if found < len(closes) else -1
 
 
 def _class(body: str) -> str:
@@ -118,6 +121,7 @@ def _class(body: str) -> str:
 
 def _tokens(part: str) -> list[str | _Wild]:
     tokens: list[str | _Wild] = []
+    closes = [found.start() for found in CLOSE.finditer(part)]
     at = 0
     while at < len(part):
         character = part[at]
@@ -126,7 +130,7 @@ def _tokens(part: str) -> list[str | _Wild]:
                 at += 1
             tokens.append(_Wild.STAR)
             continue
-        if character == "[" and (end := _class_end(part, at)) > 0:
+        if character == "[" and (end := _class_end(part, at, closes)) > 0:
             tokens.append(_class(part[at + 1 : end]))
             at = end + 1
             continue
@@ -183,3 +187,9 @@ def left_out(ignore: Ignore, path: str, *, folder: bool = False) -> bool:
         if (folder or not rule.folders_only) and rule.matches(names):
             return not rule.taken_back
     return False
+
+
+def excludes(ignore: Ignore, path: str) -> bool:
+    names = path.split("/")
+    folders = ("/".join(names[:depth]) for depth in range(1, len(names)))
+    return any(left_out(ignore, folder, folder=True) for folder in folders) or left_out(ignore, path)

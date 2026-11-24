@@ -1,14 +1,19 @@
 import fnmatch
+import sys
 import unicodedata
+from collections.abc import Callable
+from types import BuiltinFunctionType, FrameType
 
 import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from sift.domain.plan.ignore import NOTHING_LEFT_OUT, ignore_of, in_order, left_out
+from sift.domain.plan import ignore as ignore_module
+from sift.domain.plan.ignore import NOTHING_LEFT_OUT, excludes, ignore_of, in_order, left_out
 
 PATTERN_CHARACTERS = "ab*?[]!-"
 NAME_CHARACTERS = "ab-]!["
+SEARCHES = frozenset({"find", "rfind", "index", "rindex", "search", "match"})
 
 
 def ignores(lines: str, path: str, *, folder: bool = False, caseless: bool = False) -> bool:
@@ -138,3 +143,37 @@ def test_a_pattern_of_many_stars_matches_long_names_at_once() -> None:
 def test_many_patterns_and_deep_paths_stay_fast() -> None:
     ignore = ignore_of([f"folder{n}/**/*.tmp" for n in range(200)] + ["*" * 10_000 + "x"], caseless=False)
     assert not left_out(ignore, "a/" * 200 + "b.md")
+
+
+def test_a_file_in_a_folder_left_out_is_excluded_though_taken_back() -> None:
+    ignore = ignore_of(["private/", "!private/keep.md"], caseless=False)
+    assert [excludes(ignore, path) for path in ("private/keep.md", "x/private/a/b.md", "public/keep.md")] == [
+        True,
+        True,
+        False,
+    ]
+    assert excludes(ignore_of(["*.md"], caseless=False), "a/b.md")
+
+
+def _searches(run: Callable[[], object]) -> int:
+    held: list[str] = []
+
+    def profiled(frame: FrameType, event: str, arg: object) -> None:
+        mine = frame.f_code.co_filename == ignore_module.__file__
+        if mine and event == "c_call" and isinstance(arg, BuiltinFunctionType) and arg.__name__ in SEARCHES:
+            held.append(arg.__name__)
+
+    sys.setprofile(profiled)
+    try:
+        _ = run()
+    finally:
+        sys.setprofile(None)
+    return len(held)
+
+
+@pytest.mark.parametrize(
+    "pattern, name", [("[" * 20_000, "[" * 20_000), ("[a" * 10_000 + "]", "a"), ("x[" * 10_000, "x[" * 10_000)]
+)
+def test_brackets_that_never_close_are_looked_for_once_however_many(pattern: str, name: str) -> None:
+    assert _searches(lambda: ignore_of([pattern], caseless=False)) == 0
+    assert left_out(ignore_of([pattern], caseless=False), name)

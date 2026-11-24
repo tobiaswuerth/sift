@@ -10,6 +10,7 @@ from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, Inde
 from sift.app.collections import add
 from sift.app.documents import documents
 from sift.app.indexing import IGNORE_REMEDY, LIMITS, index
+from sift.app.problems import LEFT_AS_INDEXED
 from sift.ingest.ignore import IGNORE_FILE
 from tests.files import write
 from tests.later import LATER
@@ -64,3 +65,13 @@ def test_a_collection_whose_siftignore_cannot_be_read_is_skipped_and_keeps_its_d
     assert Noted(reason, IGNORE_REMEDY) in said
     assert other == CollectionIndexed("other", Indexed(1, 1, 0, 0, 0))
     assert held(home) == list(PATHS)
+
+
+def test_a_siftignore_that_leaves_out_every_file_drops_them_all(home: Path, notes: Path) -> None:
+    indexed(home)
+    write(notes / IGNORE_FILE, "*.md\n*.txt\n")
+    said: list[Event] = []
+    assert indexed(home, said.append).collections == (CollectionIndexed("notes", Indexed(0, 0, 0, 3, 0)),)
+    assert held(home) == []
+    kept = LEFT_AS_INDEXED.split("{")[0]
+    assert not [each for each in said if isinstance(each, Noted) and each.text.startswith(kept)]

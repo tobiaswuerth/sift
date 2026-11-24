@@ -83,6 +83,7 @@ class _Seen:
     linked_folders: list[str] = field(default_factory=list[str])
     named_as_records: list[str] = field(default_factory=list[str])
     identities: dict[str, Identity] = field(default_factory=dict[str, Identity])
+    left_out: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,8 +171,14 @@ def _listed(folder: str, relative: str, listing: Listing, seen: _Seen) -> Iterat
         seen.empty_folders.append(relative)
 
 
+def _left_out(walk: _Walk, path: str, *, folder: bool = False) -> bool:
+    found = left_out(walk.ignore, path, folder=folder)
+    walk.seen.left_out += found
+    return found
+
+
 def _folder(entry: DirEntry, path: str, walk: _Walk) -> None:
-    if left_out(walk.ignore, path, folder=True):
+    if _left_out(walk, path, folder=True):
         return
     if entry.is_junction():
         walk.seen.linked_folders.append(f"{path}/")
@@ -180,9 +187,9 @@ def _folder(entry: DirEntry, path: str, walk: _Walk) -> None:
 
 
 def _untyped(path: str, walk: _Walk, error: OSError) -> None:
-    if not left_out(walk.ignore, path):
+    if not _left_out(walk, path):
         _unreached(walk.seen, path, error)
-    if not left_out(walk.ignore, path, folder=True):
+    if not _left_out(walk, path, folder=True):
         walk.seen.unlisted_folders.append(f"{path}/")
         walk.seen.refusals[f"{path}/"] = _reason(error)
 
@@ -192,7 +199,7 @@ def _taken(entry: DirEntry, relative: str, walk: _Walk) -> None:
     try:
         if entry.is_dir(follow_symlinks=False):
             _folder(entry, path, walk)
-        elif kind_of(entry.name) is not None and not left_out(walk.ignore, path):
+        elif kind_of(entry.name) is not None and not _left_out(walk, path):
             _file(entry, path, walk.seen, walk.guard)
     except OSError as error:
         _untyped(path, walk, error)
@@ -222,6 +229,7 @@ def scan(
         tuple(seen.unlisted_files),
         tuple(seen.outside),
         tuple(seen.empty_folders),
+        seen.left_out,
     )
     return Scanned(
         found,

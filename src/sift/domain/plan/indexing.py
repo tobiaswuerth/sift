@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import NamedTuple
 
+from sift.domain.plan.ignore import NOTHING_LEFT_OUT, Ignore, excludes
 from sift.domain.text.kinds import CONVERTED, kind_of
 
 MOST_TIME = 2**63 - 1
@@ -29,6 +30,7 @@ class Found:
     unlisted_files: tuple[str, ...] = ()
     outside: tuple[str, ...] = ()
     empty_folders: tuple[str, ...] = ()
+    left_out: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +66,7 @@ def within(paths: frozenset[str], folders: tuple[str, ...]) -> frozenset[str]:
 
 
 def _emptied(found: Found, gone: frozenset[str]) -> tuple[str, ...]:
-    if not found.files and not found.outside:
+    if not found.files and not found.outside and not found.left_out:
         return (ROOT,) if gone else ()
     touched = {folder for path in gone for folder in folders_of(path)}
     return tuple(sorted(folder for folder in found.empty_folders if folder in touched))
@@ -79,11 +81,13 @@ def index_plan(
     known: Mapping[str, Stat],
     most_file_bytes: int = MOST_FILE_BYTES,
     unreadable: Mapping[str, bool] = NONE_UNREADABLE,
+    ignore: Ignore = NOTHING_LEFT_OUT,
 ) -> IndexPlan:
     again = {path for path, read_again in unreadable.items() if read_again}
     to_read = sorted(path for path, stat in found.files.items() if known.get(path) != stat or path in again)
     unseen = frozenset(known.keys() - found.files.keys())
-    kept = within(unseen, found.unlisted_folders) | (unseen & set(found.unlisted_files))
+    held = within(unseen, found.unlisted_folders) | (unseen & set(found.unlisted_files))
+    kept = frozenset(path for path in held if not excludes(ignore, path))
     gone = unseen - kept
     emptied = _emptied(found, gone)
     left_as_indexed = within(gone, emptied)

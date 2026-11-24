@@ -169,7 +169,7 @@ def _synced(job: Job, ignore: Ignore) -> Indexed:
     with reading(job.connection) as transaction:
         known = {path: Stat(source.modified_ns, source.size) for path, source in sources(transaction).items()}
         marks = {entry.path: bool(entry.read_again) for entry in unreadable(transaction)}
-    plan = index_plan(scanned.found, known, job.limits.most_file_bytes, marks)
+    plan = index_plan(scanned.found, known, job.limits.most_file_bytes, marks, ignore)
     for said in problems(job.collection.folder, scanned, plan, frozenset(known)):
         job.report(said)
     job.report(PhaseStarted(Phase.READ, len(plan.read)))
