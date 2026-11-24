@@ -25,6 +25,7 @@ from sift.api.ids import CollectionId
 from sift.api.wire import Json, encoded, encoded_error
 from sift.app.kept_decoded import KeptDecoded
 from sift.app.resident import ResidentCodes
+from sift.domain.text.json_values import deeper_than
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.results import KeptResults, Moment
@@ -41,12 +42,14 @@ ALIVE_SECONDS = 30.0
 ALIVE = b'{"alive": true}\n'
 WAITING = "another command writes to this home; this one waits for it to finish"
 MOST_BODY = 1 << 20
+MOST_DEPTH = 64
+NO_JSON_REMEDY = "send the request as a JSON object"
 LOGGER = "sift.server"
 UNAUTHORIZED = InvalidRequestError(
     "no token, or a wrong one", "send the token in the home's server.json", code=Problem.UNAUTHORIZED
 )
 UNKNOWN = NotFoundError("no such command", "send one of sift's commands to /api/COMMAND")
-NO_JSON = InvalidRequestError("the request is no JSON", "send the request as a JSON object")
+NO_JSON = InvalidRequestError("the request is no JSON", NO_JSON_REMEDY)
 TOO_LARGE = InvalidRequestError(f"the request is longer than {MOST_BODY:,} bytes", "send a shorter request")
 FAILED_REMEDY = "see the home process's log in SIFT_HOME/logs, and report it"
 
@@ -66,7 +69,27 @@ class Serving:
 
 
 def _line(value: Json) -> bytes:
-    return json.dumps(value, ensure_ascii=False).encode() + b"\n"
+    return json.dumps(value, ensure_ascii=False, allow_nan=False).encode() + b"\n"
+
+
+def _no_number(name: str) -> object:
+    raise InvalidRequestError(f"the request holds {name}, which is no JSON number", NO_JSON_REMEDY)
+
+
+def _given_once(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    held = dict[str, object]()
+    for key, value in pairs:
+        if key in held:
+            raise InvalidRequestError(f"the request gives the key {key[:40]!r} twice", NO_JSON_REMEDY)
+        held[key] = value
+    return held
+
+
+def json_of(body: bytes) -> object:
+    text = body.decode()
+    if deeper_than(text, MOST_DEPTH):
+        raise InvalidRequestError(f"the request is nested more than {MOST_DEPTH} deep", NO_JSON_REMEDY)
+    return cast("object", json.loads(text, parse_constant=_no_number, object_pairs_hook=_given_once))
 
 
 def _refused(error: SiftError, status: int) -> JSONResponse:
@@ -184,7 +207,9 @@ async def _command(serving: Serving, name: str, handled: Handled, request: Reque
     if body is None:
         return _refused(TOO_LARGE, 413)
     try:
-        data = cast("object", json.loads(body))
+        data = json_of(body)
+    except InvalidRequestError as refused:
+        return _refused(refused, 400)
     except ValueError:
         return _refused(NO_JSON, 400)
     return StreamingResponse(_streamed(serving, name, handled, data), media_type=LINES)

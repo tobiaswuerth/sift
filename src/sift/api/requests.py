@@ -1,4 +1,5 @@
 import dataclasses
+import math
 import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from sift.api.described import Bounds
 from sift.api.errors import InvalidRequestError
 
 KIND_NAMES: Mapping[object, str] = MappingProxyType(
-    {str: "text", int: "a whole number", float: "a number", bool: "true or false"}
+    {str: "text", int: "a whole number", float: "a finite number", bool: "true or false"}
 )
 
 
@@ -44,7 +45,7 @@ def _whole(value: object) -> bool:
 
 
 def _number(value: object) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool)
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
 
 
 SCALARS: Mapping[object, Callable[[object], bool]] = MappingProxyType(

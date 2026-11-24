@@ -51,7 +51,7 @@ def sent[R, A](endpoint: Endpoint, act: Act[R, A], request: R, report: Reporter,
     connection = http.client.HTTPConnection(LOCALHOST, endpoint.port, timeout=quiet)
     headers = {"Authorization": f"Bearer {endpoint.token}", "Content-Type": "application/json"}
     try:
-        connection.request("POST", f"/api/{act.name}", json.dumps(encoded(request)).encode(), headers)
+        connection.request("POST", f"/api/{act.name}", json.dumps(encoded(request), allow_nan=False).encode(), headers)
         with connection.getresponse() as response:
             if response.status != http.client.OK:
                 raise _refusal(response)

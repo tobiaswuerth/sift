@@ -24,7 +24,7 @@ CLIENT = "sift.interfaces.server.client"
 
 
 def as_json(answer: Answer) -> str:
-    return printable_json(json.dumps(encoded(answer), ensure_ascii=False, indent=2))
+    return printable_json(json.dumps(encoded(answer), ensure_ascii=False, indent=2, allow_nan=False))
 
 
 def never(_: object) -> bool:

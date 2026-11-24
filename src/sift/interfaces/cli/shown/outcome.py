@@ -35,7 +35,7 @@ def empty(platform: str, style: Style) -> Shown:
 
 
 def value_text(value: FieldValue) -> str:
-    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, allow_nan=False)
 
 
 def unsearched_lines(unsearched: tuple[Unsearched, ...], style: Style) -> tuple[str, ...]:
@@ -61,7 +61,7 @@ def left_out_lines(left_out: tuple[Left, ...], style: Style) -> tuple[str, ...]:
 
 
 def _error_json(said: Json) -> str:
-    return printable_json(json.dumps({"error": said}, ensure_ascii=False, indent=2))
+    return printable_json(json.dumps({"error": said}, ensure_ascii=False, indent=2, allow_nan=False))
 
 
 def failure(

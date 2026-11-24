@@ -105,6 +105,25 @@ def test_a_call_without_its_token_from_another_host_or_to_no_command_is_refused(
         assert (status, cast("Line", unknown[0]["error"])["code"]) == (404, Problem.NOT_FOUND.value)
 
 
+@pytest.mark.parametrize(
+    "body, said",
+    [
+        (b"[" * 200_000 + b"]" * 200_000, "the request is nested more than 64 deep"),
+        (b'{"query": "x", "budget": NaN}', "the request holds NaN, which is no JSON number"),
+        (b'{"query": "x", "budget": -Infinity}', "the request holds -Infinity, which is no JSON number"),
+        (b'{"query": "x", "query": "y"}', "the request gives the key 'query' twice"),
+        (b'{"query": "\xff"}', "the request is no JSON"),
+    ],
+)
+def test_json_too_deep_not_finite_with_a_key_twice_or_not_utf_8_is_refused(
+    settings: Settings, body: bytes, said: str
+) -> None:
+    with running(settings) as server:
+        status, lines = asked(server, "search", body)
+    refused = cast("Line", lines[0]["error"])
+    assert (status, refused["code"], refused["message"]) == (400, Problem.INVALID_REQUEST.value, said)
+
+
 def test_a_request_that_is_no_json_too_long_or_wrong_is_said_to_be(settings: Settings) -> None:
     with running(settings) as server:
         assert asked(server, "status", b"{not json")[0] == 400

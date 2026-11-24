@@ -44,8 +44,8 @@ def test_fields_within_their_bounds_and_of_their_kinds_pass() -> None:
         ({"k": True}, "k", "k is True, not a whole number"),
         ({"k": 2.5}, "k", "k is 2.5, not a whole number"),
         ({"name": None}, "name", "name is None, not text"),
-        ({"share": "1"}, "share", "share is '1', not a number or nothing"),
-        ({"share": False}, "share", "share is False, not a number or nothing"),
+        ({"share": "1"}, "share", "share is '1', not a finite number or nothing"),
+        ({"share": False}, "share", "share is False, not a finite number or nothing"),
     ],
 )
 def test_a_field_of_another_kind_is_refused_by_name_saying_what_it_takes(
@@ -63,7 +63,9 @@ def test_a_field_of_another_kind_is_refused_by_name_saying_what_it_takes(
         ({"collections": ["notes"]}, "collections", r"collections is \['notes'\], not a list of text"),
         ({"fields": ("url", 3)}, "fields", r"fields is \('url', 3\), not a list of text"),
         ({"filters": ({"year": 2024},)}, "filters", "not a list of filters"),
-        ({"budget": "1"}, "budget", "budget is '1', not a number or nothing"),
+        ({"budget": "1"}, "budget", "budget is '1', not a finite number or nothing"),
+        ({"budget": float("nan")}, "budget", "budget is nan, not a finite number or nothing"),
+        ({"budget": float("inf")}, "budget", "budget is inf, not a finite number or nothing"),
         ({"all_passages": 1}, "all_passages", "all_passages is 1, not true or false"),
     ],
 )
