@@ -2,18 +2,27 @@ import heapq
 import itertools
 import json
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
 
-from sift.domain.arrays import Ascending, Ids, among, first, firsts, ints, last, run_starts
+from sift.domain.arrays import Ascending, Ids, after, among, first, firsts, ints, last, run_starts, total
 from sift.domain.codec.postings import blocked_all, lengths_of, positions_all, with_lengths
-from sift.domain.codec.segments import Lists, postings_of
+from sift.domain.codec.segments import Lists, RangesPart, blocks_of, postings_of, ranges_joined, ranges_part
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Held, Policy, merges
 from sift.storage.database import Batches, IdRow, Reading, WritingDocuments, rows, run, streamed
-from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
+from sift.storage.keyword_writes import (
+    Head,
+    blocks_added,
+    lengths_added,
+    long_begun,
+    long_finished,
+    postings_added,
+    segment_added,
+)
 
 SHORT = """SELECT :rank, term, -1, chunks, length(postings) + length(positions), postings, positions
            FROM keyword_postings WHERE segment = :segment AND postings IS NOT NULL ORDER BY term"""
@@ -76,19 +85,65 @@ def _listed(transaction: WritingDocuments, merged: Sequence[PlacedSegment], bloc
     return heapq.merge(*streams, key=_order)
 
 
-def batched(listed: Iterator[MergedTerm], batches: Batches) -> Iterator[list[MergedTerm]]:
+class TermsBatch(NamedTuple):
+    rows: list[MergedTerm]
+
+
+class LargeTerm(NamedTuple):
+    rows: Iterator[MergedTerm]
+
+
+def _too_large(postings: int, size: int, batches: Batches) -> bool:
+    return postings >= batches.postings_a_merge or size >= batches.bytes_a_merge
+
+
+class _Taken(NamedTuple):
+    rows: list[MergedTerm]
+    postings: int
+    size: int
+
+
+def _taken(rows_of_term: Iterator[MergedTerm], batches: Batches) -> _Taken | LargeTerm:
+    taken: list[MergedTerm] = []
+    postings = size = 0
+    for row in rows_of_term:
+        taken.append(row)
+        postings, size = postings + row.chunks, size + row.size
+        if _too_large(postings, size, batches):
+            return LargeTerm(itertools.chain(taken, rows_of_term))
+    return _Taken(taken, postings, size)
+
+
+def batched(listed: Iterator[MergedTerm], batches: Batches) -> Iterator[TermsBatch | LargeTerm]:
     batch: list[MergedTerm] = []
-    volume = size = 0
+    postings = size = 0
     for _, rows_of_term in itertools.groupby(listed, key=lambda row: row.term):
-        held = list(rows_of_term)
-        batch.extend(held)
-        volume += sum(row.chunks for row in held)
-        size += sum(row.size for row in held)
-        if volume >= batches.postings_a_merge or size >= batches.bytes_a_merge:
-            yield batch
-            batch, volume, size = [], 0, 0
+        match _taken(rows_of_term, batches):
+            case LargeTerm() as large:
+                if batch:
+                    yield TermsBatch(batch)
+                    batch, postings, size = [], 0, 0
+                yield large
+            case taken:
+                batch.extend(taken.rows)
+                postings, size = postings + taken.postings, size + taken.size
+                if _too_large(postings, size, batches):
+                    yield TermsBatch(batch)
+                    batch, postings, size = [], 0, 0
     if batch:
-        yield batch
+        yield TermsBatch(batch)
+
+
+def _pieces(rows: Iterator[MergedTerm], batches: Batches) -> Iterator[list[MergedTerm]]:
+    piece: list[MergedTerm] = []
+    postings = size = 0
+    for row in rows:
+        if piece and _too_large(postings + row.chunks, size + row.size, batches):
+            yield piece
+            piece, postings, size = [], 0, 0
+        piece.append(row)
+        postings, size = postings + row.chunks, size + row.size
+    yield piece
 
 
 def _lengths(transaction: WritingDocuments, merged: Sequence[PlacedSegment], live: Ids, shift: int) -> Ids:
@@ -109,8 +164,55 @@ def _lengths(transaction: WritingDocuments, merged: Sequence[PlacedSegment], liv
     return found
 
 
-def _lists(listed: Sequence[MergedTerm], dead: Ids, live: Ids, lengths: Ids) -> Lists:
-    places, counts, bounds = blocked_all([row.postings for row in listed])
+@dataclass(eq=False, frozen=True, slots=True)
+class _Merging:
+    made: int
+    dead: Ids
+    live: Ids
+    lengths: Ids
+    average: float
+    shape: Shape
+
+
+class _Decoded(NamedTuple):
+    rows: Sequence[MergedTerm]
+    places: Ids
+    counts: Ids
+    bounds: list[int]
+    held: list[int]
+
+
+def _decoded(rows: Sequence[MergedTerm]) -> _Decoded:
+    places, counts, bounds = blocked_all([row.postings for row in rows])
+    return _Decoded(rows, places, counts, bounds, ints(np.diff(after(0, np.cumsum(counts))[bounds])))
+
+
+class _Span(NamedTuple):
+    decoded: _Decoded
+    start: int
+    end: int
+
+
+def _spans(sizes: Sequence[int], most: int) -> Iterator[tuple[int, int]]:
+    start = held = 0
+    for at, size in enumerate(sizes):
+        if at > start and held + size > most:
+            yield start, at
+            start, held = at, 0
+        held += size
+    yield start, len(sizes)
+
+
+def _within(spans: Iterator[_Span], most: int) -> Iterator[_Span]:
+    for span in spans:
+        for start, end in _spans(span.decoded.held[span.start : span.end], most):
+            yield _Span(span.decoded, span.start + start, span.start + end)
+
+
+def _lists(merging: _Merging, span: _Span) -> Lists:
+    dead, live, lengths = merging.dead, merging.live, merging.lengths
+    listed, bounds = span.decoded.rows[span.start : span.end], span.decoded.bounds[span.start : span.end + 1]
+    places, counts = span.decoded.places[bounds[0] : bounds[-1]], span.decoded.counts[bounds[0] : bounds[-1]]
     positions = positions_all([row.positions for row in listed], counts)
     names = sorted({row.term for row in listed})
     coded = {name: code for code, name in enumerate(names)}
@@ -126,6 +228,69 @@ def _lists(listed: Sequence[MergedTerm], dead: Ids, live: Ids, lengths: Ids) -> 
     return Lists(terms, tuple(starts), places, counts, positions, lengths[at])
 
 
+def _lists_written(transaction: WritingDocuments, merging: _Merging, lists: Lists) -> None:
+    if lists.terms:
+        postings_added(transaction, merging.made, postings_of(lists, merging.average, merging.shape))
+
+
+def _joined(held: Sequence[Lists]) -> Lists:
+    def joined(parts: list[Ids]) -> Ids:
+        return np.concatenate([np.zeros(0, np.int64), *parts])
+
+    ids, counts = joined([each.ids for each in held]), joined([each.counts for each in held])
+    positions, lengths = joined([each.positions for each in held]), joined([each.lengths for each in held])
+    return Lists(held[0].terms, (0,), ids, counts, positions, lengths)
+
+
+def _cut(lists: Lists, end: int) -> tuple[Lists, Lists]:
+    at = total(lists.counts[:end])
+    head = Lists(lists.terms, (0,), lists.ids[:end], lists.counts[:end], lists.positions[:at], lists.lengths[:end])
+    rest = Lists(lists.terms, (0,), lists.ids[end:], lists.counts[end:], lists.positions[at:], lists.lengths[end:])
+    return head, rest
+
+
+def _written_blocks(transaction: WritingDocuments, merging: _Merging, pending: Lists, written: int) -> int:
+    blocks = blocks_of(pending.ids, pending.counts, pending.positions, merging.shape)
+    blocks_added(transaction, merging.made, pending.terms[0], written, blocks)
+    return written + len(blocks)
+
+
+def _term_written(transaction: WritingDocuments, merging: _Merging, spans: Iterator[_Span]) -> None:
+    shape, held, parts, chunks = merging.shape, list[Lists](), list[RangesPart](), 0
+    written: int | None = None
+    for span in _within(spans, transaction.batches.tokens_a_segment):
+        lists = _lists(merging, span)
+        if not lists.terms:
+            continue
+        parts.append(ranges_part(lists.ids, lists.counts, lists.lengths, merging.average, shape))
+        held.append(lists)
+        chunks += len(lists.ids)
+        if chunks >= shape.long:
+            if written is None:
+                long_begun(transaction, merging.made, lists.terms[0])
+            pending = _joined(held)
+            ready, rest = _cut(pending, len(pending.ids) // shape.block * shape.block)
+            written, held = _written_blocks(transaction, merging, ready, written or 0), [rest]
+    if written is not None:
+        last = _joined(held)
+        _written_blocks(transaction, merging, last, written)
+        long_finished(transaction, merging.made, last.terms[0], chunks, ranges_joined(parts))
+    elif held:
+        _lists_written(transaction, merging, _joined(held))
+
+
+def _batch_written(transaction: WritingDocuments, merging: _Merging, rows: Sequence[MergedTerm]) -> None:
+    decoded = _decoded(rows)
+    starts = [at for at in range(len(rows)) if not at or rows[at].term != rows[at - 1].term] + [len(rows)]
+    sizes = [sum(decoded.held[start:end]) for start, end in itertools.pairwise(starts)]
+    for first_term, end_term in _spans(sizes, transaction.batches.tokens_a_segment):
+        span = _Span(decoded, starts[first_term], starts[end_term])
+        if end_term - first_term == 1:
+            _term_written(transaction, merging, iter([span]))
+        else:
+            _lists_written(transaction, merging, _lists(merging, span))
+
+
 def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shape: Shape) -> None:
     low, high = merged[0].first, merged[-1].last
     named = json.dumps([each.id for each in merged])
@@ -139,11 +304,14 @@ def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shap
     dead = _ids(
         transaction, "SELECT place AS id FROM keyword_dead WHERE place BETWEEN ? AND ? ORDER BY place", low, high
     )
-    listed = _listed(transaction, merged, shape.block)
-    for batch in batched(listed, transaction.batches):
-        lists = _lists(batch, dead, live, lengths)
-        if lists.terms:
-            postings_added(transaction, made, postings_of(lists, average, shape))
+    merging = _Merging(made, dead, live, lengths, average, shape)
+    for batch in batched(_listed(transaction, merged, shape.block), transaction.batches):
+        match batch:
+            case TermsBatch(rows=terms_rows):
+                _batch_written(transaction, merging, terms_rows)
+            case large:
+                pieces = map(_decoded, _pieces(large.rows, transaction.batches))
+                _term_written(transaction, merging, (_Span(each, 0, len(each.rows)) for each in pieces))
     lengths_added(transaction, made, with_lengths(live, lengths, shape.lengths_shift))
     for sql in DROPPED:
         run(transaction, sql, (named,))

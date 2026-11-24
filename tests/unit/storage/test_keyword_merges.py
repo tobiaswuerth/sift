@@ -1,4 +1,5 @@
 import tempfile
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,45 @@ def test_segments_merged_as_they_come_index_what_fts5_makes_of_the_live_chunks(e
         applied(connection, each, MERGING)
         checked(connection)
         settled(connection, MERGING.merging)
+
+
+PIECES = Batches(chunks_a_segment=3, postings_a_merge=1, bytes_a_merge=1, merging=Policy(factor=2, floor=1))
+DENSE = Batches(chunks_a_segment=3, tokens_a_segment=1, merging=Policy(factor=2, floor=1))
+
+
+@settings(max_examples=30, deadline=None)
+@given(rounds, st.sampled_from([SMALL, Shape()]), st.sampled_from([PIECES, DENSE]))
+def test_terms_merged_a_row_at_a_time_index_what_fts5_makes_of_the_live_chunks(
+    each: list[Round], shape: Shape, batches: Batches
+) -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, shape) as connection:
+        applied(connection, each, batches)
+        checked(connection)
+        settled(connection, batches.merging)
+
+
+@pytest.mark.parametrize(
+    "halves",
+    [
+        Batches(postings_a_merge=8, merging=Policy(factor=2, floor=1, span=0.0)),
+        Batches(tokens_a_segment=4096, merging=Policy(factor=2, floor=1, span=0.0)),
+    ],
+)
+def test_a_term_too_large_for_a_merge_s_batch_is_merged_in_pieces_never_whole(halves: Batches) -> None:
+    word: Content = ("", "w", "word " * 60_000)
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [{"a.md": word}, {"b.md": word}], Batches(merging=Policy(factor=10, floor=10**6)))
+        with reading(connection) as transaction:
+            assert len(rows(transaction, Sized, "SELECT chunks, dead FROM keyword_segments")) == 2
+        tracemalloc.start()
+        try:
+            assert list(settle(connection, halves))[-1] > 0
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert len(settled(connection, halves.merging)) == 1
+        assert peak < 2 * 60_000 * 8
+        checked(connection)
 
 
 def test_one_chunk_written_at_a_time_merges_like_a_binary_counter() -> None:
@@ -83,11 +123,12 @@ def test_a_segment_to_rewrite_whose_chunks_are_all_gone_is_damage() -> None:
             applied(connection, [{}])
 
 
-def test_a_term_only_dead_chunks_held_is_gone_after_a_merge() -> None:
-    batches = Batches(postings_a_merge=1, merging=Policy(factor=2, floor=1, span=0.0, dead_share=0.99))
+@pytest.mark.parametrize("postings", [1, 2])
+def test_a_term_only_dead_chunks_held_is_gone_after_a_merge(postings: int) -> None:
+    batches = Batches(postings_a_merge=postings, merging=Policy(factor=2, floor=1, span=0.0, dead_share=0.99))
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
         common: Content = ("", "c", "common")
-        applied(connection, [{"a.md": ("", "a", "solo"), "b.md": common, "c.md": common}, {"a.md": None}], batches)
+        applied(connection, [{"a.md": ("", "s", "solo"), "b.md": common, "c.md": common}, {"a.md": None}], batches)
         applied(connection, [{"d.md": common, "e.md": common}], batches)
         assert settled(connection, batches.merging) == [Sized(4, 0)]
         with reading(connection) as transaction:
@@ -128,13 +169,19 @@ def test_merges_that_fit_a_write_run_though_a_larger_one_waits() -> None:
         checked(connection)
 
 
-def test_merges_batch_by_bytes_as_well_as_by_postings() -> None:
+def _shown(batches: Batches) -> list[tuple[str, list[str]]]:
     listed = [MergedTerm(0, term, 0, 3, 10, b"", b"") for term in ("a", "a", "b", "c")]
-    by_terms = [[row.term for row in batch] for batch in batched(iter(listed), Batches(bytes_a_merge=1))]
-    assert by_terms == [["a", "a"], ["b"], ["c"]]
-    assert len(list(batched(iter(listed), Batches(postings_a_merge=3)))) == 3
-    assert len(list(batched(iter(listed), Batches(bytes_a_merge=30, postings_a_merge=10**9)))) == 2
-    assert len(list(batched(iter(listed), Batches()))) == 1
+    return [(type(each).__name__, [row.term for row in each.rows]) for each in batched(iter(listed), batches)]
+
+
+def test_merges_batch_terms_by_bytes_as_well_as_by_postings_and_a_term_past_either_in_pieces() -> None:
+    assert _shown(Batches(bytes_a_merge=1)) == [("LargeTerm", ["a", "a"]), ("LargeTerm", ["b"]), ("LargeTerm", ["c"])]
+    assert _shown(Batches(postings_a_merge=4)) == [("LargeTerm", ["a", "a"]), ("TermsBatch", ["b", "c"])]
+    assert _shown(Batches(bytes_a_merge=30, postings_a_merge=10**9)) == [
+        ("TermsBatch", ["a", "a", "b"]),
+        ("TermsBatch", ["c"]),
+    ]
+    assert _shown(Batches()) == [("TermsBatch", ["a", "a", "b", "c"])]
 
 
 def test_settling_or_writing_a_half_remade_index_says_to_finish_the_remake() -> None:

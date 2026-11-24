@@ -1,8 +1,8 @@
 from collections.abc import Mapping, Sequence
 from typing import NamedTuple
 
-from sift.domain.codec.segments import LongPostings, Postings
-from sift.storage.database import IdRow, Writing, rows, run_each
+from sift.domain.codec.segments import LongPostings, Postings, ShortPostings
+from sift.storage.database import IdRow, Writing, rows, run, run_each
 
 
 class Head(NamedTuple):
@@ -23,10 +23,17 @@ def segment_added(transaction: Writing, head: Head) -> int:
     return made.id
 
 
+POSTINGS_ROW = (
+    "INSERT INTO keyword_postings(segment, term, chunks, postings, positions, ranges) VALUES (?, ?, ?, ?, ?, ?)"
+)
+BLOCK_ROW = "INSERT INTO keyword_blocks(segment, term, number, postings, positions) VALUES (?, ?, ?, ?, ?)"
+UNFINISHED_RANGES = b""
+
+
 def postings_added(transaction: Writing, segment: int, postings: Sequence[Postings]) -> None:
     run_each(
         transaction,
-        "INSERT INTO keyword_postings(segment, term, chunks, postings, positions, ranges) VALUES (?, ?, ?, ?, ?, ?)",
+        POSTINGS_ROW,
         [
             (segment, p.term, p.chunks, None, None, p.held.ranges)
             if isinstance(p.held, LongPostings)
@@ -36,7 +43,7 @@ def postings_added(transaction: Writing, segment: int, postings: Sequence[Postin
     )
     run_each(
         transaction,
-        "INSERT INTO keyword_blocks(segment, term, number, postings, positions) VALUES (?, ?, ?, ?, ?)",
+        BLOCK_ROW,
         [
             (segment, p.term, number, part.postings, part.positions)
             for p in postings
@@ -44,6 +51,23 @@ def postings_added(transaction: Writing, segment: int, postings: Sequence[Postin
             for number, part in enumerate(p.held.blocks)
         ],
     )
+
+
+def long_begun(transaction: Writing, segment: int, term: str) -> None:
+    run(transaction, POSTINGS_ROW, (segment, term, 1, None, None, UNFINISHED_RANGES))
+
+
+def blocks_added(transaction: Writing, segment: int, term: str, first: int, blocks: Sequence[ShortPostings]) -> None:
+    run_each(
+        transaction,
+        BLOCK_ROW,
+        [(segment, term, first + number, part.postings, part.positions) for number, part in enumerate(blocks)],
+    )
+
+
+def long_finished(transaction: Writing, segment: int, term: str, chunks: int, ranges: bytes) -> None:
+    sql = "UPDATE keyword_postings SET chunks = ?, ranges = ? WHERE segment = ? AND term = ?"
+    run(transaction, sql, (chunks, ranges, segment, term))
 
 
 def lengths_added(transaction: Writing, segment: int, lengths: Mapping[int, bytes]) -> None:

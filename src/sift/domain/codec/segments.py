@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ids, first, ints, last, maxima_at, run_starts, total
+from sift.domain.arrays import Ids, Scores, first, ints, last, maxima_at, run_starts, sums_at, total
 from sift.domain.codec.postings import encoded, ranged, with_lengths
 from sift.domain.codec.shape import SHAPE, Shape
 from sift.domain.rank.bm25 import quantized, term_scores
@@ -56,11 +56,32 @@ def stream(title: Sequence[str], text: Sequence[str], meta: Sequence[str]) -> li
     return [*title, GAP, *text, GAP, *meta]
 
 
-def _ranges(ids: Ids, counts: Ids, lengths: Ids, average: float, shape: Shape) -> bytes:
+@dataclass(eq=False, frozen=True, slots=True)
+class RangesPart:
+    ids: Ids
+    sizes: Ids
+    best: Scores
+
+
+def ranges_part(ids: Ids, counts: Ids, lengths: Ids, average: float, shape: Shape) -> RangesPart:
     ranges = ids >> shape.range_shift
     starts = run_starts(ranges)
     best = maxima_at(term_scores(counts, lengths, average), starts)
-    return ranged(ranges[starts], np.diff(np.append(starts, len(ids))), quantized(best))
+    return RangesPart(ranges[starts], np.diff(np.append(starts, len(ids))), best)
+
+
+def ranges_joined(parts: Sequence[RangesPart]) -> bytes:
+    ids = np.concatenate([each.ids for each in parts])
+    starts = run_starts(ids)
+    sizes = sums_at(np.concatenate([each.sizes for each in parts]), starts)
+    return ranged(ids[starts], sizes, quantized(maxima_at(np.concatenate([each.best for each in parts]), starts)))
+
+
+def blocks_of(ids: Ids, counts: Ids, positions: Ids, shape: Shape) -> tuple[ShortPostings, ...]:
+    if not len(ids):
+        return ()
+    made = encoded(ids, counts, positions, [*range(0, len(ids), shape.block), len(ids)])
+    return tuple(ShortPostings(*each) for each in zip(made.postings, made.positions, strict=True))
 
 
 def _cuts(term_starts: list[int], end: int, shape: Shape) -> list[int]:
@@ -93,9 +114,8 @@ def postings_of(lists: Lists, average: float, shape: Shape = SHAPE) -> tuple[Pos
         else:
             blocks = tuple(ShortPostings(*next(parts)) for _ in range(start, stop, shape.block))
             here = slice(start, stop)
-            held = LongPostings(
-                _ranges(lists.ids[here], lists.counts[here], lists.lengths[here], average, shape), blocks
-            )
+            part = ranges_part(lists.ids[here], lists.counts[here], lists.lengths[here], average, shape)
+            held = LongPostings(ranges_joined([part]), blocks)
         written.append(Postings(term, stop - start, held))
     return tuple(written)
 
