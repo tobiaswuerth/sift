@@ -1,4 +1,4 @@
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -63,20 +63,27 @@ class Query:
         return self.bounding[leaf] * TOP
 
 
+def _sorted(parts: Sequence[PostingArrays]) -> PostingArrays:
+    places = np.concatenate([np.zeros(0, np.int64), *(here for here, _ in parts)])
+    values = np.concatenate([np.zeros(0, np.int64), *(counts for _, counts in parts)])
+    order = np.argsort(places, kind="stable")
+    return places[order], values[order]
+
+
+def _scores(store: Opened, places: Ids, counts: Ids, average: float) -> Scores:
+    return term_scores(counts, lengths_at(store, places), average)
+
+
 def _exact(store: Opened, places: Ids, counts: Ids, average: float) -> Exact:
-    scores = term_scores(counts, lengths_at(store, places), average)
-    return Exact(places >> store.shape.range_shift, places, scores)
+    return Exact(places >> store.shape.range_shift, places, _scores(store, places, counts, average))
 
 
 def scored(store: Opened, query: Query, found: list[StoredList] | PostingArrays) -> Scored:
     if isinstance(found, tuple):
         places, counts = found
         return Scored((_exact(store, places, counts, query.average),), (), len(places))
-    exact = tuple(
-        _exact(store, *live(store, held.segment, held.places, held.counts), query.average)
-        for held in found
-        if isinstance(held, Whole)
-    )
+    whole = [live(store, held.segment, held.places, held.counts) for held in found if isinstance(held, Whole)]
+    exact = (_exact(store, *_sorted(whole), query.average),) if whole else ()
     averages = {segment.id: segment.average for segment in store.segments}
     bounded = tuple(
         Bounded(held, slack(query.average, averages[held.segment])) for held in found if isinstance(held, Ranged)
@@ -105,22 +112,25 @@ def bounds(query: Query, lists: Mapping[Leaf, Scored]) -> tuple[int, Scores, dic
     return start, bound, present
 
 
-def within(store: Opened, query: Query, held: Scored, group: Ids) -> Iterator[tuple[Ids, Scores]]:
-    for each in held.exact:
-        take = slices(np.searchsorted(each.ranges, group), np.searchsorted(each.ranges, group, side="right"))
-        yield each.places[take], each.scores[take]
+def _bounded_within(store: Opened, held: Scored, group: Ids) -> Iterator[PostingArrays]:
     for each in held.bounded:
         ids = each.held.ranges.ids
         at = np.minimum(np.searchsorted(ids, group), len(ids) - 1)
         hit = among(group, each.held.ids)
         if hit.any():
-            places, counts = postings_in(store, each.held, at[hit])
-            yield places, term_scores(counts, lengths_at(store, places), query.average)
+            yield postings_in(store, each.held, at[hit])
 
 
-def merged_within(store: Opened, query: Query, held: Scored, group: Ids) -> tuple[Ids, Scores]:
-    parts = list(within(store, query, held, group)) if len(group) else []
-    places = np.concatenate([np.zeros(0, np.int64), *(p for p, _ in parts)])
-    scores = np.concatenate([np.zeros(0), *(s for _, s in parts)])
-    order = np.argsort(places, kind="stable")
-    return places[order], scores[order]
+def within(store: Opened, query: Query, held: Scored, group: Ids) -> tuple[Ids, Scores]:
+    places, scores = [np.zeros(0, np.int64)], [np.zeros(0)]
+    for each in held.exact:
+        take = slices(np.searchsorted(each.ranges, group), np.searchsorted(each.ranges, group, side="right"))
+        places.append(each.places[take])
+        scores.append(each.scores[take])
+    read, counts = _sorted(list(_bounded_within(store, held, group)))
+    if len(read):
+        places.append(read)
+        scores.append(_scores(store, read, counts, query.average))
+    joined = np.concatenate(places)
+    order = np.argsort(joined, kind="stable")
+    return joined[order], np.concatenate(scores)[order]

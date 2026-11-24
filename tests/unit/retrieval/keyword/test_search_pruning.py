@@ -1,10 +1,14 @@
+import cProfile
+import pstats
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+
+import numpy as np
 
 from sift.domain.query.expressions import And, Or, Term
 from sift.retrieval.keyword.lists import Opened
-from sift.retrieval.keyword.search import Tuning
-from tests.keyword_searches import brute, collections, same, search
+from sift.retrieval.keyword.search import FoundChunk, Tuning
+from tests.keyword_searches import Draws, brute, collections, prose, same, search
 from tests.keyword_stores import Round
 
 FILLER = "filler"
@@ -20,6 +24,26 @@ def in_ranges(groups: Sequence[Sequence[str]]) -> list[Round]:
 
 def blocks_read(store: Opened) -> Counter[str]:
     return Counter(term for _, term, _ in store.blocks)
+
+
+def calls(run: Callable[[], object], names: Sequence[str]) -> list[int]:
+    profile = cProfile.Profile()
+    _ = profile.runcall(run)
+    counted = pstats.Stats(profile).get_stats_profile().func_profiles
+    return [int(counted[name].ncalls.split("/")[0]) if name in counted else 0 for name in names]
+
+
+def test_a_word_s_postings_in_many_segments_get_their_lengths_once_a_batch_of_ranges() -> None:
+    rng = Draws(np.random.default_rng(3))
+    rounds = [prose(rng, 30, f"r{n}_") for n in range(8)]
+    with collections([rounds]) as (stores, held):
+        (store,) = stores
+        assert len(store.segments) == len(rounds)
+        query = Or((Term("w0"), Term("w1"), Term("w2")))
+        found: list[tuple[FoundChunk, ...]] = []
+        batches, looked_up = calls(lambda: found.append(search(stores, query, 5)), ["_scored_group", "lengths_at"])
+        same(found[0], brute(held, query, 20, by_document=True), 5, query)
+        assert 0 < looked_up <= (batches + 1) * len(query.parts)
 
 
 def test_a_word_in_every_chunk_is_read_only_where_the_others_bring_a_chunk_near() -> None:

@@ -13,7 +13,7 @@ from sift.domain.rank.boolean import counted, may_hold
 from sift.retrieval.allowed import AllowedDocuments
 from sift.retrieval.keyword.leaves import materialized, reads_of, refused
 from sift.retrieval.keyword.lists import Opened, PostingArrays, StoredList, owners, stored
-from sift.retrieval.keyword.scoring import Query, Scored, bounds, merged_within, scored, within
+from sift.retrieval.keyword.scoring import Query, Scored, bounds, scored, within
 from sift.storage.keyword_lists import frequencies
 
 
@@ -83,16 +83,15 @@ def _summed(query: Query, held: Mapping[Leaf, Scores], size: int) -> Scores:
     return total
 
 
-def _held_at(found: dict[Leaf, list[tuple[Ids, Scores]]]) -> tuple[Ids, dict[Leaf, Scores]]:
-    every = [places for parts in found.values() for places, _ in parts]
+def _held_at(found: dict[Leaf, tuple[Ids, Scores]]) -> tuple[Ids, dict[Leaf, Scores]]:
+    every = [here for here, _ in found.values()]
     places, where = np.unique(np.concatenate([np.zeros(0, np.int64), *every]), return_inverse=True)
     held: dict[Leaf, Scores] = {}
     at = 0
-    for leaf, parts in found.items():
+    for leaf, (here, scores) in found.items():
         held[leaf] = np.zeros(len(places))
-        for here, scores in parts:
-            held[leaf][where[at : at + len(here)]] = scores
-            at += len(here)
+        held[leaf][where[at : at + len(here)]] = scores
+        at += len(here)
     return places, held
 
 
@@ -106,11 +105,10 @@ def _with_lazy(
         near = np.flatnonzero(may_reach(acc + sum(query.most(other) for other in lazy[n:]), best.threshold))
         places, acc, held = places[near], acc[near], {key: value[near] for key, value in held.items()}
         found = np.zeros(len(places))
-        ranges = distinct(Ascending(places >> shift)).values
-        for here, scores in within(work.store, query, work.lists[leaf], ranges) if len(ranges) else ():
-            at = np.minimum(np.searchsorted(here, places), len(here) - 1)
-            hit = np.flatnonzero(among(places, Ascending(here)))
-            found[hit] = scores[at[hit]]
+        here, scores = within(work.store, query, work.lists[leaf], distinct(Ascending(places >> shift)).values)
+        at = np.minimum(np.searchsorted(here, places), max(len(here) - 1, 0))
+        hit = np.flatnonzero(among(places, Ascending(here)))
+        found[hit] = scores[at[hit]]
         held[leaf] = found
         acc = acc + query.bounding[leaf] * found
     return places, held
@@ -120,7 +118,7 @@ def _all_of(work: Pass, best: Best, group: Ids) -> Best:
     query, shift = work.query, work.store.shape.range_shift
     places, held = np.zeros(0, np.int64), {}
     for n, leaf in enumerate(sorted(query.leaves, key=lambda each: work.lists[each].size)):
-        here, scores = merged_within(
+        here, scores = within(
             work.store, query, work.lists[leaf], group if n == 0 else distinct(Ascending(places >> shift)).values
         )
         if n == 0:
@@ -140,8 +138,8 @@ def _scored_group(work: Pass, best: Best, group: Ids) -> Best:
         return _all_of(work, best, group)
     lazy = _lazy(work, best.threshold)
     eager = [leaf for leaf in query.leaves if leaf not in lazy]
-    found = {leaf: list(within(work.store, query, work.lists[leaf], group)) for leaf in eager}
-    if not any(len(places) for parts in found.values() for places, _ in parts):
+    found = {leaf: within(work.store, query, work.lists[leaf], group) for leaf in eager}
+    if not any(len(places) for places, _ in found.values()):
         return best
     places, held = _held_at(found)
     if query.flat:
