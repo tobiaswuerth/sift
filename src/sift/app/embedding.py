@@ -18,7 +18,8 @@ from sift.inference.models import Models
 from sift.storage.catalog import Collection
 from sift.storage.database import Connection, reading, writing
 from sift.storage.store import connected
-from sift.storage.vectors import Pending, VectorsPut, forget_vectors, left, pending, put_vectors, refuse_model
+from sift.storage.vector_meta import left
+from sift.storage.vectors import Pending, VectorsPut, forget_vectors, pending, put_vectors, refuse_model
 
 RESET_ALL_REMEDY = "run sift embed with reset, naming no collection"
 BROKEN_REMEDY = "run sift embed again; if they stay, the model fails on their text"

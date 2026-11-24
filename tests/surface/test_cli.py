@@ -104,8 +104,12 @@ def test_status_and_add_answer_in_json_when_asked(settings: Settings, notes: Pat
                     "unreadable_files": [],
                     "links": 0,
                     "unresolved": 0,
+                    "embedded": 0,
+                    "model": None,
+                    "fields": [],
                     "state": "counted",
                 },
+                "active": True,
             }
         ],
     }

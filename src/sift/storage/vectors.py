@@ -9,10 +9,10 @@ from sift.api.ids import ChunkId, DocumentId
 from sift.domain.arrays import STORED_HALF, Ids, among, ascending, distinct, ints
 from sift.domain.codec.codes import MOST_BITS, Bits, Halves, code_bytes, codes, width_of
 from sift.domain.errors import DamagedError
-from sift.storage.database import Count, IdRow, Reading, Value, Writing, first, rows, run, run_each
+from sift.storage.database import Count, IdRow, Reading, Writing, rows, run, run_each
 from sift.storage.texts import TextSpan, spans_text
+from sift.storage.vector_meta import MODEL_KEY, WIDTH_KEY, model_of, width_held
 
-MODEL_KEY, WIDTH_KEY = "vector_model", "vector_width"
 PENDING = """SELECT c.id, c.document, c.start, c.length,
                     c.id = (SELECT min(f.id) FROM chunks f WHERE f.document = c.document)
              FROM unembedded u JOIN chunks c ON c.id = u.chunk
@@ -20,7 +20,6 @@ PENDING = """SELECT c.id, c.document, c.start, c.length,
              ORDER BY u.chunk LIMIT ?"""
 TITLES = "SELECT id, title FROM documents WHERE id IN (SELECT value FROM json_each(?))"
 CODES = "SELECT chunk, bits FROM codes ORDER BY chunk"
-HELD_META = "SELECT value FROM meta WHERE key = ? AND (SELECT vectors FROM counts) > 0"
 READ = 65_536
 MATRIX = 2
 EMBED_REMEDY = "run sift embed with reset to embed every collection with {model}"
@@ -58,20 +57,6 @@ class VectorRow(NamedTuple):
     vector: bytes
 
 
-def _meta(transaction: Reading, key: str) -> str | None:
-    found = first(transaction, Value, HELD_META, (key,))
-    return None if found is None else found.value
-
-
-def model_of(transaction: Reading) -> str | None:
-    return _meta(transaction, MODEL_KEY)
-
-
-def width_held(transaction: Reading) -> int | None:
-    found = _meta(transaction, WIDTH_KEY)
-    return None if found is None else int(found)
-
-
 def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
     spans = rows(transaction, Waiting, PENDING, (after, most))
     wanted = json.dumps(sorted({each.document for each in spans}))
@@ -86,11 +71,6 @@ def pending(transaction: Reading, after: int, most: int) -> list[Pending]:
 def documents_embedded(transaction: Reading) -> int:
     sql = "SELECT count(DISTINCT c.document) FROM codes k JOIN chunks c ON c.id = k.chunk"
     (found,) = rows(transaction, Count, sql)
-    return found.n
-
-
-def left(transaction: Reading) -> int:
-    (found,) = rows(transaction, Count, "SELECT chunks - vectors FROM counts")
     return found.n
 
 

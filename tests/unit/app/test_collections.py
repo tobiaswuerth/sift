@@ -1,4 +1,5 @@
 import contextlib
+import sqlite3
 import stat
 import sys
 from pathlib import Path
@@ -15,10 +16,12 @@ from sift.api.collections import (
     TitleFrom,
     Unavailable,
 )
+from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections
 from sift.app.collections import add, status
+from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.domain.text.notes import note
 from sift.storage.database import PRIVATE_FILE, PRIVATE_FOLDER
@@ -26,6 +29,8 @@ from sift.storage.documents import add_documents, put_source
 from sift.storage.keywords import writing_documents
 from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
 from tests.damage import damage_table
+from tests.files import write
+from tests.models import Hashed
 
 
 @pytest.fixture
@@ -109,6 +114,28 @@ def test_status_counts_what_each_store_holds(tmp_path: Path, home: Path) -> None
     assert isinstance(notes.contents, Counted)
     assert (notes.contents.documents, notes.contents.chunks) == (0, 0)
     assert counted.contents == Counted(2, 2, store.stat().st_size, unreadable=0, unreadable_files=())
+
+
+def test_status_says_what_is_embedded_by_which_model_the_fields_held_and_what_is_searched(
+    tmp_path: Path, home: Path
+) -> None:
+    root = tmp_path / "notes"
+    write(root / "a.md", "---\nyear: 2024\nauthor: Ada\n---\n# A\n\ntext\n")
+    write(root / "b.md", "---\ntags: [x]\n---\n# B\n\nmore\n")
+    write(root / "c.md", "# C\n\nplain\n")
+    add(home, AddCollection(str(root)))
+    add(home, AddCollection(str(folder(tmp_path, "other"))))
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(("notes",)), lambda _: None, Hashed())
+    with contextlib.closing(sqlite3.connect(home / "catalog.sqlite")) as catalog, catalog:
+        catalog.execute("UPDATE collections SET active = 0 WHERE name = 'other'")
+    notes, other = status(home, ShowStatus()).collections
+    assert isinstance(notes.contents, Counted)
+    assert isinstance(other.contents, Counted)
+    held = notes.contents
+    assert (held.chunks, held.embedded, held.model, held.fields) == (3, 3, "hashed-words", ("author", "tags", "year"))
+    assert (other.contents.embedded, other.contents.model, other.contents.fields) == (0, None, ())
+    assert (notes.active, other.active) == (True, False)
 
 
 def test_status_shows_the_collections_named(tmp_path: Path, home: Path) -> None:

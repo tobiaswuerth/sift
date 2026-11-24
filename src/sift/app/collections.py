@@ -26,9 +26,10 @@ from sift.storage.catalog import (
     named,
     open_catalog,
 )
-from sift.storage.documents import counts, unreadable
+from sift.storage.documents import counts, fields_sampled, unreadable
 from sift.storage.links import links_held
 from sift.storage.store import read_store, stored_bytes
+from sift.storage.vector_meta import left, model_of
 
 OBSIDIAN = ".obsidian"
 FIELD_REMEDY = "name the field, e.g. abstract"
@@ -74,14 +75,17 @@ def _contents(one: Collection, *, listed: bool) -> Counted | Unavailable:
         with read_store(one.store, one.id) as transaction:
             kept, failed = counts(transaction), unreadable(transaction)
             linked, gone = links_held(transaction), len(unresolved_links(transaction))
+            waiting, model, fields = left(transaction), model_of(transaction), fields_sampled(transaction)
     except StoreUnavailableError as error:
         return Unavailable(error.message, error.remedy)
     files = tuple(UnreadableFile(entry.path, entry.problem) for entry in failed) if listed else ()
-    return Counted(kept.documents, kept.chunks, stored_bytes(one.store), len(failed), files, linked, gone)
+    size, embedded = stored_bytes(one.store), kept.chunks - waiting
+    held = Counted(kept.documents, kept.chunks, size, len(failed), files, linked, gone)
+    return replace(held, embedded=embedded, model=model, fields=fields)
 
 
 def _status(one: Collection, *, listed: bool) -> CollectionStatus:
-    return CollectionStatus(one.name, str(one.folder), str(one.store), _contents(one, listed=listed))
+    return CollectionStatus(one.name, str(one.folder), str(one.store), _contents(one, listed=listed), one.active)
 
 
 def status(home: Path, request: ShowStatus) -> Status:

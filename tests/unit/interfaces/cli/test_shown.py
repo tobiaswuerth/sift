@@ -121,6 +121,20 @@ def test_status_counts_unreadable_files_and_lists_them_when_asked() -> None:
     )
 
 
+def test_status_counts_what_is_embedded_by_which_model_and_says_what_searches_leave_out() -> None:
+    embedded = dataclasses.replace(NOTES, contents=Counted(1, 2, 3_000, 0, (), embedded=2, model="google/x"))
+    resting = dataclasses.replace(NOTES, name="old", contents=Counted(1, 2, 3_000, 0, ()), active=False)
+    gone = dataclasses.replace(STATUS.collections[1], active=False)
+    assert status(Status("/h", (embedded, resting, gone)), "linux", PLAIN).results == (
+        "collection   folder        documents  chunks  embedded    size  active",
+        "notes        /data/notes           1       2         2  3.0 kB     yes",
+        "old          /data/notes           1       2         0  3.0 kB      no",
+        "Papers-日本  /data/papers          -       -         -       -      no",
+        "",
+        "model  google/x",
+    )
+
+
 def test_status_of_no_collection_says_how_to_add_one() -> None:
     assert status(Status("/home/.sift", ()), "linux", PLAIN) == EMPTY
 

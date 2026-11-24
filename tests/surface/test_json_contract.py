@@ -36,10 +36,14 @@ SAMPLES: dict[str, Answer] = {
                 "notes",
                 "/data/notes",
                 "/home/.sift/collections/notes.sqlite",
-                Counted(3, 7, 4096, 1, (UnreadableFile("bad.pdf", "no text"),), 2, 1),
+                Counted(3, 7, 4096, 1, (UnreadableFile("bad.pdf", "no text"),), 2, 1, 5, "a-model", ("year",)),
             ),
             CollectionStatus(
-                "papers", "/data/papers", "/home/.sift/collections/papers.sqlite", Unavailable("gone", "add it")
+                "papers",
+                "/data/papers",
+                "/home/.sift/collections/papers.sqlite",
+                Unavailable("gone", "add it"),
+                active=False,
             ),
         ),
     ),

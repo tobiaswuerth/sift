@@ -11,7 +11,8 @@ from sift.storage.documents import add_documents, kept, put_source
 from sift.storage.forgetting import delete_documents
 from sift.storage.kept_vectors import AT_ONCE, vectors_held, vectors_kept
 from sift.storage.keywords import writing_documents
-from sift.storage.vectors import left, pending, put_vectors
+from sift.storage.vector_meta import left
+from sift.storage.vectors import pending, put_vectors
 from tests.keyword_stores import SMALL, chunk_texts, opened_store
 
 LONG = "# Alpha\n\n" + "".join(f"Paragraph {number:04} about brushes and strokes.\n\n" for number in range(3000))

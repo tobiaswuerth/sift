@@ -283,6 +283,30 @@ def counts(transaction: Reading) -> Counts:
     return kept_counts
 
 
+FIELD_SAMPLE = 1_000
+ENDS = "SELECT (SELECT min(id) FROM documents) AS first, (SELECT max(id) FROM documents) AS last"
+SAMPLED_FIELDS = """SELECT DISTINCT f.key AS name FROM json_each(?) p,
+    json_each((SELECT fields FROM documents WHERE id >= p.value ORDER BY id LIMIT 1)) f ORDER BY f.key"""
+
+
+class Ends(NamedTuple):
+    first: int | None
+    last: int | None
+
+
+class FieldName(NamedTuple):
+    name: str
+
+
+def fields_sampled(transaction: Reading, sample: int = FIELD_SAMPLE) -> tuple[str, ...]:
+    (ends,) = rows(transaction, Ends, ENDS)
+    if ends.first is None or ends.last is None:
+        return ()
+    steps = max(sample - 1, 1)
+    ids = sorted({ends.first + (ends.last - ends.first) * at // steps for at in range(steps + 1)})
+    return tuple(found.name for found in rows(transaction, FieldName, SAMPLED_FIELDS, (json.dumps(ids),)))
+
+
 class KeyDigest(NamedTuple):
     key: str
     digest: str

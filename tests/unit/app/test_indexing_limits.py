@@ -19,7 +19,7 @@ from sift.storage.catalog import known_collections
 from sift.storage.database import Batches
 from sift.storage.documents import stored
 from sift.storage.store import read_store
-from sift.storage.vectors import left
+from sift.storage.vector_meta import left
 from tests.files import write
 from tests.homes import text_of, unreadable_files
 from tests.later import LATER, later, reading

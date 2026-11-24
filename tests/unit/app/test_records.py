@@ -27,7 +27,7 @@ from sift.storage.catalog import known_collections
 from sift.storage.database import reading
 from sift.storage.documents import counts
 from sift.storage.store import open_store
-from sift.storage.vectors import left
+from sift.storage.vector_meta import left
 from tests.files import jsonl, write
 from tests.homes import text_of
 from tests.keyword_stores import vectors_by_text

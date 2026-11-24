@@ -21,7 +21,8 @@ from sift.storage.database import Reading, abandon, reading
 from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
 from sift.storage.store import connected, unavailable_if_unusable
-from sift.storage.vectors import EMBED_REMEDY, codes_of, left, model_of, width_held
+from sift.storage.vector_meta import left, model_of, width_held
+from sift.storage.vectors import EMBED_REMEDY, codes_of
 
 UNEMBEDDED_REMEDY = "run sift embed"
 EMPTY_QUERY = "an empty query finds nothing"

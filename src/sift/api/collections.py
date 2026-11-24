@@ -83,6 +83,9 @@ class Counted:
     unreadable_files: tuple[UnreadableFile, ...]
     links: int = 0
     unresolved: int = 0
+    embedded: int = 0
+    model: str | None = None
+    fields: tuple[str, ...] = ()
     state: Literal["counted"] = "counted"
 
 
@@ -99,6 +102,7 @@ class CollectionStatus:
     folder: str
     store: str
     contents: Counted | Unavailable
+    active: bool = True
 
 
 @dataclass(frozen=True, slots=True)

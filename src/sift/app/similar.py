@@ -18,7 +18,8 @@ from sift.domain.codec.codes import Floats
 from sift.domain.rank.works import work_of_fields
 from sift.storage.database import Reading
 from sift.storage.documents import chunks_of, fields_by_document
-from sift.storage.vectors import model_of, vectors_of
+from sift.storage.vector_meta import model_of
+from sift.storage.vectors import vectors_of
 
 NO_DIRECTION_REMEDY = "start from another document, or search its words with sift vsearch"
 

@@ -14,17 +14,8 @@ from sift.domain.codec.codes import Halves, codes
 from sift.domain.errors import DamagedError
 from sift.storage.database import Connection, Reading, reading, rows, run, run_each, writing
 from sift.storage.store import LAYOUT, create_store, open_store
-from sift.storage.vectors import (
-    VectorsPut,
-    codes_of,
-    forget_vectors,
-    left,
-    model_of,
-    pending,
-    put_vectors,
-    vectors_of,
-    width_held,
-)
+from sift.storage.vector_meta import left, model_of, width_held
+from sift.storage.vectors import VectorsPut, codes_of, forget_vectors, pending, put_vectors, vectors_of
 from tests.keyword_stores import SMALL, Round, applied, chunk_texts, opened_store
 
 NOTES: Round = {"a.md": ("", "Alpha", "one two " * 2000), "b.md": ("", "Beta", "three")}
