@@ -1,3 +1,4 @@
+import logging
 import multiprocessing
 import os
 import shutil
@@ -105,21 +106,24 @@ def test_a_file_its_reader_has_no_memory_for_is_refused_alone_and_the_reader_rea
     assert multiprocessing.active_children() == []
 
 
-def test_a_reader_that_raises_ends_the_reading_saying_which_file_and_what_its_traceback_above(
-    capfd: pytest.CaptureFixture[str],
+def test_a_file_whose_reader_raises_is_stopped_alone_its_traceback_logged_and_the_reading_goes_on(
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    said = r"raise\.pdf raised an error in its process, ValueError: a reader's bug; its traceback is above"
-    with pytest.raises(ReaderFailedError, match=said), sandboxed(misbehaving, PATIENT) as reading:
-        _ = list(reading(asked("a.pdf", "raise.pdf")))
+    with caplog.at_level(logging.ERROR), sandboxed(misbehaving, PATIENT, workers=1) as reading:
+        found = dict(reading(asked("a.pdf", "raise.pdf", "b.pdf")))
+    failed = stopped("sift failed reading it (ValueError: a reader's bug); the log holds the details")
+    assert found == {0: read("a.pdf"), 1: failed, 2: read("b.pdf")}
     assert multiprocessing.active_children() == []
-    shown = capfd.readouterr().err
-    assert ("Traceback (most recent call last):" in shown, "ValueError: a reader's bug" in shown) == (True, True)
+    (logged,) = caplog.records
+    assert logged.getMessage().startswith("reading raise.pdf raised an error:\nTraceback (most recent call last):")
 
 
-def test_a_reader_that_raised_and_will_not_end_is_stopped_when_its_time_to_end_is_up() -> None:
+def test_a_reader_that_raised_with_a_thread_left_running_ends_with_its_file() -> None:
     brief = Patience(base_seconds=120.0, bytes_a_second=1e12, stop_seconds=1.0)
-    with pytest.raises(ReaderFailedError, match="its thread left running"), sandboxed(misbehaving, brief) as reading:
-        _ = list(reading(asked("linger.pdf")))
+    with sandboxed(misbehaving, brief) as reading:
+        ((_, refused),) = list(reading(asked("linger.pdf")))
+    assert isinstance(refused, Refused)
+    assert (refused.stopped, "its thread left running" in refused.problem) == (True, True)
     assert multiprocessing.active_children() == []
 
 

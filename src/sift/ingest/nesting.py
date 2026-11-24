@@ -5,6 +5,8 @@ from email import policy
 from email.message import EmailMessage
 from email.parser import BytesHeaderParser
 
+from sift.domain.text.heads import refuse_unreadable
+
 LINE_END = re.compile(rb"\r\n|\r|\n")
 MARKED_LINE_START = re.compile(rb"(?:\r\n|\r(?!\n)|\n)(?=--)")
 MARKED_OR_BLANK_LINE_START = re.compile(rb"(?:\r\n|\r(?!\n)|\n)(?=--|\r|\n)")
@@ -103,6 +105,7 @@ def nesting(raw: bytes, most: int) -> int:
         status = _status(opened)
         if heading:
             head, at, blank = _head(raw, at, opened)
+            refuse_unreadable(head)
             found = _declared(head, in_digest=bool(opened) and opened[-1].digest)
             if found is not None:
                 opened.append(found)

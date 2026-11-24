@@ -18,6 +18,7 @@ from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
 from sift.app.search import search
 from sift.domain.text.documents import Conversion, Convert, Converted, Outcome, Unread, stopped
+from sift.domain.text.heads import NESTED_TOO_DEEPLY as HEAD_NESTED_TOO_DEEPLY
 from sift.ingest.documents import convert
 from sift.ingest.files import Identity
 from sift.ingest.mail import NESTED_TOO_DEEPLY
@@ -194,6 +195,16 @@ def test_a_mail_too_deep_to_parse_is_unreadable_and_the_rest_is_indexed(tmp_path
     add(home, AddCollection(str(root)))
     assert indexed(home) == Indexed(files=2, added=1, changed=0, removed=0, unreadable=1)
     assert [(each.path, each.problem) for each in unreadable_files(home)] == [("deep.eml", NESTED_TOO_DEEPLY)]
+
+
+def test_a_mail_whose_header_comments_nest_too_deep_is_unreadable_and_the_rest_is_indexed(tmp_path: Path) -> None:
+    root, home = tmp_path / "mail", tmp_path / "home"
+    write(root / "a.md", "# A\n\nwords\n")
+    nested = b"(" * 5000 + b")" * 5000
+    (root / "deep.eml").write_bytes(b"From: a@example.com " + nested + b"\r\nSubject: Deep\r\n\r\nThe body.\r\n")
+    add(home, AddCollection(str(root)))
+    assert indexed(home) == Indexed(files=2, added=1, changed=0, removed=0, unreadable=1)
+    assert [(each.path, each.problem) for each in unreadable_files(home)] == [("deep.eml", HEAD_NESTED_TOO_DEEPLY)]
 
 
 def test_a_mail_and_its_attachments_are_documents_found_and_filtered_by_their_ids(post: Path) -> None:

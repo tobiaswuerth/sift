@@ -1,3 +1,4 @@
+import logging
 import multiprocessing
 import multiprocessing.connection
 import os
@@ -94,6 +95,10 @@ def out_of_memory() -> Refused:
     return stopped("its reader ran out of memory")
 
 
+def reader_failed(traceback_text: str) -> Refused:
+    return stopped(f"sift failed reading it ({traceback_text.strip().rsplit('\n', 1)[-1]}); the log holds the details")
+
+
 def too_large_an_answer(size: int, most: int) -> Refused:
     return Refused(
         f"read, it comes to {size:,} bytes, more than the {most:,} sift takes from one file", read_again=False
@@ -142,8 +147,8 @@ def _serve[A, B](asked: _Channel, answers: _Channel, read: Callable[[A], B], mos
             outcome: B | Refused = read(cast("A", each))
         except MemoryError:
             outcome = out_of_memory()
-        except Exception as error:
-            answers.send(_Raised("".join(traceback.format_exception_only(error)).strip()))
+        except Exception:
+            answers.send(_Raised(traceback.format_exc()))
             raise
         answers.send_bytes(_pickled(outcome, most))
 
@@ -290,9 +295,9 @@ class _Pool[A: FileTask, B]:
             return None
         if isinstance(message, _Raised):
             worker.task = None
-            raise ReaderFailedError(
-                f"reading {task.asked.path} raised an error in its process, {message.error}; its traceback is above"
-            )
+            self._dropped(worker)
+            logging.getLogger(__name__).error("reading %s raised an error:\n%s", task.asked.path, message.error)
+            return task.at, reader_failed(message.error)
         worker.task = None
         return task.at, cast("B", message)
 
