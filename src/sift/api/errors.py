@@ -1,4 +1,7 @@
+import errno
+from collections.abc import Mapping
 from enum import StrEnum
+from types import MappingProxyType
 from typing import ClassVar, override
 
 
@@ -21,6 +24,7 @@ class Problem(StrEnum):
     BUSY = "busy"
     MODEL_UNAVAILABLE = "model_unavailable"
     UNAUTHORIZED = "unauthorized"
+    OS = "os"
     INTERNAL = "internal"
 
 
@@ -67,6 +71,24 @@ class ModelUnavailableError(SiftError):
 
 class InternalError(SiftError):
     usual: ClassVar[Problem] = Problem.INTERNAL
+
+
+class SystemFailureError(SiftError):
+    usual: ClassVar[Problem] = Problem.OS
+
+
+OS_REMEDIES: Mapping[int, str] = MappingProxyType(
+    {
+        errno.ENOENT: "check that the path exists",
+        errno.EACCES: "check that you may read and write the path",
+        errno.ENOSPC: "free space on the disk",
+    }
+)
+OS_REMEDY = "check the path and its permissions"
+
+
+def system_failure(error: OSError) -> SystemFailureError:
+    return SystemFailureError(str(error), OS_REMEDIES.get(error.errno or 0, OS_REMEDY))
 
 
 def _rebuilt(kind: type[SiftError], message: str, remedy: str, code: Problem, field: str | None) -> SiftError:

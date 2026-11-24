@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from sift.api.errors import InternalError, InvalidRequestError, NotFoundError, Problem, SiftError
+from sift.api.errors import InternalError, InvalidRequestError, NotFoundError, Problem, SiftError, system_failure
 from sift.api.events import Event, Noted, Reporter
 from sift.api.ids import CollectionId
 from sift.api.wire import Json, encoded, encoded_error
@@ -138,9 +138,10 @@ def _ran(serving: Serving, name: str, handled: Handled, data: object, lines: "qu
         )
         lines.put(_line({"answer": encoded(answer)}))
         logging.getLogger(LOGGER).info("%s answered in %.2f s", name, time.perf_counter() - started)
-    except SiftError as error:
-        lines.put(_line({"error": encoded_error(error)}))
-        logging.getLogger(LOGGER).info("%s refused: %s", name, error.code.value)
+    except (SiftError, OSError) as error:
+        refused = system_failure(error) if isinstance(error, OSError) else error
+        lines.put(_line({"error": encoded_error(refused)}))
+        logging.getLogger(LOGGER).info("%s refused: %s", name, refused.code.value)
     except RecursionError:
         raise
     except Exception as error:

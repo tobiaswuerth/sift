@@ -1,10 +1,9 @@
-import errno
 import json
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import NamedTuple
 
-from sift.api.errors import InvalidRequestError, SiftError
+from sift.api.errors import InvalidRequestError, SiftError, system_failure
 from sift.api.fields import FieldValue
 from sift.api.search import Left, Unsearched
 from sift.api.wire import Json, encoded_error
@@ -14,14 +13,6 @@ from sift.interfaces.console.text import labelled, printable_json
 
 DONE, FAILED, USAGE = 0, 1, 2
 EXIT_CODES: MappingProxyType[type[SiftError], int] = MappingProxyType({InvalidRequestError: USAGE})
-OS_REMEDIES = MappingProxyType(
-    {
-        errno.ENOENT: "check that the path exists",
-        errno.EACCES: "check that you may read and write the path",
-        errno.ENOSPC: "free space on the disk",
-    }
-)
-OS_REMEDY = "check the path and its permissions"
 NO_FLAGS: Mapping[str, str] = MappingProxyType({})
 
 
@@ -76,14 +67,10 @@ def _error_json(said: Json) -> str:
 def failure(
     error: SiftError | OSError, style: Style, *, as_json: bool = False, flags: Mapping[str, str] = NO_FLAGS
 ) -> Shown:
-    field = error.field if isinstance(error, InvalidRequestError) else None
-    if isinstance(error, OSError):
-        message, remedy, code = str(error), OS_REMEDIES.get(error.errno or 0, OS_REMEDY), FAILED
-        written: Json = {"kind": "os", "code": "os", "message": message, "remedy": remedy, "field": None}
-    else:
-        message, remedy, code = error.message, error.remedy, EXIT_CODES.get(type(error), FAILED)
-        written = encoded_error(error)
+    known = system_failure(error) if isinstance(error, OSError) else error
+    field = known.field if isinstance(known, InvalidRequestError) else None
     flag = flags.get(field) if field is not None else None
-    said = message if flag is None else f"{flag}: {message}"
-    lines = (labelled("error", said, Tone.ERROR, style), *fix(remedy, style))
-    return Shown((_error_json(written),) if as_json else (), lines, code)
+    said = known.message if flag is None else f"{flag}: {known.message}"
+    lines = (labelled("error", said, Tone.ERROR, style), *fix(known.remedy, style))
+    code = EXIT_CODES.get(type(known), FAILED)
+    return Shown((_error_json(encoded_error(known)),) if as_json else (), lines, code)

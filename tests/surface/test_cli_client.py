@@ -48,6 +48,24 @@ def test_a_command_sent_to_the_home_process_is_answered_as_it_is_alone(settings:
     assert [code for code, _, _ in alone] == [0, 0, 0, 1, 0, 0, 2, 0, 0, 0, 0]
 
 
+def test_a_failure_of_the_system_is_said_alike_served_and_alone(
+    settings: Settings, notes: Path, tmp_path: Path
+) -> None:
+    indexed_notes(settings, notes)
+    (tmp_path / "a.txt").write_text("not a folder\n", encoding="utf-8")
+    (tmp_path / "other").mkdir()
+    store = str(tmp_path / "a.txt" / "other.sqlite")
+    argvs = [
+        ("add", str(tmp_path / "other"), "--store", store),
+        ("add", str(tmp_path / "other"), "--store", store, "--json"),
+    ]
+    alone = [ran(settings, *argv) for argv in argvs]
+    with running(settings):
+        served = [ran(settings, *argv) for argv in argvs]
+    assert served == alone
+    assert ([code for code, _, _ in alone], '"kind": "os"' in alone[1][1]) == ([1, 1], True)
+
+
 def test_an_index_sent_to_the_home_process_says_its_progress_as_it_does_alone(
     settings: Settings, notes: Path, tmp_path: Path
 ) -> None:

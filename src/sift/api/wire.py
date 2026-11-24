@@ -14,6 +14,7 @@ from sift.api.errors import (
     Problem,
     SiftError,
     StoreUnavailableError,
+    SystemFailureError,
 )
 from sift.api.fields import Fields, FieldValue
 from sift.api.requests import fits, named, type_name
@@ -27,6 +28,7 @@ ERROR_KINDS: Mapping[str, type[SiftError]] = MappingProxyType(
         "not_found": NotFoundError,
         "store_unavailable": StoreUnavailableError,
         "model_unavailable": ModelUnavailableError,
+        "os": SystemFailureError,
         "internal": InternalError,
     }
 )
