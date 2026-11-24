@@ -12,6 +12,7 @@ from sift.api.errors import InvalidRequestError
 from sift.api.filters import Filter, Operator
 from sift.api.requests import Request
 from sift.api.search import SearchHybrid, SearchKeywords
+from sift.api.wire import decoded
 
 
 def built(kind: Callable[..., object], *given: object, **named: object) -> object:
@@ -162,3 +163,15 @@ def test_text_with_half_a_surrogate_pair_is_refused_by_field(build: Callable[[],
     with pytest.raises(InvalidRequestError, match="half a surrogate pair") as refused:
         build()
     assert (refused.value.field, refused.value.remedy) == (field, "send it as text in UTF-8")
+
+
+DECOMPOSED, COMPOSED = "Ro\u0308sterei", "R\u00f6sterei"
+
+
+def test_the_names_of_fields_to_show_sort_by_or_look_in_are_composed_however_they_were_sent() -> None:
+    asked = decoded(SearchKeywords, {"query": "x", "fields": [DECOMPOSED], "sort": DECOMPOSED})
+    shown = documents.GetDocuments(("notes/a.md",), fields=(DECOMPOSED,))
+    looked = links.FindMentions("notes/a.md", also=(DECOMPOSED, "plain"))
+    found = (asked.fields, asked.sort, shown.fields, looked.also)
+    assert found == ((COMPOSED,), COMPOSED, (COMPOSED,), (COMPOSED, "plain"))
+    assert (SearchKeywords("x").sort, SearchKeywords(DECOMPOSED).query) == (None, DECOMPOSED)

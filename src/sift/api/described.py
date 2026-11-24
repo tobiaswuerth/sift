@@ -12,6 +12,11 @@ class Place:
 
 
 @dataclass(frozen=True, slots=True)
+class Composed:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class Bounds:
     low: int
     high: int

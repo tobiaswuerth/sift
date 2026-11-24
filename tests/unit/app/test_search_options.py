@@ -333,8 +333,9 @@ def test_a_filter_matches_text_however_its_accents_were_composed(tmp_path: Path)
     write(root / "decomposed.md", "---\nplace: Ro\u0308sterei\n---\n# Beans\n\nRoasted beans.\n")
     add(home, AddCollection(str(root)))
     index(home, IndexCollections(), lambda _: None)
-    for asked in ("place=R\u00f6sterei", "place=Ro\u0308sterei"):
-        result = search(home, SearchKeywords("beans", filters=(written(asked),)))
+    sent = Filter("place", Operator.ANY, ("Ro\u0308sterei",))
+    for asked in (written("place=R\u00f6sterei"), written("place=Ro\u0308sterei"), sent):
+        result = search(home, SearchKeywords("beans", filters=(asked,)))
         assert [hit.id for hit in result.hits] == ["cafes/decomposed.md"]
 
 

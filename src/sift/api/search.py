@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Annotated
 
-from sift.api.described import Bounds, Help
+from sift.api.described import Bounds, Composed, Help
 from sift.api.errors import Problem, SiftError
 from sift.api.fields import FIELDS, Fields
 from sift.api.filters import Filter
@@ -44,8 +44,8 @@ class Options(Request):
     ] = ()
     path: Annotated[str | None, Help(PATH)] = None
     filters: Annotated[tuple[Filter, ...], Help(FILTERS)] = ()
-    fields: Annotated[tuple[str, ...], Help(FIELDS)] = ()
-    sort: Annotated[str | None, Help(SORT)] = None
+    fields: Annotated[tuple[str, ...], Help(FIELDS), Composed()] = ()
+    sort: Annotated[str | None, Help(SORT), Composed()] = None
     links_to: Annotated[tuple[str, ...], Help(LINKS_TO)] = ()
     linked_from: Annotated[tuple[str, ...], Help(LINKED_FROM)] = ()
     all_passages: Annotated[

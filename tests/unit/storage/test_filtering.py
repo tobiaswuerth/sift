@@ -12,8 +12,10 @@ from sift.api.errors import InvalidRequestError
 from sift.api.fields import Fields
 from sift.api.filters import Filter, FilterValue, Operator, written
 from sift.api.ids import CollectionId
+from sift.api.wire import decoded
 from sift.domain.arrays import ints
 from sift.domain.query.filters import UNLINKED, Linked, LinkFilter, condition
+from sift.domain.text.front_matter import front_matter
 from sift.storage.database import Reading
 from sift.storage.passing import Passing, reads_quotes
 from sift.storage.store import create_store, open_store
@@ -237,3 +239,17 @@ def test_documents_linking_a_note_cost_about_what_a_plain_value_costs() -> None:
     plain = steps(many, [one("org", ANY, "o1")])
     assert steps(many, [one("org", ANY, "[[Acme]]")], Linked({LinkFilter("org", ANY, "Acme"): half})) < 3 * plain
     assert steps(many, [one("org", NONE, "[[Acme]]")], Linked({LinkFilter("org", NONE, "Acme"): half})) < 3 * plain
+
+
+@pytest.mark.parametrize("value", ["1e3", "12345678901234567890", "True", "TRUE", "-0.5", "false"])
+def test_a_value_written_as_front_matter_writes_it_matches_what_front_matter_stored(value: str) -> None:
+    found = front_matter(f"---\nk: {value}\n---\n")
+    assert found is not None
+    assert passing({"doc": found.fields, "other": {"k": "x"}}, [written(f"k={value}")]) == ["doc"]
+
+
+def test_true_or_false_however_written_or_sent_keeps_to_that_truth() -> None:
+    flags: dict[str, Fields] = {"yes": {"f": True}, "no": {"f": False}, "Yes": {"f": "True"}, "NO": {"f": "FALSE"}}
+    sent = [decoded(Filter, {"field": "f", "operator": "=", "values": [truth]}) for truth in (True, False)]
+    assert [passing(flags, [each]) for each in sent] == [["Yes", "yes"], ["NO", "no"]]
+    assert [passing(flags, [written(each)]) for each in ("f=true", "f=False")] == [["Yes", "yes"], ["NO", "no"]]

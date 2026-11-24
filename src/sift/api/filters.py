@@ -47,13 +47,34 @@ class Filter:
             raise _wrong(f"the filter on {self.field!r} has no value")
         if self.operator not in SETS and len(self.values) > 1:
             raise _wrong(f"the range on {self.field!r} takes one value, not {len(self.values)}")
-        for value in cast("tuple[object, ...]", self.values):
+        object.__setattr__(self, "field", unicodedata.normalize("NFC", field))
+        values = tuple(
+            _meant(value, ranged=self.operator not in SETS) for value in cast("tuple[object, ...]", self.values)
+        )
+        object.__setattr__(self, "values", values)
+        for value in values:
             if not isinstance(value, str | int | float):
                 raise _wrong(f"the filter on {self.field!r}: {value!r} is no text, number, true or false")
             if isinstance(value, int) and not isinstance(value, bool) and not -MOST_INTEGER <= value < MOST_INTEGER:
                 raise _wrong(f"the filter on {self.field!r}: {value} is too large")
             if isinstance(value, float) and not math.isfinite(value):
                 raise _wrong(f"the filter on {self.field!r}: {value} is no finite number")
+
+
+def _number_in(text: str) -> object:
+    try:
+        read = cast("object", json.loads(text))
+    except ValueError:
+        return text
+    finite = isinstance(read, int | float) and not isinstance(read, bool) and math.isfinite(read)
+    return read if finite else text
+
+
+def _meant(value: object, *, ranged: bool) -> object:
+    if not isinstance(value, str):
+        return value
+    text = unicodedata.normalize("NFC", value)
+    return _number_in(text) if ranged else text
 
 
 def _wrong(problem: str) -> InvalidRequestError:
@@ -68,17 +89,11 @@ def _scalar(value: object) -> bool:
     return isinstance(value, str | int | float)
 
 
-def _json(value: str, *, as_written: bool) -> object:
-    if as_written:
-        return cast("object", json.loads(value, parse_float=str, parse_int=str, parse_constant=str))
-    return cast("object", json.loads(value))
-
-
-def _values(text: str, value: str, operator: Operator) -> tuple[FilterValue, ...]:
+def _values(text: str, value: str) -> tuple[FilterValue, ...]:
     if value.count("[") + value.count("{") > MOST_BRACKETS:
         return (value,)
     try:
-        read = _json(value, as_written=operator in SETS)
+        read = cast("object", json.loads(value, parse_float=str, parse_int=str, parse_constant=str))
     except ValueError:
         return (value,)
     held = cast("list[object]", read) if isinstance(read, list) else [read]
@@ -88,13 +103,13 @@ def _values(text: str, value: str, operator: Operator) -> tuple[FilterValue, ...
 
 
 def written(text: str) -> Filter:
-    found = WRITTEN.fullmatch(unicodedata.normalize("NFC", text))
+    found = WRITTEN.fullmatch(text)
     if found is None:
         raise _refused(text, "it names no field and operator")
     field, operator, value = found[1].strip(), Operator(found[2]), found[3].strip()
     if not value:
         raise _refused(text, "it gives no value")
-    return Filter(field, operator, _values(text, value, operator))
+    return Filter(field, operator, _values(text, value))
 
 
 def gathered(filters: tuple[Filter, ...]) -> tuple[Filter, ...]:

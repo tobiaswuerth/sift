@@ -6,15 +6,20 @@ from types import MappingProxyType
 
 from sift.api.errors import InvalidRequestError
 from sift.api.filters import FILTER_REMEDY, SETS, Filter, FilterValue, Operator, gathered
+from sift.domain.text.front_matter import flow_list
+from sift.domain.text.json_values import json_value
 from sift.domain.text.links import link_target
 
 type SpecValue = str | int | float | bool | list[SpecValue] | dict[str, SpecValue] | None
 
 SQLITE_INT = 2**63
+TRUTH_WORDS = MappingProxyType({True: ("true", "True", "TRUE"), False: ("false", "False", "FALSE")})
+TRUTH_OF = MappingProxyType({word: truth for truth, words in TRUTH_WORDS.items() for word in words})
 WHOLE = re.compile(r"-?[0-9]+")
 DECIMAL = re.compile(r"-?[0-9]+\.[0-9]+")
 NONE_WITHIN = "[]"
 PATH_REMEDY = "write the folders of a path in a collection with / between them"
+LIST_REMEDY = 'give several values as a JSON list, e.g. t=["a","c"], or repeat the filter'
 QUOTE_REMEDY = "name the field without a double quote, or use a Python whose SQLite is 3.47 or newer"
 
 
@@ -62,16 +67,26 @@ def json_path(field: str, *, reads_quotes: bool) -> str:
     return "$." + json.dumps(field, ensure_ascii=False)
 
 
+def _number_forms(text: str) -> list[SpecValue]:
+    try:
+        read = json_value(text)
+    except ValueError:
+        return []
+    if isinstance(read, bool) or not isinstance(read, int | float):
+        return []
+    return [read if isinstance(read, float) or -SQLITE_INT <= read < SQLITE_INT else float(read)]
+
+
 def forms(value: FilterValue) -> list[SpecValue]:
     if isinstance(value, bool):
-        return ["true" if value else "false"]
+        return list(TRUTH_WORDS[value])
     if not isinstance(value, str):
         return [value, json.dumps(value)]
-    if value in ("true", "false"):
-        return [value]
-    if WHOLE.fullmatch(value) and -SQLITE_INT <= int(value) < SQLITE_INT:
-        return [value, int(value)]
-    return [value, float(value)] if DECIMAL.fullmatch(value) else [value]
+    if value in TRUTH_OF:
+        return list(TRUTH_WORDS[TRUTH_OF[value]])
+    if flow_list(value) is not None:
+        raise _refused(f"the filter value {value!r} reads as a list", LIST_REMEDY)
+    return [value, *_number_forms(value)]
 
 
 def readable(filters: Sequence[Filter], *, reads_quotes: bool) -> None:

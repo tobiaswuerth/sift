@@ -2,6 +2,7 @@ import dataclasses
 import math
 import re
 import types
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -9,7 +10,7 @@ from functools import cache
 from types import MappingProxyType
 from typing import Annotated, Literal, TypeAliasType, cast, get_args, get_origin, get_type_hints
 
-from sift.api.described import Bounds
+from sift.api.described import Bounds, Composed
 from sift.api.errors import InvalidRequestError
 
 SURROGATE = re.compile(f"[{chr(0xD800)}-{chr(0xDFFF)}]")
@@ -139,6 +140,20 @@ def holds_half_a_pair(value: object) -> bool:
     return isinstance(value, tuple) and any(holds_half_a_pair(each) for each in cast("tuple[object, ...]", value))
 
 
+@cache
+def _composed_names(kind: type) -> tuple[str, ...]:
+    hints = cast("dict[str, object]", get_type_hints(kind, include_extras=True))
+    return tuple(name for name, hint in hints.items() if any(isinstance(each, Composed) for each in _parts(hint)[1]))
+
+
+def composed(value: object) -> object:
+    if isinstance(value, str):
+        return unicodedata.normalize("NFC", value)
+    if isinstance(value, tuple):
+        return tuple(composed(each) for each in cast("tuple[object, ...]", value))
+    return value
+
+
 def checked(request: object) -> None:
     for name, kind, bounds in _hints(type(request)):
         value = cast("object", getattr(request, name))
@@ -155,3 +170,5 @@ def checked(request: object) -> None:
 class Request:
     def __post_init__(self) -> None:
         checked(self)
+        for name in _composed_names(type(self)):
+            object.__setattr__(self, name, composed(cast("object", getattr(self, name))))

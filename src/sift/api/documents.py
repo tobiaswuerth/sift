@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Annotated
 
-from sift.api.described import Help
+from sift.api.described import Composed, Help
 from sift.api.errors import Problem
 from sift.api.fields import FIELDS, Fields
 from sift.api.requests import Request
@@ -16,7 +16,7 @@ IDS = (
 class GetDocuments(Request):
     ids: Annotated[tuple[str, ...], Help(IDS)]
     lines: Annotated[str | None, Help('only these lines, e.g. "17-26" or "40"')] = None
-    fields: Annotated[tuple[str, ...], Help(FIELDS)] = ()
+    fields: Annotated[tuple[str, ...], Help(FIELDS), Composed()] = ()
 
 
 @dataclass(frozen=True, slots=True)

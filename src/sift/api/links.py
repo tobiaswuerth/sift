@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated
 
-from sift.api.described import Bounds, Help
+from sift.api.described import Bounds, Composed, Help
 from sift.api.requests import Request
 from sift.api.search import MOST_HITS, Options, Unsearched
 
@@ -91,7 +91,7 @@ class Unresolved:
 @dataclass(frozen=True, slots=True)
 class FindMentions(Options):
     id: Annotated[str, Help(NOTE)]
-    also: Annotated[tuple[str, ...], Help(ALSO)] = ()
+    also: Annotated[tuple[str, ...], Help(ALSO), Composed()] = ()
 
 
 @dataclass(frozen=True, slots=True)
