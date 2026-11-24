@@ -26,8 +26,22 @@ def cwd(tmp_path: Path) -> Path:
 
 
 def test_the_home_is_a_folder_in_the_user_s_unless_set(user: Path, cwd: Path) -> None:
-    assert parsed({}, user, cwd) == Settings(home=user / ".sift", user=user, cwd=cwd)
+    own = user / ".local" / "state" / "sift"
+    assert parsed({}, user, cwd, "linux") == Settings(home=user / ".sift", user=user, cwd=cwd, state=own)
     assert parsed({"SIFT_HOME": str(cwd / "elsewhere")}, user, cwd).home == cwd / "elsewhere"
+
+
+def test_the_user_s_own_folder_is_local_app_data_on_windows_and_the_xdg_state_folder_elsewhere(
+    user: Path, cwd: Path
+) -> None:
+    assert parsed({}, user, cwd, "win32").state == user / "AppData" / "Local" / "sift"
+    assert parsed({"LOCALAPPDATA": str(cwd / "local")}, user, cwd, "win32").state == cwd / "local" / "sift"
+    assert parsed({"LOCALAPPDATA": str(cwd / "local")}, user, cwd, "darwin").state == user / ".local/state/sift"
+    assert parsed({"XDG_STATE_HOME": str(cwd / "kept")}, user, cwd, "darwin").state == cwd / "kept" / "sift"
+    assert parsed({"XDG_STATE_HOME": "kept"}, user, cwd, "linux").state == user / ".local/state/sift"
+    home = str(cwd / "home")
+    assert parsed({"SIFT_HOME": home}, None, cwd, "linux").state is None
+    assert parsed({"SIFT_HOME": home, "XDG_STATE_HOME": str(cwd)}, None, cwd, "linux").state == cwd / "sift"
 
 
 def test_colour_is_left_out_where_no_color_is_set_or_the_terminal_is_dumb(user: Path, cwd: Path) -> None:

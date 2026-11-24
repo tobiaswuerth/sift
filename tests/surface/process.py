@@ -8,15 +8,23 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
-ENDPOINT = "server.json"
+from sift.interfaces.server.endpoint import own_endpoint
+from sift.settings import OWN_FOLDER, Settings
+
 INTERRUPT = cast("int", getattr(signal, "CTRL_BREAK_EVENT", signal.SIGINT))
 OWN_GROUP = cast("int", getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+
+
+def settings_of(home: Path) -> Settings:
+    return Settings(home=home, user=None, cwd=home.parent, state=home.parent / "state" / OWN_FOLDER)
 
 
 def environment(home: Path, model: str = "", reranker: str = "") -> dict[str, str]:
     return {
         **os.environ,
         "SIFT_HOME": str(home),
+        "LOCALAPPDATA": str(home.parent / "state"),
+        "XDG_STATE_HOME": str(home.parent / "state"),
         "PYTHONIOENCODING": "utf-8",
         "NO_COLOR": "1",
         "SIFT_EMBED_MODEL": model,
@@ -51,9 +59,9 @@ def served(home: Path) -> Generator[subprocess.Popen[str]]:
         creationflags=OWN_GROUP,
     )
     try:
-        waited = threading.Event()
+        waited, listed = threading.Event(), own_endpoint(settings_of(home))
         for _ in range(6000):
-            if (home / ENDPOINT).exists() or running.poll() is not None:
+            if listed.exists() or running.poll() is not None:
                 break
             waited.wait(0.01)
         yield running

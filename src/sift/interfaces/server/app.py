@@ -51,7 +51,7 @@ MOST_DEPTH = 64
 NO_JSON_REMEDY = "send the request as a JSON object"
 LOGGER = "sift.server"
 UNAUTHORIZED = InvalidRequestError(
-    "no token, or a wrong one", "send the token in the home's server.json", code=Problem.UNAUTHORIZED
+    "no token, or a wrong one", "send the token sift serve keeps in its user's own folder", code=Problem.UNAUTHORIZED
 )
 UNKNOWN = NotFoundError("no such command", "send one of sift's commands to /api/COMMAND")
 NO_JSON = InvalidRequestError("the request is no JSON", NO_JSON_REMEDY)

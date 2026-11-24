@@ -1,4 +1,5 @@
 import os
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,11 @@ DUMB = "dumb"
 DEFAULT_HOME = ".sift"
 USER = "~"
 NO_HOME = "no home folder is set"
+STATE_VARIABLES = MappingProxyType({"win32": "LOCALAPPDATA"})
+STATE_VARIABLE = "XDG_STATE_HOME"
+STATE_FOLDERS = MappingProxyType({"win32": ("AppData", "Local")})
+STATE_FOLDER = (".local", "state")
+OWN_FOLDER = "sift"
 HOME_REMEDY = f"set {HOME} to an absolute folder"
 
 
@@ -42,6 +48,7 @@ class Settings:
     ocr: OcrSetting = OcrSetting.AUTO
     gpus: str | None = None
     update_check: bool = False
+    state: Path | None = None
 
 
 def whole_path(written: str, user: Path | None, cwd: Path) -> Path:
@@ -95,7 +102,14 @@ def _update_check(environment: Mapping[str, str]) -> bool:
     return switched and environment.get(OFFLINE_VARIABLE, "").strip().lower() not in OFFLINE
 
 
-def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path) -> Settings:
+def _state(environment: Mapping[str, str], user: Path | None, platform: str) -> Path | None:
+    written = Path(environment.get(STATE_VARIABLES.get(platform, STATE_VARIABLE), ""))
+    if written.is_absolute():
+        return written / OWN_FOLDER
+    return None if user is None else user.joinpath(*STATE_FOLDERS.get(platform, STATE_FOLDER), OWN_FOLDER)
+
+
+def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path, platform: str = sys.platform) -> Settings:
     return Settings(
         home=_home(environment.get(HOME), user, cwd),
         user=user,
@@ -107,6 +121,7 @@ def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path) -> Sett
         ocr=_ocr(environment.get(OCR_VARIABLE)),
         gpus=environment.get(GPUS_VARIABLE),
         update_check=_update_check(environment),
+        state=_state(environment, user, platform),
     )
 
 

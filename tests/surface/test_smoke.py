@@ -302,7 +302,7 @@ def served_run(home: Path, notes: Path) -> None:
         assert (jobs.returncode, json.loads(jobs.stdout)) == (0, {"jobs": [], "stopped": None})
         unknown = sift(home, "jobs", "--stop", "99")
         assert (unknown.returncode, "there is no job 99" in unknown.stderr) == (1, True)
-    assert (running.poll() is not None, found(home)) == (True, None)
+    assert (running.poll() is not None, found(process.settings_of(home))) == (True, None)
     (log,) = (home / "logs").glob("serve-*.log")
     logged = log.read_text(encoding="utf-8")
     answered = ("search answered", "status answered", "get answered", "index answered")

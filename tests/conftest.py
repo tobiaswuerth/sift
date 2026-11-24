@@ -11,6 +11,8 @@ settings.load_profile("sift")
 
 @pytest.fixture(autouse=True, scope="session")
 def no_home_but_a_temporary_one(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    home = tmp_path_factory.mktemp("no-test-uses-this") / "home"
-    os.environ["SIFT_HOME"] = str(home)
-    return home
+    unused = tmp_path_factory.mktemp("no-test-uses-this")
+    os.environ["SIFT_HOME"] = str(unused / "home")
+    for variable in ("LOCALAPPDATA", "XDG_STATE_HOME"):
+        os.environ[variable] = str(unused / "state")
+    return unused / "home"

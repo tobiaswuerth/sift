@@ -79,6 +79,13 @@ Everything sift keeps lies under `SIFT_HOME` (`~/.sift`):
 | `worker/` | `sift worker`'s certificate and token, readable by you only | Made on its first start, each file through `FILE.part` for a moment; delete it to make a new key |
 | `numba/` | The compiled search code `sift serve` and `sift bench` keep | Made again when deleted |
 
+`sift serve` keeps one file outside the home, in your own folder (`%LOCALAPPDATA%\sift` on Windows,
+`$XDG_STATE_HOME/sift` or `~/.local/state/sift` elsewhere), so that only you may read it wherever the home lies:
+
+| Path | What | Lifecycle |
+|---|---|---|
+| `servers/KEY.json` | The port, process and token of the home process that serves a home (KEY from the home's path), readable by you only | Written by `sift serve` through `KEY.json.PID.part` for a moment, deleted when it stops; one a killed `sift serve` left is replaced by the next |
+
 An index can lie anywhere else:
 
 ```bash

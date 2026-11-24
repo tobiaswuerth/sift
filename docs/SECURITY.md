@@ -8,11 +8,14 @@ Expect a first reply within a week. Security fixes go into the latest release.
 
 ## Scope
 
-- **The server.** `sift serve` binds to `127.0.0.1` by default and has no authentication: anyone who can reach its port
-  can search the indexed files and read them in full, through MCP and the UI. Expose it only behind something that
-  authenticates; bound to another address, it warns. Bound locally, it answers only requests naming a local host, so a
-  web page can't reach it under its own domain (DNS rebinding); bound to another address, only requests naming this
-  machine by an address, by its own name, or by a name given with `--allow-host`.
+- **The home process.** `sift serve` binds to `127.0.0.1` alone and answers only requests with its token: 256 random
+  bits, kept with its port in your own folder (`%LOCALAPPDATA%\sift` on Windows, `~/.local/state/sift` elsewhere),
+  readable by you only, never in the home. The token is the whole command line: whoever holds it may add any folder
+  you can read, index it, and read its text. It answers only requests naming a local host, so a web page can't reach
+  it under its own domain (DNS rebinding).
+- **The home.** It holds the text of every indexed file. On Windows a home outside your profile folder takes the
+  rights of the folder it lies in, often readable by every local user: keep it in a folder only you may read. On
+  other systems sift makes the home and its stores yours alone.
 - **The UI.** Files opened from it carry `Content-Security-Policy: sandbox`, so a saved web page in a collection can't
   run scripts as the UI; PDFs go to the browser's viewer. It refuses what another site's page has the browser fetch
   in the background (by Fetch Metadata), and no other site may show it in a frame; a navigation to it, as a link

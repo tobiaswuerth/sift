@@ -1,7 +1,6 @@
 import http.client
 import json
 import logging
-import os
 import threading
 from pathlib import Path
 from typing import cast
@@ -9,7 +8,7 @@ from typing import cast
 import pytest
 
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
+from sift.api.errors import Problem
 from sift.api.events import Event, Listening
 from sift.api.serving import Served, ServeHome
 from sift.app.embedding import embed
@@ -17,22 +16,16 @@ from sift.interfaces.acts.acting import Acting
 from sift.interfaces.cli.main import ENTRIES
 from sift.interfaces.server.app import LOGGER, MOST_BODY, WAITING
 from sift.interfaces.server.endpoint import (
-    ENDPOINT,
-    LOOK_EVERY_SECONDS,
-    SERVER,
-    SERVING,
     Endpoint,
     found,
-    lock_of,
-    written,
+    own_endpoint,
 )
 from sift.interfaces.server.gate import WAITING_FOR_ALONE, WAITING_FOR_READS
 from sift.interfaces.server.handled import HANDLED, Handled
-from sift.interfaces.server.serving import RESTED, HomeServer, Serve, held, serve, watched_idle
+from sift.interfaces.server.serving import RESTED, HomeServer, Serve, serve, watched_idle
 from sift.settings import Settings
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
-from sift.storage.writer import held_by, sole_writer
 from tests.files import write
 from tests.models import Hashed
 from tests.serving import Line, asked, last, running, streaming
@@ -46,7 +39,7 @@ def test_the_home_process_runs_commands_streaming_their_events_then_their_answer
     settings: Settings, notes: Path
 ) -> None:
     with running(settings) as server:
-        assert found(settings.home) == server.endpoint
+        assert found(settings) == server.endpoint
         status, added = asked(server, "add", {"folder": str(notes)})
         assert (status, last(added, "answer")["state"]) == (200, "added")
         _, indexed = asked(server, "index", {})
@@ -56,7 +49,7 @@ def test_the_home_process_runs_commands_streaming_their_events_then_their_answer
         assert cast("Line", collection["outcome"])["added"] == 2
         _, searched = asked(server, "search", {"query": "robot"})
         assert [hit["id"] for hit in cast("list[Line]", last(searched, "answer")["hits"])] == ["notes/brush.md"]
-    assert (found(settings.home), (settings.home / ENDPOINT).exists()) == (None, False)
+    assert (found(settings), own_endpoint(settings).exists()) == (None, False)
 
 
 def test_searches_through_the_home_process_keep_a_store_s_codes(settings: Settings, notes: Path) -> None:
@@ -278,63 +271,18 @@ def interrupted(_event: Event) -> None:
 def test_ctrl_c_as_the_home_process_says_where_it_listens_stops_it_as_at_any_other_time(settings: Settings) -> None:
     ran = list[HomeServer]()
     served = serve(settings, ServeHome(port=0), "2.0.0", interrupted, Serve(ran.append))
-    assert (ran, served.url.startswith("http://127.0.0.1:"), found(settings.home)) == ([], True, None)
+    assert (ran, served.url.startswith("http://127.0.0.1:"), found(settings)) == ([], True, None)
 
 
 def test_serve_says_where_it_listens_serves_and_leaves_nothing_behind(settings: Settings) -> None:
     said, seen = list[Event](), list[Endpoint | None]()
-    looked = Serve(lambda _: seen.append(found(settings.home)))
+    looked = Serve(lambda _: seen.append(found(settings)))
     served = serve(settings, ServeHome(port=0), "2.0.0", said.append, looked)
     (endpoint,) = seen
     assert endpoint is not None
     url = f"http://127.0.0.1:{endpoint.port}"
     assert (said, served) == ([Listening(url, str(settings.home))], Served(url))
-    assert (found(settings.home), (settings.home / ENDPOINT).exists()) == (None, False)
-
-
-def test_a_home_process_whose_endpoint_is_not_written_yet_is_starting_and_said_to_be(settings: Settings) -> None:
-    with sole_writer(settings.home / SERVER, SERVING):
-        assert held_by(lock_of(settings.home)) is not None
-        with pytest.raises(StoreUnavailableError, match=f"is starting \\(process {os.getpid()}\\)") as refused:
-            found(settings.home, patience=LOOK_EVERY_SECONDS)
-    assert (refused.value.code, refused.value.remedy) == (Problem.BUSY, "ask again in a moment")
-
-
-def test_the_endpoint_of_another_process_is_not_the_home_process_that_holds_the_home(settings: Settings) -> None:
-    settings.home.mkdir(parents=True)
-    written(settings.home, Endpoint(9, os.getpid() + 1, "t", "2.0.0"))
-    assert found(settings.home) is None
-    with sole_writer(settings.home / SERVER, SERVING), pytest.raises(StoreUnavailableError, match="is starting"):
-        found(settings.home, patience=LOOK_EVERY_SECONDS * 2)
-
-
-def test_a_home_process_takes_the_place_of_an_endpoint_left_by_one_that_was_killed(settings: Settings) -> None:
-    settings.home.mkdir(parents=True)
-    written(settings.home, Endpoint(9, os.getpid(), "t", "2.0.0"))
-    with running(settings) as server:
-        assert found(settings.home) == server.endpoint != Endpoint(9, os.getpid(), "t", "2.0.0")
-
-
-def test_a_second_home_process_is_refused_naming_the_first(settings: Settings) -> None:
-    with running(settings) as server:
-        with (
-            pytest.raises(StoreUnavailableError, match=f"on port {server.endpoint.port}") as refused,
-            held(settings, ServeHome(port=0), "2.0.0", list[Event]().append),
-        ):
-            pass
-        assert refused.value.code == Problem.BUSY
-
-
-def test_a_port_that_is_taken_is_said_to_be(settings: Settings) -> None:
-    other = Settings(settings.home.parent / "other", settings.user, settings.cwd)
-    with running(settings) as server:
-        taken = ServeHome(server.endpoint.port)
-        with (
-            pytest.raises(InvalidRequestError, match=f"port {taken.port} cannot be had") as refused,
-            held(other, taken, "2.0.0", list[Event]().append),
-        ):
-            pass
-        assert refused.value.field == "port"
+    assert (found(settings), own_endpoint(settings).exists()) == (None, False)
 
 
 def test_the_home_process_lets_idle_models_go_and_says_so(caplog: pytest.LogCaptureFixture) -> None:

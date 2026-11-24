@@ -12,7 +12,7 @@ from sift.api.events import Advanced, CollectionStarted, Event, Noted
 from sift.api.serving import Served, ServeHome
 from sift.interfaces.acts.acting import NO_HOME_PROCESS, Acting
 from sift.interfaces.cli.main import Host, run
-from sift.interfaces.server.endpoint import ENDPOINT, found
+from sift.interfaces.server.endpoint import found, own_endpoint
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import STOPPING, HomeServer, Serve, held, serve
 from sift.settings import Settings
@@ -123,7 +123,7 @@ def test_ctrl_c_with_a_job_running_stops_the_job_and_says_so(settings: Settings)
 
     handled = {**HANDLED, "index": Handled(endless(started, ended), writes=True)}
     serve(settings, ServeHome(port=0), "2.0.0", said.append, Serve(served, handled))
-    assert (ended, found(settings.home)) == (["stopped"], None)
+    assert (ended, found(settings)) == (["stopped"], None)
     assert [event for event in said if isinstance(event, Noted)] == [Noted(STOPPING.format(jobs="sift index (job 1)"))]
 
 
@@ -162,7 +162,7 @@ def test_a_second_ctrl_c_exits_at_once(settings: Settings) -> None:
     with running(settings) as server:
         server.server.handle_exit(signal.SIGINT, None)
         server.server.handle_exit(signal.SIGINT, None)
-        gone = not (settings.home / ENDPOINT).exists()
+        gone = not own_endpoint(settings).exists()
         assert (server.server.should_exit, server.server.force_exit, gone) == (True, True, True)
 
 
@@ -210,5 +210,5 @@ def test_sift_serve_ended_as_a_service_is_ended_stops_as_by_ctrl_c(settings: Set
 
     before = signal.getsignal(signal.SIGTERM)
     served_url = serve(settings, ServeHome(port=0), "2.0.0", list[Event]().append, Serve(served)).url
-    assert (served_url.startswith("http://127.0.0.1:"), found(settings.home)) == (True, None)
+    assert (served_url.startswith("http://127.0.0.1:"), found(settings)) == (True, None)
     assert signal.getsignal(signal.SIGTERM) is before

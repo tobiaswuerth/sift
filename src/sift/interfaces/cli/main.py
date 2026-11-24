@@ -281,7 +281,7 @@ class _Chosen:
 def _server(settings: Settings, command: str) -> Endpoint | None:
     if command == SERVE:
         return None
-    running = found(settings.home)
+    running = found(settings)
     if running is None or running.version == _version():
         return running
     said = f"the home process runs sift {running.version}, this is sift {_version()}"

@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from types import FrameType
 from typing import cast, override
 
@@ -23,7 +24,7 @@ from sift.app.questions import RememberedQuestions
 from sift.app.resident import ResidentCodes
 from sift.interfaces.acts.acting import fresh_models
 from sift.interfaces.server.app import ALIVE_SECONDS, LOGGER, Serving, served_app
-from sift.interfaces.server.endpoint import ENDPOINT, SERVER, SERVING, Endpoint, found, written
+from sift.interfaces.server.endpoint import SERVER, SERVING, Endpoint, found, own_endpoint, written
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.results import KeptResults
 from sift.settings import Settings
@@ -45,8 +46,8 @@ STOPPING_SIGNALS: tuple[int, ...] = tuple(
 )
 
 
-def _stopping(serving: Serving, report: Reporter) -> None:
-    (serving.settings.home / ENDPOINT).unlink(missing_ok=True)
+def _stopping(serving: Serving, listed: Path, report: Reporter) -> None:
+    listed.unlink(missing_ok=True)
     if stopped := serving.jobs.stop_all():
         jobs = ", ".join(f"sift {job.command} (job {job.number})" for job in stopped)
         report(Noted(STOPPING.format(jobs=jobs)))
@@ -70,6 +71,7 @@ class HomeServer:
     serving: Serving
     server: StoppingServer
     socket: socket.socket
+    listed: Path
 
     @property
     def url(self) -> str:
@@ -77,7 +79,7 @@ class HomeServer:
 
 
 def _refuse_another(settings: Settings) -> None:
-    another = found(settings.home)
+    another = found(settings)
     if another is not None:
         said = f"another sift serves this home on port {another.port} (process {another.pid})"
         raise StoreUnavailableError(said, ANOTHER_REMEDY, code=Problem.BUSY)
@@ -131,6 +133,7 @@ def held(
     settings: Settings, request: ServeHome, version: str, report: Reporter, how: Serve = SERVE
 ) -> Generator[HomeServer]:
     private_folder(settings.home)
+    listed = own_endpoint(settings)
     _refuse_another(settings)
     models = fresh_models(settings)
     with (
@@ -140,7 +143,7 @@ def held(
         ThreadPoolExecutor(1, thread_name_prefix="sift-write") as writer,
         _resting(models.release_idle),
     ):
-        (settings.home / ENDPOINT).unlink(missing_ok=True)
+        listed.unlink(missing_ok=True)
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version)
         kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
@@ -149,11 +152,12 @@ def held(
         config = uvicorn.Config(
             app, log_config=None, access_log=False, lifespan="off", timeout_graceful_shutdown=how.grace_seconds
         )
-        written(settings.home, endpoint)
+        written(listed, endpoint)
+        server = StoppingServer(config, partial(_stopping, serving, listed, report))
         try:
-            yield HomeServer(endpoint, serving, StoppingServer(config, partial(_stopping, serving, report)), bound)
+            yield HomeServer(endpoint, serving, server, bound, listed)
         finally:
-            (settings.home / ENDPOINT).unlink(missing_ok=True)
+            listed.unlink(missing_ok=True)
             serving.watch.let_go()
 
 
@@ -178,5 +182,5 @@ def serve(settings: Settings, request: ServeHome, version: str, report: Reporter
             how.run(running)
         except KeyboardInterrupt:
             running.server.should_exit = True
-            _stopping(running.serving, report)
+            _stopping(running.serving, running.listed, report)
     return Served(running.url)
