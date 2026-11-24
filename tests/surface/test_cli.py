@@ -6,7 +6,7 @@ import subprocess
 import sys
 from importlib.metadata import version
 from pathlib import Path
-from typing import TextIO, final, override
+from typing import TextIO, cast, final, override
 
 import pytest
 
@@ -14,6 +14,8 @@ from sift.interfaces.cli.main import main, run
 from sift.interfaces.console.text import table
 from sift.interfaces.console.units import size
 from sift.settings import Settings
+from sift.storage.catalog import CATALOG, CATALOG_DAMAGED_REMEDY
+from tests.damage import damage_pages
 from tests.surface.commands import Terminal, indexed_notes, ran
 from tests.surface.process import sift
 
@@ -369,3 +371,15 @@ def test_in_a_terminal_the_running_phase_is_drawn_in_place_and_cleared(
     assert shown[3].startswith("  done  +2  ~0  -0  ")
     assert shown[4:] == [""]
     assert "\x1b[" not in drawn
+
+
+def test_a_damaged_catalog_is_an_error_saying_what_to_do_also_in_json(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    damage_pages(settings.home / CATALOG)
+    code, out, err = ran(settings, "status")
+    assert (code, out, err.startswith("error  the catalog "), " is damaged: " in err) == (1, "", True, True)
+    assert f"  fix  {CATALOG_DAMAGED_REMEDY}\n" in err
+    code, out, _ = ran(settings, "--json", "status")
+    said = cast("dict[str, object]", cast("dict[str, object]", json.loads(out))["error"])
+    expected = (1, "store_unavailable", "store_damaged", CATALOG_DAMAGED_REMEDY)
+    assert (code, said["kind"], said["code"], said["remedy"]) == expected

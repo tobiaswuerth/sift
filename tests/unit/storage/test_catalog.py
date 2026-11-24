@@ -7,14 +7,16 @@ from typing import NamedTuple
 import pytest
 
 from sift.api.collections import TitleFrom
-from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.ids import CollectionId
 from sift.storage.catalog import (
     CATALOG,
+    CATALOG_DAMAGED_REMEDY,
     Choices,
     Collection,
     NewCollection,
     add_collection,
+    catalog_of,
     collections,
     known_collections,
     named,
@@ -23,6 +25,7 @@ from sift.storage.catalog import (
 )
 from sift.storage.database import connect, reading, rows, run, writing
 from sift.storage.store import create_store, open_store
+from tests.damage import damage_pages
 
 
 class Version(NamedTuple):
@@ -325,3 +328,24 @@ def test_a_collection_whose_registration_fails_at_the_end_leaves_no_store(
 def test_choices_that_are_no_json_are_refused_by_the_catalog(catalog: sqlite3.Connection) -> None:
     with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"), writing(catalog) as transaction:
         run(transaction, "INSERT INTO collections(name, folder, store, choices) VALUES ('a', 'f', 's', '{no')")
+
+
+def test_a_damaged_catalog_is_unavailable_saying_what_to_do(home: Path) -> None:
+    with contextlib.closing(open_catalog(home)):
+        pass
+    damage_pages(home / CATALOG)
+    with pytest.raises(StoreUnavailableError, match=r"the catalog .* is damaged") as refused:
+        known_collections(home)
+    assert (refused.value.code, refused.value.remedy) == (Problem.STORE_DAMAGED, CATALOG_DAMAGED_REMEDY)
+
+
+def test_a_catalog_another_program_writes_is_unavailable_saying_what_to_do(home: Path) -> None:
+    with (
+        contextlib.closing(open_catalog(home)) as other,
+        writing(other),
+        pytest.raises(StoreUnavailableError, match="another sift is writing to the catalog") as refused,
+        catalog_of(home, timeout=0) as connection,
+        writing(connection),
+    ):
+        pass
+    assert refused.value.code == Problem.STORE_UNAVAILABLE

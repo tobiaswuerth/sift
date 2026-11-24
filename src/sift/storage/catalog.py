@@ -2,8 +2,8 @@ import json
 import os
 import re
 import sqlite3
-from collections.abc import Sequence
-from contextlib import closing
+from collections.abc import Generator, Sequence
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, cast
@@ -13,6 +13,7 @@ from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUn
 from sift.api.ids import CollectionId
 from sift.domain.text.records import NO_CHOICE, Chosen
 from sift.storage.database import (
+    BUSY_TIMEOUT_SECONDS,
     Reading,
     Writing,
     connect,
@@ -27,8 +28,11 @@ from sift.storage.database import (
 from sift.storage.migrations import Migration, migrated, version
 from sift.storage.store import create_store, holds_nothing, left_by_add
 from sift.storage.store_files import delete_store
+from sift.storage.unusable import Unusable, unavailable_if_unusable
 
 CATALOG = "catalog.sqlite"
+CATALOG_DAMAGED_REMEDY = "move the catalog away, then add the folders again"
+THE_CATALOG = Unusable("the catalog", CATALOG_DAMAGED_REMEDY)
 STORES = "collections"
 STORE_SUFFIX = ".sqlite"
 NAME = re.compile(r"\w[\w.-]*")
@@ -139,9 +143,9 @@ def _up_to_date(connection: sqlite3.Connection, path: Path) -> None:
             migrated(transaction, LAYOUT, path)
 
 
-def open_catalog(home: Path) -> sqlite3.Connection:
+def open_catalog(home: Path, timeout: float = BUSY_TIMEOUT_SECONDS) -> sqlite3.Connection:
     path = home / CATALOG
-    connection = connect(path, create=True)
+    connection = connect(path, create=True, timeout=timeout)
     kept_private(home)
     try:
         _up_to_date(connection, path)
@@ -149,6 +153,12 @@ def open_catalog(home: Path) -> sqlite3.Connection:
         connection.close()
         raise
     return connection
+
+
+@contextmanager
+def catalog_of(home: Path, timeout: float = BUSY_TIMEOUT_SECONDS) -> Generator[sqlite3.Connection]:
+    with unavailable_if_unusable(home / CATALOG, THE_CATALOG), closing(open_catalog(home, timeout)) as connection:
+        yield connection
 
 
 def collections(transaction: Reading) -> tuple[Collection, ...]:
@@ -174,17 +184,17 @@ def refuse_inactive(one: Collection) -> Collection:
 def known_collections(home: Path) -> tuple[Collection, ...]:
     if not (home / CATALOG).is_file():
         return ()
-    with closing(open_catalog(home)) as connection, reading(connection) as transaction:
+    with catalog_of(home) as connection, reading(connection) as transaction:
         return collections(transaction)
 
 
 def forget_collection(home: Path, identity: CollectionId) -> None:
-    with closing(open_catalog(home)) as connection, writing(connection) as transaction:
+    with catalog_of(home) as connection, writing(connection) as transaction:
         run(transaction, "DELETE FROM collections WHERE id = ?", (identity,))
 
 
 def set_choices(home: Path, identity: CollectionId, choices: Choices) -> None:
-    with closing(open_catalog(home)) as connection, writing(connection) as transaction:
+    with catalog_of(home) as connection, writing(connection) as transaction:
         run(transaction, "UPDATE collections SET choices = ? WHERE id = ?", (choices_json(choices), identity))
 
 
@@ -194,7 +204,7 @@ def holding_folder(home: Path, folder: Path) -> Collection | None:
 
 
 def set_store(home: Path, identity: CollectionId, store: Path) -> None:
-    with closing(open_catalog(home)) as connection, writing(connection) as transaction:
+    with catalog_of(home) as connection, writing(connection) as transaction:
         run(transaction, "UPDATE collections SET store = ? WHERE id = ?", (str(store), identity))
 
 
@@ -205,7 +215,7 @@ def same_place(one: Path, other: Path) -> bool:
 def set_active(home: Path, names: Sequence[str], *, active: bool) -> tuple[Collection, ...]:
     for name in names:
         named(known_collections(home), name)
-    with closing(open_catalog(home)) as connection, writing(connection) as transaction:
+    with catalog_of(home) as connection, writing(connection) as transaction:
         chosen = tuple(dict.fromkeys(named(collections(transaction), name) for name in names))
         run_each(
             transaction,
@@ -305,7 +315,8 @@ def add_collection(connection: sqlite3.Connection, home: Path, new: NewCollectio
         with writing(connection) as transaction:
             identity = _registered(transaction, wanted, new.choices)
             _cleared(home, wanted.store, identity)
-            create_store(wanted.store, identity)
+            with unavailable_if_unusable(wanted.store):
+                create_store(wanted.store, identity)
             created = True
     except BaseException:
         if created:

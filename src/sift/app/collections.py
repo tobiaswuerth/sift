@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from contextlib import closing, nullcontext
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 
@@ -31,11 +31,11 @@ from sift.storage.catalog import (
     Collection,
     NewCollection,
     add_collection,
+    catalog_of,
     forget_collection,
     holding_folder,
     known_collections,
     named,
-    open_catalog,
     refuse_inactive,
     set_active,
 )
@@ -74,7 +74,7 @@ def add(home: Path, request: AddCollection, report: Reporter = unreported) -> Co
         nested=request.nested,
         choices=Choices(title_from, follow_links=follow_links, records=records, agents=agents),
     )
-    with closing(open_catalog(home)) as catalog:
+    with catalog_of(home) as catalog:
         added = add_collection(catalog, home, new)
     return CollectionAdded(
         added.name, str(added.folder), str(added.store), title_from, vault, follow_links=follow_links, agents=agents
