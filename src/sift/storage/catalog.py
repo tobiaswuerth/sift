@@ -14,7 +14,7 @@ from sift.api.ids import CollectionId
 from sift.domain.text.records import NO_CHOICE, Chosen
 from sift.storage.database import Reading, Writing, connect, inserted, kept_private, reading, rows, writing
 from sift.storage.migrations import Migration, migrated, version
-from sift.storage.store import create_store, delete_store, left_by_add
+from sift.storage.store import create_store, delete_store, holds_nothing, left_by_add
 
 CATALOG = "catalog.sqlite"
 STORES = "collections"
@@ -229,10 +229,11 @@ def _registered(transaction: Writing, wanted: Placed, choices: Choices) -> Colle
     )
 
 
-def _cleared(store: Path, identity: CollectionId) -> None:
+def _cleared(home: Path, store: Path, identity: CollectionId) -> None:
     if not store.exists():
         return
-    if not left_by_add(store, identity):
+    made_here = store.parent == home / STORES and holds_nothing(store)
+    if not made_here and not left_by_add(store, identity):
         raise InvalidRequestError(f"{store} exists already", STORE_TAKEN_REMEDY)
     delete_store(store)
 
@@ -243,7 +244,7 @@ def add_collection(connection: sqlite3.Connection, home: Path, new: NewCollectio
     try:
         with writing(connection) as transaction:
             identity = _registered(transaction, wanted, new.choices)
-            _cleared(wanted.store, identity)
+            _cleared(home, wanted.store, identity)
             create_store(wanted.store, identity)
             created = True
     except BaseException:

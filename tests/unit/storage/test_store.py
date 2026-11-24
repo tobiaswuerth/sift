@@ -9,6 +9,7 @@ import pytest
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.storage.database import connect, first, reading, run, writing
+from sift.storage.documents import paths_named
 from sift.storage.migrations import Migration
 from sift.storage.store import (
     DAMAGED_REMEDY,
@@ -227,6 +228,16 @@ def test_a_store_of_an_older_layout_is_brought_up_to_this_one_when_opened(tmp_pa
             assert first(transaction, Value, "SELECT sum(x) FROM added") == Value(7)
     with pytest.raises(StoreUnavailableError, match="newer sift"):
         open_store(tmp_path / "s.sqlite", COLLECTION)
+
+
+def test_a_store_of_the_layout_before_names_were_folded_has_them_folded_when_opened(tmp_path: Path) -> None:
+    store = tmp_path / "s.sqlite"
+    create_store(store, COLLECTION, LAYOUT[:-1])
+    with opened(store, layout=LAYOUT[:-1]) as connection, writing(connection) as transaction:
+        run(transaction, "INSERT INTO sources(path, modified_ns, size) VALUES ('Notizen/Äpfel.md', 1, 1)")
+        run(transaction, "INSERT INTO documents(source, key, digest, title, fields) VALUES (1, '', 'd', 'Ä', '{}')")
+    with opened(store) as connection, reading(connection) as transaction:
+        assert paths_named(transaction, "ÄPFEL.MD") == ["Notizen/Äpfel.md"]
 
 
 def test_a_store_of_another_collection_is_not_brought_up_to_this_layout(tmp_path: Path) -> None:

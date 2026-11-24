@@ -42,3 +42,8 @@ def test_a_name_written_with_combining_marks_is_looked_for_without_umlauts_too()
 def test_the_words_of_names_are_counted_as_a_query_s() -> None:
     assert words_in(any_phrase([f"name{n} word" for n in range(501)])) == 1002
     assert words_in(any_phrase(["one", "two words", "one"])) == 3
+
+
+def test_a_name_of_two_wide_characters_is_long_enough_to_look_for() -> None:
+    assert phrases(["東京", "王芳", "東"]) == ("東京", "王芳")
+    assert phrases(["ab"]) == ()

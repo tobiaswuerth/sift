@@ -78,10 +78,26 @@ class SourceRow(NamedTuple):
     id: SourceId
 
 
+def folded(path: str) -> str:
+    return path.rsplit("/", 1)[-1].casefold()
+
+
+class _Named(NamedTuple):
+    id: int
+    path: str
+
+
+def folded_names(transaction: Writing) -> None:
+    named = rows(transaction, _Named, "SELECT id, path FROM sources")
+    run_each(
+        transaction, "UPDATE sources SET folded = ? WHERE id = ?", [(folded(each.path), each.id) for each in named]
+    )
+
+
 def put_source(transaction: Writing, path: str, modified_ns: int, size: int) -> SourceId:
-    sql = """INSERT INTO sources(path, modified_ns, size) VALUES (?, ?, ?)
+    sql = """INSERT INTO sources(path, modified_ns, size, folded) VALUES (?, ?, ?, ?)
              ON CONFLICT(path) DO UPDATE SET modified_ns = excluded.modified_ns, size = excluded.size RETURNING id"""
-    (written,) = rows(transaction, SourceRow, sql, (path, modified_ns, size))
+    (written,) = rows(transaction, SourceRow, sql, (path, modified_ns, size, folded(path)))
     return written.id
 
 
@@ -199,11 +215,11 @@ class PathRow(NamedTuple):
 
 
 PATHS_NAMED = """SELECT s.path FROM sources s JOIN documents d ON d.source = s.id AND d.key = ''
-                 WHERE s.name = ? COLLATE NOCASE ORDER BY s.path"""
+                 WHERE s.folded = ? ORDER BY s.path"""
 
 
 def paths_named(transaction: Reading, name: str) -> list[str]:
-    return [found.path for found in rows(transaction, PathRow, PATHS_NAMED, (name,))]
+    return [found.path for found in rows(transaction, PathRow, PATHS_NAMED, (name.casefold(),))]
 
 
 class Passage(NamedTuple):

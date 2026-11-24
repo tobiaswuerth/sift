@@ -1,7 +1,8 @@
 import shutil
 import tracemalloc
-from collections.abc import Generator, Iterable
+from collections.abc import Generator, Iterable, Iterator, Sequence
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,10 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
+from sift.domain.text.documents import Conversion, Converted, Outcome
 from sift.ingest.files import CHANGED, Identity, pieces_of
+from sift.ingest.readers import ToRead, read_file
+from sift.ingest.sandbox import FileReading
 from sift.storage.catalog import known_collections
 from sift.storage.database import Batches
 from sift.storage.documents import stored
@@ -22,7 +26,7 @@ from sift.storage.store import read_store
 from sift.storage.vector_meta import left
 from tests.files import write
 from tests.homes import text_of, unreadable_files
-from tests.later import LATER, later, reading
+from tests.later import LATER, in_process, later, reading
 from tests.mails import sample
 from tests.models import Hashed
 
@@ -172,3 +176,36 @@ def test_a_note_of_any_size_is_read_and_replaced_in_memory_its_size_does_not_rai
     (notes / "large.md").write_text(text + "and then cobalt\n", encoding="utf-8")
     assert _read_peak(home, Limits(batches=small)) < 16 << 20
     assert text_of(home, "notes/large.md").endswith("ultramarine\nand then cobalt\n")
+
+
+def _wordy(_raw: bytes, _name: str) -> Conversion:
+    return Converted("# Paper\n\n" + "words " * 50)
+
+
+def _counted(home: Path) -> int:
+    (one,) = known_collections(home)
+    with read_store(one.store, one.id) as transaction:
+        return sum(stored(transaction, f"p{n}.pdf") is not None for n in range(3))
+
+
+def test_files_read_are_written_once_their_text_passes_what_a_write_holds(tmp_path: Path, home: Path) -> None:
+    root = tmp_path / "papers"
+    for n in range(3):
+        write(root / f"p{n}.pdf", f"%PDF-1.4 paper {n}")
+    add(home, AddCollection(str(root)))
+    seen: list[int] = []
+
+    @contextmanager
+    def watched() -> Generator[FileReading]:
+        with in_process(partial(read_file, converting=_wordy)) as read:
+
+            def each(asked: Sequence[ToRead]) -> Iterator[tuple[int, Outcome]]:
+                for found in read(asked):
+                    seen.append(_counted(home))
+                    yield found
+
+            yield each
+
+    limits = Limits(most_characters_a_write=100)
+    assert indexed(home, limits, Readers(clock=later, files=watched)).added == 3
+    assert seen == [0, 1, 2]

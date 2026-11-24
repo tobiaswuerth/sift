@@ -221,6 +221,39 @@ def test_a_file_no_add_of_this_collection_left_is_never_taken(
     assert (taken.read_bytes(), known(catalog)) == (before, ())
 
 
+@pytest.mark.parametrize("left", [b"", None])
+def test_a_store_an_add_was_stopped_making_in_the_home_is_made_anew(
+    tmp_path: Path, home: Path, catalog: sqlite3.Connection, left: bytes | None
+) -> None:
+    store = home / "collections" / "notes.sqlite"
+    store.parent.mkdir(parents=True)
+    if left is None:
+        with contextlib.closing(sqlite3.connect(store)) as database:
+            database.execute("PRAGMA journal_mode=WAL")
+    else:
+        store.write_bytes(left)
+    added = add_collection(catalog, home, NewCollection(folder(tmp_path, "notes")))
+    assert added.store == store
+    with contextlib.closing(open_store(store, added.id)) as connection:
+        assert connection.execute("SELECT count(*) FROM documents").fetchone() == (0,)
+
+
+@pytest.mark.parametrize("kind", ["a database", "no database"])
+def test_a_file_of_another_program_in_the_home_s_stores_is_never_taken(
+    tmp_path: Path, home: Path, catalog: sqlite3.Connection, kind: str
+) -> None:
+    store = home / "collections" / "notes.sqlite"
+    store.parent.mkdir(parents=True)
+    if kind == "a database":
+        with contextlib.closing(sqlite3.connect(store)) as database:
+            database.execute("CREATE TABLE bookmarks(url TEXT)")
+            database.commit()
+    else:
+        store.write_bytes(b"someone's notes, no database at all" * 100)
+    with pytest.raises(InvalidRequestError, match="exists already"):
+        add_collection(catalog, home, NewCollection(folder(tmp_path, "notes")))
+
+
 def test_a_store_holding_documents_is_never_taken(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
     held = tmp_path / "held.sqlite"
     create_store(held, CollectionId(7))

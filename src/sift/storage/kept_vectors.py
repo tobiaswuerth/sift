@@ -53,7 +53,6 @@ def _keyed(transaction: Writing, sql: str, documents: Sequence[DocumentId]) -> I
 
 def vectors_held(transaction: Writing, documents: Sequence[DocumentId]) -> None:
     run(transaction, KEPT)
-    run(transaction, "DELETE FROM temp.kept_vectors")
     for batch in _keyed(transaction, HELD, documents):
         run_each(
             transaction,
@@ -70,4 +69,8 @@ def vectors_kept(transaction: Writing, documents: Sequence[DocumentId]) -> None:
         placed = [(each.chunk, key) for each, key in batch]
         run_each(transaction, VECTORS_KEPT, placed)
         run_each(transaction, CODES_KEPT, placed)
+
+
+def vectors_let_go(transaction: Writing) -> None:
+    run(transaction, KEPT)
     run(transaction, "DELETE FROM temp.kept_vectors")

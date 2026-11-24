@@ -17,7 +17,7 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.searching import UNEMBEDDED_REMEDY, Watching
-from sift.app.vector_candidates import Rescoring
+from sift.app.vector_candidates import MOST_WIDER, Rescoring
 from sift.app.vsearch import vsearch
 from sift.domain.errors import DamagedError
 from sift.storage.database import Reading
@@ -309,3 +309,17 @@ def test_the_model_s_loading_is_said_only_when_a_vector_is_needed(home: Path, tm
     quiet: list[Event] = []
     vsearch(bare, SearchVectors("halo"), Hashed(), watching=Watching(report=quiet.append))
     assert quiet == []
+
+
+def test_a_search_for_one_passage_a_document_widens_at_most_so_far_and_keeps_what_it_found(tmp_path: Path) -> None:
+    root = parts(tmp_path)
+    write(root / "gamma.md", "# gamma\n\nWombats dig burrows.\n")
+    home = tmp_path / "home"
+    add(home, AddCollection(str(root)))
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    reads = VectorReads()
+    found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), Rescoring(1, reads))
+    assert chunks_in(home / "collections" / "parts.sqlite") > MOST_WIDER * 3
+    assert max(reads.read) <= MOST_WIDER * 3
+    assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]

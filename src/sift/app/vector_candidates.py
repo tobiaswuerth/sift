@@ -22,6 +22,7 @@ from sift.storage.vectors import EMBED_REMEDY, documents_embedded, vectors_of
 
 QUERY_REMEDY = "word the query otherwise; if the model keeps failing, report it with its name"
 WIDER = 4
+MOST_WIDER = WIDER**2
 
 type ExactRows = tuple[Ids, Halves]
 type ExactReader = Callable[[Reading, Ids], ExactRows]
@@ -105,15 +106,16 @@ def _documents(stores: Open, count: Callable[[Reading], int]) -> int:
 def near(stores: Open, wanted: Best, query: Floats, asked: Rescoring) -> tuple[Near, ...]:
     chunks = sum(len(vectors.coded.ids) for _, vectors in stores.embedded())
     want, documents = max(asked.rescore, wanted.k), None
+    farthest = want * MOST_WIDER
     while True:
         found = _nearest(stores, query, want, asked.read)
         best = _best(wanted, found, _owned(stores, found))
-        if len(best) >= wanted.k or want >= chunks or len(found) < want:
+        if len(best) >= wanted.k or want >= min(chunks, farthest) or len(found) < want:
             return best
         documents = _documents(stores, asked.count) if documents is None else documents
         if len(best) >= documents:
             return best
-        want *= WIDER
+        want = min(want * WIDER, farthest)
 
 
 def _round(stores: Open, request: Options, query: Floats, asked: Rescoring, wanted: int) -> Ranked:

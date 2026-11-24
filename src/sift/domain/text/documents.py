@@ -48,6 +48,10 @@ class Refused:
     stopped: bool = False
 
 
+def text_held(read: "FileRead | Unread | Refused") -> int:
+    return sum(len(each.text) for each in read.documents) if isinstance(read, FileRead) else 0
+
+
 def stopped(problem: str) -> Refused:
     return Refused(problem, read_again=False, stopped=True)
 

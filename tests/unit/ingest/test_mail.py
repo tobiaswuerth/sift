@@ -6,10 +6,12 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from sift.api.collections import TitleFrom
 from sift.domain.text.decoding import encodable
 from sift.domain.text.documents import FileRead, Unread
+from sift.ingest.documents import convert
 from sift.ingest.mail import as_utf8, in_charset, mail, plain
-from sift.ingest.readers import unique
+from sift.ingest.readers import read_whole, unique
 from tests.mails import PARAGRAPH, atoms, failing, mail_bytes, message, only, read, read_file, sample
 
 NO_CHARSET = b"Content-Type:multipart/;boundary=b\r--b\nContent-Type:charset=\x00"
@@ -282,8 +284,18 @@ def test_mail_in_mail_is_read_three_levels_deep() -> None:
         inner = message(headers={"Subject": str(level)}, attachments=[(None, inner)])
     found = read_file(mail_bytes(message(headers={"Subject": "top"}, attachments=[(None, inner)])), "a.eml")
     keys = ["", "5.eml", "5.eml/4.eml", "5.eml/4.eml/3.eml"]
-    assert ([each.key for each in found.documents], found.problems) == (keys, ())
+    assert [each.key for each in found.documents] == keys
+    assert found.problems == ("5.eml: 4.eml: 3.eml: 2.eml: a mail nested more than 3 deep, left out",)
     assert found.documents[-1].fields["attachments"] == ["2.eml"]
+
+
+def test_attachments_past_what_one_file_may_hold_of_text_are_named_and_left_out() -> None:
+    attached = [(f"n{n}.md", f"# Note {n}\n\n{'word ' * 20}\n".encode(), "text/markdown") for n in range(4)]
+    raw = mail_bytes(message(headers={"Subject": "Many"}, attachments=attached))
+    found = read_whole(raw, "a.eml", TitleFrom.HEADING, convert, most_text=250)
+    assert isinstance(found, FileRead)
+    assert [each.key for each in found.documents] == ["", "n0.md", "n1.md"]
+    assert found.problems == ("n2.md, n3.md: left out, as the mail's text came to more than 250 characters",)
 
 
 def test_a_damaged_attachment_is_a_problem_and_the_mail_still_reads() -> None:

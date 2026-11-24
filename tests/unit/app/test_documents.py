@@ -98,6 +98,15 @@ def test_a_document_is_read_by_its_file_s_absolute_path_in_any_case(tmp_path: Pa
         assert unfound(home, str(outside)).message.startswith("unknown document")
 
 
+def test_an_absolute_path_finds_its_document_whatever_the_case_of_its_letters_beyond_ascii(
+    tmp_path: Path, home: Path
+) -> None:
+    write(tmp_path / "notes" / "Äpfel.md", "# Äpfel\n")
+    index(home, IndexCollections(), lambda _: None)
+    for written in ("Äpfel.md", "äpfel.md", "ÄPFEL.MD"):
+        assert documents(home, GetDocuments((str(tmp_path / "notes" / written),))).found[0].id == "notes/Äpfel.md"
+
+
 def test_an_absolute_id_on_a_share_no_collection_lies_on_is_unknown(home: Path) -> None:
     elsewhere = str(Path("//host.invalid/share/notes/rl.md"))
     assert unfound(home, elsewhere).message == f"unknown document {elsewhere!r}"

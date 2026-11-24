@@ -14,7 +14,7 @@ from sift.app.scans import ScanModel, ScanRun, ScansRead, scans_read
 from sift.app.streamed import stored_note
 from sift.domain.plan.ignore import Ignore
 from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan, recorded
-from sift.domain.text.documents import FileRead, Outcome, Refused, too_large
+from sift.domain.text.documents import FileRead, Outcome, Refused, text_held, too_large
 from sift.domain.text.kinds import FileKind, kind_of, streamed
 from sift.domain.text.scans import reads_skipped
 from sift.ingest.files import Identity
@@ -23,7 +23,7 @@ from sift.ingest.readers import ToRead
 from sift.ingest.sandbox import FileReading
 from sift.ingest.scan import Reach, scan
 from sift.storage.catalog import Collection
-from sift.storage.database import Batches, Connection, WritingDocuments, reading
+from sift.storage.database import Batches, Connection, WritingDocuments, reading, writing
 from sift.storage.documents import (
     Mark,
     Unreadable,
@@ -36,8 +36,8 @@ from sift.storage.documents import (
     sources,
     unreadable,
 )
-from sift.storage.forgetting import delete_documents, delete_sources
-from sift.storage.kept_vectors import vectors_held, vectors_kept
+from sift.storage.forgetting import delete_documents, delete_sources, documents_at
+from sift.storage.kept_vectors import vectors_held, vectors_kept, vectors_let_go
 from sift.storage.keyword_order import order_due, ordered
 from sift.storage.keywords import remade, remake_started, settle, writing_documents
 from sift.storage.store import connected
@@ -104,6 +104,8 @@ def _file_stored(transaction: WritingDocuments, path: str, stat: Stat, read: Fil
 def _dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
     most = job.limits.most_file_bytes
     with writing_documents(job.connection, job.limits.batches) as transaction:
+        vectors_let_go(transaction)
+        vectors_held(transaction, documents_at(transaction, plan.drop))
         removed = delete_sources(transaction, plan.drop)
         clear_unreadable(transaction, plan.forget)
         release = job.readers.release
@@ -146,13 +148,22 @@ def _scans_finished(run: _Run, scans: ScanRun, path: str, read: FileRead) -> Sca
     return replace(found, read=_described(found.read, run.job.limits))
 
 
-def _read(run: _Run, read_files: FileReading, paths: Sequence[str]) -> list[tuple[str, Outcome]]:
+def _read_and_written(run: _Run, read_files: FileReading, paths: Sequence[str]) -> tuple[Tally, list[Outcome]]:
+    tally, plain, held = Tally(), list[tuple[str, Outcome]](), 0
     outcomes: dict[int, Outcome] = {}
     for at, outcome in read_files([run.asked(path) for path in paths]):
         outcomes[at] = outcome
-        if not _scanned(outcome):
-            run.advanced()
-    return [(path, outcomes[at]) for at, path in enumerate(paths)]
+        if _scanned(outcome):
+            continue
+        run.advanced()
+        finished = _finished(run, outcome)
+        plain.append((paths[at], finished))
+        held += text_held(finished)
+        if held >= run.job.limits.most_characters_a_write:
+            tally += _written(run, plain, ())
+            plain, held = [], 0
+    tally += _written(run, plain, ())
+    return tally, [outcomes[at] for at in range(len(paths))]
 
 
 def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str]) -> Tally:
@@ -180,11 +191,11 @@ def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str
 
 
 def _batch_stored(run: _Run, read_files: FileReading, scans: ScanRun, batch: Sequence[str]) -> Tally:
-    read = _read(run, read_files, [path for path in batch if kind_of(path) is not FileKind.NOTE])
-    plain = [(path, _finished(run, outcome)) for path, outcome in read if not _scanned(outcome)]
-    tally = _written(run, plain, [path for path in batch if kind_of(path) is FileKind.NOTE])
+    paths = [path for path in batch if kind_of(path) is not FileKind.NOTE]
+    tally, read = _read_and_written(run, read_files, paths)
+    tally += _written(run, (), [path for path in batch if kind_of(path) is FileKind.NOTE])
     held: list[tuple[str, Outcome]] = []
-    for path, outcome in ((path, outcome) for path, outcome in read if _scanned(outcome)):
+    for path, outcome in ((path, outcome) for path, outcome in zip(paths, read, strict=True) if _scanned(outcome)):
         found = _scans_finished(run, scans, path, outcome)
         if found.model_ready:
             tally += _written(run, [(path, found.read)], ())
@@ -227,7 +238,7 @@ def _synced(job: Job, ignore: Ignore) -> Indexed:
         Reach(job.collection.choices.follow_links, ignore),
         progress=lambda found: job.report(Advanced(found)),
     )
-    files = recorded(scanned.found.files, started)
+    files = recorded(scanned.found.files, started, job.readers.clock())
     job.report(PhaseDone(len(files)))
     with reading(job.connection) as transaction:
         known = {path: Stat(source.modified_ns, source.size) for path, source in sources(transaction).items()}
@@ -237,6 +248,8 @@ def _synced(job: Job, ignore: Ignore) -> Indexed:
         job.report(said)
     job.report(PhaseStarted(Phase.READ, len(plan.read)))
     tally = _dropped(job, plan, files) + _read_and_stored(job, plan, files, scanned.identities)
+    with writing(job.connection) as transaction:
+        vectors_let_go(transaction)
     job.report(PhaseDone(len(plan.read)))
     _settled(job.connection, job.report, job.limits.batches)
     with reading(job.connection) as transaction:

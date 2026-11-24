@@ -371,5 +371,5 @@ def test_a_shortened_id_is_looked_up_by_the_index_of_names_not_by_reading_every_
     sql = f"EXPLAIN QUERY PLAN {PATHS_NAMED}"
     with reading(store) as transaction:
         steps = [step.detail for step in rows(transaction, Step, sql, ("c.md",))]
-    assert steps[0] == "SEARCH s USING INDEX sources_name (name=?)"
+    assert steps[0] == "SEARCH s USING INDEX sources_folded (folded=?)"
     assert not [step for step in steps if step.startswith("SCAN")]

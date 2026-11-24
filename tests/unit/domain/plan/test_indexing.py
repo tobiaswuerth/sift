@@ -172,11 +172,15 @@ def test_a_batch_holds_at_most_so_many_files_and_bytes_unless_one_file_is_more(
 
 
 def test_a_file_changed_within_the_clock_s_grain_of_the_scan_is_recorded_to_be_read_again() -> None:
-    scanned = 100 * 10**9
+    scanned, ended = 100 * 10**9, 103 * 10**9
     fresh, settled = Stat(scanned - 10**9, 5), Stat(scanned - 3 * 10**9, 7)
-    assert recorded({"fresh.md": fresh, "settled.md": settled}, scanned) == {
+    during, coming = Stat(ended + 10**9, 6), Stat(ended + 3 * 10**9, 8)
+    found = {"fresh.md": fresh, "settled.md": settled, "during.md": during, "coming.md": coming}
+    assert recorded(found, scanned, ended) == {
         "fresh.md": Stat(RACY, 5),
         "settled.md": settled,
+        "during.md": Stat(RACY, 6),
+        "coming.md": coming,
     }
     assert index_plan(Found({"fresh.md": fresh}), {"fresh.md": Stat(RACY, 5)}).read == ("fresh.md",)
 

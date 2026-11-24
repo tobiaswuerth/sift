@@ -9,7 +9,7 @@ from sift.domain.text.notes import note
 from sift.storage.database import Connection, Count, IdRow, Reading, reading, rows, writing
 from sift.storage.documents import add_documents, kept, put_source
 from sift.storage.forgetting import delete_documents
-from sift.storage.kept_vectors import AT_ONCE, vectors_held, vectors_kept
+from sift.storage.kept_vectors import AT_ONCE, vectors_held, vectors_kept, vectors_let_go
 from sift.storage.keywords import writing_documents
 from sift.storage.vector_meta import left
 from sift.storage.vectors import pending, put_vectors
@@ -61,8 +61,11 @@ def test_a_document_written_again_keeps_the_vectors_of_its_chunks_whose_embedded
         with reading(connection) as transaction:
             after = held(transaction)
             texts = list(chunk_texts(transaction).values())
-            assert rows(transaction, Count, "SELECT count(*) FROM temp.kept_vectors") == [Count(0)]
+            assert rows(transaction, Count, "SELECT count(*) FROM temp.kept_vectors") != [Count(0)]
             assert left(transaction) == len([text for text in texts if text not in before]) > 0
+        with writing(connection) as transaction:
+            vectors_let_go(transaction)
+            assert rows(transaction, Count, "SELECT count(*) FROM temp.kept_vectors") == [Count(0)]
         assert all(before[each.text] == each for each in after)
         assert len(after) == len(texts) - left_of(connection) > 0
 

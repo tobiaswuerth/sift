@@ -45,9 +45,9 @@ class IndexPlan:
     unchanged: int
 
 
-def recorded(files: Mapping[str, Stat], scanned_ns: int) -> dict[str, Stat]:
+def recorded(files: Mapping[str, Stat], started_ns: int, ended_ns: int) -> dict[str, Stat]:
     return {
-        path: Stat(RACY, stat.size) if stat.modified_ns >= scanned_ns - GRAIN_NS else stat
+        path: Stat(RACY, stat.size) if started_ns - GRAIN_NS <= stat.modified_ns <= ended_ns + GRAIN_NS else stat
         for path, stat in files.items()
     }
 

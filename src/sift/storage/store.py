@@ -23,6 +23,7 @@ from sift.storage.database import (
     uri,
     writing,
 )
+from sift.storage.documents import folded_names
 from sift.storage.keyword_meta import keyword_meta
 from sift.storage.migrations import Migration, migrated, newer, version
 from sift.storage.texts import BLOCK, texts_cut
@@ -217,6 +218,12 @@ LAYOUT: tuple[Migration, ...] = (
         "ALTER TABLE counts ADD COLUMN ordered_at INTEGER NOT NULL DEFAULT 0",
     ),
     ("ALTER TABLE unreadable ADD COLUMN stopped_under TEXT",),
+    (
+        "ALTER TABLE sources ADD COLUMN folded TEXT NOT NULL DEFAULT ''",
+        folded_names,
+        "DROP INDEX sources_name",
+        "CREATE INDEX sources_folded ON sources(folded)",
+    ),
 )
 NUMBERED_TABLES = ("documents", "chunks")
 WRITER_SUFFIX = ".writer"
@@ -248,6 +255,18 @@ def _files(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
 
 LEFT_BY_ADD = """SELECT (SELECT value FROM meta WHERE key = 'collection') = ?
                         AND NOT EXISTS (SELECT 1 FROM documents)"""
+
+
+SCHEMA_HELD = "SELECT count(*) FROM sqlite_schema"
+
+
+def holds_nothing(path: Path) -> bool:
+    try:
+        with closing(sqlite3.connect(uri(path.resolve(), "ro"), uri=True)) as connection:
+            (held,) = cast("tuple[int]", connection.execute(SCHEMA_HELD).fetchone())
+    except sqlite3.DatabaseError:
+        return False
+    return held == 0
 
 
 def left_by_add(path: Path, collection: CollectionId) -> bool:
