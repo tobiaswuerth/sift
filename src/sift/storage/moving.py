@@ -23,8 +23,8 @@ COPY = Unusable("the copy", "check the drive it goes to, then move the collectio
 type Copied = Callable[[int, int], None]
 
 
-def opened_folder(folder: Path) -> int | None:
-    return None if sys.platform == "win32" else os.open(folder, os.O_RDONLY)
+def opened_folder(folder: Path, platform: str = sys.platform) -> int | None:
+    return None if platform == "win32" else os.open(folder, os.O_RDONLY)
 
 
 @dataclass(frozen=True, slots=True)

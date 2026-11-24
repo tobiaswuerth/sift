@@ -1,10 +1,11 @@
 import json
 import stat
 import sys
-from collections.abc import Generator, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from itertools import islice
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -38,13 +39,22 @@ def linked(link: Path, target: str, *, folder: bool = False) -> None:
 
 
 @contextmanager
-def undeletable(path: Path) -> Generator[None]:
-    if sys.platform == "win32":
-        with path.open("rb"):
-            yield
-        return
+def _held_open(path: Path) -> Generator[None]:
+    with path.open("rb"):
+        yield
+
+
+@contextmanager
+def _in_a_read_only_folder(path: Path) -> Generator[None]:
     path.parent.chmod(stat.S_IRUSR | stat.S_IXUSR)
     try:
         yield
     finally:
         path.parent.chmod(stat.S_IRWXU)
+
+
+UNDELETABLE: Mapping[str, Callable[[Path], AbstractContextManager[None]]] = MappingProxyType({"win32": _held_open})
+
+
+def undeletable(path: Path) -> AbstractContextManager[None]:
+    return UNDELETABLE.get(sys.platform, _in_a_read_only_folder)(path)
