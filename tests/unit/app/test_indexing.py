@@ -23,8 +23,9 @@ from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows
 from sift.storage.documents import stored
 from sift.storage.keywords import settle
-from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
+from sift.storage.store import MISSING_REMEDY, open_store
 from sift.storage.texts import text_of
+from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
 from tests.later import LATER

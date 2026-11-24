@@ -9,7 +9,8 @@ from sift.api.ids import CollectionId
 from sift.domain.codec.shape import SHAPE
 from sift.storage.database import Connection, reading, run, writing
 from sift.storage.documents import Mark, Unreadable, clear_unreadable, mark_unreadable, unreadable
-from sift.storage.store import LAYOUT, create_store, open_store
+from sift.storage.layout import LAYOUT
+from sift.storage.store import create_store, open_store
 from tests.keyword_stores import opened_store
 
 COLLECTION = CollectionId(2)

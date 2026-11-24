@@ -132,7 +132,7 @@ def test_a_store_whose_writer_file_may_not_be_written_is_said_to_be_so(tmp_path:
     try:
         with (
             pytest.raises(
-                StoreUnavailableError, match="cannot be written: attempt to write a readonly database"
+                StoreUnavailableError, match=r"the lock file .* cannot be written: attempt to write a readonly database"
             ) as refused,
             sole_writer(store, "sift index"),
         ):

@@ -10,18 +10,11 @@ from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.storage.database import connect, first, reading, run, writing
 from sift.storage.documents import folded_names, paths_named
+from sift.storage.layout import LAYOUT
 from sift.storage.migrations import Migration
-from sift.storage.store import (
-    DAMAGED_REMEDY,
-    LAYOUT,
-    MISSING_REMEDY,
-    connected,
-    create_store,
-    open_store,
-    read_store,
-    unavailable_if_unusable,
-)
+from sift.storage.store import MISSING_REMEDY, connected, create_store, open_store, read_store
 from sift.storage.store_files import stored_bytes
+from sift.storage.unusable import DAMAGED_REMEDY, unavailable_if_unusable
 from tests.damage import damage_table
 
 COLLECTION = CollectionId(7)

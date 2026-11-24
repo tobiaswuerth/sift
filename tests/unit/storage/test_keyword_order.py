@@ -12,7 +12,8 @@ from sift.domain.codec.order import topical
 from sift.storage.database import Connection, Count, IdRow, reading, rows, run, run_each, writing
 from sift.storage.keyword_order import order_due, ordered, placed_anew
 from sift.storage.keywords import current, remade, remake_started, settle
-from sift.storage.store import LAYOUT, create_store, open_store
+from sift.storage.layout import LAYOUT
+from sift.storage.store import create_store, open_store
 from sift.storage.vectors import codes_of, forget_vectors, put_vectors
 from tests.keyword_indexes import MERGING, NOTES, TWO, checked
 from tests.keyword_stores import SMALL, Round, applied, opened_store

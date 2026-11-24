@@ -9,7 +9,7 @@ from typing import cast
 
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.storage.database import primary_code, private_file, private_folder, uri
-from sift.storage.store import unavailable_if_unusable
+from sift.storage.unusable import unavailable_if_unusable
 
 COPY_PAGES = 16_384
 LINKLESS = frozenset({errno.EXDEV, errno.EPERM, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EMLINK})

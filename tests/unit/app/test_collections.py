@@ -27,7 +27,8 @@ from sift.domain.text.notes import note
 from sift.storage.database import PRIVATE_FILE, PRIVATE_FOLDER
 from sift.storage.documents import add_documents, put_source
 from sift.storage.keywords import writing_documents
-from sift.storage.store import DAMAGED_REMEDY, MISSING_REMEDY, open_store
+from sift.storage.store import MISSING_REMEDY, open_store
+from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
 from tests.models import Hashed

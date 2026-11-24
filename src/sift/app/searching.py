@@ -26,7 +26,8 @@ from sift.storage.database import Reading, abandon, reading
 from sift.storage.keyword_lists import keyword_generation
 from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
-from sift.storage.store import connected, unavailable_if_unusable
+from sift.storage.store import connected
+from sift.storage.unusable import unavailable_if_unusable
 from sift.storage.vector_meta import left, model_of, width_held
 from sift.storage.vectors import EMBED_REMEDY, codes_of, refuse_recipe, vector_generation
 

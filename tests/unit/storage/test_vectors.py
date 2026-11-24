@@ -14,7 +14,8 @@ from sift.domain.codec.codes import Halves, codes
 from sift.domain.errors import DamagedError
 from sift.domain.text.embedding import RECIPE
 from sift.storage.database import Connection, Reading, reading, rows, run, run_each, writing
-from sift.storage.store import LAYOUT, create_store, open_store
+from sift.storage.layout import LAYOUT
+from sift.storage.store import create_store, open_store
 from sift.storage.vector_meta import left, model_of, recipe_of, width_held
 from sift.storage.vectors import (
     VectorsPut,

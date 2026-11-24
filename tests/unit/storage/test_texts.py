@@ -14,7 +14,8 @@ from hypothesis import strategies as st
 from sift.api.ids import CollectionId, DocumentId
 from sift.domain.errors import DamagedError
 from sift.storage.database import Reading, Writing, reading, rows, run, writing
-from sift.storage.store import LAYOUT, create_store, open_store
+from sift.storage.layout import LAYOUT
+from sift.storage.store import create_store, open_store
 from sift.storage.texts import (
     BLOCK,
     BLOCKS,

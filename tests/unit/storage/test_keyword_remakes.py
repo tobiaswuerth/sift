@@ -9,7 +9,8 @@ from sift.api.ids import CollectionId
 from sift.storage.database import Batches, reading, rows, run, writing
 from sift.storage.keyword_lists import frequencies
 from sift.storage.keywords import REMAKE_REMEDY, current, remade, remake_started
-from sift.storage.store import LAYOUT, create_store, open_store
+from sift.storage.layout import LAYOUT
+from sift.storage.store import create_store, open_store
 from tests.keyword_indexes import (
     NOTES,
     TWO,

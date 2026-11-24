@@ -9,7 +9,7 @@ from sift.api.indexing import IndexCollections
 from sift.app.collections import add
 from sift.app.documents import documents
 from sift.app.indexing import index
-from sift.storage.store import DAMAGED_REMEDY
+from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
 

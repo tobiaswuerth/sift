@@ -8,8 +8,8 @@ from typing import Protocol, cast
 
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.storage.database import primary_code, private_file_once, private_folder, require_sqlite, uri
-from sift.storage.store import unavailable_if_unusable
 from sift.storage.store_files import WRITER_SUFFIX
+from sift.storage.unusable import LOCK, unavailable_if_unusable
 
 BUSY_REMEDY = "wait until it is done, or stop that process"
 MOMENT_SECONDS = 0.5
@@ -84,7 +84,7 @@ def _free(connection: LockFile, waiting: str) -> bool:
 def held_by(path: Path, opened: Callable[[Path], LockFile] = lock_file) -> Holder | None:
     if not path.is_file():
         return None
-    with closing(opened(path)) as connection, unavailable_if_unusable(path):
+    with closing(opened(path)) as connection, unavailable_if_unusable(path, LOCK):
         if _free(connection, ASK_AT_ONCE) or _free(connection, ASK_AGAIN):
             return None
         connection.execute(WAIT_A_MOMENT)
@@ -98,7 +98,7 @@ def sole_writer(store: Path, purpose: str, opened: Callable[[Path], LockFile] = 
     private_folder(path.parent)
     private_file_once(path)
     with closing(opened(path)) as connection:
-        with unavailable_if_unusable(path):
+        with unavailable_if_unusable(path, LOCK):
             _taken(connection, purpose)
         try:
             yield

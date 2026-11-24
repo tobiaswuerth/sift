@@ -7,13 +7,9 @@ from pathlib import Path
 from typing import cast
 
 from sift.storage.catalog import CATALOG, known_collections
-from sift.storage.database import uri
+from sift.storage.database import read_only
 
 type Seen = tuple[int | None, ...]
-
-
-def _watching(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(uri(path.resolve(), "ro"), uri=True, check_same_thread=False, isolation_level=None)
 
 
 def _unknown() -> Iterator[int]:
@@ -52,7 +48,7 @@ class HomeWatch:
             return None
         try:
             if path not in self.held:
-                self.held[path] = _watching(path)
+                self.held[path] = read_only(path)
             (version,) = cast("tuple[int]", self.held[path].execute("PRAGMA data_version").fetchone())
         except sqlite3.Error:
             if path in self.held:

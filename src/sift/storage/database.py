@@ -98,6 +98,13 @@ def private_file_once(path: Path) -> None:
         private_file(path)
 
 
+def read_only(path: Path, timeout: float = BUSY_TIMEOUT_SECONDS) -> sqlite3.Connection:
+    require_sqlite(sqlite3.sqlite_version_info)
+    return sqlite3.connect(
+        uri(path.resolve(), "ro"), uri=True, timeout=timeout, isolation_level=None, check_same_thread=False
+    )
+
+
 def connect(path: Path, *, create: bool, timeout: float = BUSY_TIMEOUT_SECONDS) -> sqlite3.Connection:
     require_sqlite(sqlite3.sqlite_version_info)
     if create:

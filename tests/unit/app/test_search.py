@@ -18,8 +18,10 @@ from sift.app.documents import documents
 from sift.app.indexing import index
 from sift.app.search import search
 from sift.storage.keywords import REMAKE_REMEDY, TAKEN_OVER_REMEDY
-from sift.storage.store import DAMAGED_REMEDY, LAYOUT, MISSING_REMEDY, create_store
+from sift.storage.layout import LAYOUT
+from sift.storage.store import MISSING_REMEDY, create_store
 from sift.storage.store_files import delete_store
+from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import changed, damage_table
 from tests.files import write
 
