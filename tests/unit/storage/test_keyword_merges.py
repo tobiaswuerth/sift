@@ -1,6 +1,7 @@
 import tempfile
 import tracemalloc
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 from hypothesis import given, settings
@@ -21,6 +22,7 @@ from tests.keyword_indexes import (
     Sized,
     Term,
     checked,
+    content,
     rounds,
     settled,
     staled,
@@ -52,6 +54,57 @@ def test_terms_merged_a_row_at_a_time_index_what_fts5_makes_of_the_live_chunks(
         settled(connection, batches.merging)
 
 
+class Stored(NamedTuple):
+    first: int
+    term: str
+    number: int
+    chunks: int
+    postings: bytes | None
+    positions: bytes | None
+    ranges: bytes | None
+
+
+STORED = """SELECT s.first, p.term, -1, p.chunks, p.postings, p.positions, p.ranges
+            FROM keyword_postings p JOIN keyword_segments s ON s.id = p.segment
+            UNION ALL
+            SELECT s.first, b.term, b.number, 0, b.postings, b.positions, NULL
+            FROM keyword_blocks b JOIN keyword_segments s ON s.id = b.segment
+            ORDER BY 1, 2, 3"""
+KEPT_APART = Batches(chunks_a_segment=3, merging=Policy(factor=10**6))
+many_rounds = st.lists(
+    st.dictionaries(st.sampled_from([f"{n}.md" for n in range(12)]), st.one_of(st.none(), content), max_size=12),
+    min_size=1,
+    max_size=4,
+)
+
+
+def merged_with(folder: Path, each: list[Round], shape: Shape, batches: Batches) -> list[Stored]:
+    with opened_store(folder, 3, shape) as connection:
+        applied(connection, each, KEPT_APART)
+        list(settle(connection, batches))
+        with reading(connection) as transaction:
+            return rows(transaction, Stored, STORED)
+
+
+@settings(max_examples=30, deadline=None)
+@given(many_rounds, st.sampled_from([SMALL, Shape()]), st.sampled_from([PIECES, DENSE]))
+def test_terms_merged_in_pieces_are_stored_byte_for_byte_as_merged_whole(
+    each: list[Round], shape: Shape, batches: Batches
+) -> None:
+    with tempfile.TemporaryDirectory() as pieces, tempfile.TemporaryDirectory() as whole:
+        cut = merged_with(Path(pieces), each, shape, batches)
+        assert cut == merged_with(Path(whole), each, shape, Batches(merging=batches.merging))
+
+
+@pytest.mark.parametrize("batches", [PIECES, DENSE])
+def test_the_ranges_pieces_of_a_term_share_are_joined_as_a_whole_merge_joins_them(batches: Batches) -> None:
+    each: list[Round] = [{f"{n:02}.md": ("", f"Note {n}", "common " * (n % 3 + 1)) for n in range(12)}]
+    with tempfile.TemporaryDirectory() as pieces, tempfile.TemporaryDirectory() as whole:
+        cut = merged_with(Path(pieces), each, SMALL, batches)
+        assert cut == merged_with(Path(whole), each, SMALL, Batches(merging=batches.merging))
+        assert any(row.ranges for row in cut)
+
+
 @pytest.mark.parametrize(
     "halves",
     [
@@ -73,6 +126,23 @@ def test_a_term_too_large_for_a_merge_s_batch_is_merged_in_pieces_never_whole(ha
             tracemalloc.stop()
         assert len(settled(connection, halves.merging)) == 1
         assert peak < 2 * 60_000 * 8
+        checked(connection)
+
+
+def test_a_merge_reads_a_few_rows_of_each_segment_at_a_time_however_many_it_holds() -> None:
+    small = Batches(postings_a_merge=8, tokens_a_segment=4096, merging=Policy(factor=2, floor=1, span=0.0))
+    words = {name: ("", name, " ".join(f"{name}{n}" for n in range(5_000))) for name in ("a", "b")}
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(
+            connection, [{"a.md": words["a"]}, {"b.md": words["b"]}], Batches(merging=Policy(factor=10, floor=10**6))
+        )
+        tracemalloc.start()
+        try:
+            assert list(settle(connection, small))[-1] > 0
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert peak < 1 << 20
         checked(connection)
 
 

@@ -40,7 +40,7 @@ def order_due(transaction: Reading) -> bool:
 def placed_anew(connection: Connection, order: Ids, made_at: int) -> int:
     with writing(connection) as transaction:
         held = _held(transaction)
-        if held.ordered_at >= made_at or _due_since(held, made_at):
+        if _due_since(held, made_at) or not _due_since(held, held.ordered_at):
             return 0
         ids = np.fromiter((row.id for row in rows(transaction, IdRow, "SELECT id FROM chunks ORDER BY id")), np.int64)
         coded = order[among(order, ascending(ids))]

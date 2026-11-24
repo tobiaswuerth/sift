@@ -265,6 +265,26 @@ def test_an_order_whose_codes_changed_enough_while_it_was_made_to_be_due_again_i
         assert due(connection)
 
 
+def test_an_order_read_before_another_was_placed_is_not_placed_once_the_store_is_no_longer_due() -> None:
+    with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
+        applied(connection, [TEN])
+        ids = [each.id for each in placed(connection)]
+        embedded(connection, ids)
+        with reading(connection) as transaction:
+            first = topical(*codes_of(transaction))
+        first_at = written(connection)
+        embedded(connection, ids[:1])
+        with reading(connection) as transaction:
+            later = topical(*codes_of(transaction))
+        later_at = written(connection)
+        assert placed_anew(connection, first, first_at) == len(ids)
+        assert placed_anew(connection, later[::-1], later_at) == 0
+        list(remade(connection))
+        assert placed_anew(connection, later[::-1], later_at) == 0
+        assert [each.id for each in placed(connection)] == ints(first)
+        checked(connection)
+
+
 def test_an_order_made_from_codes_another_order_was_placed_by_is_not_placed_again() -> None:
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
         applied(connection, [NOTES])

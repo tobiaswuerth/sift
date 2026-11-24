@@ -31,6 +31,7 @@ BLOCKS = """SELECT :rank, term, number, :block, length(postings) + length(positi
 LENGTHS = """SELECT segment, block, lengths FROM keyword_lengths WHERE segment IN (SELECT value FROM json_each(?))
              ORDER BY segment, block"""
 HELD = "SELECT coalesce(sum(chunks - dead), 0), (SELECT tokens FROM counts) FROM keyword_segments"
+ROWS_AT_ONCE = 64
 DROPPED = (
     "DELETE FROM keyword_blocks WHERE segment IN (SELECT value FROM json_each(?))",
     "DELETE FROM keyword_postings WHERE segment IN (SELECT value FROM json_each(?))",
@@ -78,7 +79,7 @@ def _order(row: MergedTerm) -> tuple[str, int, int]:
 
 def _listed(transaction: WritingDocuments, merged: Sequence[PlacedSegment], block: int) -> Iterator[MergedTerm]:
     streams = [
-        streamed(transaction, MergedTerm, sql, {"rank": rank, "segment": each.id, "block": block})
+        streamed(transaction, MergedTerm, sql, {"rank": rank, "segment": each.id, "block": block}, ROWS_AT_ONCE)
         for rank, each in enumerate(merged)
         for sql in (SHORT, BLOCKS)
     ]
