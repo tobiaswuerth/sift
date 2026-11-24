@@ -95,6 +95,13 @@ def test_a_reader_that_raises_ends_the_reading_saying_which_file_and_what_its_tr
     assert ("Traceback (most recent call last):" in shown, "ValueError: a reader's bug" in shown) == (True, True)
 
 
+def test_a_reader_that_raised_and_will_not_end_is_stopped_when_its_time_to_end_is_up() -> None:
+    brief = Patience(base_seconds=120.0, bytes_a_second=1e12, stop_seconds=1.0)
+    with pytest.raises(ReaderFailedError, match="its thread left running"), sandboxed(misbehaving, brief) as reading:
+        _ = list(reading(asked("linger.pdf")))
+    assert multiprocessing.active_children() == []
+
+
 def test_a_process_ended_with_any_exit_code_costs_its_file_alone() -> None:
     with sandboxed(misbehaving, PATIENT, workers=1) as reading:
         found = dict(reading(asked("exit1.pdf", "a.pdf")))

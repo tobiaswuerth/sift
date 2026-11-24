@@ -43,7 +43,6 @@ BEGAN = "began"
 ORPHANED = 4
 MOST_WORKERS = 30
 MOST_ANSWER_BYTES = 2 << 30
-STOP_SECONDS = 10.0
 HEARD_SECONDS = 1.0
 
 
@@ -66,6 +65,7 @@ class Patience:
     base_seconds: float = 600.0
     bytes_a_second: float = 100_000.0
     start_seconds: float = 120.0
+    stop_seconds: float = 10.0
 
     def seconds(self, size: int) -> float:
         return self.base_seconds + size / self.bytes_a_second
@@ -173,12 +173,15 @@ class _Worker[A]:
     began: bool = False
 
 
-def _stopped[A](worker: _Worker[A]) -> None:
+def _stopped[A](worker: _Worker[A], seconds: float) -> None:
     worker.asked.close()
     if worker.task is not None or not worker.greeting.said.is_set():
         worker.process.kill()
-    worker.process.join(STOP_SECONDS)
-    worker.listener.join(STOP_SECONDS)
+    worker.process.join(seconds)
+    if worker.process.is_alive():
+        worker.process.kill()
+        worker.process.join(seconds)
+    worker.listener.join(seconds)
     worker.answers.close()
 
 
@@ -235,7 +238,7 @@ class _Pool[A: Request, B]:
             if not _settled(worker.greeting, deadline, self.clock):
                 raise ReaderFailedError(f"a reader process did not start in {self.patience.start_seconds:,.0f} seconds")
             if not worker.greeting.said.is_set():
-                worker.process.join(STOP_SECONDS)
+                worker.process.join(self.patience.stop_seconds)
                 raise ReaderFailedError(f"a reader process ended as it started, exit code {worker.process.exitcode}")
 
     def _busy(self) -> int:
@@ -243,7 +246,7 @@ class _Pool[A: Request, B]:
 
     def _dropped(self, worker: _Worker[A]) -> None:
         _ = self.workers.pop(worker.number)
-        _stopped(worker)
+        _stopped(worker, self.patience.stop_seconds)
 
     def _given(self, todo: deque[tuple[int, A]]) -> None:
         for worker in [each for each in self.workers.values() if each.task is None][: len(todo)]:

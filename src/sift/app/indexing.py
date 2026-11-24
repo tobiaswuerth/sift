@@ -170,12 +170,15 @@ def _batch_stored(run: _Run, read_files: FileReading, scans: ScanRun, batch: Seq
     held: list[tuple[str, Outcome]] = []
     for path, outcome in ((path, outcome) for path, outcome in read if _scanned(outcome)):
         found = _scans_finished(run, scans, path, outcome)
-        if found.by_ocr:
+        if found.model_ready:
             tally += _written(run, [(path, found.read)], ())
+            run.advanced()
         else:
             held.append((path, found.read))
+    tally += _written(run, held, ())
+    for _ in held:
         run.advanced()
-    return tally + _written(run, held, ())
+    return tally
 
 
 def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat], identities: Mapping[str, Identity]) -> Tally:

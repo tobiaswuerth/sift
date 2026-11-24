@@ -42,6 +42,7 @@ class ScanUnread:
     problem: str
     read_again: bool
     skipped: bool = False
+    passing: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +57,9 @@ def _available(scanning: Scanning) -> _Reader | ScanUnread:
     module = scanning.module()
     device = module.ocr_device()
     if device.name == ON_THE_CPU and scanning.setting is OcrSetting.AUTO:
-        return ScanUnread(BUSY, read_again=True) if device.busy else ScanUnread(NO_GPU, read_again=False, skipped=True)
+        if device.busy:
+            return ScanUnread(BUSY, read_again=True, passing=True)
+        return ScanUnread(NO_GPU, read_again=False, skipped=True)
     try:
         return _Reader(module, module.loaded_ocr(device))
     except ModelUnavailableError as error:
@@ -69,7 +72,7 @@ class ScanModel:
     held: _Reader | ScanUnread | None = None
 
     def reader(self) -> _Reader | ScanUnread:
-        if self.held is None:
+        if self.held is None or (isinstance(self.held, ScanUnread) and self.held.passing):
             self.held = _available(self.scanning)
         return self.held
 
@@ -87,7 +90,7 @@ class ScanRun:
 @dataclass(frozen=True, slots=True)
 class ScansRead:
     read: FileRead
-    by_ocr: bool
+    model_ready: bool
 
 
 def _pages_said(found: Pages) -> str:

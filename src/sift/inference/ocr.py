@@ -129,9 +129,10 @@ def _read(ocr: Ocr, picture: bytes) -> str:
 def _within_memory(ocr: Ocr, picture: bytes, caches: Mapping[str, Callable[[], None]]) -> str:
     try:
         return within_memory(OCR_MODEL, ocr.device.name, lambda: _read(ocr, picture))
-    except ModelUnavailableError:
-        emptied(ocr.device, caches)
-        raise
+    except ModelUnavailableError as error:
+        said = error.message, error.remedy
+    emptied(ocr.device, caches)
+    raise ModelUnavailableError(*said)
 
 
 def pages_text(ocr: Ocr, pictures: Iterable[bytes], caches: Mapping[str, Callable[[], None]] = CACHES) -> list[str]:

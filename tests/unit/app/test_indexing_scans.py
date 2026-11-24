@@ -51,10 +51,13 @@ class FakeOcr:
     loads: int = 0
     devices: int = 0
     interrupted_at: int | None = None
+    then: Device | None = None
     stores: list[Path] = field(default_factory=list[Path])
 
     def ocr_device(self) -> Device:
         self.devices += 1
+        if self.devices > 1 and self.then is not None:
+            self.device = self.then
         return self.device
 
     def loaded_ocr(self, device: Device) -> Ocr:
@@ -229,6 +232,15 @@ def test_the_model_loads_once_however_many_scans_an_index_reads(home: Path, scan
     assert (ocr.loads, sorted(ocr.read)) == (1, [1, 2])
 
 
+def test_a_gpu_too_full_at_one_scan_is_asked_again_at_the_next(home: Path, scans: Path) -> None:
+    (scans / "second.pdf").write_bytes(scan())
+    ocr = FakeOcr(BUSY_GPU, then=GPU)
+    assert indexed(home, scanning(ocr)).unreadable == 1
+    assert ([(each.path, each.problem) for each in unreadable_files(home)], ocr.read) == ([("scan.pdf", BUSY)], [1])
+    assert indexed(home, scanning(ocr)).unreadable == 0
+    assert (ocr.loads, ocr.read) == (2, [1, 2])
+
+
 @pytest.mark.usefixtures("scans")
 def test_the_model_loads_once_an_index_however_many_collections_hold_scans(tmp_path: Path, home: Path) -> None:
     more = tmp_path / "more"
@@ -257,7 +269,10 @@ def test_a_scan_read_is_kept_though_the_index_stops_while_reading_the_next(home:
     assert again.read == [1]
 
 
-def test_a_scan_counts_as_read_once_its_text_is_stored(tmp_path: Path, home: Path) -> None:
+@pytest.mark.parametrize("setting", [OcrSetting.AUTO, OcrSetting.OFF])
+def test_a_scan_counts_as_read_once_its_text_or_problem_is_stored(
+    tmp_path: Path, home: Path, setting: OcrSetting
+) -> None:
     alone = tmp_path / "alone"
     alone.mkdir()
     (alone / "scan.pdf").write_bytes(scan(pages=2))
@@ -270,11 +285,11 @@ def test_a_scan_counts_as_read_once_its_text_is_stored(tmp_path: Path, home: Pat
             case PhaseStarted(phase=phase):
                 reading_files[0] = phase is Phase.READ
             case Advanced() if reading_files[0]:
-                stored.append(text_of(home, "alone/scan.pdf") == READ)
+                stored.append(text_of(home, "alone/scan.pdf") == READ or bool(unreadable_files(home)))
             case _:
                 pass
 
-    readers = Readers(clock=later, files=reading(converting=Converting()), scanning=scanning(FakeOcr()))
+    readers = Readers(clock=later, files=reading(converting=Converting()), scanning=scanning(FakeOcr(), setting))
     index(home, IndexCollections(), seen, readers=readers)
     assert stored == [True]
 

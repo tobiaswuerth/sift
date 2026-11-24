@@ -1,4 +1,5 @@
 import io
+import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,6 +64,7 @@ class FakeModel:
     device: str = "cpu"
     generated: list[int] = field(default_factory=list[int])
     penalties: list[float | None] = field(default_factory=list[float | None])
+    working: list["weakref.ref[torch.Tensor]"] = field(default_factory=list["weakref.ref[torch.Tensor]"])
 
     def to(self, device: str, /) -> "FakeModel":
         self.device = device
@@ -74,6 +76,8 @@ class FakeModel:
     def generate(self, **inputs: object) -> torch.Tensor:
         assert (inputs["do_sample"], inputs["max_new_tokens"]) == (False, NEW_TOKENS)
         if self.full:
+            held = torch.zeros(4)
+            self.working.append(weakref.ref(held))
             raise torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 3.00 GiB")
         prompt = cast("torch.Tensor", inputs["input_ids"])
         penalty = cast("float | None", inputs.get("repetition_penalty"))
@@ -136,14 +140,15 @@ def test_a_loop_the_second_reading_does_not_better_is_cut() -> None:
 def test_a_model_out_of_memory_on_a_page_is_unavailable_saying_so_its_device_emptied_for_the_next() -> None:
     found = pages(scan())
     assert isinstance(found, Pages)
-    emptied: list[str] = []
+    emptied: list[bool] = []
+    full = FakeModel(full=True)
     with pytest.raises(ModelUnavailableError, match="ran out of memory on the cpu"):
-        pages_text(ocr_of(FakeModel(full=True)), found.pictures, {"cpu": lambda: emptied.append("cpu")})
-    assert emptied == ["cpu"]
-    assert pages_text(ocr_of(FakeModel()), found.pictures, {"cpu": lambda: emptied.append("again")}) == [
+        pages_text(ocr_of(full), found.pictures, {"cpu": lambda: emptied.append(full.working[0]() is None)})
+    assert emptied == [True]
+    assert pages_text(ocr_of(FakeModel()), found.pictures, {"cpu": lambda: emptied.append(False)}) == [
         "word1089 word1540"
     ]
-    assert emptied == ["cpu"]
+    assert emptied == [True]
 
 
 def test_the_model_loads_at_its_pinned_revision_onto_its_device_in_its_precision() -> None:
