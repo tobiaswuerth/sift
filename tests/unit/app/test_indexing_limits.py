@@ -1,9 +1,11 @@
+import gc
 import shutil
 import tracemalloc
 from collections.abc import Generator, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -15,7 +17,7 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
-from sift.domain.text.documents import Conversion, Converted, Outcome
+from sift.domain.text.documents import Conversion, Converted, FileRead, Outcome
 from sift.ingest.files import CHANGED, Identity, pieces_of
 from sift.ingest.readers import ToRead, read_file
 from sift.ingest.sandbox import FileReading
@@ -209,3 +211,35 @@ def test_files_read_are_written_once_their_text_passes_what_a_write_holds(tmp_pa
     limits = Limits(most_characters_a_write=100)
     assert indexed(home, limits, Readers(clock=later, files=watched)).added == 3
     assert seen == [0, 1, 2]
+
+
+def _large(_raw: bytes, _name: str) -> Conversion:
+    return Converted("# Large paper\n\n" + "words " * 70_000)
+
+
+def _large_read_alive() -> int:
+    gc.collect()
+    held = [each for each in cast("list[object]", gc.get_objects()) if type(each) is FileRead]
+    return sum(any(document.title == "Large paper" for document in each.documents) for each in held)
+
+
+def test_files_written_are_let_go_however_many_a_batch_holds(tmp_path: Path, home: Path) -> None:
+    root = tmp_path / "papers"
+    for n in range(12):
+        write(root / f"p{n}.pdf", f"%PDF-1.4 paper {n}")
+    add(home, AddCollection(str(root)))
+    seen: list[int] = []
+
+    @contextmanager
+    def watched() -> Generator[FileReading]:
+        with in_process(partial(read_file, converting=_large)) as read:
+
+            def each(asked: Sequence[ToRead]) -> Iterator[tuple[int, Outcome]]:
+                for found in read(asked):
+                    seen.append(_large_read_alive())
+                    yield found
+
+            yield each
+
+    assert indexed(home, Limits(most_characters_a_write=100_000), Readers(clock=later, files=watched)).added == 12
+    assert max(seen) <= 3

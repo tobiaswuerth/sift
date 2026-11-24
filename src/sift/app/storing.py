@@ -126,12 +126,14 @@ def _scans_finished(run: _Run, scans: ScanRun, path: str, read: FileRead) -> Sca
     return replace(found, read=_described(found.read, run.job.limits))
 
 
-def _read_and_written(run: _Run, read_files: FileReading, paths: Sequence[str]) -> tuple[Tally, list[Outcome]]:
+def _read_and_written(
+    run: _Run, read_files: FileReading, paths: Sequence[str]
+) -> tuple[Tally, list[tuple[str, FileRead]]]:
     tally, plain, held = Tally(), list[tuple[str, Outcome]](), 0
-    outcomes: dict[int, Outcome] = {}
+    scanned: dict[int, FileRead] = {}
     for at, outcome in read_files([run.asked(path) for path in paths]):
-        outcomes[at] = outcome
         if _scanned(outcome):
+            scanned[at] = outcome
             continue
         run.advanced()
         finished = _finished(run, outcome)
@@ -141,7 +143,7 @@ def _read_and_written(run: _Run, read_files: FileReading, paths: Sequence[str]) 
             tally += _written(run, plain, ())
             plain, held = [], 0
     tally += _written(run, plain, ())
-    return tally, [outcomes[at] for at in range(len(paths))]
+    return tally, [(paths[at], scanned[at]) for at in sorted(scanned)]
 
 
 def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str]) -> Tally:
@@ -170,10 +172,10 @@ def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str
 
 def _batch_stored(run: _Run, read_files: FileReading, scans: ScanRun, batch: Sequence[str]) -> Tally:
     paths = [path for path in batch if kind_of(path) is not FileKind.NOTE]
-    tally, read = _read_and_written(run, read_files, paths)
+    tally, scanned = _read_and_written(run, read_files, paths)
     tally += _written(run, (), [path for path in batch if kind_of(path) is FileKind.NOTE])
     held: list[tuple[str, Outcome]] = []
-    for path, outcome in ((path, outcome) for path, outcome in zip(paths, read, strict=True) if _scanned(outcome)):
+    for path, outcome in scanned:
         found = _scans_finished(run, scans, path, outcome)
         if found.model_ready:
             tally += _written(run, [(path, found.read)], ())
