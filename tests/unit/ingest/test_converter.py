@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from xberg import ExtractionResult
 
-from sift.domain.text.documents import NO_TEXT, Unread
+from sift.domain.text.documents import FileRead, Unread
 from sift.domain.text.kinds import DOCUMENTS
 from sift.ingest.converter import converted
 from tests.mails import PARAGRAPH, SAMPLES, only, read, sample
@@ -96,8 +96,12 @@ def test_a_damaged_document_is_unread_with_what_the_converter_said(name: str, ra
     assert found.problem.startswith("Parsing error: ")
 
 
-def test_a_pdf_without_text_is_unread_for_its_lack_of_text() -> None:
-    assert read((SAMPLES / "blank.pdf").read_bytes(), "blank.pdf") == Unread(NO_TEXT)
+def test_a_pdf_without_text_is_a_scan_to_read_with_ocr() -> None:
+    raw = (SAMPLES / "blank.pdf").read_bytes()
+    found = read(raw, "blank.pdf")
+    assert isinstance(found, FileRead)
+    (scan,) = found.scans
+    assert (found.documents, scan.raw, scan.document.title) == ((), raw, "blank")
 
 
 def _rezipped(path: Path, document: bytes | None = None) -> Path:

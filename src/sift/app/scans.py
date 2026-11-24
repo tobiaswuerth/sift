@@ -1,0 +1,135 @@
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from sift.api.errors import ModelUnavailableError
+from sift.api.events import Noted, Reporter
+from sift.domain.text.documents import FileRead, Refused, Scan
+from sift.domain.text.notes import Document
+from sift.domain.text.scans import PAGES, OcrSetting, read_scan
+from sift.inference.hub import OCR_MODEL
+from sift.inference.loading import OcrModule, ocr_module
+from sift.ingest.pictures import Pages, ToPicture
+from sift.ingest.sandbox import OpenPicturing, Picturing, picturing
+
+if TYPE_CHECKING:
+    from sift.inference.ocr import Ocr
+
+OFF = "a scan; SIFT_OCR is off"
+NO_GPU = "a scan; sift reads scans on a GPU, and this machine has none; SIFT_OCR=on reads them on the CPU, slowly"
+BUSY = "a scan; too little of the GPU's memory is free now; the next index tries again"
+NOT_LOADED = "a scan, and its OCR model could not be loaded ({}); the next index tries again"
+FULL = "a scan, and OCR ran out of memory ({}); the next index tries again"
+UNPICTURED = "a scan whose pages could not be pictured: {}"
+NO_TEXT_FOUND = "a scan, and OCR found no text in it"
+ON_THE_CPU = "cpu"
+
+
+@dataclass(frozen=True, slots=True)
+class Scanning:
+    setting: OcrSetting = OcrSetting.AUTO
+    module: Callable[[], OcrModule] = ocr_module
+    pictures: OpenPicturing = picturing
+    most_pages: int = PAGES
+
+
+SCANNING = Scanning()
+
+
+@dataclass(frozen=True, slots=True)
+class ScanUnread:
+    problem: str
+    read_again: bool
+    skipped: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _Reader:
+    module: OcrModule
+    ocr: "Ocr"
+
+
+def _available(scanning: Scanning) -> _Reader | ScanUnread:
+    if scanning.setting is OcrSetting.OFF:
+        return ScanUnread(OFF, read_again=False, skipped=True)
+    module = scanning.module()
+    device = module.ocr_device()
+    if device.name == ON_THE_CPU and scanning.setting is OcrSetting.AUTO:
+        return ScanUnread(BUSY, read_again=True) if device.busy else ScanUnread(NO_GPU, read_again=False, skipped=True)
+    try:
+        return _Reader(module, module.loaded_ocr(device))
+    except ModelUnavailableError as error:
+        return ScanUnread(NOT_LOADED.format(error.message), read_again=True)
+
+
+@dataclass(slots=True)
+class ScanRun:
+    scanning: Scanning
+    picturing: Picturing
+    report: Reporter
+    held: _Reader | ScanUnread | None = None
+    skipped: bool = False
+
+    def reader(self) -> _Reader | ScanUnread:
+        if self.held is None:
+            self.held = _available(self.scanning)
+        return self.held
+
+
+def _pages_said(found: Pages) -> str:
+    read = len(found.pictures)
+    return (
+        f"{read} page{'' if read == 1 else 's'}" if read == found.count else f"its first {read} of {found.count} pages"
+    )
+
+
+def _named(path: str, key: str) -> str:
+    return f"{path}#{key}" if key else path
+
+
+def _pictured(run: ScanRun, path: str, scan: Scan) -> Pages | ScanUnread:
+    asked = ToPicture(Path(path), len(scan.raw), scan.raw, run.scanning.most_pages)
+    ((_, found),) = list(run.picturing([asked]))
+    match found:
+        case Pages():
+            return found
+        case Refused(problem=problem):
+            return ScanUnread(UNPICTURED.format(problem), read_again=False)
+        case unpictured:
+            return ScanUnread(UNPICTURED.format(unpictured.problem), read_again=False)
+
+
+def _scan_read(run: ScanRun, path: str, scan: Scan) -> Document | ScanUnread:
+    reader = run.reader()
+    if isinstance(reader, ScanUnread):
+        return reader
+    pictured = _pictured(run, path, scan)
+    if isinstance(pictured, ScanUnread):
+        return pictured
+    try:
+        texts = reader.module.pages_text(reader.ocr, pictured.pictures)
+    except ModelUnavailableError as error:
+        return ScanUnread(FULL.format(error.message), read_again=True)
+    found = read_scan(scan.document, texts, OCR_MODEL)
+    if found is None:
+        return ScanUnread(NO_TEXT_FOUND, read_again=False)
+    run.report(Noted(f"{_named(path, scan.document.key)}: a scan, read with OCR ({_pages_said(pictured)})"))
+    return found
+
+
+def scans_read(run: ScanRun, path: str, read: FileRead, held: Mapping[str, str]) -> FileRead:
+    documents, problems, again = list(read.documents), list(read.problems), read.read_again
+    for scan in read.scans:
+        key = scan.document.key
+        if held.get(key) == scan.document.digest:
+            documents.append(scan.document)
+            continue
+        match _scan_read(run, path, scan):
+            case ScanUnread() as unread:
+                problems.append(f"{key}: {unread.problem}" if key else unread.problem)
+                again |= unread.read_again
+                run.skipped |= unread.skipped
+            case found:
+                documents.append(found)
+    return FileRead(tuple(documents), tuple(problems), (), again)

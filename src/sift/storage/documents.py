@@ -9,7 +9,17 @@ from sift.domain.errors import DamagedError
 from sift.domain.text.chunks import Chunk
 from sift.domain.text.links import Link, names
 from sift.domain.text.notes import Document, NotePart, NoteRead
-from sift.storage.database import Reading, Writing, WritingDocuments, first, inserted, rows, run, run_each
+from sift.storage.database import (
+    Reading,
+    Value,
+    Writing,
+    WritingDocuments,
+    first,
+    inserted,
+    rows,
+    run,
+    run_each,
+)
 from sift.storage.texts import put_text
 
 SourceId = NewType("SourceId", int)
@@ -277,3 +287,30 @@ class Counts(NamedTuple):
 def counts(transaction: Reading) -> Counts:
     (kept_counts,) = rows(transaction, Counts, "SELECT documents, chunks FROM counts")
     return kept_counts
+
+
+SCANS_SKIPPED = "scans_skipped"
+
+
+class KeyDigest(NamedTuple):
+    key: str
+    digest: str
+
+
+def digests_of(transaction: Reading, path: str) -> dict[str, str]:
+    sql = "SELECT d.key, d.digest FROM documents d JOIN sources s ON s.id = d.source WHERE s.path = ?"
+    return {each.key: each.digest for each in rows(transaction, KeyDigest, sql, (path,))}
+
+
+def scans_skipped_under(transaction: Reading) -> str | None:
+    found = first(transaction, Value, "SELECT value FROM meta WHERE key = ?", (SCANS_SKIPPED,))
+    return None if found is None else found.value
+
+
+def scans_skipped(transaction: Writing, setting: str) -> None:
+    run(transaction, "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (SCANS_SKIPPED, setting))
+
+
+def unreadable_read_again(transaction: Writing) -> None:
+    run(transaction, "UPDATE unreadable SET read_again = 1")
+    run(transaction, "DELETE FROM meta WHERE key = ?", (SCANS_SKIPPED,))

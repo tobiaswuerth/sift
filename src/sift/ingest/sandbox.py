@@ -13,14 +13,28 @@ from collections.abc import Callable, Generator, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass, field
 from multiprocessing.process import BaseProcess
+from pathlib import Path
 from typing import NoReturn, Protocol, cast
 
 from sift.domain.text.documents import Outcome, Refused
+from sift.ingest.pictures import Pictured, ToPicture, picture
 from sift.ingest.readers import ToRead, read_file
 
+
+class Request(Protocol):
+    @property
+    def path(self) -> Path: ...
+
+    @property
+    def size(self) -> int: ...
+
+
+type Answering[A, B] = Callable[[Sequence[A]], Iterator[tuple[int, B | Refused]]]
 type ReadOne = Callable[[ToRead], Outcome]
-type FileReading = Callable[[Sequence[ToRead]], Iterator[tuple[int, Outcome]]]
+type FileReading = Answering[ToRead, Outcome]
 type OpenReading = Callable[[], AbstractContextManager[FileReading]]
+type Picturing = Answering[ToPicture, Pictured]
+type OpenPicturing = Callable[[], AbstractContextManager[Picturing]]
 type Heard = tuple[int, object]
 
 ENDED = "its reader ended the process it ran in"
@@ -66,9 +80,9 @@ class _Raised:
 
 
 @dataclass(frozen=True, slots=True)
-class _Task:
+class _Task[A]:
     at: int
-    asked: ToRead
+    asked: A
     deadline: float
 
 
@@ -108,12 +122,12 @@ def _ends_with(parent: BaseProcess) -> NoReturn:
     os._exit(ORPHANED * len(multiprocessing.connection.wait([parent.sentinel])))
 
 
-def _pickled(outcome: Outcome, most: int) -> bytes:
+def _pickled(outcome: object, most: int) -> bytes:
     held = pickle.dumps(outcome, pickle.HIGHEST_PROTOCOL)
     return held if len(held) <= most else pickle.dumps(too_large_an_answer(len(held), most), pickle.HIGHEST_PROTOCOL)
 
 
-def _serve(asked: _Channel, answers: _Channel, read: ReadOne, most: int) -> None:
+def _serve[A, B](asked: _Channel, answers: _Channel, read: Callable[[A], B], most: int) -> None:
     _ = signal.signal(signal.SIGINT, signal.SIG_IGN)
     parent = cast("BaseProcess", multiprocessing.parent_process())
     threading.Thread(target=_ends_with, args=(parent,), daemon=True).start()
@@ -121,7 +135,7 @@ def _serve(asked: _Channel, answers: _Channel, read: ReadOne, most: int) -> None
     while (each := _message(asked)) is not None:
         answers.send(BEGAN)
         try:
-            outcome = read(cast("ToRead", each))
+            outcome = read(cast("A", each))
         except Exception as error:
             answers.send(_Raised("".join(traceback.format_exception_only(error)).strip()))
             raise
@@ -148,18 +162,18 @@ def _listened(number: int, channel: _Channel, greeting: _Greeting, heard: "queue
 
 
 @dataclass(slots=True)
-class _Worker:
+class _Worker[A]:
     number: int
     process: BaseProcess
     asked: _Channel
     answers: _Channel
     greeting: _Greeting
     listener: threading.Thread
-    task: _Task | None = None
+    task: _Task[A] | None = None
     began: bool = False
 
 
-def _stopped(worker: _Worker) -> None:
+def _stopped[A](worker: _Worker[A]) -> None:
     worker.asked.close()
     if worker.task is not None or not worker.greeting.said.is_set():
         worker.process.kill()
@@ -176,11 +190,11 @@ def _settled(greeting: _Greeting, deadline: float, clock: Callable[[], float]) -
 
 
 @dataclass(slots=True)
-class _Reading:
-    todo: deque[tuple[int, ToRead]]
+class _Reading[A: Request]:
+    todo: deque[tuple[int, A]]
     again: set[int] = field(default_factory=set[int])
 
-    def back(self, task: _Task) -> None:
+    def back(self, task: _Task[A]) -> None:
         if task.at in self.again:
             raise ReaderFailedError(f"reader processes ended twice before they began reading {task.asked.path}")
         self.again.add(task.at)
@@ -188,19 +202,19 @@ class _Reading:
 
 
 @dataclass(slots=True)
-class _Pool:
-    read: ReadOne
+class _Pool[A: Request, B]:
+    read: Callable[[A], B]
     patience: Patience
     most: int
     most_answer_bytes: int
     clock: Callable[[], float]
-    workers: dict[int, _Worker] = field(default_factory=dict[int, _Worker])
+    workers: dict[int, _Worker[A]] = field(default_factory=dict[int, _Worker[A]])
     heard: "queue.Queue[Heard]" = field(default_factory=queue.Queue[Heard])
     made: int = 0
 
     def _started(self, count: int) -> None:
         context = multiprocessing.get_context("spawn")
-        started: list[_Worker] = []
+        started: list[_Worker[A]] = []
         for _ in range(count):
             asked_there, asked = context.Pipe(duplex=False)
             answers, answers_there = context.Pipe(duplex=False)
@@ -213,7 +227,8 @@ class _Pool:
             greeting = _Greeting()
             listener = threading.Thread(target=_listened, args=(self.made, answers, greeting, self.heard), daemon=True)
             listener.start()
-            self.workers[self.made] = worker = _Worker(self.made, process, asked, answers, greeting, listener)
+            worker = _Worker[A](self.made, process, asked, answers, greeting, listener)
+            self.workers[self.made] = worker
             started.append(worker)
         deadline = self.clock() + self.patience.start_seconds
         for worker in started:
@@ -226,25 +241,25 @@ class _Pool:
     def _busy(self) -> int:
         return sum(worker.task is not None for worker in self.workers.values())
 
-    def _dropped(self, worker: _Worker) -> None:
+    def _dropped(self, worker: _Worker[A]) -> None:
         _ = self.workers.pop(worker.number)
         _stopped(worker)
 
-    def _given(self, todo: deque[tuple[int, ToRead]]) -> None:
+    def _given(self, todo: deque[tuple[int, A]]) -> None:
         for worker in [each for each in self.workers.values() if each.task is None][: len(todo)]:
             at, asked = todo.popleft()
             worker.task, worker.began = _Task(at, asked, self.clock() + self.patience.seconds(asked.size)), False
             with suppress(OSError):
                 worker.asked.send(asked)
 
-    def _overdue(self) -> Iterator[tuple[int, Outcome]]:
+    def _overdue(self) -> Iterator[tuple[int, B | Refused]]:
         now = self.clock()
         for worker in list(self.workers.values()):
             if (task := worker.task) is not None and now >= task.deadline:
                 self._dropped(worker)
                 yield task.at, came_to_no_end(self.patience.seconds(task.asked.size))
 
-    def _ended(self, worker: _Worker, reading: _Reading) -> tuple[int, Outcome] | None:
+    def _ended(self, worker: _Worker[A], reading: _Reading[A]) -> tuple[int, B | Refused] | None:
         task, began = worker.task, worker.began
         self._dropped(worker)
         if task is None:
@@ -254,13 +269,13 @@ class _Pool:
             return None
         return task.at, Refused(ENDED, read_again=False)
 
-    def _answer(self, number: int, message: object, reading: _Reading) -> tuple[int, Outcome] | None:
+    def _answer(self, number: int, message: object, reading: _Reading[A]) -> tuple[int, B | Refused] | None:
         worker = self.workers.get(number)
         if worker is None:
             return None
         if message is None:
             return self._ended(worker, reading)
-        task = cast("_Task", worker.task)
+        task = cast("_Task[A]", worker.task)
         if message == BEGAN:
             worker.began = True
             return None
@@ -269,13 +284,13 @@ class _Pool:
                 f"reading {task.asked.path} raised an error in its process, {message.error}; its traceback is above"
             )
         worker.task = None
-        return task.at, cast("Outcome", message)
+        return task.at, cast("B", message)
 
     def _waited(self) -> float:
         nearest = min(task.deadline for worker in self.workers.values() if (task := worker.task) is not None)
         return min(HEARD_SECONDS, max(0.0, nearest - self.clock()))
 
-    def files(self, asked: Sequence[ToRead]) -> Iterator[tuple[int, Outcome]]:
+    def files(self, asked: Sequence[A]) -> Iterator[tuple[int, B | Refused]]:
         reading = _Reading(deque(enumerate(asked)))
         while reading.todo or self._busy():
             if (wanted := min(self.most, self._busy() + len(reading.todo)) - len(self.workers)) > 0:
@@ -295,13 +310,9 @@ class _Pool:
 
 
 @contextmanager
-def sandboxed(
-    read: ReadOne = read_file,
-    patience: Patience = PATIENCE,
-    workers: int = MOST_WORKERS,
-    clock: Callable[[], float] = time.perf_counter,
-    most_answer_bytes: int = MOST_ANSWER_BYTES,
-) -> Generator[FileReading]:
+def _sandboxed[A: Request, B](
+    read: Callable[[A], B], patience: Patience, workers: int, clock: Callable[[], float], most_answer_bytes: int
+) -> Generator[Answering[A, B]]:
     if workers < 1:
         raise ValueError(f"a sandbox of {workers} reader processes reads nothing: give it one at least")
     pool = _Pool(read, patience, reader_processes(workers, usable_cpus()), most_answer_bytes, clock)
@@ -309,3 +320,19 @@ def sandboxed(
         yield pool.files
     finally:
         pool.ended()
+
+
+def sandboxed(
+    read: ReadOne = read_file,
+    patience: Patience = PATIENCE,
+    workers: int = MOST_WORKERS,
+    clock: Callable[[], float] = time.perf_counter,
+    most_answer_bytes: int = MOST_ANSWER_BYTES,
+) -> AbstractContextManager[FileReading]:
+    return _sandboxed(read, patience, workers, clock, most_answer_bytes)
+
+
+def picturing(
+    patience: Patience = PATIENCE, clock: Callable[[], float] = time.perf_counter
+) -> AbstractContextManager[Picturing]:
+    return _sandboxed(picture, patience, 1, clock, MOST_ANSWER_BYTES)

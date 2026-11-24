@@ -4,11 +4,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sift.api.errors import InvalidRequestError
+from sift.domain.text.scans import OcrSetting
 from sift.inference.hub import EMBED_MODEL, RERANK_MODEL
 
 HOME = "SIFT_HOME"
 EMBED_MODEL_VARIABLE = "SIFT_EMBED_MODEL"
 RERANK_MODEL_VARIABLE = "SIFT_RERANK_MODEL"
+OCR_VARIABLE = "SIFT_OCR"
+OCR_REMEDY = (
+    f"set {OCR_VARIABLE} to auto (on a GPU, the default), on (also on the CPU, which takes minutes a page) or off"
+)
 NO_COLOR = "NO_COLOR"
 TERM = "TERM"
 DUMB = "dumb"
@@ -27,6 +32,7 @@ class Settings:
     dumb: bool = False
     embed_model: str = EMBED_MODEL
     rerank_model: str = RERANK_MODEL
+    ocr: OcrSetting = OcrSetting.AUTO
 
 
 def whole_path(written: str, user: Path | None, cwd: Path) -> Path:
@@ -57,6 +63,14 @@ def user_folder(home: Callable[[], Path] = Path.home) -> Path | None:
         return None
 
 
+def _ocr(written: str | None) -> OcrSetting:
+    chosen = (written or OcrSetting.AUTO.value).strip().lower()
+    found = next((each for each in OcrSetting if each.value == chosen), None)
+    if found is None:
+        raise InvalidRequestError(f"{OCR_VARIABLE} is {written!r}", OCR_REMEDY)
+    return found
+
+
 def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path) -> Settings:
     return Settings(
         home=_home(environment.get(HOME), user, cwd),
@@ -66,6 +80,7 @@ def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path) -> Sett
         dumb=environment.get(TERM) == DUMB,
         embed_model=environment.get(EMBED_MODEL_VARIABLE) or EMBED_MODEL,
         rerank_model=environment.get(RERANK_MODEL_VARIABLE) or RERANK_MODEL,
+        ocr=_ocr(environment.get(OCR_VARIABLE)),
     )
 
 

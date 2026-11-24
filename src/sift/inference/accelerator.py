@@ -55,6 +55,7 @@ class Device:
     batch: int = BATCH
     threads: int = CPU_THREADS
     notice: str | None = None
+    busy: bool = False
 
 
 CPU = Device("cpu", torch.float32)
@@ -84,7 +85,7 @@ def _on_cuda(cuda: Cuda) -> Device:
     held = budget(free, total)
     if held is None:
         notice = f"only {free / GIB:.1f} GiB of the GPU's memory is free, too little: the models run on the CPU"
-        return Device("cpu", torch.float32, notice=notice)
+        return Device("cpu", torch.float32, notice=notice, busy=True)
     cuda.set_per_process_memory_fraction(held / total, 0)
     dtype = torch.bfloat16 if cuda.is_bf16_supported(including_emulation=False) else torch.float32
     return Device("cuda", dtype, threads=GPU_THREADS)

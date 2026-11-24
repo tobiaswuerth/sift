@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from sift.api.collections import TitleFrom
-from sift.domain.text.documents import Convert, FileRead, Outcome, Refused, Unread, document, too_large
+from sift.domain.text.documents import Convert, FileRead, Outcome, Refused, Scan, Unread, document, too_large
 from sift.domain.text.kinds import FileKind, kind_of
 from sift.domain.text.links import folded
 from sift.domain.text.notes import Document, note
@@ -54,6 +54,7 @@ def _mail(raw: bytes, name: str, title_from: TitleFrom, convert: Convert, depth:
         return found
     documents: list[Document] = [found.document]
     problems = list(found.problems)
+    scans: list[Scan] = []
     taken: dict[str, int] = {}
     for attached in found.attachments:
         read = _attachment(attached, title_from, convert, depth)
@@ -66,14 +67,24 @@ def _mail(raw: bytes, name: str, title_from: TitleFrom, convert: Convert, depth:
             case _:
                 documents += [replace(each, key=within(key, each.key)) for each in read.documents]
                 problems += [f"{attached.name}: {problem}" for problem in read.problems]
-    return FileRead(tuple(documents), tuple(problems))
+                scans += [_keyed(each, within(key, each.document.key)) for each in read.scans]
+    return FileRead(tuple(documents), tuple(problems), tuple(scans))
+
+
+def _keyed(scan: Scan, key: str) -> Scan:
+    return replace(scan, document=replace(scan.document, key=key))
 
 
 def read_whole(raw: bytes, name: str, title_from: TitleFrom, convert: Convert) -> FileRead | Unread:
     match kind_of(name):
         case FileKind.DOCUMENT:
-            found = document(raw, name, convert(raw, name))
-            return found if isinstance(found, Unread) else FileRead((found,))
+            match document(raw, name, convert(raw, name)):
+                case Unread() as unread:
+                    return unread
+                case Scan() as scan:
+                    return FileRead((), scans=(scan,))
+                case found:
+                    return FileRead((found,))
         case FileKind.MAIL:
             return _mail(raw, name, title_from, convert, MAIL_DEPTH)
         case _:

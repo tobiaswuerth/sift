@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sift.api.events import Reporter
+from sift.app.scans import SCANNING, Scanning
 from sift.domain.plan.indexing import MOST_FILE_BYTES
 from sift.domain.text.notes import Document
 from sift.domain.text.records import MOST_RECORD_CHARACTERS, SkippedLine
@@ -52,6 +53,7 @@ class Readers:
     pieces: ReadPieces = pieces_of
     clock: Callable[[], int] = time.time_ns
     files: OpenReading = sandboxed
+    scanning: Scanning = SCANNING
 
 
 READERS = Readers()

@@ -85,7 +85,7 @@ def width_of(name: str, found: int | None) -> int:
     return found
 
 
-def _device() -> Device:
+def this_device() -> Device:
     transformers_logging.disable_progress_bar()
     enable_progress_bars()
     found = Hardware(torch.backends.mps.is_available(), nvidia(), torch.version.cuda)
@@ -205,7 +205,7 @@ class Local:
 
     def _on(self) -> Device:
         if self.device is None:
-            self.device = _device()
+            self.device = this_device()
         return self.device
 
     def _embedding(self) -> Loaded:

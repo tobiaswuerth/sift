@@ -1,5 +1,5 @@
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from sift.api.errors import StoreUnavailableError
@@ -9,26 +9,32 @@ from sift.app.collections import chosen_or_active
 from sift.app.filing import READERS, Job, Limits, Readers, Tally, too_large_to_describe
 from sift.app.problems import problems
 from sift.app.records import stored_records
+from sift.app.scans import ScanRun, scans_read
 from sift.app.streamed import stored_note
 from sift.domain.plan.ignore import Ignore
 from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan, recorded
 from sift.domain.text.documents import FileRead, Outcome, Refused, too_large
 from sift.domain.text.kinds import FileKind, kind_of, streamed
+from sift.domain.text.scans import reads_more, setting_of
 from sift.ingest.files import Identity
 from sift.ingest.ignore import IGNORE_FILE, ignore_at
 from sift.ingest.readers import ToRead
 from sift.ingest.sandbox import FileReading
 from sift.ingest.scan import Reach, scan
 from sift.storage.catalog import Collection
-from sift.storage.database import Batches, Connection, WritingDocuments, reading
+from sift.storage.database import Batches, Connection, WritingDocuments, reading, writing
 from sift.storage.documents import (
     add_documents,
     clear_unreadable,
+    digests_of,
     kept,
     mark_unreadable,
     put_source,
+    scans_skipped,
+    scans_skipped_under,
     sources,
     unreadable,
+    unreadable_read_again,
 )
 from sift.storage.forgetting import delete_documents, delete_sources
 from sift.storage.kept_vectors import vectors_held, vectors_kept
@@ -48,7 +54,7 @@ def _described(read: FileRead, limits: Limits) -> FileRead:
     found = [(each, too_large_to_describe(each, limits.most_description_bytes)) for each in read.documents]
     kept = tuple(each for each, problem in found if problem is None)
     large = (f"{each.key}: {problem}" if each.key else problem for each, problem in found if problem is not None)
-    return FileRead(kept, (*read.problems, *large))
+    return replace(read, documents=kept, problems=(*read.problems, *large))
 
 
 def _refused(transaction: WritingDocuments, path: str, stat: Stat, refused: Refused) -> Tally:
@@ -80,7 +86,7 @@ def _file_stored(transaction: WritingDocuments, path: str, stat: Stat, read: Fil
     delete_documents(transaction, [*gone, *replaced])
     vectors_kept(transaction, add_documents(transaction, source, path, [*changed, *new]))
     if read.problems:
-        mark_unreadable(transaction, path, PROBLEMS_APART.join(read.problems), read_again=False)
+        mark_unreadable(transaction, path, PROBLEMS_APART.join(read.problems), read_again=read.read_again)
     return Tally(added=len(new), changed=len(changed), removed=len(gone))
 
 
@@ -110,17 +116,27 @@ class _Run:
         return ToRead(job.collection.folder / path, self.files[path].size, most, self.identities.get(path), title_from)
 
 
-def _read(run: _Run, reading: FileReading, paths: Sequence[str]) -> list[tuple[str, Outcome]]:
+def _finished(run: _Run, scans: ScanRun, path: str, outcome: Outcome) -> Outcome:
+    if isinstance(outcome, Refused):
+        return outcome
+    if outcome.scans:
+        with reading(run.job.connection) as transaction:
+            held = digests_of(transaction, path)
+        outcome = scans_read(scans, path, outcome, held)
+    return _described(outcome, run.job.limits)
+
+
+def _read(run: _Run, read_files: FileReading, scans: ScanRun, paths: Sequence[str]) -> list[tuple[str, Outcome]]:
     outcomes: dict[int, Outcome] = {}
-    for at, outcome in reading([run.asked(path) for path in paths]):
-        outcomes[at] = outcome if isinstance(outcome, Refused) else _described(outcome, run.job.limits)
+    for at, outcome in read_files([run.asked(path) for path in paths]):
+        outcomes[at] = outcome
         run.advanced()
-    return [(path, outcomes[at]) for at, path in enumerate(paths)]
+    return [(path, _finished(run, scans, path, outcomes[at])) for at, path in enumerate(paths)]
 
 
-def _batch_stored(run: _Run, reading: FileReading, batch: Sequence[str]) -> Tally:
+def _batch_stored(run: _Run, read_files: FileReading, scans: ScanRun, batch: Sequence[str]) -> Tally:
     job, files, tally = run.job, run.files, Tally()
-    read = _read(run, reading, [path for path in batch if kind_of(path) is not FileKind.NOTE])
+    read = _read(run, read_files, scans, [path for path in batch if kind_of(path) is not FileKind.NOTE])
     with writing_documents(job.connection, job.limits.batches) as transaction:
         whole = [path for path, outcome in read if _whole(outcome)]
         for path, outcome in read:
@@ -146,10 +162,23 @@ def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat], ident
         tally += stored_records(job, path, files[path], job.collection.choices.records, identities.get(path))
         run.advanced()
     whole = tuple(path for path in plan.read if not streamed(path))
-    with job.readers.files() as reading:
+    scanning = job.readers.scanning
+    with job.readers.files() as reading, scanning.pictures() as picturing:
+        scans = ScanRun(scanning, picturing, job.report)
         for batch in batches(whole, files, limits.most_files_a_write, limits.most_bytes_a_write):
-            tally += _batch_stored(run, reading, batch)
+            tally += _batch_stored(run, reading, scans, batch)
+    if scans.skipped:
+        with writing(job.connection) as transaction:
+            scans_skipped(transaction, scanning.setting.value)
     return tally
+
+
+def _skipped_read_again(job: Job) -> None:
+    with reading(job.connection) as transaction:
+        before = scans_skipped_under(transaction)
+    if before is not None and reads_more(job.readers.scanning.setting, setting_of(before)):
+        with writing(job.connection) as transaction:
+            unreadable_read_again(transaction)
 
 
 def _whole(outcome: FileRead | Refused) -> bool:
@@ -157,6 +186,7 @@ def _whole(outcome: FileRead | Refused) -> bool:
 
 
 def _synced(job: Job, ignore: Ignore) -> Indexed:
+    _skipped_read_again(job)
     job.report(PhaseStarted(Phase.SCAN, None))
     started = job.readers.clock()
     scanned = scan(

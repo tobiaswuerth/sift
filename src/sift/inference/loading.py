@@ -1,11 +1,15 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference.hub import pinned
 from sift.inference.models import Models
+
+if TYPE_CHECKING:
+    from sift.inference.accelerator import Device
+    from sift.inference.ocr import Ocr
 
 
 class LocalLoader(Protocol):
@@ -50,3 +54,19 @@ class Deferred:
 
 def deferred(model: str, reranker: str) -> Deferred:
     return Deferred(model, reranker)
+
+
+class OcrModule(Protocol):
+    def ocr_device(self) -> "Device": ...
+
+    def loaded_ocr(self, device: "Device") -> "Ocr": ...
+
+    def pages_text(self, ocr: "Ocr", pictures: Sequence[bytes]) -> list[str]: ...
+
+
+def _as_ocr(module: object) -> OcrModule:
+    return cast("OcrModule", module)
+
+
+def ocr_module() -> OcrModule:
+    return _as_ocr(import_module("sift.inference.ocr"))

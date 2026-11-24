@@ -20,6 +20,7 @@ dependencies = [
     "torchvision>=0.28",  # and torchvision; it must match torch (0.28 is 2.13's)
     "nvidia-ml-py>=12",  # free GPU memory as nvidia-smi sees it, which CUDA overstates on Windows
     "xberg>=1.3",  # PDF, office files, e-books and web pages as Markdown
+    "pypdfium2>=4.30",  # the pages of scans as pictures, for OCR (PDFium inside)
 ]
 keywords = [
     "rag",

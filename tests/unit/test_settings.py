@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 
 from sift.api.errors import InvalidRequestError
-from sift.settings import Settings, from_environment, parsed, user_folder, whole_path
+from sift.domain.text.scans import OcrSetting
+from sift.settings import OCR_REMEDY, Settings, from_environment, parsed, user_folder, whole_path
 
 
 @pytest.fixture
@@ -34,6 +35,19 @@ def test_the_models_are_embeddinggemma_and_gte_s_reranker_unless_set(user: Path,
     assert parsed({"SIFT_EMBED_MODEL": "owner/model@v2"}, user, cwd).embed_model == "owner/model@v2"
     assert parsed({}, user, cwd).rerank_model == "Alibaba-NLP/gte-reranker-modernbert-base"
     assert parsed({"SIFT_RERANK_MODEL": "owner/ranker"}, user, cwd).rerank_model == "owner/ranker"
+
+
+def test_scans_are_read_on_a_gpu_unless_set_and_a_setting_sift_knows_not_says_what_it_takes(
+    user: Path, cwd: Path
+) -> None:
+    assert [parsed(asked, user, cwd).ocr for asked in ({}, {"SIFT_OCR": ""}, {"SIFT_OCR": " ON "})] == [
+        OcrSetting.AUTO,
+        OcrSetting.AUTO,
+        OcrSetting.ON,
+    ]
+    with pytest.raises(InvalidRequestError, match="SIFT_OCR is 'maybe'") as refused:
+        parsed({"SIFT_OCR": "maybe"}, user, cwd)
+    assert refused.value.remedy == OCR_REMEDY
 
 
 def test_an_empty_variable_counts_as_unset(user: Path, cwd: Path) -> None:
