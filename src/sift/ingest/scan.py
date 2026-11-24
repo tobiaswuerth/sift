@@ -217,6 +217,47 @@ def _taken(entry: DirEntry, relative: str, walk: _Walk) -> None:
         _untyped(path, walk, error)
 
 
+@dataclass(frozen=True, slots=True)
+class _PathEntry:
+    location: Path
+
+    @property
+    def name(self) -> str:
+        return self.location.name
+
+    @property
+    def path(self) -> str:
+        return str(self.location)
+
+    def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+        return self.location.is_dir() and (follow_symlinks or not self.location.is_symlink())
+
+    def is_junction(self) -> bool:
+        return self.location.is_junction()
+
+    def is_symlink(self) -> bool:
+        return self.location.is_symlink()
+
+    def stat(self) -> os.stat_result:
+        return self.location.stat()
+
+
+def _passed_over(root: Path, folder: str, walk: _Walk) -> bool:
+    entry = _PathEntry(root / folder)
+    linked = entry.is_junction() or _links_to_a_folder(entry)
+    return linked or _left_out(walk, folder, folder=True) or not _folder_taken(entry)
+
+
+def scan_one(root: Path, relative: str, reach: Reach = WITHIN, *, links: LinkChecks = LINK_CHECKS) -> Scanned:
+    seen, guard = _Seen(), None if reach.follow_links else _Guard(root.resolve(), links)
+    walk = _Walk(seen, [], guard, reach.ignore)
+    *folders, _ = relative.split("/")
+    within = ["/".join(folders[: at + 1]) for at in range(len(folders))]
+    if not any(_passed_over(root, folder, walk) for folder in within):
+        _taken(_PathEntry(root / relative), "".join(f"{folder}/" for folder in folders), walk)
+    return _scanned(seen)
+
+
 def scan(
     root: Path,
     reach: Reach = WITHIN,
@@ -235,6 +276,10 @@ def scan(
             looked_at += 1
             if looked_at % PROGRESS_EVERY == 0:
                 progress(len(seen.files))
+    return _scanned(seen)
+
+
+def _scanned(seen: _Seen) -> Scanned:
     found = Found(
         seen.files,
         tuple(seen.unlisted_folders),

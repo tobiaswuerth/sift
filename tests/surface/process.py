@@ -4,9 +4,12 @@ import sys
 from pathlib import Path
 
 
-def sift(home: Path, *args: str, model: str = "", reranker: str = "") -> subprocess.CompletedProcess[str]:
+def sift(
+    home: Path, *args: str, model: str = "", reranker: str = "", cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "sift", *args],
+        cwd=cwd,
         capture_output=True,
         text=True,
         encoding="utf-8",

@@ -78,6 +78,15 @@ class SourceRow(NamedTuple):
     id: SourceId
 
 
+def source_at(transaction: Reading, path: str) -> Source | None:
+    return first(transaction, Source, "SELECT id, path, modified_ns, size FROM sources WHERE path = ?", (path,))
+
+
+def holds_documents(transaction: Reading, source: SourceId) -> bool:
+    sql = "SELECT source FROM documents WHERE source = ? LIMIT 1"
+    return first(transaction, SourceRow, sql, (source,)) is not None
+
+
 def folded(path: str) -> str:
     return path.rsplit("/", 1)[-1].casefold()
 
@@ -297,6 +306,11 @@ def clear_unreadable(transaction: Writing, paths: Sequence[str]) -> None:
 def unreadable(transaction: Reading) -> list[Unreadable]:
     sql = "SELECT path, problem, read_again, skipped_under, stopped_under FROM unreadable ORDER BY path"
     return rows(transaction, Unreadable, sql)
+
+
+def unreadable_at(transaction: Reading, path: str) -> Unreadable | None:
+    sql = "SELECT path, problem, read_again, skipped_under, stopped_under FROM unreadable WHERE path = ?"
+    return first(transaction, Unreadable, sql, (path,))
 
 
 class Counts(NamedTuple):

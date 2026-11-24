@@ -8,16 +8,14 @@ from sift.api.collections import AddCollection, CollectionChanged, ShowStatus, T
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError
 from sift.api.indexing import IndexCollections
-from sift.api.search import SearchKeywords
 from sift.app.collections import add, status
 from sift.app.embedding import embed
 from sift.app.indexing import index
-from sift.app.search import search
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading, rows
 from sift.storage.store import connected
 from tests.files import write
-from tests.homes import indexed_home
+from tests.homes import found_ids, indexed_home
 from tests.models import Hashed
 
 
@@ -71,10 +69,6 @@ def unembedded(home: Path) -> list[Unembedded]:
         )
 
 
-def found(home: Path, query: str) -> list[str]:
-    return [hit.id for hit in search(home, SearchKeywords(query)).hits]
-
-
 def test_adding_a_collection_again_changes_where_its_titles_come_from(home: Path, notes: Path) -> None:
     changed = add(home, AddCollection(str(notes), title_from=TitleFrom.NAME))
     assert changed == CollectionChanged(
@@ -87,12 +81,12 @@ def test_adding_a_collection_again_changes_where_its_titles_come_from(home: Path
         "rl.md": "rl",
         "robots/brush.md": "Brush stroke planning",
     }
-    assert found(home, "Müller") == ["notes/Hans Müller.md"]
-    assert found(home, "learning") == ["notes/rl.md"]
+    assert found_ids(home, "Müller") == ["notes/Hans Müller.md"]
+    assert found_ids(home, "learning") == ["notes/rl.md"]
     back = add(home, AddCollection(str(notes), name="notes", title_from=TitleFrom.HEADING))
     assert isinstance(back, CollectionChanged)
     assert (back.retitled, titles(home)["Hans Müller.md"]) == (2, "Summary")
-    assert found(home, "Müller") == []
+    assert found_ids(home, "Müller") == []
 
 
 def test_retitled_notes_stay_retitled_when_indexed_again(home: Path, notes: Path) -> None:
@@ -129,7 +123,7 @@ def test_a_collection_hidden_from_agents_says_so_and_is_still_searched(home: Pat
     assert hidden.agents is False
     (shown,) = status(home, ShowStatus()).collections
     assert shown.agents is False
-    assert found(home, "learning") == ["notes/rl.md"]
+    assert found_ids(home, "learning") == ["notes/rl.md"]
 
 
 NOTHING_ELSE: tuple[Callable[[Path], AddCollection], ...] = (

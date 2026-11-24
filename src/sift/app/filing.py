@@ -14,6 +14,7 @@ from sift.domain.text.records import MOST_RECORD_CHARACTERS, SkippedLine
 from sift.ingest.files import Identity, pieces_of
 from sift.ingest.records import lines_of
 from sift.ingest.sandbox import OpenReading, sandboxed
+from sift.ingest.scan import Reach, Scanned, scan_one
 from sift.storage.catalog import Collection
 from sift.storage.database import BATCHES, Batches, Connection
 from sift.storage.documents import MOST_DESCRIPTION_BYTES, description_bytes
@@ -69,6 +70,7 @@ class Readers:
     files: OpenReading = sandboxed
     scanning: Scanning = SCANNING
     release: Callable[[], str] = installed
+    scan_one: Callable[[Path, str, Reach], Scanned] = scan_one
 
 
 READERS = Readers()

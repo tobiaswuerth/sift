@@ -1,7 +1,6 @@
 import json
 from collections.abc import Generator, Iterator, Sequence
 from contextlib import closing, contextmanager
-from itertools import islice
 from pathlib import Path
 
 import pytest
@@ -31,7 +30,7 @@ from sift.storage.database import reading
 from sift.storage.documents import counts
 from sift.storage.store import open_store
 from sift.storage.vector_meta import left
-from tests.files import jsonl, write
+from tests.files import TORN, jsonl, torn_lines, write
 from tests.homes import text_of
 from tests.keyword_stores import vectors_by_text
 from tests.later import later
@@ -244,20 +243,15 @@ def test_a_record_whose_title_and_fields_take_more_than_a_document_holds_is_skip
     assert "bytes of name, title and fields, more than the 200 a document holds" in noted
 
 
-def broken(path: Path, most: int, scanned: Identity | None) -> Iterator[tuple[int, str | SkippedLine]]:
-    yield from islice(lines_of(path, most, scanned), 2)
-    raise OSError(5, "the drive went away")
-
-
 def test_a_file_that_cannot_be_read_to_its_end_keeps_what_was_read_and_is_read_again(tmp_path: Path) -> None:
     write(tmp_path / "c" / "r.jsonl", jsonl([{"id": n, "text": f"part {n}"} for n in range(3)]))
     home = tmp_path / "home"
     add(home, AddCollection(str(tmp_path / "c")))
-    assert indexed(home, Limits(most_records_a_write=1), lines=broken).added == 2
+    assert indexed(home, Limits(most_records_a_write=1), lines=torn_lines).added == 2
     assert found(home, "part") == ["c/r.jsonl#0", "c/r.jsonl#1"]
     (contents,) = [each.contents for each in status(home, ShowStatus(unreadable=True)).collections]
     assert isinstance(contents, Counted)
-    assert [(each.path, each.problem) for each in contents.unreadable_files] == [("r.jsonl", "the drive went away")]
+    assert [(each.path, each.problem) for each in contents.unreadable_files] == [("r.jsonl", TORN)]
     again = indexed(home)
     assert (again.added, again.changed, again.removed, again.unreadable) == (1, 0, 0, 0)
     assert found(home, "part") == ["c/r.jsonl#0", "c/r.jsonl#1", "c/r.jsonl#2"]

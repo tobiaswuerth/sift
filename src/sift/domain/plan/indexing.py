@@ -104,6 +104,13 @@ def index_plan(
     )
 
 
+def dropping(paths: Sequence[str]) -> IndexPlan:
+    gone = tuple(paths)
+    return IndexPlan(
+        read=(), too_large=(), drop=gone, kept=(), left_as_indexed=(), emptied=(), forget=gone, unchanged=0
+    )
+
+
 def batches(
     paths: Sequence[str], stats: Mapping[str, Stat], most_files: int, most_bytes: int
 ) -> tuple[tuple[str, ...], ...]:

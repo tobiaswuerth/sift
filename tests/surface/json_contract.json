@@ -115,7 +115,8 @@
           "removed": 0,
           "unreadable": 1,
           "state": "indexed"
-        }
+        },
+        "named": []
       },
       {
         "name": "papers",
@@ -123,7 +124,35 @@
           "message": "gone",
           "remedy": "add it",
           "state": "skipped"
-        }
+        },
+        "named": []
+      }
+    ]
+  },
+  "index files": {
+    "collections": [
+      {
+        "name": "notes",
+        "outcome": {
+          "files": 2,
+          "added": 0,
+          "changed": 1,
+          "removed": 0,
+          "unreadable": 1,
+          "state": "indexed"
+        },
+        "named": [
+          {
+            "id": "notes/rl.md",
+            "state": "changed",
+            "note": null
+          },
+          {
+            "id": "notes/scan.pdf",
+            "state": "unreadable",
+            "note": "no text"
+          }
+        ]
       }
     ]
   },

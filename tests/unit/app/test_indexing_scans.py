@@ -13,7 +13,7 @@ from sift.api.collections import AddCollection
 from sift.api.documents import GetDocuments
 from sift.api.errors import ModelUnavailableError
 from sift.api.events import Advanced, Event, Noted, Phase, PhaseStarted
-from sift.api.indexing import IndexCollections, Indexed
+from sift.api.indexing import FileIndexed, IndexCollections, Indexed
 from sift.app.collections import add
 from sift.app.documents import documents
 from sift.app.filing import Readers
@@ -226,6 +226,31 @@ def test_scans_skipped_under_a_setting_are_read_once_it_reads_more(
     assert indexed(home, scanning(reading_ocr, after), converting=converting).unreadable == 0
     assert indexed(home, scanning(reading_ocr, after), converting=converting).unreadable == 0
     assert (skipping.read, reading_ocr.read, converting.names) == ([], [2], ["scan.pdf"])
+    assert text_of(home, "scans/scan.pdf") == READ
+
+
+def named_scan(home: Path, ocr: Scanning, said: list[Event]) -> FileIndexed:
+    readers = Readers(clock=later, files=reading(converting=Converting()), scanning=ocr)
+    ((file,),) = (
+        one.named
+        for one in index(home, IndexCollections(files=("scans/scan.pdf",)), said.append, readers=readers).collections
+    )
+    return file
+
+
+@pytest.mark.usefixtures("scans")
+def test_a_scan_named_is_read_by_ocr_saying_so(home: Path) -> None:
+    said = list[Event]()
+    assert named_scan(home, scanning(FakeOcr()), said) == FileIndexed("scans/scan.pdf", "added")
+    assert text_of(home, "scans/scan.pdf") == READ
+    assert "scan.pdf: a scan, read with OCR (2 pages)" in notes(said)
+
+
+@pytest.mark.usefixtures("scans")
+def test_a_scan_named_while_ocr_is_off_is_read_by_the_index_once_it_is_on(home: Path) -> None:
+    unread = FileIndexed("scans/scan.pdf", "unreadable", OFF)
+    assert named_scan(home, scanning(FakeOcr(), OcrSetting.OFF), []) == unread
+    assert indexed(home, scanning(FakeOcr())).unreadable == 0
     assert text_of(home, "scans/scan.pdf") == READ
 
 

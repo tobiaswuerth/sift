@@ -17,9 +17,11 @@ FLAGGED = (How.OPTION, How.SWITCH, How.TOGGLE, How.READ)
 LISTED = (How.ANY, How.SOME)
 
 
-def sift(home: Path, *args: str, model: str = "", reranker: str = "") -> subprocess.CompletedProcess[str]:
+def sift(
+    home: Path, *args: str, model: str = "", reranker: str = "", cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     RAN.append(args)
-    return process.sift(home, *args, model=model, reranker=reranker)
+    return process.sift(home, *args, model=model, reranker=reranker, cwd=cwd)
 
 
 def _forms(argument: Argument) -> frozenset[str]:
@@ -126,6 +128,15 @@ def indexed(home: Path, notes: Path) -> None:
 def plain_run(home: Path, notes: Path) -> None:
     indexed(home, notes)
     assert sift(home, "index", "notes", "--json").stdout.count('"added": 0') == 1
+    named = sift(home, "index", "--file", str(notes / "rl.md"), "--file", "notes/gone.md")
+    assert (named.returncode, named.stderr.splitlines()[-2:]) == (
+        0,
+        ["notes/rl.md: unchanged", "notes/gone.md: missing"],
+    )
+    asked = answer(sift(home, "index", "--file", "notes/sub/brush.md", "--json"))
+    assert cast("list[Answer]", cast("list[Answer]", asked["collections"])[0]["named"])[0]["state"] == "unchanged"
+    here = sift(home, "index", "--file", "brush.md", "--file", "../gone.md", cwd=notes / "sub")
+    assert here.stderr.splitlines()[-2:] == ["notes/sub/brush.md: unchanged", "notes/gone.md: missing"]
     status_run(home)
     one = sift(home, "get", "notes/brush.md")
     assert (one.returncode, one.stdout, one.stderr) == (0, "# Brush\n", "")

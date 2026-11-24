@@ -1,225 +1,45 @@
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+import os
+from collections import Counter
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeGuard
 
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase, PhaseDone, PhaseStarted, Reporter
-from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
+from sift.api.indexing import CollectionIndexed, FileIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import chosen_or_active
-from sift.app.filing import LIMITS, READERS, Job, Limits, Readers, Tally, too_large_to_describe
+from sift.app.documents import located
+from sift.app.filing import LIMITS, READERS, Job, Limits, Readers, Tally
 from sift.app.problems import problems
-from sift.app.records import stored_records
-from sift.app.scans import ScanModel, ScanRun, ScansRead, scans_read
-from sift.app.streamed import stored_note
+from sift.app.scans import ScanModel
+from sift.app.storing import dropped, read_and_stored
 from sift.domain.plan.ignore import Ignore
-from sift.domain.plan.indexing import IndexPlan, Stat, batches, index_plan, recorded
-from sift.domain.text.documents import FileRead, Outcome, Refused, text_held, too_large
-from sift.domain.text.kinds import FileKind, kind_of, streamed
+from sift.domain.plan.indexing import Found, Stat, dropping, index_plan, recorded
+from sift.domain.text.kinds import split_keyed_path
 from sift.domain.text.scans import reads_skipped
-from sift.ingest.files import Identity
 from sift.ingest.ignore import IGNORE_FILE, ignore_at
-from sift.ingest.readers import ToRead
-from sift.ingest.sandbox import FileReading
-from sift.ingest.scan import Reach, scan
-from sift.storage.catalog import Collection
-from sift.storage.database import Batches, Connection, WritingDocuments, reading, writing
+from sift.ingest.scan import Reach, Scanned, scan
+from sift.storage.catalog import Collection, known_collections
+from sift.storage.database import Batches, Connection, reading, writing
 from sift.storage.documents import (
-    Mark,
     Unreadable,
-    add_documents,
-    clear_unreadable,
-    digests_of,
-    kept,
-    mark_unreadable,
-    put_source,
+    holds_documents,
+    source_at,
     sources,
     unreadable,
+    unreadable_at,
 )
-from sift.storage.forgetting import delete_documents, delete_sources, documents_at
-from sift.storage.kept_vectors import vectors_held, vectors_kept, vectors_let_go
+from sift.storage.kept_vectors import vectors_let_go
 from sift.storage.keyword_order import order_due, ordered
-from sift.storage.keywords import remade, remake_started, settle, writing_documents
+from sift.storage.keywords import remade, remake_started, settle
 from sift.storage.store import connected
 from sift.storage.writer import sole_writer
 
 FOLDER_MISSING_REMEDY = "connect the drive it lies on"
 OUT_OF_REACH_REMEDY = "see that its folder and its store can be read, then index it again"
 IGNORE_REMEDY = f"make its {IGNORE_FILE} a file sift can read, or remove it, then index it again"
-PROBLEMS_APART = "; "
-
-
-def _described(read: FileRead, limits: Limits) -> FileRead:
-    found = [(each, too_large_to_describe(each, limits.most_description_bytes)) for each in read.documents]
-    kept = tuple(each for each, problem in found if problem is None)
-    large = (f"{each.key}: {problem}" if each.key else problem for each, problem in found if problem is not None)
-    return replace(read, documents=kept, problems=(*read.problems, *large))
-
-
-def _refused(
-    transaction: WritingDocuments, path: str, stat: Stat, refused: Refused, release: Callable[[], str]
-) -> Tally:
-    under = release() if refused.stopped else None
-    mark_unreadable(transaction, path, Mark(refused.problem, refused.read_again, stopped_under=under))
-    if refused.read_again:
-        return Tally()
-    source = put_source(transaction, path, stat.modified_ns, stat.size)
-    if refused.stopped:
-        return Tally()
-    gone = [document.id for document in kept(transaction, source)]
-    delete_documents(transaction, gone)
-    return Tally(removed=len(gone))
-
-
-def _stored(
-    transaction: WritingDocuments, path: str, stat: Stat, read: FileRead | Refused, release: Callable[[], str]
-) -> Tally:
-    match read:
-        case Refused():
-            return _refused(transaction, path, stat, read, release)
-        case _:
-            return _file_stored(transaction, path, stat, read)
-
-
-def _file_stored(transaction: WritingDocuments, path: str, stat: Stat, read: FileRead) -> Tally:
-    source = put_source(transaction, path, stat.modified_ns, stat.size)
-    held = {document.key: document for document in kept(transaction, source)}
-    changed = [each for each in read.documents if each.key in held and held[each.key].digest != each.digest]
-    new = [each for each in read.documents if each.key not in held]
-    gone = [held[key].id for key in held.keys() - {each.key for each in read.documents}]
-    replaced = [held[each.key].id for each in changed]
-    vectors_held(transaction, replaced)
-    delete_documents(transaction, [*gone, *replaced])
-    vectors_kept(transaction, add_documents(transaction, source, path, [*changed, *new]))
-    if read.problems:
-        under = None if read.skipped_under is None else read.skipped_under.value
-        problem = PROBLEMS_APART.join(read.problems)
-        mark_unreadable(transaction, path, Mark(problem, read.read_again, skipped_under=under))
-    return Tally(added=len(new), changed=len(changed), removed=len(gone))
-
-
-def _dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
-    most = job.limits.most_file_bytes
-    with writing_documents(job.connection, job.limits.batches) as transaction:
-        vectors_let_go(transaction)
-        vectors_held(transaction, documents_at(transaction, plan.drop))
-        removed = delete_sources(transaction, plan.drop)
-        clear_unreadable(transaction, plan.forget)
-        release = job.readers.release
-        large = [
-            _refused(transaction, path, files[path], too_large(files[path].size, most), release)
-            for path in plan.too_large
-        ]
-    return sum(large, Tally(removed=removed))
-
-
-@dataclass(slots=True)
-class _Run:
-    job: Job
-    files: Mapping[str, Stat]
-    identities: Mapping[str, Identity]
-    done: int = 0
-
-    def advanced(self) -> None:
-        self.done += 1
-        self.job.report(Advanced(self.done))
-
-    def asked(self, path: str) -> ToRead:
-        job = self.job
-        most, title_from = job.limits.most_file_bytes, job.collection.choices.title_from
-        return ToRead(job.collection.folder / path, self.files[path].size, most, self.identities.get(path), title_from)
-
-
-def _scanned(outcome: Outcome) -> TypeGuard[FileRead]:
-    return isinstance(outcome, FileRead) and bool(outcome.scans)
-
-
-def _finished(run: _Run, outcome: Outcome) -> Outcome:
-    return outcome if isinstance(outcome, Refused) else _described(outcome, run.job.limits)
-
-
-def _scans_finished(run: _Run, scans: ScanRun, path: str, read: FileRead) -> ScansRead:
-    with reading(run.job.connection) as transaction:
-        held = digests_of(transaction, path)
-    found = scans_read(scans, path, read, held)
-    return replace(found, read=_described(found.read, run.job.limits))
-
-
-def _read_and_written(run: _Run, read_files: FileReading, paths: Sequence[str]) -> tuple[Tally, list[Outcome]]:
-    tally, plain, held = Tally(), list[tuple[str, Outcome]](), 0
-    outcomes: dict[int, Outcome] = {}
-    for at, outcome in read_files([run.asked(path) for path in paths]):
-        outcomes[at] = outcome
-        if _scanned(outcome):
-            continue
-        run.advanced()
-        finished = _finished(run, outcome)
-        plain.append((paths[at], finished))
-        held += text_held(finished)
-        if held >= run.job.limits.most_characters_a_write:
-            tally += _written(run, plain, ())
-            plain, held = [], 0
-    tally += _written(run, plain, ())
-    return tally, [outcomes[at] for at in range(len(paths))]
-
-
-def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str]) -> Tally:
-    job, files, tally = run.job, run.files, Tally()
-    if not read and not notes:
-        return tally
-    release = job.readers.release
-    with writing_documents(job.connection, job.limits.batches) as transaction:
-        whole = [path for path, outcome in read if _whole(outcome)]
-        for path, outcome in read:
-            tally += _stored(transaction, path, files[path], outcome, release)
-        for path in notes:
-            match stored_note(job, transaction, path, files[path], run.identities.get(path)):
-                case Tally() as stored:
-                    tally += stored
-                    whole.append(path)
-                case refused:
-                    tally += _refused(transaction, path, files[path], refused, release)
-            run.advanced()
-        clear_unreadable(transaction, whole)
-    for path, outcome in read:
-        if isinstance(outcome, FileRead) and outcome.problems:
-            job.report(Noted(f"{path}: {PROBLEMS_APART.join(outcome.problems)}"))
-    return tally
-
-
-def _batch_stored(run: _Run, read_files: FileReading, scans: ScanRun, batch: Sequence[str]) -> Tally:
-    paths = [path for path in batch if kind_of(path) is not FileKind.NOTE]
-    tally, read = _read_and_written(run, read_files, paths)
-    tally += _written(run, (), [path for path in batch if kind_of(path) is FileKind.NOTE])
-    held: list[tuple[str, Outcome]] = []
-    for path, outcome in ((path, outcome) for path, outcome in zip(paths, read, strict=True) if _scanned(outcome)):
-        found = _scans_finished(run, scans, path, outcome)
-        if found.model_ready:
-            tally += _written(run, [(path, found.read)], ())
-            run.advanced()
-        else:
-            held.append((path, found.read))
-    tally += _written(run, held, ())
-    for _ in held:
-        run.advanced()
-    return tally
-
-
-def _read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat], identities: Mapping[str, Identity]) -> Tally:
-    tally, limits, run = Tally(), job.limits, _Run(job, files, identities)
-    for path in (path for path in plan.read if streamed(path)):
-        tally += stored_records(job, path, files[path], job.collection.choices.records, identities.get(path))
-        run.advanced()
-    whole = tuple(path for path in plan.read if not streamed(path))
-    with job.readers.files() as read_files, job.readers.scanning.pictures() as picturing:
-        scans = ScanRun(job.ocr, picturing, job.report)
-        for batch in batches(whole, files, limits.most_files_a_write, limits.most_bytes_a_write):
-            tally += _batch_stored(run, read_files, scans, batch)
-    return tally
-
-
-def _whole(outcome: FileRead | Refused) -> bool:
-    return isinstance(outcome, FileRead) and not outcome.problems
+NO_COLLECTION_REMEDY = "give a file inside a collection's folder, or its id as collection/path"
+BOTH_REMEDY = "give the collections to index, or the files to read now"
 
 
 def _read_again(readers: Readers, entry: Unreadable) -> bool:
@@ -244,7 +64,7 @@ def _synced(job: Job, ignore: Ignore) -> Indexed:
     for said in problems(job.collection.folder, scanned, plan, frozenset(known)):
         job.report(said)
     job.report(PhaseStarted(Phase.READ, len(plan.read)))
-    tally = _dropped(job, plan, files) + _read_and_stored(job, plan, files, scanned.identities)
+    tally = dropped(job, plan, files) + read_and_stored(job, plan, files, scanned.identities)
     with writing(job.connection) as transaction:
         vectors_let_go(transaction)
     job.report(PhaseDone(len(plan.read)))
@@ -255,17 +75,71 @@ def _synced(job: Job, ignore: Ignore) -> Indexed:
     return Indexed(len(files), tally.added, tally.changed, tally.removed, outstanding)
 
 
+def _why_left_out(scanned: Scanned, path: str) -> str:
+    if path in scanned.found.outside:
+        return "it leads outside its collection's folder"
+    return "its collection's rules leave it out" if scanned.found.left_out else "sift takes no such file there"
+
+
+def _held_as_it_is(job: Job, path: str) -> tuple[bool, str | None]:
+    with reading(job.connection) as transaction:
+        entry, source = unreadable_at(transaction, path), source_at(transaction, path)
+        if entry is None:
+            return True, None
+        stored = source is not None and holds_documents(transaction, source.id)
+    return stored and not entry.read_again and entry.stopped_under is None, entry.problem
+
+
+def _file_indexed(job: Job, ignore: Ignore, path: str) -> FileIndexed:
+    shown, folder = f"{job.collection.name}/{path}", job.collection.folder
+    started = job.readers.clock()
+    scanned = job.readers.scan_one(folder, path, Reach(job.collection.choices.follow_links, ignore))
+    files = recorded(scanned.found.files, started, job.readers.clock())
+    if path in scanned.refusals:
+        return FileIndexed(shown, "unreadable", scanned.refusals[path])
+    with reading(job.connection) as transaction:
+        held = source_at(transaction, path)
+    gone = not os.path.lexists(folder / path)
+    if held is None and path not in files:
+        return FileIndexed(shown, "missing") if gone else FileIndexed(shown, "left out", _why_left_out(scanned, path))
+    plan = index_plan(Found(files), {}, job.limits.most_file_bytes) if path in files else dropping((path,))
+    tally = dropped(job, plan, files) + read_and_stored(job, plan, files, scanned.identities)
+    if path not in files:
+        return FileIndexed(shown, "removed", None if gone else _why_left_out(scanned, path))
+    as_it_is, problem = _held_as_it_is(job, path)
+    if not as_it_is:
+        return FileIndexed(shown, "unreadable", problem)
+    return FileIndexed(shown, "added" if held is None else "changed" if tally != Tally() else "unchanged", problem)
+
+
+def _files_synced(job: Job, ignore: Ignore, paths: tuple[str, ...]) -> CollectionIndexed:
+    job.report(PhaseStarted(Phase.READ, len(paths)))
+    found = tuple(_file_indexed(job, ignore, path) for path in paths)
+    with writing(job.connection) as transaction:
+        vectors_let_go(transaction)
+    job.report(PhaseDone(len(paths)))
+    _settled(job.connection, job.report, job.limits.batches)
+    with reading(job.connection) as transaction:
+        outstanding = len(unreadable(transaction))
+    states = Counter(each.state for each in found)
+    job.report(Finished(states["added"], states["changed"], states["removed"], outstanding))
+    outcome = Indexed(len(paths), states["added"], states["changed"], states["removed"], outstanding)
+    return CollectionIndexed(job.collection.name, outcome, found)
+
+
 def _skipped(skipped: Collection, report: Reporter, reason: str, remedy: str | None) -> CollectionIndexed:
     report(Noted(reason, remedy))
     return CollectionIndexed(skipped.name, Skipped(reason, remedy))
 
 
-def _ignoring(job: Job) -> CollectionIndexed:
+def _ignoring(job: Job, paths: tuple[str, ...]) -> CollectionIndexed:
     try:
         ignore = ignore_at(job.collection.folder)
     except OSError as error:
         reason = f"its {IGNORE_FILE} can't be read ({error.strerror or error})"
         return _skipped(job.collection, job.report, reason, IGNORE_REMEDY)
+    if paths:
+        return _files_synced(job, ignore, paths)
     return CollectionIndexed(job.collection.name, _synced(job, ignore))
 
 
@@ -300,7 +174,16 @@ def _settled(connection: Connection, report: Reporter, batches: Batches) -> None
         report(PhaseDone(done))
 
 
-def _indexed(one: Collection, report: Reporter, limits: Limits, readers: Readers, ocr: ScanModel) -> CollectionIndexed:
+@dataclass(frozen=True, slots=True)
+class _Indexing:
+    report: Reporter
+    limits: Limits
+    readers: Readers
+    ocr: ScanModel
+
+
+def _indexed(one: Collection, asked: _Indexing, paths: tuple[str, ...] = ()) -> CollectionIndexed:
+    report, limits = asked.report, asked.limits
     report(CollectionStarted(one.name, str(one.folder)))
     try:
         with sole_writer(one.store, "sift index"), connected(one.store, one.id) as connection:
@@ -308,15 +191,29 @@ def _indexed(one: Collection, report: Reporter, limits: Limits, readers: Readers
             _remade(connection, report, limits.batches)
             if not one.folder.is_dir():
                 return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)
-            return _ignoring(Job(one, connection, report, limits, readers, ocr))
+            return _ignoring(Job(one, connection, report, limits, asked.readers, asked.ocr), paths)
     except StoreUnavailableError as error:
         return _skipped(one, report, error.message, error.remedy)
     except OSError as error:
         return _skipped(one, report, f"it is out of reach ({error.strerror or error})", OUT_OF_REACH_REMEDY)
 
 
+def _grouped(home: Path, files: Sequence[str]) -> dict[Collection, tuple[str, ...]]:
+    known, grouped = known_collections(home), dict[Collection, list[str]]()
+    for given in files:
+        found = located(known, given)
+        if found is None:
+            raise InvalidRequestError(f"{given} is in no collection", NO_COLLECTION_REMEDY, "files")
+        grouped.setdefault(found[0], []).append(split_keyed_path(found[1])[0])
+    return {one: tuple(dict.fromkeys(paths)) for one, paths in grouped.items()}
+
+
 def index(
     home: Path, request: IndexCollections, report: Reporter, limits: Limits = LIMITS, readers: Readers = READERS
 ) -> IndexResult:
-    chosen, ocr = chosen_or_active(home, request.names), ScanModel(readers.scanning)
-    return IndexResult(tuple(_indexed(one, report, limits, readers, ocr) for one in chosen))
+    asked = _Indexing(report, limits, readers, ScanModel(readers.scanning))
+    if not request.files:
+        return IndexResult(tuple(_indexed(one, asked) for one in chosen_or_active(home, request.names)))
+    if request.names:
+        raise InvalidRequestError("give collections or files, not both", BOTH_REMEDY, "files")
+    return IndexResult(tuple(_indexed(one, asked, paths) for one, paths in _grouped(home, request.files).items()))

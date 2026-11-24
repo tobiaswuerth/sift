@@ -15,7 +15,7 @@ from sift.api.collections import (
 from sift.api.documents import Documents, DocumentText, Unfound
 from sift.api.embedding import CollectionEmbedded, Embedded, EmbedResult
 from sift.api.errors import Problem
-from sift.api.indexing import CollectionIndexed, Indexed, IndexResult, Skipped
+from sift.api.indexing import CollectionIndexed, FileIndexed, Indexed, IndexResult, Skipped
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
 from sift.api.search import Hit, SearchResult, Unsearched
 from sift.interfaces.cli.context import Answer
@@ -60,6 +60,15 @@ SAMPLES: dict[str, Answer] = {
     ),
     "index": IndexResult(
         (CollectionIndexed("notes", Indexed(3, 1, 1, 0, 1)), CollectionIndexed("papers", Skipped("gone", "add it")))
+    ),
+    "index files": IndexResult(
+        (
+            CollectionIndexed(
+                "notes",
+                Indexed(2, 0, 1, 0, 1),
+                (FileIndexed("notes/rl.md", "changed"), FileIndexed("notes/scan.pdf", "unreadable", "no text")),
+            ),
+        )
     ),
     "embed": EmbedResult(
         (CollectionEmbedded("notes", Embedded(7, 0)), CollectionEmbedded("papers", Skipped("gone", "add it")))

@@ -38,14 +38,19 @@ def holding(known: Sequence[Collection], full: Path) -> tuple[Collection, str] |
     return held(full) or (held(full.parent.resolve() / full.name) if anchored else None)
 
 
-def place(known: Sequence[Collection], id_: str) -> tuple[Collection, str]:
+def located(known: Sequence[Collection], id_: str) -> tuple[Collection, str] | None:
     if Path(id_).is_absolute():
         found = holding(known, Path(os.path.normpath(id_)))
     else:
         name, _, relative = id_.partition(SEPARATOR)
         chosen = next((one for one in known if one.name.casefold() == name.casefold()), None)
         found = (chosen, relative) if chosen else None
-    if found is None or not found[1]:
+    return found if found is not None and found[1] else None
+
+
+def place(known: Sequence[Collection], id_: str) -> tuple[Collection, str]:
+    found = located(known, id_)
+    if found is None:
         raise unknown(id_)
     return refuse_inactive(found[0]), found[1]
 

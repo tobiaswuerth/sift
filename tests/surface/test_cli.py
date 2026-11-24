@@ -283,7 +283,7 @@ def test_index_answers_in_json_when_asked(settings: Settings, notes: Path) -> No
     indexed_notes(settings, notes)
     code, out, _ = ran(settings, "index", "notes", "--json")
     outcome = {"files": 2, "added": 2, "changed": 0, "removed": 0, "unreadable": 0, "state": "indexed"}
-    assert (code, json.loads(out)) == (0, {"collections": [{"name": "notes", "outcome": outcome}]})
+    assert (code, json.loads(out)) == (0, {"collections": [{"name": "notes", "outcome": outcome, "named": []}]})
 
 
 def test_index_without_collections_says_how_to_add_one(settings: Settings) -> None:
