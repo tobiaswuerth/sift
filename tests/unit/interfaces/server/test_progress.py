@@ -7,6 +7,7 @@ from sift.api.events import Noted
 from sift.api.serving import Served
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.handled import HANDLED, Handled
+from sift.interfaces.server.serving import Serve
 from sift.settings import Settings
 from tests.files import write
 from tests.serving import Line, asked, running, streaming, until
@@ -41,7 +42,7 @@ def test_indexing_many_files_through_the_home_process_sends_progress_at_most_twi
 ) -> None:
     for number in range(FILES):
         write(tmp_path / "notes" / f"{number}.md", f"# Note {number}\n")
-    with running(settings, clock=lambda: 0.0) as server:
+    with running(settings, how=Serve(clock=lambda: 0.0)) as server:
         asked(server, "add", {"folder": str(tmp_path / "notes")})
         _, indexed = asked(server, "index", {})
     phases = phases_of(indexed)

@@ -176,7 +176,7 @@ def test_a_quiet_command_s_answer_is_kept_alive_by_a_line_while_nothing_else_is_
         return Served("quiet")
 
     with (
-        running(settings, {**HANDLED, "status": Handled(quiet, writes=False)}, alive_every=0.01) as server,
+        running(settings, {**HANDLED, "status": Handled(quiet, writes=False)}, how=Serve(alive_every=0.01)) as server,
         streaming(server, "status") as response,
     ):
         first = response.readline()

@@ -11,7 +11,6 @@ from typing import cast
 from sift.api.events import Event
 from sift.api.serving import ServeHome
 from sift.interfaces.acts.acting import Acting
-from sift.interfaces.server.app import ALIVE_SECONDS
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import SERVE, HomeServer, Serve, held
 from sift.settings import Settings
@@ -24,11 +23,10 @@ def running(
     settings: Settings,
     handled: Mapping[str, Handled] = HANDLED,
     of: str = VERSION,
-    alive_every: float = ALIVE_SECONDS,
-    clock: Callable[[], float] = SERVE.clock,
+    how: Serve = SERVE,
 ) -> Generator[HomeServer]:
-    heard, how = list[Event](), Serve(handled=handled, alive_every=alive_every, clock=clock)
-    with held(settings, ServeHome(port=0), of, heard.append, how) as server:
+    heard, served = list[Event](), dataclasses.replace(how, handled=handled)
+    with held(settings, ServeHome(port=0), of, heard.append, served) as server:
         thread = threading.Thread(target=server.server.run, kwargs={"sockets": [server.socket]}, daemon=True)
         thread.start()
         waited = threading.Event()

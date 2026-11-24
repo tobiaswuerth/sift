@@ -26,6 +26,7 @@ from sift.interfaces.acts.acting import fresh_models
 from sift.interfaces.server.app import ALIVE_SECONDS, LOGGER, Serving, served_app
 from sift.interfaces.server.endpoint import SERVER, SERVING, Endpoint, found, own_endpoint, written
 from sift.interfaces.server.handled import HANDLED, Handled
+from sift.interfaces.server.heads import HeadsInTime
 from sift.interfaces.server.results import KeptResults
 from sift.settings import Settings
 from sift.storage.database import private_folder
@@ -39,6 +40,8 @@ PORT_REMEDY = "give another port, or 0 for any free one"
 IDLE_CHECK_SECONDS = 30.0
 STOP_SECONDS = 5.0
 GRACE_SECONDS = 10
+KEEP_ALIVE_SECONDS = 5
+MOST_CONNECTIONS = 256
 STOPPING = "stopping: {jobs} stops at its next step; what it wrote so far is kept"
 RESTED = "the models were idle: they wait in RAM, off the GPU, until used again"
 STOPPING_SIGNALS: tuple[int, ...] = tuple(
@@ -123,6 +126,8 @@ class Serve:
     alive_every: float = ALIVE_SECONDS
     grace_seconds: int = GRACE_SECONDS
     clock: Callable[[], float] = time.perf_counter
+    keep_alive_seconds: int = KEEP_ALIVE_SECONDS
+    most_connections: int = MOST_CONNECTIONS
 
 
 SERVE = Serve()
@@ -150,7 +155,14 @@ def held(
         serving = Serving(settings, endpoint.token, *kept, writer, pool, how.alive_every, clock=how.clock)
         app = served_app(serving, how.handled)
         config = uvicorn.Config(
-            app, log_config=None, access_log=False, lifespan="off", timeout_graceful_shutdown=how.grace_seconds
+            app,
+            http=HeadsInTime,
+            log_config=None,
+            access_log=False,
+            lifespan="off",
+            timeout_graceful_shutdown=how.grace_seconds,
+            timeout_keep_alive=how.keep_alive_seconds,
+            limit_concurrency=how.most_connections,
         )
         written(listed, endpoint)
         server = StoppingServer(config, partial(_stopping, serving, listed, report))

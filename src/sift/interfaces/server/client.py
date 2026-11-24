@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
-from sift.api.errors import InternalError, InvalidRequestError, SiftError, StoreUnavailableError
+from sift.api.errors import InternalError, InvalidRequestError, Problem, SiftError, StoreUnavailableError
 from sift.api.events import EVENT_KINDS, Event, Reporter
 from sift.api.wire import Json, decoded, decoded_error, encoded
 from sift.interfaces.acts.acting import Act, answer_kind
@@ -17,6 +17,8 @@ UNFINISHED = "the home process ended its answer unfinished"
 UNREADABLE = "the home process answered what this sift cannot read"
 LOG_REMEDY = "see its log in SIFT_HOME/logs, and ask again"
 SILENT_REMEDY = "see whether sift serve still runs there; else stop it and start it again"
+BUSY = "the home process holds as many connections as it takes"
+BUSY_REMEDY = "ask again in a moment; else see what opens connections to it and leaves them open"
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +52,8 @@ def _said(line: bytes) -> dict[str, Json]:
 
 
 def _refusal(response: http.client.HTTPResponse, longest: int) -> SiftError:
+    if response.status == http.client.SERVICE_UNAVAILABLE:
+        return StoreUnavailableError(BUSY, BUSY_REMEDY, code=Problem.BUSY)
     said = _said(response.read(longest))
     return _readable(decoded_error, said["error"]) if "error" in said else InternalError(UNREADABLE, LOG_REMEDY)
 
