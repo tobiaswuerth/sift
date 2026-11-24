@@ -5,11 +5,12 @@ import sys
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
-from functools import partial
 from pathlib import Path
+from typing import cast
 
 ENDPOINT = "server.json"
-INTERRUPT = signal.SIGINT
+INTERRUPT = cast("int", getattr(signal, "CTRL_BREAK_EVENT", signal.SIGINT))
+OWN_GROUP = cast("int", getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
 
 
 def environment(home: Path, model: str = "", reranker: str = "") -> dict[str, str]:
@@ -47,6 +48,7 @@ def served(home: Path) -> Generator[subprocess.Popen[str]]:
         text=True,
         encoding="utf-8",
         env=environment(home),
+        creationflags=OWN_GROUP,
     )
     try:
         waited = threading.Event()
@@ -57,6 +59,5 @@ def served(home: Path) -> Generator[subprocess.Popen[str]]:
         yield running
     finally:
         if running.poll() is None:
-            stop = running.kill if sys.platform == "win32" else partial(running.send_signal, INTERRUPT)
-            stop()
+            running.send_signal(INTERRUPT)
         running.communicate(timeout=60)

@@ -38,6 +38,7 @@ UNIT = 8
 SPEED = 9
 TIME = 10
 BAR = 16
+STOP_HINT = "Ctrl+C stops it and its jobs; sift jobs lists them"
 FILLED = ("\N{BOX DRAWINGS HEAVY HORIZONTAL}", "#")
 EMPTY = ("\N{BOX DRAWINGS LIGHT HORIZONTAL}", "-")
 DOT = ("\N{MIDDLE DOT}", "|")
@@ -102,7 +103,10 @@ def _done(finished: Finished, view: View, now: float, looks: Looks) -> tuple[str
 
 def _said(said: Noted | Listening, style: Style) -> tuple[str, ...]:
     if isinstance(said, Listening):
-        return (labelled("serve", f"{printable(said.url)}  {printable(said.home)}", Tone.STRONG, style),)
+        return (
+            labelled("serve", f"{printable(said.url)}  {printable(said.home)}", Tone.STRONG, style),
+            labelled("stop", STOP_HINT),
+        )
     fix = (_label("fix", Tone.SECONDARY, style) + printable(said.remedy),) if said.remedy else ()
     return (_label("note", Tone.WARNING, style) + printable(said.text), *fix)
 

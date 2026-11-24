@@ -1,6 +1,7 @@
 import logging
 import os
 import secrets
+import signal
 import socket
 import threading
 from collections.abc import Callable, Generator, Mapping
@@ -38,6 +39,9 @@ STOP_SECONDS = 5.0
 GRACE_SECONDS = 10
 STOPPING = "stopping: {jobs} stops at its next step; what it wrote so far is kept"
 RESTED = "the models were idle: they wait in RAM, off the GPU, until used again"
+STOPPING_SIGNALS: tuple[int, ...] = tuple(
+    cast("int", getattr(signal, name)) for name in ("SIGTERM", "SIGBREAK") if hasattr(signal, name)
+)
 
 
 def _stopping(serving: Serving, report: Reporter) -> None:
@@ -151,8 +155,22 @@ def held(
             serving.watch.let_go()
 
 
+def _interrupted(_signal: int, _frame: FrameType | None) -> None:
+    raise KeyboardInterrupt
+
+
+@contextmanager
+def _stopped_as_by_ctrl_c() -> Generator[None]:
+    kept = {each: signal.signal(each, _interrupted) for each in STOPPING_SIGNALS}
+    try:
+        yield
+    finally:
+        for each, handler in kept.items():
+            signal.signal(each, handler)
+
+
 def serve(settings: Settings, request: ServeHome, version: str, report: Reporter, how: Serve = SERVE) -> Served:
-    with held(settings, request, version, report, how) as running:
+    with _stopped_as_by_ctrl_c(), held(settings, request, version, report, how) as running:
         try:
             report(Listening(running.url, str(settings.home)))
             how.run(running)

@@ -202,3 +202,22 @@ def test_a_write_that_ends_after_its_client_was_let_go_ends_quietly(settings: Se
         client.join(30)
         release.set()
     assert ended == ["ended"]
+
+
+def test_sift_serve_ended_as_a_service_is_ended_stops_as_by_ctrl_c(settings: Settings) -> None:
+    def terminated_once_started(running: HomeServer) -> None:
+        assert until(lambda: running.server.started)
+        signal.raise_signal(signal.SIGTERM)
+
+    def served(running: HomeServer) -> None:
+        helper = threading.Thread(target=terminated_once_started, args=(running,), daemon=True)
+        helper.start()
+        try:
+            running.server.run(sockets=[running.socket])
+        finally:
+            helper.join(30)
+
+    before = signal.getsignal(signal.SIGTERM)
+    served_url = serve(settings, ServeHome(port=0), "2.0.0", list[Event]().append, Serve(served)).url
+    assert (served_url.startswith("http://127.0.0.1:"), found(settings.home)) == (True, None)
+    assert signal.getsignal(signal.SIGTERM) is before

@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 import sys
 from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
@@ -35,6 +36,8 @@ def linked(link: Path, target: str, *, folder: bool = False) -> None:
     try:
         link.symlink_to(target, target_is_directory=folder)
     except OSError as refused:
+        if os.environ.get("CI"):
+            raise
         pytest.skip(f"this system makes no symbolic links: {refused}")
 
 

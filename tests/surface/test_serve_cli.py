@@ -1,11 +1,9 @@
 import http.client
 import signal
-import sys
 import threading
 from pathlib import Path
 
-import pytest
-
+from sift.interfaces.console.progress import STOP_HINT
 from sift.interfaces.server.endpoint import ENDPOINT, found
 from sift.settings import Settings
 from tests.surface import process
@@ -39,14 +37,14 @@ def test_ctrl_c_stops_sift_serve_saying_so_and_leaves_nothing_behind(settings: S
     threading.Thread(target=interrupted_once_answering, args=(settings.home,), daemon=True).start()
     code, out, err = ran(settings, "serve", "--port", "0")
     url = err.split("  ")[1]
-    assert (code, out, err) == (0, "", f"serve  {url}  {settings.home}\n done  stopped serving {url}\n")
+    started = f"serve  {url}  {settings.home}\n stop  {STOP_HINT}\n"
+    assert (code, out, err) == (0, "", f"{started} done  stopped serving {url}\n")
     assert (found(settings.home), (settings.home / ENDPOINT).exists()) == (None, False)
     said = next((settings.home / "logs").glob("serve-*.log")).read_text(encoding="utf-8")
     assert said.endswith(" INFO sift: ended with exit code 0\n")
     assert " INFO uvicorn.error: Started server process [" in said
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Windows gives a child process no Ctrl+C of its own")
 def test_ctrl_c_stops_the_home_process_and_takes_its_endpoint_away(tmp_path: Path) -> None:
     home = tmp_path / "home"
     with process.served(home) as running:

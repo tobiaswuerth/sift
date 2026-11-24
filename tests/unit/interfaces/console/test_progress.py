@@ -70,7 +70,8 @@ def test_a_note_while_a_phase_runs_is_said_and_the_phase_still_ends_in_its_row()
 
 def test_a_home_process_listening_says_where_and_for_which_home() -> None:
     view, lines = shown(View(), Listening("http://127.0.0.1:8765", "/home/sift"), 0.0, LOOKS)
-    assert (view, lines) == (View(), ("serve  http://127.0.0.1:8765  /home/sift",))
+    stop = " stop  Ctrl+C stops it and its jobs; sift jobs lists them"
+    assert (view, lines) == (View(), ("serve  http://127.0.0.1:8765  /home/sift", stop))
 
 
 def test_without_unicode_the_glyphs_are_ascii() -> None:
