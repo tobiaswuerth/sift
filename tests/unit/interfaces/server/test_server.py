@@ -1,5 +1,6 @@
 import http.client
 import json
+import logging
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -15,10 +16,10 @@ from sift.api.serving import Served, ServeHome
 from sift.app.embedding import embed
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.cli.main import ENTRIES
-from sift.interfaces.server.app import WAITING
+from sift.interfaces.server.app import LOGGER, WAITING
 from sift.interfaces.server.endpoint import ENDPOINT, SERVER, SERVING, Endpoint, found, lock_of
 from sift.interfaces.server.handled import HANDLED, Handled
-from sift.interfaces.server.serving import HomeServer, held, serve
+from sift.interfaces.server.serving import RESTED, HomeServer, held, serve, watched_idle
 from sift.settings import Settings
 from sift.storage.writer import held_by, sole_writer
 from tests.files import write
@@ -225,3 +226,17 @@ def test_a_port_that_is_taken_is_said_to_be(settings: Settings) -> None:
         ):
             pass
         assert refused.value.field == "port"
+
+
+def test_the_home_process_lets_idle_models_go_and_says_so(caplog: pytest.LogCaptureFixture) -> None:
+    stop, asked = threading.Event(), list[bool]()
+
+    def release() -> bool:
+        asked.append(len(asked) == 0)
+        if len(asked) == 2:
+            stop.set()
+        return asked[-1]
+
+    with caplog.at_level(logging.INFO, LOGGER):
+        watched_idle(release, stop, 0.001)
+    assert (asked, [record.getMessage() for record in caplog.records]) == ([True, False], [RESTED])

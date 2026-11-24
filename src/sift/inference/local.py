@@ -1,5 +1,7 @@
+import math
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from types import MappingProxyType
 from typing import Protocol, cast
@@ -14,12 +16,15 @@ from transformers.utils import logging as transformers_logging
 
 from sift.api.errors import ModelUnavailableError
 from sift.domain.codec.codes import Floats, Halves
-from sift.inference.accelerator import MACHINE, Device, emptied, host_full, placed, too_large
+from sift.inference.accelerator import CACHES, MACHINE, Device, Machine, emptied, host_full, placed, too_large
 from sift.inference.batches import Attempt, BatchShape, in_batches
 from sift.inference.hub import RERANK_MODEL, hub, pinned
 
 MOST_TOKENS = 1024
 RERANK_BATCH = 16
+IDLE_SECONDS = 300.0
+RESTS = "cuda"
+RAM = "cpu"
 BROKEN_REMEDY = "check the name in SIFT_EMBED_MODEL or SIFT_RERANK_MODEL; if it is right, report this with the name"
 UNLOADED_REMEDY = (
     "check the network and the name in SIFT_EMBED_MODEL or SIFT_RERANK_MODEL; for a gated model, log in: hf auth login"
@@ -42,7 +47,11 @@ class Capped(Protocol):
     def max_seq_length(self, value: int) -> None: ...
 
 
-class Embedder(Capped, Protocol):
+class Movable(Protocol):
+    def to(self, device: str) -> object: ...
+
+
+class Embedder(Capped, Movable, Protocol):
     @property
     def tokenizer(self) -> object: ...
 
@@ -59,7 +68,7 @@ class Embedder(Capped, Protocol):
     ) -> object: ...
 
 
-class Ranker(Capped, Protocol):
+class Ranker(Capped, Movable, Protocol):
     @property
     def tokenizer(self) -> object: ...
 
@@ -85,10 +94,10 @@ def width_of(name: str, found: int | None) -> int:
     return found
 
 
-def this_device(gpus: str | None = None) -> Device:
+def this_device(gpus: str | None = None, machine: Machine = MACHINE) -> Device:
     transformers_logging.disable_progress_bar()
     enable_progress_bars()
-    return placed(MACHINE, gpus)
+    return placed(machine, gpus)
 
 
 def _capped[T: Capped](model: T) -> T:
@@ -184,50 +193,121 @@ def _scored(ranker: Ranker, query: str, texts: list[str]) -> Floats:
     return np.asarray(found, np.float32).reshape(-1, 1)
 
 
+@dataclass(frozen=True, slots=True)
+class LocalHost:
+    machine: Machine = MACHINE
+    clock: Callable[[], float] = time.perf_counter
+    embedders: Callable[[str, Device], Loaded] = _embedder
+    rankers: Callable[[str, Device], Ranker] = _ranker
+    caches: Mapping[str, Callable[[], None]] = CACHES
+
+
+LOCAL_HOST = LocalHost()
+
+
+@dataclass(slots=True)
+class Placement:
+    gpus: str | None
+    host: LocalHost
+    device: Device | None = None
+    used: float = -math.inf
+    resting: bool = False
+
+    def on(self) -> tuple[Device, bool]:
+        back = False
+        if self.device is None:
+            self.device = this_device(self.gpus, self.host.machine)
+            back, self.resting = self.resting, False
+        self.used = self.host.clock()
+        return self.device, back
+
+    def rested(self) -> Device | None:
+        device = self.device
+        if device is None or device.name != RESTS or self.host.clock() - self.used < IDLE_SECONDS:
+            return None
+        self.device, self.resting = None, True
+        return device
+
+
+@dataclass(slots=True)
+class HeldModels:
+    model: str
+    reranker: str
+    host: LocalHost
+    embedder: Loaded | None = None
+    ranker: Ranker | None = None
+
+    def embedding(self, device: Device) -> Loaded:
+        if self.embedder is None:
+            self.embedder = self.host.embedders(self.model, device)
+        return self.embedder
+
+    def ranking(self, device: Device) -> Ranker:
+        if self.ranker is None:
+            self.ranker = self.host.rankers(self.reranker, device)
+        return self.ranker
+
+    def moved(self, device: str) -> None:
+        embedder = None if self.embedder is None else self.embedder.model
+        for model in (embedder, self.ranker):
+            if model is not None:
+                model.to(device)
+
+    def let_go(self) -> None:
+        self.embedder, self.ranker = None, None
+
+
 @dataclass(slots=True)
 class Local:
     model: str
     reranker: str = RERANK_MODEL
     gpus: str | None = None
-    device: Device | None = None
-    embedder: Loaded | None = None
-    ranker: Ranker | None = None
+    host: LocalHost = LOCAL_HOST
     batch: int | None = None
     rerank_batch: int = RERANK_BATCH
+    placing: Placement = field(init=False)
+    held: HeldModels = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.placing = Placement(self.gpus, self.host)
+        self.held = HeldModels(self.model, self.reranker, self.host)
 
     @property
     def name(self) -> str:
         return pinned(self.model)
 
     def _on(self) -> Device:
-        if self.device is None:
-            self.device = this_device(self.gpus)
-        return self.device
+        device, back = self.placing.on()
+        if back and device.name == RESTS:
+            self.held.moved(device.name)
+        elif back:
+            self.held.let_go()
+            self.batch, self.rerank_batch = None, RERANK_BATCH
+        return device
 
-    def _embedding(self) -> Loaded:
-        if self.embedder is None:
-            self.embedder = _embedder(self.model, self._on())
-        return self.embedder
-
-    def _ranking(self) -> Ranker:
-        if self.ranker is None:
-            self.ranker = _ranker(self.reranker, self._on())
-        return self.ranker
+    def release_idle(self) -> bool:
+        device = self.placing.rested()
+        if device is None:
+            return False
+        self.held.moved(RAM)
+        emptied(device, self.host.caches)
+        return True
 
     def _notices(self) -> tuple[str, ...]:
         notice = self._on().notice
         return () if notice is None else (notice,)
 
     def prepare(self) -> tuple[str, ...]:
-        self._embedding()
+        self.held.embedding(self._on())
         return self._notices()
 
     def prepare_ranker(self) -> tuple[str, ...]:
-        self._ranking()
+        self.held.ranking(self._on())
         return self._notices()
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
-        loaded, device = self._embedding(), self._on()
+        device = self._on()
+        loaded = self.held.embedding(device)
 
         def run(part: list[str]) -> Floats:
             return _run(loaded.model, part, query=query)
@@ -239,7 +319,7 @@ class Local:
         return found.rows.astype(np.float16)
 
     def rerank(self, query: str, texts: Sequence[str]) -> Floats:
-        ranker = self._ranking()
+        ranker = self.held.ranking(self._on())
 
         def run(part: list[str]) -> Floats:
             return _scored(ranker, query, part)

@@ -43,6 +43,7 @@ def test_ctrl_c_stops_sift_serve_saying_so_and_leaves_nothing_behind(settings: S
     assert (found(settings.home), (settings.home / ENDPOINT).exists()) == (None, False)
     said = next((settings.home / "logs").glob("serve-*.log")).read_text(encoding="utf-8")
     assert said.endswith(" INFO sift: ended with exit code 0\n")
+    assert " INFO uvicorn.error: Started server process [" in said
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows gives a child process no Ctrl+C of its own")

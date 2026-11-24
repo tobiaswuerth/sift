@@ -1,9 +1,7 @@
 import errno
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 
-import pynvml
 import pytest
 import torch
 
@@ -23,53 +21,9 @@ from sift.inference.accelerator import (
     placed,
     too_large,
 )
+from tests.devices import FakeCuda
 
 NONE = Hardware(mps=False, nvidia=False, cuda_build=None)
-
-
-@dataclass(frozen=True, slots=True)
-class Properties:
-    total_memory: int
-
-
-@dataclass(slots=True)
-class FakeCuda:
-    free: int
-    total: int
-    used: int | None = None
-    available: bool = True
-    bf16: bool = True
-    failure: Exception | None = None
-    fractions: list[float] = field(default_factory=list[float])
-    emulated: list[bool] = field(default_factory=list[bool])
-    contexts: list[int] = field(default_factory=list[int])
-
-    def is_available(self) -> bool:
-        return self.available
-
-    def is_bf16_supported(self, *, including_emulation: bool = True) -> bool:
-        self.emulated.append(including_emulation)
-        return self.bf16
-
-    def mem_get_info(self, device: int) -> tuple[int, int]:
-        self.contexts.append(device)
-        return self.free, self.total
-
-    def device_memory_used(self, device: int) -> int:
-        assert device == 0
-        if self.failure is not None:
-            raise self.failure
-        if self.used is None:
-            raise pynvml.NVMLError(pynvml.NVML_ERROR_NOT_SUPPORTED)
-        return self.used
-
-    def get_device_properties(self, device: int) -> Properties:
-        assert device == 0
-        return Properties(self.total)
-
-    def set_per_process_memory_fraction(self, fraction: float, device: int) -> None:
-        assert device == 0
-        self.fractions.append(fraction)
 
 
 def test_the_budget_is_what_others_leave_free_less_a_tenth_or_a_gib() -> None:

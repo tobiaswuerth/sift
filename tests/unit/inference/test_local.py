@@ -46,11 +46,11 @@ def test_a_model_from_a_folder_embeds_texts_as_normalised_halves_in_their_order(
 
 def test_the_model_loads_once_when_first_needed(tiny: Path) -> None:
     models = Local(str(tiny))
-    assert models.embedder is None
+    assert models.held.embedder is None
     models.prepare()
-    loaded = models.embedder
+    loaded = models.held.embedder
     models.encode(["halo"], query=True)
-    assert models.embedder is loaded
+    assert models.held.embedder is loaded
 
 
 def hashed(_: Path) -> Models:
@@ -101,8 +101,8 @@ def test_queries_and_documents_are_embedded_with_their_prompts_and_at_most_1024_
     assert np.allclose(queries, np.asarray(query, np.float32), atol=1e-2)
     assert np.allclose(documents, np.asarray(document, np.float32), atol=1e-2)
     assert not np.allclose(queries, documents, atol=1e-2)
-    assert models.embedder is not None
-    assert models.embedder.model.max_seq_length == 1024
+    assert models.held.embedder is not None
+    assert models.held.embedder.model.max_seq_length == 1024
 
 
 def test_a_model_that_cannot_be_loaded_says_what_to_check(tmp_path: Path) -> None:
@@ -117,8 +117,8 @@ def test_a_reranker_reading_fewer_than_1024_tokens_reads_passages_cut_to_its_len
     models = local(str(tiny), str(tiny.parent / "reranker"))
     scores = models.rerank("dark matter", [" ".join(["halo"] * 200), "pruning"])
     assert bool(np.isfinite(scores).all())
-    assert models.ranker is not None
-    assert models.ranker.max_seq_length == POSITIONS
+    assert models.held.ranker is not None
+    assert models.held.ranker.max_seq_length == POSITIONS
 
 
 def test_a_model_too_large_for_the_memory_left_says_so_not_to_check_the_network() -> None:
@@ -169,8 +169,10 @@ def test_a_model_routing_queries_to_static_embeddings_caps_only_what_reads_token
     models = Local(str(tiny_routed(tmp_path)))
     assert models.encode(["dark matter"], query=True).shape == (1, WIDTH)
     assert models.encode(["dark matter"], query=False).shape == (1, WIDTH)
-    assert models.embedder is not None
-    assert [each.max_seq_length for each in models.embedder.model.modules() if isinstance(each, Transformer)] == [1024]
+    assert models.held.embedder is not None
+    assert [each.max_seq_length for each in models.held.embedder.model.modules() if isinstance(each, Transformer)] == [
+        1024
+    ]
 
 
 class Predicting(Protocol):
@@ -207,13 +209,13 @@ def test_the_models_run_in_inference_mode_as_models_loaded_for_it(tiny: Path) ->
     models = local(str(tiny), str(tiny.parent / "reranker"))
     models.prepare()
     models.prepare_ranker()
-    assert models.embedder is not None
+    assert models.held.embedder is not None
     seen: set[tuple[bool, bool]] = set()
 
     def heard(module: torch.nn.Module, _args: tuple[object, ...], _output: object) -> None:
         seen.add((torch.is_inference_mode_enabled(), module.training))
 
-    for module in [*modules_of(models.embedder.model), *modules_of(models.ranker)]:
+    for module in [*modules_of(models.held.embedder.model), *modules_of(models.held.ranker)]:
         module.register_forward_hook(heard)
     models.encode(["halo"], query=False)
     models.rerank("dark matter", ["halo"])
@@ -223,8 +225,8 @@ def test_the_models_run_in_inference_mode_as_models_loaded_for_it(tiny: Path) ->
 def test_texts_are_embedded_longest_first_by_the_tokens_the_model_reads_not_their_characters(tiny: Path) -> None:
     models = Local(str(tiny), batch=1)
     models.prepare()
-    assert models.embedder is not None
-    (reader,) = [each for each in models.embedder.model.modules() if isinstance(each, Transformer)]
+    assert models.held.embedder is not None
+    (reader,) = [each for each in models.held.embedder.model.modules() if isinstance(each, Transformer)]
     read: list[int] = []
 
     def heard(_module: torch.nn.Module, args: tuple[dict[str, torch.Tensor], ...]) -> None:

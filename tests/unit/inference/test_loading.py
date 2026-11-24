@@ -8,8 +8,7 @@ import pytest
 
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference import local, ocr
-from sift.inference.loading import REDIRECTS, Deferred, LocalLoader, OcrModule, ocr_module
-from sift.inference.models import Models
+from sift.inference.loading import REDIRECTS, Deferred, LocalLoader, OcrModule, Resting, ocr_module
 from tests.models import Hashed
 
 
@@ -22,7 +21,7 @@ class Crowded:
     most_at_once: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def local(self, model: str, reranker: str, gpus: str | None) -> Models:
+    def local(self, model: str, reranker: str, gpus: str | None) -> Resting:
         with self.lock:
             self.builds.append((model, reranker, gpus))
         return Watched(self)
@@ -62,6 +61,11 @@ class Watched:
     def rerank(self, query: str, texts: Sequence[str]) -> Floats:
         return self.inner.rerank(query, texts)
 
+    def release_idle(self) -> bool:
+        self.crowded.entered()
+        self.crowded.left()
+        return True
+
 
 def test_models_shared_by_threads_are_built_once_and_used_by_one_call_at_a_time() -> None:
     crowded = Crowded(threading.Barrier(8))
@@ -78,6 +82,25 @@ def test_models_shared_by_threads_are_built_once_and_used_by_one_call_at_a_time(
     for thread in threads:
         thread.join(60)
     assert (crowded.builds, crowded.calls, crowded.most_at_once) == ([("model", "reranker", None)], 160, 1)
+
+
+def test_idle_models_are_let_go_one_call_at_a_time_and_none_are_built_to_let_go_of() -> None:
+    crowded = Crowded(threading.Barrier(8))
+    shared = Deferred("model", "reranker", None, loader=lambda: crowded)
+    assert (shared.release_idle(), crowded.builds) == (False, [])
+    shared.encode(["dark matter"], query=True)
+
+    def use(n: int) -> None:
+        crowded.arrived.wait(30)
+        for _ in range(20):
+            assert shared.release_idle() if n % 2 else len(shared.encode(["halo"], query=True)) == 1
+
+    threads = [threading.Thread(target=use, args=(n,)) for n in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(60)
+    assert (crowded.calls, crowded.most_at_once) == (161, 1)
 
 
 def test_the_note_pytorch_logs_on_a_mac_as_the_models_load_is_silenced() -> None:

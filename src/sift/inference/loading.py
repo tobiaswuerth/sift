@@ -18,8 +18,12 @@ REDIRECTS = "torch.distributed.elastic.multiprocessing.redirects"
 VIRTUAL_MAC = "Skipping device"
 
 
+class Resting(Models, Protocol):
+    def release_idle(self) -> bool: ...
+
+
 class LocalLoader(Protocol):
-    def local(self, model: str, reranker: str, gpus: str | None) -> Models: ...
+    def local(self, model: str, reranker: str, gpus: str | None) -> Resting: ...
 
 
 def _models_module(name: str) -> object:
@@ -41,7 +45,7 @@ class Deferred:
     model: str
     reranker: str
     gpus: str | None
-    built: Models | None = None
+    built: Resting | None = None
     loader: Callable[[], LocalLoader] = _local_module
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -49,7 +53,7 @@ class Deferred:
     def name(self) -> str:
         return pinned(self.model)
 
-    def _built(self) -> Models:
+    def _built(self) -> Resting:
         if self.built is None:
             self.built = self.loader().local(self.model, self.reranker, self.gpus)
         return self.built
@@ -69,6 +73,10 @@ class Deferred:
     def rerank(self, query: str, texts: Sequence[str]) -> Floats:
         with self.lock:
             return self._built().rerank(query, texts)
+
+    def release_idle(self) -> bool:
+        with self.lock:
+            return self.built is not None and self.built.release_idle()
 
 
 def deferred(model: str, reranker: str, gpus: str | None) -> Deferred:

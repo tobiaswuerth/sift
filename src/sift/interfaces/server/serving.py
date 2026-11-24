@@ -1,4 +1,5 @@
 import contextlib
+import logging
 import os
 import secrets
 import socket
@@ -18,7 +19,7 @@ from sift.app.kept_decoded import KeptDecoded
 from sift.app.questions import RememberedQuestions
 from sift.app.resident import ResidentCodes
 from sift.interfaces.acts.acting import fresh_models
-from sift.interfaces.server.app import ALIVE_SECONDS, Serving, served_app
+from sift.interfaces.server.app import ALIVE_SECONDS, LOGGER, Serving, served_app
 from sift.interfaces.server.endpoint import ENDPOINT, SERVER, SERVING, Endpoint, found, written
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.results import KeptResults
@@ -30,6 +31,9 @@ LOCALHOST = "127.0.0.1"
 WORKERS = 32
 ANOTHER_REMEDY = "commands are sent to it as they are; stop it to start another"
 PORT_REMEDY = "give another port, or 0 for any free one"
+IDLE_CHECK_SECONDS = 30.0
+STOP_SECONDS = 5.0
+RESTED = "the models were idle: they wait in RAM, off the GPU, until used again"
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -60,6 +64,24 @@ def _bound(port: int) -> socket.socket:
         ) from None
 
 
+def watched_idle(release: Callable[[], bool], stop: threading.Event, every: float = IDLE_CHECK_SECONDS) -> None:
+    while not stop.wait(every):
+        if release():
+            logging.getLogger(LOGGER).info(RESTED)
+
+
+@contextmanager
+def _resting(release: Callable[[], bool]) -> Generator[None]:
+    stop = threading.Event()
+    watch = threading.Thread(target=watched_idle, args=(release, stop), name="sift-idle", daemon=True)
+    watch.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        watch.join(STOP_SECONDS)
+
+
 @contextmanager
 def held(
     settings: Settings,
@@ -70,16 +92,17 @@ def held(
 ) -> Generator[HomeServer]:
     private_folder(settings.home)
     _refuse_another(settings)
+    models = fresh_models(settings)
     with (
         sole_writer(settings.home / SERVER, SERVING),
         _bound(request.port) as bound,
         ThreadPoolExecutor(WORKERS, thread_name_prefix="sift-serve") as pool,
+        _resting(models.release_idle),
     ):
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version)
-        models, codes, decoded = RememberedQuestions(fresh_models(settings)), ResidentCodes(), KeptDecoded()
-        kept = (codes, decoded, KeptResults())
-        serving = Serving(settings, endpoint.token, models, *kept, threading.Lock(), pool, alive_every)
+        kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults())
+        serving = Serving(settings, endpoint.token, *kept, threading.Lock(), pool, alive_every)
         config = uvicorn.Config(served_app(serving, handled), log_config=None, access_log=False, lifespan="off")
         written(settings.home, endpoint)
         try:
