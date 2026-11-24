@@ -9,6 +9,7 @@ from sift.settings import Settings
 
 if TYPE_CHECKING:
     from sift.inference.loading import Deferred
+    from sift.inference.models import Models
 
 LOADING = "sift.inference.loading"
 
@@ -18,7 +19,7 @@ class Acting:
     settings: Settings
     report: Reporter
     clock: Callable[[], float]
-    models: "Callable[[], Deferred]"
+    models: "Callable[[], Models]"
     codes: CodeSource = read_each_time
     decoded: DecodedSource = decoded_each_search
 

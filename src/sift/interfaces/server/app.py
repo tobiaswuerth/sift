@@ -31,7 +31,7 @@ from sift.settings import Settings
 from sift.storage.catalog import known_collections
 
 if TYPE_CHECKING:
-    from sift.inference.loading import Deferred
+    from sift.inference.models import Models
 
 HOSTS = ("127.0.0.1", "localhost")
 LINES = "application/x-ndjson; charset=utf-8"
@@ -53,7 +53,7 @@ FAILED_REMEDY = "see the home process's log in SIFT_HOME/logs, and report it"
 class Serving:
     settings: Settings
     token: str
-    models: "Deferred"
+    models: "Models"
     codes: ResidentCodes
     decoded: KeptDecoded
     writing: threading.Lock
