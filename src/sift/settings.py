@@ -53,7 +53,7 @@ def whole_path(written: str, user: Path | None, cwd: Path) -> Path:
     return cwd / path
 
 
-def _home(written: str | None, user: Path | None, cwd: Path) -> Path:
+def _named_home(written: str | None, user: Path | None, cwd: Path) -> Path:
     if not written:
         if user is None:
             raise InvalidRequestError(NO_HOME, HOME_REMEDY)
@@ -61,6 +61,13 @@ def _home(written: str | None, user: Path | None, cwd: Path) -> Path:
     if not Path(written).is_absolute() and Path(written).parts[:1] != (USER,):
         raise InvalidRequestError(f"{HOME} is no absolute folder: {written}", HOME_REMEDY)
     return whole_path(written, user, cwd)
+
+
+def _home(written: str | None, user: Path | None, cwd: Path) -> Path:
+    home = _named_home(written, user, cwd)
+    if home.exists() and not home.is_dir():
+        raise InvalidRequestError(f"the home {home} is no folder", HOME_REMEDY)
+    return home
 
 
 def user_folder(home: Callable[[], Path] = Path.home) -> Path | None:

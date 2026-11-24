@@ -31,6 +31,7 @@ from sift.storage.catalog import (
     Collection,
     NewCollection,
     add_collection,
+    all_named,
     catalog_of,
     forget_collection,
     holding_folder,
@@ -84,7 +85,7 @@ def add(home: Path, request: AddCollection, report: Reporter = unreported) -> Co
 
 def chosen(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
     known = known_collections(home)
-    return tuple(dict.fromkeys(named(known, name) for name in names)) if names else known
+    return all_named(known, names) if names else known
 
 
 def chosen_or_active(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:

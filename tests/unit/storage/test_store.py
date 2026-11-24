@@ -67,7 +67,7 @@ def test_a_file_that_is_no_database_is_a_damaged_store(tmp_path: Path) -> None:
     (tmp_path / "s.sqlite").write_bytes(b"not a database, just text that is long enough to have a header" * 10)
     with pytest.raises(StoreUnavailableError, match="damaged") as refused:
         open_store(tmp_path / "s.sqlite", COLLECTION)
-    assert refused.value.remedy == DAMAGED_REMEDY
+    assert refused.value.remedy == "run sift rm with its name, then add its folder and index it again"
 
 
 def test_a_database_that_is_no_store_is_refused(tmp_path: Path) -> None:

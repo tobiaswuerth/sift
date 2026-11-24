@@ -221,11 +221,15 @@ def same_place(one: Path, other: Path) -> bool:
     return _same(one.resolve()) == _same(other.resolve())
 
 
+def all_named(known: Sequence[Collection], names: Sequence[str]) -> tuple[Collection, ...]:
+    return tuple(dict.fromkeys(named(known, name) for name in names))
+
+
 def set_active(home: Path, names: Sequence[str], *, active: bool) -> tuple[Collection, ...]:
-    for name in names:
-        named(known_collections(home), name)
+    if not (home / CATALOG).is_file():
+        return all_named((), names)
     with catalog_of(home) as connection, writing(connection) as transaction:
-        chosen = tuple(dict.fromkeys(named(collections(transaction), name) for name in names))
+        chosen = all_named(collections(transaction), names)
         run_each(
             transaction,
             "UPDATE collections SET active = ? WHERE id = ?",

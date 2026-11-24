@@ -106,6 +106,20 @@ def test_a_relative_home_is_refused(user: Path, cwd: Path, written: str) -> None
     assert refused.value.remedy == "set SIFT_HOME to an absolute folder"
 
 
+def test_a_home_that_is_a_file_is_refused(tmp_path: Path, user: Path, cwd: Path) -> None:
+    taken = tmp_path / "taken"
+    taken.write_text("not a folder", encoding="utf-8")
+    user.mkdir()
+    (user / ".sift").write_text("not a folder", encoding="utf-8")
+    for asked, path in (({"SIFT_HOME": str(taken)}, taken), ({}, user / ".sift")):
+        with pytest.raises(InvalidRequestError) as refused:
+            parsed(asked, user, cwd)
+        assert (refused.value.message, refused.value.remedy) == (
+            f"the home {path} is no folder",
+            "set SIFT_HOME to an absolute folder",
+        )
+
+
 def test_without_a_user_folder_sift_home_alone_will_do(cwd: Path) -> None:
     assert parsed({"SIFT_HOME": str(cwd / "home")}, None, cwd).home == cwd / "home"
     for asked in ({}, {"SIFT_HOME": "~/home"}):
