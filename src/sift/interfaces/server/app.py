@@ -10,6 +10,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from starlette.applications import Starlette
@@ -18,6 +19,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from sift.api.errors import InternalError, InvalidRequestError, NotFoundError, Problem, SiftError, system_failure
 from sift.api.events import Event, Noted, Reporter
@@ -57,6 +59,7 @@ UNKNOWN = NotFoundError("no such command", "send one of sift's commands to /api/
 NO_JSON = InvalidRequestError("the request is no JSON", NO_JSON_REMEDY)
 TOO_LARGE = InvalidRequestError(f"the request is longer than {MOST_BODY:,} bytes", "send a shorter request")
 FAILED_REMEDY = "see the home process's log in SIFT_HOME/logs, and report it"
+LISTENED_FOR_LEAVING = MappingProxyType({"version": "3.0", "spec_version": "2.3"})
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -287,9 +290,17 @@ def _route(serving: Serving, name: str, handled: Handled) -> Route:
     return Route(f"/api/{name}", answer, methods=["POST"])
 
 
+@dataclass(frozen=True, slots=True)
+class ListeningForLeaving:
+    app: ASGIApp
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await self.app({**scope, "asgi": dict(LISTENED_FOR_LEAVING)}, receive, send)
+
+
 def served_app(serving: Serving, handled: Mapping[str, Handled] = HANDLED) -> Starlette:
     return Starlette(
         routes=[_route(serving, name, each) for name, each in handled.items()],
-        middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=list(HOSTS))],
+        middleware=[Middleware(ListeningForLeaving), Middleware(TrustedHostMiddleware, allowed_hosts=list(HOSTS))],
         exception_handlers={404: _unknown, 405: _unknown},
     )
