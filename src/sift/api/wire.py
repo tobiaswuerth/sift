@@ -129,6 +129,17 @@ def _one(kind: object, data: object, field: str) -> object:
     return data
 
 
+def _first_taking(members: tuple[object, ...], data: object, field: str, whole: object) -> object:
+    for member in members:
+        try:
+            found = _one(member, data, field)
+        except (WireError, InvalidRequestError):
+            continue
+        if fits(found, member):
+            return found
+    raise _refused(field, f"{field} is {data!r}, not {named(whole)}")
+
+
 def _value(kind: object, data: object, field: str) -> object:
     plain = _plain(kind)
     if get_origin(plain) is types.UnionType:
@@ -139,12 +150,14 @@ def _value(kind: object, data: object, field: str) -> object:
         if chosen is not None:
             return _one(chosen, data, field)
         rest = [member for member in members if member is not types.NoneType]
-        plain = rest[0] if len(rest) == 1 else plain
+        if len(rest) > 1:
+            return _first_taking(tuple(rest), data, field, plain)
+        plain = rest[0]
     try:
         found = _one(plain, data, field)
     except WireError as error:
         raise _refused(field, str(error)) from None
-    if get_origin(plain) is not types.UnionType and not fits(found, plain):
+    if not fits(found, plain):
         raise _refused(field, f"{field} is {data!r}, not {named(plain)}")
     return found
 

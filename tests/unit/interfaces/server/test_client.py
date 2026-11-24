@@ -13,7 +13,7 @@ from sift.api.events import Event, Noted
 from sift.api.links import ListUnresolved, Unresolved
 from sift.api.wire import encoded_error
 from sift.interfaces.acts.links import UNRESOLVED
-from sift.interfaces.server.client import UNFINISHED, UNREADABLE, sent
+from sift.interfaces.server.client import UNFINISHED, UNREADABLE, ClientLimits, sent
 from sift.interfaces.server.endpoint import Endpoint
 
 LINES = b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n"
@@ -58,7 +58,7 @@ def answering(reply: bytes | None, heard: list[bytes]) -> Generator[Endpoint]:
 def asked(reply: bytes | None, quiet: float = 30.0) -> tuple[Unresolved, list[Event], list[bytes]]:
     said, heard = list[Event](), list[bytes]()
     with answering(reply, heard) as endpoint:
-        answer = sent(endpoint, UNRESOLVED, ListUnresolved(k=7), said.append, quiet)
+        answer = sent(endpoint, UNRESOLVED, ListUnresolved(k=7), said.append, ClientLimits(quiet=quiet))
     return answer, said, heard
 
 
@@ -99,13 +99,26 @@ def test_an_answer_this_sift_cannot_read_is_said_to_be() -> None:
         LINES + b"[1]\n",
         _refusal("500 Internal Server Error", b"Internal Server Error"),
         _refusal("400 Bad Request", b'{"detail": "a bad request"}'),
+        LINES + b'{"answer": {"targets": 3}}\n',
+        LINES + b'{"event": "NoSuchEvent", "data": {}}\n',
+        LINES + b'{"event": "Noted", "data": {"words": "a note"}}\n',
+        LINES + b'{"error": {"kind": "no_such_kind", "code": "busy", "message": "m", "remedy": "r"}}\n',
     ):
         assert refused(reply) == UNREADABLE, reply
 
 
 def test_an_answer_ended_before_its_answer_line_is_said_to_be_unfinished() -> None:
-    for reply in (LINES + b'{"alive": true}\n', CHUNKED):
+    for reply in (LINES + b'{"alive": true}\n', CHUNKED, LINES + b'{"answer": {"targ'):
         assert refused(reply) == UNFINISHED, reply
+
+
+def test_a_line_longer_than_the_client_reads_is_refused_without_reading_it_whole() -> None:
+    said, heard = list[Event](), list[bytes]()
+    with (
+        answering(LINES + b'{"answer": "' + b"x" * 100 + b'"}\n', heard) as endpoint,
+        pytest.raises(InternalError, match="sent a line longer than 50 bytes"),
+    ):
+        sent(endpoint, UNRESOLVED, ListUnresolved(k=7), said.append, ClientLimits(longest=50))
 
 
 def test_a_home_process_that_closes_or_stays_silent_is_said_not_to_answer() -> None:

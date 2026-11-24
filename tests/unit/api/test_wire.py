@@ -14,7 +14,7 @@ from sift.api.errors import (
     StoreUnavailableError,
 )
 from sift.api.filters import Filter, Operator
-from sift.api.indexing import Indexed
+from sift.api.indexing import CollectionIndexed, Indexed
 from sift.api.links import Direction, FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import Left, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.api.wire import Json, decoded, decoded_error, encoded, encoded_error
@@ -88,6 +88,16 @@ def test_an_answer_of_another_state_is_refused() -> None:
     with pytest.raises(InvalidRequestError, match="state is 'skipped', not indexed") as refused:
         decoded(Indexed, {"files": 1, "added": 1, "changed": 0, "removed": 0, "unreadable": 0, "state": "skipped"})
     assert refused.value.field == "state"
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [3, "indexed", {"state": "gone", "message": "m", "remedy": None}],
+)
+def test_a_value_none_of_its_union_s_kinds_takes_is_refused(outcome: object) -> None:
+    with pytest.raises(InvalidRequestError, match=r"outcome is .*, not Indexed or Skipped") as refused:
+        decoded(CollectionIndexed, {"name": "n", "outcome": outcome})
+    assert refused.value.field == "outcome"
 
 
 def test_a_request_is_read_from_an_object_alone() -> None:
