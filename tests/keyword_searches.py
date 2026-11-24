@@ -1,4 +1,5 @@
 import contextlib
+import itertools
 import math
 import sqlite3
 import tempfile
@@ -156,22 +157,26 @@ def leaves_of(expression: Expression) -> list[Leaf]:
 TIE = 1e-12
 
 
-def by_score_then_chunk(ranked: list[tuple[int, float]]) -> list[tuple[int, float]]:
-    ordered = sorted(ranked, key=lambda each: (-each[1], each[0]))
+def tied(ranked: list[tuple[int, float]]) -> list[list[tuple[int, float]]]:
     groups: list[list[tuple[int, float]]] = []
-    for each in ordered:
+    for each in sorted(ranked, key=lambda each: (-each[1], each[0])):
         if groups and abs(groups[-1][0][1] - each[1]) <= TIE * abs(each[1]):
             groups[-1].append(each)
         else:
             groups.append([each])
-    return [each for group in groups for each in sorted(group)]
+    return groups
 
 
 def same(got: tuple[FoundChunk, ...], more: list[tuple[int, float]], k: int, query: object) -> None:
-    want = by_score_then_chunk(more)[:k]
+    groups = tied(more)
+    want = [each for group in groups for each in group][:k]
     assert len(got) == len(want), query
     assert np.allclose([each.score for each in got], [score for _, score in want], rtol=1e-9), (query, got, want)
-    assert [each.chunk for each in got] == [chunk for chunk, _ in want], (query, got, want)
+    assert list(got) == sorted(got, key=lambda each: (-each.score, each.chunk)), (query, got)
+    assert len({each.chunk for each in got}) == len(got), (query, got)
+    for group, start in zip(groups, itertools.accumulate(map(len, groups), initial=0), strict=False):
+        held = {each.chunk for each in got[start : start + len(group)]}
+        assert held <= {chunk for chunk, _ in group}, (query, got, want)
 
 
 def random_expression(rng: Draws, phrases: list[tuple[str, ...]], depth: int = 0) -> Expression:

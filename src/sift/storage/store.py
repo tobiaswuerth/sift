@@ -208,6 +208,12 @@ LAYOUT: tuple[Migration, ...] = (
         """CREATE TRIGGER chunks_given_places AFTER INSERT ON chunks WHEN NEW.place IS NOT NULL
            BEGIN UPDATE counts SET places = max(places, NEW.place); END""",
         "ALTER TABLE keyword_dead RENAME COLUMN chunk TO place",
+        "ALTER TABLE counts ADD COLUMN vectors_written INTEGER NOT NULL DEFAULT 0",
+        "UPDATE counts SET vectors_written = vectors",
+        """CREATE TRIGGER vectors_written AFTER INSERT ON vectors
+           BEGIN UPDATE counts SET vectors_written = vectors_written + 1; END""",
+        """CREATE TRIGGER vectors_rewritten AFTER UPDATE OF vector ON vectors
+           BEGIN UPDATE counts SET vectors_written = vectors_written + 1; END""",
         "ALTER TABLE counts ADD COLUMN ordered_at INTEGER NOT NULL DEFAULT 0",
     ),
 )

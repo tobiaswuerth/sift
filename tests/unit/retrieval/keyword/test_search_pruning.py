@@ -2,9 +2,13 @@ import cProfile
 import pstats
 from collections import Counter
 from collections.abc import Callable, Sequence
+from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 
+import sift.retrieval.keyword.lists as lists_module
+import sift.retrieval.keyword.search as search_module
 from sift.domain.query.expressions import And, Or, Term
 from sift.retrieval.keyword.lists import Opened
 from sift.retrieval.keyword.search import FoundChunk, Tuning
@@ -26,11 +30,13 @@ def blocks_read(store: Opened) -> Counter[str]:
     return Counter(term for _, term, _ in store.blocks)
 
 
-def calls(run: Callable[[], object], names: Sequence[str]) -> list[int]:
+def calls(run: Callable[[], object], named: Sequence[tuple[ModuleType, str]]) -> list[int]:
     profile = cProfile.Profile()
     _ = profile.runcall(run)
     counted = pstats.Stats(profile).get_stats_profile().func_profiles
-    return [int(counted[name].ncalls.split("/")[0]) if name in counted else 0 for name in names]
+    found = [counted[name] for _, name in named]
+    assert [Path(each.file_name) for each in found] == [Path(str(module.__file__)) for module, _ in named]
+    return [int(each.ncalls.split("/")[0]) for each in found]
 
 
 def test_a_word_s_postings_in_many_segments_get_their_lengths_once_a_batch_of_ranges() -> None:
@@ -41,7 +47,8 @@ def test_a_word_s_postings_in_many_segments_get_their_lengths_once_a_batch_of_ra
         assert len(store.segments) == len(rounds)
         query = Or((Term("w0"), Term("w1"), Term("w2")))
         found: list[tuple[FoundChunk, ...]] = []
-        batches, looked_up = calls(lambda: found.append(search(stores, query, 5)), ["_scored_group", "lengths_at"])
+        scored = [(search_module, "_scored_group"), (lists_module, "lengths_at")]
+        batches, looked_up = calls(lambda: found.append(search(stores, query, 5)), scored)
         same(found[0], brute(held, query, 20, by_document=True), 5, query)
         assert 0 < looked_up <= (batches + 1) * len(query.parts)
 
