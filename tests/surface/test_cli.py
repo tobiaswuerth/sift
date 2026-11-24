@@ -14,7 +14,7 @@ from sift.interfaces.cli.main import main, run
 from sift.interfaces.console.text import table
 from sift.interfaces.console.units import size
 from sift.settings import Settings
-from tests.surface.commands import indexed_notes, ran
+from tests.surface.commands import Terminal, indexed_notes, ran
 from tests.surface.process import sift
 
 
@@ -329,13 +329,6 @@ def test_index_fails_if_a_collection_was_skipped_however_it_answers(settings: Se
     assert "  note  the store is missing: " in err
     code, out, _ = ran(settings, "index", "--json")
     assert (code, json.loads(out)["collections"][0]["outcome"]["state"]) == (1, "skipped")
-
-
-@final
-class Terminal(io.TextIOWrapper):
-    @override
-    def isatty(self) -> bool:
-        return True
 
 
 def test_in_a_terminal_a_document_cannot_steer_it_and_its_json_never_can(

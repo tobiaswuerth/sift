@@ -9,7 +9,7 @@ from datetime import datetime
 from functools import partial
 from importlib import import_module
 from types import MappingProxyType
-from typing import NoReturn, Protocol, TextIO, cast, override
+from typing import TYPE_CHECKING, NoReturn, Protocol, TextIO, cast, override
 
 from sift.api.collections import (
     ActivateCollections,
@@ -29,6 +29,7 @@ from sift.domain.text.decoding import encodable
 from sift.interfaces.cli.arguments import arguments, flags, options
 from sift.interfaces.cli.context import Command, Commands, Context
 from sift.interfaces.cli.logs import FOLDER, LOGGED, Log, heard_too, kept
+from sift.interfaces.cli.notice import noticed
 from sift.interfaces.cli.shown.outcome import FAILED, Shown, failure
 from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
@@ -37,6 +38,9 @@ from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal,
 from sift.interfaces.console.text import printable_text
 from sift.interfaces.console.windows import console, escapes_work
 from sift.settings import Settings, from_environment, whole_path
+
+if TYPE_CHECKING:
+    from sift.interfaces.cli.updates import Checking
 
 INTERRUPTED = 130
 DESCRIPTION = "Fast local search over your documents and notes."
@@ -131,12 +135,12 @@ class VersionAction(argparse.Action):
         values: str | Sequence[object] | None,
         option_string: str | None = None,
     ) -> None:
-        write_results(sys.stdout, (_sift(),))
+        write_results(sys.stdout, (f"sift {_version()}",))
         parser.exit()
 
 
-def _sift() -> str:
-    return f"sift {_as_metadata(import_module('importlib.metadata')).version('sift-rag')}"
+def _version() -> str:
+    return _as_metadata(import_module("importlib.metadata")).version("sift-rag")
 
 
 class StoppedError(Exception):
@@ -253,6 +257,7 @@ class Host:
     platform: str = sys.platform
     clock: Callable[[], float] = time.perf_counter
     now: Callable[[], datetime] = _local_now
+    checking: "Checking | None" = None
 
 
 HOST = Host()
@@ -288,6 +293,16 @@ def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log:
         live.close()
 
 
+def _logged(asked: _Chosen, settings: Settings, host: Host, live: Live) -> Shown:
+    if asked.command not in LOGGED:
+        return _commanded(asked, settings, host, live, None)
+    with kept(settings.home / FOLDER, asked.command, host.now(), f"sift {_version()}, {asked.command}") as log:
+        found = _commanded(asked, settings, host, live, log)
+        say(log, found.messages)
+        log.ended(found.code)
+        return found
+
+
 def _ran(
     argv: Sequence[str],
     settings: Settings,
@@ -310,14 +325,10 @@ def _ran(
         return Shown((built.format_help().rstrip("\n"),), ())
     style = _style(err, settings, Colour(str(given["color"])), encoding)
     asked = _Chosen(chosen, namespace, given["json"] is True, style)
-    live = _live(err, settings, style, platform, host.clock)
-    if chosen not in LOGGED:
-        return _commanded(asked, settings, host, live, None)
-    with kept(settings.home / FOLDER, chosen, host.now(), f"{_sift()}, {chosen}") as log:
-        found = _commanded(asked, settings, host, live, log)
-        say(log, found.messages)
-        log.ended(found.code)
+    found = _logged(asked, settings, host, _live(err, settings, style, platform, host.clock))
+    if not settings.update_check or asked.json or not is_terminal(err):
         return found
+    return noticed(found, settings.home, _version(), style, host.checking)
 
 
 def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO | None, host: Host = HOST) -> int:

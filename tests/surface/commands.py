@@ -1,8 +1,16 @@
 import io
 from pathlib import Path
+from typing import final, override
 
 from sift.interfaces.cli.main import run
 from sift.settings import Settings
+
+
+@final
+class Terminal(io.TextIOWrapper):
+    @override
+    def isatty(self) -> bool:
+        return True
 
 
 def ran(settings: Settings, *argv: str) -> tuple[int, str, str]:

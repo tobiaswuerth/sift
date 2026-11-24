@@ -2,6 +2,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from sift.api.errors import InvalidRequestError
 from sift.domain.text.scans import OcrSetting
@@ -15,6 +16,11 @@ GPUS_VARIABLE = "CUDA_VISIBLE_DEVICES"
 OCR_REMEDY = (
     f"set {OCR_VARIABLE} to auto (on a GPU, the default), on (also on the CPU, which takes minutes a page) or off"
 )
+UPDATE_CHECK_VARIABLE = "SIFT_UPDATE_CHECK"
+UPDATE_CHECK_REMEDY = f"set {UPDATE_CHECK_VARIABLE} to on, to be told of a newer sift once a day, or to off"
+SWITCHES = MappingProxyType({"on": True, "off": False})
+OFFLINE_VARIABLE = "HF_HUB_OFFLINE"
+OFFLINE = frozenset({"1", "on", "yes", "true"})
 NO_COLOR = "NO_COLOR"
 TERM = "TERM"
 DUMB = "dumb"
@@ -35,6 +41,7 @@ class Settings:
     rerank_model: str = RERANK_MODEL
     ocr: OcrSetting = OcrSetting.AUTO
     gpus: str | None = None
+    update_check: bool = False
 
 
 def whole_path(written: str, user: Path | None, cwd: Path) -> Path:
@@ -73,6 +80,14 @@ def _ocr(written: str | None) -> OcrSetting:
     return found
 
 
+def _update_check(environment: Mapping[str, str]) -> bool:
+    written = environment.get(UPDATE_CHECK_VARIABLE) or "off"
+    switched = SWITCHES.get(written.strip().lower())
+    if switched is None:
+        raise InvalidRequestError(f"{UPDATE_CHECK_VARIABLE} is {written!r}", UPDATE_CHECK_REMEDY)
+    return switched and environment.get(OFFLINE_VARIABLE, "").strip().lower() not in OFFLINE
+
+
 def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path) -> Settings:
     return Settings(
         home=_home(environment.get(HOME), user, cwd),
@@ -84,6 +99,7 @@ def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path) -> Sett
         rerank_model=environment.get(RERANK_MODEL_VARIABLE) or RERANK_MODEL,
         ocr=_ocr(environment.get(OCR_VARIABLE)),
         gpus=environment.get(GPUS_VARIABLE),
+        update_check=_update_check(environment),
     )
 
 

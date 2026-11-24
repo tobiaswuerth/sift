@@ -4,7 +4,15 @@ import pytest
 
 from sift.api.errors import InvalidRequestError
 from sift.domain.text.scans import OcrSetting
-from sift.settings import OCR_REMEDY, Settings, from_environment, parsed, user_folder, whole_path
+from sift.settings import (
+    OCR_REMEDY,
+    UPDATE_CHECK_REMEDY,
+    Settings,
+    from_environment,
+    parsed,
+    user_folder,
+    whole_path,
+)
 
 
 @pytest.fixture
@@ -48,6 +56,21 @@ def test_scans_are_read_on_a_gpu_unless_set_and_a_setting_sift_knows_not_says_wh
     with pytest.raises(InvalidRequestError, match="SIFT_OCR is 'maybe'") as refused:
         parsed({"SIFT_OCR": "maybe"}, user, cwd)
     assert refused.value.remedy == OCR_REMEDY
+
+
+def test_sift_asks_pypi_for_a_newer_sift_only_when_switched_on_and_never_offline(user: Path, cwd: Path) -> None:
+    asked: tuple[dict[str, str], ...] = (
+        {},
+        {"SIFT_UPDATE_CHECK": " On "},
+        {"SIFT_UPDATE_CHECK": "off"},
+        {"SIFT_UPDATE_CHECK": "on", "HF_HUB_OFFLINE": "1"},
+        {"SIFT_UPDATE_CHECK": "on", "HF_HUB_OFFLINE": "yes"},
+        {"SIFT_UPDATE_CHECK": "on", "HF_HUB_OFFLINE": "0"},
+    )
+    assert [parsed(each, user, cwd).update_check for each in asked] == [False, True, False, False, False, True]
+    with pytest.raises(InvalidRequestError, match="SIFT_UPDATE_CHECK is 'daily'") as refused:
+        parsed({"SIFT_UPDATE_CHECK": "daily"}, user, cwd)
+    assert refused.value.remedy == UPDATE_CHECK_REMEDY
 
 
 def test_the_gpus_cuda_may_use_are_kept_as_set_even_empty_which_hides_them_all(user: Path, cwd: Path) -> None:
