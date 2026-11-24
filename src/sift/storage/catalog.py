@@ -19,6 +19,7 @@ from sift.storage.database import (
     connect,
     inserted,
     kept_private,
+    read_only,
     reading,
     rows,
     run,
@@ -182,8 +183,16 @@ def refuse_inactive(one: Collection) -> Collection:
 
 
 def known_collections(home: Path) -> tuple[Collection, ...]:
-    if not (home / CATALOG).is_file():
+    path = home / CATALOG
+    if not path.is_file():
         return ()
+    with (
+        unavailable_if_unusable(path, THE_CATALOG),
+        closing(read_only(path)) as connection,
+        reading(connection) as transaction,
+    ):
+        if version(transaction) == len(LAYOUT):
+            return collections(transaction)
     with catalog_of(home) as connection, reading(connection) as transaction:
         return collections(transaction)
 

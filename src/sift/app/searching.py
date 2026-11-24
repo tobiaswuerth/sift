@@ -26,7 +26,7 @@ from sift.storage.database import Reading, abandon, reading
 from sift.storage.keyword_lists import keyword_generation
 from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
-from sift.storage.store import connected
+from sift.storage.store import read_connected
 from sift.storage.unusable import unavailable_if_unusable
 from sift.storage.vector_meta import left, model_of, width_held
 from sift.storage.vectors import EMBED_REMEDY, codes_of, refuse_recipe, vector_generation
@@ -267,7 +267,7 @@ def _searching(one: Collection, asked: Narrowing, wants: Wants) -> Searching | N
     resources = ExitStack()
     with unavailable_if_unusable(one.store):
         try:
-            connection = resources.enter_context(connected(one.store, one.id))
+            connection = resources.enter_context(read_connected(one.store, one.id))
             transaction = resources.enter_context(reading(connection))
             found = condition_in(asked, one, transaction)
             if found is not None and found.lets_none:

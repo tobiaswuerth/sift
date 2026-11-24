@@ -1,5 +1,6 @@
 import contextlib
 import sqlite3
+import stat
 from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple, cast
@@ -15,6 +16,7 @@ from sift.storage.migrations import Migration
 from sift.storage.store import MISSING_REMEDY, connected, create_store, open_store, read_store
 from sift.storage.store_files import stored_bytes
 from sift.storage.unusable import DAMAGED_REMEDY, unavailable_if_unusable
+from sift.storage.writer import sole_writer
 from tests.damage import damage_table
 
 COLLECTION = CollectionId(7)
@@ -242,3 +244,46 @@ def test_a_store_connected_or_read_is_closed_after_and_says_why_it_cannot_be_use
         first(reading_it, Value, "SELECT max(size) FROM sources")
     with pytest.raises(StoreUnavailableError, match="missing"), connected(tmp_path / "gone.sqlite", COLLECTION):
         pass
+
+
+def test_a_store_of_this_layout_is_read_without_its_lock_and_one_of_an_older_layout_under_it(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    later = (*LAYOUT, ("CREATE TABLE added(x INTEGER) STRICT", "INSERT INTO added(x) VALUES (7)"))
+    with sole_writer(path, "sift index"):
+        with read_store(path, COLLECTION) as transaction:
+            assert first(transaction, Value, "PRAGMA user_version") == Value(len(LAYOUT))
+        with (
+            pytest.raises(StoreUnavailableError, match="another sift writes it now"),
+            read_store(path, COLLECTION, later),
+        ):
+            pass
+    with read_store(path, COLLECTION, later) as transaction:
+        assert first(transaction, Value, "SELECT sum(x) FROM added") == Value(7)
+
+
+def test_what_reads_a_store_cannot_change_it(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    with pytest.raises(StoreUnavailableError, match="cannot be written"), read_store(path, COLLECTION) as transaction:
+        transaction.connection.execute("DELETE FROM meta")
+    with read_store(path, COLLECTION) as transaction:
+        assert first(transaction, Value, "SELECT value FROM meta WHERE key = 'collection'") == Value(str(COLLECTION))
+
+
+def test_a_store_that_may_only_be_read_is_read_and_left_as_it_was_unless_it_is_of_an_older_layout(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    before = path.read_bytes()
+    path.chmod(stat.S_IREAD)
+    try:
+        with read_store(path, COLLECTION) as transaction:
+            assert first(transaction, Value, "PRAGMA user_version") == Value(len(LAYOUT))
+        assert path.read_bytes() == before
+        later = (*LAYOUT, ("CREATE TABLE added(x INTEGER) STRICT",))
+        with pytest.raises(StoreUnavailableError, match="cannot be written"), read_store(path, COLLECTION, later):
+            pass
+    finally:
+        path.chmod(stat.S_IREAD | stat.S_IWRITE)

@@ -1,5 +1,5 @@
 import sqlite3
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import cast
@@ -8,6 +8,7 @@ from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.domain.codec.shape import SHAPE, Shape
 from sift.storage.database import (
+    CACHE,
     Reading,
     Value,
     connect,
@@ -23,10 +24,12 @@ from sift.storage.keyword_meta import keyword_meta
 from sift.storage.layout import LAYOUT
 from sift.storage.migrations import Migration, migrated, newer, version
 from sift.storage.store_files import delete_store
-from sift.storage.unusable import DAMAGED_REMEDY, raise_for, unavailable_if_unusable
+from sift.storage.unusable import DAMAGED_REMEDY, unavailable_if_unusable
+from sift.storage.writer import sole_writer
 
 NUMBERED_TABLES = ("documents", "chunks")
 MISSING_REMEDY = "connect the drive it lies on, or remove the collection"
+BRINGING_UP_TO_DATE = "bringing the store up to date"
 LEFT_BY_ADD = """SELECT (SELECT value FROM meta WHERE key = 'collection') = ?
                         AND NOT EXISTS (SELECT 1 FROM documents)"""
 
@@ -84,39 +87,69 @@ def create_store(
         raise
 
 
-def _checked(connection: sqlite3.Connection, path: Path, collection: CollectionId, layout: Sequence[Migration]) -> None:
-    with reading(connection) as transaction:
-        found = version(transaction)
-        if found == 0:
-            raise StoreUnavailableError(f"{path} is no store of sift", DAMAGED_REMEDY, code=Problem.STORE_DAMAGED)
-        if found > len(layout):
-            raise newer(path, found, len(layout))
-        held = first(transaction, Value, "SELECT value FROM meta WHERE key = 'collection'")
+def _verified(transaction: Reading, path: Path, collection: CollectionId, layout: Sequence[Migration]) -> int:
+    found = version(transaction)
+    if found == 0:
+        raise StoreUnavailableError(f"{path} is no store of sift", DAMAGED_REMEDY, code=Problem.STORE_DAMAGED)
+    if found > len(layout):
+        raise newer(path, found, len(layout))
+    held = first(transaction, Value, "SELECT value FROM meta WHERE key = 'collection'")
     if held is None or held.value != str(collection):
         owner = "no collection" if held is None else f"collection {held.value}"
         said = f"{path} is the store of {owner}, not of collection {collection}"
         raise StoreUnavailableError(said, DAMAGED_REMEDY, code=Problem.STORE_DAMAGED)
-    if found < len(layout):
-        with writing(connection) as transaction:
-            migrated(transaction, layout, path)
+    return found
+
+
+def _writable(path: Path) -> sqlite3.Connection:
+    return connect(path, create=False)
+
+
+def _opened(path: Path, opener: Callable[[Path], sqlite3.Connection]) -> sqlite3.Connection:
+    if not path.is_file():
+        raise StoreUnavailableError(f"the store is missing: {path}", MISSING_REMEDY, code=Problem.STORE_MISSING)
+    with unavailable_if_unusable(path):
+        return opener(path)
+
+
+@contextmanager
+def _closed_if_failed(connection: sqlite3.Connection) -> Generator[None]:
+    try:
+        yield
+    except BaseException:
+        connection.close()
+        raise
 
 
 def open_store(path: Path, collection: CollectionId, layout: Sequence[Migration] = LAYOUT) -> sqlite3.Connection:
-    try:
-        connection = connect(path, create=False)
-    except FileNotFoundError:
-        raise StoreUnavailableError(
-            f"the store is missing: {path}", MISSING_REMEDY, code=Problem.STORE_MISSING
-        ) from None
-    except sqlite3.DatabaseError as error:
-        raise_for(path, error)
-    try:
-        _checked(connection, path, collection, layout)
-    except BaseException as error:
-        connection.close()
-        if isinstance(error, sqlite3.DatabaseError):
-            raise_for(path, error)
-        raise
+    connection = _opened(path, _writable)
+    with unavailable_if_unusable(path), _closed_if_failed(connection):
+        with reading(connection) as transaction:
+            found = _verified(transaction, path, collection, layout)
+        if found < len(layout):
+            with writing(connection) as transaction:
+                migrated(transaction, layout, path)
+    return connection
+
+
+def _read_only_store(
+    path: Path, collection: CollectionId, layout: Sequence[Migration]
+) -> tuple[sqlite3.Connection, int]:
+    connection = _opened(path, read_only)
+    with unavailable_if_unusable(path), _closed_if_failed(connection):
+        connection.execute(CACHE)
+        with reading(connection) as transaction:
+            return connection, _verified(transaction, path, collection, layout)
+
+
+def _for_reading(path: Path, collection: CollectionId, layout: Sequence[Migration] = LAYOUT) -> sqlite3.Connection:
+    connection, found = _read_only_store(path, collection, layout)
+    if found == len(layout):
+        return connection
+    connection.close()
+    with sole_writer(path, BRINGING_UP_TO_DATE), closing(open_store(path, collection, layout)):
+        pass
+    connection, _ = _read_only_store(path, collection, layout)
     return connection
 
 
@@ -127,6 +160,14 @@ def connected(path: Path, collection: CollectionId) -> Generator[sqlite3.Connect
 
 
 @contextmanager
-def read_store(path: Path, collection: CollectionId) -> Generator[Reading]:
-    with connected(path, collection) as connection, reading(connection) as transaction:
+def read_connected(
+    path: Path, collection: CollectionId, layout: Sequence[Migration] = LAYOUT
+) -> Generator[sqlite3.Connection]:
+    with unavailable_if_unusable(path), closing(_for_reading(path, collection, layout)) as connection:
+        yield connection
+
+
+@contextmanager
+def read_store(path: Path, collection: CollectionId, layout: Sequence[Migration] = LAYOUT) -> Generator[Reading]:
+    with read_connected(path, collection, layout) as connection, reading(connection) as transaction:
         yield transaction

@@ -1,5 +1,6 @@
 import contextlib
 import sqlite3
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
@@ -23,7 +24,7 @@ from sift.storage.catalog import (
     open_catalog,
     store_path,
 )
-from sift.storage.database import connect, reading, rows, run, writing
+from sift.storage.database import connect, read_only, reading, rows, run, writing
 from sift.storage.store import create_store, open_store
 from tests.damage import damage_pages
 
@@ -349,3 +350,24 @@ def test_a_catalog_another_program_writes_is_unavailable_saying_what_to_do(home:
     ):
         pass
     assert refused.value.code == Problem.STORE_UNAVAILABLE
+
+
+def test_the_collections_of_a_read_only_catalog_are_listed_and_it_is_left_as_it_was(tmp_path: Path, home: Path) -> None:
+    with contextlib.closing(open_catalog(home)) as catalog:
+        added = add_collection(catalog, home, NewCollection(folder(tmp_path, "notes")))
+    path = home / CATALOG
+    before = path.read_bytes()
+    path.chmod(stat.S_IREAD)
+    try:
+        assert known_collections(home) == (added,)
+        assert path.read_bytes() == before
+    finally:
+        path.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_a_catalog_of_an_older_layout_is_brought_up_to_date_when_its_collections_are_listed(home: Path) -> None:
+    home.mkdir()
+    (home / CATALOG).touch()
+    assert known_collections(home) == ()
+    with contextlib.closing(read_only(home / CATALOG)) as catalog, reading(catalog) as transaction:
+        assert rows(transaction, Version, "PRAGMA user_version") == [Version(1)]

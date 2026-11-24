@@ -25,6 +25,9 @@ from sift.app.query import query
 from sift.app.search import search
 from sift.app.vsearch import vsearch
 from sift.storage.catalog import known_collections
+from sift.storage.layout import LAYOUT
+from sift.storage.store import create_store
+from sift.storage.store_files import delete_store
 from sift.storage.writer import sole_writer
 from tests.files import write
 from tests.models import Hashed
@@ -71,6 +74,14 @@ def test_a_collection_whose_store_is_damaged_is_removed_with_it(home: Path) -> N
     diary.store.write_bytes(b"not a database, " * 1000)
     removed = remove(home, RemoveCollection("diary"))
     assert (removed.documents, removed.problem is not None) == (None, True)
+    assert not diary.store.exists()
+
+
+def test_a_collection_whose_store_is_of_an_older_layout_is_removed_with_its_documents_counted(home: Path) -> None:
+    (diary,) = [one for one in known_collections(home) if one.name == "diary"]
+    delete_store(diary.store)
+    create_store(diary.store, diary.id, LAYOUT[:1])
+    assert remove(home, RemoveCollection("diary")) == CollectionRemoved("diary", str(diary.store), 0, None)
     assert not diary.store.exists()
 
 

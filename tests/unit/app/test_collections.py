@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from sift.api.collections import (
+    ActivateCollections,
     AddCollection,
     CollectionAdded,
     CollectionStatus,
@@ -20,7 +21,7 @@ from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections
-from sift.app.collections import add, status
+from sift.app.collections import activate, add, status
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.domain.text.notes import note
@@ -190,7 +191,7 @@ def test_the_home_its_stores_and_their_logs_are_the_user_s_alone(tmp_path: Path)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
-def test_a_home_and_stores_others_could_read_are_made_the_user_s_when_opened(tmp_path: Path) -> None:
+def test_a_home_and_stores_others_could_read_are_made_the_user_s_when_written(tmp_path: Path) -> None:
     home, folder = tmp_path / "home", tmp_path / "notes"
     folder.mkdir()
     (folder / "a.md").write_text("# A\n", encoding="utf-8")
@@ -202,5 +203,6 @@ def test_a_home_and_stores_others_could_read_are_made_the_user_s_when_opened(tmp
     ):
         path.chmod(shared)
     index(home, IndexCollections(), lambda _: None)
+    activate(home, ActivateCollections(("notes",)))
     assert stat.S_IMODE(home.stat().st_mode) == PRIVATE_FOLDER
     assert {stat.S_IMODE(path.stat().st_mode) for path in home.rglob("*.sqlite")} == {PRIVATE_FILE}

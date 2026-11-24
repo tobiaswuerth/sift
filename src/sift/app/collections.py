@@ -39,9 +39,10 @@ from sift.storage.catalog import (
     refuse_inactive,
     set_active,
 )
+from sift.storage.database import reading
 from sift.storage.documents import counts, fields_sampled, unreadable
 from sift.storage.links import links_held
-from sift.storage.store import read_store
+from sift.storage.store import connected, read_store
 from sift.storage.store_files import store_files_left, stored_bytes
 from sift.storage.vector_meta import left, model_of
 from sift.storage.writer import sole_writer
@@ -102,7 +103,7 @@ def searchable(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
 
 def _held(one: Collection) -> tuple[int | None, str | None]:
     try:
-        with read_store(one.store, one.id) as transaction:
+        with connected(one.store, one.id) as connection, reading(connection) as transaction:
             return counts(transaction).documents, None
     except StoreUnavailableError as error:
         return None, error.message

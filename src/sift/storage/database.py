@@ -18,12 +18,13 @@ CACHE_KIBIBYTES = 256 << 10
 DAMAGED = frozenset({sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB})
 MINIMUM_SQLITE = (3, 38, 0)
 STREAMED = 10_000
+CACHE = f"PRAGMA cache_size = -{CACHE_KIBIBYTES}"
 SETTINGS = (
     "PRAGMA journal_mode = WAL",
     f"PRAGMA journal_size_limit = {WAL_LIMIT_BYTES}",
     "PRAGMA synchronous = NORMAL",
     "PRAGMA foreign_keys = ON",
-    f"PRAGMA cache_size = -{CACHE_KIBIBYTES}",
+    CACHE,
 )
 
 type Parameters = Sequence[object] | Mapping[str, object]
