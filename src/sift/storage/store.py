@@ -8,7 +8,7 @@ from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.domain.codec.shape import SHAPE, Shape
 from sift.storage.database import (
-    CACHE,
+    READ_CACHE,
     Reading,
     Value,
     connect,
@@ -141,7 +141,7 @@ def _read_only_store(
 ) -> tuple[sqlite3.Connection, int]:
     connection = _opened(path, read_only)
     with unavailable_if_unusable(path), _closed_if_failed(connection):
-        connection.execute(CACHE)
+        connection.execute(READ_CACHE)
         with reading(connection) as transaction:
             return connection, _verified(transaction, path, collection, layout)
 

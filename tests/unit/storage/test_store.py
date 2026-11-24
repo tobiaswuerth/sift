@@ -9,7 +9,7 @@ import pytest
 
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
-from sift.storage.database import connect, first, reading, run, writing
+from sift.storage.database import CACHE_KIBIBYTES, READ_CACHE_KIBIBYTES, connect, first, reading, run, writing
 from sift.storage.documents import folded_names, paths_named
 from sift.storage.layout import LAYOUT
 from sift.storage.migrations import Migration
@@ -260,6 +260,14 @@ def test_a_store_of_this_layout_is_read_without_its_lock_and_one_of_an_older_lay
             pass
     with read_store(path, COLLECTION, later) as transaction:
         assert first(transaction, Value, "SELECT sum(x) FROM added") == Value(7)
+
+
+def test_a_reader_keeps_a_page_cache_a_sixteenth_of_a_writer_s(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    with read_store(path, COLLECTION) as transaction, opened(path) as written:
+        caches = [each.execute("PRAGMA cache_size").fetchone() for each in (transaction.connection, written)]
+    assert caches == [(-READ_CACHE_KIBIBYTES,), (-CACHE_KIBIBYTES,)] == [(-(16 << 10),), (-(256 << 10),)]
 
 
 def test_what_reads_a_store_cannot_change_it(tmp_path: Path) -> None:

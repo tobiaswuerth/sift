@@ -15,10 +15,12 @@ from sift.domain.plan.segments import POLICY, Policy
 BUSY_TIMEOUT_SECONDS = 30
 WAL_LIMIT_BYTES = 64 << 20
 CACHE_KIBIBYTES = 256 << 10
+READ_CACHE_KIBIBYTES = 16 << 10
 DAMAGED = frozenset({sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB})
 MINIMUM_SQLITE = (3, 38, 0)
 STREAMED = 10_000
 CACHE = f"PRAGMA cache_size = -{CACHE_KIBIBYTES}"
+READ_CACHE = f"PRAGMA cache_size = -{READ_CACHE_KIBIBYTES}"
 SETTINGS = (
     "PRAGMA journal_mode = WAL",
     f"PRAGMA journal_size_limit = {WAL_LIMIT_BYTES}",
