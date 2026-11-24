@@ -17,7 +17,6 @@ from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.storage import keyword_lists
 from sift.storage.database import Reading
-from sift.storage.documents import documents_of
 from sift.storage.keyword_lists import SegmentRow
 from sift.storage.keywords import shape_of, totals
 
@@ -261,8 +260,10 @@ def positions_at(store: Opened, held: StoredList, wanted: Ascending) -> tuple[Id
     return _positions_ranged(store, held, wanted)
 
 
-def owners(store: Opened, places: Ids) -> Ids:
-    found = documents_of(store.transaction, ints(places))
-    if set(ints(places)) - found.keys():
+def owners(store: Opened, places: Ids) -> tuple[Ids, Ids]:
+    asked = ints(places)
+    found = keyword_lists.chunks_placed(store.transaction, asked)
+    if set(asked) - found.keys():
         raise DamagedError("the keyword index holds chunks the store does not")
-    return np.fromiter(map(found.__getitem__, ints(places)), np.int64, len(places))
+    chunks = np.fromiter((found[place].chunk for place in asked), np.int64, len(asked))
+    return chunks, np.fromiter((found[place].document for place in asked), np.int64, len(asked))

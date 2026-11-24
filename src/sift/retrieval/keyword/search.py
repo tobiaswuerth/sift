@@ -57,11 +57,11 @@ class Pass:
 def _offer(work: Pass, best: Best, places: Ids, scores: Scores) -> Best:
     if not len(places):
         return best
-    held = owners(work.store, places)
+    chunks, held = owners(work.store, places)
     if work.allowed is not None:
         keep = work.allowed.documents(held)
-        places, held, scores = places[keep], held[keep], scores[keep]
-    return offered(best, places, held, scores)
+        chunks, held, scores = chunks[keep], held[keep], scores[keep]
+    return offered(best, chunks, held, scores)
 
 
 def _lazy(work: Pass, threshold: float) -> list[Leaf]:

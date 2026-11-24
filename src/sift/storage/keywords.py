@@ -168,7 +168,7 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
     spans = rows(
         transaction,
         Span,
-        "SELECT id, document, start, length FROM chunks WHERE id > ? ORDER BY id LIMIT ?",
+        "SELECT place AS id, document, start, length FROM chunks WHERE place > ? ORDER BY place LIMIT ?",
         (_through(transaction), transaction.batches.chunks_a_segment),
     )
     if not spans:
@@ -204,8 +204,8 @@ def _forget(transaction: Writing, documents: Sequence[DocumentId]) -> None:
     spans = rows(
         transaction,
         Span,
-        """SELECT id, document, start, length FROM chunks
-           WHERE document IN (SELECT value FROM json_each(?)) AND id <= ? ORDER BY id""",
+        """SELECT place AS id, document, start, length FROM chunks
+           WHERE document IN (SELECT value FROM json_each(?)) AND place <= ? ORDER BY place""",
         (json.dumps(list(documents)), _through(transaction)),
     )
     gone: Counter[str] = Counter()
@@ -215,7 +215,7 @@ def _forget(transaction: Writing, documents: Sequence[DocumentId]) -> None:
         held += _tokens((each,))
     _uncounted(transaction, gone, held)
     dead = [span.id for span in spans]
-    run(transaction, "INSERT INTO keyword_dead(chunk) SELECT value FROM json_each(?)", (json.dumps(dead),))
+    run(transaction, "INSERT INTO keyword_dead(place) SELECT value FROM json_each(?)", (json.dumps(dead),))
     run_each(
         transaction, "UPDATE keyword_segments SET dead = dead + ? WHERE id = ?", _dead_by_segment(transaction, dead)
     )
@@ -228,23 +228,27 @@ def forget(transaction: WritingDocuments, documents: Sequence[DocumentId]) -> No
         _forget(transaction, documents[at : at + size])
 
 
-def _anew(transaction: Writing, made: str) -> None:
+def _anew(transaction: Writing, made: str, start: int) -> None:
     run(transaction, "DELETE FROM keyword_segments")
     run(transaction, "DELETE FROM keyword_terms")
     run(transaction, "DELETE FROM keyword_dead")
     run(transaction, "UPDATE counts SET tokens = 0")
     written = _meta(transaction, SHAPE_KEY)
     shape = json.dumps(dataclasses.asdict(SHAPE if written is None else _shape(written)))
-    start = str(first_row(CollectionId(_number(transaction, "collection"))))
     run_each(
         transaction,
         "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-        [(SHAPE_KEY, shape), (THROUGH_KEY, start), (FINGERPRINT_KEY, made)],
+        [(SHAPE_KEY, shape), (THROUGH_KEY, str(start)), (FINGERPRINT_KEY, made)],
     )
 
 
+def remake_above(transaction: Writing, place: int) -> None:
+    refuse_stale(transaction)
+    _anew(transaction, remaking(fingerprint(transaction)), place)
+
+
 def _left(transaction: Reading) -> int:
-    (found,) = rows(transaction, Count, "SELECT count(*) FROM chunks WHERE id > ?", (_through(transaction),))
+    (found,) = rows(transaction, Count, "SELECT count(*) FROM chunks WHERE place > ?", (_through(transaction),))
     return found.n
 
 
@@ -263,7 +267,7 @@ def remake_started(connection: Connection) -> int:
         made = fingerprint(transaction)
         state = keyword_state(_meta(transaction, FINGERPRINT_KEY), made)
         if state not in (KeywordState.CURRENT, KeywordState.REMAKING):
-            _anew(transaction, remaking(made))
+            _anew(transaction, remaking(made), first_row(CollectionId(_number(transaction, "collection"))))
         return 0 if state is KeywordState.CURRENT or _done_if_whole(transaction, made) else _left(transaction)
 
 

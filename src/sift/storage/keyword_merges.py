@@ -129,14 +129,16 @@ def _lists(listed: Sequence[MergedTerm], dead: Ids, live: Ids, lengths: Ids) -> 
 def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shape: Shape) -> None:
     low, high = merged[0].first, merged[-1].last
     named = json.dumps([each.id for each in merged])
-    live = _ids(transaction, "SELECT id FROM chunks WHERE id BETWEEN ? AND ? ORDER BY id", low, high)
+    live = _ids(transaction, "SELECT place AS id FROM chunks WHERE place BETWEEN ? AND ? ORDER BY place", low, high)
     if not len(live):
         raise DamagedError("segments of the keyword index hold no chunk the store holds")
     lengths = _lengths(transaction, merged, live, shape.lengths_shift)
     (held,) = rows(transaction, Totals, HELD)
     average = held.tokens / held.chunks
     made = segment_added(transaction, Head(first(live), last(live), len(live), average))
-    dead = _ids(transaction, "SELECT chunk FROM keyword_dead WHERE chunk BETWEEN ? AND ? ORDER BY chunk", low, high)
+    dead = _ids(
+        transaction, "SELECT place AS id FROM keyword_dead WHERE place BETWEEN ? AND ? ORDER BY place", low, high
+    )
     listed = _listed(transaction, merged, shape.block)
     for batch in batched(listed, transaction.batches):
         lists = _lists(batch, dead, live, lengths)

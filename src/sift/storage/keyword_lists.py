@@ -70,10 +70,21 @@ class IdsRow(NamedTuple):
 
 
 def dead_within(transaction: Reading, low: int, high: int) -> Ids:
-    sql = """SELECT json_group_array(chunk) FROM
-             (SELECT chunk FROM keyword_dead WHERE chunk BETWEEN ? AND ? ORDER BY chunk)"""
+    sql = """SELECT json_group_array(place) FROM
+             (SELECT place FROM keyword_dead WHERE place BETWEEN ? AND ? ORDER BY place)"""
     (found,) = rows(transaction, IdsRow, sql, (low, high))
     return np.array(json.loads(found.ids), np.int64)
+
+
+class PlacedChunk(NamedTuple):
+    place: int
+    chunk: int
+    document: int
+
+
+def chunks_placed(transaction: Reading, places: Sequence[int]) -> dict[int, PlacedChunk]:
+    sql = "SELECT place, id, document FROM chunks WHERE place IN (SELECT value FROM json_each(?))"
+    return {each.place: each for each in rows(transaction, PlacedChunk, sql, (json.dumps(list(places)),))}
 
 
 def frequencies(transaction: Reading, terms: Sequence[str]) -> dict[str, int]:

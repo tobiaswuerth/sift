@@ -15,6 +15,7 @@ UNITS = MappingProxyType(
         Phase.MERGE: "chunk",
         Phase.EMBED: "chunk",
         Phase.LOAD: "model",
+        Phase.ORDER: "chunk",
     }
 )
 RATED = frozenset({Phase.REMAKE, Phase.READ, Phase.MERGE, Phase.EMBED})

@@ -48,7 +48,17 @@ def expected(found: list[Instance]) -> Places:
     return {term: {chunk: sorted(places) for chunk, places in chunks.items()} for term, chunks in held.items()}
 
 
+class ChunkPlace(NamedTuple):
+    id: int
+    place: int
+
+
+def chunks_at(transaction: Reading) -> dict[int, int]:
+    return {each.place: each.id for each in rows(transaction, ChunkPlace, "SELECT id, place FROM chunks")}
+
+
 def stored(transaction: Reading) -> Places:
+    chunk_at = chunks_at(transaction)
     gone = set(ints(dead_within(transaction, 0, 2**63 - 1)))
     every = sorted({row.term for row in rows(transaction, Term, "SELECT DISTINCT term FROM keyword_postings")})
     held: Places = {}
@@ -68,9 +78,9 @@ def stored(transaction: Reading) -> Places:
         for postings, places in found:
             ids, counts = blocked(postings)
             flat = positions_of(places, counts)
-            for chunk, own in zip(ints(ids), np.split(flat, np.cumsum(counts)[:-1]), strict=True):
-                if chunk not in gone:
-                    held.setdefault(part.term, {})[chunk] = own.tolist()
+            for place, own in zip(ints(ids), np.split(flat, np.cumsum(counts)[:-1]), strict=True):
+                if place not in gone:
+                    held.setdefault(part.term, {})[chunk_at[place]] = own.tolist()
     return held
 
 
@@ -90,8 +100,9 @@ def checked(connection: Connection) -> None:
         assert sorted(row.term for row in rows(transaction, Term, "SELECT term FROM keyword_terms")) == sorted(want)
         assert totals(transaction).tokens == len(found)
         held = segments(transaction)
-        live = {chunk for chunks in want.values() for chunk in chunks}
-        assert all(sum(s.first <= chunk <= s.last for s in held) == 1 for chunk in live)
+        place_of = {chunk: place for place, chunk in chunks_at(transaction).items()}
+        live = {place_of[chunk] for chunks in want.values() for chunk in chunks}
+        assert all(sum(s.first <= place <= s.last for s in held) == 1 for place in live)
         gone = ints(dead_within(transaction, 0, 2**63 - 1))
         for each in rows(transaction, Kept, "SELECT first, last, chunks, dead FROM keyword_segments"):
             assert each.dead == sum(each.first <= chunk <= each.last for chunk in gone) < each.chunks

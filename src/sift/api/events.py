@@ -10,6 +10,7 @@ class Phase(StrEnum):
     MERGE = "merge"
     EMBED = "embed"
     LOAD = "load"
+    ORDER = "order"
 
 
 @dataclass(frozen=True, slots=True)

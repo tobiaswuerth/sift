@@ -36,6 +36,7 @@ from sift.storage.documents import (
 )
 from sift.storage.forgetting import delete_documents, delete_sources
 from sift.storage.kept_vectors import vectors_held, vectors_kept
+from sift.storage.keyword_order import order_due, ordered
 from sift.storage.keywords import remade, remake_started, settle, writing_documents
 from sift.storage.store import connected
 
@@ -254,6 +255,16 @@ def _remade(connection: Connection, report: Reporter, batches: Batches) -> None:
     _settled(connection, report, batches)
 
 
+def _ordered(connection: Connection, report: Reporter, batches: Batches) -> None:
+    with reading(connection) as transaction:
+        due = order_due(transaction)
+    if not due:
+        return
+    report(PhaseStarted(Phase.ORDER, None))
+    report(PhaseDone(ordered(connection)))
+    _remade(connection, report, batches)
+
+
 def _settled(connection: Connection, report: Reporter, batches: Batches) -> None:
     done, started = 0, False
     for done in settle(connection, batches):
@@ -268,6 +279,7 @@ def _indexed(one: Collection, report: Reporter, limits: Limits, readers: Readers
     try:
         with connected(one.store, one.id) as connection:
             _remade(connection, report, limits.batches)
+            _ordered(connection, report, limits.batches)
             if not one.folder.is_dir():
                 return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)
             return _ignoring(Job(one, connection, report, limits, readers, ocr))

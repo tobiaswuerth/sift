@@ -196,6 +196,18 @@ LAYOUT: tuple[Migration, ...] = (
            FROM documents d""",
     ),
     ("ALTER TABLE unreadable ADD COLUMN skipped_under TEXT CHECK (skipped_under IN ('off', 'auto'))",),
+    (
+        "ALTER TABLE chunks ADD COLUMN place INTEGER",
+        "UPDATE chunks SET place = id",
+        "CREATE UNIQUE INDEX chunks_place ON chunks(place)",
+        "ALTER TABLE counts ADD COLUMN places INTEGER NOT NULL DEFAULT 0 CHECK (places >= 0)",
+        "UPDATE counts SET places = coalesce((SELECT seq FROM sqlite_sequence WHERE name = 'chunks'), 0)",
+        """CREATE TRIGGER chunks_placed AFTER INSERT ON chunks WHEN NEW.place IS NULL
+           BEGIN UPDATE counts SET places = max(places + 1, NEW.id);
+                 UPDATE chunks SET place = (SELECT places FROM counts) WHERE id = NEW.id; END""",
+        "ALTER TABLE keyword_dead RENAME COLUMN chunk TO place",
+        "ALTER TABLE counts ADD COLUMN ordered INTEGER NOT NULL DEFAULT 0 CHECK (ordered >= 0)",
+    ),
 )
 NUMBERED_TABLES = ("documents", "chunks")
 FILE_SUFFIXES = ("", "-wal", "-shm")
