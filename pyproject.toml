@@ -16,6 +16,7 @@ dependencies = [
     "torch>=2.13",  # older releases have advisories known against them
     "sentence-transformers>=6.1",  # the module layout embeddinggemma-2 is saved in
     "transformers>=5.18",  # the first release with embeddinggemma-2
+    "huggingface-hub>=1.31",  # downloads of models show their progress; transformers 5.24 needs 1.31
     "pillow>=13",  # embeddinggemma-2 takes images too, so transformers needs Pillow even for text
     "torchvision>=0.28",  # and torchvision; it must match torch (0.28 is 2.13's)
     "nvidia-ml-py>=12",  # free GPU memory as nvidia-smi sees it, which CUDA overstates on Windows
@@ -243,44 +244,21 @@ allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Model libraries only where models run and devices are chosen"
-type = "forbidden"
-source_modules = [
-    "sift.api",
-    "sift.domain",
-    "sift.storage",
-    "sift.retrieval",
-    "sift.ingest",
-    "sift.app",
-    "sift.interfaces",
-    "sift.inference.batches",
-    "sift.inference.hub",
-    "sift.inference.loading",
-    "sift.inference.models",
-]
-forbidden_modules = ["torch", "transformers", "sentence_transformers", "pynvml"]
-allow_indirect_imports = true
+type = "protected"
+protected_modules = ["torch", "transformers", "sentence_transformers", "pynvml"]
+allowed_importers = ["sift.inference.accelerator", "sift.inference.local", "sift.inference.ocr"]
 
 [[tool.importlinter.contracts]]
 name = "The document converter only where documents are converted"
-type = "forbidden"
-source_modules = [
-    "sift.api",
-    "sift.domain",
-    "sift.storage",
-    "sift.retrieval",
-    "sift.inference",
-    "sift.app",
-    "sift.interfaces",
-    "sift.ingest.documents",
-    "sift.ingest.files",
-    "sift.ingest.links",
-    "sift.ingest.mail",
-    "sift.ingest.readers",
-    "sift.ingest.records",
-    "sift.ingest.scan",
-]
-forbidden_modules = ["xberg"]
-allow_indirect_imports = true
+type = "protected"
+protected_modules = ["xberg"]
+allowed_importers = ["sift.ingest.converter"]
+
+[[tool.importlinter.contracts]]
+name = "Worker processes only in the sandbox that reads files"
+type = "protected"
+protected_modules = ["multiprocessing"]
+allowed_importers = ["sift.ingest.sandbox"]
 
 [[tool.importlinter.contracts]]
 name = "Settings only in interfaces: the core and the use cases take values"

@@ -43,6 +43,8 @@ def lint(session: nox.Session) -> None:
         session.error(f"git neither tracks nor ignores these, and the hooks check tracked files alone:\n{unknown}")
     session.run("pre-commit", "run", "--all-files", "--show-diff-on-failure")
     session.run("lint-imports")
+    session.run("python", "-m", "tools", "imports")
+    session.run("python", "-m", "tools", "stubs")
 
 
 @nox.session(python=OLDEST)

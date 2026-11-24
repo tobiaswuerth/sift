@@ -38,6 +38,10 @@ threads more workers made the suite slower (35 s on 8, 101 s on 32).
   places need is kept where both can import it (`python -m tools dead`, `python -m tools twins`).
 - Packages import only those below them: interfaces, app, retrieval and ingest, storage and inference, domain, api.
   No module imports one that imports it (`[tool.importlinter]` in `pyproject.toml`).
+- SQLite, the model libraries, the document converter and worker processes are each imported in their place alone
+  (the import contracts).
+- sift imports only packages `pyproject.toml` depends on, and the stubs in `typings/` name only what their packages
+  have (`python -m tools imports`, `python -m tools stubs`, which the lint session runs where sift is installed).
 - Tests pass fakes and values in; `monkeypatch` is not used, and no test reads a clock: what costs time is counted
   (`python -m tools idioms`, which also holds lessons of earlier bugs: each of its findings names the fix).
 - sift reads its environment in `sift.settings` alone, and only `sift.interfaces` imports that module: the use cases

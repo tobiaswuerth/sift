@@ -1625,6 +1625,7 @@ name = "sift-rag"
 version = "2.0.0a0"
 source = { editable = "." }
 dependencies = [
+    { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "nvidia-ml-py" },
     { name = "pillow" },
@@ -1655,6 +1656,7 @@ gate = [
 
 [package.metadata]
 requires-dist = [
+    { name = "huggingface-hub", specifier = ">=1.31" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "nvidia-ml-py", specifier = ">=12" },
     { name = "pillow", specifier = ">=13" },
