@@ -17,7 +17,7 @@ from sift.api.serving import Served, ServeHome
 from sift.app.embedding import embed
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.cli.main import ENTRIES
-from sift.interfaces.server.app import LOGGER, WAITING
+from sift.interfaces.server.app import LOGGER, MOST_BODY, WAITING
 from sift.interfaces.server.endpoint import (
     ENDPOINT,
     LOOK_EVERY_SECONDS,
@@ -96,13 +96,29 @@ def test_codes_and_keywords_of_a_collection_deactivated_or_removed_are_let_go(
 
 def test_a_call_without_its_token_from_another_host_or_to_no_command_is_refused(settings: Settings) -> None:
     with running(settings) as server:
-        assert [asked(server, "status", {}, bearer=given)[0] for given in ("", "wrong")] == [401, 401]
-        refused = asked(server, "status", {}, bearer="wrong")[1][0]
+        wrong = ("Bearer ", "Bearer wrong")
+        assert [asked(server, "status", {}, authorization=given)[0] for given in wrong] == [401, 401]
+        refused = asked(server, "status", {}, authorization="Bearer wrong")[1][0]
         assert cast("Line", refused["error"])["code"] == Problem.UNAUTHORIZED.value
         assert asked(server, "status", {}, host="sift.example.com")[0] == 400
         assert asked(server, "status", {}, host=f"localhost:{server.endpoint.port}")[0] == 200
         status, unknown = asked(server, "frobnicate", {})
         assert (status, cast("Line", unknown[0]["error"])["code"]) == (404, Problem.NOT_FOUND.value)
+
+
+@pytest.mark.parametrize("authorization", ["", "Basic dGhlOnRva2Vu", "bearer {token}", "Bearer  {token}"])
+@pytest.mark.parametrize("name", ["status", "rm"])
+def test_a_call_without_the_token_in_its_one_form_is_refused(settings: Settings, authorization: str, name: str) -> None:
+    with running(settings) as server:
+        given = authorization.format(token=server.endpoint.token)
+        status, lines = asked(server, name, {"name": "notes"}, authorization=given)
+    assert (status, cast("Line", lines[0]["error"])["code"]) == (401, Problem.UNAUTHORIZED.value)
+
+
+def test_a_request_of_exactly_the_most_a_request_holds_is_read(settings: Settings) -> None:
+    with running(settings) as server:
+        assert asked(server, "status", b"{}" + b" " * (MOST_BODY - 2))[0] == 200
+        assert asked(server, "status", b"{}" + b" " * (MOST_BODY - 1))[0] == 413
 
 
 @pytest.mark.parametrize(

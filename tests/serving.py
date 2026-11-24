@@ -44,10 +44,11 @@ type Line = dict[str, object]
 
 
 def asked(
-    server: HomeServer, name: str, body: object, *, bearer: str | None = None, host: str | None = None
+    server: HomeServer, name: str, body: object, *, authorization: str | None = None, host: str | None = None
 ) -> tuple[int, list[Line]]:
     connection = http.client.HTTPConnection("127.0.0.1", server.endpoint.port, timeout=60)
-    headers = {"Authorization": f"Bearer {server.endpoint.token if bearer is None else bearer}"}
+    given = f"Bearer {server.endpoint.token}" if authorization is None else authorization
+    headers = {"Authorization": given} if given else {}
     if host is not None:
         headers["Host"] = host
     sent = body if isinstance(body, bytes) else json.dumps(body).encode()
