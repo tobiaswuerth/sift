@@ -12,7 +12,7 @@ from sift.interfaces.cli.shown import indexing as shown
 
 
 def _index(context: Context, request: IndexCollections) -> IndexResult:
-    readers = Readers(scanning=Scanning(context.settings.ocr))
+    readers = Readers(scanning=Scanning(context.settings.ocr, gpus=context.settings.gpus))
     return indexing.index(context.settings.home, request, context.report, readers=readers)
 
 

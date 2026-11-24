@@ -18,10 +18,10 @@ from sift.app.collections import add
 from sift.app.documents import documents
 from sift.app.filing import Readers
 from sift.app.indexing import index
-from sift.app.scans import BUSY, FULL, NO_GPU, NO_TEXT_FOUND, NOT_LOADED, OFF, Scanning
+from sift.app.scans import BUSY, FULL, GPU_UNUSED, NO_GPU, NO_TEXT_FOUND, NOT_LOADED, OFF, Scanning
 from sift.domain.text.documents import Conversion, Refused, Unread
 from sift.domain.text.scans import OCR_FIELD, PAGES, OcrSetting
-from sift.inference.accelerator import CPU, Device
+from sift.inference.accelerator import CPU, HIDDEN, Device
 from sift.inference.hub import OCR_MODEL
 from sift.inference.ocr import Generating, Ocr, Processing
 from sift.ingest.documents import convert
@@ -36,6 +36,7 @@ from tests.scans import scan
 
 GPU = Device("cuda", torch.bfloat16)
 BUSY_GPU = Device("cpu", torch.float32, busy=True)
+HIDDEN_GPU = Device("cpu", torch.float32, notice=HIDDEN.format("-1"))
 GIB_FULL = "the model ran out of memory on the cuda: CUDA out of memory"
 UNLOADED = f"the model {OCR_MODEL} could not be loaded: 401"
 READ = ("scan", "read page 1\n\nread page 2", OCR_MODEL)
@@ -53,9 +54,11 @@ class FakeOcr:
     interrupted_at: int | None = None
     then: Device | None = None
     stores: list[Path] = field(default_factory=list[Path])
+    hidden: list[str | None] = field(default_factory=list[str | None])
 
-    def ocr_device(self) -> Device:
+    def ocr_device(self, gpus: str | None) -> Device:
         self.devices += 1
+        self.hidden.append(gpus)
         if self.devices > 1 and self.then is not None:
             self.device = self.then
         return self.device
@@ -163,6 +166,13 @@ def test_a_long_scan_is_read_up_to_its_first_pages_saying_so(home: Path, scans: 
 
 
 @pytest.mark.usefixtures("scans")
+def test_ocr_is_placed_with_the_gpus_cuda_may_use(home: Path) -> None:
+    ocr = FakeOcr()
+    indexed(home, Scanning(OcrSetting.AUTO, lambda: ocr, pictured_here, gpus="1"))
+    assert ocr.hidden == ["1"]
+
+
+@pytest.mark.usefixtures("scans")
 def test_scans_are_read_outside_any_write(home: Path) -> None:
     (one,) = known_collections(home)
     ocr = FakeOcr(stores=[one.store])
@@ -175,6 +185,7 @@ def test_scans_are_read_outside_any_write(home: Path) -> None:
     [
         (scanning(FakeOcr(), OcrSetting.OFF), OFF, False),
         (scanning(FakeOcr(CPU)), NO_GPU, False),
+        (scanning(FakeOcr(HIDDEN_GPU)), GPU_UNUSED.format(HIDDEN_GPU.notice), False),
         (scanning(FakeOcr(BUSY_GPU)), BUSY, True),
         (scanning(FakeOcr(full=True)), FULL.format(GIB_FULL), True),
         (scanning(FakeOcr(unloadable=True)), NOT_LOADED.format(UNLOADED), True),

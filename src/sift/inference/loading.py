@@ -1,4 +1,5 @@
 import logging
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib import import_module
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
     from sift.inference.ocr import Ocr
 
 REDIRECTS = "torch.distributed.elastic.multiprocessing.redirects"
+VIRTUAL_MAC = "Skipping device"
 
 
 class LocalLoader(Protocol):
@@ -21,6 +23,7 @@ class LocalLoader(Protocol):
 
 def _models_module(name: str) -> object:
     logging.getLogger(REDIRECTS).setLevel(logging.ERROR)
+    warnings.filterwarnings("ignore", VIRTUAL_MAC, UserWarning)
     return import_module(name)
 
 
@@ -66,7 +69,7 @@ def deferred(model: str, reranker: str, gpus: str | None) -> Deferred:
 
 
 class OcrModule(Protocol):
-    def ocr_device(self) -> "Device": ...
+    def ocr_device(self, gpus: str | None) -> "Device": ...
 
     def loaded_ocr(self, device: "Device") -> "Ocr": ...
 

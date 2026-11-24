@@ -11,11 +11,12 @@ from sift.settings import Settings
 from tests.surface.commands import indexed_notes, ran
 
 MAIN_AGAIN = "__mp_main__"
+UNLISTED_BY_PYTHON_3_12_0 = "_wmi"
 LOADED = (
     "import sys; before = set(sys.modules); from sift.interfaces.cli.main import run; "
     "from sift.settings import from_environment; run(sys.argv[1:], from_environment(), None, None); "
     "print(sorted({name.split('.')[0] for name in set(sys.modules) - before} "
-    f"- set(sys.stdlib_module_names) - {{{MAIN_AGAIN!r}}}))"
+    f"- set(sys.stdlib_module_names) - {{{MAIN_AGAIN!r}, {UNLISTED_BY_PYTHON_3_12_0!r}}}))"
 )
 
 
@@ -25,6 +26,22 @@ def loaded(home: Path, *argv: str) -> str:
         [sys.executable, "-c", LOADED, *argv], capture_output=True, text=True, check=True, timeout=60, env=environment
     )
     return found.stdout
+
+
+def test_help_is_plain_where_python_would_colour_it(settings: Settings) -> None:
+    coloured = {name: value for name, value in os.environ.items() if name != "NO_COLOR"}
+    environment = {**coloured, "FORCE_COLOR": "1", "SIFT_HOME": str(settings.home), "PYTHONIOENCODING": "utf-8"}
+    for argv in (("--help",), ("search", "--help"), ()):
+        found = subprocess.run(
+            [sys.executable, "-m", "sift", *argv],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+            timeout=60,
+            env=environment,
+        )
+        assert found.stdout.startswith("usage: sift"), argv
 
 
 def test_a_command_loads_what_it_needs_alone(settings: Settings, notes: Path) -> None:

@@ -20,10 +20,11 @@ uv run --only-group gate nox
 
 It runs every check a change must pass, stops at the first that fails, and CI runs the same sessions: `lint`
 (pre-commit hooks and import contracts; it refuses files git neither tracks nor ignores), `types` (basedpyright for
-Linux, macOS and Windows), `tests-3.12` and `tests-3.15` (100% line and branch coverage of `sift` and `tools`),
-`lowest` (the lowest versions sift allows), `package` (the wheel and sdist hold the tracked sources and nothing
-else, and the installed commands run). One session: `uv run --only-group gate nox -s types`. Before a release,
-`nox -s explore` runs the property tests with fresh random examples, 2,000 each; the gate runs them derandomized.
+Linux, macOS and Windows, each as Python 3.12 and 3.15), `tests-3.12` and `tests-3.15` (100% line and branch
+coverage of `sift` and `tools`), `lowest` (the lowest versions sift allows), `package` (the wheel and sdist hold the
+tracked sources and nothing else, and the installed commands run). One session:
+`uv run --only-group gate nox -s types`. Before a release, `nox -s explore` runs the property tests with fresh
+random examples, 2,000 each; the gate runs them derandomized.
 Tests run on at most 8 workers: each worker imports every test module, the model libraries among them, and on 32
 threads more workers made the suite slower (35 s on 8, 101 s on 32).
 
@@ -49,8 +50,9 @@ threads more workers made the suite slower (35 s on 8, 101 s on 32).
 - A character that shows as nothing, or as another, is written as an escape (`"\N{ZERO WIDTH SPACE}"`), never as
   itself (`python -m tools idioms`).
 - The tokenizer's table is generated from SQLite's FTS5 (`python -m tools fts5 --write`), and a test holds it equal.
-- Stores need SQLite 3.37 or newer (STRICT tables); an older one is refused with what to do. A store's layout
-  changes by a numbered migration appended to `LAYOUT`, never by editing one a release has shipped.
+- Stores need SQLite 3.38 or newer (STRICT tables, the JSON functions built in); an older one is refused with what
+  to do. A store's layout changes by a numbered migration appended to `LAYOUT`, never by editing one a release has
+  shipped.
 - Published text names no machine's model, and prose is wrapped as the code is (`python -m tools text`).
 - No check is silenced. A suppression needs the owner's yes, scoped to one rule in one place.
 

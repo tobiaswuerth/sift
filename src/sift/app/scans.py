@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 OFF = "a scan; SIFT_OCR is off"
 NO_GPU = "a scan; sift reads scans on a GPU, and this machine has none; SIFT_OCR=on reads them on the CPU, slowly"
+GPU_UNUSED = "a scan; sift reads scans on a GPU: {}; SIFT_OCR=on reads them on the CPU, slowly"
 BUSY = "a scan; too little of the GPU's memory is free now; the next index tries again"
 NOT_LOADED = "a scan, and its OCR model could not be loaded ({}); the next index tries again"
 FULL = "a scan, and OCR ran out of memory ({}); the next index tries again"
@@ -32,6 +33,7 @@ class Scanning:
     module: Callable[[], OcrModule] = ocr_module
     pictures: OpenPicturing = picturing
     most_pages: int = PAGES
+    gpus: str | None = None
 
 
 SCANNING = Scanning()
@@ -55,11 +57,12 @@ def _available(scanning: Scanning) -> _Reader | ScanUnread:
     if scanning.setting is OcrSetting.OFF:
         return ScanUnread(OFF, read_again=False, skipped=True)
     module = scanning.module()
-    device = module.ocr_device()
+    device = module.ocr_device(scanning.gpus)
     if device.name == ON_THE_CPU and scanning.setting is OcrSetting.AUTO:
         if device.busy:
             return ScanUnread(BUSY, read_again=True, passing=True)
-        return ScanUnread(NO_GPU, read_again=False, skipped=True)
+        reason = NO_GPU if device.notice is None else GPU_UNUSED.format(device.notice)
+        return ScanUnread(reason, read_again=False, skipped=True)
     try:
         return _Reader(module, module.loaded_ocr(device))
     except ModelUnavailableError as error:

@@ -34,6 +34,11 @@ def test_fields_or_a_sort_naming_no_field_are_refused(fields: tuple[str, ...], s
     checked(("url",), "-created")
 
 
+def test_a_number_written_as_text_is_ordered_among_the_numbers_as_a_filter_reads_it() -> None:
+    each: list[Fields] = [{"y": 2021}, {"y": "2019"}, {"y": 2024}, {"y": "2020.5"}, {"y": "2020s"}, {"y": "-3"}]
+    assert order(each, "y") == [5, 1, 3, 0, 2, 4]
+
+
 def test_whole_numbers_too_large_for_a_float_keep_their_order() -> None:
     each: list[Fields] = [{"r": 2**53 + 1}, {"r": 2**53}, {"r": 2.5}]
     assert order(each, "r") == [2, 1, 0]

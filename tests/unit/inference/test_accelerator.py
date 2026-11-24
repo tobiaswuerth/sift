@@ -1,5 +1,4 @@
 import errno
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -155,22 +154,6 @@ def test_pytorch_keeps_one_cpu_thread_beside_an_nvidia_gpu_and_one_a_core_elsewh
     held: list[int] = []
     device = placed(machine(cuda, held, mps), None)
     assert (device.threads, held) == (threads, [threads])
-
-
-def virtual_mac() -> bool:
-    warnings.warn("Skipping device Apple Paravirtual device that does not support Metal 2.0", UserWarning, stacklevel=2)
-    return False
-
-
-def warning_mac() -> bool:
-    warnings.warn("MPS is deprecated", UserWarning, stacklevel=2)
-    return False
-
-
-def test_a_virtual_mac_gpu_is_passed_over_quietly_and_other_warnings_still_heard() -> None:
-    assert placed(machine(FakeCuda(0, 0, available=False), [], virtual_mac), None) == CPU
-    with pytest.warns(UserWarning, match="MPS is deprecated"):
-        placed(machine(FakeCuda(0, 0, available=False), [], warning_mac), None)
 
 
 def test_an_nvidia_gpu_is_known_by_the_nvidia_smi_its_driver_brings(tmp_path: Path) -> None:

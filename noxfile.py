@@ -54,7 +54,10 @@ def types(session: nox.Session) -> None:
     if python is None:
         session.error(f"no python in {session.bin}")
     for platform in PLATFORMS:
-        session.run("basedpyright", "--pythonpath", python, "--pythonplatform", platform)
+        for version in (OLDEST, PYTHONS[-1]):
+            session.run(
+                "basedpyright", "--pythonpath", python, "--pythonplatform", platform, "--pythonversion", version
+            )
 
 
 @nox.session(python=PYTHONS)

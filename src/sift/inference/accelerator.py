@@ -1,6 +1,5 @@
 import errno
 import shutil
-import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -22,7 +21,6 @@ CUDA_FIX = "uv tool install --reinstall --torch-backend auto sift-rag"
 UNBUILT = f"an NVIDIA GPU is there, but this PyTorch has no CUDA: the models run on the CPU; to use it: {CUDA_FIX}"
 UNSEEN = "PyTorch (CUDA {}) can use no NVIDIA GPU here: the models run on the CPU; update the NVIDIA driver"
 HIDDEN = "PyTorch sees no NVIDIA GPU with CUDA_VISIBLE_DEVICES set to {!r}: the models run on the CPU"
-VIRTUAL_MAC = "Skipping device"
 
 
 class Properties(Protocol):
@@ -128,14 +126,8 @@ class Machine:
 MACHINE = Machine()
 
 
-def _mps_quietly(mps: Callable[[], bool]) -> bool:
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", VIRTUAL_MAC, UserWarning)
-        return mps()
-
-
 def placed(machine: Machine, gpus: str | None) -> Device:
-    found = Hardware(_mps_quietly(machine.mps), machine.nvidia(), machine.cuda_build, gpus)
+    found = Hardware(machine.mps(), machine.nvidia(), machine.cuda_build, gpus)
     device = chosen(machine.cuda, found)
     machine.threads(device.threads)
     return device

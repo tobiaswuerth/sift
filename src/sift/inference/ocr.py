@@ -167,5 +167,5 @@ def loaded_ocr(
     return loading(name, device, load)
 
 
-def ocr_device() -> Device:
-    return this_device()
+def ocr_device(gpus: str | None) -> Device:
+    return this_device(gpus)

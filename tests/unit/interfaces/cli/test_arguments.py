@@ -11,6 +11,7 @@ from sift.api.documents import GetDocuments
 from sift.api.errors import InvalidRequestError
 from sift.api.indexing import IndexCollections
 from sift.interfaces.cli.arguments import options, request_of
+from sift.interfaces.cli.main import Parser, UsageError
 
 
 def whole(text: str) -> str:
@@ -18,7 +19,7 @@ def whole(text: str) -> str:
 
 
 def parsed[R](request: type[R], argv: list[str]) -> R:
-    parser = argparse.ArgumentParser(prog="sift add", exit_on_error=False)
+    parser = Parser(prog="sift add")
     options(parser, request, whole)
     return request_of(request, parser.parse_args(argv))
 
@@ -35,7 +36,7 @@ def test_a_list_is_given_by_its_places_and_may_be_empty_if_it_has_a_default() ->
     assert parsed(ShowStatus, []) == ShowStatus()
     assert parsed(IndexCollections, ["a", "b"]) == IndexCollections(("a", "b"))
     assert parsed(GetDocuments, ["x", "y", "--lines", "3"]) == GetDocuments(("x", "y"), "3")
-    with pytest.raises(argparse.ArgumentError, match="the following arguments are required: ids"):
+    with pytest.raises(UsageError, match="the following arguments are required: ids"):
         parsed(GetDocuments, [])
 
 
@@ -49,7 +50,7 @@ def test_a_choice_may_be_given_by_its_place() -> None:
 
 
 def test_a_choice_not_offered_is_refused_with_the_choices_there_are() -> None:
-    with pytest.raises(argparse.ArgumentError, match=r"invalid choice: 'title' \(choose from '?heading'?, '?name'?\)"):
+    with pytest.raises(UsageError, match=r"invalid choice: 'title' \(choose from '?heading'?, '?name'?\)"):
         parsed(AddCollection, ["notes", "--title-from", "title"])
 
 
@@ -170,7 +171,7 @@ def test_a_field_with_a_value_for_default_is_an_option_and_may_have_a_short_flag
 
 @pytest.mark.parametrize("written", ["many", "1_000", " 3", "3.0", "+3", chr(0x663), "1" * 19, ""])
 def test_a_number_written_other_than_in_digits_alone_is_refused(written: str) -> None:
-    with pytest.raises(argparse.ArgumentError, match="is no whole number: write up to 18 digits alone"):
+    with pytest.raises(UsageError, match="is no whole number: write up to 18 digits alone"):
         parsed(Counted, ["x", f"--k={written}"])
 
 
@@ -188,7 +189,7 @@ def test_a_decimal_option_takes_digits_with_a_point() -> None:
 
 @pytest.mark.parametrize("written", ["1e3", "nan", "inf", ".5", "1.", "0x1", "1_0.5", ""])
 def test_a_decimal_written_otherwise_is_refused(written: str) -> None:
-    with pytest.raises(argparse.ArgumentError, match="is no number"):
+    with pytest.raises(UsageError, match="is no number"):
         parsed(Timed, ["x", f"--budget={written}"])
 
 

@@ -213,6 +213,19 @@ def test_with_no_collection_every_command_that_reads_one_says_how_to_add_one(set
         assert ran(settings, *argv) == (0, "", empty)
 
 
+def test_with_no_collection_a_command_asked_for_json_answers_in_json_as_it_would_with_one(settings: Settings) -> None:
+    asked = (
+        (("unresolved",), 0),
+        (("get", "a/b.md"), 1),
+        (("links", "A"), 1),
+        (("mentions", "A"), 1),
+        (("similar", "a/b.md"), 1),
+    )
+    for argv, failed in asked:
+        code, out, _ = ran(settings, *argv, "--json")
+        assert (code, isinstance(cast("object", json.loads(out)), dict)) == (failed, True)
+
+
 def test_status_of_a_store_that_is_gone_fails_and_json_may_come_before_the_command(
     settings: Settings, notes: Path
 ) -> None:

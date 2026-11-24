@@ -30,6 +30,7 @@ MOST_NESTED = 50
 NESTED_TOO_DEEPLY = f"its parts nest more than {MOST_NESTED} deep"
 ATTACHED = frozenset({FileKind.NOTE, FileKind.DOCUMENT, FileKind.MAIL})
 ATTACHED_MAIL = "message/rfc822"
+MULTIPART, ALTERNATIVE = "multipart", "alternative"
 FOLDERS = re.compile(r"[\\/]")
 HTML_NAME = "mail.html"
 NOT_NAMES = frozenset({"", ".", ".."})
@@ -265,10 +266,27 @@ def _attachments(parts: Sequence[MIMEPart]) -> Iterator[Attachment]:
             yield found
 
 
+def _beside_the_body(part: MIMEPart) -> list[MIMEPart]:
+    if part.get_content_subtype() == ALTERNATIVE:
+        return [each for each in part.iter_parts() if each.get_content_maintype() == MULTIPART]
+    return list(part.iter_attachments())
+
+
+def _attached(message: MIMEPart) -> list[MIMEPart]:
+    found = _beside_the_body(message)
+    at = 0
+    while at < len(found):
+        if found[at].get_content_maintype() == MULTIPART:
+            found[at : at + 1] = _beside_the_body(found[at])
+        else:
+            at += 1
+    return found
+
+
 def _read(raw: bytes, name: str, convert: Convert) -> Mail:
     message = BytesParser(EmailMessage, policy=policy.default).parsebytes(raw)
     head = _head(message)
-    parts = list(message.iter_attachments())
+    parts = _attached(message)
     names = [found for part in parts if (found := attachment_name(part))]
     fields = dict(head.fields)
     shown = list(head.shown)

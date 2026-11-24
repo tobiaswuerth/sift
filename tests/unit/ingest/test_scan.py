@@ -26,11 +26,14 @@ class Fake:
     modified_ns: int = 7
     refusal: OSError | None = None
     untyped: OSError | None = None
+    unfollowed: OSError | None = None
     attributes: int = 0
 
     def is_dir(self, *, follow_symlinks: bool = True) -> bool:
         if self.untyped is not None:
             raise self.untyped
+        if follow_symlinks and self.unfollowed is not None:
+            raise self.unfollowed
         return self.folder and (follow_symlinks or not self.symlink)
 
     def is_junction(self) -> bool:
@@ -150,6 +153,13 @@ def test_a_folder_that_vanishes_while_scanned_keeps_what_it_held(notes: Path) ->
         assert index_plan(scanned.found, {"robots/brush.md": Stat(1, 1)}).kept == ("robots/brush.md",)
 
 
+def test_a_link_that_cannot_be_followed_is_taken_for_a_link_to_a_file_not_to_a_folder(tmp_path: Path) -> None:
+    denied = PermissionError(13, "Access is denied")
+    entries = [Fake("odd.md", "odd.md", symlink=True, unfollowed=denied), Fake("ok.md", "ok.md")]
+    scanned = scan(tmp_path, links=FAKE, listing=listing({str(tmp_path): entries}))
+    assert (paths(scanned), scanned.linked_folders) == (["odd.md", "ok.md"], ())
+
+
 def test_a_file_that_cannot_be_stated_is_named_and_one_gone_passed_over(tmp_path: Path) -> None:
     root = str(tmp_path)
     entries = [
@@ -162,7 +172,7 @@ def test_a_file_that_cannot_be_stated_is_named_and_one_gone_passed_over(tmp_path
     assert (paths(scanned), scanned.found.unlisted_files) == (["ok.md"], ("denied.md",))
 
 
-def test_no_junction_and_no_linked_folder_is_followed(tmp_path: Path) -> None:
+def test_no_junction_and_no_linked_folder_is_followed_and_each_is_named_as_left_out(tmp_path: Path) -> None:
     entries = [
         Fake("loop", str(tmp_path), folder=True, junction=True),
         Fake("away", str(tmp_path / "elsewhere"), folder=True, symlink=True),
@@ -170,7 +180,7 @@ def test_no_junction_and_no_linked_folder_is_followed(tmp_path: Path) -> None:
     ]
     write(tmp_path / "elsewhere" / "outside.md")
     scanned = scan(tmp_path, links=FAKE, listing=listing({str(tmp_path): entries}))
-    assert (paths(scanned), scanned.linked_folders) == (["ok.md"], ("loop/",))
+    assert (paths(scanned), scanned.linked_folders) == (["ok.md"], ("loop/", "away/"))
 
 
 def test_a_file_linked_from_outside_the_folder_is_left_out_unless_links_are_followed(tmp_path: Path) -> None:

@@ -4,12 +4,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from sift.domain.arrays import Ids, Scores, first, ints, last, maxima_at, run_starts, sums_at, total
+from sift.domain.arrays import Ids, Scores, first, ints, largest, last, maxima_at, run_starts, sums_at, total
 from sift.domain.codec.postings import encoded, ranged, with_lengths
 from sift.domain.codec.shape import SHAPE, Shape
 from sift.domain.rank.bm25 import quantized, term_scores
 
 GAP = ""
+MOST_TIMES = 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +121,13 @@ def postings_of(lists: Lists, average: float, shape: Shape = SHAPE) -> tuple[Pos
     return tuple(written)
 
 
+def _counted(counts: Ids, places: Ids) -> tuple[Ids, Ids]:
+    if not len(counts) or largest(counts) <= MOST_TIMES:
+        return counts, places
+    nth = np.arange(len(places)) - np.repeat(np.cumsum(counts) - counts, counts)
+    return np.minimum(counts, MOST_TIMES), places[nth < MOST_TIMES]
+
+
 def segment(ids: Ids, streams: Sequence[Sequence[str]], average: float, shape: Shape = SHAPE) -> Segment:
     names, codes, owners, places = _coded(streams)
     kept = codes.astype(np.bool_)
@@ -127,7 +135,7 @@ def segment(ids: Ids, streams: Sequence[Sequence[str]], average: float, shape: S
     order = np.argsort(codes[kept], kind="stable")
     codes, owners, places = codes[kept][order], owners[kept][order], places[kept][order]
     posting_starts = run_starts(codes * len(streams) + owners)
-    counts = np.diff(np.append(posting_starts, len(codes)))
+    counts, places = _counted(np.diff(np.append(posting_starts, len(codes))), places)
     terms, holders = codes[posting_starts], owners[posting_starts]
     term_starts = ints(run_starts(terms))
     named = tuple(names[code] for code in ints(terms[term_starts]))

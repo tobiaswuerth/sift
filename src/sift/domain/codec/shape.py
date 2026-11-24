@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 FORMAT = 1
 MOST_RANGE_SHIFT = 8
-MOST_BLOCK = 1 << 20
+MOST_BLOCK = 1 << 12
 MOST_LENGTHS_SHIFT = 20
 
 

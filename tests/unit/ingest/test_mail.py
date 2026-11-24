@@ -155,6 +155,42 @@ def test_a_text_attachment_reads_in_the_charset_its_mail_declares() -> None:
     assert [note.text for note in notes] == ["Grüße aus Zürich", "Grüße", "Grüße"]
 
 
+def _within(kind: str, boundary: str, *parts: bytes) -> bytes:
+    head = f'Content-Type: multipart/{kind}; boundary="{boundary}"\r\n\r\n'.encode()
+    held = b"".join(b"--%b\r\n%b\r\n" % (boundary.encode(), part) for part in parts)
+    return head + held + b"--%b--\r\n" % boundary.encode()
+
+
+def _leaf(kind: str, text: bytes, name: str | None = None) -> bytes:
+    named = f'Content-Disposition: attachment; filename="{name}"\r\n' if name else ""
+    return f"Content-Type: text/{kind}; charset=utf-8\r\n{named}\r\n".encode() + text
+
+
+PLAIN_WORDS = _leaf("plain", b"Plain words.")
+NOTES = _leaf("markdown", b"# Notes", "notes.md")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _within("alternative", "out", PLAIN_WORDS, _within("mixed", "in", _leaf("html", b"<p>Plain.</p>"), NOTES)),
+        _within("mixed", "out", _within("mixed", "in", PLAIN_WORDS, NOTES)),
+        _within(
+            "mixed",
+            "out",
+            _within("related", "in", _within("alternative", "alt", PLAIN_WORDS), _leaf("plain", b"logo", "logo.txt")),
+            NOTES,
+        ),
+    ],
+    ids=["within the alternative to the plain text", "within a part of mixed parts", "beside related parts"],
+)
+def test_an_attachment_is_found_however_deep_the_parts_of_a_mail_hold_it(body: bytes) -> None:
+    found = read_file(b"Subject: Nested\r\nMIME-Version: 1.0\r\n" + body, "mail.eml")
+    assert [each.key for each in found.documents] == ["", "notes.md"]
+    assert found.documents[0].fields["attachments"] == ["notes.md"]
+    assert "Plain words." in found.documents[0].text
+
+
 def test_attachments_sift_reads_are_documents_of_their_own_named_once_each() -> None:
     raw = mail_bytes(
         message(

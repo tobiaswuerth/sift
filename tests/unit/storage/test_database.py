@@ -233,7 +233,7 @@ def test_a_database_opens_at_a_path_of_spaces_marks_and_letters_of_any_script(tm
 def test_an_sqlite_older_than_sift_needs_is_refused_with_what_to_do() -> None:
     require_sqlite(MINIMUM_SQLITE)
     require_sqlite((MINIMUM_SQLITE[0], MINIMUM_SQLITE[1] + 1, 0))
-    with pytest.raises(StoreUnavailableError, match=r"SQLite 3\.36\.0") as refused:
-        require_sqlite((3, 36, 0))
+    with pytest.raises(StoreUnavailableError, match=r"SQLite 3\.37\.2") as refused:
+        require_sqlite((3, 37, 2))
     assert refused.value.remedy is not None
-    assert "3.37" in refused.value.remedy
+    assert "3.38" in refused.value.remedy

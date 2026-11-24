@@ -7,9 +7,17 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.arrays import floats, ints
-from sift.domain.codec.postings import blocked, lengths_of, positions_of, ranges_of
-from sift.domain.codec.segments import GAP, LongPostings, Postings, ShortPostings, segment, stream
-from sift.domain.codec.shape import Shape
+from sift.domain.codec.postings import MOST_BYTES, MOST_INFLATED_BYTES, blocked, lengths_of, positions_of, ranges_of
+from sift.domain.codec.segments import (
+    GAP,
+    MOST_TIMES,
+    LongPostings,
+    Postings,
+    ShortPostings,
+    segment,
+    stream,
+)
+from sift.domain.codec.shape import MOST_BLOCK, Shape
 from sift.domain.rank.bm25 import term_scores, unquantized
 
 SMALL = Shape(range_shift=2, block=2, long=3, lengths_shift=3)
@@ -87,14 +95,28 @@ def test_the_ranges_of_a_long_list_bound_every_score_in_them(columns: list[tuple
         ({"range_shift": -1}, "its counts are bytes"),
         ({"block": 0}, "one entry at least"),
         ({"lengths_shift": 0}, "one entry at least"),
-        ({"block": (1 << 20) + 1}, "at most 1,048,576"),
-        ({"long": (1 << 20) + 1}, "at most 1,048,576"),
+        ({"block": (1 << 12) + 1}, "at most 4,096"),
+        ({"long": (1 << 12) + 1}, "at most 4,096"),
         ({"lengths_shift": 21}, r"2\*\*20"),
     ],
 )
 def test_a_shape_whose_ranges_or_blocks_cannot_be_written_is_refused(asked: dict[str, int], refusal: str) -> None:
     with pytest.raises(ValueError, match=refusal):
         Shape(**asked)
+
+
+def test_a_word_counts_in_a_passage_no_more_often_than_a_list_may_hold_and_the_passage_stays_as_long() -> None:
+    often = MOST_TIMES + 500
+    streams = [stream([], ["x"] * often, ["y"]), stream(["x"], [], [])]
+    written = segment(np.array([7, 9], np.int64), streams, average=4.0)
+    held = {each.term: decoded(each) for each in written.postings}
+    assert held["x"] == ([7, 9], [MOST_TIMES, 1], [*range(1, MOST_TIMES + 1), 0])
+    assert held["y"] == ([7], [1], [often + 2])
+    assert written.tokens == often + 2
+
+
+def test_no_list_a_shape_lets_be_written_unpacks_to_more_than_a_reader_takes() -> None:
+    assert MOST_BLOCK * MOST_TIMES * MOST_BYTES <= MOST_INFLATED_BYTES
 
 
 def test_a_chunk_of_no_word_is_in_the_segment_with_no_tokens() -> None:

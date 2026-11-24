@@ -52,7 +52,7 @@ def searched[R](request: type[R], act: Callable[[Context, R], SearchResult], kin
 
 def needing_collections(made: Command) -> Command:
     def run(namespace: argparse.Namespace, context: Context) -> Shown:
-        if not chosen(context.settings.home, ()):
+        if not context.json and not chosen(context.settings.home, ()):
             return empty(context.platform, context.style)
         return made.run(namespace, context)
 

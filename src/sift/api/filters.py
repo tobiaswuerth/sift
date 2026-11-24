@@ -60,11 +60,17 @@ def _scalar(value: object) -> bool:
     return isinstance(value, str | int | float)
 
 
-def _values(text: str, value: str) -> tuple[FilterValue, ...]:
+def _json(value: str, *, as_written: bool) -> object:
+    if as_written:
+        return cast("object", json.loads(value, parse_float=str, parse_int=str, parse_constant=str))
+    return cast("object", json.loads(value))
+
+
+def _values(text: str, value: str, operator: Operator) -> tuple[FilterValue, ...]:
     if value.count("[") + value.count("{") > MOST_BRACKETS:
         return (value,)
     try:
-        read = cast("object", json.loads(value))
+        read = _json(value, as_written=operator in SETS)
     except ValueError:
         return (value,)
     held = cast("list[object]", read) if isinstance(read, list) else [read]
@@ -80,7 +86,7 @@ def written(text: str) -> Filter:
     field, operator, value = found[1].strip(), Operator(found[2]), found[3].strip()
     if not value:
         raise _refused(text, "it gives no value")
-    return Filter(field, operator, _values(text, value))
+    return Filter(field, operator, _values(text, value, operator))
 
 
 def gathered(filters: tuple[Filter, ...]) -> tuple[Filter, ...]:

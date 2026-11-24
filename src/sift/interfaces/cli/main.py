@@ -89,6 +89,8 @@ class UsageError(Exception):
 
 
 class Parser(argparse.ArgumentParser):
+    color: bool = False
+
     @override
     def error(self, message: str) -> NoReturn:
         raise UsageError(message, self.prog)
@@ -138,12 +140,14 @@ def _placed(settings: Settings, written: str) -> str:
 
 def parser(settings: Settings) -> argparse.ArgumentParser:
     built = Parser(prog="sift", description=DESCRIPTION)
+    built.color = False
     built.add_argument("--version", action=VersionAction)
     built.add_argument("--json", action="store_true", help=JSON_HELP)
     built.add_argument("--color", choices=list(Colour), default=Colour.AUTO, help=COLOR_HELP)
     commands = built.add_subparsers(dest="command", metavar="COMMAND")
     for name, each in ENTRIES.items():
         chosen = commands.add_parser(name, help=each.help, description=each.help)
+        chosen.color = False
         options(chosen, each.request, partial(_placed, settings))
         chosen.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=JSON_HELP)
         chosen.add_argument("--color", choices=list(Colour), default=argparse.SUPPRESS, help=COLOR_HELP)

@@ -6,14 +6,16 @@ from collections.abc import Generator
 from pathlib import Path
 
 import numpy as np
+import pytest
 
+from sift.api.errors import InvalidRequestError
 from sift.api.fields import Fields
-from sift.api.filters import Filter, FilterValue, Operator
+from sift.api.filters import Filter, FilterValue, Operator, written
 from sift.api.ids import CollectionId
 from sift.domain.arrays import ints
 from sift.domain.query.filters import UNLINKED, Linked, LinkFilter, condition
 from sift.storage.database import Reading
-from sift.storage.passing import Passing
+from sift.storage.passing import Passing, reads_quotes
 from sift.storage.store import create_store, open_store
 
 ANY, NONE = Operator.ANY, Operator.NONE
@@ -46,7 +48,7 @@ def stored(documents: dict[str, Fields]) -> Generator[sqlite3.Connection]:
 def passing(
     documents: dict[str, Fields], filters: list[Filter], path: str | None = None, linked: Linked = UNLINKED
 ) -> list[str]:
-    found = condition(path, filters, reads_quotes=True, linked=linked)
+    found = condition(path, filters, reads_quotes=reads_quotes(), linked=linked)
     names = list(documents)
     with stored(documents) as database:
         if found is None:
@@ -158,6 +160,13 @@ def test_yes_and_no_match_the_words_true_and_false_alone() -> None:
     assert passing(flags, [one("flag", Operator.ABOVE, 0)]) == ["one"]
 
 
+def test_a_number_written_with_a_zero_at_its_end_matches_the_text_written_so_and_the_number_alone() -> None:
+    versions: dict[str, Fields] = {"text": {"version": "1.10"}, "number": {"version": 1.1}, "other": {"version": "1.1"}}
+    assert passing(versions, [written("version=1.10")]) == ["number", "text"]
+    assert passing(versions, [written("version!=1.10")]) == ["other"]
+    assert passing(versions, [written("version>=1.10")]) == ["number", "other", "text"]
+
+
 def test_a_range_on_a_list_needs_one_element_within_it_all() -> None:
     multi: dict[str, Fields] = {"multi": {"years": [2019, 2030]}}
     assert passing(multi, [one("years", Operator.ABOVE, 2020), one("years", Operator.BELOW, 2025)]) == []
@@ -165,13 +174,21 @@ def test_a_range_on_a_list_needs_one_element_within_it_all() -> None:
 
 def test_any_field_name_is_addressed_and_odd_numbers_break_nothing() -> None:
     odd: dict[str, Fields] = {
-        "cited": {"journal-ref": "Nature 12", "date created": "2024-05-01", 'say "hi"': "yes"},
+        "cited": {"journal-ref": "Nature 12", "date created": "2024-05-01"},
         "odd": {"score": "NaN"},
     }
     assert passing(odd, [one("journal-ref", ANY, "Nature 12")]) == ["cited"]
     assert passing(odd, [one("date created", Operator.AT_LEAST, "2024-05")]) == ["cited"]
-    assert passing(odd, [one('say "hi"', ANY, "yes")]) == ["cited"]
     assert passing(odd, [one("score", ANY, "NaN")]) == ["odd"]
+
+
+def test_a_field_name_with_a_double_quote_is_addressed_where_sqlite_reads_it_and_refused_elsewhere() -> None:
+    quoted: dict[str, Fields] = {"cited": {'say "hi"': "yes"}, "odd": {"say": "yes"}}
+    if reads_quotes():
+        assert passing(quoted, [one('say "hi"', ANY, "yes")]) == ["cited"]
+    else:
+        with pytest.raises(InvalidRequestError, match="double quote"):
+            passing(quoted, [one('say "hi"', ANY, "yes")])
 
 
 def test_documents_linking_a_note_pass_its_wikilink_value_and_fail_its_negation() -> None:
@@ -200,7 +217,7 @@ def test_documents_left_out_never_pass() -> None:
 
 
 def steps(documents: dict[str, Fields], filters: list[Filter], linked: Linked = UNLINKED) -> int:
-    found = condition(None, filters, reads_quotes=True, linked=linked)
+    found = condition(None, filters, reads_quotes=reads_quotes(), linked=linked)
     assert found is not None
     ticks: list[int] = []
 

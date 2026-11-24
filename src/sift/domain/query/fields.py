@@ -2,6 +2,7 @@ from collections.abc import Sequence
 
 from sift.api.errors import InvalidRequestError
 from sift.api.fields import Fields, FieldValue
+from sift.domain.query.filters import DECIMAL, WHOLE
 
 EVERY = "*"
 TITLE = "title"
@@ -27,7 +28,10 @@ def picked(held: Fields, asked: Sequence[str]) -> Fields:
 def _key(value: FieldValue) -> Key:
     if isinstance(value, int | float):
         return (0, value, "")
-    return (1, 0.0, str(value))
+    written = str(value)
+    if WHOLE.fullmatch(written):
+        return (0, int(written), "")
+    return (0, float(written), "") if DECIMAL.fullmatch(written) else (1, 0.0, written)
 
 
 def order(each: Sequence[Fields], sort: str) -> list[int]:

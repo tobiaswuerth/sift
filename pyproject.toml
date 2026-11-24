@@ -276,7 +276,12 @@ forbidden_modules = ["argparse", "jinja2", "mcp", "starlette", "uvicorn"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = ["--strict-markers", "--strict-config", "--import-mode=importlib"]
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # PyTorch says this of a virtual Mac's GPU, as CI's runners have, when a test imports the model libraries; sift
+    # itself keeps it from its users (sift.inference.loading).
+    "ignore:Skipping device:UserWarning",
+]
 timeout = 300
 xfail_strict = true
 

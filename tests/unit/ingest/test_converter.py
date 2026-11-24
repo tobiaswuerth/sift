@@ -1,14 +1,19 @@
 import json
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from xberg import ExtractionResult
 
 from sift.domain.text.documents import FileRead, Unread
 from sift.domain.text.kinds import DOCUMENTS
+from sift.ingest import converter
 from sift.ingest.converter import converted
 from tests.mails import PARAGRAPH, SAMPLES, only, read, sample
+
+if TYPE_CHECKING:
+    from sift.ingest.documents import Converter
 
 PAGES = (".html", ".htm")
 WORD = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -170,3 +175,8 @@ def test_a_panic_of_the_converter_leaves_the_document_unread_and_an_interrupt_st
         converted(b"%PDF", "a.pdf", mistaken)
     with pytest.raises(RecursionError):
         converted(b"%PDF", "a.pdf", too_deep)
+
+
+def test_the_converter_loaded_late_is_what_its_callers_take_it_for() -> None:
+    late: Converter = converter
+    assert late.converted is converted

@@ -189,7 +189,8 @@ def test_a_model_from_a_folder_that_holds_none_cannot_be_loaded(tmp_path: Path) 
 
 
 def test_ocr_runs_on_the_device_the_other_models_would_and_loads_when_first_needed() -> None:
-    assert ocr_device().name in {"cpu", "cuda", "mps"}
+    assert ocr_device(None).name in {"cpu", "cuda", "mps"}
+    assert ocr_device("-1").name == "cpu"
     module = ocr_module()
     assert (module.ocr_device, module.loaded_ocr, module.pages_text) == (ocr_device, loaded_ocr, pages_text)
 

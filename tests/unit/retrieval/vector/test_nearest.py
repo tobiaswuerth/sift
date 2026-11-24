@@ -56,8 +56,8 @@ def reader(exact: list[tuple[Ids, Halves]]) -> ExactRead:
 @settings(max_examples=20, deadline=None)
 @given(st.integers(0, 2**32 - 1), st.lists(st.integers(0, 60), min_size=1, max_size=3), st.sampled_from([1, 5, 40]))
 def test_with_every_candidate_scored_exactly_the_nearest_are_found(seed: int, sizes: list[int], k: int) -> None:
-    held, exact = stores(seed, sizes, 24)
-    query = unit(np.random.default_rng(seed + 1).normal(size=24))
+    held, exact = exact_stores(seed, sizes, 24)
+    query = exact_query(seed + 1, 24)
     found = nearest(held, query, k, Reads(reader(exact)), rescore=1000)
     assert found == tuple(brute(exact, query, k)) if sum(sizes) else found == ()
 
@@ -130,6 +130,10 @@ def exact_stores(seed: int, sizes: list[int], width: int) -> tuple[list[Coded], 
     return held, exact
 
 
+def exact_query(seed: int, width: int) -> Floats:
+    return (np.random.default_rng(seed).integers(-64, 65, size=width) / 64).astype(np.float32)
+
+
 def staged(exact: list[tuple[Ids, Halves]], query: Floats, k: int, rescore: int) -> list[Near]:
     ids = np.concatenate([each for each, _ in exact])
     signs = np.vstack([rows for _, rows in exact]) > 0
@@ -158,12 +162,12 @@ def test_the_nearest_are_those_by_codes_then_by_bits_then_exactly_with_ties_by_i
     seed: int, sizes: list[int], width: int, k: int, rescore: int
 ) -> None:
     held, exact = exact_stores(seed, sizes, width)
-    query = (np.random.default_rng(seed + 1).integers(-64, 65, size=width) / 64).astype(np.float32)
+    query = exact_query(seed + 1, width)
     assert list(nearest(held, query, k, Reads(reader(exact)), rescore=rescore)) == staged(exact, query, k, rescore)
 
 
 def test_a_store_without_codes_is_passed_over_and_not_read() -> None:
-    held, exact = stores(3, [80], 24)
+    held, exact = exact_stores(3, [80], 24)
     empty = coded(np.zeros(0, np.int64), np.zeros((0, 0), np.uint8), 0)
     read: list[int] = []
 
@@ -171,7 +175,7 @@ def test_a_store_without_codes_is_passed_over_and_not_read() -> None:
         read.append(store)
         return reader([(np.zeros(0, np.int64), np.zeros((0, 0), np.float16)), *exact])(store, chunks)
 
-    query = unit(np.random.default_rng(4).normal(size=24))
+    query = exact_query(4, 24)
     assert list(nearest([empty, *held], query, 5, Reads(recorded), rescore=3)) == staged(exact, query, 5, 3)
     assert read == [1]
 

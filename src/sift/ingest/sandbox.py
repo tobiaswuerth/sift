@@ -90,6 +90,10 @@ def came_to_no_end(seconds: float) -> Refused:
     return stopped(f"its reader came to no end in {seconds:,.0f} seconds")
 
 
+def out_of_memory() -> Refused:
+    return stopped("its reader ran out of memory")
+
+
 def too_large_an_answer(size: int, most: int) -> Refused:
     return Refused(
         f"read, it comes to {size:,} bytes, more than the {most:,} sift takes from one file", read_again=False
@@ -135,7 +139,9 @@ def _serve[A, B](asked: _Channel, answers: _Channel, read: Callable[[A], B], mos
     while (each := _message(asked)) is not None:
         answers.send(BEGAN)
         try:
-            outcome = read(cast("A", each))
+            outcome: B | Refused = read(cast("A", each))
+        except MemoryError:
+            outcome = out_of_memory()
         except Exception as error:
             answers.send(_Raised("".join(traceback.format_exception_only(error)).strip()))
             raise

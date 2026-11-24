@@ -21,6 +21,7 @@ from sift.ingest.sandbox import (
     Patience,
     ReaderFailedError,
     came_to_no_end,
+    out_of_memory,
     reader_processes,
     sandboxed,
     usable_cpus,
@@ -94,6 +95,13 @@ def test_a_reader_is_given_more_time_the_larger_its_file_is() -> None:
     with sandboxed(misbehaving, by_size, workers=1) as reading:
         found = dict(reading(asked("hang.pdf")))
     assert found == {0: came_to_no_end(2.0)}
+    assert multiprocessing.active_children() == []
+
+
+def test_a_file_its_reader_has_no_memory_for_is_refused_alone_and_the_reader_reads_on() -> None:
+    with sandboxed(misbehaving, PATIENT, workers=1) as reading:
+        found = dict(reading(asked("a.pdf", "balloon.pdf", "b.pdf")))
+    assert found == {0: read("a.pdf"), 1: out_of_memory(), 2: read("b.pdf")}
     assert multiprocessing.active_children() == []
 
 

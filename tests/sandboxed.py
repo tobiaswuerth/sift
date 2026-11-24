@@ -37,6 +37,8 @@ def misbehaving(asked: ToRead) -> Outcome:
             _ = threading.Event().wait()
         case "raise":
             raise ValueError("a reader's bug")
+        case "balloon":
+            raise MemoryError
         case "linger":
             threading.Thread(target=threading.Event().wait).start()
             raise ValueError("a reader's bug, its thread left running")

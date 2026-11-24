@@ -177,12 +177,22 @@ def _left_out(walk: _Walk, path: str, *, folder: bool = False) -> bool:
     return found
 
 
-def _folder(entry: DirEntry, path: str, walk: _Walk) -> None:
-    if _left_out(walk, path, folder=True):
-        return
-    if entry.is_junction():
+def _links_to_a_folder(entry: DirEntry) -> bool:
+    try:
+        return entry.is_symlink() and entry.is_dir()
+    except OSError:
+        return False
+
+
+def _linked_folder(path: str, walk: _Walk) -> None:
+    if not _left_out(walk, path, folder=True):
         walk.seen.linked_folders.append(f"{path}/")
-    elif _folder_taken(entry):
+
+
+def _folder(entry: DirEntry, path: str, walk: _Walk) -> None:
+    if entry.is_junction():
+        _linked_folder(path, walk)
+    elif not _left_out(walk, path, folder=True) and _folder_taken(entry):
         walk.folders.append((entry.path, f"{path}/"))
 
 
@@ -199,6 +209,8 @@ def _taken(entry: DirEntry, relative: str, walk: _Walk) -> None:
     try:
         if entry.is_dir(follow_symlinks=False):
             _folder(entry, path, walk)
+        elif _links_to_a_folder(entry):
+            _linked_folder(path, walk)
         elif kind_of(entry.name) is not None and not _left_out(walk, path):
             _file(entry, path, walk.seen, walk.guard)
     except OSError as error:
