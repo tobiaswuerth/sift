@@ -335,12 +335,17 @@ def test_a_search_out_of_time_looks_no_further_for_more_works(tmp_path: Path) ->
     assert (cut.partial, [hit.id for hit in cut.hits]) == (True, ["c/copy0.md"])
 
 
-def test_a_search_out_of_time_says_it_is_partial_and_keeps_what_it_found(tmp_path: Path) -> None:
+def many_notes(tmp_path: Path) -> Path:
     for n in range(300):
         write(tmp_path / "many" / f"n{n:03}.md", f"# Note {n}\n\nA note, number {n}.\n")
     home = tmp_path / "home"
     add(home, AddCollection(str(tmp_path / "many")))
     indexed(home)
+    return home
+
+
+def test_a_search_out_of_time_says_it_is_partial_and_keeps_what_it_found(tmp_path: Path) -> None:
+    home = many_notes(tmp_path)
     ticks = itertools.count()
     request = SearchKeywords("note", k=500, budget=0.5)
     cut = search(home, request, clock=lambda: float(next(ticks)), tuning=Tuning(first_batch=1))
@@ -348,6 +353,14 @@ def test_a_search_out_of_time_says_it_is_partial_and_keeps_what_it_found(tmp_pat
     assert 0 < len(cut.hits) < 300
     whole = search(home, dataclasses.replace(request, budget=None), tuning=Tuning(first_batch=1))
     assert (whole.partial, len(whole.hits)) == (False, 300)
+
+
+def test_with_time_to_spare_a_budget_changes_nothing(tmp_path: Path) -> None:
+    home = many_notes(tmp_path)
+    request = SearchKeywords("note", k=40)
+    spared = search(home, dataclasses.replace(request, budget=60.0), clock=lambda: 0.0, tuning=Tuning(first_batch=1))
+    assert spared == search(home, request, tuning=Tuning(first_batch=1))
+    assert not spared.partial
 
 
 @pytest.mark.parametrize("query", ["", " ", "\t\n"])
