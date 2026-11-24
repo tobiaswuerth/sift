@@ -1,5 +1,6 @@
 import dataclasses
 import math
+import re
 import types
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from typing import Annotated, Literal, TypeAliasType, cast, get_args, get_origin
 from sift.api.described import Bounds
 from sift.api.errors import InvalidRequestError
 
+SURROGATE = re.compile(f"[{chr(0xD800)}-{chr(0xDFFF)}]")
+HALF_PAIR_REMEDY = "send it as text in UTF-8"
 KIND_NAMES: Mapping[object, str] = MappingProxyType(
     {str: "text", int: "a whole number", float: "a finite number", bool: "true or false"}
 )
@@ -130,12 +133,20 @@ def _bounded(name: str, value: object, bounds: Bounds) -> None:
         raise InvalidRequestError(said, f"give {bounds.low:,} to {bounds.high:,}", name)
 
 
+def holds_half_a_pair(value: object) -> bool:
+    if isinstance(value, str):
+        return SURROGATE.search(value) is not None
+    return isinstance(value, tuple) and any(holds_half_a_pair(each) for each in cast("tuple[object, ...]", value))
+
+
 def checked(request: object) -> None:
     for name, kind, bounds in _hints(type(request)):
         value = cast("object", getattr(request, name))
         if not fits(value, kind):
             wanted = named(kind)
             raise InvalidRequestError(f"{name} is {value!r}, not {wanted}", f"give {name} as {wanted}", name)
+        if holds_half_a_pair(value):
+            raise InvalidRequestError(f"{name} holds half a surrogate pair", HALF_PAIR_REMEDY, name)
         for each in bounds:
             _bounded(name, value, each)
 

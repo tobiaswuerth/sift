@@ -95,7 +95,6 @@ def test_a_query_is_read_as_fts5_reads_it_where_both_read_it(query: str, express
         ("(a OR)", '")" where words are missing'),
         ("NEAR(a b)", "NEAR is not supported"),
         ("NEAR (a b)", "NEAR is not supported"),
-        ("ab" + chr(0xD800) + "*", "half a surrogate pair"),
         ("a " * (MOST_WORDS + 1), f"more than {MOST_WORDS:,} words"),
         ('"' + "a " * (MOST_WORDS + 1) + '"', f"more than {MOST_WORDS:,} words"),
         ("su*per", "* ends a prefix"),

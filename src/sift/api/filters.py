@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import cast
 
 from sift.api.errors import InvalidRequestError
+from sift.api.requests import HALF_PAIR_REMEDY, holds_half_a_pair
 
 type FilterValue = str | int | float | bool
 
@@ -40,6 +41,8 @@ class Filter:
             raise _wrong(f"the operator {operator!r} is no Operator: give one of {', '.join(Operator)}")
         if not isinstance(field, str) or not field:
             raise _wrong("a filter names no field")
+        if holds_half_a_pair(field) or holds_half_a_pair(self.values):
+            raise InvalidRequestError("a filter holds half a surrogate pair", HALF_PAIR_REMEDY, "filters")
         if not self.values:
             raise _wrong(f"the filter on {self.field!r} has no value")
         if self.operator not in SETS and len(self.values) > 1:

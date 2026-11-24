@@ -141,3 +141,24 @@ def test_every_dataclass_of_sift_api_whose_fields_are_described_is_a_request_tha
     ]
     assert len(described) >= 12
     assert [kind.__name__ for kind in described if not issubclass(kind, Request)] == []
+
+
+HALF = "a" + chr(0xD800)
+
+
+@pytest.mark.parametrize(
+    "build, field",
+    [
+        (lambda: SearchKeywords(HALF), "query"),
+        (lambda: SearchKeywords("x", path=HALF), "path"),
+        (lambda: SearchKeywords("x", collections=("notes", HALF)), "collections"),
+        (lambda: documents.GetDocuments((HALF,)), "ids"),
+        (lambda: links.ShowLinks(HALF), "id"),
+        (lambda: Filter(HALF, Operator.ANY, ("x",)), "filters"),
+        (lambda: Filter("year", Operator.ANY, (HALF,)), "filters"),
+    ],
+)
+def test_text_with_half_a_surrogate_pair_is_refused_by_field(build: Callable[[], object], field: str) -> None:
+    with pytest.raises(InvalidRequestError, match="half a surrogate pair") as refused:
+        build()
+    assert (refused.value.field, refused.value.remedy) == (field, "send it as text in UTF-8")

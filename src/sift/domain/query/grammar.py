@@ -17,7 +17,6 @@ MOST_WORDS = 1000
 MOST_QUERY_CHARS = 100_000
 JOINS = "+"
 FEWEST_RELAXED = 2
-SURROGATE = re.compile(f"[{chr(0xD800)}-{chr(0xDFFF)}]")
 WORDLIKE = re.compile(r"\w")
 REMEDY = 'write words, "phrases", prefix*, AND, OR, NOT and (parentheses), e.g. (bert OR roberta) AND "fine tuning"'
 PREFIX_REMEDY = "end one word of letters and digits with *, e.g. superconduct*"
@@ -192,8 +191,6 @@ def _any(items: Sequence[Lexeme], at: int, nesting: int) -> Parsed:
 
 
 def parsed(query: str) -> Expression:
-    if SURROGATE.search(query):
-        raise _refused("it holds half a surrogate pair", "send the query as text in UTF-8")
     items = lexemes(query)
     if not items:
         return NOTHING
