@@ -12,7 +12,16 @@ import pytest
 
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.storage.store_files import FILE_SUFFIXES, WRITER_SUFFIX
-from sift.storage.writer import ASK_AT_ONCE, WAIT_A_MOMENT, Holder, LockFile, held_by, lock_file, sole_writer
+from sift.storage.writer import (
+    ASK_AGAIN,
+    ASK_AT_ONCE,
+    WAIT_A_MOMENT,
+    Holder,
+    LockFile,
+    held_by,
+    lock_file,
+    sole_writer,
+)
 
 HOLD = (
     "import os, sys; from pathlib import Path; from sift.storage.writer import sole_writer\n"
@@ -168,7 +177,33 @@ def test_who_holds_a_lock_is_asked_at_once_and_read_waiting_only_a_moment(tmp_pa
 
     with sole_writer(store, "sift serve"):
         assert held_by(Path(f"{store}{WRITER_SUFFIX}"), recorded) == Holder(os.getpid(), "sift serve")
-    assert opened[0].said == [ASK_AT_ONCE, "BEGIN IMMEDIATE", WAIT_A_MOMENT, "SELECT pid, purpose FROM holder"]
+    asked = [ASK_AT_ONCE, "BEGIN IMMEDIATE", ASK_AGAIN, "BEGIN IMMEDIATE"]
+    assert opened[0].said == [*asked, WAIT_A_MOMENT, "SELECT pid, purpose FROM holder"]
+
+
+@final
+class ContendedLock:
+    def __init__(self, real: LockFile, other: LockFile) -> None:
+        self.real, self.other, self.begun = real, other, 0
+
+    def execute(self, sql: str, parameters: tuple[int | str, ...] = (), /) -> sqlite3.Cursor:
+        if sql == "BEGIN IMMEDIATE":
+            self.begun += 1
+            self.other.execute("BEGIN IMMEDIATE" if self.begun == 1 else "ROLLBACK")
+        return self.real.execute(sql, parameters)
+
+    def close(self) -> None:
+        self.real.close()
+
+
+def test_a_lock_another_asker_takes_for_a_moment_is_not_said_to_be_held(tmp_path: Path) -> None:
+    store = tmp_path / "server"
+    lock = Path(f"{store}{WRITER_SUFFIX}")
+    with sole_writer(store, "sift serve"):
+        pass
+    with closing(lock_file(lock)) as other:
+        contended = ContendedLock(lock_file(lock), other)
+        assert (held_by(lock, lambda _path: contended), contended.begun) == (None, 2)
 
 
 def test_a_writer_file_that_cannot_be_locked_for_another_reason_says_that_reason(tmp_path: Path) -> None:

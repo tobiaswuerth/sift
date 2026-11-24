@@ -14,6 +14,8 @@ from sift.storage.store_files import WRITER_SUFFIX
 BUSY_REMEDY = "wait until it is done, or stop that process"
 MOMENT_SECONDS = 0.5
 ASK_AT_ONCE = "PRAGMA busy_timeout = 0"
+ASK_AGAIN_SECONDS = 0.05
+ASK_AGAIN = f"PRAGMA busy_timeout = {round(ASK_AGAIN_SECONDS * 1000)}"
 WAIT_A_MOMENT = f"PRAGMA busy_timeout = {round(MOMENT_SECONDS * 1000)}"
 HOLDER = "CREATE TABLE holder(pid INTEGER NOT NULL, purpose TEXT NOT NULL) STRICT"
 
@@ -69,20 +71,26 @@ def lock_file(path: Path) -> LockFile:
     return sqlite3.connect(uri(path.resolve(), "rw"), uri=True, timeout=MOMENT_SECONDS, isolation_level=None)
 
 
+def _free(connection: LockFile, waiting: str) -> bool:
+    connection.execute(waiting)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as error:
+        if primary_code(error) != sqlite3.SQLITE_BUSY:
+            raise
+        return False
+    connection.execute("ROLLBACK")
+    return True
+
+
 def held_by(path: Path, opened: Callable[[Path], LockFile] = lock_file) -> Holder | None:
     if not path.is_file():
         return None
     with closing(opened(path)) as connection, unavailable_if_unusable(path):
-        connection.execute(ASK_AT_ONCE)
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-        except sqlite3.OperationalError as error:
-            if primary_code(error) != sqlite3.SQLITE_BUSY:
-                raise
-            connection.execute(WAIT_A_MOMENT)
-            return _holder(connection)
-        connection.execute("ROLLBACK")
-        return None
+        if _free(connection, ASK_AT_ONCE) or _free(connection, ASK_AGAIN):
+            return None
+        connection.execute(WAIT_A_MOMENT)
+        return _holder(connection)
 
 
 @contextmanager

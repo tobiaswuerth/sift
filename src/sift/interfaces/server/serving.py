@@ -100,6 +100,7 @@ def held(
         ThreadPoolExecutor(WORKERS, thread_name_prefix="sift-serve") as pool,
         _resting(models.release_idle),
     ):
+        (settings.home / ENDPOINT).unlink(missing_ok=True)
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version)
         kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))

@@ -1,6 +1,7 @@
 import http.client
 import json
 import logging
+import os
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -17,7 +18,16 @@ from sift.app.embedding import embed
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.cli.main import ENTRIES
 from sift.interfaces.server.app import LOGGER, WAITING
-from sift.interfaces.server.endpoint import ENDPOINT, SERVER, SERVING, Endpoint, found, lock_of
+from sift.interfaces.server.endpoint import (
+    ENDPOINT,
+    LOOK_EVERY_SECONDS,
+    SERVER,
+    SERVING,
+    Endpoint,
+    found,
+    lock_of,
+    written,
+)
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import RESTED, HomeServer, held, serve, watched_idle
 from sift.settings import Settings
@@ -200,10 +210,27 @@ def test_serve_says_where_it_listens_serves_and_leaves_nothing_behind(settings: 
     assert (found(settings.home), (settings.home / ENDPOINT).exists()) == (None, False)
 
 
-def test_a_server_whose_endpoint_is_not_written_yet_is_none_to_find(settings: Settings) -> None:
+def test_a_home_process_whose_endpoint_is_not_written_yet_is_starting_and_said_to_be(settings: Settings) -> None:
     with sole_writer(settings.home / SERVER, SERVING):
         assert held_by(lock_of(settings.home)) is not None
-        assert found(settings.home) is None
+        with pytest.raises(StoreUnavailableError, match=f"is starting \\(process {os.getpid()}\\)") as refused:
+            found(settings.home, patience=LOOK_EVERY_SECONDS)
+    assert (refused.value.code, refused.value.remedy) == (Problem.BUSY, "ask again in a moment")
+
+
+def test_the_endpoint_of_another_process_is_not_the_home_process_that_holds_the_home(settings: Settings) -> None:
+    settings.home.mkdir(parents=True)
+    written(settings.home, Endpoint(9, os.getpid() + 1, "t", "2.0.0"))
+    assert found(settings.home) is None
+    with sole_writer(settings.home / SERVER, SERVING), pytest.raises(StoreUnavailableError, match="is starting"):
+        found(settings.home, patience=LOOK_EVERY_SECONDS * 2)
+
+
+def test_a_home_process_takes_the_place_of_an_endpoint_left_by_one_that_was_killed(settings: Settings) -> None:
+    settings.home.mkdir(parents=True)
+    written(settings.home, Endpoint(9, os.getpid(), "t", "2.0.0"))
+    with running(settings) as server:
+        assert found(settings.home) == server.endpoint != Endpoint(9, os.getpid(), "t", "2.0.0")
 
 
 def test_a_second_home_process_is_refused_naming_the_first(settings: Settings) -> None:
