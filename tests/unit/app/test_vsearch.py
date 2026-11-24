@@ -64,6 +64,17 @@ def test_passages_nearest_in_meaning_are_found_each_document_once(home: Path) ->
     assert scores == sorted(scores, reverse=True)
 
 
+def test_a_search_by_meaning_finds_what_the_index_holds_since_its_files_changed(home: Path, tmp_path: Path) -> None:
+    root = tmp_path / "notes"
+    (root / "halo.md").unlink()
+    write(root / "matter.md", "# Matter\n\nGalaxy rotation curves.\n")
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    assert "notes/halo.md" not in ids(home, SearchVectors("dark matter halo models", k=9))
+    found = vsearch(home, SearchVectors("galaxy rotation curves", k=1), Hashed()).hits
+    assert [(hit.id, hit.text) for hit in found] == [("notes/matter.md", "# Matter\n\nGalaxy rotation curves.")]
+
+
 def test_every_passage_is_found_when_asked_and_text_left_out_when_compact(home: Path) -> None:
     found = ids(home, SearchVectors("pruning skips ranges that cannot win", k=4, all_passages=True))
     assert found.count("notes/pruning.md") > 1

@@ -7,6 +7,7 @@ from sift.api.ids import ChunkId, owner
 from sift.api.search import Hit, Options, SearchResult, Unsearched
 from sift.app.searching import Open, Ranked, ScoredChunk, Searching, despite_losses
 from sift.domain.query import fields as shown
+from sift.domain.rank.hybrid import standing_out
 from sift.domain.rank.works import one_per_work, work_of_fields
 from sift.domain.text.kinds import public_id
 from sift.storage.documents import fields_by_document, passages
@@ -67,7 +68,8 @@ def hits(stores: Open, found: Sequence[ScoredChunk], request: Options, copy_of: 
     return seen if request.all_passages else one_each(seen)
 
 
-def presented(reads: Sequence[Retrieved], request: Options) -> list[tuple[int, Hit]]:
+def presented(ranked: Sequence[Retrieved], request: Options) -> list[tuple[int, Hit]]:
+    reads = ranked[: standing_out([each.hit.score for each in ranked])] if request.adaptive else ranked
     order = range(len(reads)) if request.sort is None else shown.order([each.fields for each in reads], request.sort)
     wanted = request.fields
     return [

@@ -178,11 +178,20 @@ def options_run(home: Path, notes: Path, model: str, reranker: str) -> None:
     indexed(home, notes)
     assert sift(home, "embed", model=model).returncode == 0
     narrowed = ("-k", "2", "-c", "notes", "--path", "*", "-f", "see!=x", "--fields", "*", "--sort=-see")
-    linked = ("--links-to", "brush", "--linked-from", "notes/rl.md", "--all-passages", "--compact", "--json")
+    linked = (
+        "--links-to",
+        "brush",
+        "--linked-from",
+        "notes/rl.md",
+        "--all-passages",
+        "--compact",
+        "--adaptive",
+        "--json",
+    )
     for asked in (
         ("search", "brush OR learning", *narrowed, *linked, "--budget", "5"),
         ("vsearch", "learning", *narrowed, *linked),
-        ("query", "learning", *narrowed, *linked, "--candidates", "5", "--adaptive"),
+        ("query", "learning", *narrowed, *linked, "--candidates", "5"),
         ("similar", "notes/rl.md", *narrowed, *linked),
         ("mentions", "notes/sub/brush.md", *narrowed, *linked, "--also", "Pinsel"),
     ):

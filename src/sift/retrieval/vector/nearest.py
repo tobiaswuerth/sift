@@ -121,7 +121,7 @@ def _listed(held: Sequence[Coded], found: Measured, allowed: Sequence[AllowedChu
     start = 0
     for store, each in enumerate(allowed):
         size = found.sizes[store]
-        if each is not None:
+        if each is not None and size:
             let[start : start + size] = np.isin(held[store].ids, each.listed())
         start += size
     return np.flatnonzero(let)

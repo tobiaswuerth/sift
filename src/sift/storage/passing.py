@@ -62,7 +62,9 @@ WHERE (:path IS NULL OR s.path GLOB :path)
                      OR (v.type = 'text' AND ltrim(trim(v.value), '+-') GLOB '*[0-9]*'
                          AND ltrim(trim(v.value), '+-') NOT GLOB '*[^0-9.]*'
                          AND ltrim(trim(v.value), '+-') NOT GLOB '*.*.*'
-                         AND length(trim(v.value)) - length(ltrim(trim(v.value), '+-')) <= 1))
+                         AND length(trim(v.value)) - length(ltrim(trim(v.value), '+-')) <= 1)
+                     OR (v.type = 'text' AND trim(v.value) GLOB '[0-9]*'
+                         AND substr(ltrim(trim(v.value), '0123456789'), 1, 1) IN ('-', '/')))
                  AND CASE b.op
                    WHEN '<' THEN CAST(v.value AS REAL) < b.value
                    WHEN '<=' THEN CAST(v.value AS REAL) <= b.value

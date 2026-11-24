@@ -92,6 +92,19 @@ def test_documents_like_one_are_found_by_the_mean_of_its_vectors(papers: Path) -
     assert ids(similar(papers, FindSimilar("robots", k=1))) == ids(found)[:1]
 
 
+def test_every_passage_alike_is_k_of_them_though_the_passages_of_the_copy_are_nearest(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    sections = "".join(f"## Part {n}\n\n{'attention transformer layers ' * 150}\n\n" for n in range(3))
+    paper = f'---\ndoi: "10.1000/paper"\n---\n# Paper\n\n{sections}'
+    others = {f"other{n}.md": f"# Other {n}\n\nattention transformer layers, and {n}\n" for n in range(8)}
+    collection(tmp_path, home, "a", {"paper.md": paper})
+    collection(tmp_path, home, "b", {"paper.md": paper, **others})
+    index(home, IndexCollections(), lambda _: None)
+    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    found = similar(home, FindSimilar("a/paper.md", k=5, all_passages=True))
+    assert (len(found.hits), "b/paper.md" in ids(found)) == (5, False)
+
+
 def test_similar_takes_what_searches_take(papers: Path) -> None:
     asked = FindSimilar(
         "arxiv/robots.md", collections=("openalex",), compact=True, fields=("doi",), filters=(written("doi!=10.1/x"),)

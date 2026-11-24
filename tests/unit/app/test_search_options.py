@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.fields import listed
 from sift.api.filters import Filter, Operator, written
 from sift.api.indexing import IndexCollections
+from sift.api.links import FindSimilar
 from sift.api.search import SORT, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app import searching
 from sift.app.collections import add
@@ -17,9 +19,11 @@ from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.search import search
+from sift.app.similar import similar
 from sift.app.vector_candidates import ExactRows, Rescoring
 from sift.app.vsearch import vsearch
 from sift.domain.arrays import Ids
+from sift.domain.rank.hybrid import standing_out
 from sift.storage.database import Reading
 from sift.storage.vectors import vectors_of
 from tests.counting import DocumentCounts
@@ -73,10 +77,66 @@ def test_every_search_keeps_to_the_documents_the_filters_let_through(home: Path,
     assert days(found(home, (Filter("tags", NONE, ("paint",)),))) == ["pigment", "plain"]
 
 
+Adapted = tuple[SearchResult, SearchResult]
+
+
+def keywords_of(home: Path) -> Adapted:
+    asked = SearchKeywords("pigment", k=20)
+    return search(home, asked), search(home, replace(asked, adaptive=True))
+
+
+def meaning_of(home: Path) -> Adapted:
+    asked = SearchVectors("pigment", k=20)
+    return vsearch(home, asked, Hashed()), vsearch(home, replace(asked, adaptive=True), Hashed())
+
+
+def both_of(home: Path) -> Adapted:
+    asked = SearchHybrid("pigment", k=20)
+    return query(home, asked, Hashed()), query(home, replace(asked, adaptive=True), Hashed())
+
+
+def like_of(home: Path) -> Adapted:
+    asked = FindSimilar("notes/loose/plain.md", k=20)
+    return similar(home, asked), similar(home, replace(asked, adaptive=True))
+
+
+@pytest.mark.parametrize("found", [keywords_of, meaning_of, both_of, like_of])
+def test_every_search_asked_to_adapt_keeps_the_results_that_stand_out_of_all_it_finds(
+    home: Path, found: Callable[[Path], Adapted]
+) -> None:
+    whole, adapted = found(home)
+    assert adapted.hits == whole.hits[: standing_out([hit.score for hit in whole.hits])]
+
+
+def test_a_keyword_search_asked_to_adapt_leaves_out_what_falls_behind_the_largest_drop(home: Path) -> None:
+    whole, adapted = keywords_of(home)
+    assert len(adapted.hits) < len(whole.hits)
+
+
 def test_a_filter_leaves_as_many_results_as_asked_for_when_better_matches_fail_it(home: Path) -> None:
     oil = (Filter("tags", ANY, ("oil",)),)
     assert len(search(home, SearchKeywords("pigment", k=2, filters=oil)).hits) == 2
     assert len(vsearch(home, SearchVectors("pigment", k=2, filters=oil), Hashed()).hits) == 2
+
+
+def test_a_filter_of_twenty_thousand_values_is_answered(home: Path) -> None:
+    many = Filter("rank", ANY, (*range(10, 20_010), 2))
+    assert days(search(home, SearchKeywords("pigment", k=20, filters=(many,)))) == ["2024-06-15"]
+
+
+def test_a_document_without_front_matter_has_no_fields_however_many_are_asked(home: Path) -> None:
+    found = search(home, SearchKeywords("pigment", k=20, fields=("*",))).hits
+    assert {hit.id: hit.fields for hit in found}["notes/loose/plain.md"] == {}
+
+
+def test_a_field_named_in_letters_beyond_ascii_is_filtered_and_shown_by_its_name(tmp_path: Path) -> None:
+    for name, street in (("a", "Hauptweg"), ("b", "Nebenweg")):
+        write(tmp_path / "streets" / f"{name}.md", f"---\nStraße: {street}\n---\n# {name}\n\nPigment.\n")
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "streets")))
+    index(home, IndexCollections(), lambda _: None)
+    asked = SearchKeywords("pigment", filters=(written("Straße=Hauptweg"),), fields=("Straße",))
+    assert [(hit.id, hit.fields) for hit in search(home, asked).hits] == [("streets/a.md", {"Straße": "Hauptweg"})]
 
 
 def test_a_path_glob_keeps_to_the_documents_whose_path_matches_it(home: Path) -> None:

@@ -22,7 +22,7 @@ from sift.domain.codec.codes import Floats
 from sift.domain.query.expressions import NOTHING, Expression
 from sift.domain.query.grammar import parsed
 from sift.domain.rank.best import Best
-from sift.domain.rank.hybrid import blend, named, passage, standing_out, words
+from sift.domain.rank.hybrid import blend, named, passage, words
 from sift.inference.models import Models
 from sift.retrieval.keyword.search import TUNING, never
 
@@ -142,8 +142,7 @@ def _answered(
     if query is not None:
         alike(stores, models.name, query)
     ranked = _ranked(stores, request, models, query, asked)[: request.k]
-    shown = ranked[: standing_out([each.hit.score for each in ranked])] if request.adaptive else ranked
-    plain = [replace(each, hit=replace(each.hit, text=None)) for each in shown] if request.compact else shown
+    plain = [replace(each, hit=replace(each.hit, text=None)) for each in ranked] if request.compact else ranked
     return hits.presented(plain, request)
 
 

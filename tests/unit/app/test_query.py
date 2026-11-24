@@ -110,6 +110,19 @@ def test_adaptive_keeps_the_results_that_stand_out(home: Path) -> None:
     assert standing == every[: len(standing)]
 
 
+def test_a_compact_query_ranks_as_the_whole_one_without_the_text(home: Path) -> None:
+    whole = query(home, SearchHybrid("dark matter halo models", k=9), Hashed()).hits
+    compact = query(home, SearchHybrid("dark matter halo models", k=9, compact=True), Hashed()).hits
+    assert [(hit.id, hit.lines, hit.score) for hit in compact] == [(hit.id, hit.lines, hit.score) for hit in whole]
+    assert {hit.text for hit in compact} == {None}
+
+
+def test_a_question_of_stopwords_alone_is_answered_by_meaning(home: Path) -> None:
+    models = Hashed()
+    assert len(query(home, SearchHybrid("what is the", k=3), models).hits) == 3
+    assert [asked for asked, _ in models.reranked] == ["what is the"]
+
+
 def test_a_collection_not_embedded_gives_keyword_candidates_alone(tmp_path: Path) -> None:
     root = tmp_path / "plain"
     write(root / "a.md", "# A\n\nComets and glaciers.\n")

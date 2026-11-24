@@ -265,3 +265,14 @@ def test_a_store_without_a_filter_beside_one_with_it_keeps_every_code() -> None:
     listed = nearest(held, query, 3005, Reads(reader(exact), [None, few]), rescore=3005)
     assert {near.chunk for near in listed} == {*ints(exact[0][0]), *ints(exact[1][0][:5])}
     assert few.listings == [True]
+
+
+def test_a_filter_over_a_store_without_codes_is_never_listed_and_one_letting_nothing_through_finds_nothing() -> None:
+    held, exact = stores(15, [3000, 0], 256)
+    query = unit(np.random.default_rng(16).normal(size=256))
+    few, empty = Chosen(exact[0][0][:5]), Chosen(np.zeros(0, np.int64))
+    found = nearest(held, query, 3005, Reads(reader(exact), [few, empty]), rescore=3005)
+    assert {near.chunk for near in found} == set(ints(exact[0][0][:5]))
+    assert (few.listings, empty.listings) == ([True], [])
+    nothing = Chosen(np.zeros(0, np.int64))
+    assert nearest(held, query, 10, Reads(reader(exact), [nothing, None]), rescore=10) == ()

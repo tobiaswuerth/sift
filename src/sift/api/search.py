@@ -57,6 +57,7 @@ class Options:
         bool, Help("every passage found, not only each document's best, and copies of one work apart")
     ] = False
     compact: Annotated[bool, Help("leave out the text of each passage")] = False
+    adaptive: Annotated[bool, Help(ADAPTIVE)] = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +75,6 @@ class SearchVectors(Options):
 class SearchHybrid(Options):
     query: Annotated[str, Help("a question, or a description of what to find")]
     candidates: Annotated[int, Help(CANDIDATES), Bounds(1, MOST_HITS)] = 40
-    adaptive: Annotated[bool, Help(ADAPTIVE)] = False
 
 
 @dataclass(frozen=True, slots=True)

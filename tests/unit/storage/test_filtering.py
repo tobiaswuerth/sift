@@ -93,6 +93,8 @@ def test_ranges_compare_numbers_as_numbers_and_text_at_the_precision_given() -> 
     }
     within = [one("created", Operator.AT_LEAST, "2024-06"), one("created", Operator.BELOW, "2025")]
     assert passing(dated, within) == ["2024-06-15.md", "2024-12-31.md"]
+    in_the_year = [one("created", Operator.AT_LEAST, 2024), one("created", Operator.BELOW, 2025)]
+    assert passing(dated, in_the_year) == ["2024-06-15.md", "2024-12-31.md"]
     assert passing(dated, [one("created", Operator.AT_MOST, "2024")]) == [
         "2023-12-31.md",
         "2024-06-15.md",
@@ -129,7 +131,7 @@ def test_a_number_range_passes_over_text_without_a_number_and_a_text_range_over_
     assert passing(made, [one("c", Operator.ABOVE, "2024")]) == ["dated", "number"]
 
 
-def test_whole_numbers_compare_exactly_and_text_is_a_number_only_when_written_as_a_decimal() -> None:
+def test_whole_numbers_compare_exactly_and_text_is_a_number_written_as_a_decimal_or_a_date_by_its_first() -> None:
     big: dict[str, Fields] = {"over": {"n": 2**53 + 1}, "at": {"n": 2**53}}
     assert passing(big, [one("n", Operator.ABOVE, 2**53)]) == ["over"]
     written: dict[str, Fields] = {
@@ -138,9 +140,13 @@ def test_whole_numbers_compare_exactly_and_text_is_a_number_only_when_written_as
         "signed": {"n": " -7.5 "},
         "two dots": {"n": "1.2.3"},
         "two signs": {"n": "--3"},
+        "dated": {"n": "2024-06-15"},
+        "slashed": {"n": "3/4/2020"},
+        "worded": {"n": "2024abc"},
+        "era": {"n": "-50-01-01"},
     }
-    assert passing(written, [one("n", Operator.ABOVE, 5)]) == []
-    assert passing(written, [one("n", Operator.BELOW, 5)]) == ["signed"]
+    assert passing(written, [one("n", Operator.ABOVE, 5)]) == ["dated"]
+    assert passing(written, [one("n", Operator.BELOW, 5)]) == ["signed", "slashed"]
 
 
 def test_yes_and_no_match_the_words_true_and_false_alone() -> None:
