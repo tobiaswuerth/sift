@@ -1,5 +1,8 @@
 import json
-from collections.abc import Iterator, Mapping, Sequence
+import stat
+import sys
+from collections.abc import Generator, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from itertools import islice
 from pathlib import Path
 
@@ -32,3 +35,16 @@ def linked(link: Path, target: str, *, folder: bool = False) -> None:
         link.symlink_to(target, target_is_directory=folder)
     except OSError as refused:
         pytest.skip(f"this system makes no symbolic links: {refused}")
+
+
+@contextmanager
+def undeletable(path: Path) -> Generator[None]:
+    if sys.platform == "win32":
+        with path.open("rb"):
+            yield
+        return
+    path.parent.chmod(stat.S_IRUSR | stat.S_IXUSR)
+    try:
+        yield
+    finally:
+        path.parent.chmod(stat.S_IRWXU)

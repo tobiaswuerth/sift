@@ -245,7 +245,7 @@ def test_a_removal_says_what_its_store_held_and_names_the_files_left_in_use() ->
         " gone  diary: its store deleted; its files stay where they are",
         "store  could not be read: it is missing",
         " left  /s/diary.sqlite-wal: in use, not deleted",
-        "  fix  delete it once the program using it has stopped",
+        "  fix  the next sift index deletes it, once the program using it has stopped",
     )
 
 
@@ -255,7 +255,7 @@ def test_a_move_says_where_each_store_went_how_and_what_it_left() -> None:
     assert moved(StoresMoved((copied, linked), ("papers",)), "linux", PLAIN).messages == (
         "moved  diary  /t/diary.sqlite, copied: it lay on another drive",
         " left  /s/diary.sqlite: in use, not deleted",
-        "  fix  delete it once the program using it has stopped",
+        "  fix  the next sift index deletes it, once the program using it has stopped",
         "moved  notes  /t/notes.sqlite",
         " kept  papers: there already",
     )

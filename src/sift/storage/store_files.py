@@ -2,7 +2,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 WRITER_SUFFIX = ".writer"
-FILE_SUFFIXES = ("", "-wal", "-shm", WRITER_SUFFIX, f"{WRITER_SUFFIX}-journal")
+PART_SUFFIX = ".part"
+FILE_SUFFIXES = ("", "-wal", "-shm", WRITER_SUFFIX, f"{WRITER_SUFFIX}-journal", PART_SUFFIX, f"{PART_SUFFIX}-journal")
 DATA_SUFFIXES = ("", "-wal")
 
 

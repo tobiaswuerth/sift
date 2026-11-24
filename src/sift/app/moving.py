@@ -7,7 +7,17 @@ from sift.api.errors import InvalidRequestError
 from sift.api.events import Advanced, CollectionStarted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.ids import CollectionId
 from sift.app.collections import chosen
-from sift.storage.catalog import STORE_SUFFIX, Collection, known_collections, same_place, set_store
+from sift.storage.catalog import (
+    STORE_SUFFIX,
+    Collection,
+    known_collections,
+    owe_files,
+    owed_to,
+    paid,
+    same_place,
+    set_store,
+)
+from sift.storage.leftovers import tidied
 from sift.storage.moving import TRANSFER, Copied, Transfer, held_alone, transferred
 from sift.storage.store import read_store
 from sift.storage.store_files import store_files_left, unlinked
@@ -49,17 +59,26 @@ def _planned(home: Path, request: MoveCollections) -> list[tuple[Collection, Pat
     return [(one, to / one.store.name) for one in found]
 
 
+def _taken(new: Path) -> InvalidRequestError:
+    return InvalidRequestError(f"{new} exists already", TAKEN_REMEDY, "to")
+
+
 def _refused(home: Path, one: Collection, new: Path) -> None:
     with read_store(one.store, one.id):
         pass
     others = [other.store for other in known_collections(home) if other.id != one.id]
-    if new.exists() or any(same_place(other, new) for other in others):
-        raise InvalidRequestError(f"{new} exists already", TAKEN_REMEDY, "to")
+    left_by_a_move = any(same_place(new, owed) for owed in owed_to(home, one.id))
+    if (new.exists() and not left_by_a_move) or any(same_place(other, new) for other in others):
+        raise _taken(new)
 
 
 def _moved(home: Path, one: Collection, new: Path, report: Reporter, how: Moving) -> StoreMoved:
     report(CollectionStarted(one.name, str(new)))
     with sole_writer(one.store, "sift move"), held_alone(one.store) as held:
+        tidied(home, one.id, how.unlink)
+        if new.exists():
+            raise _taken(new)
+        owe_files(home, new, one.id)
         copied = transferred(held, one.store, new, _reported(report), how.transfer)
         try:
             how.repoint(home, one.id, new)
@@ -69,6 +88,8 @@ def _moved(home: Path, one: Collection, new: Path, report: Reporter, how: Moving
     if copied:
         report(PhaseDone(_megabytes(new.stat().st_size)))
     left = tuple(str(file) for file in store_files_left(one.store, how.unlink))
+    if not left:
+        paid(home, one.store)
     return StoreMoved(one.name, str(one.store), str(new), copied=copied, left=left)
 
 

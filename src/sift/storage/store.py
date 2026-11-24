@@ -35,24 +35,28 @@ LEFT_BY_ADD = """SELECT (SELECT value FROM meta WHERE key = 'collection') = ?
 
 
 SCHEMA_HELD = "SELECT count(*) FROM sqlite_schema"
+COLLECTION_HELD = "SELECT value FROM meta WHERE key = 'collection'"
+
+
+def _probed(path: Path, sql: str, parameters: tuple[str, ...] = ()) -> tuple[object, ...] | None:
+    try:
+        with closing(read_only(path, immutable=not Path(f"{path}-wal").exists())) as connection:
+            return cast("tuple[object, ...] | None", connection.execute(sql, parameters).fetchone())
+    except sqlite3.DatabaseError:
+        return None
 
 
 def holds_nothing(path: Path) -> bool:
-    try:
-        with closing(read_only(path)) as connection:
-            (held,) = cast("tuple[int]", connection.execute(SCHEMA_HELD).fetchone())
-    except sqlite3.DatabaseError:
-        return False
-    return held == 0
+    return _probed(path, SCHEMA_HELD) == (0,)
 
 
 def left_by_add(path: Path, collection: CollectionId) -> bool:
-    try:
-        with closing(read_only(path)) as connection:
-            (left,) = cast("tuple[int | None]", connection.execute(LEFT_BY_ADD, (str(collection),)).fetchone())
-    except sqlite3.DatabaseError:
-        return False
-    return left == 1
+    return _probed(path, LEFT_BY_ADD, (str(collection),)) == (1,)
+
+
+def of_another_collection(path: Path, collection: CollectionId) -> bool:
+    held = _probed(path, COLLECTION_HELD)
+    return held is not None and held != (str(collection),)
 
 
 def _made(path: Path, collection: CollectionId, layout: Sequence[Migration], shape: Shape) -> None:

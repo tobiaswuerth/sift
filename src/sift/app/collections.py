@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -37,6 +37,7 @@ from sift.storage.catalog import (
     holding_folder,
     known_collections,
     named,
+    paid,
     refuse_inactive,
     set_active,
 )
@@ -44,7 +45,7 @@ from sift.storage.database import reading
 from sift.storage.documents import counts, fields_sampled, unreadable
 from sift.storage.links import links_held
 from sift.storage.store import connected, read_store
-from sift.storage.store_files import store_files_left, stored_bytes
+from sift.storage.store_files import store_files_left, stored_bytes, unlinked
 from sift.storage.vector_meta import left, model_of
 from sift.storage.writer import sole_writer
 
@@ -110,12 +111,14 @@ def _held(one: Collection) -> tuple[int | None, str | None]:
         return None, error.message
 
 
-def remove(home: Path, request: RemoveCollection) -> CollectionRemoved:
+def remove(home: Path, request: RemoveCollection, unlink: Callable[[Path], None] = unlinked) -> CollectionRemoved:
     one = named(known_collections(home), request.name)
     with sole_writer(one.store, "sift rm") if one.store.parent.is_dir() else nullcontext():
         documents, problem = _held(one)
         forget_collection(home, one.id)
-    left = tuple(str(file) for file in store_files_left(one.store))
+    left = tuple(str(file) for file in store_files_left(one.store, unlink))
+    if not left:
+        paid(home, one.store)
     return CollectionRemoved(one.name, str(one.store), documents, problem, left)
 
 

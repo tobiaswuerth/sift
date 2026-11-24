@@ -1,4 +1,5 @@
 import errno
+import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -20,6 +21,8 @@ from sift.app.search import search
 from sift.app.vsearch import vsearch
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.moving import Transfer
+from sift.storage.store import create_store
+from sift.storage.store_files import delete_store
 from tests.files import write
 from tests.models import Hashed
 
@@ -163,3 +166,97 @@ def test_a_store_moved_but_still_open_at_its_old_place_is_left_to_delete(home: P
     (result,) = moved(home, "notes", to=tmp_path / "elsewhere", how=Moving(unlink=held_open)).moved
     assert result.left == (str(old),)
     assert notes(home).store == tmp_path / "elsewhere" / "notes.sqlite"
+
+
+def linked_then_stopped(old: Path, new: Path) -> None:
+    os.link(old, new)
+    raise KeyboardInterrupt
+
+
+def stopped(_file: Path) -> None:
+    raise KeyboardInterrupt
+
+
+def test_a_move_stopped_before_its_catalog_changed_is_finished_by_the_next(home: Path, tmp_path: Path) -> None:
+    old, to = notes(home).store, tmp_path / "elsewhere"
+    with pytest.raises(KeyboardInterrupt):
+        moved(home, "notes", to=to, how=Moving(transfer=Transfer(link=linked_then_stopped)))
+    assert notes(home).store == old
+    (result,) = moved(home, "notes", to=to).moved
+    assert (result.new, result.left) == (str(to / "notes.sqlite"), ())
+    assert notes(home).store == to / "notes.sqlite"
+    assert not old.exists()
+    assert searched(home) == (["notes/rl.md"], ["notes/rl.md"])
+
+
+def first_move_stopped_before_the_old_copy_went(home: Path, tmp_path: Path) -> Path:
+    old = notes(home).store
+    with pytest.raises(KeyboardInterrupt):
+        moved(home, "notes", to=tmp_path / "first", how=Moving(unlink=stopped))
+    assert notes(home).store == tmp_path / "first" / "notes.sqlite"
+    assert old.exists()
+    return old
+
+
+def test_the_old_copy_of_a_stopped_move_is_deleted_by_the_next_move(home: Path, tmp_path: Path) -> None:
+    old = first_move_stopped_before_the_old_copy_went(home, tmp_path)
+    moved(home, "notes", to=tmp_path / "second")
+    assert not old.exists()
+    assert not (tmp_path / "first" / "notes.sqlite").exists()
+    assert searched(home) == (["notes/rl.md"], ["notes/rl.md"])
+
+
+def test_the_old_copy_of_a_stopped_move_is_deleted_by_the_next_index(home: Path, tmp_path: Path) -> None:
+    old = first_move_stopped_before_the_old_copy_went(home, tmp_path)
+    index(home, IndexCollections(), lambda _: None)
+    assert sorted(old.parent.iterdir()) == []
+    assert searched(home) == (["notes/rl.md"], ["notes/rl.md"])
+
+
+def test_a_store_of_another_collection_where_a_move_left_its_old_copy_is_kept(home: Path, tmp_path: Path) -> None:
+    old = first_move_stopped_before_the_old_copy_went(home, tmp_path)
+    delete_store(old)
+    create_store(old, CollectionId(99))
+    index(home, IndexCollections(), lambda _: None)
+    index(home, IndexCollections(), lambda _: None)
+    assert old.is_file()
+
+
+def test_what_a_stopped_move_left_is_tidied_by_its_own_collection_alone(home: Path, tmp_path: Path) -> None:
+    old = first_move_stopped_before_the_old_copy_went(home, tmp_path)
+    write(tmp_path / "diary" / "d.md", "# Diary")
+    add(home, AddCollection(str(tmp_path / "diary")))
+    index(home, IndexCollections(("diary",)), lambda _: None)
+    assert old.exists()
+    index(home, IndexCollections(("notes",)), lambda _: None)
+    assert not old.exists()
+
+
+def test_a_place_a_stopped_move_left_is_kept_once_another_collection_is_stored_there(
+    home: Path, tmp_path: Path
+) -> None:
+    place = tmp_path / "elsewhere" / "notes.sqlite"
+    with pytest.raises(KeyboardInterrupt):
+        moved(home, "notes", to=place.parent, how=Moving(transfer=Transfer(link=linked_then_stopped)))
+    delete_store(place)
+    write(tmp_path / "diary" / "d.md", "# Diary")
+    add(home, AddCollection(str(tmp_path / "diary"), store=str(place)))
+    index(home, IndexCollections(), lambda _: None)
+    index(home, IndexCollections(), lambda _: None)
+    assert place.is_file()
+    assert [hit.id for hit in search(home, SearchKeywords("diary")).hits] == ["diary/d.md"]
+
+
+def test_a_place_a_stopped_move_left_open_elsewhere_is_not_moved_onto(home: Path, tmp_path: Path) -> None:
+    place = tmp_path / "elsewhere" / "notes.sqlite"
+    with pytest.raises(KeyboardInterrupt):
+        moved(home, "notes", to=place.parent, how=Moving(transfer=Transfer(link=linked_then_stopped)))
+
+    def held_open(file: Path) -> None:
+        if file == place:
+            raise PermissionError(13, "The process cannot access the file", str(file))
+        file.unlink()
+
+    with pytest.raises(InvalidRequestError, match="exists already"):
+        moved(home, "notes", to=place.parent, how=Moving(unlink=held_open))
+    assert moved(home, "notes", to=place.parent).moved[0].new == str(place)

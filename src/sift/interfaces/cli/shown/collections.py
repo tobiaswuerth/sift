@@ -21,7 +21,7 @@ from sift.interfaces.console.units import size
 
 UNREADABLE_HEADER = ("collection", "file", "problem")
 NONE = "-"
-LEFT_REMEDY = "delete it once the program using it has stopped"
+LEFT_REMEDY = "the next sift index deletes it, once the program using it has stopped"
 COPIED = ", copied: it lay on another drive"
 TITLES = MappingProxyType({TitleFrom.HEADING: "headings", TitleFrom.NAME: "file names"})
 SWITCHED = MappingProxyType(

@@ -24,6 +24,7 @@ from sift.storage.catalog import (
     open_catalog,
     store_path,
 )
+from sift.storage.catalog import LAYOUT as CATALOG_LAYOUT
 from sift.storage.database import connect, read_only, reading, rows, run, writing
 from sift.storage.store import create_store, open_store
 from tests.damage import damage_pages
@@ -58,7 +59,7 @@ def known(catalog: sqlite3.Connection) -> tuple[Collection, ...]:
 def test_the_catalog_lies_in_the_home_folder_and_records_its_layout(home: Path, catalog: sqlite3.Connection) -> None:
     assert (home / CATALOG).is_file()
     with reading(catalog) as transaction:
-        assert rows(transaction, Version, "PRAGMA user_version") == [Version(1)]
+        assert rows(transaction, Version, "PRAGMA user_version") == [Version(len(CATALOG_LAYOUT))]
 
 
 def test_what_the_catalog_is_told_is_on_the_disk_once_told(catalog: sqlite3.Connection) -> None:
@@ -375,4 +376,4 @@ def test_a_catalog_of_an_older_layout_is_brought_up_to_date_when_its_collections
     (home / CATALOG).touch()
     assert known_collections(home) == ()
     with contextlib.closing(read_only(home / CATALOG)) as catalog, reading(catalog) as transaction:
-        assert rows(transaction, Version, "PRAGMA user_version") == [Version(1)]
+        assert rows(transaction, Version, "PRAGMA user_version") == [Version(len(CATALOG_LAYOUT))]

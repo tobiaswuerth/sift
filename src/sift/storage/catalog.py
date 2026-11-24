@@ -26,6 +26,7 @@ from sift.storage.database import (
     run_each,
     writing,
 )
+from sift.storage.ledger import LEFTOVERS, Owed, forgive, owe, owe_the_store_of, owed, reclaimed
 from sift.storage.migrations import Migration, migrated, version
 from sift.storage.store import create_store, holds_nothing, left_by_add
 from sift.storage.store_files import delete_store
@@ -49,8 +50,10 @@ LAYOUT: tuple[Migration, ...] = (
             choices TEXT NOT NULL CHECK (json_valid(choices))
         ) STRICT""",
     ),
+    (LEFTOVERS,),
 )
 STORE_TAKEN_REMEDY = "move it away, or choose another place for it"
+IN_USE_REMEDY = "wait until it is closed, then add the folder again"
 INACTIVE_REMEDY = "run sift activate with its name"
 
 
@@ -201,7 +204,23 @@ def known_collections(home: Path) -> tuple[Collection, ...]:
 
 def forget_collection(home: Path, identity: CollectionId) -> None:
     with catalog_of(home) as connection, writing(connection) as transaction:
+        owe_the_store_of(transaction, identity)
         run(transaction, "DELETE FROM collections WHERE id = ?", (identity,))
+
+
+def owe_files(home: Path, store: Path, identity: CollectionId) -> None:
+    with catalog_of(home) as connection, writing(connection) as transaction:
+        owe(transaction, store, identity)
+
+
+def paid(home: Path, store: Path) -> None:
+    with catalog_of(home) as connection, writing(connection) as transaction:
+        forgive(transaction, store)
+
+
+def owed_to(home: Path, identity: CollectionId) -> tuple[Path, ...]:
+    with catalog_of(home) as connection, reading(connection) as transaction:
+        return tuple(Path(owing.store) for owing in owed(transaction) if owing.collection == identity)
 
 
 def set_choices(home: Path, identity: CollectionId, choices: Choices) -> None:
@@ -216,7 +235,9 @@ def holding_folder(home: Path, folder: Path) -> Collection | None:
 
 def set_store(home: Path, identity: CollectionId, store: Path) -> None:
     with catalog_of(home) as connection, writing(connection) as transaction:
+        owe_the_store_of(transaction, identity)
         run(transaction, "UPDATE collections SET store = ? WHERE id = ?", (str(store), identity))
+        forgive(transaction, store)
 
 
 def same_place(one: Path, other: Path) -> bool:
@@ -314,7 +335,16 @@ def _registered(transaction: Writing, wanted: Placed, choices: Choices) -> Colle
     )
 
 
-def _cleared(home: Path, store: Path, identity: CollectionId) -> None:
+def _left_by_removal(transaction: Writing, store: Path) -> Owed | None:
+    held = {one.id for one in collections(transaction)}
+    wanted = _same(store)
+    removed = (owing for owing in owed(transaction) if owing.collection not in held)
+    return next((owing for owing in removed if _same(Path(owing.store)) == wanted), None)
+
+
+def _cleared(transaction: Writing, home: Path, store: Path, identity: CollectionId) -> None:
+    if (owing := _left_by_removal(transaction, store)) is not None and reclaimed(transaction, owing):
+        raise InvalidRequestError(f"{store} is open in another program", IN_USE_REMEDY)
     if not store.exists():
         return
     made_here = store.parent == home / STORES and holds_nothing(store)
@@ -329,7 +359,7 @@ def add_collection(connection: sqlite3.Connection, home: Path, new: NewCollectio
     try:
         with writing(connection) as transaction:
             identity = _registered(transaction, wanted, new.choices)
-            _cleared(home, wanted.store, identity)
+            _cleared(transaction, home, wanted.store, identity)
             with unavailable_if_unusable(wanted.store):
                 create_store(wanted.store, identity)
             created = True

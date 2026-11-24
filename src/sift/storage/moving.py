@@ -10,6 +10,7 @@ from typing import cast
 
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.storage.database import primary_code, private_file, private_folder, uri
+from sift.storage.store_files import PART_SUFFIX
 from sift.storage.unusable import Unusable, unavailable_if_unusable
 
 COPY_PAGES = 16_384
@@ -61,7 +62,7 @@ def held_alone(path: Path) -> Generator[sqlite3.Connection]:
 
 
 def _copied(held: sqlite3.Connection, new: Path, copied: Copied, how: Transfer) -> None:
-    part = new.with_name(f"{new.name}.part")
+    part = Path(f"{new}{PART_SUFFIX}")
     part.unlink(missing_ok=True)
     private_file(part)
     (size,) = cast("tuple[int]", held.execute("PRAGMA page_size").fetchone())

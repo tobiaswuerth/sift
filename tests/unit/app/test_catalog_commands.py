@@ -85,6 +85,20 @@ def test_a_collection_whose_store_is_of_an_older_layout_is_removed_with_its_docu
     assert not diary.store.exists()
 
 
+def test_a_store_open_elsewhere_when_its_collection_is_removed_is_deleted_by_the_next_index(home: Path) -> None:
+    (diary,) = [one for one in known_collections(home) if one.name == "diary"]
+
+    def held_open(file: Path) -> None:
+        if file == diary.store:
+            raise PermissionError(13, "The process cannot access the file", str(file))
+        file.unlink()
+
+    assert remove(home, RemoveCollection("diary"), held_open).left == (str(diary.store),)
+    assert diary.store.exists()
+    index(home, IndexCollections(), lambda _: None)
+    assert not diary.store.exists()
+
+
 def test_a_collection_another_sift_writes_now_stays(home: Path) -> None:
     (diary,) = [one for one in known_collections(home) if one.name == "diary"]
     with sole_writer(diary.store, "sift index"), pytest.raises(StoreUnavailableError) as refused:

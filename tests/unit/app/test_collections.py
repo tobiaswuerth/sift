@@ -25,13 +25,14 @@ from sift.app.collections import activate, add, status
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.domain.text.notes import note
+from sift.storage.catalog import forget_collection, known_collections
 from sift.storage.database import PRIVATE_FILE, PRIVATE_FOLDER
 from sift.storage.documents import add_documents, put_source
 from sift.storage.keywords import writing_documents
 from sift.storage.store import MISSING_REMEDY, open_store
 from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import damage_table
-from tests.files import write
+from tests.files import undeletable, write
 from tests.models import Hashed
 
 
@@ -95,6 +96,42 @@ def test_a_folder_inside_a_collection_is_added_only_as_nested(tmp_path: Path, ho
     with pytest.raises(InvalidRequestError, match="lies inside the folder of the collection 'notes'"):
         add(home, AddCollection(str(inner)))
     assert add(home, AddCollection(str(inner), nested=True)).name == "inner"
+
+
+def test_a_store_its_removal_left_behind_is_made_anew_when_its_folder_is_added_again(
+    tmp_path: Path, home: Path
+) -> None:
+    notes = folder(tmp_path, "notes")
+    write(notes / "a.md", "# A\n\nAn apple.\n")
+    added = new(home, AddCollection(str(notes)))
+    index(home, IndexCollections(), lambda _: None)
+    (one,) = known_collections(home)
+    forget_collection(home, one.id)
+    assert new(home, AddCollection(str(notes))).store == added.store
+    (shown,) = status(home, ShowStatus()).collections
+    assert isinstance(shown.contents, Counted)
+    assert shown.contents.documents == 0
+
+
+def test_a_store_its_removal_left_open_elsewhere_is_taken_by_an_add_once_closed(tmp_path: Path, home: Path) -> None:
+    notes = folder(tmp_path, "notes")
+    added = new(home, AddCollection(str(notes)))
+    (one,) = known_collections(home)
+    forget_collection(home, one.id)
+    with undeletable(Path(added.store)), pytest.raises(InvalidRequestError, match="is open in another program"):
+        add(home, AddCollection(str(notes)))
+    assert new(home, AddCollection(str(notes))).store == added.store
+
+
+def test_an_add_refused_for_a_database_in_its_place_leaves_nothing_beside_it(tmp_path: Path, home: Path) -> None:
+    taken = home / "collections" / "notes.sqlite"
+    taken.parent.mkdir(parents=True)
+    with contextlib.closing(sqlite3.connect(taken)) as other:
+        other.execute("PRAGMA journal_mode = WAL")
+        other.execute("CREATE TABLE mine(x INTEGER)")
+    with pytest.raises(InvalidRequestError, match="exists already"):
+        add(home, AddCollection(str(folder(tmp_path, "notes"))))
+    assert sorted(file.name for file in taken.parent.iterdir()) == ["notes.sqlite"]
 
 
 def test_status_without_a_catalog_is_empty_and_makes_none(home: Path) -> None:

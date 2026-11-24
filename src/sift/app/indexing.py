@@ -32,6 +32,7 @@ from sift.storage.documents import (
 from sift.storage.kept_vectors import vectors_let_go
 from sift.storage.keyword_order import order_due, ordered
 from sift.storage.keywords import remade, remake_started, settle
+from sift.storage.leftovers import tidied
 from sift.storage.store import connected
 from sift.storage.writer import sole_writer
 
@@ -176,6 +177,7 @@ def _settled(connection: Connection, report: Reporter, batches: Batches) -> None
 
 @dataclass(frozen=True, slots=True)
 class _Indexing:
+    home: Path
     report: Reporter
     limits: Limits
     readers: Readers
@@ -187,6 +189,7 @@ def _indexed(one: Collection, asked: _Indexing, paths: tuple[str, ...] = ()) -> 
     report(CollectionStarted(one.name, str(one.folder)))
     try:
         with sole_writer(one.store, "sift index"), connected(one.store, one.id) as connection:
+            tidied(asked.home, one.id)
             _ordered(connection, report, limits.batches)
             _remade(connection, report, limits.batches)
             if not one.folder.is_dir():
@@ -211,7 +214,7 @@ def _grouped(home: Path, files: Sequence[str]) -> dict[Collection, tuple[str, ..
 def index(
     home: Path, request: IndexCollections, report: Reporter, limits: Limits = LIMITS, readers: Readers = READERS
 ) -> IndexResult:
-    asked = _Indexing(report, limits, readers, ScanModel(readers.scanning))
+    asked = _Indexing(home, report, limits, readers, ScanModel(readers.scanning))
     if not request.files:
         return IndexResult(tuple(_indexed(one, asked) for one in chosen_or_active(home, request.names)))
     if request.names:
