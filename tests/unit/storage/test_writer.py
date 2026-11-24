@@ -56,7 +56,7 @@ def test_who_holds_a_lock_is_told_without_taking_it_and_no_one_once_it_is_let_go
         assert held_by(lock) == Holder(os.getpid(), "sift serve")
         assert held_by(lock) == Holder(os.getpid(), "sift serve")
     assert held_by(lock) is None
-    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+    with pytest.raises(StoreUnavailableError, match=r"the lock file .* could not be read or written: disk I/O error"):
         held_by(lock, failing)
 
 
@@ -150,6 +150,12 @@ def test_a_writer_leaves_one_file_beside_the_store(tmp_path: Path) -> None:
     assert WRITER_SUFFIX in FILE_SUFFIXES
 
 
+def disk_failed() -> sqlite3.OperationalError:
+    error = sqlite3.OperationalError("disk I/O error")
+    error.sqlite_errorcode, error.sqlite_errorname = sqlite3.SQLITE_IOERR_WRITE, "SQLITE_IOERR_WRITE"
+    return error
+
+
 @final
 class RecordedLock:
     def __init__(self, real: LockFile, failing: str | None = None) -> None:
@@ -158,7 +164,7 @@ class RecordedLock:
     def execute(self, sql: str, parameters: tuple[int | str, ...] = (), /) -> sqlite3.Cursor:
         self.said.append(sql)
         if sql == self.failing:
-            raise sqlite3.OperationalError("disk I/O error")
+            raise disk_failed()
         return self.real.execute(sql, parameters)
 
     def close(self) -> None:
@@ -209,10 +215,13 @@ def test_a_lock_another_asker_takes_for_a_moment_is_not_said_to_be_held(tmp_path
 
 def test_a_writer_file_that_cannot_be_locked_for_another_reason_says_that_reason(tmp_path: Path) -> None:
     with (
-        pytest.raises(sqlite3.OperationalError, match="disk I/O error"),
+        pytest.raises(
+            StoreUnavailableError, match=r"the lock file .* could not be read or written: disk I/O"
+        ) as refused,
         sole_writer(tmp_path / "notes.sqlite", "sift index", failing),
     ):
         pass
+    assert refused.value.remedy == "check the drive it lies on"
 
 
 def test_two_first_writers_of_a_store_take_it_in_turn_or_are_refused_naming_the_other(tmp_path: Path) -> None:
