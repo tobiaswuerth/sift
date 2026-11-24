@@ -28,7 +28,7 @@ def filtered(text: str) -> tuple[Filter, ...]:
 
 def file_or_id(text: str) -> tuple[str, ...]:
     from_here = text.startswith(FROM_HERE)
-    return (str(Path(text).resolve()) if from_here or os.path.lexists(text) else text,)
+    return (os.path.normpath(Path(text).absolute()) if from_here or os.path.lexists(text) else text,)
 
 
 FLAGS: Mapping[str, Flag] = MappingProxyType(

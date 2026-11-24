@@ -14,7 +14,7 @@ from sift.ingest.scan import Reach, Scanned
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading, rows
 from sift.storage.store import connected
-from tests.files import TORN, jsonl, torn_lines, write
+from tests.files import TORN, jsonl, linked, torn_lines, write
 from tests.homes import found_ids
 from tests.later import LATER, later
 
@@ -96,6 +96,13 @@ def test_a_file_that_leads_outside_its_folder_is_left_out_and_dropped_if_it_was_
         ("removed", "it leads outside its collection's folder"),
         ("missing", None),
     ]
+
+
+def test_a_link_given_by_its_path_that_leads_outside_is_left_out_saying_so(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "elsewhere" / "x.md", "# Elsewhere")
+    linked(tmp_path / "diary" / "link.md", str(tmp_path / "elsewhere" / "x.md"))
+    ((left),) = reindexed(home, str(tmp_path / "diary" / "link.md"))
+    assert (left.state, left.note) == ("left out", "it leads outside its collection's folder")
 
 
 def test_a_file_its_reader_refuses_is_said_unreadable_with_why(home: Path, tmp_path: Path) -> None:
