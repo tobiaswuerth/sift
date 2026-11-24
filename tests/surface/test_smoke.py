@@ -1,4 +1,3 @@
-import http.client
 import json
 import shutil
 import subprocess
@@ -286,20 +285,24 @@ def documents_run(home: Path, folder: Path) -> None:
     assert '"path": "broken.pdf"' in listing
 
 
+def said(ran: subprocess.CompletedProcess[str]) -> tuple[int, str, str]:
+    return ran.returncode, ran.stdout, ran.stderr
+
+
 def served_run(home: Path, notes: Path) -> None:
     indexed(home, notes)
+    asked = (("search", "brush", "--json"), ("status", "--json"), ("get", "notes/none.md"))
+    alone = [said(process.sift(home, *argv)) for argv in asked]
     RAN.append(("serve", "--port", "0", "--json"))
     with process.served(home) as running:
-        endpoint = cast("Answer", json.loads((home / process.ENDPOINT).read_bytes()))
-        connection = http.client.HTTPConnection("127.0.0.1", cast("int", endpoint["port"]), timeout=60)
-        try:
-            connection.request("POST", "/api/status", b"{}", {"Authorization": f"Bearer {endpoint['token']}"})
-            (said, *_) = connection.getresponse().read().split(b"\n")
-        finally:
-            connection.close()
-        (collection,) = cast("list[Answer]", cast("Answer", cast("Answer", json.loads(said))["answer"])["collections"])
-        assert collection["name"] == "notes"
+        assert [said(process.sift(home, *argv)) for argv in asked] == alone
+        again = process.sift(home, "index")
+        assert (again.returncode, "  done  +0  ~0  -0  " in again.stderr) == (0, True)
     assert (running.poll() is not None, found(home)) == (True, None)
+    (log,) = (home / "logs").glob("serve-*.log")
+    logged = log.read_text(encoding="utf-8")
+    answered = ("search answered", "status answered", "get answered", "index answered")
+    assert all(f" INFO sift.server: {name} " in logged for name in answered)
 
 
 def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path: Path) -> None:

@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast, get_type_hints
 
 from sift.api.events import Reporter
 from sift.app.resident import CodeSource, read_each_time
@@ -24,8 +24,13 @@ class Acting:
 
 @dataclass(frozen=True, slots=True)
 class Act[R, A]:
+    name: str
     request: type[R]
     run: Callable[[Acting, R], A]
+
+
+def answer_kind[R, A](act: Act[R, A]) -> type[A]:
+    return cast("type[A]", cast("dict[str, object]", get_type_hints(act.run))["return"])
 
 
 class Loading(Protocol):

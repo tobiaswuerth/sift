@@ -16,7 +16,7 @@ from sift.api.events import Listening, Reporter
 from sift.api.serving import Served, ServeHome
 from sift.app.resident import ResidentCodes
 from sift.interfaces.acts.acting import fresh_models
-from sift.interfaces.server.app import Serving, served_app
+from sift.interfaces.server.app import ALIVE_SECONDS, Serving, served_app
 from sift.interfaces.server.endpoint import ENDPOINT, SERVER, SERVING, Endpoint, found, written
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.settings import Settings
@@ -59,7 +59,11 @@ def _bound(port: int) -> socket.socket:
 
 @contextmanager
 def held(
-    settings: Settings, request: ServeHome, version: str, handled: Mapping[str, Handled] = HANDLED
+    settings: Settings,
+    request: ServeHome,
+    version: str,
+    handled: Mapping[str, Handled] = HANDLED,
+    alive_every: float = ALIVE_SECONDS,
 ) -> Generator[HomeServer]:
     private_folder(settings.home)
     _refuse_another(settings)
@@ -70,7 +74,8 @@ def held(
     ):
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version)
-        serving = Serving(settings, endpoint.token, fresh_models(settings), ResidentCodes(), threading.Lock(), pool)
+        codes, writing = ResidentCodes(), threading.Lock()
+        serving = Serving(settings, endpoint.token, fresh_models(settings), codes, writing, pool, alive_every)
         config = uvicorn.Config(served_app(serving, handled), log_config=None, access_log=False, lifespan="off")
         written(settings.home, endpoint)
         try:

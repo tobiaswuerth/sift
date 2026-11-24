@@ -20,4 +20,4 @@ def _stopped(served: Served, _platform: str, style: Style) -> Shown:
     return Shown((), (labelled("done", f"stopped serving {printable(served.url)}", Tone.DONE, style),))
 
 
-COMMANDS = MappingProxyType({"serve": command(Act(ServeHome, _serve), _stopped)})
+COMMANDS = MappingProxyType({"serve": command(Act("serve", ServeHome, _serve), _stopped)})

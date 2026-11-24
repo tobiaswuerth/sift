@@ -13,30 +13,32 @@ class Handled:
     writes: bool
 
 
-def handled[R, A](act: Act[R, A], *, writes: bool = False) -> Handled:
+def handled[R, A](act: Act[R, A], *, writes: bool = False) -> tuple[str, Handled]:
     def run(acting: Acting, data: object) -> A:
         return act.run(acting, decoded(act.request, data))
 
-    return Handled(run, writes)
+    return act.name, Handled(run, writes)
 
 
 HANDLED: Mapping[str, Handled] = MappingProxyType(
-    {
-        "add": handled(collections.ADD, writes=True),
-        "rm": handled(collections.REMOVE, writes=True),
-        "move": handled(collections.MOVE, writes=True),
-        "activate": handled(collections.ACTIVATE, writes=True),
-        "deactivate": handled(collections.DEACTIVATE, writes=True),
-        "index": handled(indexing.INDEX, writes=True),
-        "embed": handled(indexing.EMBED, writes=True),
-        "status": handled(collections.STATUS),
-        "get": handled(collections.GET),
-        "search": handled(searching.SEARCH),
-        "vsearch": handled(searching.VSEARCH),
-        "query": handled(searching.QUERY),
-        "mentions": handled(searching.MENTIONS),
-        "similar": handled(searching.SIMILAR),
-        "links": handled(links.LINKS),
-        "unresolved": handled(links.UNRESOLVED),
-    }
+    dict(
+        (
+            handled(collections.ADD, writes=True),
+            handled(collections.REMOVE, writes=True),
+            handled(collections.MOVE, writes=True),
+            handled(collections.ACTIVATE, writes=True),
+            handled(collections.DEACTIVATE, writes=True),
+            handled(indexing.INDEX, writes=True),
+            handled(indexing.EMBED, writes=True),
+            handled(collections.STATUS),
+            handled(collections.GET),
+            handled(searching.SEARCH),
+            handled(searching.VSEARCH),
+            handled(searching.QUERY),
+            handled(searching.MENTIONS),
+            handled(searching.SIMILAR),
+            handled(links.LINKS),
+            handled(links.UNRESOLVED),
+        )
+    )
 )

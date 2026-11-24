@@ -1,6 +1,7 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
 
 
 class Phase(StrEnum):
@@ -59,3 +60,8 @@ class Listening:
 
 type Event = CollectionStarted | PhaseStarted | Advanced | PhaseDone | Noted | Finished | Listening
 type Reporter = Callable[[Event], None]
+type EventKind = type[CollectionStarted | PhaseStarted | Advanced | PhaseDone | Noted | Finished | Listening]
+
+EVENT_KINDS: Mapping[str, EventKind] = MappingProxyType(
+    {kind.__name__: kind for kind in (CollectionStarted, PhaseStarted, Advanced, PhaseDone, Noted, Finished, Listening)}
+)

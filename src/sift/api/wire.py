@@ -149,6 +149,8 @@ def _value(kind: object, data: object, field: str) -> object:
 
 def decoded[T](kind: type[T], data: object) -> T:
     try:
+        if get_origin(kind) is types.UnionType:
+            return cast("T", _value(kind, data, ""))
         return cast("T", _object(kind, data, None))
     except WireError:
         raise InvalidRequestError("a request is an object of its fields", WIRE_REMEDY) from None

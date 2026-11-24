@@ -21,7 +21,7 @@ from sift.api.collections import (
 )
 from sift.api.documents import GetDocuments
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError, SiftError
+from sift.api.errors import InvalidRequestError, SiftError, StoreUnavailableError
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
@@ -38,6 +38,7 @@ from sift.interfaces.console.streams import ReaderLeftError, columns, is_termina
 from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal, style_of
 from sift.interfaces.console.text import printable_text
 from sift.interfaces.console.windows import console, escapes_work
+from sift.interfaces.server.endpoint import Endpoint, found
 from sift.settings import Settings, from_environment, whole_path
 
 if TYPE_CHECKING:
@@ -50,6 +51,9 @@ ONE_VALUE = re.compile(r"argument (\S+?)(?:/\S+)?: expected one argument")
 REQUIRED = "the following arguments are required: "
 OWN_FLAGS = frozenset({"--json", "--color", "-h", "--help"})
 STOPPED_WRITING = "stopped: what was written so far is kept"
+STOPPED_WATCHING = "stopped watching: the home process goes on with it"
+OTHER_SIFT_REMEDY = "stop sift serve where it runs, and start it again with this sift"
+SERVE = "serve"
 JSON_HELP = "answer in JSON"
 COLOR_HELP = "colour what sift says"
 VERSION_HELP = "say which sift this is"
@@ -275,10 +279,22 @@ class _Chosen:
     style: Style
 
 
+def _server(settings: Settings, command: str) -> Endpoint | None:
+    if command == SERVE:
+        return None
+    running = found(settings.home)
+    if running is None or running.version == _version():
+        return running
+    said = f"the home process runs sift {running.version}, this is sift {_version()}"
+    raise StoreUnavailableError(said, OTHER_SIFT_REMEDY)
+
+
 def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log: Log | None) -> Shown:
     told = live if log is None else heard_too(live, log, host.clock)
+    server: Endpoint | None = None
     try:
-        context = Context(settings, host.platform, chosen.json, chosen.style, told, host.clock)
+        server = _server(settings, chosen.command)
+        context = Context(settings, host.platform, chosen.json, chosen.style, told, host.clock, server)
         with ticking(told.tick):
             return command_of(chosen.command).run(chosen.namespace, context)
     except (SiftError, OSError) as error:
@@ -287,7 +303,7 @@ def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log:
         if log is not None:
             log.stopped()
         if chosen.command in WRITERS:
-            raise StoppedError(STOPPED_WRITING) from None
+            raise StoppedError(STOPPED_WRITING if server is None else STOPPED_WATCHING) from None
         raise
     except Exception:
         if log is not None:

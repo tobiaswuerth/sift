@@ -1,7 +1,7 @@
 import http.client
 import json
 import threading
-from collections.abc import Generator, Mapping
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
@@ -15,6 +15,7 @@ from sift.api.serving import Served, ServeHome
 from sift.app.embedding import embed
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.cli.main import ENTRIES
+from sift.interfaces.server.app import WAITING
 from sift.interfaces.server.endpoint import ENDPOINT, SERVER, SERVING, Endpoint, found, lock_of
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import HomeServer, held, serve
@@ -22,25 +23,9 @@ from sift.settings import Settings
 from sift.storage.writer import held_by, sole_writer
 from tests.files import write
 from tests.models import Hashed
+from tests.serving import running
 
 type Line = dict[str, object]
-
-
-@contextmanager
-def running(settings: Settings, handled: Mapping[str, Handled] = HANDLED) -> Generator[HomeServer]:
-    with held(settings, ServeHome(port=0), "2.0.0", handled) as server:
-        thread = threading.Thread(target=server.server.run, kwargs={"sockets": [server.socket]}, daemon=True)
-        thread.start()
-        waited = threading.Event()
-        for _ in range(3000):
-            if server.server.started:
-                break
-            waited.wait(0.01)
-        try:
-            yield server
-        finally:
-            server.server.should_exit = True
-            thread.join(30)
 
 
 def asked(
@@ -171,6 +156,57 @@ def test_a_command_that_recurses_too_deep_ends_its_answer_unfinished(settings: S
         with pytest.raises(http.client.IncompleteRead):
             asked(server, "status", {})
         assert last(asked(server, "unresolved", {})[1], "answer") == {"targets": [], "unsearched": []}
+
+
+@contextmanager
+def streaming(server: HomeServer, name: str) -> Generator[http.client.HTTPResponse]:
+    connection = http.client.HTTPConnection("127.0.0.1", server.endpoint.port, timeout=60)
+    try:
+        connection.request("POST", f"/api/{name}", b"{}", {"Authorization": f"Bearer {server.endpoint.token}"})
+        with connection.getresponse() as response:
+            yield response
+    finally:
+        connection.close()
+
+
+def test_a_quiet_command_s_answer_is_kept_alive_by_a_line_while_nothing_else_is_said(settings: Settings) -> None:
+    release = threading.Event()
+
+    def quiet(_acting: Acting, _data: object) -> object:
+        release.wait(30)
+        return Served("quiet")
+
+    with (
+        running(settings, {**HANDLED, "status": Handled(quiet, writes=False)}, alive_every=0.01) as server,
+        streaming(server, "status") as response,
+    ):
+        first = response.readline()
+        release.set()
+        rest = response.read()
+        kind = response.getheader("Content-Type")
+    assert (kind, first) == ("application/x-ndjson; charset=utf-8", b'{"alive": true}\n')
+    assert rest.split(b"\n")[-2:] == [b'{"answer": {"url": "quiet"}}', b""]
+
+
+def test_a_write_sent_while_another_writes_is_told_it_waits_then_runs(settings: Settings) -> None:
+    started, release = threading.Event(), threading.Event()
+
+    def writing(_acting: Acting, _data: object) -> object:
+        started.set()
+        release.wait(30)
+        return Served("written")
+
+    with running(settings, {**HANDLED, "add": Handled(writing, writes=True)}) as server:
+        first = threading.Thread(target=asked, args=(server, "add", {}), daemon=True)
+        first.start()
+        started.wait(30)
+        with streaming(server, "add") as response:
+            told = cast("Line", json.loads(response.readline()))
+            release.set()
+            rest = response.read()
+        first.join(30)
+    assert told == {"event": "Noted", "data": {"text": WAITING, "remedy": None}}
+    assert rest.endswith(b'{"answer": {"url": "written"}}\n')
 
 
 def test_serve_says_where_it_listens_serves_and_leaves_nothing_behind(settings: Settings) -> None:

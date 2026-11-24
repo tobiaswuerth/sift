@@ -4,9 +4,9 @@ import logging
 import queue
 import threading
 import time
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Generator, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -20,7 +20,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from sift.api.errors import InternalError, InvalidRequestError, NotFoundError, Problem, SiftError
-from sift.api.events import Event
+from sift.api.events import Event, Noted, Reporter
 from sift.api.ids import CollectionId
 from sift.api.wire import Json, encoded, encoded_error
 from sift.app.resident import ResidentCodes
@@ -33,7 +33,10 @@ if TYPE_CHECKING:
     from sift.inference.loading import Deferred
 
 HOSTS = ("127.0.0.1", "localhost")
-LINES = "application/x-ndjson"
+LINES = "application/x-ndjson; charset=utf-8"
+ALIVE_SECONDS = 30.0
+ALIVE = b'{"alive": true}\n'
+WAITING = "another command writes to this home; this one waits for it to finish"
 MOST_BODY = 1 << 20
 LOGGER = "sift.server"
 UNAUTHORIZED = InvalidRequestError(
@@ -53,6 +56,7 @@ class Serving:
     codes: ResidentCodes
     writing: threading.Lock
     pool: ThreadPoolExecutor
+    alive_every: float = ALIVE_SECONDS
 
 
 def _line(value: Json) -> bytes:
@@ -71,13 +75,24 @@ def _searched(home: Path) -> set[tuple[Path, CollectionId]]:
     return {(one.store, one.id) for one in known_collections(home) if one.active}
 
 
+@contextmanager
+def _turn(writing: threading.Lock, report: Reporter) -> Generator[None]:
+    if not writing.acquire(blocking=False):
+        report(Noted(WAITING))
+        writing.acquire()
+    try:
+        yield
+    finally:
+        writing.release()
+
+
 def _ran(serving: Serving, name: str, handled: Handled, data: object, lines: "queue.Queue[bytes | None]") -> None:
     def report(event: Event) -> None:
         lines.put(_line({"event": type(event).__name__, "data": encoded(event)}))
 
     started = time.perf_counter()
     try:
-        with serving.writing if handled.writes else nullcontext():
+        with _turn(serving.writing, report) if handled.writes else nullcontext():
             try:
                 answer = handled.run(_acting(serving, report), data)
             finally:
@@ -101,7 +116,14 @@ def _ran(serving: Serving, name: str, handled: Handled, data: object, lines: "qu
 def _streamed(serving: Serving, name: str, handled: Handled, data: object) -> Iterator[bytes]:
     lines: queue.Queue[bytes | None] = queue.Queue()
     ran = serving.pool.submit(_ran, serving, name, handled, data, lines)
-    while (line := lines.get()) is not None:
+    while True:
+        try:
+            line = lines.get(timeout=serving.alive_every)
+        except queue.Empty:
+            yield ALIVE
+            continue
+        if line is None:
+            break
         yield line
     ran.result()
 
