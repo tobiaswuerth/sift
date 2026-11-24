@@ -30,9 +30,9 @@ def interrupted_once_answering(home: Path) -> None:
     waited = threading.Event()
     for _ in range(3000):
         if answers(home):
-            break
+            signal.raise_signal(signal.SIGINT)
+            return
         waited.wait(0.01)
-    signal.raise_signal(signal.SIGINT)
 
 
 def test_ctrl_c_stops_sift_serve_saying_so_and_leaves_nothing_behind(settings: Settings) -> None:
