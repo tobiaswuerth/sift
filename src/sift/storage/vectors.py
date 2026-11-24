@@ -158,6 +158,11 @@ def forget_vectors(transaction: Writing) -> None:
     run(transaction, "DELETE FROM meta WHERE key IN (?, ?, ?)", (MODEL_KEY, WIDTH_KEY, RECIPE_KEY))
 
 
+def vector_generation(transaction: Reading) -> int:
+    (held,) = rows(transaction, Count, "SELECT vector_changes FROM counts")
+    return held.n
+
+
 def codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, Bits]:
     (held,) = rows(transaction, Count, "SELECT vectors FROM counts")
     size = code_bytes(width_held(transaction) or 0)

@@ -51,5 +51,11 @@ class Finished:
     unreadable: int
 
 
-type Event = CollectionStarted | PhaseStarted | Advanced | PhaseDone | Noted | Finished
+@dataclass(frozen=True, slots=True)
+class Listening:
+    url: str
+    home: str
+
+
+type Event = CollectionStarted | PhaseStarted | Advanced | PhaseDone | Noted | Finished | Listening
 type Reporter = Callable[[Event], None]

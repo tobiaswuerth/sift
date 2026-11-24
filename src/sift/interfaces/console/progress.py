@@ -1,10 +1,20 @@
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 
-from sift.api.events import Advanced, CollectionStarted, Event, Finished, Noted, Phase, PhaseDone, PhaseStarted
+from sift.api.events import (
+    Advanced,
+    CollectionStarted,
+    Event,
+    Finished,
+    Listening,
+    Noted,
+    Phase,
+    PhaseDone,
+    PhaseStarted,
+)
 from sift.interfaces.console.shell import command
 from sift.interfaces.console.style import Style, Tone, paint
-from sift.interfaces.console.text import fitted, printable
+from sift.interfaces.console.text import fitted, labelled, printable
 from sift.interfaces.console.units import duration, rate
 
 UNITS = MappingProxyType(
@@ -90,9 +100,11 @@ def _done(finished: Finished, view: View, now: float, looks: Looks) -> tuple[str
     return line, " " * (len(INDENT) + LABEL) + paint(listing, Tone.SECONDARY, style)
 
 
-def _noted(noted: Noted, style: Style) -> tuple[str, ...]:
-    fix = (_label("fix", Tone.SECONDARY, style) + printable(noted.remedy),) if noted.remedy else ()
-    return (_label("note", Tone.WARNING, style) + printable(noted.text), *fix)
+def _said(said: Noted | Listening, style: Style) -> tuple[str, ...]:
+    if isinstance(said, Listening):
+        return (labelled("serve", f"{printable(said.url)}  {printable(said.home)}", Tone.STRONG, style),)
+    fix = (_label("fix", Tone.SECONDARY, style) + printable(said.remedy),) if said.remedy else ()
+    return (_label("note", Tone.WARNING, style) + printable(said.text), *fix)
 
 
 def _header(started: CollectionStarted, style: Style) -> str:
@@ -114,8 +126,8 @@ def shown(view: View, event: Event, now: float, looks: Looks) -> tuple[View, tup
             running = view.running
             lines = () if running is None else (_row(running, event.count, now, looks.style),)
             return replace(view, running=None), lines
-        case Noted():
-            return view, _noted(event, looks.style)
+        case Noted() | Listening():
+            return view, _said(event, looks.style)
         case _:
             return replace(view, running=None), _done(event, view, now, looks)
 

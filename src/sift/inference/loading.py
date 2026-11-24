@@ -1,7 +1,8 @@
 import logging
+import threading
 import warnings
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from importlib import import_module
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -35,12 +36,14 @@ def _local_module() -> LocalLoader:
     return _as_local(_models_module("sift.inference.local"))
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class Deferred:
     model: str
     reranker: str
     gpus: str | None
     built: Models | None = None
+    loader: Callable[[], LocalLoader] = _local_module
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
     def name(self) -> str:
@@ -48,20 +51,24 @@ class Deferred:
 
     def _built(self) -> Models:
         if self.built is None:
-            self.built = _local_module().local(self.model, self.reranker, self.gpus)
+            self.built = self.loader().local(self.model, self.reranker, self.gpus)
         return self.built
 
     def prepare(self) -> tuple[str, ...]:
-        return self._built().prepare()
+        with self.lock:
+            return self._built().prepare()
 
     def prepare_ranker(self) -> tuple[str, ...]:
-        return self._built().prepare_ranker()
+        with self.lock:
+            return self._built().prepare_ranker()
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
-        return self._built().encode(texts, query=query)
+        with self.lock:
+            return self._built().encode(texts, query=query)
 
     def rerank(self, query: str, texts: Sequence[str]) -> Floats:
-        return self._built().rerank(query, texts)
+        with self.lock:
+            return self._built().rerank(query, texts)
 
 
 def deferred(model: str, reranker: str, gpus: str | None) -> Deferred:

@@ -66,6 +66,20 @@ def lock_file(path: Path) -> LockFile:
     return sqlite3.connect(uri(path.resolve(), "rw"), uri=True, timeout=0, isolation_level=None)
 
 
+def held_by(path: Path, opened: Callable[[Path], LockFile] = lock_file) -> Holder | None:
+    if not path.is_file():
+        return None
+    with closing(opened(path)) as connection, unavailable_if_unusable(path):
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as error:
+            if primary_code(error) != sqlite3.SQLITE_BUSY:
+                raise
+            return _holder(connection)
+        connection.execute("ROLLBACK")
+        return None
+
+
 @contextmanager
 def sole_writer(store: Path, purpose: str, opened: Callable[[Path], LockFile] = lock_file) -> Generator[None]:
     require_sqlite(sqlite3.sqlite_version_info)

@@ -20,6 +20,8 @@ class Problem(StrEnum):
     OUT_OF_TIME = "out_of_time"
     BUSY = "busy"
     MODEL_UNAVAILABLE = "model_unavailable"
+    UNAUTHORIZED = "unauthorized"
+    INTERNAL = "internal"
 
 
 class SiftError(Exception):
@@ -61,6 +63,10 @@ class StoreUnavailableError(SiftError):
 
 class ModelUnavailableError(SiftError):
     usual: ClassVar[Problem] = Problem.MODEL_UNAVAILABLE
+
+
+class InternalError(SiftError):
+    usual: ClassVar[Problem] = Problem.INTERNAL
 
 
 def _rebuilt(kind: type[SiftError], message: str, remedy: str, code: Problem, field: str | None) -> SiftError:

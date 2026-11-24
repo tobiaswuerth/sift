@@ -22,6 +22,8 @@ dependencies = [
     "nvidia-ml-py>=12",  # free GPU memory as nvidia-smi sees it, which CUDA overstates on Windows
     "xberg>=1.3",  # PDF, office files, e-books and web pages as Markdown
     "pypdfium2>=4.30",  # the pages of scans as pictures, for OCR (PDFium inside)
+    "starlette>=1.3.1",  # the home process's HTTP API, then MCP and the UI on it
+    "uvicorn>=0.31",  # the server that runs it
 ]
 keywords = [
     "rag",

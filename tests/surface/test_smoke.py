@@ -1,3 +1,4 @@
+import http.client
 import json
 import shutil
 import subprocess
@@ -8,6 +9,7 @@ from typing import cast
 
 from sift.interfaces.cli.arguments import Argument, How, arguments
 from sift.interfaces.cli.main import ENTRIES
+from sift.interfaces.server.endpoint import found
 from tests.mails import WORD, mail_bytes, message, sample
 from tests.surface import process
 from tests.tiny_model import tiny_model, tiny_reranker
@@ -284,6 +286,22 @@ def documents_run(home: Path, folder: Path) -> None:
     assert '"path": "broken.pdf"' in listing
 
 
+def served_run(home: Path, notes: Path) -> None:
+    indexed(home, notes)
+    RAN.append(("serve", "--port", "0", "--json"))
+    with process.served(home) as running:
+        endpoint = cast("Answer", json.loads((home / process.ENDPOINT).read_bytes()))
+        connection = http.client.HTTPConnection("127.0.0.1", cast("int", endpoint["port"]), timeout=60)
+        try:
+            connection.request("POST", "/api/status", b"{}", {"Authorization": f"Bearer {endpoint['token']}"})
+            (said, *_) = connection.getresponse().read().split(b"\n")
+        finally:
+            connection.close()
+        (collection,) = cast("list[Answer]", cast("Answer", cast("Answer", json.loads(said))["answer"])["collections"])
+        assert collection["name"] == "notes"
+    assert (running.poll() is not None, found(home)) == (True, None)
+
+
 def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path: Path) -> None:
     notes = notes_in(tmp_path / "Notizen Müller")
     model, reranker = str(tiny_model(tmp_path / "models")), str(tiny_reranker(tmp_path / "models"))
@@ -293,6 +311,7 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
         partial(options_run, tmp_path / "options", notes, model, reranker),
         partial(records_run, tmp_path / "records", notes_in(tmp_path / "Papiere"), model),
         partial(documents_run, tmp_path / "documents", tmp_path / "Dokumente"),
+        partial(served_run, tmp_path / "served", notes),
     )
     with ThreadPoolExecutor(len(runs)) as pool:
         for running in [pool.submit(run) for run in runs]:

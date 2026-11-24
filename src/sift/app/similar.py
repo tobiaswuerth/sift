@@ -57,7 +57,9 @@ def similar(
     like = read_in(named.note.collection, partial(_like, named.note, request.id))
     narrowing = searching.narrowed(home, request, LeftOut(named.note, linking=False))
     with ExitStack() as cleanup:
-        stores = searching.opened(cleanup, narrowing, Wants(model=like.model, vectors_required=True), expired)
+        stores = searching.opened(
+            cleanup, narrowing, Wants(model=like.model, vectors_required=True, codes=watching.codes), expired
+        )
         alike(stores, like.model, like.query)
         found = hits.result(stores, nearest_hits(stores, request, like.query, asked, like.work), partial=False)
     return hits.also_unsearched(found, named.unsearched)

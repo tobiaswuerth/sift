@@ -1,7 +1,17 @@
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.api.events import Advanced, CollectionStarted, Event, Finished, Noted, Phase, PhaseDone, PhaseStarted
+from sift.api.events import (
+    Advanced,
+    CollectionStarted,
+    Event,
+    Finished,
+    Listening,
+    Noted,
+    Phase,
+    PhaseDone,
+    PhaseStarted,
+)
 from sift.interfaces.console.progress import Looks, View, running_line, shown
 from sift.interfaces.console.style import PLAIN, Style
 from sift.interfaces.console.text import width
@@ -56,6 +66,11 @@ def test_a_note_while_a_phase_runs_is_said_and_the_phase_still_ends_in_its_row()
     assert view.running is None
     assert lines[-3:-1] == ["  note  the store is damaged", "  fix   remove the collection"]
     assert lines[-1].startswith("  read       1,208 files")
+
+
+def test_a_home_process_listening_says_where_and_for_which_home() -> None:
+    view, lines = shown(View(), Listening("http://127.0.0.1:8765", "/home/sift"), 0.0, LOOKS)
+    assert (view, lines) == (View(), ("serve  http://127.0.0.1:8765  /home/sift",))
 
 
 def test_without_unicode_the_glyphs_are_ascii() -> None:

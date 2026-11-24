@@ -10,7 +10,7 @@ import pytest
 
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.storage.store_files import FILE_SUFFIXES, WRITER_SUFFIX
-from sift.storage.writer import LockFile, lock_file, sole_writer
+from sift.storage.writer import Holder, LockFile, held_by, lock_file, sole_writer
 
 HOLD = (
     "import os, sys; from pathlib import Path; from sift.storage.writer import sole_writer\n"
@@ -34,6 +34,17 @@ def test_a_second_writer_of_a_store_is_refused_at_once_naming_the_first(tmp_path
         assert refused.value.remedy == "wait until it is done, or stop that process"
     with sole_writer(store, "sift embed"):
         pass
+
+
+def test_who_holds_a_lock_is_told_without_taking_it_and_no_one_once_it_is_let_go(tmp_path: Path) -> None:
+    store, lock = tmp_path / "home" / "server", tmp_path / "home" / "server.writer"
+    assert held_by(lock) is None
+    with sole_writer(store, "sift serve"):
+        assert held_by(lock) == Holder(os.getpid(), "sift serve")
+        assert held_by(lock) == Holder(os.getpid(), "sift serve")
+    assert held_by(lock) is None
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        held_by(lock, failing)
 
 
 def test_writers_of_other_stores_go_on_side_by_side(tmp_path: Path) -> None:
@@ -61,11 +72,13 @@ def test_a_writer_that_dies_holding_its_store_leaves_it_free(tmp_path: Path) -> 
                 sole_writer(store, "sift index"),
             ):
                 pass
+            assert held_by(Path(f"{store}{WRITER_SUFFIX}")) == Holder(int(pid), "sift embed")
             holder.stdin.write("die\n")
             holder.stdin.flush()
             assert holder.wait(timeout=60) == 3
         finally:
             holder.kill()
+    assert held_by(Path(f"{store}{WRITER_SUFFIX}")) is None
     with sole_writer(store, "sift index"):
         pass
 

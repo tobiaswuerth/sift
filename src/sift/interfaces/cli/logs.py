@@ -13,7 +13,7 @@ from sift.interfaces.console.live import Live
 from sift.interfaces.console.progress import Looks
 from sift.interfaces.console.style import PLAIN, unpainted
 
-LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed"})
+LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed", "serve"})
 FOLDER = "logs"
 FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 SAID = "sift"

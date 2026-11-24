@@ -25,6 +25,7 @@ from sift.api.errors import InvalidRequestError, SiftError
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
+from sift.api.serving import ServeHome
 from sift.domain.text.decoding import encodable
 from sift.interfaces.cli.arguments import arguments, flags, options
 from sift.interfaces.cli.context import Command, Commands, Context
@@ -93,6 +94,9 @@ ENTRIES = MappingProxyType(
         "links": CommandEntry("the links of a note: those it holds, and those into it", ShowLinks, "links"),
         "unresolved": CommandEntry("link targets no note answers to yet, most linked first", ListUnresolved, "links"),
         "status": CommandEntry("show each collection: its folder and what its store holds", ShowStatus, "collections"),
+        "serve": CommandEntry(
+            "serve this home: its models and codes held, commands answered at once", ServeHome, "serving"
+        ),
     }
 )
 

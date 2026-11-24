@@ -23,7 +23,9 @@ def vsearch(
     expired = searching.expired_after(request.budget, watching.clock)
     narrowing = searching.narrowed(home, request)
     with ExitStack() as cleanup:
-        stores = searching.opened(cleanup, narrowing, Wants(model=models.name, vectors_required=True), expired)
+        stores = searching.opened(
+            cleanup, narrowing, Wants(model=models.name, vectors_required=True, codes=watching.codes), expired
+        )
         if not any(len(vectors.coded.ids) for _, vectors in stores.embedded()):
             return hits.result(stores, (), partial=False)
         prepared(watching.report, (models.prepare,))

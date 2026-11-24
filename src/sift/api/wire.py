@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Annotated, Literal, TypeAliasType, cast, get_args, get_origin, get_type_hints
 
 from sift.api.errors import (
+    InternalError,
     InvalidRequestError,
     ModelUnavailableError,
     NotFoundError,
@@ -26,6 +27,7 @@ ERROR_KINDS: Mapping[str, type[SiftError]] = MappingProxyType(
         "not_found": NotFoundError,
         "store_unavailable": StoreUnavailableError,
         "model_unavailable": ModelUnavailableError,
+        "internal": InternalError,
     }
 )
 KIND_OF: Mapping[type[SiftError], str] = MappingProxyType({kind: name for name, kind in ERROR_KINDS.items()})

@@ -3,6 +3,7 @@ import time
 from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
+from functools import partial
 from pathlib import Path
 from typing import Protocol
 
@@ -14,6 +15,7 @@ from sift.api.search import MOST_HITS, Left, Options, Unsearched, unsearched
 from sift.app.collections import searchable
 from sift.app.linked import LeftOut, Narrowing, condition_in, narrowing
 from sift.app.loading import unreported
+from sift.app.resident import CodesAt, CodeSource, read_each_time
 from sift.domain.query import fields as shown
 from sift.domain.query.expressions import Expression
 from sift.retrieval.keyword import lists
@@ -25,7 +27,7 @@ from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
 from sift.storage.store import connected, unavailable_if_unusable
 from sift.storage.vector_meta import left, model_of, width_held
-from sift.storage.vectors import EMBED_REMEDY, codes_of, refuse_recipe
+from sift.storage.vectors import EMBED_REMEDY, codes_of, refuse_recipe, vector_generation
 
 UNEMBEDDED_REMEDY = "run sift embed"
 EMPTY_QUERY = "an empty query finds nothing"
@@ -40,6 +42,7 @@ type Clock = Callable[[], float]
 class Watching:
     report: Reporter = unreported
     clock: Clock = time.perf_counter
+    codes: CodeSource = read_each_time
 
 
 WATCHING = Watching()
@@ -79,6 +82,7 @@ class Wants:
     keywords: bool = False
     model: str | None = None
     vectors_required: bool = False
+    codes: CodeSource = read_each_time
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -185,7 +189,12 @@ def no_vectors() -> Vectors:
     return Vectors(coded(np.zeros(0, np.int64), np.zeros((0, 0), np.uint8), 0))
 
 
-def embedded_by(model: str, transaction: Reading) -> Vectors | None:
+def _coded(transaction: Reading) -> Coded:
+    ids, bits = codes_of(transaction)
+    return coded(ids, bits, width_held(transaction) or 0)
+
+
+def embedded_by(model: str, one: Collection, transaction: Reading, codes: CodeSource) -> Vectors | None:
     found = model_of(transaction)
     if found is None:
         return None
@@ -193,13 +202,13 @@ def embedded_by(model: str, transaction: Reading) -> Vectors | None:
         said = f"its vectors are of {found}, not of {model}"
         raise StoreUnavailableError(said, EMBED_REMEDY.format(model=model), code=Problem.OTHER_MODEL)
     refuse_recipe(transaction, model)
-    ids, bits = codes_of(transaction)
-    return Vectors(coded(ids, bits, width_held(transaction) or 0))
+    at = CodesAt(one.store, one.id, vector_generation(transaction))
+    return Vectors(codes(at, partial(_coded, transaction)))
 
 
-def _vectors(model: str, transaction: Reading, wants: Wants) -> Vectors:
+def _vectors(model: str, one: Collection, transaction: Reading, wants: Wants) -> Vectors:
     try:
-        found = embedded_by(model, transaction)
+        found = embedded_by(model, one, transaction, wants.codes)
     except StoreUnavailableError as error:
         if wants.vectors_required or error.code is not Problem.OTHER_MODEL:
             raise
@@ -211,13 +220,15 @@ def _vectors(model: str, transaction: Reading, wants: Wants) -> Vectors:
     return replace(no_vectors(), unembedded=left(transaction))
 
 
-def _held(transaction: Reading, allowed: Passing | None, wants: Wants) -> tuple[Keywords | None, Vectors | None]:
+def _held(
+    one: Collection, transaction: Reading, allowed: Passing | None, wants: Wants
+) -> tuple[Keywords | None, Vectors | None]:
     if wants.keywords:
         refuse_stale(transaction)
     keywords = Keywords(lists.opened(transaction), allowed) if wants.keywords else None
     if wants.model is None:
         return keywords, None
-    return keywords, replace(_vectors(wants.model, transaction, wants), allowed=allowed)
+    return keywords, replace(_vectors(wants.model, one, transaction, wants), allowed=allowed)
 
 
 def keywords_alone(collection: str, error: StoreUnavailableError) -> Left:
@@ -255,7 +266,7 @@ def _searching(one: Collection, asked: Narrowing, wants: Wants) -> Searching | N
                 resources.close()
                 return None
             allowed = None if found is None else Passing(transaction, found)
-            return Searching(one, transaction, *_held(transaction, allowed, wants), resources)
+            return Searching(one, transaction, *_held(one, transaction, allowed, wants), resources)
         except BaseException:
             resources.close()
             raise
