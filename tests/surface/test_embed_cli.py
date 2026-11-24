@@ -59,7 +59,7 @@ def test_vsearch_before_embedding_says_to_embed(embedding: Settings, notes: Path
 
 def test_the_model_library_is_imported_only_once_a_text_is_embedded() -> None:
     script = (
-        "import sys; from sift.inference.loading import deferred; m = deferred('google/embeddinggemma-2', 'r'); "
+        "import sys; from sift.inference.loading import deferred; m = deferred('google/embeddinggemma-2', 'r', None); "
         "print(m.name, 'torch' in sys.modules)"
     )
     found = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True, timeout=60)

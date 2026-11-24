@@ -1,5 +1,6 @@
 import errno
 import shutil
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -19,7 +20,9 @@ HOST_FULL = ("not enough memory", "paging file is too small")
 HOST_FULL_WINDOWS = frozenset({8, 14, 1455})
 CUDA_FIX = "uv tool install --reinstall --torch-backend auto sift-rag"
 UNBUILT = f"an NVIDIA GPU is there, but this PyTorch has no CUDA: the models run on the CPU; to use it: {CUDA_FIX}"
-HIDDEN = "PyTorch can use no NVIDIA GPU here (see CUDA_VISIBLE_DEVICES and the driver): the models run on the CPU"
+UNSEEN = "PyTorch (CUDA {}) can use no NVIDIA GPU here: the models run on the CPU; update the NVIDIA driver"
+HIDDEN = "PyTorch sees no NVIDIA GPU with CUDA_VISIBLE_DEVICES set to {!r}: the models run on the CPU"
+VIRTUAL_MAC = "Skipping device"
 
 
 class Properties(Protocol):
@@ -46,6 +49,7 @@ class Hardware:
     mps: bool
     nvidia: bool
     cuda_build: str | None
+    gpus: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +98,9 @@ def _on_cuda(cuda: Cuda) -> Device:
 def _unused(found: Hardware) -> str | None:
     if not found.nvidia:
         return None
-    return UNBUILT if found.cuda_build is None else HIDDEN
+    if found.cuda_build is None:
+        return UNBUILT
+    return UNSEEN.format(found.cuda_build) if found.gpus is None else HIDDEN.format(found.gpus)
 
 
 def chosen(cuda: Cuda, found: Hardware) -> Device:
@@ -106,8 +112,33 @@ def chosen(cuda: Cuda, found: Hardware) -> Device:
     return CPU if notice is None else Device("cpu", torch.float32, notice=notice)
 
 
-def nvidia() -> bool:
-    return shutil.which("nvidia-smi") is not None
+def nvidia(path: str | None = None) -> bool:
+    return shutil.which("nvidia-smi", path=path) is not None
+
+
+@dataclass(frozen=True, slots=True)
+class Machine:
+    cuda: Cuda = torch.cuda
+    mps: Callable[[], bool] = torch.backends.mps.is_available
+    nvidia: Callable[[], bool] = nvidia
+    cuda_build: str | None = torch.version.cuda
+    threads: Callable[[int], None] = torch.set_num_threads
+
+
+MACHINE = Machine()
+
+
+def _mps_quietly(mps: Callable[[], bool]) -> bool:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", VIRTUAL_MAC, UserWarning)
+        return mps()
+
+
+def placed(machine: Machine, gpus: str | None) -> Device:
+    found = Hardware(_mps_quietly(machine.mps), machine.nvidia(), machine.cuda_build, gpus)
+    device = chosen(machine.cuda, found)
+    machine.threads(device.threads)
+    return device
 
 
 def _host_full_code(error: BaseException) -> bool:

@@ -11,6 +11,7 @@ HOME = "SIFT_HOME"
 EMBED_MODEL_VARIABLE = "SIFT_EMBED_MODEL"
 RERANK_MODEL_VARIABLE = "SIFT_RERANK_MODEL"
 OCR_VARIABLE = "SIFT_OCR"
+GPUS_VARIABLE = "CUDA_VISIBLE_DEVICES"
 OCR_REMEDY = (
     f"set {OCR_VARIABLE} to auto (on a GPU, the default), on (also on the CPU, which takes minutes a page) or off"
 )
@@ -33,6 +34,7 @@ class Settings:
     embed_model: str = EMBED_MODEL
     rerank_model: str = RERANK_MODEL
     ocr: OcrSetting = OcrSetting.AUTO
+    gpus: str | None = None
 
 
 def whole_path(written: str, user: Path | None, cwd: Path) -> Path:
@@ -81,6 +83,7 @@ def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path) -> Sett
         embed_model=environment.get(EMBED_MODEL_VARIABLE) or EMBED_MODEL,
         rerank_model=environment.get(RERANK_MODEL_VARIABLE) or RERANK_MODEL,
         ocr=_ocr(environment.get(OCR_VARIABLE)),
+        gpus=environment.get(GPUS_VARIABLE),
     )
 
 

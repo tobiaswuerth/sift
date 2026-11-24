@@ -3,13 +3,9 @@ from types import MappingProxyType
 from sift.api.links import FindMentions, FindSimilar
 from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app import mentions, query, search, similar, vsearch
-from sift.inference.loading import Deferred, deferred
 from sift.interfaces.cli.commands.making import needing_collections, searched
+from sift.interfaces.cli.commands.models import models_of
 from sift.interfaces.cli.context import Context
-
-
-def _models(context: Context) -> Deferred:
-    return deferred(context.settings.embed_model, context.settings.rerank_model)
 
 
 def _search(context: Context, request: SearchKeywords) -> SearchResult:
@@ -17,11 +13,11 @@ def _search(context: Context, request: SearchKeywords) -> SearchResult:
 
 
 def _vsearch(context: Context, request: SearchVectors) -> SearchResult:
-    return vsearch.vsearch(context.settings.home, request, _models(context), report=context.report)
+    return vsearch.vsearch(context.settings.home, request, models_of(context), report=context.report)
 
 
 def _query(context: Context, request: SearchHybrid) -> SearchResult:
-    return query.query(context.settings.home, request, _models(context), report=context.report)
+    return query.query(context.settings.home, request, models_of(context), report=context.report)
 
 
 def _mentions(context: Context, request: FindMentions) -> SearchResult:

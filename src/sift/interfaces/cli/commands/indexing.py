@@ -5,8 +5,8 @@ from sift.api.indexing import IndexCollections, IndexResult, Skipped
 from sift.app import embedding, indexing
 from sift.app.filing import Readers
 from sift.app.scans import Scanning
-from sift.inference.loading import deferred
 from sift.interfaces.cli.commands.making import command
+from sift.interfaces.cli.commands.models import models_of
 from sift.interfaces.cli.context import Context
 from sift.interfaces.cli.shown import indexing as shown
 
@@ -17,8 +17,7 @@ def _index(context: Context, request: IndexCollections) -> IndexResult:
 
 
 def _embed(context: Context, request: EmbedCollections) -> EmbedResult:
-    models = deferred(context.settings.embed_model, context.settings.rerank_model)
-    return embedding.embed(context.settings.home, request, context.report, models)
+    return embedding.embed(context.settings.home, request, context.report, models_of(context))
 
 
 def _some_skipped(result: IndexResult | EmbedResult) -> bool:

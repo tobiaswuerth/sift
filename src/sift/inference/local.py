@@ -14,7 +14,7 @@ from transformers.utils import logging as transformers_logging
 
 from sift.api.errors import ModelUnavailableError
 from sift.domain.codec.codes import Floats, Halves
-from sift.inference.accelerator import Device, Hardware, chosen, emptied, host_full, nvidia, too_large
+from sift.inference.accelerator import MACHINE, Device, emptied, host_full, placed, too_large
 from sift.inference.batches import Attempt, BatchShape, in_batches
 from sift.inference.hub import RERANK_MODEL, hub, pinned
 
@@ -85,13 +85,10 @@ def width_of(name: str, found: int | None) -> int:
     return found
 
 
-def this_device() -> Device:
+def this_device(gpus: str | None = None) -> Device:
     transformers_logging.disable_progress_bar()
     enable_progress_bars()
-    found = Hardware(torch.backends.mps.is_available(), nvidia(), torch.version.cuda)
-    device = chosen(torch.cuda, found)
-    torch.set_num_threads(device.threads)
-    return device
+    return placed(MACHINE, gpus)
 
 
 def _capped[T: Capped](model: T) -> T:
@@ -177,15 +174,13 @@ def _lengths(tokenizer: object, texts: list[str]) -> list[int]:
 
 def _run(model: Embedder, texts: list[str], *, query: bool) -> Floats:
     encode = model.encode_query if query else model.encode_document
-    with torch.inference_mode():
-        found = encode(texts, batch_size=len(texts), normalize_embeddings=True, show_progress_bar=False)
+    found = encode(texts, batch_size=len(texts), normalize_embeddings=True, show_progress_bar=False)
     return np.asarray(found, np.float32)
 
 
 def _scored(ranker: Ranker, query: str, texts: list[str]) -> Floats:
     pairs = [(query, text) for text in texts]
-    with torch.inference_mode():
-        found = ranker.predict(pairs, batch_size=len(pairs), show_progress_bar=False, activation_fn=torch.nn.Identity())
+    found = ranker.predict(pairs, batch_size=len(pairs), show_progress_bar=False, activation_fn=torch.nn.Identity())
     return np.asarray(found, np.float32).reshape(-1, 1)
 
 
@@ -193,6 +188,7 @@ def _scored(ranker: Ranker, query: str, texts: list[str]) -> Floats:
 class Local:
     model: str
     reranker: str = RERANK_MODEL
+    gpus: str | None = None
     device: Device | None = None
     embedder: Loaded | None = None
     ranker: Ranker | None = None
@@ -205,7 +201,7 @@ class Local:
 
     def _on(self) -> Device:
         if self.device is None:
-            self.device = this_device()
+            self.device = this_device(self.gpus)
         return self.device
 
     def _embedding(self) -> Loaded:
@@ -260,5 +256,5 @@ class Local:
         return Attempt(run, too_large, lambda: emptied(device))
 
 
-def local(model: str, reranker: str = RERANK_MODEL) -> Local:
-    return Local(model, reranker)
+def local(model: str, reranker: str = RERANK_MODEL, gpus: str | None = None) -> Local:
+    return Local(model, reranker, gpus)

@@ -50,6 +50,11 @@ def test_scans_are_read_on_a_gpu_unless_set_and_a_setting_sift_knows_not_says_wh
     assert refused.value.remedy == OCR_REMEDY
 
 
+def test_the_gpus_cuda_may_use_are_kept_as_set_even_empty_which_hides_them_all(user: Path, cwd: Path) -> None:
+    asked: tuple[dict[str, str], ...] = ({}, {"CUDA_VISIBLE_DEVICES": "-1"}, {"CUDA_VISIBLE_DEVICES": ""})
+    assert [parsed(each, user, cwd).gpus for each in asked] == [None, "-1", ""]
+
+
 def test_an_empty_variable_counts_as_unset(user: Path, cwd: Path) -> None:
     assert parsed({"SIFT_HOME": "", "SIFT_EMBED_MODEL": "", "SIFT_RERANK_MODEL": ""}, user, cwd) == parsed(
         {}, user, cwd

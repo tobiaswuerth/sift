@@ -1,12 +1,14 @@
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 import numpy as np
 import pytest
 import torch
-from sentence_transformers import SentenceTransformer
+from huggingface_hub.utils import are_progress_bars_disabled
+from sentence_transformers import CrossEncoder, SentenceTransformer
 from sentence_transformers.sentence_transformer.modules import Transformer
+from transformers.utils import logging as transformers_logging
 
 from sift.api.errors import ModelUnavailableError
 from sift.inference.accelerator import CPU
@@ -169,3 +171,65 @@ def test_a_model_routing_queries_to_static_embeddings_caps_only_what_reads_token
     assert models.encode(["dark matter"], query=False).shape == (1, WIDTH)
     assert models.embedder is not None
     assert [each.max_seq_length for each in models.embedder.model.modules() if isinstance(each, Transformer)] == [1024]
+
+
+class Predicting(Protocol):
+    def predict(self, inputs: list[tuple[str, str]], *, activation_fn: torch.nn.Module | None = None) -> object: ...
+
+
+def test_rerank_gives_raw_scores_whatever_the_model_applies(tiny: Path) -> None:
+    folder = tiny.parent / "reranker"
+    pairs = [("dark matter", "halo models"), ("dark matter", "pruning")]
+    own = cast("Predicting", CrossEncoder(str(folder)))
+    raw = np.asarray(own.predict(pairs, activation_fn=torch.nn.Identity()), np.float32)
+    squashed = np.asarray(own.predict(pairs), np.float32)
+    scores = local(str(tiny), str(folder)).rerank("dark matter", ["halo models", "pruning"])
+    assert np.allclose(scores, raw, atol=1e-4)
+    assert not np.allclose(scores, squashed, atol=1e-2)
+
+
+def test_loading_the_models_draws_no_progress_bar_and_downloads_still_show_theirs(
+    tiny: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    models = local(str(tiny), str(tiny.parent / "reranker"))
+    models.prepare()
+    models.prepare_ranker()
+    assert "Loading weights" not in capsys.readouterr().err
+    assert not transformers_logging.is_progress_bar_enabled()
+    assert not are_progress_bars_disabled()
+
+
+def modules_of(model: object) -> list[torch.nn.Module]:
+    return list(cast("torch.nn.Module", model).modules())
+
+
+def test_the_models_run_in_inference_mode_as_models_loaded_for_it(tiny: Path) -> None:
+    models = local(str(tiny), str(tiny.parent / "reranker"))
+    models.prepare()
+    models.prepare_ranker()
+    assert models.embedder is not None
+    seen: set[tuple[bool, bool]] = set()
+
+    def heard(module: torch.nn.Module, _args: tuple[object, ...], _output: object) -> None:
+        seen.add((torch.is_inference_mode_enabled(), module.training))
+
+    for module in [*modules_of(models.embedder.model), *modules_of(models.ranker)]:
+        module.register_forward_hook(heard)
+    models.encode(["halo"], query=False)
+    models.rerank("dark matter", ["halo"])
+    assert seen == {(True, False)}
+
+
+def test_texts_are_embedded_longest_first_by_the_tokens_the_model_reads_not_their_characters(tiny: Path) -> None:
+    models = Local(str(tiny), batch=1)
+    models.prepare()
+    assert models.embedder is not None
+    (reader,) = [each for each in models.embedder.model.modules() if isinstance(each, Transformer)]
+    read: list[int] = []
+
+    def heard(_module: torch.nn.Module, args: tuple[dict[str, torch.Tensor], ...]) -> None:
+        read.append(int(args[0]["input_ids"].shape[1]))
+
+    reader.register_forward_pre_hook(heard)
+    models.encode(["pruningpruningpruningpruning", "halo halo halo halo halo"], query=False)
+    assert read == [7, 3]

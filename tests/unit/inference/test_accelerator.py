@@ -1,11 +1,29 @@
 import errno
+import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pynvml
 import pytest
 import torch
 
-from sift.inference.accelerator import CACHES, CPU, CUDA_FIX, GIB, Device, Hardware, budget, chosen, emptied, too_large
+from sift.inference.accelerator import (
+    CACHES,
+    CPU,
+    CPU_THREADS,
+    CUDA_FIX,
+    GIB,
+    Device,
+    Hardware,
+    Machine,
+    budget,
+    chosen,
+    emptied,
+    nvidia,
+    placed,
+    too_large,
+)
 
 NONE = Hardware(mps=False, nvidia=False, cuda_build=None)
 
@@ -94,9 +112,73 @@ def test_without_a_cuda_gpu_an_apple_one_or_the_cpu_is_chosen_saying_why_an_nvid
     unbuilt = chosen(absent, Hardware(mps=False, nvidia=True, cuda_build=None)).notice
     assert unbuilt is not None
     assert unbuilt.endswith(CUDA_FIX)
-    hidden = chosen(absent, Hardware(mps=False, nvidia=True, cuda_build="12.6")).notice
-    assert hidden is not None
-    assert "CUDA_VISIBLE_DEVICES" in hidden
+    unseen = chosen(absent, Hardware(mps=False, nvidia=True, cuda_build="12.6")).notice
+    assert unseen == (
+        "PyTorch (CUDA 12.6) can use no NVIDIA GPU here: the models run on the CPU; update the NVIDIA driver"
+    )
+
+
+@pytest.mark.parametrize("gpus", ["-1", ""])
+def test_a_gpu_hidden_on_purpose_is_no_driver_to_update(gpus: str) -> None:
+    hidden = chosen(FakeCuda(0, 0, available=False), Hardware(mps=False, nvidia=True, cuda_build="12.6", gpus=gpus))
+    said = f"PyTorch sees no NVIDIA GPU with CUDA_VISIBLE_DEVICES set to {gpus!r}: the models run on the CPU"
+    assert hidden.notice == said
+    unbuilt = chosen(FakeCuda(0, 0, available=False), Hardware(mps=False, nvidia=True, cuda_build=None, gpus=gpus))
+    assert unbuilt.notice is not None
+    assert unbuilt.notice.endswith(CUDA_FIX)
+
+
+def unseen_mps() -> bool:
+    return False
+
+
+def seen_mps() -> bool:
+    return True
+
+
+def machine(cuda: FakeCuda, held: list[int], mps: Callable[[], bool] = unseen_mps) -> Machine:
+    return Machine(cuda=cuda, mps=mps, nvidia=lambda: False, cuda_build="12.6", threads=held.append)
+
+
+@pytest.mark.parametrize(
+    "cuda, mps, threads",
+    [
+        (FakeCuda(free=20 * GIB, total=24 * GIB, used=0), unseen_mps, 1),
+        (FakeCuda(free=20 * GIB, total=24 * GIB, used=22 * GIB), unseen_mps, CPU_THREADS),
+        (FakeCuda(0, 0, available=False), seen_mps, CPU_THREADS),
+        (FakeCuda(0, 0, available=False), unseen_mps, CPU_THREADS),
+    ],
+)
+def test_pytorch_keeps_one_cpu_thread_beside_an_nvidia_gpu_and_one_a_core_elsewhere(
+    cuda: FakeCuda, mps: Callable[[], bool], threads: int
+) -> None:
+    held: list[int] = []
+    device = placed(machine(cuda, held, mps), None)
+    assert (device.threads, held) == (threads, [threads])
+
+
+def virtual_mac() -> bool:
+    warnings.warn("Skipping device Apple Paravirtual device that does not support Metal 2.0", UserWarning, stacklevel=2)
+    return False
+
+
+def warning_mac() -> bool:
+    warnings.warn("MPS is deprecated", UserWarning, stacklevel=2)
+    return False
+
+
+def test_a_virtual_mac_gpu_is_passed_over_quietly_and_other_warnings_still_heard() -> None:
+    assert placed(machine(FakeCuda(0, 0, available=False), [], virtual_mac), None) == CPU
+    with pytest.warns(UserWarning, match="MPS is deprecated"):
+        placed(machine(FakeCuda(0, 0, available=False), [], warning_mac), None)
+
+
+def test_an_nvidia_gpu_is_known_by_the_nvidia_smi_its_driver_brings(tmp_path: Path) -> None:
+    assert not nvidia(str(tmp_path))
+    for name in ("nvidia-smi", "nvidia-smi.exe"):
+        (tmp_path / name).write_bytes(b"")
+        (tmp_path / name).chmod(0o755)
+    assert nvidia(str(tmp_path))
 
 
 class LocalizedError(OSError):
