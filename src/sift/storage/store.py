@@ -205,8 +205,10 @@ LAYOUT: tuple[Migration, ...] = (
         """CREATE TRIGGER chunks_placed AFTER INSERT ON chunks WHEN NEW.place IS NULL
            BEGIN UPDATE counts SET places = max(places + 1, NEW.id);
                  UPDATE chunks SET place = (SELECT places FROM counts) WHERE id = NEW.id; END""",
+        """CREATE TRIGGER chunks_given_places AFTER INSERT ON chunks WHEN NEW.place IS NOT NULL
+           BEGIN UPDATE counts SET places = max(places, NEW.place); END""",
         "ALTER TABLE keyword_dead RENAME COLUMN chunk TO place",
-        "ALTER TABLE counts ADD COLUMN ordered INTEGER NOT NULL DEFAULT 0 CHECK (ordered >= 0)",
+        "ALTER TABLE counts ADD COLUMN ordered_at INTEGER NOT NULL DEFAULT 0",
     ),
 )
 NUMBERED_TABLES = ("documents", "chunks")

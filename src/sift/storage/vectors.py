@@ -160,7 +160,6 @@ def _rows(matrix: NDArray[np.generic]) -> list[bytes]:
 def forget_vectors(transaction: Writing) -> None:
     run(transaction, "DELETE FROM vectors")
     run(transaction, "DELETE FROM meta WHERE key IN (?, ?)", (MODEL_KEY, WIDTH_KEY))
-    run(transaction, "UPDATE counts SET ordered = 0")
 
 
 def codes_of(transaction: Reading, read: int = READ) -> tuple[Ids, Bits]:

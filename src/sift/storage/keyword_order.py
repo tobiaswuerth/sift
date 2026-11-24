@@ -18,16 +18,26 @@ type Order = Callable[[Ids, Bits], Ids]
 class _Held(NamedTuple):
     chunks: int
     vectors: int
-    ordered: int
+    changes: int
+    ordered_at: int
+
+
+def _held(transaction: Reading) -> _Held:
+    sql = "SELECT chunks, vectors, vector_changes AS changes, ordered_at FROM counts"
+    (found,) = rows(transaction, _Held, sql)
+    return found
 
 
 def order_due(transaction: Reading) -> bool:
-    (held,) = rows(transaction, _Held, "SELECT chunks, vectors, ordered FROM counts")
-    return held.vectors - held.ordered > ORDER_SHARE * held.chunks
+    held = _held(transaction)
+    return held.vectors > 0 and held.changes - held.ordered_at > ORDER_SHARE * held.chunks
 
 
-def placed_anew(connection: Connection, order: Ids) -> int:
+def placed_anew(connection: Connection, order: Ids, made_at: int) -> int:
     with writing(connection) as transaction:
+        held = _held(transaction)
+        if held.changes != made_at or held.ordered_at >= made_at:
+            return 0
         ids = np.fromiter((row.id for row in rows(transaction, IdRow, "SELECT id FROM chunks ORDER BY id")), np.int64)
         coded = order[among(order, ascending(ids))]
         sequence = np.concatenate([coded, ids[~among(ids, ascending(coded))]])
@@ -35,11 +45,12 @@ def placed_anew(connection: Connection, order: Ids) -> int:
         places = range(top.n + 1, top.n + 1 + len(sequence))
         run_each(transaction, "UPDATE chunks SET place = ? WHERE id = ?", zip(places, ints(sequence), strict=True))
         remake_above(transaction, top.n)
-        run(transaction, "UPDATE counts SET places = ?, ordered = ?", (top.n + len(sequence), len(coded)))
+        run(transaction, "UPDATE counts SET places = ?, ordered_at = ?", (top.n + len(sequence), made_at))
         return len(sequence)
 
 
 def ordered(connection: Connection, order: Order = topical) -> int:
     with reading(connection) as transaction:
+        made_at = _held(transaction).changes
         ids, bits = codes_of(transaction)
-    return placed_anew(connection, order(ids, bits))
+    return placed_anew(connection, order(ids, bits), made_at)
