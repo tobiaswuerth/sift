@@ -111,12 +111,10 @@ def _unreached(seen: _Seen, relative: str, error: OSError) -> None:
     seen.refusals[relative] = _reason(error)
 
 
-def _guarded(entry: DirEntry, relative: str, guard: _Guard) -> Identity | None:
+def _guarded(entry: DirEntry, relative: str, guard: _Guard) -> Identity:
     path = Path(entry.path)
     if not entry.is_symlink():
         return guard.checks.own_identity(path)
-    if not lands_within(relative, guard.root, guard.checks.target):
-        return None
     identity = guard.checks.identity(path)
     if not lands_within(relative, guard.root, guard.checks.target):
         raise ChangedError(CHANGED)
@@ -126,9 +124,6 @@ def _guarded(entry: DirEntry, relative: str, guard: _Guard) -> Identity | None:
 def _file(entry: DirEntry, relative: str, seen: _Seen, guard: _Guard | None) -> None:
     try:
         identity = None if guard is None else _guarded(entry, relative, guard)
-        if guard is not None and identity is None:
-            seen.outside.append(relative)
-            return
         found = entry.stat()
     except GONE as error:
         if entry.is_symlink():
@@ -204,13 +199,24 @@ def _untyped(path: str, walk: _Walk, error: OSError) -> None:
         walk.seen.refusals[f"{path}/"] = _reason(error)
 
 
+def _link(entry: DirEntry, path: str, walk: _Walk) -> None:
+    guard, readable = walk.guard, kind_of(entry.name) is not None
+    if guard is not None and not lands_within(path, guard.root, guard.checks.target):
+        if readable and not _left_out(walk, path):
+            walk.seen.outside.append(path)
+    elif _links_to_a_folder(entry):
+        _linked_folder(path, walk)
+    elif readable and not _left_out(walk, path):
+        _file(entry, path, walk.seen, guard)
+
+
 def _taken(entry: DirEntry, relative: str, walk: _Walk) -> None:
     path = relative + entry.name
     try:
         if entry.is_dir(follow_symlinks=False):
             _folder(entry, path, walk)
-        elif _links_to_a_folder(entry):
-            _linked_folder(path, walk)
+        elif entry.is_symlink():
+            _link(entry, path, walk)
         elif kind_of(entry.name) is not None and not _left_out(walk, path):
             _file(entry, path, walk.seen, walk.guard)
     except OSError as error:

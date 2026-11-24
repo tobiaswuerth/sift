@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from sift.domain.plan.ignore import NOTHING_LEFT_OUT, Ignore, left_out
-from sift.ingest.ignore import IGNORE_FILE, NOT_A_FILE, IgnoreUnreadableError, ignore_at
+from sift.ingest.ignore import IGNORE_FILE, LEADS_OUTSIDE, NOT_A_FILE, IgnoreUnreadableError, ignore_at
 from tests.files import linked
 
 
@@ -68,3 +68,18 @@ def test_a_siftignore_that_is_a_junction_to_nothing_cannot_be_read(tmp_path: Pat
     target.rmdir()
     with pytest.raises(FileNotFoundError):
         ignore_at(tmp_path)
+
+
+def test_a_siftignore_linked_to_a_file_outside_its_folder_is_not_read(tmp_path: Path) -> None:
+    folder, outside = tmp_path / "notes", tmp_path / "elsewhere.txt"
+    folder.mkdir()
+    outside.write_bytes(b"*.md\n")
+    linked(folder / IGNORE_FILE, str(outside))
+    with pytest.raises(IgnoreUnreadableError, match=LEADS_OUTSIDE):
+        ignore_at(folder)
+
+
+def test_a_siftignore_linked_to_a_file_inside_its_folder_is_read(tmp_path: Path) -> None:
+    (tmp_path / "rules.txt").write_bytes(b"*.md\n")
+    linked(tmp_path / IGNORE_FILE, "rules.txt")
+    assert left_out(ignore_at(tmp_path), "a.md")
