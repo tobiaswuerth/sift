@@ -25,6 +25,7 @@ class Problem(StrEnum):
     MODEL_UNAVAILABLE = "model_unavailable"
     UNAUTHORIZED = "unauthorized"
     OS = "os"
+    STOPPED = "stopped"
     INTERNAL = "internal"
 
 
@@ -75,6 +76,10 @@ class InternalError(SiftError):
 
 class SystemFailureError(SiftError):
     usual: ClassVar[Problem] = Problem.OS
+
+
+class JobStoppedError(SiftError):
+    usual: ClassVar[Problem] = Problem.STOPPED
 
 
 OS_REMEDIES: Mapping[int, str] = MappingProxyType(

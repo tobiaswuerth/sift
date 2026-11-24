@@ -3,8 +3,6 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Generator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
@@ -30,14 +28,14 @@ from sift.interfaces.server.endpoint import (
 )
 from sift.interfaces.server.gate import WAITING_FOR_ALONE, WAITING_FOR_READS
 from sift.interfaces.server.handled import HANDLED, Handled
-from sift.interfaces.server.serving import RESTED, HomeServer, held, serve, watched_idle
+from sift.interfaces.server.serving import RESTED, HomeServer, Serve, held, serve, watched_idle
 from sift.settings import Settings
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
 from sift.storage.writer import held_by, sole_writer
 from tests.files import write
 from tests.models import Hashed
-from tests.serving import Line, asked, last, running
+from tests.serving import Line, asked, last, running, streaming
 
 
 def test_the_home_process_answers_every_command_the_command_line_has_but_serve() -> None:
@@ -177,18 +175,6 @@ def test_a_command_that_recurses_too_deep_ends_its_answer_unfinished(settings: S
         assert last(asked(server, "unresolved", {})[1], "answer") == {"targets": [], "unsearched": []}
 
 
-@contextmanager
-def streaming(server: HomeServer, name: str, body: object = None) -> Generator[http.client.HTTPResponse]:
-    connection = http.client.HTTPConnection("127.0.0.1", server.endpoint.port, timeout=60)
-    sent = json.dumps({} if body is None else body).encode()
-    try:
-        connection.request("POST", f"/api/{name}", sent, {"Authorization": f"Bearer {server.endpoint.token}"})
-        with connection.getresponse() as response:
-            yield response
-    finally:
-        connection.close()
-
-
 def test_a_quiet_command_s_answer_is_kept_alive_by_a_line_while_nothing_else_is_said(settings: Settings) -> None:
     release = threading.Event()
 
@@ -225,7 +211,8 @@ def test_a_write_sent_while_another_writes_is_told_it_waits_then_runs(settings: 
             release.set()
             rest = response.read()
         first.join(30)
-    assert told == {"event": "Noted", "data": {"text": WAITING, "remedy": None}}
+    waiting = WAITING.format(count="1 job", command="add", number=1)
+    assert told == {"event": "Noted", "data": {"text": waiting, "remedy": None}}
     assert rest.endswith(b'{"answer": {"url": "written"}}\n')
 
 
@@ -290,13 +277,14 @@ def interrupted(_event: Event) -> None:
 
 def test_ctrl_c_as_the_home_process_says_where_it_listens_stops_it_as_at_any_other_time(settings: Settings) -> None:
     ran = list[HomeServer]()
-    served = serve(settings, ServeHome(port=0), "2.0.0", interrupted, ran.append)
+    served = serve(settings, ServeHome(port=0), "2.0.0", interrupted, Serve(ran.append))
     assert (ran, served.url.startswith("http://127.0.0.1:"), found(settings.home)) == ([], True, None)
 
 
 def test_serve_says_where_it_listens_serves_and_leaves_nothing_behind(settings: Settings) -> None:
     said, seen = list[Event](), list[Endpoint | None]()
-    served = serve(settings, ServeHome(port=0), "2.0.0", said.append, lambda _: seen.append(found(settings.home)))
+    looked = Serve(lambda _: seen.append(found(settings.home)))
+    served = serve(settings, ServeHome(port=0), "2.0.0", said.append, looked)
     (endpoint,) = seen
     assert endpoint is not None
     url = f"http://127.0.0.1:{endpoint.port}"
@@ -331,7 +319,7 @@ def test_a_second_home_process_is_refused_naming_the_first(settings: Settings) -
     with running(settings) as server:
         with (
             pytest.raises(StoreUnavailableError, match=f"on port {server.endpoint.port}") as refused,
-            held(settings, ServeHome(port=0), "2.0.0"),
+            held(settings, ServeHome(port=0), "2.0.0", list[Event]().append),
         ):
             pass
         assert refused.value.code == Problem.BUSY
@@ -343,7 +331,7 @@ def test_a_port_that_is_taken_is_said_to_be(settings: Settings) -> None:
         taken = ServeHome(server.endpoint.port)
         with (
             pytest.raises(InvalidRequestError, match=f"port {taken.port} cannot be had") as refused,
-            held(other, taken, "2.0.0"),
+            held(other, taken, "2.0.0", list[Event]().append),
         ):
             pass
         assert refused.value.field == "port"

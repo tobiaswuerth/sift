@@ -1,4 +1,3 @@
-import contextlib
 import logging
 import os
 import secrets
@@ -8,12 +7,14 @@ from collections.abc import Callable, Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import cast
+from functools import partial
+from types import FrameType
+from typing import cast, override
 
 import uvicorn
 
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
-from sift.api.events import Listening, Reporter
+from sift.api.events import Listening, Noted, Reporter
 from sift.api.serving import Served, ServeHome
 from sift.app.kept_decoded import KeptDecoded
 from sift.app.questions import RememberedQuestions
@@ -34,14 +35,35 @@ ANOTHER_REMEDY = "commands are sent to it as they are; stop it to start another"
 PORT_REMEDY = "give another port, or 0 for any free one"
 IDLE_CHECK_SECONDS = 30.0
 STOP_SECONDS = 5.0
+GRACE_SECONDS = 10
+STOPPING = "stopping: {jobs} stops at its next step; what it wrote so far is kept"
 RESTED = "the models were idle: they wait in RAM, off the GPU, until used again"
+
+
+def _stopping(serving: Serving, report: Reporter) -> None:
+    (serving.settings.home / ENDPOINT).unlink(missing_ok=True)
+    if stopped := serving.jobs.stop_all():
+        jobs = ", ".join(f"sift {job.command} (job {job.number})" for job in stopped)
+        report(Noted(STOPPING.format(jobs=jobs)))
+
+
+class StoppingServer(uvicorn.Server):
+    def __init__(self, config: uvicorn.Config, on_first_exit: Callable[[], None]) -> None:
+        super().__init__(config)
+        self.on_first_exit: Callable[[], None] = on_first_exit
+
+    @override
+    def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+        if not self.should_exit:
+            self.on_first_exit()
+        super().handle_exit(sig, frame)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
 class HomeServer:
     endpoint: Endpoint
     serving: Serving
-    server: uvicorn.Server
+    server: StoppingServer
     socket: socket.socket
 
     @property
@@ -83,13 +105,24 @@ def _resting(release: Callable[[], bool]) -> Generator[None]:
         watch.join(STOP_SECONDS)
 
 
+def _served(running: HomeServer) -> None:
+    running.server.run(sockets=[running.socket])
+
+
+@dataclass(frozen=True, slots=True)
+class Serve:
+    run: Callable[[HomeServer], None] = _served
+    handled: Mapping[str, Handled] = HANDLED
+    alive_every: float = ALIVE_SECONDS
+    grace_seconds: int = GRACE_SECONDS
+
+
+SERVE = Serve()
+
+
 @contextmanager
 def held(
-    settings: Settings,
-    request: ServeHome,
-    version: str,
-    handled: Mapping[str, Handled] = HANDLED,
-    alive_every: float = ALIVE_SECONDS,
+    settings: Settings, request: ServeHome, version: str, report: Reporter, how: Serve = SERVE
 ) -> Generator[HomeServer]:
     private_folder(settings.home)
     _refuse_another(settings)
@@ -98,34 +131,32 @@ def held(
         sole_writer(settings.home / SERVER, SERVING),
         _bound(request.port) as bound,
         ThreadPoolExecutor(WORKERS, thread_name_prefix="sift-serve") as pool,
+        ThreadPoolExecutor(1, thread_name_prefix="sift-write") as writer,
         _resting(models.release_idle),
     ):
         (settings.home / ENDPOINT).unlink(missing_ok=True)
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version)
         kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
-        serving = Serving(settings, endpoint.token, *kept, threading.Lock(), pool, alive_every)
-        config = uvicorn.Config(served_app(serving, handled), log_config=None, access_log=False, lifespan="off")
+        serving = Serving(settings, endpoint.token, *kept, writer, pool, how.alive_every)
+        app = served_app(serving, how.handled)
+        config = uvicorn.Config(
+            app, log_config=None, access_log=False, lifespan="off", timeout_graceful_shutdown=how.grace_seconds
+        )
         written(settings.home, endpoint)
         try:
-            yield HomeServer(endpoint, serving, uvicorn.Server(config), bound)
+            yield HomeServer(endpoint, serving, StoppingServer(config, partial(_stopping, serving, report)), bound)
         finally:
             (settings.home / ENDPOINT).unlink(missing_ok=True)
             serving.watch.let_go()
 
 
-def _served(running: HomeServer) -> None:
-    running.server.run(sockets=[running.socket])
-
-
-def serve(
-    settings: Settings,
-    request: ServeHome,
-    version: str,
-    report: Reporter,
-    run: Callable[[HomeServer], None] = _served,
-) -> Served:
-    with held(settings, request, version) as running, contextlib.suppress(KeyboardInterrupt):
-        report(Listening(running.url, str(settings.home)))
-        run(running)
+def serve(settings: Settings, request: ServeHome, version: str, report: Reporter, how: Serve = SERVE) -> Served:
+    with held(settings, request, version, report, how) as running:
+        try:
+            report(Listening(running.url, str(settings.home)))
+            how.run(running)
+        except KeyboardInterrupt:
+            running.server.should_exit = True
+            _stopping(running.serving, report)
     return Served(running.url)

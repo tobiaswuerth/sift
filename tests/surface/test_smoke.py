@@ -298,6 +298,10 @@ def served_run(home: Path, notes: Path) -> None:
         assert [said(process.sift(home, *argv)) for argv in asked] == alone
         again = process.sift(home, "index")
         assert (again.returncode, "  done  +0  ~0  -0  " in again.stderr) == (0, True)
+        jobs = sift(home, "jobs", "--json")
+        assert (jobs.returncode, json.loads(jobs.stdout)) == (0, {"jobs": [], "stopped": None})
+        unknown = sift(home, "jobs", "--stop", "99")
+        assert (unknown.returncode, "there is no job 99" in unknown.stderr) == (1, True)
     assert (running.poll() is not None, found(home)) == (True, None)
     (log,) = (home / "logs").glob("serve-*.log")
     logged = log.read_text(encoding="utf-8")

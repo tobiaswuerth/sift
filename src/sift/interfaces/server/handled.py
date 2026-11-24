@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from sift.api.wire import decoded, encoded
-from sift.interfaces.acts import collections, indexing, links, searching
+from sift.interfaces.acts import collections, indexing, jobs, links, searching
 from sift.interfaces.acts.acting import Act, Acting
 
 
@@ -45,6 +45,7 @@ HANDLED: Mapping[str, Handled] = MappingProxyType(
             handled(searching.SIMILAR, kept=True),
             handled(links.LINKS),
             handled(links.UNRESOLVED),
+            handled(jobs.JOBS),
         )
     )
 )

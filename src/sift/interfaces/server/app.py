@@ -1,12 +1,11 @@
+import asyncio
 import hmac
 import json
 import logging
-import queue
-import threading
 import time
-from collections.abc import Awaitable, Callable, Generator, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -26,9 +25,11 @@ from sift.api.wire import Json, encoded, encoded_error
 from sift.app.kept_decoded import KeptDecoded
 from sift.app.resident import ResidentCodes
 from sift.domain.text.json_values import deeper_than
+from sift.domain.text.wording import counted
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.gate import Gate
 from sift.interfaces.server.handled import HANDLED, Handled
+from sift.interfaces.server.jobs import HeldJob, Jobs
 from sift.interfaces.server.results import KeptResults, Moment
 from sift.settings import Settings
 from sift.storage.catalog import known_collections
@@ -41,7 +42,8 @@ HOSTS = ("127.0.0.1", "localhost")
 LINES = "application/x-ndjson; charset=utf-8"
 ALIVE_SECONDS = 30.0
 ALIVE = b'{"alive": true}\n'
-WAITING = "another command writes to this home; this one waits for it to finish"
+END = b""
+WAITING = "this command waits for {count} ahead of it: sift {command} (job {number}) runs now; see them with sift jobs"
 MOST_BODY = 1 << 20
 MOST_DEPTH = 64
 NO_JSON_REMEDY = "send the request as a JSON object"
@@ -64,10 +66,11 @@ class Serving:
     decoded: KeptDecoded
     results: KeptResults
     watch: HomeWatch
-    writing: threading.Lock
+    writer: ThreadPoolExecutor
     pool: ThreadPoolExecutor
     alive_every: float = ALIVE_SECONDS
     gate: Gate = field(default_factory=Gate)
+    jobs: Jobs = field(default_factory=Jobs)
 
 
 def _line(value: Json) -> bytes:
@@ -99,26 +102,23 @@ def _refused(error: SiftError, status: int) -> JSONResponse:
 
 
 def _acting(serving: Serving, report: Reporter) -> Acting:
-    return Acting(serving.settings, report, time.perf_counter, lambda: serving.models, serving.codes, serving.decoded)
+    return Acting(
+        serving.settings,
+        report,
+        time.perf_counter,
+        lambda: serving.models,
+        serving.codes,
+        serving.decoded,
+        serving.jobs,
+    )
 
 
 def _searched(home: Path) -> set[tuple[Path, CollectionId]]:
     return {(one.store, one.id) for one in known_collections(home) if one.active}
 
 
-@contextmanager
-def _turn(writing: threading.Lock, report: Reporter) -> Generator[None]:
-    if not writing.acquire(blocking=False):
-        report(Noted(WAITING))
-        writing.acquire()
-    try:
-        yield
-    finally:
-        writing.release()
-
-
 def _written(serving: Serving, handled: Handled, data: object, report: Reporter) -> object:
-    with _turn(serving.writing, report), serving.gate.alone(report) if handled.alone else nullcontext():
+    with serving.gate.alone(report) if handled.alone else nullcontext():
         serving.results.written()
         serving.watch.let_go()
         try:
@@ -153,7 +153,49 @@ def _answered(serving: Serving, handled: Handled, data: object, report: Reporter
     return answer
 
 
-def _ran(serving: Serving, name: str, handled: Handled, data: object, lines: "queue.Queue[bytes | None]") -> None:
+@dataclass(frozen=True, slots=True)
+class _Sent:
+    name: str
+    handled: Handled
+    data: object
+
+
+def _answer(serving: Serving, asked: _Sent, report: Reporter, noted: list[Noted], job: HeldJob | None) -> object:
+    if job is None:
+        return _read(serving, asked.handled, asked.data, report, noted)
+    serving.jobs.began(job)
+    return _written(serving, asked.handled, asked.data, serving.jobs.reporting(job, report))
+
+
+@dataclass(frozen=True, slots=True)
+class _Lines:
+    loop: asyncio.AbstractEventLoop
+    queue: "asyncio.Queue[tuple[bytes, ...]]"
+
+    def put(self, *lines: bytes) -> None:
+        if not self.loop.is_closed():
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, lines)
+
+
+def _final(serving: Serving, sent: _Sent, report: Reporter, noted: list[Noted], job: HeldJob | None) -> bytes:
+    started = time.perf_counter()
+    try:
+        answer = _answer(serving, sent, report, noted, job)
+    except (SiftError, OSError) as error:
+        refused = system_failure(error) if isinstance(error, OSError) else error
+        logging.getLogger(LOGGER).info("%s refused: %s", sent.name, refused.code.value)
+        return _line({"error": encoded_error(refused)})
+    except RecursionError:
+        raise
+    except Exception as error:
+        logging.getLogger(LOGGER).exception("%s failed", sent.name)
+        failed = InternalError(f"the home process failed: {type(error).__name__}: {error}", FAILED_REMEDY)
+        return _line({"error": encoded_error(failed)})
+    logging.getLogger(LOGGER).info("%s answered in %.2f s", sent.name, time.perf_counter() - started)
+    return _line({"answer": encoded(answer)})
+
+
+def _ran(serving: Serving, sent: _Sent, lines: _Lines, job: HeldJob | None) -> None:
     noted: list[Noted] = []
 
     def report(event: Event) -> None:
@@ -161,40 +203,48 @@ def _ran(serving: Serving, name: str, handled: Handled, data: object, lines: "qu
             noted.append(event)
         lines.put(_line({"event": type(event).__name__, "data": encoded(event)}))
 
-    started = time.perf_counter()
+    final: tuple[bytes, ...] = ()
     try:
-        answer = (
-            _written(serving, handled, data, report) if handled.writes else _read(serving, handled, data, report, noted)
-        )
-        lines.put(_line({"answer": encoded(answer)}))
-        logging.getLogger(LOGGER).info("%s answered in %.2f s", name, time.perf_counter() - started)
-    except (SiftError, OSError) as error:
-        refused = system_failure(error) if isinstance(error, OSError) else error
-        lines.put(_line({"error": encoded_error(refused)}))
-        logging.getLogger(LOGGER).info("%s refused: %s", name, refused.code.value)
-    except RecursionError:
-        raise
-    except Exception as error:
-        logging.getLogger(LOGGER).exception("%s failed", name)
-        failed = InternalError(f"the home process failed: {type(error).__name__}: {error}", FAILED_REMEDY)
-        lines.put(_line({"error": encoded_error(failed)}))
+        final = (_final(serving, sent, report, noted, job),)
     finally:
-        lines.put(None)
+        if job is not None:
+            serving.jobs.ended(job)
+        lines.put(*final, END)
 
 
-def _streamed(serving: Serving, name: str, handled: Handled, data: object) -> Iterator[bytes]:
-    lines: queue.Queue[bytes | None] = queue.Queue()
-    ran = serving.pool.submit(_ran, serving, name, handled, data, lines)
-    while True:
-        try:
-            line = lines.get(timeout=serving.alive_every)
-        except queue.Empty:
-            yield ALIVE
-            continue
-        if line is None:
-            break
-        yield line
-    ran.result()
+def _waiting(serving: Serving, job: HeldJob) -> Iterator[bytes]:
+    if ahead := serving.jobs.ahead(job):
+        said = WAITING.format(count=counted(len(ahead), "job"), command=ahead[0].command, number=ahead[0].number)
+        yield _line({"event": Noted.__name__, "data": encoded(Noted(said))})
+
+
+async def _streamed(serving: Serving, name: str, handled: Handled, data: object) -> AsyncIterator[bytes]:
+    lines = _Lines(asyncio.get_running_loop(), asyncio.Queue())
+    job = serving.jobs.queued(name) if handled.writes else None
+    if job is not None:
+        for line in _waiting(serving, job):
+            yield line
+    ran = (serving.pool if job is None else serving.writer).submit(
+        _ran, serving, _Sent(name, handled, data), lines, job
+    )
+    getting = asyncio.ensure_future(lines.queue.get())
+    try:
+        while True:
+            if not (await asyncio.wait({getting}, timeout=serving.alive_every))[0]:
+                yield ALIVE
+                continue
+            batch = getting.result()
+            for line in batch:
+                if line != END:
+                    yield line
+            if END in batch:
+                break
+            getting = asyncio.ensure_future(lines.queue.get())
+    finally:
+        getting.cancel()
+        if job is not None and not ran.done():
+            job.watched = False
+    await asyncio.wrap_future(ran)
 
 
 async def _body(request: Request) -> bytes | None:

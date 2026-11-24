@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import NamedTuple
 
-from sift.api.errors import InvalidRequestError, SiftError, system_failure
+from sift.api.errors import InvalidRequestError, JobStoppedError, SiftError, system_failure
 from sift.api.fields import FieldValue
 from sift.api.search import Left, Unsearched
 from sift.api.wire import Json, encoded_error
@@ -11,8 +11,10 @@ from sift.interfaces.console.shell import command
 from sift.interfaces.console.style import Style, Tone
 from sift.interfaces.console.text import labelled, printable_json
 
-DONE, FAILED, USAGE = 0, 1, 2
-EXIT_CODES: MappingProxyType[type[SiftError], int] = MappingProxyType({InvalidRequestError: USAGE})
+DONE, FAILED, USAGE, INTERRUPTED = 0, 1, 2, 130
+EXIT_CODES: MappingProxyType[type[SiftError], int] = MappingProxyType(
+    {InvalidRequestError: USAGE, JobStoppedError: INTERRUPTED}
+)
 NO_FLAGS: Mapping[str, str] = MappingProxyType({})
 
 

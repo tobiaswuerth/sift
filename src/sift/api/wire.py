@@ -9,6 +9,7 @@ from typing import Annotated, Literal, TypeAliasType, cast, get_args, get_origin
 from sift.api.errors import (
     InternalError,
     InvalidRequestError,
+    JobStoppedError,
     ModelUnavailableError,
     NotFoundError,
     Problem,
@@ -29,6 +30,7 @@ ERROR_KINDS: Mapping[str, type[SiftError]] = MappingProxyType(
         "store_unavailable": StoreUnavailableError,
         "model_unavailable": ModelUnavailableError,
         "os": SystemFailureError,
+        "stopped": JobStoppedError,
         "internal": InternalError,
     }
 )

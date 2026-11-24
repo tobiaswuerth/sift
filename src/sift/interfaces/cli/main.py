@@ -23,6 +23,7 @@ from sift.api.documents import GetDocuments
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, SiftError, StoreUnavailableError
 from sift.api.indexing import IndexCollections
+from sift.api.jobs import ListJobs
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
 from sift.api.serving import ServeHome
@@ -31,7 +32,7 @@ from sift.interfaces.cli.arguments import arguments, flags, options
 from sift.interfaces.cli.context import Command, Commands, Context
 from sift.interfaces.cli.logs import FOLDER, LOGGED, Log, heard_too, kept
 from sift.interfaces.cli.notice import noticed
-from sift.interfaces.cli.shown.outcome import FAILED, Shown, failure
+from sift.interfaces.cli.shown.outcome import FAILED, INTERRUPTED, Shown, failure
 from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
 from sift.interfaces.console.streams import ReaderLeftError, columns, is_terminal, let_go, say, utf8, write_results
@@ -44,14 +45,13 @@ from sift.settings import Settings, from_environment, whole_path
 if TYPE_CHECKING:
     from sift.interfaces.cli.updates import Checking
 
-INTERRUPTED = 130
 DESCRIPTION = "Fast local search over your documents and notes."
 NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
 ONE_VALUE = re.compile(r"argument (\S+?)(?:/\S+)?: expected one argument")
 REQUIRED = "the following arguments are required: "
 OWN_FLAGS = frozenset({"--json", "--color", "-h", "--help"})
 STOPPED_WRITING = "stopped: what was written so far is kept"
-STOPPED_WATCHING = "stopped watching: the home process goes on with it"
+STOPPED_WATCHING = "stopped watching: the home process goes on with it; sift jobs lists it and stops it"
 OTHER_SIFT_REMEDY = "stop sift serve where it runs, and start it again with this sift"
 SERVE = "serve"
 JSON_HELP = "answer in JSON"
@@ -96,6 +96,7 @@ ENTRIES = MappingProxyType(
         "mentions": CommandEntry("find documents naming a note without linking to it", FindMentions, "searching"),
         "links": CommandEntry("the links of a note: those it holds, and those into it", ShowLinks, "links"),
         "unresolved": CommandEntry("link targets no note answers to yet, most linked first", ListUnresolved, "links"),
+        "jobs": CommandEntry("what sift serve does in the background, or stop one of its jobs", ListJobs, "jobs"),
         "status": CommandEntry("show each collection: its folder and what its store holds", ShowStatus, "collections"),
         "serve": CommandEntry(
             "serve this home: its models and codes held, commands answered at once", ServeHome, "serving"

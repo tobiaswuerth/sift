@@ -8,11 +8,12 @@ from importlib.metadata import version
 from types import MappingProxyType
 from typing import cast
 
+from sift.api.events import Event
 from sift.api.serving import ServeHome
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.app import ALIVE_SECONDS
 from sift.interfaces.server.handled import HANDLED, Handled
-from sift.interfaces.server.serving import HomeServer, held
+from sift.interfaces.server.serving import HomeServer, Serve, held
 from sift.settings import Settings
 
 VERSION = version("sift-rag")
@@ -25,7 +26,8 @@ def running(
     of: str = VERSION,
     alive_every: float = ALIVE_SECONDS,
 ) -> Generator[HomeServer]:
-    with held(settings, ServeHome(port=0), of, handled, alive_every) as server:
+    heard = list[Event]()
+    with held(settings, ServeHome(port=0), of, heard.append, Serve(handled=handled, alive_every=alive_every)) as server:
         thread = threading.Thread(target=server.server.run, kwargs={"sockets": [server.socket]}, daemon=True)
         thread.start()
         waited = threading.Event()
@@ -76,3 +78,15 @@ def counted(asked: list[str]) -> Mapping[str, Handled]:
         return dataclasses.replace(handled, run=run)
 
     return MappingProxyType({name: each(name, handled) for name, handled in HANDLED.items()})
+
+
+@contextmanager
+def streaming(server: HomeServer, name: str, body: object = None) -> Generator[http.client.HTTPResponse]:
+    connection = http.client.HTTPConnection("127.0.0.1", server.endpoint.port, timeout=60)
+    sent = json.dumps({} if body is None else body).encode()
+    try:
+        connection.request("POST", f"/api/{name}", sent, {"Authorization": f"Bearer {server.endpoint.token}"})
+        with connection.getresponse() as response:
+            yield response
+    finally:
+        connection.close()

@@ -100,6 +100,6 @@ def test_an_interrupt_while_watching_the_home_process_leaves_the_command_to_it(s
     with running(settings):
         out, err = io.StringIO(), io.StringIO()
         assert run(("index",), settings, out, err, Host(clock=_stopped)) == 130
-        assert (out.getvalue(), err.getvalue()) == ("", "stopped watching: the home process goes on with it\n")
+        assert (out.getvalue(), err.getvalue()) == ("", STOPPED_WATCHING + NEWLINE)
         again = ran(settings, "index")
     assert (again[0], "done  +0  ~0  -0" in again[2]) == (0, True)
