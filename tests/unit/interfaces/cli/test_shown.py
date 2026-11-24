@@ -9,6 +9,8 @@ from sift.api.collections import (
     CollectionStatus,
     Counted,
     Status,
+    StoreMoved,
+    StoresMoved,
     TitleFrom,
     Unavailable,
     UnreadableFile,
@@ -18,7 +20,7 @@ from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUn
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
 from sift.api.search import Hit, Left, SearchResult, Unsearched
-from sift.interfaces.cli.shown.collections import added, removed, status, switched
+from sift.interfaces.cli.shown.collections import added, moved, removed, status, switched
 from sift.interfaces.cli.shown.documents import documents
 from sift.interfaces.cli.shown.indexing import said_as_it_went
 from sift.interfaces.cli.shown.links import links as shown_links
@@ -227,6 +229,18 @@ def test_a_removal_says_what_its_store_held_and_names_the_files_left_in_use() ->
         "store  could not be read: it is missing",
         " left  /s/diary.sqlite-wal: in use, not deleted",
         "  fix  delete it once the program using it has stopped",
+    )
+
+
+def test_a_move_says_where_each_store_went_how_and_what_it_left() -> None:
+    copied = StoreMoved("diary", "/s/diary.sqlite", "/t/diary.sqlite", copied=True, left=("/s/diary.sqlite",))
+    linked = StoreMoved("notes", "/s/notes.sqlite", "/t/notes.sqlite", copied=False)
+    assert moved(StoresMoved((copied, linked), ("papers",)), "linux", PLAIN).messages == (
+        "moved  diary  /t/diary.sqlite, copied: it lay on another drive",
+        " left  /s/diary.sqlite: in use, not deleted",
+        "  fix  delete it once the program using it has stopped",
+        "moved  notes  /t/notes.sqlite",
+        " kept  papers: there already",
     )
 
 

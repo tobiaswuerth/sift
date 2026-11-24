@@ -8,6 +8,7 @@ from sift.api.collections import (
     CollectionStatus,
     Counted,
     Status,
+    StoresMoved,
     TitleFrom,
     Unavailable,
 )
@@ -20,6 +21,7 @@ from sift.interfaces.console.units import size
 UNREADABLE_HEADER = ("collection", "file", "problem")
 NONE = "-"
 LEFT_REMEDY = "delete it once the program using it has stopped"
+COPIED = ", copied: it lay on another drive"
 SWITCHED = MappingProxyType(
     {True: "searched again", False: "left out of searches, and of index and embed unless named"}
 )
@@ -41,16 +43,30 @@ def added(result: CollectionAdded, platform: str, style: Style) -> Shown:
     )
 
 
+def _left(files: tuple[str, ...], style: Style) -> tuple[str, ...]:
+    return tuple(
+        line for file in files for line in (labelled("left", f"{file}: in use, not deleted"), *fix(LEFT_REMEDY, style))
+    )
+
+
 def removed(result: CollectionRemoved, _platform: str, style: Style) -> Shown:
     held = f" of {counted(result.documents, 'document')}" if result.documents is not None else ""
     unread = (labelled("store", f"could not be read: {result.problem}"),) if result.problem is not None else ()
-    left = tuple(
-        line
-        for file in result.left
-        for line in (labelled("left", f"{file}: in use, not deleted"), *fix(LEFT_REMEDY, style))
-    )
     said = f"{result.name}: its store{held} deleted; its files stay where they are"
-    return Shown((), (labelled("gone", said, Tone.DONE, style), *unread, *left))
+    return Shown((), (labelled("gone", said, Tone.DONE, style), *unread, *_left(result.left, style)))
+
+
+def moved(result: StoresMoved, _platform: str, style: Style) -> Shown:
+    lines = [
+        line
+        for each in result.moved
+        for line in (
+            labelled("moved", f"{each.name}  {each.new}{COPIED if each.copied else ''}", Tone.DONE, style),
+            *_left(each.left, style),
+        )
+    ]
+    already = (labelled("kept", f"{', '.join(result.already)}: there already"),) if result.already else ()
+    return Shown((), (*lines, *already))
 
 
 def switched(result: CollectionsSwitched, _platform: str, style: Style) -> Shown:

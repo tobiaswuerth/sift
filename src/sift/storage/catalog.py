@@ -180,6 +180,15 @@ def forget_collection(home: Path, identity: CollectionId) -> None:
         run(transaction, "DELETE FROM collections WHERE id = ?", (identity,))
 
 
+def set_store(home: Path, identity: CollectionId, store: Path) -> None:
+    with closing(open_catalog(home)) as connection, writing(connection) as transaction:
+        run(transaction, "UPDATE collections SET store = ? WHERE id = ?", (str(store), identity))
+
+
+def same_place(one: Path, other: Path) -> bool:
+    return _same(one.resolve()) == _same(other.resolve())
+
+
 def set_active(home: Path, names: Sequence[str], *, active: bool) -> tuple[Collection, ...]:
     for name in names:
         named(known_collections(home), name)

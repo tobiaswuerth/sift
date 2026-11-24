@@ -7,13 +7,15 @@ from sift.api.collections import (
     CollectionRemoved,
     CollectionsSwitched,
     DeactivateCollections,
+    MoveCollections,
     RemoveCollection,
     ShowStatus,
     Status,
+    StoresMoved,
     Unavailable,
 )
 from sift.api.documents import Documents, GetDocuments
-from sift.app import collections, documents
+from sift.app import collections, documents, moving
 from sift.interfaces.cli.commands.making import command, needing_collections
 from sift.interfaces.cli.context import Context
 from sift.interfaces.cli.shown import collections as shown
@@ -30,6 +32,10 @@ def _status(context: Context, request: ShowStatus) -> Status:
 
 def _remove(context: Context, request: RemoveCollection) -> CollectionRemoved:
     return collections.remove(context.settings.home, request)
+
+
+def _move(context: Context, request: MoveCollections) -> StoresMoved:
+    return moving.move(context.settings.home, request, context.report)
 
 
 def _activate(context: Context, request: ActivateCollections) -> CollectionsSwitched:
@@ -56,6 +62,7 @@ COMMANDS = MappingProxyType(
     {
         "add": command(AddCollection, _add, shown.added),
         "rm": command(RemoveCollection, _remove, shown.removed),
+        "move": needing_collections(command(MoveCollections, _move, shown.moved)),
         "activate": command(ActivateCollections, _activate, shown.switched),
         "deactivate": command(DeactivateCollections, _deactivate, shown.switched),
         "status": command(ShowStatus, _status, shown.status, _some_unavailable),

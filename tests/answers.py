@@ -5,6 +5,8 @@ from sift.api.collections import (
     CollectionStatus,
     Counted,
     Status,
+    StoreMoved,
+    StoresMoved,
     TitleFrom,
     Unavailable,
     UnreadableFile,
@@ -28,6 +30,10 @@ SAMPLES: dict[str, Answer] = {
         follow_links=False,
     ),
     "rm": CollectionRemoved("diary", "/home/.sift/collections/diary.sqlite", 3, None, ("/s/diary.sqlite-wal",)),
+    "move": StoresMoved(
+        (StoreMoved("diary", "/s/diary.sqlite", "/t/diary.sqlite", copied=True, left=("/s/diary.sqlite-shm",)),),
+        ("notes",),
+    ),
     "activate": CollectionsSwitched(active=True, changed=("diary",), already=()),
     "deactivate": CollectionsSwitched(active=False, changed=("diary",), already=("notes",)),
     "status": Status(

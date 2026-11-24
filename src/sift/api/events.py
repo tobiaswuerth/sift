@@ -11,6 +11,7 @@ class Phase(StrEnum):
     EMBED = "embed"
     LOAD = "load"
     ORDER = "order"
+    COPY = "copy"
 
 
 @dataclass(frozen=True, slots=True)

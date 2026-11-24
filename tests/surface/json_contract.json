@@ -16,6 +16,22 @@
       "/s/diary.sqlite-wal"
     ]
   },
+  "move": {
+    "moved": [
+      {
+        "name": "diary",
+        "old": "/s/diary.sqlite",
+        "new": "/t/diary.sqlite",
+        "copied": true,
+        "left": [
+          "/s/diary.sqlite-shm"
+        ]
+      }
+    ],
+    "already": [
+      "notes"
+    ]
+  },
   "activate": {
     "active": true,
     "changed": [

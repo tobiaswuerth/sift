@@ -9,16 +9,17 @@ from sift.interfaces.console.units import duration, rate
 
 UNITS = MappingProxyType(
     {
-        Phase.REMAKE: "chunk",
-        Phase.SCAN: "file",
-        Phase.READ: "file",
-        Phase.MERGE: "chunk",
-        Phase.EMBED: "chunk",
-        Phase.LOAD: "model",
-        Phase.ORDER: "chunk",
+        Phase.REMAKE: ("chunk", "chunks"),
+        Phase.SCAN: ("file", "files"),
+        Phase.READ: ("file", "files"),
+        Phase.MERGE: ("chunk", "chunks"),
+        Phase.EMBED: ("chunk", "chunks"),
+        Phase.LOAD: ("model", "models"),
+        Phase.ORDER: ("chunk", "chunks"),
+        Phase.COPY: ("MB", "MB"),
     }
 )
-RATED = frozenset({Phase.REMAKE, Phase.READ, Phase.MERGE, Phase.EMBED})
+RATED = frozenset({Phase.REMAKE, Phase.READ, Phase.MERGE, Phase.EMBED, Phase.COPY})
 INDENT = "  "
 LABEL = 6
 COUNT = 10
@@ -63,7 +64,8 @@ def _label(label: str, tone: Tone | None, style: Style) -> str:
 
 
 def _counted(phase: Phase, count: int) -> str:
-    unit = UNITS[phase] + ("" if count == 1 else "s")
+    one, many = UNITS[phase]
+    unit = one if count == 1 else many
     return f"{count:>{COUNT},} {unit:<{UNIT}}"
 
 

@@ -14,6 +14,7 @@ from sift.api.collections import (
     ActivateCollections,
     AddCollection,
     DeactivateCollections,
+    MoveCollections,
     RemoveCollection,
     ShowStatus,
 )
@@ -61,6 +62,9 @@ ENTRIES = MappingProxyType(
         "add": CommandEntry("add a folder as a collection", AddCollection, "collections"),
         "rm": CommandEntry(
             "remove a collection and its store; its files stay where they are", RemoveCollection, "collections"
+        ),
+        "move": CommandEntry(
+            "move the stores of collections, or of all, to another folder or drive", MoveCollections, "collections"
         ),
         "activate": CommandEntry("search collections deactivated before again", ActivateCollections, "collections"),
         "deactivate": CommandEntry(

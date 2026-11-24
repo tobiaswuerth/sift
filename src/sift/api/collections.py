@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -76,6 +76,27 @@ class CollectionRemoved:
     documents: int | None
     problem: str | None
     left: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MoveCollections(Request):
+    names: Annotated[tuple[str, ...], Help("the collections whose stores to move (default: every one)")] = ()
+    to: Annotated[str, Help("a folder, or for one collection, a file ending in .sqlite"), Place()] = field(kw_only=True)
+
+
+@dataclass(frozen=True, slots=True)
+class StoreMoved:
+    name: str
+    old: str
+    new: str
+    copied: bool
+    left: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class StoresMoved:
+    moved: tuple[StoreMoved, ...]
+    already: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)

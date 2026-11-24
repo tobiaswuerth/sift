@@ -164,9 +164,13 @@ def catalog_run(home: Path) -> None:
         ["error  no collection is active", "  fix  run sift activate with a collection's name"],
     )
     assert answer(sift(home, "activate", "notes", "--json"))["changed"] == ["notes"]
+    moved = sift(home, "move", "notes", str(home / "kept"), "--json")
+    (store,) = cast("list[Answer]", answer(moved)["moved"])
+    assert (moved.returncode, store["new"]) == (0, str((home / "kept" / "notes.sqlite").resolve()))
+    assert sift(home, "search", "learning", "--json").returncode == 0
     removed = sift(home, "rm", "notes", "--json")
     assert (removed.returncode, answer(removed)["documents"]) == (0, 3)
-    assert not list((home / "collections").iterdir())
+    assert not list((home / "kept").iterdir())
 
 
 def models_run(home: Path, notes: Path, model: str, reranker: str) -> None:

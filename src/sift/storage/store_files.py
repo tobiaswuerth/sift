@@ -15,11 +15,11 @@ def delete_store(path: Path) -> None:
         file.unlink()
 
 
-def _unlinked(file: Path) -> None:
+def unlinked(file: Path) -> None:
     file.unlink(missing_ok=True)
 
 
-def store_files_left(path: Path, unlink: Callable[[Path], None] = _unlinked) -> tuple[Path, ...]:
+def store_files_left(path: Path, unlink: Callable[[Path], None] = unlinked) -> tuple[Path, ...]:
     left: list[Path] = []
     for file in _files(path, FILE_SUFFIXES):
         try:
