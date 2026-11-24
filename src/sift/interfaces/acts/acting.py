@@ -1,0 +1,38 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+from importlib import import_module
+from typing import TYPE_CHECKING, Protocol, cast
+
+from sift.api.events import Reporter
+from sift.settings import Settings
+
+if TYPE_CHECKING:
+    from sift.inference.loading import Deferred
+
+LOADING = "sift.inference.loading"
+
+
+@dataclass(frozen=True, slots=True)
+class Acting:
+    settings: Settings
+    report: Reporter
+    clock: Callable[[], float]
+    models: "Callable[[], Deferred]"
+
+
+@dataclass(frozen=True, slots=True)
+class Act[R, A]:
+    request: type[R]
+    run: Callable[[Acting, R], A]
+
+
+class Loading(Protocol):
+    def deferred(self, model: str, reranker: str, gpus: str | None) -> "Deferred": ...
+
+
+def _as_loading(module: object) -> Loading:
+    return cast("Loading", module)
+
+
+def fresh_models(settings: Settings) -> "Deferred":
+    return _as_loading(import_module(LOADING)).deferred(settings.embed_model, settings.rerank_model, settings.gpus)

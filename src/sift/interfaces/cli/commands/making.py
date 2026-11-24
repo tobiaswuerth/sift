@@ -1,10 +1,12 @@
 import argparse
 import json
 from collections.abc import Callable
+from functools import partial
 
 from sift.api.search import SearchResult
 from sift.api.wire import encoded
 from sift.app.collections import chosen
+from sift.interfaces.acts.acting import Act, Acting, fresh_models
 from sift.interfaces.cli.arguments import request_of
 from sift.interfaces.cli.context import Answer, Command, Context
 from sift.interfaces.cli.shown.outcome import DONE, FAILED, Shown, empty
@@ -21,24 +23,27 @@ def never(_: object) -> bool:
     return False
 
 
+def acting(context: Context) -> Acting:
+    return Acting(context.settings, context.report, context.clock, partial(fresh_models, context.settings))
+
+
 def command[R, A: Answer](
-    request: type[R],
-    act: Callable[[Context, R], A],
+    act: Act[R, A],
     show: Callable[[A, str, Style], Shown],
     failed: Callable[[A], bool] = never,
 ) -> Command:
     def run(namespace: argparse.Namespace, context: Context) -> Shown:
-        answer = act(context, request_of(request, namespace))
+        answer = act.run(acting(context), request_of(act.request, namespace))
         found = Shown((as_json(answer),), ()) if context.json else show(answer, context.platform, context.style)
         return found._replace(code=FAILED if failed(answer) else DONE)
 
     return Command(run)
 
 
-def searched[R](request: type[R], act: Callable[[Context, R], SearchResult], kind: str) -> Command:
+def searched[R](act: Act[R, SearchResult], kind: str) -> Command:
     def run(namespace: argparse.Namespace, context: Context) -> Shown:
         started = context.clock()
-        answer = act(context, request_of(request, namespace))
+        answer = act.run(acting(context), request_of(act.request, namespace))
         seconds = context.clock() - started
         found = (
             Shown((as_json(answer),), ())
