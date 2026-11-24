@@ -142,9 +142,10 @@ def test_an_error_is_a_message_with_its_fix_and_no_traceback(settings: Settings,
 def test_an_error_of_the_system_is_a_message(settings: Settings, notes: Path) -> None:
     settings.home.write_bytes(b"a file, not a folder")
     code, out, err = ran(settings, "add", str(notes))
+    as_the_system_names_it = repr(str(settings.home))[:-1]
     assert (code, out) == (1, "")
-    assert err.startswith("error  [")
-    assert err.endswith("home'\n  fix  check the path and its permissions\n")
+    assert (err.startswith("error  ["), as_the_system_names_it in err) == (True, True)
+    assert err.endswith("'\n  fix  check the path and its permissions\n")
     assert err.count("\n") == 2
 
 

@@ -186,6 +186,10 @@ def catalog_run(home: Path, notes: Path) -> None:
     removed = sift(home, "rm", "notes", "--json")
     assert (removed.returncode, answer(removed)["documents"]) == (0, 3)
     assert not list((home / "kept").iterdir())
+    logs = sorted((home / "logs").iterdir())
+    assert {log.name.split("-20", 1)[0] for log in logs} == {"activate", "add", "deactivate", "index", "move", "rm"}
+    (rm,) = (log for log in logs if log.name.startswith("rm-"))
+    assert rm.read_text(encoding="utf-8").endswith(" INFO sift: ended with exit code 0\n")
 
 
 def models_run(home: Path, notes: Path, model: str, reranker: str) -> None:

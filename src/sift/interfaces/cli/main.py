@@ -5,6 +5,7 @@ import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 from importlib import import_module
 from types import MappingProxyType
@@ -27,6 +28,7 @@ from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
 from sift.domain.text.decoding import encodable
 from sift.interfaces.cli.arguments import arguments, flags, options
 from sift.interfaces.cli.context import Command, Commands, Context
+from sift.interfaces.cli.logs import FOLDER, LOGGED, Log, heard_too, kept
 from sift.interfaces.cli.shown.outcome import FAILED, Shown, failure
 from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
@@ -129,9 +131,12 @@ class VersionAction(argparse.Action):
         values: str | Sequence[object] | None,
         option_string: str | None = None,
     ) -> None:
-        metadata = _as_metadata(import_module("importlib.metadata"))
-        write_results(sys.stdout, (f"sift {metadata.version('sift-rag')}",))
+        write_results(sys.stdout, (_sift(),))
         parser.exit()
+
+
+def _sift() -> str:
+    return f"sift {_as_metadata(import_module('importlib.metadata')).version('sift-rag')}"
 
 
 class StoppedError(Exception):
@@ -239,13 +244,48 @@ def _live(err: TextIO | None, settings: Settings, style: Style, platform: str, c
     return Live(err, Looks(style, platform), redraw=redraw, columns=width, clock=clock)
 
 
+def _local_now() -> datetime:
+    return datetime.now().astimezone()
+
+
 @dataclass(frozen=True, slots=True)
 class Host:
     platform: str = sys.platform
     clock: Callable[[], float] = time.perf_counter
+    now: Callable[[], datetime] = _local_now
 
 
 HOST = Host()
+
+
+@dataclass(frozen=True, slots=True)
+class _Chosen:
+    command: str
+    namespace: argparse.Namespace
+    json: bool
+    style: Style
+
+
+def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log: Log | None) -> Shown:
+    told = live if log is None else heard_too(live, log, host.clock)
+    try:
+        context = Context(settings, host.platform, chosen.json, chosen.style, told, host.clock)
+        with ticking(told.tick):
+            return command_of(chosen.command).run(chosen.namespace, context)
+    except (SiftError, OSError) as error:
+        return failure(error, chosen.style, as_json=chosen.json, flags=flags(ENTRIES[chosen.command].request))
+    except KeyboardInterrupt:
+        if log is not None:
+            log.stopped()
+        if chosen.command in WRITERS:
+            raise StoppedError(STOPPED_WRITING) from None
+        raise
+    except Exception:
+        if log is not None:
+            log.failed()
+        raise
+    finally:
+        live.close()
 
 
 def _ran(
@@ -269,19 +309,15 @@ def _ran(
     if not isinstance(chosen, str):
         return Shown((built.format_help().rstrip("\n"),), ())
     style = _style(err, settings, Colour(str(given["color"])), encoding)
+    asked = _Chosen(chosen, namespace, given["json"] is True, style)
     live = _live(err, settings, style, platform, host.clock)
-    try:
-        context = Context(settings, platform, given["json"] is True, style, live, host.clock)
-        with ticking(live.tick):
-            return command_of(chosen).run(namespace, context)
-    except (SiftError, OSError) as error:
-        return failure(error, style, as_json=given["json"] is True, flags=flags(ENTRIES[chosen].request))
-    except KeyboardInterrupt:
-        if chosen in WRITERS:
-            raise StoppedError(STOPPED_WRITING) from None
-        raise
-    finally:
-        live.close()
+    if chosen not in LOGGED:
+        return _commanded(asked, settings, host, live, None)
+    with kept(settings.home / FOLDER, chosen, host.now(), f"{_sift()}, {chosen}") as log:
+        found = _commanded(asked, settings, host, live, log)
+        say(log, found.messages)
+        log.ended(found.code)
+        return found
 
 
 def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO | None, host: Host = HOST) -> int:

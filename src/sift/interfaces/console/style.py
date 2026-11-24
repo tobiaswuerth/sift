@@ -1,9 +1,11 @@
 import codecs
+import re
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 
 GLYPHS = "\N{BOX DRAWINGS HEAVY HORIZONTAL}\N{BOX DRAWINGS LIGHT HORIZONTAL}\N{MIDDLE DOT}"
 RESET = "\x1b[0m"
+PAINTED = re.compile("\x1b\\[[0-9;]*m")
 
 
 class Tone(Enum):
@@ -31,6 +33,10 @@ PLAIN = Style()
 
 def paint(text: str, tone: Tone, style: Style) -> str:
     return f"\x1b[{tone.value}m{text}{RESET}" if style.colour and text else text
+
+
+def unpainted(text: str) -> str:
+    return PAINTED.sub("", text)
 
 
 def _prints_glyphs(encoding: str | None) -> bool:

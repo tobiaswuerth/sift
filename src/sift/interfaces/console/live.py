@@ -2,11 +2,10 @@ import threading
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TextIO
 
 from sift.api.events import Advanced, Event
 from sift.interfaces.console.progress import Looks, View, running_line, shown
-from sift.interfaces.console.streams import draw, say
+from sift.interfaces.console.streams import Sink, draw, say
 from sift.interfaces.console.text import width
 
 REDRAW_SECONDS = 0.1
@@ -17,7 +16,7 @@ STOP_SECONDS = 5.0
 
 @dataclass(slots=True)
 class Live:
-    stream: TextIO | None
+    stream: Sink | None
     looks: Looks
     redraw: bool
     columns: Callable[[], int]

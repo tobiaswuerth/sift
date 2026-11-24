@@ -4,11 +4,17 @@ import errno
 import io
 import os
 from collections.abc import Iterable
-from typing import TextIO
+from typing import Protocol, TextIO
 
 UTF8 = "utf-8"
 READER_GONE = frozenset({errno.EPIPE, errno.EINVAL})
 DEFAULT_COLUMNS = 80
+
+
+class Sink(Protocol):
+    def write(self, text: str, /) -> int: ...
+
+    def flush(self) -> None: ...
 
 
 class ReaderLeftError(Exception):
@@ -40,7 +46,7 @@ def write_results(stream: TextIO | None, lines: Iterable[str]) -> None:
         raise
 
 
-def say(stream: TextIO | None, lines: Iterable[str]) -> None:
+def say(stream: Sink | None, lines: Iterable[str]) -> None:
     if stream is None:
         return
     with contextlib.suppress(OSError, ValueError):
@@ -60,7 +66,7 @@ def let_go(stream: TextIO) -> None:
         os.close(nowhere)
 
 
-def draw(stream: TextIO | None, text: str) -> None:
+def draw(stream: Sink | None, text: str) -> None:
     if stream is None:
         return
     with contextlib.suppress(OSError, ValueError):
