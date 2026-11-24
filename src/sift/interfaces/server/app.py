@@ -6,7 +6,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Generator, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -27,6 +27,7 @@ from sift.app.kept_decoded import KeptDecoded
 from sift.app.resident import ResidentCodes
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.handled import HANDLED, Handled
+from sift.interfaces.server.results import KeptResults
 from sift.settings import Settings
 from sift.storage.catalog import known_collections
 
@@ -56,6 +57,7 @@ class Serving:
     models: "Models"
     codes: ResidentCodes
     decoded: KeptDecoded
+    results: KeptResults
     writing: threading.Lock
     pool: ThreadPoolExecutor
     alive_every: float = ALIVE_SECONDS
@@ -88,20 +90,45 @@ def _turn(writing: threading.Lock, report: Reporter) -> Generator[None]:
         writing.release()
 
 
+def _written(serving: Serving, handled: Handled, data: object, report: Reporter) -> object:
+    with _turn(serving.writing, report):
+        serving.results.written()
+        try:
+            return handled.run(_acting(serving, report), data)
+        finally:
+            searched = _searched(serving.settings.home)
+            serving.codes.kept_only(searched)
+            serving.decoded.kept_only(searched)
+            serving.results.written()
+
+
+def _read(serving: Serving, handled: Handled, data: object, report: Reporter, noted: list[Noted]) -> object:
+    if handled.kept is None:
+        return handled.run(_acting(serving, report), data)
+    key = handled.kept(data)
+    found = serving.results.found(key)
+    if found is not None:
+        return found
+    seen = serving.results.seen()
+    answer = handled.run(_acting(serving, report), data)
+    if not noted:
+        serving.results.keep(key, answer, seen)
+    return answer
+
+
 def _ran(serving: Serving, name: str, handled: Handled, data: object, lines: "queue.Queue[bytes | None]") -> None:
+    noted: list[Noted] = []
+
     def report(event: Event) -> None:
+        if isinstance(event, Noted):
+            noted.append(event)
         lines.put(_line({"event": type(event).__name__, "data": encoded(event)}))
 
     started = time.perf_counter()
     try:
-        with _turn(serving.writing, report) if handled.writes else nullcontext():
-            try:
-                answer = handled.run(_acting(serving, report), data)
-            finally:
-                if handled.writes:
-                    searched = _searched(serving.settings.home)
-                    serving.codes.kept_only(searched)
-                    serving.decoded.kept_only(searched)
+        answer = (
+            _written(serving, handled, data, report) if handled.writes else _read(serving, handled, data, report, noted)
+        )
         lines.put(_line({"answer": encoded(answer)}))
         logging.getLogger(LOGGER).info("%s answered in %.2f s", name, time.perf_counter() - started)
     except SiftError as error:

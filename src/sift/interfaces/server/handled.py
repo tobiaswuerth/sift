@@ -1,8 +1,9 @@
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from sift.api.wire import decoded
+from sift.api.wire import decoded, encoded
 from sift.interfaces.acts import collections, indexing, links, searching
 from sift.interfaces.acts.acting import Act, Acting
 
@@ -11,13 +12,17 @@ from sift.interfaces.acts.acting import Act, Acting
 class Handled:
     run: Callable[[Acting, object], object]
     writes: bool
+    kept: Callable[[object], str] | None = None
 
 
-def handled[R, A](act: Act[R, A], *, writes: bool = False) -> tuple[str, Handled]:
+def handled[R, A](act: Act[R, A], *, writes: bool = False, kept: bool = False) -> tuple[str, Handled]:
     def run(acting: Acting, data: object) -> A:
         return act.run(acting, decoded(act.request, data))
 
-    return act.name, Handled(run, writes)
+    def key(data: object) -> str:
+        return json.dumps([act.name, encoded(decoded(act.request, data))], sort_keys=True)
+
+    return act.name, Handled(run, writes, key if kept else None)
 
 
 HANDLED: Mapping[str, Handled] = MappingProxyType(
@@ -32,11 +37,11 @@ HANDLED: Mapping[str, Handled] = MappingProxyType(
             handled(indexing.EMBED, writes=True),
             handled(collections.STATUS),
             handled(collections.GET),
-            handled(searching.SEARCH),
-            handled(searching.VSEARCH),
-            handled(searching.QUERY),
-            handled(searching.MENTIONS),
-            handled(searching.SIMILAR),
+            handled(searching.SEARCH, kept=True),
+            handled(searching.VSEARCH, kept=True),
+            handled(searching.QUERY, kept=True),
+            handled(searching.MENTIONS, kept=True),
+            handled(searching.SIMILAR, kept=True),
             handled(links.LINKS),
             handled(links.UNRESOLVED),
         )

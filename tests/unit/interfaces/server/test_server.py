@@ -23,44 +23,7 @@ from sift.settings import Settings
 from sift.storage.writer import held_by, sole_writer
 from tests.files import write
 from tests.models import Hashed
-from tests.serving import running
-
-type Line = dict[str, object]
-
-
-def asked(
-    server: HomeServer, name: str, body: object, *, bearer: str | None = None, host: str | None = None
-) -> tuple[int, list[Line]]:
-    connection = http.client.HTTPConnection("127.0.0.1", server.endpoint.port, timeout=60)
-    headers = {"Authorization": f"Bearer {server.endpoint.token if bearer is None else bearer}"}
-    if host is not None:
-        headers["Host"] = host
-    sent = body if isinstance(body, bytes) else json.dumps(body).encode()
-    try:
-        connection.request("POST", f"/api/{name}", sent, headers)
-        response = connection.getresponse()
-        status, read = response.status, response.read()
-    finally:
-        connection.close()
-    if not read.startswith(b"{"):
-        return status, [{"text": read.decode()}]
-    return status, [cast("Line", json.loads(line)) for line in read.split(b"\n") if line]
-
-
-def last(lines: list[Line], key: str) -> Line:
-    return cast("Line", lines[-1][key])
-
-
-@pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    return Settings(home=tmp_path / "home", user=None, cwd=tmp_path)
-
-
-@pytest.fixture
-def notes(tmp_path: Path) -> Path:
-    write(tmp_path / "notes" / "halo.md", "# Halo\n\nDark matter halo models.\n")
-    write(tmp_path / "notes" / "brush.md", "# Brush\n\nA robot plans brush strokes.\n")
-    return tmp_path / "notes"
+from tests.serving import Line, asked, last, running
 
 
 def test_the_home_process_answers_every_command_the_command_line_has_but_serve() -> None:

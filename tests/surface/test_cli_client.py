@@ -1,14 +1,10 @@
 import dataclasses
 import io
-from collections.abc import Mapping
 from pathlib import Path
-from types import MappingProxyType
 
-from sift.interfaces.acts.acting import Acting
 from sift.interfaces.cli.main import Host, run
-from sift.interfaces.server.handled import HANDLED, Handled
 from sift.settings import Settings
-from tests.serving import VERSION, running
+from tests.serving import VERSION, counted, running
 from tests.surface.commands import indexed_notes
 
 ASKED = (
@@ -40,17 +36,6 @@ def ran(settings: Settings, *argv: str) -> tuple[int, str, str]:
     return code, out.getvalue(), err.getvalue()
 
 
-def counted(asked: list[str]) -> Mapping[str, Handled]:
-    def each(name: str, handled: Handled) -> Handled:
-        def run(acting: Acting, data: object) -> object:
-            asked.append(name)
-            return handled.run(acting, data)
-
-        return Handled(run, handled.writes)
-
-    return MappingProxyType({name: each(name, handled) for name, handled in HANDLED.items()})
-
-
 def test_a_command_sent_to_the_home_process_is_answered_as_it_is_alone(settings: Settings, notes: Path) -> None:
     indexed_notes(settings, notes)
     assert ran(settings, "index")[0] == 0
@@ -59,7 +44,7 @@ def test_a_command_sent_to_the_home_process_is_answered_as_it_is_alone(settings:
     with running(settings, counted(asked)):
         served = [ran(settings, *argv) for argv in ASKED]
     assert served == alone
-    assert asked == [argv[0] for argv in ASKED if argv[-2:] != ("-k", "0")]
+    assert asked == ["status", "status", "get", "get", "search", "links", "unresolved", "deactivate", "activate"]
     assert [code for code, _, _ in alone] == [0, 0, 0, 1, 0, 0, 2, 0, 0, 0, 0]
 
 

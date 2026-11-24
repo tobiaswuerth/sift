@@ -21,6 +21,7 @@ from sift.interfaces.acts.acting import fresh_models
 from sift.interfaces.server.app import ALIVE_SECONDS, Serving, served_app
 from sift.interfaces.server.endpoint import ENDPOINT, SERVER, SERVING, Endpoint, found, written
 from sift.interfaces.server.handled import HANDLED, Handled
+from sift.interfaces.server.results import KeptResults
 from sift.settings import Settings
 from sift.storage.database import private_folder
 from sift.storage.writer import sole_writer
@@ -77,7 +78,8 @@ def held(
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version)
         models, codes, decoded = RememberedQuestions(fresh_models(settings)), ResidentCodes(), KeptDecoded()
-        serving = Serving(settings, endpoint.token, models, codes, decoded, threading.Lock(), pool, alive_every)
+        kept = (codes, decoded, KeptResults())
+        serving = Serving(settings, endpoint.token, models, *kept, threading.Lock(), pool, alive_every)
         config = uvicorn.Config(served_app(serving, handled), log_config=None, access_log=False, lifespan="off")
         written(settings.home, endpoint)
         try:

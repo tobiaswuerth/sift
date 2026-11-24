@@ -1,0 +1,113 @@
+import threading
+from collections.abc import Mapping
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from sift.api.errors import Problem
+from sift.api.events import Noted, Phase, PhaseDone, PhaseStarted
+from sift.api.indexing import IndexCollections
+from sift.api.search import Hit, SearchKeywords, SearchResult, Unsearched
+from sift.interfaces.acts.acting import Act, Acting
+from sift.interfaces.server.handled import HANDLED, Handled, handled
+from sift.interfaces.server.results import KEPT_HITS, RESULTS
+from sift.settings import Settings
+from tests.files import write
+from tests.serving import Line, asked, counted, last, running
+
+HIT = Hit("n/a.md", "n", "a.md", "A", 1, 1, 1.0, None)
+UNSEARCHED = Unsearched("m", "the store is missing", None, Problem.STORE_MISSING)
+
+
+def hits_of(lines: list[Line]) -> list[str]:
+    return [cast("str", hit["id"]) for hit in cast("list[Line]", last(lines, "answer")["hits"])]
+
+
+def answering(answers: list[SearchResult], ran: list[str]) -> Mapping[str, Handled]:
+    def run(acting: Acting, request: SearchKeywords) -> SearchResult:
+        ran.append(request.query)
+        if request.query == "noisy":
+            acting.report(Noted("a note along the way"))
+        if request.query == "loading":
+            acting.report(PhaseStarted(Phase.LOAD, None))
+            acting.report(PhaseDone(1))
+        return answers[0]
+
+    return {**HANDLED, "search": handled(Act("search", SearchKeywords, run), kept=True)[1]}
+
+
+def test_a_search_asked_again_is_answered_from_memory_until_the_home_is_written(
+    settings: Settings, notes: Path
+) -> None:
+    ran = list[str]()
+    with running(settings, counted(ran)) as server:
+        asked(server, "add", {"folder": str(notes)})
+        asked(server, "index", {})
+        first = asked(server, "search", {"query": "robot OR halo"})
+        again = asked(server, "search", {"k": 10, "query": "robot OR halo"})
+        assert (again, ran.count("search")) == (first, 1)
+        write(notes / "robots.md", "# Robots\n\nA robot arm.\n")
+        asked(server, "index", {})
+        after = asked(server, "search", {"query": "robot OR halo"})
+    assert (ran.count("search"), len(hits_of(after[1]))) == (2, 3)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        SearchResult((), 1, (), partial=True),
+        SearchResult((), 1, (UNSEARCHED,)),
+        SearchResult((HIT,) * (KEPT_HITS + 1), 1, ()),
+    ],
+)
+def test_an_answer_cut_short_passing_a_store_over_or_too_large_is_not_kept(
+    settings: Settings, answer: SearchResult
+) -> None:
+    ran = list[str]()
+    with running(settings, answering([answer], ran)) as server:
+        for _ in range(2):
+            asked(server, "search", {"query": "x"})
+    assert ran == ["x", "x"]
+
+
+def test_an_answer_whose_search_noted_something_along_the_way_is_not_kept_one_that_only_progressed_is(
+    settings: Settings,
+) -> None:
+    ran = list[str]()
+    with running(settings, answering([SearchResult((HIT,), 1, ())], ran)) as server:
+        said = [asked(server, "search", {"query": "noisy"})[1] for _ in range(2)]
+        progressed = [asked(server, "search", {"query": "loading"})[1] for _ in range(2)]
+    assert ran == ["noisy", "noisy", "loading"]
+    assert [lines[0]["event"] for lines in said] == ["Noted", "Noted"]
+    assert [len(lines) for lines in progressed] == [3, 1]
+
+
+def test_only_the_latest_answers_are_kept(settings: Settings) -> None:
+    ran = list[str]()
+    with running(settings, answering([SearchResult((HIT,), 1, ())], ran)) as server:
+        for n in [*range(RESULTS + 1), RESULTS, 0]:
+            asked(server, "search", {"query": f"q{n}"})
+    assert ran == [*(f"q{n}" for n in range(RESULTS + 1)), "q0"]
+
+
+def test_an_answer_found_while_the_home_is_written_is_not_kept(settings: Settings) -> None:
+    started, release = threading.Event(), threading.Event()
+
+    def writing(_acting: Acting, _request: IndexCollections) -> SearchResult:
+        started.set()
+        release.wait(30)
+        return SearchResult((), 0, ())
+
+    ran = list[str]()
+    index = handled(Act("index", IndexCollections, writing), writes=True)[1]
+    blocked = {**answering([SearchResult((HIT,), 1, ())], ran), "index": index}
+    with running(settings, blocked) as server:
+        write_thread = threading.Thread(target=asked, args=(server, "index", {}))
+        write_thread.start()
+        started.wait(30)
+        for _ in range(2):
+            asked(server, "search", {"query": "x"})
+        release.set()
+        write_thread.join(30)
+    assert ran == ["x", "x"]
