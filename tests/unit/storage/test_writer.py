@@ -15,6 +15,7 @@ from sift.storage.store_files import FILE_SUFFIXES, WRITER_SUFFIX
 from sift.storage.writer import (
     ASK_AGAIN,
     ASK_AT_ONCE,
+    HELD,
     WAIT_A_MOMENT,
     Holder,
     LockFile,
@@ -178,7 +179,7 @@ def test_who_holds_a_lock_is_asked_at_once_and_read_waiting_only_a_moment(tmp_pa
     with sole_writer(store, "sift serve"):
         assert held_by(Path(f"{store}{WRITER_SUFFIX}"), recorded) == Holder(os.getpid(), "sift serve")
     asked = [ASK_AT_ONCE, "BEGIN IMMEDIATE", ASK_AGAIN, "BEGIN IMMEDIATE"]
-    assert opened[0].said == [*asked, WAIT_A_MOMENT, "SELECT pid, purpose FROM holder"]
+    assert opened[0].said == [*asked, WAIT_A_MOMENT, HELD, "SELECT pid, purpose FROM holder"]
 
 
 @final
@@ -212,3 +213,34 @@ def test_a_writer_file_that_cannot_be_locked_for_another_reason_says_that_reason
         sole_writer(tmp_path / "notes.sqlite", "sift index", failing),
     ):
         pass
+
+
+def test_two_first_writers_of_a_store_take_it_in_turn_or_are_refused_naming_the_other(tmp_path: Path) -> None:
+    outcomes = list[str]()
+
+    def writer(store: Path, barrier: threading.Barrier, name: str) -> None:
+        barrier.wait(30)
+        try:
+            with sole_writer(store, name):
+                outcomes.append("held")
+        except StoreUnavailableError as refused:
+            outcomes.append(f"{refused.code}: {refused.message}"[:27])
+
+    for trial in range(50):
+        store, barrier = tmp_path / f"s{trial}.sqlite", threading.Barrier(2)
+        threads = [threading.Thread(target=writer, args=(store, barrier, f"w{n}")) for n in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+    assert set(outcomes) <= {"held", "busy: another sift writes it"}
+    assert (len(outcomes), outcomes.count("held") >= 50) == (100, True)
+
+
+def test_who_holds_a_fresh_lock_is_asked_while_its_first_writer_makes_it(tmp_path: Path) -> None:
+    lock = tmp_path / "s.sqlite.writer"
+    lock.touch()
+    with closing(lock_file(lock)) as first:
+        first.execute("BEGIN IMMEDIATE")
+        first.execute("CREATE TABLE IF NOT EXISTS holder(pid INTEGER NOT NULL, purpose TEXT NOT NULL) STRICT")
+        assert held_by(lock) is None

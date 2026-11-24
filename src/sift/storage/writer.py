@@ -17,7 +17,8 @@ ASK_AT_ONCE = "PRAGMA busy_timeout = 0"
 ASK_AGAIN_SECONDS = 0.05
 ASK_AGAIN = f"PRAGMA busy_timeout = {round(ASK_AGAIN_SECONDS * 1000)}"
 WAIT_A_MOMENT = f"PRAGMA busy_timeout = {round(MOMENT_SECONDS * 1000)}"
-HOLDER = "CREATE TABLE holder(pid INTEGER NOT NULL, purpose TEXT NOT NULL) STRICT"
+HOLDER = "CREATE TABLE IF NOT EXISTS holder(pid INTEGER NOT NULL, purpose TEXT NOT NULL) STRICT"
+HELD = "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'holder'"
 
 
 class LockFile(Protocol):
@@ -32,14 +33,9 @@ class Holder:
     purpose: str
 
 
-def _made(connection: LockFile) -> None:
-    (version,) = cast("tuple[int]", connection.execute("PRAGMA user_version").fetchone())
-    if version == 0:
-        connection.execute(HOLDER)
-        connection.execute("PRAGMA user_version = 1")
-
-
 def _holder(connection: LockFile) -> Holder | None:
+    if connection.execute(HELD).fetchone() is None:
+        return None
     found = cast("tuple[int, str] | None", connection.execute("SELECT pid, purpose FROM holder").fetchone())
     return None if found is None else Holder(*found)
 
@@ -61,6 +57,8 @@ def _hold(connection: LockFile) -> None:
 
 def _taken(connection: LockFile, purpose: str) -> None:
     _hold(connection)
+    connection.execute(HOLDER)
+    connection.execute("PRAGMA user_version = 1")
     connection.execute("DELETE FROM holder")
     connection.execute("INSERT INTO holder(pid, purpose) VALUES (?, ?)", (os.getpid(), purpose))
     connection.execute("COMMIT")
@@ -101,7 +99,6 @@ def sole_writer(store: Path, purpose: str, opened: Callable[[Path], LockFile] = 
     os.close(os.open(path, os.O_CREAT | os.O_RDONLY, PRIVATE_FILE))
     with closing(opened(path)) as connection:
         with unavailable_if_unusable(path):
-            _made(connection)
             _taken(connection, purpose)
         try:
             yield
