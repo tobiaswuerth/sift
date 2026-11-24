@@ -11,6 +11,7 @@ from sift.app.collections import chosen_or_active
 from sift.app.documents import located
 from sift.app.filing import LIMITS, READERS, Job, Limits, Readers, Tally
 from sift.app.problems import problems
+from sift.app.retitling import resumed
 from sift.app.scans import ScanModel
 from sift.app.storing import dropped, read_and_stored
 from sift.domain.plan.ignore import Ignore
@@ -190,11 +191,12 @@ def _indexed(one: Collection, asked: _Indexing, paths: tuple[str, ...] = ()) -> 
     try:
         with sole_writer(one.store, "sift index"), connected(one.store, one.id) as connection:
             tidied(asked.home, one.id)
+            current = resumed(asked.home, one, connection, report, limits)
             _ordered(connection, report, limits.batches)
             _remade(connection, report, limits.batches)
-            if not one.folder.is_dir():
-                return _skipped(one, report, f"its folder is missing: {one.folder}", FOLDER_MISSING_REMEDY)
-            return _ignoring(Job(one, connection, report, limits, asked.readers, asked.ocr), paths)
+            if not current.folder.is_dir():
+                return _skipped(current, report, f"its folder is missing: {current.folder}", FOLDER_MISSING_REMEDY)
+            return _ignoring(Job(current, connection, report, limits, asked.readers, asked.ocr), paths)
     except StoreUnavailableError as error:
         return _skipped(one, report, error.message, error.remedy)
     except OSError as error:

@@ -1,5 +1,9 @@
+import itertools
 import posixpath
-from collections.abc import Sequence
+from collections.abc import Callable
+from dataclasses import replace
+from functools import partial
+from pathlib import Path
 from typing import NamedTuple
 
 from sift.api.collections import TitleFrom
@@ -9,8 +13,8 @@ from sift.app.choosing import Retitled
 from sift.app.filing import LIMITS, Limits
 from sift.domain.text.kinds import FileKind, kind_of
 from sift.domain.text.notes import NoteRead, NoteTitle, read_note
-from sift.storage.catalog import Collection
-from sift.storage.database import WritingDocuments, reading, rows, writing
+from sift.storage.catalog import Choices, Collection, choices_json, choices_of, set_choices
+from sift.storage.database import Connection, Value, WritingDocuments, first, reading, rows, run, writing
 from sift.storage.documents import SourceId, add_streamed, set_digest
 from sift.storage.forgetting import delete_documents
 from sift.storage.kept_vectors import vectors_held, vectors_kept, vectors_let_go
@@ -22,7 +26,8 @@ from sift.storage.writer import sole_writer
 
 NOTES = """SELECT d.id, d.source, s.path, d.title, d.digest FROM documents d JOIN sources s ON s.id = d.source
            WHERE d.key = '' ORDER BY d.id"""
-AT_ONCE = 500
+RETITLING = "retitling"
+PROMISED = "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)"
 
 
 class _Note(NamedTuple):
@@ -47,25 +52,48 @@ def _retitled_one(transaction: WritingDocuments, note: _Note, title_from: TitleF
     return True
 
 
-def _batches(notes: Sequence[_Note]) -> list[Sequence[_Note]]:
-    return [notes[at : at + AT_ONCE] for at in range(0, len(notes), AT_ONCE)]
+def _titles_changed(connection: Connection, title_from: TitleFrom, report: Reporter, limits: Limits) -> int:
+    with reading(connection) as transaction:
+        notes = [each for each in rows(transaction, _Note, NOTES) if kind_of(each.path) is FileKind.NOTE]
+    report(PhaseStarted(Phase.TITLE, len(notes)))
+    changed = done = 0
+    for batch in itertools.batched(notes, limits.most_files_a_write):
+        with writing_documents(connection, limits.batches) as transaction:
+            changed += sum(_retitled_one(transaction, note, title_from) for note in batch)
+        done += len(batch)
+        report(Advanced(done))
+    report(PhaseDone(done))
+    return changed
 
 
-def retitle(one: Collection, title_from: TitleFrom, report: Reporter, limits: Limits = LIMITS) -> Retitled:
+def _finished(
+    connection: Connection, title_from: TitleFrom, chosen: Callable[[], None], report: Reporter, limits: Limits
+) -> Retitled:
+    with reading(connection) as transaction:
+        before = left(transaction)
+    changed = _titles_changed(connection, title_from, report, limits)
+    with writing(connection) as transaction:
+        vectors_let_go(transaction)
+        after = left(transaction)
+    chosen()
+    with writing(connection) as transaction:
+        run(transaction, "DELETE FROM meta WHERE key = ?", (RETITLING,))
+    return Retitled(changed, after - before)
+
+
+def retitle(home: Path, one: Collection, wanted: Choices, report: Reporter, limits: Limits = LIMITS) -> Retitled:
     report(CollectionStarted(one.name, str(one.folder)))
     with sole_writer(one.store, "sift add"), connected(one.store, one.id) as connection:
-        with reading(connection) as transaction:
-            before = left(transaction)
-            notes = [each for each in rows(transaction, _Note, NOTES) if kind_of(each.path) is FileKind.NOTE]
-        report(PhaseStarted(Phase.TITLE, len(notes)))
-        changed = done = 0
-        for batch in _batches(notes):
-            with writing_documents(connection, limits.batches) as transaction:
-                changed += sum(_retitled_one(transaction, note, title_from) for note in batch)
-            done += len(batch)
-            report(Advanced(done))
         with writing(connection) as transaction:
-            vectors_let_go(transaction)
-            after = left(transaction)
-    report(PhaseDone(done))
-    return Retitled(changed, after - before)
+            run(transaction, PROMISED, (RETITLING, choices_json(wanted)))
+        return _finished(connection, wanted.title_from, partial(set_choices, home, one.id, wanted), report, limits)
+
+
+def resumed(home: Path, one: Collection, connection: Connection, report: Reporter, limits: Limits) -> Collection:
+    with reading(connection) as transaction:
+        promised = first(transaction, Value, "SELECT value FROM meta WHERE key = ?", (RETITLING,))
+    if promised is None:
+        return one
+    wanted = choices_of(promised.value)
+    _finished(connection, wanted.title_from, partial(set_choices, home, one.id, wanted), report, limits)
+    return replace(one, choices=wanted)

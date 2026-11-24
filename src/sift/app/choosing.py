@@ -3,10 +3,10 @@ from importlib import import_module
 from pathlib import Path
 from typing import Protocol, cast
 
-from sift.api.collections import AddCollection, CollectionChanged, TitleFrom
+from sift.api.collections import AddCollection, CollectionChanged
 from sift.api.errors import InvalidRequestError
 from sift.api.events import Reporter
-from sift.storage.catalog import Collection, set_choices
+from sift.storage.catalog import Choices, Collection, set_choices
 
 CHANGE_REMEDY = (
     "give what to change alone: where titles come from, whether files linked from outside are read, "
@@ -24,7 +24,7 @@ NONE_RETITLED = Retitled(0, 0)
 
 
 class Retitling(Protocol):
-    def retitle(self, one: Collection, title_from: TitleFrom, report: Reporter) -> Retitled: ...
+    def retitle(self, home: Path, one: Collection, wanted: Choices, report: Reporter) -> Retitled: ...
 
 
 def _as_retitling(module: object) -> Retitling:
@@ -51,9 +51,11 @@ def changed(home: Path, one: Collection, request: AddCollection, report: Reporte
     )
     if _otherwise(request, one) or wanted == held:
         raise InvalidRequestError(f"{one.folder} is the collection {one.name!r} already", CHANGE_REMEDY)
-    retitling = wanted.title_from is not held.title_from
-    retitled = _retitling().retitle(one, wanted.title_from, report) if retitling else NONE_RETITLED
-    set_choices(home, one.id, wanted)
+    if wanted.title_from is held.title_from:
+        set_choices(home, one.id, wanted)
+        retitled = NONE_RETITLED
+    else:
+        retitled = _retitling().retitle(home, one, wanted, report)
     return CollectionChanged(
         one.name,
         wanted.title_from,

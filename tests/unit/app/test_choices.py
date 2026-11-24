@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import NamedTuple
 
@@ -7,10 +8,13 @@ import pytest
 from sift.api.collections import AddCollection, CollectionChanged, ShowStatus, TitleFrom
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError
+from sift.api.events import Advanced, Event
 from sift.api.indexing import IndexCollections
 from sift.app.collections import add, status
 from sift.app.embedding import embed
+from sift.app.filing import Limits
 from sift.app.indexing import index
+from sift.app.retitling import retitle
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading, rows
 from sift.storage.store import connected
@@ -92,6 +96,23 @@ def test_adding_a_collection_again_changes_where_its_titles_come_from(home: Path
 def test_retitled_notes_stay_retitled_when_indexed_again(home: Path, notes: Path) -> None:
     add(home, AddCollection(str(notes), title_from=TitleFrom.NAME))
     write(notes / "Hans Müller.md", "## Summary\n\nKey account, now at Initech.\n")
+    index(home, IndexCollections(), lambda _: None)
+    assert (titles(home)["Hans Müller.md"], titles(home)["rl.md"]) == ("Hans Müller", "rl")
+
+
+def test_a_retitle_stopped_midway_is_finished_by_the_next_index(home: Path) -> None:
+    (one,) = known_collections(home)
+
+    def stopped(event: Event) -> None:
+        if isinstance(event, Advanced):
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        retitle(home, one, replace(one.choices, title_from=TitleFrom.NAME), stopped, Limits(most_files_a_write=1))
+    assert known_collections(home)[0].choices.title_from is TitleFrom.HEADING
+    index(home, IndexCollections(), lambda _: None)
+    assert known_collections(home)[0].choices.title_from is TitleFrom.NAME
+    assert (titles(home)["Hans Müller.md"], titles(home)["rl.md"]) == ("Hans Müller", "rl")
     index(home, IndexCollections(), lambda _: None)
     assert (titles(home)["Hans Müller.md"], titles(home)["rl.md"]) == ("Hans Müller", "rl")
 
