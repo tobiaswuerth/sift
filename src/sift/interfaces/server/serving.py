@@ -25,6 +25,7 @@ from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.results import KeptResults
 from sift.settings import Settings
 from sift.storage.database import private_folder
+from sift.storage.watching import HomeWatch
 from sift.storage.writer import sole_writer
 
 LOCALHOST = "127.0.0.1"
@@ -101,7 +102,7 @@ def held(
     ):
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version)
-        kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults())
+        kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
         serving = Serving(settings, endpoint.token, *kept, threading.Lock(), pool, alive_every)
         config = uvicorn.Config(served_app(serving, handled), log_config=None, access_log=False, lifespan="off")
         written(settings.home, endpoint)
@@ -109,6 +110,7 @@ def held(
             yield HomeServer(endpoint, serving, uvicorn.Server(config), bound)
         finally:
             (settings.home / ENDPOINT).unlink(missing_ok=True)
+            serving.watch.let_go()
 
 
 def _served(running: HomeServer) -> None:

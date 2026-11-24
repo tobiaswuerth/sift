@@ -27,9 +27,10 @@ from sift.app.kept_decoded import KeptDecoded
 from sift.app.resident import ResidentCodes
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.handled import HANDLED, Handled
-from sift.interfaces.server.results import KeptResults
+from sift.interfaces.server.results import KeptResults, Moment
 from sift.settings import Settings
 from sift.storage.catalog import known_collections
+from sift.storage.watching import HomeWatch
 
 if TYPE_CHECKING:
     from sift.inference.models import Models
@@ -58,6 +59,7 @@ class Serving:
     codes: ResidentCodes
     decoded: KeptDecoded
     results: KeptResults
+    watch: HomeWatch
     writing: threading.Lock
     pool: ThreadPoolExecutor
     alive_every: float = ALIVE_SECONDS
@@ -93,6 +95,7 @@ def _turn(writing: threading.Lock, report: Reporter) -> Generator[None]:
 def _written(serving: Serving, handled: Handled, data: object, report: Reporter) -> object:
     with _turn(serving.writing, report):
         serving.results.written()
+        serving.watch.let_go()
         try:
             return handled.run(_acting(serving, report), data)
         finally:
@@ -102,17 +105,21 @@ def _written(serving: Serving, handled: Handled, data: object, report: Reporter)
             serving.results.written()
 
 
+def _moment(serving: Serving) -> Moment:
+    return Moment(serving.results.seen(), serving.watch.seen())
+
+
 def _read(serving: Serving, handled: Handled, data: object, report: Reporter, noted: list[Noted]) -> object:
     if handled.kept is None:
         return handled.run(_acting(serving, report), data)
     key = handled.kept(data)
-    found = serving.results.found(key)
+    before = _moment(serving)
+    found = serving.results.found(key, before)
     if found is not None:
         return found
-    seen = serving.results.seen()
     answer = handled.run(_acting(serving, report), data)
     if not noted:
-        serving.results.keep(key, answer, seen)
+        serving.results.keep(key, answer, before, _moment(serving))
     return answer
 
 

@@ -9,6 +9,7 @@ from sift.api.errors import Problem
 from sift.api.events import Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections
 from sift.api.search import Hit, SearchKeywords, SearchResult, Unsearched
+from sift.app.indexing import index
 from sift.interfaces.acts.acting import Act, Acting
 from sift.interfaces.server.handled import HANDLED, Handled, handled
 from sift.interfaces.server.results import KEPT_HITS, RESULTS
@@ -89,6 +90,56 @@ def test_only_the_latest_answers_are_kept(settings: Settings) -> None:
         for n in [*range(RESULTS + 1), RESULTS, 0]:
             asked(server, "search", {"query": f"q{n}"})
     assert ran == [*(f"q{n}" for n in range(RESULTS + 1)), "q0"]
+
+
+def test_an_answer_asked_again_is_kept_as_the_latest(settings: Settings) -> None:
+    ran = list[str]()
+    with running(settings, answering([SearchResult((HIT,), 1, ())], ran)) as server:
+        for n in [*range(RESULTS), 0, RESULTS, 0, 1]:
+            asked(server, "search", {"query": f"q{n}"})
+    assert ran == [*(f"q{n}" for n in range(RESULTS)), f"q{RESULTS}", "q1"]
+
+
+def test_answers_are_kept_again_once_a_write_is_done(settings: Settings, notes: Path) -> None:
+    ran = list[str]()
+    with running(settings, counted(ran)) as server:
+        asked(server, "add", {"folder": str(notes)})
+        asked(server, "index", {})
+        for _ in range(3):
+            asked(server, "search", {"query": "halo"})
+    assert ran.count("search") == 1
+
+
+def test_an_answer_is_not_kept_past_a_write_made_beside_the_home_process(settings: Settings, notes: Path) -> None:
+    ran = list[str]()
+    with running(settings, counted(ran)) as server:
+        asked(server, "add", {"folder": str(notes)})
+        asked(server, "index", {})
+        before = [hits_of(asked(server, "search", {"query": "zebra"})[1]) for _ in range(2)]
+        write(notes / "zebra.md", "# Zebra\n\nA zebra grazes.\n")
+        index(settings.home, IndexCollections(), lambda _: None)
+        after = [hits_of(asked(server, "search", {"query": "zebra"})[1]) for _ in range(2)]
+    assert (before, after, ran.count("search")) == ([[], []], [["notes/zebra.md"]] * 2, 2)
+
+
+def test_an_answer_whose_search_saw_a_write_beside_the_home_process_is_not_kept(
+    settings: Settings, notes: Path
+) -> None:
+    ran = list[str]()
+
+    def written_meanwhile(acting: Acting, request: SearchKeywords) -> SearchResult:
+        ran.append(request.query)
+        write(notes / f"{len(ran)}.md", f"# Note {len(ran)}\n\nWritten while a search ran.\n")
+        index(acting.settings.home, IndexCollections(), lambda _: None)
+        return SearchResult((HIT,), 1, ())
+
+    searched = {**HANDLED, "search": handled(Act("search", SearchKeywords, written_meanwhile), kept=True)[1]}
+    with running(settings, searched) as server:
+        asked(server, "add", {"folder": str(notes)})
+        asked(server, "index", {})
+        for _ in range(2):
+            asked(server, "search", {"query": "x"})
+    assert ran == ["x", "x"]
 
 
 def test_an_answer_found_while_the_home_is_written_is_not_kept(settings: Settings) -> None:
