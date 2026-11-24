@@ -28,9 +28,12 @@ from sift.interfaces.server.endpoint import (
     lock_of,
     written,
 )
+from sift.interfaces.server.gate import WAITING_FOR_ALONE, WAITING_FOR_READS
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import RESTED, HomeServer, held, serve, watched_idle
 from sift.settings import Settings
+from sift.storage.catalog import known_collections
+from sift.storage.store import read_store
 from sift.storage.writer import held_by, sole_writer
 from tests.files import write
 from tests.models import Hashed
@@ -175,10 +178,11 @@ def test_a_command_that_recurses_too_deep_ends_its_answer_unfinished(settings: S
 
 
 @contextmanager
-def streaming(server: HomeServer, name: str) -> Generator[http.client.HTTPResponse]:
+def streaming(server: HomeServer, name: str, body: object = None) -> Generator[http.client.HTTPResponse]:
     connection = http.client.HTTPConnection("127.0.0.1", server.endpoint.port, timeout=60)
+    sent = json.dumps({} if body is None else body).encode()
     try:
-        connection.request("POST", f"/api/{name}", b"{}", {"Authorization": f"Bearer {server.endpoint.token}"})
+        connection.request("POST", f"/api/{name}", sent, {"Authorization": f"Bearer {server.endpoint.token}"})
         with connection.getresponse() as response:
             yield response
     finally:
@@ -223,6 +227,61 @@ def test_a_write_sent_while_another_writes_is_told_it_waits_then_runs(settings: 
         first.join(30)
     assert told == {"event": "Noted", "data": {"text": WAITING, "remedy": None}}
     assert rest.endswith(b'{"answer": {"url": "written"}}\n')
+
+
+def answer_in(read: bytes) -> Line:
+    (answer,) = [
+        cast("Line", json.loads(line))["answer"] for line in read.splitlines() if line.startswith(b'{"answer"')
+    ]
+    return cast("Line", answer)
+
+
+def test_rm_waits_for_searches_of_its_store_and_deletes_it(settings: Settings, notes: Path) -> None:
+    started, release = threading.Event(), threading.Event()
+
+    def searching(acting: Acting, _data: object) -> object:
+        (one,) = known_collections(acting.settings.home)
+        with read_store(one.store, one.id):
+            started.set()
+            release.wait(30)
+        return Served("searched")
+
+    with running(settings, {**HANDLED, "search": Handled(searching, writes=False)}) as server:
+        asked(server, "add", {"folder": str(notes)})
+        asked(server, "index", {})
+        reader = threading.Thread(target=asked, args=(server, "search", {}), daemon=True)
+        reader.start()
+        started.wait(30)
+        with streaming(server, "rm", {"name": "notes"}) as response:
+            told = cast("Line", json.loads(response.readline()))
+            release.set()
+            rest = response.read()
+        reader.join(30)
+        _, added = asked(server, "add", {"folder": str(notes)})
+    assert told == {"event": "Noted", "data": {"text": WAITING_FOR_READS, "remedy": None}}
+    assert answer_in(rest)["left"] == []
+    assert last(added, "answer")["state"] == "added"
+
+
+def test_a_search_sent_while_a_store_is_removed_waits_for_it_then_runs(settings: Settings) -> None:
+    started, release = threading.Event(), threading.Event()
+
+    def removing(_acting: Acting, _data: object) -> object:
+        started.set()
+        release.wait(30)
+        return Served("removed")
+
+    with running(settings, {**HANDLED, "rm": Handled(removing, writes=True, alone=True)}) as server:
+        remover = threading.Thread(target=asked, args=(server, "rm", {"name": "notes"}), daemon=True)
+        remover.start()
+        started.wait(30)
+        with streaming(server, "status") as response:
+            told = cast("Line", json.loads(response.readline()))
+            release.set()
+            rest = response.read()
+        remover.join(30)
+    assert told == {"event": "Noted", "data": {"text": WAITING_FOR_ALONE, "remedy": None}}
+    assert answer_in(rest)["collections"] == []
 
 
 def interrupted(_event: Event) -> None:

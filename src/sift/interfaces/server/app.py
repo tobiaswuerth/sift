@@ -6,8 +6,8 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Generator, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-from dataclasses import dataclass
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -27,6 +27,7 @@ from sift.app.kept_decoded import KeptDecoded
 from sift.app.resident import ResidentCodes
 from sift.domain.text.json_values import deeper_than
 from sift.interfaces.acts.acting import Acting
+from sift.interfaces.server.gate import Gate
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.results import KeptResults, Moment
 from sift.settings import Settings
@@ -66,6 +67,7 @@ class Serving:
     writing: threading.Lock
     pool: ThreadPoolExecutor
     alive_every: float = ALIVE_SECONDS
+    gate: Gate = field(default_factory=Gate)
 
 
 def _line(value: Json) -> bytes:
@@ -116,7 +118,7 @@ def _turn(writing: threading.Lock, report: Reporter) -> Generator[None]:
 
 
 def _written(serving: Serving, handled: Handled, data: object, report: Reporter) -> object:
-    with _turn(serving.writing, report):
+    with _turn(serving.writing, report), serving.gate.alone(report) if handled.alone else nullcontext():
         serving.results.written()
         serving.watch.let_go()
         try:
@@ -133,6 +135,11 @@ def _moment(serving: Serving) -> Moment:
 
 
 def _read(serving: Serving, handled: Handled, data: object, report: Reporter, noted: list[Noted]) -> object:
+    with serving.gate.shared(report):
+        return _answered(serving, handled, data, report, noted)
+
+
+def _answered(serving: Serving, handled: Handled, data: object, report: Reporter, noted: list[Noted]) -> object:
     if handled.kept is None:
         return handled.run(_acting(serving, report), data)
     key = handled.kept(data)
