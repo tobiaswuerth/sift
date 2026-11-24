@@ -225,6 +225,13 @@ LAYOUT: tuple[Migration, ...] = (
         "DROP INDEX sources_name",
         "CREATE INDEX sources_folded ON sources(folded)",
     ),
+    (
+        "ALTER TABLE counts ADD COLUMN keyword_changes INTEGER NOT NULL DEFAULT 0",
+        """CREATE TRIGGER keyword_segment_made AFTER INSERT ON keyword_segments
+           BEGIN UPDATE counts SET keyword_changes = keyword_changes + 1; END""",
+        """CREATE TRIGGER keyword_segment_gone AFTER DELETE ON keyword_segments
+           BEGIN UPDATE counts SET keyword_changes = keyword_changes + 1; END""",
+    ),
 )
 NUMBERED_TABLES = ("documents", "chunks")
 MISSING_REMEDY = "connect the drive it lies on, or remove the collection"

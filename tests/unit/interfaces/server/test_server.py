@@ -95,7 +95,11 @@ def test_searches_through_the_home_process_keep_a_store_s_codes(settings: Settin
         assert [store.name for store, _ in server.serving.codes.held] == ["notes.sqlite"]
 
 
-def test_codes_of_a_collection_deactivated_or_removed_are_let_go(
+def decoded_in(server: HomeServer) -> list[str]:
+    return sorted({store.name for store, *_ in server.serving.decoded.entries})
+
+
+def test_codes_and_keywords_of_a_collection_deactivated_or_removed_are_let_go(
     settings: Settings, notes: Path, tmp_path: Path
 ) -> None:
     write(tmp_path / "papers" / "shaping.md", "# Shaping\n\nReward shaping speeds up learning.\n")
@@ -106,11 +110,14 @@ def test_codes_of_a_collection_deactivated_or_removed_are_let_go(
         embed(settings.home, EmbedCollections(), lambda _: None, Hashed())
         asked(server, "similar", {"id": "notes/halo.md"})
         asked(server, "similar", {"id": "papers/shaping.md"})
+        asked(server, "search", {"query": "halo OR shaping"})
         assert sorted(store.name for store, _ in server.serving.codes.held) == ["notes.sqlite", "papers.sqlite"]
+        assert decoded_in(server) == ["notes.sqlite", "papers.sqlite"]
         asked(server, "deactivate", {"names": ["notes"]})
         assert [store.name for store, _ in server.serving.codes.held] == ["papers.sqlite"]
+        assert decoded_in(server) == ["papers.sqlite"]
         asked(server, "rm", {"name": "papers"})
-        assert list(server.serving.codes.held) == []
+        assert (list(server.serving.codes.held), decoded_in(server)) == ([], [])
 
 
 def test_a_call_without_its_token_from_another_host_or_to_no_command_is_refused(settings: Settings) -> None:

@@ -12,7 +12,7 @@ import sift.retrieval.keyword.search as search_module
 from sift.domain.query.expressions import And, Or, Term
 from sift.retrieval.keyword.lists import Opened
 from sift.retrieval.keyword.search import FoundChunk, Tuning
-from tests.keyword_searches import Draws, brute, collections, prose, same, search
+from tests.keyword_searches import Draws, blocks_read, brute, collections, prose, same, search
 from tests.keyword_stores import Round
 
 FILLER = "filler"
@@ -26,8 +26,8 @@ def in_ranges(groups: Sequence[Sequence[str]]) -> list[Round]:
     return [{f"n{n:04}.md": ("", "", text)} for n, text in enumerate(texts)]
 
 
-def blocks_read(store: Opened) -> Counter[str]:
-    return Counter(term for _, term, _ in store.blocks)
+def terms_read(store: Opened) -> Counter[str]:
+    return Counter(term for _, term, _ in blocks_read(store))
 
 
 def calls(run: Callable[[], object], named: Sequence[tuple[ModuleType, str]]) -> list[int]:
@@ -60,7 +60,7 @@ def test_a_word_in_every_chunk_is_read_only_where_the_others_bring_a_chunk_near(
         (store,) = stores
         query = Or((Term("stop"), Term("apple"), Term("banana")))
         same(search(stores, query, 1, tuning=Tuning(first_batch=1)), brute(held, query, 21, by_document=True), 1, query)
-        read = blocks_read(store)
+        read = terms_read(store)
         assert read["stop"] < read["apple"] / 2
 
 
@@ -84,6 +84,6 @@ def test_all_of_some_words_reads_each_only_where_chunks_with_all_rarer_ones_are_
         query = And((Term("alpha"), Term("beta"), Term("gamma"), Term("delta")))
         assert search(stores, query, 10) == ()
         assert brute(held, query, 10, by_document=True) == []
-        read = blocks_read(store)
+        read = terms_read(store)
         assert read["gamma"] > 0
         assert read["alpha"] == read["beta"] == 0

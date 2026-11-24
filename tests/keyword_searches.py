@@ -15,7 +15,7 @@ from sift.domain.codec.shape import Shape
 from sift.domain.plan.segments import Policy
 from sift.domain.query.expressions import And, Expression, Leaf, Not, Or, Phrase, Prefix, Term
 from sift.domain.rank.best import Best
-from sift.retrieval.keyword.lists import Opened, opened
+from sift.retrieval.keyword.lists import BlockKey, Opened, PostingArrays, opened
 from sift.retrieval.keyword.search import (
     TUNING,
     FoundChunk,
@@ -221,6 +221,10 @@ def phrases_in(stores: Sequence[Chunks]) -> list[tuple[str, ...]]:
     }
     overlapping = {each for each in found if each[0] == each[1]}
     return sorted(found)[:20] + sorted(overlapping)[:5] + [("w0", "w1", "w0")]
+
+
+def blocks_read(store: Opened) -> list[BlockKey]:
+    return list(cast("dict[BlockKey, PostingArrays]", store.decoded.blocks))
 
 
 @contextlib.contextmanager

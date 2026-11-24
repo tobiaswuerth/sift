@@ -43,6 +43,10 @@ STORE_OPENED_BY_HAND = (
 )
 SQL_CALLS = frozenset({"execute", "executemany", "executescript"})
 RAW_SQL = "SQL run on a transaction's connection outside sift.storage: add a storage function and call it"
+LAYOUT_FROM_ITS_END = (
+    "a layout cut from its end, which the next migration moves: "
+    "cut it before the migration it means, found by what that migration holds"
+)
 NUMBERED = (
     "a numbered SQL placeholder, which Python 3.12.0 to 3.12.3 take for a named one: "
     "bind by name from a dict, or give each plain ? its own value"
@@ -297,6 +301,19 @@ def raw_sql(path: str, tree: ast.Module) -> Iterator[Finding]:
                 pass
 
 
+def _from_the_end(bound: ast.expr | None) -> bool:
+    return isinstance(bound, ast.UnaryOp) and isinstance(bound.op, ast.USub)
+
+
+def layouts_cut_from_their_end(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and ast.unparse(node.value).endswith("LAYOUT"):
+            cut = node.slice
+            bounds = (cut.lower, cut.upper) if isinstance(cut, ast.Slice) else (cut,)
+            if any(map(_from_the_end, bounds)):
+                yield Finding(path, node.lineno, LAYOUT_FROM_ITS_END)
+
+
 def idioms(path: str, source: str) -> tuple[Finding, ...]:
     tree = canonical(ast.parse(source))
     in_tests, in_sift = path.startswith("tests/"), path.startswith("src/sift/")
@@ -319,6 +336,7 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *(sift_patched(path, tree) if in_tests else ()),
         *(clocks(path, tree) if in_tests else ()),
         *(databases_left_open(path, tree) if in_tests else ()),
+        *layouts_cut_from_their_end(path, tree),
     )
 
 

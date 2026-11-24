@@ -19,6 +19,7 @@ from tests.keyword_searches import (
     MERGING,
     SEEDS,
     Draws,
+    blocks_read,
     brute,
     collections,
     fts5_query,
@@ -131,7 +132,7 @@ def test_most_blocks_of_a_common_term_are_never_read(seed: int) -> None:
     with collections([[prose(rng, 300)]]) as (stores, _):
         (store,) = stores
         search(stores, Term("w0"), 1, tuning=Tuning(first_batch=2))
-        read = len(store.blocks)
+        read = len(blocks_read(store))
         lists = [held for held in stored(store, ["w0"])["w0"] if isinstance(held, Ranged)]
         total = sum(-(-last(held.ranges.ends) // store.shape.block) for held in lists)
         assert 0 < read < total / 3

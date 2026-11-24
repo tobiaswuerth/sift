@@ -5,12 +5,12 @@ from sift.app.searching import Watching
 from sift.interfaces.acts.acting import Act, Acting
 
 
-def _search(acting: Acting, request: SearchKeywords) -> SearchResult:
-    return search.search(acting.settings.home, request, acting.clock)
-
-
 def _watching(acting: Acting) -> Watching:
-    return Watching(report=acting.report, codes=acting.codes)
+    return Watching(report=acting.report, clock=acting.clock, codes=acting.codes, decoded=acting.decoded)
+
+
+def _search(acting: Acting, request: SearchKeywords) -> SearchResult:
+    return search.search(acting.settings.home, request, _watching(acting))
 
 
 def _vsearch(acting: Acting, request: SearchVectors) -> SearchResult:
@@ -22,7 +22,7 @@ def _query(acting: Acting, request: SearchHybrid) -> SearchResult:
 
 
 def _mentions(acting: Acting, request: FindMentions) -> SearchResult:
-    return mentions.mentions(acting.settings.home, request)
+    return mentions.mentions(acting.settings.home, request, _watching(acting))
 
 
 def _similar(acting: Acting, request: FindSimilar) -> SearchResult:

@@ -9,7 +9,7 @@ import pytest
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.storage.database import connect, first, reading, run, writing
-from sift.storage.documents import paths_named
+from sift.storage.documents import folded_names, paths_named
 from sift.storage.migrations import Migration
 from sift.storage.store import (
     DAMAGED_REMEDY,
@@ -217,8 +217,9 @@ def test_a_store_of_an_older_layout_is_brought_up_to_this_one_when_opened(tmp_pa
 
 def test_a_store_of_the_layout_before_names_were_folded_has_them_folded_when_opened(tmp_path: Path) -> None:
     store = tmp_path / "s.sqlite"
-    create_store(store, COLLECTION, LAYOUT[:-1])
-    with opened(store, layout=LAYOUT[:-1]) as connection, writing(connection) as transaction:
+    before = LAYOUT[: next(at for at, migration in enumerate(LAYOUT) if folded_names in migration)]
+    create_store(store, COLLECTION, before)
+    with opened(store, layout=before) as connection, writing(connection) as transaction:
         run(transaction, "INSERT INTO sources(path, modified_ns, size) VALUES ('Notizen/Äpfel.md', 1, 1)")
         run(transaction, "INSERT INTO documents(source, key, digest, title, fields) VALUES (1, '', 'd', 'Ä', '{}')")
     with opened(store) as connection, reading(connection) as transaction:

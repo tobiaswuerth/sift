@@ -5,7 +5,7 @@ from typing import NamedTuple
 import numpy as np
 
 from sift.domain.arrays import Ids
-from sift.storage.database import Reading, rows
+from sift.storage.database import Count, Reading, rows
 
 MOST_POINT = 0x10FFFF
 SURROGATES_START, SURROGATES_END = 0xD800, 0xE000
@@ -142,3 +142,8 @@ def lengths(transaction: Reading, segment: int, numbers: Sequence[int]) -> list[
     sql = """SELECT block, lengths FROM keyword_lengths
              WHERE segment = ? AND block IN (SELECT value FROM json_each(?)) ORDER BY block"""
     return rows(transaction, LengthsRow, sql, (segment, json.dumps(list(numbers))))
+
+
+def keyword_generation(transaction: Reading) -> int:
+    (held,) = rows(transaction, Count, "SELECT keyword_changes FROM counts")
+    return held.n

@@ -1,5 +1,6 @@
 import itertools
 from dataclasses import dataclass, field
+from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -39,6 +40,8 @@ class Ranged:
 
 type StoredList = Whole | Ranged
 type PostingArrays = tuple[Ids, Ids]
+type BlockKey = tuple[int, str, int]
+WHOLE = -1
 
 
 @dataclass(eq=False, frozen=True, slots=True)
@@ -52,6 +55,31 @@ class Dense:
         return self.order[np.searchsorted(self.blocks.values, blocks)]
 
 
+class Keeping[K, V](Protocol):
+    def get(self, key: K, /) -> V | None: ...
+
+    def __setitem__(self, key: K, value: V, /) -> None: ...
+
+
+@dataclass(eq=False, frozen=True, slots=True)
+class DecodedLists:
+    lengths: Keeping[int, Dense]
+    blocks: Keeping[BlockKey, PostingArrays]
+    positions: Keeping[BlockKey, Ids]
+
+
+def decoded_anew() -> DecodedLists:
+    return DecodedLists(dict[int, Dense](), dict[BlockKey, PostingArrays](), dict[BlockKey, Ids]())
+
+
+def held_bytes(value: Dense | PostingArrays | Ids) -> int:
+    if isinstance(value, Dense):
+        return value.numbers.nbytes + value.table.nbytes + value.order.nbytes + value.blocks.values.nbytes
+    if isinstance(value, tuple):
+        return sum(each.nbytes for each in value)
+    return value.nbytes
+
+
 @dataclass(eq=False, slots=True)
 class Opened:
     transaction: Reading
@@ -59,17 +87,17 @@ class Opened:
     segments: tuple[SegmentRow, ...]
     chunks: int
     tokens: int
+    decoded: DecodedLists = field(default_factory=decoded_anew)
     dead: dict[int, Ascending] = field(default_factory=dict[int, Ascending])
-    lengths: dict[int, Dense] = field(default_factory=dict[int, Dense])
-    blocks: dict[tuple[int, str, int], PostingArrays] = field(default_factory=dict[tuple[int, str, int], PostingArrays])
 
 
-def opened(transaction: Reading) -> Opened:
+def opened(transaction: Reading, decoded: DecodedLists | None = None) -> Opened:
     held = totals(transaction)
     found = tuple(keyword_lists.segments(transaction))
     if any(before.last >= after.first for before, after in itertools.pairwise(found)):
         raise DamagedError("segments of the keyword index overlap")
-    return Opened(transaction, shape_of(transaction), found, held.chunks, held.tokens)
+    kept = decoded_anew() if decoded is None else decoded
+    return Opened(transaction, shape_of(transaction), found, held.chunks, held.tokens, kept)
 
 
 def _dead(store: Opened, segment: int) -> Ascending:
@@ -127,7 +155,8 @@ def _one[T](found: list[T], what: str) -> T:
 
 def _block(store: Opened, held: Ranged, number: int) -> PostingArrays:
     key = (held.segment, held.term, number)
-    if key not in store.blocks:
+    found = store.decoded.blocks.get(key)
+    if found is None:
         row = _one(keyword_lists.blocks(store.transaction, held.segment, held.term, [number]), "a block of postings")
         places, counts = blocked(row.postings)
         size = min(store.shape.block, last(held.ranges.ends) - number * store.shape.block)
@@ -137,8 +166,9 @@ def _block(store: Opened, held: Ranged, number: int) -> PostingArrays:
         owners = np.searchsorted(held.ranges.ends, np.arange(start, start + size), side="right")
         if not bool(np.array_equal(places >> store.shape.range_shift, held.ranges.ids[owners])):
             raise DamagedError("a block holds postings outside its ranges")
-        store.blocks[key] = places, counts
-    return store.blocks[key]
+        found = places, counts
+        store.decoded.blocks[key] = found
+    return found
 
 
 def _indexes(held: Ranged, chosen: Ids) -> Ids:
@@ -180,17 +210,11 @@ def _empty(shift: int) -> Dense:
     return Dense(none, np.zeros((0, 1 << shift), np.uint32), none, Ascending(none))
 
 
-def _grown(table: NDArray[np.uint32], rows: int, shift: int) -> NDArray[np.uint32]:
-    if rows <= len(table):
-        return table
-    grown = np.zeros((max(rows, 2 * len(table)), 1 << shift), np.uint32)
-    grown[: len(table)] = table
-    return grown
-
-
 def _loaded(store: Opened, segment: SegmentRow, blocks: Ids) -> Dense:
     shift = store.shape.lengths_shift
-    held = store.lengths.get(segment.id, _empty(shift))
+    held = store.decoded.lengths.get(segment.id)
+    if held is None:
+        held = _empty(shift)
     wanted = distinct(Ascending(blocks)).values
     missing = wanted[~among(wanted, held.blocks)]
     if not len(missing):
@@ -198,13 +222,13 @@ def _loaded(store: Opened, segment: SegmentRow, blocks: Ids) -> Dense:
     found = keyword_lists.lengths(store.transaction, segment.id, ints(missing))
     if [row.block for row in found] != ints(missing):
         raise DamagedError("the lengths of some chunks are missing from the keyword index")
-    used = len(held.numbers)
-    table = _grown(held.table, used + len(missing), shift)
-    table[used : used + len(missing)] = np.stack([lengths_of(row.lengths, shift) for row in found])
+    read = np.stack([lengths_of(row.lengths, shift) for row in found]).astype(np.uint32)
+    table = np.concatenate([held.table, read])
     numbers = np.concatenate([held.numbers, missing])
     order = np.argsort(numbers, kind="stable")
-    store.lengths[segment.id] = Dense(numbers, table, order, Ascending(numbers[order]))
-    return store.lengths[segment.id]
+    made = Dense(numbers, table, order, Ascending(numbers[order]))
+    store.decoded.lengths[segment.id] = made
+    return made
 
 
 def lengths_at(store: Opened, places: Ids) -> Ids:
@@ -224,8 +248,12 @@ def lengths_at(store: Opened, places: Ids) -> Ids:
 
 
 def _positions_whole(store: Opened, held: Whole, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
-    row = _one(keyword_lists.positions(store.transaction, held.segment, held.term, None), "a list of positions")
-    flat = positions_of(row.positions, held.counts)
+    key = (held.segment, held.term, WHOLE)
+    flat = store.decoded.positions.get(key)
+    if flat is None:
+        row = _one(keyword_lists.positions(store.transaction, held.segment, held.term, None), "a list of positions")
+        flat = positions_of(row.positions, held.counts)
+        store.decoded.positions[key] = flat
     return _chosen(held.places, held.counts, flat, wanted)
 
 
@@ -237,11 +265,20 @@ def _chosen(places: Ids, counts: Ids, flat: Ids, wanted: Ascending) -> tuple[Ids
 def _positions_ranged(store: Opened, held: Ranged, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
     chosen = np.flatnonzero(among(held.ranges.ids, distinct(Ascending(wanted.values >> store.shape.range_shift))))
     numbers = ints(distinct(Ascending(_indexes(held, chosen) // store.shape.block)).values)
-    parts = [_none()]
-    for row in keyword_lists.positions(store.transaction, held.segment, held.term, numbers):
+    found: dict[int, tuple[Ids, Ids, Ids]] = {}
+    missing: list[int] = []
+    for number in numbers:
+        flat = store.decoded.positions.get((held.segment, held.term, number))
+        if flat is None:
+            missing.append(number)
+        else:
+            found[number] = _chosen(*_block(store, held, number), flat, wanted)
+    for row in keyword_lists.positions(store.transaction, held.segment, held.term, missing) if missing else ():
         places, counts = _block(store, held, row.number)
-        parts.append(_chosen(places, counts, positions_of(row.positions, counts), wanted))
-    return joined(parts)
+        flat = positions_of(row.positions, counts)
+        store.decoded.positions[held.segment, held.term, row.number] = flat
+        found[row.number] = _chosen(places, counts, flat, wanted)
+    return joined([_none(), *(found[number] for number in sorted(found))])
 
 
 def _none() -> tuple[Ids, Ids, Ids]:

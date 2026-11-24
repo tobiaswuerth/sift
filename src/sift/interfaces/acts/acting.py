@@ -4,7 +4,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Protocol, cast, get_type_hints
 
 from sift.api.events import Reporter
-from sift.app.resident import CodeSource, read_each_time
+from sift.app.resident import CodeSource, DecodedSource, decoded_each_search, read_each_time
 from sift.settings import Settings
 
 if TYPE_CHECKING:
@@ -20,6 +20,7 @@ class Acting:
     clock: Callable[[], float]
     models: "Callable[[], Deferred]"
     codes: CodeSource = read_each_time
+    decoded: DecodedSource = decoded_each_search
 
 
 @dataclass(frozen=True, slots=True)

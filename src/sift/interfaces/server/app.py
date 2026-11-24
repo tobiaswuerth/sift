@@ -23,6 +23,7 @@ from sift.api.errors import InternalError, InvalidRequestError, NotFoundError, P
 from sift.api.events import Event, Noted, Reporter
 from sift.api.ids import CollectionId
 from sift.api.wire import Json, encoded, encoded_error
+from sift.app.kept_decoded import KeptDecoded
 from sift.app.resident import ResidentCodes
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.handled import HANDLED, Handled
@@ -54,6 +55,7 @@ class Serving:
     token: str
     models: "Deferred"
     codes: ResidentCodes
+    decoded: KeptDecoded
     writing: threading.Lock
     pool: ThreadPoolExecutor
     alive_every: float = ALIVE_SECONDS
@@ -67,8 +69,8 @@ def _refused(error: SiftError, status: int) -> JSONResponse:
     return JSONResponse({"error": encoded_error(error)}, status_code=status)
 
 
-def _acting(serving: Serving, report: Callable[[Event], None]) -> Acting:
-    return Acting(serving.settings, report, time.perf_counter, lambda: serving.models, serving.codes)
+def _acting(serving: Serving, report: Reporter) -> Acting:
+    return Acting(serving.settings, report, time.perf_counter, lambda: serving.models, serving.codes, serving.decoded)
 
 
 def _searched(home: Path) -> set[tuple[Path, CollectionId]]:
@@ -97,7 +99,9 @@ def _ran(serving: Serving, name: str, handled: Handled, data: object, lines: "qu
                 answer = handled.run(_acting(serving, report), data)
             finally:
                 if handled.writes:
-                    serving.codes.kept_only(_searched(serving.settings.home))
+                    searched = _searched(serving.settings.home)
+                    serving.codes.kept_only(searched)
+                    serving.decoded.kept_only(searched)
         lines.put(_line({"answer": encoded(answer)}))
         logging.getLogger(LOGGER).info("%s answered in %.2f s", name, time.perf_counter() - started)
     except SiftError as error:

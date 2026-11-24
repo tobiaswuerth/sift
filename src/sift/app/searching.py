@@ -15,7 +15,7 @@ from sift.api.search import MOST_HITS, Left, Options, Unsearched, unsearched
 from sift.app.collections import searchable
 from sift.app.linked import LeftOut, Narrowing, condition_in, narrowing
 from sift.app.loading import unreported
-from sift.app.resident import CodesAt, CodeSource, read_each_time
+from sift.app.resident import CodesAt, CodeSource, DecodedSource, KeywordsAt, decoded_each_search, read_each_time
 from sift.domain.query import fields as shown
 from sift.domain.query.expressions import Expression
 from sift.retrieval.keyword import lists
@@ -23,6 +23,7 @@ from sift.retrieval.keyword.search import Expired, Prepared, never
 from sift.retrieval.vector.nearest import Coded, coded
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading
+from sift.storage.keyword_lists import keyword_generation
 from sift.storage.keywords import refuse_stale
 from sift.storage.passing import Passing
 from sift.storage.store import connected, unavailable_if_unusable
@@ -43,6 +44,7 @@ class Watching:
     report: Reporter = unreported
     clock: Clock = time.perf_counter
     codes: CodeSource = read_each_time
+    decoded: DecodedSource = decoded_each_search
 
 
 WATCHING = Watching()
@@ -83,6 +85,7 @@ class Wants:
     model: str | None = None
     vectors_required: bool = False
     codes: CodeSource = read_each_time
+    decoded: DecodedSource = decoded_each_search
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -220,12 +223,16 @@ def _vectors(model: str, one: Collection, transaction: Reading, wants: Wants) ->
     return replace(no_vectors(), unembedded=left(transaction))
 
 
+def _keywords(one: Collection, transaction: Reading, allowed: Passing | None, decoded: DecodedSource) -> Keywords:
+    refuse_stale(transaction)
+    at = KeywordsAt(one.store, one.id, keyword_generation(transaction))
+    return Keywords(lists.opened(transaction, decoded(at)), allowed)
+
+
 def _held(
     one: Collection, transaction: Reading, allowed: Passing | None, wants: Wants
 ) -> tuple[Keywords | None, Vectors | None]:
-    if wants.keywords:
-        refuse_stale(transaction)
-    keywords = Keywords(lists.opened(transaction), allowed) if wants.keywords else None
+    keywords = _keywords(one, transaction, allowed, wants.decoded) if wants.keywords else None
     if wants.model is None:
         return keywords, None
     return keywords, replace(_vectors(wants.model, one, transaction, wants), allowed=allowed)

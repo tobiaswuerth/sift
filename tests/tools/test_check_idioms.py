@@ -310,3 +310,12 @@ def test_a_store_is_opened_by_hand_in_sift_storage_alone() -> None:
     assert problems("src/sift/app/a.py", source) == [check_idioms.STORE_OPENED_BY_HAND]
     assert problems("src/sift/storage/a.py", source) == []
     assert problems("tests/a.py", source) == []
+
+
+@pytest.mark.parametrize("cut", ["LAYOUT[:-1]", "store.LAYOUT[-1]", "CATALOG_LAYOUT[: -2]", "LAYOUT[-3:]"])
+def test_a_layout_cut_from_its_end_is_found(cut: str) -> None:
+    assert problems("tests/a.py", f"before = {cut}\n") == [check_idioms.LAYOUT_FROM_ITS_END]
+
+
+def test_a_layout_cut_at_a_place_passes() -> None:
+    assert problems("tests/a.py", "before = LAYOUT[:7]\nmade = LAYOUT[5][0]\nlast = steps[-1]\n") == []

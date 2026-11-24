@@ -14,6 +14,7 @@ import uvicorn
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.events import Listening, Reporter
 from sift.api.serving import Served, ServeHome
+from sift.app.kept_decoded import KeptDecoded
 from sift.app.resident import ResidentCodes
 from sift.interfaces.acts.acting import fresh_models
 from sift.interfaces.server.app import ALIVE_SECONDS, Serving, served_app
@@ -74,8 +75,8 @@ def held(
     ):
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version)
-        codes, writing = ResidentCodes(), threading.Lock()
-        serving = Serving(settings, endpoint.token, fresh_models(settings), codes, writing, pool, alive_every)
+        models, codes, decoded = fresh_models(settings), ResidentCodes(), KeptDecoded()
+        serving = Serving(settings, endpoint.token, models, codes, decoded, threading.Lock(), pool, alive_every)
         config = uvicorn.Config(served_app(serving, handled), log_config=None, access_log=False, lifespan="off")
         written(settings.home, endpoint)
         try:

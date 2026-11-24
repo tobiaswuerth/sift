@@ -5,6 +5,7 @@ from functools import partial
 from sift.api.search import Options, SearchResult
 from sift.app import hits
 from sift.app.linked import Narrowing
+from sift.app.resident import DecodedSource, decoded_each_search
 from sift.app.searching import Open, Ranked, Wants, despite_losses, opened
 from sift.domain.query.expressions import NOTHING, Expression
 from sift.domain.rank.best import Best
@@ -63,11 +64,15 @@ def _in_time(expired: Expired) -> bool:
 
 
 def keyword_result(
-    narrowing: Narrowing, request: Options, wanted: Wanted, expression: Expression, looser: Expression | None = None
+    narrowing: Narrowing,
+    request: Options,
+    wanted: Wanted,
+    expressions: tuple[Expression, Expression | None],
+    decoded: DecodedSource = decoded_each_search,
 ) -> SearchResult:
     with ExitStack() as cleanup:
-        stores = opened(cleanup, narrowing, Wants(keywords=True))
-        rank = partial(_ranked, stores, wanted, (expression, looser))
+        stores = opened(cleanup, narrowing, Wants(keywords=True, decoded=decoded))
+        rank = partial(_ranked, stores, wanted, expressions)
         more = partial(_in_time, wanted.expired)
         answered, cut = despite_losses(partial(hits.answered, stores, rank, request, more=more))
         return hits.result(stores, answered, partial=cut)

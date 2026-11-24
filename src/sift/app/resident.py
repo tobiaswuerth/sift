@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 from sift.api.ids import CollectionId
 
 if TYPE_CHECKING:
+    from sift.retrieval.keyword.lists import DecodedLists
     from sift.retrieval.vector.nearest import Coded
 
 
@@ -23,6 +24,21 @@ class CodeSource(Protocol):
 
 def read_each_time(_at: CodesAt, read: Callable[[], "Coded"], /) -> "Coded":
     return read()
+
+
+@dataclass(frozen=True, slots=True)
+class KeywordsAt:
+    store: Path
+    collection: CollectionId
+    generation: int
+
+
+class DecodedSource(Protocol):
+    def __call__(self, at: KeywordsAt, /) -> "DecodedLists | None": ...
+
+
+def decoded_each_search(_at: KeywordsAt, /) -> "DecodedLists | None":
+    return None
 
 
 @dataclass(slots=True, eq=False)

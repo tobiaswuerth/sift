@@ -176,7 +176,10 @@ def query(
     narrowing = searching.narrowed(home, request)
     with ExitStack() as cleanup:
         stores = searching.opened(
-            cleanup, narrowing, Wants(keywords=True, model=models.name, codes=watching.codes), expired
+            cleanup,
+            narrowing,
+            Wants(keywords=True, model=models.name, codes=watching.codes, decoded=watching.decoded),
+            expired,
         )
         answered, cut = _answered(stores, HybridAsked(request, models, asked, expired), watching.report)
         return hits.result(stores, answered, partial=cut)
