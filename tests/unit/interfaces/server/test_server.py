@@ -216,6 +216,16 @@ def test_a_write_sent_while_another_writes_is_told_it_waits_then_runs(settings: 
     assert rest.endswith(b'{"answer": {"url": "written"}}\n')
 
 
+def interrupted(_event: Event) -> None:
+    raise KeyboardInterrupt
+
+
+def test_ctrl_c_as_the_home_process_says_where_it_listens_stops_it_as_at_any_other_time(settings: Settings) -> None:
+    ran = list[HomeServer]()
+    served = serve(settings, ServeHome(port=0), "2.0.0", interrupted, ran.append)
+    assert (ran, served.url.startswith("http://127.0.0.1:"), found(settings.home)) == ([], True, None)
+
+
 def test_serve_says_where_it_listens_serves_and_leaves_nothing_behind(settings: Settings) -> None:
     said, seen = list[Event](), list[Endpoint | None]()
     served = serve(settings, ServeHome(port=0), "2.0.0", said.append, lambda _: seen.append(found(settings.home)))

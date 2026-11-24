@@ -96,8 +96,7 @@ def serve(
     report: Reporter,
     run: Callable[[HomeServer], None] = _served,
 ) -> Served:
-    with held(settings, request, version) as running:
+    with held(settings, request, version) as running, contextlib.suppress(KeyboardInterrupt):
         report(Listening(running.url, str(settings.home)))
-        with contextlib.suppress(KeyboardInterrupt):
-            run(running)
-        return Served(running.url)
+        run(running)
+    return Served(running.url)
