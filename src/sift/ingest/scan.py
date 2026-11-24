@@ -4,14 +4,14 @@ import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Protocol
 
 from sift.domain.plan.ignore import NOTHING_LEFT_OUT, Ignore, left_out
 from sift.domain.plan.indexing import Found, Stat, stored_time
 from sift.domain.text.decoding import encodable
-from sift.domain.text.kinds import kind_of, split_keyed_path
+from sift.domain.text.kinds import kind_of, split_keyed_path, windows_cannot_open
 from sift.ingest.files import CHANGED, ChangedError, Identity, identity_at, own_identity_at
 from sift.ingest.links import LinkTarget, lands_within, link_target
 
@@ -19,6 +19,7 @@ SKIPPED_FOLDERS = frozenset({"node_modules", "__pycache__"})
 GONE = (FileNotFoundError, NotADirectoryError)
 PROGRESS_EVERY = 1000
 HIDDEN_SYSTEM = stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM
+UNOPENABLE = "Windows cannot open a folder whose name ends in a dot or a space: rename it"
 
 
 class DirEntry(Protocol):
@@ -50,6 +51,7 @@ LINK_CHECKS = LinkChecks()
 class Reach:
     follow_links: bool = False
     ignore: Ignore = NOTHING_LEFT_OUT
+    platform: str = sys.platform
 
 
 WITHIN = Reach()
@@ -91,7 +93,7 @@ class _Walk:
     seen: _Seen
     folders: list[tuple[str, str]]
     guard: _Guard | None
-    ignore: Ignore
+    reach: Reach
 
 
 def _reason(error: OSError) -> str:
@@ -167,7 +169,7 @@ def _listed(folder: str, relative: str, listing: Listing, seen: _Seen) -> Iterat
 
 
 def _left_out(walk: _Walk, path: str, *, folder: bool = False) -> bool:
-    found = left_out(walk.ignore, path, folder=folder)
+    found = left_out(walk.reach.ignore, path, folder=folder)
     walk.seen.left_out += found
     return found
 
@@ -184,9 +186,17 @@ def _linked_folder(path: str, walk: _Walk) -> None:
         walk.seen.linked_folders.append(f"{path}/")
 
 
+def _unopenable(path: str, walk: _Walk) -> None:
+    if not _left_out(walk, path, folder=True):
+        walk.seen.unlisted_folders.append(f"{path}/")
+        walk.seen.refusals[f"{path}/"] = UNOPENABLE
+
+
 def _folder(entry: DirEntry, path: str, walk: _Walk) -> None:
     if entry.is_junction():
         _linked_folder(path, walk)
+    elif windows_cannot_open(entry.name, walk.reach.platform):
+        _unopenable(path, walk)
     elif not _left_out(walk, path, folder=True) and _folder_taken(entry):
         walk.folders.append((entry.path, f"{path}/"))
 
@@ -249,6 +259,8 @@ class _PathEntry:
 
 
 def _passed_over(root: Path, folder: str, walk: _Walk) -> bool:
+    if windows_cannot_open(PurePosixPath(folder).name, walk.reach.platform):
+        return True
     entry = _PathEntry(root / folder)
     linked = entry.is_junction() or _links_to_a_folder(entry)
     return linked or _left_out(walk, folder, folder=True) or not _folder_taken(entry)
@@ -256,7 +268,7 @@ def _passed_over(root: Path, folder: str, walk: _Walk) -> bool:
 
 def scan_one(root: Path, relative: str, reach: Reach = WITHIN, *, links: LinkChecks = LINK_CHECKS) -> Scanned:
     seen, guard = _Seen(), None if reach.follow_links else _Guard(root.resolve(), links)
-    walk = _Walk(seen, [], guard, reach.ignore)
+    walk = _Walk(seen, [], guard, reach)
     *folders, _ = relative.split("/")
     within = ["/".join(folders[: at + 1]) for at in range(len(folders))]
     if not any(_passed_over(root, folder, walk) for folder in within):
@@ -274,7 +286,7 @@ def scan(
 ) -> Scanned:
     seen, guard = _Seen(), None if reach.follow_links else _Guard(root.resolve(), links)
     folders, looked_at = [(str(root), "")], 0
-    walk = _Walk(seen, folders, guard, reach.ignore)
+    walk = _Walk(seen, folders, guard, reach)
     while folders:
         folder, relative = folders.pop()
         for entry in _listed(folder, relative, listing, seen):

@@ -7,7 +7,7 @@ import pytest
 from sift.domain.plan.ignore import ignore_of
 from sift.domain.plan.indexing import MOST_TIME, Stat, index_plan
 from sift.ingest.files import Identity
-from sift.ingest.scan import HIDDEN_SYSTEM, Reach, scan
+from sift.ingest.scan import HIDDEN_SYSTEM, UNOPENABLE, Reach, scan, scan_one
 from tests.files import write
 from tests.listings import FAKE, Breaking, Fake, listing, paths
 
@@ -182,3 +182,28 @@ def test_an_entry_of_untold_kind_left_out_as_a_file_alone_is_named_as_a_folder(t
     ignore = ignore_of(["*.md", "!*/"], caseless=False)
     scanned = scan(tmp_path, Reach(ignore=ignore), links=FAKE, listing=listing({str(tmp_path): entries}))
     assert (scanned.found.unlisted_files, scanned.found.unlisted_folders) == ((), ("odd.md/",))
+
+
+def test_a_folder_whose_name_windows_cannot_open_is_named_not_read_there(tmp_path: Path) -> None:
+    root = tmp_path / "notes"
+    (root / "dot").mkdir(parents=True)
+    write(root / "dot" / "same.md", "# The folder without the dot")
+    entries = [Fake("dot.", str(root / "dot."), folder=True), Fake("space ", str(root / "space "), folder=True)]
+    fake = listing({str(root): [*entries, Fake("dot", str(root / "dot"), folder=True)]})
+    on_windows = scan(root, Reach(platform="win32"), links=FAKE, listing=fake)
+    assert (paths(on_windows), on_windows.found.unlisted_folders) == (["dot/same.md"], ("dot./", "space /"))
+    assert on_windows.refusals == {"dot./": UNOPENABLE, "space /": UNOPENABLE}
+    left = scan(root, Reach(ignore=ignore_of(["dot./"], caseless=True), platform="win32"), links=FAKE, listing=fake)
+    assert left.found.unlisted_folders == ("space /",)
+    assert scan_one(root, "dot./same.md", Reach(platform="win32")).found.files == {}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 strips a trailing dot from a name")
+def test_a_folder_whose_name_ends_in_a_dot_is_named_and_its_twin_without_one_read(tmp_path: Path) -> None:
+    root = tmp_path / "notes"
+    for folder, text in (("dot.", "# With the dot"), ("dot", "# Without the dot")):
+        whole = Path(f"\\\\?\\{root / folder}")
+        whole.mkdir(parents=True)
+        (whole / "same.md").write_text(text, encoding="utf-8")
+    scanned = scan(root)
+    assert (paths(scanned), scanned.found.unlisted_folders) == (["dot/same.md"], ("dot./",))

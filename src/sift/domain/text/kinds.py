@@ -31,6 +31,10 @@ KEY_MARK = "#"
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
+def windows_cannot_open(name: str, platform: str) -> bool:
+    return platform == "win32" and name.endswith((".", " "))
+
+
 def kind_of(path: str) -> FileKind | None:
     return KINDS.get(posixpath.splitext(path)[1].lower())
 
