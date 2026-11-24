@@ -1,5 +1,7 @@
 from sift.api.collections import (
     CollectionAdded,
+    CollectionRemoved,
+    CollectionsSwitched,
     CollectionStatus,
     Counted,
     Status,
@@ -25,6 +27,9 @@ SAMPLES: dict[str, Answer] = {
         vault=True,
         follow_links=False,
     ),
+    "rm": CollectionRemoved("diary", "/home/.sift/collections/diary.sqlite", 3, None, ("/s/diary.sqlite-wal",)),
+    "activate": CollectionsSwitched(active=True, changed=("diary",), already=()),
+    "deactivate": CollectionsSwitched(active=False, changed=("diary",), already=("notes",)),
     "status": Status(
         "/home/.sift",
         (

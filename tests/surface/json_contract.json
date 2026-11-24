@@ -7,6 +7,31 @@
     "vault": true,
     "follow_links": false
   },
+  "rm": {
+    "name": "diary",
+    "store": "/home/.sift/collections/diary.sqlite",
+    "documents": 3,
+    "problem": null,
+    "left": [
+      "/s/diary.sqlite-wal"
+    ]
+  },
+  "activate": {
+    "active": true,
+    "changed": [
+      "diary"
+    ],
+    "already": []
+  },
+  "deactivate": {
+    "active": false,
+    "changed": [
+      "diary"
+    ],
+    "already": [
+      "notes"
+    ]
+  },
   "status": {
     "home": "/home/.sift",
     "collections": [

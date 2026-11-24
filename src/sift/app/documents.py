@@ -7,7 +7,7 @@ from sift.api.errors import InvalidRequestError, NotFoundError, Problem, SiftErr
 from sift.domain.query import fields as shown
 from sift.domain.text.kinds import public_id, split_keyed_path
 from sift.domain.text.lines import line_range, refuse_past_end
-from sift.storage.catalog import Collection, known_collections
+from sift.storage.catalog import Collection, known_collections, refuse_inactive
 from sift.storage.database import Reading
 from sift.storage.documents import Stored, fields_of, paths_named, stored
 from sift.storage.store import read_store
@@ -47,7 +47,7 @@ def place(known: Sequence[Collection], id_: str) -> tuple[Collection, str]:
         found = (chosen, relative) if chosen else None
     if found is None or not found[1]:
         raise unknown(id_)
-    return found
+    return refuse_inactive(found[0]), found[1]
 
 
 def resolved_at(transaction: Reading, id_: str, relative: str, *, absolute: bool) -> Stored:

@@ -12,9 +12,21 @@ from sift.api.collections import TitleFrom
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.ids import CollectionId
 from sift.domain.text.records import NO_CHOICE, Chosen
-from sift.storage.database import Reading, Writing, connect, inserted, kept_private, reading, rows, writing
+from sift.storage.database import (
+    Reading,
+    Writing,
+    connect,
+    inserted,
+    kept_private,
+    reading,
+    rows,
+    run,
+    run_each,
+    writing,
+)
 from sift.storage.migrations import Migration, migrated, version
-from sift.storage.store import create_store, delete_store, holds_nothing, left_by_add
+from sift.storage.store import create_store, holds_nothing, left_by_add
+from sift.storage.store_files import delete_store
 
 CATALOG = "catalog.sqlite"
 STORES = "collections"
@@ -33,6 +45,7 @@ LAYOUT: tuple[Migration, ...] = (
     ),
 )
 STORE_TAKEN_REMEDY = "move it away, or choose another place for it"
+INACTIVE_REMEDY = "run sift activate with its name"
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,11 +161,36 @@ def named(known: Sequence[Collection], name: str) -> Collection:
     raise NotFoundError(f"no collection is named {name!r}", remedy, code=Problem.UNKNOWN_COLLECTION)
 
 
+def refuse_inactive(one: Collection) -> Collection:
+    if not one.active:
+        said = f"the collection {one.name!r} is inactive"
+        raise InvalidRequestError(said, INACTIVE_REMEDY, code=Problem.INACTIVE_COLLECTION)
+    return one
+
+
 def known_collections(home: Path) -> tuple[Collection, ...]:
     if not (home / CATALOG).is_file():
         return ()
     with closing(open_catalog(home)) as connection, reading(connection) as transaction:
         return collections(transaction)
+
+
+def forget_collection(home: Path, identity: CollectionId) -> None:
+    with closing(open_catalog(home)) as connection, writing(connection) as transaction:
+        run(transaction, "DELETE FROM collections WHERE id = ?", (identity,))
+
+
+def set_active(home: Path, names: Sequence[str], *, active: bool) -> tuple[Collection, ...]:
+    for name in names:
+        named(known_collections(home), name)
+    with closing(open_catalog(home)) as connection, writing(connection) as transaction:
+        chosen = tuple(dict.fromkeys(named(collections(transaction), name) for name in names))
+        run_each(
+            transaction,
+            "UPDATE collections SET active = ? WHERE id = ?",
+            [(int(active), one.id) for one in chosen],
+        )
+    return chosen
 
 
 def store_path(home: Path, name: str, given: Path | None) -> Path:

@@ -2,8 +2,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from sift.api.described import Help, Place
+from sift.api.described import Bounds, Help, Place
 from sift.api.requests import Request
+
+MOST_NAMED = 1_000
 
 
 class TitleFrom(StrEnum):
@@ -60,6 +62,41 @@ class CollectionAdded:
     title_from: TitleFrom
     vault: bool
     follow_links: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RemoveCollection(Request):
+    name: Annotated[str, Help("the collection to remove, with its store; its files stay where they are")]
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionRemoved:
+    name: str
+    store: str
+    documents: int | None
+    problem: str | None
+    left: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ActivateCollections(Request):
+    names: Annotated[tuple[str, ...], Help("the collections to search again"), Bounds(1, MOST_NAMED)]
+
+
+@dataclass(frozen=True, slots=True)
+class DeactivateCollections(Request):
+    names: Annotated[
+        tuple[str, ...],
+        Help("the collections to leave out of searches, and of index and embed unless named"),
+        Bounds(1, MOST_NAMED),
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionsSwitched:
+    active: bool
+    changed: tuple[str, ...]
+    already: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)

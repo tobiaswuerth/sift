@@ -153,6 +153,20 @@ def plain_run(home: Path, notes: Path) -> None:
     assert len(listed(unresolved, "targets")) == 1
     coloured = sift(home, "index", "notes", "--color", "always")
     assert "\x1b[" in coloured.stderr
+    catalog_run(home)
+
+
+def catalog_run(home: Path) -> None:
+    assert answer(sift(home, "deactivate", "notes", "--json"))["changed"] == ["notes"]
+    refused = sift(home, "search", "learning")
+    assert (refused.returncode, refused.stderr.split("\n")[:2]) == (
+        2,
+        ["error  no collection is active", "  fix  run sift activate with a collection's name"],
+    )
+    assert answer(sift(home, "activate", "notes", "--json"))["changed"] == ["notes"]
+    removed = sift(home, "rm", "notes", "--json")
+    assert (removed.returncode, answer(removed)["documents"]) == (0, 3)
+    assert not list((home / "collections").iterdir())
 
 
 def models_run(home: Path, notes: Path, model: str, reranker: str) -> None:

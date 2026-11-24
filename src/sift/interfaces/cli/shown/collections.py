@@ -1,6 +1,17 @@
 from dataclasses import dataclass
+from types import MappingProxyType
 
-from sift.api.collections import CollectionAdded, CollectionStatus, Counted, Status, TitleFrom, Unavailable
+from sift.api.collections import (
+    CollectionAdded,
+    CollectionRemoved,
+    CollectionsSwitched,
+    CollectionStatus,
+    Counted,
+    Status,
+    TitleFrom,
+    Unavailable,
+)
+from sift.domain.text.wording import counted
 from sift.interfaces.cli.shown.outcome import Shown, empty, fix, next_step
 from sift.interfaces.console.style import Style, Tone
 from sift.interfaces.console.text import labelled, table
@@ -8,6 +19,10 @@ from sift.interfaces.console.units import size
 
 UNREADABLE_HEADER = ("collection", "file", "problem")
 NONE = "-"
+LEFT_REMEDY = "delete it once the program using it has stopped"
+SWITCHED = MappingProxyType(
+    {True: "searched again", False: "left out of searches, and of index and embed unless named"}
+)
 
 
 def added(result: CollectionAdded, platform: str, style: Style) -> Shown:
@@ -24,6 +39,26 @@ def added(result: CollectionAdded, platform: str, style: Style) -> Shown:
             next_step(("sift", "index", result.name), platform, style),
         ),
     )
+
+
+def removed(result: CollectionRemoved, _platform: str, style: Style) -> Shown:
+    held = f" of {counted(result.documents, 'document')}" if result.documents is not None else ""
+    unread = (labelled("store", f"could not be read: {result.problem}"),) if result.problem is not None else ()
+    left = tuple(
+        line
+        for file in result.left
+        for line in (labelled("left", f"{file}: in use, not deleted"), *fix(LEFT_REMEDY, style))
+    )
+    said = f"{result.name}: its store{held} deleted; its files stay where they are"
+    return Shown((), (labelled("gone", said, Tone.DONE, style), *unread, *left))
+
+
+def switched(result: CollectionsSwitched, _platform: str, style: Style) -> Shown:
+    state, label = ("active", "on") if result.active else ("inactive", "off")
+    said = f"{', '.join(result.changed)}: {SWITCHED[result.active]}"
+    changed = (labelled(label, said, Tone.DONE, style),) if result.changed else ()
+    already = (labelled("kept", f"{', '.join(result.already)}: {state} already"),) if result.already else ()
+    return Shown((), (*changed, *already))
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,15 +108,15 @@ def _row(collection: CollectionStatus, columns: _Columns) -> tuple[str, ...]:
     active = (("yes" if collection.active else "no"),) * columns.resting
     match collection.contents:
         case Counted() as held:
-            counted = _counts(held, columns)
+            numbers = _counts(held, columns)
         case _:
-            counted = (NONE,) * (len(_header(columns)) - 2 - len(active))
-    return (collection.name, collection.folder, *counted, *active)
+            numbers = (NONE,) * (len(_header(columns)) - 2 - len(active))
+    return (collection.name, collection.folder, *numbers, *active)
 
 
 def _models(result: Status) -> tuple[str, ...]:
-    counted = [each.contents for each in result.collections if isinstance(each.contents, Counted)]
-    held = sorted({each.model for each in counted if each.model is not None})
+    readable = [each.contents for each in result.collections if isinstance(each.contents, Counted)]
+    held = sorted({each.model for each in readable if each.model is not None})
     return ("", labelled("model", ", ".join(held))) if held else ()
 
 

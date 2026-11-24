@@ -9,7 +9,7 @@ from typing import cast, final
 import pytest
 
 from sift.api.errors import Problem, StoreUnavailableError
-from sift.storage.store import FILE_SUFFIXES, WRITER_SUFFIX
+from sift.storage.store_files import FILE_SUFFIXES, WRITER_SUFFIX
 from sift.storage.writer import LockFile, lock_file, sole_writer
 
 HOLD = (

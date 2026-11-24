@@ -8,6 +8,7 @@ class Problem(StrEnum):
     UNKNOWN_COLLECTION = "unknown_collection"
     UNKNOWN_DOCUMENT = "unknown_document"
     UNKNOWN_NOTE = "unknown_note"
+    INACTIVE_COLLECTION = "inactive_collection"
     STORE_UNAVAILABLE = "store_unavailable"
     STORE_MISSING = "store_missing"
     STORE_DAMAGED = "store_damaged"

@@ -26,6 +26,7 @@ from sift.storage.database import (
 from sift.storage.documents import folded_names
 from sift.storage.keyword_meta import keyword_meta
 from sift.storage.migrations import Migration, migrated, newer, version
+from sift.storage.store_files import delete_store
 from sift.storage.texts import BLOCK, texts_cut
 
 LAYOUT: tuple[Migration, ...] = (
@@ -226,9 +227,6 @@ LAYOUT: tuple[Migration, ...] = (
     ),
 )
 NUMBERED_TABLES = ("documents", "chunks")
-WRITER_SUFFIX = ".writer"
-FILE_SUFFIXES = ("", "-wal", "-shm", WRITER_SUFFIX, f"{WRITER_SUFFIX}-journal")
-DATA_SUFFIXES = ("", "-wal")
 MISSING_REMEDY = "connect the drive it lies on, or remove the collection"
 DAMAGED_REMEDY = "remove the collection, then add its folder and index it again"
 BUSY = ("another sift is writing to the store {path}", "wait for it to finish, then run sift again")
@@ -247,10 +245,6 @@ UNUSABLE: Mapping[int, tuple[str, str]] = MappingProxyType(
         sqlite3.SQLITE_IOERR: ("the store {path} could not be read or written: {error}", "check the drive it lies on"),
     }
 )
-
-
-def _files(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
-    return [file for file in (Path(f"{path}{suffix}") for suffix in suffixes) if file.is_file()]
 
 
 LEFT_BY_ADD = """SELECT (SELECT value FROM meta WHERE key = 'collection') = ?
@@ -276,22 +270,6 @@ def left_by_add(path: Path, collection: CollectionId) -> bool:
     except sqlite3.DatabaseError:
         return False
     return left == 1
-
-
-def delete_store(path: Path) -> None:
-    for file in _files(path, FILE_SUFFIXES):
-        file.unlink()
-
-
-def _size(file: Path) -> int:
-    try:
-        return file.stat().st_size
-    except FileNotFoundError:
-        return 0
-
-
-def stored_bytes(path: Path) -> int:
-    return sum(_size(Path(f"{path}{suffix}")) for suffix in DATA_SUFFIXES)
 
 
 def _made(path: Path, collection: CollectionId, layout: Sequence[Migration], shape: Shape) -> None:

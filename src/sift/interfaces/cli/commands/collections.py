@@ -1,6 +1,17 @@
 from types import MappingProxyType
 
-from sift.api.collections import AddCollection, CollectionAdded, ShowStatus, Status, Unavailable
+from sift.api.collections import (
+    ActivateCollections,
+    AddCollection,
+    CollectionAdded,
+    CollectionRemoved,
+    CollectionsSwitched,
+    DeactivateCollections,
+    RemoveCollection,
+    ShowStatus,
+    Status,
+    Unavailable,
+)
 from sift.api.documents import Documents, GetDocuments
 from sift.app import collections, documents
 from sift.interfaces.cli.commands.making import command, needing_collections
@@ -15,6 +26,18 @@ def _add(context: Context, request: AddCollection) -> CollectionAdded:
 
 def _status(context: Context, request: ShowStatus) -> Status:
     return collections.status(context.settings.home, request)
+
+
+def _remove(context: Context, request: RemoveCollection) -> CollectionRemoved:
+    return collections.remove(context.settings.home, request)
+
+
+def _activate(context: Context, request: ActivateCollections) -> CollectionsSwitched:
+    return collections.activate(context.settings.home, request)
+
+
+def _deactivate(context: Context, request: DeactivateCollections) -> CollectionsSwitched:
+    return collections.deactivate(context.settings.home, request)
 
 
 def _get(context: Context, request: GetDocuments) -> Documents:
@@ -32,6 +55,9 @@ def _some_unfound(found: Documents) -> bool:
 COMMANDS = MappingProxyType(
     {
         "add": command(AddCollection, _add, shown.added),
+        "rm": command(RemoveCollection, _remove, shown.removed),
+        "activate": command(ActivateCollections, _activate, shown.switched),
+        "deactivate": command(DeactivateCollections, _deactivate, shown.switched),
         "status": command(ShowStatus, _status, shown.status, _some_unavailable),
         "get": needing_collections(command(GetDocuments, _get, shown_documents, _some_unfound)),
     }

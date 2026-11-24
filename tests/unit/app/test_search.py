@@ -20,7 +20,8 @@ from sift.app.indexing import index
 from sift.app.search import search
 from sift.retrieval.keyword.search import Tuning
 from sift.storage.keywords import REMAKE_REMEDY, TAKEN_OVER_REMEDY
-from sift.storage.store import DAMAGED_REMEDY, LAYOUT, MISSING_REMEDY, create_store, delete_store
+from sift.storage.store import DAMAGED_REMEDY, LAYOUT, MISSING_REMEDY, create_store
+from sift.storage.store_files import delete_store
 from tests.damage import changed, damage_table
 from tests.files import write
 

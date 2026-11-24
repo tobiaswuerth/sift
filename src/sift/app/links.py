@@ -18,7 +18,7 @@ from sift.api.links import (
     Unresolved,
 )
 from sift.api.search import Unsearched, unsearched
-from sift.app.collections import chosen_or_active
+from sift.app.collections import searchable
 from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, linking, note_of, read_in, unresolved_links
 from sift.domain.text.kinds import public_id
 from sift.domain.text.links import name_key
@@ -159,7 +159,7 @@ def _unresolved(collection: str, transaction: Reading) -> list[tuple[str, list[s
 def unresolved(home: Path, request: ListUnresolved) -> Unresolved:
     found: list[tuple[str, list[str]]] = []
     passed: list[Unsearched] = []
-    for one in chosen_or_active(home, request.collections):
+    for one in searchable(home, request.collections):
         try:
             found += read_in(one, partial(_unresolved, one.name))
         except StoreUnavailableError as error:

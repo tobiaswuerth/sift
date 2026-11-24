@@ -1,0 +1,40 @@
+from collections.abc import Callable
+from pathlib import Path
+
+WRITER_SUFFIX = ".writer"
+FILE_SUFFIXES = ("", "-wal", "-shm", WRITER_SUFFIX, f"{WRITER_SUFFIX}-journal")
+DATA_SUFFIXES = ("", "-wal")
+
+
+def _files(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
+    return [file for file in (Path(f"{path}{suffix}") for suffix in suffixes) if file.is_file()]
+
+
+def delete_store(path: Path) -> None:
+    for file in _files(path, FILE_SUFFIXES):
+        file.unlink()
+
+
+def _unlinked(file: Path) -> None:
+    file.unlink(missing_ok=True)
+
+
+def store_files_left(path: Path, unlink: Callable[[Path], None] = _unlinked) -> tuple[Path, ...]:
+    left: list[Path] = []
+    for file in _files(path, FILE_SUFFIXES):
+        try:
+            unlink(file)
+        except PermissionError:
+            left.append(file)
+    return tuple(left)
+
+
+def _size(file: Path) -> int:
+    try:
+        return file.stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
+def stored_bytes(path: Path) -> int:
+    return sum(_size(Path(f"{path}{suffix}")) for suffix in DATA_SUFFIXES)

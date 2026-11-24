@@ -11,7 +11,7 @@ import numpy as np
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.events import Reporter
 from sift.api.search import MOST_HITS, Left, Options, Unsearched, unsearched
-from sift.app.collections import chosen_or_active
+from sift.app.collections import searchable
 from sift.app.linked import LeftOut, Narrowing, condition_in, narrowing
 from sift.app.loading import unreported
 from sift.domain.query import fields as shown
@@ -178,7 +178,7 @@ def checked_query(query: str, remedy: str) -> None:
 
 
 def narrowed(home: Path, request: Options, left_out: LeftOut | None = None) -> Narrowing:
-    return narrowing(home, request, chosen_or_active(home, request.collections), left_out)
+    return narrowing(home, request, searchable(home, request.collections), left_out)
 
 
 def no_vectors() -> Vectors:

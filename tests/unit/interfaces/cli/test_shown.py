@@ -4,6 +4,8 @@ import json
 
 from sift.api.collections import (
     CollectionAdded,
+    CollectionRemoved,
+    CollectionsSwitched,
     CollectionStatus,
     Counted,
     Status,
@@ -16,7 +18,7 @@ from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUn
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
 from sift.api.search import Hit, Left, SearchResult, Unsearched
-from sift.interfaces.cli.shown.collections import added, status
+from sift.interfaces.cli.shown.collections import added, removed, status, switched
 from sift.interfaces.cli.shown.documents import documents
 from sift.interfaces.cli.shown.indexing import said_as_it_went
 from sift.interfaces.cli.shown.links import links as shown_links
@@ -213,6 +215,29 @@ def test_a_partial_search_says_better_matches_may_be_missing() -> None:
     said = dot.join(("1 result", "keyword", "partial: better matches may be missing", "1 collection", "0.2 s"))
     assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
     assert "partial" not in hits(dataclasses.replace(found, partial=False), 0.25, "linux", PLAIN).messages[0]
+
+
+def test_a_removal_says_what_its_store_held_and_names_the_files_left_in_use() -> None:
+    gone = CollectionRemoved("diary", "/s/diary.sqlite", 1, None)
+    said = " gone  diary: its store of 1 document deleted; its files stay where they are"
+    assert removed(gone, "linux", PLAIN) == Shown((), (said,))
+    unread = CollectionRemoved("diary", "/s/diary.sqlite", None, "it is missing", ("/s/diary.sqlite-wal",))
+    assert removed(unread, "linux", PLAIN).messages == (
+        " gone  diary: its store deleted; its files stay where they are",
+        "store  could not be read: it is missing",
+        " left  /s/diary.sqlite-wal: in use, not deleted",
+        "  fix  delete it once the program using it has stopped",
+    )
+
+
+def test_switching_collections_says_which_changed_and_which_were_so_already() -> None:
+    off = CollectionsSwitched(active=False, changed=("diary", "recipes"), already=("notes",))
+    assert switched(off, "linux", PLAIN).messages == (
+        "  off  diary, recipes: left out of searches, and of index and embed unless named",
+        " kept  notes: inactive already",
+    )
+    on = CollectionsSwitched(active=True, changed=("diary",), already=())
+    assert switched(on, "linux", PLAIN).messages == ("   on  diary: searched again",)
 
 
 def test_what_a_search_left_out_of_a_collection_is_noted_with_its_remedy_before_the_count() -> None:

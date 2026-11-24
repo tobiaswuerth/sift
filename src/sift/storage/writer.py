@@ -8,7 +8,8 @@ from typing import Protocol, cast
 
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.storage.database import PRIVATE_FILE, primary_code, private_folder, require_sqlite, uri
-from sift.storage.store import WRITER_SUFFIX, unavailable_if_unusable
+from sift.storage.store import unavailable_if_unusable
+from sift.storage.store_files import WRITER_SUFFIX
 
 BUSY_REMEDY = "wait until it is done, or stop that process"
 HOLDER = "CREATE TABLE holder(pid INTEGER NOT NULL, purpose TEXT NOT NULL) STRICT"

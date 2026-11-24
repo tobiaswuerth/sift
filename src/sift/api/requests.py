@@ -119,7 +119,12 @@ def _hints(kind: type) -> tuple[tuple[str, object, tuple[Bounds, ...]], ...]:
 
 
 def _bounded(name: str, value: object, bounds: Bounds) -> None:
-    if isinstance(value, int) and not bounds.low <= value <= bounds.high:
+    if isinstance(value, tuple):
+        held = len(cast("tuple[object, ...]", value))
+        if not bounds.low <= held <= bounds.high:
+            said = f"{name} holds {held:,}, not {bounds.low:,} to {bounds.high:,}"
+            raise InvalidRequestError(said, f"give {bounds.low:,} to {bounds.high:,} of them", name)
+    elif isinstance(value, int) and not bounds.low <= value <= bounds.high:
         said = f"{value:,} is outside {bounds.low:,} to {bounds.high:,}"
         raise InvalidRequestError(said, f"give {bounds.low:,} to {bounds.high:,}", name)
 

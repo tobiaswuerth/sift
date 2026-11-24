@@ -10,7 +10,13 @@ from importlib import import_module
 from types import MappingProxyType
 from typing import NoReturn, Protocol, TextIO, cast, override
 
-from sift.api.collections import AddCollection, ShowStatus
+from sift.api.collections import (
+    ActivateCollections,
+    AddCollection,
+    DeactivateCollections,
+    RemoveCollection,
+    ShowStatus,
+)
 from sift.api.documents import GetDocuments
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, SiftError
@@ -53,6 +59,15 @@ class CommandEntry:
 ENTRIES = MappingProxyType(
     {
         "add": CommandEntry("add a folder as a collection", AddCollection, "collections"),
+        "rm": CommandEntry(
+            "remove a collection and its store; its files stay where they are", RemoveCollection, "collections"
+        ),
+        "activate": CommandEntry("search collections deactivated before again", ActivateCollections, "collections"),
+        "deactivate": CommandEntry(
+            "leave collections out of searches, and of index and embed unless named",
+            DeactivateCollections,
+            "collections",
+        ),
         "index": CommandEntry("read what is new or changed in collections", IndexCollections, "indexing"),
         "query": CommandEntry(
             "find passages for a question: keyword and semantic, reranked", SearchHybrid, "searching"

@@ -17,12 +17,11 @@ from sift.storage.store import (
     MISSING_REMEDY,
     connected,
     create_store,
-    delete_store,
     open_store,
     read_store,
-    stored_bytes,
     unavailable_if_unusable,
 )
+from sift.storage.store_files import stored_bytes
 from tests.damage import damage_table
 
 COLLECTION = CollectionId(7)
@@ -134,20 +133,6 @@ def test_a_store_that_could_not_be_made_leaves_no_file(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="collection id"):
         create_store(tmp_path / "s.sqlite", CollectionId(0))
     assert list(tmp_path.iterdir()) == []
-
-
-def test_deleting_a_store_deletes_its_database_log_and_shared_memory(tmp_path: Path) -> None:
-    for name in ("s.sqlite", "s.sqlite-wal", "s.sqlite-shm", "other.sqlite"):
-        (tmp_path / name).write_bytes(b"x")
-    delete_store(tmp_path / "s.sqlite")
-    assert [path.name for path in tmp_path.iterdir()] == ["other.sqlite"]
-
-
-def test_deleting_a_store_that_is_not_there_does_nothing(tmp_path: Path) -> None:
-    (tmp_path / "file").write_bytes(b"x")
-    delete_store(tmp_path / "gone.sqlite")
-    delete_store(tmp_path / "file" / "s.sqlite")
-    assert [path.name for path in tmp_path.iterdir()] == ["file"]
 
 
 def test_the_bytes_a_store_holds_count_its_log_and_not_its_shared_memory(tmp_path: Path) -> None:
