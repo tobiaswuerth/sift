@@ -1,3 +1,4 @@
+import contextlib
 import os
 import sqlite3
 import stat
@@ -92,11 +93,16 @@ def private_file(path: Path) -> None:
     os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, PRIVATE_FILE))
 
 
+def private_file_once(path: Path) -> None:
+    with contextlib.suppress(FileExistsError):
+        private_file(path)
+
+
 def connect(path: Path, *, create: bool, timeout: float = BUSY_TIMEOUT_SECONDS) -> sqlite3.Connection:
     require_sqlite(sqlite3.sqlite_version_info)
     if create:
         private_folder(path.parent)
-        os.close(os.open(path, os.O_CREAT | os.O_WRONLY, PRIVATE_FILE))
+        private_file_once(path)
     elif not path.is_file():
         raise FileNotFoundError(path)
     kept_private(path)

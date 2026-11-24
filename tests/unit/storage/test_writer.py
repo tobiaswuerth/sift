@@ -244,3 +244,27 @@ def test_who_holds_a_fresh_lock_is_asked_while_its_first_writer_makes_it(tmp_pat
         first.execute("BEGIN IMMEDIATE")
         first.execute("CREATE TABLE IF NOT EXISTS holder(pid INTEGER NOT NULL, purpose TEXT NOT NULL) STRICT")
         assert held_by(lock) is None
+
+
+TAKE_AT_ONCE = (
+    "import sqlite3, sys\n"
+    "connection = sqlite3.connect(sys.argv[1], timeout=0, isolation_level=None)\n"
+    "try:\n"
+    "    connection.execute('BEGIN IMMEDIATE')\n"
+    "    print('taken')\n"
+    "except sqlite3.OperationalError as error:\n"
+    "    print(error)\n"
+)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX locks belong to a process and are dropped by any close")
+def test_asking_again_for_a_lock_this_process_holds_leaves_it_held_against_others(tmp_path: Path) -> None:
+    store = tmp_path / "notes.sqlite"
+    lock = Path(f"{store}{WRITER_SUFFIX}")
+    with sole_writer(store, "sift index"):
+        with pytest.raises(StoreUnavailableError, match="another sift writes it now"), sole_writer(store, "sift embed"):
+            pass
+        other = subprocess.run(
+            [sys.executable, "-c", TAKE_AT_ONCE, str(lock)], capture_output=True, text=True, timeout=60, check=True
+        )
+    assert other.stdout == "database is locked\n"

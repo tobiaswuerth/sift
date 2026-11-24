@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from sift.api.errors import Problem, StoreUnavailableError
-from sift.storage.database import PRIVATE_FILE, primary_code, private_folder, require_sqlite, uri
+from sift.storage.database import primary_code, private_file_once, private_folder, require_sqlite, uri
 from sift.storage.store import unavailable_if_unusable
 from sift.storage.store_files import WRITER_SUFFIX
 
@@ -96,7 +96,7 @@ def sole_writer(store: Path, purpose: str, opened: Callable[[Path], LockFile] = 
     require_sqlite(sqlite3.sqlite_version_info)
     path = Path(f"{store}{WRITER_SUFFIX}")
     private_folder(path.parent)
-    os.close(os.open(path, os.O_CREAT | os.O_RDONLY, PRIVATE_FILE))
+    private_file_once(path)
     with closing(opened(path)) as connection:
         with unavailable_if_unusable(path):
             _taken(connection, purpose)
