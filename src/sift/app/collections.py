@@ -7,6 +7,7 @@ from sift.api.collections import (
     ActivateCollections,
     AddCollection,
     CollectionAdded,
+    CollectionChanged,
     CollectionRemoved,
     CollectionsSwitched,
     CollectionStatus,
@@ -20,6 +21,9 @@ from sift.api.collections import (
     UnreadableFile,
 )
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
+from sift.api.events import Reporter
+from sift.app.choosing import changed
+from sift.app.loading import unreported
 from sift.app.notes import unresolved_links
 from sift.domain.text.records import Chosen
 from sift.storage.catalog import (
@@ -28,6 +32,7 @@ from sift.storage.catalog import (
     NewCollection,
     add_collection,
     forget_collection,
+    holding_folder,
     known_collections,
     named,
     open_catalog,
@@ -52,23 +57,27 @@ def _field(name: str | None, field: str) -> str | None:
     return name
 
 
-def add(home: Path, request: AddCollection) -> CollectionAdded:
+def add(home: Path, request: AddCollection, report: Reporter = unreported) -> CollectionAdded | CollectionChanged:
     folder = Path(request.folder)
+    again = holding_folder(home, folder)
+    if again is not None:
+        return changed(home, again, request, report)
     vault = (folder / OBSIDIAN).is_dir()
     title_from = request.title_from or (TitleFrom.NAME if vault else TitleFrom.HEADING)
     records = Chosen(_field(request.id_field, "id_field"), _field(request.title_field, "title_field"))
     records = replace(records, text=tuple(_field(each, "text_fields") or "" for each in request.text_fields))
+    follow_links, agents = request.follow_links is True, request.agents is not False
     new = NewCollection(
         folder,
         request.name,
         Path(request.store) if request.store else None,
         nested=request.nested,
-        choices=Choices(title_from, follow_links=request.follow_links, records=records),
+        choices=Choices(title_from, follow_links=follow_links, records=records, agents=agents),
     )
     with closing(open_catalog(home)) as catalog:
         added = add_collection(catalog, home, new)
     return CollectionAdded(
-        added.name, str(added.folder), str(added.store), title_from, vault, follow_links=request.follow_links
+        added.name, str(added.folder), str(added.store), title_from, vault, follow_links=follow_links, agents=agents
     )
 
 
@@ -137,7 +146,8 @@ def _contents(one: Collection, *, listed: bool) -> Counted | Unavailable:
 
 
 def _status(one: Collection, *, listed: bool) -> CollectionStatus:
-    return CollectionStatus(one.name, str(one.folder), str(one.store), _contents(one, listed=listed), one.active)
+    contents = _contents(one, listed=listed)
+    return CollectionStatus(one.name, str(one.folder), str(one.store), contents, one.active, one.choices.agents)
 
 
 def status(home: Path, request: ShowStatus) -> Status:

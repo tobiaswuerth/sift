@@ -1,5 +1,6 @@
 from sift.api.collections import (
     CollectionAdded,
+    CollectionChanged,
     CollectionRemoved,
     CollectionsSwitched,
     CollectionStatus,
@@ -28,6 +29,9 @@ SAMPLES: dict[str, Answer] = {
         TitleFrom.HEADING,
         vault=True,
         follow_links=False,
+    ),
+    "add again": CollectionChanged(
+        "notes", TitleFrom.NAME, follow_links=True, agents=False, retitled=2, to_embed=1, index_again=True
     ),
     "rm": CollectionRemoved("diary", "/home/.sift/collections/diary.sqlite", 3, None, ("/s/diary.sqlite-wal",)),
     "move": StoresMoved(

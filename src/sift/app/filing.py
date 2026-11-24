@@ -31,6 +31,9 @@ class Limits:
     batches: Batches = BATCHES
 
 
+LIMITS = Limits()
+
+
 @dataclass(frozen=True, slots=True)
 class Tally:
     added: int = 0

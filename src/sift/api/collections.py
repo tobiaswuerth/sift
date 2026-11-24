@@ -13,9 +13,10 @@ class TitleFrom(StrEnum):
     NAME = "name"
 
 
+AGAIN = "; given for a folder that is a collection already, it changes that collection"
 FOLLOW_LINKS = (
     "read the files that are links to outside the folder too, which are left out otherwise: a link may lead to any "
-    "file of this machine"
+    f"file of this machine{AGAIN}"
 )
 ID_FIELD = (
     "JSON Lines: the field holding each record's id, a text or a whole number (default: id or _id, else the "
@@ -26,9 +27,10 @@ TEXT_FIELDS = (
     "JSON Lines: the fields whose text a record's document holds, comma-separated "
     "(default: text, content, body, abstract, description or summary, else the longest string)"
 )
+AGENTS = f"let agents see it through sift's tools for them (default: yes){AGAIN}"
 TITLE_FROM = (
     "a note's title, unless its front matter sets one: its first heading, or its file name as Obsidian does "
-    "(default: file names in an Obsidian vault, else headings)"
+    f"(default: file names in an Obsidian vault, else headings){AGAIN}"
 )
 
 
@@ -48,7 +50,8 @@ class AddCollection(Request):
         bool,
         Help("add a folder inside a collection, or one that holds a collection, though their files are indexed twice"),
     ] = False
-    follow_links: Annotated[bool, Help(FOLLOW_LINKS)] = False
+    follow_links: Annotated[bool | None, Help(FOLLOW_LINKS)] = None
+    agents: Annotated[bool | None, Help(AGENTS)] = None
     id_field: Annotated[str | None, Help(ID_FIELD)] = None
     title_field: Annotated[str | None, Help(TITLE_FIELD)] = None
     text_fields: Annotated[tuple[str, ...], Help(TEXT_FIELDS)] = ()
@@ -62,6 +65,20 @@ class CollectionAdded:
     title_from: TitleFrom
     vault: bool
     follow_links: bool
+    agents: bool = True
+    state: Literal["added"] = "added"
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionChanged:
+    name: str
+    title_from: TitleFrom
+    follow_links: bool
+    agents: bool
+    retitled: int
+    to_embed: int
+    index_again: bool = False
+    state: Literal["changed"] = "changed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +178,7 @@ class CollectionStatus:
     store: str
     contents: Counted | Unavailable
     active: bool = True
+    agents: bool = True
 
 
 @dataclass(frozen=True, slots=True)

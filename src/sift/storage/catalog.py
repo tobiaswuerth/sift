@@ -53,6 +53,7 @@ class Choices:
     title_from: TitleFrom = TitleFrom.HEADING
     follow_links: bool = False
     records: Chosen = NO_CHOICE
+    agents: bool = True
 
 
 DEFAULT_CHOICES = Choices()
@@ -80,7 +81,8 @@ class CollectionRow(NamedTuple):
 def choices_json(choices: Choices) -> str:
     records = choices.records
     chosen = {"id_field": records.id, "title_field": records.title, "text_fields": list(records.text)}
-    return json.dumps({"title_from": choices.title_from.value, "follow_links": choices.follow_links, **chosen})
+    flags = {"follow_links": choices.follow_links, "agents": choices.agents}
+    return json.dumps({"title_from": choices.title_from.value, **flags, **chosen})
 
 
 def _named(value: object, key: str) -> str | None:
@@ -96,9 +98,9 @@ def _names(value: object) -> tuple[str, ...]:
     return tuple(each for each in held if isinstance(each, str))
 
 
-def _flag(value: object) -> bool:
+def _flag(value: object, key: str) -> bool:
     if not isinstance(value, bool):
-        raise TypeError("follow_links is neither true nor false")
+        raise TypeError(f"{key} is neither true nor false")
     return value
 
 
@@ -114,8 +116,9 @@ def choices_of(written: str) -> Choices:
     )
     return Choices(
         title_from=TitleFrom(document.get("title_from", TitleFrom.HEADING.value)),
-        follow_links=_flag(document.get("follow_links", False)),
+        follow_links=_flag(document.get("follow_links", False), "follow_links"),
         records=records,
+        agents=_flag(document.get("agents", True), "agents"),
     )
 
 
@@ -178,6 +181,16 @@ def known_collections(home: Path) -> tuple[Collection, ...]:
 def forget_collection(home: Path, identity: CollectionId) -> None:
     with closing(open_catalog(home)) as connection, writing(connection) as transaction:
         run(transaction, "DELETE FROM collections WHERE id = ?", (identity,))
+
+
+def set_choices(home: Path, identity: CollectionId, choices: Choices) -> None:
+    with closing(open_catalog(home)) as connection, writing(connection) as transaction:
+        run(transaction, "UPDATE collections SET choices = ? WHERE id = ?", (choices_json(choices), identity))
+
+
+def holding_folder(home: Path, folder: Path) -> Collection | None:
+    wanted = _same(folder.resolve())
+    return next((one for one in known_collections(home) if _same(one.folder) == wanted), None)
 
 
 def set_store(home: Path, identity: CollectionId, store: Path) -> None:

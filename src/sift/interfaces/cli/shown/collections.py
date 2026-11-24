@@ -3,6 +3,7 @@ from types import MappingProxyType
 
 from sift.api.collections import (
     CollectionAdded,
+    CollectionChanged,
     CollectionRemoved,
     CollectionsSwitched,
     CollectionStatus,
@@ -22,15 +23,37 @@ UNREADABLE_HEADER = ("collection", "file", "problem")
 NONE = "-"
 LEFT_REMEDY = "delete it once the program using it has stopped"
 COPIED = ", copied: it lay on another drive"
+TITLES = MappingProxyType({TitleFrom.HEADING: "headings", TitleFrom.NAME: "file names"})
 SWITCHED = MappingProxyType(
     {True: "searched again", False: "left out of searches, and of index and embed unless named"}
 )
 
 
-def added(result: CollectionAdded, platform: str, style: Style) -> Shown:
+def _changed(result: CollectionChanged, platform: str, style: Style) -> Shown:
+    titled = f"from {TITLES[result.title_from]}: {counted(result.retitled, 'title')} changed"
+    linked = "read" if result.follow_links else "left out"
+    lines = (
+        labelled("title", f"{result.name}: {titled}", Tone.DONE, style),
+        labelled("links", f"{result.name}: files linked from outside the folder {linked}"),
+        labelled("agent", f"{result.name}: {'seen by agents' if result.agents else 'hidden from agents'}"),
+    )
+    embed = (
+        (labelled("embed", f"{counted(result.to_embed, 'passage')} to embed again, which carry their title"),)
+        if result.to_embed
+        else ()
+    )
+    steps = [("sift", "index", result.name)] if result.index_again else []
+    steps += [("sift", "embed", result.name)] if result.to_embed else []
+    return Shown((), (*lines, *embed, *(next_step(words, platform, style) for words in steps)))
+
+
+def added(result: CollectionAdded | CollectionChanged, platform: str, style: Style) -> Shown:
+    if isinstance(result, CollectionChanged):
+        return _changed(result, platform, style)
     vault = ", as in an Obsidian vault" if result.vault else ""
     titles = (labelled("title", f"from file names{vault}"),) if result.title_from is TitleFrom.NAME else ()
     links = (labelled("links", "followed out of the folder"),) if result.follow_links else ()
+    hidden = () if result.agents else (labelled("agent", "hidden from agents"),)
     return Shown(
         (),
         (
@@ -38,6 +61,7 @@ def added(result: CollectionAdded, platform: str, style: Style) -> Shown:
             labelled("store", result.store),
             *titles,
             *links,
+            *hidden,
             next_step(("sift", "index", result.name), platform, style),
         ),
     )

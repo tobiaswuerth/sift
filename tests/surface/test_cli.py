@@ -86,6 +86,8 @@ def test_status_and_add_answer_in_json_when_asked(settings: Settings, notes: Pat
         "title_from": "name",
         "vault": False,
         "follow_links": False,
+        "agents": True,
+        "state": "added",
     }
     code, out, err = ran(settings, "status", "--json")
     assert (code, err) == (0, "")
@@ -110,6 +112,7 @@ def test_status_and_add_answer_in_json_when_asked(settings: Settings, notes: Pat
                     "state": "counted",
                 },
                 "active": True,
+                "agents": True,
             }
         ],
     }

@@ -16,8 +16,8 @@ from sift.api.ids import CollectionId
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import add, status
 from sift.app.documents import documents
-from sift.app.filing import Limits, Readers
-from sift.app.indexing import FOLDER_MISSING_REMEDY, LIMITS, OUT_OF_REACH_REMEDY, index
+from sift.app.filing import LIMITS, Limits, Readers
+from sift.app.indexing import FOLDER_MISSING_REMEDY, OUT_OF_REACH_REMEDY, index
 from sift.app.problems import EMPTY_INSIDE, EMPTY_INSIDE_REMEDY, LEFT_AS_INDEXED
 from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows

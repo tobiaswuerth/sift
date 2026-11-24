@@ -51,6 +51,24 @@ def test_a_choice_may_be_given_by_its_place() -> None:
     assert parsed(Picked, ["name"]) == Picked(TitleFrom.NAME)
 
 
+@dataclass(frozen=True, slots=True)
+class Toggled:
+    folder: Annotated[str, Help("a folder")]
+    follow: Annotated[bool | None, Help("follow its links")] = None
+
+
+@dataclass(frozen=True, slots=True)
+class ToggledOn:
+    follow: Annotated[bool | None, Help("follow its links")] = False
+
+
+def test_a_yes_or_no_that_may_be_left_out_is_given_by_its_name_or_its_name_with_no() -> None:
+    assert parsed(Toggled, ["x"]) == Toggled("x")
+    assert parsed(Toggled, ["x", "--follow"]) == Toggled("x", follow=True)
+    assert parsed(Toggled, ["x", "--no-follow"]) == Toggled("x", follow=False)
+    assert flags(Toggled) == {"folder": "folder", "follow": "--follow"}
+
+
 def test_a_choice_not_offered_is_refused_with_the_choices_there_are() -> None:
     with pytest.raises(UsageError, match=r"invalid choice: 'title' \(choose from '?heading'?, '?name'?\)"):
         parsed(AddCollection, ["notes", "--title-from", "title"])
@@ -61,12 +79,14 @@ def test_each_argument_says_what_it_is_for() -> None:
     options(parser, AddCollection, whole)
     shown = " ".join(parser.format_help().split())
     usage = (
-        "sift add [-h] [--name NAME] [--store STORE] [--title-from {heading,name}] [--nested] [--follow-links]"
+        "sift add [-h] [--name NAME] [--store STORE] [--title-from {heading,name}] [--nested]"
+        " [--follow-links | --no-follow-links] [--agents | --no-agents]"
         " [--id-field ID_FIELD] [--title-field TITLE_FIELD] [--text-fields TEXT_FIELDS] folder"
     )
     assert usage in shown
     assert "folder the folder whose files the collection holds" in shown
     assert "--nested add a folder inside a collection" in shown
+    assert "it changes that collection" in shown
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +164,7 @@ def test_a_list_read_by_a_function_is_an_option_given_as_often_as_wanted() -> No
         (ShortPosition, "ShortPosition.k: only an option given by name has a short flag"),
         (Undescribed, "Undescribed.name: no Help"),
         (OnByDefault, "OnByDefault.loud: a switch is off by default"),
+        (ToggledOn, "ToggledOn.follow: a yes or no that may be left out has no default but None"),
         (OptionalWithAValue, "OptionalWithAValue.name: an option that may be left out has no default but None"),
         (ReadAlone, "ReadAlone.filters: only a list is read by a function"),
         (ReadFilled, r"ReadFilled.fields: a list read by a function has no default but \(\)"),

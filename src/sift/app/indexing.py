@@ -7,7 +7,7 @@ from sift.api.errors import StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import chosen_or_active
-from sift.app.filing import READERS, Job, Limits, Readers, Tally, too_large_to_describe
+from sift.app.filing import LIMITS, READERS, Job, Limits, Readers, Tally, too_large_to_describe
 from sift.app.problems import problems
 from sift.app.records import stored_records
 from sift.app.scans import ScanModel, ScanRun, ScansRead, scans_read
@@ -47,9 +47,6 @@ FOLDER_MISSING_REMEDY = "connect the drive it lies on"
 OUT_OF_REACH_REMEDY = "see that its folder and its store can be read, then index it again"
 IGNORE_REMEDY = f"make its {IGNORE_FILE} a file sift can read, or remove it, then index it again"
 PROBLEMS_APART = "; "
-
-
-LIMITS = Limits()
 
 
 def _described(read: FileRead, limits: Limits) -> FileRead:

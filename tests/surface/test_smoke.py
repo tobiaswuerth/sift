@@ -13,7 +13,7 @@ from tests.surface import process
 from tests.tiny_model import tiny_model, tiny_reranker
 
 RAN: list[tuple[str, ...]] = []
-FLAGGED = (How.OPTION, How.SWITCH, How.READ)
+FLAGGED = (How.OPTION, How.SWITCH, How.TOGGLE, How.READ)
 LISTED = (How.ANY, How.SOME)
 
 
@@ -153,10 +153,14 @@ def plain_run(home: Path, notes: Path) -> None:
     assert len(listed(unresolved, "targets")) == 1
     coloured = sift(home, "index", "notes", "--color", "always")
     assert "\x1b[" in coloured.stderr
-    catalog_run(home)
+    catalog_run(home, notes)
 
 
-def catalog_run(home: Path) -> None:
+def catalog_run(home: Path, notes: Path) -> None:
+    again = sift(home, "add", str(notes), "--title-from", "name", "--no-agents", "--no-follow-links", "--json")
+    assert (again.returncode, answer(again)["state"], answer(again)["retitled"]) == (0, "changed", 2)
+    seen = sift(home, "add", str(notes), "--agents")
+    assert (seen.returncode, "agent  notes: seen by agents" in seen.stderr) == (0, True)
     assert answer(sift(home, "deactivate", "notes", "--json"))["changed"] == ["notes"]
     refused = sift(home, "search", "learning")
     assert (refused.returncode, refused.stderr.split("\n")[:2]) == (

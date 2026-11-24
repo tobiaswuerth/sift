@@ -5,7 +5,19 @@
     "store": "/home/.sift/collections/notes.sqlite",
     "title_from": "heading",
     "vault": true,
-    "follow_links": false
+    "follow_links": false,
+    "agents": true,
+    "state": "added"
+  },
+  "add again": {
+    "name": "notes",
+    "title_from": "name",
+    "follow_links": true,
+    "agents": false,
+    "retitled": 2,
+    "to_embed": 1,
+    "index_again": true,
+    "state": "changed"
   },
   "rm": {
     "name": "diary",
@@ -75,7 +87,8 @@
           ],
           "state": "counted"
         },
-        "active": true
+        "active": true,
+        "agents": true
       },
       {
         "name": "papers",
@@ -86,7 +99,8 @@
           "remedy": "add it",
           "state": "unavailable"
         },
-        "active": false
+        "active": false,
+        "agents": true
       }
     ]
   },

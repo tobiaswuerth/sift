@@ -17,9 +17,10 @@ UNITS = MappingProxyType(
         Phase.LOAD: ("model", "models"),
         Phase.ORDER: ("chunk", "chunks"),
         Phase.COPY: ("MB", "MB"),
+        Phase.TITLE: ("note", "notes"),
     }
 )
-RATED = frozenset({Phase.REMAKE, Phase.READ, Phase.MERGE, Phase.EMBED, Phase.COPY})
+RATED = frozenset({Phase.REMAKE, Phase.READ, Phase.MERGE, Phase.EMBED, Phase.COPY, Phase.TITLE})
 INDENT = "  "
 LABEL = 6
 COUNT = 10

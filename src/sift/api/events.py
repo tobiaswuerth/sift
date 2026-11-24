@@ -12,6 +12,7 @@ class Phase(StrEnum):
     LOAD = "load"
     ORDER = "order"
     COPY = "copy"
+    TITLE = "title"
 
 
 @dataclass(frozen=True, slots=True)

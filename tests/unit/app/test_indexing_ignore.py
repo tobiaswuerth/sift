@@ -9,7 +9,8 @@ from sift.api.events import Event, Noted
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import add
 from sift.app.documents import documents
-from sift.app.indexing import IGNORE_REMEDY, LIMITS, index
+from sift.app.filing import LIMITS
+from sift.app.indexing import IGNORE_REMEDY, index
 from sift.app.problems import LEFT_AS_INDEXED
 from sift.ingest.ignore import IGNORE_FILE
 from tests.files import write

@@ -4,6 +4,7 @@ import json
 
 from sift.api.collections import (
     CollectionAdded,
+    CollectionChanged,
     CollectionRemoved,
     CollectionsSwitched,
     CollectionStatus,
@@ -217,6 +218,22 @@ def test_a_partial_search_says_better_matches_may_be_missing() -> None:
     said = dot.join(("1 result", "keyword", "partial: better matches may be missing", "1 collection", "0.2 s"))
     assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
     assert "partial" not in hits(dataclasses.replace(found, partial=False), 0.25, "linux", PLAIN).messages[0]
+
+
+def test_a_collection_changed_says_its_choices_now_and_what_to_run_next() -> None:
+    changed = CollectionChanged(
+        "notes", TitleFrom.NAME, follow_links=True, agents=False, retitled=2, to_embed=1, index_again=True
+    )
+    assert added(changed, "linux", PLAIN).messages == (
+        "title  notes: from file names: 2 titles changed",
+        "links  notes: files linked from outside the folder read",
+        "agent  notes: hidden from agents",
+        "embed  1 passage to embed again, which carry their title",
+        " next  sift index notes",
+        " next  sift embed notes",
+    )
+    plain = CollectionChanged("notes", TitleFrom.HEADING, follow_links=False, agents=True, retitled=0, to_embed=0)
+    assert added(plain, "linux", PLAIN).messages[-1] == "agent  notes: seen by agents"
 
 
 def test_a_removal_says_what_its_store_held_and_names_the_files_left_in_use() -> None:

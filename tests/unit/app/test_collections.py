@@ -38,6 +38,12 @@ def home(tmp_path: Path) -> Path:
     return tmp_path / "home"
 
 
+def new(home: Path, request: AddCollection) -> CollectionAdded:
+    added = add(home, request)
+    assert isinstance(added, CollectionAdded)
+    return added
+
+
 def folder(tmp_path: Path, name: str) -> Path:
     path = tmp_path / name
     path.mkdir(parents=True)
@@ -63,7 +69,7 @@ def test_the_name_place_and_titles_chosen_are_kept(tmp_path: Path, home: Path) -
         store=str(tmp_path / "stores"),
         title_from=TitleFrom.NAME,
     )
-    added = add(home, request)
+    added = new(home, request)
     assert (added.name, added.store, added.title_from) == (
         "mine",
         str((tmp_path / "stores" / "mine.sqlite").resolve()),
@@ -76,7 +82,7 @@ def test_an_obsidian_vault_is_titled_by_file_names_unless_told_otherwise(tmp_pat
     for each in (vault, other):
         (each / ".obsidian").mkdir()
     assert add(home, AddCollection(str(vault))).title_from is TitleFrom.NAME
-    chosen = add(home, AddCollection(str(other), title_from=TitleFrom.HEADING))
+    chosen = new(home, AddCollection(str(other), title_from=TitleFrom.HEADING))
     assert (chosen.title_from, chosen.vault) == (TitleFrom.HEADING, True)
 
 
@@ -95,7 +101,7 @@ def test_status_without_a_catalog_is_empty_and_makes_none(home: Path) -> None:
 
 
 def test_status_counts_what_each_store_holds(tmp_path: Path, home: Path) -> None:
-    papers = add(home, AddCollection(str(folder(tmp_path, "papers"))))
+    papers = new(home, AddCollection(str(folder(tmp_path, "papers"))))
     add(home, AddCollection(str(folder(tmp_path, "Notes"))))
     store = Path(papers.store)
     with (
@@ -163,7 +169,7 @@ def test_status_of_a_store_damaged_where_it_is_read_says_so_and_shows_the_others
 
 
 def test_status_says_why_a_store_cannot_be_read(tmp_path: Path, home: Path) -> None:
-    added = add(home, AddCollection(str(folder(tmp_path, "notes"))))
+    added = new(home, AddCollection(str(folder(tmp_path, "notes"))))
     Path(added.store).unlink()
     (only,) = status(home, ShowStatus()).collections
     assert only.contents == Unavailable(f"the store is missing: {added.store}", MISSING_REMEDY)

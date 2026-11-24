@@ -22,6 +22,7 @@ class How(Enum):
     POSITION = "position"
     OPTION = "option"
     SWITCH = "switch"
+    TOGGLE = "toggle"
     READ = "read"
     ANY = "*"
     SOME = "+"
@@ -105,6 +106,10 @@ def _how(request: type[object], name: str, described: Described, default: object
         if default is not False:
             raise _refused(request, name, "a switch is off by default")
         return How.SWITCH
+    if _left_out(kind) is bool:
+        if default is not None:
+            raise _refused(request, name, "a yes or no that may be left out has no default but None")
+        return How.TOGGLE
     if _many(kind):
         if not absent and default != ():
             raise _refused(request, name, "a list given by place has no default but ()")
@@ -121,7 +126,7 @@ def _argument(request: type[object], field: dataclasses.Field[object], hint: obj
     kind, default = described.kind, field.default
     how = _how(request, field.name, described, default)
     taken = (_left_out(kind) or kind) if how is How.OPTION else str if how in (How.ANY, How.SOME, How.READ) else kind
-    if how is not How.SWITCH and taken not in PLAIN_KINDS and choices_of(taken) is None:
+    if how not in (How.SWITCH, How.TOGGLE) and taken not in PLAIN_KINDS and choices_of(taken) is None:
         raise _refused(request, field.name, f"the command line takes no {type_name(kind)}")
     if described.flag.short is not None and how not in (How.OPTION, How.READ):
         raise _refused(request, field.name, "only an option given by name has a short flag")
@@ -163,6 +168,10 @@ def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placing) ->
     choices = choices_of(argument.kind)
     if argument.how is How.SWITCH:
         parser.add_argument(*named, action="store_true", help=argument.help)
+    elif argument.how is How.TOGGLE:
+        parser.add_argument(
+            *named, dest=argument.name, action=argparse.BooleanOptionalAction, default=None, help=argument.help
+        )
     elif argument.how is How.READ:
         parser.add_argument(*named, dest=argument.name, action="append", help=argument.help)
     elif argument.how in (How.ANY, How.SOME):
@@ -189,7 +198,7 @@ def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placing) ->
 def flags(request: type[object]) -> dict[str, str]:
     return {
         argument.name: argument.flag.long or argument.flag.short or argument.name
-        if argument.how in (How.OPTION, How.SWITCH, How.READ)
+        if argument.how in (How.OPTION, How.SWITCH, How.TOGGLE, How.READ)
         else argument.name
         for argument in arguments(request)
     }

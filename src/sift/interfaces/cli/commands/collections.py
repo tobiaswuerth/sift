@@ -4,6 +4,7 @@ from sift.api.collections import (
     ActivateCollections,
     AddCollection,
     CollectionAdded,
+    CollectionChanged,
     CollectionRemoved,
     CollectionsSwitched,
     DeactivateCollections,
@@ -22,8 +23,8 @@ from sift.interfaces.cli.shown import collections as shown
 from sift.interfaces.cli.shown.documents import documents as shown_documents
 
 
-def _add(context: Context, request: AddCollection) -> CollectionAdded:
-    return collections.add(context.settings.home, request)
+def _add(context: Context, request: AddCollection) -> CollectionAdded | CollectionChanged:
+    return collections.add(context.settings.home, request, context.report)
 
 
 def _status(context: Context, request: ShowStatus) -> Status:

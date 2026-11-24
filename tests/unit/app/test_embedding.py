@@ -20,6 +20,7 @@ from sift.storage.catalog import CATALOG
 from sift.storage.vectors import EMBED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
+from tests.homes import indexed_home
 from tests.later import LATER
 from tests.models import BROKEN, Hashed
 
@@ -42,10 +43,7 @@ def notes(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def home(tmp_path: Path, notes: Path) -> Path:
-    home = tmp_path / "home"
-    add(home, AddCollection(str(notes)))
-    index(home, IndexCollections(), lambda _: None)
-    return home
+    return indexed_home(tmp_path, notes)
 
 
 def store(home: Path, name: str = "notes") -> Path:
