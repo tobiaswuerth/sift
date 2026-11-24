@@ -22,7 +22,7 @@ from sift.storage.store import read_store
 from sift.storage.vectors import left
 from tests.files import write
 from tests.homes import text_of, unreadable_files
-from tests.later import LATER, later
+from tests.later import LATER, later, reading
 from tests.mails import sample
 from tests.models import Hashed
 
@@ -78,7 +78,7 @@ def test_a_document_grown_too_large_after_the_scan_is_read_no_further_than_the_l
         asked.append(most)
         return b"x" * (most + 1)
 
-    assert indexed(home, readers=Readers(whole=grown, clock=later)).unreadable == 1
+    assert indexed(home, readers=Readers(files=reading(whole=grown), clock=later)).unreadable == 1
     assert asked == [2000]
     assert [each.problem for each in unreadable_files(home)] == [f"2,001 bytes: {TOO_LARGE}"]
 

@@ -6,12 +6,11 @@ from pathlib import Path
 
 from sift.api.events import Reporter
 from sift.domain.plan.indexing import MOST_FILE_BYTES
-from sift.domain.text.documents import Convert
 from sift.domain.text.notes import Document
 from sift.domain.text.records import MOST_RECORD_CHARACTERS, SkippedLine
-from sift.ingest.documents import convert
-from sift.ingest.files import Identity, at_most, pieces_of
+from sift.ingest.files import Identity, pieces_of
 from sift.ingest.records import lines_of
+from sift.ingest.sandbox import OpenReading, sandboxed
 from sift.storage.catalog import Collection
 from sift.storage.database import BATCHES, Batches, Connection
 from sift.storage.documents import MOST_DESCRIPTION_BYTES, description_bytes
@@ -38,29 +37,21 @@ class Tally:
         return Tally(self.added + other.added, self.changed + other.changed, self.removed + other.removed)
 
 
-@dataclass(frozen=True, slots=True)
-class Refused:
-    problem: str
-    read_again: bool
-
-
 def too_large_to_describe(document: Document, most: int) -> str | None:
     size = description_bytes(document)
     return f"{size:,} bytes of name, title and fields, more than the {most:,} a document holds" if size > most else None
 
 
 type Lines = Callable[[Path, int, Identity | None], Iterator[tuple[int, str | SkippedLine]]]
-type ReadWhole = Callable[[Path, int, Identity | None], bytes]
 type ReadPieces = Callable[[Path, Identity | None], AbstractContextManager[Iterable[bytes]]]
 
 
 @dataclass(frozen=True, slots=True)
 class Readers:
     lines: Lines = lines_of
-    whole: ReadWhole = at_most
     pieces: ReadPieces = pieces_of
     clock: Callable[[], int] = time.time_ns
-    convert: Convert = convert
+    files: OpenReading = sandboxed
 
 
 READERS = Readers()

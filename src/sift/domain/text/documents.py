@@ -29,8 +29,19 @@ class FileRead:
     problems: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class Refused:
+    problem: str
+    read_again: bool
+
+
 type Conversion = Converted | Unread
 type Convert = Callable[[bytes, str], Conversion]
+type Outcome = FileRead | Refused
+
+
+def too_large(size: int, most: int) -> Refused:
+    return Refused(f"{size:,} bytes: sift reads documents of at most {most:,} bytes; split the file", read_again=False)
 
 
 def document(raw: bytes, name: str, conversion: Conversion) -> Document | Unread:

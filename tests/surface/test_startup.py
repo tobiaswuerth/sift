@@ -10,10 +10,12 @@ from sift.interfaces.cli.main import ENTRIES, command_of, main
 from sift.settings import Settings
 from tests.surface.commands import indexed_notes, ran
 
+MAIN_AGAIN = "__mp_main__"
 LOADED = (
     "import sys; before = set(sys.modules); from sift.interfaces.cli.main import run; "
     "from sift.settings import from_environment; run(sys.argv[1:], from_environment(), None, None); "
-    "print(sorted({name.split('.')[0] for name in set(sys.modules) - before} - set(sys.stdlib_module_names)))"
+    "print(sorted({name.split('.')[0] for name in set(sys.modules) - before} "
+    f"- set(sys.stdlib_module_names) - {{{MAIN_AGAIN!r}}}))"
 )
 
 

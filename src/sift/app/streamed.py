@@ -2,9 +2,10 @@ import hashlib
 import posixpath
 from collections.abc import Iterable, Iterator
 
-from sift.app.filing import Job, Refused, Tally
+from sift.app.filing import Job, Tally
 from sift.domain.plan.indexing import Stat
 from sift.domain.text.decoding import text_pieces
+from sift.domain.text.documents import Refused
 from sift.domain.text.notes import DIGEST_BYTES, read_note
 from sift.ingest.files import Identity
 from sift.storage.database import WritingDocuments, back_to_save_point, past_save_point, save_point

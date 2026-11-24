@@ -25,7 +25,7 @@ from sift.storage.vectors import left
 from tests.files import write
 from tests.homes import text_of, unreadable_files
 from tests.keyword_stores import vectors_by_text
-from tests.later import later
+from tests.later import later, reading
 from tests.mails import PARAGRAPH, mail_bytes, message, nested_parts, only, sample
 from tests.models import Hashed
 
@@ -105,7 +105,7 @@ def test_a_damaged_document_is_listed_not_read_again_until_it_changes_then_read(
         converted.append(name)
         return convert(raw, name)
 
-    assert indexed(library, readers=Readers(clock=later, convert=counted)).unreadable == 1
+    assert indexed(library, readers=Readers(clock=later, files=reading(converting=counted))).unreadable == 1
     assert converted == []
     shutil.copy(sample(".pdf"), root / "broken.pdf")
     assert indexed(library) == Indexed(files=4, added=1, changed=0, removed=0, unreadable=0)
@@ -119,7 +119,7 @@ def test_a_document_that_stops_converting_loses_its_document(library: Path) -> N
         return Unread("the converter failed: index out of bounds")
 
     (library.parent / "library" / "pigments.pdf").touch()
-    assert indexed(library, readers=Readers(clock=later, convert=failing)).removed == 1
+    assert indexed(library, readers=Readers(clock=later, files=reading(converting=failing))).removed == 1
     assert unreadable_files(library) == (UnreadableFile("pigments.pdf", "the converter failed: index out of bounds"),)
 
 
@@ -127,7 +127,7 @@ def test_a_document_that_cannot_be_read_is_read_again_at_the_next_index(library:
     def locked(_path: Path, _most: int, _scanned: Identity | None) -> bytes:
         raise PermissionError(13, "Permission denied")
 
-    assert indexed(library, readers=Readers(whole=locked, clock=later)).unreadable == 3
+    assert indexed(library, readers=Readers(files=reading(whole=locked), clock=later)).unreadable == 3
     assert {each.problem for each in unreadable_files(library)} == {"Permission denied"}
     assert indexed(library) == Indexed(files=3, added=3, changed=0, removed=0, unreadable=0)
 
@@ -146,7 +146,7 @@ def long_titled_pdf(_raw: bytes, name: str) -> Conversion:
 
 
 def test_a_document_whose_title_and_fields_take_more_than_a_document_holds_is_left_out(library: Path) -> None:
-    readers = Readers(clock=later, convert=long_titled_pdf)
+    readers = Readers(clock=later, files=reading(converting=long_titled_pdf))
     found = indexed(library, Limits(most_description_bytes=200), readers=readers)
     assert found == Indexed(files=3, added=2, changed=0, removed=0, unreadable=1)
     assert unreadable_files(library) == (UnreadableFile("pigments.pdf", too_large_to_describe("")),)
@@ -154,7 +154,7 @@ def test_a_document_whose_title_and_fields_take_more_than_a_document_holds_is_le
 
 def test_an_attachment_too_large_to_describe_is_left_out_and_its_mail_kept(post: Path) -> None:
     said: list[Event] = []
-    readers = Readers(clock=later, convert=long_titled_pdf)
+    readers = Readers(clock=later, files=reading(converting=long_titled_pdf))
     found = indexed(post, Limits(most_description_bytes=200), said, readers)
     assert found == Indexed(files=1, added=1, changed=0, removed=0, unreadable=1)
     (problem,) = [event.text for event in said if isinstance(event, Noted)]
