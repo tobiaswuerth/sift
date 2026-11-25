@@ -16,6 +16,7 @@ class FakeCuda:
     available: bool = True
     bf16: bool = True
     failure: Exception | None = None
+    reserved: int = 0
     fractions: list[float] = field(default_factory=list[float])
     emulated: list[bool] = field(default_factory=list[bool])
     contexts: list[int] = field(default_factory=list[int])
@@ -38,6 +39,10 @@ class FakeCuda:
         if self.used is None:
             raise pynvml.NVMLError(pynvml.NVML_ERROR_NOT_SUPPORTED)
         return self.used
+
+    def memory_reserved(self, device: int) -> int:
+        assert device == 0
+        return self.reserved
 
     def get_device_properties(self, device: int) -> Properties:
         assert device == 0

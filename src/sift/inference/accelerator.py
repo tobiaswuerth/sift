@@ -37,6 +37,8 @@ class Cuda(Protocol):
 
     def device_memory_used(self, device: int) -> int: ...
 
+    def memory_reserved(self, device: int) -> int: ...
+
     def get_device_properties(self, device: int) -> Properties: ...
 
     def set_per_process_memory_fraction(self, fraction: float, device: int) -> None: ...
@@ -83,7 +85,8 @@ def _free(cuda: Cuda) -> tuple[int, int]:
 
 
 def _on_cuda(cuda: Cuda) -> Device:
-    free, total = _free(cuda)
+    others_leave, total = _free(cuda)
+    free = others_leave + cuda.memory_reserved(0)
     held = budget(free, total)
     if held is None:
         notice = f"only {free / GIB:.1f} GiB of the GPU's memory is free, too little: the models run on the CPU"
@@ -128,9 +131,7 @@ MACHINE = Machine()
 
 def placed(machine: Machine, gpus: str | None) -> Device:
     found = Hardware(machine.mps(), machine.nvidia(), machine.cuda_build, gpus)
-    device = chosen(machine.cuda, found)
-    machine.threads(device.threads)
-    return device
+    return chosen(machine.cuda, found)
 
 
 def _host_full_code(error: BaseException) -> bool:

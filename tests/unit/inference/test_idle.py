@@ -137,7 +137,7 @@ def test_back_from_rest_the_budget_is_measured_again_and_a_busy_gpu_means_the_mo
     room.cuda.free = GIB
     used(local)
     on_cpu = [(model.on, model.dtype) for model in room.loaded[2:]]
-    assert (on_cpu, room.threads) == ([("cpu", torch.float32)] * 2, [GPU_THREADS, CPU_THREADS])
+    assert (on_cpu, room.threads) == ([("cpu", torch.float32)] * 2, [GPU_THREADS] * 2 + [CPU_THREADS] * 2)
     assert local.prepare() == ("only 1.0 GiB of the GPU's memory is free, too little: the models run on the CPU",)
     assert len(room.cuda.fractions) == 1
 

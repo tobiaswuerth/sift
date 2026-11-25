@@ -32,6 +32,14 @@ def test_the_budget_is_what_others_leave_free_less_a_tenth_or_a_gib() -> None:
     assert budget(int(2.9 * GIB), 8 * GIB) is None
 
 
+def test_sift_s_cap_counts_the_memory_it_already_holds_as_room() -> None:
+    cuda = FakeCuda(free=10 * GIB, total=24 * GIB, used=14 * GIB, reserved=4 * GIB)
+    assert chosen(cuda, NONE).name == "cuda"
+    assert cuda.fractions == [pytest.approx((10 + 4 - 2.4) / 24)]
+    held = FakeCuda(free=2 * GIB, total=24 * GIB, used=22 * GIB, reserved=6 * GIB)
+    assert (chosen(held, NONE).name, held.fractions) == ("cuda", [pytest.approx((2 + 6 - 2.4) / 24)])
+
+
 def test_on_a_gpu_with_room_sift_caps_itself_at_its_budget_in_native_bfloat16() -> None:
     cuda = FakeCuda(free=20 * GIB, total=24 * GIB, used=6 * GIB)
     assert chosen(cuda, NONE) == Device("cuda", torch.bfloat16, threads=1)
@@ -107,7 +115,7 @@ def test_pytorch_keeps_one_cpu_thread_beside_an_nvidia_gpu_and_one_a_core_elsewh
 ) -> None:
     held: list[int] = []
     device = placed(machine(cuda, held, mps), None)
-    assert (device.threads, held) == (threads, [threads])
+    assert (device.threads, held) == (threads, [])
 
 
 def test_an_nvidia_gpu_is_known_by_the_nvidia_smi_its_driver_brings(tmp_path: Path) -> None:

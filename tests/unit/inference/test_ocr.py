@@ -19,6 +19,7 @@ from sift.inference.ocr import (
     NEW_TOKENS,
     RETRY_PENALTY,
     Ocr,
+    let_go,
     loaded_ocr,
     ocr_device,
     page_text,
@@ -198,3 +199,10 @@ def test_ocr_runs_on_the_device_the_other_models_would_and_loads_when_first_need
 def test_a_page_is_told_to_stop_on_the_device_it_is_read_on() -> None:
     ids = cast("torch.LongTensor", torch.tensor([[1, 2, 3, 4]], device="meta"))
     assert stops(FakeProcessor(), 3)(ids, None).device == ids.device
+
+
+def test_letting_ocr_go_empties_the_cache_of_its_device() -> None:
+    emptied: list[str] = []
+    let_go(Device("cuda", torch.bfloat16), {"cuda": lambda: emptied.append("cuda")})
+    let_go(CPU, {"cuda": lambda: emptied.append("cuda")})
+    assert emptied == ["cuda"]

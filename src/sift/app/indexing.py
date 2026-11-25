@@ -220,9 +220,12 @@ def _grouped(home: Path, files: Sequence[str]) -> dict[Collection, tuple[str, ..
 def index(
     home: Path, request: IndexCollections, report: Reporter, limits: Limits = LIMITS, readers: Readers = READERS
 ) -> IndexResult:
-    asked = _Indexing(home, report, limits, readers, ScanModel(readers.scanning))
-    if not request.files:
-        return IndexResult(tuple(_indexed(one, asked) for one in chosen_or_active(home, request.names)))
-    if request.names:
+    if request.files and request.names:
         raise InvalidRequestError("give collections or files, not both", BOTH_REMEDY, "files")
-    return IndexResult(tuple(_indexed(one, asked, paths) for one, paths in _grouped(home, request.files).items()))
+    asked = _Indexing(home, report, limits, readers, ScanModel(readers.scanning))
+    try:
+        if not request.files:
+            return IndexResult(tuple(_indexed(one, asked) for one in chosen_or_active(home, request.names)))
+        return IndexResult(tuple(_indexed(one, asked, paths) for one, paths in _grouped(home, request.files).items()))
+    finally:
+        asked.ocr.let_go()

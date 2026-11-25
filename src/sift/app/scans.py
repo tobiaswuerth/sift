@@ -82,6 +82,13 @@ class ScanModel:
     def loaded(self) -> bool:
         return isinstance(self.held, _Reader)
 
+    def let_go(self) -> None:
+        held, self.held = self.held, None
+        if isinstance(held, _Reader):
+            module, device = held.module, held.ocr.device
+            del held
+            module.let_go(device)
+
 
 @dataclass(frozen=True, slots=True)
 class ScanRun:

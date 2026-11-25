@@ -54,6 +54,10 @@ class FakeOcr:
     then: Device | None = None
     stores: list[Path] = field(default_factory=list[Path])
     hidden: list[str | None] = field(default_factory=list[str | None])
+    let_go_of: list[Device] = field(default_factory=list[Device])
+
+    def let_go(self, device: Device) -> None:
+        self.let_go_of.append(device)
 
     def ocr_device(self, gpus: str | None) -> Device:
         self.devices += 1
@@ -135,6 +139,15 @@ def test_a_scan_is_read_by_ocr_when_indexed_saying_so(home: Path) -> None:
     assert indexed(home, scanning(ocr), said) == Indexed(files=2, added=2, changed=0, removed=0, unreadable=0)
     assert (text_of(home, "scans/scan.pdf"), ocr.read) == (READ, [2])
     assert "scan.pdf: a scan, read with OCR (2 pages)" in notes(said)
+    assert ocr.let_go_of == [GPU]
+
+
+def test_ocr_never_loaded_by_an_index_has_nothing_to_let_go(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "plain" / "note.md", "# Note\n\nwords\n")
+    add(home, AddCollection(str(tmp_path / "plain")))
+    ocr = FakeOcr()
+    indexed(home, scanning(ocr))
+    assert (ocr.loads, ocr.let_go_of) == (0, [])
 
 
 def test_a_scan_is_read_once_though_its_file_is_read_again(home: Path, scans: Path) -> None:

@@ -93,6 +93,8 @@ class OcrModule(Protocol):
 
     def pages_text(self, ocr: "Ocr", pictures: Sequence[bytes]) -> list[str]: ...
 
+    def let_go(self, device: "Device") -> None: ...
+
 
 def _as_ocr(module: object) -> OcrModule:
     return cast("OcrModule", module)
