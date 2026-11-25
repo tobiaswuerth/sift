@@ -82,8 +82,9 @@ def _described(request: type[object], name: str, hint: object) -> Described:
 def limits(bounds: Bounds | None, default: object) -> str:
     if not isinstance(default, int) or isinstance(default, bool):
         return ""
-    span = "" if bounds is None else f"{bounds.low:,} to {bounds.high:,}; "
-    return f" ({span}default: {default:,})"
+    shown = Bounds(default, default) if bounds is None else bounds
+    span = "" if bounds is None else f"{shown.shown(shown.low)} to {shown.shown(shown.high)}; "
+    return f" ({span}default: {shown.shown(default)})"
 
 
 def _left_out(kind: object) -> object | None:

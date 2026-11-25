@@ -155,8 +155,9 @@ def _bounded(name: str, value: object, bounds: Bounds) -> None:
             said = f"{name} holds {held:,}, not {bounds.low:,} to {bounds.high:,}"
             raise InvalidRequestError(said, f"give {bounds.low:,} to {bounds.high:,} of them", name)
     elif isinstance(value, int) and not bounds.low <= value <= bounds.high:
-        said = f"{shown_value(value)} is outside {bounds.low:,} to {bounds.high:,}"
-        raise InvalidRequestError(said, f"give {bounds.low:,} to {bounds.high:,}", name)
+        span = f"{bounds.shown(bounds.low)} to {bounds.shown(bounds.high)}"
+        written = shown_value(value) if bounds.grouped else str(value)
+        raise InvalidRequestError(f"{written} is outside {span}", f"give {span}", name)
 
 
 def _sized(name: str, value: object, length: Length) -> None:

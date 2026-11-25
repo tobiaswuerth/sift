@@ -5,12 +5,13 @@ from collections.abc import Sequence
 from typing import NoReturn, TextIO, cast, override
 
 from sift.api.errors import InvalidRequestError
-from sift.interfaces.cli.arguments import arguments
+from sift.interfaces.cli.arguments import arguments, flags
 from sift.interfaces.cli.entries import ENTRIES
 from sift.interfaces.cli.shown.outcome import FAILED, Shown, failure
 from sift.interfaces.console.style import PLAIN
 
 ONE_VALUE = re.compile(r"argument (\S+): expected one argument")
+ARGUMENT = re.compile(r"argument (\S+): (.+)", re.DOTALL)
 REQUIRED = "the following arguments are required: "
 OWN_FLAGS = frozenset({"--json", "--color", "-h", "--help"})
 
@@ -38,11 +39,24 @@ def asked_json(argv: Sequence[str]) -> bool:
     return "--json" in (given[: given.index("--")] if "--" in given else given)
 
 
-def _known(prog: str) -> frozenset[str]:
+def _request(prog: str) -> type[object] | None:
     entry = ENTRIES.get(prog.removeprefix("sift").strip())
-    arguments_of = () if entry is None else arguments(entry.request)
+    return None if entry is None else entry.request
+
+
+def _known(prog: str) -> frozenset[str]:
+    request = _request(prog)
+    arguments_of = () if request is None else arguments(request)
     found = {name for argument in arguments_of for name in (argument.flag.short, argument.flag.long)}
     return OWN_FLAGS | {name for name in found if name is not None}
+
+
+def _field(request: type[object], names: Sequence[str]) -> str | None:
+    named = set(names)
+    held = (
+        argument for argument in arguments(request) if {argument.flag.short, argument.flag.long, argument.name} & named
+    )
+    return next((argument.name for argument in held), None)
 
 
 def _options(argv: Sequence[str]) -> list[str]:
@@ -77,7 +91,12 @@ def _usage(wrong: UsageError, argv: Sequence[str]) -> str:
 
 
 def _refused_usage(wrong: UsageError, argv: Sequence[str]) -> Shown:
-    return failure(InvalidRequestError(wrong.message, _usage(wrong, argv)), PLAIN, as_json=asked_json(argv))
+    remedy, request, found = _usage(wrong, argv), _request(wrong.prog), ARGUMENT.fullmatch(wrong.message)
+    field = None if request is None or found is None else _field(request, found.group(1).split("/"))
+    if request is None or found is None or field is None:
+        return failure(InvalidRequestError(wrong.message, remedy), PLAIN, as_json=asked_json(argv))
+    refused = InvalidRequestError(found.group(2), remedy, field)
+    return failure(refused, PLAIN, as_json=asked_json(argv), flags=flags(request))
 
 
 def parsed(

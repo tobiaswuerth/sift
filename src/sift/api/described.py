@@ -20,6 +20,10 @@ class Composed:
 class Bounds:
     low: int
     high: int
+    grouped: bool = True
+
+    def shown(self, number: int) -> str:
+        return f"{number:,}" if self.grouped else str(number)
 
 
 @dataclass(frozen=True, slots=True)

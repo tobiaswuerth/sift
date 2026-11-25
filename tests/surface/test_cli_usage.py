@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -96,3 +97,27 @@ def test_help_names_every_setting_and_what_it_sets(settings: Settings) -> None:
     lines = out.split("settings, read from the environment:\n", 1)[1].splitlines()
     assert (code, [line.split()[0] for line in lines]) == (0, list(VARIABLES))
     assert all(line.endswith(VARIABLES[line.split()[0]]) for line in lines)
+
+
+@pytest.mark.parametrize(
+    "argv, field, said",
+    [
+        (("search", "x", "-k", "1e9"), "k", "'1e9' is no whole number: write up to 18 digits alone, e.g. 10"),
+        (("search", "x", "-k", "0"), "k", "0 is outside 1 to 10,000"),
+        (
+            ("search", "x", "--budget", "abc"),
+            "budget",
+            "'abc' is no number: write digits with a point if need be, e.g. 0.5",
+        ),
+        (("search", "x", "--sort", "year", "--sort", "id"), "sort", "given twice: give it once"),
+        (("serve", "--port", "99999"), "port", "99999 is outside 0 to 65535"),
+    ],
+)
+def test_a_value_refused_names_its_field_whichever_check_refused_it(
+    settings: Settings, argv: tuple[str, ...], field: str, said: str
+) -> None:
+    code, out, _ = ran(settings, *argv, "--json")
+    error = cast("dict[str, object]", json.loads(out)["error"])
+    assert (code, error["field"], error["message"]) == (2, field, said)
+    flag = argv[-2] if field != "sort" else "--sort"
+    assert ran(settings, *argv)[2].startswith(f"error  {flag}: {said}\n")

@@ -239,7 +239,7 @@ def test_a_mistaken_argument_exits_2_with_a_fix_and_no_usage_block(settings: Set
 def test_an_option_given_twice_is_refused_and_collections_may_be_given_again(settings: Settings, notes: Path) -> None:
     searched_notes(settings, notes)
     code, _, err = ran(settings, "search", "brush", "-k", "2", "-k", "3")
-    assert (code, err.splitlines()[0]) == (2, "error  argument -k: given twice: give it once")
+    assert (code, err.splitlines()[0]) == (2, "error  -k: given twice: give it once")
     other = notes.parent / "other"
     other.mkdir()
     (other / "brush.md").write_text("# Brush again\n", encoding="utf-8")
