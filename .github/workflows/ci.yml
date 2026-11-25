@@ -76,7 +76,7 @@ jobs:
           - {os: ubuntu-latest, python: "3.12"}
           - {os: ubuntu-latest, python: "3.15"}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30  # Windows takes 10 minutes, and took 16 on a slow runner
     steps: *prepare
 
   lowest:
