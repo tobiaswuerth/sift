@@ -1,15 +1,18 @@
 import copy
+import errno
 
 import pytest
 
 from sift.api.errors import (
     CODE_KINDS,
+    OS_REMEDY,
     InvalidRequestError,
     ModelUnavailableError,
     NotFoundError,
     Problem,
     SiftError,
     StoreUnavailableError,
+    system_failure,
 )
 
 
@@ -62,3 +65,49 @@ def test_every_code_belongs_to_one_kind_and_an_error_of_another_kind_is_a_bug() 
     with pytest.raises(TypeError, match="InvalidRequestError cannot carry the code busy, a StoreUnavailableError's"):
         InvalidRequestError("m", "r", code=Problem.BUSY)
     assert (CODE_KINDS[Problem.AMBIGUOUS], CODE_KINDS[Problem.TAKEN]) == (InvalidRequestError, InvalidRequestError)
+
+
+@pytest.mark.parametrize(
+    "error, said, remedy",
+    [
+        (
+            FileExistsError(errno.EEXIST, "Cannot create a file when that file already exists", "C:\\Users\\a b\\x"),
+            "Cannot create a file when that file already exists: C:\\Users\\a b\\x",
+            "move what is there away, or choose another path",
+        ),
+        (
+            NotADirectoryError(errno.ENOTDIR, "Not a directory", "/home/a/file/x"),
+            "Not a directory: /home/a/file/x",
+            "check that each folder of the path is a folder, not a file",
+        ),
+        (
+            OSError(errno.EINVAL, "Invalid argument", "a:b?"),
+            "Invalid argument: a:b?",
+            'check that the path names no character the system refuses, such as : * ? " < > |',
+        ),
+        (
+            OSError(errno.ENAMETOOLONG, "File name too long", "x" * 300),
+            f"File name too long: {'x' * 300}",
+            "choose a shorter path",
+        ),
+        (
+            OSError(errno.EROFS, "Read-only file system", "/mnt/x"),
+            "Read-only file system: /mnt/x",
+            "choose a place that may be written",
+        ),
+        (
+            OSError(errno.EXDEV, "Invalid cross-device link", "/a", None, "/b"),
+            "Invalid cross-device link: /a -> /b",
+            OS_REMEDY,
+        ),
+        (OSError(errno.ENOSPC, "No space left on device"), "No space left on device", "free space on the disk"),
+        (OSError(errno.EIO, "Input/output error", b"/raw\xff"), "Input/output error: /raw\\xff", OS_REMEDY),
+        (OSError("no number at all"), "no number at all", OS_REMEDY),
+    ],
+    ids=["exists", "no folder", "invalid", "too long", "read-only", "two paths", "no path", "bytes", "no errno"],
+)
+def test_an_error_of_the_system_says_what_it_said_of_which_path_and_what_to_do(
+    error: OSError, said: str, remedy: str
+) -> None:
+    found = system_failure(error)
+    assert (found.message, found.remedy) == (said, remedy)

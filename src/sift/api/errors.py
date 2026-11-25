@@ -3,7 +3,7 @@ from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from enum import StrEnum
 from types import MappingProxyType
-from typing import ClassVar, override
+from typing import ClassVar, cast, override
 
 
 class Problem(StrEnum):
@@ -120,14 +120,35 @@ OS_REMEDIES: Mapping[int, str] = MappingProxyType(
     {
         errno.ENOENT: "check that the path exists",
         errno.EACCES: "check that you may read and write the path",
+        errno.EPERM: "check that you may read and write the path",
         errno.ENOSPC: "free space on the disk",
+        errno.EEXIST: "move what is there away, or choose another path",
+        errno.ENOTDIR: "check that each folder of the path is a folder, not a file",
+        errno.EISDIR: "give a file, not a folder",
+        errno.EINVAL: 'check that the path names no character the system refuses, such as : * ? " < > |',
+        errno.ENAMETOOLONG: "choose a shorter path",
+        errno.EROFS: "choose a place that may be written",
     }
 )
 OS_REMEDY = "check the path and its permissions"
+PATHS_JOINED = " -> "
+
+
+def _path_text(path: object) -> str:
+    return path.decode("utf-8", "backslashreplace") if isinstance(path, bytes) else str(path)
+
+
+def _system_said(error: OSError) -> str:
+    said = error.strerror
+    if said is None:
+        return str(error)
+    named = cast("tuple[object, object]", (error.filename, error.filename2))
+    paths = [_path_text(path) for path in named if path is not None]
+    return f"{said}: {PATHS_JOINED.join(paths)}" if paths else said
 
 
 def system_failure(error: OSError) -> SystemFailureError:
-    return SystemFailureError(str(error), OS_REMEDIES.get(error.errno or 0, OS_REMEDY))
+    return SystemFailureError(_system_said(error), OS_REMEDIES.get(error.errno or 0, OS_REMEDY))
 
 
 def _rebuilt(kind: type[SiftError], message: str, remedy: str, code: Problem, field: str | None) -> SiftError:

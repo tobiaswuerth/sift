@@ -144,10 +144,9 @@ def test_an_error_is_a_message_with_its_fix_and_no_traceback(settings: Settings,
 def test_an_error_of_the_system_is_a_message(settings: Settings, notes: Path) -> None:
     settings.home.write_bytes(b"a file, not a folder")
     code, out, err = ran(settings, "add", str(notes))
-    as_the_system_names_it = repr(str(settings.home))[:-1]
     assert (code, out) == (1, "")
-    assert (err.startswith("error  ["), as_the_system_names_it in err) == (True, True)
-    assert err.endswith("'\n  fix  check the path and its permissions\n")
+    assert (err.startswith("error  "), f": {settings.home}\n" in err, "Errno" in err) == (True, True, False)
+    assert err.endswith("\n  fix  move what is there away, or choose another path\n")
     assert err.count("\n") == 2
 
 
@@ -194,7 +193,7 @@ def test_results_that_cannot_be_written_for_another_reason_are_an_error(settings
     ran(settings, "add", str(notes))
     err = io.StringIO()
     assert run(["status"], settings, Refusing(OSError(errno.ENOSPC, "No space left on device")), err) == 1
-    assert err.getvalue() == f"error  [Errno {errno.ENOSPC}] No space left on device\n  fix  free space on the disk\n"
+    assert err.getvalue() == "error  No space left on device\n  fix  free space on the disk\n"
 
 
 def closed() -> TextIO:

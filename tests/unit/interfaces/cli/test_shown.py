@@ -189,7 +189,7 @@ def test_a_failure_says_what_failed_and_how_to_fix_it() -> None:
     )
     assert failure(StoreUnavailableError("busy", "wait"), PLAIN) == Shown((), ("error  busy", "  fix  wait"), FAILED)
     assert failure(OSError(errno.ENOSPC, "No space left on device"), PLAIN) == Shown(
-        (), ("error  [Errno 28] No space left on device", "  fix  free space on the disk"), FAILED
+        (), ("error  No space left on device", "  fix  free space on the disk"), FAILED
     )
     assert (
         failure(OSError(errno.EIO, "Input/output error"), PLAIN).messages[1]
