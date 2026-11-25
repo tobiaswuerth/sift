@@ -4,6 +4,7 @@ import posixpath
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from enum import Enum
 
 from sift.api.collections import TitleFrom
 from sift.api.fields import Fields
@@ -19,6 +20,7 @@ NEWLINE = "\n"
 HEAD_OPENS = re.compile(r"---[ \t]*\n")
 HEAD_CLOSES = re.compile(r"---[ \t]*\n?")
 MOST_HEAD = 1 << 20
+FRONT_MATTER_TOO_LONG = f"its front matter is longer than the {MOST_HEAD:,} characters sift reads as fields"
 DIGEST_BYTES = 16
 LINK_ADDRESS_OPENS = "]("
 
@@ -53,6 +55,7 @@ class NoteAsked:
 class NoteRead:
     fields: Fields
     parts: Iterator[NotePart]
+    problem: str | None = None
 
 
 def storable(text: str) -> str:
@@ -74,18 +77,26 @@ def file_stem(name: str) -> str:
     return posixpath.splitext(name)[0]
 
 
-def _head(lines: Iterator[TextLine]) -> tuple[list[TextLine], bool]:
+class _HeadEnd(Enum):
+    CLOSED = "closed"
+    NONE = "none"
+    TOO_LONG = "too long"
+
+
+def _head(lines: Iterator[TextLine]) -> tuple[list[TextLine], _HeadEnd]:
     taken: list[TextLine] = []
     size = 0
     for line in lines:
         taken.append(line)
         size += len(line.text)
         opening = len(taken) == 1
-        if not line.whole or size > MOST_HEAD or (opening and not HEAD_OPENS.fullmatch(line.text)):
-            return taken, False
+        if opening and not HEAD_OPENS.fullmatch(line.text):
+            return taken, _HeadEnd.NONE
+        if not line.whole or size > MOST_HEAD:
+            return taken, _HeadEnd.TOO_LONG
         if not opening and HEAD_CLOSES.fullmatch(line.text):
-            return taken, True
-    return taken, False
+            return taken, _HeadEnd.CLOSED
+    return taken, _HeadEnd.NONE
 
 
 def _linking(text: str) -> bool:
@@ -134,12 +145,14 @@ def _parts(found: FrontMatter | None, head: str, body: Iterable[TextLine], read:
 
 def read_note(pieces: Iterable[str], name: str, title_from: TitleFrom = TitleFrom.HEADING) -> NoteRead:
     lines = text_lines(pieces)
-    taken, closed = _head(lines)
+    taken, ended = _head(lines)
+    closed = ended is _HeadEnd.CLOSED
     head = "".join(line.text for line in taken) if closed else ""
     found = front_matter(head) if closed else None
     body = lines if found else itertools.chain(taken, lines)
     fields: Fields = composed_fields(found.fields) if found else {}
-    return NoteRead(fields, _parts(found, head, body, NoteAsked(name, title_from, fields)))
+    problem = FRONT_MATTER_TOO_LONG if ended is _HeadEnd.TOO_LONG else None
+    return NoteRead(fields, _parts(found, head, body, NoteAsked(name, title_from, fields)), problem)
 
 
 def document_of(read: NoteRead, digested: str) -> Document:

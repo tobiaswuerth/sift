@@ -11,13 +11,14 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
-from sift.api.events import Event, Finished, Phase, PhaseDone, PhaseStarted
+from sift.api.events import Event, Finished, Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections, Indexed
 from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
 from sift.domain.text.documents import Conversion, Converted, FileRead, Outcome
+from sift.domain.text.notes import FRONT_MATTER_TOO_LONG, MOST_HEAD
 from sift.ingest.files import CHANGED, Identity, pieces_of
 from sift.ingest.readers import ToRead, read_file
 from sift.ingest.sandbox import FileReading
@@ -243,3 +244,16 @@ def test_files_written_are_let_go_however_many_a_batch_holds(tmp_path: Path, hom
 
     assert indexed(home, Limits(most_characters_a_write=100_000), Readers(clock=later, files=watched)).added == 12
     assert max(seen) <= 3
+
+
+def test_a_note_whose_front_matter_is_too_long_for_fields_is_stored_and_listed_with_why(
+    home: Path, notes: Path
+) -> None:
+    write(notes / "long.md", "---\na: " + "x" * MOST_HEAD + "\n---\n# Long\n\nA body.\n")
+    said: list[Event] = []
+    indexed(home, said=said)
+    assert [(each.path, each.problem) for each in unreadable_files(home)] == [("long.md", FRONT_MATTER_TOO_LONG)]
+    assert Noted(f"long.md: {FRONT_MATTER_TOO_LONG}") in said
+    write(notes / "long.md", "---\na: short\n---\n# Long\n\nA body.\n")
+    indexed(home)
+    assert unreadable_files(home) == ()

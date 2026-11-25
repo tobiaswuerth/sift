@@ -155,12 +155,16 @@ def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str
         for path, outcome in read:
             tally += _stored(transaction, path, files[path], outcome, release)
         for path in notes:
-            match stored_note(job, transaction, path, files[path], run.identities.get(path)):
-                case Tally() as stored:
-                    tally += stored
-                    whole.append(path)
-                case refused:
-                    tally += _refused(transaction, path, files[path], refused, release)
+            stored = stored_note(job, transaction, path, files[path], run.identities.get(path))
+            if isinstance(stored, Refused):
+                tally += _refused(transaction, path, files[path], stored, release)
+            elif stored.problem is None:
+                tally += stored.tally
+                whole.append(path)
+            else:
+                tally += stored.tally
+                mark_unreadable(transaction, path, Mark(stored.problem, read_again=False))
+                job.report(Noted(f"{path}: {stored.problem}"))
             run.advanced()
         clear_unreadable(transaction, whole)
     run.kept(len(read) + len(notes))

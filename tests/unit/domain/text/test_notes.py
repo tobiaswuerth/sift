@@ -7,7 +7,16 @@ from hypothesis import strategies as st
 from sift.api.collections import TitleFrom
 from sift.domain.text.decoding import text_pieces
 from sift.domain.text.markdown import MOST_LINE, MOST_TITLE, title_of
-from sift.domain.text.notes import Document, digest, document_of, file_stem, note, read_note
+from sift.domain.text.notes import (
+    FRONT_MATTER_TOO_LONG,
+    MOST_HEAD,
+    Document,
+    digest,
+    document_of,
+    file_stem,
+    note,
+    read_note,
+)
 
 
 def written(text: str, name: str = "file.md", title_from: TitleFrom = TitleFrom.HEADING) -> Document:
@@ -85,6 +94,21 @@ def test_a_note_of_front_matter_alone_is_its_front_matter() -> None:
     assert written("---\n---\n", "Empty.md").chunks == ()
     assert written("---\n  \n---\n", "Blank.md").chunks == ()
     assert len(written("---\na: 1\n---\nA body.\n", "Body.md").chunks) == 1
+
+
+@pytest.mark.parametrize(
+    "head, problem",
+    [
+        ("---\na: " + "x" * MOST_HEAD + "\n---\n", FRONT_MATTER_TOO_LONG),
+        ("---\n" + "a: x\n" * (MOST_HEAD // 5 + 1) + "---\n", FRONT_MATTER_TOO_LONG),
+        ("---\na: x\n---\n", None),
+        ("# No front matter\n", None),
+        ("---\nnever closed\n", None),
+    ],
+)
+def test_a_front_matter_too_long_to_read_as_fields_is_a_problem_of_its_note(head: str, problem: str | None) -> None:
+    read = read_note(text_pieces(((head + "A body.\n").encode(),)), "a.md")
+    assert (read.problem, read.fields == {} or problem is None) == (problem, True)
 
 
 @pytest.mark.parametrize(
