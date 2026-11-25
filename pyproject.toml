@@ -149,8 +149,8 @@ ignore = [
 "tests/**" = ["S101", "PLR2004", "S603"]
 "tools/findings.py" = ["T201", "S603", "S607"]
 "tools/__main__.py" = ["T201"]
-# The one process sift starts outside its reader sandbox: `sift serve` detached, with sift's own arguments alone,
-# when an agent's `sift serve --stdio` finds no home process (decided with the owner).
+# The one process sift starts outside its reader sandbox: `sift serve` in a minimized window of its own, with sift's
+# own arguments alone, when an agent's `sift serve --stdio` finds no home process (decided with the owner).
 "src/sift/interfaces/server/proxy.py" = ["S603"]
 "tools/check_package.py" = ["T201"]
 

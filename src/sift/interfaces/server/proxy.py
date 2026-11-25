@@ -6,6 +6,7 @@ import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import BinaryIO, cast
 
 from sift.api.errors import StoreUnavailableError
@@ -27,23 +28,35 @@ NOT_STARTED = "the home process did not start within {seconds:,} s"
 LOG_REMEDY = "see its log in SIFT_HOME/logs"
 SILENT = "the home process does not answer: {error}"
 STARTED = "started a home process for agents on port {port} (process {pid}); it leaves after {idle:,} s idle"
-DETACHED = 0x00000008 | 0x00000200
+NEW_CONSOLE = 0x00000010 | 0x00000200
+USE_SHOW_WINDOW = 0x00000001
+MINIMIZED_UNFOCUSED = 7
 
 type Start = Callable[[Settings, int], None]
 
 
-def started(settings: Settings, idle: int) -> None:
-    command = [sys.executable, "-m", "sift", "serve", "--port", "0", "--idle-exit", str(idle)]
+def _shown_minimized() -> object | None:
+    made = cast("Callable[..., object] | None", getattr(subprocess, "STARTUPINFO", None))
+    return None if made is None else made(dwFlags=USE_SHOW_WINDOW, wShowWindow=MINIMIZED_UNFOCUSED)
+
+
+def in_the_background(command: list[str], cwd: Path | None) -> subprocess.Popen[bytes]:
     windows = sys.platform == "win32"
-    _ = subprocess.Popen(
+    return subprocess.Popen(
         command,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        cwd=settings.home.parent if settings.home.parent.is_dir() else None,
-        creationflags=DETACHED if windows else 0,
+        cwd=cwd,
+        creationflags=NEW_CONSOLE if windows else 0,
+        startupinfo=_shown_minimized(),
         start_new_session=not windows,
     )
+
+
+def started(settings: Settings, idle: int) -> None:
+    command = [sys.executable, "-m", "sift", "serve", "--port", "0", "--idle-exit", str(idle)]
+    _ = in_the_background(command, settings.home.parent if settings.home.parent.is_dir() else None)
 
 
 @dataclass(frozen=True, slots=True)

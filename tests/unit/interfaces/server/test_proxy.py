@@ -2,14 +2,17 @@ import io
 import json
 import os
 import socket
+import sys
 import threading
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from sift.api.collections import AddCollection
 from sift.app.collections import add
 from sift.interfaces.server.endpoint import SERVER, SERVING, Endpoint, own_endpoint, written
-from sift.interfaces.server.proxy import Pipes, Starting, proxied
+from sift.interfaces.server.proxy import Pipes, Starting, in_the_background, proxied
 from sift.settings import Settings
 from sift.storage.writer import sole_writer
 from tests.homes import indexed, quiet
@@ -110,3 +113,17 @@ def test_a_home_process_that_stops_answering_is_said_to_each_message_waiting(set
     error = cast("Message", refused["error"])
     assert (refused["id"], error["code"]) == (2, -32603)
     assert cast("str", error["message"]).startswith("the home process does not answer: ")
+
+
+WINDOW_SAID = (
+    "import ctypes, sys; k, u = ctypes.windll.kernel32, ctypes.windll.user32; w = k.GetConsoleWindow(); "
+    "open(sys.argv[1], 'w').write(f'{w != 0} {bool(u.IsWindowVisible(w))} {bool(u.IsIconic(w))}')"
+)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="console windows are Windows' own")
+def test_a_process_started_in_the_background_shows_its_window_minimized(tmp_path: Path) -> None:
+    said = tmp_path / "window.txt"
+    with in_the_background([sys.executable, "-c", WINDOW_SAID, str(said)], tmp_path) as running:
+        assert running.wait(30) == 0
+    assert said.read_text(encoding="utf-8") == "True True True"
