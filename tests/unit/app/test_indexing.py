@@ -9,7 +9,6 @@ from typing import NamedTuple
 import pytest
 
 from sift.api.collections import AddCollection, Counted, ShowStatus, TitleFrom, UnreadableFile
-from sift.api.documents import GetDocuments
 from sift.api.errors import NotFoundError
 from sift.api.events import (
     Advanced,
@@ -38,6 +37,7 @@ from sift.storage.texts import text_of
 from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
+from tests.homes import asked
 from tests.later import LATER
 
 
@@ -396,5 +396,5 @@ def test_a_file_rewritten_within_the_grain_of_its_scan_is_read_again(home: Path,
     write(tick, "# Tick\n\nomega\n")
     os.utime(tick, ns=(stamp, stamp))
     index(home, IndexCollections(), lambda _: None, LIMITS, LATER)
-    (found,) = documents(home, GetDocuments(("notes/tick.md",))).found
+    (found,) = documents(home, asked("notes/tick.md")).found
     assert "omega" in found.text

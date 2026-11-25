@@ -10,7 +10,6 @@ import pytest
 import torch
 
 from sift.api.collections import AddCollection
-from sift.api.documents import GetDocuments
 from sift.api.errors import ModelUnavailableError
 from sift.api.events import Advanced, Event, Noted, Phase, PhaseStarted
 from sift.api.indexing import FileIndexed, IndexCollections, Indexed
@@ -29,7 +28,7 @@ from sift.ingest.pictures import Pictured, ToPicture, Unpictured
 from sift.ingest.sandbox import ENDED, Picturing
 from sift.storage.catalog import known_collections
 from tests.files import write
-from tests.homes import unreadable_files
+from tests.homes import asked, unreadable_files
 from tests.later import later, pictured_here, reading
 from tests.mails import mail_bytes, message
 from tests.scans import scan
@@ -122,7 +121,7 @@ def indexed(
 
 
 def text_of(home: Path, id_: str) -> tuple[str, str, object] | None:
-    found = documents(home, GetDocuments((id_,), fields=(OCR_FIELD,))).found
+    found = documents(home, asked(id_, fields=(OCR_FIELD,))).found
     return (found[0].title, found[0].text, (found[0].fields or {}).get(OCR_FIELD)) if found else None
 
 

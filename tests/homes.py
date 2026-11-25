@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from sift.api.collections import AddCollection, Counted, ShowStatus, UnreadableFile
-from sift.api.documents import GetDocuments
+from sift.api.documents import GetDocuments, WantedDocument
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchKeywords
 from sift.app.collections import add, status
@@ -34,6 +34,10 @@ def unreadable_files(home: Path) -> tuple[UnreadableFile, ...]:
     return shown.contents.unreadable_files
 
 
+def asked(*ids: str, lines: tuple[int | None, int | None] = (None, None), fields: tuple[str, ...] = ()) -> GetDocuments:
+    return GetDocuments(tuple(WantedDocument(each, *lines) for each in ids), fields)
+
+
 def text_of(home: Path, id_: str) -> str:
-    (one,) = documents(home, GetDocuments((id_,))).found
+    (one,) = documents(home, asked(id_)).found
     return one.text

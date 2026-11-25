@@ -7,13 +7,13 @@ import pytest
 
 from sift.api.collections import AddCollection, ShowStatus, TitleFrom
 from sift.api.described import Help
-from sift.api.documents import GetDocuments
 from sift.api.errors import InvalidRequestError
 from sift.api.filters import Filter, written
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchKeywords
 from sift.interfaces.cli.arguments import arguments, flags, options, request_of
 from sift.interfaces.cli.main import Parser, UsageError
+from sift.interfaces.cli.reading import ReadDocuments
 
 WHOLE = Path("/whole").absolute()
 
@@ -39,9 +39,9 @@ def test_a_field_without_a_default_is_given_by_its_place_and_the_others_by_name(
 def test_a_list_is_given_by_its_places_and_may_be_empty_if_it_has_a_default() -> None:
     assert parsed(ShowStatus, []) == ShowStatus()
     assert parsed(IndexCollections, ["a", "b"]) == IndexCollections(("a", "b"))
-    assert parsed(GetDocuments, ["x", "y", "--lines", "3"]) == GetDocuments(("x", "y"), "3")
+    assert parsed(ReadDocuments, ["x", "y", "--lines", "3"]) == ReadDocuments(("x", "y"), "3")
     with pytest.raises(UsageError, match="the following arguments are required: ids"):
-        parsed(GetDocuments, [])
+        parsed(ReadDocuments, [])
 
 
 @dataclass(frozen=True, slots=True)

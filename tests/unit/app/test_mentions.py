@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 
 from sift.api.collections import Counted, ShowStatus
-from sift.api.documents import GetDocuments
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, ShowLinks
@@ -15,7 +14,7 @@ from sift.app.links import links
 from sift.app.mentions import mentions
 from tests.damage import damage_pages
 from tests.files import write
-from tests.homes import collection
+from tests.homes import asked, collection
 
 HANS, ACME = "vault/People/Hans Müller.md", "vault/Orgs/Acme AG.md"
 ACME_LINK = '"[[Acme AG]]"'
@@ -146,5 +145,5 @@ def test_a_record_is_mentioned_by_its_title_and_its_id_is_read_back(tmp_path: Pa
     index(home, IndexCollections(), lambda _: None)
     assert ids(mentions(home, FindMentions("R/papers.jsonl#p1"))) == ["R/x.md"]
     assert links(home, ShowLinks("R/papers.jsonl#p1")).id == "R/papers.jsonl#p1"
-    (found,) = documents(home, GetDocuments(("R/papers.jsonl#p1",))).found
+    (found,) = documents(home, asked("R/papers.jsonl#p1")).found
     assert found.id == "R/papers.jsonl#p1"

@@ -2,11 +2,11 @@ import os
 from collections.abc import Sequence
 from pathlib import Path, PurePath
 
-from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound
+from sift.api.documents import MOST_LINE, Documents, DocumentText, GetDocuments, Unfound, WantedDocument
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, SiftError
 from sift.domain.query import fields as shown
 from sift.domain.text.kinds import public_id, split_keyed_path
-from sift.domain.text.lines import line_range, refuse_past_end
+from sift.domain.text.lines import refuse_past_end
 from sift.storage.catalog import Collection, known_collections, refuse_inactive
 from sift.storage.database import Reading
 from sift.storage.documents import Stored, fields_of, paths_named, stored
@@ -73,29 +73,39 @@ def resolved_at(transaction: Reading, id_: str, relative: str, *, absolute: bool
     return found
 
 
-def _document(known: Sequence[Collection], id_: str, request: GetDocuments) -> DocumentText:
-    span = line_range(request.lines) if request.lines is not None else None
-    chosen, relative = place(known, id_)
+def _lines(wanted: WantedDocument) -> tuple[int, int] | None:
+    if wanted.first_line is None and wanted.last_line is None:
+        return None
+    first, last = wanted.first_line or 1, wanted.last_line or MOST_LINE
+    if last < first:
+        said = f"{wanted.id}: line {last} comes before line {first}"
+        raise InvalidRequestError(said, "give the first line before the last", "documents")
+    return first, last
+
+
+def _document(known: Sequence[Collection], wanted: WantedDocument, fields: tuple[str, ...]) -> DocumentText:
+    span = _lines(wanted)
+    chosen, relative = place(known, wanted.id)
     with read_store(chosen.store, chosen.id) as transaction:
-        found = resolved_at(transaction, id_, relative, absolute=Path(id_).is_absolute())
+        found = resolved_at(transaction, wanted.id, relative, absolute=Path(wanted.id).is_absolute())
         read = lines_between(transaction, found.id, *span) if span else LinesRead(text_of(transaction, found.id), 0)
     whole = public_id(chosen.name, found.path, found.key)
     if span:
         refuse_past_end(whole, read.total, first=span[0])
-    fields = shown.picked(fields_of(found.fields), request.fields) if request.fields else None
-    return DocumentText(whole, found.title, read.text, fields)
+    picked = shown.picked(fields_of(found.fields), fields) if fields else None
+    return DocumentText(whole, found.title, read.text, picked)
 
 
 def documents(home: Path, request: GetDocuments) -> Documents:
     shown.checked(request.fields, None)
-    if request.lines is not None:
-        line_range(request.lines)
+    for wanted in request.documents:
+        _lines(wanted)
     known = known_collections(home)
     found: list[DocumentText] = []
     unfound: list[Unfound] = []
-    for id_ in request.ids:
+    for wanted in request.documents:
         try:
-            found.append(_document(known, id_, request))
+            found.append(_document(known, wanted, request.fields))
         except SiftError as error:
-            unfound.append(Unfound(id_, error.message, error.remedy, error.code))
+            unfound.append(Unfound(wanted.id, error.message, error.remedy, error.code))
     return Documents(tuple(found), tuple(unfound))

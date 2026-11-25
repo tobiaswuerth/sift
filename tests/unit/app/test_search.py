@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from sift.api.collections import AddCollection, Counted, ShowStatus
-from sift.api.documents import GetDocuments
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
 from sift.api.ids import CollectionId
@@ -24,6 +23,7 @@ from sift.storage.store_files import delete_store
 from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import changed, damage_table
 from tests.files import write
+from tests.homes import asked
 
 LONG = "\n\n".join(["Pruning skips what cannot win. " * 20] * 8)
 
@@ -90,7 +90,7 @@ def test_a_search_finds_each_document_by_its_best_passage_with_where_it_is(home:
 
 def test_the_lines_of_a_hit_are_its_passage(home: Path) -> None:
     (hit,) = search(home, SearchKeywords('"block max"')).hits
-    (shown,) = documents(home, GetDocuments((hit.id,), hit.lines)).found
+    (shown,) = documents(home, asked(hit.id, lines=(hit.first_line, hit.last_line))).found
     assert hit.text is not None
     assert shown.text.strip() == hit.text.strip()
 

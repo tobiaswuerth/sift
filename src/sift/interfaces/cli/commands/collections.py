@@ -4,6 +4,7 @@ from sift.api.collections import Status, Unavailable
 from sift.api.documents import Documents
 from sift.interfaces.acts.collections import ACTIVATE, ADD, DEACTIVATE, GET, MOVE, REMOVE, STATUS
 from sift.interfaces.cli.commands.making import command, needing_collections
+from sift.interfaces.cli.reading import wanted
 from sift.interfaces.cli.shown import collections as shown
 from sift.interfaces.cli.shown.documents import documents as shown_documents
 
@@ -24,6 +25,6 @@ COMMANDS = MappingProxyType(
         "activate": command(ACTIVATE, shown.switched),
         "deactivate": command(DEACTIVATE, shown.switched),
         "status": command(STATUS, shown.status, _some_unavailable),
-        "get": needing_collections(command(GET, shown_documents, _some_unfound)),
+        "get": needing_collections(command(GET, shown_documents, _some_unfound, wanted)),
     }
 )

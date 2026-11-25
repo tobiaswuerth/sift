@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 
 from sift.api.collections import AddCollection
-from sift.api.documents import GetDocuments
 from sift.api.events import Event, Noted
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import add
@@ -14,6 +13,7 @@ from sift.app.indexing import IGNORE_REMEDY, index
 from sift.app.problems import LEFT_AS_INDEXED
 from sift.ingest.ignore import IGNORE_FILE
 from tests.files import write
+from tests.homes import asked
 from tests.later import LATER
 
 PATHS = ("notes/rl.md", "notes/plain.txt", "notes/robots/brush.md", "other/x.md")
@@ -39,7 +39,7 @@ def indexed(home: Path, report: Callable[[Event], None] = lambda _: None) -> Ind
 
 
 def held(home: Path) -> list[str]:
-    return [each.id for each in documents(home, GetDocuments(PATHS)).found]
+    return [each.id for each in documents(home, asked(*PATHS)).found]
 
 
 def test_the_index_follows_siftignore_as_it_changes(home: Path, notes: Path) -> None:

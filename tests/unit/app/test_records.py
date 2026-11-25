@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from sift.api.collections import AddCollection, Counted, ShowStatus
-from sift.api.documents import GetDocuments
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError
 from sift.api.events import Event, Noted
@@ -31,7 +30,7 @@ from sift.storage.documents import counts
 from sift.storage.store import open_store
 from sift.storage.vector_meta import left
 from tests.files import TORN, jsonl, torn_lines, write
-from tests.homes import text_of
+from tests.homes import asked, text_of
 from tests.keyword_stores import vectors_by_text
 from tests.later import later
 from tests.models import Hashed
@@ -77,7 +76,7 @@ def test_each_line_of_a_json_lines_file_is_a_document_named_by_its_file_and_id(p
     assert text_of(papers, BRUSH) == "# Brush stroke planning\n\nA robot plans brush strokes."
     assert found(papers, "strings") == [STRINGS]
     assert found(papers, "learning OR strokes OR junctions", ("year=1999",)) == [STRINGS]
-    (shown,) = documents(papers, GetDocuments((BRUSH,), fields=("year", "authors"))).found
+    (shown,) = documents(papers, asked(BRUSH, fields=("year", "authors"))).found
     assert shown.fields == {"year": 2021}
 
 

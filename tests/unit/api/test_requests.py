@@ -156,7 +156,7 @@ HALF = "a" + chr(0xD800)
         (lambda: SearchKeywords(HALF), "query"),
         (lambda: SearchKeywords("x", path=HALF), "path"),
         (lambda: SearchKeywords("x", collections=("notes", HALF)), "collections"),
-        (lambda: documents.GetDocuments((HALF,)), "ids"),
+        (lambda: documents.WantedDocument(HALF), "id"),
         (lambda: links.ShowLinks(HALF), "id"),
         (lambda: Filter(HALF, Operator.ANY, ("x",)), "filters"),
         (lambda: Filter("year", Operator.ANY, (HALF,)), "filters"),
@@ -173,7 +173,7 @@ DECOMPOSED, COMPOSED = "Ro\u0308sterei", "R\u00f6sterei"
 
 def test_the_names_of_fields_to_show_sort_by_or_look_in_are_composed_however_they_were_sent() -> None:
     asked = decoded(SearchKeywords, {"query": "x", "fields": [DECOMPOSED], "sort": DECOMPOSED})
-    shown = documents.GetDocuments(("notes/a.md",), fields=(DECOMPOSED,))
+    shown = documents.GetDocuments((documents.WantedDocument("notes/a.md"),), fields=(DECOMPOSED,))
     looked = links.FindMentions("notes/a.md", also=(DECOMPOSED, "plain"))
     found = (asked.fields, asked.sort, shown.fields, looked.also)
     assert found == ((COMPOSED,), COMPOSED, (COMPOSED,), (COMPOSED, "plain"))

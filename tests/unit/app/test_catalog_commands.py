@@ -10,7 +10,6 @@ from sift.api.collections import (
     DeactivateCollections,
     RemoveCollection,
 )
-from sift.api.documents import GetDocuments
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.indexing import IndexCollections
@@ -30,6 +29,7 @@ from sift.storage.store import create_store
 from sift.storage.store_files import delete_store
 from sift.storage.writer import sole_writer
 from tests.files import write
+from tests.homes import asked
 from tests.models import Hashed
 
 
@@ -171,7 +171,7 @@ def test_an_inactive_collection_named_is_refused_saying_how_to_search_it(home: P
             Problem.INACTIVE_COLLECTION,
             "run sift activate with its name",
         )
-    (unfound,) = documents(home, GetDocuments(("diary/monday.md",))).unfound
+    (unfound,) = documents(home, asked("diary/monday.md")).unfound
     assert (unfound.id, unfound.code) == ("diary/monday.md", Problem.INACTIVE_COLLECTION)
 
 

@@ -19,7 +19,6 @@ from sift.api.collections import (
     RemoveCollection,
     ShowStatus,
 )
-from sift.api.documents import GetDocuments
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, SiftError, StoreUnavailableError
 from sift.api.indexing import IndexCollections
@@ -32,6 +31,7 @@ from sift.interfaces.cli.arguments import arguments, flags, options
 from sift.interfaces.cli.context import Command, Commands, Context
 from sift.interfaces.cli.logs import FOLDER, LOGGED, Log, heard_too, kept
 from sift.interfaces.cli.notice import noticed
+from sift.interfaces.cli.reading import ReadDocuments
 from sift.interfaces.cli.shown.outcome import FAILED, INTERRUPTED, Shown, failure, stopped_writing
 from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
@@ -90,7 +90,7 @@ ENTRIES = MappingProxyType(
             "embed passages for semantic search, with the model SIFT_EMBED_MODEL names", EmbedCollections, "indexing"
         ),
         "vsearch": CommandEntry("find passages near a query in meaning", SearchVectors, "searching"),
-        "get": CommandEntry("print documents by their ids", GetDocuments, "collections"),
+        "get": CommandEntry("print documents by their ids", ReadDocuments, "collections"),
         "similar": CommandEntry("find documents near one in meaning, by its own vectors", FindSimilar, "searching"),
         "mentions": CommandEntry("find documents naming a note without linking to it", FindMentions, "searching"),
         "links": CommandEntry("the links of a note: those it holds, and those into it", ShowLinks, "links"),

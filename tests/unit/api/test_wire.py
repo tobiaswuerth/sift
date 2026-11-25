@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 
 from sift.api.collections import AddCollection, ShowStatus, TitleFrom
-from sift.api.documents import GetDocuments
+from sift.api.documents import GetDocuments, WantedDocument
 from sift.api.errors import (
     InvalidRequestError,
     ModelUnavailableError,
@@ -30,7 +30,7 @@ REQUESTS = (
         text_fields=("body", "abstract"),
     ),
     ShowStatus(("notes",), unreadable=True),
-    GetDocuments(("notes/a.md", "b.md"), lines="2-4", fields=("*",)),
+    GetDocuments((WantedDocument("notes/a.md", 2, 4), WantedDocument("b.md")), fields=("*",)),
     SearchKeywords(
         "halo",
         k=3,

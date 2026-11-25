@@ -43,8 +43,10 @@ def _as_client(module: object) -> Client:
     return cast("Client", module)
 
 
-def answered[R, A](act: Act[R, A], namespace: argparse.Namespace, context: Context) -> A:
-    request = request_of(act.request, namespace)
+def answered[R, A](
+    act: Act[R, A], namespace: argparse.Namespace, context: Context, made: Callable[[argparse.Namespace], R] | None
+) -> A:
+    request = request_of(act.request, namespace) if made is None else made(namespace)
     if context.server is None:
         return act.run(acting(context), request)
     return _as_client(import_module(CLIENT)).sent(context.server, act, request, context.report)
@@ -54,9 +56,10 @@ def command[R, A: Answer](
     act: Act[R, A],
     show: Callable[[A, str, Style], Shown],
     failed: Callable[[A], bool] = never,
+    made: Callable[[argparse.Namespace], R] | None = None,
 ) -> Command:
     def run(namespace: argparse.Namespace, context: Context) -> Shown:
-        answer = answered(act, namespace, context)
+        answer = answered(act, namespace, context, made)
         found = Shown((as_json(answer),), ()) if context.json else show(answer, context.platform, context.style)
         return found._replace(code=FAILED if failed(answer) else DONE)
 
@@ -66,7 +69,7 @@ def command[R, A: Answer](
 def searched[R](act: Act[R, SearchResult], kind: str) -> Command:
     def run(namespace: argparse.Namespace, context: Context) -> Shown:
         started = context.clock()
-        answer = answered(act, namespace, context)
+        answer = answered(act, namespace, context, None)
         seconds = context.clock() - started
         found = (
             Shown((as_json(answer),), ())
