@@ -5,6 +5,7 @@ from typing import cast
 
 import pytest
 
+from sift.api.embedding import EmbedCollections, EmbedResult
 from sift.api.errors import Problem
 from sift.api.events import Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections, IndexResult
@@ -14,6 +15,8 @@ from sift.interfaces.acts.acting import Act, Acting
 from sift.interfaces.server.handled import HANDLED, Handled, handled
 from sift.interfaces.server.results import KEPT_HITS, RESULTS
 from sift.settings import Settings
+from sift.storage.store_files import CATALOG
+from tests.damage import damage_pages
 from tests.files import write
 from tests.homes import indexed
 from tests.serving import Line, asked, counted, last, running
@@ -167,3 +170,25 @@ def test_an_answer_found_while_the_home_is_written_is_not_kept(settings: Setting
         release.set()
         joined(write_thread, 30)
     assert ran == ["x", "x"]
+
+
+def test_answers_are_kept_again_after_a_write_at_whose_end_the_home_could_not_be_listed(
+    settings: Settings, notes: Path
+) -> None:
+    ran, whole = list[str](), list[bytes]()
+    catalog = settings.home / CATALOG
+
+    def damaging(_acting: Acting, _request: EmbedCollections) -> EmbedResult:
+        whole.append(catalog.read_bytes())
+        damage_pages(catalog)
+        return EmbedResult(())
+
+    embed = handled(Act("embed", EmbedCollections, EmbedResult, damaging, writes=True))[1]
+    with running(settings, {**counted(ran), "embed": embed}) as server:
+        asked(server, "add", {"folder": str(notes)})
+        asked(server, "index", {})
+        _, said = asked(server, "embed", {})
+        catalog.write_bytes(whole[0])
+        for _ in range(3):
+            asked(server, "search", {"query": "halo"})
+    assert ("is damaged" in str(last(said, "error")["message"]), ran.count("search")) == (True, 1)

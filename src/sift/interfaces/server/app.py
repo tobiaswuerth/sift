@@ -135,14 +135,16 @@ def _searched(home: Path) -> set[tuple[Path, CollectionId]]:
 def _written(serving: Serving, sent: Sent, report: Reporter) -> object:
     with serving.gate.alone(report) if sent.handled.alone else nullcontext():
         serving.results.written()
-        serving.watch.let_go()
         try:
+            serving.watch.let_go()
             return sent.handled.run(_acting(serving, report, sent.audience), sent.data)
         finally:
-            searched = _searched(serving.settings.home)
-            serving.codes.kept_only(searched)
-            serving.decoded.kept_only(searched)
-            serving.results.written()
+            try:
+                searched = _searched(serving.settings.home)
+                serving.codes.kept_only(searched)
+                serving.decoded.kept_only(searched)
+            finally:
+                serving.results.written()
 
 
 def _moment(serving: Serving) -> Moment:
