@@ -1,3 +1,4 @@
+import dataclasses
 import importlib.util
 import json
 import threading
@@ -197,3 +198,19 @@ def test_without_a_command_known_a_newer_sift_is_told_of_alone(tmp_path: Path) -
         now=lambda: NOW, fetch=recording([], "2.1.0"), prefix=tmp_path, package=tmp_path / "sift", pip=lambda: False
     )
     assert told(tmp_path, "2.0.0", unknown) == "sift 2.1.0 is out, this is 2.0.0"
+
+
+def test_a_pypi_that_does_not_answer_is_given_up_at_the_deadline(tmp_path: Path) -> None:
+    released = threading.Event()
+
+    def hanging(_url: str, _installed: str) -> str:
+        released.wait(10)
+        return "9.0.0"
+
+    hung = dataclasses.replace(checking(tmp_path, fetch=hanging), deadline=0.05)
+    try:
+        assert told(tmp_path, "2.0.0", hung) is None
+    finally:
+        released.set()
+    failed = known(tmp_path / "update.json").failed
+    assert failed == "TimeoutError: PyPI did not answer within 0.05 s"

@@ -17,7 +17,7 @@ from sift.interfaces.cli.arguments import flags, options
 from sift.interfaces.cli.context import Context
 from sift.interfaces.cli.entries import ENTRIES, command_of
 from sift.interfaces.cli.logs import FOLDER, LOGGED, Log, heard_too, kept
-from sift.interfaces.cli.notice import noticed
+from sift.interfaces.cli.notice import notice
 from sift.interfaces.cli.shown.outcome import FAILED, INTERRUPTED, Shown, failure, stopped_writing
 from sift.interfaces.cli.usage import Parser, asked_json, parsed
 from sift.interfaces.console.live import Live, ticking
@@ -260,7 +260,14 @@ def _ran(
     found = _logged(asked, settings, host, _live(err, settings, style, platform, host.clock))
     if not settings.update_check or asked.json or not is_terminal(err):
         return found
-    return noticed(found, settings.home, _version(), style, host.checking)
+    _shown(found, out, err)
+    say(err, notice(settings.home, _version(), style, host.checking))
+    return found.code
+
+
+def _shown(found: Shown, out: TextIO | None, err: TextIO | None) -> None:
+    write_results(out, map(printable_text, found.results) if is_terminal(out) else found.results)
+    say(err, found.messages)
 
 
 def _given(settings: Settings) -> Settings:
@@ -286,8 +293,7 @@ def _answered(
         found = _ran(argv, source, (out, err), host, encoding)
         if isinstance(found, int):
             return found
-        write_results(out, map(printable_text, found.results) if is_terminal(out) else found.results)
-        say(err, found.messages)
+        _shown(found, out, err)
     except ReaderLeftError as left:
         let_go(left.stream)
         return FAILED

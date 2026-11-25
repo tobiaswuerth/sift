@@ -4,6 +4,7 @@ import json
 import re
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 from collections.abc import Callable
@@ -16,6 +17,7 @@ PYPI = "https://pypi.org/pypi/sift-rag/json"
 STATE = "update.json"
 DAY = 24 * 3600.0
 TIMEOUT = 3.0
+DEADLINE = 5.0
 MOST_BYTES = 32 << 20
 PACKAGE = "sift-rag"
 VERSION = re.compile(r"([0-9]+(?:\.[0-9]+)*)(?:(a|b|rc)([0-9]+))?")
@@ -141,16 +143,34 @@ class Checking:
     package: Path = Path(__file__)
     pip: Callable[[], bool] = _has_pip
     python: str = sys.executable
+    deadline: float = DEADLINE
 
 
 CHECKING = Checking()
 
 
-def _asked(checking: Checking, installed: str, before: Known) -> Known:
+@dataclass(slots=True)
+class PypiAnswer:
+    latest: str | None = None
+    failed: str | None = None
+
+
+def _ask(answered: PypiAnswer, checking: Checking, installed: str) -> None:
     try:
-        return Known(checking.now(), checking.fetch(checking.url, installed), None)
+        answered.latest = checking.fetch(checking.url, installed)
     except (OSError, ValueError, TypeError) as error:
-        return Known(checking.now(), before.latest, f"{type(error).__name__}: {error}")
+        answered.failed = f"{type(error).__name__}: {error}"
+
+
+def _asked(checking: Checking, installed: str, before: Known) -> Known:
+    answered = PypiAnswer()
+    asking = threading.Thread(target=_ask, args=(answered, checking, installed), daemon=True)
+    asking.start()
+    asking.join(checking.deadline)
+    if answered.latest is not None:
+        return Known(checking.now(), answered.latest, None)
+    failed = answered.failed or f"TimeoutError: PyPI did not answer within {checking.deadline:g} s"
+    return Known(checking.now(), before.latest, failed)
 
 
 def told(home: Path, installed: str, asked: Checking | None = None) -> str | None:
