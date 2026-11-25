@@ -137,10 +137,18 @@ def test_an_error_is_a_message_with_its_fix_and_no_traceback(settings: Settings,
 def test_an_error_of_the_system_is_a_message(settings: Settings, notes: Path) -> None:
     settings.home.write_bytes(b"a file, not a folder")
     code, out, err = ran(settings, "add", str(notes))
-    assert (code, out) == (1, "")
-    assert (err.startswith("error  "), f": {settings.home}\n" in err, "Errno" in err) == (True, True, False)
-    assert err.endswith("\n  fix  move what is there away, or choose another path\n")
-    assert err.count("\n") == 2
+    said, fix = err.split("\n  fix  ")
+    assert (code, out, said.startswith("error  "), f": {settings.home}" in said, "Errno" in err) == (
+        1,
+        "",
+        True,
+        True,
+        False,
+    )
+    assert fix in {
+        "move what is there away, or choose another path\n",
+        "check that each folder of the path is a folder, not a file\n",
+    }
 
 
 def test_a_bug_keeps_its_traceback(settings: Settings, notes: Path) -> None:
