@@ -247,3 +247,9 @@ def test_every_store_a_name_was_not_looked_up_in_is_named(people: Path, tmp_path
     with pytest.raises(NotFoundError, match=r"not searched: w: .*; not searched: x: "):
         links(people, ShowLinks("Nowhere"))
     assert [each.collection for each in links(people, ShowLinks("Acme AG")).unsearched] == ["w", "x"]
+
+
+def test_a_target_linked_from_the_root_is_the_target_its_wikilink_names(tmp_path: Path) -> None:
+    home = vault(tmp_path, {"Notes/a.md": "See [ghost](/Ghost.md).\n", "Notes/b.md": "See [[Ghost]].\n"})
+    (target,) = unresolved(home, ListUnresolved()).targets
+    assert (target.documents, target.ids) == (2, ("v/Notes/a.md", "v/Notes/b.md"))

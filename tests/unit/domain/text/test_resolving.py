@@ -85,3 +85,6 @@ def test_paths_compare_folded_and_a_note_s_without_its_extension() -> None:
     assert name_key("notes.txt") == "notes.txt"
     assert link_path("Notes/Plan.md", MARKDOWN, "../People/Hans.md") == "People/Hans.md"
     assert link_path("Notes/Plan.md", WIKI, "/People/Hans") == "People/Hans"
+    assert link_path("Notes/Plan.md", MARKDOWN, "/People/Hans.md") == "People/Hans.md"
+    hans = [candidate(0, "People/Hans.md"), candidate(1, "Notes/People/Hans.md")]
+    assert resolved("Notes/Plan.md", MARKDOWN, "/People/Hans.md", hans, []) == via(Via.PATH, 0)

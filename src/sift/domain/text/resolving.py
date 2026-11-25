@@ -38,6 +38,8 @@ UNRESOLVED = Resolution(Via.UNRESOLVED, ())
 
 
 def link_path(source: str, kind: LinkKind, target: str) -> str:
+    if kind is LinkKind.MARKDOWN and target.startswith("/"):
+        return posixpath.normpath(target.lstrip("/"))
     if kind is LinkKind.MARKDOWN or target.startswith(RELATIVE):
         return posixpath.normpath(posixpath.join(posixpath.dirname(source), target))
     return target.lstrip("/")
