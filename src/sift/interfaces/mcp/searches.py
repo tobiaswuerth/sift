@@ -1,9 +1,10 @@
-from collections.abc import Mapping
+import dataclasses
+from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import cast
 
 from sift.api.errors import InvalidRequestError
-from sift.api.links import FindMentions, Links, ShowLinks
+from sift.api.links import FindMentions, FindSimilar, Links, ShowLinks
 from sift.api.search import SearchHybrid
 from sift.api.wire import Json, encoded
 from sift.interfaces.mcp.answers import ToolAnswer, answered, compacted, hits_of, with_notes
@@ -12,12 +13,12 @@ from sift.interfaces.mcp.tools import Tool, ToolRunning
 
 MOST_QUERIES = 20
 MODES: Mapping[str, str] = MappingProxyType({"hybrid": "query", "keyword": "search", "semantic": "vsearch"})
-KINDS: Mapping[str, tuple[str, str | None]] = MappingProxyType(
+KINDS: Mapping[str, tuple[str, type, str | None]] = MappingProxyType(
     {
-        "similar": ("similar", None),
-        "links": ("links", "out"),
-        "backlinks": ("links", "in"),
-        "mentions": ("mentions", None),
+        "similar": ("similar", FindSimilar, None),
+        "links": ("links", ShowLinks, "out"),
+        "backlinks": ("links", ShowLinks, "in"),
+        "mentions": ("mentions", FindMentions, None),
     }
 )
 QUERY = (
@@ -53,6 +54,11 @@ RELATED = (
 )
 
 
+def _either(names: Iterable[str]) -> str:
+    *first, last = names
+    return f"{', '.join(first)} or {last}" if first else last
+
+
 def _refused(field: str, given: object, wanted: str) -> InvalidRequestError:
     return InvalidRequestError(f"{field} is {given!r}, not {wanted}", f"give {field} as {wanted}", field)
 
@@ -74,7 +80,7 @@ def _search(running: ToolRunning, arguments: Mapping[str, object]) -> Json:
         raise InvalidRequestError("the search needs query", "give query, e.g. what the documents are about", "query")
     queries, mode = _queries(rest.pop("query")), rest.pop("mode", "hybrid")
     if not isinstance(mode, str) or mode not in MODES:
-        raise _refused("mode", mode, " or ".join(MODES))
+        raise _refused("mode", mode, _either(MODES))
     found = [hits_of(running.read(MODES[mode], cast("Json", {**rest, "query": query}))) for query in queries]
     if isinstance(arguments["query"], str):
         return cast("Json", found[0])
@@ -88,16 +94,24 @@ def _links(answer: object) -> ToolAnswer:
     return with_notes(shown, links.unsearched)
 
 
+def _refuse_untaken(kind: str, request: type, given: Mapping[str, object]) -> None:
+    own = (field.name for field in dataclasses.fields(request) if field.name not in ("id", "direction"))
+    taken = ("id", "kind", *own)
+    for key in given:
+        if key not in taken:
+            leave = f"leave out {key!r}: it takes {', '.join(taken)}"
+            raise InvalidRequestError(f"related of kind {kind} takes no {key!r}", leave, key)
+
+
 def _related(running: ToolRunning, arguments: Mapping[str, object]) -> Json:
     rest = dict(arguments)
     kind = rest.pop("kind", "similar")
     if not isinstance(kind, str) or kind not in KINDS:
-        raise _refused("kind", kind, ", ".join(KINDS))
-    act, direction = KINDS[kind]
+        raise _refused("kind", kind, _either(KINDS))
+    act, request, direction = KINDS[kind]
+    _refuse_untaken(kind, request, rest)
     if direction is None:
         return cast("Json", hits_of(running.read(act, cast("Json", rest))))
-    if "direction" in rest:
-        raise InvalidRequestError("related takes no direction", "give kind as links or backlinks", "direction")
     return cast("Json", _links(running.read(act, cast("Json", {**rest, "direction": direction}))))
 
 

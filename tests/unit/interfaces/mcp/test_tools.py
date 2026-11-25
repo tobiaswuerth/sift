@@ -259,3 +259,15 @@ def test_collections_says_which_are_inactive_unreadable_or_out_of_reach() -> Non
         ],
         "jobs": [{"job": 2, "command": "index", "running": False, "seconds": 0.0}],
     }
+
+
+def test_a_refusal_names_what_the_tool_takes_for_its_kind_and_mode(direct: Direct) -> None:
+    with pytest.raises(InvalidRequestError) as compact:
+        called(direct, "related", {"id": "open/Plan.md", "kind": "links", "compact": True})
+    with pytest.raises(InvalidRequestError) as fuzzy:
+        called(direct, "search", {"query": "x", "mode": "fuzzy"})
+    assert (compact.value.message, compact.value.remedy) == (
+        "related of kind links takes no 'compact'",
+        "leave out 'compact': it takes id, kind, depth, field, k",
+    )
+    assert fuzzy.value.message == "mode is 'fuzzy', not hybrid, keyword or semantic"
