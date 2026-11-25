@@ -2,18 +2,20 @@ import argparse
 import dataclasses
 import re
 import types
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, cast, get_args, get_origin, get_type_hints, override
 
-from sift.api.described import AbsolutePath, Bounds, Help
+from sift.api.described import AbsolutePath, Bounds, FileOrId, Help
 from sift.api.requests import choices_of, type_name
 from sift.interfaces.cli.flags import RESERVED, Flag, flag_of
 
 type Placing = Callable[[str], str]
+type Places = Mapping[type[object], Placing]
 
 PLAIN_KINDS = (str, int, float)
+PLACED = (AbsolutePath, FileOrId)
 WHOLE_NUMBER = re.compile("-?[0-9]{1,18}")
 DECIMAL = re.compile("-?[0-9]{1,9}([.][0-9]{1,9})?")
 
@@ -33,7 +35,7 @@ class Argument:
     name: str
     kind: object
     help: str
-    place: bool
+    place: type[object] | None
     how: How
     flag: Flag
     default: object = None
@@ -43,7 +45,7 @@ class Argument:
 class Described:
     kind: object
     help: Help
-    place: bool
+    place: type[object] | None
     flag: Flag
     bounds: Bounds | None = None
 
@@ -76,7 +78,8 @@ def _described(request: type[object], name: str, hint: object) -> Described:
     if name in RESERVED:
         raise _refused(request, name, "sift's own option is named so")
     bounds = next((part for part in metadata if isinstance(part, Bounds)), None)
-    return Described(kind, found[0], any(isinstance(part, AbsolutePath) for part in metadata), flag_of(name), bounds)
+    place = next((type(part) for part in metadata if isinstance(part, PLACED)), None)
+    return Described(kind, found[0], place, flag_of(name), bounds)
 
 
 def limits(bounds: Bounds | None, default: object) -> str:
@@ -168,13 +171,13 @@ def _decimal(written: str) -> float:
     return float(written)
 
 
-def _converter(argument: Argument, place: Placing) -> Callable[[str], object]:
-    if argument.place:
-        return place
+def _converter(argument: Argument, places: Places) -> Callable[[str], object]:
+    if argument.place is not None:
+        return places[argument.place]
     return _whole if argument.kind is int else _decimal if argument.kind is float else str
 
 
-def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placing) -> None:
+def _add(parser: argparse.ArgumentParser, argument: Argument, places: Places) -> None:
     named = [each for each in (argument.flag.short, argument.flag.long) if each is not None]
     choices = choices_of(argument.kind)
     if argument.how is How.SWITCH:
@@ -184,10 +187,11 @@ def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placing) ->
             *named, dest=argument.name, action=argparse.BooleanOptionalAction, default=None, help=argument.help
         )
     elif argument.how is How.READ:
-        parser.add_argument(*named, dest=argument.name, action="append", help=argument.help)
+        converted = _converter(argument, places)
+        parser.add_argument(*named, dest=argument.name, action="append", type=converted, help=argument.help)
     elif argument.how in (How.ANY, How.SOME):
         parser.add_argument(
-            argument.name, nargs=argument.how.value, type=_converter(argument, place), help=argument.help
+            argument.name, nargs=argument.how.value, type=_converter(argument, places), help=argument.help
         )
     elif choices is not None:
         offered = [str(member) for member in choices]
@@ -198,12 +202,12 @@ def _add(parser: argparse.ArgumentParser, argument: Argument, place: Placing) ->
         else:
             parser.add_argument(argument.name, choices=offered, help=argument.help)
     elif argument.how is How.OPTION:
-        converted = _converter(argument, place)
+        converted = _converter(argument, places)
         parser.add_argument(
             *named, dest=argument.name, action=Once, type=converted, default=argument.default, help=argument.help
         )
     else:
-        parser.add_argument(argument.name, type=_converter(argument, place), help=argument.help)
+        parser.add_argument(argument.name, type=_converter(argument, places), help=argument.help)
 
 
 def flags(request: type[object]) -> dict[str, str]:
@@ -215,9 +219,10 @@ def flags(request: type[object]) -> dict[str, str]:
     }
 
 
-def options(parser: argparse.ArgumentParser, request: type[object], place: Placing) -> None:
+def options(parser: argparse.ArgumentParser, request: type[object], place: Placing, file_or_id: Placing = str) -> None:
+    places: Places = {AbsolutePath: place, FileOrId: file_or_id}
     for argument in arguments(request):
-        _add(parser, argument, place)
+        _add(parser, argument, places)
 
 
 def _value(argument: Argument, given: object) -> object:

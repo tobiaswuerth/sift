@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated
 
-from sift.api.described import FIELD_LENGTH, LISTED, NAME_LENGTH, PATH_LENGTH, Bounds, Composed, Help
+from sift.api.described import FIELD_LENGTH, LISTED, NAME_LENGTH, PATH_LENGTH, Bounds, Composed, FileOrId, Help
 from sift.api.notices import Notice
 from sift.api.requests import Request
 from sift.api.search import MOST_HITS, Options
@@ -21,7 +21,7 @@ class Direction(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ShowLinks(Request):
-    id: Annotated[str, Help(NOTE), PATH_LENGTH]
+    id: Annotated[str, Help(NOTE), FileOrId(), PATH_LENGTH]
     direction: Annotated[Direction, Help("out (default): the links it holds; in: those into it; or both")] = (
         Direction.OUT
     )
@@ -95,10 +95,10 @@ class Unresolved:
 
 @dataclass(frozen=True, slots=True)
 class FindMentions(Options):
-    id: Annotated[str, Help(NOTE), PATH_LENGTH]
+    id: Annotated[str, Help(NOTE), FileOrId(), PATH_LENGTH]
     also: Annotated[tuple[str, ...], Help(ALSO), Composed(), LISTED, FIELD_LENGTH] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class FindSimilar(Options):
-    id: Annotated[str, Help(DOCUMENT), PATH_LENGTH]
+    id: Annotated[str, Help(DOCUMENT), FileOrId(), PATH_LENGTH]

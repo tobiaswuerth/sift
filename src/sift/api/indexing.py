@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from sift.api.described import LISTED, NAME_LENGTH, PATH_LENGTH, Bounds, Help
+from sift.api.described import LISTED, NAME_LENGTH, PATH_LENGTH, Bounds, FileOrId, Help
 from sift.api.errors import Problem
 from sift.api.notices import Notice
 from sift.api.requests import Request
@@ -21,6 +21,7 @@ class IndexCollections(Request):
     files: Annotated[
         tuple[str, ...],
         Help(FILES),
+        FileOrId(),
         Bounds(0, MOST_FILES),
         PATH_LENGTH,
     ] = ()

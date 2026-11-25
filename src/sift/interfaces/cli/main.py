@@ -16,6 +16,7 @@ from sift.domain.text.decoding import encodable
 from sift.interfaces.cli.arguments import flags, options
 from sift.interfaces.cli.context import Context
 from sift.interfaces.cli.entries import ENTRIES, command_of
+from sift.interfaces.cli.flags import file_or_id
 from sift.interfaces.cli.logs import FOLDER, LOGGED, Log, heard_too, kept
 from sift.interfaces.cli.notice import notice
 from sift.interfaces.cli.shown.outcome import FAILED, INTERRUPTED, Shown, failure, stopped_writing
@@ -109,6 +110,13 @@ def _settings_help() -> str:
     return "\n".join([SETTINGS_HEADING, *(f"  {name:<{width}}{said}" for name, said in VARIABLES.items())])
 
 
+def _file_or_id(user: Path | None, cwd: Path, written: str) -> str:
+    try:
+        return file_or_id(user, cwd, written)
+    except InvalidRequestError as error:
+        raise argparse.ArgumentTypeError(f"{error.message}: {error.remedy}") from None
+
+
 def parser(user: Path | None, cwd: Path) -> argparse.ArgumentParser:
     built = Parser(
         prog="sift",
@@ -125,7 +133,7 @@ def parser(user: Path | None, cwd: Path) -> argparse.ArgumentParser:
     for name, each in ENTRIES.items():
         chosen = commands.add_parser(name, help=each.help, description=each.help, allow_abbrev=False)
         chosen.color = False
-        options(chosen, each.request, partial(_placed, user, cwd))
+        options(chosen, each.request, partial(_placed, user, cwd), partial(_file_or_id, user, cwd))
         chosen.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=JSON_HELP)
         chosen.add_argument("--color", choices=list(Colour), default=argparse.SUPPRESS, help=COLOR_HELP)
     return built

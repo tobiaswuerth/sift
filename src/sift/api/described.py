@@ -12,6 +12,11 @@ class AbsolutePath:
 
 
 @dataclass(frozen=True, slots=True)
+class FileOrId:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class Composed:
     pass
 

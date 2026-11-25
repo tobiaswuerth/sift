@@ -6,6 +6,7 @@ from types import MappingProxyType
 
 from sift.api.filters import Filter
 from sift.interfaces.cli.written import WRITTEN_SYNTAX, listed, written
+from sift.settings import USER, whole_path
 
 RESERVED = frozenset({"command", "json", "color", "help", "version"})
 FROM_HERE = tuple(dots + separator for dots in (".", "..") for separator in sorted({"/", os.sep}))
@@ -27,9 +28,11 @@ def filtered(text: str) -> tuple[Filter, ...]:
     return (written(text),)
 
 
-def file_or_id(text: str) -> tuple[str, ...]:
-    from_here = text.startswith(FROM_HERE)
-    return (os.path.normpath(Path(text).absolute()) if from_here or os.path.lexists(text) else text,)
+def file_or_id(user: Path | None, cwd: Path, text: str) -> str:
+    if Path(text).parts[:1] == (USER,):
+        return os.path.normpath(whole_path(text, user, cwd))
+    path = cwd / text
+    return os.path.normpath(path) if text.startswith(FROM_HERE) or os.path.lexists(path) else text
 
 
 LISTED_SYNTAX = "; comma-separated, e.g. url,created"
@@ -43,7 +46,7 @@ FLAGS: Mapping[str, Flag] = MappingProxyType(
         "also": Flag("--also", None, listed, LISTED_SYNTAX),
         "links_to": Flag("--links-to", None, one),
         "linked_from": Flag("--linked-from", None, one),
-        "files": Flag("--file", None, file_or_id),
+        "files": Flag("--file", None, one),
     }
 )
 
