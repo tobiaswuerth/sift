@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
 
+from tests.repository.texts import matches
+
 ROOT = Path(__file__).parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 BUILD_CONSTRAINTS = ".github/requirements-build.txt"
@@ -9,11 +11,6 @@ SILENCED_WITH_THE_OWNER_S_YES = frozenset({("release.yml", "workflow_run:  # ziz
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
-
-
-def matches(pattern: str, text: str) -> list[str]:
-    found: list[str] = re.findall(pattern, text)
-    return found
 
 
 def jobs(workflow: str) -> str:
