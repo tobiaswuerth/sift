@@ -299,6 +299,12 @@ def test_front_matter_that_is_no_mapping_is_damage(written: str) -> None:
         fields_of(written)
 
 
+@pytest.mark.parametrize("written", ["{nope", "", '{"a": 1'])
+def test_front_matter_that_is_no_json_is_damage(written: str) -> None:
+    with pytest.raises(DamagedError, match="a document's front matter is no JSON"):
+        fields_of(written)
+
+
 def test_the_largest_row_fits_a_row_sqlite_stores(store: sqlite3.Connection) -> None:
     most_characters_as_utf8, most_composed, digest_and_numbers = 4, 3, 1 << 10
     note_title_and_fields = (MOST_LINE + MOST_HEAD * most_composed) * most_characters_as_utf8

@@ -64,7 +64,10 @@ def description_bytes(document: Document) -> int:
 
 
 def fields_of(written: str) -> Fields:
-    read = cast("object", json.loads(written))
+    try:
+        read = cast("object", json.loads(written))
+    except ValueError as error:
+        raise DamagedError(f"a document's front matter is no JSON: {error}") from None
     if not isinstance(read, dict):
         raise DamagedError("a document's front matter is no mapping")
     return cast("Fields", read)
