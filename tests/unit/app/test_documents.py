@@ -119,7 +119,7 @@ def test_an_unknown_id_is_told_the_case_ids_keep_or_how_folders_are_written(
 ) -> None:
     missing = unfound(home, asked)
     assert (missing.message, missing.remedy, missing.code) == (
-        f"unknown document {asked!r}",
+        f"no note or document {asked!r}",
         remedy,
         Problem.UNKNOWN_DOCUMENT,
     )
@@ -128,7 +128,7 @@ def test_an_unknown_id_is_told_the_case_ids_keep_or_how_folders_are_written(
 @pytest.mark.parametrize("unknown", ["notes/rush.md", "notes/z/b/c.md", "notes/robots", "missing/rl.md", "notes"])
 def test_an_id_that_names_no_document_whole_is_unknown(home: Path, unknown: str) -> None:
     assert unfound(home, unknown) == Notice(
-        Problem.UNKNOWN_DOCUMENT, f"unknown document {unknown!r}", UNKNOWN, id=unknown
+        Problem.UNKNOWN_DOCUMENT, f"no note or document {unknown!r}", UNKNOWN, id=unknown
     )
 
 
@@ -138,7 +138,7 @@ def test_a_document_is_read_by_its_file_s_absolute_path_in_any_case(tmp_path: Pa
     assert documents(home, asked(str(root / "Robots" / "BRUSH.md"))).found[0].id == "notes/robots/brush.md"
     assert documents(home, asked(str(root / "twice.md"))).found[0].id == "notes/Twice.md"
     for outside in (tmp_path / "rl.md", root / "brush.md"):
-        assert unfound(home, str(outside)).message.startswith("unknown document")
+        assert unfound(home, str(outside)).message.startswith("no note or document")
 
 
 def test_an_absolute_path_finds_its_document_whatever_the_case_of_its_letters_beyond_ascii(
@@ -152,7 +152,7 @@ def test_an_absolute_path_finds_its_document_whatever_the_case_of_its_letters_be
 
 def test_an_absolute_id_on_a_share_no_collection_lies_on_is_unknown(home: Path) -> None:
     elsewhere = str(Path("//host.invalid/share/notes/rl.md"))
-    assert unfound(home, elsewhere).message == f"unknown document {elsewhere!r}"
+    assert unfound(home, elsewhere).message == f"no note or document {elsewhere!r}"
 
 
 def test_several_documents_are_read_at_once_and_those_not_found_said(home: Path) -> None:
@@ -166,7 +166,7 @@ def test_a_document_is_read_as_indexed_until_the_next_index(tmp_path: Path, home
     assert text(home, "notes/rl.md").startswith("# Reward shaping")
     (tmp_path / "notes" / "rl.md").unlink()
     index(home, IndexCollections(), lambda _: None)
-    assert unfound(home, "notes/rl.md").message == "unknown document 'notes/rl.md'"
+    assert unfound(home, "notes/rl.md").message == "no note or document 'notes/rl.md'"
 
 
 def test_a_shortened_id_many_paths_end_in_names_the_first_five(tmp_path: Path, home: Path) -> None:
@@ -185,7 +185,7 @@ def test_a_document_of_a_damaged_store_is_not_found_and_says_why(home: Path) -> 
 
 def test_without_any_collection_every_id_is_unknown(tmp_path: Path) -> None:
     result = documents(tmp_path / "empty", asked("notes/rl.md"))
-    assert [missing.message for missing in result.not_read] == ["unknown document 'notes/rl.md'"]
+    assert [missing.message for missing in result.not_read] == ["no note or document 'notes/rl.md'"]
     assert not (tmp_path / "empty").exists()
 
 

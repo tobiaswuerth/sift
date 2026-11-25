@@ -237,7 +237,7 @@ def test_a_note_found_by_name_is_read_again_at_its_path_alone(people: Path) -> N
     (one,) = known_collections(people)
     with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
         assert Note(one, "Orgs/Acme AG.md").find(transaction) > 0
-        with pytest.raises(NotFoundError, match=r"unknown document 'v/Acme AG\.md'"):
+        with pytest.raises(NotFoundError, match=r"no note or document 'v/Acme AG\.md'"):
             Note(one, "Acme AG.md").find(transaction)
 
 

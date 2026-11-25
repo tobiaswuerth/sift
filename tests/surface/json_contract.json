@@ -221,7 +221,7 @@
       "not_read": [
         {
           "code": "unknown_document",
-          "message": "unknown document 'notes/b.md'",
+          "message": "no note or document 'notes/b.md'",
           "remedy": "take the id from a search result",
           "collection": null,
           "id": "notes/b.md"

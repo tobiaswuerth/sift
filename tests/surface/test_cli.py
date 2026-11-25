@@ -66,7 +66,7 @@ def test_a_collection_added_is_shown_by_status(settings: Settings, notes: Path) 
         "\n".join(
             table(
                 (
-                    ("collection", "folder", "documents", "chunks", "size"),
+                    ("collection", "folder", "documents", "passages", "size"),
                     ("notes", str(notes.resolve()), "0", "0", size(store.stat().st_size)),
                 ),
                 frozenset({2, 3, 4}),
@@ -309,7 +309,7 @@ def test_get_of_a_document_there_is_not_is_an_error(settings: Settings, notes: P
     ran(settings, "index")
     code, out, err = ran(settings, "get", "notes/gone.md")
     assert (code, out) == (1, "")
-    assert err.startswith("error  notes/gone.md: unknown document 'notes/gone.md'\n  fix  ")
+    assert err.startswith("error  no note or document 'notes/gone.md'\n  fix  ")
     code, out, err = ran(settings, "get", "notes/gone.md", "--json")
     assert (code, json.loads(out)["not_read"][0]["id"], err) == (1, "notes/gone.md", "")
 

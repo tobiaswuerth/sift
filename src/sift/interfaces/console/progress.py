@@ -18,15 +18,16 @@ from sift.interfaces.console.style import Style, Tone, paint
 from sift.interfaces.console.text import fitted, labelled, printable
 from sift.interfaces.console.units import duration, rate
 
+PASSAGES = ("passage", "passages")
 UNITS = MappingProxyType(
     {
-        Phase.REMAKE: ("chunk", "chunks"),
+        Phase.REMAKE: PASSAGES,
         Phase.SCAN: ("file", "files"),
         Phase.READ: ("file", "files"),
-        Phase.MERGE: ("chunk", "chunks"),
-        Phase.EMBED: ("chunk", "chunks"),
+        Phase.MERGE: PASSAGES,
+        Phase.EMBED: PASSAGES,
         Phase.LOAD: ("model", "models"),
-        Phase.ORDER: ("chunk", "chunks"),
+        Phase.ORDER: PASSAGES,
         Phase.COPY: ("MB", "MB"),
         Phase.TITLE: ("note", "notes"),
     }
@@ -87,7 +88,7 @@ def _counted(phase: Phase, count: int) -> str:
 
 def _speed(phase: Phase, count: int, seconds: float) -> str:
     rated = phase in RATED and count > 1 and seconds >= SHORTEST_RATED
-    return rate(count, seconds, UNITS[phase][1]) if rated else ""
+    return f" {rate(count, seconds, UNITS[phase][1])}" if rated else ""
 
 
 def _row(running: Running, count: int, now: float, style: Style) -> str:

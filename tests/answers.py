@@ -92,7 +92,7 @@ SAMPLES: dict[str, Answer] = {
         (
             Notice(
                 Problem.UNKNOWN_DOCUMENT,
-                "unknown document 'notes/b.md'",
+                "no note or document 'notes/b.md'",
                 "take the id from a search result",
                 id="notes/b.md",
             ),

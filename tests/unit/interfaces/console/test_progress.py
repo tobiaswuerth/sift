@@ -132,7 +132,7 @@ def test_one_file_is_a_file_and_has_no_speed() -> None:
 
 def test_a_remake_counts_chunks_and_their_speed() -> None:
     lines = replayed(((0.0, PhaseStarted(Phase.REMAKE, 5_000)), (2.0, PhaseDone(5_000))))[1]
-    assert lines == ["  remake     5,000 chunks    2,500 chunks/s     2.0 s"]
+    assert lines == ["  remake     5,000 passages 2,500 passages/s     2.0 s"]
 
 
 def test_a_phase_done_in_less_than_a_twentieth_of_a_second_shows_no_speed() -> None:

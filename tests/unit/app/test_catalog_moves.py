@@ -79,7 +79,7 @@ def test_a_store_moves_to_another_drive_as_a_copy_saying_how_far_it_got(home: Pa
     result = moved(home, "notes", to=tmp_path / "other drive", how=Moving(Transfer(no_link, pages=2)), said=said)
     assert result.moved[0].copied
     assert said[:2] == [
-        CollectionStarted("notes", str(tmp_path / "other drive" / "notes.sqlite")),
+        CollectionStarted("notes", str(home / "collections" / "notes.sqlite")),
         PhaseStarted(Phase.COPY, 1),
     ]
     assert any(isinstance(each, Advanced) for each in said)

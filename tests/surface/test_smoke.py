@@ -132,12 +132,12 @@ def plain_run(home: Path, notes: Path) -> None:
     named = sift(home, "index", "--file", str(notes / "rl.md"), "--file", "notes/gone.md")
     assert (named.returncode, named.stderr.splitlines()[-2:]) == (
         0,
-        ["notes/rl.md: unchanged", "notes/gone.md: missing"],
+        [" file  notes/rl.md: unchanged", " file  notes/gone.md: missing"],
     )
     asked = answer(sift(home, "index", "--file", "notes/sub/brush.md", "--json"))
     assert cast("list[Answer]", cast("list[Answer]", asked["collections"])[0]["named"])[0]["state"] == "unchanged"
     here = sift(home, "index", "--file", "brush.md", "--file", "../gone.md", cwd=notes / "sub")
-    assert here.stderr.splitlines()[-2:] == ["notes/sub/brush.md: unchanged", "notes/gone.md: missing"]
+    assert here.stderr.splitlines()[-2:] == [" file  notes/sub/brush.md: unchanged", " file  notes/gone.md: missing"]
     status_run(home)
     one = sift(home, "get", "notes/brush.md")
     assert (one.returncode, one.stdout, one.stderr) == (0, "# Brush\n", "")
@@ -154,7 +154,7 @@ def plain_run(home: Path, notes: Path) -> None:
     links_run(home)
     missing = sift(home, "get", "notes/gone.md")
     assert (missing.returncode, missing.stdout) == (1, "")
-    assert missing.stderr.startswith("error  notes/gone.md: unknown document")
+    assert missing.stderr.startswith("error  no note or document 'notes/gone.md'")
     assert sift(home, "frobnicate").returncode == 2
     assert sift(home, "--help").stdout.startswith("usage: sift")
     linking = sift(
@@ -197,7 +197,7 @@ def models_run(home: Path, notes: Path, model: str, reranker: str) -> None:
     indexed(home, notes)
     embedded = sift(home, "embed", model=model)
     assert (embedded.returncode, embedded.stdout) == (0, "")
-    assert "  embed          3 chunks" in embedded.stderr
+    assert "  embed          3 passages" in embedded.stderr
     assert "  load           1 model " in embedded.stderr
     assert ("%|" in embedded.stderr, "it/s]" in embedded.stderr) == (False, False)
     near = sift(home, "vsearch", "learning", "-k", "1", "--json", model=model)

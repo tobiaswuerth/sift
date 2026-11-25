@@ -43,7 +43,7 @@ def _in(heading: str, found: tuple[LinkIn, ...]) -> tuple[str, ...]:
 def links(result: Links, _platform: str, style: Style) -> Shown:
     note = f"{result.title} ({result.id})"
     out = () if result.out is None else _out(f"{note} links to", result.out)
-    into = () if result.into is None else _in(f"Linking to {note}", result.into)
+    into = () if result.into is None else _in(f"linking to {note}", result.into)
     more = (labelled("more", MORE_LINKS, style=style),) if result.more else ()
     return Shown(tuple(printable(line) for line in (*out, *into)), (*notice_lines(result.unsearched, style), *more))
 

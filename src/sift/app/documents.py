@@ -33,7 +33,7 @@ def _written_oddly(id_: str) -> bool:
 
 def unknown(id_: str, remedy: str = UNKNOWN_REMEDY) -> NotFoundError:
     told = SEPARATED_REMEDY if _written_oddly(id_) else remedy
-    return NotFoundError(f"unknown document {id_!r}", told, code=Problem.UNKNOWN_DOCUMENT)
+    return NotFoundError(f"no note or document {id_!r}", told, code=Problem.UNKNOWN_DOCUMENT)
 
 
 def _unknown_in(name: str, id_: str, relative: str, candidates: Sequence[str]) -> NotFoundError:

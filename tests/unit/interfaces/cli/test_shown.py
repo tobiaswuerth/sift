@@ -86,9 +86,9 @@ def test_labels_take_their_colour_where_colour_is_on() -> None:
 def test_status_is_a_table_whose_numbers_align_and_whose_problems_are_said_beside_it() -> None:
     assert status(STATUS, "linux", PLAIN) == Shown(
         (
-            "collection   folder        documents  chunks    size",
-            "notes        /data/notes      12,431  76,738  412 MB",
-            "Papers-日本  /data/papers          -       -       -",
+            "collection   folder        documents  passages    size",
+            "notes        /data/notes      12,431    76,738  412 MB",
+            "Papers-日本  /data/papers          -         -       -",
         ),
         (
             "error  Papers-日本: the store is missing: /s/papers.sqlite",
@@ -100,9 +100,9 @@ def test_status_is_a_table_whose_numbers_align_and_whose_problems_are_said_besid
 def test_status_counts_links_where_a_collection_holds_any() -> None:
     linked = dataclasses.replace(NOTES, contents=Counted(1, 2, 3_000, 0, (), links=3_249, unresolved=7))
     assert status(Status("/h", (linked, STATUS.collections[1])), "linux", PLAIN).results == (
-        "collection   folder        documents  chunks    size  links  unresolved",
-        "notes        /data/notes           1       2  3.0 kB  3,249           7",
-        "Papers-日本  /data/papers          -       -       -      -           -",
+        "collection   folder        documents  passages    size  links  unresolved",
+        "notes        /data/notes           1         2  3.0 kB  3,249           7",
+        "Papers-日本  /data/papers          -         -       -      -           -",
     )
 
 
@@ -115,8 +115,8 @@ def test_status_counts_unreadable_files_and_lists_them_when_asked() -> None:
     failed = (UnreadableFile("huge.txt", "too large"), UnreadableFile("locked.md", "Permission denied"))
     counted = dataclasses.replace(NOTES, contents=Counted(1, 2, 3_000, 2, failed))
     assert status(Status("/h", (counted,)), "linux", PLAIN).results == (
-        "collection  folder       documents  chunks    size  unreadable",
-        "notes       /data/notes          1       2  3.0 kB           2",
+        "collection  folder       documents  passages    size  unreadable",
+        "notes       /data/notes          1         2  3.0 kB           2",
         "",
         "collection  file       problem",
         "notes       huge.txt   too large",
@@ -129,10 +129,10 @@ def test_status_counts_what_is_embedded_by_which_model_and_says_what_searches_le
     resting = dataclasses.replace(NOTES, name="old", contents=Counted(1, 2, 3_000, 0, ()), active=False)
     gone = dataclasses.replace(STATUS.collections[1], active=False)
     assert status(Status("/h", (embedded, resting, gone)), "linux", PLAIN).results == (
-        "collection   folder        documents  chunks  embedded    size  active",
-        "notes        /data/notes           1       2         2  3.0 kB     yes",
-        "old          /data/notes           1       2         0  3.0 kB      no",
-        "Papers-日本  /data/papers          -       -         -       -      no",
+        "collection   folder        documents  passages  embedded    size  active",
+        "notes        /data/notes           1         2         2  3.0 kB     yes",
+        "old          /data/notes           1         2         0  3.0 kB      no",
+        "Papers-日本  /data/papers          -         -         -       -      no",
         "",
         "model  google/x",
     )
@@ -161,14 +161,14 @@ def test_several_documents_are_headed_by_their_ids_and_those_not_found_said() ->
     unfound = (
         Notice(
             Problem.UNKNOWN_DOCUMENT,
-            "unknown document 'notes/x.md'",
+            "no note or document 'notes/x.md'",
             "take the id from a search result",
             id="notes/x.md",
         ),
     )
     assert documents(Documents(found, unfound), "linux", PLAIN) == Shown(
         ("==> notes/a.md <==", "# A", "", "==> notes/b.md <==", "# B"),
-        ("error  notes/x.md: unknown document 'notes/x.md'", "  fix  take the id from a search result"),
+        ("error  no note or document 'notes/x.md'", "  fix  take the id from a search result"),
     )
     assert documents(Documents((), unfound), "linux", PLAIN).results == ()
 

@@ -105,7 +105,7 @@ def test_links_show_where_each_leads_and_the_lines_linking_in() -> None:
         "     3  org: Hans#Team  ->  v/Hans.md (alias)",
         "     4  Dup  ->  ambiguous: v/A/Dup.md, v/B/Dup.md",
         "     5  Gone  ->  unresolved  (through v/Notes.md)",
-        "Linking to Offer (v/Offer.md):",
+        "linking to Offer (v/Offer.md):",
         "  v/Notes.md  Notes",
         "     3  [[Offer]] again",
     )

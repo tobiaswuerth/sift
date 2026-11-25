@@ -146,7 +146,7 @@ def test_a_long_step_goes_into_the_log_every_minute_while_the_screen_draws_it_in
 
 def test_a_step_shorter_than_a_minute_goes_into_the_log_once_where_it_ended(tmp_path: Path) -> None:
     _, embeds = embedding(tmp_path, (0.0, 0.0, 0.0, 0.0, 30.0, 30.0, 31.0, 31.0, 31.0, 31.0))
-    assert (len(embeds), embeds[0].endswith(" 31 s"), "3 chunks" in embeds[0]) == (1, True, True)
+    assert (len(embeds), embeds[0].endswith(" 31 s"), "3 passages" in embeds[0]) == (1, True, True)
 
 
 def test_logs_of_one_second_are_pruned_oldest_first(tmp_path: Path) -> None:

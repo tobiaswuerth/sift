@@ -27,7 +27,7 @@ def test_embed_then_vsearch_finds_passages_near_the_query(embedding: Settings, n
     assert ran(embedding, "index")[0] == 0
     code, out, err = ran(embedding, "embed", "--json")
     assert code == 0
-    assert "embed          2 chunks" in err
+    assert "embed          2 passages" in err
     assert json.loads(out)["collections"][0]["outcome"] == {"stored": 2, "broken": 0, "state": "embedded"}
     code, out, err = ran(embedding, "vsearch", "brush", "-k", "1", "--compact")
     assert code == 0

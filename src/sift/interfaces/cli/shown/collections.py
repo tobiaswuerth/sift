@@ -124,7 +124,7 @@ def _header(columns: _Columns) -> tuple[str, ...]:
         "collection",
         "folder",
         "documents",
-        "chunks",
+        "passages",
         *(("embedded",) * columns.embedded),
         "size",
         *(("links", "unresolved") if columns.linked else ()),
