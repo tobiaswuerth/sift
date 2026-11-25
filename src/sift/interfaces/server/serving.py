@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import secrets
@@ -5,7 +6,7 @@ import signal
 import socket
 import threading
 import time
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Coroutine, Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -125,13 +126,17 @@ def _resting(release: Callable[[], bool]) -> Generator[None]:
         watch.join(STOP_SECONDS)
 
 
-def _served(running: HomeServer) -> None:
-    running.server.run(sockets=[running.socket])
+def on_a_selector[T](work: Coroutine[object, object, T]) -> T:
+    return asyncio.run(work, loop_factory=asyncio.SelectorEventLoop)
+
+
+def served_until_stopped(running: HomeServer) -> None:
+    on_a_selector(running.server.serve(sockets=[running.socket]))
 
 
 @dataclass(frozen=True, slots=True)
 class Serve:
-    run: Callable[[HomeServer], None] = _served
+    run: Callable[[HomeServer], None] = served_until_stopped
     handled: Mapping[str, Handled] = HANDLED
     alive_every: float = ALIVE_SECONDS
     grace_seconds: int = GRACE_SECONDS

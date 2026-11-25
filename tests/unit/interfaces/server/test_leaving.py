@@ -1,3 +1,4 @@
+import asyncio
 import itertools
 
 import pytest
@@ -5,7 +6,7 @@ import pytest
 from sift.api.serving import ServeHome
 from sift.interfaces.server.activity import Activity
 from sift.interfaces.server.endpoint import found
-from sift.interfaces.server.serving import LEFT_IDLE, HomeServer, Serve, serve
+from sift.interfaces.server.serving import LEFT_IDLE, HomeServer, Serve, on_a_selector, serve
 from sift.settings import Settings
 from tests.homes import quiet
 
@@ -41,3 +42,11 @@ def test_a_home_process_stopped_before_it_was_idle_long_enough_stops_its_watch(s
 
     served = serve(settings, ServeHome(port=0, idle_exit=3_600), "2.0.0", quiet, Serve(interrupted, idle_every=0.01))
     assert (served.url.startswith("http://127.0.0.1:"), found(settings)) == (True, None)
+
+
+async def _loop_running() -> asyncio.AbstractEventLoop:
+    return asyncio.get_running_loop()
+
+
+def test_the_home_process_serves_on_a_selector_loop_whose_listening_socket_outlives_a_failed_accept() -> None:
+    assert isinstance(on_a_selector(_loop_running()), asyncio.SelectorEventLoop)
