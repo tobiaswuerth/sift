@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import cast
 
 import numpy as np
@@ -7,8 +7,8 @@ import pytest
 import torch
 
 from sift.api.errors import ModelUnavailableError
-from sift.inference.accelerator import CPU_THREADS, GIB, GPU_THREADS, Device, Machine
-from sift.inference.held import Embedder, Loaded, Ranker
+from sift.inference.accelerator import BATCH, CPU_THREADS, GIB, GPU_THREADS, Device, Machine
+from sift.inference.held import RERANK_BATCH, Embedder, Loaded, OnDevice, Ranker
 from sift.inference.local import FULL_REMEDIES, IDLE_SECONDS, Local, LocalHost
 from tests.devices import FakeCuda
 
@@ -83,6 +83,11 @@ class Room:
         return Local("an-embedder", "a-reranker", host=host)
 
 
+def placed(local: Local) -> OnDevice:
+    assert isinstance(local.state, OnDevice)
+    return local.state
+
+
 def used(local: Local) -> None:
     local.encode(["a question"], query=True)
     local.rerank("a question", ["a passage"])
@@ -132,10 +137,12 @@ def test_back_from_rest_the_budget_is_measured_again_and_a_busy_gpu_means_the_mo
     room = Room()
     local = room.local()
     used(local)
+    local.state = replace(placed(local), batch=3, rerank_batch=2)
     room.now = IDLE_SECONDS
     assert local.release_idle()
     room.cuda.free = GIB
     used(local)
+    assert (placed(local).batch, placed(local).rerank_batch) == (BATCH, RERANK_BATCH)
     on_cpu = [(model.on, model.dtype) for model in room.loaded[2:]]
     assert (on_cpu, room.threads) == ([("cpu", torch.float32)] * 2, [GPU_THREADS] * 2 + [CPU_THREADS] * 2)
     assert local.prepare() == ("only 1.0 GiB of the GPU's memory is free, too little: the models run on the CPU",)

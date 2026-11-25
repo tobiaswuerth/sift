@@ -53,6 +53,7 @@ def test_cosines_all_alike_leave_the_reranker_s_order() -> None:
         ([5.0, 5.0, 5.0, 5.0], 4),
         ([3.0, 1.0], 2),
         ([3.0, 2.0, 1.0], 3),
+        ([100.0 - n for n in range(18)] + [30.0, 29.0], 20),
     ],
 )
 def test_the_results_standing_out_end_five_after_the_largest_drop(scores: list[float], kept: int) -> None:
