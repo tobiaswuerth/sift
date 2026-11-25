@@ -13,6 +13,8 @@ SIGNED_WHOLE = re.compile(r"[+-]?[0-9]+")
 SIGNED_DECIMAL = re.compile(r"[+-]?(?:[0-9]+\.[0-9]*|\.[0-9]+)")
 DATED = re.compile(r"([0-9]+)[-/]")
 
+MOST_EXACT_DIGITS = 300
+
 type Key = tuple[int, int | float, str]
 
 
@@ -27,6 +29,10 @@ def picked(held: Fields, asked: Sequence[str]) -> Fields:
     return {key: held[key] for key in asked if key in held}
 
 
+def _whole(digits: str) -> int | float:
+    return int(digits) if len(digits) <= MOST_EXACT_DIGITS else float(digits)
+
+
 def number_read(value: FieldValue) -> int | float | None:
     if isinstance(value, bool) or not isinstance(value, int | float | str):
         return None
@@ -34,11 +40,11 @@ def number_read(value: FieldValue) -> int | float | None:
         return value
     text = value.strip(" ")
     if SIGNED_WHOLE.fullmatch(text):
-        return int(text)
+        return _whole(text)
     if SIGNED_DECIMAL.fullmatch(text):
         return float(text)
     dated = DATED.match(text)
-    return int(dated.group(1)) if dated else None
+    return _whole(dated.group(1)) if dated else None
 
 
 def _text(value: FieldValue) -> str:

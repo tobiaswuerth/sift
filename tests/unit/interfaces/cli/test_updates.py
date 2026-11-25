@@ -61,6 +61,13 @@ def test_the_same_an_earlier_or_an_unreadable_version_is_no_newer_sift(latest: s
     assert not newer(latest, installed)
 
 
+def test_a_version_of_more_digits_than_python_reads_is_no_newer_sift() -> None:
+    assert not newer("1" * 5_000, "2.0.0")
+    assert not newer("3.0." + "1" * 5_000, "2.0.0")
+    assert not newer("3.0.0rc" + "1" * 5_000, "2.0.0")
+    assert newer("3.123456789.0", "2.0.0")
+
+
 def test_a_sift_run_from_its_source_is_not_installed_in_its_environment(tmp_path: Path) -> None:
     environment = tmp_path / "venv"
     assert from_source(environment, environment / "Lib" / "site-packages" / "sift") is False

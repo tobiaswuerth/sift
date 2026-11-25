@@ -44,3 +44,10 @@ def test_a_number_written_as_text_is_ordered_among_the_numbers_as_a_filter_reads
 def test_whole_numbers_too_large_for_a_float_keep_their_order() -> None:
     each: list[Fields] = [{"r": 2**53 + 1}, {"r": 2**53}, {"r": 2.5}]
     assert order(each, "r") == [2, 1, 0]
+
+
+def test_a_whole_number_of_more_digits_than_python_reads_is_ordered_as_larger_than_any_other() -> None:
+    huge = "1" * 5_000
+    each: list[Fields] = [{"n": huge}, {"n": "7"}, {"n": f"-{huge}"}, {"n": f"9{huge}-01-01"}, {"n": 10**300}]
+    assert order(each, "n") == [2, 1, 4, 0, 3]
+    assert order(each, "-n") == [3, 0, 4, 1, 2]

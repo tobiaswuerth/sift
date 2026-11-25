@@ -43,6 +43,7 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.domain.plan.indexing` | `MOST_TIME` | `2**63 - 1` |
 | `sift.domain.plan.indexing` | `MOST_FILE_BYTES` | `1 << 30` |
 | `sift.domain.plan.segments` | `FEWEST_JOINED` | `2` |
+| `sift.domain.query.fields` | `MOST_EXACT_DIGITS` | `300` |
 | `sift.domain.query.grammar` | `MOST_DEPTH` | `100` |
 | `sift.domain.query.grammar` | `MOST_WORDS` | `1000` |
 | `sift.domain.query.grammar` | `MOST_QUERY_CHARS` | `100_000` |
