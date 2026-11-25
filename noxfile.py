@@ -11,6 +11,7 @@ nox.options.stop_on_first_error = True
 nox.options.sessions = ("lint", "types", "tests-3.12", "tests-3.15", "lowest", "package")
 
 OLDEST = "3.12"
+FIRST_RELEASE = "3.12.0"
 PYTHONS = ("3.12", "3.13", "3.14", "3.15")
 PLATFORMS = ("Linux", "Darwin", "Windows")
 BUILD_CONSTRAINTS = ".github/requirements-build.txt"
@@ -78,9 +79,16 @@ def real(session: nox.Session) -> None:
     session.run("python", "-m", "tests.real_models")
 
 
-@nox.session(python=OLDEST)
+@nox.session(python=OLDEST, reuse_venv=False)
 def lowest(session: nox.Session) -> None:
     session.install("--resolution=lowest-direct", "--group=dev", "-e", ".")
+    session.run("python", "-m", "tools", "floors")
+    session.run("pytest", "-q", "-n", WORKERS)
+
+
+@nox.session(python=FIRST_RELEASE)
+def oldest(session: nox.Session) -> None:
+    synced(session)
     session.run("pytest", "-q", "-n", WORKERS)
 
 

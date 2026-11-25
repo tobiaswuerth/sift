@@ -1659,7 +1659,7 @@ gate = [
 requires-dist = [
     { name = "huggingface-hub", specifier = ">=1.31" },
     { name = "numpy", specifier = ">=2.0" },
-    { name = "nvidia-ml-py", specifier = ">=12" },
+    { name = "nvidia-ml-py", specifier = ">=12.535.77" },
     { name = "pillow", specifier = ">=13" },
     { name = "pypdfium2", specifier = ">=4.30" },
     { name = "sentence-transformers", specifier = ">=6.1" },

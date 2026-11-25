@@ -22,7 +22,7 @@ dependencies = [
     # The four below: free GPU memory as nvidia-smi sees it (CUDA overstates it on Windows); PDF, office files,
     # e-books and web pages as Markdown; the pages of scans as pictures for OCR; the server of the home process. No
     # newer feature is used: each floor is the version sift was first built on, which the lowest session tests.
-    "nvidia-ml-py>=12",  # see above
+    "nvidia-ml-py>=12.535.77",  # see above
     "xberg>=1.3",  # see above
     "pypdfium2>=4.30",  # see above
     "uvicorn>=0.31",  # see above

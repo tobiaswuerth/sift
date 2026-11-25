@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from tests.repository.texts import matches
+from tests.repository.texts import job, jobs, matches
 
 ROOT = Path(__file__).parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -11,14 +11,6 @@ SILENCED_WITH_THE_OWNER_S_YES = frozenset({("release.yml", "workflow_run:  # ziz
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
-
-
-def jobs(workflow: str) -> str:
-    return "\n" + workflow.split("\njobs:\n", 1)[1]
-
-
-def job(workflow: str, name: str) -> str:
-    return re.split(r"\n  [\w-]+:\n", jobs(workflow).split(f"\n  {name}:\n", 1)[1], maxsplit=1)[0]
 
 
 def test_a_job_is_cut_out_of_its_workflow() -> None:

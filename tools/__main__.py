@@ -12,6 +12,7 @@ from tools import (
     check_stubs,
     check_text,
     check_twins,
+    floors,
     fts5_table,
     release,
 )
@@ -19,6 +20,7 @@ from tools import (
 CHECKS = MappingProxyType(
     {
         "dead": check_dead.main,
+        "floors": floors.main,
         "fts5": fts5_table.main,
         "idioms": check_idioms.main,
         "imports": check_imports.main,

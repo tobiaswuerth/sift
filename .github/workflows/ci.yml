@@ -87,19 +87,31 @@ jobs:
     timeout-minutes: 20
     steps: *prepare
 
+  oldest:
+    # Python 3.12.0 itself, the first release sift supports: uv's own build of it, never the runner's newer 3.12.
+    env:
+      PYTHON: "3.12.0"
+      SESSION: oldest
+      UV_PYTHON_PREFERENCE: only-managed
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps: *prepare
+
   tests:
-    # One required check for the whole matrix and the lowest versions, so that the matrix may change.
+    # One required check for the whole matrix, the lowest versions and the first Python, so that the matrix may
+    # change.
     if: always()
-    needs: [first, test, lowest]
+    needs: [first, test, lowest, oldest]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every job of the matrix passed, and that of the lowest versions
+      - name: Every job of the matrix passed, and those of the lowest versions and the first Python
         env:
           FIRST: ${{ needs.first.result }}
           REST: ${{ needs.test.result }}
           LOWEST: ${{ needs.lowest.result }}
-        run: test "$FIRST" = success && test "$REST" = success && test "$LOWEST" = success
+          OLDEST: ${{ needs.oldest.result }}
+        run: test "$FIRST" = success && test "$REST" = success && test "$LOWEST" = success && test "$OLDEST" = success
 
   package:
     env:
