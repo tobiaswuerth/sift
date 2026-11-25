@@ -35,6 +35,18 @@ def test_a_docstring_is_named_by_its_first_line() -> None:
     assert found.text == "first"
 
 
+def test_a_text_kept_in_a_private_name_nothing_reads_is_found() -> None:
+    source = '_WHY = "because SQLite"\n_HOW: str = f"{x}"\n_READ = "x"\nprint(_READ)\n__all__ = ("a",)\nKEPT = "y"\n'
+    assert prose("a.py", source) == (Prose("a.py", 1, "unread", "because SQLite"), Prose("a.py", 2, "unread", "f'{x}'"))
+
+
+def test_a_text_in_annotated_metadata_outside_help_is_found() -> None:
+    source = 'x: Annotated[int, "because SQLite", Help("the count"), Field(why="it is")] = 1\n'
+    found = prose("src/sift/api/a.py", source)
+    assert [(each.kind, each.text) for each in found] == [("annotation", "because SQLite"), ("annotation", "it is")]
+    assert prose("a.py", 'def f(x: Annotated[int, Help("the count"), Bounds(1, 2)]) -> None: ...\n') == ()
+
+
 def test_strings_in_expressions_are_code() -> None:
     assert prose("a.py", 'x = "# not a comment"\nprint(f"{x}")\n') == ()
 

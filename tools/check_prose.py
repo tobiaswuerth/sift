@@ -5,10 +5,13 @@ import tomllib
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from tools.findings import PYTHON_ROOTS, ROOT, Finding, files, read, report
 
 ALLOWED = "tools/prose_allowed.toml"
+HELP = "Help"
+ANNOTATED = "Annotated"
 REMEDY = (
     "Say it with a name, a type, a test or the structure instead. Only what no code can express may stay, "
     f"with the owner's yes, as an [[allowed]] entry in {ALLOWED} naming path, text and reason."
@@ -58,8 +61,60 @@ def strings_as_statements(path: str, source: str) -> Iterator[Prose]:
             yield Prose(path, said.lineno, "prose", ast.unparse(said))
 
 
+def _private(name: str) -> bool:
+    return name.startswith("_") and name != "_" and not name.endswith("__")
+
+
+def unread_texts(path: str, tree: ast.Module) -> Iterator[Prose]:
+    read = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+    for node in tree.body:
+        match node:
+            case (
+                ast.Assign(targets=[ast.Name(id=name)], value=value)
+                | ast.AnnAssign(target=ast.Name(id=name), value=ast.expr() as value)
+            ) if _private(name) and name not in read and _said(value):
+                said = value.value if isinstance(value, ast.Constant) and isinstance(value.value, str) else None
+                yield Prose(path, node.lineno, "unread", ast.unparse(value) if said is None else said)
+            case _:
+                pass
+
+
+def _texts_outside_help(node: ast.expr) -> Iterator[ast.Constant]:
+    match node:
+        case ast.Call(func=called) if ast.unparse(called).rpartition(".")[2] == HELP:
+            return
+        case ast.Constant(value=str()):
+            yield node
+        case _:
+            for child in ast.iter_child_nodes(node):
+                value = child.value if isinstance(child, ast.keyword) else child
+                if isinstance(value, ast.expr):
+                    yield from _texts_outside_help(value)
+
+
+def annotated_texts(path: str, tree: ast.Module) -> Iterator[Prose]:
+    for node in ast.walk(tree):
+        match node:
+            case ast.Subscript(value=annotated, slice=ast.Tuple(elts=[_, *metadata])) if (
+                ast.unparse(annotated).rpartition(".")[2] == ANNOTATED
+            ):
+                for each in metadata:
+                    yield from (
+                        Prose(path, text.lineno, "annotation", cast("str", text.value))
+                        for text in _texts_outside_help(each)
+                    )
+            case _:
+                pass
+
+
 def prose(path: str, source: str) -> tuple[Prose, ...]:
-    return (*comments(path, source), *strings_as_statements(path, source))
+    tree = ast.parse(source)
+    return (
+        *comments(path, source),
+        *strings_as_statements(path, source),
+        *unread_texts(path, tree),
+        *annotated_texts(path, tree),
+    )
 
 
 def allowed_entries(text: str) -> Allowed:
