@@ -205,17 +205,6 @@ def test_an_index_stopped_after_its_first_write_says_how_many_files_it_kept_and_
     assert "+50  " in ran(settings, "index")[2]
 
 
-def test_a_stream_that_cannot_print_the_glyphs_gets_ascii_ones(settings: Settings, notes: Path) -> None:
-    indexed_notes(settings, notes)
-    raw = io.BytesIO()
-    err = io.TextIOWrapper(raw, encoding="cp1252")
-    assert run(("search", "brush"), settings, io.StringIO(), err) == 0
-    err.flush()
-    said = raw.getvalue().decode("utf-8")
-    assert "  |  keyword  |  " in said
-    assert "\N{MIDDLE DOT}" not in said
-
-
 def test_an_error_asked_for_in_json_is_json_on_stdout(settings: Settings, notes: Path) -> None:
     searched_notes(settings, notes)
     code, out, err = ran(settings, "search", "brush", "-c", "nope", "--json")

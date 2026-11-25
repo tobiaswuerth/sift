@@ -49,15 +49,15 @@ def test_a_run_leaves_a_line_a_phase_and_one_that_sums_it_up() -> None:
 def test_the_running_phase_is_one_line_with_a_bar_its_speed_and_the_time_left() -> None:
     view, _ = replayed(RUN[:5])
     bar = "\N{BOX DRAWINGS HEAVY HORIZONTAL}" * 8 + "\N{BOX DRAWINGS LIGHT HORIZONTAL}" * 8
-    assert running_line(view, 1.0, 100, PLAIN) == f"  read         600 files   {bar}  50%   1,000 files/s  608 ms left"
-    assert running_line(replayed(RUN[:2])[0], 0.25, 100, PLAIN) == "  scan" + " " * 41 + "250 ms"
-    assert running_line(replayed(RUN[:3])[0], 0.5, 100, PLAIN) is None
+    assert running_line(view, 1.0, 100) == f"  read         600 files   {bar}  50%   1,000 files/s  608 ms left"
+    assert running_line(replayed(RUN[:2])[0], 0.25, 100) == "  scan" + " " * 41 + "250 ms"
+    assert running_line(replayed(RUN[:3])[0], 0.5, 100) is None
 
 
 def test_more_done_than_counted_at_the_start_fills_the_bar_and_leaves_no_time() -> None:
     view, _ = replayed((*RUN[:4], (1.0, Advanced(1_500))))
     bar = "\N{BOX DRAWINGS HEAVY HORIZONTAL}" * 16
-    assert running_line(view, 1.0, 100, PLAIN) == f"  read       1,500 files   {bar} 100%   2,500 files/s"
+    assert running_line(view, 1.0, 100) == f"  read       1,500 files   {bar} 100%   2,500 files/s"
 
 
 def test_a_note_while_a_phase_runs_is_said_and_the_phase_still_ends_in_its_row() -> None:
@@ -72,15 +72,6 @@ def test_a_home_process_listening_says_where_and_for_which_home() -> None:
     view, lines = shown(View(), Listening("http://127.0.0.1:8765", "/home/sift"), 0.0, LOOKS)
     stop = " stop  Ctrl+C stops it and its jobs; sift jobs lists them"
     assert (view, lines) == (View(), ("serve  http://127.0.0.1:8765  /home/sift", stop))
-
-
-def test_without_unicode_the_glyphs_are_ascii() -> None:
-    ascii_only = Style(unicode=False)
-    view, lines = replayed(RUN, Looks(ascii_only, "linux"))
-    assert " | 3 with problems | " in lines[3].replace("  ", " ")
-    running, _ = replayed(RUN[:5], Looks(ascii_only, "linux"))
-    assert "########--------  50%" in (running_line(running, 1.0, 100, ascii_only) or "")
-    assert view.running is None
 
 
 def test_with_colour_labels_and_secondary_parts_are_painted() -> None:
@@ -113,13 +104,13 @@ def test_a_run_without_changes_or_problems_says_so_in_one_line() -> None:
 
 def test_an_empty_read_phase_is_full() -> None:
     view, _ = replayed(((0.0, PhaseStarted(Phase.READ, 0)),))
-    assert "100%" in (running_line(view, 0.0, 100, PLAIN) or "")
+    assert "100%" in (running_line(view, 0.0, 100) or "")
 
 
 @given(st.integers(0, 10**7), st.integers(1, 10**7), st.floats(0, 10**5), st.integers(1, 200))
 def test_a_running_line_never_takes_the_last_column(done: int, total: int, seconds: float, columns: int) -> None:
     view, _ = replayed(((0.0, PhaseStarted(Phase.READ, total)), (seconds, Advanced(min(done, total)))))
-    line = running_line(view, seconds, columns, PLAIN) or ""
+    line = running_line(view, seconds, columns) or ""
     assert width(line) <= max(columns - 1, 0)
 
 
@@ -127,7 +118,7 @@ def test_one_file_is_a_file_and_has_no_speed() -> None:
     lines = replayed(((0.0, PhaseStarted(Phase.READ, 1)), (0.5, PhaseDone(1))))[1]
     assert lines == ["  read           1 file" + " " * 24 + "500 ms"]
     view, _ = replayed(((0.0, PhaseStarted(Phase.READ, 2)), (0.5, Advanced(1))))
-    assert (running_line(view, 0.5, 100, PLAIN) or "").startswith("  read           1 file    ")
+    assert (running_line(view, 0.5, 100) or "").startswith("  read           1 file    ")
 
 
 def test_a_remake_counts_chunks_and_their_speed() -> None:
@@ -156,4 +147,4 @@ def test_models_loaded_are_counted_and_none_loaded_leaves_no_line() -> None:
 
 def test_a_running_scan_says_how_many_files_it_has_found_so_far() -> None:
     view, _ = replayed(((0.0, PhaseStarted(Phase.SCAN, None)), (2.0, Advanced(12_431))))
-    assert running_line(view, 2.5, 100, PLAIN) == "  scan      12,431 files" + " " * 24 + "2.5 s"
+    assert running_line(view, 2.5, 100) == "  scan      12,431 files" + " " * 24 + "2.5 s"

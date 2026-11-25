@@ -43,9 +43,9 @@ SPEED = 16
 TIME = 10
 BAR = 16
 STOP_HINT = "Ctrl+C stops it and its jobs; sift jobs lists them"
-FILLED = ("\N{BOX DRAWINGS HEAVY HORIZONTAL}", "#")
-EMPTY = ("\N{BOX DRAWINGS LIGHT HORIZONTAL}", "-")
-DOT = ("\N{MIDDLE DOT}", "|")
+FILLED = "\N{BOX DRAWINGS HEAVY HORIZONTAL}"
+EMPTY = "\N{BOX DRAWINGS LIGHT HORIZONTAL}"
+DOT = "\N{MIDDLE DOT}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,10 +69,6 @@ class View:
 class Looks:
     style: Style
     platform: str
-
-
-def _glyph(pair: tuple[str, str], style: Style) -> str:
-    return pair[0] if style.unicode else pair[1]
 
 
 def _label(label: str, tone: Tone | None, style: Style) -> str:
@@ -104,7 +100,7 @@ def _done(finished: Finished, view: View, now: float, looks: Looks) -> tuple[str
     if finished.unreadable:
         parts.append(paint(f"{finished.unreadable:,} with problems", Tone.WARNING, style))
     parts.append(duration(now - view.started))
-    line = _label("done", Tone.DONE, style) + f"  {_glyph(DOT, style)}  ".join(parts)
+    line = _label("done", Tone.DONE, style) + f"  {DOT}  ".join(parts)
     if not finished.unreadable:
         return (line,)
     listing = command(("sift", "status", view.name, "--unreadable"), looks.platform)
@@ -153,12 +149,12 @@ def shown(view: View, event: Event, now: float, looks: Looks) -> tuple[View, tup
             return replace(view, running=None), _done(event, view, now, looks)
 
 
-def _bar(done: int, total: int, style: Style) -> str:
+def _bar(done: int, total: int) -> str:
     filled = round(BAR * done / total) if total else BAR
-    return _glyph(FILLED, style) * filled + _glyph(EMPTY, style) * (BAR - filled)
+    return FILLED * filled + EMPTY * (BAR - filled)
 
 
-def running_line(view: View, now: float, columns: int, style: Style) -> str | None:
+def running_line(view: View, now: float, columns: int) -> str | None:
     running = view.running
     if running is None:
         return None
@@ -171,5 +167,5 @@ def running_line(view: View, now: float, columns: int, style: Style) -> str | No
     share = within / total if total else 1.0
     per_second = done / seconds if seconds > 0 else 0.0
     left = f"{duration((total - within) / per_second)} left" if per_second and within < total else ""
-    progress = f"{_bar(within, total, style)} {share:>4.0%}{_speed(running.phase, done, seconds):>{SPEED}}  {left}"
+    progress = f"{_bar(within, total)} {share:>4.0%}{_speed(running.phase, done, seconds):>{SPEED}}  {left}"
     return fitted(f"{head}{_counted(running.phase, done)}{progress}".rstrip(), columns - 1)

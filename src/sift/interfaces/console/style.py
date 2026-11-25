@@ -1,9 +1,7 @@
-import codecs
 import re
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 
-GLYPHS = "\N{BOX DRAWINGS HEAVY HORIZONTAL}\N{BOX DRAWINGS LIGHT HORIZONTAL}\N{MIDDLE DOT}"
 RESET = "\x1b[0m"
 PAINTED = re.compile("\x1b\\[[0-9;]*m")
 
@@ -25,7 +23,6 @@ class Colour(StrEnum):
 @dataclass(frozen=True, slots=True)
 class Style:
     colour: bool = False
-    unicode: bool = True
 
 
 PLAIN = Style()
@@ -39,21 +36,10 @@ def unpainted(text: str) -> str:
     return PAINTED.sub("", text)
 
 
-def _prints_glyphs(encoding: str | None) -> bool:
-    if encoding is None:
-        return True
-    try:
-        GLYPHS.encode(codecs.lookup(encoding).name)
-    except (UnicodeEncodeError, LookupError):
-        return False
-    return True
-
-
 @dataclass(frozen=True, slots=True)
 class Terminal:
     terminal: bool
     escapes: bool
-    encoding: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,4 +52,4 @@ class Asked:
 def style_of(stream: Terminal, asked: Asked) -> Style:
     automatic = stream.terminal and stream.escapes and not asked.no_color and not asked.dumb
     colour = asked.choice is Colour.ALWAYS or (asked.choice is Colour.AUTO and automatic)
-    return Style(colour=colour, unicode=_prints_glyphs(stream.encoding))
+    return Style(colour=colour)

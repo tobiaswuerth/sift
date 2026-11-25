@@ -38,13 +38,13 @@ def _hit(rank: int, hit: Hit, ranks: int, scores: int) -> tuple[str, ...]:
     return (head, f"{indent}{printable(hit.id)}:{hit.lines}", *also, *fields, *text)
 
 
-def _footer(result: SearchResult, seconds: float, style: Style) -> str:
+def _footer(result: SearchResult, seconds: float) -> str:
     found = (counted(len(result.hits), "result") if result.hits else "no matches") + (
         ", more follow" if result.more else ""
     )
     ruled_out = f", {result.ruled_out} ruled out by the links" if result.ruled_out else ""
     searched = f"{counted(result.searched, 'collection')}{ruled_out}"
-    separator = f"{GAP}{DOT[0] if style.unicode else DOT[1]}{GAP}"
+    separator = f"{GAP}{DOT}{GAP}"
     partial = ("partial: better matches may be missing",) if result.partial else ()
     return separator.join((found, SCORED[result.scored_by], *partial, searched, duration(seconds)))
 
@@ -58,4 +58,4 @@ def hits(result: SearchResult, seconds: float, platform: str, style: Style, firs
     problems = notice_lines(result.unsearched, style)
     notes = notice_lines(result.left_out, style, "note")
     loosened = (labelled("note", LOOSENED, Tone.WARNING, style),) if result.loosened else ()
-    return Shown(tuple(lines), (*problems, *notes, *loosened, _footer(result, seconds, style)))
+    return Shown(tuple(lines), (*problems, *notes, *loosened, _footer(result, seconds)))

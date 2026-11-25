@@ -45,7 +45,7 @@ class Live:
             if self.redraw:
                 self._drawn(now)
                 return
-            line = running_line(self.view, now, self.columns(), self.looks.style)
+            line = running_line(self.view, now, self.columns())
             if line is not None and now - max(self.last_said, running.started) >= HEARTBEAT_SECONDS:
                 self._said((line.rstrip(),), now)
 
@@ -59,7 +59,7 @@ class Live:
         self.last_said = now
 
     def _drawn(self, now: float) -> None:
-        line = running_line(self.view, now, self.columns(), self.looks.style)
+        line = running_line(self.view, now, self.columns())
         if line is None:
             self._erased()
             return

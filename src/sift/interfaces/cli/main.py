@@ -145,16 +145,11 @@ def parser(user: Path | None, cwd: Path) -> argparse.ArgumentParser:
     return built
 
 
-def _encoding(stream: TextIO | None) -> str | None:
-    found: object = stream.encoding if stream is not None else None
-    return found if isinstance(found, str) else None
-
-
-def _style(err: TextIO | None, settings: Settings, choice: Colour, encoding: str | None) -> Style:
+def _style(err: TextIO | None, settings: Settings, choice: Colour) -> Style:
     terminal = is_terminal(err)
     target = None if err is None else descriptor(err)
     escapes = terminal and target is not None and _escapes_work(target)
-    return style_of(Terminal(terminal, escapes, encoding), Asked(choice, settings.no_color, settings.dumb))
+    return style_of(Terminal(terminal, escapes), Asked(choice, settings.no_color, settings.dumb))
 
 
 def _live(err: TextIO | None, settings: Settings, style: Style, platform: str, clock: Callable[[], float]) -> Live:
@@ -255,7 +250,6 @@ def _ran(
     source: SettingsSource,
     streams: tuple[TextIO | None, TextIO | None],
     host: Host,
-    encoding: str | None,
 ) -> Shown | int:
     out, err = streams
     platform = host.platform
@@ -274,7 +268,7 @@ def _ran(
         settings = source.read()
     except InvalidRequestError as error:
         return failure(error, PLAIN, as_json=given["json"] is True)
-    style = _style(err, settings, Colour(str(given["color"])), encoding)
+    style = _style(err, settings, Colour(str(given["color"])))
     asked = _Chosen(chosen, namespace, given["json"] is True, style)
     found = _logged(asked, settings, host, _live(err, settings, style, platform, host.clock))
     if not settings.update_check or asked.json or not is_terminal(err):
@@ -305,11 +299,10 @@ def _answered(
     argv: Sequence[str], source: SettingsSource, streams: tuple[TextIO | None, TextIO | None], host: Host
 ) -> int:
     out, err = streams
-    encoding = _encoding(err)
     for stream in (out, err):
         utf8(stream)
     try:
-        found = _ran(argv, source, (out, err), host, encoding)
+        found = _ran(argv, source, (out, err), host)
         if isinstance(found, int):
             return found
         _shown(found, out, err)
