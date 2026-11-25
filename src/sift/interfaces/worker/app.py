@@ -13,11 +13,14 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route
 
 from sift.domain.arrays import floats
+from sift.domain.text.decoding import encodable
+from sift.domain.text.json_values import deeper_than
 from sift.inference.loading import Resting
 from sift.inference.remote import EMBED, INFO, MOST_TEXTS, RERANK
 from sift.interfaces.server.app import body_of
 
 MOST_BODY = 32 << 20
+MOST_NESTING = 4
 OCTETS = "application/octet-stream"
 WRONG_KEY = "wrong key"
 EMBED_SHAPE = 'send {"texts": [...], "query": false}'
@@ -42,7 +45,7 @@ def _texts(value: object) -> list[str] | None:
     if not isinstance(value, list):
         return None
     listed = cast("list[object]", value)
-    texts = [each for each in listed if isinstance(each, str)]
+    texts = [each for each in listed if isinstance(each, str) and encodable(each)]
     return texts if len(texts) == len(listed) else None
 
 
@@ -53,7 +56,8 @@ async def _asked(lent: Lent, request: Request) -> dict[str, object] | Response:
     if body is None:
         return PlainTextResponse(TOO_LONG, status_code=413)
     try:
-        read = cast("object", json.loads(body))
+        text = body.decode()
+        read = None if deeper_than(text, MOST_NESTING) else cast("object", json.loads(text))
     except ValueError:
         read = None
     return cast("dict[str, object]", read) if isinstance(read, dict) else {}
@@ -94,7 +98,7 @@ async def rerank_answered(lent: Lent, request: Request) -> Response:
     if isinstance(asked, Response):
         return asked
     query, texts = asked.get("query"), _texts(asked.get("texts"))
-    if texts is None or not isinstance(query, str):
+    if texts is None or not isinstance(query, str) or not encodable(query):
         return PlainTextResponse(RERANK_SHAPE, status_code=400)
     refused = _too_many(texts)
     if refused is not None:

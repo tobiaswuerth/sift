@@ -115,6 +115,7 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.interfaces.server.serving` | `KEEP_ALIVE_SECONDS` | `5` |
 | `sift.interfaces.server.serving` | `MOST_CONNECTIONS` | `256` |
 | `sift.interfaces.worker.app` | `MOST_BODY` | `32 << 20` |
+| `sift.interfaces.worker.app` | `MOST_NESTING` | `4` |
 | `sift.interfaces.worker.keys` | `TOKEN_BYTES` | `32` |
 | `sift.interfaces.worker.serving` | `GRACE_SECONDS` | `10` |
 | `sift.interfaces.worker.serving` | `KEEP_ALIVE_SECONDS` | `5` |
