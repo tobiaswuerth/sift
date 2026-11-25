@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -21,7 +22,13 @@ from sift.api.wire import Json, decoded, decoded_error, encoded, encoded_error
 from tests.answers import SAMPLES
 
 REQUESTS = (
-    AddCollection("/data/notes", name="n", title_from=TitleFrom.NAME, nested=True, text_fields=("body", "abstract")),
+    AddCollection(
+        str(Path("/data/notes").absolute()),
+        name="n",
+        title_from=TitleFrom.NAME,
+        nested=True,
+        text_fields=("body", "abstract"),
+    ),
     ShowStatus(("notes",), unreadable=True),
     GetDocuments(("notes/a.md", "b.md"), lines="2-4", fields=("*",)),
     SearchKeywords(

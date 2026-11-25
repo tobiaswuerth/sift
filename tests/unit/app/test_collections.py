@@ -24,6 +24,7 @@ from sift.api.indexing import IndexCollections
 from sift.app.collections import activate, add, status
 from sift.app.embedding import embed
 from sift.app.indexing import index
+from sift.app.paths import ABSOLUTE_REMEDY
 from sift.domain.text.notes import note
 from sift.storage.catalog import forget_collection, known_collections
 from sift.storage.database import PRIVATE_FILE, PRIVATE_FOLDER
@@ -243,3 +244,16 @@ def test_a_home_and_stores_others_could_read_are_made_the_user_s_when_written(tm
     activate(home, ActivateCollections(("notes",)))
     assert stat.S_IMODE(home.stat().st_mode) == PRIVATE_FOLDER
     assert {stat.S_IMODE(path.stat().st_mode) for path in home.rglob("*.sqlite")} == {PRIVATE_FILE}
+
+
+@pytest.mark.parametrize(
+    "folder, store, field",
+    [("notes", None, "folder"), ("", None, "folder"), (None, "stores", "store"), (None, "", "store")],
+)
+def test_a_folder_or_store_to_add_that_is_not_absolute_is_refused_by_its_field(
+    tmp_path: Path, home: Path, folder: str | None, store: str | None, field: str
+) -> None:
+    asked = AddCollection(str(tmp_path) if folder is None else folder, store=store)
+    with pytest.raises(InvalidRequestError, match="is no absolute path") as refused:
+        add(home, asked)
+    assert (refused.value.field, refused.value.remedy, known_collections(home)) == (field, ABSOLUTE_REMEDY, ())

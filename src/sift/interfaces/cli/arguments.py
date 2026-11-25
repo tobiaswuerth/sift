@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, cast, get_args, get_origin, get_type_hints, override
 
-from sift.api.described import Help, Place
+from sift.api.described import AbsolutePath, Help
 from sift.api.requests import choices_of, type_name
 from sift.interfaces.cli.flags import RESERVED, Flag, flag_of
 
@@ -74,7 +74,7 @@ def _described(request: type[object], name: str, hint: object) -> Described:
         raise _refused(request, name, "no Help")
     if name in RESERVED:
         raise _refused(request, name, "sift's own option is named so")
-    return Described(kind, found[0], any(isinstance(part, Place) for part in metadata), flag_of(name))
+    return Described(kind, found[0], any(isinstance(part, AbsolutePath) for part in metadata), flag_of(name))
 
 
 def _left_out(kind: object) -> object | None:

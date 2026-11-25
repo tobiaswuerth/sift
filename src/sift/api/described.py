@@ -7,7 +7,7 @@ class Help:
 
 
 @dataclass(frozen=True, slots=True)
-class Place:
+class AbsolutePath:
     pass
 
 

@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from sift.api.described import Bounds, Help, Place
+from sift.api.described import AbsolutePath, Bounds, Help
 from sift.api.requests import Request
 
 MOST_NAMED = 1_000
@@ -36,14 +36,14 @@ TITLE_FROM = (
 
 @dataclass(frozen=True, slots=True)
 class AddCollection(Request):
-    folder: Annotated[str, Help("the folder whose files the collection holds"), Place()]
+    folder: Annotated[str, Help("the folder whose files the collection holds"), AbsolutePath()]
     name: Annotated[str | None, Help("its name (default: the folder's)")] = None
     store: Annotated[
         str | None,
         Help(
             "where its index goes: a folder, or a file ending in .sqlite (default: the folder collections in SIFT_HOME)"
         ),
-        Place(),
+        AbsolutePath(),
     ] = None
     title_from: Annotated[TitleFrom | None, Help(TITLE_FROM)] = None
     nested: Annotated[
@@ -98,7 +98,9 @@ class CollectionRemoved:
 @dataclass(frozen=True, slots=True)
 class MoveCollections(Request):
     names: Annotated[tuple[str, ...], Help("the collections whose stores to move (default: every one)")] = ()
-    to: Annotated[str, Help("a folder, or for one collection, a file ending in .sqlite"), Place()] = field(kw_only=True)
+    to: Annotated[str, Help("a folder, or for one collection, a file ending in .sqlite"), AbsolutePath()] = field(
+        kw_only=True
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -25,6 +25,7 @@ from sift.api.events import Reporter
 from sift.app.choosing import changed
 from sift.app.loading import unreported
 from sift.app.notes import unresolved_links
+from sift.app.paths import absolute
 from sift.domain.text.records import Chosen
 from sift.storage.catalog import (
     Choices,
@@ -61,7 +62,7 @@ def _field(name: str | None, field: str) -> str | None:
 
 
 def add(home: Path, request: AddCollection, report: Reporter = unreported) -> CollectionAdded | CollectionChanged:
-    folder = Path(request.folder)
+    folder = absolute(request.folder, "folder")
     again = holding_folder(home, folder)
     if again is not None:
         return changed(home, again, request, report)
@@ -73,7 +74,7 @@ def add(home: Path, request: AddCollection, report: Reporter = unreported) -> Co
     new = NewCollection(
         folder,
         request.name,
-        Path(request.store) if request.store else None,
+        None if request.store is None else absolute(request.store, "store"),
         nested=request.nested,
         choices=Choices(title_from, follow_links=follow_links, records=records, agents=agents),
     )

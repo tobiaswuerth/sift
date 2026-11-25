@@ -17,6 +17,7 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.moving import Moving, move
+from sift.app.paths import ABSOLUTE_REMEDY
 from sift.app.search import search
 from sift.app.vsearch import vsearch
 from sift.storage.catalog import Collection, known_collections
@@ -260,3 +261,14 @@ def test_a_place_a_stopped_move_left_open_elsewhere_is_not_moved_onto(home: Path
     with pytest.raises(InvalidRequestError, match="exists already"):
         moved(home, "notes", to=place.parent, how=Moving(unlink=held_open))
     assert moved(home, "notes", to=place.parent).moved[0].new == str(place)
+
+
+@pytest.mark.parametrize("to", ["elsewhere", ""])
+def test_a_place_to_move_to_that_is_not_absolute_is_refused(tmp_path: Path, to: str) -> None:
+    home = tmp_path / "home"
+    folder = tmp_path / "notes"
+    folder.mkdir()
+    add(home, AddCollection(str(folder)))
+    with pytest.raises(InvalidRequestError, match="is no absolute path") as refused:
+        move(home, MoveCollections(to=to), lambda _: None)
+    assert (refused.value.field, refused.value.remedy) == ("to", ABSOLUTE_REMEDY)

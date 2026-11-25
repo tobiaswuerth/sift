@@ -7,6 +7,7 @@ from sift.api.errors import InvalidRequestError
 from sift.api.events import Advanced, CollectionStarted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.ids import CollectionId
 from sift.app.collections import chosen
+from sift.app.paths import absolute
 from sift.storage.catalog import (
     STORE_SUFFIX,
     Collection,
@@ -50,7 +51,7 @@ def _reported(report: Reporter) -> Copied:
 
 
 def _planned(home: Path, request: MoveCollections) -> list[tuple[Collection, Path]]:
-    to = Path(request.to).resolve()
+    to = absolute(request.to, "to").resolve()
     found = chosen(home, request.names)
     if to.name.lower().endswith(STORE_SUFFIX):
         if len(found) != 1:

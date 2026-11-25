@@ -2,6 +2,7 @@ import dataclasses
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated, cast, get_args, get_origin, get_type_hints
 
 import pytest
@@ -13,6 +14,8 @@ from sift.api.filters import Filter, Operator
 from sift.api.requests import Request
 from sift.api.search import SearchHybrid, SearchKeywords
 from sift.api.wire import decoded
+
+ABSOLUTE = str(Path.cwd())
 
 
 def built(kind: Callable[..., object], *given: object, **named: object) -> object:
@@ -95,9 +98,9 @@ def test_a_request_of_a_kind_no_surface_can_send_is_a_bug_said_at_once() -> None
 
 def test_a_choice_is_one_of_its_members() -> None:
     with pytest.raises(InvalidRequestError, match="title_from is 'name', not heading, name or nothing") as refused:
-        built(collections.AddCollection, "notes", title_from="name")
+        built(collections.AddCollection, ABSOLUTE, title_from="name")
     assert refused.value.field == "title_from"
-    assert collections.AddCollection("notes", title_from=collections.TitleFrom.NAME).title_from == "name"
+    assert collections.AddCollection(ABSOLUTE, title_from=collections.TitleFrom.NAME).title_from == "name"
 
 
 @pytest.mark.parametrize(

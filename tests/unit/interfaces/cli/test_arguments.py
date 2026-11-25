@@ -15,9 +15,11 @@ from sift.api.search import SearchKeywords
 from sift.interfaces.cli.arguments import arguments, flags, options, request_of
 from sift.interfaces.cli.main import Parser, UsageError
 
+WHOLE = Path("/whole").absolute()
+
 
 def whole(text: str) -> str:
-    return f"/whole/{text}"
+    return str(WHOLE / text)
 
 
 def parsed[R](request: type[R], argv: list[str]) -> R:
@@ -27,10 +29,10 @@ def parsed[R](request: type[R], argv: list[str]) -> R:
 
 
 def test_a_field_without_a_default_is_given_by_its_place_and_the_others_by_name() -> None:
-    assert parsed(AddCollection, ["notes"]) == AddCollection("/whole/notes")
+    assert parsed(AddCollection, ["notes"]) == AddCollection(whole("notes"))
     given = ["notes", "--name", "n", "--store", "s", "--title-from", "name", "--nested"]
     assert parsed(AddCollection, given) == AddCollection(
-        "/whole/notes", name="n", store="/whole/s", title_from=TitleFrom.NAME, nested=True
+        whole("notes"), name="n", store=whole("s"), title_from=TitleFrom.NAME, nested=True
     )
 
 

@@ -114,13 +114,9 @@ def named(kind: object) -> str:
 
 
 @cache
-def _hints(kind: type) -> tuple[tuple[str, object, tuple[Bounds, ...]], ...]:
+def _hints(kind: type) -> tuple[tuple[str, object, tuple[object, ...]], ...]:
     hints = cast("dict[str, object]", get_type_hints(kind, include_extras=True))
-    found: list[tuple[str, object, tuple[Bounds, ...]]] = []
-    for field in dataclasses.fields(kind):
-        hint, metadata = _parts(hints[field.name])
-        found.append((field.name, hint, tuple(part for part in metadata if isinstance(part, Bounds))))
-    return tuple(found)
+    return tuple((field.name, *_parts(hints[field.name])) for field in dataclasses.fields(kind))
 
 
 def _bounded(name: str, value: object, bounds: Bounds) -> None:
@@ -142,8 +138,7 @@ def holds_half_a_pair(value: object) -> bool:
 
 @cache
 def _composed_names(kind: type) -> tuple[str, ...]:
-    hints = cast("dict[str, object]", get_type_hints(kind, include_extras=True))
-    return tuple(name for name, hint in hints.items() if any(isinstance(each, Composed) for each in _parts(hint)[1]))
+    return tuple(name for name, _, metadata in _hints(kind) if any(isinstance(each, Composed) for each in metadata))
 
 
 def composed(value: object) -> object:
@@ -155,15 +150,16 @@ def composed(value: object) -> object:
 
 
 def checked(request: object) -> None:
-    for name, kind, bounds in _hints(type(request)):
+    for name, kind, metadata in _hints(type(request)):
         value = cast("object", getattr(request, name))
         if not fits(value, kind):
             wanted = named(kind)
             raise InvalidRequestError(f"{name} is {value!r}, not {wanted}", f"give {name} as {wanted}", name)
         if holds_half_a_pair(value):
             raise InvalidRequestError(f"{name} holds half a surrogate pair", HALF_PAIR_REMEDY, name)
-        for each in bounds:
-            _bounded(name, value, each)
+        for each in metadata:
+            if isinstance(each, Bounds):
+                _bounded(name, value, each)
 
 
 @dataclass(frozen=True, slots=True)

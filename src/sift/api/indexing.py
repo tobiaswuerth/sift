@@ -5,8 +5,8 @@ from sift.api.described import Help
 from sift.api.requests import Request
 
 FILES = (
-    "read only this file now, or drop it if gone, whatever its date: a path in a collection, or its id "
-    "(collection/path); several: each of them"
+    "read only this file now, or drop it if gone, whatever its date: its id (collection/path), or its absolute "
+    "path; several: each of them"
 )
 
 
