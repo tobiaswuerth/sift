@@ -39,10 +39,11 @@ class Out:
 
 
 def _out(resolver: Resolver, document: DocumentId, request: ShowLinks) -> list[Out]:
-    first = [Out(row, resolver.of(row), None) for row in links_out(resolver.transaction, document, request.field)]
-    found = list(first)
-    if request.depth == FURTHER:
-        reached = [each.how.documents[0] for each in first if each.how.via in LEADING]
+    shown = request.k + 1
+    rows = links_out(resolver.transaction, document, request.field)[:shown]
+    found = [Out(row, resolver.of(row), None) for row in rows]
+    if request.depth == FURTHER and len(found) < shown:
+        reached = [each.how.documents[0] for each in found if each.how.via in LEADING]
         seen = {document, *reached}
         for step in dict.fromkeys(reached):
             for row in links_out(resolver.transaction, step, request.field):
@@ -50,6 +51,8 @@ def _out(resolver: Resolver, document: DocumentId, request: ShowLinks) -> list[O
                 if how.via in LEADING and how.documents[0] not in seen:
                     seen.add(how.documents[0])
                     found.append(Out(row, how, step))
+                if len(found) >= shown:
+                    return found
     return found
 
 

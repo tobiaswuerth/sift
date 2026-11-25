@@ -1,3 +1,5 @@
+import cProfile
+import pstats
 from collections.abc import Callable
 from contextlib import closing
 from functools import partial
@@ -8,7 +10,7 @@ import pytest
 from sift.api.collections import AddCollection
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.indexing import IndexCollections
-from sift.api.links import Direction, LinkIn, LinkingLine, LinkOut, ListUnresolved, ShowLinks, Target
+from sift.api.links import Direction, LinkIn, LinkingLine, LinkOut, Links, ListUnresolved, ShowLinks, Target
 from sift.app.collections import add
 from sift.app.indexing import index
 from sift.app.links import links, unresolved
@@ -253,3 +255,18 @@ def test_a_target_linked_from_the_root_is_the_target_its_wikilink_names(tmp_path
     home = vault(tmp_path, {"Notes/a.md": "See [ghost](/Ghost.md).\n", "Notes/b.md": "See [[Ghost]].\n"})
     (target,) = unresolved(home, ListUnresolved()).targets
     assert (target.documents, target.ids) == (2, ("v/Notes/a.md", "v/Notes/b.md"))
+
+
+def resolutions(run: Callable[[], object]) -> int:
+    profile = cProfile.Profile()
+    _ = profile.runcall(run)
+    counted = pstats.Stats(profile).get_stats_profile().func_profiles
+    return int(counted["of"].ncalls.split("/")[0]) if "of" in counted else 0
+
+
+def test_links_shown_up_to_k_resolve_no_more_than_one_past_k(tmp_path: Path) -> None:
+    many = " ".join(f"[[N{n}]]" for n in range(100))
+    home = vault(tmp_path, {"hub.md": f"# Hub\n\n{many}\n", **{f"N{n}.md": f"# N{n}\n" for n in range(100)}})
+    found: list[Links] = []
+    resolved = resolutions(lambda: found.append(links(home, ShowLinks("v/hub.md", Direction.OUT, k=5))))
+    assert (len(found[0].out or ()), found[0].more, resolved <= 6) == (5, True, True)

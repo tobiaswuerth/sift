@@ -6,7 +6,7 @@ from hypothesis import strategies as st
 
 from sift.api.collections import TitleFrom
 from sift.domain.text.decoding import text_pieces
-from sift.domain.text.markdown import MOST_TITLE, title_of
+from sift.domain.text.markdown import MOST_LINE, MOST_TITLE, title_of
 from sift.domain.text.notes import Document, digest, document_of, file_stem, note, read_note
 
 
@@ -187,3 +187,9 @@ def test_a_title_is_one_line_and_at_most_the_title_length(raw: bytes) -> None:
 def test_a_title_cut_to_its_length_ends_at_a_space() -> None:
     title = note(b"# " + b"word " * 500 + b"\n", "n.md").title
     assert (len(title), title.endswith("word")) == (MOST_TITLE - 1, True)
+
+
+def test_lines_over_most_line_hold_no_links() -> None:
+    long = "[[Alice]] " + "x" * MOST_LINE
+    found = note(f"# N\n{long}\n[[Bob]]\n".encode(), "n.md")
+    assert [link.target for link in found.links] == ["Bob"]
