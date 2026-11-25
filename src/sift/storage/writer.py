@@ -19,6 +19,8 @@ ASK_AGAIN = f"PRAGMA busy_timeout = {round(ASK_AGAIN_SECONDS * 1000)}"
 WAIT_A_MOMENT = f"PRAGMA busy_timeout = {round(MOMENT_SECONDS * 1000)}"
 HOLDER = "CREATE TABLE IF NOT EXISTS holder(pid INTEGER NOT NULL, purpose TEXT NOT NULL) STRICT"
 HELD = "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'holder'"
+WRITING = "BEGIN IMMEDIATE"
+NAMING = "BEGIN EXCLUSIVE"
 
 
 class LockFile(Protocol):
@@ -34,35 +36,42 @@ class Holder:
 
 
 def _holder(connection: LockFile) -> Holder | None:
-    if connection.execute(HELD).fetchone() is None:
-        return None
-    found = cast("tuple[int, str] | None", connection.execute("SELECT pid, purpose FROM holder").fetchone())
-    return None if found is None else Holder(*found)
-
-
-def _busy(connection: LockFile) -> StoreUnavailableError:
-    holder = _holder(connection)
-    who = "" if holder is None else f" ({holder.purpose}, process {holder.pid})"
-    return StoreUnavailableError(f"another sift writes it now{who}", BUSY_REMEDY, code=Problem.BUSY)
-
-
-def _hold(connection: LockFile) -> None:
     try:
-        connection.execute("BEGIN IMMEDIATE")
+        if connection.execute(HELD).fetchone() is None:
+            return None
+        found = cast("tuple[int, str] | None", connection.execute("SELECT pid, purpose FROM holder").fetchone())
     except sqlite3.OperationalError as error:
         if primary_code(error) != sqlite3.SQLITE_BUSY:
             raise
-        raise _busy(connection) from None
+        return None
+    return None if found is None else Holder(*found)
+
+
+def _began(connection: LockFile, begin: str) -> bool:
+    try:
+        connection.execute(begin)
+    except sqlite3.OperationalError as error:
+        if primary_code(error) != sqlite3.SQLITE_BUSY:
+            raise
+        return False
+    return True
+
+
+def _hold(connection: LockFile, begin: str) -> None:
+    if not _began(connection, begin):
+        holder = _holder(connection)
+        who = "" if holder is None else f" ({holder.purpose}, process {holder.pid})"
+        raise StoreUnavailableError(f"another sift writes it now{who}", BUSY_REMEDY, code=Problem.BUSY)
 
 
 def _taken(connection: LockFile, purpose: str) -> None:
-    _hold(connection)
+    _hold(connection, NAMING)
     connection.execute(HOLDER)
     connection.execute("PRAGMA user_version = 1")
     connection.execute("DELETE FROM holder")
     connection.execute("INSERT INTO holder(pid, purpose) VALUES (?, ?)", (os.getpid(), purpose))
     connection.execute("COMMIT")
-    _hold(connection)
+    _hold(connection, WRITING)
 
 
 def lock_file(path: Path) -> LockFile:
@@ -71,11 +80,7 @@ def lock_file(path: Path) -> LockFile:
 
 def _free(connection: LockFile, waiting: str) -> bool:
     connection.execute(waiting)
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-    except sqlite3.OperationalError as error:
-        if primary_code(error) != sqlite3.SQLITE_BUSY:
-            raise
+    if not _began(connection, WRITING):
         return False
     connection.execute("ROLLBACK")
     return True

@@ -16,6 +16,7 @@ from sift.storage.writer import (
     ASK_AGAIN,
     ASK_AT_ONCE,
     HELD,
+    HOLDER,
     WAIT_A_MOMENT,
     Holder,
     LockFile,
@@ -181,6 +182,15 @@ def failing(path: Path) -> LockFile:
     return RecordedLock(lock_file(path), "BEGIN IMMEDIATE")
 
 
+def test_who_holds_a_lock_whose_file_cannot_be_read_is_told_that(tmp_path: Path) -> None:
+    store = tmp_path / "server"
+    with (
+        sole_writer(store, "sift serve"),
+        pytest.raises(StoreUnavailableError, match=r"the lock file .* could not be read or written: disk I/O error"),
+    ):
+        held_by(Path(f"{store}{WRITER_SUFFIX}"), lambda path: RecordedLock(lock_file(path), HELD))
+
+
 def test_who_holds_a_lock_is_asked_at_once_and_read_waiting_only_a_moment(tmp_path: Path) -> None:
     store, opened = tmp_path / "server", list[RecordedLock]()
 
@@ -239,7 +249,7 @@ def test_two_first_writers_of_a_store_take_it_in_turn_or_are_refused_naming_the_
             with sole_writer(store, name):
                 outcomes.append("held")
         except StoreUnavailableError as refused:
-            outcomes.append(f"{refused.code}: {refused.message}"[:27])
+            outcomes.append(f"{refused.code}: {refused.message.partition(' (')[0]}")
 
     for trial in range(50):
         store, barrier = tmp_path / f"s{trial}.sqlite", threading.Barrier(2)
@@ -248,8 +258,65 @@ def test_two_first_writers_of_a_store_take_it_in_turn_or_are_refused_naming_the_
             thread.start()
         for thread in threads:
             joined(thread, 30)
-    assert set(outcomes) <= {"held", "busy: another sift writes it"}
+    assert set(outcomes) <= {"held", "busy: another sift writes it now"}
     assert (len(outcomes), outcomes.count("held") >= 50) == (100, True)
+
+
+@final
+class NamingLock:
+    def __init__(self, real: LockFile, naming: threading.Event, asked: threading.Event) -> None:
+        self.real, self.naming, self.asked = real, naming, asked
+
+    def execute(self, sql: str, parameters: tuple[int | str, ...] = (), /) -> sqlite3.Cursor:
+        if sql == HOLDER:
+            self.naming.set()
+            waited(self.asked)
+        return self.real.execute(sql, parameters)
+
+    def close(self) -> None:
+        self.real.close()
+
+
+@final
+class ImpatientLock:
+    def __init__(self, real: LockFile) -> None:
+        self.real = real
+        real.execute(ASK_AT_ONCE)
+
+    def execute(self, sql: str, parameters: tuple[int | str, ...] = (), /) -> sqlite3.Cursor:
+        return self.real.execute(ASK_AT_ONCE if sql == WAIT_A_MOMENT else sql, parameters)
+
+    def close(self) -> None:
+        self.real.close()
+
+
+def impatient(path: Path) -> LockFile:
+    return ImpatientLock(lock_file(path))
+
+
+def test_a_writer_still_writing_its_name_is_not_named_as_the_writer_before_it(tmp_path: Path) -> None:
+    store = tmp_path / "notes.sqlite"
+    lock = Path(f"{store}{WRITER_SUFFIX}")
+    with sole_writer(store, "an index"):
+        pass
+    naming, asked = threading.Event(), threading.Event()
+
+    def slow() -> None:
+        with sole_writer(store, "an embedding", lambda path: NamingLock(lock_file(path), naming, asked)):
+            pass
+
+    thread = threading.Thread(target=slow)
+    thread.start()
+    try:
+        waited(naming)
+        with pytest.raises(StoreUnavailableError) as refused, sole_writer(store, "a move", impatient):
+            pass
+        assert (refused.value.code, refused.value.message) == (Problem.BUSY, "another sift writes it now")
+        assert held_by(lock, impatient) is None
+    finally:
+        asked.set()
+        joined(thread, 30)
+    assert held_by(lock) is None
 
 
 def test_who_holds_a_fresh_lock_is_asked_while_its_first_writer_makes_it(tmp_path: Path) -> None:
