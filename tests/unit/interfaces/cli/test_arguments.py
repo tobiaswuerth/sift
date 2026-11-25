@@ -42,7 +42,7 @@ def test_a_list_is_given_by_its_places_and_may_be_empty_if_it_has_a_default() ->
     assert parsed(ShowStatus, []) == ShowStatus()
     assert parsed(IndexCollections, ["a", "b"]) == IndexCollections(("a", "b"))
     assert parsed(ReadDocuments, ["x", "y", "--lines", "3"]) == ReadDocuments(("x", "y"), "3")
-    with pytest.raises(UsageError, match="the following arguments are required: ids"):
+    with pytest.raises(UsageError, match="the following arguments are required: ID"):
         parsed(ReadDocuments, [])
 
 
@@ -83,12 +83,12 @@ def test_each_argument_says_what_it_is_for() -> None:
     options(parser, AddCollection, whole)
     shown = " ".join(parser.format_help().split())
     usage = (
-        "sift add [-h] [--name NAME] [--store STORE] [--title-from {heading,name}] [--nested]"
+        "sift add [-h] [--name NAME] [--store PATH] [--title-from {heading,name}] [--nested]"
         " [--follow-links | --no-follow-links] [--agents | --no-agents]"
-        " [--id-field ID_FIELD] [--title-field TITLE_FIELD] [--text-fields TEXT_FIELDS] folder"
+        " [--id-field FIELD] [--title-field FIELD] [--text-fields FIELD,...] FOLDER"
     )
     assert usage in shown
-    assert "folder the folder whose files the collection holds" in shown
+    assert "FOLDER the folder whose files the collection holds" in shown
     assert "--nested add a folder inside a collection" in shown
     assert "it changes that collection" in shown
 

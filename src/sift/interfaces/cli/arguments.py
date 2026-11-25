@@ -9,7 +9,7 @@ from typing import Annotated, cast, get_args, get_origin, get_type_hints, overri
 
 from sift.api.described import AbsolutePath, Bounds, FileOrId, Help
 from sift.api.requests import choices_of, type_name
-from sift.interfaces.cli.flags import RESERVED, Flag, flag_of
+from sift.interfaces.cli.flags import RESERVED, Flag, flag_of, metavar_of
 
 type Placing = Callable[[str], str]
 type Places = Mapping[type[object], Placing]
@@ -179,7 +179,7 @@ def _converter(argument: Argument, places: Places) -> Callable[[str], object]:
 
 def _add(parser: argparse.ArgumentParser, argument: Argument, places: Places) -> None:
     named = [each for each in (argument.flag.short, argument.flag.long) if each is not None]
-    choices = choices_of(argument.kind)
+    choices, shown = choices_of(argument.kind), metavar_of(argument.name)
     if argument.how is How.SWITCH:
         parser.add_argument(*named, action="store_true", help=argument.help)
     elif argument.how is How.TOGGLE:
@@ -188,10 +188,16 @@ def _add(parser: argparse.ArgumentParser, argument: Argument, places: Places) ->
         )
     elif argument.how is How.READ:
         converted = _converter(argument, places)
-        parser.add_argument(*named, dest=argument.name, action="append", type=converted, help=argument.help)
+        parser.add_argument(
+            *named, dest=argument.name, action="append", type=converted, metavar=shown, help=argument.help
+        )
     elif argument.how in (How.ANY, How.SOME):
         parser.add_argument(
-            argument.name, nargs=argument.how.value, type=_converter(argument, places), help=argument.help
+            argument.name,
+            nargs=argument.how.value,
+            type=_converter(argument, places),
+            metavar=shown,
+            help=argument.help,
         )
     elif choices is not None:
         offered = [str(member) for member in choices]
@@ -204,10 +210,16 @@ def _add(parser: argparse.ArgumentParser, argument: Argument, places: Places) ->
     elif argument.how is How.OPTION:
         converted = _converter(argument, places)
         parser.add_argument(
-            *named, dest=argument.name, action=Once, type=converted, default=argument.default, help=argument.help
+            *named,
+            dest=argument.name,
+            action=Once,
+            type=converted,
+            default=argument.default,
+            metavar=shown,
+            help=argument.help,
         )
     else:
-        parser.add_argument(argument.name, type=_converter(argument, places), help=argument.help)
+        parser.add_argument(argument.name, type=_converter(argument, places), metavar=shown, help=argument.help)
 
 
 def flags(request: type[object]) -> dict[str, str]:

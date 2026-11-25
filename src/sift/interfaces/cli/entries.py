@@ -22,6 +22,8 @@ from sift.interfaces.cli.reading import ReadDocuments
 
 COMMANDS_PACKAGE = "sift.interfaces.cli.commands"
 LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed", "serve"})
+SEARCH_EXAMPLE = 'sift search "dark matter" -k 5'
+GET_EXAMPLE = "sift get notes/physics.md --lines 17-26"
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,44 +31,94 @@ class CommandEntry:
     help: str
     request: type[object]
     module: str
+    example: str
 
 
 ENTRIES = MappingProxyType(
     {
-        "add": CommandEntry("add a folder as a collection", AddCollection, "collections"),
-        "rm": CommandEntry(
-            "remove a collection and its store; its files stay where they are", RemoveCollection, "collections"
+        "add": CommandEntry("add a folder as a collection", AddCollection, "collections", "sift add ~/notes"),
+        "index": CommandEntry(
+            "read what is new or changed in collections", IndexCollections, "indexing", "sift index notes"
         ),
-        "move": CommandEntry(
-            "move the stores of collections, or of all, to another folder or drive", MoveCollections, "collections"
+        "embed": CommandEntry(
+            "embed passages for semantic search, with the model SIFT_EMBED_MODEL names",
+            EmbedCollections,
+            "indexing",
+            "sift embed notes",
         ),
-        "activate": CommandEntry("search collections deactivated before again", ActivateCollections, "collections"),
+        "search": CommandEntry(
+            "find passages by their words, ranked by BM25", SearchKeywords, "searching", SEARCH_EXAMPLE
+        ),
+        "vsearch": CommandEntry(
+            "find passages near a query in meaning",
+            SearchVectors,
+            "searching",
+            'sift vsearch "what holds galaxies together"',
+        ),
+        "query": CommandEntry(
+            "find passages for a question: keyword and semantic, reranked",
+            SearchHybrid,
+            "searching",
+            'sift query "what holds galaxies together?"',
+        ),
+        "get": CommandEntry("print documents by their ids", ReadDocuments, "collections", GET_EXAMPLE),
+        "links": CommandEntry(
+            "show the links of a note: those it holds, and those into it",
+            ShowLinks,
+            "links",
+            'sift links "Acme AG" --direction both',
+        ),
+        "mentions": CommandEntry(
+            "find documents naming a note without linking to it", FindMentions, "searching", 'sift mentions "Acme AG"'
+        ),
+        "similar": CommandEntry(
+            "find documents near one in meaning, by its own vectors",
+            FindSimilar,
+            "searching",
+            "sift similar notes/physics.md",
+        ),
+        "unresolved": CommandEntry(
+            "list the link targets no note answers to yet, most linked first",
+            ListUnresolved,
+            "links",
+            "sift unresolved -c notes",
+        ),
+        "status": CommandEntry(
+            "show each collection: its folder and what its store holds", ShowStatus, "collections", "sift status notes"
+        ),
+        "activate": CommandEntry(
+            "search collections deactivated before again", ActivateCollections, "collections", "sift activate archive"
+        ),
         "deactivate": CommandEntry(
             "leave collections out of searches, and of index and embed unless named",
             DeactivateCollections,
             "collections",
+            "sift deactivate archive",
         ),
-        "index": CommandEntry("read what is new or changed in collections", IndexCollections, "indexing"),
-        "query": CommandEntry(
-            "find passages for a question: keyword and semantic, reranked", SearchHybrid, "searching"
+        "move": CommandEntry(
+            "move the stores of collections, or of all, to another folder or drive",
+            MoveCollections,
+            "collections",
+            "sift move notes D:/stores",
         ),
-        "search": CommandEntry("find passages by their words, ranked by BM25", SearchKeywords, "searching"),
-        "embed": CommandEntry(
-            "embed passages for semantic search, with the model SIFT_EMBED_MODEL names", EmbedCollections, "indexing"
+        "rm": CommandEntry(
+            "remove a collection and its store; its files stay where they are",
+            RemoveCollection,
+            "collections",
+            "sift rm archive",
         ),
-        "vsearch": CommandEntry("find passages near a query in meaning", SearchVectors, "searching"),
-        "get": CommandEntry("print documents by their ids", ReadDocuments, "collections"),
-        "similar": CommandEntry("find documents near one in meaning, by its own vectors", FindSimilar, "searching"),
-        "mentions": CommandEntry("find documents naming a note without linking to it", FindMentions, "searching"),
-        "links": CommandEntry("the links of a note: those it holds, and those into it", ShowLinks, "links"),
-        "unresolved": CommandEntry("link targets no note answers to yet, most linked first", ListUnresolved, "links"),
-        "jobs": CommandEntry("what sift serve does in the background, or stop one of its jobs", ListJobs, "jobs"),
-        "status": CommandEntry("show each collection: its folder and what its store holds", ShowStatus, "collections"),
         "serve": CommandEntry(
-            "serve this home: its models and codes held, commands answered at once", ServeHome, "serving"
+            "serve this home: its models and codes held, commands answered at once", ServeHome, "serving", "sift serve"
+        ),
+        "jobs": CommandEntry(
+            "list what sift serve does in the background, or stop one of its jobs",
+            ListJobs,
+            "jobs",
+            "sift jobs --stop 3",
         ),
     }
 )
+EXAMPLES = ("sift add ~/notes", "sift index", SEARCH_EXAMPLE, GET_EXAMPLE)
 
 
 def _as_commands(module: object) -> Commands:

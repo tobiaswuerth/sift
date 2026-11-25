@@ -16,11 +16,11 @@ from sift.api.wire import CONTRACT, contract_text, understood
 from sift.domain.text.decoding import encodable
 from sift.interfaces.cli.arguments import flags, options
 from sift.interfaces.cli.context import Context
-from sift.interfaces.cli.entries import ENTRIES, LOGGED, command_of
+from sift.interfaces.cli.entries import ENTRIES, EXAMPLES, LOGGED, command_of
 from sift.interfaces.cli.flags import file_or_id
 from sift.interfaces.cli.heavy import endpoints, logs, windows
 from sift.interfaces.cli.notice import notice
-from sift.interfaces.cli.shown.outcome import FAILED, INTERRUPTED, Shown, failure, stopped_writing
+from sift.interfaces.cli.shown.outcome import DONE, FAILED, INTERRUPTED, USAGE, Shown, failure, stopped_writing
 from sift.interfaces.cli.usage import Parser, asked_json, parsed
 from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
@@ -45,12 +45,13 @@ if TYPE_CHECKING:
 
 DESCRIPTION = "Fast local search over your documents and notes."
 SETTINGS_HEADING = "settings, read from the environment:"
+EXIT_CODES = f"  {DONE} done, {FAILED} failed, {USAGE} refused as asked, {INTERRUPTED} stopped"
 NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
 STOPPED_WATCHING = "stopped watching: the home process goes on with it; sift jobs lists it and stops it"
 OTHER_SIFT_REMEDY = "stop sift serve where it runs, and start it again with this sift"
 SERVE = "serve"
 JSON_HELP = "answer in JSON"
-COLOR_HELP = "colour what sift says"
+COLOR_HELP = "colour what sift says (default: auto)"
 VERSION_HELP = "say which sift this is"
 
 
@@ -106,9 +107,11 @@ def _placed(user: Path | None, cwd: Path, written: str) -> str:
         raise argparse.ArgumentTypeError(f"{error.message}: {error.remedy}") from None
 
 
-def _settings_help() -> str:
+def _epilog() -> str:
     width = max(map(len, VARIABLES)) + 2
-    return "\n".join([SETTINGS_HEADING, *(f"  {name:<{width}}{said}" for name, said in VARIABLES.items())])
+    settings = (f"  {name:<{width}}{said}" for name, said in VARIABLES.items())
+    examples = (f"  {example}" for example in EXAMPLES)
+    return "\n".join(["examples:", *examples, "", "exit codes:", EXIT_CODES, "", SETTINGS_HEADING, *settings])
 
 
 def _file_or_id(user: Path | None, cwd: Path, written: str) -> str:
@@ -122,7 +125,7 @@ def parser(user: Path | None, cwd: Path) -> argparse.ArgumentParser:
     built = Parser(
         prog="sift",
         description=DESCRIPTION,
-        epilog=_settings_help(),
+        epilog=_epilog(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,
     )
@@ -132,7 +135,9 @@ def parser(user: Path | None, cwd: Path) -> argparse.ArgumentParser:
     built.add_argument("--color", choices=list(Colour), default=Colour.AUTO, help=COLOR_HELP)
     commands = built.add_subparsers(dest="command", metavar="COMMAND")
     for name, each in ENTRIES.items():
-        chosen = commands.add_parser(name, help=each.help, description=each.help, allow_abbrev=False)
+        chosen = commands.add_parser(
+            name, help=each.help, description=each.help, epilog=f"e.g. {each.example}", allow_abbrev=False
+        )
         chosen.color = False
         options(chosen, each.request, partial(_placed, user, cwd), partial(_file_or_id, user, cwd))
         chosen.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=JSON_HELP)

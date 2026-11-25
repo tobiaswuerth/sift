@@ -1,5 +1,6 @@
 import argparse
 import contextlib
+import difflib
 import re
 from collections.abc import Sequence
 from typing import NoReturn, TextIO, cast, override
@@ -12,6 +13,7 @@ from sift.interfaces.console.style import PLAIN
 
 ONE_VALUE = re.compile(r"argument (\S+): expected one argument")
 ARGUMENT = re.compile(r"argument (\S+): (.+)", re.DOTALL)
+NO_COMMAND = re.compile(r"argument COMMAND: invalid choice: '([^']*)'")
 REQUIRED = "the following arguments are required: "
 OWN_FLAGS = frozenset({"--json", "--color", "-h", "--help"})
 
@@ -81,7 +83,15 @@ def _no_value(names: Sequence[str], prog: str, argv: Sequence[str]) -> str:
     return f"give {typed} a value; see {prog} --help"
 
 
+def _nearest(written: str) -> str:
+    nearest = difflib.get_close_matches(written, ENTRIES, n=1)
+    return f"did you mean sift {nearest[0]}? " if nearest else ""
+
+
 def _usage(wrong: UsageError, argv: Sequence[str]) -> str:
+    unknown = NO_COMMAND.match(wrong.message)
+    if unknown:
+        return f"{_nearest(unknown.group(1))}see {wrong.prog} --help"
     asked = ONE_VALUE.fullmatch(wrong.message)
     if asked:
         return _no_value(asked.group(1).split("/"), wrong.prog, argv)
