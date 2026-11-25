@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import http.client
 import io
@@ -7,6 +8,8 @@ import threading
 from collections.abc import Callable
 from typing import cast
 
+from starlette.types import ASGIApp, Message
+
 from sift.api.errors import JobStoppedError
 from sift.api.events import Advanced, CollectionStarted, Event, Noted
 from sift.api.serving import Served, ServeHome
@@ -14,6 +17,7 @@ from sift.interfaces.acts.acting import NO_HOME_PROCESS, Acting
 from sift.interfaces.cli.main import Host, run
 from sift.interfaces.server.endpoint import found, own_endpoint
 from sift.interfaces.server.handled import HANDLED, Handled
+from sift.interfaces.server.routes import served_app
 from sift.interfaces.server.serving import STOPPING, HomeServer, Serve, held, serve
 from sift.settings import Settings
 from tests.serving import Line, asked, last, running, streaming
@@ -213,3 +217,50 @@ def test_sift_serve_ended_as_a_service_is_ended_stops_as_by_ctrl_c(settings: Set
     served_url = serve(settings, ServeHome(port=0), "2.0.0", list[Event]().append, Serve(served)).url
     assert (served_url.startswith("http://127.0.0.1:"), found(settings)) == (True, None)
     assert signal.getsignal(signal.SIGTERM) is before
+
+
+async def left_at_its_first_line(app: ASGIApp, token: str, name: str) -> None:
+    told, received = asyncio.Event(), iter([{"type": "http.request", "body": b"{}", "more_body": False}])
+
+    async def receive() -> Message:
+        for message in received:
+            return message
+        await told.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        if message["type"] == "http.response.body" and message.get("body"):
+            told.set()
+            await asyncio.Event().wait()
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "path": f"/api/{name}",
+        "query_string": b"",
+        "headers": [(b"host", b"127.0.0.1"), (b"authorization", f"Bearer {token}".encode())],
+    }
+    await app(scope, receive, send)
+
+
+def test_a_job_left_by_its_client_as_it_is_told_to_wait_runs_in_its_turn_and_leaves_the_list(
+    settings: Settings,
+) -> None:
+    started, ended, added = threading.Event(), list[str](), list[str]()
+
+    def adding(_acting: Acting, _data: object) -> object:
+        added.append("added")
+        return Served("added")
+
+    handled = {**HANDLED, "index": Handled(endless(started, ended), writes=True), "add": Handled(adding, writes=True)}
+    with running(settings, handled) as server:
+        with streaming(server, "index") as response:
+            _ = response.readline()
+            assert started.wait(30)
+            asyncio.run(left_at_its_first_line(served_app(server.serving, handled), server.endpoint.token, "add"))
+            first, second = listed(server)
+            assert (first["running"], second["command"], second["running"]) == (True, "add", False)
+            assert jobs_of(server, {"stop": first["id"]})["stopped"] == first["id"]
+        assert until(lambda: listed(server) == [], 5)
+    assert (ended, added) == (["stopped"], ["added"])

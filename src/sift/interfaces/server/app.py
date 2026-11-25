@@ -252,14 +252,14 @@ def _waiting(serving: Serving, job: HeldJob) -> Iterator[bytes]:
 async def _streamed(serving: Serving, name: str, handled: Handled, data: object) -> AsyncIterator[bytes]:
     lines = _Lines(asyncio.get_running_loop(), asyncio.Queue(), threading.Event())
     job = serving.jobs.queued(name) if handled.writes else None
-    if job is not None:
-        for line in _waiting(serving, job):
-            yield line
+    waiting = () if job is None else tuple(_waiting(serving, job))
     ran = (serving.pool if job is None else serving.writer).submit(
         _ran, serving, Sent(name, handled, data, Audience.PEOPLE), lines, job
     )
     getting = asyncio.ensure_future(lines.queue.get())
     try:
+        for line in waiting:
+            yield line
         while True:
             if not (await asyncio.wait({getting}, timeout=serving.alive_every))[0]:
                 yield ALIVE
