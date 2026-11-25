@@ -192,3 +192,10 @@ def test_a_block_whose_postings_lie_outside_its_ranges_is_damage() -> None:
         )
         with pytest.raises(DamagedError, match="outside its ranges"):
             search(stores, Term("w0"), 10_000)
+
+
+def test_a_short_list_of_other_than_its_count_is_damage() -> None:
+    with collections([[{"a.md": ("", "A", "w1"), "b.md": ("", "B", "w1")}]]) as (stores, _):
+        stores[0].transaction.connection.execute("UPDATE keyword_postings SET chunks = 3 WHERE term = 'w1'")
+        with pytest.raises(DamagedError, match="the list of 'w1' holds 2 passages, not its 3"):
+            search(stores, Term("w1"), 10)

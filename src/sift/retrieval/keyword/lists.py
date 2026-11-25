@@ -121,6 +121,8 @@ def stored(store: Opened, terms: list[str]) -> dict[str, list[StoredList]]:
     whole = [part for part in parts if not part.ranged]
     places, counts, bounds = blocked_all([part.data for part in whole])
     for part, (start, end) in zip(whole, itertools.pairwise(bounds), strict=True):
+        if end - start != part.chunks:
+            raise DamagedError(f"the list of {part.term!r} holds {end - start:,} passages, not its {part.chunks:,}")
         found[part.term].append(Whole(part.segment, part.term, places[start:end], counts[start:end]))
     placed = {held.id: held for held in store.segments}
     for part in parts:

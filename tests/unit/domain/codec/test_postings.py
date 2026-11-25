@@ -224,6 +224,18 @@ def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -
         positions_of(RAW + b"\x01\x02", np.array([3], np.int64))
 
 
+@pytest.mark.parametrize("gaps", [[2**62], [2**32], [2**31, 2**31], [1, 2**32 - 1]])
+def test_positions_beyond_any_passage_are_refused_as_damaged(gaps: list[int]) -> None:
+    data, _ = varints(np.array(gaps, np.int64))
+    with pytest.raises(DamagedError, match="a list holds a position past any passage"):
+        positions_of(RAW + data, np.array([len(gaps)], np.int64))
+
+
+def test_positions_up_to_the_last_a_passage_holds_are_read() -> None:
+    data, _ = varints(np.array([2**32 - 1], np.int64))
+    assert ints(positions_of(RAW + data, np.array([1], np.int64))) == [2**32 - 1]
+
+
 def test_lengths_packed_far_larger_than_their_block_are_never_unpacked_whole() -> None:
     packed = zlib.compress(bytes(1 << 26))
     tracemalloc.start()

@@ -18,6 +18,7 @@ PACKED_FROM = 64
 BLOCK_HEAD = struct.Struct("<qI")
 RANGES_HEAD = struct.Struct("<qI")
 MOST_GAP = 1 << 32
+MOST_POSITION = 1 << 32
 GAP_BYTES = 4
 LENGTH_BYTES = 4
 COUNT_BYTES = 1
@@ -179,7 +180,10 @@ def positions_all(each: Sequence[bytes], counts: Ids) -> Ids:
     _sound(holds=len(gaps) == total(counts), problem="a list holds positions other than its counts")
     summed = np.cumsum(gaps)
     starts = np.cumsum(counts) - counts
-    return summed - np.repeat(summed[starts] - gaps[starts], counts)
+    found = summed - np.repeat(summed[starts] - gaps[starts], counts)
+    within = not len(found) or max(largest(gaps), largest(found)) < MOST_POSITION
+    _sound(holds=within, problem="a list holds a position past any passage")
+    return found
 
 
 def _ascending(start: int, gaps: NDArray[np.uint32]) -> Ids:
