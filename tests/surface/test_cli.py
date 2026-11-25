@@ -16,6 +16,7 @@ from sift.interfaces.console.units import size
 from sift.settings import Settings
 from sift.storage.catalog import CATALOG, CATALOG_DAMAGED_REMEDY
 from tests.damage import damage_pages
+from tests.environments import clean_environment
 from tests.surface.commands import Terminal, indexed_notes, ran
 from tests.surface.process import sift
 
@@ -252,7 +253,7 @@ def test_a_stream_of_another_encoding_is_switched_to_utf8(settings: Settings, tm
 
 def test_a_reader_leaving_is_found_before_python_ends(tmp_path: Path, notes: Path) -> None:
     assert sift(tmp_path / "home", "add", str(notes)).returncode == 0
-    environment = {**os.environ, "SIFT_HOME": str(tmp_path / "home")}
+    environment = clean_environment(SIFT_HOME=str(tmp_path / "home"))
     unread, results = os.pipe()
     os.close(unread)
     try:

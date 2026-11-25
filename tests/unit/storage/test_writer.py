@@ -23,6 +23,7 @@ from sift.storage.writer import (
     lock_file,
     sole_writer,
 )
+from tests.environments import clean_environment
 
 HOLD = (
     "import os, sys; from pathlib import Path; from sift.storage.writer import sole_writer\n"
@@ -94,7 +95,7 @@ def test_a_writer_takes_its_store_once_another_held_its_lock_only_for_a_moment(
 
 def test_a_writer_that_dies_holding_its_store_leaves_it_free(tmp_path: Path) -> None:
     store = tmp_path / "notes.sqlite"
-    environment = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
+    environment = clean_environment(PYTHONPATH=os.pathsep.join(sys.path))
     with subprocess.Popen(
         [sys.executable, "-c", HOLD, str(store)],
         stdin=subprocess.PIPE,

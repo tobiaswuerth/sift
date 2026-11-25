@@ -1,4 +1,3 @@
-import os
 import signal
 import subprocess
 import sys
@@ -10,6 +9,7 @@ from typing import cast
 
 from sift.interfaces.server.endpoint import own_endpoint
 from sift.settings import OWN_FOLDER, Settings
+from tests.environments import clean_environment
 
 INTERRUPT = cast("int", getattr(signal, "CTRL_BREAK_EVENT", signal.SIGINT))
 OWN_GROUP = cast("int", getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
@@ -20,16 +20,15 @@ def settings_of(home: Path) -> Settings:
 
 
 def environment(home: Path, model: str = "", reranker: str = "") -> dict[str, str]:
-    return {
-        **os.environ,
-        "SIFT_HOME": str(home),
-        "LOCALAPPDATA": str(home.parent / "state"),
-        "XDG_STATE_HOME": str(home.parent / "state"),
-        "PYTHONIOENCODING": "utf-8",
-        "NO_COLOR": "1",
-        "SIFT_EMBED_MODEL": model,
-        "SIFT_RERANK_MODEL": reranker,
-    }
+    return clean_environment(
+        SIFT_HOME=str(home),
+        LOCALAPPDATA=str(home.parent / "state"),
+        XDG_STATE_HOME=str(home.parent / "state"),
+        PYTHONIOENCODING="utf-8",
+        NO_COLOR="1",
+        SIFT_EMBED_MODEL=model,
+        SIFT_RERANK_MODEL=reranker,
+    )
 
 
 def sift(

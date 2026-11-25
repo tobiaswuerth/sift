@@ -7,6 +7,7 @@ import pytest
 
 from sift.api.errors import ModelUnavailableError
 from sift.inference.hub import EMBED_MODEL, PINNED, hub, pinned
+from tests.environments import clean_environment
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
@@ -31,7 +32,7 @@ def test_a_folder_is_named_by_where_it_lies_whole_and_how_its_files_stand(tmp_pa
     named = pinned(str(folder))
     assert named.startswith(f"{folder.resolve()}#")
     asked = "from sift.inference.hub import pinned; print(pinned('mine@home'))"
-    environment = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
+    environment = clean_environment(PYTHONPATH=os.pathsep.join(sys.path))
     found = subprocess.run(
         [sys.executable, "-c", asked],
         cwd=tmp_path,
@@ -85,7 +86,7 @@ def test_a_folder_s_stamp_follows_the_files_its_model_reads_alone(tmp_path: Path
 def test_a_folder_named_with_an_at_is_loaded_from_the_folder(tmp_path: Path) -> None:
     (tmp_path / f"model@{COMMIT[:8]}").mkdir()
     asked = f"from sift.inference.hub import hub; print(hub('model@{COMMIT[:8]}'))"
-    environment = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
+    environment = clean_environment(PYTHONPATH=os.pathsep.join(sys.path))
     found = subprocess.run(
         [sys.executable, "-c", asked],
         cwd=tmp_path,

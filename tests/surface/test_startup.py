@@ -1,5 +1,4 @@
 import ast
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +10,7 @@ from sift.api.errors import InvalidRequestError
 from sift.interfaces.cli.entries import ENTRIES, command_of
 from sift.interfaces.cli.main import main
 from sift.settings import OCR_REMEDY, Settings
+from tests.environments import clean_environment
 from tests.surface.commands import indexed_notes, ran
 
 MAIN_AGAIN = "__mp_main__"
@@ -24,7 +24,7 @@ LOADED = (
 
 
 def loaded(home: Path, *argv: str) -> str:
-    environment = {**os.environ, "SIFT_HOME": str(home)}
+    environment = clean_environment(SIFT_HOME=str(home))
     found = subprocess.run(
         [sys.executable, "-c", LOADED, *argv], capture_output=True, text=True, check=True, timeout=60, env=environment
     )
@@ -32,8 +32,7 @@ def loaded(home: Path, *argv: str) -> str:
 
 
 def test_help_is_plain_where_python_would_colour_it(settings: Settings) -> None:
-    coloured = {name: value for name, value in os.environ.items() if name != "NO_COLOR"}
-    environment = {**coloured, "FORCE_COLOR": "1", "SIFT_HOME": str(settings.home), "PYTHONIOENCODING": "utf-8"}
+    environment = clean_environment(FORCE_COLOR="1", SIFT_HOME=str(settings.home), PYTHONIOENCODING="utf-8")
     for argv in (("--help",), ("search", "--help"), ()):
         found = subprocess.run(
             [sys.executable, "-m", "sift", *argv],
@@ -63,7 +62,7 @@ HEAVY_LOADED = (
 def test_help_and_the_version_load_no_database_log_console_or_process_module(
     tmp_path: Path, argv: list[str], needed: list[str]
 ) -> None:
-    environment = {**os.environ, "SIFT_HOME": str(tmp_path / "home"), "PYTHONIOENCODING": "utf-8"}
+    environment = clean_environment(SIFT_HOME=str(tmp_path / "home"), PYTHONIOENCODING="utf-8")
     found = subprocess.run(
         [sys.executable, "-c", HEAVY_LOADED, *argv],
         capture_output=True,

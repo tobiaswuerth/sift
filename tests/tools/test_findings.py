@@ -1,10 +1,10 @@
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from tests.environments import clean_environment
 from tests.tools.repositories import tracked_in
 from tools.findings import ROOT, files, read
 
@@ -26,7 +26,7 @@ def test_roots_with_no_file_tracked_are_an_error(tmp_path: Path) -> None:
 
 def test_the_checks_read_the_repository_from_any_folder(tmp_path: Path) -> None:
     counted = "from tools.findings import PYTHON_ROOTS, files; print(len(files(PYTHON_ROOTS, ('.py',))))"
-    environment = {**os.environ, "PYTHONPATH": str(ROOT)}
+    environment = clean_environment(PYTHONPATH=str(ROOT))
     for argv in ([sys.executable, "-c", counted], [sys.executable, "-m", "tools", "twins"]):
         ran = subprocess.run(
             argv, cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=120, check=False
