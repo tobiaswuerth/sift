@@ -15,5 +15,5 @@ def _embed(acting: Acting, request: EmbedCollections) -> EmbedResult:
     return embedding.embed(acting.settings.home, request, acting.report, acting.models())
 
 
-INDEX = Act("index", IndexCollections, _index, writes=True)
-EMBED = Act("embed", EmbedCollections, _embed, writes=True)
+INDEX = Act("index", IndexCollections, IndexResult, _index, writes=True)
+EMBED = Act("embed", EmbedCollections, EmbedResult, _embed, writes=True)

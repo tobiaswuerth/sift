@@ -45,10 +45,10 @@ def _get(acting: Acting, request: GetDocuments) -> Documents:
     return documents.documents(acting.settings.home, request)
 
 
-ADD = Act("add", AddCollection, _add, writes=True)
-REMOVE = Act("rm", RemoveCollection, _remove, writes=True)
-MOVE = Act("move", MoveCollections, _move, writes=True)
-ACTIVATE = Act("activate", ActivateCollections, _activate, writes=True)
-DEACTIVATE = Act("deactivate", DeactivateCollections, _deactivate, writes=True)
-STATUS = Act("status", ShowStatus, _status)
-GET = Act("get", GetDocuments, _get)
+ADD = Act("add", AddCollection, CollectionAdded | CollectionChanged, _add, writes=True)
+REMOVE = Act("rm", RemoveCollection, CollectionRemoved, _remove, writes=True)
+MOVE = Act("move", MoveCollections, StoresMoved, _move, writes=True)
+ACTIVATE = Act("activate", ActivateCollections, CollectionsSwitched, _activate, writes=True)
+DEACTIVATE = Act("deactivate", DeactivateCollections, CollectionsSwitched, _deactivate, writes=True)
+STATUS = Act("status", ShowStatus, Status, _status)
+GET = Act("get", GetDocuments, Documents, _get)

@@ -11,5 +11,5 @@ def _unresolved(acting: Acting, request: ListUnresolved) -> Unresolved:
     return links.unresolved(acting.settings.home, request)
 
 
-LINKS = Act("links", ShowLinks, _links)
-UNRESOLVED = Act("unresolved", ListUnresolved, _unresolved)
+LINKS = Act("links", ShowLinks, Links, _links)
+UNRESOLVED = Act("unresolved", ListUnresolved, Unresolved, _unresolved)

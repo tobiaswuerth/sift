@@ -7,7 +7,7 @@ from typing import cast
 from sift.api.errors import InternalError, InvalidRequestError, Problem, SiftError, StoreUnavailableError
 from sift.api.events import EVENT_KINDS, Event, Reporter
 from sift.api.wire import Json, decoded, decoded_error, encoded
-from sift.interfaces.acts.acting import Act, answer_kind
+from sift.interfaces.acts.acting import Act
 from sift.interfaces.server.endpoint import Endpoint
 
 LOCALHOST = "127.0.0.1"
@@ -72,7 +72,7 @@ def _answer[R, A](act: Act[R, A], response: http.client.HTTPResponse, report: Re
         if "event" in said:
             report(_readable(event_of, str(said["event"]), said.get("data")))
         elif "answer" in said:
-            return _readable(decoded, answer_kind(act), said["answer"])
+            return _readable(decoded, cast("type[A]", act.answer), said["answer"])
         elif "error" in said:
             raise _readable(decoded_error, said["error"])
     raise InternalError(UNFINISHED, LOG_REMEDY)

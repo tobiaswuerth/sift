@@ -29,8 +29,8 @@ def _similar(acting: Acting, request: FindSimilar) -> SearchResult:
     return similar.similar(acting.settings.home, request, watching=_watching(acting))
 
 
-SEARCH = Act("search", SearchKeywords, _search)
-VSEARCH = Act("vsearch", SearchVectors, _vsearch)
-QUERY = Act("query", SearchHybrid, _query)
-MENTIONS = Act("mentions", FindMentions, _mentions)
-SIMILAR = Act("similar", FindSimilar, _similar)
+SEARCH = Act("search", SearchKeywords, SearchResult, _search)
+VSEARCH = Act("vsearch", SearchVectors, SearchResult, _vsearch)
+QUERY = Act("query", SearchHybrid, SearchResult, _query)
+MENTIONS = Act("mentions", FindMentions, SearchResult, _mentions)
+SIMILAR = Act("similar", FindSimilar, SearchResult, _similar)

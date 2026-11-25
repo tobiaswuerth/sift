@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
-from typing import TYPE_CHECKING, Protocol, cast, get_type_hints
+from typing import TYPE_CHECKING, Protocol, cast
 
 from sift.api.errors import NotFoundError
 from sift.api.events import Reporter
@@ -53,12 +53,9 @@ class Acting:
 class Act[R, A]:
     name: str
     request: type[R]
+    answer: object
     run: Callable[[Acting, R], A]
     writes: bool = False
-
-
-def answer_kind[R, A](act: Act[R, A]) -> type[A]:
-    return cast("type[A]", cast("dict[str, object]", get_type_hints(act.run))["return"])
 
 
 class Loading(Protocol):

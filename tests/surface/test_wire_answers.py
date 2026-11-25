@@ -1,6 +1,7 @@
 from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
+from typing import cast
 
 import pytest
 
@@ -17,13 +18,13 @@ from sift.api.events import (
 )
 from sift.api.wire import Json, decoded, encoded
 from sift.interfaces.acts import collections, indexing, links, searching
-from sift.interfaces.acts.acting import Act, answer_kind
+from sift.interfaces.acts.acting import Act
 from sift.interfaces.server.client import event_of
 from tests.answers import SAMPLES
 
 
 def read_back[R, A](act: Act[R, A], data: Json) -> A:
-    return decoded(answer_kind(act), data)
+    return decoded(cast("type[A]", act.answer), data)
 
 
 READ_BACK: Mapping[str, Callable[[Json], object]] = MappingProxyType(

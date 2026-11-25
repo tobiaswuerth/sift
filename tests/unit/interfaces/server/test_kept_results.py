@@ -7,7 +7,7 @@ import pytest
 
 from sift.api.errors import Problem
 from sift.api.events import Noted, Phase, PhaseDone, PhaseStarted
-from sift.api.indexing import IndexCollections
+from sift.api.indexing import IndexCollections, IndexResult
 from sift.api.search import Hit, SearchKeywords, SearchResult, Unsearched
 from sift.app.indexing import index
 from sift.interfaces.acts.acting import Act, Acting
@@ -35,7 +35,7 @@ def answering(answers: list[SearchResult], ran: list[str]) -> Mapping[str, Handl
             acting.report(PhaseDone(1))
         return answers[0]
 
-    return {**HANDLED, "search": handled(Act("search", SearchKeywords, run), kept=True)[1]}
+    return {**HANDLED, "search": handled(Act("search", SearchKeywords, SearchResult, run), kept=True)[1]}
 
 
 def test_a_search_asked_again_is_answered_from_memory_until_the_home_is_written(
@@ -133,7 +133,10 @@ def test_an_answer_whose_search_saw_a_write_beside_the_home_process_is_not_kept(
         index(acting.settings.home, IndexCollections(), lambda _: None)
         return SearchResult((HIT,), 1, ())
 
-    searched = {**HANDLED, "search": handled(Act("search", SearchKeywords, written_meanwhile), kept=True)[1]}
+    searched = {
+        **HANDLED,
+        "search": handled(Act("search", SearchKeywords, SearchResult, written_meanwhile), kept=True)[1],
+    }
     with running(settings, searched) as server:
         asked(server, "add", {"folder": str(notes)})
         asked(server, "index", {})
@@ -151,7 +154,7 @@ def test_an_answer_found_while_the_home_is_written_is_not_kept(settings: Setting
         return SearchResult((), 0, ())
 
     ran = list[str]()
-    index = handled(Act("index", IndexCollections, writing, writes=True))[1]
+    index = handled(Act("index", IndexCollections, IndexResult, writing, writes=True))[1]
     blocked = {**answering([SearchResult((HIT,), 1, ())], ran), "index": index}
     with running(settings, blocked) as server:
         write_thread = threading.Thread(target=asked, args=(server, "index", {}))

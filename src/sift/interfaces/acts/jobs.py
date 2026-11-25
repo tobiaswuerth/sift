@@ -7,4 +7,4 @@ def _jobs(acting: Acting, request: ListJobs) -> JobsListed:
     return JobsListed(acting.jobs.listed(), stopped)
 
 
-JOBS = Act("jobs", ListJobs, _jobs)
+JOBS = Act("jobs", ListJobs, JobsListed, _jobs)
