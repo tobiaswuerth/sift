@@ -7,6 +7,7 @@ The details behind the [README](https://github.com/tobiaswuerth/sift#readme).
 - [Front matter and filters](#front-matter-and-filters)
 - [What sift reads](#what-sift-reads): formats, JSON Lines, documents and scans, emails
 - [Linked notes](#linked-notes)
+- [Output and errors](#output-and-errors): UTF-8, JSON, problem codes, exit codes
 - [The home process](#the-home-process): `sift serve`, agents, jobs
 - [The browser UI](#the-browser-ui)
 - [Measuring search on your own documents](#measuring-search-on-your-own-documents)
@@ -149,7 +150,9 @@ Over MCP, `search` takes up to 20 queries in one call, returning the results of 
 `search` requires every word; when no passage holds them all and the query has no operators, it returns passages with
 any of them, ranked by BM25, and says it loosened the query. Write words, `"phrases"`, `prefix*` (one word of letters
 and digits), `AND`, `OR`, `NOT` and parentheses: `'"notice period" AND (contract OR agreement)'`. Operators are
-capitals; `NOT` binds closer than `AND`, and `AND` closer than `OR`. A quote inside a phrase is written `""`.
+capitals; `NOT` binds closer than `AND`, and `AND` closer than `OR`. A quote inside a phrase is written `""`. A word
+under `NOT` only leaves passages out and adds nothing to a score (sift 1.x, through FTS5, added it where a passage held
+it under an `OR`).
 
 A query sift can't read is refused, saying where: a quote or a parenthesis not closed, a `)` that closes nothing, or
 `NEAR(...)`, which sift doesn't support.
@@ -309,6 +312,29 @@ under three characters left out). `links` and `unresolved` return at most 50 (`-
 **A note just written** is found by the next search once the agent calls `reindex`: it reads those files at once, or
 drops the documents of files gone, and embeds their new passages where the collection is embedded. From the command
 line, `sift index --file` does the same, and `sift embed` embeds.
+
+## Output and errors
+
+Results go to standard output, and what sift says while it works (progress, notes, errors and what to do) to standard
+error. sift writes UTF-8, whatever the console's code page; in Windows PowerShell 5.1,
+`[Console]::OutputEncoding = [Text.UTF8Encoding]::new()` lets a script read it as written. Colours follow `--color`
+(`auto`: in a terminal), and `NO_COLOR` or `TERM=dumb` turn them off.
+
+With `--json` the answer is one JSON object on standard output. A refusal or a failure is one too,
+`{"error": {"kind": ..., "code": ..., "message": ..., "remedy": ..., "field": ...}}`, and standard error says it as
+without `--json`. Documents or collections a command could not read are listed in its answer with the same `code`,
+`message` and `remedy`. A `code` is one of `invalid_request`, `ambiguous`, `taken`, `too_many_words`,
+`widened_enough`, `field_not_held`, `not_found`, `folder_missing`, `unknown_collection`, `unknown_document`,
+`unknown_note`, `inactive_collection`, `store_unavailable`, `store_missing`, `store_damaged`, `store_newer`,
+`sqlite_too_old`, `keywords_remade`, `not_embedded`, `other_model`, `out_of_time`, `busy`, `model_unavailable`,
+`unauthorized`, `os`, `stopped` and `internal`.
+
+| Exit code | Means |
+|---|---|
+| 0 | Done |
+| 1 | Failed: a document not found, a store that can't be read, a collection skipped |
+| 2 | Refused as asked: a flag or value sift doesn't take, a query it can't read |
+| 130 | Stopped, as by Ctrl+C |
 
 ## The home process
 

@@ -7,12 +7,14 @@ from pathlib import Path
 
 import pytest
 
+from sift.api.errors import Problem
 from sift.app.importing import NEW_STORE
 from sift.inference.accelerator import CUDA_FIX
 from sift.inference.remote import MOST_TEXTS
 from sift.interfaces.cli.entries import ENTRIES
 from sift.interfaces.cli.logs import FOLDER as LOG_FOLDER
 from sift.interfaces.cli.main import parser
+from sift.interfaces.cli.shown.outcome import DONE, FAILED, INTERRUPTED, USAGE
 from sift.interfaces.cli.updates import STATE
 from sift.interfaces.cli.usage import UsageError
 from sift.interfaces.server.endpoint import SERVER, SERVERS
@@ -225,3 +227,12 @@ def test_every_file_sift_keeps_is_in_the_table_of_its_files_with_its_lifecycle()
     told = [row[0] for row in rows if len(row) == 3 and row[2].strip(" |")]
     listed = {span.rsplit("/", 1)[-1] for cell in told for span in found_in(SPANNED, cell)}
     assert [name for name in kept_files() if name.rsplit("/", 1)[-1] not in listed] == []
+
+
+def test_usage_names_every_code_a_problem_has_and_every_exit_code() -> None:
+    told = section(ROOT / "docs" / "usage.md", "## Output and errors")
+    exits = {int(each) for each in found_in(re.compile(r"^\| (\d+) \|", re.MULTILINE), told)}
+    assert ([each.value for each in Problem if f"`{each.value}`" not in told], exits) == (
+        [],
+        {DONE, FAILED, USAGE, INTERRUPTED},
+    )
