@@ -17,7 +17,7 @@ from sift.domain.text.decoding import decoded
 from sift.domain.text.documents import Convert, Unread
 from sift.domain.text.json_values import LONE_SURROGATE, REPLACEMENT, composed_fields
 from sift.domain.text.kinds import CONTROL, FileKind, kind_of
-from sift.domain.text.markdown import one_line
+from sift.domain.text.markdown import title_of
 from sift.domain.text.notes import Document, digest, file_stem, storable
 from sift.ingest.nesting import nesting
 
@@ -293,7 +293,7 @@ def _read(raw: bytes, name: str, convert: Convert) -> Mail:
     if names:
         fields["attachments"] = names
         shown.append("Attachments: " + ", ".join(names))
-    title = one_line(_whole(str(message.get("subject") or ""))) or file_stem(name)
+    title = title_of(_whole(str(message.get("subject") or ""))) or file_stem(name)
     body, problems = _text(message, convert)
     text = storable(_whole("\n\n".join(part for part in (f"# {title}", "\n".join(shown), body) if part)))
     document = Document("", digest(raw), storable(title), composed_fields(fields), text, chunks(text), ())

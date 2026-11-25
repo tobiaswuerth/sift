@@ -5,7 +5,7 @@ from sift.api.fields import FieldValue
 from sift.domain.text.chunks import chunks
 from sift.domain.text.json_values import NestedTooDeeplyError, composed_fields, json_value
 from sift.domain.text.kinds import CONTROL
-from sift.domain.text.markdown import heading, one_line
+from sift.domain.text.markdown import heading, title_of
 from sift.domain.text.notes import Document, digest, storable
 
 MOST_RECORD_CHARACTERS = 64 << 20
@@ -77,7 +77,7 @@ def record(found: Mapping[str, FieldValue], line: int, chosen: Chosen) -> Docume
     body = "\n\n".join(text for name in text_fields if (text := as_text(found.get(name))))
     if not body:
         return SkippedLine(line, "no text")
-    title = one_line(as_text(found.get(title_field))) if title_field else ""
+    title = title_of(as_text(found.get(title_field))) if title_field else ""
     text = storable(f"# {title}\n\n{body}" if title else body)
     fields = composed_fields({name: value for name, value in found.items() if name not in text_fields})
     return Document(storable(named), "", storable(title or heading(body) or named), fields, text, chunks(text), ())

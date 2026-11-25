@@ -6,6 +6,7 @@ from hypothesis import strategies as st
 
 from sift.api.collections import TitleFrom
 from sift.domain.text.decoding import text_pieces
+from sift.domain.text.markdown import MOST_TITLE, title_of
 from sift.domain.text.notes import Document, digest, document_of, file_stem, note, read_note
 
 
@@ -66,7 +67,7 @@ def test_titles_may_come_from_file_names_after_the_title_field() -> None:
 
 def test_a_heading_is_found_on_lines_that_make_a_careless_pattern_backtrack() -> None:
     text = "# a" + " " * 100_000 + "b\n" + "#" + " " * 100_000 + "\n"
-    assert written(text).title == "a" + " " * 100_000 + "b"
+    assert written(text).title == "a"
 
 
 @pytest.mark.parametrize(
@@ -171,3 +172,18 @@ def test_words_of_nested_front_matter_are_in_some_passage() -> None:
 def test_front_matter_read_whole_is_no_passage_of_its_own_beside_a_body() -> None:
     found = note(b"---\nauthor: Zanzibarian\ntags:\n  - a\n---\nbody\n", "n.md")
     assert [text.strip() for _, _, text in passages(found)] == ["body"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b"# Title \rbody line \r" * 300, "# A \u2028B \x85C\n".encode(), b"# " + b"word " * 180_000 + b"\n"],
+    ids=["carriage returns alone", "line separators", "a heading of 900,000 characters"],
+)
+def test_a_title_is_one_line_and_at_most_the_title_length(raw: bytes) -> None:
+    title = note(raw, "n.md").title
+    assert (len(title) <= MOST_TITLE, title == title_of(title), title.strip() == title) == (True, True, True)
+
+
+def test_a_title_cut_to_its_length_ends_at_a_space() -> None:
+    title = note(b"# " + b"word " * 500 + b"\n", "n.md").title
+    assert (len(title), title.endswith("word")) == (MOST_TITLE - 1, True)

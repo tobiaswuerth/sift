@@ -12,7 +12,7 @@ from sift.domain.text.decoding import text_pieces
 from sift.domain.text.front_matter import FrontMatter, front_matter
 from sift.domain.text.json_values import REPLACEMENT, composed_fields
 from sift.domain.text.links import MARKDOWN, Link, front_matter_links, in_line
-from sift.domain.text.markdown import TextLine, heading_of, one_line, text_lines, with_prose
+from sift.domain.text.markdown import TextLine, heading_of, text_lines, title_of, with_prose
 
 NUL = "\N{NULL}"
 NEWLINE = "\n"
@@ -67,7 +67,7 @@ def title_field(fields: Fields) -> str | None:
     title = fields.get("title")
     if isinstance(title, bool) or not isinstance(title, str | int | float):
         return None
-    return one_line(str(title)) or None
+    return title_of(str(title)) or None
 
 
 def file_stem(name: str) -> str:

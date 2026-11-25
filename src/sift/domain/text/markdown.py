@@ -6,7 +6,8 @@ from typing import NamedTuple
 HEADING = re.compile(r" {0,3}#{1,6}[ \t]")
 FENCE = re.compile(r"((?:[ \t]*>)*[ \t]*)(`{3,}|~{3,})")
 LIST_INDENT = 4
-LINE_BREAKS = re.compile(r"[\r\n]+")
+LINE_BREAKS = re.compile(r"[\r\n\x0b\x0c\x85\u2028\u2029]+")
+MOST_TITLE = 1_000
 NEWLINE = "\n"
 MOST_LINE = 1 << 20
 
@@ -116,7 +117,7 @@ def _heading_text(line: str) -> str:
 
 
 def heading_of(line: str) -> str | None:
-    return (_heading_text(line) or None) if HEADING.match(line) else None
+    return (title_of(_heading_text(line)) or None) if HEADING.match(line) else None
 
 
 def heading(text: str) -> str | None:
@@ -124,5 +125,9 @@ def heading(text: str) -> str | None:
     return next((title for line, outside in lines if outside and (title := heading_of(line.text))), None)
 
 
-def one_line(title: str) -> str:
-    return " ".join(part.strip(" \t") for part in LINE_BREAKS.split(title.strip()))
+def title_of(text: str) -> str:
+    line = " ".join(part.strip(" \t") for part in LINE_BREAKS.split(text.strip()))
+    if len(line) <= MOST_TITLE:
+        return line
+    space = line.rfind(" ", 0, MOST_TITLE + 1)
+    return line[: space if space > 0 else MOST_TITLE].rstrip()
