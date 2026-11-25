@@ -86,6 +86,15 @@ def test_nested_queries_score_as_fts5_scores_them(seed: int) -> None:
             same(search(stores, expression, 10), want, min(10, len(want)), fts5_query(expression))
 
 
+def test_the_fts5_oracle_scores_each_row_as_fts5_scores_it_alone() -> None:
+    held = {1: (1, [[], ["w0", "w5"], []]), 2: (2, [[], ["w1", "w0", "w30"], []]), 3: (3, [[], ["w0", "w5"], []])}
+    query = '("w0" AND ("w5" OR "w1 w30")) OR "w39"'
+    found = fts5_ranked(held, query, 10)
+    assert [chunk for chunk, _ in found] == [1, 3]
+    want = brute([held], parsed(query), 10, by_document=True)
+    assert np.allclose([score for _, score in found], [score for _, score in want], rtol=1e-9)
+
+
 def test_a_list_long_enough_for_ranges_in_the_default_shape_finds_what_scoring_every_chunk_finds() -> None:
     notes: Round = {f"n{n:05}.md": ("", "N", f"w1 w{2 + n % 7}") for n in range(5000)}
     with collections([[notes]], Shape()) as (stores, held):

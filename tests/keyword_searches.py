@@ -242,19 +242,25 @@ def collections(
         yield stores, held
 
 
-def fts5_ranked(held: Chunks, query: str, k: int) -> list[tuple[int, float]]:
+def _fts5_scores(held: Chunks, query: str) -> dict[int, float]:
     with contextlib.closing(sqlite3.connect(":memory:")) as db:
         db.execute("CREATE VIRTUAL TABLE t USING fts5(title, text, meta, tokenize='unicode61 remove_diacritics 2')")
-        db.execute("CREATE TABLE owners(chunk INTEGER PRIMARY KEY, document INTEGER)")
-        for chunk, (document, columns) in held.items():
-            db.execute(
-                "INSERT INTO t(rowid, title, text, meta) VALUES (?, ?, ?, ?)", (chunk, *(" ".join(c) for c in columns))
-            )
-            db.execute("INSERT INTO owners VALUES (?, ?)", (chunk, document))
-        sql = """WITH p AS MATERIALIZED (SELECT t.rowid chunk, o.document document, -bm25(t) score FROM t
-                 JOIN owners o ON o.chunk = t.rowid WHERE t MATCH ?)
-                 SELECT chunk, max(score) FROM p GROUP BY document ORDER BY 2 DESC, 1 LIMIT ?"""
-        return cast("list[tuple[int, float]]", db.execute(sql, (query, k)).fetchall())
+        db.executemany(
+            "INSERT INTO t(rowid, title, text, meta) VALUES (?, ?, ?, ?)",
+            [(chunk, *(" ".join(column) for column in columns)) for chunk, (_, columns) in held.items()],
+        )
+        matching = cast("list[tuple[int]]", db.execute("SELECT rowid FROM t WHERE t MATCH ?", (query,)).fetchall())
+        alone = "SELECT -bm25(t) FROM t WHERE t MATCH ? AND rowid = ?"
+        return {chunk: cast("tuple[float]", db.execute(alone, (query, chunk)).fetchone())[0] for (chunk,) in matching}
+
+
+def fts5_ranked(held: Chunks, query: str, k: int) -> list[tuple[int, float]]:
+    best: dict[int, tuple[float, int]] = {}
+    for chunk, score in sorted(_fts5_scores(held, query).items()):
+        document = held[chunk][0]
+        if document not in best or score > best[document][0]:
+            best[document] = (score, chunk)
+    return sorted(((chunk, score) for score, chunk in best.values()), key=lambda each: (-each[1], each[0]))[:k]
 
 
 def search(
