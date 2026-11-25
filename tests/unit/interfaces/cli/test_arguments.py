@@ -11,6 +11,7 @@ from sift.api.errors import InvalidRequestError
 from sift.api.filters import Filter
 from sift.api.indexing import IndexCollections
 from sift.api.jobs import ListJobs
+from sift.api.links import FindMentions
 from sift.api.search import SearchHybrid, SearchKeywords
 from sift.interfaces.cli.arguments import arguments, flags, options, request_of
 from sift.interfaces.cli.reading import ReadDocuments
@@ -291,3 +292,11 @@ def test_options_the_command_line_reads_its_own_way_say_how_to_write_them() -> N
     told = {each.name: each.help for each in arguments(SearchKeywords)}
     assert told["filters"].endswith("; written KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06")
     assert told["fields"].endswith("of them; comma-separated, e.g. url,created")
+
+
+def test_a_list_s_example_names_what_that_list_holds() -> None:
+    told = {each.name: each.help for each in (*arguments(AddCollection), *arguments(FindMentions))}
+    assert (told["text_fields"].split("; ")[-1], told["also"].split("; ")[-1]) == (
+        "comma-separated, e.g. abstract,body",
+        "comma-separated, e.g. emails,aliases",
+    )

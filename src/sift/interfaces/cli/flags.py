@@ -35,7 +35,7 @@ def file_or_id(user: Path | None, cwd: Path, text: str) -> str:
     return os.path.normpath(path) if text.startswith(FROM_HERE) or os.path.lexists(path) else text
 
 
-LISTED_SYNTAX = "; comma-separated, e.g. url,created"
+LISTED_SYNTAX = "; comma-separated, e.g. {example}"
 LISTED = "FIELD,..."
 METAVARS: Mapping[str, str] = MappingProxyType(
     {
@@ -69,9 +69,9 @@ FLAGS: Mapping[str, Flag] = MappingProxyType(
         "k": Flag(None, "-k"),
         "collections": Flag("--collection", "-c", one),
         "filters": Flag("--filter", "-f", filtered, f"; {WRITTEN_SYNTAX}"),
-        "fields": Flag("--fields", None, listed, LISTED_SYNTAX),
-        "text_fields": Flag("--text-fields", None, listed, LISTED_SYNTAX),
-        "also": Flag("--also", None, listed, LISTED_SYNTAX),
+        "fields": Flag("--fields", None, listed, LISTED_SYNTAX.format(example="url,created")),
+        "text_fields": Flag("--text-fields", None, listed, LISTED_SYNTAX.format(example="abstract,body")),
+        "also": Flag("--also", None, listed, LISTED_SYNTAX.format(example="emails,aliases")),
         "links_to": Flag("--links-to", None, one),
         "linked_from": Flag("--linked-from", None, one),
         "files": Flag("--file", None, one),
