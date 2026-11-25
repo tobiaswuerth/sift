@@ -5,7 +5,7 @@ import pytest
 
 from sift.api.errors import InvalidRequestError
 from sift.interfaces.cli.main import main
-from sift.settings import Settings
+from sift.settings import VARIABLES, Settings
 from tests.surface.commands import indexed_notes, ran
 
 
@@ -89,3 +89,10 @@ def test_settings_refused_are_json_when_json_is_asked(capsys: pytest.CaptureFixt
         main(["status", "--json"], refused)
     said = capsys.readouterr()
     assert (ended.value.code, json.loads(said.out)["error"]["field"]) == (2, "SIFT_OCR")
+
+
+def test_help_names_every_setting_and_what_it_sets(settings: Settings) -> None:
+    code, out, _ = ran(settings, "--help")
+    lines = out.split("settings, read from the environment:\n", 1)[1].splitlines()
+    assert (code, [line.split()[0] for line in lines]) == (0, list(VARIABLES))
+    assert all(line.endswith(VARIABLES[line.split()[0]]) for line in lines)

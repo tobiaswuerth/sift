@@ -7,6 +7,7 @@ from sift.domain.text.scans import OcrSetting
 from sift.settings import (
     OCR_REMEDY,
     UPDATE_CHECK_REMEDY,
+    VARIABLES,
     Settings,
     from_environment,
     parsed,
@@ -108,16 +109,67 @@ def test_a_path_is_made_whole_from_the_user_s_folder_or_the_current_one(
     assert whole_path(written, user, cwd) == tmp_path.joinpath(*place)
 
 
-@pytest.mark.parametrize("written", ["~", "~/data"])
-def test_the_home_may_be_named_from_the_user_s_folder(user: Path, cwd: Path, written: str) -> None:
-    assert parsed({"SIFT_HOME": written}, user, cwd).home == user.joinpath(*Path(written).parts[1:])
+def test_the_home_may_be_named_from_the_user_s_folder(user: Path, cwd: Path) -> None:
+    assert parsed({"SIFT_HOME": "~/data"}, user, cwd).home == user / "data"
 
 
-@pytest.mark.parametrize("written", ["data", "../data"])
+@pytest.mark.parametrize("written", ["~", "~/", "{user}", "{user}/."])
+def test_the_user_s_folder_itself_is_no_home(user: Path, cwd: Path, written: str) -> None:
+    with pytest.raises(InvalidRequestError) as refused:
+        parsed({"SIFT_HOME": written.format(user=user)}, user, cwd)
+    said = refused.value
+    assert (said.message, said.remedy, said.field) == (
+        f"SIFT_HOME is your user folder: {written.format(user=user)!r}",
+        "set SIFT_HOME to a folder of sift's own, e.g. ~/.sift",
+        "SIFT_HOME",
+    )
+
+
+@pytest.mark.parametrize("written", ["SIFT_HOEM", "SIFT_OCRR", "SIFT_"])
+def test_a_variable_sift_has_no_setting_of_is_refused_with_those_it_has(user: Path, cwd: Path, written: str) -> None:
+    with pytest.raises(InvalidRequestError) as refused:
+        parsed({"SIFT_HOME": str(cwd / "home"), written: "x"}, user, cwd)
+    said = refused.value
+    assert (said.message, said.field) == (f"sift has no setting {written}", written)
+    assert said.remedy == f"unset {written}, or set one of {', '.join(VARIABLES)}"
+
+
+def test_every_setting_of_sift_is_in_the_table_of_its_variables(user: Path, cwd: Path) -> None:
+    every = dict.fromkeys(VARIABLES, "")
+    assert parsed(every, user, cwd) == parsed({}, user, cwd)
+    assert sorted(VARIABLES) == ["SIFT_EMBED_MODEL", "SIFT_HOME", "SIFT_OCR", "SIFT_RERANK_MODEL", "SIFT_UPDATE_CHECK"]
+
+
+def test_names_of_models_are_read_without_the_spaces_around_them(user: Path, cwd: Path) -> None:
+    found = parsed({"SIFT_EMBED_MODEL": "   ", "SIFT_RERANK_MODEL": " owner/ranker "}, user, cwd)
+    assert (found.embed_model, found.rerank_model) == (parsed({}, user, cwd).embed_model, "owner/ranker")
+
+
+@pytest.mark.parametrize(
+    "asked, field",
+    [
+        ({"SIFT_HOME": "data"}, "SIFT_HOME"),
+        ({"SIFT_OCR": "maybe"}, "SIFT_OCR"),
+        ({"SIFT_UPDATE_CHECK": "x"}, "SIFT_UPDATE_CHECK"),
+    ],
+)
+def test_a_setting_refused_names_its_variable_as_the_field_at_fault(
+    user: Path, cwd: Path, asked: dict[str, str], field: str
+) -> None:
+    with pytest.raises(InvalidRequestError) as refused:
+        parsed(asked, user, cwd)
+    assert refused.value.field == field
+
+
+@pytest.mark.parametrize("written", ["data", "../data", "  "])
 def test_a_relative_home_is_refused(user: Path, cwd: Path, written: str) -> None:
-    with pytest.raises(InvalidRequestError, match="SIFT_HOME is no absolute folder") as refused:
+    with pytest.raises(InvalidRequestError) as refused:
         parsed({"SIFT_HOME": written}, user, cwd)
-    assert refused.value.remedy == "set SIFT_HOME to an absolute folder"
+    said = refused.value
+    assert (said.message, said.remedy) == (
+        f"SIFT_HOME is no absolute folder: {written!r}",
+        "set SIFT_HOME to an absolute folder",
+    )
 
 
 def test_a_home_that_is_a_file_is_refused(tmp_path: Path, user: Path, cwd: Path) -> None:

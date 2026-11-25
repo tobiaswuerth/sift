@@ -36,12 +36,13 @@ from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal,
 from sift.interfaces.console.text import printable_text
 from sift.interfaces.console.windows import console, escapes_work
 from sift.interfaces.server.endpoint import Endpoint, found, unshared
-from sift.settings import Settings, from_environment, user_folder, whole_path
+from sift.settings import VARIABLES, Settings, from_environment, user_folder, whole_path
 
 if TYPE_CHECKING:
     from sift.interfaces.cli.updates import Checking
 
 DESCRIPTION = "Fast local search over your documents and notes."
+SETTINGS_HEADING = "settings, read from the environment:"
 NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
 STOPPED_WATCHING = "stopped watching: the home process goes on with it; sift jobs lists it and stops it"
 OTHER_SIFT_REMEDY = "stop sift serve where it runs, and start it again with this sift"
@@ -103,8 +104,19 @@ def _placed(user: Path | None, cwd: Path, written: str) -> str:
         raise argparse.ArgumentTypeError(f"{error.message}: {error.remedy}") from None
 
 
+def _settings_help() -> str:
+    width = max(map(len, VARIABLES)) + 2
+    return "\n".join([SETTINGS_HEADING, *(f"  {name:<{width}}{said}" for name, said in VARIABLES.items())])
+
+
 def parser(user: Path | None, cwd: Path) -> argparse.ArgumentParser:
-    built = Parser(prog="sift", description=DESCRIPTION, allow_abbrev=False)
+    built = Parser(
+        prog="sift",
+        description=DESCRIPTION,
+        epilog=_settings_help(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
+    )
     built.color = False
     built.add_argument("--version", action=VersionAction)
     built.add_argument("--json", action="store_true", help=JSON_HELP)

@@ -34,6 +34,17 @@ STATE_FOLDERS = MappingProxyType({"win32": ("AppData", "Local")})
 STATE_FOLDER = (".local", "state")
 OWN_FOLDER = "sift"
 HOME_REMEDY = f"set {HOME} to an absolute folder"
+OWN_HOME_REMEDY = f"set {HOME} to a folder of sift's own, e.g. ~/{DEFAULT_HOME}"
+OWN_PREFIX = "SIFT_"
+VARIABLES = MappingProxyType(
+    {
+        HOME: f"the folder of sift's collections, stores and logs (default ~/{DEFAULT_HOME})",
+        EMBED_MODEL_VARIABLE: f"the model that embeds passages (default {EMBED_MODEL})",
+        RERANK_MODEL_VARIABLE: f"the model that reranks the passages of a query (default {RERANK_MODEL})",
+        OCR_VARIABLE: "auto, on or off: read the text of scans and images (default auto: on a GPU)",
+        UPDATE_CHECK_VARIABLE: "on or off: be told of a newer sift once a day (default off)",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,14 +92,17 @@ def _named_home(written: str | None, user: Path | None, cwd: Path) -> Path:
             raise InvalidRequestError(NO_HOME, HOME_REMEDY)
         return user / DEFAULT_HOME
     if not Path(written).is_absolute() and Path(written).parts[:1] != (USER,):
-        raise InvalidRequestError(f"{HOME} is no absolute folder: {written}", HOME_REMEDY)
-    return whole_path(written, user, cwd)
+        raise InvalidRequestError(f"{HOME} is no absolute folder: {written!r}", HOME_REMEDY, HOME)
+    home = whole_path(written, user, cwd)
+    if home == user:
+        raise InvalidRequestError(f"{HOME} is your user folder: {written!r}", OWN_HOME_REMEDY, HOME)
+    return home
 
 
 def _home(written: str | None, user: Path | None, cwd: Path) -> Path:
     home = _named_home(written, user, cwd)
     if home.exists() and not home.is_dir():
-        raise InvalidRequestError(f"the home {home} is no folder", HOME_REMEDY)
+        raise InvalidRequestError(f"the home {home} is no folder", HOME_REMEDY, HOME)
     return home
 
 
@@ -105,7 +119,7 @@ def _ocr(written: str | None) -> OcrSetting:
     chosen = (written or OcrSetting.AUTO.value).strip().lower()
     found = next((each for each in OcrSetting if each.value == chosen), None)
     if found is None:
-        raise InvalidRequestError(f"{OCR_VARIABLE} is {written!r}", OCR_REMEDY)
+        raise InvalidRequestError(f"{OCR_VARIABLE} is {written!r}", OCR_REMEDY, OCR_VARIABLE)
     return found
 
 
@@ -113,7 +127,7 @@ def _update_check(environment: Mapping[str, str]) -> bool:
     written = environment.get(UPDATE_CHECK_VARIABLE) or "off"
     switched = SWITCHES.get(written.strip().lower())
     if switched is None:
-        raise InvalidRequestError(f"{UPDATE_CHECK_VARIABLE} is {written!r}", UPDATE_CHECK_REMEDY)
+        raise InvalidRequestError(f"{UPDATE_CHECK_VARIABLE} is {written!r}", UPDATE_CHECK_REMEDY, UPDATE_CHECK_VARIABLE)
     return switched and environment.get(OFFLINE_VARIABLE, "").strip().lower() not in OFFLINE
 
 
@@ -124,15 +138,29 @@ def _state(environment: Mapping[str, str], user: Path | None, platform: str) -> 
     return None if user is None else user.joinpath(*STATE_FOLDERS.get(platform, STATE_FOLDER), OWN_FOLDER)
 
 
+def _known_variables(environment: Mapping[str, str]) -> None:
+    unknown = sorted(name for name in environment if name.startswith(OWN_PREFIX) and name not in VARIABLES)
+    if unknown:
+        name = unknown[0]
+        raise InvalidRequestError(
+            f"sift has no setting {name}", f"unset {name}, or set one of {', '.join(VARIABLES)}", name
+        )
+
+
+def _model(environment: Mapping[str, str], variable: str, default: str) -> str:
+    return (environment.get(variable) or "").strip() or default
+
+
 def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path, platform: str = sys.platform) -> Settings:
+    _known_variables(environment)
     return Settings(
         home=_home(environment.get(HOME), user, cwd),
         user=user,
         cwd=cwd,
         no_color=bool(environment.get(NO_COLOR)),
         dumb=environment.get(TERM) == DUMB,
-        embed_model=environment.get(EMBED_MODEL_VARIABLE) or EMBED_MODEL,
-        rerank_model=environment.get(RERANK_MODEL_VARIABLE) or RERANK_MODEL,
+        embed_model=_model(environment, EMBED_MODEL_VARIABLE, EMBED_MODEL),
+        rerank_model=_model(environment, RERANK_MODEL_VARIABLE, RERANK_MODEL),
         ocr=_ocr(environment.get(OCR_VARIABLE)),
         gpus=environment.get(GPUS_VARIABLE),
         update_check=_update_check(environment),
