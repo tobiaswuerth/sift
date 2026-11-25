@@ -13,10 +13,20 @@ def test_the_fields_asked_for_are_picked_and_every_one_but_the_title_for_a_star(
     assert picked(HELD, ()) == {}
 
 
-def test_an_order_by_a_field_puts_numbers_before_text_and_those_without_it_last_as_they_came() -> None:
+def test_an_order_by_a_field_puts_numbers_then_truths_then_text_and_those_without_it_last_as_they_came() -> None:
     each: list[Fields] = [{"r": "b"}, {}, {"r": 2}, {"r": None}, {"r": "a"}, {"r": 1.5}, {"r": True}]
-    assert order(each, "r") == [6, 5, 2, 4, 0, 1, 3]
-    assert order(each, "-r") == [0, 4, 2, 5, 6, 1, 3]
+    assert order(each, "r") == [5, 2, 6, 4, 0, 1, 3]
+    assert order(each, "-r") == [0, 4, 6, 2, 5, 1, 3]
+
+
+def test_sort_orders_values_as_range_filters_read_them() -> None:
+    each: list[Fields] = [{"c": 2025}, {"c": "2024-06-15"}, {"c": "+4"}, {"c": 2023}, {"c": " 7 "}, {"c": "1.2.3"}]
+    assert order(each, "c") == [2, 4, 3, 1, 0, 5]
+
+
+def test_a_list_is_ordered_by_its_first_value() -> None:
+    each: list[Fields] = [{"t": ["b", "a"]}, {"t": [3, 9]}, {"t": []}, {"t": ["a"]}, {"t": {"k": 1}}]
+    assert order(each, "t") == [1, 2, 3, 0, 4]
 
 
 def test_a_sort_naming_no_field_is_refused() -> None:

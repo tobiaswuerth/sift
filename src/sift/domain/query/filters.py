@@ -1,5 +1,4 @@
 import json
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -15,8 +14,6 @@ type SpecValue = str | int | float | bool | list[SpecValue] | dict[str, SpecValu
 SQLITE_INT = 2**63
 TRUTH_WORDS = MappingProxyType({True: ("true", "True", "TRUE"), False: ("false", "False", "FALSE")})
 TRUTH_OF = MappingProxyType({word: truth for truth, words in TRUTH_WORDS.items() for word in words})
-WHOLE = re.compile(r"-?[0-9]+")
-DECIMAL = re.compile(r"-?[0-9]+\.[0-9]+")
 NONE_WITHIN = "[]"
 PATH_REMEDY = "write the folders of a path in a collection with / between them"
 LIST_REMEDY = 'give several values as a JSON list, e.g. t=["a","c"], or repeat the filter'
