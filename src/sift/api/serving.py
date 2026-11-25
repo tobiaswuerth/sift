@@ -15,6 +15,4 @@ class Served:
 
 @dataclass(frozen=True, slots=True)
 class ServeHome(Request):
-    port: Annotated[
-        int, Help(f"the port on 127.0.0.1 to answer on, 0 for any free one (default: {PORT})"), Bounds(0, MOST_PORT)
-    ] = PORT
+    port: Annotated[int, Help("the port on 127.0.0.1 to answer on, 0 for any free one"), Bounds(0, MOST_PORT)] = PORT

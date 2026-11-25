@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, cast, get_args, get_origin, get_type_hints, override
 
-from sift.api.described import AbsolutePath, Help
+from sift.api.described import AbsolutePath, Bounds, Help
 from sift.api.requests import choices_of, type_name
 from sift.interfaces.cli.flags import RESERVED, Flag, flag_of
 
@@ -45,6 +45,7 @@ class Described:
     help: Help
     place: bool
     flag: Flag
+    bounds: Bounds | None = None
 
 
 class Once(argparse.Action):
@@ -74,7 +75,15 @@ def _described(request: type[object], name: str, hint: object) -> Described:
         raise _refused(request, name, "no Help")
     if name in RESERVED:
         raise _refused(request, name, "sift's own option is named so")
-    return Described(kind, found[0], any(isinstance(part, AbsolutePath) for part in metadata), flag_of(name))
+    bounds = next((part for part in metadata if isinstance(part, Bounds)), None)
+    return Described(kind, found[0], any(isinstance(part, AbsolutePath) for part in metadata), flag_of(name), bounds)
+
+
+def limits(bounds: Bounds | None, default: object) -> str:
+    if not isinstance(default, int) or isinstance(default, bool):
+        return ""
+    span = "" if bounds is None else f"{bounds.low:,} to {bounds.high:,}; "
+    return f" ({span}default: {default:,})"
 
 
 def _left_out(kind: object) -> object | None:
@@ -131,7 +140,8 @@ def _argument(request: type[object], field: dataclasses.Field[object], hint: obj
     if described.flag.short is not None and how not in (How.OPTION, How.READ):
         raise _refused(request, field.name, "only an option given by name has a short flag")
     given = None if default is dataclasses.MISSING else default
-    return Argument(field.name, taken, described.help.text, described.place, how, described.flag, given)
+    told = described.help.text + limits(described.bounds, given)
+    return Argument(field.name, taken, told, described.place, how, described.flag, given)
 
 
 def arguments(request: type[object]) -> tuple[Argument, ...]:

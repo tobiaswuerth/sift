@@ -24,10 +24,7 @@ QUERY = (
     'what to find: words, "phrases", prefix*, AND, OR, NOT and (parentheses); words side by side must all be in a '
     "passage, and if no passage holds them all, any of them will do"
 )
-CANDIDATES = (
-    "passages each of keyword and semantic search hands the reranker, raised to k if fewer, at most 10,000"
-    " (default: 40)"
-)
+CANDIDATES = "passages each of keyword and semantic search hands the reranker, raised to k if fewer"
 ADAPTIVE = "only the results before the largest drop in score, and five more, instead of always k"
 BUDGET = (
     "seconds the search may take, roughly: once they are spent and anything is found, the best found so far, "
@@ -49,7 +46,7 @@ LINKED_FROM = "only documents this note links to, named by its id or as links wr
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Options(Request):
-    k: Annotated[int, Help(f"how many results, at most {MOST_HITS:,} (default: 10)"), Bounds(1, MOST_HITS)] = 10
+    k: Annotated[int, Help("how many results"), Bounds(1, MOST_HITS)] = 10
     collections: Annotated[
         tuple[str, ...],
         Help("search this collection; several: each of them (default: every active one)"),

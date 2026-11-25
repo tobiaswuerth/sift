@@ -10,7 +10,8 @@ from sift.api.described import Help
 from sift.api.errors import InvalidRequestError
 from sift.api.filters import Filter, written
 from sift.api.indexing import IndexCollections
-from sift.api.search import SearchKeywords
+from sift.api.jobs import ListJobs
+from sift.api.search import SearchHybrid, SearchKeywords
 from sift.interfaces.cli.arguments import arguments, flags, options, request_of
 from sift.interfaces.cli.main import Parser, UsageError
 from sift.interfaces.cli.reading import ReadDocuments
@@ -274,3 +275,12 @@ def test_the_flags_of_a_search_are_named_for_one_value_given_again() -> None:
         "offset": "--offset",
         "budget": "--budget",
     }
+
+
+def test_a_whole_number_s_range_and_default_are_shown_from_its_field() -> None:
+    told = {each.name: each.help for each in arguments(SearchHybrid)}
+    assert (told["k"], told["candidates"].endswith(" if fewer (1 to 10,000; default: 40)")) == (
+        "how many results (1 to 10,000; default: 10)",
+        True,
+    )
+    assert {each.name: each.help for each in arguments(ListJobs)}["stop"].endswith(")") is False

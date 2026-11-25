@@ -232,3 +232,20 @@ def test_the_names_of_fields_to_show_sort_by_or_look_in_are_composed_however_the
     found = (asked.fields, asked.sort, shown.fields, looked.also)
     assert found == ((COMPOSED,), COMPOSED, (COMPOSED,), (COMPOSED, "plain"))
     assert (SearchKeywords("x").sort, SearchKeywords(DECOMPOSED).query) == (None, DECOMPOSED)
+
+
+def _stated(kind: type) -> list[str]:
+    hints = cast("dict[str, object]", get_type_hints(kind, include_extras=True))
+    found = list[str]()
+    for field in dataclasses.fields(kind):
+        marks = cast("tuple[object, ...]", get_args(hints[field.name]))[1:]
+        text = next((each.text for each in marks if isinstance(each, Help)), "")
+        whole = isinstance(field.default, int) and not isinstance(field.default, bool)
+        highs = [f"{each.high:,}" for each in marks if isinstance(each, Bounds) and each.high >= 10]
+        if (whole and "default:" in text) or any(high in text for high in highs):
+            found.append(f"{kind.__name__}.{field.name}: {text}")
+    return found
+
+
+def test_no_help_text_states_its_field_s_default_or_upper_bound() -> None:
+    assert [found for kind in _requests() for found in _stated(kind)] == []

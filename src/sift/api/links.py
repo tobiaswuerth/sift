@@ -7,7 +7,7 @@ from sift.api.requests import Request
 from sift.api.search import MOST_HITS, Options, Unsearched
 
 NOTE = 'a note: its id, as sift get takes it, or its name as links write it, e.g. "Acme AG"'
-LINKS_K = "at most this many links each way (default: 50)"
+LINKS_K = "at most this many links each way"
 DOCUMENT = 'a document: its id, as sift get takes it, or a note\'s name as links write it, e.g. "Acme AG"'
 ALSO = "front matter fields whose values name the note too, comma-separated, e.g. emails"
 
@@ -24,7 +24,7 @@ class ShowLinks(Request):
     direction: Annotated[Direction, Help("out (default): the links it holds; in: those into it; or both")] = (
         Direction.OUT
     )
-    depth: Annotated[int, Help("2: also the notes one link further (default: 1)"), Bounds(1, 2)] = 1
+    depth: Annotated[int, Help("2: also the notes one link further"), Bounds(1, 2)] = 1
     field: Annotated[str | None, Help("only links in this front matter field"), FIELD_LENGTH] = None
     k: Annotated[int, Help(LINKS_K), Bounds(1, MOST_HITS)] = 50
 
@@ -74,7 +74,7 @@ class ListUnresolved(Request):
         LISTED,
         NAME_LENGTH,
     ] = ()
-    k: Annotated[int, Help("at most this many targets (default: 50)"), Bounds(1, MOST_HITS)] = 50
+    k: Annotated[int, Help("at most this many targets"), Bounds(1, MOST_HITS)] = 50
 
 
 @dataclass(frozen=True, slots=True)
