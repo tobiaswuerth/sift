@@ -1,12 +1,14 @@
 import contextlib
 import glob
 import logging
+import re
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from types import MappingProxyType
 
 from sift.api.events import Event
 from sift.interfaces.console.live import Live
@@ -19,6 +21,9 @@ FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 SAID = "sift"
 PARTS = 3
 COLUMNS = 120
+LEVELS = MappingProxyType({"error": logging.ERROR, "note": logging.WARNING})
+LABEL_END = "  "
+DIGITS = re.compile("[0-9]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +43,9 @@ class Log:
     def write(self, text: str, /) -> int:
         for line in text.split("\n"):
             if line:
-                self.said.info("%s", unpainted(line))
+                plain = unpainted(line)
+                label = plain.lstrip().split(LABEL_END, 1)[0]
+                self.said.log(LEVELS.get(label, logging.INFO), "%s", plain)
         return len(text)
 
     def flush(self) -> None:
@@ -92,8 +99,13 @@ def _deleted_unless_another_sift_writes_it(path: Path) -> None:
         path.unlink()
 
 
+def _started(path: Path) -> tuple[str, int]:
+    stem, _, number = path.stem.rpartition("-")
+    return (stem, int(number)) if DIGITS.fullmatch(number) else (path.stem, 1)
+
+
 def _pruned(folder: Path, command: str, kept: int) -> None:
-    logs = sorted(folder.glob(f"{glob.escape(command)}-*.log"))
+    logs = sorted(folder.glob(f"{glob.escape(command)}-*.log"), key=_started)
     for old in logs[: max(len(logs) - kept, 0)]:
         for path in (old, *folder.glob(f"{glob.escape(old.name)}.*")):
             _deleted_unless_another_sift_writes_it(path)

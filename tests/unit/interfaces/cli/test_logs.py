@@ -147,3 +147,23 @@ def test_a_long_step_goes_into_the_log_every_minute_while_the_screen_draws_it_in
 def test_a_step_shorter_than_a_minute_goes_into_the_log_once_where_it_ended(tmp_path: Path) -> None:
     _, embeds = embedding(tmp_path, (0.0, 0.0, 0.0, 0.0, 30.0, 30.0, 31.0, 31.0, 31.0, 31.0))
     assert (len(embeds), embeds[0].endswith(" 31 s"), "3 chunks" in embeds[0]) == (1, True, True)
+
+
+def test_logs_of_one_second_are_pruned_oldest_first(tmp_path: Path) -> None:
+    same = ["index-2026-10-01_120000.log", "index-2026-10-01_120000-2.log", "index-2026-10-01_120000-10.log"]
+    for name in same:
+        (tmp_path / name).write_bytes(b"x")
+    with kept(tmp_path, "index", NOW, "sift", LogLimits(kept=2)) as log:
+        pass
+    assert sorted(path.name for path in tmp_path.iterdir()) == sorted([same[2], log.path.name])
+
+
+def test_a_line_sift_says_is_logged_at_the_level_its_label_names(tmp_path: Path) -> None:
+    with kept(tmp_path, "index", NOW, "sift") as log:
+        say(log, ("error  no collection is named 'x'", "  fix  name one", " note  slow", "added  notes"))
+    assert lines(log.path)[1:] == [
+        "ERROR sift: error  no collection is named 'x'",
+        "INFO sift:   fix  name one",
+        "WARNING sift:  note  slow",
+        "INFO sift: added  notes",
+    ]

@@ -74,7 +74,9 @@ def test_a_command_stopped_or_broken_logs_how_it_ended(settings: Settings, notes
 def test_a_command_refused_logs_its_error_and_how_it_ended(settings: Settings) -> None:
     code, _, err = ran(settings, "rm", "nope")
     said = logged(settings, "rm")
-    assert all(f" INFO sift: {line}\n" in said for line in err.split("\n")[:-1])
+    lines = err.split("\n")[:-1]
+    assert (f" ERROR sift: {lines[0]}\n" in said, lines[0].startswith("error  ")) == (True, True)
+    assert all(f" INFO sift: {line}\n" in said for line in lines[1:])
     assert said.endswith(f" ERROR sift: ended with exit code {code}\n")
 
 
