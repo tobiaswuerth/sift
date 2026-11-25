@@ -126,7 +126,7 @@ def _parts(found: FrontMatter | None, head: str, body: Iterable[TextLine], read:
     for part in _body(body, markdown=markdown, headings=headings):
         chunked_body = chunked_body or isinstance(part, Chunk)
         yield part
-    if not chunked_body and found and found.inner:
+    if found and found.inner and (found.lost or not chunked_body):
         yield from chunks(found.inner, 2, found.inner_start)
     chosen = title_field(read.fields) or (headings[0] if headings and read.title_from is TitleFrom.HEADING else None)
     yield NoteTitle(storable(chosen or file_stem(read.name)))

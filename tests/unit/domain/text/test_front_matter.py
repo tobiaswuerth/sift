@@ -148,7 +148,7 @@ def test_each_line_of_a_list_in_brackets_is_looked_at_once_for_the_bracket_that_
     line = looked_at(looked)
     items = 2000
     lines = [line("tags: ["), *(line(f"  item{i},") for i in range(items)), line("]"), line("year: 2024")]
-    found = entries(lines)
+    found = entries(lines).found
     assert [(entry.kind, len(below)) for entry, below in found.values()] == [(Kind.FLOW, items + 1), (Kind.PLAIN, 0)]
     assert 0 < sum(looked) <= sum(map(len, lines))
 

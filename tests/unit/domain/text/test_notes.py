@@ -158,3 +158,16 @@ def test_a_note_read_in_pieces_is_the_note_read_whole(raw: bytes, at: list[int],
     edges = [0, *sorted(min(each, len(raw)) for each in at), len(raw)]
     parts = [raw[start:end] for start, end in itertools.pairwise(edges)]
     assert document_of(read_note(text_pieces(parts), name), digest(raw)) == note(raw, name)
+
+
+NESTED = b"---\nauthor:\n  name: Zanzibarian\npeople:\n  - name: A\n    role: Wombatchief\n---\nbody\n"
+
+
+def test_words_of_nested_front_matter_are_in_some_passage() -> None:
+    read = " ".join(text for _, _, text in passages(note(NESTED, "n.md")))
+    assert ("Zanzibarian" in read, "Wombatchief" in read, "body" in read) == (True, True, True)
+
+
+def test_front_matter_read_whole_is_no_passage_of_its_own_beside_a_body() -> None:
+    found = note(b"---\nauthor: Zanzibarian\ntags:\n  - a\n---\nbody\n", "n.md")
+    assert [text.strip() for _, _, text in passages(found)] == ["body"]

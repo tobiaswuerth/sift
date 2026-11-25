@@ -22,6 +22,7 @@ class FrontMatter:
     inner: str
     inner_start: int
     end: int
+    lost: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,22 +144,33 @@ TAKES: Mapping[Kind, Callable[[str], bool]] = MappingProxyType(
 )
 
 
-def entries(lines: Iterable[str]) -> dict[str, tuple[Entry, list[str]]]:
+@dataclass(frozen=True, slots=True)
+class Entries:
+    found: dict[str, tuple[Entry, list[str]]]
+    lost: bool
+
+
+def _lost_below_a_list(current: tuple[Entry, list[str]] | None, line: str) -> bool:
+    return current is not None and current[0].kind is Kind.LIST and _key_line(line.lstrip()) is not None
+
+
+def entries(lines: Iterable[str]) -> Entries:
     found: dict[str, tuple[Entry, list[str]]] = {}
     current: tuple[Entry, list[str]] | None = None
-    brackets = Brackets()
+    brackets, lost = Brackets(), False
     for line in lines:
         if current is not None and TAKES[current[0].kind](line):
             current[1].append(line)
             if current[0].kind is Kind.FLOW and (brackets := read_on(line.strip(), brackets)).depth <= 0:
                 current = None
             continue
+        lost = lost or (line[:1].isspace() and _lost_below_a_list(current, line))
         if current is not None and current[0].kind is not Kind.LIST:
             current = None
         if started := _key_line(line):
             current = found[started.key] = (started, [])
             brackets = read_on(started.value, Brackets()) if started.kind is Kind.FLOW else Brackets()
-    return found
+    return Entries(found, lost)
 
 
 def block_scalar(lines: Sequence[str], *, folded: bool) -> str:
@@ -210,8 +222,8 @@ def _shallow_enough(found: FieldValue, written: FieldValue) -> FieldValue:
     return [item if depth(item) < MOST_DEPTH else text for item, text in pairs]
 
 
-def fields(block: str) -> dict[str, FieldValue]:
-    parsed = {key: PARSE[entry.kind](entry, below) for key, (entry, below) in entries(block.split("\n")).items()}
+def _fields_of(read: Entries, block: str) -> dict[str, FieldValue]:
+    parsed = {key: PARSE[entry.kind](entry, below) for key, (entry, below) in read.found.items()}
     if block.count("[") + block.count("{") < MOST_DEPTH:
         return {key: found for key, (found, _) in parsed.items()}
     return {key: _shallow_enough(found, written) for key, (found, written) in parsed.items()}
@@ -230,4 +242,5 @@ def front_matter(text: str) -> FrontMatter | None:
         return None
     inner = found.group(1) or ""
     start = found.start(1) if found.group(1) is not None else found.end()
-    return FrontMatter(fields(inner), inner, start, found.end())
+    read = entries(inner.split("\n"))
+    return FrontMatter(_fields_of(read, inner), inner, start, found.end(), read.lost)
