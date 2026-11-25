@@ -126,3 +126,6 @@ def test_a_home_process_that_closes_or_stays_silent_is_said_not_to_answer() -> N
 
 def test_an_event_of_a_newer_sift_is_passed_over_and_one_with_more_read() -> None:
     assert (event_of("JobQueued", {"number": 2}), event_of("Advanced", {"done": 3, "of": 9})) == (None, Advanced(3))
+    newer = b'{"event": "JobQueued", "data": {"number": 2}}\n'
+    answer, said, _ = asked(LINES + newer + b'{"answer": {"targets": []}}\n')
+    assert (answer, said) == (Unresolved(()), [])
