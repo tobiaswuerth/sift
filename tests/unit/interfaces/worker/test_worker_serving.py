@@ -1,4 +1,5 @@
 import socket
+import ssl
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -15,7 +16,7 @@ from sift.interfaces.worker.serving import LEND, Lend, WorkerServer, lend, lent
 from sift.settings import Settings
 from tests.models import Hashed
 from tests.serving import VERSION
-from tests.workers import LOOPBACK, QUICK, offered
+from tests.workers import LOOPBACK, QUICK, offered, working
 
 HERE = ServeWorker(port=0, host=LOOPBACK)
 
@@ -106,3 +107,10 @@ def test_a_port_another_program_holds_is_refused(settings: Settings) -> None:
         port = cast("tuple[str, int]", taken.getsockname())[1]
         with pytest.raises(InvalidRequestError, match=f"port {port} cannot be had"):
             lend(settings, ServeWorker(port=port, host=LOOPBACK), VERSION, unheard, quick())
+
+
+def test_the_worker_takes_no_tls_older_than_1_2(settings: Settings) -> None:
+    with working(settings, Hashed()) as worker:
+        tls = worker.running.server.config.ssl
+        assert tls is not None
+        assert tls.minimum_version >= ssl.TLSVersion.TLSv1_2
