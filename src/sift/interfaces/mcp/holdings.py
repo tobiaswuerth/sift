@@ -12,6 +12,7 @@ from sift.interfaces.mcp.answers import ToolAnswer, said, with_notes
 from sift.interfaces.mcp.schemas import schema_of
 from sift.interfaces.mcp.tools import Tool, ToolRunning
 
+MOST_FIELDS_LISTED = 200
 RUNS_ON = "it runs on: collections lists it until it ends"
 COLLECTIONS = (
     "What the user's indexed collections hold, those agents may search: each one's folder, documents, passages and "
@@ -30,10 +31,12 @@ def _counted(contents: Counted) -> ToolAnswer:
         "documents": contents.documents,
         "passages": contents.chunks,
         "embedded": contents.embedded,
-        "fields": list[Json](contents.fields),
+        "fields": list[Json](contents.fields[:MOST_FIELDS_LISTED]),
         "links": contents.links,
         "unresolved": contents.unresolved,
     }
+    if len(contents.fields) > MOST_FIELDS_LISTED:
+        shown["more_fields"] = len(contents.fields) - MOST_FIELDS_LISTED
     if contents.unreadable:
         shown["unreadable"] = contents.unreadable
     return shown

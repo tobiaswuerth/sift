@@ -263,6 +263,21 @@ def test_collections_says_which_are_inactive_unreadable_or_out_of_reach() -> Non
     }
 
 
+def test_collections_names_at_most_200_fields_of_a_collection_and_counts_the_others() -> None:
+    names = tuple(f"field {n}" for n in range(201))
+    listed = Status(
+        "/home",
+        (
+            CollectionStatus("few", "/f", "/s/f", Counted(1, 1, 0, 0, (), fields=names[:200])),
+            CollectionStatus("many", "/m", "/s/m", Counted(1, 1, 0, 0, (), fields=names)),
+        ),
+    )
+    answer = cast("Object", tool("collections").call(Faked(listed), {}))
+    few, many = cast("list[Object]", answer["collections"])
+    assert (few["fields"], "more_fields" in few) == (list(names[:200]), False)
+    assert (many["fields"], many["more_fields"]) == (list(names[:200]), 1)
+
+
 def test_a_refusal_names_what_the_tool_takes_for_its_kind_and_mode(direct: Direct) -> None:
     with pytest.raises(InvalidRequestError) as compact:
         called(direct, "related", {"id": "open/Plan.md", "kind": "links", "compact": True})
