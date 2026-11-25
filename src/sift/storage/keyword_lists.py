@@ -5,7 +5,7 @@ from typing import NamedTuple
 import numpy as np
 
 from sift.domain.arrays import Ids
-from sift.storage.database import Count, Reading, rows
+from sift.storage.database import Count, Reading, columns, rows
 
 MOST_POINT = 0x10FFFF
 SURROGATES_START, SURROGATES_END = 0xD800, 0xE000
@@ -76,15 +76,10 @@ def dead_within(transaction: Reading, low: int, high: int) -> Ids:
     return np.array(json.loads(found.ids), np.int64)
 
 
-class PlacedChunk(NamedTuple):
-    place: int
-    chunk: int
-    document: int
-
-
-def chunks_placed(transaction: Reading, places: Sequence[int]) -> dict[int, PlacedChunk]:
-    sql = "SELECT place, id, document FROM chunks WHERE place IN (SELECT value FROM json_each(?))"
-    return {each.place: each for each in rows(transaction, PlacedChunk, sql, (json.dumps(list(places)),))}
+def chunks_placed(transaction: Reading, places: Sequence[int]) -> tuple[Ids, Ids, Ids]:
+    sql = "SELECT place, id, document FROM chunks WHERE place IN (SELECT value FROM json_each(?)) ORDER BY place"
+    found, chunks, documents = columns(transaction, sql, (json.dumps(list(places)),), 3)
+    return found, chunks, documents
 
 
 def frequencies(transaction: Reading, terms: Sequence[str]) -> dict[str, int]:

@@ -9,6 +9,7 @@ import numpy as np
 
 import sift.retrieval.keyword.lists as lists_module
 import sift.retrieval.keyword.search as search_module
+from sift.domain.codec.shape import Shape
 from sift.domain.query.expressions import And, Or, Term
 from sift.retrieval.keyword.lists import Opened
 from sift.retrieval.keyword.search import FoundChunk, Tuning
@@ -87,3 +88,18 @@ def test_all_of_some_words_reads_each_only_where_chunks_with_all_rarer_ones_are_
         read = terms_read(store)
         assert read["gamma"] > 0
         assert read["alpha"] == read["beta"] == 0
+
+
+def rows_made(run: Callable[[], object]) -> int:
+    profile = cProfile.Profile()
+    _ = profile.runcall(run)
+    counted = pstats.Stats(profile).get_stats_profile().func_profiles
+    return sum(int(each.ncalls.split("/")[0]) for name, each in counted.items() if name == "_make")
+
+
+def test_the_places_offered_to_the_best_are_read_as_columns_not_a_row_object_each() -> None:
+    notes: Round = {f"n{n}.md": ("", "N", f"w1 x{n}") for n in range(1000)}
+    with collections([[notes]], Shape()) as (stores, _):
+        found: list[tuple[FoundChunk, ...]] = []
+        made = rows_made(lambda: found.append(search(stores, Term("w1"), 500, by_document=False)))
+        assert (len(found[0]), made < 50) == (500, True)

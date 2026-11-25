@@ -9,7 +9,10 @@ from pathlib import Path, PurePath
 from typing import NamedTuple, cast
 from urllib.parse import quote
 
+import numpy as np
+
 from sift.api.errors import Problem, StoreUnavailableError
+from sift.domain.arrays import Ids
 from sift.domain.plan.segments import POLICY, Policy
 
 BUSY_TIMEOUT_SECONDS = 30
@@ -180,6 +183,12 @@ class KeyRow(NamedTuple):
 def rows[R: NamedTuple](transaction: Reading, shape: type[R], sql: str, parameters: Parameters = ()) -> list[R]:
     fetched = cast("list[tuple[object, ...]]", transaction.connection.execute(sql, parameters).fetchall())
     return [shape._make(row) for row in fetched]
+
+
+def columns(transaction: Reading, sql: str, parameters: Parameters, width: int) -> tuple[Ids, ...]:
+    fetched = cast("list[tuple[int, ...]]", transaction.connection.execute(sql, parameters).fetchall())
+    table = np.array(fetched, np.int64).reshape(len(fetched), width)
+    return tuple(np.ascontiguousarray(table[:, at]) for at in range(width))
 
 
 def batches[R: NamedTuple](

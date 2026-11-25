@@ -300,9 +300,8 @@ def positions_at(store: Opened, held: StoredList, wanted: Ascending) -> tuple[Id
 
 
 def owners(store: Opened, places: Ids) -> tuple[Ids, Ids]:
-    asked = ints(places)
-    found = keyword_lists.chunks_placed(store.transaction, asked)
-    if set(asked) - found.keys():
+    found, chunks, documents = keyword_lists.chunks_placed(store.transaction, ints(places))
+    at = np.minimum(np.searchsorted(found, places), max(len(found) - 1, 0))
+    if len(places) and (not len(found) or not bool(np.array_equal(found[at], places))):
         raise DamagedError("the keyword index holds chunks the store does not")
-    chunks = np.fromiter((found[place].chunk for place in asked), np.int64, len(asked))
-    return chunks, np.fromiter((found[place].document for place in asked), np.int64, len(asked))
+    return chunks[at], documents[at]
