@@ -9,7 +9,6 @@ from sift.api.collections import AddCollection, Counted, ShowStatus
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError
 from sift.api.events import Event, Noted
-from sift.api.filters import written
 from sift.api.indexing import IndexCollections, Indexed
 from sift.api.search import SearchKeywords
 from sift.app.collections import add, status
@@ -24,6 +23,7 @@ from sift.ingest.files import Identity
 from sift.ingest.readers import ToRead
 from sift.ingest.records import lines_of
 from sift.ingest.sandbox import FileReading, OpenReading
+from sift.interfaces.cli.written import written
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading
 from sift.storage.documents import counts

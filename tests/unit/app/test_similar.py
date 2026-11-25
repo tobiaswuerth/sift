@@ -6,7 +6,6 @@ import pytest
 
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError
-from sift.api.filters import written
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindSimilar
 from sift.api.search import SearchKeywords, SearchResult, SearchVectors
@@ -15,6 +14,7 @@ from sift.app.indexing import index
 from sift.app.search import search
 from sift.app.similar import similar
 from sift.app.vsearch import vsearch
+from sift.interfaces.cli.written import written
 from tests.files import write
 from tests.homes import collection
 from tests.models import Hashed

@@ -24,7 +24,7 @@ ID_FIELD = (
 )
 TITLE_FIELD = "JSON Lines: the field holding the title (default: title, name, headline or subject)"
 TEXT_FIELDS = (
-    "JSON Lines: the fields whose text a record's document holds, comma-separated "
+    "JSON Lines: the fields whose text a record's document holds "
     "(default: text, content, body, abstract, description or summary, else the longest string)"
 )
 AGENTS = f"let agents see it through sift's tools for them (default: yes){AGAIN}"

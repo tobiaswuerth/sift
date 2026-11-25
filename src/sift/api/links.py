@@ -6,10 +6,10 @@ from sift.api.described import FIELD_LENGTH, LISTED, NAME_LENGTH, PATH_LENGTH, B
 from sift.api.requests import Request
 from sift.api.search import MOST_HITS, Options, Unsearched
 
-NOTE = 'a note: its id, as sift get takes it, or its name as links write it, e.g. "Acme AG"'
+NOTE = 'a note: its id, as get takes it, or its name as links write it, e.g. "Acme AG"'
 LINKS_K = "at most this many links each way"
-DOCUMENT = 'a document: its id, as sift get takes it, or a note\'s name as links write it, e.g. "Acme AG"'
-ALSO = "front matter fields whose values name the note too, comma-separated, e.g. emails"
+DOCUMENT = 'a document: its id, as get takes it, or a note\'s name as links write it, e.g. "Acme AG"'
+ALSO = "front matter fields whose values name the note too, e.g. emails"
 
 
 class Direction(StrEnum):

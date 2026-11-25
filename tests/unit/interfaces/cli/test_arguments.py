@@ -8,13 +8,14 @@ import pytest
 from sift.api.collections import AddCollection, ShowStatus, TitleFrom
 from sift.api.described import Help
 from sift.api.errors import InvalidRequestError
-from sift.api.filters import Filter, written
+from sift.api.filters import Filter
 from sift.api.indexing import IndexCollections
 from sift.api.jobs import ListJobs
 from sift.api.search import SearchHybrid, SearchKeywords
 from sift.interfaces.cli.arguments import arguments, flags, options, request_of
 from sift.interfaces.cli.main import Parser, UsageError
 from sift.interfaces.cli.reading import ReadDocuments
+from sift.interfaces.cli.written import written
 
 WHOLE = Path("/whole").absolute()
 
@@ -284,3 +285,9 @@ def test_a_whole_number_s_range_and_default_are_shown_from_its_field() -> None:
         True,
     )
     assert {each.name: each.help for each in arguments(ListJobs)}["stop"].endswith(")") is False
+
+
+def test_options_the_command_line_reads_its_own_way_say_how_to_write_them() -> None:
+    told = {each.name: each.help for each in arguments(SearchKeywords)}
+    assert told["filters"].endswith("; written KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06")
+    assert told["fields"].endswith("of them; comma-separated, e.g. url,created")

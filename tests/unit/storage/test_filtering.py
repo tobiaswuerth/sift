@@ -10,12 +10,13 @@ import pytest
 
 from sift.api.errors import InvalidRequestError
 from sift.api.fields import Fields
-from sift.api.filters import Filter, FilterValue, Operator, written
+from sift.api.filters import Filter, FilterValue, Operator
 from sift.api.ids import CollectionId
 from sift.api.wire import decoded
 from sift.domain.arrays import ints
 from sift.domain.query.filters import UNLINKED, Linked, LinkFilter, condition
 from sift.domain.text.front_matter import front_matter
+from sift.interfaces.cli.written import written
 from sift.storage.database import Reading
 from sift.storage.passing import Passing, reads_quotes
 from sift.storage.store import create_store, open_store

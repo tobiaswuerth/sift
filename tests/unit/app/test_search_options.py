@@ -9,8 +9,7 @@ import pytest
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
-from sift.api.fields import listed
-from sift.api.filters import Filter, Operator, written
+from sift.api.filters import Filter, Operator
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindSimilar
 from sift.api.search import SORT, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
@@ -26,6 +25,7 @@ from sift.app.vector_candidates import ExactRows, Rescoring
 from sift.app.vsearch import vsearch
 from sift.domain.arrays import Ids
 from sift.domain.rank.hybrid import standing_out
+from sift.interfaces.cli.written import listed, written
 from sift.storage.database import Reading
 from sift.storage.vectors import vectors_of
 from tests.counting import DocumentCounts

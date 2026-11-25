@@ -9,7 +9,6 @@ import pytest
 from sift.api.collections import AddCollection, UnreadableFile
 from sift.api.embedding import EmbedCollections
 from sift.api.events import Advanced, Event, Noted
-from sift.api.filters import written
 from sift.api.indexing import IndexCollections, Indexed
 from sift.api.search import SearchKeywords
 from sift.app.collections import add
@@ -24,6 +23,7 @@ from sift.ingest.files import Identity
 from sift.ingest.mail import NESTED_TOO_DEEPLY
 from sift.ingest.readers import ToRead, read_file
 from sift.ingest.sandbox import ENDED
+from sift.interfaces.cli.written import written
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
 from sift.storage.vector_meta import left

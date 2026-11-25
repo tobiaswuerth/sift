@@ -1,10 +1,11 @@
 import pytest
 
 from sift.api.errors import InvalidRequestError
-from sift.api.filters import Filter, FilterValue, Operator, gathered, written
+from sift.api.filters import Filter, FilterValue, Operator, gathered
 from sift.api.search import SearchKeywords
 from sift.api.wire import decoded
 from sift.domain.query.filters import LIST_REMEDY, condition, forms
+from sift.interfaces.cli.written import written
 
 
 @pytest.mark.parametrize(

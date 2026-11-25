@@ -5,7 +5,6 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.errors import InvalidRequestError, NotFoundError
-from sift.api.filters import written
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, FindSimilar, ShowLinks
 from sift.api.search import SearchKeywords
@@ -15,6 +14,7 @@ from sift.app.links import links
 from sift.app.mentions import mentions
 from sift.app.search import search
 from sift.app.similar import similar
+from sift.interfaces.cli.written import written
 from tests.files import write
 
 

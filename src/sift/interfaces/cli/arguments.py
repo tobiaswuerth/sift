@@ -140,7 +140,7 @@ def _argument(request: type[object], field: dataclasses.Field[object], hint: obj
     if described.flag.short is not None and how not in (How.OPTION, How.READ):
         raise _refused(request, field.name, "only an option given by name has a short flag")
     given = None if default is dataclasses.MISSING else default
-    told = described.help.text + limits(described.bounds, given)
+    told = described.help.text + limits(described.bounds, given) + described.flag.syntax
     return Argument(field.name, taken, told, described.place, how, described.flag, given)
 
 

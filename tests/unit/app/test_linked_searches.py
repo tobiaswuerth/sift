@@ -5,7 +5,7 @@ import pytest
 
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
-from sift.api.filters import Filter, written
+from sift.api.filters import Filter
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app import searching
@@ -16,6 +16,7 @@ from sift.app.notes import Note, read_in
 from sift.app.query import query
 from sift.app.search import search
 from sift.app.vsearch import vsearch
+from sift.interfaces.cli.written import written
 from tests.damage import damage_pages
 from tests.files import write
 from tests.homes import collection

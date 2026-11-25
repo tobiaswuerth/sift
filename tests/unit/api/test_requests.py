@@ -249,3 +249,18 @@ def _stated(kind: type) -> list[str]:
 
 def test_no_help_text_states_its_field_s_default_or_upper_bound() -> None:
     assert [found for kind in _requests() for found in _stated(kind)] == []
+
+
+CLI_WORDS = re.compile(r"comma-separated|KEY=VALUE|--|sift [a-z]+")
+
+
+def test_no_help_text_speaks_the_command_line_s_syntax() -> None:
+    texts = [
+        each.text
+        for kind in _requests()
+        for hint in cast("dict[str, object]", get_type_hints(kind, include_extras=True)).values()
+        for each in cast("tuple[object, ...]", get_args(hint))[1:]
+        if isinstance(each, Help)
+    ]
+    assert len(texts) > 60
+    assert [text for text in texts if CLI_WORDS.search(text)] == []

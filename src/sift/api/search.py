@@ -32,8 +32,8 @@ BUDGET = (
 )
 PATH = 'only documents whose path in the collection matches this glob, e.g. "2024/*"'
 FILTERS = (
-    "only documents whose front matter passes: KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06; "
-    "several: values of one key asked alike mean any (=) or none (!=) of them"
+    "only documents whose front matter passes each filter: a field, an operator (=, !=, <, <=, >, >=) and its "
+    "values; values of one field asked alike mean any (=) or none (!=) of them"
 )
 SORT = "order the k found by a front matter field, e.g. created, or -created for the newest first"
 LINKS_TO = (

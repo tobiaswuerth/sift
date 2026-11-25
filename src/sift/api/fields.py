@@ -4,8 +4,4 @@ type FieldValue = str | int | float | bool | Sequence[FieldValue] | Mapping[str,
 type Fields = Mapping[str, FieldValue]
 
 
-FIELDS = 'front matter to show, comma-separated, e.g. "url,created"; "*" for all'
-
-
-def listed(text: str) -> tuple[str, ...]:
-    return tuple(name.strip() for name in text.split(",")) if text.strip() else ()
+FIELDS = 'the front matter fields to show, e.g. url and created; "*" for all of them'
