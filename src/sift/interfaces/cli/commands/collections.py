@@ -13,8 +13,8 @@ def _some_unavailable(found: Status) -> bool:
     return any(isinstance(each.contents, Unavailable) for each in found.collections)
 
 
-def _some_unfound(found: Documents) -> bool:
-    return bool(found.unfound)
+def _some_not_read(found: Documents) -> bool:
+    return bool(found.not_read)
 
 
 COMMANDS = MappingProxyType(
@@ -25,6 +25,6 @@ COMMANDS = MappingProxyType(
         "activate": command(ACTIVATE, shown.switched),
         "deactivate": command(DEACTIVATE, shown.switched),
         "status": command(STATUS, shown.status, _some_unavailable),
-        "get": needing_collections(command(GET, shown_documents, _some_unfound, wanted)),
+        "get": needing_collections(command(GET, shown_documents, _some_not_read, wanted)),
     }
 )

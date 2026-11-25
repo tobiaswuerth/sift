@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from sift.api.described import LISTED, NAME_LENGTH, PATH_LENGTH, Bounds, Help
+from sift.api.errors import Problem
+from sift.api.notices import Notice
 from sift.api.requests import Request
 
 MOST_FILES = 10_000
@@ -29,6 +31,7 @@ class FileIndexed:
     id: str
     state: Literal["added", "changed", "unchanged", "removed", "missing", "unreadable", "left out"]
     note: str | None = None
+    code: Problem | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,9 +45,7 @@ class Indexed:
 
 
 @dataclass(frozen=True, slots=True)
-class Skipped:
-    message: str
-    remedy: str | None
+class Skipped(Notice):
     state: Literal["skipped"] = "skipped"
 
 

@@ -33,7 +33,7 @@ type Parsed = tuple[Expression, int, int]
 
 
 def _refused(problem: str, remedy: str = REMEDY) -> InvalidRequestError:
-    return InvalidRequestError(f"the query is not understood: {problem}", remedy)
+    return InvalidRequestError(f"the query is not understood: {problem}", remedy, "query")
 
 
 def _quoted(query: str, at: int) -> tuple[Word, int]:

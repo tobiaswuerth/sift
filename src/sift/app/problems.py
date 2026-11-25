@@ -2,6 +2,7 @@ from collections import Counter
 from collections.abc import Set as AbstractSet
 from pathlib import Path
 
+from sift.api.errors import Problem
 from sift.api.events import Noted
 from sift.domain.plan.indexing import ROOT, IndexPlan, folders_of
 from sift.domain.text.wording import counted
@@ -28,12 +29,13 @@ def _held(paths: tuple[str, ...]) -> Counter[str]:
 def _unlisted_folder(scanned: Scanned, kept: Counter[str], folder: str) -> Noted:
     held = kept[folder]
     why = scanned.refusals.get(folder, "")
-    return Noted(f"{folder or 'its folder'} can't be read ({why}): {counted(held, 'file')} in it kept as indexed")
+    said = f"{folder or 'its folder'} can't be read ({why}): {counted(held, 'file')} in it kept as indexed"
+    return Noted(said, code=Problem.OS)
 
 
 def _unlisted_file(scanned: Scanned, known: AbstractSet[str], path: str) -> Noted:
     kept = "kept as indexed" if path in known else "left for the next index"
-    return Noted(f"{path} can't be read ({scanned.refusals.get(path, '')}): {kept}")
+    return Noted(f"{path} can't be read ({scanned.refusals.get(path, '')}): {kept}", code=Problem.OS)
 
 
 def _emptied(folder: Path, left: Counter[str], emptied: str) -> Noted:

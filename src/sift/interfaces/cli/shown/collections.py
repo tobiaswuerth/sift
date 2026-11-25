@@ -75,7 +75,7 @@ def _left(files: tuple[str, ...], style: Style) -> tuple[str, ...]:
 
 def removed(result: CollectionRemoved, _platform: str, style: Style) -> Shown:
     held = f" of {counted(result.documents, 'document')}" if result.documents is not None else ""
-    unread = (labelled("store", f"could not be read: {result.problem}"),) if result.problem is not None else ()
+    unread = (labelled("store", f"could not be read: {result.problem.message}"),) if result.problem is not None else ()
     said = f"{result.name}: its store{held} deleted; its files stay where they are"
     return Shown((), (labelled("gone", said, Tone.DONE, style), *unread, *_left(result.left, style)))
 

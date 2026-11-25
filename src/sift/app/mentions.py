@@ -34,16 +34,16 @@ def mentions(home: Path, request: FindMentions, watching: Watching = WATCHING, t
         if not field.strip():
             said = f"names front matter fields, e.g. emails, not {field!r}"
             raise InvalidRequestError(said, ALSO_REMEDY, "also")
-    named = note_of(home, request.id)
+    named = note_of(home, request.id, "id")
     found = _names(named.note, request.also)
     looked_for = phrases(found)
     if not looked_for:
         said = ", ".join(map(repr, found))
-        raise InvalidRequestError(f"the note's names are too short to search for: {said}", SHORT_REMEDY)
+        raise InvalidRequestError(f"the note's names are too short to search for: {said}", SHORT_REMEDY, "id")
     expression = any_phrase(looked_for)
     if words_in(expression) > MOST_WORDS:
         remedy = "name fewer fields to look for too" if request.also else "give it fewer or shorter names"
-        raise InvalidRequestError(f"the note's names hold more than {MOST_WORDS:,} words", remedy)
+        raise InvalidRequestError(f"the note's names hold more than {MOST_WORDS:,} words", remedy, "id")
     expired = searching.expired_after(request.budget, watching.clock)
     wanted = Wanted(request.wanted, not request.all_passages, tuning, expired)
     narrowing = searching.narrowed(home, request, LeftOut(named.note, linking=True))

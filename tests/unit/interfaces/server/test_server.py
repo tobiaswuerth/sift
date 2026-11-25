@@ -206,7 +206,7 @@ def test_a_write_sent_while_another_writes_is_told_it_waits_then_runs(settings: 
             rest = response.read()
         first.join(30)
     waiting = WAITING.format(count="1 job", command="add", number=1)
-    assert told == {"event": "Noted", "data": {"text": waiting, "remedy": None}}
+    assert told == {"event": "Noted", "data": {"text": waiting, "remedy": None, "code": None}}
     assert rest.endswith(b'{"answer": {"url": "written"}}\n')
 
 
@@ -239,7 +239,7 @@ def test_rm_waits_for_searches_of_its_store_and_deletes_it(settings: Settings, n
             rest = response.read()
         reader.join(30)
         _, added = asked(server, "add", {"folder": str(notes)})
-    assert told == {"event": "Noted", "data": {"text": WAITING_FOR_READS, "remedy": None}}
+    assert told == {"event": "Noted", "data": {"text": WAITING_FOR_READS, "remedy": None, "code": None}}
     assert answer_in(rest)["left"] == []
     assert last(added, "answer")["state"] == "added"
 
@@ -261,7 +261,7 @@ def test_a_search_sent_while_a_store_is_removed_waits_for_it_then_runs(settings:
             release.set()
             rest = response.read()
         remover.join(30)
-    assert told == {"event": "Noted", "data": {"text": WAITING_FOR_ALONE, "remedy": None}}
+    assert told == {"event": "Noted", "data": {"text": WAITING_FOR_ALONE, "remedy": None, "code": None}}
     assert answer_in(rest)["collections"] == []
 
 

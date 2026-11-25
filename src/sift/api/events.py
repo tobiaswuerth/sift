@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 
+from sift.api.errors import Problem
+
 
 class Phase(StrEnum):
     REMAKE = "remake"
@@ -47,6 +49,7 @@ class PhaseDone:
 class Noted:
     text: str
     remedy: str | None = None
+    code: Problem | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -9,7 +9,7 @@ from typing import NamedTuple
 import pytest
 
 from sift.api.collections import AddCollection, Counted, ShowStatus, TitleFrom, UnreadableFile
-from sift.api.errors import NotFoundError
+from sift.api.errors import NotFoundError, Problem
 from sift.api.events import (
     Advanced,
     CollectionStarted,
@@ -152,8 +152,9 @@ def test_a_collection_whose_folder_is_missing_is_skipped_and_kept(home: Path, no
     said: list[Event] = []
     result = indexed(home, report=said.append)
     reason = f"its folder is missing: {notes.resolve()}"
-    assert result.collections == (CollectionIndexed("notes", Skipped(reason, FOLDER_MISSING_REMEDY)),)
-    assert said[-1] == Noted(reason, FOLDER_MISSING_REMEDY)
+    skipped = Skipped(Problem.FOLDER_MISSING, reason, FOLDER_MISSING_REMEDY)
+    assert result.collections == (CollectionIndexed("notes", skipped),)
+    assert said[-1] == Noted(reason, FOLDER_MISSING_REMEDY, Problem.FOLDER_MISSING)
     assert len(titles(home)) == 3
 
 
@@ -281,7 +282,8 @@ def test_a_collection_out_of_reach_is_skipped_and_the_others_are_indexed(tmp_pat
 
     seen: list[Event] = []
     out_of_reach, sound = indexed(home, report=denied_while_scanning).collections
-    assert out_of_reach == CollectionIndexed("a", Skipped("it is out of reach (Access is denied)", OUT_OF_REACH_REMEDY))
+    unreached = Skipped(Problem.OS, "it is out of reach (Access is denied)", OUT_OF_REACH_REMEDY)
+    assert out_of_reach == CollectionIndexed("a", unreached)
     assert sound == CollectionIndexed("b", Indexed(1, 1, 0, 0, 0))
 
 
@@ -307,12 +309,6 @@ def test_a_store_that_cannot_be_written_is_passed_over_and_the_next_collection_i
     assert isinstance(found["more"], Indexed)
     assert isinstance(found["notes"], Skipped)
     assert found["notes"].message.startswith(f"the store {store.resolve()} cannot be written")
-
-
-def test_a_nul_in_a_file_is_stored_as_a_replacement_character(home: Path, notes: Path) -> None:
-    (notes / "pasted.md").write_bytes(b"# Num\x00bers\n")
-    indexed(home)
-    assert titles(home)["pasted.md"] == "Num\N{REPLACEMENT CHARACTER}bers"
 
 
 @pytest.mark.usefixtures("notes")

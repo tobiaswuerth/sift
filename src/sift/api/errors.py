@@ -1,5 +1,6 @@
 import errno
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from enum import StrEnum
 from types import MappingProxyType
 from typing import ClassVar, override
@@ -10,6 +11,7 @@ class Problem(StrEnum):
     AMBIGUOUS = "ambiguous"
     TAKEN = "taken"
     NOT_FOUND = "not_found"
+    FOLDER_MISSING = "folder_missing"
     UNKNOWN_COLLECTION = "unknown_collection"
     UNKNOWN_DOCUMENT = "unknown_document"
     UNKNOWN_NOTE = "unknown_note"
@@ -36,8 +38,9 @@ class SiftError(Exception):
     message: str
     remedy: str
     code: Problem
+    field: str | None
 
-    def __init__(self, message: str, remedy: str, *, code: Problem | None = None) -> None:
+    def __init__(self, message: str, remedy: str, field: str | None = None, *, code: Problem | None = None) -> None:
         super().__init__(message)
         chosen = type(self).usual if code is None else code
         kind = CODE_KINDS[chosen]
@@ -46,22 +49,15 @@ class SiftError(Exception):
         self.message = message
         self.remedy = remedy
         self.code = chosen
-
-    @override
-    def __reduce__(self) -> tuple[object, ...]:
-        return _rebuilt, (type(self), self.message, self.remedy, self.code, None)
-
-
-class InvalidRequestError(SiftError):
-    field: str | None
-
-    def __init__(self, message: str, remedy: str, field: str | None = None, *, code: Problem | None = None) -> None:
-        super().__init__(message, remedy, code=code)
         self.field = field
 
     @override
     def __reduce__(self) -> tuple[object, ...]:
         return _rebuilt, (type(self), self.message, self.remedy, self.code, self.field)
+
+
+class InvalidRequestError(SiftError):
+    usual: ClassVar[Problem] = Problem.INVALID_REQUEST
 
 
 class NotFoundError(SiftError):
@@ -96,6 +92,7 @@ CODE_KINDS: Mapping[Problem, type[SiftError]] = MappingProxyType(
         Problem.INACTIVE_COLLECTION: InvalidRequestError,
         Problem.UNAUTHORIZED: InvalidRequestError,
         Problem.NOT_FOUND: NotFoundError,
+        Problem.FOLDER_MISSING: NotFoundError,
         Problem.UNKNOWN_COLLECTION: NotFoundError,
         Problem.UNKNOWN_DOCUMENT: NotFoundError,
         Problem.UNKNOWN_NOTE: NotFoundError,
@@ -130,6 +127,14 @@ def system_failure(error: OSError) -> SystemFailureError:
 
 
 def _rebuilt(kind: type[SiftError], message: str, remedy: str, code: Problem, field: str | None) -> SiftError:
-    if issubclass(kind, InvalidRequestError):
-        return kind(message, remedy, field, code=code)
-    return kind(message, remedy, code=code)
+    return kind(message, remedy, field, code=code)
+
+
+@contextmanager
+def field_at_fault(field: str) -> Generator[None]:
+    try:
+        yield
+    except (InvalidRequestError, NotFoundError) as error:
+        if error.field is None:
+            error.field = field
+        raise

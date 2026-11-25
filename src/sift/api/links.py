@@ -3,8 +3,9 @@ from enum import StrEnum
 from typing import Annotated
 
 from sift.api.described import FIELD_LENGTH, LISTED, NAME_LENGTH, PATH_LENGTH, Bounds, Composed, Help
+from sift.api.notices import Notice
 from sift.api.requests import Request
-from sift.api.search import MOST_HITS, Options, Unsearched
+from sift.api.search import MOST_HITS, Options
 
 NOTE = 'a note: its id, as get takes it, or its name as links write it, e.g. "Acme AG"'
 LINKS_K = "at most this many links each way"
@@ -63,7 +64,7 @@ class Links:
     title: str
     out: tuple[LinkOut, ...] | None
     into: tuple[LinkIn, ...] | None
-    unsearched: tuple[Unsearched, ...] = ()
+    unsearched: tuple[Notice, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +88,7 @@ class Target:
 @dataclass(frozen=True, slots=True)
 class Unresolved:
     targets: tuple[Target, ...]
-    unsearched: tuple[Unsearched, ...] = ()
+    unsearched: tuple[Notice, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

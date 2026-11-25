@@ -312,7 +312,7 @@ def test_get_of_a_document_there_is_not_is_an_error(settings: Settings, notes: P
     assert (code, out) == (1, "")
     assert err.startswith("error  notes/gone.md: unknown document 'notes/gone.md'\n  fix  ")
     code, out, err = ran(settings, "get", "notes/gone.md", "--json")
-    assert (code, json.loads(out)["unfound"][0]["id"], err) == (1, "notes/gone.md", "")
+    assert (code, json.loads(out)["not_read"][0]["id"], err) == (1, "notes/gone.md", "")
 
 
 def test_colour_is_given_when_asked_and_kept_out_of_results(settings: Settings, notes: Path) -> None:

@@ -53,7 +53,7 @@ UNLINKED = Linked()
 
 
 def _refused(problem: str, remedy: str = FILTER_REMEDY) -> InvalidRequestError:
-    return InvalidRequestError(problem, remedy)
+    return InvalidRequestError(problem, remedy, "filters")
 
 
 def _refuse_unreadable(field: str, *, reads_quotes: bool) -> None:

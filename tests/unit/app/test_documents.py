@@ -5,10 +5,11 @@ from pathlib import Path
 import pytest
 
 from sift.api.collections import AddCollection
-from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound, WantedDocument
+from sift.api.documents import Documents, DocumentText, GetDocuments, WantedDocument
 from sift.api.errors import InvalidRequestError, Problem
 from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections
+from sift.api.notices import Notice
 from sift.app.collections import add
 from sift.app.documents import SEPARATED_REMEDY, documents
 from sift.app.indexing import index
@@ -36,12 +37,12 @@ def home(tmp_path: Path) -> Path:
 
 def text(home: Path, id_: str, first: int | None = None, last: int | None = None) -> str:
     result = documents(home, asked(id_, lines=(first, last)))
-    assert result.unfound == ()
+    assert result.not_read == ()
     return result.found[0].text
 
 
-def unfound(home: Path, id_: str) -> Unfound:
-    (missing,) = documents(home, asked(id_)).unfound
+def unfound(home: Path, id_: str) -> Notice:
+    (missing,) = documents(home, asked(id_)).not_read
     return missing
 
 
@@ -74,7 +75,7 @@ def test_only_some_lines_are_read_if_asked(home: Path) -> None:
         WantedDocument("notes/rl.md", 0)
     with pytest.raises(InvalidRequestError, match="line 2 comes before line 3"):
         documents(home, asked("notes/rl.md", lines=(3, 2)))
-    (past,) = documents(home, asked("notes/rl.md", lines=(9, 9))).unfound
+    (past,) = documents(home, asked("notes/rl.md", lines=(9, 9))).not_read
     assert past.message == "notes/rl.md has 3 lines; line 9 is past its end"
 
 
@@ -126,8 +127,8 @@ def test_an_unknown_id_is_told_the_case_ids_keep_or_how_folders_are_written(
 
 @pytest.mark.parametrize("unknown", ["notes/rush.md", "notes/z/b/c.md", "notes/robots", "missing/rl.md", "notes"])
 def test_an_id_that_names_no_document_whole_is_unknown(home: Path, unknown: str) -> None:
-    assert unfound(home, unknown) == Unfound(
-        unknown, f"unknown document {unknown!r}", UNKNOWN, Problem.UNKNOWN_DOCUMENT
+    assert unfound(home, unknown) == Notice(
+        Problem.UNKNOWN_DOCUMENT, f"unknown document {unknown!r}", UNKNOWN, id=unknown
     )
 
 
@@ -157,7 +158,7 @@ def test_an_absolute_id_on_a_share_no_collection_lies_on_is_unknown(home: Path) 
 def test_several_documents_are_read_at_once_and_those_not_found_said(home: Path) -> None:
     result = documents(home, asked("notes/rl.md", "notes/gone.md", "notes/brush.md"))
     assert [found.id for found in result.found] == ["notes/rl.md", "notes/robots/brush.md"]
-    assert [missing.id for missing in result.unfound] == ["notes/gone.md"]
+    assert [missing.id for missing in result.not_read] == ["notes/gone.md"]
 
 
 def test_a_document_is_read_as_indexed_until_the_next_index(tmp_path: Path, home: Path) -> None:
@@ -184,7 +185,7 @@ def test_a_document_of_a_damaged_store_is_not_found_and_says_why(home: Path) -> 
 
 def test_without_any_collection_every_id_is_unknown(tmp_path: Path) -> None:
     result = documents(tmp_path / "empty", asked("notes/rl.md"))
-    assert [missing.message for missing in result.unfound] == ["unknown document 'notes/rl.md'"]
+    assert [missing.message for missing in result.not_read] == ["unknown document 'notes/rl.md'"]
     assert not (tmp_path / "empty").exists()
 
 
@@ -210,5 +211,5 @@ def test_documents_of_one_collection_are_read_with_its_store_opened_once(home: P
             yield transaction
 
     result = documents(home, asked(*["notes/rl.md", "notes/gone.md", "notes/robots/brush.md"] * 20), counted)
-    assert (len(result.found), len(result.unfound), len(opened)) == (40, 20, 1)
+    assert (len(result.found), len(result.not_read), len(opened)) == (40, 20, 1)
     assert [each.id for each in result.found[:2]] == ["notes/rl.md", "notes/robots/brush.md"]

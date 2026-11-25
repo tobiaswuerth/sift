@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from sift.api.errors import InvalidRequestError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.indexing import CollectionIndexed, FileIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import chosen_or_active
@@ -98,7 +98,7 @@ def _file_indexed(job: Job, ignore: Ignore, path: str) -> FileIndexed:
     scanned = job.readers.scan_one(folder, path, Reach(job.collection.choices.follow_links, ignore))
     files = recorded(scanned.found.files, started, job.readers.clock())
     if path in scanned.refusals:
-        return FileIndexed(shown, "unreadable", scanned.refusals[path])
+        return FileIndexed(shown, "unreadable", scanned.refusals[path], Problem.OS)
     with reading(job.connection) as transaction:
         held = source_at(transaction, path)
     gone = not os.path.lexists(folder / path)
@@ -129,9 +129,9 @@ def _files_synced(job: Job, ignore: Ignore, paths: tuple[str, ...]) -> Collectio
     return CollectionIndexed(job.collection.name, outcome, found)
 
 
-def _skipped(skipped: Collection, report: Reporter, reason: str, remedy: str | None) -> CollectionIndexed:
-    report(Noted(reason, remedy))
-    return CollectionIndexed(skipped.name, Skipped(reason, remedy))
+def _skipped(skipped: Collection, report: Reporter, outcome: Skipped) -> CollectionIndexed:
+    report(Noted(outcome.message, outcome.remedy, outcome.code))
+    return CollectionIndexed(skipped.name, outcome)
 
 
 def _ignoring(job: Job, paths: tuple[str, ...]) -> CollectionIndexed:
@@ -139,7 +139,7 @@ def _ignoring(job: Job, paths: tuple[str, ...]) -> CollectionIndexed:
         ignore = ignore_at(job.collection.folder)
     except OSError as error:
         reason = f"its {IGNORE_FILE} can't be read ({error.strerror or error})"
-        return _skipped(job.collection, job.report, reason, IGNORE_REMEDY)
+        return _skipped(job.collection, job.report, Skipped(Problem.OS, reason, IGNORE_REMEDY))
     if paths:
         return _files_synced(job, ignore, paths)
     return CollectionIndexed(job.collection.name, _synced(job, ignore))
@@ -195,12 +195,16 @@ def _indexed(one: Collection, asked: _Indexing, paths: tuple[str, ...] = ()) -> 
             _ordered(connection, report, limits.batches)
             _remade(connection, report, limits.batches)
             if not current.folder.is_dir():
-                return _skipped(current, report, f"its folder is missing: {current.folder}", FOLDER_MISSING_REMEDY)
+                missing = Skipped(
+                    Problem.FOLDER_MISSING, f"its folder is missing: {current.folder}", FOLDER_MISSING_REMEDY
+                )
+                return _skipped(current, report, missing)
             return _ignoring(Job(current, connection, report, limits, asked.readers, asked.ocr), paths)
     except StoreUnavailableError as error:
-        return _skipped(one, report, error.message, error.remedy)
+        return _skipped(one, report, Skipped(error.code, error.message, error.remedy))
     except OSError as error:
-        return _skipped(one, report, f"it is out of reach ({error.strerror or error})", OUT_OF_REACH_REMEDY)
+        reason = f"it is out of reach ({error.strerror or error})"
+        return _skipped(one, report, Skipped(Problem.OS, reason, OUT_OF_REACH_REMEDY))
 
 
 def _grouped(home: Path, files: Sequence[str]) -> dict[Collection, tuple[str, ...]]:

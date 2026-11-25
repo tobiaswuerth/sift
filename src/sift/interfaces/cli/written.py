@@ -16,7 +16,7 @@ def listed(text: str) -> tuple[str, ...]:
 
 
 def _refused(text: str, problem: str) -> InvalidRequestError:
-    return InvalidRequestError(f"the filter {text!r} is no KEY=VALUE: {problem}", WRITTEN_REMEDY)
+    return InvalidRequestError(f"the filter {text!r} is no KEY=VALUE: {problem}", WRITTEN_REMEDY, "filters")
 
 
 def _scalar(value: object) -> bool:

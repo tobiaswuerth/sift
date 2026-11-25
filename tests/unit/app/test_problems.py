@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import MappingProxyType
 
+from sift.api.errors import Problem
 from sift.api.events import Noted
 from sift.app.problems import problems
 from sift.domain.plan.indexing import Found, Stat, index_plan
@@ -23,10 +24,10 @@ def test_folders_and_files_that_could_not_be_read_are_said_with_why_and_what_was
     refusals = MappingProxyType({"robots/": "Access is denied", "": "Input/output error", "rl.md": "Access is denied"})
     known = {"a.md": A, "rl.md": A, "robots/brush.md": A}
     assert said(Scanned(found, (), refusals), known) == (
-        Noted("robots/ can't be read (Access is denied): 1 file in it kept as indexed"),
-        Noted("its folder can't be read (Input/output error): 2 files in it kept as indexed"),
-        Noted("rl.md can't be read (Access is denied): kept as indexed"),
-        Noted("new.md can't be read (): left for the next index"),
+        Noted("robots/ can't be read (Access is denied): 1 file in it kept as indexed", code=Problem.OS),
+        Noted("its folder can't be read (Input/output error): 2 files in it kept as indexed", code=Problem.OS),
+        Noted("rl.md can't be read (Access is denied): kept as indexed", code=Problem.OS),
+        Noted("new.md can't be read (): left for the next index", code=Problem.OS),
     )
 
 

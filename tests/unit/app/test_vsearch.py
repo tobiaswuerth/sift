@@ -12,7 +12,8 @@ from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, ModelUnavailableError, NotFoundError, Problem
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections
-from sift.api.search import SearchVectors, Unsearched
+from sift.api.notices import Notice
+from sift.api.search import SearchVectors
 from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
@@ -118,9 +119,7 @@ def test_a_query_the_model_cannot_place_is_said_to_be_the_model_s_failing(home: 
 def test_a_collection_not_yet_embedded_is_passed_over_saying_so(home: Path, tmp_path: Path) -> None:
     more(home, tmp_path)
     result = vsearch(home, SearchVectors("halo"), Hashed())
-    assert result.unsearched == (
-        Unsearched("more", "it holds no vectors yet", UNEMBEDDED_REMEDY, Problem.NOT_EMBEDDED),
-    )
+    assert result.unsearched == (Notice(Problem.NOT_EMBEDDED, "it holds no vectors yet", UNEMBEDDED_REMEDY, "more"),)
     assert result.searched == 1
 
 
@@ -129,11 +128,11 @@ def test_a_collection_of_another_model_is_passed_over_saying_so(home: Path, tmp_
     embed(home, EmbedCollections(("more",)), lambda _: None, Hashed(name="other-model"))
     result = vsearch(home, SearchVectors("halo"), Hashed())
     assert result.unsearched == (
-        Unsearched(
-            "more",
+        Notice(
+            Problem.OTHER_MODEL,
             "its vectors are of other-model, not of hashed-words",
             EMBED_REMEDY.format(model="hashed-words"),
-            Problem.OTHER_MODEL,
+            "more",
         ),
     )
 
@@ -193,11 +192,11 @@ def test_documents_of_many_passages_widen_the_search_until_k_documents_are_found
 def test_a_collection_of_the_same_model_at_another_width_is_passed_over_saying_so(home: Path) -> None:
     result = vsearch(home, SearchVectors("halo"), Hashed(width=32))
     assert result.unsearched == (
-        Unsearched(
-            "notes",
+        Notice(
+            Problem.OTHER_MODEL,
             "its vectors have 48 dimensions, the query 32",
             EMBED_REMEDY.format(model="hashed-words"),
-            Problem.OTHER_MODEL,
+            "notes",
         ),
     )
 

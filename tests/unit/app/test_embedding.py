@@ -9,7 +9,7 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import CollectionEmbedded, EmbedCollections, Embedded
-from sift.api.errors import InvalidRequestError
+from sift.api.errors import InvalidRequestError, Problem
 from sift.api.events import Advanced, Event, Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections, Skipped
 from sift.app.collections import add
@@ -105,7 +105,9 @@ def test_a_collection_of_another_model_is_skipped_until_every_one_is_embedded_ag
     assert skipped == CollectionEmbedded(
         "notes",
         Skipped(
-            "the store holds vectors of hashed-words, not of other-model", EMBED_REMEDY.format(model="other-model")
+            Problem.OTHER_MODEL,
+            "the store holds vectors of hashed-words, not of other-model",
+            EMBED_REMEDY.format(model="other-model"),
         ),
     )
     with pytest.raises(InvalidRequestError, match="embeds every collection again"):
@@ -208,7 +210,7 @@ def test_a_store_taken_by_another_model_midway_is_skipped_saying_so(home: Path) 
     assert outcome.outcome.message == "the store holds vectors of other-model, not of hashed-words"
     assert [event for event in said if isinstance(event, PhaseStarted)][-1].phase is Phase.EMBED
     assert not isinstance(said[-2], PhaseDone)
-    assert said[-1] == Noted(outcome.outcome.message, outcome.outcome.remedy)
+    assert said[-1] == Noted(outcome.outcome.message, outcome.outcome.remedy, Problem.OTHER_MODEL)
     (refused,) = busy
     assert isinstance(refused, Skipped)
     assert "another sift writes it now (an embedding, process " in refused.message

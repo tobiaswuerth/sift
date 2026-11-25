@@ -29,6 +29,19 @@
         "/s/diary.sqlite-wal"
       ]
     },
+    "rm unread": {
+      "name": "diary",
+      "store": "/home/.sift/collections/diary.sqlite",
+      "documents": null,
+      "problem": {
+        "code": "store_damaged",
+        "message": "it is damaged",
+        "remedy": "move it",
+        "collection": null,
+        "id": null
+      },
+      "left": []
+    },
     "move": {
       "moved": [
         {
@@ -96,8 +109,11 @@
           "folder": "/data/papers",
           "store": "/home/.sift/collections/papers.sqlite",
           "contents": {
+            "code": "store_missing",
             "message": "gone",
             "remedy": "add it",
+            "collection": null,
+            "id": null,
             "state": "unavailable"
           },
           "active": false,
@@ -122,8 +138,11 @@
         {
           "name": "papers",
           "outcome": {
+            "code": "folder_missing",
             "message": "gone",
             "remedy": "add it",
+            "collection": null,
+            "id": null,
             "state": "skipped"
           },
           "named": []
@@ -146,12 +165,20 @@
             {
               "id": "notes/rl.md",
               "state": "changed",
-              "note": null
+              "note": null,
+              "code": null
             },
             {
               "id": "notes/scan.pdf",
               "state": "unreadable",
-              "note": "no text"
+              "note": "no text",
+              "code": null
+            },
+            {
+              "id": "notes/locked.md",
+              "state": "unreadable",
+              "note": "Access is denied",
+              "code": "os"
             }
           ]
         }
@@ -170,8 +197,11 @@
         {
           "name": "papers",
           "outcome": {
+            "code": "store_missing",
             "message": "gone",
             "remedy": "add it",
+            "collection": null,
+            "id": null,
             "state": "skipped"
           }
         }
@@ -188,12 +218,13 @@
           }
         }
       ],
-      "unfound": [
+      "not_read": [
         {
-          "id": "notes/b.md",
+          "code": "unknown_document",
           "message": "unknown document 'notes/b.md'",
           "remedy": "take the id from a search result",
-          "code": "unknown_document"
+          "collection": null,
+          "id": "notes/b.md"
         }
       ]
     },
@@ -219,15 +250,24 @@
       "searched": 1,
       "unsearched": [
         {
-          "collection": "papers",
+          "code": "busy",
           "message": "the store is busy",
           "remedy": "wait, then ask again",
-          "code": "store_unavailable"
+          "collection": "papers",
+          "id": null
         }
       ],
       "partial": true,
       "ruled_out": 1,
-      "left_out": []
+      "left_out": [
+        {
+          "code": "not_embedded",
+          "message": "1 document has no vectors: searched by keyword alone",
+          "remedy": null,
+          "collection": "notes",
+          "id": null
+        }
+      ]
     },
     "links": {
       "id": "notes/a.md",
@@ -261,10 +301,11 @@
       ],
       "unsearched": [
         {
-          "collection": "papers",
+          "code": "busy",
           "message": "the store is busy",
           "remedy": "wait, then ask again",
-          "code": "store_unavailable"
+          "collection": "papers",
+          "id": null
         }
       ]
     },
@@ -281,10 +322,11 @@
       ],
       "unsearched": [
         {
-          "collection": "papers",
+          "code": "busy",
           "message": "the store is busy",
           "remedy": "wait, then ask again",
-          "code": "store_unavailable"
+          "collection": "papers",
+          "id": null
         }
       ]
     },
@@ -549,6 +591,15 @@
         "field": "k"
       }
     },
+    "unknown_collection of a field": {
+      "error": {
+        "kind": "not_found",
+        "code": "unknown_collection",
+        "message": "no collection is named 'x'",
+        "remedy": "the collections are: notes",
+        "field": "collections"
+      }
+    },
     "invalid_request": {
       "error": {
         "kind": "invalid_request",
@@ -581,6 +632,15 @@
         "kind": "not_found",
         "code": "not_found",
         "message": "a refusal coded not_found",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "folder_missing": {
+      "error": {
+        "kind": "not_found",
+        "code": "folder_missing",
+        "message": "a refusal coded folder_missing",
         "remedy": "what to do",
         "field": null
       }
@@ -794,7 +854,16 @@
       "event": "Noted",
       "data": {
         "text": "a note",
-        "remedy": "a fix"
+        "remedy": "a fix",
+        "code": null
+      }
+    },
+    "noted with a code": {
+      "event": "Noted",
+      "data": {
+        "text": "a folder can't be read",
+        "remedy": null,
+        "code": "os"
       }
     },
     "finished": {

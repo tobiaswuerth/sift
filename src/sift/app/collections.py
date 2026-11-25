@@ -20,8 +20,9 @@ from sift.api.collections import (
     Unavailable,
     UnreadableFile,
 )
-from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError, field_at_fault
 from sift.api.events import Reporter
+from sift.api.notices import Notice, notice_of
 from sift.app.choosing import changed
 from sift.app.loading import unreported
 from sift.app.notes import unresolved_links
@@ -53,6 +54,7 @@ from sift.storage.writer import sole_writer
 OBSIDIAN = ".obsidian"
 FIELD_REMEDY = "name the field, e.g. abstract"
 NONE_ACTIVE_REMEDY = "activate a collection by its name"
+SEARCHED = "collections"
 
 
 def _field(name: str | None, field: str) -> str | None:
@@ -85,9 +87,10 @@ def add(home: Path, request: AddCollection, report: Reporter = unreported) -> Co
     )
 
 
-def chosen(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
+def chosen(home: Path, names: Sequence[str], field: str = "names") -> tuple[Collection, ...]:
     known = known_collections(home)
-    return all_named(known, names) if names else known
+    with field_at_fault(field):
+        return all_named(known, names) if names else known
 
 
 def chosen_or_active(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
@@ -96,7 +99,8 @@ def chosen_or_active(home: Path, names: Sequence[str]) -> tuple[Collection, ...]
 
 def searchable(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
     if names:
-        return tuple(map(refuse_inactive, chosen(home, names)))
+        with field_at_fault(SEARCHED):
+            return tuple(map(refuse_inactive, chosen(home, names, SEARCHED)))
     known = chosen(home, ())
     active = tuple(one for one in known if one.active)
     if known and not active:
@@ -104,16 +108,17 @@ def searchable(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
     return active
 
 
-def _held(one: Collection) -> tuple[int | None, str | None]:
+def _held(one: Collection) -> tuple[int | None, Notice | None]:
     try:
         with connected(one.store, one.id) as connection, reading(connection) as transaction:
             return counts(transaction).documents, None
     except StoreUnavailableError as error:
-        return None, error.message
+        return None, notice_of(error)
 
 
 def remove(home: Path, request: RemoveCollection, unlink: Callable[[Path], None] = unlinked) -> CollectionRemoved:
-    one = named(known_collections(home), request.name)
+    with field_at_fault("name"):
+        one = named(known_collections(home), request.name)
     with sole_writer(one.store, "a removal") if one.store.parent.is_dir() else nullcontext():
         documents, problem = _held(one)
         forget_collection(home, one.id)
@@ -144,7 +149,7 @@ def _contents(one: Collection, *, listed: bool) -> Counted | Unavailable:
             linked, gone = links_held(transaction), len(unresolved_links(transaction))
             waiting, model, fields = left(transaction), model_of(transaction), fields_sampled(transaction)
     except StoreUnavailableError as error:
-        return Unavailable(error.message, error.remedy)
+        return Unavailable(error.code, error.message, error.remedy)
     files = tuple(UnreadableFile(entry.path, entry.problem) for entry in failed) if listed else ()
     size, embedded = stored_bytes(one.store), kept.chunks - waiting
     held = Counted(kept.documents, kept.chunks, size, len(failed), files, linked, gone)

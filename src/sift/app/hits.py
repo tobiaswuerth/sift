@@ -4,7 +4,8 @@ from functools import partial
 
 from sift.api.fields import Fields
 from sift.api.ids import ChunkId, owner
-from sift.api.search import Hit, Options, SearchResult, Unsearched
+from sift.api.notices import Notice
+from sift.api.search import Hit, Options, SearchResult
 from sift.app.searching import Open, Ranked, ScoredChunk, Searching, despite_losses
 from sift.domain.query import fields as shown
 from sift.domain.rank.hybrid import standing_out
@@ -113,6 +114,6 @@ def result(stores: Open, answered: Sequence[tuple[int, Hit]], *, partial: bool) 
     return SearchResult(found, searched, unsearched, partial=cut, ruled_out=stores.ruled_out, left_out=left_out)
 
 
-def also_unsearched(found: SearchResult, more: Sequence[Unsearched]) -> SearchResult:
+def also_unsearched(found: SearchResult, more: Sequence[Notice]) -> SearchResult:
     said = {each.collection for each in found.unsearched}
     return replace(found, unsearched=(*found.unsearched, *(each for each in more if each.collection not in said)))

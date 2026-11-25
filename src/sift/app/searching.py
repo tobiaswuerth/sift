@@ -10,7 +10,8 @@ import numpy as np
 
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.events import Reporter
-from sift.api.search import MOST_HITS, Left, Options, Unsearched, unsearched
+from sift.api.notices import Notice, notice_of
+from sift.api.search import MOST_HITS, Options
 from sift.app.collections import searchable
 from sift.app.linked import LeftOut, Narrowing, condition_in, narrowing
 from sift.app.loading import unreported
@@ -104,13 +105,13 @@ class StoreLostError(Exception):
 @dataclass(slots=True)
 class Open:
     searching: list[Searching] = field(default_factory=list[Searching])
-    unsearched: list[Unsearched] = field(default_factory=list[Unsearched])
+    unsearched: list[Notice] = field(default_factory=list[Notice])
     ruled_out: int = 0
-    left_out: list[Left] = field(default_factory=list[Left])
+    left_out: list[Notice] = field(default_factory=list[Notice])
     cut: bool = False
 
     def said(self, collection: Collection, error: StoreUnavailableError) -> None:
-        self.unsearched.append(unsearched(collection.name, error))
+        self.unsearched.append(notice_of(error, collection.name))
 
     def dropped(self, each: Searching, error: StoreUnavailableError) -> None:
         self.searching.remove(each)
@@ -235,17 +236,17 @@ def _held(
     return keywords, replace(_vectors(wants.model, one, transaction, wants), allowed=allowed)
 
 
-def keywords_alone(collection: str, error: StoreUnavailableError) -> Left:
-    return Left(collection, f"{error.message}: searched by keyword alone", error.remedy, error.code)
+def keywords_alone(collection: str, error: StoreUnavailableError) -> Notice:
+    return Notice(error.code, f"{error.message}: searched by keyword alone", error.remedy, collection)
 
 
-def _unembedded(collection: Collection, count: int) -> Left:
+def _unembedded(collection: Collection, count: int) -> Notice:
     holds, passed = ("holds", "it") if count == 1 else ("hold", "them")
     said = f"{count:,} of its passages {holds} no vector yet: a search by meaning passes {passed} over"
-    return Left(collection.name, said, UNEMBEDDED_REMEDY, Problem.NOT_EMBEDDED)
+    return Notice(Problem.NOT_EMBEDDED, said, UNEMBEDDED_REMEDY, collection.name)
 
 
-def _notes(collection: Collection, vectors: Vectors) -> list[Left]:
+def _notes(collection: Collection, vectors: Vectors) -> list[Notice]:
     if vectors.unlike is not None:
         return [keywords_alone(collection.name, vectors.unlike)]
     return [_unembedded(collection, vectors.unembedded)] if vectors.unembedded else []
@@ -254,7 +255,7 @@ def _notes(collection: Collection, vectors: Vectors) -> list[Left]:
 def _out_of_time(held: Open, one: Collection, wants: Wants, expired: Expired) -> bool:
     if wants.model is None or not held.searching or not expired():
         return False
-    held.left_out.append(Left(one.name, OUT_OF_TIME, OUT_OF_TIME_REMEDY, Problem.OUT_OF_TIME))
+    held.left_out.append(Notice(Problem.OUT_OF_TIME, OUT_OF_TIME, OUT_OF_TIME_REMEDY, one.name))
     held.cut = True
     return True
 

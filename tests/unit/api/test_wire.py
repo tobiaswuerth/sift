@@ -18,7 +18,8 @@ from sift.api.errors import (
 from sift.api.filters import Filter, Operator
 from sift.api.indexing import CollectionIndexed, Indexed
 from sift.api.links import Direction, FindMentions, FindSimilar, ListUnresolved, ShowLinks
-from sift.api.search import Hit, Left, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
+from sift.api.notices import Notice
+from sift.api.search import Hit, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.api.wire import Json, decoded, decoded_error, encoded, encoded_error, read_answer
 from tests.answers import SAMPLES
 
@@ -61,7 +62,7 @@ def test_every_answer_comes_back_from_its_json_as_it_was(name: str) -> None:
 
 
 def test_what_a_search_left_out_comes_back_too() -> None:
-    found = SearchResult((), 1, (), left_out=(Left("notes", "out of time", "give more", Problem.OUT_OF_TIME),))
+    found = SearchResult((), 1, (), left_out=(Notice(Problem.OUT_OF_TIME, "out of time", "give more", "notes"),))
     assert decoded(SearchResult, encoded(found)) == found
 
 

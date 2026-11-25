@@ -82,7 +82,9 @@ def test_a_query_outside_the_grammar_is_refused_with_how_to_write_one(settings: 
     searched_notes(settings, notes)
     code, out, err = ran(settings, "search", "a AND")
     assert (code, out) == (2, "")
-    assert err.startswith("error  the query is not understood: it ends where words are missing\n  fix  write words")
+    assert err.startswith(
+        "error  query: the query is not understood: it ends where words are missing\n  fix  write words"
+    )
 
 
 def test_search_fails_if_a_collection_could_not_be_searched_however_it_answers(settings: Settings, notes: Path) -> None:
@@ -131,7 +133,7 @@ def test_search_keeps_to_front_matter_and_paths_shows_it_and_orders_by_it(settin
     ]
     code, out, err = ran(settings, "search", "brush", "-f", "year")
     assert (code, out) == (2, "")
-    assert err.startswith("error  the filter 'year' is no KEY=VALUE")
+    assert err.startswith("error  --filter: the filter 'year' is no KEY=VALUE")
 
 
 def test_unresolved_fails_if_a_collection_could_not_be_read_however_it_answers(settings: Settings, notes: Path) -> None:
@@ -215,7 +217,8 @@ def test_an_error_asked_for_in_json_is_json_on_stdout(settings: Settings, notes:
     searched_notes(settings, notes)
     code, out, err = ran(settings, "search", "brush", "-c", "nope", "--json")
     said = cast("dict[str, dict[str, str]]", json.loads(out))["error"]
-    assert (code, said["kind"], said["message"]) == (1, "not_found", err.splitlines()[0].removeprefix("error  "))
+    shown = err.splitlines()[0].removeprefix("error  --collection: ")
+    assert (code, said["kind"], said["field"], said["message"]) == (1, "not_found", "collections", shown)
 
 
 def test_a_mistaken_argument_exits_2_with_a_fix_and_no_usage_block(settings: Settings, notes: Path) -> None:

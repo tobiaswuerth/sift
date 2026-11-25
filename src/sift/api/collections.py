@@ -3,6 +3,7 @@ from enum import StrEnum
 from typing import Annotated, Literal
 
 from sift.api.described import FIELD_LENGTH, LISTED, NAME_LENGTH, PATH_LENGTH, AbsolutePath, Bounds, Help
+from sift.api.notices import Notice
 from sift.api.requests import Request
 
 MOST_NAMED = 1_000
@@ -92,7 +93,7 @@ class CollectionRemoved:
     name: str
     store: str
     documents: int | None
-    problem: str | None
+    problem: Notice | None
     left: tuple[str, ...] = ()
 
 
@@ -171,9 +172,7 @@ class Counted:
 
 
 @dataclass(frozen=True, slots=True)
-class Unavailable:
-    message: str
-    remedy: str | None
+class Unavailable(Notice):
     state: Literal["unavailable"] = "unavailable"
 
 

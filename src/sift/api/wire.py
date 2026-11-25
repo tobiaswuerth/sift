@@ -197,13 +197,12 @@ def read_answer[T](kind: type[T], data: object) -> T:
 
 
 def encoded_error(error: SiftError) -> Json:
-    field = error.field if isinstance(error, InvalidRequestError) else None
     return {
         "kind": KIND_OF[type(error)],
         "code": error.code.value,
         "message": error.message,
         "remedy": error.remedy,
-        "field": field,
+        "field": error.field,
     }
 
 
@@ -214,7 +213,5 @@ def decoded_error(data: Json) -> SiftError:
     kind = InternalError if named is None else named
     message, remedy = str(data.get("message", "")), str(data.get("remedy") or "")
     code = kind.usual if named is None else PROBLEMS.get(str(data.get("code")), kind.usual)
-    if issubclass(kind, InvalidRequestError):
-        field = data.get("field")
-        return kind(message, remedy, None if field is None else str(field), code=code)
-    return kind(message, remedy, code=code)
+    field = data.get("field")
+    return kind(message, remedy, None if field is None else str(field), code=code)

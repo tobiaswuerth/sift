@@ -171,7 +171,7 @@ def test_an_inactive_collection_named_is_refused_saying_how_to_search_it(home: P
             Problem.INACTIVE_COLLECTION,
             "activate it",
         )
-    (unfound,) = documents(home, asked("diary/monday.md")).unfound
+    (unfound,) = documents(home, asked("diary/monday.md")).not_read
     assert (unfound.id, unfound.code) == ("diary/monday.md", Problem.INACTIVE_COLLECTION)
 
 

@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from typing import Annotated
 
 from sift.api.described import FIELD_LENGTH, LISTED, PATH_LENGTH, Bounds, Composed, Help
-from sift.api.errors import Problem
 from sift.api.fields import FIELDS, Fields
+from sift.api.notices import Notice
 from sift.api.requests import Request
 
 ID = (
@@ -38,14 +38,6 @@ class DocumentText:
 
 
 @dataclass(frozen=True, slots=True)
-class Unfound:
-    id: str
-    message: str
-    remedy: str | None
-    code: Problem
-
-
-@dataclass(frozen=True, slots=True)
 class Documents:
     found: tuple[DocumentText, ...]
-    unfound: tuple[Unfound, ...]
+    not_read: tuple[Notice, ...]

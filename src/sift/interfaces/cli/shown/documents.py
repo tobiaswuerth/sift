@@ -14,15 +14,15 @@ def _document(found: DocumentText) -> tuple[str, ...]:
 
 
 def documents(result: Documents, _platform: str, style: Style) -> Shown:
-    if len(result.found) == 1 and not result.unfound:
+    if len(result.found) == 1 and not result.not_read:
         return Shown(_document(result.found[0]), ())
     shown = [line for found in result.found for line in (f"==> {printable(found.id)} <==", *_document(found), "")]
     messages = [
         line
-        for unfound in result.unfound
+        for unread in result.not_read
         for line in (
-            labelled("error", f"{unfound.id}: {unfound.message}", Tone.ERROR, style),
-            *fix(unfound.remedy, style),
+            labelled("error", f"{unread.id}: {unread.message}", Tone.ERROR, style),
+            *fix(unread.remedy, style),
         )
     ]
     return Shown(tuple(shown[:-1]), tuple(messages))

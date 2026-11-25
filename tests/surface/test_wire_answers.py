@@ -32,6 +32,7 @@ READ_BACK: Mapping[str, Callable[[Json], object]] = MappingProxyType(
         "add": partial(read_back, collections.ADD),
         "add again": partial(read_back, collections.ADD),
         "rm": partial(read_back, collections.REMOVE),
+        "rm unread": partial(read_back, collections.REMOVE),
         "move": partial(read_back, collections.MOVE),
         "activate": partial(read_back, collections.ACTIVATE),
         "deactivate": partial(read_back, collections.DEACTIVATE),

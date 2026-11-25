@@ -13,7 +13,7 @@ from sift.api.collections import (
 )
 from sift.api.documents import GetDocuments, WantedDocument
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import CODE_KINDS, InvalidRequestError, Problem, SiftError
+from sift.api.errors import CODE_KINDS, InvalidRequestError, NotFoundError, Problem, SiftError
 from sift.api.events import (
     Advanced,
     CollectionStarted,
@@ -88,6 +88,9 @@ REQUEST_SAMPLES: Mapping[str, object] = MappingProxyType(
 ERROR_SAMPLES: Mapping[str, SiftError] = MappingProxyType(
     {
         "invalid_request of a field": InvalidRequestError("k is 0, outside 1 to 10,000", "give 1 to 10,000", "k"),
+        "unknown_collection of a field": NotFoundError(
+            "no collection is named 'x'", "the collections are: notes", "collections", code=Problem.UNKNOWN_COLLECTION
+        ),
         **{code.value: CODE_KINDS[code](f"a refusal coded {code.value}", "what to do", code=code) for code in Problem},
     }
 )
@@ -99,6 +102,7 @@ EVENT_SAMPLES: Mapping[str, Event] = MappingProxyType(
         "files kept": FilesKept(2),
         "phase done": PhaseDone(3),
         "noted": Noted("a note", "a fix"),
+        "noted with a code": Noted("a folder can't be read", None, Problem.OS),
         "finished": Finished(1, 2, 3, 4),
         "listening": Listening("http://127.0.0.1:8765", "/home/.sift"),
     }

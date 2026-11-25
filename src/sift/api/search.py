@@ -12,9 +12,9 @@ from sift.api.described import (
     Composed,
     Help,
 )
-from sift.api.errors import Problem, SiftError
 from sift.api.fields import FIELDS, Fields
 from sift.api.filters import Filter
+from sift.api.notices import Notice
 from sift.api.requests import Request
 
 MOST_HITS = 10_000
@@ -110,30 +110,10 @@ class Hit:
 
 
 @dataclass(frozen=True, slots=True)
-class Unsearched:
-    collection: str
-    message: str
-    remedy: str | None
-    code: Problem
-
-
-def unsearched(collection: str, error: SiftError) -> Unsearched:
-    return Unsearched(collection, error.message, error.remedy, error.code)
-
-
-@dataclass(frozen=True, slots=True)
-class Left:
-    collection: str
-    message: str
-    remedy: str | None
-    code: Problem
-
-
-@dataclass(frozen=True, slots=True)
 class SearchResult:
     hits: tuple[Hit, ...]
     searched: int
-    unsearched: tuple[Unsearched, ...]
+    unsearched: tuple[Notice, ...]
     partial: bool = False
     ruled_out: int = 0
-    left_out: tuple[Left, ...] = ()
+    left_out: tuple[Notice, ...] = ()

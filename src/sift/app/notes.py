@@ -3,9 +3,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError, field_at_fault
 from sift.api.ids import DocumentId
-from sift.api.search import Unsearched, unsearched
+from sift.api.notices import Notice, notice_of
 from sift.app.documents import place, resolved_at
 from sift.app.documents import unknown as documents_unknown
 from sift.domain.text.kinds import public_id
@@ -66,13 +66,13 @@ class Note:
 @dataclass(frozen=True, slots=True)
 class NamedNote:
     note: Note
-    unsearched: tuple[Unsearched, ...]
+    unsearched: tuple[Notice, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class Matches:
     found: tuple[Note, ...]
-    unsearched: tuple[Unsearched, ...]
+    unsearched: tuple[Notice, ...]
 
 
 def read_in[T](one: Collection, read: Callable[[Reading], T]) -> T:
@@ -98,23 +98,23 @@ def _matches(one: Collection, name: str) -> list[Note]:
     return read_in(one, read)
 
 
-def passed(message: str, unsearched: Sequence[Unsearched]) -> str:
+def passed(message: str, unsearched: Sequence[Notice]) -> str:
     return "; ".join([message, *(f"not searched: {each.collection}: {each.message}" for each in unsearched)])
 
 
-def _remedy(remedy: str, unsearched: Sequence[Unsearched]) -> str:
+def _remedy(remedy: str, unsearched: Sequence[Notice]) -> str:
     found = [each.remedy for each in unsearched if each.remedy is not None]
     return "; ".join(dict.fromkeys([*found, remedy]))
 
 
 def matches(collections: Sequence[Collection], id_: str) -> Matches:
-    name, unread = target_of(id_), list[Unsearched]()
+    name, unread = target_of(id_), list[Notice]()
     found: list[Note] = []
     for one in collections:
         try:
             found += _matches(one, name)
         except StoreUnavailableError as error:
-            unread.append(unsearched(one.name, error))
+            unread.append(notice_of(error, one.name))
     if len(found) > 1:
         listed = ", ".join(sorted(each.id for each in found)[:AMBIGUOUS_SHOWN])
         more = ", ..." if len(found) > AMBIGUOUS_SHOWN else ""
@@ -123,7 +123,7 @@ def matches(collections: Sequence[Collection], id_: str) -> Matches:
     return Matches(tuple(found), tuple(unread))
 
 
-def unknown_note(spec: str, unsearched: Sequence[Unsearched]) -> NotFoundError:
+def unknown_note(spec: str, unsearched: Sequence[Notice]) -> NotFoundError:
     said = passed(f"no note or document {spec!r}", unsearched)
     return NotFoundError(said, _remedy(NOTE_REMEDY, unsearched), code=Problem.UNKNOWN_NOTE)
 
@@ -159,7 +159,12 @@ def unresolved_links(transaction: Reading) -> list[LinkRow]:
     return [row for row in doubtful(transaction) if resolver.of(row).via is Via.UNRESOLVED]
 
 
-def note_of(home: Path, spec: str) -> NamedNote:
+def note_of(home: Path, spec: str, field: str) -> NamedNote:
+    with field_at_fault(field):
+        return _note_of(home, spec)
+
+
+def _note_of(home: Path, spec: str) -> NamedNote:
     try:
         return NamedNote(_by_id(home, spec), ())
     except NotFoundError:

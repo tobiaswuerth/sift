@@ -16,11 +16,12 @@ from sift.api.collections import (
     Unavailable,
     UnreadableFile,
 )
-from sift.api.documents import Documents, DocumentText, Unfound
+from sift.api.documents import Documents, DocumentText
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
-from sift.api.search import Hit, Left, SearchResult, Unsearched
+from sift.api.notices import Notice
+from sift.api.search import Hit, SearchResult
 from sift.interfaces.cli.shown.collections import added, moved, removed, status, switched
 from sift.interfaces.cli.shown.documents import documents
 from sift.interfaces.cli.shown.indexing import said_as_it_went
@@ -42,7 +43,9 @@ STATUS = Status(
             "Papers-日本",
             "/data/papers",
             "/s/papers.sqlite",
-            Unavailable("the store is missing: /s/papers.sqlite", "connect the drive it lies on"),
+            Unavailable(
+                Problem.STORE_MISSING, "the store is missing: /s/papers.sqlite", "connect the drive it lies on"
+            ),
         ),
     ),
 )
@@ -161,8 +164,11 @@ def test_one_document_is_printed_as_its_text() -> None:
 def test_several_documents_are_headed_by_their_ids_and_those_not_found_said() -> None:
     found = (DocumentText("notes/a.md", "A", "# A\n"), DocumentText("notes/b.md", "B", "# B\n"))
     unfound = (
-        Unfound(
-            "notes/x.md", "unknown document 'notes/x.md'", "take the id from a search result", Problem.UNKNOWN_DOCUMENT
+        Notice(
+            Problem.UNKNOWN_DOCUMENT,
+            "unknown document 'notes/x.md'",
+            "take the id from a search result",
+            id="notes/x.md",
         ),
     )
     assert documents(Documents(found, unfound), "linux", PLAIN) == Shown(
@@ -240,7 +246,8 @@ def test_a_removal_says_what_its_store_held_and_names_the_files_left_in_use() ->
     gone = CollectionRemoved("diary", "/s/diary.sqlite", 1, None)
     said = " gone  diary: its store of 1 document deleted; its files stay where they are"
     assert removed(gone, "linux", PLAIN) == Shown((), (said,))
-    unread = CollectionRemoved("diary", "/s/diary.sqlite", None, "it is missing", ("/s/diary.sqlite-wal",))
+    missing = Notice(Problem.STORE_MISSING, "it is missing", "connect the drive it lies on")
+    unread = CollectionRemoved("diary", "/s/diary.sqlite", None, missing, ("/s/diary.sqlite-wal",))
     assert removed(unread, "linux", PLAIN).messages == (
         " gone  diary: its store deleted; its files stay where they are",
         "store  could not be read: it is missing",
@@ -273,7 +280,7 @@ def test_switching_collections_says_which_changed_and_which_were_so_already() ->
 
 def test_what_a_search_left_out_of_a_collection_is_noted_with_its_remedy_before_the_count() -> None:
     hit = Hit("notes/a.md", "notes", "a.md", "A", 1, 2, 1.5, None)
-    left = Left("notes", "3 of its passages hold no vector yet", "embed the collection", Problem.NOT_EMBEDDED)
+    left = Notice(Problem.NOT_EMBEDDED, "3 of its passages hold no vector yet", "embed the collection", "notes")
     messages = hits(SearchResult((hit,), 1, (), left_out=(left,)), 0.25, "linux", PLAIN).messages
     assert messages[:3] == (
         " note  notes: 3 of its passages hold no vector yet",
@@ -368,7 +375,7 @@ def test_unresolved_targets_show_how_many_link_them_and_a_few_of_those() -> None
 def test_unresolved_targets_of_a_store_that_could_not_be_read_are_said_to_be_missing() -> None:
     found = Unresolved(
         (Target("Gone", 1, ("v/c.md",)),),
-        (Unsearched("w", "the store is damaged", "remove the collection", Problem.STORE_DAMAGED),),
+        (Notice(Problem.STORE_DAMAGED, "the store is damaged", "remove the collection", "w"),),
     )
     assert shown_unresolved(found, "linux", PLAIN).messages[0] == "error  w: the store is damaged"
     alone = shown_unresolved(Unresolved((), found.unsearched), "linux", PLAIN)
@@ -381,7 +388,7 @@ def test_links_of_a_note_found_while_a_store_could_not_be_read_say_so() -> None:
         "A",
         (),
         None,
-        (Unsearched("w", "the store is damaged", "remove the collection", Problem.STORE_DAMAGED),),
+        (Notice(Problem.STORE_DAMAGED, "the store is damaged", "remove the collection", "w"),),
     )
     shown_found = shown_links(found, "linux", PLAIN)
     assert shown_found.results == ("A (v/A.md) links to: nothing",)

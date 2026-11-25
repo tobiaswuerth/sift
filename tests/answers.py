@@ -12,15 +12,16 @@ from sift.api.collections import (
     Unavailable,
     UnreadableFile,
 )
-from sift.api.documents import Documents, DocumentText, Unfound
+from sift.api.documents import Documents, DocumentText
 from sift.api.embedding import CollectionEmbedded, Embedded, EmbedResult
 from sift.api.errors import Problem
 from sift.api.indexing import CollectionIndexed, FileIndexed, Indexed, IndexResult, Skipped
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
-from sift.api.search import Hit, SearchResult, Unsearched
+from sift.api.notices import Notice
+from sift.api.search import Hit, SearchResult
 from sift.interfaces.cli.context import Answer
 
-UNSEARCHED = Unsearched("papers", "the store is busy", "wait, then ask again", Problem.STORE_UNAVAILABLE)
+UNSEARCHED = Notice(Problem.BUSY, "the store is busy", "wait, then ask again", "papers")
 SAMPLES: dict[str, Answer] = {
     "add": CollectionAdded(
         "notes",
@@ -34,6 +35,9 @@ SAMPLES: dict[str, Answer] = {
         "notes", TitleFrom.NAME, follow_links=True, agents=False, retitled=2, to_embed=1, index_again=True
     ),
     "rm": CollectionRemoved("diary", "/home/.sift/collections/diary.sqlite", 3, None, ("/s/diary.sqlite-wal",)),
+    "rm unread": CollectionRemoved(
+        "diary", "/home/.sift/collections/diary.sqlite", None, Notice(Problem.STORE_DAMAGED, "it is damaged", "move it")
+    ),
     "move": StoresMoved(
         (StoreMoved("diary", "/s/diary.sqlite", "/t/diary.sqlite", copied=True, left=("/s/diary.sqlite-shm",)),),
         ("notes",),
@@ -53,34 +57,44 @@ SAMPLES: dict[str, Answer] = {
                 "papers",
                 "/data/papers",
                 "/home/.sift/collections/papers.sqlite",
-                Unavailable("gone", "add it"),
+                Unavailable(Problem.STORE_MISSING, "gone", "add it"),
                 active=False,
             ),
         ),
     ),
     "index": IndexResult(
-        (CollectionIndexed("notes", Indexed(3, 1, 1, 0, 1)), CollectionIndexed("papers", Skipped("gone", "add it")))
+        (
+            CollectionIndexed("notes", Indexed(3, 1, 1, 0, 1)),
+            CollectionIndexed("papers", Skipped(Problem.FOLDER_MISSING, "gone", "add it")),
+        )
     ),
     "index files": IndexResult(
         (
             CollectionIndexed(
                 "notes",
                 Indexed(2, 0, 1, 0, 1),
-                (FileIndexed("notes/rl.md", "changed"), FileIndexed("notes/scan.pdf", "unreadable", "no text")),
+                (
+                    FileIndexed("notes/rl.md", "changed"),
+                    FileIndexed("notes/scan.pdf", "unreadable", "no text"),
+                    FileIndexed("notes/locked.md", "unreadable", "Access is denied", Problem.OS),
+                ),
             ),
         )
     ),
     "embed": EmbedResult(
-        (CollectionEmbedded("notes", Embedded(7, 0)), CollectionEmbedded("papers", Skipped("gone", "add it")))
+        (
+            CollectionEmbedded("notes", Embedded(7, 0)),
+            CollectionEmbedded("papers", Skipped(Problem.STORE_MISSING, "gone", "add it")),
+        )
     ),
     "get": Documents(
         (DocumentText("notes/a.md", "A", "# A\n", {"year": 2024}),),
         (
-            Unfound(
-                "notes/b.md",
+            Notice(
+                Problem.UNKNOWN_DOCUMENT,
                 "unknown document 'notes/b.md'",
                 "take the id from a search result",
-                Problem.UNKNOWN_DOCUMENT,
+                id="notes/b.md",
             ),
         ),
     ),
@@ -90,6 +104,7 @@ SAMPLES: dict[str, Answer] = {
         (UNSEARCHED,),
         partial=True,
         ruled_out=1,
+        left_out=(Notice(Problem.NOT_EMBEDDED, "1 document has no vectors: searched by keyword alone", None, "notes"),),
     ),
     "links": Links(
         "notes/a.md",

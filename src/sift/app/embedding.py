@@ -77,8 +77,8 @@ def _filled(connection: Connection, work: Work) -> Embedded:
 
 
 def _skipped(one: Collection, report: Reporter, error: StoreUnavailableError) -> CollectionEmbedded:
-    report(Noted(error.message, error.remedy))
-    return CollectionEmbedded(one.name, Skipped(error.message, error.remedy))
+    report(Noted(error.message, error.remedy, error.code))
+    return CollectionEmbedded(one.name, Skipped(error.code, error.message, error.remedy))
 
 
 def _embedded(one: Collection, work: Work, failed: Failed) -> CollectionEmbedded:
@@ -113,7 +113,7 @@ def _reset(home: Path, report: Reporter, ready: Callable[[], None], embedding_no
     for one in known:
         if one.id in failed and one.id not in now:
             report(CollectionStarted(one.name, str(one.folder)))
-            report(Noted(failed[one.id].message, failed[one.id].remedy))
+            report(Noted(failed[one.id].message, failed[one.id].remedy, failed[one.id].code))
     return failed
 
 

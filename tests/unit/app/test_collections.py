@@ -18,7 +18,7 @@ from sift.api.collections import (
     Unavailable,
 )
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError, NotFoundError
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem
 from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections
 from sift.app.collections import activate, add, status
@@ -212,7 +212,7 @@ def test_status_says_why_a_store_cannot_be_read(tmp_path: Path, home: Path) -> N
     added = new(home, AddCollection(str(folder(tmp_path, "notes"))))
     Path(added.store).unlink()
     (only,) = status(home, ShowStatus()).collections
-    assert only.contents == Unavailable(f"the store is missing: {added.store}", MISSING_REMEDY)
+    assert only.contents == Unavailable(Problem.STORE_MISSING, f"the store is missing: {added.store}", MISSING_REMEDY)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")

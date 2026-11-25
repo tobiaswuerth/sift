@@ -4,9 +4,10 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
-from sift.api.documents import MOST_LINE, Documents, DocumentText, GetDocuments, Unfound, WantedDocument
+from sift.api.documents import MOST_LINE, Documents, DocumentText, GetDocuments, WantedDocument
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, SiftError
 from sift.api.ids import CollectionId
+from sift.api.notices import Notice, notice_of
 from sift.domain.query import fields as shown
 from sift.domain.text.kinds import public_id, split_keyed_path
 from sift.domain.text.lines import refuse_past_end
@@ -94,17 +95,17 @@ def resolved_at(transaction: Reading, name: str, id_: str, relative: str, *, abs
     return found
 
 
-def _lines(wanted: WantedDocument) -> tuple[int, int] | None:
+def _lines(wanted: WantedDocument, at: int) -> tuple[int, int] | None:
     if wanted.first_line is None and wanted.last_line is None:
         return None
     first, last = wanted.first_line or 1, wanted.last_line or MOST_LINE
     if last < first:
         said = f"{wanted.id}: line {last} comes before line {first}"
-        raise InvalidRequestError(said, "give the first line before the last", "documents")
+        raise InvalidRequestError(said, "give the first line before the last", f"documents[{at}].last_line")
     return first, last
 
 
-type Read = DocumentText | Unfound
+type Read = DocumentText | Notice
 type StoreReading = Callable[[Path, CollectionId], AbstractContextManager[Reading]]
 
 
@@ -115,12 +116,12 @@ class _Placed:
     relative: str
 
 
-def _unfound(wanted: WantedDocument, error: SiftError) -> Unfound:
-    return Unfound(wanted.id, error.message, error.remedy, error.code)
+def _unread(wanted: WantedDocument, error: SiftError) -> Notice:
+    return notice_of(error, id_=wanted.id)
 
 
 def _document(transaction: Reading, chosen: Collection, placed: _Placed, fields: tuple[str, ...]) -> DocumentText:
-    wanted, span = placed.wanted, _lines(placed.wanted)
+    wanted, span = placed.wanted, _lines(placed.wanted, placed.at)
     found = resolved_at(transaction, chosen.name, wanted.id, placed.relative, absolute=Path(wanted.id).is_absolute())
     read = lines_between(transaction, found.id, *span) if span else LinesRead(text_of(transaction, found.id), 0)
     whole = public_id(chosen.name, found.path, found.key)
@@ -134,7 +135,7 @@ def _answered(transaction: Reading, chosen: Collection, placed: _Placed, fields:
     try:
         return _document(transaction, chosen, placed, fields)
     except SiftError as error:
-        return _unfound(placed.wanted, error)
+        return _unread(placed.wanted, error)
 
 
 def _read_from(
@@ -146,13 +147,13 @@ def _read_from(
             for placed in asked:
                 answers[placed.at] = _answered(transaction, chosen, placed, fields)
     except SiftError as error:
-        return {placed.at: answers.get(placed.at) or _unfound(placed.wanted, error) for placed in asked}
+        return {placed.at: answers.get(placed.at) or _unread(placed.wanted, error) for placed in asked}
     return answers
 
 
 def documents(home: Path, request: GetDocuments, reading: StoreReading = read_store) -> Documents:
-    for wanted in request.documents:
-        _lines(wanted)
+    for at, wanted in enumerate(request.documents):
+        _lines(wanted, at)
     known = known_collections(home)
     answers: dict[int, Read] = {}
     held: dict[CollectionId, tuple[Collection, list[_Placed]]] = {}
@@ -160,11 +161,11 @@ def documents(home: Path, request: GetDocuments, reading: StoreReading = read_st
         try:
             chosen, relative = place(known, wanted.id)
         except SiftError as error:
-            answers[at] = _unfound(wanted, error)
+            answers[at] = _unread(wanted, error)
             continue
         held.setdefault(chosen.id, (chosen, []))[1].append(_Placed(at, wanted, relative))
     for chosen, asked in held.values():
         answers |= _read_from(chosen, asked, request.fields, reading)
     ordered = [answers[at] for at in range(len(request.documents))]
     found = tuple(each for each in ordered if isinstance(each, DocumentText))
-    return Documents(found, tuple(each for each in ordered if isinstance(each, Unfound)))
+    return Documents(found, tuple(each for each in ordered if isinstance(each, Notice)))

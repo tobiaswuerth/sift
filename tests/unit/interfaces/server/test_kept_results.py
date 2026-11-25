@@ -8,7 +8,8 @@ import pytest
 from sift.api.errors import Problem
 from sift.api.events import Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections, IndexResult
-from sift.api.search import Hit, SearchKeywords, SearchResult, Unsearched
+from sift.api.notices import Notice
+from sift.api.search import Hit, SearchKeywords, SearchResult
 from sift.app.indexing import index
 from sift.interfaces.acts.acting import Act, Acting
 from sift.interfaces.server.handled import HANDLED, Handled, handled
@@ -18,7 +19,7 @@ from tests.files import write
 from tests.serving import Line, asked, counted, last, running
 
 HIT = Hit("n/a.md", "n", "a.md", "A", 1, 1, 1.0, None)
-UNSEARCHED = Unsearched("m", "the store is missing", None, Problem.STORE_MISSING)
+UNSEARCHED = Notice(Problem.STORE_MISSING, "the store is missing", None, "m")
 
 
 def hits_of(lines: list[Line]) -> list[str]:

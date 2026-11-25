@@ -12,6 +12,7 @@ from sift.api.events import Advanced, Event, Noted
 from sift.api.indexing import IndexCollections, Indexed
 from sift.api.search import SearchKeywords
 from sift.app.collections import add
+from sift.app.documents import documents
 from sift.app.embedding import embed
 from sift.app.filing import Limits, Readers
 from sift.app.indexing import index
@@ -28,7 +29,7 @@ from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
 from sift.storage.vector_meta import left
 from tests.files import write
-from tests.homes import text_of, unreadable_files
+from tests.homes import asked, text_of, unreadable_files
 from tests.keyword_stores import vectors_by_text
 from tests.later import in_process, later, reading
 from tests.mails import PARAGRAPH, mail_bytes, message, nested_parts, only, sample
@@ -46,6 +47,15 @@ def indexed(
     ).collections
     assert isinstance(one.outcome, Indexed)
     return one.outcome
+
+
+def test_a_nul_in_a_file_is_stored_as_a_replacement_character(tmp_path: Path) -> None:
+    home, root = tmp_path / "home", tmp_path / "notes"
+    write(root / "pasted.md", "")
+    (root / "pasted.md").write_bytes(b"# Num\x00bers\n")
+    add(home, AddCollection(str(root)))
+    indexed(home)
+    assert documents(home, asked("notes/pasted.md")).found[0].title == "Num\N{REPLACEMENT CHARACTER}bers"
 
 
 def found_ids(home: Path) -> list[str]:

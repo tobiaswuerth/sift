@@ -17,7 +17,7 @@ from sift.api.links import (
     Target,
     Unresolved,
 )
-from sift.api.search import Unsearched, unsearched
+from sift.api.notices import Notice, notice_of
 from sift.app.collections import searchable
 from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, linking, note_of, read_in, unresolved_links
 from sift.domain.text.kinds import public_id
@@ -129,7 +129,7 @@ def _links(transaction: Reading, found: Note, request: ShowLinks) -> Links:
 
 
 def links(home: Path, request: ShowLinks) -> Links:
-    named = note_of(home, request.id)
+    named = note_of(home, request.id, "id")
     shown = read_in(named.note.collection, lambda transaction: _links(transaction, named.note, request))
     return replace(shown, unsearched=named.unsearched)
 
@@ -158,12 +158,12 @@ def _unresolved(collection: str, transaction: Reading) -> list[tuple[str, list[s
 
 def unresolved(home: Path, request: ListUnresolved) -> Unresolved:
     found: list[tuple[str, list[str]]] = []
-    passed: list[Unsearched] = []
+    passed: list[Notice] = []
     for one in searchable(home, request.collections):
         try:
             found += read_in(one, partial(_unresolved, one.name))
         except StoreUnavailableError as error:
-            passed.append(unsearched(one.name, error))
+            passed.append(notice_of(error, one.name))
     ranked = sorted(found, key=lambda each: (-len(each[1]), each[0]))[: request.k]
     targets = tuple(Target(target, len(ids), tuple(sorted(ids)[:LINKING_SHOWN])) for target, ids in ranked)
     return Unresolved(targets, tuple(passed))

@@ -11,7 +11,8 @@ from sift.api.errors import InvalidRequestError, NotFoundError, Problem
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
 from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections, Skipped
-from sift.api.search import Hit, SearchKeywords, SearchResult, Unsearched
+from sift.api.notices import Notice
+from sift.api.search import Hit, SearchKeywords, SearchResult
 from sift.app.collections import add, status
 from sift.app.documents import documents
 from sift.app.indexing import index
@@ -202,7 +203,7 @@ def test_a_store_that_cannot_be_read_is_passed_over_and_said(home: Path, tmp_pat
     assert [hit.id for hit in result.hits] == ["notes/halo.md"]
     assert result.searched == 1
     (missing,) = result.unsearched
-    assert dataclasses.replace(missing, message="") == Unsearched("more", "", MISSING_REMEDY, Problem.STORE_MISSING)
+    assert dataclasses.replace(missing, message="") == Notice(Problem.STORE_MISSING, "", MISSING_REMEDY, "more")
 
 
 @pytest.mark.parametrize("table", ["keyword_postings", "chunks", "keyword_segments", "sources"])
@@ -286,7 +287,7 @@ def test_two_stores_lost_in_one_search_leave_the_third_to_answer(home: Path, tmp
     damage_table(home / "collections" / "third.sqlite", "sources")
     result = search(home, SearchKeywords("halo"))
     assert result.hits == alone
-    assert sorted(each.collection for each in result.unsearched) == ["notes", "third"]
+    assert sorted(str(each.collection) for each in result.unsearched) == ["notes", "third"]
     assert result.searched == 1
 
 

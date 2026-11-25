@@ -56,15 +56,15 @@ def _held(one: Collection, target: str) -> bool:
         return True
 
 
-def _found(home: Path, spec: str) -> Pointed:
-    named = note_of(home, spec)
-    where = frozenset({named.note.collection.name, *(each.collection for each in named.unsearched)})
+def _found(home: Path, spec: str, field: str) -> Pointed:
+    named = note_of(home, spec, field)
+    where = frozenset({named.note.collection.name, *(each.collection for each in named.unsearched if each.collection)})
     return Pointed(spec, named.note, target_of(spec), where)
 
 
 def _linked_to(home: Path, scope: Sequence[Collection], spec: str) -> Pointed:
     try:
-        return _found(home, _checked(spec, "links_to"))
+        return _found(home, _checked(spec, "links_to"), "links_to")
     except NotFoundError:
         target = target_of(spec)
         held = frozenset(one.name for one in scope if _held(one, target))
@@ -74,12 +74,12 @@ def _linked_to(home: Path, scope: Sequence[Collection], spec: str) -> Pointed:
 
 
 def _linking_from(home: Path, spec: str) -> Pointed:
-    return _found(home, _checked(spec, "linked_from"))
+    return _found(home, _checked(spec, "linked_from"), "linked_from")
 
 
 def _filtered(home: Path, each: LinkFilter) -> Pointed:
     try:
-        return _found(home, each.target)
+        return _found(home, each.target, "filters")
     except NotFoundError:
         return Pointed(each.target, None, each.target, frozenset())
 
@@ -90,7 +90,7 @@ def _reachable(scope: tuple[Collection, ...], pointed: Sequence[Pointed]) -> Non
         if each.note is not None and not each.where & names:
             name = each.note.collection.name
             said = f"{each.spec!r} is a note of {name}, and links stay within their collection"
-            raise InvalidRequestError(said, f"search the collection {name}, or every collection")
+            raise InvalidRequestError(said, f"search the collection {name}, or every collection", "collections")
 
 
 def _kept(

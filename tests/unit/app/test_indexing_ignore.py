@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from sift.api.collections import AddCollection
+from sift.api.errors import Problem
 from sift.api.events import Event, Noted
 from sift.api.indexing import CollectionIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import add
@@ -62,8 +63,8 @@ def test_a_collection_whose_siftignore_cannot_be_read_is_skipped_and_keeps_its_d
     said: list[Event] = []
     skipped, other = indexed(home, said.append).collections
     reason = f"its {IGNORE_FILE} can't be read (it is not a file)"
-    assert skipped == CollectionIndexed("notes", Skipped(reason, IGNORE_REMEDY))
-    assert Noted(reason, IGNORE_REMEDY) in said
+    assert skipped == CollectionIndexed("notes", Skipped(Problem.OS, reason, IGNORE_REMEDY))
+    assert Noted(reason, IGNORE_REMEDY, Problem.OS) in said
     assert other == CollectionIndexed("other", Indexed(1, 1, 0, 0, 0))
     assert held(home) == list(PATHS)
 
