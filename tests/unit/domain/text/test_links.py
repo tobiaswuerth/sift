@@ -1,6 +1,8 @@
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
-from sift.domain.text.links import Link, LinkKind, Name, NameKind, aliases, front_matter_links, name_key, names
+from sift.domain.text.links import Link, LinkKind, Name, NameKind, aliases, name_key, names
 from sift.domain.text.notes import note
 
 type Found = tuple[str | None, int, LinkKind, str, str | None, str | None]
@@ -174,5 +176,40 @@ def test_a_name_s_key_leaves_out_a_markdown_extension_alone() -> None:
 
 
 def test_a_link_in_a_list_item_holding_a_key_belongs_to_the_list_s_field() -> None:
-    found = front_matter_links("---\nrelated:\n  - see: [[Alice]]\n# owner: [[Bob]]\n---\n")
-    assert [(link.field, link.target) for link in found] == [("related", "Alice")]
+    links = found("---\nrelated:\n  - see: [[Alice]]\n# owner: [[Bob]]\n---\n")
+    assert [(link.field, link.line, link.target) for link in links] == [("related", 3, "Alice")]
+
+
+@pytest.mark.parametrize(
+    "head, fields",
+    [
+        ("org: x\n-x: [[Acme]]", [("-x", "Acme")]),
+        ("related:\n- see: [[Alice]]", [("related", "Alice")]),
+        ("e\N{COMBINING ACUTE ACCENT}: [[Alice]]", [("\N{LATIN SMALL LETTER E WITH ACUTE}", "Alice")]),
+        (
+            "e\N{COMBINING ACUTE ACCENT}: [[Alice]]\n\N{LATIN SMALL LETTER E WITH ACUTE}: [[Bob]]",
+            [("e\N{COMBINING ACUTE ACCENT}", "Alice"), ("\N{LATIN SMALL LETTER E WITH ACUTE}", "Bob")],
+        ),
+    ],
+    ids=["a key starting with a dash", "an item at the margin", "a decomposed key", "a decomposed key beside its twin"],
+)
+def test_a_front_matter_link_s_field_is_the_field_its_line_is_read_into(
+    head: str, fields: list[tuple[str, str]]
+) -> None:
+    document = note(f"---\n{head}\n---\n".encode(), "n.md")
+    assert [(link.field, link.target) for link in document.links] == fields
+    assert {field for field, _ in fields} <= set(document.fields)
+
+
+KEYS = st.sampled_from(
+    ["a", "-a", "- a", "#a", "[[a]]", "\N{LATIN SMALL LETTER E WITH ACUTE}", "e\N{COMBINING ACUTE ACCENT}"]
+)
+VALUES = st.sampled_from(["", " [[a]]", " x [[a]]", " [[[a]]]", " |", " [", " ]", " {", " # [[a]]"])
+LEADS = st.sampled_from(["", "  ", "- ", "  - ", "#"])
+head_lines = st.lists(st.tuples(LEADS, KEYS, st.sampled_from([":", ""]), VALUES).map("".join), max_size=8)
+
+
+@given(head_lines)
+def test_the_field_of_every_front_matter_link_is_a_field_of_the_note(lines: list[str]) -> None:
+    document = note(("---\n" + "\n".join(lines) + "\n---\nbody\n").encode(), "n.md")
+    assert {link.field for link in document.links} - {None} <= set(document.fields)

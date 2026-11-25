@@ -9,9 +9,9 @@ from sift.api.collections import TitleFrom
 from sift.api.fields import Fields
 from sift.domain.text.chunks import Chunk, chunk_of, chunks, groups, pieces
 from sift.domain.text.decoding import text_pieces
-from sift.domain.text.front_matter import FrontMatter, front_matter
+from sift.domain.text.front_matter import FrontMatter, front_matter, front_matter_links
 from sift.domain.text.json_values import REPLACEMENT, composed_fields
-from sift.domain.text.links import MARKDOWN, Link, front_matter_links, in_line
+from sift.domain.text.links import MARKDOWN, Link, in_line
 from sift.domain.text.markdown import TextLine, heading_of, text_lines, title_of, with_prose
 
 NUL = "\N{NULL}"
@@ -120,7 +120,7 @@ def _parts(found: FrontMatter | None, head: str, body: Iterable[TextLine], read:
     if found:
         yield storable(head)
         if markdown and _linking(head):
-            yield from front_matter_links(head)
+            yield from front_matter_links(found)
     headings: list[str] = []
     chunked_body = False
     for part in _body(body, markdown=markdown, headings=headings):

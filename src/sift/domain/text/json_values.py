@@ -2,7 +2,7 @@ import json
 import math
 import re
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import cast
 
 from sift.api.fields import Fields, FieldValue
@@ -112,11 +112,16 @@ def _composed(text: str) -> str:
     return unicodedata.normalize("NFC", text)
 
 
+def composed_names(names: Iterable[str]) -> dict[str, str]:
+    given = list(names)
+    taken = {name for name in given if _composed(name) == name}
+    renamed: dict[str, str] = {}
+    for name in given:
+        renamed[name] = name if _composed(name) in taken else _composed(name)
+        taken.add(renamed[name])
+    return renamed
+
+
 def composed_fields(fields: Fields) -> Fields:
-    taken = {name for name in fields if _composed(name) == name}
-    found: dict[str, FieldValue] = {}
-    for name, value in fields.items():
-        key = name if _composed(name) in taken else _composed(name)
-        taken.add(key)
-        found[key] = strings_changed(value, _composed)
-    return found
+    renamed = composed_names(fields)
+    return {renamed[name]: strings_changed(value, _composed) for name, value in fields.items()}

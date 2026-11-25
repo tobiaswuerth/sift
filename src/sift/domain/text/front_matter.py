@@ -1,19 +1,21 @@
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import MappingProxyType
+from typing import NamedTuple
 
 from sift.api.fields import Fields, FieldValue
-from sift.domain.text.json_values import MOST_DEPTH, deeper_than, depth, inside, json_value
+from sift.domain.text.json_values import MOST_DEPTH, composed_names, deeper_than, depth, inside, json_value
+from sift.domain.text.links import WIKILINK, Link, in_line
 
 BLOCK = re.compile(r"\A---[ \t]*\r?\n(?:(.*?)\r?\n)??---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 LIST_ITEM = re.compile(r"[ \t]*-[ \t]+(.*)")
 AT_THE_MARGIN = frozenset({"-", "]", "}", "],", "},"})
 BLOCK_SCALAR = re.compile(r"([|>])[+-]?[1-9]?[+-]?(?:[ \t]+#.*)?")
-WIKILINK = re.compile(r"\[\[[^\[\]\n]*\]\]")
 CLOSERS = frozenset({"", "]", "}"})
 MOST_FLOW_NESTING = 32
+FIRST_INNER_LINE = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +87,8 @@ def flow_items(text: str) -> list[str] | None:
 
 
 def value(text: str) -> FieldValue:
+    if WIKILINK.fullmatch(text):
+        return text
     try:
         return json_value(text)
     except ValueError:
@@ -93,7 +97,7 @@ def value(text: str) -> FieldValue:
 
 
 def flow_list(text: str) -> list[FieldValue] | None:
-    if not (text.startswith("[") and text.endswith("]")) or WIKILINK.fullmatch(text):
+    if not (text.startswith("[") and text.endswith("]")):
         return None
     items = flow_items(text)
     return None if items is None else [value(item.strip()) for item in items if item.strip()]
@@ -144,10 +148,16 @@ TAKES: Mapping[Kind, Callable[[str], bool]] = MappingProxyType(
 )
 
 
+class OwnedLine(NamedTuple):
+    key: str | None
+    written: str
+
+
 @dataclass(frozen=True, slots=True)
 class Entries:
     found: dict[str, tuple[Entry, list[str]]]
     lost: bool
+    held: tuple[OwnedLine, ...]
 
 
 def _lost_below_a_list(current: tuple[Entry, list[str]] | None, line: str) -> bool:
@@ -158,9 +168,11 @@ def entries(lines: Iterable[str]) -> Entries:
     found: dict[str, tuple[Entry, list[str]]] = {}
     current: tuple[Entry, list[str]] | None = None
     brackets, lost = Brackets(), False
+    held: list[OwnedLine] = []
     for line in lines:
         if current is not None and TAKES[current[0].kind](line):
             current[1].append(line)
+            held.append(OwnedLine(current[0].key, line))
             if current[0].kind is Kind.FLOW and (brackets := read_on(line.strip(), brackets)).depth <= 0:
                 current = None
             continue
@@ -170,7 +182,10 @@ def entries(lines: Iterable[str]) -> Entries:
         if started := _key_line(line):
             current = found[started.key] = (started, [])
             brackets = read_on(started.value, Brackets()) if started.kind is Kind.FLOW else Brackets()
-    return Entries(found, lost)
+        held.append(
+            OwnedLine(started.key, started.value) if started else OwnedLine(held[-1].key if held else None, line)
+        )
+    return Entries(found, lost, tuple(held))
 
 
 def block_scalar(lines: Sequence[str], *, folded: bool) -> str:
@@ -244,3 +259,11 @@ def front_matter(text: str) -> FrontMatter | None:
     start = found.start(1) if found.group(1) is not None else found.end()
     read = entries(inner.split("\n"))
     return FrontMatter(_fields_of(read, inner), inner, start, found.end(), read.lost)
+
+
+def front_matter_links(found: FrontMatter) -> Iterator[Link]:
+    read = entries(found.inner.split("\n"))
+    named = composed_names(read.found)
+    for number, (key, written) in enumerate(read.held, FIRST_INNER_LINE):
+        if key is not None and "[[" in written and not written.lstrip().startswith("#"):
+            yield from in_line(written, number, named[key])

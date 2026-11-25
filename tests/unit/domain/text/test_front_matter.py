@@ -83,6 +83,9 @@ def test_windows_line_endings() -> None:
         ("[ ]", []),
         ("[[Acme AG]]", "[[Acme AG]]"),
         ("[[Acme AG|Acme]]", "[[Acme AG|Acme]]"),
+        ("[[2024]]", "[[2024]]"),
+        ("[[1, 2]]", "[[1, 2]]"),
+        ("![[cover.png]]", "![[cover.png]]"),
         ("[[[Anna Keller]], [[Peter Frei|Peter]]]", ["[[Anna Keller]]", "[[Peter Frei|Peter]]"]),
         ('["[[Anna Keller]]", "[[Peter Frei]]"]', ["[[Anna Keller]]", "[[Peter Frei]]"]),
         ("[[A]], [[B]]", "[[A]], [[B]]"),
@@ -105,8 +108,8 @@ def test_values_sqlite_cannot_store_or_python_cannot_nest_stay_as_written() -> N
     nested = "[" * 1100 + "1" + "]" * 1100
     assert fields(f"---\nx: {nested}\nsize: 1e400\n---\n") == {"x": nested, "size": "1e400"}
     deep = "[" * 999 + "1" + "]" * 999
-    parsed = fields(f"---\ntags:\n  - {deep}\n  - fine\nk: [x, {deep}]\nok: [[1]]\n---\n")
-    assert parsed == {"tags": [deep, "fine"], "k": f"[x, {deep}]", "ok": [[1]]}
+    parsed = fields(f"---\ntags:\n  - {deep}\n  - fine\nk: [x, {deep}]\nok: [[1, 2], 3]\n---\n")
+    assert parsed == {"tags": [deep, "fine"], "k": f"[x, {deep}]", "ok": [[1, 2], 3]}
     assert depth(dict(parsed)) <= MOST_DEPTH + 1
 
 

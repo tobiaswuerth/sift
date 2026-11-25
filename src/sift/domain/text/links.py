@@ -178,17 +178,6 @@ def in_line(line: str, number: int, field: str | None = None) -> list[Link]:
     return [link for _, link in sorted(found, key=lambda item: item[0]) if link]
 
 
-def front_matter_links(head: str) -> Iterator[Link]:
-    field: str | None = None
-    for number, line in enumerate(head.split("\n")[:-1], 1):
-        name, colon, rest = line.partition(":")
-        starts = bool(colon and name.strip() and not name[0].isspace() and name[0] not in "#-")
-        field = name.strip() if starts else field
-        written = rest if starts else line
-        if field and "[[" in written and not written.lstrip().startswith("#"):
-            yield from in_line(written, number, field)
-
-
 def each_of(found: FieldValue) -> Sequence[FieldValue]:
     return found if isinstance(found, Sequence) and not isinstance(found, str) else (found,)
 
