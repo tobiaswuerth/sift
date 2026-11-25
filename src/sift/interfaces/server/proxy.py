@@ -64,6 +64,7 @@ class Starting:
     start: Start = started
     idle: int = IDLE_SECONDS
     patience: float = STARTING_SECONDS
+    quiet: float = QUIET_SECONDS
 
 
 STARTING = Starting()
@@ -102,8 +103,8 @@ class _Home:
         raise StoreUnavailableError(NOT_STARTED.format(seconds=starting.patience), LOG_REMEDY)
 
 
-def _posted(endpoint: Endpoint, body: bytes) -> tuple[int, bytes]:
-    connection = http.client.HTTPConnection(LOCALHOST, endpoint.port, timeout=QUIET_SECONDS)
+def _posted(endpoint: Endpoint, body: bytes, quiet: float) -> tuple[int, bytes]:
+    connection = http.client.HTTPConnection(LOCALHOST, endpoint.port, timeout=quiet)
     try:
         connection.request("POST", MCP_PATH, body, {"Content-Type": "application/json"})
         response = connection.getresponse()
@@ -129,9 +130,9 @@ def _failed(body: bytes, message: str) -> bytes | None:
 def _relayed(home: _Home, body: bytes) -> bytes | None:
     try:
         try:
-            status, answer = _posted(home.endpoint(), body)
-        except (ConnectionError, TimeoutError, http.client.HTTPException):
-            status, answer = _posted(home.endpoint(again=True), body)
+            status, answer = _posted(home.endpoint(), body, home.starting.quiet)
+        except (ConnectionError, http.client.HTTPException):
+            status, answer = _posted(home.endpoint(again=True), body, home.starting.quiet)
     except StoreUnavailableError as error:
         return _failed(body, f"{error.message}; fix: {error.remedy}")
     except (ConnectionError, TimeoutError, http.client.HTTPException) as error:

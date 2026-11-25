@@ -115,6 +115,31 @@ def test_a_home_process_that_stops_answering_is_said_to_each_message_waiting(set
     assert cast("str", error["message"]).startswith("the home process does not answer: ")
 
 
+def connections_waiting(listening: socket.socket) -> int:
+    listening.settimeout(0)
+    found = 0
+    while True:
+        try:
+            listening.accept()[0].close()
+        except BlockingIOError:
+            return found
+        found += 1
+
+
+def test_a_home_process_that_stays_silent_is_asked_once_and_said_to_the_message_waiting(settings: Settings) -> None:
+    settings.home.mkdir(parents=True)
+    out = io.BytesIO()
+    with socket.create_server(("127.0.0.1", 0)) as silent:
+        port = cast("tuple[str, int]", silent.getsockname())[1]
+        written(own_endpoint(settings), Endpoint(port, os.getpid(), "t", "2.0.0"))
+        with sole_writer(settings.home / SERVER, SERVING):
+            proxied(settings, quiet, Pipes(lines(LISTED), out), Starting(quiet=0.2))
+        asked = connections_waiting(silent)
+    (refused,) = answers(out).values()
+    said = cast("str", cast("Message", refused["error"])["message"])
+    assert (asked, refused["id"], said.startswith("the home process does not answer: ")) == (1, 2, True)
+
+
 WINDOW_SAID = (
     "import ctypes, sys; k, u = ctypes.windll.kernel32, ctypes.windll.user32; w = k.GetConsoleWindow(); "
     "open(sys.argv[1], 'w').write(f'{w != 0} {bool(u.IsWindowVisible(w))} {bool(u.IsIconic(w))}')"
