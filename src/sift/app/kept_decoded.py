@@ -8,7 +8,7 @@ from typing import cast
 from sift.api.ids import CollectionId
 from sift.app.resident import KeywordsAt
 from sift.domain.arrays import Ids
-from sift.retrieval.keyword.lists import BlockKey, DecodedLists, Dense, PostingArrays, held_bytes
+from sift.retrieval.keyword.lists import DecodedLists, Dense, PostingArrays, held_bytes
 
 KEPT_BYTES = 512 << 20
 ENTRY_BYTES = 512
@@ -36,9 +36,9 @@ class KeptDecoded:
                 self._dropped(lambda key: key[:2] == (at.store, at.collection))
                 self.generations[at.store, at.collection] = at.generation
         return DecodedLists(
-            _KeptView[int, Dense](self, at, LENGTHS),
-            _KeptView[BlockKey, PostingArrays](self, at, BLOCKS),
-            _KeptView[BlockKey, Ids](self, at, POSITIONS),
+            _KeptView(self, at, LENGTHS),
+            _KeptView(self, at, BLOCKS),
+            _KeptView(self, at, POSITIONS),
         )
 
     def got(self, key: EntryKey) -> Decoded | None:

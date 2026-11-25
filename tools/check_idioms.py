@@ -9,6 +9,7 @@ from typing import TypeGuard
 
 from tools.canonical import canonical
 from tools.findings import PYTHON_ROOTS, Finding, found, report
+from tools.idioms_python import generics_called
 from tools.idioms_storage import storage_idioms
 
 CORE = ("src/sift/api/", "src/sift/domain/")
@@ -374,6 +375,7 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *(waits_dropped(path, tree) if in_tests and path != WAITS else ()),
         *(truthy_asserts(path, tree) if in_tests else ()),
         *storage_idioms(path, tree),
+        *generics_called(path, tree),
     )
 
 

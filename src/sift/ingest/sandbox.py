@@ -242,7 +242,7 @@ class _Pool[A: FileTask, B]:
             greeting = _Greeting()
             listener = threading.Thread(target=_listened, args=(self.made, answers, greeting, self.heard), daemon=True)
             listener.start()
-            worker = _Worker[A](self.made, process, asked, answers, greeting, listener)
+            worker: _Worker[A] = _Worker(self.made, process, asked, answers, greeting, listener)
             self.workers[self.made] = worker
             started.append(worker)
         deadline = self.clock() + self.patience.start_seconds
