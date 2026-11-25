@@ -69,7 +69,8 @@ need its new keys; ids of JSON Lines records and mail attachments are written an
 - Your commands send the home process a token, kept with its port in your own folder (`%LOCALAPPDATA%\sift` on
   Windows, `~/.local/state/sift` elsewhere), readable by you alone, never in the home: it grants the whole command
   line. MCP and the UI take none, answer only requests addressed to `127.0.0.1` or `localhost`, and MCP refuses what
-  web pages of other sites send ([security](docs/SECURITY.md)).
+  web pages of other sites send; no other site can show the UI's pages or files in a frame, or load them
+  ([security](docs/SECURITY.md)).
 
 ## [1.15.2] - 2026-11-22
 
