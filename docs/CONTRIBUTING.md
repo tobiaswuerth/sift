@@ -18,12 +18,14 @@ uv run pre-commit install
 uv run --only-group gate nox
 ```
 
-It runs every check a change must pass, stops at the first that fails, and CI runs the same sessions: `lint`
+It runs every check a change must pass and stops at the first that fails: `lint`
 (pre-commit hooks and import contracts; it refuses files git neither tracks nor ignores), `types` (basedpyright for
 Linux, macOS and Windows, each as Python 3.12 and 3.15), `tests-3.12` and `tests-3.15` (100% line and branch
 coverage of `sift` and `tools`), `lowest` (the lowest versions sift allows), `package` (the wheel and sdist hold the
 tracked sources and nothing else, and the installed commands run). One session:
-`uv run --only-group gate nox -s types`. Before a release, `nox -s explore` runs the property tests with fresh
+`uv run --only-group gate nox -s types`. CI runs these sessions too, and the tests on every Python from 3.12 to
+3.15 on Linux (x86 and ARM), macOS and Windows, which no local run covers. `lowest` and `package` install
+packages, so they need the network. Before a release, `nox -s explore` runs the property tests with fresh
 random examples, 2,000 each, and 200 at least for those that build stores (`few` in `tests/examples.py`); the gate
 runs them derandomized.
 Tests run on at most 8 workers: each worker imports every test module, the model libraries among them, and on 32
