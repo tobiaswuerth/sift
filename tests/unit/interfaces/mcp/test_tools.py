@@ -30,10 +30,12 @@ type Object = dict[str, Json]
 class Direct:
     acting: Acting
     asked: list[str] = field(default_factory=list[str])
+    sent: list[Json] = field(default_factory=list[Json])
     finished: bool = True
 
     def read(self, name: str, data: Json) -> object:
         self.asked.append(name)
+        self.sent.append(data)
         return for_agents(HANDLED)[name].run(self.acting, data)
 
     def job(self, name: str, data: Json) -> Started:
@@ -271,3 +273,31 @@ def test_a_refusal_names_what_the_tool_takes_for_its_kind_and_mode(direct: Direc
         "leave out 'compact': it takes id, kind, depth, field, k",
     )
     assert fuzzy.value.message == "mode is 'fuzzy', not hybrid, keyword or semantic"
+
+
+def test_several_queries_share_the_time_budget_one_call_has(direct: Direct) -> None:
+    called(direct, "search", {"query": ["Kestrel", "osprey"], "mode": "keyword", "budget": 2.0})
+    assert [cast("Object", each)["budget"] for each in direct.sent] == [1.0, 1.0]
+    called(direct, "search", {"query": "Kestrel", "mode": "keyword", "budget": 2.0})
+    assert cast("Object", direct.sent[-1])["budget"] == 2.0
+
+
+@pytest.mark.parametrize(
+    "arguments, said",
+    [
+        ({"query": ["a", "b"], "budget": -2}, "^-2 is outside"),
+        ({"query": ["a"] * 20, "budget": 0.01}, r"0\.01 s shared by 20 queries"),
+        ({"query": ["a", "b"], "k": 5_001}, r"10,000 hits"),
+    ],
+)
+def test_a_budget_or_k_too_wrong_for_several_queries_is_refused_as_asked(
+    direct: Direct, arguments: Object, said: str
+) -> None:
+    with pytest.raises(InvalidRequestError, match=said):
+        called(direct, "search", arguments)
+    assert direct.sent == []
+
+
+def test_several_queries_may_ask_for_as_many_hits_in_all_as_one_search(direct: Direct) -> None:
+    answer = called(direct, "search", {"query": ["Kestrel", "osprey"], "mode": "keyword", "k": 5_000})
+    assert len(cast("list[Object]", answer["results"])) == 2

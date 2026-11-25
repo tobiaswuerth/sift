@@ -3,17 +3,20 @@ from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import cast
 
+from sift.api.described import SECONDS
 from sift.api.errors import InvalidRequestError
 from sift.api.links import FindMentions, FindSimilar, Links, ShowLinks
-from sift.api.search import SearchHybrid
-from sift.api.wire import Json, encoded
+from sift.api.search import MOST_HITS, Options, SearchHybrid, SearchKeywords, SearchVectors
+from sift.api.wire import Json, decoded, encoded
 from sift.interfaces.acts.acting import answered
 from sift.interfaces.mcp.answers import ToolAnswer, compacted, hits_of, with_notes
 from sift.interfaces.mcp.schemas import Schema, schema_of
 from sift.interfaces.mcp.tools import Tool, ToolRunning
 
 MOST_QUERIES = 20
-MODES: Mapping[str, str] = MappingProxyType({"hybrid": "query", "keyword": "search", "semantic": "vsearch"})
+MODES: Mapping[str, tuple[str, type[Options]]] = MappingProxyType(
+    {"hybrid": ("query", SearchHybrid), "keyword": ("search", SearchKeywords), "semantic": ("vsearch", SearchVectors)}
+)
 KINDS: Mapping[str, tuple[str, type, str | None]] = MappingProxyType(
     {
         "similar": ("similar", FindSimilar, None),
@@ -25,7 +28,7 @@ KINDS: Mapping[str, tuple[str, type, str | None]] = MappingProxyType(
 QUERY = (
     'what to find: a question or a description (hybrid, semantic), or keywords (keyword): words, "phrases", '
     f"prefix*, AND, OR, NOT and (parentheses); several phrasings at once as a list of up to {MOST_QUERIES}, each "
-    "searched alike and answered in turn"
+    f"searched alike and answered in turn, sharing the budget; k times their number is at most {MOST_HITS:,}"
 )
 MODE = (
     "hybrid (default): keywords and meaning, reranked, for questions and topics; keyword: exact strings, such as "
@@ -75,6 +78,19 @@ def _queries(given: object) -> tuple[str, ...]:
     return tuple(cast("list[str]", listed))
 
 
+def _shared(rest: dict[str, object], queries: tuple[str, ...], request: type[Options]) -> dict[str, object]:
+    asked, n = decoded(request, {**rest, "query": queries[0]}), len(queries)
+    if asked.k * n > MOST_HITS:
+        said = f"{n} queries of {asked.k:,} hits each ask for more than {MOST_HITS:,} hits in all"
+        raise InvalidRequestError(said, f"ask for {MOST_HITS // n:,} hits each at most, or give fewer queries", "k")
+    if asked.budget is None:
+        return rest
+    if asked.budget / n < SECONDS.low:
+        said = f"{asked.budget:g} s shared by {n} queries leaves each less than {SECONDS.low:g} s"
+        raise InvalidRequestError(said, f"give a budget of {SECONDS.low * n:g} s at least", "budget")
+    return {**rest, "budget": asked.budget / n}
+
+
 def _search(running: ToolRunning, arguments: Mapping[str, object]) -> Json:
     rest = dict(arguments)
     if "query" not in rest:
@@ -82,7 +98,9 @@ def _search(running: ToolRunning, arguments: Mapping[str, object]) -> Json:
     queries, mode = _queries(rest.pop("query")), rest.pop("mode", "hybrid")
     if not isinstance(mode, str) or mode not in MODES:
         raise _refused("mode", mode, _either(MODES))
-    found = [hits_of(running.read(MODES[mode], cast("Json", {**rest, "query": query}))) for query in queries]
+    act, request = MODES[mode]
+    shared = _shared(rest, queries, request)
+    found = [hits_of(running.read(act, cast("Json", {**shared, "query": query}))) for query in queries]
     if isinstance(arguments["query"], str):
         return cast("Json", found[0])
     return {"results": [{"query": query, **each} for query, each in zip(queries, found, strict=True)]}
