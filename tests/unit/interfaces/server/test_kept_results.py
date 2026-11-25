@@ -17,6 +17,7 @@ from sift.interfaces.server.results import KEPT_HITS, RESULTS
 from sift.settings import Settings
 from tests.files import write
 from tests.serving import Line, asked, counted, last, running
+from tests.waits import joined, waited
 
 HIT = Hit("n/a.md", "n", "a.md", "A", 1, 1, 1.0, None)
 UNSEARCHED = Notice(Problem.STORE_MISSING, "the store is missing", None, "m")
@@ -151,7 +152,7 @@ def test_an_answer_found_while_the_home_is_written_is_not_kept(settings: Setting
 
     def writing(_acting: Acting, _request: IndexCollections) -> SearchResult:
         started.set()
-        release.wait(30)
+        waited(release, 30)
         return SearchResult((), 0, (), scored_by="keywords")
 
     ran = list[str]()
@@ -160,9 +161,9 @@ def test_an_answer_found_while_the_home_is_written_is_not_kept(settings: Setting
     with running(settings, blocked) as server:
         write_thread = threading.Thread(target=asked, args=(server, "index", {}))
         write_thread.start()
-        started.wait(30)
+        waited(started, 30)
         for _ in range(2):
             asked(server, "search", {"query": "x"})
         release.set()
-        write_thread.join(30)
+        joined(write_thread, 30)
     assert ran == ["x", "x"]

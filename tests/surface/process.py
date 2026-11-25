@@ -1,7 +1,6 @@
 import signal
 import subprocess
 import sys
-import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -10,6 +9,7 @@ from typing import cast
 from sift.interfaces.server.endpoint import own_endpoint
 from sift.settings import OWN_FOLDER, Settings
 from tests.environments import clean_environment
+from tests.waits import until
 
 INTERRUPT = cast("int", getattr(signal, "CTRL_BREAK_EVENT", signal.SIGINT))
 OWN_GROUP = cast("int", getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
@@ -58,11 +58,9 @@ def served(home: Path) -> Generator[subprocess.Popen[str]]:
         creationflags=OWN_GROUP,
     )
     try:
-        waited, listed = threading.Event(), own_endpoint(settings_of(home))
-        for _ in range(6000):
-            if listed.exists() or running.poll() is not None:
-                break
-            waited.wait(0.01)
+        listed = own_endpoint(settings_of(home))
+        started = until(lambda: listed.exists() or running.poll() is not None, 60)
+        assert started, "the home process neither listed its endpoint nor ended within 60 s"
         yield running
     finally:
         if running.poll() is None:

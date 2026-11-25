@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from sift.interfaces.cli.updates import DAY, Checking, Known, fetched, from_source, known, newer, told, upgrade_command
+from tests.waits import joined, waited
 
 NOW = 1_800_000_000.0
 LATEST = json.dumps({"info": {"version": "2.1.0"}}).encode()
@@ -47,7 +48,7 @@ def pypi(answer: bytes, status: int = 200) -> Generator[str]:
     finally:
         server.shutdown()
         server.server_close()
-        thread.join(5)
+        joined(thread, 5)
 
 
 @pytest.mark.parametrize("latest, installed", NEWER)
@@ -204,7 +205,7 @@ def test_a_pypi_that_does_not_answer_is_given_up_at_the_deadline(tmp_path: Path)
     released = threading.Event()
 
     def hanging(_url: str, _installed: str) -> str:
-        released.wait(10)
+        waited(released, 10)
         return "9.0.0"
 
     hung = dataclasses.replace(checking(tmp_path, fetch=hanging), deadline=0.05)

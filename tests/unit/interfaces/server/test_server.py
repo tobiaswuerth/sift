@@ -30,6 +30,7 @@ from sift.storage.store import read_store
 from tests.files import write
 from tests.models import Hashed
 from tests.serving import Line, asked, last, running, streaming
+from tests.waits import joined, waited
 
 
 def test_the_home_process_answers_every_command_the_command_line_has_but_serve() -> None:
@@ -173,7 +174,7 @@ def test_a_quiet_command_s_answer_is_kept_alive_by_a_line_while_nothing_else_is_
     release = threading.Event()
 
     def quiet(_acting: Acting, _data: object) -> object:
-        release.wait(30)
+        waited(release, 30)
         return Served("quiet")
 
     with (
@@ -193,18 +194,18 @@ def test_a_write_sent_while_another_writes_is_told_it_waits_then_runs(settings: 
 
     def writing(_acting: Acting, _data: object) -> object:
         started.set()
-        release.wait(30)
+        waited(release, 30)
         return Served("written")
 
     with running(settings, {**HANDLED, "add": Handled(writing, writes=True)}) as server:
         first = threading.Thread(target=asked, args=(server, "add", {}), daemon=True)
         first.start()
-        started.wait(30)
+        waited(started, 30)
         with streaming(server, "add") as response:
             told = cast("Line", json.loads(response.readline()))
             release.set()
             rest = response.read()
-        first.join(30)
+        joined(first, 30)
     waiting = WAITING.format(count="1 job", command="add", number=1)
     assert told == {"event": "Noted", "data": {"text": waiting, "remedy": None, "code": None}}
     assert rest.endswith(b'{"answer": {"url": "written"}}\n')
@@ -224,7 +225,7 @@ def test_rm_waits_for_searches_of_its_store_and_deletes_it(settings: Settings, n
         (one,) = known_collections(acting.settings.home)
         with read_store(one.store, one.id):
             started.set()
-            release.wait(30)
+            waited(release, 30)
         return Served("searched")
 
     with running(settings, {**HANDLED, "search": Handled(searching, writes=False)}) as server:
@@ -232,12 +233,12 @@ def test_rm_waits_for_searches_of_its_store_and_deletes_it(settings: Settings, n
         asked(server, "index", {})
         reader = threading.Thread(target=asked, args=(server, "search", {}), daemon=True)
         reader.start()
-        started.wait(30)
+        waited(started, 30)
         with streaming(server, "rm", {"name": "notes"}) as response:
             told = cast("Line", json.loads(response.readline()))
             release.set()
             rest = response.read()
-        reader.join(30)
+        joined(reader, 30)
         _, added = asked(server, "add", {"folder": str(notes)})
     assert told == {"event": "Noted", "data": {"text": WAITING_FOR_READS, "remedy": None, "code": None}}
     assert answer_in(rest)["left"] == []
@@ -249,18 +250,18 @@ def test_a_search_sent_while_a_store_is_removed_waits_for_it_then_runs(settings:
 
     def removing(_acting: Acting, _data: object) -> object:
         started.set()
-        release.wait(30)
+        waited(release, 30)
         return Served("removed")
 
     with running(settings, {**HANDLED, "rm": Handled(removing, writes=True, alone=True)}) as server:
         remover = threading.Thread(target=asked, args=(server, "rm", {"name": "notes"}), daemon=True)
         remover.start()
-        started.wait(30)
+        waited(started, 30)
         with streaming(server, "status") as response:
             told = cast("Line", json.loads(response.readline()))
             release.set()
             rest = response.read()
-        remover.join(30)
+        joined(remover, 30)
     assert told == {"event": "Noted", "data": {"text": WAITING_FOR_ALONE, "remedy": None, "code": None}}
     assert answer_in(rest)["collections"] == []
 

@@ -13,6 +13,7 @@ from sift.inference.hub import pinned
 from sift.inference.loading import REDIRECTS, Deferred, LocalLoader, OcrModule, Resting, ocr_module
 from sift.inference.prepared import ModelsPrepared
 from tests.models import Hashed
+from tests.waits import crossed, joined
 
 
 @dataclass(slots=True)
@@ -75,7 +76,7 @@ def test_models_shared_by_threads_are_built_once_and_used_by_one_call_at_a_time(
     shared = Deferred("model", "reranker", None, loader=lambda: crowded)
 
     def use() -> None:
-        crowded.arrived.wait(30)
+        crossed(crowded.arrived, 30)
         for _ in range(20):
             shared.encode(["dark matter"], query=True)
 
@@ -83,7 +84,7 @@ def test_models_shared_by_threads_are_built_once_and_used_by_one_call_at_a_time(
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(60)
+        joined(thread, 60)
     assert (crowded.builds, crowded.calls, crowded.most_at_once) == ([("model", "reranker", None)], 160, 1)
 
 
@@ -94,7 +95,7 @@ def test_idle_models_are_let_go_one_call_at_a_time_and_none_are_built_to_let_go_
     shared.encode(["dark matter"], query=True)
 
     def use(n: int) -> None:
-        crowded.arrived.wait(30)
+        crossed(crowded.arrived, 30)
         for _ in range(20):
             assert shared.release_idle() if n % 2 else len(shared.encode(["halo"], query=True)) == 1
 
@@ -102,7 +103,7 @@ def test_idle_models_are_let_go_one_call_at_a_time_and_none_are_built_to_let_go_
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(60)
+        joined(thread, 60)
     assert (crowded.calls, crowded.most_at_once) == (161, 1)
 
 

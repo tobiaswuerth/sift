@@ -5,6 +5,7 @@ import pytest
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.events import Event, Noted
 from sift.interfaces.server.gate import WAITING_FOR_ALONE, WAITING_FOR_READS, Gate
+from tests.waits import crossed, joined
 
 ROUNDS = 300
 
@@ -25,7 +26,7 @@ def test_no_read_runs_while_a_command_holds_the_home_alone_and_none_waits_for_go
             inside[at] -= 1
 
     def reading() -> None:
-        barrier.wait(30)
+        crossed(barrier, 30)
         for _ in range(ROUNDS):
             with gate.shared(said.append):
                 entered(0)
@@ -33,7 +34,7 @@ def test_no_read_runs_while_a_command_holds_the_home_alone_and_none_waits_for_go
         done.append("read")
 
     def writing() -> None:
-        barrier.wait(30)
+        crossed(barrier, 30)
         for _ in range(ROUNDS // 10):
             with gate.alone(said.append):
                 entered(1)
@@ -46,7 +47,7 @@ def test_no_read_runs_while_a_command_holds_the_home_alone_and_none_waits_for_go
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(60)
+        joined(thread, 60)
     assert (overlaps, sorted(done)) == ([], ["read"] * 8 + ["written"] * 2)
     assert {event.text for event in said if isinstance(event, Noted)} <= {WAITING_FOR_ALONE, WAITING_FOR_READS}
     assert (gate.readers, gate.held_alone) == (0, False)

@@ -24,6 +24,7 @@ from sift.storage.writer import (
     sole_writer,
 )
 from tests.environments import clean_environment
+from tests.waits import crossed, joined, waited
 
 HOLD = (
     "import os, sys; from pathlib import Path; from sift.storage.writer import sole_writer\n"
@@ -73,24 +74,28 @@ def test_a_writer_takes_its_store_once_another_held_its_lock_only_for_a_moment(
     store = tmp_path / "notes.sqlite"
     with sole_writer(store, "sift index"):
         pass
-    held = threading.Event()
+    held, asking = threading.Event(), threading.Event()
 
     def moment() -> None:
         with closing(lock_file(Path(f"{store}{WRITER_SUFFIX}"))) as other:
             for statement in taken:
                 other.execute(statement)
             held.set()
-            threading.Event().wait(0.1)
+            waited(asking)
             other.execute("ROLLBACK")
+
+    def opened(path: Path) -> LockFile:
+        asking.set()
+        return lock_file(path)
 
     thread = threading.Thread(target=moment)
     thread.start()
-    held.wait(30)
+    waited(held)
     try:
-        with sole_writer(store, "sift embed"):
+        with sole_writer(store, "sift embed", opened):
             assert held_by(Path(f"{store}{WRITER_SUFFIX}")) == Holder(os.getpid(), "sift embed")
     finally:
-        thread.join(30)
+        joined(thread, 30)
 
 
 def test_a_writer_that_dies_holding_its_store_leaves_it_free(tmp_path: Path) -> None:
@@ -229,7 +234,7 @@ def test_two_first_writers_of_a_store_take_it_in_turn_or_are_refused_naming_the_
     outcomes = list[str]()
 
     def writer(store: Path, barrier: threading.Barrier, name: str) -> None:
-        barrier.wait(30)
+        crossed(barrier, 30)
         try:
             with sole_writer(store, name):
                 outcomes.append("held")
@@ -242,7 +247,7 @@ def test_two_first_writers_of_a_store_take_it_in_turn_or_are_refused_naming_the_
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(30)
+            joined(thread, 30)
     assert set(outcomes) <= {"held", "busy: another sift writes it"}
     assert (len(outcomes), outcomes.count("held") >= 50) == (100, True)
 

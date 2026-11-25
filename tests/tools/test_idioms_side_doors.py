@@ -99,6 +99,14 @@ def test_no_property_test_pins_its_example_count() -> None:
     assert problems("tests/unit/test_a.py", widened) == []
 
 
+@pytest.mark.parametrize("dropped", ["thread.join(30)", "started.wait(30)", "threading.Event().wait(0.1)"])
+def test_a_wait_in_a_test_whose_outcome_is_dropped_is_found(dropped: str) -> None:
+    source = f"def test_a() -> None:\n    {dropped}\n"
+    assert problems("tests/unit/test_a.py", source) == [check_idioms.WAIT_DROPPED]
+    assert problems("tests/waits.py", source) == []
+    assert problems("tests/unit/test_a.py", f"def test_a() -> None:\n    assert {dropped}\n") == []
+
+
 def test_names_are_followed_in_each_function_alone() -> None:
     twice = "    moment = datetime.datetime\n    return moment.now()\n"
     source = f"import datetime\n\n\ndef a():\n{twice}\n\ndef b():\n{twice}"

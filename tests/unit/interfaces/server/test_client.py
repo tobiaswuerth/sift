@@ -15,6 +15,7 @@ from sift.api.wire import encoded_error
 from sift.interfaces.acts.links import UNRESOLVED
 from sift.interfaces.server.client import UNFINISHED, UNREADABLE, ClientLimits, event_of, sent
 from sift.interfaces.server.endpoint import Endpoint
+from tests.waits import joined, waited
 
 LINES = b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n"
 CHUNKED = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n20\r\n" + b'{"alive": tr'
@@ -41,7 +42,7 @@ def answering(reply: bytes | None, heard: list[bytes]) -> Generator[Endpoint]:
         with listening.accept()[0] as connection:
             heard.append(_request(connection))
             if reply is None:
-                done.wait(30)
+                waited(done, 30)
             else:
                 connection.sendall(reply)
 
@@ -51,7 +52,7 @@ def answering(reply: bytes | None, heard: list[bytes]) -> Generator[Endpoint]:
         yield Endpoint(cast("tuple[str, int]", listening.getsockname())[1], 1, "the-token", "2.0.0")
     finally:
         done.set()
-        thread.join(30)
+        joined(thread, 30)
         listening.close()
 
 

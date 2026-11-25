@@ -23,6 +23,7 @@ from sift.app.vsearch import vsearch
 from sift.retrieval.vector.nearest import Coded, coded
 from tests.files import write
 from tests.models import Hashed
+from tests.waits import joined, still_running, waited
 
 
 @dataclass(slots=True)
@@ -106,7 +107,7 @@ def test_searches_at_once_read_each_store_s_codes_once(home: Path) -> None:
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(60)
+        joined(thread, 60)
     assert (failures, len(results), len(counting.reads)) == ([], 8, 2)
     assert all(each == results[0] for each in results)
 
@@ -120,7 +121,7 @@ def test_codes_held_for_one_store_are_handed_out_while_another_store_s_are_read(
 
     def slow() -> Coded:
         reading.set()
-        read.wait(30)
+        waited(read, 30)
         return codes
 
     thread = threading.Thread(target=held, args=(other, slow))
@@ -129,9 +130,9 @@ def test_codes_held_for_one_store_are_handed_out_while_another_store_s_are_read(
     handed: list[Coded] = []
     beside = threading.Thread(target=lambda: handed.append(held(one, lambda: codes)))
     beside.start()
-    beside.join(5)
+    joined(beside, 5)
     read.set()
-    thread.join(30)
+    joined(thread, 30)
     assert handed == [codes]
 
 
@@ -144,7 +145,7 @@ def test_a_search_waiting_on_a_store_s_codes_takes_those_just_read() -> None:
     def slow() -> Coded:
         reads.append(1)
         reading.set()
-        read.wait(30)
+        waited(read, 30)
         return codes
 
     first = threading.Thread(target=held, args=(at, slow))
@@ -153,8 +154,8 @@ def test_a_search_waiting_on_a_store_s_codes_takes_those_just_read() -> None:
     handed: list[Coded] = []
     second = threading.Thread(target=lambda: handed.append(held(at, slow)))
     second.start()
-    second.join(0.2)
+    still_running(second, 0.2)
     read.set()
-    first.join(30)
-    second.join(30)
+    joined(first, 30)
+    joined(second, 30)
     assert (handed, reads) == ([codes], [1])

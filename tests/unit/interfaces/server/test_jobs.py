@@ -16,7 +16,8 @@ from sift.interfaces.server.endpoint import found, own_endpoint
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import STOPPING, HomeServer, Serve, held, serve
 from sift.settings import Settings
-from tests.serving import Line, asked, last, running, streaming, until
+from tests.serving import Line, asked, last, running, streaming
+from tests.waits import joined, paused, until, waited
 
 STEPS = 1_000_000
 
@@ -28,7 +29,7 @@ def endless(started: threading.Event, ended: list[str]) -> Callable[[Acting, obj
         try:
             for done in range(1, STEPS):
                 acting.report(Advanced(done))
-                threading.Event().wait(0.01)
+                paused(0.01)
         except JobStoppedError:
             ended.append("stopped")
             raise
@@ -65,7 +66,7 @@ def test_a_job_stopped_while_it_waits_ends_before_it_begins_and_its_client_is_to
     def writing(_acting: Acting, _data: object) -> object:
         ran.append("ran")
         started.set()
-        release.wait(30)
+        waited(release, 30)
         return Served("written")
 
     with running(settings, {**HANDLED, "add": Handled(writing, writes=True)}) as server:
@@ -77,7 +78,7 @@ def test_a_job_stopped_while_it_waits_ends_before_it_begins_and_its_client_is_to
             assert jobs_of(server, {"stop": 2})["stopped"] == 2
             release.set()
             rest = response.read()
-        first.join(30)
+        joined(first, 30)
     (error,) = [cast("Line", json.loads(line))["error"] for line in rest.splitlines() if line.startswith(b'{"error"')]
     assert (cast("Line", error)["kind"], ran) == ("stopped", ["ran"])
 
@@ -87,7 +88,7 @@ def test_searches_are_answered_while_many_writes_wait(settings: Settings) -> Non
 
     def writing(_acting: Acting, _data: object) -> object:
         started.set()
-        release.wait(120)
+        waited(release, 120)
         return Served("written")
 
     with running(settings, {**HANDLED, "add": Handled(writing, writes=True)}) as server:
@@ -100,7 +101,7 @@ def test_searches_are_answered_while_many_writes_wait(settings: Settings) -> Non
         status, said = asked(server, "status", {})
         release.set()
         for each in writes:
-            each.join(30)
+            joined(each, 30)
     assert (status, last(said, "answer")["collections"]) == (200, [])
 
 
@@ -119,7 +120,7 @@ def test_ctrl_c_with_a_job_running_stops_the_job_and_says_so(settings: Settings)
         try:
             running.server.run(sockets=[running.socket])
         finally:
-            helper.join(30)
+            joined(helper, 30)
 
     handled = {**HANDLED, "index": Handled(endless(started, ended), writes=True)}
     serve(settings, ServeHome(port=0), "2.0.0", said.append, Serve(served, handled))
@@ -171,7 +172,7 @@ def test_a_write_that_ends_after_its_client_was_let_go_ends_quietly(settings: Se
 
     def writing(_acting: Acting, _data: object) -> object:
         started.set()
-        release.wait(30)
+        waited(release, 30)
         ended.append("ended")
         return Served("written")
 
@@ -189,8 +190,8 @@ def test_a_write_that_ends_after_its_client_was_let_go_ends_quietly(settings: Se
         assert started.wait(30)
         server.server.handle_exit(signal.SIGINT, None)
         server.server.handle_exit(signal.SIGINT, None)
-        thread.join(30)
-        client.join(30)
+        joined(thread, 30)
+        joined(client, 30)
         release.set()
     assert ended == ["ended"]
 
@@ -206,7 +207,7 @@ def test_sift_serve_ended_as_a_service_is_ended_stops_as_by_ctrl_c(settings: Set
         try:
             running.server.run(sockets=[running.socket])
         finally:
-            helper.join(30)
+            joined(helper, 30)
 
     before = signal.getsignal(signal.SIGTERM)
     served_url = serve(settings, ServeHome(port=0), "2.0.0", list[Event]().append, Serve(served)).url

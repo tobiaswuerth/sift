@@ -39,6 +39,7 @@ from tests.sandboxed import (
     misbehaving,
     pid_or_hang,
 )
+from tests.waits import joined
 
 ROOT = Path(__file__).parents[3]
 WAITED_SECONDS = 60.0
@@ -150,7 +151,7 @@ def test_an_answer_larger_than_sift_takes_is_refused_as_the_file_s_problem() -> 
 def _ended(pid: int) -> None:
     (child,) = [each for each in multiprocessing.active_children() if each.pid == pid]
     child.kill()
-    child.join(WAITED_SECONDS)
+    joined(child, WAITED_SECONDS)
 
 
 def test_a_reader_process_that_ends_while_it_waits_is_replaced() -> None:

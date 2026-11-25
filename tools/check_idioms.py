@@ -55,6 +55,11 @@ PINNED_EXAMPLES = (
     "an example count pinned in a test, which the explore session cannot widen: "
     "use few(n) or more(n) from tests/examples.py"
 )
+WAITS = "tests/waits.py"
+WAIT_DROPPED = (
+    "a wait or join whose outcome is dropped, so a test that should fail hangs or goes on: "
+    "use joined, waited, crossed, until or paused from tests/waits.py"
+)
 CLOCK_IN_A_TEST = (
     "a clock in a test, which passes or fails by the machine and its load: count what costs the time "
     "(calls, characters looked at, rows read), or pass a clock in"
@@ -233,6 +238,15 @@ def pinned_examples(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, node.lineno, PINNED_EXAMPLES)
 
 
+def waits_dropped(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        match node:
+            case ast.Expr(value=ast.Call(func=ast.Attribute(attr="wait" | "join"))):
+                yield Finding(path, node.lineno, WAIT_DROPPED)
+            case _:
+                pass
+
+
 def clocks(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import | ast.ImportFrom) and CLOCKS & {n.split(".")[0] for n in _imported(node)}:
@@ -347,6 +361,7 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *(sift_patched(path, tree) if in_tests else ()),
         *(clocks(path, tree) if in_tests else ()),
         *(pinned_examples(path, tree) if in_tests and path not in EXAMPLE_COUNTS else ()),
+        *(waits_dropped(path, tree) if in_tests and path != WAITS else ()),
         *storage_idioms(path, tree),
     )
 

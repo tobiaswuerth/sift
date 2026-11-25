@@ -34,6 +34,7 @@ from tests.keyword_stores import vectors_by_text
 from tests.later import in_process, later, reading
 from tests.mails import PARAGRAPH, mail_bytes, message, nested_parts, only, sample
 from tests.models import Hashed
+from tests.waits import joined
 
 PDF = "application/pdf"
 
@@ -252,7 +253,7 @@ def test_a_reader_process_that_ends_between_batches_costs_no_file(library: Path)
         if event == Advanced(1):
             for child in multiprocessing.active_children():
                 child.kill()
-                child.join(60)
+                joined(child, 60)
                 ended.append(child.exitcode or 0)
 
     limits, readers = Limits(most_files_a_write=1), Readers(clock=later)

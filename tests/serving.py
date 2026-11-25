@@ -2,7 +2,7 @@ import dataclasses
 import http.client
 import json
 import threading
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from importlib.metadata import version
 from types import MappingProxyType
@@ -14,6 +14,7 @@ from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import SERVE, HomeServer, Serve, held
 from sift.settings import Settings
+from tests.waits import joined, until
 
 VERSION = version("sift-rag")
 
@@ -29,28 +30,15 @@ def running(
     with held(settings, ServeHome(port=0), of, heard.append, served) as server:
         thread = threading.Thread(target=server.server.run, kwargs={"sockets": [server.socket]}, daemon=True)
         thread.start()
-        waited = threading.Event()
-        for _ in range(3000):
-            if server.server.started:
-                break
-            waited.wait(0.01)
+        assert until(lambda: server.server.started), "the home server did not start within 30 s"
         try:
             yield server
         finally:
             server.server.should_exit = True
-            thread.join(30)
+            joined(thread, 30)
 
 
 type Line = dict[str, object]
-
-
-def until(holds: Callable[[], bool]) -> bool:
-    waited = threading.Event()
-    for _ in range(3000):
-        if holds():
-            return True
-        waited.wait(0.01)
-    return False
 
 
 def asked(

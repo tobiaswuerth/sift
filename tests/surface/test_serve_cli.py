@@ -8,6 +8,7 @@ from sift.interfaces.server.endpoint import found, own_endpoint
 from sift.settings import Settings
 from tests.surface import process
 from tests.surface.commands import ran
+from tests.waits import until
 
 
 def answers(settings: Settings) -> bool:
@@ -24,18 +25,18 @@ def answers(settings: Settings) -> bool:
         connection.close()
 
 
-def interrupted_once_answering(settings: Settings) -> None:
-    waited = threading.Event()
-    for _ in range(3000):
-        if answers(settings):
-            signal.raise_signal(signal.SIGINT)
-            return
-        waited.wait(0.01)
+def interrupted_once_answering(settings: Settings, answered: list[bool]) -> None:
+    try:
+        answered.append(until(lambda: answers(settings)))
+    finally:
+        signal.raise_signal(signal.SIGINT)
 
 
 def test_ctrl_c_stops_sift_serve_saying_so_and_leaves_nothing_behind(settings: Settings) -> None:
-    threading.Thread(target=interrupted_once_answering, args=(settings,), daemon=True).start()
+    answered: list[bool] = []
+    threading.Thread(target=interrupted_once_answering, args=(settings, answered), daemon=True).start()
     code, out, err = ran(settings, "serve", "--port", "0")
+    assert answered == [True], "sift serve did not answer within 30 s"
     url = err.split("  ")[1]
     started = f"serve  {url}  {settings.home}\n stop  {STOP_HINT}\n"
     assert (code, out, err) == (0, "", f"{started} done  stopped serving {url}\n")

@@ -10,7 +10,8 @@ from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import Serve
 from sift.settings import Settings
 from tests.files import write
-from tests.serving import Line, asked, running, streaming, until
+from tests.serving import Line, asked, running, streaming
+from tests.waits import until, waited
 
 FILES = 2000
 LEFT_LINES = 2000
@@ -56,7 +57,7 @@ def test_what_a_job_says_once_its_client_is_gone_is_not_held_for_it(settings: Se
 
     def saying(acting: Acting, _data: object) -> object:
         acting.report(Noted("begun"))
-        left.wait(30)
+        waited(left, 30)
         before = tracemalloc.get_traced_memory()[0]
         for number in range(LEFT_LINES):
             acting.report(Noted(f"{number} " + "x" * LEFT_LINE_BYTES))

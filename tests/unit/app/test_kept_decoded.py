@@ -22,6 +22,7 @@ from sift.app.searching import Watching
 from sift.retrieval.keyword.lists import Dense, PostingArrays
 from tests.files import write
 from tests.models import Hashed
+from tests.waits import joined
 
 A = KeywordsAt(Path("a.sqlite"), CollectionId(2), 1)
 B = KeywordsAt(Path("b.sqlite"), CollectionId(3), 1)
@@ -84,7 +85,7 @@ def test_searches_side_by_side_keep_the_budget_and_count_what_they_hold() -> Non
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(60)
+        joined(thread, 60)
     assert 0 < kept.size <= 4000
     assert kept.size == sum(size for _, size in kept.entries.values())
 
