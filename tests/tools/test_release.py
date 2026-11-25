@@ -1,5 +1,6 @@
 import pytest
 
+from tools.release import CHANGELOG as CHANGELOG_FILE
 from tools.release import RefusedError, main, notes, pre_release
 
 CHANGELOG = """# Changelog
@@ -69,3 +70,5 @@ def test_the_tool_prints_the_notes_or_refuses_without_printing_any(capsys: pytes
     assert (refused.out, refused.err.startswith("error  CHANGELOG.md has no section")) == ("", True)
     assert (main(["prerelease", "2.0.0rc1"]), capsys.readouterr().out) == (0, "true\n")
     assert main(["notes"]) == 2
+    held = notes(CHANGELOG_FILE.read_text(encoding="utf-8"), "1.15.2")
+    assert (main(["notes", "1.15.2"]), capsys.readouterr().out) == (0, held)
