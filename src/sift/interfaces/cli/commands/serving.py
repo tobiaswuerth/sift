@@ -1,6 +1,7 @@
 from importlib.metadata import version
 from types import MappingProxyType
 
+from sift.api.package import PACKAGE
 from sift.api.serving import Served, ServeHome
 from sift.interfaces.acts.acting import Act, Acting
 from sift.interfaces.cli.commands.making import command
@@ -8,8 +9,6 @@ from sift.interfaces.cli.shown.outcome import Shown
 from sift.interfaces.console.style import Style, Tone
 from sift.interfaces.console.text import labelled, printable
 from sift.interfaces.server import serving
-
-PACKAGE = "sift-rag"
 
 
 def _serve(acting: Acting, request: ServeHome) -> Served:

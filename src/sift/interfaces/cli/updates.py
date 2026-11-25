@@ -13,13 +13,14 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import cast
 
-PYPI = "https://pypi.org/pypi/sift-rag/json"
+from sift.api.package import PACKAGE
+
+PYPI = f"https://pypi.org/pypi/{PACKAGE}/json"
 STATE = "update.json"
 DAY = 24 * 3600.0
 TIMEOUT = 3.0
 DEADLINE = 5.0
 MOST_BYTES = 32 << 20
-PACKAGE = "sift-rag"
 VERSION = re.compile(r"([0-9]+(?:\.[0-9]+)*)(?:(a|b|rc)([0-9]+))?")
 PHASES = MappingProxyType({"a": 0, "b": 1, "rc": 2})
 FINAL = (3, 0)

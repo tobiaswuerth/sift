@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TextIO, cast, override
 
 from sift.api.errors import InvalidRequestError, SiftError, StoreUnavailableError
+from sift.api.package import PACKAGE
 from sift.api.wire import CONTRACT, contract_text, understood
 from sift.domain.text.decoding import encodable
 from sift.interfaces.cli.arguments import flags, options
@@ -78,7 +79,7 @@ class VersionAction(argparse.Action):
 
 
 def _version() -> str:
-    return _as_metadata(import_module("importlib.metadata")).version("sift-rag")
+    return _as_metadata(import_module("importlib.metadata")).version(PACKAGE)
 
 
 class StoppedError(Exception):

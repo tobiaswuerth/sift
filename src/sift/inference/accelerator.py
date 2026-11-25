@@ -8,6 +8,8 @@ from typing import Protocol
 import pynvml
 import torch
 
+from sift.api.package import PACKAGE
+
 GIB = 1 << 30
 HEADROOM = 0.1
 LEAST_BUDGET = 2 * GIB
@@ -17,7 +19,7 @@ CPU_THREADS = int(torch.get_num_threads())
 DEVICE_FULL = ("out of memory", "cublas_status_alloc_failed")
 HOST_FULL = ("not enough memory", "paging file is too small")
 HOST_FULL_WINDOWS = frozenset({8, 14, 1455})
-CUDA_FIX = "uv tool install --reinstall --torch-backend auto sift-rag"
+CUDA_FIX = f"uv tool install --reinstall --torch-backend auto {PACKAGE}"
 UNBUILT = f"an NVIDIA GPU is there, but this PyTorch has no CUDA: the models run on the CPU; to use it: {CUDA_FIX}"
 UNSEEN = "PyTorch (CUDA {}) can use no NVIDIA GPU here: the models run on the CPU; update the NVIDIA driver"
 HIDDEN = "PyTorch sees no NVIDIA GPU with CUDA_VISIBLE_DEVICES set to {!r}: the models run on the CPU"

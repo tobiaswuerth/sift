@@ -7,6 +7,7 @@ from importlib import metadata
 from pathlib import Path
 
 from sift.api.events import Reporter
+from sift.api.package import PACKAGE
 from sift.app.scans import SCANNING, ScanModel, Scanning
 from sift.domain.plan.indexing import MOST_FILE_BYTES
 from sift.domain.text.notes import Document
@@ -55,12 +56,9 @@ type Lines = Callable[[Path, int, Identity | None], Iterator[tuple[int, str | Sk
 type ReadPieces = Callable[[Path, Identity | None], AbstractContextManager[Iterable[bytes]]]
 
 
-DISTRIBUTION = "sift-rag"
-
-
 @functools.cache
 def installed() -> str:
-    return metadata.version(DISTRIBUTION)
+    return metadata.version(PACKAGE)
 
 
 @dataclass(frozen=True, slots=True)
