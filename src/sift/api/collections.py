@@ -190,3 +190,12 @@ class CollectionStatus:
 class Status:
     home: str
     collections: tuple[CollectionStatus, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Retitled:
+    documents: int
+    to_embed: int
+
+
+NONE_RETITLED = Retitled(0, 0)

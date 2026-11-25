@@ -3,19 +3,21 @@ import threading
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from importlib import import_module
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference.hub import pinned
 from sift.inference.models import Models
 from sift.inference.prepared import ModelsPrepared
+from sift.late import late
 
 if TYPE_CHECKING:
     from sift.inference.accelerator import Device
     from sift.inference.ocr import Ocr
 
 REDIRECTS = "torch.distributed.elastic.multiprocessing.redirects"
+LOCAL = "sift.inference.local"
+OCR = "sift.inference.ocr"
 VIRTUAL_MAC = "Skipping device"
 
 
@@ -27,18 +29,14 @@ class LocalLoader(Protocol):
     def local(self, model: str, reranker: str, gpus: str | None) -> Resting: ...
 
 
-def _models_module(name: str) -> object:
+def _models_module[P](name: str, protocol: type[P]) -> P:
     logging.getLogger(REDIRECTS).setLevel(logging.ERROR)
     warnings.filterwarnings("ignore", VIRTUAL_MAC, UserWarning)
-    return import_module(name)
-
-
-def _as_local(module: object) -> LocalLoader:
-    return cast("LocalLoader", module)
+    return late(name, protocol)
 
 
 def _local_module() -> LocalLoader:
-    return _as_local(_models_module("sift.inference.local"))
+    return _models_module(LOCAL, LocalLoader)
 
 
 @dataclass(slots=True, eq=False)
@@ -97,9 +95,13 @@ class OcrModule(Protocol):
     def let_go(self, device: "Device") -> None: ...
 
 
-def _as_ocr(module: object) -> OcrModule:
-    return cast("OcrModule", module)
-
-
 def ocr_module() -> OcrModule:
-    return _as_ocr(_models_module("sift.inference.ocr"))
+    return _models_module(OCR, OcrModule)
+
+
+if TYPE_CHECKING:
+    from sift.inference import local as _local
+    from sift.inference import ocr as _ocr
+
+    _LOCAL: LocalLoader = _local
+    _OCR: OcrModule = _ocr

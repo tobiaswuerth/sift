@@ -24,7 +24,7 @@ from sift.inference.accelerator import CPU, HIDDEN, Device
 from sift.inference.hub import OCR_MODEL
 from sift.inference.ocr import Generating, Ocr, Processing
 from sift.ingest.documents import convert
-from sift.ingest.pictures import Pictured, ToPicture, Unpictured
+from sift.ingest.pictured import Pictured, ToPicture, Unpictured
 from sift.ingest.sandbox import ENDED, Picturing
 from sift.storage.catalog import known_collections
 from tests.files import write

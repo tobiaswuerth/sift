@@ -6,7 +6,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TextIO, cast, override
 
@@ -36,6 +35,7 @@ from sift.interfaces.console.streams import (
 )
 from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal, style_of
 from sift.interfaces.console.text import printable_text
+from sift.late import late
 from sift.settings import VARIABLES, Settings, from_environment, user_folder, whole_path
 
 if TYPE_CHECKING:
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from sift.interfaces.server.endpoint import Endpoint
 
 DESCRIPTION = "Fast local search over your documents and notes."
+METADATA = "importlib.metadata"
 SETTINGS_HEADING = "settings, read from the environment:"
 EXIT_CODES = f"  {DONE} done, {FAILED} failed, {USAGE} refused as asked, {INTERRUPTED} stopped"
 NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
@@ -57,10 +58,6 @@ VERSION_HELP = "say which sift this is"
 
 class Metadata(Protocol):
     def version(self, distribution_name: str) -> str: ...
-
-
-def _as_metadata(module: object) -> Metadata:
-    return cast("Metadata", module)
 
 
 class VersionAction(argparse.Action):
@@ -80,7 +77,7 @@ class VersionAction(argparse.Action):
 
 
 def _version() -> str:
-    return _as_metadata(import_module("importlib.metadata")).version(PACKAGE)
+    return late(METADATA, Metadata).version(PACKAGE)
 
 
 class StoppedError(Exception):
@@ -328,3 +325,9 @@ def main(argv: Sequence[str] | None = None, read_settings: Callable[[], Settings
         source = SettingsSource(partial(_refused, error), user_folder(), Path.cwd())
         raise SystemExit(_answered(given, source, (sys.stdout, sys.stderr), HOST)) from None
     raise SystemExit(run(given, settings, sys.stdout, sys.stderr))
+
+
+if TYPE_CHECKING:
+    from importlib import metadata as _metadata
+
+    _METADATA: Metadata = _metadata

@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import NoReturn, Protocol, cast
 
 from sift.domain.text.documents import Outcome, Refused, stopped
-from sift.ingest.pictures import Pictured, ToPicture, picture
+from sift.ingest.pictured import Pictured, ToPicture
+from sift.ingest.pictures import picture
 from sift.ingest.readers import ToRead, read_file
 
 

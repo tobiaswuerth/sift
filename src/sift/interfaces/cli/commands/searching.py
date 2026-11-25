@@ -1,9 +1,11 @@
+from collections.abc import Mapping
 from types import MappingProxyType
 
 from sift.interfaces.acts.searching import MENTIONS, QUERY, SEARCH, SIMILAR, VSEARCH
 from sift.interfaces.cli.commands.making import needing_collections, searched
+from sift.interfaces.cli.context import Command
 
-COMMANDS = MappingProxyType(
+COMMANDS: Mapping[str, Command] = MappingProxyType(
     {
         "search": searched(SEARCH),
         "vsearch": searched(VSEARCH),

@@ -2,7 +2,6 @@ import argparse
 import json
 from collections.abc import Callable
 from functools import partial
-from importlib import import_module
 from typing import TYPE_CHECKING, Protocol, cast
 
 from sift.api.events import Reporter
@@ -16,6 +15,7 @@ from sift.interfaces.cli.shown.outcome import DONE, FAILED, Shown, empty
 from sift.interfaces.cli.shown.searching import hits
 from sift.interfaces.console.style import Style
 from sift.interfaces.console.text import printable_json
+from sift.late import late
 
 if TYPE_CHECKING:
     from sift.interfaces.server.endpoint import Endpoint
@@ -39,17 +39,13 @@ class Client(Protocol):
     def sent[R, A](self, endpoint: "Endpoint", act: Act[R, A], request: R, report: Reporter) -> A: ...
 
 
-def _as_client(module: object) -> Client:
-    return cast("Client", module)
-
-
 def answered[R, A](
     act: Act[R, A], namespace: argparse.Namespace, context: Context, made: Callable[[argparse.Namespace], R] | None
 ) -> A:
     request = request_of(act.request, namespace) if made is None else made(namespace)
     if context.server is None:
         return act.run(acting(context), request)
-    return _as_client(import_module(CLIENT)).sent(context.server, act, request, context.report)
+    return late(CLIENT, Client).sent(context.server, act, request, context.report)
 
 
 def command[R, A: Answer](
@@ -89,3 +85,9 @@ def needing_collections(made: Command) -> Command:
         return made.run(namespace, context)
 
     return Command(run, writes=made.writes)
+
+
+if TYPE_CHECKING:
+    from sift.interfaces.server import client as _client
+
+    _CLIENT: Client = _client

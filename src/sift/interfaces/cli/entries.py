@@ -1,7 +1,6 @@
 from dataclasses import dataclass
-from importlib import import_module
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING
 
 from sift.api.collections import (
     ActivateCollections,
@@ -19,6 +18,7 @@ from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
 from sift.api.serving import ServeHome
 from sift.interfaces.cli.context import Command, Commands
 from sift.interfaces.cli.reading import ReadDocuments
+from sift.late import late
 
 COMMANDS_PACKAGE = "sift.interfaces.cli.commands"
 LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed", "serve"})
@@ -121,9 +121,21 @@ ENTRIES = MappingProxyType(
 EXAMPLES = ("sift add ~/notes", "sift index", SEARCH_EXAMPLE, GET_EXAMPLE)
 
 
-def _as_commands(module: object) -> Commands:
-    return cast("Commands", module)
-
-
 def command_of(name: str) -> Command:
-    return _as_commands(import_module(f"{COMMANDS_PACKAGE}.{ENTRIES[name].module}")).COMMANDS[name]
+    return late(f"{COMMANDS_PACKAGE}.{ENTRIES[name].module}", Commands).COMMANDS[name]
+
+
+if TYPE_CHECKING:
+    from sift.interfaces.cli.commands import collections as _collections
+    from sift.interfaces.cli.commands import indexing as _indexing
+    from sift.interfaces.cli.commands import jobs as _jobs
+    from sift.interfaces.cli.commands import links as _links
+    from sift.interfaces.cli.commands import searching as _searching
+    from sift.interfaces.cli.commands import serving as _serving
+
+    _COLLECTIONS: Commands = _collections
+    _INDEXING: Commands = _indexing
+    _JOBS: Commands = _jobs
+    _LINKS: Commands = _links
+    _SEARCHING: Commands = _searching
+    _SERVING: Commands = _serving

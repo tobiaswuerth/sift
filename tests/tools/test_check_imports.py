@@ -1,5 +1,7 @@
+import pytest
+
 from tools import check_imports
-from tools.check_imports import declared, undeclared
+from tools.check_imports import UNPROVEN, declared, late_loaded, undeclared
 
 PROVIDERS = {"numpy": ["numpy"], "huggingface_hub": ["huggingface-hub"], "PIL": ["Pillow"], "pynvml": ["nvidia-ml-py"]}
 
@@ -34,3 +36,48 @@ def test_dependencies_are_known_by_their_normalised_names_whatever_follows_them(
 
 def test_every_package_sift_imports_is_a_dependency() -> None:
     assert check_imports.main([]) == 0
+
+
+PROVEN = """from typing import TYPE_CHECKING
+
+from sift.late import late
+
+RETITLING = "sift.app.retitling"
+
+if TYPE_CHECKING:
+    from sift.app import retitling as _retitling
+    from sift.ingest import pages as _pages
+
+    _RETITLING: Retitling = _retitling
+    _PAGES: Painter = _pages
+
+
+def one() -> None:
+    late(RETITLING, Retitling).retitle()
+    late("sift.ingest.pages", Painter).pages()
+    import_module("importlib.metadata")
+"""
+
+
+def test_a_module_loaded_by_name_and_proven_to_fit_its_protocol_passes() -> None:
+    assert late_loaded({"src/sift/a.py": PROVEN}) == []
+
+
+@pytest.mark.parametrize(
+    "loaded",
+    [
+        'late("sift.app.retitling", Retitling)',
+        'import_module("sift.app.retitling")',
+        "late(RETITLING, Retitling)",
+    ],
+)
+def test_a_module_loaded_by_name_without_proof_that_it_fits_is_found(loaded: str) -> None:
+    source = f'RETITLING = "sift.app.retitling"\n\n\ndef one() -> None:\n    {loaded}\n'
+    assert [(each.line, each.problem) for each in late_loaded({"src/sift/a.py": source})] == [
+        (5, UNPROVEN.format(module="sift.app.retitling"))
+    ]
+
+
+def test_an_import_under_type_checking_alone_proves_nothing() -> None:
+    source = PROVEN.replace("    _RETITLING: Retitling = _retitling\n", "")
+    assert [each.line for each in late_loaded({"src/sift/a.py": source})] == [15]

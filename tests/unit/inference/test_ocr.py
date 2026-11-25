@@ -27,7 +27,7 @@ from sift.inference.ocr import (
     stops,
 )
 from sift.ingest.pages import pages
-from sift.ingest.pictures import Pages
+from sift.ingest.pictured import Pages
 from tests.scans import scan
 
 if TYPE_CHECKING:

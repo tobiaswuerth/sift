@@ -10,7 +10,7 @@ from sift.domain.text.notes import Document
 from sift.domain.text.scans import PAGES, OcrSetting, read_scan
 from sift.inference.hub import OCR_MODEL
 from sift.inference.loading import OcrModule, ocr_module
-from sift.ingest.pictures import Pages, ToPicture
+from sift.ingest.pictured import Pages, ToPicture
 from sift.ingest.sandbox import OpenPicturing, Picturing, picturing
 
 if TYPE_CHECKING:

@@ -1,16 +1,20 @@
-from importlib import import_module
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 from sift.domain.text.documents import Conversion
+from sift.late import late
+
+CONVERTER = "sift.ingest.converter"
 
 
 class Converter(Protocol):
     def converted(self, raw: bytes, name: str) -> Conversion: ...
 
 
-def _as_converter(module: object) -> Converter:
-    return cast("Converter", module)
-
-
 def convert(raw: bytes, name: str) -> Conversion:
-    return _as_converter(import_module("sift.ingest.converter")).converted(raw, name)
+    return late(CONVERTER, Converter).converted(raw, name)
+
+
+if TYPE_CHECKING:
+    from sift.ingest import converter as _converter
+
+    _CONVERTER: Converter = _converter

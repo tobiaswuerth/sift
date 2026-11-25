@@ -1,38 +1,22 @@
-from dataclasses import dataclass, replace
-from importlib import import_module
+from dataclasses import replace
 from pathlib import Path
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
-from sift.api.collections import AddCollection, CollectionChanged
+from sift.api.collections import NONE_RETITLED, AddCollection, CollectionChanged, Retitled
 from sift.api.errors import InvalidRequestError
 from sift.api.events import Reporter
+from sift.late import late
 from sift.storage.catalog import Choices, Collection, set_choices
 
+RETITLING = "sift.app.retitling"
 CHANGE_REMEDY = (
     "give what to change alone: where titles come from, whether files linked from outside are read, "
     "or whether agents see it"
 )
 
 
-@dataclass(frozen=True, slots=True)
-class Retitled:
-    documents: int
-    to_embed: int
-
-
-NONE_RETITLED = Retitled(0, 0)
-
-
 class Retitling(Protocol):
     def retitle(self, home: Path, one: Collection, wanted: Choices, report: Reporter) -> Retitled: ...
-
-
-def _as_retitling(module: object) -> Retitling:
-    return cast("Retitling", module)
-
-
-def _retitling() -> Retitling:
-    return _as_retitling(import_module("sift.app.retitling"))
 
 
 def _otherwise(request: AddCollection, one: Collection) -> bool:
@@ -55,7 +39,7 @@ def changed(home: Path, one: Collection, request: AddCollection, report: Reporte
         set_choices(home, one.id, wanted)
         retitled = NONE_RETITLED
     else:
-        retitled = _retitling().retitle(home, one, wanted, report)
+        retitled = late(RETITLING, Retitling).retitle(home, one, wanted, report)
     return CollectionChanged(
         one.name,
         wanted.title_from,
@@ -65,3 +49,9 @@ def changed(home: Path, one: Collection, request: AddCollection, report: Reporte
         retitled.to_embed,
         index_again=wanted.follow_links != held.follow_links,
     )
+
+
+if TYPE_CHECKING:
+    from sift.app import retitling as _retitling
+
+    _RETITLING: Retitling = _retitling

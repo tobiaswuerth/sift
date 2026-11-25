@@ -1,12 +1,12 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from importlib import import_module
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 from sift.api.errors import NotFoundError
 from sift.api.events import Reporter
 from sift.api.jobs import ServedJob
 from sift.app.resident import CodeSource, DecodedSource, decoded_each_search, read_each_time
+from sift.late import late
 from sift.settings import Settings
 
 if TYPE_CHECKING:
@@ -62,9 +62,11 @@ class Loading(Protocol):
     def deferred(self, model: str, reranker: str, gpus: str | None) -> "Deferred": ...
 
 
-def _as_loading(module: object) -> Loading:
-    return cast("Loading", module)
-
-
 def fresh_models(settings: Settings) -> "Deferred":
-    return _as_loading(import_module(LOADING)).deferred(settings.embed_model, settings.rerank_model, settings.gpus)
+    return late(LOADING, Loading).deferred(settings.embed_model, settings.rerank_model, settings.gpus)
+
+
+if TYPE_CHECKING:
+    from sift.inference import loading as _loading
+
+    _LOADING: Loading = _loading

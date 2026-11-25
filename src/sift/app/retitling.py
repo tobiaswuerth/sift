@@ -6,10 +6,9 @@ from functools import partial
 from pathlib import Path
 from typing import NamedTuple
 
-from sift.api.collections import TitleFrom
+from sift.api.collections import Retitled, TitleFrom
 from sift.api.events import Advanced, CollectionStarted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.ids import DocumentId
-from sift.app.choosing import Retitled
 from sift.app.filing import LIMITS, Limits
 from sift.domain.text.kinds import FileKind, kind_of
 from sift.domain.text.notes import NoteRead, NoteTitle, read_note

@@ -1,7 +1,8 @@
 import shlex
 from collections.abc import Iterable, Sequence
-from importlib import import_module
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol
+
+from sift.late import late
 
 WINDOWS = "win32"
 PROCESSES = "subprocess"
@@ -11,11 +12,13 @@ class CommandLines(Protocol):
     def list2cmdline(self, seq: Iterable[str]) -> str: ...
 
 
-def _as_command_lines(module: object) -> CommandLines:
-    return cast("CommandLines", module)
-
-
 def command(words: Sequence[str], platform: str) -> str:
     if platform != WINDOWS:
         return shlex.join(words)
-    return _as_command_lines(import_module(PROCESSES)).list2cmdline(words)
+    return late(PROCESSES, CommandLines).list2cmdline(words)
+
+
+if TYPE_CHECKING:
+    import subprocess as _subprocess
+
+    _PROCESSES: CommandLines = _subprocess

@@ -1,12 +1,12 @@
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import datetime
-from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 from sift.api.events import Noted
 from sift.interfaces.console.live import Live
+from sift.late import late
 from sift.settings import Settings
 
 if TYPE_CHECKING:
@@ -37,25 +37,23 @@ class Windows(Protocol):
     def escapes_work(self, found: "Console | None", descriptor: int) -> bool: ...
 
 
-def _as_logs(module: object) -> Logs:
-    return cast("Logs", module)
-
-
-def _as_endpoints(module: object) -> Endpoints:
-    return cast("Endpoints", module)
-
-
-def _as_windows(module: object) -> Windows:
-    return cast("Windows", module)
-
-
 def logs() -> Logs:
-    return _as_logs(import_module(LOGS))
+    return late(LOGS, Logs)
 
 
 def endpoints() -> Endpoints:
-    return _as_endpoints(import_module(ENDPOINTS))
+    return late(ENDPOINTS, Endpoints)
 
 
 def windows() -> Windows:
-    return _as_windows(import_module(WINDOWS))
+    return late(WINDOWS, Windows)
+
+
+if TYPE_CHECKING:
+    from sift.interfaces.cli import logs as _logs
+    from sift.interfaces.console import windows as _windows
+    from sift.interfaces.server import endpoint as _endpoint
+
+    _LOGS: Logs = _logs
+    _ENDPOINTS: Endpoints = _endpoint
+    _WINDOWS: Windows = _windows

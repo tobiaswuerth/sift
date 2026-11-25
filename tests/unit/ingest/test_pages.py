@@ -2,9 +2,8 @@ import io
 
 from PIL import Image
 
-from sift.ingest import pages as painter
 from sift.ingest.pages import pages
-from sift.ingest.pictures import Pages, Painter, Unpictured
+from sift.ingest.pictured import Pages, Unpictured
 from tests.scans import blank_pdf, scan
 
 
@@ -25,8 +24,3 @@ def test_a_pdf_that_cannot_be_opened_is_unpictured_saying_why() -> None:
 def test_a_pdf_with_a_page_that_cannot_be_loaded_is_unpictured_saying_why() -> None:
     assert sizes(pages(blank_pdf([(595, 842), (1, 800)]))) == (2, [(1089, 1540), (2, 1540)])
     assert pages(blank_pdf(missing=1)) == Unpictured("Failed to load page.")
-
-
-def test_the_painter_loaded_late_is_what_its_callers_take_it_for() -> None:
-    late: Painter = painter
-    assert late.pages is pages

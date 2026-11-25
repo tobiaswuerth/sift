@@ -3,7 +3,7 @@ import io
 import pypdfium2
 
 from sift.domain.text.scans import PAGES, page_scale
-from sift.ingest.pictures import Pages, Pictured, Unpictured
+from sift.ingest.pictured import Pages, Pictured, Unpictured
 
 PICTURED_AS = "PNG"
 COLOURS = "RGB"
