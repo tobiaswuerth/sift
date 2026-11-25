@@ -47,6 +47,18 @@ def test_links_that_go_round_in_a_loop_are_said_apart_from_those_leading_outside
     )
 
 
+def test_files_whose_names_differ_only_in_how_their_letters_are_composed_are_named() -> None:
+    composed, decomposed = "M\N{LATIN SMALL LETTER U WITH DIAERESIS}ller.md", "Mu\N{COMBINING DIAERESIS}ller.md"
+    alone = ("a/Z\N{LATIN SMALL LETTER U WITH DIAERESIS}rich.md", "Ze\N{COMBINING ACUTE ACCENT}ro.md", "plain.md")
+    files = {composed: A, decomposed: A, **dict.fromkeys(alone, A)}
+    assert said(Scanned(Found(files)), {}) == (
+        Noted(
+            f"1 name written both composed and decomposed, a file each way: {composed}",
+            "rename one of each: their ids print alike",
+        ),
+    )
+
+
 def test_files_named_as_records_are_left_out_with_how_to_rename_them() -> None:
     assert said(Scanned(Found({}), named_as_records=("a.jsonl#k.md",)), {}) == (
         Noted(

@@ -1,10 +1,12 @@
+import unicodedata
 from collections import Counter
+from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from pathlib import Path
 
 from sift.api.errors import Problem
 from sift.api.events import Noted
-from sift.domain.plan.indexing import ROOT, IndexPlan, folders_of
+from sift.domain.plan.indexing import ROOT, IndexPlan, Stat, folders_of
 from sift.domain.text.wording import counted
 from sift.ingest.scan import Scanned
 
@@ -16,6 +18,7 @@ LEFT_AS_INDEXED = (
 EMPTY_INSIDE = "{folder} is empty: {files} once in it kept as indexed, as a drive not mounted looks so"
 NAMED_AS_RECORD_REMEDY = "rename them: a # after .jsonl or .ndjson names a record"
 EMPTY_INSIDE_REMEDY = "connect the drive, or delete the empty folder to let them go"
+APART = "rename one of each: their ids print alike"
 
 
 def _named(paths: tuple[str, ...]) -> str:
@@ -45,6 +48,11 @@ def _emptied(folder: Path, left: Counter[str], emptied: str) -> Noted:
     return Noted(EMPTY_INSIDE.format(files=held, folder=emptied), EMPTY_INSIDE_REMEDY)
 
 
+def _written_apart(files: Mapping[str, Stat]) -> tuple[str, ...]:
+    other = Counter(unicodedata.normalize("NFC", path) for path in files if not unicodedata.is_normalized("NFC", path))
+    return tuple(sorted(name for name, count in other.items() if count + (name in files) > 1))
+
+
 def problems(folder: Path, scanned: Scanned, plan: IndexPlan, known: AbstractSet[str]) -> tuple[Noted, ...]:
     found, said = scanned.found, list[Noted]()
     kept, left = _held(plan.kept), _held(plan.left_as_indexed)
@@ -57,6 +65,10 @@ def problems(folder: Path, scanned: Scanned, plan: IndexPlan, known: AbstractSet
     if scanned.looped:
         looped = counted(len(scanned.looped), "file")
         said.append(Noted(f"{looped} whose links go round in a loop left out: {_named(scanned.looped)}"))
+    apart = _written_apart(found.files)
+    if apart:
+        names = counted(len(apart), "name")
+        said.append(Noted(f"{names} written both composed and decomposed, a file each way: {_named(apart)}", APART))
     if scanned.named_as_records:
         named, listed = counted(len(scanned.named_as_records), "file"), _named(scanned.named_as_records)
         said.append(Noted(f"{named} left out, whose names read as a record's id: {listed}", NAMED_AS_RECORD_REMEDY))
