@@ -1,10 +1,13 @@
 import dataclasses
 import io
+import json
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
 from sift.domain.text.scans import OcrSetting
+from sift.interfaces.cli.entries import ENTRIES
 from sift.interfaces.cli.main import STOPPED_WATCHING, Host, run
 from sift.interfaces.server.endpoint import own_endpoint, written
 from sift.settings import Settings
@@ -24,6 +27,28 @@ ASKED = (
     ("unresolved",),
     ("deactivate", "notes"),
     ("activate", "notes"),
+    ("mentions", "brush"),
+    ("similar", "notes/rl.md"),
+    ("similar", "notes/rl.md", "--json"),
+    ("get", "notes/none.md", "--json"),
+)
+WRITES = (
+    ("add", "../more", "--name", "more"),
+    ("index", "more"),
+    ("index", "--file", "../more/m.md"),
+    ("move", "more", "kept", "--json"),
+    ("rm", "more", "--json"),
+    ("rm", "none", "--json"),
+    ("add", "../more/m.md", "--json"),
+)
+NOT_COMPARED = MappingProxyType(
+    {
+        "serve": "it starts the home process",
+        "jobs": "it asks the home process alone",
+        "embed": "it needs models",
+        "vsearch": "it needs models",
+        "query": "it needs models",
+    }
 )
 
 
@@ -42,6 +67,7 @@ def ran(settings: Settings, *argv: str) -> tuple[int, str, str]:
 
 
 def test_a_command_sent_to_the_home_process_is_answered_as_it_is_alone(settings: Settings, notes: Path) -> None:
+    (notes / "arm.md").write_text("# Arm\n\nThe arm holds a brush.\n", encoding="utf-8")
     indexed_notes(settings, notes)
     assert ran(settings, "index")[0] == 0
     alone = [ran(settings, *argv) for argv in ASKED]
@@ -49,8 +75,39 @@ def test_a_command_sent_to_the_home_process_is_answered_as_it_is_alone(settings:
     with running(settings, counted(asked)):
         served = [ran(settings, *argv) for argv in ASKED]
     assert served == alone
-    assert asked == ["status", "status", "get", "get", "search", "links", "unresolved", "deactivate", "activate"]
-    assert [code for code, _, _ in alone] == [0, 0, 0, 1, 0, 0, 2, 0, 0, 0, 0]
+    assert asked == [
+        *("status", "status", "get", "get", "search", "links", "unresolved", "deactivate", "activate"),
+        *("mentions", "similar", "similar", "get"),
+    ]
+    assert [code for code, _, _ in alone] == [0, 0, 0, 1, 0, 0, 2, 0, 0, 0, 0, 0, 1, 1, 1]
+
+
+def _homeless(home: Path, said: str) -> str:
+    whole = str(home.resolve())
+    return said.replace(json.dumps(whole)[1:-1], "<home>").replace(whole, "<home>")
+
+
+def _seen_from(home: Path, done: tuple[int, str, str]) -> tuple[int, str, str]:
+    code, out, err = done
+    return code, _homeless(home, out), _homeless(home, err)
+
+
+def test_writes_from_another_folder_are_answered_served_as_alone(settings: Settings, tmp_path: Path) -> None:
+    (tmp_path / "more").mkdir()
+    (tmp_path / "more" / "m.md").write_text("# More\n\nMore notes.\n", encoding="utf-8")
+    alone, served = (dataclasses.replace(settings, home=tmp_path / name) for name in ("alone", "served"))
+    said_alone = [_seen_from(alone.home, ran(alone, *argv)) for argv in WRITES]
+    asked = list[str]()
+    with running(served, counted(asked)):
+        said_served = [_seen_from(served.home, ran(served, *argv)) for argv in WRITES]
+    assert said_served == said_alone
+    assert asked == ["add", "index", "index", "move", "rm", "rm", "add"]
+    assert [code for code, _, _ in said_alone] == [0, 0, 0, 0, 0, 1, 2]
+
+
+def test_every_command_is_compared_served_and_alone_or_says_why_not() -> None:
+    compared = {argv[0] for argv in (*ASKED, *WRITES)}
+    assert (compared | NOT_COMPARED.keys(), compared & NOT_COMPARED.keys()) == (set(ENTRIES), set())
 
 
 def test_a_failure_of_the_system_is_said_alike_served_and_alone(

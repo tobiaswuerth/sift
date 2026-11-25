@@ -137,11 +137,12 @@ def served_run(smoke: Smoke, notes: Path, more: Path) -> None:
         )
         smoke.checked(
             "add",
-            str(more),
-            "--name",
-            "more",
+            more.name,
             "--json",
-            holds=lambda done: (done.returncode, answer(done)["name"]) == (0, "more"),
+            cwd=more.parent,
+            holds=lambda done: (
+                (done.returncode, answer(done)["name"], answer(done)["folder"]) == (0, "more", str(more))
+            ),
         )
         smoke.checked("rm", "more", "--json", holds=lambda done: (done.returncode, answer(done)["documents"]) == (0, 0))
     assert (running.poll() is not None, found(process.settings_of(home))) == (True, None)
