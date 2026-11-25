@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 from typing import cast
 
+import numpy as np
 import pytest
 
 from sift.api.collections import AddCollection, TitleFrom
@@ -234,3 +235,18 @@ def test_a_file_where_an_imported_store_goes_is_left_and_its_collection_skipped(
         True,
         b"someone's file",
     )
+
+
+def test_a_broken_vector_of_sift_1_is_left_to_embed_and_the_intact_ones_are_carried(
+    tmp_path: Path, notes: Path
+) -> None:
+    former = former_home(tmp_path, {"notes": notes}, hashed())
+    with contextlib.closing(sqlite3.connect(former / "collections" / "notes.sqlite")) as connection, connection:
+        (chunk, size) = cast("tuple[int, int]", connection.execute("SELECT chunk, length(vec) FROM vectors").fetchone())
+        broken = np.full(size // 2, np.nan, np.float16).tobytes()
+        connection.execute("UPDATE vectors SET vec = ? WHERE chunk = ?", (broken, chunk))
+    home = tmp_path / "home"
+    (done,) = brought(home, former)
+    assert isinstance(done, Brought)
+    assert (done.vectors_before, done.vectors) == (2, 1)
+    assert embed(home, EmbedCollections(), quiet, hashed()).collections[0].outcome == Embedded(1, 0)

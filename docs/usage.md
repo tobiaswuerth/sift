@@ -259,7 +259,7 @@ tables and columns in reading order; their metadata says `ocr`.
 - Without a GPU, scans are skipped and reported; `SIFT_OCR=on` reads them on the CPU (minutes a page), `off` never.
   A scan skipped because the GPU's memory was taken, or OCR ran out of it, is read again by the next `sift index`;
   so are those skipped before `SIFT_OCR` was turned on, or from `off` to `auto`.
-- `reindex` leaves scans to the next `sift index`, so searches don't wait; `sift index --file` reads them at once.
+- `reindex` reads a scan as `sift index` does, in a job of the home process, so searches go on meanwhile.
 
 ### Emails
 
