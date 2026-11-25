@@ -147,13 +147,33 @@ def test_every_store_scores_its_best_ranges_though_time_is_out() -> None:
         assert ints(second.best.chunks) != ints(first.best.chunks)
 
 
-def test_a_phrase_whose_rarest_word_is_in_more_passages_than_a_search_reads_is_refused() -> None:
-    notes: Round = {f"n{n}.md": ("", "N", "of the w1") for n in range(4)}
+def test_a_phrase_is_held_to_what_all_its_words_read() -> None:
+    notes: Round = {f"n{n}.md": ("", "N", "of the w1" if n < 2 else "of w2") for n in range(4)}
     with collections([[notes]]) as (stores, _):
-        assert len(search(stores, Phrase(("of", "the")), 10, tuning=Tuning(most_read=4))) == 4
-        with pytest.raises(InvalidRequestError, match='"of the" reads 4 passages, more than the 3') as refused:
-            search(stores, Phrase(("of", "the")), 10, tuning=Tuning(most_read=3))
+        assert len(search(stores, Phrase(("of", "the")), 10, tuning=Tuning(most_read=6))) == 2
+        with pytest.raises(InvalidRequestError, match='"of the" reads 6 passages, more than the 5') as refused:
+            search(stores, Phrase(("of", "the")), 10, tuning=Tuning(most_read=5))
         assert refused.value.remedy == "add a rarer word to the phrase, or search its words without quotes"
+
+
+def test_a_prefix_of_more_words_than_a_search_expands_is_refused() -> None:
+    notes: Round = {"a.md": ("", "A", "w1 w10 w11"), "b.md": ("", "B", "w12")}
+    with collections([[notes]]) as (stores, _):
+        assert len(search(stores, Prefix("w1"), 10, tuning=Tuning(most_expansions=4))) == 2
+        refusal = r"w1\* stands for 4 words, more than the 3 a search expands"
+        with pytest.raises(InvalidRequestError, match=refusal) as refused:
+            search(stores, Prefix("w1"), 10, tuning=Tuning(most_expansions=3))
+        assert refused.value.remedy == "write more of the word before the *"
+
+
+def test_the_prefixes_of_a_query_are_held_together_to_what_a_search_expands() -> None:
+    notes: Round = {"a.md": ("", "A", "w1 w10 w20 w21")}
+    with collections([[notes], [notes]]) as (stores, _):
+        either = Or((Prefix("w1"), Prefix("w2")))
+        assert search(stores, either, 10, tuning=Tuning(most_expansions=8))
+        refusal = r"w1\* stands for 4 words; with the rest of the query, 8 words, more than the 7"
+        with pytest.raises(InvalidRequestError, match=refusal):
+            search(stores, either, 10, tuning=Tuning(most_expansions=7))
 
 
 def test_the_prefixes_and_phrases_of_a_query_are_held_to_what_a_search_reads_together() -> None:

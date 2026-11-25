@@ -11,7 +11,7 @@ from sift.domain.rank.best import Best, may_reach, offered, ranked
 from sift.domain.rank.bm25 import idf
 from sift.domain.rank.boolean import counted, may_hold
 from sift.retrieval.allowed import AllowedDocuments
-from sift.retrieval.keyword.leaves import materialized, reads_of, refused
+from sift.retrieval.keyword.leaves import Limit, expansions_of, materialized, reads_of, refused
 from sift.retrieval.keyword.lists import Opened, PostingArrays, StoredList, owners, stored
 from sift.retrieval.keyword.scoring import Query, Scored, bounds, scored, within
 from sift.storage.keyword_lists import frequencies
@@ -22,6 +22,7 @@ class Tuning:
     first_batch: int = 16
     most_batch: int = 4096
     most_read: int = 10_000_000
+    most_expansions: int = 100_000
 
 
 TUNING = Tuning()
@@ -200,21 +201,27 @@ class Planned:
     leaves: tuple[Leaf, ...]
     lists: dict[str, list[StoredList]]
     reads: Mapping[Phrase | Prefix, int]
+    expansions: Mapping[Prefix, int]
 
 
 def planned(store: Opened, expression: Expression) -> Planned:
     unique = tuple(dict.fromkeys(leaves(expression)))
     lists = stored(store, _tokens(unique))
     reads = {leaf: reads_of(store, leaf, lists) for leaf in unique if isinstance(leaf, Phrase | Prefix)}
-    return Planned(store, unique, lists, reads)
+    expanded = {leaf: expansions_of(store, leaf) for leaf in unique if isinstance(leaf, Prefix)}
+    return Planned(store, unique, lists, reads, expanded)
 
 
 def refuse_reading_too_much(plans: Sequence[Planned], tuning: Tuning = TUNING) -> None:
     reads: Counter[Phrase | Prefix] = Counter()
+    expanded: Counter[Phrase | Prefix] = Counter()
     for plan in plans:
         reads.update(plan.reads)
+        expanded.update(plan.expansions)
+    if (total := expanded.total()) > tuning.most_expansions:
+        refused(expanded, Limit(total, tuning.most_expansions, "word", "stands for", "expands"))
     if (total := reads.total()) > tuning.most_read:
-        refused(reads, total, tuning.most_read)
+        refused(reads, Limit(total, tuning.most_read, "passage", "reads", "reads"))
 
 
 def prepared(plan: Planned, *, allowed: AllowedDocuments | None = None) -> Prepared:

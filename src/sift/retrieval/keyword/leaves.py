@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import NoReturn
 
 import numpy as np
@@ -80,18 +81,29 @@ def materialized(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[Sto
 def reads_of(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[StoredList]]) -> int:
     if isinstance(leaf, Prefix):
         return volume(store.transaction, leaf.text).passages
-    return _size(lists[_rarest_first(leaf, lists)[0]])
+    return sum(_size(lists[token]) for token in set(leaf.tokens))
+
+
+def expansions_of(store: Opened, prefix: Prefix) -> int:
+    return volume(store.transaction, prefix.text).words
 
 
 def _written(leaf: Phrase | Prefix) -> str:
     return f"{leaf.text}*" if isinstance(leaf, Prefix) else f'"{" ".join(leaf.tokens)}"'
 
 
-def refused(reads: Mapping[Phrase | Prefix, int], total: int, most: int) -> NoReturn:
-    widest, passages = max(reads.items(), key=lambda each: each[1])
+@dataclass(frozen=True, slots=True)
+class Limit:
+    total: int
+    most: int
+    unit: str
+    costs: str
+    verb: str
+
+
+def refused(costs: Mapping[Phrase | Prefix, int], limit: Limit) -> NoReturn:
+    widest, cost = max(costs.items(), key=lambda each: each[1])
     remedy = PREFIX_REMEDY if isinstance(widest, Prefix) else PHRASE_REMEDY
-    whole = "" if total == passages else f"; with the rest of the query, {counted(total, 'passage')}"
-    raise InvalidRequestError(
-        f"{_written(widest)} reads {counted(passages, 'passage')}{whole}, more than the {most:,} a search reads",
-        remedy,
-    )
+    whole = "" if limit.total == cost else f"; with the rest of the query, {counted(limit.total, limit.unit)}"
+    said = f"{_written(widest)} {limit.costs} {counted(cost, limit.unit)}{whole}"
+    raise InvalidRequestError(f"{said}, more than the {limit.most:,} a search {limit.verb}", remedy)
