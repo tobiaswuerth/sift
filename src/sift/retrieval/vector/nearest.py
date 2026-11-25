@@ -68,8 +68,12 @@ def coded(ids: Ids, bits: Bits, width: int) -> Coded:
 @dataclass(frozen=True, slots=True, eq=False)
 class Measured:
     distance: NDArray[np.uint16]
-    ids: Ids
+    held_ids: tuple[Ids, ...]
     sizes: tuple[int, ...]
+
+    @property
+    def total(self) -> int:
+        return len(self.distance)
 
     def owners(self, at: Ids) -> Ids:
         return np.searchsorted(np.cumsum(self.sizes), at, side="right").astype(np.int64)
@@ -77,6 +81,16 @@ class Measured:
     def rows(self, at: Ids) -> Ids:
         starts = np.concatenate([np.zeros(1, np.int64), np.cumsum(self.sizes)[:-1]])
         return at - starts[self.owners(at)]
+
+    def ids(self, at: Ids) -> Ids:
+        if len(self.held_ids) == 1:
+            return self.held_ids[0][at]
+        owners, rows = self.owners(at), self.rows(at)
+        found = np.empty(len(at), np.int64)
+        for store in ints(np.unique(owners)):
+            mine = np.equal(owners, store)
+            found[mine] = self.held_ids[store][rows[mine]]
+        return found
 
 
 def _joined[T: np.generic](parts: list[NDArray[T]], empty: NDArray[T]) -> NDArray[T]:
@@ -87,13 +101,13 @@ def _measured(held: Sequence[Coded], query: Floats) -> Measured:
     asked = code_of(query)
     return Measured(
         _joined([distances(each.words, asked) for each in held], np.zeros(0, np.uint16)),
-        _joined([each.ids for each in held], np.zeros(0, np.int64)),
+        tuple(each.ids for each in held),
         tuple(len(each.ids) for each in held),
     )
 
 
 def _candidates(found: Measured, at: Ids) -> Candidates:
-    return Candidates(found.ids[at], found.owners(at), found.rows(at))
+    return Candidates(found.ids(at), found.owners(at), found.rows(at))
 
 
 def _nearest_of(found: Measured, among: Ids | None, want: int) -> Candidates:
@@ -103,7 +117,7 @@ def _nearest_of(found: Measured, among: Ids | None, want: int) -> Candidates:
     cutoff = int(np.searchsorted(np.cumsum(np.bincount(distance)), want))
     close = np.flatnonzero(distance <= cutoff)
     at = close if among is None else among[close]
-    return _candidates(found, at[np.lexsort((found.ids[at], distance[close]))[:want]])
+    return _candidates(found, at[np.lexsort((found.ids(at), distance[close]))[:want]])
 
 
 def _let(found: Measured, chosen: Ids, allowed: Sequence[AllowedChunks | None]) -> Mask:
@@ -112,12 +126,12 @@ def _let(found: Measured, chosen: Ids, allowed: Sequence[AllowedChunks | None]) 
     for store, each in enumerate(allowed):
         mine = np.flatnonzero(np.equal(owners, store))
         if each is not None and len(mine):
-            let[mine] = each.checked(found.ids[chosen[mine]])
+            let[mine] = each.checked(found.ids(chosen[mine]))
     return let
 
 
 def _listed(held: Sequence[Coded], found: Measured, allowed: Sequence[AllowedChunks | None]) -> Ids:
-    let = np.ones(len(found.ids), np.bool_)
+    let = np.ones(found.total, np.bool_)
     start = 0
     for store, each in enumerate(allowed):
         size = found.sizes[store]
@@ -132,7 +146,7 @@ def _passing(held: Sequence[Coded], found: Measured, want: int, allowed: Sequenc
     counts = ints(within)
     kept: list[Ids] = [np.zeros(0, np.int64)]
     passed, low, n = 0, 0, want
-    while n <= SCAN_SHARE * len(found.ids):
+    while n <= SCAN_SHARE * found.total:
         high = int(np.searchsorted(within, n))
         band = np.flatnonzero(
             np.logical_and(np.greater_equal(found.distance, low), np.less_equal(found.distance, high))

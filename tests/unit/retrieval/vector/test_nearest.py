@@ -103,8 +103,11 @@ def test_the_codes_find_the_nearest_among_many_more_codes_than_are_scored_exactl
     assert recall >= RECALL_AT_10
 
 
-def test_a_scan_without_a_filter_holds_a_few_bytes_a_code_beside_the_codes() -> None:
-    held, exact = stores(11, [200_000], 64)
+@pytest.mark.parametrize("sizes", [[200_000], [100_000, 100_000], [30_000] * 6 + [20_000]])
+def test_a_scan_without_a_filter_holds_a_few_bytes_a_code_beside_the_codes_however_many_stores(
+    sizes: list[int],
+) -> None:
+    held, exact = stores(11, sizes, 64)
     query = unit(np.random.default_rng(12).normal(size=64))
     nearest(held, query, 10, Reads(reader(exact)), rescore=50)
     tracemalloc.start()
