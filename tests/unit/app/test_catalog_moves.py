@@ -71,7 +71,7 @@ def test_a_store_moves_to_a_file_of_another_name(home: Path, tmp_path: Path) -> 
 def test_a_store_moves_to_another_drive_as_a_copy_saying_how_far_it_got(home: Path, tmp_path: Path) -> None:
     before, said = searched(home), list[Event]()
     result = moved(home, "notes", to=tmp_path / "other drive", how=Moving(Transfer(no_link, pages=2)), said=said)
-    assert result.moved[0].copied
+    assert result.moved[0].copied is True
     assert said[:2] == [
         CollectionStarted("notes", str(home / "collections" / "notes.sqlite")),
         PhaseStarted(Phase.COPY, 1),

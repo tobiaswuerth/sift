@@ -136,7 +136,7 @@ def test_what_is_kept_cannot_be_written(home: Path) -> None:
     kept = KeptDecoded()
     search(home, SearchKeywords('"robot plans" OR halo'), Watching(decoded=kept))
     arrays_kept = [array for value, _ in kept.entries.values() for array in arrays_of(value)]
-    assert arrays_kept
+    assert len(arrays_kept) == 6
     for array in arrays_kept:
         with pytest.raises(ValueError, match="WRITEABLE"):
             array.flags.writeable = True

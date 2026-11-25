@@ -88,7 +88,7 @@ def test_the_fake_keeps_the_contract_the_local_models_keep(tiny: Path, make: Cal
     assert bool(np.isfinite(scores).all())
     assert models.rerank("dark matter", []).shape == (0,)
     assert models.prepare().notices == models.prepare_ranker().notices
-    assert models.name
+    assert models.name != ""
 
 
 def test_a_model_that_says_not_how_wide_its_vectors_are_is_refused() -> None:

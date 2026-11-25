@@ -107,6 +107,13 @@ def test_a_wait_in_a_test_whose_outcome_is_dropped_is_found(dropped: str) -> Non
     assert problems("tests/unit/test_a.py", f"def test_a() -> None:\n    assert {dropped}\n") == []
 
 
+@pytest.mark.parametrize("held", ["found", "found.hits", "found.hits[0]"])
+def test_an_assertion_that_any_truthy_value_passes_is_found_in_tests(held: str) -> None:
+    assert problems("tests/unit/test_a.py", f"assert {held}\n") == [check_idioms.TRUTHY]
+    assert problems("tests/unit/test_a.py", f"assert {held} is True\nassert {held} == [1]\n") == []
+    assert problems("src/sift/a.py", f"assert {held}\n") == []
+
+
 def test_names_are_followed_in_each_function_alone() -> None:
     twice = "    moment = datetime.datetime\n    return moment.now()\n"
     source = f"import datetime\n\n\ndef a():\n{twice}\n\ndef b():\n{twice}"

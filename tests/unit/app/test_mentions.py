@@ -112,8 +112,7 @@ def test_a_note_named_by_more_words_than_a_query_takes_is_refused_saying_why(tmp
     for also, remedy in (((), "give it fewer or shorter names"), (("mails",), "name fewer fields to look for too")):
         with pytest.raises(InvalidRequestError, match="the note's names hold more than 1,000 words") as refused:
             mentions(home, FindMentions("v/Long.md", also=also))
-        assert refused.value.remedy is not None
-        assert remedy in refused.value.remedy
+        assert refused.value.remedy == remedy
 
 
 def test_status_counts_the_links_of_each_collection_and_those_leading_nowhere(named: Path, tmp_path: Path) -> None:

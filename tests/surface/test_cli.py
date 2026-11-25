@@ -11,7 +11,6 @@ from typing import TextIO, cast, final, override
 import pytest
 
 from sift.interfaces.cli.main import main, run
-from sift.interfaces.console.text import table
 from sift.interfaces.console.units import size
 from sift.settings import Settings
 from sift.storage.catalog import CATALOG, CATALOG_DAMAGED_REMEDY
@@ -62,20 +61,13 @@ def test_a_collection_added_is_shown_by_status(settings: Settings, notes: Path) 
         "",
         f"added  notes  {notes.resolve()}\nstore  {store}\n next  sift index notes\n",
     )
-    assert ran(settings, "status") == (
-        0,
-        "\n".join(
-            table(
-                (
-                    ("collection", "folder", "documents", "passages", "size"),
-                    ("notes", str(notes.resolve()), "0", "0", size(store.stat().st_size)),
-                ),
-                frozenset({2, 3, 4}),
-            )
-        )
-        + "\n",
-        "",
+    folder, stored = str(notes.resolve()), size(store.stat().st_size)
+    wide, last = max(len("folder"), len(folder)), max(len("size"), len(stored))
+    shown = (
+        f"collection  {'folder':<{wide}}  documents  passages  {'size':>{last}}\n"
+        f"notes       {folder:<{wide}}  {'0':>9}  {'0':>8}  {stored:>{last}}\n"
     )
+    assert ran(settings, "status") == (0, shown, "")
 
 
 def test_status_and_add_answer_in_json_when_asked(settings: Settings, notes: Path) -> None:

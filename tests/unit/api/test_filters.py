@@ -43,7 +43,7 @@ def test_a_filter_is_written_as_a_field_an_operator_and_a_value_whose_numbers_st
 def test_a_filter_written_otherwise_is_refused_saying_how_to_write_one(text: str) -> None:
     with pytest.raises(InvalidRequestError, match="KEY=VALUE") as refused:
         written(text)
-    assert refused.value.remedy is not None
+    assert refused.value.remedy == "write KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06"
 
 
 def test_values_of_one_field_asked_alike_are_gathered_into_any_or_none_of_them() -> None:

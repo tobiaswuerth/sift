@@ -209,7 +209,10 @@ def test_a_damaged_store_is_passed_over_by_names_and_unresolved_saying_so(people
     assert [each.collection for each in found.unsearched] == ["w"]
     with pytest.raises(NotFoundError, match=r"; not searched: w: the store .* is damaged") as refused:
         links(people, ShowLinks("Nowhere"))
-    assert refused.value.remedy is not None
+    assert refused.value.remedy == (
+        "remove the collection, then add its folder and index it again; "
+        'name a note by its id, or as links name it, e.g. "Acme AG"'
+    )
     assert refused.value.remedy.endswith(f"; {NOTE_REMEDY}")
     write(tmp_path / "v" / "Other" / "Acme AG.md", "# Acme AG again\n")
     index(people, IndexCollections(names=("v",)), quiet)

@@ -247,15 +247,15 @@ def test_with_no_collection_every_command_that_reads_one_says_how_to_add_one(set
 
 def test_with_no_collection_a_command_asked_for_json_answers_in_json_as_it_would_with_one(settings: Settings) -> None:
     asked = (
-        (("unresolved",), 0),
-        (("get", "a/b.md"), 1),
-        (("links", "A"), 1),
-        (("mentions", "A"), 1),
-        (("similar", "a/b.md"), 1),
+        (("unresolved",), 0, ["more", "targets", "unsearched"]),
+        (("get", "a/b.md"), 1, ["found", "not_read"]),
+        (("links", "A"), 1, ["error"]),
+        (("mentions", "A"), 1, ["error"]),
+        (("similar", "a/b.md"), 1, ["error"]),
     )
-    for argv, failed in asked:
+    for argv, failed, keys in asked:
         code, out, _ = ran(settings, *argv, "--json")
-        assert (code, isinstance(cast("object", json.loads(out)), dict)) == (failed, True)
+        assert (code, sorted(cast("dict[str, object]", json.loads(out)))) == (failed, keys)
 
 
 def test_status_of_a_store_that_is_gone_fails_and_json_may_come_before_the_command(

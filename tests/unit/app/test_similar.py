@@ -118,7 +118,7 @@ def test_similar_needs_the_document_embedded(papers: Path, tmp_path: Path) -> No
     indexed(papers)
     with pytest.raises(StoreUnavailableError, match=r"'arxiv/new\.md' has no vectors yet") as refused:
         similar(papers, FindSimilar("arxiv/new.md"))
-    assert (refused.value.remedy is not None, refused.value.code) == (True, Problem.NOT_EMBEDDED)
+    assert (refused.value.remedy, refused.value.code) == ("embed the collection", Problem.NOT_EMBEDDED)
     assert refused.value.remedy == "embed the collection"
     with pytest.raises(NotFoundError, match="no note or document"):
         similar(papers, FindSimilar("arxiv/missing.md"))

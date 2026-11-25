@@ -113,7 +113,7 @@ def test_a_query_outside_the_grammar_is_refused_with_what_to_write(query: str, p
     with pytest.raises(InvalidRequestError, match="the query is not understood") as refused:
         parsed(query)
     assert problem in refused.value.message
-    assert refused.value.remedy
+    assert refused.value.remedy == REMEDIES.get(problem, SYNTAX)
 
 
 @pytest.mark.parametrize(
@@ -164,6 +164,17 @@ def test_a_query_of_words_alone_is_relaxed_to_any_of_them(query: str, expression
 
 ROWS = tuple(" ".join(chosen) for n in range(1, 4) for chosen in combinations("abcde", n))
 COMPARED, MOST_TRIED = 300, 3000
+SYNTAX = 'write words, "phrases", prefix*, AND, OR, NOT and (parentheses), e.g. (bert OR roberta) AND "fine tuning"'
+PREFIX = "end one word of letters and digits with *, e.g. superconduct*"
+REMEDIES = {
+    "a quote is not closed": 'close it, or write "" for a quote inside quotes',
+    "NEAR is not supported": 'write the words side by side, or as a "phrase"',
+    "* ends a prefix": PREFIX,
+    "a prefix is one word": PREFIX,
+    "+ joins nothing here": 'put the words of a phrase in quotes, e.g. "dark matter"',
+    f"more than {MOST_WORDS:,} words": "ask with fewer words",
+    f"more than {MOST_QUERY_CHARS:,} characters": "ask in fewer words",
+}
 
 
 def pick[T](rng: np.random.Generator, items: Sequence[T]) -> T:

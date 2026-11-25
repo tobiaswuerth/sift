@@ -34,4 +34,4 @@ def test_colour_is_off_in_a_pipe_without_escapes_with_no_color_a_dumb_terminal_o
 
 def test_colour_asked_for_is_given_anywhere() -> None:
     piped = Terminal(terminal=False, escapes=False)
-    assert style_of(piped, Asked(Colour.ALWAYS, no_color=True, dumb=True)).colour
+    assert style_of(piped, Asked(Colour.ALWAYS, no_color=True, dumb=True)).colour is True

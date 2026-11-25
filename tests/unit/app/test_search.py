@@ -75,7 +75,7 @@ def test_a_search_finds_each_document_by_its_best_passage_with_where_it_is(home:
                 "Halo",
                 4,
                 6,
-                result.hits[0].score,
+                3.959956,
                 "# Halo\n\nDark matter halo models.",
             ),
         ),
@@ -83,8 +83,6 @@ def test_a_search_finds_each_document_by_its_best_passage_with_where_it_is(home:
         (),
         scored_by="keywords",
     )
-    assert result.hits[0].score > 0
-    assert result.hits[0].score != round(result.hits[0].score, 4)
 
 
 def test_the_lines_of_a_hit_are_its_passage(home: Path) -> None:

@@ -60,6 +60,10 @@ WAIT_DROPPED = (
     "a wait or join whose outcome is dropped, so a test that should fail hangs or goes on: "
     "use joined, waited, crossed, until or paused from tests/waits.py"
 )
+TRUTHY = (
+    "an assertion that holds for any truthy value, a wrong one too: "
+    "compare with the value meant, or write `is True` for a flag"
+)
 CLOCK_IN_A_TEST = (
     "a clock in a test, which passes or fails by the machine and its load: count what costs the time "
     "(calls, characters looked at, rows read), or pass a clock in"
@@ -247,6 +251,12 @@ def waits_dropped(path: str, tree: ast.Module) -> Iterator[Finding]:
                 pass
 
 
+def truthy_asserts(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assert) and isinstance(node.test, ast.Name | ast.Attribute | ast.Subscript):
+            yield Finding(path, node.lineno, TRUTHY)
+
+
 def clocks(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import | ast.ImportFrom) and CLOCKS & {n.split(".")[0] for n in _imported(node)}:
@@ -362,6 +372,7 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *(clocks(path, tree) if in_tests else ()),
         *(pinned_examples(path, tree) if in_tests and path not in EXAMPLE_COUNTS else ()),
         *(waits_dropped(path, tree) if in_tests and path != WAITS else ()),
+        *(truthy_asserts(path, tree) if in_tests else ()),
         *storage_idioms(path, tree),
     )
 

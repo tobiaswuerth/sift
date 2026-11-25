@@ -68,5 +68,5 @@ def test_a_command_that_waits_too_long_for_reads_is_refused_and_lets_them_go_on(
     assert refused.value.code is Problem.BUSY
     assert said == [Noted(WAITING_FOR_READS)]
     with gate.alone(said.append):
-        assert gate.held_alone
+        assert gate.held_alone is True
     assert said == [Noted(WAITING_FOR_READS)]

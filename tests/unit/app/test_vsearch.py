@@ -273,7 +273,7 @@ def test_a_store_lost_while_its_documents_are_counted_is_passed_over(home: Path,
     request = SearchVectors("pruning skips ranges that cannot win", k=3)
     found = vsearch(home, request, Hashed(), Rescoring(1, vectors_of, count))
     assert len(found.unsearched) == 1
-    assert found.hits
+    assert [hit.id for hit in found.hits] == ["notes/pruning.md", "notes/filler3.md", "notes/matter.md"]
 
 
 def test_documents_are_counted_once_however_often_the_search_widens(tmp_path: Path) -> None:

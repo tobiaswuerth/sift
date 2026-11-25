@@ -53,7 +53,7 @@ class FakeProcessor:
         }
 
     def decode(self, ids: torch.Tensor, /, *, skip_special_tokens: bool) -> str:
-        assert skip_special_tokens
+        assert skip_special_tokens is True
         return " ".join(f"word{int(each)}" for each in ids if int(each))
 
 

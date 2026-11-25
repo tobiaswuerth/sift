@@ -227,7 +227,7 @@ def test_options_that_cannot_be_followed_are_refused_saying_how(
 ) -> None:
     with pytest.raises(InvalidRequestError, match=refusal) as refused:
         search(home, request_)
-    assert refused.value.remedy is not None
+    assert refused.value.remedy == "name a front matter field, e.g. created, or -created for the newest first"
 
 
 def test_a_filter_letting_few_documents_through_ends_the_semantic_search_once_they_are_found(home: Path) -> None:
@@ -250,8 +250,16 @@ def many(tmp_path: Path, name: str, notes: int) -> Path:
     return root
 
 
-@pytest.mark.parametrize("notes", [400, 6])
-def test_a_store_lost_while_its_filter_is_checked_or_listed_is_passed_over(tmp_path: Path, notes: int) -> None:
+@pytest.mark.parametrize(
+    "notes, left",
+    [
+        (400, ["second/even/42.md", "second/even/168.md", "second/even/214.md"]),
+        (6, ["second/even/2.md", "second/even/0.md", "second/even/4.md"]),
+    ],
+)
+def test_a_store_lost_while_its_filter_is_checked_or_listed_is_passed_over(
+    tmp_path: Path, notes: int, left: list[str]
+) -> None:
     home = tmp_path / "home"
     for name in ("first", "second"):
         add(home, AddCollection(str(many(tmp_path, name, notes))))
@@ -264,8 +272,7 @@ def test_a_store_lost_while_its_filter_is_checked_or_listed_is_passed_over(tmp_p
     damage_table(home / "collections" / "first.sqlite", "documents")
     found = vsearch(home, request, Hashed(), Rescoring(3, vectors_of))
     assert [each.collection for each in found.unsearched] == ["first"]
-    assert found.hits
-    assert all(hit.id.startswith("second/even/") for hit in found.hits)
+    assert [hit.id for hit in found.hits] == left
 
 
 def _gone() -> None:

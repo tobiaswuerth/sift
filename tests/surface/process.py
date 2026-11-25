@@ -59,8 +59,9 @@ def served(home: Path) -> Generator[subprocess.Popen[str]]:
     )
     try:
         listed = own_endpoint(settings_of(home))
-        started = until(lambda: listed.exists() or running.poll() is not None, 60)
-        assert started, "the home process neither listed its endpoint nor ended within 60 s"
+        assert until(lambda: listed.exists() or running.poll() is not None, 60), (
+            "the home process neither listed its endpoint nor ended within 60 s"
+        )
         yield running
     finally:
         if running.poll() is None:

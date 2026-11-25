@@ -190,7 +190,17 @@ def test_a_store_lost_while_the_cosines_of_its_candidates_are_read_is_passed_ove
 
     result = query(home, SearchHybrid("dark matter halo models"), Hashed(), Rescoring(1000, reading))
     assert len(result.unsearched) == 1
-    assert result.hits
+    assert [hit.id for hit in result.hits] == [
+        "notes/halo.md",
+        "notes/matter.md",
+        "notes/filler2.md",
+        "notes/filler5.md",
+        "notes/filler1.md",
+        "notes/pruning.md",
+        "notes/filler0.md",
+        "notes/filler4.md",
+        "notes/filler3.md",
+    ]
 
 
 def test_values_of_the_front_matter_the_query_names_are_read_from_lists_too(home: Path) -> None:

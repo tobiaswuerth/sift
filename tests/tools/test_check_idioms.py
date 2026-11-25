@@ -196,7 +196,15 @@ def test_catching_recursion_error_named_in_a_tuple_of_another_module_is_found() 
     tree = canonical(ast.parse(source))
     found = list(check_idioms.recursion_caught("src/sift/c.py", tree, tuples_of))
     assert [each.problem for each in found] == [check_idioms.RECURSION_CAUGHT]
-    assert check_idioms.first_party_tuples("sift.ingest.mail")["UNREADABLE"]
+    unreadable = check_idioms.first_party_tuples("sift.ingest.mail")["UNREADABLE"]
+    assert [ast.unparse(each) for each in unreadable] == [
+        "email.errors.MessageError",
+        "ValueError",
+        "LookupError",
+        "IndexError",
+        "AttributeError",
+        "NameError",
+    ]
 
 
 def test_the_repository_keeps_the_idioms() -> None:

@@ -41,7 +41,7 @@ def test_a_search_out_of_time_says_it_is_partial_and_keeps_what_it_found(tmp_pat
     ticks = itertools.count()
     request = SearchKeywords("note", k=500, budget=0.5)
     cut = search(home, request, watching=Watching(clock=lambda: float(next(ticks))), tuning=Tuning(first_batch=1))
-    assert cut.partial
+    assert cut.partial is True
     assert 0 < len(cut.hits) < 300
     whole = search(home, dataclasses.replace(request, budget=None), tuning=Tuning(first_batch=1))
     assert (whole.partial, len(whole.hits)) == (False, 300)

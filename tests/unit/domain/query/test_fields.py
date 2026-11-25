@@ -32,7 +32,7 @@ def test_a_list_is_ordered_by_its_first_value() -> None:
 def test_a_sort_naming_no_field_is_refused() -> None:
     with pytest.raises(InvalidRequestError, match="names no field to sort by") as refused:
         checked("-")
-    assert refused.value.remedy is not None
+    assert refused.value.remedy == "name a front matter field, e.g. created, or -created for the newest first"
     checked("-created")
 
 
