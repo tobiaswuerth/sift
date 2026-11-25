@@ -17,7 +17,7 @@ from sift.api.errors import (
 from sift.api.filters import Filter, Operator
 from sift.api.indexing import CollectionIndexed, Indexed
 from sift.api.links import Direction, FindMentions, FindSimilar, ListUnresolved, ShowLinks
-from sift.api.search import Left, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
+from sift.api.search import Hit, Left, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.api.wire import Json, decoded, decoded_error, encoded, encoded_error
 from tests.answers import SAMPLES
 
@@ -127,3 +127,11 @@ def test_an_error_comes_back_from_its_json_as_it_was(error: SiftError) -> None:
     if isinstance(error, InvalidRequestError):
         assert isinstance(back, InvalidRequestError)
         assert back.field == error.field
+
+
+@pytest.mark.parametrize(
+    "score, shown", [(0.7465865612030029, 0.7465866), (12.345678901, 12.34568), (1e-12, 1e-12), (0.0, 0.0)]
+)
+def test_a_hit_s_score_carries_the_digits_a_float32_holds_and_no_more(score: float, shown: float) -> None:
+    hit = Hit("n/a.md", "n", "a.md", "A", 1, 2, score, None)
+    assert (hit.score, json.dumps(cast("dict[str, Json]", encoded(hit))["score"])) == (shown, json.dumps(shown))

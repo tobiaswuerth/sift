@@ -19,6 +19,7 @@ from sift.api.requests import Request
 
 MOST_HITS = 10_000
 MOST_LINKS = 100
+SCORE_DIGITS = 7
 QUERY = (
     'what to find: words, "phrases", prefix*, AND, OR, NOT and (parentheses); words side by side must all be in a '
     "passage, and if no passage holds them all, any of them will do"
@@ -102,6 +103,9 @@ class Hit:
     text: str | None
     also: tuple[str, ...] = ()
     fields: Fields | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "score", float(f"{self.score:.{SCORE_DIGITS}g}"))
 
     @property
     def lines(self) -> str:
