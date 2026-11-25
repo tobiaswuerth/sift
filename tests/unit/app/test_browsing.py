@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,7 @@ from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.app.browsing import browse
 from sift.app.collections import add
 from sift.app.documents import source_of
-from tests.files import write
+from tests.files import linked, write
 from tests.homes import collection, indexed
 
 NOTES = {
@@ -79,3 +80,21 @@ def test_a_document_s_source_is_its_file_in_its_collection(home: Path, tmp_path:
         source_of(home, "notes/2024/none.md")
     with pytest.raises(NotFoundError):
         source_of(home, "hidden/s.md", audience=Audience.AGENTS)
+
+
+def test_a_link_that_took_an_indexed_file_s_place_is_no_source_to_open(home: Path, tmp_path: Path) -> None:
+    notes, outside = tmp_path / "notes", tmp_path / "outside"
+    write(outside / "a.md", "a private key\n")
+    write(outside / "d.md", "a private key\n")
+    (notes / "a.md").unlink()
+    linked(notes / "a.md", str(outside / "a.md"))
+    shutil.rmtree(notes / "2024" / "deep")
+    linked(notes / "2024" / "deep", str(outside), folder=True)
+    for id_ in ("notes/a.md", "notes/2024/deep/d.md"):
+        with pytest.raises(NotFoundError, match="is left out by sift now"):
+            source_of(home, id_)
+    add(home, AddCollection(str(notes), follow_links=True))
+    assert source_of(home, "notes/a.md") == notes / "a.md"
+    with pytest.raises(NotFoundError, match="a folder on its path is a link"):
+        source_of(home, "notes/2024/deep/d.md")
+    assert source_of(home, "notes/2024/b.md") == notes / "2024" / "b.md"

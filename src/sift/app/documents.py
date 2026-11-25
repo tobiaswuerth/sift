@@ -13,6 +13,7 @@ from sift.api.notices import Notice, notice_of
 from sift.domain.query import fields as shown
 from sift.domain.text.kinds import public_id, split_keyed_path
 from sift.domain.text.lines import refuse_past_end
+from sift.ingest.scan import Reach, scan_one
 from sift.storage.catalog import Collection, known_to, refuse_inactive
 from sift.storage.database import Reading
 from sift.storage.documents import Stored, fields_of, paths_named, stored
@@ -24,6 +25,7 @@ SEPARATOR = "/"
 BACKSLASH = "\\"
 PARENT = ".."
 UNKNOWN_REMEDY = "take the id from a search result"
+LEFT_OUT_REMEDY = "open it from its folder yourself, if you trust where it leads"
 SEPARATED_REMEDY = "write an id's folders with / between them, as search results give it"
 
 
@@ -186,4 +188,9 @@ def source_of(home: Path, id_: str, *, audience: Audience = Audience.PEOPLE) -> 
     chosen, relative = place(known_to(home, audience), id_)
     with read_store(chosen.store, chosen.id) as transaction:
         found = resolved_at(transaction, chosen.name, id_, relative, absolute=Path(id_).is_absolute())
+    scanned = scan_one(chosen.folder, found.path, Reach(chosen.choices.follow_links))
+    if found.path not in scanned.found.files:
+        why = scanned.why.get(found.path)
+        said = f"the file of {id_!r} is left out by sift now" + ("" if why is None else f": {why}")
+        raise NotFoundError(said, LEFT_OUT_REMEDY, code=Problem.UNKNOWN_DOCUMENT)
     return chosen.folder / found.path
