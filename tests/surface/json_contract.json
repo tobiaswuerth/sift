@@ -1,290 +1,664 @@
 {
-  "add": {
-    "name": "notes",
-    "folder": "/data/notes",
-    "store": "/home/.sift/collections/notes.sqlite",
-    "title_from": "heading",
-    "vault": true,
-    "follow_links": false,
-    "agents": true,
-    "state": "added"
-  },
-  "add again": {
-    "name": "notes",
-    "title_from": "name",
-    "follow_links": true,
-    "agents": false,
-    "retitled": 2,
-    "to_embed": 1,
-    "index_again": true,
-    "state": "changed"
-  },
-  "rm": {
-    "name": "diary",
-    "store": "/home/.sift/collections/diary.sqlite",
-    "documents": 3,
-    "problem": null,
-    "left": [
-      "/s/diary.sqlite-wal"
-    ]
-  },
-  "move": {
-    "moved": [
-      {
-        "name": "diary",
-        "old": "/s/diary.sqlite",
-        "new": "/t/diary.sqlite",
-        "copied": true,
-        "left": [
-          "/s/diary.sqlite-shm"
-        ]
-      }
-    ],
-    "already": [
-      "notes"
-    ]
-  },
-  "activate": {
-    "active": true,
-    "changed": [
-      "diary"
-    ],
-    "already": []
-  },
-  "deactivate": {
-    "active": false,
-    "changed": [
-      "diary"
-    ],
-    "already": [
-      "notes"
-    ]
-  },
-  "status": {
-    "home": "/home/.sift",
-    "collections": [
-      {
-        "name": "notes",
-        "folder": "/data/notes",
-        "store": "/home/.sift/collections/notes.sqlite",
-        "contents": {
-          "documents": 3,
-          "chunks": 7,
-          "stored_bytes": 4096,
-          "unreadable": 1,
-          "unreadable_files": [
+  "answers": {
+    "add": {
+      "name": "notes",
+      "folder": "/data/notes",
+      "store": "/home/.sift/collections/notes.sqlite",
+      "title_from": "heading",
+      "vault": true,
+      "follow_links": false,
+      "agents": true,
+      "state": "added"
+    },
+    "add again": {
+      "name": "notes",
+      "title_from": "name",
+      "follow_links": true,
+      "agents": false,
+      "retitled": 2,
+      "to_embed": 1,
+      "index_again": true,
+      "state": "changed"
+    },
+    "rm": {
+      "name": "diary",
+      "store": "/home/.sift/collections/diary.sqlite",
+      "documents": 3,
+      "problem": null,
+      "left": [
+        "/s/diary.sqlite-wal"
+      ]
+    },
+    "move": {
+      "moved": [
+        {
+          "name": "diary",
+          "old": "/s/diary.sqlite",
+          "new": "/t/diary.sqlite",
+          "copied": true,
+          "left": [
+            "/s/diary.sqlite-shm"
+          ]
+        }
+      ],
+      "already": [
+        "notes"
+      ]
+    },
+    "activate": {
+      "active": true,
+      "changed": [
+        "diary"
+      ],
+      "already": []
+    },
+    "deactivate": {
+      "active": false,
+      "changed": [
+        "diary"
+      ],
+      "already": [
+        "notes"
+      ]
+    },
+    "status": {
+      "home": "/home/.sift",
+      "collections": [
+        {
+          "name": "notes",
+          "folder": "/data/notes",
+          "store": "/home/.sift/collections/notes.sqlite",
+          "contents": {
+            "documents": 3,
+            "chunks": 7,
+            "stored_bytes": 4096,
+            "unreadable": 1,
+            "unreadable_files": [
+              {
+                "path": "bad.pdf",
+                "problem": "no text"
+              }
+            ],
+            "links": 2,
+            "unresolved": 1,
+            "embedded": 5,
+            "model": "a-model",
+            "fields": [
+              "year"
+            ],
+            "state": "counted"
+          },
+          "active": true,
+          "agents": true
+        },
+        {
+          "name": "papers",
+          "folder": "/data/papers",
+          "store": "/home/.sift/collections/papers.sqlite",
+          "contents": {
+            "message": "gone",
+            "remedy": "add it",
+            "state": "unavailable"
+          },
+          "active": false,
+          "agents": true
+        }
+      ]
+    },
+    "index": {
+      "collections": [
+        {
+          "name": "notes",
+          "outcome": {
+            "files": 3,
+            "added": 1,
+            "changed": 1,
+            "removed": 0,
+            "unreadable": 1,
+            "state": "indexed"
+          },
+          "named": []
+        },
+        {
+          "name": "papers",
+          "outcome": {
+            "message": "gone",
+            "remedy": "add it",
+            "state": "skipped"
+          },
+          "named": []
+        }
+      ]
+    },
+    "index files": {
+      "collections": [
+        {
+          "name": "notes",
+          "outcome": {
+            "files": 2,
+            "added": 0,
+            "changed": 1,
+            "removed": 0,
+            "unreadable": 1,
+            "state": "indexed"
+          },
+          "named": [
             {
-              "path": "bad.pdf",
-              "problem": "no text"
+              "id": "notes/rl.md",
+              "state": "changed",
+              "note": null
+            },
+            {
+              "id": "notes/scan.pdf",
+              "state": "unreadable",
+              "note": "no text"
+            }
+          ]
+        }
+      ]
+    },
+    "embed": {
+      "collections": [
+        {
+          "name": "notes",
+          "outcome": {
+            "stored": 7,
+            "broken": 0,
+            "state": "embedded"
+          }
+        },
+        {
+          "name": "papers",
+          "outcome": {
+            "message": "gone",
+            "remedy": "add it",
+            "state": "skipped"
+          }
+        }
+      ]
+    },
+    "get": {
+      "found": [
+        {
+          "id": "notes/a.md",
+          "title": "A",
+          "text": "# A\n",
+          "fields": {
+            "year": 2024
+          }
+        }
+      ],
+      "unfound": [
+        {
+          "id": "notes/b.md",
+          "message": "unknown document 'notes/b.md'",
+          "remedy": "take the id from a search result",
+          "code": "unknown_document"
+        }
+      ]
+    },
+    "search": {
+      "hits": [
+        {
+          "id": "notes/a.md",
+          "collection": "notes",
+          "path": "a.md",
+          "title": "A",
+          "first_line": 1,
+          "last_line": 2,
+          "score": 1.5,
+          "text": "# A",
+          "also": [
+            "copy/a.md"
+          ],
+          "fields": {
+            "year": 2024
+          }
+        }
+      ],
+      "searched": 1,
+      "unsearched": [
+        {
+          "collection": "papers",
+          "message": "the store is busy",
+          "remedy": "wait, then ask again",
+          "code": "store_unavailable"
+        }
+      ],
+      "partial": true,
+      "ruled_out": 1,
+      "left_out": []
+    },
+    "links": {
+      "id": "notes/a.md",
+      "title": "A",
+      "out": [
+        {
+          "line": 3,
+          "target": "B",
+          "field": "org",
+          "fragment": "Intro",
+          "via": "name",
+          "id": "notes/b.md",
+          "title": "B",
+          "ambiguous": [],
+          "through": null
+        }
+      ],
+      "into": [
+        {
+          "id": "notes/c.md",
+          "title": "C",
+          "lines": [
+            {
+              "line": 4,
+              "field": null,
+              "text": "see [[A]]"
             }
           ],
-          "links": 2,
-          "unresolved": 1,
-          "embedded": 5,
-          "model": "a-model",
-          "fields": [
-            "year"
-          ],
-          "state": "counted"
-        },
-        "active": true,
-        "agents": true
-      },
-      {
-        "name": "papers",
-        "folder": "/data/papers",
-        "store": "/home/.sift/collections/papers.sqlite",
-        "contents": {
-          "message": "gone",
-          "remedy": "add it",
-          "state": "unavailable"
-        },
-        "active": false,
-        "agents": true
-      }
-    ]
-  },
-  "index": {
-    "collections": [
-      {
-        "name": "notes",
-        "outcome": {
-          "files": 3,
-          "added": 1,
-          "changed": 1,
-          "removed": 0,
-          "unreadable": 1,
-          "state": "indexed"
-        },
-        "named": []
-      },
-      {
-        "name": "papers",
-        "outcome": {
-          "message": "gone",
-          "remedy": "add it",
-          "state": "skipped"
-        },
-        "named": []
-      }
-    ]
-  },
-  "index files": {
-    "collections": [
-      {
-        "name": "notes",
-        "outcome": {
-          "files": 2,
-          "added": 0,
-          "changed": 1,
-          "removed": 0,
-          "unreadable": 1,
-          "state": "indexed"
-        },
-        "named": [
-          {
-            "id": "notes/rl.md",
-            "state": "changed",
-            "note": null
-          },
-          {
-            "id": "notes/scan.pdf",
-            "state": "unreadable",
-            "note": "no text"
-          }
-        ]
-      }
-    ]
-  },
-  "embed": {
-    "collections": [
-      {
-        "name": "notes",
-        "outcome": {
-          "stored": 7,
-          "broken": 0,
-          "state": "embedded"
+          "through": null
         }
-      },
-      {
-        "name": "papers",
-        "outcome": {
-          "message": "gone",
-          "remedy": "add it",
-          "state": "skipped"
+      ],
+      "unsearched": [
+        {
+          "collection": "papers",
+          "message": "the store is busy",
+          "remedy": "wait, then ask again",
+          "code": "store_unavailable"
         }
-      }
-    ]
+      ]
+    },
+    "unresolved": {
+      "targets": [
+        {
+          "target": "Missing",
+          "documents": 2,
+          "ids": [
+            "notes/a.md",
+            "notes/c.md"
+          ]
+        }
+      ],
+      "unsearched": [
+        {
+          "collection": "papers",
+          "message": "the store is busy",
+          "remedy": "wait, then ask again",
+          "code": "store_unavailable"
+        }
+      ]
+    },
+    "serve": {
+      "url": "http://127.0.0.1:8765"
+    }
   },
-  "get": {
-    "found": [
-      {
-        "id": "notes/a.md",
-        "title": "A",
-        "text": "# A\n",
-        "fields": {
-          "year": 2024
+  "requests": {
+    "add": {
+      "folder": "/data/notes",
+      "name": "notes",
+      "store": "/data/notes.sqlite",
+      "title_from": "name",
+      "nested": true,
+      "follow_links": true,
+      "agents": false,
+      "id_field": "key",
+      "title_field": "title",
+      "text_fields": [
+        "body"
+      ]
+    },
+    "rm": {
+      "name": "diary"
+    },
+    "move": {
+      "names": [
+        "diary"
+      ],
+      "to": "/data/stores"
+    },
+    "activate": {
+      "names": [
+        "diary"
+      ]
+    },
+    "deactivate": {
+      "names": [
+        "diary"
+      ]
+    },
+    "index": {
+      "names": [
+        "notes"
+      ],
+      "files": [
+        "notes/a.md"
+      ]
+    },
+    "embed": {
+      "names": [
+        "notes"
+      ],
+      "reset": true
+    },
+    "status": {
+      "names": [
+        "notes"
+      ],
+      "unreadable": true
+    },
+    "get": {
+      "documents": [
+        {
+          "id": "notes/a.md",
+          "first_line": 2,
+          "last_line": 4
         }
+      ],
+      "fields": [
+        "url"
+      ]
+    },
+    "search": {
+      "k": 5,
+      "collections": [
+        "notes"
+      ],
+      "path": "2024/*",
+      "filters": [
+        {
+          "field": "year",
+          "operator": ">=",
+          "values": [
+            2020
+          ]
+        }
+      ],
+      "fields": [
+        "url"
+      ],
+      "sort": "-created",
+      "links_to": [
+        "Alice"
+      ],
+      "linked_from": [
+        "Bob"
+      ],
+      "all_passages": true,
+      "compact": true,
+      "adaptive": true,
+      "offset": 5,
+      "budget": 0.5,
+      "query": "halo"
+    },
+    "vsearch": {
+      "k": 5,
+      "collections": [
+        "notes"
+      ],
+      "path": "2024/*",
+      "filters": [
+        {
+          "field": "year",
+          "operator": ">=",
+          "values": [
+            2020
+          ]
+        }
+      ],
+      "fields": [
+        "url"
+      ],
+      "sort": "-created",
+      "links_to": [
+        "Alice"
+      ],
+      "linked_from": [
+        "Bob"
+      ],
+      "all_passages": true,
+      "compact": true,
+      "adaptive": true,
+      "offset": 5,
+      "budget": 0.5,
+      "query": "dark matter"
+    },
+    "query": {
+      "k": 5,
+      "collections": [
+        "notes"
+      ],
+      "path": "2024/*",
+      "filters": [
+        {
+          "field": "year",
+          "operator": ">=",
+          "values": [
+            2020
+          ]
+        }
+      ],
+      "fields": [
+        "url"
+      ],
+      "sort": "-created",
+      "links_to": [
+        "Alice"
+      ],
+      "linked_from": [
+        "Bob"
+      ],
+      "all_passages": true,
+      "compact": true,
+      "adaptive": true,
+      "offset": 5,
+      "budget": 0.5,
+      "query": "dark matter",
+      "candidates": 60
+    },
+    "mentions": {
+      "k": 5,
+      "collections": [
+        "notes"
+      ],
+      "path": "2024/*",
+      "filters": [
+        {
+          "field": "year",
+          "operator": ">=",
+          "values": [
+            2020
+          ]
+        }
+      ],
+      "fields": [
+        "url"
+      ],
+      "sort": "-created",
+      "links_to": [
+        "Alice"
+      ],
+      "linked_from": [
+        "Bob"
+      ],
+      "all_passages": true,
+      "compact": true,
+      "adaptive": true,
+      "offset": 5,
+      "budget": 0.5,
+      "id": "notes/Alice.md",
+      "also": [
+        "emails"
+      ]
+    },
+    "similar": {
+      "k": 5,
+      "collections": [
+        "notes"
+      ],
+      "path": "2024/*",
+      "filters": [
+        {
+          "field": "year",
+          "operator": ">=",
+          "values": [
+            2020
+          ]
+        }
+      ],
+      "fields": [
+        "url"
+      ],
+      "sort": "-created",
+      "links_to": [
+        "Alice"
+      ],
+      "linked_from": [
+        "Bob"
+      ],
+      "all_passages": true,
+      "compact": true,
+      "adaptive": true,
+      "offset": 5,
+      "budget": 0.5,
+      "id": "notes/a.md"
+    },
+    "links": {
+      "id": "notes/a.md",
+      "direction": "both",
+      "depth": 2,
+      "field": "related",
+      "k": 20
+    },
+    "unresolved": {
+      "collections": [
+        "notes"
+      ],
+      "k": 20
+    },
+    "jobs": {
+      "stop": 3
+    }
+  },
+  "errors": {
+    "invalid request": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "invalid_request",
+        "message": "k is 0, outside 1 to 10,000",
+        "remedy": "give 1 to 10,000",
+        "field": "k"
       }
-    ],
-    "unfound": [
-      {
-        "id": "notes/b.md",
-        "message": "unknown document 'notes/b.md'",
+    },
+    "not found": {
+      "error": {
+        "kind": "not_found",
+        "code": "not_found",
+        "message": "unknown document 'notes/x.md'",
         "remedy": "take the id from a search result",
-        "code": "unknown_document"
+        "field": null
       }
-    ]
-  },
-  "search": {
-    "hits": [
-      {
-        "id": "notes/a.md",
-        "collection": "notes",
-        "path": "a.md",
-        "title": "A",
-        "first_line": 1,
-        "last_line": 2,
-        "score": 1.5,
-        "text": "# A",
-        "also": [
-          "copy/a.md"
-        ],
-        "fields": {
-          "year": 2024
-        }
-      }
-    ],
-    "searched": 1,
-    "unsearched": [
-      {
-        "collection": "papers",
+    },
+    "store unavailable": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "store_unavailable",
         "message": "the store is busy",
         "remedy": "wait, then ask again",
-        "code": "store_unavailable"
+        "field": null
       }
-    ],
-    "partial": true,
-    "ruled_out": 1,
-    "left_out": []
+    },
+    "model unavailable": {
+      "error": {
+        "kind": "model_unavailable",
+        "code": "model_unavailable",
+        "message": "the model cannot be loaded",
+        "remedy": "see the log",
+        "field": null
+      }
+    },
+    "os": {
+      "error": {
+        "kind": "os",
+        "code": "os",
+        "message": "the disk is full",
+        "remedy": "free space on the disk",
+        "field": null
+      }
+    },
+    "stopped": {
+      "error": {
+        "kind": "stopped",
+        "code": "stopped",
+        "message": "the job was stopped",
+        "remedy": "run it again to go on from there",
+        "field": null
+      }
+    },
+    "internal": {
+      "error": {
+        "kind": "internal",
+        "code": "internal",
+        "message": "the home process failed",
+        "remedy": "see its log",
+        "field": null
+      }
+    }
   },
-  "links": {
-    "id": "notes/a.md",
-    "title": "A",
-    "out": [
-      {
-        "line": 3,
-        "target": "B",
-        "field": "org",
-        "fragment": "Intro",
-        "via": "name",
-        "id": "notes/b.md",
-        "title": "B",
-        "ambiguous": [],
-        "through": null
+  "events": {
+    "collection started": {
+      "event": "CollectionStarted",
+      "data": {
+        "name": "notes",
+        "folder": "/data/notes"
       }
-    ],
-    "into": [
-      {
-        "id": "notes/c.md",
-        "title": "C",
-        "lines": [
-          {
-            "line": 4,
-            "field": null,
-            "text": "see [[A]]"
-          }
-        ],
-        "through": null
+    },
+    "phase started": {
+      "event": "PhaseStarted",
+      "data": {
+        "phase": "read",
+        "total": 3
       }
-    ],
-    "unsearched": [
-      {
-        "collection": "papers",
-        "message": "the store is busy",
-        "remedy": "wait, then ask again",
-        "code": "store_unavailable"
+    },
+    "advanced": {
+      "event": "Advanced",
+      "data": {
+        "done": 2
       }
-    ]
-  },
-  "unresolved": {
-    "targets": [
-      {
-        "target": "Missing",
-        "documents": 2,
-        "ids": [
-          "notes/a.md",
-          "notes/c.md"
-        ]
+    },
+    "files kept": {
+      "event": "FilesKept",
+      "data": {
+        "files": 2
       }
-    ],
-    "unsearched": [
-      {
-        "collection": "papers",
-        "message": "the store is busy",
-        "remedy": "wait, then ask again",
-        "code": "store_unavailable"
+    },
+    "phase done": {
+      "event": "PhaseDone",
+      "data": {
+        "count": 3
       }
-    ]
+    },
+    "noted": {
+      "event": "Noted",
+      "data": {
+        "text": "a note",
+        "remedy": "a fix"
+      }
+    },
+    "finished": {
+      "event": "Finished",
+      "data": {
+        "added": 1,
+        "changed": 2,
+        "removed": 3,
+        "unreadable": 4
+      }
+    },
+    "listening": {
+      "event": "Listening",
+      "data": {
+        "url": "http://127.0.0.1:8765",
+        "home": "/home/.sift"
+      }
+    }
   }
 }
