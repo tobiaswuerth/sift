@@ -26,6 +26,7 @@ from sift.api.jobs import ListJobs
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
 from sift.api.serving import ServeHome
+from sift.api.wire import CONTRACT, contract_text, understood
 from sift.domain.text.decoding import encodable
 from sift.interfaces.cli.arguments import arguments, flags, options
 from sift.interfaces.cli.context import Command, Commands, Context
@@ -282,9 +283,11 @@ def _server(settings: Settings, command: str) -> Endpoint | None:
     if command == SERVE:
         return None
     running = found(settings)
-    if running is None or running.version == _version():
+    if running is None or understood(running.contract):
         return running
-    said = f"the home process runs sift {running.version}, this is sift {_version()}"
+    spoken, ours = contract_text(running.contract), contract_text(CONTRACT)
+    said = f"the home process runs sift {running.version}, whose contract {spoken} "
+    said += f"this sift {_version()} ({ours}) cannot read"
     raise StoreUnavailableError(said, OTHER_SIFT_REMEDY)
 
 

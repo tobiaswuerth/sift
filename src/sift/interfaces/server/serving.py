@@ -19,6 +19,7 @@ import uvicorn
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.events import Listening, Noted, Reporter
 from sift.api.serving import Served, ServeHome
+from sift.api.wire import CONTRACT
 from sift.app.kept_decoded import KeptDecoded
 from sift.app.questions import RememberedQuestions
 from sift.app.resident import ResidentCodes
@@ -150,7 +151,7 @@ def held(
     ):
         listed.unlink(missing_ok=True)
         port = cast("tuple[str, int]", bound.getsockname())[1]
-        endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version, acting_on(settings))
+        endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version, acting_on(settings), CONTRACT)
         kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
         serving = Serving(settings, endpoint.token, *kept, writer, pool, how.alive_every, clock=how.clock)
         app = served_app(serving, how.handled)

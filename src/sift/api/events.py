@@ -71,7 +71,14 @@ type EventKind = type[
 
 EVENT_KINDS: Mapping[str, EventKind] = MappingProxyType(
     {
-        kind.__name__: kind
-        for kind in (CollectionStarted, PhaseStarted, Advanced, FilesKept, PhaseDone, Noted, Finished, Listening)
+        "CollectionStarted": CollectionStarted,
+        "PhaseStarted": PhaseStarted,
+        "Advanced": Advanced,
+        "FilesKept": FilesKept,
+        "PhaseDone": PhaseDone,
+        "Noted": Noted,
+        "Finished": Finished,
+        "Listening": Listening,
     }
 )
+EVENT_TAGS: Mapping[EventKind, str] = MappingProxyType({kind: tag for tag, kind in EVENT_KINDS.items()})

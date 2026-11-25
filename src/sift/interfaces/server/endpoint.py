@@ -8,7 +8,7 @@ from typing import cast
 
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.events import Noted
-from sift.api.wire import decoded
+from sift.api.wire import read_answer
 from sift.settings import ActSetting, Settings, acting_on
 from sift.storage.database import private_file, private_folder
 from sift.storage.store_files import WRITER_SUFFIX
@@ -35,6 +35,7 @@ class Endpoint:
     token: str
     version: str
     acting_on: tuple[ActSetting, ...] = ()
+    contract: tuple[int, ...] = ()
 
 
 def lock_of(home: Path) -> Path:
@@ -75,7 +76,7 @@ def _written_by(path: Path | None, holder: Holder) -> Endpoint | None:
         read = cast("object", json.loads(path.read_bytes()))
     except FileNotFoundError:
         return None
-    endpoint = decoded(Endpoint, read)
+    endpoint = read_answer(Endpoint, read)
     return endpoint if endpoint.pid == holder.pid else None
 
 

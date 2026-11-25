@@ -9,11 +9,11 @@ from typing import cast
 import pytest
 
 from sift.api.errors import InternalError, InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
-from sift.api.events import Event, Noted
+from sift.api.events import Advanced, Event, Noted
 from sift.api.links import ListUnresolved, Unresolved
 from sift.api.wire import encoded_error
 from sift.interfaces.acts.links import UNRESOLVED
-from sift.interfaces.server.client import UNFINISHED, UNREADABLE, ClientLimits, sent
+from sift.interfaces.server.client import UNFINISHED, UNREADABLE, ClientLimits, event_of, sent
 from sift.interfaces.server.endpoint import Endpoint
 
 LINES = b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n"
@@ -100,9 +100,7 @@ def test_an_answer_this_sift_cannot_read_is_said_to_be() -> None:
         _refusal("500 Internal Server Error", b"Internal Server Error"),
         _refusal("400 Bad Request", b'{"detail": "a bad request"}'),
         LINES + b'{"answer": {"targets": 3}}\n',
-        LINES + b'{"event": "NoSuchEvent", "data": {}}\n',
         LINES + b'{"event": "Noted", "data": {"words": "a note"}}\n',
-        LINES + b'{"error": {"kind": "no_such_kind", "code": "busy", "message": "m", "remedy": "r"}}\n',
     ):
         assert refused(reply) == UNREADABLE, reply
 
@@ -124,3 +122,7 @@ def test_a_line_longer_than_the_client_reads_is_refused_without_reading_it_whole
 def test_a_home_process_that_closes_or_stays_silent_is_said_not_to_answer() -> None:
     assert refused(b"").endswith(" does not answer: Remote end closed connection without response")
     assert refused(None, quiet=0.05).endswith(" does not answer: timed out")
+
+
+def test_an_event_of_a_newer_sift_is_passed_over_and_one_with_more_read() -> None:
+    assert (event_of("JobQueued", {"number": 2}), event_of("Advanced", {"done": 3, "of": 9})) == (None, Advanced(3))

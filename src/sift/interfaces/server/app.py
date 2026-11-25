@@ -22,9 +22,9 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from sift.api.errors import InternalError, InvalidRequestError, NotFoundError, Problem, SiftError, system_failure
-from sift.api.events import Event, Noted, Reporter
+from sift.api.events import EVENT_TAGS, Event, Noted, Reporter
 from sift.api.ids import CollectionId
-from sift.api.wire import Json, encoded, encoded_error
+from sift.api.wire import CONTRACT, CONTRACT_HEADER, Json, contract_text, encoded, encoded_error
 from sift.app.kept_decoded import KeptDecoded
 from sift.app.resident import ResidentCodes
 from sift.domain.text.json_values import deeper_than
@@ -60,6 +60,7 @@ NO_JSON = InvalidRequestError("the request is no JSON", NO_JSON_REMEDY)
 TOO_LARGE = InvalidRequestError(f"the request is longer than {MOST_BODY:,} bytes", "send a shorter request")
 FAILED_REMEDY = "see the home process's log in SIFT_HOME/logs, and report it"
 LISTENED_FOR_LEAVING = MappingProxyType({"version": "3.0", "spec_version": "2.3"})
+SPOKEN = MappingProxyType({CONTRACT_HEADER: contract_text(CONTRACT)})
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -104,7 +105,7 @@ def json_of(body: bytes) -> object:
 
 
 def _refused(error: SiftError, status: int) -> JSONResponse:
-    return JSONResponse({"error": encoded_error(error)}, status_code=status)
+    return JSONResponse({"error": encoded_error(error)}, status_code=status, headers=dict(SPOKEN))
 
 
 def _acting(serving: Serving, report: Reporter) -> Acting:
@@ -208,7 +209,7 @@ def _ran(serving: Serving, sent: _Sent, lines: _Lines, job: HeldJob | None) -> N
     def said(event: Event) -> None:
         if isinstance(event, Noted):
             noted.set()
-        lines.put(_line({"event": type(event).__name__, "data": encoded(event)}))
+        lines.put(_line({"event": EVENT_TAGS[type(event)], "data": encoded(event)}))
 
     report, final = Coalesced(said, serving.clock), tuple[bytes, ...]()
     try:
@@ -223,7 +224,7 @@ def _ran(serving: Serving, sent: _Sent, lines: _Lines, job: HeldJob | None) -> N
 def _waiting(serving: Serving, job: HeldJob) -> Iterator[bytes]:
     if ahead := serving.jobs.ahead(job):
         said = WAITING.format(count=counted(len(ahead), "job"), command=ahead[0].command, number=ahead[0].number)
-        yield _line({"event": Noted.__name__, "data": encoded(Noted(said))})
+        yield _line({"event": EVENT_TAGS[Noted], "data": encoded(Noted(said))})
 
 
 async def _streamed(serving: Serving, name: str, handled: Handled, data: object) -> AsyncIterator[bytes]:
@@ -278,7 +279,7 @@ async def _command(serving: Serving, name: str, handled: Handled, request: Reque
         return _refused(refused, 400)
     except ValueError:
         return _refused(NO_JSON, 400)
-    return StreamingResponse(_streamed(serving, name, handled, data), media_type=LINES)
+    return StreamingResponse(_streamed(serving, name, handled, data), media_type=LINES, headers=dict(SPOKEN))
 
 
 async def _unknown(_request: Request, _error: Exception) -> Response:

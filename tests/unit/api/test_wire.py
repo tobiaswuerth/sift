@@ -7,6 +7,7 @@ import pytest
 from sift.api.collections import AddCollection, ShowStatus, TitleFrom
 from sift.api.documents import GetDocuments, WantedDocument
 from sift.api.errors import (
+    InternalError,
     InvalidRequestError,
     ModelUnavailableError,
     NotFoundError,
@@ -18,7 +19,7 @@ from sift.api.filters import Filter, Operator
 from sift.api.indexing import CollectionIndexed, Indexed
 from sift.api.links import Direction, FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import Hit, Left, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
-from sift.api.wire import Json, decoded, decoded_error, encoded, encoded_error
+from sift.api.wire import Json, decoded, decoded_error, encoded, encoded_error, read_answer
 from tests.answers import SAMPLES
 
 REQUESTS = (
@@ -135,3 +136,33 @@ def test_an_error_comes_back_from_its_json_as_it_was(error: SiftError) -> None:
 def test_a_hit_s_score_carries_the_digits_a_float32_holds_and_no_more(score: float, shown: float) -> None:
     hit = Hit("n/a.md", "n", "a.md", "A", 1, 2, score, None)
     assert (hit.score, json.dumps(cast("dict[str, Json]", encoded(hit))["score"])) == (shown, json.dumps(shown))
+
+
+def test_an_answer_of_a_newer_sift_is_read_with_what_it_adds_left_out_but_a_request_is_not() -> None:
+    hit = Hit("n/a.md", "n", "a.md", "A", 1, 2, 0.5, None)
+    sent = cast("dict[str, Json]", encoded(SearchResult((hit,), 1, ())))
+    sent["total"] = 9
+    cast("list[dict[str, Json]]", sent["hits"])[0]["kind"] = "passage"
+    assert read_answer(SearchResult, sent) == SearchResult((hit,), 1, ())
+    with pytest.raises(InvalidRequestError, match="SearchKeywords takes no total"):
+        decoded(SearchKeywords, {"query": "x", "total": 9})
+
+
+@pytest.mark.parametrize(
+    "sent, kind, code, remedy",
+    [
+        (
+            {"kind": "store_unavailable", "code": "new_code", "message": "m", "remedy": "r", "field": None},
+            StoreUnavailableError,
+            Problem.STORE_UNAVAILABLE,
+            "r",
+        ),
+        ({"kind": "new_kind", "code": "new_code", "message": "m", "remedy": "r"}, InternalError, Problem.INTERNAL, "r"),
+        ({"kind": "not_found", "code": "unknown_note", "message": "m"}, NotFoundError, Problem.UNKNOWN_NOTE, ""),
+    ],
+)
+def test_an_error_of_a_newer_sift_is_read_as_its_kind_or_as_internal(
+    sent: dict[str, Json], kind: type[SiftError], code: Problem, remedy: str
+) -> None:
+    found = decoded_error(sent)
+    assert (type(found), found.message, found.remedy, found.code) == (kind, "m", remedy, code)

@@ -2,8 +2,11 @@ import dataclasses
 import io
 from pathlib import Path
 
+import pytest
+
 from sift.domain.text.scans import OcrSetting
 from sift.interfaces.cli.main import STOPPED_WATCHING, Host, run
+from sift.interfaces.server.endpoint import own_endpoint, written
 from sift.settings import Settings
 from tests.serving import VERSION, counted, running
 from tests.surface.commands import indexed_notes
@@ -80,12 +83,18 @@ def test_an_index_sent_to_the_home_process_says_its_progress_as_it_does_alone(
     assert (asked, "done  +2  ~0  -0" in alone[2]) == (["index"], True)
 
 
-def test_a_home_process_of_another_sift_is_refused_saying_what_to_do(settings: Settings, notes: Path) -> None:
+@pytest.mark.parametrize("contract, spoken", [((1, 0), "1.0"), ((3, 0), "3.0"), ((), "none"), ((2, 9), None)])
+def test_a_home_process_whose_answers_this_sift_cannot_read_is_refused_saying_what_to_do(
+    settings: Settings, notes: Path, contract: tuple[int, ...], spoken: str | None
+) -> None:
     indexed_notes(settings, notes)
-    with running(settings, of="1.0.0"):
-        refused = ran(settings, "status")
-    said = f"error  the home process runs sift 1.0.0, this is sift {VERSION}\n"
-    assert refused == (1, "", said + "  fix  stop sift serve where it runs, and start it again with this sift\n")
+    alone = ran(settings, "status")
+    with running(settings, of="1.0.0") as server:
+        written(own_endpoint(settings), dataclasses.replace(server.endpoint, contract=contract))
+        found = ran(settings, "status")
+    said = f"error  the home process runs sift 1.0.0, whose contract {spoken} this sift {VERSION} (2.0) cannot read\n"
+    fix = "  fix  stop sift serve where it runs, and start it again with this sift\n"
+    assert found == (alone if spoken is None else (1, "", said + fix))
 
 
 def test_a_setting_the_home_process_does_not_share_is_noted(settings: Settings, notes: Path) -> None:

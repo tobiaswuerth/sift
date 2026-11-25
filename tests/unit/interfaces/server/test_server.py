@@ -11,6 +11,7 @@ from sift.api.embedding import EmbedCollections
 from sift.api.errors import Problem
 from sift.api.events import Event, Listening
 from sift.api.serving import Served, ServeHome
+from sift.api.wire import CONTRACT_HEADER
 from sift.app.embedding import embed
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.cli.main import ENTRIES
@@ -297,3 +298,18 @@ def test_the_home_process_lets_idle_models_go_and_says_so(caplog: pytest.LogCapt
     with caplog.at_level(logging.INFO, LOGGER):
         watched_idle(release, stop, 0.001)
     assert (asked, [record.getMessage() for record in caplog.records]) == ([True, False], [RESTED])
+
+
+def test_every_answer_and_refusal_says_the_contract_it_speaks(settings: Settings) -> None:
+    spoken = list[str | None]()
+    with running(settings) as server:
+        for token in (server.endpoint.token, "wrong"):
+            connection = http.client.HTTPConnection("127.0.0.1", server.endpoint.port, timeout=60)
+            try:
+                connection.request("POST", "/api/status", b"{}", {"Authorization": f"Bearer {token}"})
+                with connection.getresponse() as response:
+                    spoken.append(response.getheader(CONTRACT_HEADER))
+                    _ = response.read()
+            finally:
+                connection.close()
+    assert spoken == ["2.0", "2.0"]

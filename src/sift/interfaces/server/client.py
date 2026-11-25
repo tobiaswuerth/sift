@@ -6,7 +6,7 @@ from typing import cast
 
 from sift.api.errors import InternalError, InvalidRequestError, Problem, SiftError, StoreUnavailableError
 from sift.api.events import EVENT_KINDS, Event, Reporter
-from sift.api.wire import Json, decoded, decoded_error, encoded
+from sift.api.wire import Json, decoded_error, encoded, read_answer
 from sift.interfaces.acts.acting import Act
 from sift.interfaces.server.endpoint import Endpoint
 
@@ -30,8 +30,9 @@ class ClientLimits:
 NO_LONGER = ClientLimits()
 
 
-def event_of(name: str, data: Json) -> Event:
-    return decoded(EVENT_KINDS[name], data)
+def event_of(name: str, data: Json) -> Event | None:
+    kind = EVENT_KINDS.get(name)
+    return None if kind is None else read_answer(kind, data)
 
 
 def _readable[**P, T](decode: Callable[P, T], *given: P.args, **named: P.kwargs) -> T:
@@ -70,9 +71,11 @@ def _answer[R, A](act: Act[R, A], response: http.client.HTTPResponse, report: Re
     while line := _line(response, longest):
         said = _said(line)
         if "event" in said:
-            report(_readable(event_of, str(said["event"]), said.get("data")))
+            event = _readable(event_of, str(said["event"]), said.get("data"))
+            if event is not None:
+                report(event)
         elif "answer" in said:
-            return _readable(decoded, cast("type[A]", act.answer), said["answer"])
+            return _readable(read_answer, cast("type[A]", act.answer), said["answer"])
         elif "error" in said:
             raise _readable(decoded_error, said["error"])
     raise InternalError(UNFINISHED, LOG_REMEDY)

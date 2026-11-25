@@ -23,6 +23,8 @@ from sift.api.requests import fits, named, type_name
 type Json = str | int | float | bool | list[Json] | dict[str, Json] | None
 
 WIRE_REMEDY = "send the request as sift's API describes it"
+CONTRACT = (2, 0)
+CONTRACT_HEADER = "Sift-Contract"
 ERROR_KINDS: Mapping[str, type[SiftError]] = MappingProxyType(
     {
         "invalid_request": InvalidRequestError,
@@ -35,6 +37,7 @@ ERROR_KINDS: Mapping[str, type[SiftError]] = MappingProxyType(
     }
 )
 KIND_OF: Mapping[type[SiftError], str] = MappingProxyType({kind: name for name, kind in ERROR_KINDS.items()})
+PROBLEMS: Mapping[str, Problem] = MappingProxyType({each.value: each for each in Problem})
 FREE: frozenset[object] = frozenset({Fields, FieldValue})
 
 
@@ -83,18 +86,22 @@ def _fields(kind: type) -> tuple[tuple[str, object, bool], ...]:
     )
 
 
-def _object(kind: type, data: object, outer: str | None) -> object:
+def _object(kind: type, data: object, outer: str | None, *, strict: bool) -> object:
     if not isinstance(data, dict):
         raise WireError(f"a {type_name(kind).lower()} is an object")
     given = cast("dict[object, object]", data)
     known = {name: (hint, needed) for name, hint, needed in _fields(kind)}
     for key in given:
-        if key not in known:
+        if strict and key not in known:
             raise _refused(outer or str(key), f"{kind.__name__} takes no {key}")
     for name, (_, needed) in known.items():
         if needed and name not in given:
             raise _refused(outer or name, f"{kind.__name__} needs {name}")
-    built = {name: _value(hint, given[name], outer or name) for name, (hint, _) in known.items() if name in given}
+    built = {
+        name: _value(hint, given[name], outer or name, strict=strict)
+        for name, (hint, _) in known.items()
+        if name in given
+    }
     return cast("object", kind(**built))
 
 
@@ -110,7 +117,7 @@ def _discriminated(members: tuple[object, ...], data: object) -> object | None:
     return None
 
 
-def _one(kind: object, data: object, field: str) -> object:
+def _one(kind: object, data: object, field: str, *, strict: bool) -> object:
     if kind in FREE:
         return data
     if get_origin(kind) is Literal:
@@ -119,7 +126,7 @@ def _one(kind: object, data: object, field: str) -> object:
         return data
     if get_origin(kind) is tuple and isinstance(data, list):
         (each, _) = cast("tuple[object, object]", get_args(kind))
-        return tuple(_value(each, item, field) for item in cast("list[object]", data))
+        return tuple(_value(each, item, field, strict=strict) for item in cast("list[object]", data))
     if isinstance(kind, type) and issubclass(kind, Enum):
         try:
             return kind(data)
@@ -127,14 +134,14 @@ def _one(kind: object, data: object, field: str) -> object:
             choices = ", ".join(str(member) for member in kind)
             raise _refused(field, f"{data!r} is none of {choices}") from None
     if isinstance(kind, type) and dataclasses.is_dataclass(kind):
-        return _object(kind, data, field)
+        return _object(kind, data, field, strict=strict)
     return data
 
 
-def _first_taking(members: tuple[object, ...], data: object, field: str, whole: object) -> object:
+def _first_taking(members: tuple[object, ...], data: object, field: str, whole: object, *, strict: bool) -> object:
     for member in members:
         try:
-            found = _one(member, data, field)
+            found = _one(member, data, field, strict=strict)
         except (WireError, InvalidRequestError):
             continue
         if fits(found, member):
@@ -142,7 +149,7 @@ def _first_taking(members: tuple[object, ...], data: object, field: str, whole: 
     raise _refused(field, f"{field} is {data!r}, not {named(whole)}")
 
 
-def _value(kind: object, data: object, field: str) -> object:
+def _value(kind: object, data: object, field: str, *, strict: bool) -> object:
     plain = _plain(kind)
     if get_origin(plain) is types.UnionType:
         members = tuple(_plain(member) for member in cast("tuple[object, ...]", get_args(plain)))
@@ -150,13 +157,13 @@ def _value(kind: object, data: object, field: str) -> object:
             return None
         chosen = _discriminated(members, data)
         if chosen is not None:
-            return _one(chosen, data, field)
+            return _one(chosen, data, field, strict=strict)
         rest = [member for member in members if member is not types.NoneType]
         if len(rest) > 1:
-            return _first_taking(tuple(rest), data, field, plain)
+            return _first_taking(tuple(rest), data, field, plain, strict=strict)
         plain = rest[0]
     try:
-        found = _one(plain, data, field)
+        found = _one(plain, data, field, strict=strict)
     except WireError as error:
         raise _refused(field, str(error)) from None
     if not fits(found, plain):
@@ -164,13 +171,29 @@ def _value(kind: object, data: object, field: str) -> object:
     return found
 
 
-def decoded[T](kind: type[T], data: object) -> T:
+def _decoded[T](kind: type[T], data: object, *, strict: bool) -> T:
     try:
         if get_origin(kind) is types.UnionType:
-            return cast("T", _value(kind, data, ""))
-        return cast("T", _object(kind, data, None))
+            return cast("T", _value(kind, data, "", strict=strict))
+        return cast("T", _object(kind, data, None, strict=strict))
     except WireError:
         raise InvalidRequestError("a request is an object of its fields", WIRE_REMEDY) from None
+
+
+def understood(contract: tuple[int, ...]) -> bool:
+    return len(contract) == len(CONTRACT) and contract[0] == CONTRACT[0] and contract[1] >= CONTRACT[1]
+
+
+def contract_text(contract: tuple[int, ...]) -> str:
+    return ".".join(map(str, contract)) or "none"
+
+
+def decoded[T](kind: type[T], data: object) -> T:
+    return _decoded(kind, data, strict=True)
+
+
+def read_answer[T](kind: type[T], data: object) -> T:
+    return _decoded(kind, data, strict=False)
 
 
 def encoded_error(error: SiftError) -> Json:
@@ -187,8 +210,10 @@ def encoded_error(error: SiftError) -> Json:
 def decoded_error(data: Json) -> SiftError:
     if not isinstance(data, dict):
         raise TypeError(f"{data!r} is no error")
-    kind = ERROR_KINDS[str(data["kind"])]
-    message, remedy, code = str(data["message"]), str(data["remedy"]), Problem(data["code"])
+    named = ERROR_KINDS.get(str(data.get("kind")))
+    kind = InternalError if named is None else named
+    message, remedy = str(data.get("message", "")), str(data.get("remedy") or "")
+    code = kind.usual if named is None else PROBLEMS.get(str(data.get("code")), kind.usual)
     if issubclass(kind, InvalidRequestError):
         field = data.get("field")
         return kind(message, remedy, None if field is None else str(field), code=code)
