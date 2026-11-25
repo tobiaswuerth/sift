@@ -29,11 +29,13 @@ from tests.keyword_searches import (
     prose,
     random_expression,
     same,
+    scored_alike_by_fts5,
     search,
 )
 from tests.keyword_stores import SMALL, Content, Round
 
 WHOLE_LISTS = Shape(range_shift=2, block=2, lengths_shift=3)
+COMPARED, MOST_DRAWN = 40, 400
 
 
 def test_passages_of_equal_score_keep_the_order_of_their_chunks_however_the_search_is_batched() -> None:
@@ -83,10 +85,34 @@ def test_nested_queries_score_as_fts5_scores_them(seed: int) -> None:
     rng = Draws(np.random.default_rng(seed))
     with collections([[prose(rng, 60)]]) as (stores, held):
         phrases = phrases_in(held)
-        for _ in range(40):
-            expression = random_expression(rng, phrases)
+        drawn = (random_expression(rng, phrases) for _ in range(MOST_DRAWN))
+        expressions = list(itertools.islice(filter(scored_alike_by_fts5, drawn), COMPARED))
+        assert len(expressions) == COMPARED
+        for expression in expressions:
             want = fts5_ranked(held[0], fts5_query(expression), 30)
             same(search(stores, expression, 10), want, min(10, len(want)), fts5_query(expression))
+
+
+@pytest.mark.parametrize(
+    "query, scored, texts",
+    [
+        ("muller NOT (absent NOT w26)", "muller", ("muller w26", "muller w3", "w3 w5")),
+        ("w2 OR (absent NOT w1)", "w2", ("w2 w1 w1", "w2", "w5", "w6")),
+    ],
+    ids=["under a not", "under an or"],
+)
+def test_a_word_under_not_adds_nothing_to_a_score_though_fts5_adds_it(
+    query: str, scored: str, texts: tuple[str, ...]
+) -> None:
+    notes: Round = {f"n{n}.md": ("", "", text) for n, text in enumerate(texts)}
+    with collections([[notes]]) as (stores, held):
+        negated = parsed(query)
+        assert not scored_alike_by_fts5(negated)
+        found, alone = search(stores, negated, 10), brute(held, parsed(scored), 10, by_document=True)
+        assert [each.chunk for each in found] == [chunk for chunk, _ in alone]
+        assert np.allclose([each.score for each in found], [score for _, score in alone], rtol=1e-9, atol=0)
+        fts5 = dict(fts5_ranked(held[0], fts5_query(negated), 10))
+        assert any(fts5[chunk] > score * 1.5 for chunk, score in alone)
 
 
 @pytest.mark.parametrize(

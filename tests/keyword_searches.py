@@ -1,4 +1,5 @@
 import contextlib
+import itertools
 import math
 import sqlite3
 import tempfile
@@ -167,9 +168,18 @@ def tied(ranked: list[tuple[int, float]]) -> list[list[tuple[int, float]]]:
 
 
 def same(got: tuple[FoundChunk, ...], more: list[tuple[int, float]], k: int, query: object) -> None:
-    want = [each for group in tied(more) for each in sorted(group)][:k]
-    assert [each.chunk for each in got] == [chunk for chunk, _ in want], (query, got, want)
+    groups = tied(more)
+    want = [each for group in groups for each in group][:k]
+    assert len(got) == len(want), query
     assert np.allclose([each.score for each in got], [score for _, score in want], rtol=1e-9), (query, got, want)
+    assert list(got) == sorted(got, key=lambda each: (-each.score, each.chunk)), (query, got)
+    for group, start in zip(groups, itertools.accumulate(map(len, groups), initial=0), strict=False):
+        held = {each.chunk for each in got[start : start + len(group)]}
+        assert held <= {chunk for chunk, _ in group}, (query, got, want)
+        for _, equal in itertools.groupby(group, key=lambda each: each[1]):
+            chunks = [chunk for chunk, _ in equal]
+            kept = [chunk for chunk in chunks if chunk in held]
+            assert kept == chunks[: len(kept)], (query, got, want)
 
 
 def random_expression(rng: Draws, phrases: list[tuple[str, ...]], depth: int = 0) -> Expression:
@@ -185,6 +195,29 @@ def random_expression(rng: Draws, phrases: list[tuple[str, ...]], depth: int = 0
         return Not(random_expression(rng, phrases, depth + 1), random_expression(rng, phrases, depth + 1))
     parts = tuple(random_expression(rng, phrases, depth + 1) for _ in range(rng.randint(2, 3)))
     return And(parts) if kind == "and" else Or(parts)
+
+
+def _absent_when_false(expression: Expression) -> bool:
+    match expression:
+        case Term() | Phrase() | Prefix():
+            return True
+        case Or(parts):
+            return all(map(_absent_when_false, parts))
+        case _:
+            return False
+
+
+def scored_alike_by_fts5(expression: Expression, *, held_by_every_match: bool = True) -> bool:
+    match expression:
+        case Not(kept, dropped):
+            alike = scored_alike_by_fts5(kept, held_by_every_match=held_by_every_match)
+            return held_by_every_match and _absent_when_false(dropped) and alike
+        case And(parts):
+            return all(scored_alike_by_fts5(part, held_by_every_match=held_by_every_match) for part in parts)
+        case Or(parts):
+            return all(scored_alike_by_fts5(part, held_by_every_match=False) for part in parts)
+        case _:
+            return True
 
 
 def fts5_query(expression: Expression) -> str:
