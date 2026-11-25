@@ -62,6 +62,7 @@ class ScoredChunk(Protocol):
 class Ranked:
     found: Sequence[ScoredChunk]
     cut: bool = False
+    loosened: bool = False
 
 
 @dataclass(frozen=True, slots=True)

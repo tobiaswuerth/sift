@@ -58,9 +58,9 @@ def test_a_search_asked_again_is_answered_from_memory_until_the_home_is_written(
 @pytest.mark.parametrize(
     "answer",
     [
-        SearchResult((), 1, (), partial=True),
-        SearchResult((), 1, (UNSEARCHED,)),
-        SearchResult((HIT,) * (KEPT_HITS + 1), 1, ()),
+        SearchResult((), 1, (), partial=True, scored_by="keywords"),
+        SearchResult((), 1, (UNSEARCHED,), scored_by="keywords"),
+        SearchResult((HIT,) * (KEPT_HITS + 1), 1, (), scored_by="keywords"),
     ],
 )
 def test_an_answer_cut_short_passing_a_store_over_or_too_large_is_not_kept(
@@ -77,7 +77,7 @@ def test_an_answer_whose_search_noted_something_along_the_way_is_not_kept_one_th
     settings: Settings,
 ) -> None:
     ran = list[str]()
-    with running(settings, answering([SearchResult((HIT,), 1, ())], ran)) as server:
+    with running(settings, answering([SearchResult((HIT,), 1, (), scored_by="keywords")], ran)) as server:
         said = [asked(server, "search", {"query": "noisy"})[1] for _ in range(2)]
         progressed = [asked(server, "search", {"query": "loading"})[1] for _ in range(2)]
     assert ran == ["noisy", "noisy", "loading"]
@@ -87,7 +87,7 @@ def test_an_answer_whose_search_noted_something_along_the_way_is_not_kept_one_th
 
 def test_only_the_latest_answers_are_kept(settings: Settings) -> None:
     ran = list[str]()
-    with running(settings, answering([SearchResult((HIT,), 1, ())], ran)) as server:
+    with running(settings, answering([SearchResult((HIT,), 1, (), scored_by="keywords")], ran)) as server:
         for n in [*range(RESULTS + 1), RESULTS, 0]:
             asked(server, "search", {"query": f"q{n}"})
     assert ran == [*(f"q{n}" for n in range(RESULTS + 1)), "q0"]
@@ -95,7 +95,7 @@ def test_only_the_latest_answers_are_kept(settings: Settings) -> None:
 
 def test_an_answer_asked_again_is_kept_as_the_latest(settings: Settings) -> None:
     ran = list[str]()
-    with running(settings, answering([SearchResult((HIT,), 1, ())], ran)) as server:
+    with running(settings, answering([SearchResult((HIT,), 1, (), scored_by="keywords")], ran)) as server:
         for n in [*range(RESULTS), 0, RESULTS, 0, 1]:
             asked(server, "search", {"query": f"q{n}"})
     assert ran == [*(f"q{n}" for n in range(RESULTS)), f"q{RESULTS}", "q1"]
@@ -132,7 +132,7 @@ def test_an_answer_whose_search_saw_a_write_beside_the_home_process_is_not_kept(
         ran.append(request.query)
         write(notes / f"{len(ran)}.md", f"# Note {len(ran)}\n\nWritten while a search ran.\n")
         index(acting.settings.home, IndexCollections(), lambda _: None)
-        return SearchResult((HIT,), 1, ())
+        return SearchResult((HIT,), 1, (), scored_by="keywords")
 
     searched = {
         **HANDLED,
@@ -152,11 +152,11 @@ def test_an_answer_found_while_the_home_is_written_is_not_kept(settings: Setting
     def writing(_acting: Acting, _request: IndexCollections) -> SearchResult:
         started.set()
         release.wait(30)
-        return SearchResult((), 0, ())
+        return SearchResult((), 0, (), scored_by="keywords")
 
     ran = list[str]()
     index = handled(Act("index", IndexCollections, IndexResult, writing, writes=True))[1]
-    blocked = {**answering([SearchResult((HIT,), 1, ())], ran), "index": index}
+    blocked = {**answering([SearchResult((HIT,), 1, (), scored_by="keywords")], ran), "index": index}
     with running(settings, blocked) as server:
         write_thread = threading.Thread(target=asked, args=(server, "index", {}))
         write_thread.start()

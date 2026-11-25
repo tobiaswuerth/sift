@@ -27,8 +27,8 @@ def vsearch(
             cleanup, narrowing, Wants(model=models.name, vectors_required=True, codes=watching.codes), expired
         )
         if not any(len(vectors.coded.ids) for _, vectors in stores.embedded()):
-            return hits.result(stores, (), partial=False)
+            return hits.result(stores, hits.Answered(()), "vectors")
         prepared(watching.report, (models.prepare,))
         query = query_vector(models, request.query)
         alike(stores, models.name, query)
-        return hits.result(stores, nearest_hits(stores, request, query, asked), partial=False)
+        return hits.result(stores, nearest_hits(stores, request, query, asked), "vectors")

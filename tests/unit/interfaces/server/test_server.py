@@ -155,7 +155,7 @@ def test_a_command_that_fails_unforeseen_is_said_and_the_home_process_goes_on(se
             Problem.INTERNAL.value,
             "the home process failed: ValueError: a bug",
         )
-        assert last(asked(server, "unresolved", {})[1], "answer") == {"targets": [], "unsearched": []}
+        assert last(asked(server, "unresolved", {})[1], "answer") == {"targets": [], "unsearched": [], "more": False}
 
 
 def recursing(_acting: Acting, _data: object) -> object:
@@ -166,7 +166,7 @@ def test_a_command_that_recurses_too_deep_ends_its_answer_unfinished(settings: S
     with running(settings, {**HANDLED, "status": Handled(recursing, writes=False)}) as server:
         with pytest.raises(http.client.IncompleteRead):
             asked(server, "status", {})
-        assert last(asked(server, "unresolved", {})[1], "answer") == {"targets": [], "unsearched": []}
+        assert last(asked(server, "unresolved", {})[1], "answer") == {"targets": [], "unsearched": [], "more": False}
 
 
 def test_a_quiet_command_s_answer_is_kept_alive_by_a_line_while_nothing_else_is_said(settings: Settings) -> None:

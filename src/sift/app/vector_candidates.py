@@ -6,7 +6,7 @@ import numpy as np
 
 from sift.api.errors import ModelUnavailableError, Problem, StoreUnavailableError
 from sift.api.ids import ChunkId, owner
-from sift.api.search import Hit, Options
+from sift.api.search import Options
 from sift.app import hits
 from sift.app.searching import Open, Ranked, Searching, despite_losses
 from sift.domain.arrays import Ids, Mask
@@ -140,6 +140,6 @@ def _round(stores: Open, request: Options, query: Floats, asked: Rescoring, want
 
 def nearest_hits(
     stores: Open, request: Options, query: Floats, asked: Rescoring, copy_of: str | None = None
-) -> list[tuple[int, Hit]]:
+) -> hits.Answered:
     rank = partial(_round, stores, request, query, asked)
-    return despite_losses(partial(hits.answered, stores, rank, request, copy_of))[0]
+    return despite_losses(partial(hits.answered, stores, rank, request, copy_of))

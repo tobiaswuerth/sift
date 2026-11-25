@@ -1,16 +1,20 @@
 import textwrap
+from collections.abc import Mapping
+from types import MappingProxyType
 
 from sift.api.fields import Fields
-from sift.api.search import Hit, SearchResult
+from sift.api.search import Hit, ScoredBy, SearchResult
 from sift.domain.text.wording import counted
 from sift.interfaces.cli.shown.outcome import Shown, empty, notice_lines, value_text
 from sift.interfaces.console.progress import DOT
-from sift.interfaces.console.style import Style
-from sift.interfaces.console.text import GAP, printable
+from sift.interfaces.console.style import Style, Tone
+from sift.interfaces.console.text import GAP, labelled, printable
 from sift.interfaces.console.units import duration
 
 SNIPPET_CHARACTERS = 200
 SMALLEST_SHOWN = 0.005
+SCORED: Mapping[ScoredBy, str] = MappingProxyType({"keywords": "keyword", "vectors": "semantic", "reranker": "hybrid"})
+LOOSENED = "no passage holds every word of the query: these hold some of them"
 
 
 def _passage(text: str) -> str:
@@ -34,16 +38,18 @@ def _hit(rank: int, hit: Hit, ranks: int, scores: int) -> tuple[str, ...]:
     return (head, f"{indent}{printable(hit.id)}:{hit.lines}", *also, *fields, *text)
 
 
-def _footer(result: SearchResult, seconds: float, style: Style, kind: str) -> str:
-    found = counted(len(result.hits), "result") if result.hits else "no matches"
+def _footer(result: SearchResult, seconds: float, style: Style) -> str:
+    found = (counted(len(result.hits), "result") if result.hits else "no matches") + (
+        ", more follow" if result.more else ""
+    )
     ruled_out = f", {result.ruled_out} ruled out by the links" if result.ruled_out else ""
     searched = f"{counted(result.searched, 'collection')}{ruled_out}"
     separator = f"{GAP}{DOT[0] if style.unicode else DOT[1]}{GAP}"
     partial = ("partial: better matches may be missing",) if result.partial else ()
-    return separator.join((found, kind, *partial, searched, duration(seconds)))
+    return separator.join((found, SCORED[result.scored_by], *partial, searched, duration(seconds)))
 
 
-def hits(result: SearchResult, seconds: float, platform: str, style: Style, kind: str = "keyword") -> Shown:
+def hits(result: SearchResult, seconds: float, platform: str, style: Style) -> Shown:
     if not result.searched and not result.ruled_out and not result.unsearched:
         return empty(platform, style)
     ranks = len(str(len(result.hits)))
@@ -51,4 +57,5 @@ def hits(result: SearchResult, seconds: float, platform: str, style: Style, kind
     lines = [line for rank, hit in enumerate(result.hits, 1) for line in _hit(rank, hit, ranks, scores)]
     problems = notice_lines(result.unsearched, style)
     notes = notice_lines(result.left_out, style, "note")
-    return Shown(tuple(lines), (*problems, *notes, _footer(result, seconds, style, kind)))
+    loosened = (labelled("note", LOOSENED, Tone.WARNING, style),) if result.loosened else ()
+    return Shown(tuple(lines), (*problems, *notes, *loosened, _footer(result, seconds, style)))

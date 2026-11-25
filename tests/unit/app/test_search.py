@@ -85,6 +85,7 @@ def test_a_search_finds_each_document_by_its_best_passage_with_where_it_is(home:
         ),
         1,
         (),
+        scored_by="keywords",
     )
     assert result.hits[0].score > 0
     assert result.hits[0].score != round(result.hits[0].score, 4)
@@ -177,7 +178,7 @@ def test_a_collection_never_indexed_keeps_no_other_from_being_searched(home: Pat
 
 
 def test_without_any_collection_a_search_searches_none(tmp_path: Path) -> None:
-    assert search(tmp_path / "nowhere", SearchKeywords("halo")) == SearchResult((), 0, ())
+    assert search(tmp_path / "nowhere", SearchKeywords("halo")) == SearchResult((), 0, (), scored_by="keywords")
 
 
 def test_changes_and_removals_are_followed(home: Path, notes: Path) -> None:
@@ -345,7 +346,7 @@ def test_an_empty_collection_of_another_version_is_current_once_indexed(home: Pa
     indexed(home)
     changed(home / "collections" / "empty.sqlite", "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
     indexed(home)
-    assert search(home, SearchKeywords("halo", collections=("empty",))) == SearchResult((), 1, ())
+    assert search(home, SearchKeywords("halo", collections=("empty",))) == SearchResult((), 1, (), scored_by="keywords")
 
 
 @pytest.mark.parametrize("query, said", [("", "query is empty"), (" ", EMPTY_QUERY), ("\t\n", EMPTY_QUERY)])

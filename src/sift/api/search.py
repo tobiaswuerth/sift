@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Annotated
+from dataclasses import dataclass, field
+from typing import Annotated, Literal
 
 from sift.api.described import (
     FIELD_LENGTH,
@@ -109,6 +109,9 @@ class Hit:
         return f"{self.first_line}-{self.last_line}"
 
 
+type ScoredBy = Literal["keywords", "vectors", "reranker"]
+
+
 @dataclass(frozen=True, slots=True)
 class SearchResult:
     hits: tuple[Hit, ...]
@@ -117,3 +120,6 @@ class SearchResult:
     partial: bool = False
     ruled_out: int = 0
     left_out: tuple[Notice, ...] = ()
+    more: bool = False
+    loosened: bool = False
+    scored_by: ScoredBy = field(kw_only=True)

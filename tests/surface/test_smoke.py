@@ -209,7 +209,8 @@ def models_run(home: Path, notes: Path, model: str, reranker: str) -> None:
     asked = sift(home, "query", "reward shaping", "-k", "1", model=model, reranker=reranker)
     assert (asked.returncode, asked.stdout.split("\n")[1].strip().startswith("notes/")) == (0, True)
     assert asked.stderr.startswith("  load           2 models ")
-    assert asked.stderr.splitlines()[-1].startswith("1 result  \N{MIDDLE DOT}  hybrid  \N{MIDDLE DOT}  1 collection")
+    footer = asked.stderr.splitlines()[-1]
+    assert footer.startswith("1 result, more follow  \N{MIDDLE DOT}  hybrid  \N{MIDDLE DOT}  1 collection")
 
 
 def options_run(home: Path, notes: Path, model: str, reranker: str) -> None:

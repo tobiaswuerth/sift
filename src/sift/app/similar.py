@@ -63,5 +63,5 @@ def similar(
             cleanup, narrowing, Wants(model=like.model, vectors_required=True, codes=watching.codes), expired
         )
         alike(stores, like.model, like.query)
-        found = hits.result(stores, nearest_hits(stores, request, like.query, asked, like.work), partial=False)
+        found = hits.result(stores, nearest_hits(stores, request, like.query, asked, like.work), "vectors")
     return hits.also_unsearched(found, named.unsearched)

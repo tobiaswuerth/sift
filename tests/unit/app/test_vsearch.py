@@ -328,5 +328,5 @@ def test_a_search_for_one_passage_a_document_widens_at_most_so_far_and_keeps_wha
     reads = VectorReads()
     found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), Rescoring(1, reads))
     assert chunks_in(home / "collections" / "parts.sqlite") > MOST_WIDER * 3
-    assert max(reads.read) <= MOST_WIDER * 3
+    assert max(reads.read) <= MOST_WIDER * (3 + 1)
     assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]

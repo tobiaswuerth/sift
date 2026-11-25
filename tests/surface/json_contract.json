@@ -267,7 +267,10 @@
           "collection": "notes",
           "id": null
         }
-      ]
+      ],
+      "more": true,
+      "loosened": true,
+      "scored_by": "keywords"
     },
     "links": {
       "id": "notes/a.md",
@@ -307,7 +310,8 @@
           "collection": "papers",
           "id": null
         }
-      ]
+      ],
+      "more": true
     },
     "unresolved": {
       "targets": [
@@ -328,7 +332,8 @@
           "collection": "papers",
           "id": null
         }
-      ]
+      ],
+      "more": true
     },
     "serve": {
       "url": "http://127.0.0.1:8765"

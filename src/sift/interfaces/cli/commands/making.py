@@ -66,15 +66,13 @@ def command[R, A: Answer](
     return Command(run, writes=act.writes)
 
 
-def searched[R](act: Act[R, SearchResult], kind: str) -> Command:
+def searched[R](act: Act[R, SearchResult]) -> Command:
     def run(namespace: argparse.Namespace, context: Context) -> Shown:
         started = context.clock()
         answer = answered(act, namespace, context, None)
         seconds = context.clock() - started
         found = (
-            Shown((as_json(answer),), ())
-            if context.json
-            else hits(answer, seconds, context.platform, context.style, kind)
+            Shown((as_json(answer),), ()) if context.json else hits(answer, seconds, context.platform, context.style)
         )
         return found._replace(code=FAILED if answer.unsearched else DONE)
 

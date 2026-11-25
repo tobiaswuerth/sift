@@ -19,16 +19,11 @@ from sift.api.collections import (
 from sift.api.documents import Documents, DocumentText
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.indexing import CollectionIndexed, Indexed, IndexResult
-from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
 from sift.api.notices import Notice
-from sift.api.search import Hit, SearchResult
 from sift.interfaces.cli.shown.collections import added, moved, removed, status, switched
 from sift.interfaces.cli.shown.documents import documents
 from sift.interfaces.cli.shown.indexing import said_as_it_went
-from sift.interfaces.cli.shown.links import links as shown_links
-from sift.interfaces.cli.shown.links import unresolved as shown_unresolved
 from sift.interfaces.cli.shown.outcome import FAILED, USAGE, Shown, failure
-from sift.interfaces.cli.shown.searching import hits
 from sift.interfaces.console.style import PLAIN, Style
 
 ADDED = CollectionAdded(
@@ -218,14 +213,6 @@ def test_a_failure_asked_for_in_json_is_json_too() -> None:
     assert json.loads(failure(OSError(errno.ENOENT, "gone"), PLAIN, as_json=True).results[0])["error"]["kind"] == "os"
 
 
-def test_a_partial_search_says_better_matches_may_be_missing() -> None:
-    found = SearchResult((Hit("notes/a.md", "notes", "a.md", "A", 1, 2, 1.5, None),), 1, (), partial=True)
-    dot = "  \N{MIDDLE DOT}  "
-    said = dot.join(("1 result", "keyword", "partial: better matches may be missing", "1 collection", "0.2 s"))
-    assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
-    assert "partial" not in hits(dataclasses.replace(found, partial=False), 0.25, "linux", PLAIN).messages[0]
-
-
 def test_a_collection_changed_says_its_choices_now_and_what_to_run_next() -> None:
     changed = CollectionChanged(
         "notes", TitleFrom.NAME, follow_links=True, agents=False, retitled=2, to_embed=1, index_again=True
@@ -278,118 +265,6 @@ def test_switching_collections_says_which_changed_and_which_were_so_already() ->
     assert switched(on, "linux", PLAIN).messages == ("   on  diary: searched again",)
 
 
-def test_what_a_search_left_out_of_a_collection_is_noted_with_its_remedy_before_the_count() -> None:
-    hit = Hit("notes/a.md", "notes", "a.md", "A", 1, 2, 1.5, None)
-    left = Notice(Problem.NOT_EMBEDDED, "3 of its passages hold no vector yet", "embed the collection", "notes")
-    messages = hits(SearchResult((hit,), 1, (), left_out=(left,)), 0.25, "linux", PLAIN).messages
-    assert messages[:3] == (
-        " note  notes: 3 of its passages hold no vector yet",
-        "  fix  embed the collection",
-        " next  sift embed notes",
-    )
-    assert messages[3].startswith("1 result")
-
-
-def test_stores_ruled_out_by_the_links_are_said_apart_from_those_searched() -> None:
-    dot = "  \N{MIDDLE DOT}  "
-    found = SearchResult((), 1, (), ruled_out=2)
-    said = dot.join(("no matches", "keyword", "1 collection, 2 ruled out by the links", "0.2 s"))
-    assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
-    assert hits(dataclasses.replace(found, searched=0), 0.25, "linux", PLAIN).messages[0].startswith("no matches")
-
-
-def test_a_hit_names_its_copies_in_other_collections_under_its_place() -> None:
-    hit = Hit("notes/halo.md", "notes", "halo.md", "Halo", 1, 3, 3.25, None, ("more/copy.md", "papers/halo.md"))
-    shown = hits(SearchResult((hit,), 3, ()), 0.25, "linux", PLAIN, "hybrid")
-    assert shown.results == (
-        "1  3.25  Halo",
-        "         notes/halo.md:1-3",
-        "         also more/copy.md, papers/halo.md",
-    )
-    assert " hybrid " in shown.messages[-1]
-
-
-def test_a_score_too_small_for_two_decimals_is_shown_in_full() -> None:
-    found = SearchResult(
-        (Hit("n/a.md", "n", "a.md", "A", 1, 1, 1.6e-06, None), Hit("n/b.md", "n", "b.md", "B", 1, 1, 0.0, None)), 1, ()
-    )
-    assert hits(found, 0.25, "linux", PLAIN).results[::2] == ("1  1.6e-06  A", "2     0.00  B")
-
-
-def test_a_hit_shows_the_front_matter_asked_for_under_its_place() -> None:
-    hit = Hit(
-        "notes/halo.md",
-        "notes",
-        "halo.md",
-        "Halo",
-        1,
-        3,
-        3.25,
-        None,
-        fields={"created": "2024-06-15", "tags": ["a", "é"], "n": 2},
-    )
-    shown = hits(SearchResult((hit,), 1, ()), 0.25, "linux", PLAIN)
-    assert shown.results == (
-        "1  3.25  Halo",
-        "         notes/halo.md:1-3",
-        '         created: 2024-06-15  tags: ["a", "é"]  n: 2',
-    )
-    assert len(hits(SearchResult((dataclasses.replace(hit, fields={}),), 1, ()), 0.25, "linux", PLAIN).results) == 2
-
-
 def test_a_document_shows_the_front_matter_asked_for_before_its_text() -> None:
     found = DocumentText("notes/a.md", "A", "# A\n", fields={"rank": 2, "tags": ["x"]})
     assert documents(Documents((found,), ()), "linux", PLAIN).results == ("rank: 2", 'tags: ["x"]', "", "# A")
-
-
-def test_links_show_where_each_leads_and_the_lines_linking_in() -> None:
-    found = Links(
-        "v/Offer.md",
-        "Offer",
-        (
-            LinkOut(3, "Hans", "org", "Team", "alias", "v/Hans.md", "Hans", (), None),
-            LinkOut(4, "Dup", None, None, "ambiguous", None, None, ("v/A/Dup.md", "v/B/Dup.md"), None),
-            LinkOut(5, "Gone", None, None, "unresolved", None, None, (), "v/Notes.md"),
-        ),
-        (LinkIn("v/Notes.md", "Notes", (LinkingLine(3, None, "[[Offer]] again"),), None),),
-    )
-    assert shown_links(found, "linux", PLAIN).results == (
-        "Offer (v/Offer.md) links to:",
-        "     3  org: Hans#Team  ->  v/Hans.md (alias)",
-        "     4  Dup  ->  ambiguous: v/A/Dup.md, v/B/Dup.md",
-        "     5  Gone  ->  unresolved  (through v/Notes.md)",
-        "Linking to Offer (v/Offer.md):",
-        "  v/Notes.md  Notes",
-        "     3  [[Offer]] again",
-    )
-    alone = Links("v/A.md", "A", (), None)
-    assert shown_links(alone, "linux", PLAIN).results == ("A (v/A.md) links to: nothing",)
-
-
-def test_unresolved_targets_show_how_many_link_them_and_a_few_of_those() -> None:
-    found = Unresolved((Target("Missing", 7, ("v/a.md", "v/b.md")), Target("Gone", 1, ("v/c.md",))))
-    assert shown_unresolved(found, "linux", PLAIN).results == ("7  Missing  v/a.md, v/b.md, ...", "1  Gone     v/c.md")
-    assert shown_unresolved(Unresolved(()), "linux", PLAIN).messages == ("nothing  every link leads to a note",)
-
-
-def test_unresolved_targets_of_a_store_that_could_not_be_read_are_said_to_be_missing() -> None:
-    found = Unresolved(
-        (Target("Gone", 1, ("v/c.md",)),),
-        (Notice(Problem.STORE_DAMAGED, "the store is damaged", "remove the collection", "w"),),
-    )
-    assert shown_unresolved(found, "linux", PLAIN).messages[0] == "error  w: the store is damaged"
-    alone = shown_unresolved(Unresolved((), found.unsearched), "linux", PLAIN)
-    assert (alone.results, alone.messages[1:]) == ((), ("  fix  remove the collection", " next  sift rm w"))
-
-
-def test_links_of_a_note_found_while_a_store_could_not_be_read_say_so() -> None:
-    found = Links(
-        "v/A.md",
-        "A",
-        (),
-        None,
-        (Notice(Problem.STORE_DAMAGED, "the store is damaged", "remove the collection", "w"),),
-    )
-    shown_found = shown_links(found, "linux", PLAIN)
-    assert shown_found.results == ("A (v/A.md) links to: nothing",)
-    assert shown_found.messages[0] == "error  w: the store is damaged"

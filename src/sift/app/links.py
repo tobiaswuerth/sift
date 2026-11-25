@@ -50,7 +50,7 @@ def _out(resolver: Resolver, document: DocumentId, request: ShowLinks) -> list[O
                 if how.via in LEADING and how.documents[0] not in seen:
                     seen.add(how.documents[0])
                     found.append(Out(row, how, step))
-    return found[: request.k]
+    return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +70,7 @@ def _in(resolver: Resolver, document: DocumentId, request: ShowLinks) -> list[In
                 if source not in seen:
                     seen.add(source)
                     found.append(In(source, rows, step))
-    return found[: request.k]
+    return found
 
 
 def _id(collection: str, row: Titled) -> str:
@@ -113,8 +113,11 @@ def _lines(transaction: Reading, each: In) -> dict[int, str]:
 
 def _links(transaction: Reading, found: Note, request: ShowLinks) -> Links:
     resolver, collection, document = Resolver(transaction), found.collection.name, found.find(transaction)
-    out = _out(resolver, document, request) if request.direction is not Direction.IN else None
-    into = _in(resolver, document, request) if request.direction is not Direction.OUT else None
+    every_out = _out(resolver, document, request) if request.direction is not Direction.IN else None
+    every_in = _in(resolver, document, request) if request.direction is not Direction.OUT else None
+    more = any(len(every) > request.k for every in (every_out, every_in) if every is not None)
+    out = None if every_out is None else every_out[: request.k]
+    into = None if every_in is None else every_in[: request.k]
     documents = [document]
     documents += [at for each in out or () for at in (*each.how.documents, each.through) if at is not None]
     documents += [at for each in into or () for at in (each.document, each.through) if at is not None]
@@ -125,6 +128,7 @@ def _links(transaction: Reading, found: Note, request: ShowLinks) -> Links:
         names[document].title,
         None if out is None else tuple(_shown_out(each, names, collection) for each in out),
         None if into is None else tuple(_shown_in(each, names, held[each.document], collection) for each in into),
+        more=more,
     )
 
 
@@ -164,6 +168,6 @@ def unresolved(home: Path, request: ListUnresolved) -> Unresolved:
             found += read_in(one, partial(_unresolved, one.name))
         except StoreUnavailableError as error:
             passed.append(notice_of(error, one.name))
-    ranked = sorted(found, key=lambda each: (-len(each[1]), each[0]))[: request.k]
-    targets = tuple(Target(target, len(ids), tuple(sorted(ids)[:LINKING_SHOWN])) for target, ids in ranked)
-    return Unresolved(targets, tuple(passed))
+    ranked = sorted(found, key=lambda each: (-len(each[1]), each[0]))
+    targets = tuple(Target(target, len(ids), tuple(sorted(ids)[:LINKING_SHOWN])) for target, ids in ranked[: request.k])
+    return Unresolved(targets, tuple(passed), more=len(ranked) > request.k)

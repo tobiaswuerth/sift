@@ -10,7 +10,7 @@ from sift.api.errors import ModelUnavailableError
 from sift.api.events import Reporter
 from sift.api.fields import FieldValue
 from sift.api.ids import owner
-from sift.api.search import MOST_HITS, Hit, SearchHybrid, SearchResult
+from sift.api.search import MOST_HITS, SearchHybrid, SearchResult
 from sift.app import hits, searching
 from sift.app.hits import Retrieved, read
 from sift.app.keyword_candidates import Wanted, found
@@ -132,31 +132,30 @@ def _ordered(request: SearchHybrid, candidates: list[Retrieved], scores: Floats)
 
 def _ranked(stores: Open, asked: HybridAsked, query: Floats | None) -> tuple[list[Retrieved], bool]:
     request = asked.request
-    wanted = max(request.candidates, request.wanted)
+    wanted = max(request.candidates, request.wanted + 1)
     while True:
         gathered = despite_losses(partial(_gathered, stores, query, asked, wanted))
         if not gathered.candidates:
             return [], gathered.cut
         scores = _scored(asked.models, request, gathered.candidates, gathered.cosines)
         ranked = _ordered(request, gathered.candidates, scores)
-        if len(ranked) >= request.wanted or not gathered.full or gathered.cut or wanted >= MOST_HITS:
+        if len(ranked) > request.wanted or not gathered.full or gathered.cut or wanted > MOST_HITS:
             return ranked, gathered.cut
-        wanted = min(wanted * WIDER, MOST_HITS)
+        wanted = min(wanted * WIDER, MOST_HITS + 1)
 
 
-def _answered(stores: Open, asked: HybridAsked, report: Reporter) -> tuple[list[tuple[int, Hit]], bool]:
+def _answered(stores: Open, asked: HybridAsked, report: Reporter) -> hits.Answered:
     request, models = asked.request, asked.models
     if not stores.searching:
-        return [], False
+        return hits.Answered(())
     embedded = any(map(_embedded, stores.searching))
     prepared(report, (models.prepare, models.prepare_ranker) if embedded else (models.prepare_ranker,))
     query = query_vector(models, request.query) if embedded else None
     if query is not None:
         alike_or_by_keywords(stores, models.name, query)
     ranked, cut = _ranked(stores, asked, query)
-    held = ranked[: request.wanted]
-    plain = [replace(each, hit=replace(each.hit, text=None)) for each in held] if request.compact else held
-    return hits.presented(plain, request), cut
+    plain = [replace(each, hit=replace(each.hit, text=None)) for each in ranked] if request.compact else ranked
+    return hits.shown_of(plain, request, cut=cut)
 
 
 def _checked(request: SearchHybrid) -> None:
@@ -181,5 +180,5 @@ def query(
             Wants(keywords=True, model=models.name, codes=watching.codes, decoded=watching.decoded),
             expired,
         )
-        answered, cut = _answered(stores, HybridAsked(request, models, asked, expired), watching.report)
-        return hits.result(stores, answered, partial=cut)
+        answered = _answered(stores, HybridAsked(request, models, asked, expired), watching.report)
+        return hits.result(stores, answered, "reranker")

@@ -56,7 +56,8 @@ def _ranked(stores: Open, wanted: Wanted, expressions: tuple[Expression, Express
     first = found(stores, replace(wanted, k=k), expression)
     if first.found or looser is None:
         return first
-    return found(stores, replace(wanted, k=k), looser)
+    second = found(stores, replace(wanted, k=k), looser)
+    return replace(second, loosened=bool(second.found))
 
 
 def _in_time(expired: Expired) -> bool:
@@ -74,5 +75,5 @@ def keyword_result(
         stores = opened(cleanup, narrowing, Wants(keywords=True, decoded=decoded))
         rank = partial(_ranked, stores, wanted, expressions)
         more = partial(_in_time, wanted.expired)
-        answered, cut = despite_losses(partial(hits.answered, stores, rank, request, more=more))
-        return hits.result(stores, answered, partial=cut)
+        answered = despite_losses(partial(hits.answered, stores, rank, request, more=more))
+        return hits.result(stores, answered, "keywords")

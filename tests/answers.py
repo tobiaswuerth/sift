@@ -105,6 +105,9 @@ SAMPLES: dict[str, Answer] = {
         partial=True,
         ruled_out=1,
         left_out=(Notice(Problem.NOT_EMBEDDED, "1 document has no vectors: searched by keyword alone", None, "notes"),),
+        more=True,
+        loosened=True,
+        scored_by="keywords",
     ),
     "links": Links(
         "notes/a.md",
@@ -112,6 +115,7 @@ SAMPLES: dict[str, Answer] = {
         (LinkOut(3, "B", "org", "Intro", "name", "notes/b.md", "B", (), None),),
         (LinkIn("notes/c.md", "C", (LinkingLine(4, None, "see [[A]]"),), None),),
         (UNSEARCHED,),
+        more=True,
     ),
-    "unresolved": Unresolved((Target("Missing", 2, ("notes/a.md", "notes/c.md")),), (UNSEARCHED,)),
+    "unresolved": Unresolved((Target("Missing", 2, ("notes/a.md", "notes/c.md")),), (UNSEARCHED,), more=True),
 }

@@ -65,6 +65,7 @@ class Links:
     out: tuple[LinkOut, ...] | None
     into: tuple[LinkIn, ...] | None
     unsearched: tuple[Notice, ...] = ()
+    more: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +90,7 @@ class Target:
 class Unresolved:
     targets: tuple[Target, ...]
     unsearched: tuple[Notice, ...] = ()
+    more: bool = False
 
 
 @dataclass(frozen=True, slots=True)

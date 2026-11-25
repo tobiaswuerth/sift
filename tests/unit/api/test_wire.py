@@ -62,7 +62,9 @@ def test_every_answer_comes_back_from_its_json_as_it_was(name: str) -> None:
 
 
 def test_what_a_search_left_out_comes_back_too() -> None:
-    found = SearchResult((), 1, (), left_out=(Notice(Problem.OUT_OF_TIME, "out of time", "give more", "notes"),))
+    found = SearchResult(
+        (), 1, (), left_out=(Notice(Problem.OUT_OF_TIME, "out of time", "give more", "notes"),), scored_by="keywords"
+    )
     assert decoded(SearchResult, encoded(found)) == found
 
 
@@ -141,10 +143,10 @@ def test_a_hit_s_score_carries_the_digits_a_float32_holds_and_no_more(score: flo
 
 def test_an_answer_of_a_newer_sift_is_read_with_what_it_adds_left_out_but_a_request_is_not() -> None:
     hit = Hit("n/a.md", "n", "a.md", "A", 1, 2, 0.5, None)
-    sent = cast("dict[str, Json]", encoded(SearchResult((hit,), 1, ())))
+    sent = cast("dict[str, Json]", encoded(SearchResult((hit,), 1, (), scored_by="keywords")))
     sent["total"] = 9
     cast("list[dict[str, Json]]", sent["hits"])[0]["kind"] = "passage"
-    assert read_answer(SearchResult, sent) == SearchResult((hit,), 1, ())
+    assert read_answer(SearchResult, sent) == SearchResult((hit,), 1, (), scored_by="keywords")
     with pytest.raises(InvalidRequestError, match="SearchKeywords takes no total"):
         decoded(SearchKeywords, {"query": "x", "total": 9})
 

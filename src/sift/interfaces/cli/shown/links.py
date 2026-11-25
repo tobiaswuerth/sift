@@ -3,6 +3,9 @@ from sift.interfaces.cli.shown.outcome import Shown, notice_lines
 from sift.interfaces.console.style import Style
 from sift.interfaces.console.text import labelled, printable, table
 
+MORE_LINKS = "more links follow: ask for more with -k"
+MORE_TARGETS = "more targets follow: ask for more with -k"
+
 
 def _written(link: LinkOut) -> str:
     field = f"{link.field}: " if link.field else ""
@@ -41,7 +44,8 @@ def links(result: Links, _platform: str, style: Style) -> Shown:
     note = f"{result.title} ({result.id})"
     out = () if result.out is None else _out(f"{note} links to", result.out)
     into = () if result.into is None else _in(f"Linking to {note}", result.into)
-    return Shown(tuple(printable(line) for line in (*out, *into)), notice_lines(result.unsearched, style))
+    more = (labelled("more", MORE_LINKS, style=style),) if result.more else ()
+    return Shown(tuple(printable(line) for line in (*out, *into)), (*notice_lines(result.unsearched, style), *more))
 
 
 def unresolved(result: Unresolved, _platform: str, style: Style) -> Shown:
@@ -53,4 +57,5 @@ def unresolved(result: Unresolved, _platform: str, style: Style) -> Shown:
         (f"{each.documents:,}", each.target, ", ".join(each.ids) + (", ..." if each.documents > len(each.ids) else ""))
         for each in result.targets
     ]
-    return Shown(table(rows, frozenset({0})), problems)
+    more = (labelled("more", MORE_TARGETS, style=style),) if result.more else ()
+    return Shown(table(rows, frozenset({0})), (*problems, *more))
