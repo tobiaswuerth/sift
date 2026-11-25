@@ -25,6 +25,9 @@ Expect a first reply within a week. Security fixes go into the latest release.
   other systems sift makes the home and its stores' folders yours alone when it makes them.
 - **The UI.** Files opened from it carry `Content-Security-Policy: sandbox`, so a saved web page in a collection can't
   run scripts as the UI; PDFs go to the browser's viewer.
+- **Agents.** What a document says reaches an agent as a tool's answer, to be read as data. The instructions sift
+  gives an agent when it connects name your collections, their folders and their front matter fields, a field only if
+  its name is one plain word of at most 40 characters: no file of a collection can write a sentence into them.
 - **Your files.** sift never writes to them. One MCP tool changes anything, `reindex`, and only sift's stores: it reads
   only files `sift index` would read, inside a collection agents may see, outside hidden and linked folders. A linked
   file is read only if it points into its collection's folder, unless the collection was added with `--follow-links`:

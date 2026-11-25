@@ -1,3 +1,6 @@
+import re
+from collections.abc import Sequence
+
 from sift.api.collections import CollectionStatus, Counted, Status
 from sift.domain.text.wording import counted
 
@@ -23,6 +26,16 @@ Narrow any search with `collections`, a `path` glob, `filters` on front matter a
 hits alone. After writing or deleting a file of a collection, `reindex` it."""
 NONE_YET = "No collections are indexed yet."
 LISTED = "Indexed collections (the tool `collections` lists them, with their fields and the jobs running):"
+PLAIN_FIELD = re.compile(r"[\w.-]{1,40}")
+MOST_FIELDS = 30
+
+
+def _fields(names: Sequence[str]) -> str:
+    plain = [name for name in names if PLAIN_FIELD.fullmatch(name)][:MOST_FIELDS]
+    more = len(names) - len(plain)
+    if not plain:
+        return counted(more, "field")
+    return ", ".join(plain) + (f" and {more:,} more" if more else "")
 
 
 def _line(one: CollectionStatus) -> str:
@@ -31,7 +44,7 @@ def _line(one: CollectionStatus) -> str:
         return f"- {one.name} ({one.folder}): {contents.message}"
     said = f"- {one.name} ({one.folder}): {counted(contents.documents, 'document')}"
     if contents.fields:
-        said += f"; front matter: {', '.join(contents.fields)}"
+        said += f"; front matter: {_fields(contents.fields)}"
     if contents.links:
         said += f"; {counted(contents.links, 'link')}, {contents.unresolved:,} unresolved"
     return said if one.active else f"{said}; inactive"
