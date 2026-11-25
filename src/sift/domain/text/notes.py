@@ -11,7 +11,7 @@ from sift.domain.text.chunks import Chunk, chunk_of, chunks, groups, pieces
 from sift.domain.text.decoding import text_pieces
 from sift.domain.text.front_matter import FrontMatter, front_matter, front_matter_links
 from sift.domain.text.json_values import REPLACEMENT, composed_fields
-from sift.domain.text.links import MARKDOWN, Link, in_line
+from sift.domain.text.links import MARKDOWN, WIKILINK_OPENS, Link, in_line
 from sift.domain.text.markdown import TextLine, heading_of, text_lines, title_of, with_prose
 
 NUL = "\N{NULL}"
@@ -20,7 +20,7 @@ HEAD_OPENS = re.compile(r"---[ \t]*\n")
 HEAD_CLOSES = re.compile(r"---[ \t]*\n?")
 MOST_HEAD = 1 << 20
 DIGEST_BYTES = 16
-WIKILINK_OPENS, LINK_ADDRESS_OPENS = "[[", "]("
+LINK_ADDRESS_OPENS = "]("
 
 
 @dataclass(frozen=True, slots=True)

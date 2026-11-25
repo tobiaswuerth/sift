@@ -4,6 +4,7 @@ import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import NamedTuple
 from urllib.parse import unquote
 
 from sift.api.fields import Fields, FieldValue
@@ -55,6 +56,7 @@ NOT_READ = frozenset(
         ".xls",
     ]
 )
+WIKILINK_OPENS = "[["
 WIKILINK = re.compile(r"(!?)\[\[([^\[\]\n]+)\]\]")
 SHOWN = r"!?\[((?:[^\[\]\n]|\[[^\[\]\n]*\])*)\]"
 ADDRESS = r"\(\s*(<[^<>\n]*>|(?:[^\s()<>]|\([^\s()<>]*\))+)"
@@ -93,6 +95,11 @@ class Name:
     kind: NameKind
 
 
+class NamedTarget(NamedTuple):
+    target: str
+    key: str
+
+
 def folded(name: str) -> str:
     return unicodedata.normalize("NFC", unicodedata.normalize("NFC", name).casefold())
 
@@ -112,6 +119,14 @@ def name_key(name: str) -> str:
 
 def spelled_key(name: str) -> str:
     return _keyed(name, spelled)
+
+
+def last_name(path: str) -> str:
+    return path.rsplit("/", 1)[-1]
+
+
+def target_key(target: str) -> str:
+    return name_key(last_name(target))
 
 
 def without_code_spans(line: str) -> str:
@@ -145,17 +160,29 @@ class Written:
 
 def _link(field: str | None, line: int, written: Written) -> Link | None:
     target = written.target.strip()
-    last = target.rsplit("/", 1)[-1]
+    last = last_name(target)
     if last in ("", ".", "..") or posixpath.splitext(last)[1].lower() in NOT_READ:
         return None
     fragment, shown = written.fragment.strip() or None, written.shown.strip() or None
     return Link(field, line, written.kind, target, name_key(last), fragment, shown)
 
 
+def _split(inner: str) -> tuple[str, str, str]:
+    target, _, shown = inner.partition("|")
+    target, _, fragment = target.removesuffix("\\").partition("#")
+    return target, fragment, shown
+
+
+def named_target(text: str) -> NamedTarget:
+    written = text.strip()
+    found = WIKILINK.fullmatch(written)
+    target = _split(found[2] if found else written)[0].strip()
+    return NamedTarget(target, target_key(target))
+
+
 def _wikilinks(line: str, number: int, field: str | None) -> Iterator[tuple[int, Link | None]]:
     for found in WIKILINK.finditer(line):
-        target, _, shown = found[2].partition("|")
-        target, _, fragment = target.removesuffix("\\").partition("#")
+        target, fragment, shown = _split(found[2])
         kind = LinkKind.EMBED if found[1] else LinkKind.WIKILINK
         yield found.start(), _link(field, number, Written(kind, target, fragment, shown))
 
@@ -192,7 +219,7 @@ def aliases(fields: Fields) -> list[str]:
 
 
 def names(path: str, fields: Fields) -> tuple[Name, ...]:
-    own = Name(name_key(path.rsplit("/", 1)[-1]), NameKind.NAME)
+    own = Name(target_key(path), NameKind.NAME)
     return tuple(sorted({own, *(Name(name_key(alias), NameKind.ALIAS) for alias in aliases(fields))}))
 
 

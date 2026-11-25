@@ -1,5 +1,4 @@
-import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -9,16 +8,15 @@ from sift.api.notices import Notice, notice_of
 from sift.app.documents import place, resolved_at
 from sift.app.documents import unknown as documents_unknown
 from sift.domain.text.kinds import public_id
-from sift.domain.text.links import LinkKind, link_target, name_key
+from sift.domain.text.links import LinkKind, NamedTarget, name_key, named_target, target_key
 from sift.domain.text.resolving import LEADING, Candidate, Resolution, Via, link_path, resolved
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Reading
 from sift.storage.documents import stored
-from sift.storage.links import LinkRow, doubtful, keys_of, links_into, links_keyed, named, titled
+from sift.storage.links import LinkRow, doubtful, keys_of, links_into, links_keyed, links_out, named, titled
 from sift.storage.store import read_store
 
 AMBIGUOUS_SHOWN = 5
-NAME_END = re.compile(r"[#|]")
 AMBIGUOUS_REMEDY = "give the note's whole id"
 NOTE_REMEDY = 'name a note by its id, or as links name it, e.g. "Acme AG"'
 
@@ -38,8 +36,8 @@ class Resolver:
     def of(self, row: LinkRow) -> Resolution:
         return resolved(row.path, row.kind, row.target, *self._named(row.key))
 
-    def of_name(self, target: str) -> Resolution:
-        return resolved(None, LinkKind.WIKILINK, target, *self._named(name_key(target.rsplit("/", 1)[-1])))
+    def of_name(self, name: NamedTarget) -> Resolution:
+        return resolved(None, LinkKind.WIKILINK, name.target, *self._named(name.key))
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,16 +78,12 @@ def read_in[T](one: Collection, read: Callable[[Reading], T]) -> T:
         return read(transaction)
 
 
-def target_of(id_: str) -> str:
-    return link_target(id_) or NAME_END.split(id_, maxsplit=1)[0].strip()
-
-
-def _named(transaction: Reading, name: str) -> list[int]:
+def _named(transaction: Reading, name: NamedTarget) -> list[int]:
     found = Resolver(transaction).of_name(name)
     return list(found.documents) if found.via is not Via.UNRESOLVED else []
 
 
-def _matches(one: Collection, name: str) -> list[Note]:
+def _matches(one: Collection, name: NamedTarget) -> list[Note]:
     def read(transaction: Reading) -> list[Note]:
         found = _named(transaction, name)
         held = sorted(titled(transaction, found).values(), key=lambda each: (each.path, each.key))
@@ -108,7 +102,7 @@ def _remedy(remedy: str, unsearched: Sequence[Notice]) -> str:
 
 
 def matches(collections: Sequence[Collection], id_: str) -> Matches:
-    name, unread = target_of(id_), list[Notice]()
+    name, unread = named_target(id_), list[Notice]()
     found: list[Note] = []
     for one in collections:
         try:
@@ -148,9 +142,16 @@ def linking(resolver: Resolver, document: DocumentId, wanted: str | None) -> dic
     return found
 
 
+def linked_from(resolver: Resolver, document: DocumentId, wanted: str | None) -> Iterator[tuple[LinkRow, Resolution]]:
+    for row in links_out(resolver.transaction, document, wanted):
+        how = resolver.of(row)
+        if how.via in LEADING and how.documents[0] != document:
+            yield row, how
+
+
 def written(transaction: Reading, target: str, wanted: str | None) -> set[DocumentId]:
     want = name_key(target.lstrip("/"))
-    rows = links_keyed(transaction, name_key(target.rsplit("/", 1)[-1]), wanted)
+    rows = links_keyed(transaction, target_key(target), wanted)
     return {row.document for row in rows if name_key(link_path(row.path, row.kind, row.target)) == want}
 
 

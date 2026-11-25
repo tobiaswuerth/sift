@@ -7,12 +7,11 @@ from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailable
 from sift.api.filters import Filter
 from sift.api.ids import DocumentId
 from sift.api.search import Options
-from sift.app.notes import NOTE_REMEDY, Note, Resolver, linking, note_of, read_in, target_of, written
+from sift.app.notes import NOTE_REMEDY, Note, Resolver, linked_from, linking, note_of, read_in, written
 from sift.domain.query.filters import Condition, Linked, LinkFilter, condition, linkings, readable
-from sift.domain.text.resolving import LEADING
+from sift.domain.text.links import named_target
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading
-from sift.storage.links import links_out
 from sift.storage.passing import reads_quotes
 
 
@@ -59,14 +58,14 @@ def _held(one: Collection, target: str) -> bool:
 def _found(home: Path, spec: str, field: str) -> Pointed:
     named = note_of(home, spec, field)
     where = frozenset({named.note.collection.name, *(each.collection for each in named.unsearched if each.collection)})
-    return Pointed(spec, named.note, target_of(spec), where)
+    return Pointed(spec, named.note, named_target(spec).target, where)
 
 
 def _linked_to(home: Path, scope: Sequence[Collection], spec: str) -> Pointed:
     try:
         return _found(home, _checked(spec, "links_to"), "links_to")
     except NotFoundError:
-        target = target_of(spec)
+        target = named_target(spec).target
         held = frozenset(one.name for one in scope if _held(one, target))
         if not held:
             raise
@@ -139,8 +138,7 @@ def _out_of(resolver: Resolver, one: Collection, pointed: Pointed) -> set[Docume
     document = _document(pointed.note, one, resolver.transaction)
     if document is None:
         return set()
-    rows = links_out(resolver.transaction, document, None)
-    return {how.documents[0] for how in map(resolver.of, rows) if how.via in LEADING} - {document}
+    return {how.documents[0] for _, how in linked_from(resolver, document, None)}
 
 
 def _within(found: Narrowing, one: Collection, resolver: Resolver) -> list[DocumentId] | None:

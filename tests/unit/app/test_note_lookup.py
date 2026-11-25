@@ -63,6 +63,11 @@ def test_a_link_filter_and_links_to_agree(home: Path) -> None:
             search(home, asked)
 
 
+@pytest.mark.parametrize("named", ["Acme", "[[Acme]]", "Acme#Intro", "Acme|A", "Acme\\|A", "[[Acme#Intro|A]]"])
+def test_a_note_is_named_as_a_link_written_with_its_name_names_it(home: Path, named: str) -> None:
+    assert ids(home, SearchKeywords("widgets", links_to=(named,))) == ["A/Hub.md"]
+
+
 def test_mentions_leave_out_documents_of_other_collections_linking_the_note(home: Path) -> None:
     assert [hit.id for hit in mentions(home, FindMentions("A/Acme.md")).hits] == ["B/other.md"]
 

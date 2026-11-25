@@ -7,7 +7,7 @@ from typing import NamedTuple
 
 from sift.api.fields import Fields, FieldValue
 from sift.domain.text.json_values import MOST_DEPTH, composed_names, deeper_than, depth, inside, json_value
-from sift.domain.text.links import WIKILINK, Link, in_line
+from sift.domain.text.links import WIKILINK, WIKILINK_OPENS, Link, in_line
 
 BLOCK = re.compile(r"\A---[ \t]*\r?\n(?:(.*?)\r?\n)??---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
 LIST_ITEM = re.compile(r"[ \t]*-[ \t]+(.*)")
@@ -265,5 +265,5 @@ def front_matter_links(found: FrontMatter) -> Iterator[Link]:
     read = entries(found.inner.split("\n"))
     named = composed_names(read.found)
     for number, (key, written) in enumerate(read.held, FIRST_INNER_LINE):
-        if key is not None and "[[" in written and not written.lstrip().startswith("#"):
+        if key is not None and WIKILINK_OPENS in written and not written.lstrip().startswith("#"):
             yield from in_line(written, number, named[key])

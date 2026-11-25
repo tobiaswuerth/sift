@@ -19,7 +19,7 @@ from sift.api.links import (
 )
 from sift.api.notices import Notice, notice_of
 from sift.app.collections import searchable
-from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, linking, note_of, read_in, unresolved_links
+from sift.app.notes import AMBIGUOUS_SHOWN, Note, Resolver, linked_from, linking, note_of, read_in, unresolved_links
 from sift.domain.text.kinds import public_id
 from sift.domain.text.links import name_key
 from sift.domain.text.resolving import LEADING, Linking, Resolution, link_path, linking_lines
@@ -46,9 +46,8 @@ def _out(resolver: Resolver, document: DocumentId, request: ShowLinks) -> list[O
         reached = [each.how.documents[0] for each in found if each.how.via in LEADING]
         seen = {document, *reached}
         for step in dict.fromkeys(reached):
-            for row in links_out(resolver.transaction, step, request.field):
-                how = resolver.of(row)
-                if how.via in LEADING and how.documents[0] not in seen:
+            for row, how in linked_from(resolver, step, request.field):
+                if how.documents[0] not in seen:
                     seen.add(how.documents[0])
                     found.append(Out(row, how, step))
                 if len(found) >= shown:

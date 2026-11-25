@@ -270,3 +270,9 @@ def test_links_shown_up_to_k_resolve_no_more_than_one_past_k(tmp_path: Path) -> 
     found: list[Links] = []
     resolved = resolutions(lambda: found.append(links(home, ShowLinks("v/hub.md", Direction.OUT, k=5))))
     assert (len(found[0].out or ()), found[0].more, resolved <= 6) == (5, True, True)
+
+
+def test_a_note_reached_on_the_first_step_is_not_shown_again_on_the_second(tmp_path: Path) -> None:
+    home = vault(tmp_path, {"A.md": "[[B]] [[C]]", "B.md": "[[C]] [[D]] [[A]] [[Nowhere]]", "C.md": "", "D.md": ""})
+    further = links(home, ShowLinks("v/A.md", depth=2)).out or ()
+    assert [(each.target, each.through) for each in further] == [("B", None), ("C", None), ("D", "v/B.md")]

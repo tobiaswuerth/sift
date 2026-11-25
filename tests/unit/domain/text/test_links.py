@@ -2,7 +2,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.domain.text.links import Link, LinkKind, Name, NameKind, aliases, name_key, names
+from sift.domain.text.links import Link, LinkKind, Name, NameKind, aliases, in_line, name_key, named_target, names
 from sift.domain.text.notes import note
 
 type Found = tuple[str | None, int, LinkKind, str, str | None, str | None]
@@ -213,3 +213,21 @@ head_lines = st.lists(st.tuples(LEADS, KEYS, st.sampled_from([":", ""]), VALUES)
 def test_the_field_of_every_front_matter_link_is_a_field_of_the_note(lines: list[str]) -> None:
     document = note(("---\n" + "\n".join(lines) + "\n---\nbody\n").encode(), "n.md")
     assert {link.field for link in document.links} - {None} <= set(document.fields)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Acme",
+        "Acme#Intro",
+        "Acme|A",
+        "[[Acme#Intro|A]]",
+        "People/Acme.md",
+        " People/Acme.md#x|A ",
+        "Acme\\|A",
+        "Mu\N{COMBINING DIAERESIS}ller",
+    ],
+)
+def test_a_target_typed_by_a_user_is_named_as_a_link_writing_it_is(text: str) -> None:
+    (link,) = in_line(f"[[{text}]]", 1)
+    assert named_target(text) == (link.target, link.key)
