@@ -3,7 +3,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from types import MappingProxyType
-from typing import cast
+from typing import Protocol, cast
 
 import numpy as np
 import torch
@@ -110,27 +110,48 @@ def loading[T](name: str, device: Device, load: Callable[[], T]) -> T:
         raise unloaded(name, error, device.name) from error
 
 
+class Loads[T](Protocol):
+    def __call__(self, *, local_files_only: bool) -> T: ...
+
+
+def cache_first[T](load: Loads[T]) -> T:
+    try:
+        return load(local_files_only=True)
+    except OSError:
+        return load(local_files_only=False)
+
+
 def _embedder(name: str, device: Device) -> Loaded:
     repository, revision = hub(name)
 
-    def load() -> Loaded:
+    def load(*, local_files_only: bool) -> Loaded:
         model = SentenceTransformer(
-            repository, device=device.name, revision=revision, model_kwargs={"dtype": device.dtype}
+            repository,
+            device=device.name,
+            revision=revision,
+            model_kwargs={"dtype": device.dtype},
+            local_files_only=local_files_only,
         )
         held = _reading_capped(cast("Embedder", model))
         return Loaded(held, width_of(name, held.get_embedding_dimension()))
 
-    return loading(name, device, load)
+    return loading(name, device, partial(cache_first, load))
 
 
 def _ranker(name: str, device: Device) -> Ranker:
     repository, revision = hub(name)
 
-    def load() -> Ranker:
-        model = CrossEncoder(repository, device=device.name, revision=revision, model_kwargs={"dtype": device.dtype})
+    def load(*, local_files_only: bool) -> Ranker:
+        model = CrossEncoder(
+            repository,
+            device=device.name,
+            revision=revision,
+            model_kwargs={"dtype": device.dtype},
+            local_files_only=local_files_only,
+        )
         return _capped(cast("Ranker", model))
 
-    return loading(name, device, load)
+    return loading(name, device, partial(cache_first, load))
 
 
 def _counting(tokenizer: object) -> Tokenizer:

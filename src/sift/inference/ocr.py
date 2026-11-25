@@ -12,7 +12,7 @@ from sift.api.errors import ModelUnavailableError
 from sift.domain.text.scans import looping, without_loop, worth_reading
 from sift.inference.accelerator import CACHES, MACHINE, Device, Machine, emptied
 from sift.inference.hub import OCR_MODEL, hub
-from sift.inference.local import loading, this_device, within_memory
+from sift.inference.local import cache_first, loading, this_device, within_memory
 
 NEW_TOKENS = 4096
 LOOP_STEP = 16
@@ -39,15 +39,17 @@ class Processing(Protocol):
 
 
 class LoadModel(Protocol):
-    def __call__(self, repository: str, /, *, dtype: torch.dtype, revision: str) -> object: ...
+    def __call__(self, repository: str, /, *, dtype: torch.dtype, revision: str, local_files_only: bool) -> object: ...
 
 
 class LoadProcessor(Protocol):
-    def __call__(self, repository: str, /, *, revision: str) -> object: ...
+    def __call__(self, repository: str, /, *, revision: str, local_files_only: bool) -> object: ...
 
 
 class _PretrainedProcessor(Protocol):
-    def __call__(self, repository: str, /, *, revision: str, fix_mistral_regex: bool) -> object: ...
+    def __call__(
+        self, repository: str, /, *, revision: str, fix_mistral_regex: bool, local_files_only: bool
+    ) -> object: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,14 +148,14 @@ def let_go(device: Device, caches: Mapping[str, Callable[[], None]] = CACHES) ->
     emptied(device, caches)
 
 
-def _pretrained_model(repository: str, /, *, dtype: torch.dtype, revision: str) -> object:
+def _pretrained_model(repository: str, /, *, dtype: torch.dtype, revision: str, local_files_only: bool) -> object:
     load = cast("LoadModel", LightOnOcrForConditionalGeneration.from_pretrained)
-    return load(repository, dtype=dtype, revision=revision)
+    return load(repository, dtype=dtype, revision=revision, local_files_only=local_files_only)
 
 
-def _pretrained_processor(repository: str, /, *, revision: str) -> object:
+def _pretrained_processor(repository: str, /, *, revision: str, local_files_only: bool) -> object:
     load = cast("_PretrainedProcessor", LightOnOcrProcessor.from_pretrained)
-    return load(repository, revision=revision, fix_mistral_regex=True)
+    return load(repository, revision=revision, fix_mistral_regex=True, local_files_only=local_files_only)
 
 
 def loaded_ocr(
@@ -165,11 +167,16 @@ def loaded_ocr(
     repository, pinned_at = hub(name)
     revision = pinned_at or DEFAULT_REVISION
 
+    def model(*, local_files_only: bool) -> Generating:
+        loaded = load_model(repository, dtype=device.dtype, revision=revision, local_files_only=local_files_only)
+        return cast("Generating", loaded)
+
+    def processor(*, local_files_only: bool) -> Processing:
+        return cast("Processing", load_processor(repository, revision=revision, local_files_only=local_files_only))
+
     def load() -> Ocr:
         transformers_logging.set_verbosity_error()
-        model = cast("Generating", load_model(repository, dtype=device.dtype, revision=revision))
-        processor = cast("Processing", load_processor(repository, revision=revision))
-        return Ocr(model.to(device.name).eval(), processor, device)
+        return Ocr(cache_first(model).to(device.name).eval(), cache_first(processor), device)
 
     return loading(name, device, load)
 

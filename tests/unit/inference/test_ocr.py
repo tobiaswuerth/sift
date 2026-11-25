@@ -152,26 +152,32 @@ def test_a_model_out_of_memory_on_a_page_is_unavailable_saying_so_its_device_emp
     assert emptied == [True]
 
 
-def test_the_model_loads_at_its_pinned_revision_onto_its_device_in_its_precision() -> None:
-    model, asked = FakeModel(), list[tuple[str, object, str]]()
+def test_the_model_loads_at_its_pinned_revision_onto_its_device_in_its_precision_from_the_cache_first() -> None:
+    model, asked = FakeModel(), list[tuple[str, object, str, bool]]()
 
-    def load_model(repository: str, /, *, dtype: torch.dtype, revision: str) -> object:
-        asked.append((repository, dtype, revision))
+    def load_model(repository: str, /, *, dtype: torch.dtype, revision: str, local_files_only: bool) -> object:
+        asked.append((repository, dtype, revision, local_files_only))
+        if local_files_only:
+            raise OSError("not in the cache")
         return model
 
-    def load_processor(repository: str, /, *, revision: str) -> object:
-        asked.append((repository, None, revision))
+    def load_processor(repository: str, /, *, revision: str, local_files_only: bool) -> object:
+        asked.append((repository, None, revision, local_files_only))
         return FakeProcessor()
 
     found = loaded_ocr(GPU, OCR_MODEL, load_model, load_processor)
     pinned = PINNED[OCR_MODEL]
-    assert asked == [(OCR_MODEL, torch.bfloat16, pinned), (OCR_MODEL, None, pinned)]
+    assert asked == [
+        (OCR_MODEL, torch.bfloat16, pinned, True),
+        (OCR_MODEL, torch.bfloat16, pinned, False),
+        (OCR_MODEL, None, pinned, True),
+    ]
     assert (found.model, model.device, found.device) == (model, "cuda", GPU)
 
 
 def test_a_model_that_cannot_be_loaded_says_what_to_check() -> None:
-    def failing(repository: str, /, *, dtype: torch.dtype, revision: str) -> object:
-        raise OSError(f"401 Client Error: {repository}@{revision} in {dtype}")
+    def failing(repository: str, /, *, dtype: torch.dtype, revision: str, local_files_only: bool) -> object:
+        raise OSError(f"401 Client Error: {repository}@{revision} in {dtype}, cached only: {local_files_only}")
 
     with pytest.raises(ModelUnavailableError, match=f"the model {OCR_MODEL} could not be loaded"):
         loaded_ocr(GPU, OCR_MODEL, failing)
@@ -181,8 +187,8 @@ def test_a_model_from_a_folder_that_holds_none_cannot_be_loaded(tmp_path: Path) 
     with pytest.raises(ModelUnavailableError, match="could not be loaded"):
         loaded_ocr(CPU, str(tmp_path / "missing"))
 
-    def model_alone(repository: str, /, *, dtype: torch.dtype, revision: str) -> object:
-        assert (repository, dtype, revision) == (str(tmp_path / "missing"), CPU.dtype, "main")
+    def model_alone(repository: str, /, *, dtype: torch.dtype, revision: str, local_files_only: bool) -> object:
+        assert (repository, dtype, revision, local_files_only) == (str(tmp_path / "missing"), CPU.dtype, "main", True)
         return FakeModel()
 
     with pytest.raises(ModelUnavailableError, match="could not be loaded"):
