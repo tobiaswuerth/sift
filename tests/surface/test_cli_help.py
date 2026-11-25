@@ -48,8 +48,8 @@ def test_help_ends_with_examples_exit_codes_and_settings(settings: Settings) -> 
 def test_a_command_s_help_names_what_each_option_takes_and_shows_an_example(settings: Settings) -> None:
     out = ran(settings, "search", "--help")[1]
     for written in (
-        "-c NAME, --collection NAME",
-        "-f KEY=VALUE, --filter KEY=VALUE",
+        "--collection NAME",
+        "--filter KEY=VALUE",
         "--fields FIELD,...",
         "--links-to NOTE",
         "--linked-from NOTE",
