@@ -7,7 +7,7 @@ import numpy as np
 from sift.api.ids import ChunkId, DocumentId
 from sift.domain.arrays import Ascending, Ids, Scores, among, distinct, ints
 from sift.domain.query.expressions import Expression, Leaf, Phrase, Prefix, Term, leaves
-from sift.domain.rank.best import Best, may_reach, offered, ranked
+from sift.domain.rank.best import Best, may_reach, offered, ranked, unreached_alone
 from sift.domain.rank.bm25 import idf
 from sift.domain.rank.boolean import counted, may_hold
 from sift.retrieval.allowed import AllowedDocuments
@@ -60,14 +60,8 @@ def _offer(work: Pass, best: Best, places: Ids, scores: Scores) -> Best:
 
 
 def _lazy(work: Pass, threshold: float) -> list[Leaf]:
-    lazy: list[Leaf] = []
-    total = 0.0
-    for leaf in sorted(work.query.leaves, key=work.query.most) if work.query.flat else ():
-        if may_reach(np.array([total + work.query.most(leaf)]), threshold).all():
-            break
-        lazy.append(leaf)
-        total += work.query.most(leaf)
-    return lazy
+    ascending = sorted(work.query.leaves, key=work.query.most) if work.query.flat else []
+    return ascending[: unreached_alone(np.array([work.query.most(leaf) for leaf in ascending]), threshold)]
 
 
 def _summed(query: Query, held: Mapping[Leaf, Scores], size: int) -> Scores:

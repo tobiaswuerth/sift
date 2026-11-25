@@ -121,7 +121,7 @@ def postings_of(lists: Lists, average: float, shape: Shape = SHAPE) -> tuple[Pos
     return tuple(written)
 
 
-def _counted(counts: Ids, places: Ids) -> tuple[Ids, Ids]:
+def _capped(counts: Ids, places: Ids) -> tuple[Ids, Ids]:
     if not len(counts) or largest(counts) <= MOST_TIMES:
         return counts, places
     nth = np.arange(len(places)) - np.repeat(np.cumsum(counts) - counts, counts)
@@ -135,7 +135,7 @@ def segment(ids: Ids, streams: Sequence[Sequence[str]], average: float, shape: S
     order = np.argsort(codes[kept], kind="stable")
     codes, owners, places = codes[kept][order], owners[kept][order], places[kept][order]
     posting_starts = run_starts(codes * len(streams) + owners)
-    counts, places = _counted(np.diff(np.append(posting_starts, len(codes))), places)
+    counts, places = _capped(np.diff(np.append(posting_starts, len(codes))), places)
     terms, holders = codes[posting_starts], owners[posting_starts]
     term_starts = ints(run_starts(terms))
     named = tuple(names[code] for code in ints(terms[term_starts]))

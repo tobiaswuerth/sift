@@ -144,7 +144,7 @@ def _added(transaction: Writing, written: Segment) -> None:
     lengths_added(transaction, made, written.lengths)
 
 
-def _counted(transaction: Writing, added: Iterable[tuple[str, int]], tokens_added: int) -> None:
+def _terms_added(transaction: Writing, added: Iterable[tuple[str, int]], tokens_added: int) -> None:
     run_each(
         transaction,
         """INSERT INTO keyword_terms(term, chunks) VALUES (?, ?)
@@ -179,7 +179,7 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
     average = (totals(transaction).tokens + _tokens(streams)) / (indexed.n + len(spans))
     written = segment(np.array([span.id for span in spans], np.int64), streams, average, shape)
     _added(transaction, written)
-    _counted(transaction, ((p.term, p.chunks) for p in written.postings), written.tokens)
+    _terms_added(transaction, ((p.term, p.chunks) for p in written.postings), written.tokens)
     run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (str(written.last), THROUGH_KEY))
     return len(spans)
 

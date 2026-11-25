@@ -38,7 +38,7 @@ class Materialized:
     cut: bool = False
 
 
-def _all_of(store: Opened, lists: list[StoredList], expired: Expired = never) -> Materialized:
+def _union(store: Opened, lists: list[StoredList], expired: Expired = never) -> Materialized:
     parts: list[PostingArrays] = []
     cut = False
     for held in lists:
@@ -73,7 +73,7 @@ def _out_of_time() -> Materialized:
 
 def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]], expired: Expired) -> Materialized:
     order = _rarest_first(phrase, lists)
-    first = _all_of(store, lists[order[0]], expired)
+    first = _union(store, lists[order[0]], expired)
     candidates = first.postings[0]
     for token in order[1:]:
         if not len(candidates):
@@ -101,7 +101,7 @@ def _prefix(store: Opened, prefix: Prefix, expired: Expired) -> Materialized:
         return _out_of_time()
     terms = expansions(store.transaction, prefix.text)
     lists = stored(store, terms)
-    return _all_of(store, [held for term in terms for held in lists[term]], expired)
+    return _union(store, [held for term in terms for held in lists[term]], expired)
 
 
 def materialized(

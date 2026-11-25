@@ -36,6 +36,11 @@ def may_reach(bound: Scores, threshold: float) -> Mask:
     return bound * (1 + ROUNDING) >= threshold
 
 
+def unreached_alone(ascending: Scores, threshold: float) -> int:
+    reaching = may_reach(np.cumsum(ascending), threshold)
+    return int(np.argmax(reaching)) if reaching.any() else len(ascending)
+
+
 def offered(best: Best, chunks: Ids, documents: Ids, scores: Scores) -> Best:
     if not len(chunks):
         return best
