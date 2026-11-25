@@ -106,6 +106,9 @@ def test_the_ranges_pieces_of_a_term_share_are_joined_as_a_whole_merge_joins_the
         assert any(row.ranges for row in cut)
 
 
+PASSES = ("a first, in which what watches the code as it first runs allocates beside the merge", "the one measured")
+
+
 @pytest.mark.parametrize(
     "halves",
     [
@@ -114,6 +117,11 @@ def test_the_ranges_pieces_of_a_term_share_are_joined_as_a_whole_merge_joins_the
     ],
 )
 def test_a_term_too_large_for_a_merge_s_batch_is_merged_in_pieces_never_whole(halves: Batches) -> None:
+    peaks = [peak_merging_two_segments_of_one_word(halves) for _ in PASSES]
+    assert peaks[-1] < 2 * 60_000 * 8
+
+
+def peak_merging_two_segments_of_one_word(halves: Batches) -> int:
     word: Content = ("", "w", "word " * 60_000)
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
         applied(connection, [{"a.md": word}, {"b.md": word}], Batches(merging=Policy(factor=10, floor=10**6)))
@@ -126,8 +134,8 @@ def test_a_term_too_large_for_a_merge_s_batch_is_merged_in_pieces_never_whole(ha
         finally:
             tracemalloc.stop()
         assert len(settled(connection, halves.merging)) == 1
-        assert peak < 2 * 60_000 * 8
         checked(connection)
+        return peak
 
 
 def test_a_merge_reads_a_few_rows_of_each_segment_at_a_time_however_many_it_holds() -> None:
