@@ -10,7 +10,7 @@ from sift.interfaces.cli.entries import ENTRIES
 from sift.interfaces.cli.shown.outcome import FAILED, Shown, failure
 from sift.interfaces.console.style import PLAIN
 
-ONE_VALUE = re.compile(r"argument (\S+?)(?:/\S+)?: expected one argument")
+ONE_VALUE = re.compile(r"argument (\S+): expected one argument")
 REQUIRED = "the following arguments are required: "
 OWN_FLAGS = frozenset({"--json", "--color", "-h", "--help"})
 
@@ -38,22 +38,39 @@ def asked_json(argv: Sequence[str]) -> bool:
     return "--json" in (given[: given.index("--")] if "--" in given else given)
 
 
-def _known(command: str) -> frozenset[str]:
-    request = ENTRIES[command].request
-    found = {name for argument in arguments(request) for name in (argument.flag.short, argument.flag.long)}
+def _known(prog: str) -> frozenset[str]:
+    entry = ENTRIES.get(prog.removeprefix("sift").strip())
+    arguments_of = () if entry is None else arguments(entry.request)
+    found = {name for argument in arguments_of for name in (argument.flag.short, argument.flag.long)}
     return OWN_FLAGS | {name for name in found if name is not None}
 
 
+def _options(argv: Sequence[str]) -> list[str]:
+    return list(argv)[: list(argv).index("--")] if "--" in argv else list(argv)
+
+
+def _unknown(word: str, known: frozenset[str]) -> bool:
+    return word.startswith("-") and word.split("=", 1)[0] not in known
+
+
 def _unknown_dashed(prog: str, argv: Sequence[str]) -> bool:
-    known = _known(prog.removeprefix("sift").strip())
-    words = list(argv)[: list(argv).index("--")] if "--" in argv else list(argv)
-    return any(word.startswith("-") and word.split("=", 1)[0] not in known for word in words)
+    known = _known(prog)
+    return any(_unknown(word, known) for word in _options(argv))
+
+
+def _no_value(names: Sequence[str], prog: str, argv: Sequence[str]) -> str:
+    words, known = _options(argv), _known(prog)
+    typed = next((word for word in words if word in names), names[0])
+    following = [words[at + 1] for at, word in enumerate(words[:-1]) if word in names]
+    if any(_unknown(word, known) for word in following):
+        return f"a value that starts with a dash is written {typed}=-value; see {prog} --help"
+    return f"give {typed} a value; see {prog} --help"
 
 
 def _usage(wrong: UsageError, argv: Sequence[str]) -> str:
     asked = ONE_VALUE.fullmatch(wrong.message)
     if asked:
-        return f"a value that starts with a dash is written {asked.group(1)}=-value; see {wrong.prog} --help"
+        return _no_value(asked.group(1).split("/"), wrong.prog, argv)
     if wrong.message.startswith(REQUIRED) and _unknown_dashed(wrong.prog, argv):
         return f"a value that starts with a dash goes after --, e.g. {wrong.prog} -- -value"
     return f"see {wrong.prog} --help"

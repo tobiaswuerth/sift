@@ -44,6 +44,25 @@ def test_a_query_that_starts_with_a_dash_is_said_to_go_after_two_dashes(settings
 
 
 @pytest.mark.parametrize(
+    "argv, option",
+    [
+        (("index", "--file"), "--file"),
+        (("search", "x", "-k"), "-k"),
+        (("search", "x", "-c", "notes", "-c"), "-c"),
+        (("search", "x", "-k", "--json"), "-k"),
+        (("--color",), "--color"),
+    ],
+)
+def test_an_option_given_last_without_a_value_is_told_to_take_one(
+    settings: Settings, argv: tuple[str, ...], option: str
+) -> None:
+    code, _, err = ran(settings, *argv)
+    assert code == 2
+    prog = "sift" if argv[0].startswith("-") else f"sift {argv[0]}"
+    assert f"  fix  give {option} a value; see {prog} --help" in err
+
+
+@pytest.mark.parametrize(
     "argv, kind",
     [
         (("search", "--json", "--frobnicate", "x"), "invalid_request"),
