@@ -203,9 +203,11 @@ def test_settings_come_from_this_process() -> None:
     assert found.home.is_absolute()
 
 
-def test_no_test_reaches_the_home_of_whoever_runs_them(no_home_but_a_temporary_one: Path) -> None:
+def test_no_test_reaches_the_home_of_whoever_runs_them(
+    no_home_but_a_temporary_one: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
     assert from_environment().home == no_home_but_a_temporary_one
-    assert not no_home_but_a_temporary_one.exists()
+    assert no_home_but_a_temporary_one.is_relative_to(tmp_path_factory.getbasetemp()) is True
 
 
 def _nowhere() -> Path:

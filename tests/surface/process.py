@@ -13,6 +13,7 @@ from tests.waits import until
 
 INTERRUPT = cast("int", getattr(signal, "CTRL_BREAK_EVENT", signal.SIGINT))
 OWN_GROUP = cast("int", getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+SERVE = ("serve", "--port", "0", "--json")
 
 
 def settings_of(home: Path) -> Settings:
@@ -49,7 +50,7 @@ def sift(
 @contextmanager
 def served(home: Path) -> Generator[subprocess.Popen[str]]:
     running = subprocess.Popen(
-        [sys.executable, "-m", "sift", "serve", "--port", "0", "--json"],
+        [sys.executable, "-m", "sift", *SERVE],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
