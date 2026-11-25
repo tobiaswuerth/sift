@@ -20,10 +20,8 @@ from sift.api.collections import (
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem
 from sift.api.ids import CollectionId
-from sift.api.indexing import IndexCollections
 from sift.app.collections import activate, add, status
 from sift.app.embedding import embed
-from sift.app.indexing import index
 from sift.app.paths import ABSOLUTE_REMEDY
 from sift.domain.text.notes import note
 from sift.storage.catalog import forget_collection, known_collections
@@ -34,6 +32,7 @@ from sift.storage.store import MISSING_REMEDY, open_store
 from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import damage_table
 from tests.files import undeletable, write
+from tests.homes import indexed, quiet
 from tests.models import Hashed
 
 
@@ -105,7 +104,7 @@ def test_a_store_its_removal_left_behind_is_made_anew_when_its_folder_is_added_a
     notes = folder(tmp_path, "notes")
     write(notes / "a.md", "# A\n\nAn apple.\n")
     added = new(home, AddCollection(str(notes)))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     (one,) = known_collections(home)
     forget_collection(home, one.id)
     assert new(home, AddCollection(str(notes))).store == added.store
@@ -171,8 +170,8 @@ def test_status_says_what_is_embedded_by_which_model_the_fields_held_and_what_is
     write(root / "c.md", "# C\n\nplain\n")
     add(home, AddCollection(str(root)))
     add(home, AddCollection(str(folder(tmp_path, "other"))))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(("notes",)), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(("notes",)), quiet, Hashed())
     with contextlib.closing(sqlite3.connect(home / "catalog.sqlite")) as catalog, catalog:
         catalog.execute("UPDATE collections SET active = 0 WHERE name = 'other'")
     notes, other = status(home, ShowStatus()).collections
@@ -221,7 +220,7 @@ def test_the_home_its_stores_and_their_logs_are_the_user_s_alone(tmp_path: Path)
     folder.mkdir()
     (folder / "a.md").write_text("# A\n", encoding="utf-8")
     add(home, AddCollection(str(folder)))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     for path in (home, home / "collections"):
         assert stat.S_IMODE(path.stat().st_mode) == PRIVATE_FOLDER, path
     files = [home / "catalog.sqlite", *sorted((home / "collections").glob("notes.sqlite*"))]
@@ -240,7 +239,7 @@ def test_a_home_and_stores_others_could_read_are_made_the_user_s_when_written(tm
         (home / "collections" / "notes.sqlite", 0o644),
     ):
         path.chmod(shared)
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     activate(home, ActivateCollections(("notes",)))
     assert stat.S_IMODE(home.stat().st_mode) == PRIVATE_FOLDER
     assert {stat.S_IMODE(path.stat().st_mode) for path in home.rglob("*.sqlite")} == {PRIVATE_FILE}

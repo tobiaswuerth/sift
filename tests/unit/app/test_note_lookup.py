@@ -3,38 +3,29 @@ from pathlib import Path
 
 import pytest
 
-from sift.api.collections import AddCollection
 from sift.api.errors import InvalidRequestError, NotFoundError
-from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, FindSimilar, ShowLinks
 from sift.api.search import SearchKeywords
-from sift.app.collections import add
-from sift.app.indexing import index
 from sift.app.links import links
 from sift.app.mentions import mentions
 from sift.app.search import search
 from sift.app.similar import similar
 from sift.interfaces.cli.written import written
-from tests.files import write
+from tests.homes import home_of
+
+NOTES = {
+    "A/Acme.md": "Note: widgets made by Acme.\n",
+    "A/Hub.md": '---\norg: "[[Acme]]"\n---\nNote: widgets, see [[Acme]].\n',
+    "A/x/Dup.md": "Note: one.\n",
+    "B/blinker.md": '---\norg: "[[Acme]]"\n---\nNote: widgets, see [[Acme]].\n',
+    "B/other.md": "Note: Acme ships widgets.\n",
+    "B/Dup.md": "Note: two.\n",
+}
 
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    home = tmp_path / "home"
-    corpus = {
-        "A/Acme.md": "Note: widgets made by Acme.\n",
-        "A/Hub.md": '---\norg: "[[Acme]]"\n---\nNote: widgets, see [[Acme]].\n',
-        "A/x/Dup.md": "Note: one.\n",
-        "B/blinker.md": '---\norg: "[[Acme]]"\n---\nNote: widgets, see [[Acme]].\n',
-        "B/other.md": "Note: Acme ships widgets.\n",
-        "B/Dup.md": "Note: two.\n",
-    }
-    for path, text in corpus.items():
-        write(tmp_path / path, text)
-    for name in ("A", "B"):
-        add(home, AddCollection(str(tmp_path / name)))
-    index(home, IndexCollections(), lambda _: None)
-    return home
+    return home_of(tmp_path, NOTES)
 
 
 def ids(home: Path, request: SearchKeywords) -> list[str]:

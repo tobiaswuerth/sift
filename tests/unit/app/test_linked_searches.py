@@ -6,11 +6,9 @@ import pytest
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.filters import Filter
-from sift.api.indexing import IndexCollections
 from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app import searching
 from sift.app.embedding import embed
-from sift.app.indexing import index
 from sift.app.linked import condition_in
 from sift.app.notes import Note, read_in
 from sift.app.query import query
@@ -19,7 +17,7 @@ from sift.app.vsearch import vsearch
 from sift.interfaces.cli.written import written
 from tests.damage import damage_pages
 from tests.files import write
-from tests.homes import collection
+from tests.homes import collection, indexed, quiet
 from tests.models import Hashed
 
 OFFER, ACME = "vault/Offer.md", "vault/Orgs/Acme AG.md"
@@ -49,7 +47,7 @@ def linked(tmp_path: Path) -> Path:
         "old.md": "Note: see [[Archive/Wartungsvertrag 2027]].\n",
     }
     collection(tmp_path, home, "work", work)
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     return home
 
 
@@ -108,7 +106,7 @@ def test_a_name_several_notes_answer_to_is_refused_whichever_collections_are_sea
     linked: Path, tmp_path: Path
 ) -> None:
     write(tmp_path / "work" / "Acme AG.md", "Note: another Acme.\n")
-    index(linked, IndexCollections(), lambda _: None)
+    indexed(linked)
     for collections in ((), ("vault",), ("work",)):
         with pytest.raises(
             InvalidRequestError, match=r"names several notes: vault/Orgs/Acme AG\.md, work/Acme AG\.md"
@@ -134,7 +132,7 @@ def test_a_store_that_cannot_be_read_while_notes_are_looked_up_is_said_to_be_uns
 
 
 def test_every_search_takes_links(linked: Path) -> None:
-    embed(linked, EmbedCollections(), lambda _: None, Hashed())
+    embed(linked, EmbedCollections(), quiet, Hashed())
     assert ids(vsearch(linked, SearchVectors("customer", k=5, linked_from=("Hans Müller",)), Hashed())) == [ACME]
     assert ids(query(linked, SearchHybrid("customer since 2019", links_to=("Acme AG",)), Hashed())) == [HANS]
 
@@ -158,7 +156,7 @@ def orgs(tmp_path: Path) -> Path:
             "h.md": "---\norg: Acme AG\n---\nNote.\n",
         },
     )
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     return home
 
 
@@ -220,7 +218,7 @@ def test_a_note_linking_itself_is_left_out_of_its_own_links_both_ways(tmp_path: 
     collection(
         tmp_path, home, "loop", {"Loop.md": "Note: see [[Loop]] and [[Other]].\n", "Other.md": "Note: [[Loop]].\n"}
     )
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     assert notes(home, links_to=("Loop",)) == ["loop/Other.md"]
     assert notes(home, linked_from=("Loop",)) == ["loop/Other.md"]
 

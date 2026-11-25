@@ -6,17 +6,15 @@ import pytest
 
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
-from sift.api.indexing import IndexCollections
 from sift.api.links import FindSimilar
 from sift.api.search import SearchKeywords, SearchResult, SearchVectors
 from sift.app.embedding import embed
-from sift.app.indexing import index
 from sift.app.search import search
 from sift.app.similar import similar
 from sift.app.vsearch import vsearch
 from sift.interfaces.cli.written import written
 from tests.files import write
-from tests.homes import collection
+from tests.homes import collection, indexed, quiet
 from tests.models import Hashed
 
 ROBOTS = "Robots clean floors with brushes.\n"
@@ -49,8 +47,8 @@ def papers(tmp_path: Path) -> Path:
             "W3.md": "Robots and brushes for the floors.\n",
         },
     )
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     return home
 
 
@@ -99,8 +97,8 @@ def test_every_passage_alike_is_k_of_them_though_the_passages_of_the_copy_are_ne
     others = {f"other{n}.md": f"# Other {n}\n\nattention transformer layers, and {n}\n" for n in range(8)}
     collection(tmp_path, home, "a", {"paper.md": paper})
     collection(tmp_path, home, "b", {"paper.md": paper, **others})
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     found = similar(home, FindSimilar("a/paper.md", k=5, all_passages=True))
     assert (len(found.hits), "b/paper.md" in ids(found)) == (5, False)
 
@@ -117,7 +115,7 @@ def test_similar_takes_what_searches_take(papers: Path) -> None:
 
 def test_similar_needs_the_document_embedded(papers: Path, tmp_path: Path) -> None:
     write(tmp_path / "arxiv" / "new.md", "Fresh robots.\n")
-    index(papers, IndexCollections(), lambda _: None)
+    indexed(papers)
     with pytest.raises(StoreUnavailableError, match=r"'arxiv/new\.md' has no vectors yet") as refused:
         similar(papers, FindSimilar("arxiv/new.md"))
     assert (refused.value.remedy is not None, refused.value.code) == (True, Problem.NOT_EMBEDDED)
@@ -137,6 +135,6 @@ def test_a_document_whose_vectors_point_nowhere_is_refused(papers: Path) -> None
 def test_a_document_linking_the_note_is_still_alike(tmp_path: Path) -> None:
     home = tmp_path / "home"
     collection(tmp_path, home, "v", {"Robots.md": ROBOTS, "Mop.md": f"{ROBOTS}See [[Robots]].\n", "soup.md": "Soup.\n"})
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     assert ids(similar(home, FindSimilar("v/Robots.md", k=1))) == ["v/Mop.md"]

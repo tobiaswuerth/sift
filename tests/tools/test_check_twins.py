@@ -67,5 +67,12 @@ def test_twins_written_another_way_are_found(first: str, second: str) -> None:
     assert len(problems({"a.py": first, "b.py": second})) == 1
 
 
+def test_functions_reading_each_their_own_module_s_value_are_no_twins() -> None:
+    home = "def home(path):\n    return made(path / 'home', NOTES, embedded=Model(1, 2))\n"
+    own, shared = f"NOTES = {{}}\n\n\n{home}", f"from tests.notes import NOTES\n\n\n{home}"
+    assert problems({"a.py": own, "b.py": own}) == []
+    assert len(problems({"a.py": shared, "b.py": shared})) == 1
+
+
 def test_the_repository_holds_no_twins() -> None:
     assert check_twins.main([]) == 0

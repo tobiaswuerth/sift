@@ -20,6 +20,7 @@ from sift.storage.database import reading
 from sift.storage.store import open_store
 from tests.damage import damage_pages
 from tests.files import write
+from tests.homes import indexed, quiet
 
 LONG = "word " * 100
 
@@ -29,7 +30,7 @@ def vault(tmp_path: Path, files: dict[str, str], name: str = "v") -> Path:
     for path, text in files.items():
         write(tmp_path / name / path, text)
     add(home, AddCollection(str(tmp_path / name)))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     return home
 
 
@@ -137,7 +138,7 @@ def test_a_note_is_named_by_its_id_or_as_links_name_it(people: Path, tmp_path: P
     with pytest.raises(NotFoundError, match="no note or document"):
         links(people, ShowLinks("Nobody"))
     write(tmp_path / "v" / "Other" / "Acme AG.md", "# Acme AG again\n")
-    index(people, IndexCollections(), lambda _: None)
+    indexed(people)
     with pytest.raises(InvalidRequestError, match="names several notes"):
         links(people, ShowLinks("Acme AG"))
 
@@ -211,7 +212,7 @@ def test_a_damaged_store_is_passed_over_by_names_and_unresolved_saying_so(people
     assert refused.value.remedy is not None
     assert refused.value.remedy.endswith(f"; {NOTE_REMEDY}")
     write(tmp_path / "v" / "Other" / "Acme AG.md", "# Acme AG again\n")
-    index(people, IndexCollections(names=("v",)), lambda _: None)
+    index(people, IndexCollections(names=("v",)), quiet)
     with pytest.raises(InvalidRequestError, match=r"Acme AG\.md; not searched: w: the store .* is damaged"):
         links(people, ShowLinks("Acme AG"))
 

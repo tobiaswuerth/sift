@@ -3,13 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from sift.api.collections import AddCollection, DeactivateCollections, RemoveCollection, ShowStatus
+from sift.api.collections import DeactivateCollections, RemoveCollection, ShowStatus
 from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.filters import Filter, Operator
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, FindSimilar, ShowLinks
 from sift.api.search import SearchKeywords
-from sift.app.collections import add, deactivate, remove, status
+from sift.app.collections import deactivate, remove, status
 from sift.app.documents import documents
 from sift.app.indexing import index
 from sift.app.links import links
@@ -17,21 +17,15 @@ from sift.app.mentions import mentions
 from sift.app.search import search
 from sift.app.similar import similar
 from sift.storage.catalog import CATALOG
-from tests.files import write
-from tests.homes import asked
+from tests.homes import asked, home_of, quiet
 
 type Asking = Callable[[Path], object]
 
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    root, home = tmp_path / "notes", tmp_path / "home"
-    for path in ("a/b/c.md", "x/b/c.md", "rl.md", "i.md"):
-        write(root / path, f"# {path}\n")
-    write(tmp_path / "other" / "o.md", "# Other\n")
-    add(home, AddCollection(str(root)))
-    add(home, AddCollection(str(tmp_path / "other")))
-    index(home, IndexCollections(), lambda _: None)
+    notes = {f"notes/{path}": f"# {path}\n" for path in ("a/b/c.md", "x/b/c.md", "rl.md", "i.md")}
+    home = home_of(tmp_path, {**notes, "other/o.md": "# Other\n"})
     deactivate(home, DeactivateCollections(("other",)))
     return home
 
@@ -46,7 +40,7 @@ REFUSALS: dict[str, tuple[Asking, str]] = {
         lambda home: search(home, SearchKeywords("halo", collections=("other",))),
         "collections",
     ),
-    "an unknown collection indexed": (lambda home: index(home, IndexCollections(("nope",)), lambda _: None), "names"),
+    "an unknown collection indexed": (lambda home: index(home, IndexCollections(("nope",)), quiet), "names"),
     "an unknown collection shown": (lambda home: status(home, ShowStatus(("nope",))), "names"),
     "an unknown collection removed": (lambda home: remove(home, RemoveCollection("nope")), "name"),
     "an ambiguous id to find like": (lambda home: similar(home, FindSimilar("notes/c.md")), "id"),

@@ -30,7 +30,7 @@ from sift.storage.documents import counts
 from sift.storage.store import open_store
 from sift.storage.vector_meta import left
 from tests.files import TORN, jsonl, torn_lines, write
-from tests.homes import asked, text_of
+from tests.homes import asked, quiet, text_of
 from tests.keyword_stores import vectors_by_text
 from tests.later import later
 from tests.models import Hashed
@@ -98,7 +98,7 @@ def test_only_changed_records_are_stored_again_and_gone_ones_leave(papers: Path,
 
 
 def test_vectors_of_unchanged_records_are_kept(papers: Path, tmp_path: Path) -> None:
-    embed(papers, EmbedCollections(), lambda _: None, Hashed())
+    embed(papers, EmbedCollections(), quiet, Hashed())
     write(tmp_path / "arxiv" / "2021" / "2021-01.jsonl", jsonl([PAPERS[0], {**PAPERS[1], "abstract": "New text."}]))
     indexed(papers)
     (one,) = known_collections(papers)
@@ -107,7 +107,7 @@ def test_vectors_of_unchanged_records_are_kept(papers: Path, tmp_path: Path) -> 
 
 
 def test_a_record_whose_fields_alone_changed_keeps_its_vector(papers: Path, tmp_path: Path) -> None:
-    embed(papers, EmbedCollections(), lambda _: None, Hashed())
+    embed(papers, EmbedCollections(), quiet, Hashed())
     (one,) = known_collections(papers)
     with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
         before = vectors_by_text(transaction)
@@ -202,7 +202,7 @@ def test_a_file_of_records_however_large_is_read_here_and_given_to_no_reader_pro
     home = tmp_path / "home"
     add(home, AddCollection(str(tmp_path / "c")))
     asked: list[str] = []
-    (one,) = index(home, IndexCollections(), lambda _: None, Limits(), Readers(files=watching(asked))).collections
+    (one,) = index(home, IndexCollections(), quiet, Limits(), Readers(files=watching(asked))).collections
     assert (one.outcome, asked) == (Indexed(files=1, added=500, changed=0, removed=0, unreadable=0), [])
 
 

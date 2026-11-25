@@ -7,6 +7,7 @@ from sift.app.indexing import index
 from sift.storage.catalog import CATALOG, set_active
 from sift.storage.watching import HomeWatch
 from tests.files import write
+from tests.homes import indexed, quiet
 
 
 def home_of(tmp_path: Path) -> Path:
@@ -14,7 +15,7 @@ def home_of(tmp_path: Path) -> Path:
     for name in ("a", "b"):
         write(tmp_path / name / "alice.md", f"# Alice\n\nAlice keeps notes in {name}.\n")
         add(home, AddCollection(str(tmp_path / name)))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     return home
 
 
@@ -24,7 +25,7 @@ def test_what_is_seen_stays_until_another_connection_commits_to_a_store_or_the_c
     first = watch.seen()
     assert (watch.seen(), len(first)) == (first, 3)
     write(tmp_path / "b" / "bob.md", "# Bob\n\nBob too.\n")
-    index(home, IndexCollections(("b",)), lambda _: None)
+    index(home, IndexCollections(("b",)), quiet)
     after_index = watch.seen()
     assert (after_index[:2], after_index[2] != first[2]) == (first[:2], True)
     set_active(home, ["a"], active=False)

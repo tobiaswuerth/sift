@@ -16,6 +16,7 @@ from sift.storage.catalog import known_collections
 from sift.storage.database import reading, rows, run, writing
 from sift.storage.store import connected
 from tests.files import write
+from tests.homes import quiet
 from tests.later import LATER
 from tests.models import Hashed
 
@@ -63,7 +64,7 @@ def test_an_index_orders_its_store_by_topic_once_its_chunks_got_codes_and_finds_
     assert PhaseStarted(Phase.ORDER, None) not in indexed(home)
     before, unordered = found(home), placed(home)
     assert all(each.place == each.id for each in unordered)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    embed(home, EmbedCollections(), quiet, Hashed())
     said = indexed(home)
     start = said.index(PhaseStarted(Phase.ORDER, None))
     assert next(each for each in said[start:] if isinstance(each, PhaseDone)) == PhaseDone(len(unordered))
@@ -79,7 +80,7 @@ def test_an_index_orders_its_store_by_topic_once_its_chunks_got_codes_and_finds_
 def test_a_store_whose_keywords_are_stale_when_its_order_is_due_is_remade_once(home: Path) -> None:
     indexed(home)
     before = found(home)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    embed(home, EmbedCollections(), quiet, Hashed())
     (one,) = known_collections(home)
     with connected(one.store, one.id) as connection, writing(connection) as transaction:
         run(transaction, "UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")

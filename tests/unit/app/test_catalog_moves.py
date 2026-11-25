@@ -7,14 +7,12 @@ from pathlib import Path
 import pytest
 
 from sift.api.collections import AddCollection, MoveCollections, StoreMoved, StoresMoved
-from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Event, Phase, PhaseDone, PhaseStarted
 from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchKeywords, SearchVectors
 from sift.app.collections import add
-from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.moving import Moving, move
 from sift.app.paths import ABSOLUTE_REMEDY
@@ -25,18 +23,13 @@ from sift.storage.moving import Transfer
 from sift.storage.store import create_store
 from sift.storage.store_files import delete_store
 from tests.files import write
-from tests.homes import stopped_when_advanced
+from tests.homes import home_of, indexed, quiet, stopped_when_advanced
 from tests.models import Hashed
 
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    home = tmp_path / "home"
-    write(tmp_path / "notes" / "rl.md", "# Reward shaping\n\nSpeeds up learning.\n")
-    add(home, AddCollection(str(tmp_path / "notes")))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
-    return home
+    return home_of(tmp_path, {"notes/rl.md": "# Reward shaping\n\nSpeeds up learning.\n"}, embedded=Hashed())
 
 
 def notes(home: Path) -> Collection:
@@ -206,7 +199,7 @@ def test_the_old_copy_of_a_stopped_move_is_deleted_by_the_next_move(home: Path, 
 
 def test_the_old_copy_of_a_stopped_move_is_deleted_by_the_next_index(home: Path, tmp_path: Path) -> None:
     old = first_move_stopped_before_the_old_copy_went(home, tmp_path)
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     assert sorted(old.parent.iterdir()) == []
     assert searched(home) == (["notes/rl.md"], ["notes/rl.md"])
 
@@ -215,8 +208,8 @@ def test_a_store_of_another_collection_where_a_move_left_its_old_copy_is_kept(ho
     old = first_move_stopped_before_the_old_copy_went(home, tmp_path)
     delete_store(old)
     create_store(old, CollectionId(99))
-    index(home, IndexCollections(), lambda _: None)
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
+    indexed(home)
     assert old.is_file()
 
 
@@ -224,9 +217,9 @@ def test_what_a_stopped_move_left_is_tidied_by_its_own_collection_alone(home: Pa
     old = first_move_stopped_before_the_old_copy_went(home, tmp_path)
     write(tmp_path / "diary" / "d.md", "# Diary")
     add(home, AddCollection(str(tmp_path / "diary")))
-    index(home, IndexCollections(("diary",)), lambda _: None)
+    index(home, IndexCollections(("diary",)), quiet)
     assert old.exists()
-    index(home, IndexCollections(("notes",)), lambda _: None)
+    index(home, IndexCollections(("notes",)), quiet)
     assert not old.exists()
 
 
@@ -239,8 +232,8 @@ def test_a_place_a_stopped_move_left_is_kept_once_another_collection_is_stored_t
     delete_store(place)
     write(tmp_path / "diary" / "d.md", "# Diary")
     add(home, AddCollection(str(tmp_path / "diary"), store=str(place)))
-    index(home, IndexCollections(), lambda _: None)
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
+    indexed(home)
     assert place.is_file()
     assert [hit.id for hit in search(home, SearchKeywords("diary")).hits] == ["diary/d.md"]
 
@@ -266,5 +259,5 @@ def test_a_place_to_move_to_that_is_not_absolute_is_refused(tmp_path: Path) -> N
     folder.mkdir()
     add(home, AddCollection(str(folder)))
     with pytest.raises(InvalidRequestError, match="is no absolute path") as refused:
-        move(home, MoveCollections(to="elsewhere"), lambda _: None)
+        move(home, MoveCollections(to="elsewhere"), quiet)
     assert (refused.value.field, refused.value.remedy) == ("to", ABSOLUTE_REMEDY)

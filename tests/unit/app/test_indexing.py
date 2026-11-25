@@ -37,7 +37,7 @@ from sift.storage.texts import text_of
 from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
-from tests.homes import asked
+from tests.homes import asked, quiet
 from tests.later import LATER
 
 
@@ -57,7 +57,7 @@ def notes(tmp_path: Path, home: Path) -> Path:
     return root
 
 
-def indexed(home: Path, *names: str, report: Callable[[Event], None] = lambda _: None) -> IndexResult:
+def indexed(home: Path, *names: str, report: Callable[[Event], None] = quiet) -> IndexResult:
     return index(home, IndexCollections(names), report, LIMITS, LATER)
 
 
@@ -338,7 +338,7 @@ def test_merges_too_large_for_a_write_run_as_their_own_phase(home: Path, notes: 
 
 def test_merges_left_by_a_remake_run_though_the_folder_is_gone(home: Path, notes: Path) -> None:
     batches = Batches(chunks_a_segment=1, chunks_a_settle=0, merging=Policy(factor=2, floor=1, span=0.0))
-    index(home, IndexCollections(), lambda _: None, Limits(batches=batches))
+    index(home, IndexCollections(), quiet, Limits(batches=batches))
     (store,) = [Path(each.store) for each in status(home, ShowStatus()).collections]
     with contextlib.closing(open_store(store, CollectionId(1))) as connection, connection:
         connection.execute("UPDATE meta SET value = 'older' WHERE key = 'keyword_fingerprint'")
@@ -388,9 +388,9 @@ def test_a_file_rewritten_within_the_grain_of_its_scan_is_read_again(home: Path,
     tick = notes / "tick.md"
     write(tick, "# Tick\n\nalpha\n")
     stamp = tick.stat().st_mtime_ns
-    index(home, IndexCollections(), lambda _: None, LIMITS, Readers(clock=lambda: stamp))
+    index(home, IndexCollections(), quiet, LIMITS, Readers(clock=lambda: stamp))
     write(tick, "# Tick\n\nomega\n")
     os.utime(tick, ns=(stamp, stamp))
-    index(home, IndexCollections(), lambda _: None, LIMITS, LATER)
+    index(home, IndexCollections(), quiet, LIMITS, LATER)
     (found,) = documents(home, asked("notes/tick.md")).found
     assert "omega" in found.text

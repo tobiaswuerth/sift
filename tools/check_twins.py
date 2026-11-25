@@ -22,16 +22,19 @@ class Function:
     arguments: ast.arguments
     body: list[ast.stmt]
     decorators: list[ast.expr]
+    module: Mapping[str, str]
 
 
 @final
 class _Canonical(ast.NodeTransformer):
-    def __init__(self, own: frozenset[str]) -> None:
-        self.own = own
+    def __init__(self, own: frozenset[str], module: Mapping[str, str]) -> None:
+        self.own, self.module = own, module
         self.given: dict[str, str] = {}
 
     def _name(self, name: str) -> str:
-        return self.given.setdefault(name, f"_{len(self.given)}") if name in self.own else name
+        if name in self.own:
+            return self.given.setdefault(name, f"_{len(self.given)}")
+        return self.module.get(name, name)
 
     @override
     def visit_Name(self, node: ast.Name) -> ast.Name:
@@ -71,7 +74,7 @@ def _size(function: Function) -> int:
 
 
 def shape_of(function: Function) -> str:
-    canonical = _Canonical(_own_names(function))
+    canonical = _Canonical(_own_names(function), function.module)
     arguments = cast("ast.arguments", canonical.visit(copy.deepcopy(function.arguments)))
     arguments.defaults, arguments.kw_defaults = [], []
     body = [cast("ast.stmt", canonical.visit(each)) for each in copy.deepcopy(function.body)]
@@ -79,20 +82,42 @@ def shape_of(function: Function) -> str:
     return "\n".join(ast.dump(part) for part in (arguments, ast.Module(body, []), ast.List(decorators)))
 
 
-def _function(node: ast.AST) -> Function | None:
+def _function(node: ast.AST, module: Mapping[str, str]) -> Function | None:
     match node:
         case ast.FunctionDef() | ast.AsyncFunctionDef():
-            return Function(node.name, node.lineno, node.args, node.body, node.decorator_list)
+            others = {name: whole for name, whole in module.items() if name != node.name}
+            return Function(node.name, node.lineno, node.args, node.body, node.decorator_list, others)
         case ast.Lambda(args=arguments, body=body):
-            return Function(LAMBDA, node.lineno, arguments, [ast.Return(body)], [])
+            return Function(LAMBDA, node.lineno, arguments, [ast.Return(body)], [], module)
         case _:
             return None
 
 
+def _bound(node: ast.stmt) -> Iterator[str]:
+    match node:
+        case (
+            ast.FunctionDef(name=name)
+            | ast.AsyncFunctionDef(name=name)
+            | ast.ClassDef(name=name)
+            | ast.AnnAssign(target=ast.Name(id=name))
+        ):
+            yield name
+        case ast.Assign(targets=targets):
+            yield from (each.id for each in targets if isinstance(each, ast.Name))
+        case _:
+            pass
+
+
+def _defined(path: str, tree: ast.Module) -> Mapping[str, str]:
+    return {name: f"{path}:{name}" for node in tree.body for name in _bound(node)}
+
+
 def _functions(texts: Mapping[str, str]) -> Iterator[tuple[str, Function]]:
     for path, text in texts.items():
-        for node in ast.walk(imports_resolved(ast.parse(text))):
-            function = _function(node)
+        tree = imports_resolved(ast.parse(text))
+        module = _defined(path, tree)
+        for node in ast.walk(tree):
+            function = _function(node, module)
             if function is not None and _size(function) >= FEWEST_NODES:
                 yield path, function
 

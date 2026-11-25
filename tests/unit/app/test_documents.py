@@ -4,35 +4,29 @@ from pathlib import Path
 
 import pytest
 
-from sift.api.collections import AddCollection
 from sift.api.documents import Documents, DocumentText, GetDocuments, WantedDocument
 from sift.api.errors import InvalidRequestError, Problem
 from sift.api.ids import CollectionId
-from sift.api.indexing import IndexCollections
 from sift.api.notices import Notice
-from sift.app.collections import add
 from sift.app.documents import SEPARATED_REMEDY, documents
-from sift.app.indexing import index
 from sift.storage.database import Reading
 from sift.storage.store import read_store
 from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
-from tests.homes import asked
+from tests.homes import asked, home_of, indexed
 
 UNKNOWN = "take the id from a search result"
+NOTES = {
+    "notes/rl.md": "# Reward shaping\n\nReward shaping speeds up learning.\n",
+    "notes/robots/brush.md": "# Brush\n",
+    **{f"notes/{path}": f"# {path}\n" for path in ("a/b/c.md", "x/b/c.md", "a/bc.md", "Twice.md")},
+}
 
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    root, home = tmp_path / "notes", tmp_path / "home"
-    write(root / "rl.md", "# Reward shaping\n\nReward shaping speeds up learning.\n")
-    write(root / "robots" / "brush.md", "# Brush\n")
-    for path in ("a/b/c.md", "x/b/c.md", "a/bc.md", "Twice.md"):
-        write(root / path, f"# {path}\n")
-    add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
-    return home
+    return home_of(tmp_path, NOTES)
 
 
 def text(home: Path, id_: str, first: int | None = None, last: int | None = None) -> str:
@@ -145,7 +139,7 @@ def test_an_absolute_path_finds_its_document_whatever_the_case_of_its_letters_be
     tmp_path: Path, home: Path
 ) -> None:
     write(tmp_path / "notes" / "Äpfel.md", "# Äpfel\n")
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     for written in ("Äpfel.md", "äpfel.md", "ÄPFEL.MD"):
         assert documents(home, asked(str(tmp_path / "notes" / written))).found[0].id == "notes/Äpfel.md"
 
@@ -165,14 +159,14 @@ def test_a_document_is_read_as_indexed_until_the_next_index(tmp_path: Path, home
     write(tmp_path / "notes" / "rl.md", "# Rewritten\n")
     assert text(home, "notes/rl.md").startswith("# Reward shaping")
     (tmp_path / "notes" / "rl.md").unlink()
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     assert unfound(home, "notes/rl.md").message == "no note or document 'notes/rl.md'"
 
 
 def test_a_shortened_id_many_paths_end_in_names_the_first_five(tmp_path: Path, home: Path) -> None:
     for folder in "abcdef":
         write(tmp_path / "notes" / folder / "same.md", f"# {folder}\n")
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     listed = ", ".join(f"notes/{folder}/same.md" for folder in "abcde")
     assert unfound(home, "notes/same.md").message == f"'notes/same.md' matches {listed}, ..."
 
@@ -191,7 +185,7 @@ def test_without_any_collection_every_id_is_unknown(tmp_path: Path) -> None:
 
 def test_the_front_matter_asked_for_comes_with_each_document(home: Path, tmp_path: Path) -> None:
     write(tmp_path / "notes" / "dated.md", "---\ncreated: 2024-06-15\nrank: 2\n---\n# Dated\n\nText.\n")
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     (found,) = documents(home, asked("notes/dated.md", fields=("rank", "missing"))).found
     assert found.fields == {"rank": 2}
     (every,) = documents(home, asked("notes/dated.md", fields=("*",))).found

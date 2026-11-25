@@ -10,6 +10,7 @@ from sift.interfaces.acts.links import UNRESOLVED
 from sift.interfaces.server.client import BUSY, BUSY_REMEDY, sent
 from sift.interfaces.server.serving import HomeServer, Serve
 from sift.settings import Settings
+from tests.homes import quiet
 from tests.serving import running
 
 HEAD = b"POST /api/status HTTP/1.1\r\nHost: 127.0.0.1\r\n"
@@ -72,7 +73,7 @@ def test_past_its_most_connections_the_home_process_is_busy_and_says_so(settings
         held = [kept(server), kept(server)]
         try:
             with pytest.raises(StoreUnavailableError) as refused:
-                sent(server.endpoint, UNRESOLVED, ListUnresolved(), lambda _: None)
+                sent(server.endpoint, UNRESOLVED, ListUnresolved(), quiet)
         finally:
             for connection in held:
                 connection.close()

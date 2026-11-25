@@ -3,29 +3,21 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from sift.api.collections import AddCollection
-from sift.api.embedding import EmbedCollections
-from sift.api.indexing import IndexCollections
 from sift.api.search import SearchHybrid, SearchVectors
-from sift.app.collections import add
-from sift.app.embedding import embed
-from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.questions import RememberedQuestions
 from sift.app.vsearch import vsearch
-from tests.files import write
+from tests.homes import home_of
 from tests.models import Hashed
 
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    write(tmp_path / "notes" / "halo.md", "# Halo\n\nDark matter halo models.\n")
-    write(tmp_path / "notes" / "brush.md", "# Brush\n\nA robot plans brush strokes.\n")
-    home = tmp_path / "home"
-    add(home, AddCollection(str(tmp_path / "notes")))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
-    return home
+    notes = {
+        "notes/halo.md": "# Halo\n\nDark matter halo models.\n",
+        "notes/brush.md": "# Brush\n\nA robot plans brush strokes.\n",
+    }
+    return home_of(tmp_path, notes, embedded=Hashed())
 
 
 def questions_asked(models: Hashed) -> list[tuple[str, ...]]:

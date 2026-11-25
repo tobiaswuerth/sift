@@ -2,20 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from sift.api.collections import AddCollection
-from sift.api.embedding import EmbedCollections
-from sift.api.indexing import IndexCollections
 from sift.api.links import Direction, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
-from sift.app.collections import add
-from sift.app.embedding import embed
-from sift.app.indexing import index
 from sift.app.links import links, unresolved
 from sift.app.query import query
 from sift.app.search import search
 from sift.app.similar import similar
 from sift.app.vsearch import vsearch
-from tests.files import write
+from tests.homes import home_of
 from tests.models import Hashed
 
 NOTES = 9
@@ -23,14 +17,11 @@ NOTES = 9
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    root, home = tmp_path / "notes", tmp_path / "home"
-    for n in range(NOTES):
-        after = (n + 1) % NOTES
-        write(root / f"halo{n}.md", f"# Halo {n}\n\nDark matter halo {n}: see [[Missing {n}]] and [[halo{after}]].\n")
-    add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
-    return home
+    ring = {
+        f"notes/halo{n}.md": f"# Halo {n}\n\nDark matter halo {n}: see [[Missing {n}]] and [[halo{(n + 1) % NOTES}]].\n"
+        for n in range(NOTES)
+    }
+    return home_of(tmp_path, ring, embedded=Hashed())
 
 
 PAGES = [(2, 0, True), (8, 0, True), (9, 0, False), (10, 0, False), (4, 4, True), (4, 5, False), (1, 8, False)]

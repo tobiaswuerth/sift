@@ -14,7 +14,7 @@ from sift.app.indexing import IGNORE_REMEDY, index
 from sift.app.problems import LEFT_AS_INDEXED
 from sift.ingest.ignore import IGNORE_FILE
 from tests.files import write
-from tests.homes import asked
+from tests.homes import asked, quiet
 from tests.later import LATER
 
 PATHS = ("notes/rl.md", "notes/plain.txt", "notes/robots/brush.md", "other/x.md")
@@ -35,7 +35,7 @@ def notes(tmp_path: Path, home: Path) -> Path:
     return root
 
 
-def indexed(home: Path, report: Callable[[Event], None] = lambda _: None) -> IndexResult:
+def indexed(home: Path, report: Callable[[Event], None] = quiet) -> IndexResult:
     return index(home, IndexCollections(()), report, LIMITS, LATER)
 
 

@@ -21,7 +21,7 @@ from sift.storage.catalog import CATALOG
 from sift.storage.vectors import EMBED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
-from tests.homes import indexed_home
+from tests.homes import indexed, indexed_home, quiet
 from tests.later import LATER
 from tests.models import BROKEN, Hashed
 
@@ -71,7 +71,7 @@ def test_every_chunk_is_embedded_once_with_its_progress(home: Path) -> None:
 
 def test_chunks_after_the_first_are_embedded_with_their_title_and_documents_as_documents(home: Path) -> None:
     models = Hashed()
-    embed(home, EmbedCollections(), lambda _: None, models)
+    embed(home, EmbedCollections(), quiet, models)
     texts = [text for asked, query in models.asked for text in asked if not query]
     assert "# Halo\n\nDark matter halo models." in texts
     pruning = [text for text in texts if "Pruning skips" in text]
@@ -82,7 +82,7 @@ def test_chunks_after_the_first_are_embedded_with_their_title_and_documents_as_d
 
 def test_a_chunk_the_model_gives_no_vector_for_is_counted_and_stays_to_embed(home: Path, notes: Path) -> None:
     write(notes / "odd.md", f"# Odd\n\nAn {BROKEN} passage.\n")
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     said: list[Event] = []
     outcome = embed(home, EmbedCollections(), said.append, Hashed()).collections[0].outcome
     assert outcome == Embedded(chunks(home) - 1, 1)
@@ -90,18 +90,18 @@ def test_a_chunk_the_model_gives_no_vector_for_is_counted_and_stays_to_embed(hom
         PhaseDone(chunks(home) - 1),
         Noted("1 chunk could not be embedded: the model gave no vector", BROKEN_REMEDY),
     ]
-    assert embed(home, EmbedCollections(), lambda _: None, Hashed()).collections[0].outcome == Embedded(0, 1)
+    assert embed(home, EmbedCollections(), quiet, Hashed()).collections[0].outcome == Embedded(0, 1)
 
 
 def test_a_collection_of_another_model_is_skipped_until_every_one_is_embedded_again(home: Path, tmp_path: Path) -> None:
     write(tmp_path / "more" / "a.md", "# A\n\nAnother note.\n")
     add(home, AddCollection(str(tmp_path / "more")))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     with contextlib.closing(sqlite3.connect(home / CATALOG)) as catalog, catalog:
         catalog.execute("UPDATE collections SET active = 0 WHERE name = 'more'")
     other = Hashed(name="other-model", width=32)
-    (skipped,) = embed(home, EmbedCollections(), lambda _: None, other).collections
+    (skipped,) = embed(home, EmbedCollections(), quiet, other).collections
     assert other.asked == []
     assert skipped == CollectionEmbedded(
         "notes",
@@ -112,19 +112,19 @@ def test_a_collection_of_another_model_is_skipped_until_every_one_is_embedded_ag
         ),
     )
     with pytest.raises(InvalidRequestError, match="embeds every collection again"):
-        embed(home, EmbedCollections(("notes",), reset=True), lambda _: None, other)
-    (redone,) = embed(home, EmbedCollections(reset=True), lambda _: None, other).collections
+        embed(home, EmbedCollections(("notes",), reset=True), quiet, other)
+    (redone,) = embed(home, EmbedCollections(reset=True), quiet, other).collections
     assert redone == CollectionEmbedded("notes", Embedded(chunks(home), 0))
     assert counted(store(home, "more"), "SELECT count(*) FROM vectors") == 0
-    assert embed(home, EmbedCollections(("more",)), lambda _: None, other).collections[0].outcome == Embedded(1, 0)
+    assert embed(home, EmbedCollections(("more",)), quiet, other).collections[0].outcome == Embedded(1, 0)
 
 
 def test_a_collection_whose_store_is_gone_is_skipped_and_others_embedded(home: Path, tmp_path: Path) -> None:
     write(tmp_path / "more" / "a.md", "# A\n\nAnother note.\n")
     add(home, AddCollection(str(tmp_path / "more")))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     store(home).unlink()
-    found = {each.name: each.outcome for each in embed(home, EmbedCollections(), lambda _: None, Hashed()).collections}
+    found = {each.name: each.outcome for each in embed(home, EmbedCollections(), quiet, Hashed()).collections}
     assert isinstance(found["notes"], Skipped)
     assert found["more"] == Embedded(1, 0)
 
@@ -132,7 +132,7 @@ def test_a_collection_whose_store_is_gone_is_skipped_and_others_embedded(home: P
 def test_a_reset_says_which_store_it_could_not_clear(home: Path, tmp_path: Path) -> None:
     write(tmp_path / "more" / "a.md", "# A\n\nAnother note.\n")
     add(home, AddCollection(str(tmp_path / "more")))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     with contextlib.closing(sqlite3.connect(home / CATALOG)) as catalog, catalog:
         catalog.execute("UPDATE collections SET active = 0 WHERE name = 'more'")
     store(home, "more").unlink()
@@ -173,13 +173,13 @@ class Stopping:
 def test_a_reset_cut_short_is_finished_by_embedding_again(home: Path, tmp_path: Path) -> None:
     write(tmp_path / "more" / "a.md", "# A\n\nAnother note.\n")
     add(home, AddCollection(str(tmp_path / "more")))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     other = Hashed(name="other-model", width=32)
     with pytest.raises(KeyboardInterrupt):
-        embed(home, EmbedCollections(reset=True), lambda _: None, Stopping(other, 0))
+        embed(home, EmbedCollections(reset=True), quiet, Stopping(other, 0))
     assert other.prepared
-    resumed = embed(home, EmbedCollections(), lambda _: None, other).collections
+    resumed = embed(home, EmbedCollections(), quiet, other).collections
     assert {each.name: each.outcome for each in resumed} == {
         "more": Embedded(1, 0),
         "notes": Embedded(chunks(home), 0),
@@ -187,9 +187,9 @@ def test_a_reset_cut_short_is_finished_by_embedding_again(home: Path, tmp_path: 
 
 
 def test_a_reset_whose_model_will_not_load_forgets_nothing(home: Path) -> None:
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    embed(home, EmbedCollections(), quiet, Hashed())
     with pytest.raises(RuntimeError, match="would not load"):
-        embed(home, EmbedCollections(reset=True), lambda _: None, Stopping(Hashed(name="other-model"), -1))
+        embed(home, EmbedCollections(reset=True), quiet, Stopping(Hashed(name="other-model"), -1))
     assert counted(store(home), "SELECT count(*) FROM vectors") == chunks(home)
 
 
@@ -200,7 +200,7 @@ def test_a_store_taken_by_another_model_midway_is_skipped_saying_so(home: Path) 
     def taken(event: Event) -> None:
         said.append(event)
         if isinstance(event, Advanced) and event.done == 1:
-            other = embed(home, EmbedCollections(reset=True), lambda _: None, Hashed(name="other-model"))
+            other = embed(home, EmbedCollections(reset=True), quiet, Hashed(name="other-model"))
             busy.extend(each.outcome for each in other.collections)
             with contextlib.closing(sqlite3.connect(store(home))) as database:
                 database.execute("UPDATE meta SET value = 'other-model' WHERE key = 'vector_model'")
@@ -218,7 +218,7 @@ def test_a_store_taken_by_another_model_midway_is_skipped_saying_so(home: Path) 
 
 
 def test_a_store_a_reset_could_not_clear_is_skipped_saying_why(home: Path) -> None:
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    embed(home, EmbedCollections(), quiet, Hashed())
     damage_table(store(home), "vectors")
     said: list[Event] = []
     (outcome,) = embed(home, EmbedCollections(reset=True), said.append, Hashed(name="other-model")).collections
@@ -232,7 +232,7 @@ def test_a_store_a_reset_could_not_clear_is_skipped_saying_why(home: Path) -> No
 def test_the_model_loads_once_however_many_collections_wait(home: Path, tmp_path: Path, *, reset: bool) -> None:
     write(tmp_path / "more" / "comets.md", "# Comets\n\nIce and dust.\n")
     add(home, AddCollection(str(tmp_path / "more")))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     said: list[Event] = []
     models = Hashed()
     embed(home, EmbedCollections(reset=reset), said.append, models)
@@ -241,9 +241,9 @@ def test_the_model_loads_once_however_many_collections_wait(home: Path, tmp_path
 
 
 def test_a_note_changed_in_one_chunk_needs_that_chunk_embedded_alone(home: Path, notes: Path) -> None:
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    embed(home, EmbedCollections(), quiet, Hashed())
     pruning = notes / "pruning.md"
     pruning.write_text(pruning.read_text(encoding="utf-8").replace("Ranges are", "Blocks are"), encoding="utf-8")
-    index(home, IndexCollections(), lambda _: None, readers=LATER)
+    index(home, IndexCollections(), quiet, readers=LATER)
     assert chunks(home) > 2
     assert counted(store(home), "SELECT chunks - vectors FROM counts") == 1

@@ -10,13 +10,11 @@ from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.filters import Filter, Operator
-from sift.api.indexing import IndexCollections
 from sift.api.links import FindSimilar
 from sift.api.search import SORT, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app import searching
 from sift.app.collections import add
 from sift.app.embedding import embed
-from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.search import search
 from sift.app.searching import Watching
@@ -31,25 +29,27 @@ from sift.storage.vectors import vectors_of
 from tests.counting import DocumentCounts
 from tests.damage import damage_table
 from tests.files import write
+from tests.homes import home_of, indexed, quiet
 from tests.models import Hashed
 
 DAYS = ("2023-11-30", "2024-02-10", "2024-06-15", "2024-12-31", "2025-03-01")
 ANY, NONE = Operator.ANY, Operator.NONE
+NOTES = {
+    **{
+        f"notes/dated/{day}.md": (
+            f"---\ncreated: {day}\nrank: {n}\ntags: [paint, {'oil' if n % 2 else 'water'}]\n---\n"
+            f"# Pigment {day}\n\nPigment and binder, part {n}.\n"
+        )
+        for n, day in enumerate(DAYS)
+    },
+    "notes/loose/pigment.md": "---\nrank: high\n---\n# Pigment notes\n\nPigment pigment pigment.\n",
+    "notes/loose/plain.md": "# Plain\n\nPigment without front matter.\n",
+}
 
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    root = tmp_path / "notes"
-    for n, day in enumerate(DAYS):
-        fields = f"created: {day}\nrank: {n}\ntags: [paint, {'oil' if n % 2 else 'water'}]\n"
-        write(root / "dated" / f"{day}.md", f"---\n{fields}---\n# Pigment {day}\n\nPigment and binder, part {n}.\n")
-    write(root / "loose" / "pigment.md", "---\nrank: high\n---\n# Pigment notes\n\nPigment pigment pigment.\n")
-    write(root / "loose" / "plain.md", "# Plain\n\nPigment without front matter.\n")
-    home = tmp_path / "home"
-    add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
-    return home
+    return home_of(tmp_path, NOTES, embedded=Hashed())
 
 
 def days(result: SearchResult) -> list[str]:
@@ -180,7 +180,7 @@ def test_a_field_named_in_letters_beyond_ascii_is_filtered_and_shown_by_its_name
         write(tmp_path / "streets" / f"{name}.md", f"---\nStraße: {street}\n---\n# {name}\n\nPigment.\n")
     home = tmp_path / "home"
     add(home, AddCollection(str(tmp_path / "streets")))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     asked = SearchKeywords("pigment", filters=(written("Straße=Hauptweg"),), fields=("Straße",))
     assert [(hit.id, hit.fields) for hit in search(home, asked).hits] == [("streets/a.md", {"Straße": "Hauptweg"})]
 
@@ -255,8 +255,8 @@ def test_a_store_lost_while_its_filter_is_checked_or_listed_is_passed_over(tmp_p
     home = tmp_path / "home"
     for name in ("first", "second"):
         add(home, AddCollection(str(many(tmp_path, name, notes))))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     request = SearchVectors("pigment binder", k=3, path="even/*")
     kept = vsearch(home, request, Hashed(), Rescoring(3, vectors_of))
     assert len(kept.hits) == 3
@@ -302,7 +302,7 @@ def test_a_filter_keeps_a_document_of_many_passages_whose_ids_are_not_its_passag
     write(root / "z.md", f"---\nrank: 9\n---\n# Long\n\n{sections}")
     home = tmp_path / "home"
     add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     nine = (Filter("rank", ANY, (9,)),)
     found = search(home, SearchKeywords("pigment", k=3, all_passages=True, filters=nine))
     assert [hit.id for hit in found.hits] == ["notes/z.md"] * 3
@@ -312,8 +312,8 @@ def test_once_a_store_is_lost_no_other_store_is_read_for_that_round(tmp_path: Pa
     home = tmp_path / "home"
     for name in ("first", "second"):
         add(home, AddCollection(str(many(tmp_path, name, 6))))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     reads: list[int] = []
 
     def read(transaction: Reading, chunks: Ids) -> ExactRows:
@@ -331,7 +331,7 @@ def test_a_filter_matches_text_however_its_accents_were_composed(tmp_path: Path)
     root, home = tmp_path / "cafes", tmp_path / "cafes-home"
     write(root / "decomposed.md", "---\nplace: Ro\u0308sterei\n---\n# Beans\n\nRoasted beans.\n")
     add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     sent = Filter("place", Operator.ANY, ("Ro\u0308sterei",))
     for asked in (written("place=R\u00f6sterei"), written("place=Ro\u0308sterei"), sent):
         result = search(home, SearchKeywords("beans", filters=(asked,)))
@@ -341,8 +341,8 @@ def test_a_filter_matches_text_however_its_accents_were_composed(tmp_path: Path)
 def two_collections(home: Path, tmp_path: Path) -> None:
     write(tmp_path / "papers" / "pigment.md", "# More pigment\n\nPigment and binder again.\n")
     add(home, AddCollection(str(tmp_path / "papers")))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
 
 
 Timed = Callable[[Path, float | None, Callable[[], float]], SearchResult]
@@ -380,7 +380,7 @@ def test_a_search_by_meaning_out_of_time_leaves_the_stores_it_has_not_read_out_a
 
 def test_passages_without_vectors_are_said_to_be_passed_over_by_meaning(home: Path, tmp_path: Path) -> None:
     write(tmp_path / "notes" / "loose" / "new.md", "# New pigment\n\nPigment and binder, new.\n")
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     for result in (vsearch(home, SearchVectors("pigment"), Hashed()), query(home, SearchHybrid("pigment"), Hashed())):
         (note,) = result.left_out
         assert (note.collection, note.code, note.message) == (

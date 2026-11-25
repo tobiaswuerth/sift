@@ -10,12 +10,12 @@ from sift.api.events import Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections, IndexResult
 from sift.api.notices import Notice
 from sift.api.search import Hit, SearchKeywords, SearchResult
-from sift.app.indexing import index
 from sift.interfaces.acts.acting import Act, Acting
 from sift.interfaces.server.handled import HANDLED, Handled, handled
 from sift.interfaces.server.results import KEPT_HITS, RESULTS
 from sift.settings import Settings
 from tests.files import write
+from tests.homes import indexed
 from tests.serving import Line, asked, counted, last, running
 from tests.waits import joined, waited
 
@@ -119,7 +119,7 @@ def test_an_answer_is_not_kept_past_a_write_made_beside_the_home_process(setting
         asked(server, "index", {})
         before = [hits_of(asked(server, "search", {"query": "zebra"})[1]) for _ in range(2)]
         write(notes / "zebra.md", "# Zebra\n\nA zebra grazes.\n")
-        index(settings.home, IndexCollections(), lambda _: None)
+        indexed(settings.home)
         after = [hits_of(asked(server, "search", {"query": "zebra"})[1]) for _ in range(2)]
     assert (before, after, ran.count("search")) == ([[], []], [["notes/zebra.md"]] * 2, 2)
 
@@ -132,7 +132,7 @@ def test_an_answer_whose_search_saw_a_write_beside_the_home_process_is_not_kept(
     def written_meanwhile(acting: Acting, request: SearchKeywords) -> SearchResult:
         ran.append(request.query)
         write(notes / f"{len(ran)}.md", f"# Note {len(ran)}\n\nWritten while a search ran.\n")
-        index(acting.settings.home, IndexCollections(), lambda _: None)
+        indexed(acting.settings.home)
         return SearchResult((HIT,), 1, (), scored_by="keywords")
 
     searched = {

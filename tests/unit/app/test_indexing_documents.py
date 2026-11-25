@@ -29,7 +29,7 @@ from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
 from sift.storage.vector_meta import left
 from tests.files import write
-from tests.homes import asked, text_of, unreadable_files
+from tests.homes import asked, quiet, text_of, unreadable_files
 from tests.keyword_stores import vectors_by_text
 from tests.later import in_process, later, reading
 from tests.mails import PARAGRAPH, mail_bytes, message, nested_parts, only, sample
@@ -227,7 +227,7 @@ def test_a_mail_and_its_attachments_are_documents_found_and_filtered_by_their_id
 
 def test_a_changed_mail_keeps_its_unchanged_attachments_and_their_vectors(post: Path, tmp_path: Path) -> None:
     indexed(post)
-    embed(post, EmbedCollections(), lambda _: None, Hashed())
+    embed(post, EmbedCollections(), quiet, Hashed())
     (one,) = known_collections(post)
     with read_store(one.store, one.id) as transaction:
         before = vectors_by_text(transaction)

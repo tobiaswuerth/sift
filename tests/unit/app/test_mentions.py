@@ -4,17 +4,15 @@ import pytest
 
 from sift.api.collections import Counted, ShowStatus
 from sift.api.errors import InvalidRequestError, NotFoundError
-from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions, ShowLinks
 from sift.api.search import SearchResult
 from sift.app.collections import status
 from sift.app.documents import documents
-from sift.app.indexing import index
 from sift.app.links import links
 from sift.app.mentions import mentions
 from tests.damage import damage_pages
 from tests.files import write
-from tests.homes import asked, collection
+from tests.homes import asked, collection, indexed
 
 HANS, ACME = "vault/People/Hans Müller.md", "vault/Orgs/Acme AG.md"
 ACME_LINK = '"[[Acme AG]]"'
@@ -35,7 +33,7 @@ def named(tmp_path: Path) -> Path:
         },
     )
     collection(tmp_path, home, "work", {"contract.md": "Hans Müller signed for Acme AG.\n"})
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     return home
 
 
@@ -72,7 +70,7 @@ def test_a_note_is_mentioned_by_every_name_it_has(tmp_path: Path) -> None:
             "AI.md": "",
         },
     )
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     assert ids(mentions(home, FindMentions("v/Jürg Bühler.md"))) == ["v/a.md", "v/b.md", "v/c.md", "v/d.md"]
     assert "v/e.md" in ids(mentions(home, FindMentions("v/Jürg Bühler.md", also=("emails",))))
     with pytest.raises(InvalidRequestError, match=r"^the note's names are too short to search for: 'AI'$"):
@@ -91,13 +89,13 @@ def test_mentions_of_what_is_no_note_or_by_no_field_are_refused(named: Path) -> 
 def test_a_name_that_starts_like_an_id_is_looked_up_as_a_name(named: Path, tmp_path: Path) -> None:
     write(tmp_path / "vault" / "work" / "Plan.md", "Plan of the work.\n")
     write(tmp_path / "vault" / "Notes.md", "Read the work/Plan today.\n")
-    index(named, IndexCollections(), lambda _: None)
+    indexed(named)
     assert ids(mentions(named, FindMentions("work/Plan"))) == ["vault/Notes.md"]
 
 
 def test_a_store_a_name_could_not_be_looked_up_in_is_said(named: Path, tmp_path: Path) -> None:
     collection(tmp_path, named, "other", {"x.md": "Hans Müller again.\n"})
-    index(named, IndexCollections(), lambda _: None)
+    indexed(named)
     store = named / "collections" / "other.sqlite"
     damage_pages(store)
     found = mentions(named, FindMentions("Hans Mueller", collections=("work",)))
@@ -110,7 +108,7 @@ def test_a_note_named_by_more_words_than_a_query_takes_is_refused_saying_why(tmp
     home = tmp_path / "home"
     many = ", ".join(f"name{n} word" for n in range(501))
     collection(tmp_path, home, "v", {"Long.md": f"---\naliases: [{many}]\nmails: [a@example.com]\n---\n"})
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     for also, remedy in (((), "give it fewer or shorter names"), (("mails",), "name fewer fields to look for too")):
         with pytest.raises(InvalidRequestError, match="the note's names hold more than 1,000 words") as refused:
             mentions(home, FindMentions("v/Long.md", also=also))
@@ -120,7 +118,7 @@ def test_a_note_named_by_more_words_than_a_query_takes_is_refused_saying_why(tmp
 
 def test_status_counts_the_links_of_each_collection_and_those_leading_nowhere(named: Path, tmp_path: Path) -> None:
     write(tmp_path / "work" / "plan.md", "[[contract]], [[Gone]] and [[gone.md]]\n")
-    index(named, IndexCollections(), lambda _: None)
+    indexed(named)
     vault, work = (each.contents for each in status(named, ShowStatus()).collections)
     assert isinstance(vault, Counted)
     assert isinstance(work, Counted)
@@ -131,7 +129,7 @@ def test_a_name_of_one_letter_and_signs_is_too_short_and_one_with_umlauts_is_fou
     home = tmp_path / "home"
     files = {"C++.md": "", "Öl.md": "", "a.md": "Wrote C today.", "b.md": "Öl prices rose.", "c.md": "Oel prices fell."}
     collection(tmp_path, home, "v", files)
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     with pytest.raises(InvalidRequestError, match=r"too short to search for: 'C[+][+]'"):
         mentions(home, FindMentions("v/C++.md"))
     assert ids(mentions(home, FindMentions("v/Öl.md"))) == ["v/b.md", "v/c.md"]
@@ -143,7 +141,7 @@ def test_a_record_is_mentioned_by_its_title_and_its_id_is_read_back(tmp_path: Pa
     records += '{"id": "p2", "title": "Other", "text": "More."}\n'
     files = {"papers.jsonl": records, "x.md": "We read the Graph Kernels Survey.", "y.md": "Papers everywhere."}
     collection(tmp_path, home, "R", files)
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     assert ids(mentions(home, FindMentions("R/papers.jsonl#p1"))) == ["R/x.md"]
     assert links(home, ShowLinks("R/papers.jsonl#p1")).id == "R/papers.jsonl#p1"
     (found,) = documents(home, asked("R/papers.jsonl#p1")).found

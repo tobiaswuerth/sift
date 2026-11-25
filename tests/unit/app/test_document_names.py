@@ -9,7 +9,7 @@ from sift.app.documents import documents
 from sift.app.indexing import index
 from sift.app.search import search
 from tests.files import write
-from tests.homes import asked
+from tests.homes import asked, quiet
 
 
 def indexed(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -17,7 +17,7 @@ def indexed(tmp_path: Path, files: dict[str, str]) -> Path:
         write(tmp_path / "notes" / name, text)
     home = tmp_path / "home"
     add(home, AddCollection(str(tmp_path / "notes")))
-    index(home, IndexCollections(), lambda _: None)
+    index(home, IndexCollections(), quiet)
     return home
 
 

@@ -2,21 +2,20 @@ from pathlib import Path
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
-from sift.api.indexing import IndexCollections
 from sift.api.search import SearchHybrid
 from sift.app.collections import add
 from sift.app.embedding import embed
-from sift.app.indexing import index
 from sift.app.query import RERANK_PART, query
 from sift.app.searching import Watching
 from tests.files import write
+from tests.homes import indexed, quiet
 from tests.models import Hashed
 
 
 def collection(home: Path, root: Path) -> None:
     add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections((root.name,)), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections((root.name,)), quiet, Hashed())
 
 
 def reranking_takes_ten_seconds(models: Hashed) -> Watching:

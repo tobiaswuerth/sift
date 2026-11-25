@@ -6,13 +6,9 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from sift.api.collections import AddCollection
 from sift.api.ids import CollectionId
-from sift.api.indexing import IndexCollections
 from sift.api.links import FindMentions
 from sift.api.search import SearchHybrid, SearchKeywords
-from sift.app.collections import add
-from sift.app.indexing import index
 from sift.app.kept_decoded import ENTRY_BYTES, Decoded, KeptDecoded
 from sift.app.mentions import mentions
 from sift.app.query import query
@@ -21,6 +17,7 @@ from sift.app.search import search
 from sift.app.searching import Watching
 from sift.retrieval.keyword.lists import Dense, PostingArrays
 from tests.files import write
+from tests.homes import home_of, indexed
 from tests.models import Hashed
 from tests.waits import joined
 
@@ -92,12 +89,11 @@ def test_searches_side_by_side_keep_the_budget_and_count_what_they_hold() -> Non
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    write(tmp_path / "notes" / "halo.md", "# Halo\n\nDark matter halo models. See [[Brush]].\n")
-    write(tmp_path / "notes" / "brush.md", "# Brush\n\nA robot plans brush strokes.\n")
-    home = tmp_path / "home"
-    add(home, AddCollection(str(tmp_path / "notes")))
-    index(home, IndexCollections(), lambda _: None)
-    return home
+    notes = {
+        "notes/halo.md": "# Halo\n\nDark matter halo models. See [[Brush]].\n",
+        "notes/brush.md": "# Brush\n\nA robot plans brush strokes.\n",
+    }
+    return home_of(tmp_path, notes)
 
 
 def test_searches_through_what_was_decoded_find_what_they_find_alone_and_follow_the_store(
@@ -117,7 +113,7 @@ def test_searches_through_what_was_decoded_find_what_they_find_alone_and_follow_
     assert search(home, phrase, watching) == search(home, phrase, watching) == search(home, phrase)
     assert mentions(home, FindMentions("notes/brush.md"), watching) == mentions(home, FindMentions("notes/brush.md"))
     write(tmp_path / "notes" / "robots.md", "# Robots\n\nA robot arm.\n")
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     assert search(home, SearchKeywords("robot"), watching) == search(home, SearchKeywords("robot"))
     assert len(search(home, SearchKeywords("robot"), watching).hits) == 2
 

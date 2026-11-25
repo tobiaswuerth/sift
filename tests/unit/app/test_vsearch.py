@@ -11,12 +11,10 @@ from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, ModelUnavailableError, NotFoundError, Problem
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
-from sift.api.indexing import IndexCollections
 from sift.api.notices import Notice
 from sift.api.search import SearchVectors
 from sift.app.collections import add
 from sift.app.embedding import embed
-from sift.app.indexing import index
 from sift.app.searching import UNEMBEDDED_REMEDY, Watching
 from sift.app.vector_candidates import MOST_WIDER, WIDENED_REMEDY, Rescoring
 from sift.app.vsearch import vsearch
@@ -26,31 +24,27 @@ from sift.storage.vectors import EMBED_REMEDY, documents_embedded, vectors_of
 from tests.counting import DocumentCounts, VectorReads
 from tests.damage import changed, damage_table
 from tests.files import write
-from tests.homes import long_parts
+from tests.homes import home_of, indexed, long_parts, quiet
 from tests.models import BROKEN, DIRECTIONLESS, Hashed
 
 LONG = "\n\n".join(["Pruning skips ranges that cannot win. " * 20] * 8)
+NOTES = {
+    "notes/pruning.md": f"# Block-Max Pruning\n\nRanges are scored best bound first.\n\n## More\n\n{LONG}\n",
+    "notes/halo.md": "# Halo\n\nDark matter halo models.\n",
+    "notes/matter.md": "# Matter\n\nDark matter, and matter again.\n",
+    **{f"notes/filler{n}.md": f"# Filler {n}\n\nNothing to see here, note {n}.\n" for n in range(6)},
+}
 
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    root = tmp_path / "notes"
-    write(root / "pruning.md", f"# Block-Max Pruning\n\nRanges are scored best bound first.\n\n## More\n\n{LONG}\n")
-    write(root / "halo.md", "# Halo\n\nDark matter halo models.\n")
-    write(root / "matter.md", "# Matter\n\nDark matter, and matter again.\n")
-    for n in range(6):
-        write(root / f"filler{n}.md", f"# Filler {n}\n\nNothing to see here, note {n}.\n")
-    home = tmp_path / "home"
-    add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
-    return home
+    return home_of(tmp_path, NOTES, embedded=Hashed())
 
 
 def more(home: Path, tmp_path: Path) -> None:
     write(tmp_path / "more" / "halo.md", "# Halo again\n\nDark matter halo models.\n")
     add(home, AddCollection(str(tmp_path / "more")))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
 
 
 def ids(home: Path, request: SearchVectors) -> list[str]:
@@ -72,8 +66,8 @@ def test_a_search_by_meaning_finds_what_the_index_holds_since_its_files_changed(
     root = tmp_path / "notes"
     (root / "halo.md").unlink()
     write(root / "matter.md", "# Matter\n\nGalaxy rotation curves.\n")
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     assert "notes/halo.md" not in ids(home, SearchVectors("dark matter halo models", k=9))
     found = vsearch(home, SearchVectors("galaxy rotation curves", k=1), Hashed()).hits
     assert [(hit.id, hit.text) for hit in found] == [("notes/matter.md", "# Matter\n\nGalaxy rotation curves.")]
@@ -126,7 +120,7 @@ def test_a_collection_not_yet_embedded_is_passed_over_saying_so(home: Path, tmp_
 
 def test_a_collection_of_another_model_is_passed_over_saying_so(home: Path, tmp_path: Path) -> None:
     more(home, tmp_path)
-    embed(home, EmbedCollections(("more",)), lambda _: None, Hashed(name="other-model"))
+    embed(home, EmbedCollections(("more",)), quiet, Hashed(name="other-model"))
     result = vsearch(home, SearchVectors("halo"), Hashed())
     assert result.unsearched == (
         Notice(
@@ -140,7 +134,7 @@ def test_a_collection_of_another_model_is_passed_over_saying_so(home: Path, tmp_
 
 def test_collections_are_searched_together_and_one_alone_when_named(home: Path, tmp_path: Path) -> None:
     more(home, tmp_path)
-    embed(home, EmbedCollections(("more",)), lambda _: None, Hashed())
+    embed(home, EmbedCollections(("more",)), quiet, Hashed())
     together = ids(home, SearchVectors("dark matter halo models", k=2))
     assert set(together) == {"notes/halo.md", "more/halo.md"}
     assert ids(home, SearchVectors("dark matter halo models", k=2, collections=("more",))) == ["more/halo.md"]
@@ -148,7 +142,7 @@ def test_collections_are_searched_together_and_one_alone_when_named(home: Path, 
 
 def test_a_store_whose_vectors_are_damaged_is_passed_over_and_the_rest_searched(home: Path, tmp_path: Path) -> None:
     more(home, tmp_path)
-    embed(home, EmbedCollections(("more",)), lambda _: None, Hashed())
+    embed(home, EmbedCollections(("more",)), quiet, Hashed())
     changed(home / "collections" / "notes.sqlite", "UPDATE vectors SET vector = x'00'")
     result = vsearch(home, SearchVectors("dark matter halo models"), Hashed())
     assert [hit.id for hit in result.hits] == ["more/halo.md"]
@@ -158,7 +152,7 @@ def test_a_store_whose_vectors_are_damaged_is_passed_over_and_the_rest_searched(
 @pytest.mark.parametrize("table", ["chunks", "sources"])
 def test_a_store_lost_while_its_hits_are_read_is_passed_over(home: Path, tmp_path: Path, table: str) -> None:
     more(home, tmp_path)
-    embed(home, EmbedCollections(("more",)), lambda _: None, Hashed())
+    embed(home, EmbedCollections(("more",)), quiet, Hashed())
     alone = vsearch(home, SearchVectors("dark matter halo models", collections=("more",)), Hashed()).hits
     damage_table(home / "collections" / "notes.sqlite", table)
     result = vsearch(home, SearchVectors("dark matter halo models"), Hashed())
@@ -178,7 +172,7 @@ def test_the_query_is_not_embedded_when_nothing_could_be_searched(home: Path, tm
 def test_a_collection_without_passages_is_searched_as_empty(home: Path, tmp_path: Path) -> None:
     (tmp_path / "empty").mkdir()
     add(home, AddCollection(str(tmp_path / "empty")))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     result = vsearch(home, SearchVectors("halo"), Hashed())
     assert (result.searched, result.unsearched) == (2, ())
 
@@ -204,7 +198,7 @@ def test_a_collection_of_the_same_model_at_another_width_is_passed_over_saying_s
 
 def test_a_store_lost_while_rescoring_leaves_the_nearest_of_the_rest(home: Path, tmp_path: Path) -> None:
     more(home, tmp_path)
-    embed(home, EmbedCollections(("more",)), lambda _: None, Hashed())
+    embed(home, EmbedCollections(("more",)), quiet, Hashed())
     changed(home / "collections" / "notes.sqlite", "UPDATE vectors SET vector = x'00'")
     found = vsearch(home, SearchVectors("# halo dark matter halo models.", k=1), Hashed(), Rescoring(1, vectors_of))
     assert [hit.id for hit in found.hits] == ["more/halo.md"]
@@ -214,8 +208,8 @@ def test_once_every_document_is_found_no_more_vectors_are_read(tmp_path: Path) -
     root = long_parts(tmp_path)
     home = tmp_path / "home"
     add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     reads = VectorReads()
     found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), Rescoring(1, reads))
     assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]
@@ -235,10 +229,10 @@ def test_documents_without_vectors_do_not_keep_the_search_widening(tmp_path: Pat
     add(home, AddCollection(str(root)))
     if third != "# C\n\nIndexed, not embedded yet.\n":
         write(root / "c.md", third)
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     write(root / "c.md", third)
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     reads = VectorReads()
     found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), Rescoring(1, reads))
     assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]
@@ -256,8 +250,8 @@ def test_documents_are_counted_only_when_the_first_round_finds_too_few(home: Pat
 def test_a_first_round_holding_every_embedded_document_is_not_widened(tmp_path: Path) -> None:
     root, home = long_parts(tmp_path), tmp_path / "home"
     add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     rescore = chunks_in(home / "collections" / "parts.sqlite") - 1
     reads, count = VectorReads(), DocumentCounts()
     found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), Rescoring(rescore, reads, count))
@@ -267,7 +261,7 @@ def test_a_first_round_holding_every_embedded_document_is_not_widened(tmp_path: 
 
 def test_a_store_lost_while_its_documents_are_counted_is_passed_over(home: Path, tmp_path: Path) -> None:
     more(home, tmp_path)
-    embed(home, EmbedCollections(("more",)), lambda _: None, Hashed())
+    embed(home, EmbedCollections(("more",)), quiet, Hashed())
     counted: list[int] = []
 
     def count(transaction: Reading) -> int:
@@ -291,8 +285,8 @@ def test_documents_are_counted_once_however_often_the_search_widens(tmp_path: Pa
     for n in range(5):
         write(root / f"filler{n}.md", f"# Filler {n}\n\nNothing {n}.\n")
     add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     count = DocumentCounts()
     found = vsearch(home, SearchVectors("quokka wombat", k=3), Hashed(), Rescoring(1, vectors_of, count))
     assert (len(found.hits), count.counted) == (3, [6])
@@ -305,10 +299,10 @@ def test_the_model_s_loading_is_said_only_when_a_vector_is_needed(home: Path, tm
     bare = tmp_path / "bare"
     write(tmp_path / "plain" / "a.md", "# A\n\nComets.\n")
     add(bare, AddCollection(str(tmp_path / "plain")))
-    index(bare, IndexCollections(), lambda _: None)
-    quiet: list[Event] = []
-    vsearch(bare, SearchVectors("halo"), Hashed(), watching=Watching(report=quiet.append))
-    assert quiet == []
+    indexed(bare)
+    unsaid: list[Event] = []
+    vsearch(bare, SearchVectors("halo"), Hashed(), watching=Watching(report=unsaid.append))
+    assert unsaid == []
 
 
 @pytest.fixture
@@ -317,8 +311,8 @@ def few_long(tmp_path: Path) -> Path:
     write(root / "gamma.md", "# gamma\n\nWombats dig burrows.\n")
     home = tmp_path / "home"
     add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     return home
 
 

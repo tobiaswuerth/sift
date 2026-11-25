@@ -15,7 +15,7 @@ from sift.storage.catalog import known_collections
 from sift.storage.database import reading, rows
 from sift.storage.store import connected
 from tests.files import TORN, jsonl, linked, torn_lines, write
-from tests.homes import found_ids
+from tests.homes import found_ids, quiet
 from tests.later import LATER, later
 
 
@@ -34,12 +34,12 @@ def home(tmp_path: Path) -> Path:
     write(tmp_path / "diary" / ".siftignore", "ignored/\n")
     for name in ("papers", "recipes", "diary"):
         add(home, AddCollection(str(tmp_path / name)))
-    index(home, IndexCollections(), lambda _: None, readers=LATER)
+    index(home, IndexCollections(), quiet, readers=LATER)
     return home
 
 
 def reindexed(home: Path, *files: str, readers: Readers = LATER, limits: Limits = LIMITS) -> list[FileIndexed]:
-    result = index(home, IndexCollections(files=files), lambda _: None, limits, readers)
+    result = index(home, IndexCollections(files=files), quiet, limits, readers)
     return [each for collection in result.collections for each in collection.named]
 
 
@@ -155,8 +155,8 @@ def test_collections_and_files_are_not_named_together_and_a_file_must_lie_in_a_c
     home: Path, tmp_path: Path
 ) -> None:
     with pytest.raises(InvalidRequestError, match="collections or files, not both"):
-        index(home, IndexCollections(("papers",), files=("papers/rl.md",)), lambda _: None)
+        index(home, IndexCollections(("papers",), files=("papers/rl.md",)), quiet)
     write(tmp_path / "elsewhere.md", "x")
     for outside in (str(tmp_path / "elsewhere.md"), "nowhere/x.md"):
         with pytest.raises(InvalidRequestError, match="is in no collection"):
-            index(home, IndexCollections(files=(outside,)), lambda _: None)
+            index(home, IndexCollections(files=(outside,)), quiet)

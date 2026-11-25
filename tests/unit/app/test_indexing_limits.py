@@ -27,7 +27,7 @@ from sift.storage.documents import stored
 from sift.storage.store import read_store
 from sift.storage.vector_meta import left
 from tests.files import write
-from tests.homes import text_of, unreadable_files
+from tests.homes import quiet, text_of, unreadable_files
 from tests.later import LATER, in_process, later, reading
 from tests.mails import sample
 from tests.models import Hashed
@@ -137,7 +137,7 @@ def _kept_note(home: Path) -> tuple[int, int]:
 
 def test_a_note_touched_but_unchanged_is_left_as_it_was_its_vectors_too(home: Path, notes: Path) -> None:
     indexed(home)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    embed(home, EmbedCollections(), quiet, Hashed())
     identity, unembedded = _kept_note(home)
     write(notes / "rl.md", "# Reward shaping\n\nReward shaping speeds up learning.\n")
     assert indexed(home) == Indexed(files=3, added=0, changed=0, removed=0, unreadable=0)

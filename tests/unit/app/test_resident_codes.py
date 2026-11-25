@@ -6,15 +6,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
 from sift.api.ids import CollectionId
-from sift.api.indexing import IndexCollections
 from sift.api.links import FindSimilar
 from sift.api.search import SearchHybrid, SearchVectors
-from sift.app.collections import add
 from sift.app.embedding import embed
-from sift.app.indexing import index
 from sift.app.query import query
 from sift.app.resident import CodesAt, ResidentCodes
 from sift.app.searching import Watching
@@ -22,6 +18,7 @@ from sift.app.similar import similar
 from sift.app.vsearch import vsearch
 from sift.retrieval.vector.nearest import Coded, coded
 from tests.files import write
+from tests.homes import home_of, indexed, quiet
 from tests.models import Hashed
 from tests.waits import joined, still_running, waited
 
@@ -43,15 +40,12 @@ class Counting:
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    write(tmp_path / "notes" / "halo.md", "# Halo\n\nDark matter halo models.\n")
-    write(tmp_path / "notes" / "brush.md", "# Brush\n\nA robot plans brush strokes.\n")
-    write(tmp_path / "papers" / "shaping.md", "# Shaping\n\nReward shaping speeds up learning.\n")
-    home = tmp_path / "home"
-    for name in ("notes", "papers"):
-        add(home, AddCollection(str(tmp_path / name)))
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
-    return home
+    notes = {
+        "notes/halo.md": "# Halo\n\nDark matter halo models.\n",
+        "notes/brush.md": "# Brush\n\nA robot plans brush strokes.\n",
+        "papers/shaping.md": "# Shaping\n\nReward shaping speeds up learning.\n",
+    }
+    return home_of(tmp_path, notes, embedded=Hashed())
 
 
 def found(home: Path, counting: Counting | None = None) -> list[list[str]]:
@@ -85,8 +79,8 @@ def test_codes_are_read_again_once_the_store_s_vectors_change(home: Path, tmp_pa
     counting = Counting()
     found(home, counting)
     write(tmp_path / "notes" / "matter.md", "# Matter\n\nDark matter, and matter again.\n")
-    index(home, IndexCollections(), lambda _: None)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
     after = found(home, counting)
     assert "notes/matter.md" in after[0]
     assert [at.store.name for at in counting.reads] == ["notes.sqlite", "papers.sqlite", "notes.sqlite"]

@@ -28,6 +28,7 @@ from sift.settings import Settings
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
 from tests.files import write
+from tests.homes import quiet
 from tests.models import Hashed
 from tests.serving import Line, asked, last, running, streaming
 from tests.waits import joined, waited
@@ -58,7 +59,7 @@ def test_searches_through_the_home_process_keep_a_store_s_codes(settings: Settin
     with running(settings) as server:
         asked(server, "add", {"folder": str(notes)})
         asked(server, "index", {})
-        embed(settings.home, EmbedCollections(), lambda _: None, Hashed())
+        embed(settings.home, EmbedCollections(), quiet, Hashed())
         first = asked(server, "similar", {"id": "notes/halo.md"})[1]
         again = asked(server, "similar", {"id": "notes/halo.md"})[1]
         assert first == again
@@ -77,7 +78,7 @@ def test_codes_and_keywords_of_a_collection_deactivated_or_removed_are_let_go(
         for folder in (notes, tmp_path / "papers"):
             asked(server, "add", {"folder": str(folder)})
         asked(server, "index", {})
-        embed(settings.home, EmbedCollections(), lambda _: None, Hashed())
+        embed(settings.home, EmbedCollections(), quiet, Hashed())
         asked(server, "similar", {"id": "notes/halo.md"})
         asked(server, "similar", {"id": "papers/shaping.md"})
         asked(server, "search", {"query": "halo OR shaping"})
@@ -173,12 +174,12 @@ def test_a_command_that_recurses_too_deep_ends_its_answer_unfinished(settings: S
 def test_a_quiet_command_s_answer_is_kept_alive_by_a_line_while_nothing_else_is_said(settings: Settings) -> None:
     release = threading.Event()
 
-    def quiet(_acting: Acting, _data: object) -> object:
+    def silent(_acting: Acting, _data: object) -> object:
         waited(release, 30)
         return Served("quiet")
 
     with (
-        running(settings, {**HANDLED, "status": Handled(quiet, writes=False)}, how=Serve(alive_every=0.01)) as server,
+        running(settings, {**HANDLED, "status": Handled(silent, writes=False)}, how=Serve(alive_every=0.01)) as server,
         streaming(server, "status") as response,
     ):
         first = response.readline()

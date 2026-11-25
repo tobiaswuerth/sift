@@ -13,6 +13,7 @@ from sift.storage.store import read_store
 from sift.storage.vector_meta import left
 from sift.storage.writer import sole_writer
 from tests.files import write
+from tests.homes import quiet
 from tests.keyword_stores import vectors_by_text
 from tests.models import Hashed
 
@@ -29,7 +30,7 @@ def home(tmp_path: Path) -> Path:
 
 
 def indexed(home: Path) -> IndexResult:
-    return index(home, IndexCollections(), lambda _: None)
+    return index(home, IndexCollections(), quiet)
 
 
 def test_a_collection_another_sift_writes_now_is_skipped_at_once_saying_so(home: Path) -> None:
@@ -47,7 +48,7 @@ def test_a_collection_another_sift_writes_now_is_not_embedded_and_said_to_be_bus
     (one,) = known_collections(home)
     for reset in (False, True):
         with sole_writer(one.store, "sift index"):
-            found = embed(home, EmbedCollections(reset=reset), lambda _: None, Hashed())
+            found = embed(home, EmbedCollections(reset=reset), quiet, Hashed())
         (skipped,) = found.collections
         assert isinstance(skipped.outcome, Skipped)
         assert "another sift writes it now (sift index, process " in skipped.outcome.message
@@ -55,7 +56,7 @@ def test_a_collection_another_sift_writes_now_is_not_embedded_and_said_to_be_bus
 
 def test_a_file_renamed_or_moved_keeps_the_vectors_of_its_passages(home: Path, tmp_path: Path) -> None:
     indexed(home)
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    embed(home, EmbedCollections(), quiet, Hashed())
     (one,) = known_collections(home)
     with read_store(one.store, one.id) as transaction:
         before = vectors_by_text(transaction)

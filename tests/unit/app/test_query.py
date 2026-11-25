@@ -12,12 +12,10 @@ from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, ModelUnavailableError, Problem
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
-from sift.api.indexing import IndexCollections
 from sift.api.notices import Notice
 from sift.api.search import SearchHybrid
 from sift.app.collections import add
 from sift.app.embedding import embed
-from sift.app.indexing import index
 from sift.app.query import WORDS_REMEDY, query
 from sift.app.searching import Watching
 from sift.app.vector_candidates import Rescoring
@@ -29,7 +27,7 @@ from sift.storage.database import Reading
 from sift.storage.vectors import EMBED_REMEDY, vectors_of
 from tests.damage import changed, damage_pages, damage_table
 from tests.files import write
-from tests.homes import long_parts
+from tests.homes import home_of, indexed, long_parts, quiet
 from tests.models import Hashed
 
 LONG = "\n\n".join(["Pruning skips ranges that cannot win. " * 20] * 8)
@@ -37,25 +35,24 @@ LONG = "\n\n".join(["Pruning skips ranges that cannot win. " * 20] * 8)
 
 def collection(home: Path, root: Path, *, embedded: bool = True) -> None:
     add(home, AddCollection(str(root)))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     if embedded:
-        embed(home, EmbedCollections((root.name,)), lambda _: None, Hashed())
+        embed(home, EmbedCollections((root.name,)), quiet, Hashed())
+
+
+NOTES = {
+    "notes/pruning.md": f"# Block-Max Pruning\n\nRanges are scored best bound first.\n\n## More\n\n{LONG}\n",
+    "notes/halo.md": "---\nauthor: Ada Quill\ndoi: 10.1000/halo\n---\n# Halo\n\nDark matter halo models.\n",
+    "notes/matter.md": (
+        "---\ntags: [cosmology, physics]\nseen: {by: nobody}\n---\n# Matter\n\nDark matter, and matter again.\n"
+    ),
+    **{f"notes/filler{n}.md": f"# Filler {n}\n\nNothing to see here, note {n}.\n" for n in range(6)},
+}
 
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    root = tmp_path / "notes"
-    write(root / "pruning.md", f"# Block-Max Pruning\n\nRanges are scored best bound first.\n\n## More\n\n{LONG}\n")
-    write(root / "halo.md", "---\nauthor: Ada Quill\ndoi: 10.1000/halo\n---\n# Halo\n\nDark matter halo models.\n")
-    write(
-        root / "matter.md",
-        "---\ntags: [cosmology, physics]\nseen: {by: nobody}\n---\n# Matter\n\nDark matter, and matter again.\n",
-    )
-    for n in range(6):
-        write(root / f"filler{n}.md", f"# Filler {n}\n\nNothing to see here, note {n}.\n")
-    home = tmp_path / "home"
-    collection(home, root)
-    return home
+    return home_of(tmp_path, NOTES, embedded=Hashed())
 
 
 def ids(home: Path, request: SearchHybrid, models: Hashed | None = None) -> list[str]:
@@ -244,7 +241,7 @@ def test_a_collection_embedded_otherwise_is_searched_by_keyword_alone_saying_so(
 ) -> None:
     write(tmp_path / "more" / "halo.md", "# Halo again\n\nDark matter halo models.\n")
     collection(home, tmp_path / "more", embedded=False)
-    embed(home, EmbedCollections(("more",)), lambda _: None, other)
+    embed(home, EmbedCollections(("more",)), quiet, other)
     asked = "dark matter halo models"
     result = query(home, SearchHybrid(asked), Hashed())
     (alone,) = floats(Hashed().rerank(asked, ["Halo again\n\n# Halo again\n\nDark matter halo models."]))

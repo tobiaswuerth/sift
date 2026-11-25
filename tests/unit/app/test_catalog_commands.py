@@ -29,20 +29,19 @@ from sift.storage.store import create_store
 from sift.storage.store_files import delete_store
 from sift.storage.writer import sole_writer
 from tests.files import write
-from tests.homes import asked
+from tests.homes import asked, home_of, indexed, quiet
 from tests.models import Hashed
+
+NOTES = {
+    "notes/robots.md": "# Robots\n\nA robot vacuum broke. See [[Gone]].\n",
+    "diary/monday.md": "# Monday\n\nThe robot vacuum broke again.\n",
+    "diary/tuesday.md": "# Tuesday\n\nNothing broke.\n",
+}
 
 
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
-    home = tmp_path / "home"
-    write(tmp_path / "notes" / "robots.md", "# Robots\n\nA robot vacuum broke. See [[Gone]].\n")
-    write(tmp_path / "diary" / "monday.md", "# Monday\n\nThe robot vacuum broke again.\n")
-    write(tmp_path / "diary" / "tuesday.md", "# Tuesday\n\nNothing broke.\n")
-    for name in ("notes", "diary"):
-        add(home, AddCollection(str(tmp_path / name)))
-    index(home, IndexCollections(), lambda _: None)
-    return home
+    return home_of(tmp_path, NOTES)
 
 
 def found(home: Path, query_text: str = "robot") -> list[str]:
@@ -95,7 +94,7 @@ def test_a_store_open_elsewhere_when_its_collection_is_removed_is_deleted_by_the
 
     assert remove(home, RemoveCollection("diary"), held_open).left == (str(diary.store),)
     assert diary.store.exists()
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     assert not diary.store.exists()
 
 
@@ -156,7 +155,7 @@ def test_an_inactive_collection_is_passed_over_by_searches(home: Path) -> None:
 
 
 def test_an_inactive_collection_named_is_refused_saying_how_to_search_it(home: Path) -> None:
-    embed(home, EmbedCollections(), lambda _: None, Hashed())
+    embed(home, EmbedCollections(), quiet, Hashed())
     deactivate(home, DeactivateCollections(("diary",)))
     for call in (
         lambda: search(home, SearchKeywords("robot", collections=("diary",))),
@@ -191,8 +190,8 @@ def test_with_every_collection_inactive_a_search_says_how_to_activate_one(home: 
 def test_an_inactive_collection_is_left_out_of_index_and_embed_unless_named(home: Path, tmp_path: Path) -> None:
     deactivate(home, DeactivateCollections(("diary",)))
     write(tmp_path / "diary" / "wednesday.md", "# Wednesday\n\nThe robot works.\n")
-    assert [each.name for each in index(home, IndexCollections(), lambda _: None).collections] == ["notes"]
-    assert [each.name for each in embed(home, EmbedCollections(), lambda _: None, Hashed()).collections] == ["notes"]
-    assert [each.name for each in index(home, IndexCollections(("diary",)), lambda _: None).collections] == ["diary"]
+    assert [each.name for each in index(home, IndexCollections(), quiet).collections] == ["notes"]
+    assert [each.name for each in embed(home, EmbedCollections(), quiet, Hashed()).collections] == ["notes"]
+    assert [each.name for each in index(home, IndexCollections(("diary",)), quiet).collections] == ["diary"]
     activate(home, ActivateCollections(("diary",)))
     assert "diary/wednesday.md" in found(home, "works")

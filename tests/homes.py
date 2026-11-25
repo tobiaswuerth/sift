@@ -1,19 +1,39 @@
-from pathlib import Path
+from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
 
 from sift.api.collections import AddCollection, Counted, ShowStatus, UnreadableFile
 from sift.api.documents import GetDocuments, WantedDocument
+from sift.api.embedding import EmbedCollections
 from sift.api.events import Advanced, Event
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchKeywords
 from sift.app.collections import add, status
 from sift.app.documents import documents
+from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.search import search
+from sift.inference.models import Models
 from tests.files import write
 
 
+def quiet(_said: object) -> None:
+    return None
+
+
 def indexed(home: Path) -> None:
-    index(home, IndexCollections(), lambda _: None)
+    index(home, IndexCollections(), quiet)
+
+
+def home_of(tmp_path: Path, files: Mapping[str, str], *, embedded: Models | None = None) -> Path:
+    home = tmp_path / "home"
+    for path, text in files.items():
+        write(tmp_path / path, text)
+    for folder in dict.fromkeys(PurePosixPath(path).parts[0] for path in files):
+        add(home, AddCollection(str(tmp_path / folder)))
+    indexed(home)
+    if embedded is not None:
+        embed(home, EmbedCollections(), quiet, embedded)
+    return home
 
 
 def stopped_when_advanced(event: Event) -> None:
