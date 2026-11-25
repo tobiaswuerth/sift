@@ -90,6 +90,7 @@ COMMANDS = (
     "deactivate",
     "embed",
     "get",
+    "import",
     "index",
     "jobs",
     "links",
