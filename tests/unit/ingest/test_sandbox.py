@@ -14,7 +14,7 @@ from typing import BinaryIO, cast
 import pytest
 
 from sift.api.collections import TitleFrom
-from sift.domain.text.documents import Refused, stopped
+from sift.domain.text.documents import Again, Refused, stopped
 from sift.ingest.readers import ToRead, read_file
 from sift.ingest.sandbox import (
     ENDED,
@@ -53,7 +53,7 @@ def asked(*paths: Path | str) -> list[ToRead]:
 
 
 def read(*names: str) -> Refused:
-    return Refused(names[0], read_again=False)
+    return Refused(names[0], Again.NEVER)
 
 
 def test_files_read_in_reader_processes_come_back_each_with_its_place() -> None:
@@ -124,7 +124,7 @@ def test_a_reader_that_raised_with_a_thread_left_running_ends_with_its_file() ->
     with sandboxed(misbehaving, brief) as reading:
         ((_, refused),) = list(reading(asked("linger.pdf")))
     assert isinstance(refused, Refused)
-    assert (refused.stopped, "its thread left running" in refused.problem) == (True, True)
+    assert (refused.again, "its thread left running" in refused.problem) == (Again.NEXT_RELEASE, True)
     assert multiprocessing.active_children() == []
 
 

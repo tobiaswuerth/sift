@@ -18,7 +18,7 @@ from sift.app.documents import documents
 from sift.app.filing import Readers
 from sift.app.indexing import index
 from sift.app.scans import BUSY, FULL, GPU_UNUSED, NO_GPU, NO_TEXT_FOUND, NOT_LOADED, OFF, Scanning
-from sift.domain.text.documents import Conversion, Refused, Unread
+from sift.domain.text.documents import Again, Conversion, Refused, Unread
 from sift.domain.text.scans import OCR_FIELD, PAGES, OcrSetting
 from sift.inference.accelerator import CPU, HIDDEN, Device
 from sift.inference.hub import OCR_MODEL
@@ -376,7 +376,7 @@ def _painted(found: Pictured | Refused) -> Callable[[], contextlib.AbstractConte
     return opened
 
 
-@pytest.mark.parametrize("found", [Unpictured("Failed to load document"), Refused(ENDED, read_again=False)])
+@pytest.mark.parametrize("found", [Unpictured("Failed to load document"), Refused(ENDED, Again.NEVER)])
 @pytest.mark.usefixtures("scans")
 def test_a_scan_whose_pages_cannot_be_pictured_is_left_out_saying_why(home: Path, found: Unpictured | Refused) -> None:
     ocr = FakeOcr()

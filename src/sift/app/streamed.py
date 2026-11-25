@@ -7,7 +7,7 @@ from sift.api.ids import DocumentId
 from sift.app.filing import Job, Tally
 from sift.domain.plan.indexing import Stat
 from sift.domain.text.decoding import text_pieces
-from sift.domain.text.documents import Refused
+from sift.domain.text.documents import Again, Refused
 from sift.domain.text.notes import DIGEST_BYTES, read_note
 from sift.ingest.files import Identity
 from sift.storage.database import WritingDocuments, back_to_save_point, past_save_point, save_point
@@ -55,7 +55,7 @@ def stored_note(
         added, problem, digested = _stored(job, transaction, path, scanned, source)
     except OSError as error:
         back_to_save_point(transaction)
-        return Refused(error.strerror or str(error), read_again=True)
+        return Refused(error.strerror or str(error), Again.NEXT_INDEX)
     if before is not None and before.digest == digested:
         back_to_save_point(transaction)
         return NoteStored(Tally(removed=len(gone)), problem)

@@ -8,7 +8,7 @@ from sift.app.records import stored_records
 from sift.app.scans import ScanRun, ScansRead, scans_read
 from sift.app.streamed import stored_note
 from sift.domain.plan.indexing import IndexPlan, Stat, batches
-from sift.domain.text.documents import FileRead, Outcome, Refused, text_held, too_large
+from sift.domain.text.documents import Again, FileRead, Outcome, Refused, text_held, too_large
 from sift.domain.text.kinds import FileKind, kind_of, streamed
 from sift.ingest.files import Identity
 from sift.ingest.readers import ToRead
@@ -40,12 +40,12 @@ def _described(read: FileRead, limits: Limits) -> FileRead:
 def _refused(
     transaction: WritingDocuments, path: str, stat: Stat, refused: Refused, release: Callable[[], str]
 ) -> Tally:
-    under = release() if refused.stopped else None
-    mark_unreadable(transaction, path, Mark(refused.problem, refused.read_again, stopped_under=under))
-    if refused.read_again:
+    under = release() if refused.again is Again.NEXT_RELEASE else None
+    mark_unreadable(transaction, path, Mark(refused.problem, refused.again is Again.NEXT_INDEX, stopped_under=under))
+    if refused.again is Again.NEXT_INDEX:
         return Tally()
     source = put_source(transaction, path, stat.modified_ns, stat.size)
-    if refused.stopped:
+    if refused.again is Again.NEXT_RELEASE:
         return Tally()
     gone = [document.id for document in kept(transaction, source)]
     delete_documents(transaction, gone)

@@ -1,5 +1,6 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -39,12 +40,17 @@ class Scanning:
 SCANNING = Scanning()
 
 
+class ScanAgain(Enum):
+    NEVER = "once the file changes"
+    NEXT_INDEX = "at the next index"
+    PASSING = "once the GPU has room, within this index too"
+    SETTING = "once SIFT_OCR or the GPUs change"
+
+
 @dataclass(frozen=True, slots=True)
 class ScanUnread:
     problem: str
-    read_again: bool
-    skipped: bool = False
-    passing: bool = False
+    again: ScanAgain
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,18 +61,18 @@ class _Reader:
 
 def _available(scanning: Scanning) -> _Reader | ScanUnread:
     if scanning.setting is OcrSetting.OFF:
-        return ScanUnread(OFF, read_again=False, skipped=True)
+        return ScanUnread(OFF, ScanAgain.SETTING)
     module = scanning.module()
     device = module.ocr_device(scanning.gpus)
     if device.name == ON_THE_CPU and scanning.setting is OcrSetting.AUTO:
         if device.busy:
-            return ScanUnread(BUSY, read_again=True, passing=True)
+            return ScanUnread(BUSY, ScanAgain.PASSING)
         reason = NO_GPU if device.notice is None else GPU_UNUSED.format(device.notice)
-        return ScanUnread(reason, read_again=False, skipped=True)
+        return ScanUnread(reason, ScanAgain.SETTING)
     try:
         return _Reader(module, module.loaded_ocr(device))
     except ModelUnavailableError as error:
-        return ScanUnread(NOT_LOADED.format(error.message), read_again=True)
+        return ScanUnread(NOT_LOADED.format(error.message), ScanAgain.NEXT_INDEX)
 
 
 @dataclass(slots=True)
@@ -75,7 +81,7 @@ class ScanModel:
     held: _Reader | ScanUnread | None = None
 
     def reader(self) -> _Reader | ScanUnread:
-        if self.held is None or (isinstance(self.held, ScanUnread) and self.held.passing):
+        if self.held is None or (isinstance(self.held, ScanUnread) and self.held.again is ScanAgain.PASSING):
             self.held = _available(self.scanning)
         return self.held
 
@@ -121,9 +127,9 @@ def _pictured(run: ScanRun, path: str, scan: Scan) -> Pages | ScanUnread:
         case Pages():
             return found
         case Refused(problem=problem):
-            return ScanUnread(UNPICTURED.format(problem), read_again=False)
+            return ScanUnread(UNPICTURED.format(problem), ScanAgain.NEVER)
         case unpictured:
-            return ScanUnread(UNPICTURED.format(unpictured.problem), read_again=False)
+            return ScanUnread(UNPICTURED.format(unpictured.problem), ScanAgain.NEVER)
 
 
 def _scan_read(run: ScanRun, path: str, scan: Scan) -> Document | ScanUnread:
@@ -136,10 +142,10 @@ def _scan_read(run: ScanRun, path: str, scan: Scan) -> Document | ScanUnread:
     try:
         texts = reader.module.pages_text(reader.ocr, pictured.pictures)
     except ModelUnavailableError as error:
-        return ScanUnread(FULL.format(error.message), read_again=True)
+        return ScanUnread(FULL.format(error.message), ScanAgain.NEXT_INDEX)
     found = read_scan(scan.document, texts, OCR_MODEL)
     if found is None:
-        return ScanUnread(NO_TEXT_FOUND, read_again=False)
+        return ScanUnread(NO_TEXT_FOUND, ScanAgain.NEVER)
     run.report(Noted(f"{_named(path, scan.document.key)}: a scan, read with OCR ({_pages_said(pictured)})"))
     return found
 
@@ -156,8 +162,8 @@ def scans_read(run: ScanRun, path: str, read: FileRead, held: Mapping[str, str])
         match _scan_read(run, path, scan):
             case ScanUnread() as unread:
                 problems.append(f"{key}: {unread.problem}" if key else unread.problem)
-                again |= unread.read_again
-                skipped |= unread.skipped
+                again |= unread.again in {ScanAgain.NEXT_INDEX, ScanAgain.PASSING}
+                skipped |= unread.again is ScanAgain.SETTING
             case found:
                 documents.append(found)
     under = run.model.scanning.setting if skipped else None

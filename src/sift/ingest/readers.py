@@ -5,6 +5,7 @@ from pathlib import Path
 
 from sift.api.collections import TitleFrom
 from sift.domain.text.documents import (
+    Again,
     Convert,
     FileRead,
     Outcome,
@@ -124,8 +125,8 @@ def read_file(asked: ToRead, whole: ReadWhole = at_most, converting: Convert = c
     try:
         raw = whole(asked.path, asked.most, asked.scanned)
     except OSError as error:
-        return Refused(error.strerror or str(error), read_again=True)
+        return Refused(error.strerror or str(error), Again.NEXT_INDEX)
     if len(raw) > asked.most:
         return too_large(len(raw), asked.most)
     read = read_whole(raw, asked.path.name, asked.title_from, converting)
-    return Refused(read.problem, read_again=False) if isinstance(read, Unread) else read
+    return Refused(read.problem, Again.NEVER) if isinstance(read, Unread) else read

@@ -1,4 +1,4 @@
-from sift.domain.text.documents import NO_TEXT, Converted, Scan, Unread, document
+from sift.domain.text.documents import NO_TEXT, Again, Converted, Refused, Scan, Unread, document, stopped, too_large
 from sift.domain.text.notes import Document, digest
 
 
@@ -39,3 +39,8 @@ def test_a_document_without_text_or_not_converted_is_unread_but_a_pdf_without_te
     untitled = document(b"raw", "scan.pdf", Converted(""))
     assert isinstance(untitled, Scan)
     assert (untitled.document.title, untitled.document.digest) == ("scan", digest(b"raw"))
+
+
+def test_a_refusal_says_when_its_file_is_read_again_one_way_alone() -> None:
+    assert [stopped("ended").again, too_large(9, 8).again] == [Again.NEXT_RELEASE, Again.NEVER]
+    assert Refused("gone", Again.NEXT_INDEX) == Refused("gone", Again.NEXT_INDEX)

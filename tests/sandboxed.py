@@ -7,7 +7,7 @@ from collections.abc import Callable
 from multiprocessing.connection import Connection
 from typing import NoReturn, final, override
 
-from sift.domain.text.documents import Outcome, Refused
+from sift.domain.text.documents import Again, Outcome, Refused
 from sift.ingest.files import Identity
 from sift.ingest.readers import ToRead
 
@@ -17,7 +17,7 @@ LARGE = 10_000
 
 
 def echoed(asked: ToRead) -> Outcome:
-    return Refused(asked.path.name, read_again=False)
+    return Refused(asked.path.name, Again.NEVER)
 
 
 def _cut_short() -> NoReturn:
@@ -45,7 +45,7 @@ def misbehaving(asked: ToRead) -> Outcome:
         case "cut":
             _cut_short()
         case "large":
-            return Refused("x" * LARGE, read_again=False)
+            return Refused("x" * LARGE, Again.NEVER)
         case _:
             pass
     return echoed(asked)
@@ -54,7 +54,7 @@ def misbehaving(asked: ToRead) -> Outcome:
 def pid_or_hang(asked: ToRead) -> Outcome:
     if asked.path.stem == "hang":
         _ = threading.Event().wait()
-    return Refused(str(os.getpid()), read_again=False)
+    return Refused(str(os.getpid()), Again.NEVER)
 
 
 def held(asked: ToRead) -> Outcome:

@@ -1,6 +1,7 @@
 import posixpath
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 from types import MappingProxyType
 
 from sift.api.fields import Fields
@@ -41,11 +42,16 @@ class FileRead:
     skipped_under: OcrSetting | None = None
 
 
+class Again(Enum):
+    NEVER = "once the file changes"
+    NEXT_INDEX = "at the next index"
+    NEXT_RELEASE = "under the next release of sift"
+
+
 @dataclass(frozen=True, slots=True)
 class Refused:
     problem: str
-    read_again: bool
-    stopped: bool = False
+    again: Again
 
 
 def text_held(read: "FileRead | Unread | Refused") -> int:
@@ -53,7 +59,7 @@ def text_held(read: "FileRead | Unread | Refused") -> int:
 
 
 def stopped(problem: str) -> Refused:
-    return Refused(problem, read_again=False, stopped=True)
+    return Refused(problem, Again.NEXT_RELEASE)
 
 
 type Conversion = Converted | Unread
@@ -62,7 +68,7 @@ type Outcome = FileRead | Refused
 
 
 def too_large(size: int, most: int) -> Refused:
-    return Refused(f"{size:,} bytes: sift reads documents of at most {most:,} bytes; split the file", read_again=False)
+    return Refused(f"{size:,} bytes: sift reads documents of at most {most:,} bytes; split the file", Again.NEVER)
 
 
 def _scanned(name: str) -> bool:

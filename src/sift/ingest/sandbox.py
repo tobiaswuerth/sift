@@ -17,7 +17,7 @@ from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import NoReturn, Protocol, cast
 
-from sift.domain.text.documents import Outcome, Refused, stopped
+from sift.domain.text.documents import Again, Outcome, Refused, stopped
 from sift.ingest.pictured import Pictured, ToPicture
 from sift.ingest.pictures import picture
 from sift.ingest.readers import ToRead, read_file
@@ -101,9 +101,7 @@ def reader_failed(traceback_text: str) -> Refused:
 
 
 def too_large_an_answer(size: int, most: int) -> Refused:
-    return Refused(
-        f"read, it comes to {size:,} bytes, more than the {most:,} sift takes from one file", read_again=False
-    )
+    return Refused(f"read, it comes to {size:,} bytes, more than the {most:,} sift takes from one file", Again.NEVER)
 
 
 def usable_cpus() -> int:
