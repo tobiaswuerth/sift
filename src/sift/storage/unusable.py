@@ -33,15 +33,16 @@ UNUSABLE: Mapping[int, tuple[str, str]] = MappingProxyType(
 class Unusable:
     what: str
     damaged_remedy: str
+    damaged: Problem = Problem.STORE_UNAVAILABLE
 
 
-STORE = Unusable("the store", DAMAGED_REMEDY)
+STORE = Unusable("the store", DAMAGED_REMEDY, Problem.STORE_DAMAGED)
 LOCK = Unusable("the lock file", "delete it: sift makes it again")
 
 
 def damaged(path: Path, error: Exception, unusable: Unusable = STORE) -> StoreUnavailableError:
     said = f"{unusable.what} {path} is damaged: {error}"
-    return StoreUnavailableError(said, unusable.damaged_remedy, code=Problem.STORE_DAMAGED)
+    return StoreUnavailableError(said, unusable.damaged_remedy, code=unusable.damaged)
 
 
 def raise_for(path: Path, error: sqlite3.DatabaseError, unusable: Unusable = STORE) -> NoReturn:

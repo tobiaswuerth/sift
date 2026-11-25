@@ -8,8 +8,10 @@ from types import MappingProxyType
 from typing import NamedTuple, cast
 
 from sift.api.errors import StoreUnavailableError
+from sift.domain.errors import DamagedError
 from sift.storage.database import read_only
 from sift.storage.store_files import FORMER_CATALOG
+from sift.storage.unusable import Unusable, unavailable_if_unusable
 
 MODEL_KEY = "model"
 MODEL_AT_KEY = "model_at"
@@ -20,6 +22,13 @@ STORED_TEXT_END = "\x00"
 OLDER = "its index is of a sift older than 1.8, which held every collection in one file"
 OLDER_REMEDY = "open it once with sift 1.15, which splits it into a store per collection, then import it"
 UNREAD_REMEDY = "check that this user may read the sift 1.x home and its stores"
+CATALOG_OF_1 = Unusable(
+    "the catalog of sift 1.x", "add the folders of its collections to this sift, then index and embed them"
+)
+STORE_OF_1 = Unusable(
+    "the store of sift 1.x",
+    "embed the collection: its files are indexed here, and its vectors were in that store alone",
+)
 CATALOG_COLUMNS = frozenset({"name", "path", "fields", "store", "active"})
 STORE_TABLES = frozenset({"docs", "chunks", "vectors", "meta"})
 COLUMNS = "SELECT name FROM pragma_table_info('collections')"
@@ -77,19 +86,23 @@ def _names(connection: sqlite3.Connection, sql: str) -> frozenset[str]:
 
 
 def _choices(fields: str | None) -> Mapping[str, object]:
-    read = cast("object", json.loads(fields)) if fields else None
+    try:
+        read = cast("object", json.loads(fields)) if fields else None
+    except ValueError as error:
+        raise DamagedError(f"the choices of a collection are no JSON: {error}") from None
     return MappingProxyType(cast("dict[str, object]", read) if isinstance(read, dict) else {})
 
 
 def former_collections(home: Path) -> tuple[FormerCollection, ...]:
-    with closing(_opened(home / FORMER_CATALOG)) as connection:
+    path = home / FORMER_CATALOG
+    with unavailable_if_unusable(path, CATALOG_OF_1), closing(_opened(path)) as connection:
         if not _names(connection, COLUMNS) >= CATALOG_COLUMNS:
             raise StoreUnavailableError(f"{home}: {OLDER}", OLDER_REMEDY)
         found = cast("list[tuple[str, str, str | None, str, int]]", connection.execute(COLLECTIONS).fetchall())
-    return tuple(
-        FormerCollection(name, folder, _choices(fields), Path(store), bool(active))
-        for name, folder, fields, store, active in found
-    )
+        return tuple(
+            FormerCollection(name, folder, _choices(fields), Path(store), bool(active))
+            for name, folder, fields, store, active in found
+        )
 
 
 def _cut(text: str) -> str:
@@ -137,7 +150,7 @@ class FormerStore:
 
 @contextmanager
 def former_store(path: Path) -> Generator[FormerStore]:
-    with closing(_opened(path)) as connection:
+    with unavailable_if_unusable(path, STORE_OF_1), closing(_opened(path)) as connection:
         if not _names(connection, TABLES) >= STORE_TABLES:
             raise StoreUnavailableError(f"{path}: {OLDER}", OLDER_REMEDY)
         yield FormerStore(connection)

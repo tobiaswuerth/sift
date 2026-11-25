@@ -31,6 +31,7 @@ NEXT_STEPS: Mapping[Problem, tuple[str, ...]] = MappingProxyType(
         Problem.STORE_DAMAGED: ("sift", "rm", "NAME"),
     }
 )
+NEXT_BY_NAME_ALONE = frozenset({Problem.STORE_DAMAGED})
 STOPPED_WRITING = "stopped: what was written so far is kept"
 STOPPED_KEEPING = "stopped: {files} of {name} are kept; the others are read again"
 
@@ -97,6 +98,7 @@ def failure(
     known = system_failure(error) if isinstance(error, OSError) else error
     flag = flags.get(FIELD_HEAD.split(known.field, 1)[0]) if known.field is not None else None
     said = known.message if flag is None else f"{flag}: {known.message}"
-    lines = (labelled("error", said, Tone.ERROR, style), *fix(known.remedy, style), *command_next(known.code, style))
+    step = () if known.code in NEXT_BY_NAME_ALONE else command_next(known.code, style)
+    lines = (labelled("error", said, Tone.ERROR, style), *fix(known.remedy, style), *step)
     code = EXIT_CODES.get(type(known), FAILED)
     return Shown((_error_json(encoded_error(known)),) if as_json else (), lines, code)

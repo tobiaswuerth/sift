@@ -379,7 +379,7 @@ def test_a_damaged_catalog_is_an_error_saying_what_to_do_also_in_json(settings: 
     damage_pages(settings.home / CATALOG)
     code, out, err = ran(settings, "status")
     assert (code, out, err.startswith("error  the catalog "), " is damaged: " in err) == (1, "", True, True)
-    assert f"  fix  {CATALOG_DAMAGED_REMEDY}\n" in err
+    assert err.endswith(f"  fix  {CATALOG_DAMAGED_REMEDY}\n")
     code, out, _ = ran(settings, "--json", "status")
     said = cast("dict[str, object]", cast("dict[str, object]", json.loads(out))["error"])
     expected = (1, "store_unavailable", "store_damaged", CATALOG_DAMAGED_REMEDY)

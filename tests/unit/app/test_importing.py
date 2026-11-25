@@ -169,6 +169,44 @@ def test_a_store_of_another_layout_is_skipped(tmp_path: Path, notes: Path) -> No
     assert "older than 1.8" in done.message
 
 
+NO_DATABASE = b"no database at all " * 64
+CATALOG_REMEDY = "add the folders of its collections to this sift, then index and embed them"
+STORE_REMEDY = "embed the collection: its files are indexed here, and its vectors were in that store alone"
+
+
+def test_a_catalog_of_sift_1_that_is_damaged_is_refused_saying_what_to_do(tmp_path: Path) -> None:
+    (tmp_path / "old").mkdir()
+    (tmp_path / "old" / FORMER_CATALOG).write_bytes(NO_DATABASE)
+    with pytest.raises(StoreUnavailableError, match=r"the catalog of sift 1\.x .* is damaged") as refused:
+        brought(tmp_path / "home", tmp_path / "old")
+    assert (refused.value.code, refused.value.remedy) == (Problem.STORE_UNAVAILABLE, CATALOG_REMEDY)
+
+
+def test_a_catalog_of_sift_1_whose_choices_are_no_json_is_damaged(tmp_path: Path, notes: Path) -> None:
+    former = former_home(tmp_path, {"notes": notes})
+    with contextlib.closing(sqlite3.connect(former / FORMER_CATALOG)) as catalog, catalog:
+        catalog.execute("UPDATE collections SET fields = '{nope'")
+    with pytest.raises(StoreUnavailableError, match=r"the catalog of sift 1\.x .* is damaged") as refused:
+        brought(tmp_path / "home", former)
+    assert (refused.value.code, refused.value.remedy) == (Problem.STORE_UNAVAILABLE, CATALOG_REMEDY)
+
+
+def test_a_store_of_sift_1_that_is_damaged_is_said_and_the_other_collections_are_imported(
+    tmp_path: Path, notes: Path
+) -> None:
+    write(tmp_path / "papers" / "halo.md", "# Halo\n\nDark matter halo models.\n")
+    former = former_home(tmp_path, {"notes": notes, "papers": tmp_path / "papers"}, hashed())
+    (former / "collections" / "notes.sqlite").write_bytes(NO_DATABASE)
+    home = tmp_path / "home"
+    damaged, whole = brought(home, former)
+    assert isinstance(damaged, Skipped)
+    assert (damaged.code, damaged.remedy) == (Problem.STORE_UNAVAILABLE, STORE_REMEDY)
+    assert f"the store of sift 1.x {former / 'collections' / 'notes.sqlite'} is damaged" in damaged.message
+    assert isinstance(whole, Brought)
+    assert (whole.documents, whole.vectors) == (1, 1)
+    assert [one.name for one in known_collections(home)] == ["notes", "papers"]
+
+
 def test_a_home_of_sift_1_without_collections_imports_nothing(tmp_path: Path) -> None:
     former = former_home(tmp_path, {})
     assert brought(tmp_path / "home", former) == ()

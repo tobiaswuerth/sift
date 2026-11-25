@@ -149,6 +149,19 @@ def test_a_store_whose_writer_file_may_not_be_written_is_said_to_be_so(tmp_path:
         held.chmod(stat.S_IREAD | stat.S_IWRITE)
 
 
+def test_a_lock_file_that_is_damaged_is_said_to_be_so_with_a_way_out_that_removes_no_collection(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "notes.sqlite"
+    Path(f"{store}{WRITER_SUFFIX}").write_bytes(b"no database at all " * 64)
+    with (
+        pytest.raises(StoreUnavailableError, match=r"the lock file .* is damaged") as refused,
+        sole_writer(store, "sift index"),
+    ):
+        pass
+    assert (refused.value.code, refused.value.remedy) == (Problem.STORE_UNAVAILABLE, "delete it: sift makes it again")
+
+
 def test_a_writer_leaves_one_file_beside_the_store(tmp_path: Path) -> None:
     store = tmp_path / "notes.sqlite"
     with sole_writer(store, "sift index"):
