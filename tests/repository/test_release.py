@@ -93,3 +93,24 @@ def test_the_package_is_built_by_tools_pinned() -> None:
     pinned = read(ROOT / BUILD_CONSTRAINTS)
     assert re.search(r"^uv-build==\S+ \\$", pinned, re.MULTILINE)
     assert "--hash=sha256:" in pinned
+
+
+def test_the_release_refuses_a_version_without_its_changelog_section_before_it_builds() -> None:
+    release = read(WORKFLOWS / "release.yml")
+    check = job(release, "check")
+    assert 'python3 -m tools release notes "$VERSION" > /dev/null' in check
+    assert "needs: check" in job(release, "build")
+
+
+def test_the_notes_released_are_those_the_check_refuses_a_version_without() -> None:
+    release = read(WORKFLOWS / "release.yml")
+    assert 'python3 -m tools release notes "$VERSION" > notes.md' in job(release, "github-release")
+    assert "awk" not in release
+
+
+def test_a_pre_release_is_published_as_one() -> None:
+    release = read(WORKFLOWS / "release.yml")
+    assert 'echo "prerelease=$(python3 -m tools release prerelease "$VERSION")"' in job(release, "check")
+    made = job(release, "github-release")
+    assert "PRERELEASE: ${{ needs.check.outputs.prerelease }}" in made
+    assert '--notes-file notes.md "${pre[@]}"' in made

@@ -30,6 +30,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       new: ${{ steps.version.outputs.new }}
+      prerelease: ${{ steps.notes.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -47,6 +48,14 @@ jobs:
             2) echo "v$version is new."; echo "new=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "::error::git ls-remote failed ($status): whether v$version is released is unknown"; exit "$status" ;;
           esac
+      - name: Does the changelog say what this version changes?
+        id: notes
+        if: steps.version.outputs.new == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 -m tools release notes "$VERSION" > /dev/null
+          echo "prerelease=$(python3 -m tools release prerelease "$VERSION")" >> "$GITHUB_OUTPUT"
 
   build:
     needs: check
@@ -74,8 +83,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # A workflow_run always runs on the default branch, so the environment's rule of main only always holds: the
+    # check job's conditions are what keep a release to main's own pushes. A required reviewer on the environment,
+    # set in the repository's settings, would put one click between a merge and PyPI.
     environment:
-      name: pypi  # which deploys from main only
+      name: pypi
       url: https://pypi.org/project/sift-rag/
     permissions:
       id-token: write  # trusted publishing: PyPI verifies this workflow, no token needed
@@ -106,7 +118,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check.outputs.version }}
           COMMIT: ${{ github.event.workflow_run.head_sha }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
         run: |
-          awk -v v="$VERSION" '/^## \[/ { found = index($0, "[" v "]") } found && !/^## \[/ && !/^\[.*\]: /' \
-            CHANGELOG.md > notes.md
-          gh release create "v$VERSION" dist/* --target "$COMMIT" --title "v$VERSION" --notes-file notes.md
+          python3 -m tools release notes "$VERSION" > notes.md
+          pre=()
+          if [ "$PRERELEASE" = true ]; then pre=(--prerelease); fi
+          gh release create "v$VERSION" dist/* --target "$COMMIT" --title "v$VERSION" --notes-file notes.md "${pre[@]}"

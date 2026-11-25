@@ -13,6 +13,7 @@ from tools import (
     check_text,
     check_twins,
     fts5_table,
+    release,
 )
 
 CHECKS = MappingProxyType(
@@ -24,6 +25,7 @@ CHECKS = MappingProxyType(
         "names": check_names.main,
         "package": check_package.main,
         "prose": check_prose.main,
+        "release": release.main,
         "shape": check_shape.main,
         "stubs": check_stubs.main,
         "text": check_text.main,

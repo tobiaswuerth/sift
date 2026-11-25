@@ -65,6 +65,9 @@ threads more workers made the suite slower (35 s on 8, 101 s on 32).
 
 ## Releasing
 
-Set the version in `pyproject.toml` and move the "Unreleased" changes under it in a pull request. Once CI passes on
-its merge commit, the release workflow builds the package, publishes it to PyPI by trusted publishing, tags the
-commit and creates the GitHub release. If a job fails after PyPI took the package, re-run only the failed jobs.
+Set the version in `pyproject.toml` and move the "Unreleased" changes under `## [VERSION] - YYYY-MM-DD`, dated the
+day of the release, in a pull request: the release workflow refuses a version without that section, or with an empty
+one, before it builds anything (`python -m tools release notes VERSION` prints what it would publish). Once CI passes
+on its merge commit, the release workflow builds the package, publishes it to PyPI by trusted publishing, tags the
+commit and creates the GitHub release, marked a pre-release for a, b, rc and dev versions. If a job fails after PyPI
+took the package, re-run only the failed jobs.
