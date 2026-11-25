@@ -1,6 +1,9 @@
 import http.client
+import io
+import json
 import select
 import socket
+from typing import cast
 
 import pytest
 
@@ -8,6 +11,7 @@ from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.links import ListUnresolved
 from sift.interfaces.acts.links import UNRESOLVED
 from sift.interfaces.server.client import BUSY, BUSY_REMEDY, sent
+from sift.interfaces.server.proxy import Pipes, proxied
 from sift.interfaces.server.serving import HomeServer, Serve
 from sift.settings import Settings
 from tests.homes import quiet
@@ -78,3 +82,23 @@ def test_past_its_most_connections_the_home_process_is_busy_and_says_so(settings
             for connection in held:
                 connection.close()
         assert (str(refused.value), refused.value.code, refused.value.remedy) == (BUSY, Problem.BUSY, BUSY_REMEDY)
+
+
+def test_past_its_most_connections_the_home_process_tells_an_agent_it_is_busy_in_an_answer_to_its_message(
+    settings: Settings,
+) -> None:
+    asked = json.dumps({"jsonrpc": "2.0", "id": 7, "method": "tools/list"}).encode()
+    out = io.BytesIO()
+    with running(settings, how=Serve(most_connections=3)) as server:
+        held = [kept(server), kept(server)]
+        try:
+            proxied(settings, quiet, Pipes(io.BytesIO(asked), out))
+        finally:
+            for connection in held:
+                connection.close()
+    answered = cast("dict[str, object]", json.loads(out.getvalue()))
+    assert answered == {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "error": {"code": -32603, "message": f"{BUSY}; fix: {BUSY_REMEDY}"},
+    }

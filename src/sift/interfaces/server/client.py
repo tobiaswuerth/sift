@@ -2,7 +2,7 @@ import http.client
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
+from typing import cast, final, override
 
 from sift.api.errors import InternalError, InvalidRequestError, Problem, SiftError, StoreUnavailableError
 from sift.api.events import EVENT_KINDS, Event, Reporter
@@ -28,6 +28,23 @@ class ClientLimits:
 
 
 NO_LONGER = ClientLimits()
+
+
+@final
+class WholeRequests(http.client.HTTPConnection):
+    def __init__(self, port: int, quiet: float) -> None:
+        super().__init__(LOCALHOST, port, timeout=quiet)
+        self.unsent = bytearray()
+
+    @override
+    def send(self, data: object) -> None:
+        self.unsent += cast("bytes", data)
+
+    @override
+    def getresponse(self) -> http.client.HTTPResponse:
+        whole, self.unsent = bytes(self.unsent), bytearray()
+        super().send(whole)
+        return super().getresponse()
 
 
 def event_of(name: str, data: Json) -> Event | None:
@@ -82,7 +99,7 @@ def _answer[R, A](act: Act[R, A], response: http.client.HTTPResponse, report: Re
 
 
 def sent[R, A](endpoint: Endpoint, act: Act[R, A], request: R, report: Reporter, limits: ClientLimits = NO_LONGER) -> A:
-    connection = http.client.HTTPConnection(LOCALHOST, endpoint.port, timeout=limits.quiet)
+    connection = WholeRequests(endpoint.port, limits.quiet)
     headers = {"Authorization": f"Bearer {endpoint.token}", "Content-Type": "application/json"}
     try:
         connection.request("POST", f"/api/{act.name}", json.dumps(encoded(request), allow_nan=False).encode(), headers)

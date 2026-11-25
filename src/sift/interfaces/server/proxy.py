@@ -14,6 +14,7 @@ from sift.api.events import Noted, Reporter
 from sift.api.serving import Served
 from sift.api.wire import Json
 from sift.interfaces.mcp.protocol import MCP_PATH
+from sift.interfaces.server.client import BUSY, BUSY_REMEDY, WholeRequests
 from sift.interfaces.server.endpoint import Endpoint, found
 from sift.settings import Settings
 
@@ -104,7 +105,7 @@ class _Home:
 
 
 def _posted(endpoint: Endpoint, body: bytes, quiet: float) -> tuple[int, bytes]:
-    connection = http.client.HTTPConnection(LOCALHOST, endpoint.port, timeout=quiet)
+    connection = WholeRequests(endpoint.port, quiet)
     try:
         connection.request("POST", MCP_PATH, body, {"Content-Type": "application/json"})
         response = connection.getresponse()
@@ -137,6 +138,8 @@ def _relayed(home: _Home, body: bytes) -> bytes | None:
         return _failed(body, f"{error.message}; fix: {error.remedy}")
     except (ConnectionError, TimeoutError, http.client.HTTPException) as error:
         return _failed(body, SILENT.format(error=error))
+    if status == http.client.SERVICE_UNAVAILABLE:
+        return _failed(body, f"{BUSY}; fix: {BUSY_REMEDY}")
     return None if status == http.client.ACCEPTED or not answer else answer
 
 

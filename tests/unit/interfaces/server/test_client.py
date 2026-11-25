@@ -56,6 +56,28 @@ def answering(reply: bytes | None, heard: list[bytes]) -> Generator[Endpoint]:
         listening.close()
 
 
+BUSY_AND_GONE = b"HTTP/1.1 503 Service Unavailable\r\nconnection: close\r\ncontent-length: 0\r\n\r\n"
+
+
+def test_a_home_process_that_says_busy_at_a_request_s_first_bytes_and_closes_is_heard() -> None:
+    first = list[bytes]()
+
+    def busy(listening: socket.socket) -> None:
+        with listening.accept()[0] as connection:
+            first.append(connection.recv(65536))
+            connection.sendall(BUSY_AND_GONE)
+
+    with socket.create_server(("127.0.0.1", 0)) as listening:
+        thread = threading.Thread(target=busy, args=(listening,), daemon=True)
+        thread.start()
+        endpoint = Endpoint(cast("tuple[str, int]", listening.getsockname())[1], 1, "the-token", "2.0.0")
+        with pytest.raises(StoreUnavailableError) as refused:
+            sent(endpoint, UNRESOLVED, ListUnresolved(k=7), list[Event]().append)
+        joined(thread, 30)
+    head, _, body = first[0].partition(b"\r\n\r\n")
+    assert (refused.value.code, json.loads(body)["k"], b"Bearer the-token" in head) == (Problem.BUSY, 7, True)
+
+
 def asked(reply: bytes | None, quiet: float = 30.0) -> tuple[Unresolved, list[Event], list[bytes]]:
     said, heard = list[Event](), list[bytes]()
     with answering(reply, heard) as endpoint:
