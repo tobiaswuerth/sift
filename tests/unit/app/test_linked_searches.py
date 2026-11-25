@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.filters import Filter
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
@@ -110,8 +110,11 @@ def test_a_name_several_notes_answer_to_is_refused_whichever_collections_are_sea
     write(tmp_path / "work" / "Acme AG.md", "Note: another Acme.\n")
     index(linked, IndexCollections(), lambda _: None)
     for collections in ((), ("vault",), ("work",)):
-        with pytest.raises(InvalidRequestError, match=r"names several notes: vault/Orgs/Acme AG\.md, work/Acme AG\.md"):
+        with pytest.raises(
+            InvalidRequestError, match=r"names several notes: vault/Orgs/Acme AG\.md, work/Acme AG\.md"
+        ) as refused:
             notes(linked, links_to=("Acme AG",), collections=collections)
+        assert refused.value.code == Problem.AMBIGUOUS
     assert notes(linked, links_to=(ACME,), collections=("vault",)) == [HANS]
 
 

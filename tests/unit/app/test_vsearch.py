@@ -9,7 +9,7 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError, NotFoundError, Problem
+from sift.api.errors import InvalidRequestError, ModelUnavailableError, NotFoundError, Problem
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchVectors, Unsearched
@@ -96,8 +96,6 @@ def test_the_query_is_embedded_as_a_query(home: Path) -> None:
         (partial(SearchVectors, "   "), "an empty query finds nothing"),
         (partial(SearchVectors, "halo", k=0), "0 is outside 1 to 10,000"),
         (partial(SearchVectors, "halo", k=10_001), "10,001 is outside 1 to 10,000"),
-        (partial(SearchVectors, f"a {BROKEN} query"), "the model gave no vector for the query"),
-        (partial(SearchVectors, f"a {DIRECTIONLESS} query"), "the model gave the query no direction"),
     ],
 )
 def test_a_query_that_cannot_be_searched_is_refused(
@@ -105,6 +103,16 @@ def test_a_query_that_cannot_be_searched_is_refused(
 ) -> None:
     with pytest.raises(InvalidRequestError, match=refusal):
         vsearch(home, request_(), Hashed())
+
+
+@pytest.mark.parametrize(
+    "query, refusal",
+    [(f"a {BROKEN} query", "the model gave no vector for the query"), (f"a {DIRECTIONLESS} query", "no direction")],
+)
+def test_a_query_the_model_cannot_place_is_said_to_be_the_model_s_failing(home: Path, query: str, refusal: str) -> None:
+    with pytest.raises(ModelUnavailableError, match=refusal) as refused:
+        vsearch(home, SearchVectors(query), Hashed())
+    assert refused.value.code == Problem.MODEL_UNAVAILABLE
 
 
 def test_a_collection_not_yet_embedded_is_passed_over_saying_so(home: Path, tmp_path: Path) -> None:

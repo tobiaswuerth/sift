@@ -93,9 +93,10 @@ def test_a_shortened_id_is_the_end_of_a_path(home: Path, short: str, whole: str)
 def test_a_shortened_id_several_paths_end_in_asks_for_the_whole(home: Path) -> None:
     for several in ("notes/c.md", "notes/b/c.md"):
         missing = unfound(home, several)
-        assert (missing.message, missing.remedy) == (
+        assert (missing.message, missing.remedy, missing.code) == (
             f"{several!r} matches a/b/c.md, x/b/c.md",
             "give the whole id",
+            Problem.AMBIGUOUS,
         )
 
 

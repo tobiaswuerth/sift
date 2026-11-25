@@ -13,16 +13,7 @@ from sift.api.collections import (
 )
 from sift.api.documents import GetDocuments, WantedDocument
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import (
-    InternalError,
-    InvalidRequestError,
-    JobStoppedError,
-    ModelUnavailableError,
-    NotFoundError,
-    SiftError,
-    StoreUnavailableError,
-    SystemFailureError,
-)
+from sift.api.errors import CODE_KINDS, InvalidRequestError, Problem, SiftError
 from sift.api.events import (
     Advanced,
     CollectionStarted,
@@ -96,13 +87,8 @@ REQUEST_SAMPLES: Mapping[str, object] = MappingProxyType(
 )
 ERROR_SAMPLES: Mapping[str, SiftError] = MappingProxyType(
     {
-        "invalid request": InvalidRequestError("k is 0, outside 1 to 10,000", "give 1 to 10,000", "k"),
-        "not found": NotFoundError("unknown document 'notes/x.md'", "take the id from a search result"),
-        "store unavailable": StoreUnavailableError("the store is busy", "wait, then ask again"),
-        "model unavailable": ModelUnavailableError("the model cannot be loaded", "see the log"),
-        "os": SystemFailureError("the disk is full", "free space on the disk"),
-        "stopped": JobStoppedError("the job was stopped", "run it again to go on from there"),
-        "internal": InternalError("the home process failed", "see its log"),
+        "invalid_request of a field": InvalidRequestError("k is 0, outside 1 to 10,000", "give 1 to 10,000", "k"),
+        **{code.value: CODE_KINDS[code](f"a refusal coded {code.value}", "what to do", code=code) for code in Problem},
     }
 )
 EVENT_SAMPLES: Mapping[str, Event] = MappingProxyType(

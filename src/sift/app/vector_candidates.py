@@ -4,7 +4,7 @@ from functools import partial
 
 import numpy as np
 
-from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
+from sift.api.errors import ModelUnavailableError, Problem, StoreUnavailableError
 from sift.api.ids import ChunkId, owner
 from sift.api.search import Hit, Options
 from sift.app import hits
@@ -41,9 +41,9 @@ RESCORING = Rescoring(RESCORE, vectors_of)
 def query_vector(models: Models, text: str) -> Floats:
     vector = models.encode([text], query=True).astype(np.float32).reshape(-1)
     if not bool(np.isfinite(vector).all()):
-        raise InvalidRequestError("the model gave no vector for the query", QUERY_REMEDY)
+        raise ModelUnavailableError("the model gave no vector for the query", QUERY_REMEDY)
     if not bool(vector.any()):
-        raise InvalidRequestError("the model gave the query no direction to be near to", QUERY_REMEDY)
+        raise ModelUnavailableError("the model gave the query no direction to be near to", QUERY_REMEDY)
     return vector
 
 

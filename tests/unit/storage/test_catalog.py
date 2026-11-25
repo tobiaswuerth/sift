@@ -162,8 +162,9 @@ def test_a_name_holds_letters_digits_underscores_dashes_and_dots(
 
 def test_names_that_differ_in_case_alone_are_one_name(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
     add_collection(catalog, home, NewCollection(folder(tmp_path, "Notes")))
-    with pytest.raises(InvalidRequestError, match="named 'Notes' already"):
+    with pytest.raises(InvalidRequestError, match="named 'Notes' already") as refused:
         add_collection(catalog, home, NewCollection(folder(tmp_path, "other"), name="notes"))
+    assert refused.value.code == Problem.TAKEN
 
 
 def test_what_is_no_folder_is_refused(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:

@@ -540,7 +540,7 @@
     }
   },
   "errors": {
-    "invalid request": {
+    "invalid_request of a field": {
       "error": {
         "kind": "invalid_request",
         "code": "invalid_request",
@@ -549,30 +549,183 @@
         "field": "k"
       }
     },
-    "not found": {
+    "invalid_request": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "invalid_request",
+        "message": "a refusal coded invalid_request",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "ambiguous": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "ambiguous",
+        "message": "a refusal coded ambiguous",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "taken": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "taken",
+        "message": "a refusal coded taken",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "not_found": {
       "error": {
         "kind": "not_found",
         "code": "not_found",
-        "message": "unknown document 'notes/x.md'",
-        "remedy": "take the id from a search result",
+        "message": "a refusal coded not_found",
+        "remedy": "what to do",
         "field": null
       }
     },
-    "store unavailable": {
+    "unknown_collection": {
+      "error": {
+        "kind": "not_found",
+        "code": "unknown_collection",
+        "message": "a refusal coded unknown_collection",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "unknown_document": {
+      "error": {
+        "kind": "not_found",
+        "code": "unknown_document",
+        "message": "a refusal coded unknown_document",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "unknown_note": {
+      "error": {
+        "kind": "not_found",
+        "code": "unknown_note",
+        "message": "a refusal coded unknown_note",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "inactive_collection": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "inactive_collection",
+        "message": "a refusal coded inactive_collection",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "store_unavailable": {
       "error": {
         "kind": "store_unavailable",
         "code": "store_unavailable",
-        "message": "the store is busy",
-        "remedy": "wait, then ask again",
+        "message": "a refusal coded store_unavailable",
+        "remedy": "what to do",
         "field": null
       }
     },
-    "model unavailable": {
+    "store_missing": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "store_missing",
+        "message": "a refusal coded store_missing",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "store_damaged": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "store_damaged",
+        "message": "a refusal coded store_damaged",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "store_newer": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "store_newer",
+        "message": "a refusal coded store_newer",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "sqlite_too_old": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "sqlite_too_old",
+        "message": "a refusal coded sqlite_too_old",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "keywords_remade": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "keywords_remade",
+        "message": "a refusal coded keywords_remade",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "not_embedded": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "not_embedded",
+        "message": "a refusal coded not_embedded",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "other_model": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "other_model",
+        "message": "a refusal coded other_model",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "out_of_time": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "out_of_time",
+        "message": "a refusal coded out_of_time",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "busy": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "busy",
+        "message": "a refusal coded busy",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "model_unavailable": {
       "error": {
         "kind": "model_unavailable",
         "code": "model_unavailable",
-        "message": "the model cannot be loaded",
-        "remedy": "see the log",
+        "message": "a refusal coded model_unavailable",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
+    "unauthorized": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "unauthorized",
+        "message": "a refusal coded unauthorized",
+        "remedy": "what to do",
         "field": null
       }
     },
@@ -580,8 +733,8 @@
       "error": {
         "kind": "os",
         "code": "os",
-        "message": "the disk is full",
-        "remedy": "free space on the disk",
+        "message": "a refusal coded os",
+        "remedy": "what to do",
         "field": null
       }
     },
@@ -589,8 +742,8 @@
       "error": {
         "kind": "stopped",
         "code": "stopped",
-        "message": "the job was stopped",
-        "remedy": "run it again to go on from there",
+        "message": "a refusal coded stopped",
+        "remedy": "what to do",
         "field": null
       }
     },
@@ -598,8 +751,8 @@
       "error": {
         "kind": "internal",
         "code": "internal",
-        "message": "the home process failed",
-        "remedy": "see its log",
+        "message": "a refusal coded internal",
+        "remedy": "what to do",
         "field": null
       }
     }

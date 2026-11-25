@@ -7,6 +7,8 @@ from typing import ClassVar, override
 
 class Problem(StrEnum):
     INVALID_REQUEST = "invalid_request"
+    AMBIGUOUS = "ambiguous"
+    TAKEN = "taken"
     NOT_FOUND = "not_found"
     UNKNOWN_COLLECTION = "unknown_collection"
     UNKNOWN_DOCUMENT = "unknown_document"
@@ -37,9 +39,13 @@ class SiftError(Exception):
 
     def __init__(self, message: str, remedy: str, *, code: Problem | None = None) -> None:
         super().__init__(message)
+        chosen = type(self).usual if code is None else code
+        kind = CODE_KINDS[chosen]
+        if not isinstance(self, kind):
+            raise TypeError(f"{type(self).__name__} cannot carry the code {chosen.value}, a {kind.__name__}'s")
         self.message = message
         self.remedy = remedy
-        self.code = type(self).usual if code is None else code
+        self.code = chosen
 
     @override
     def __reduce__(self) -> tuple[object, ...]:
@@ -82,6 +88,33 @@ class JobStoppedError(SiftError):
     usual: ClassVar[Problem] = Problem.STOPPED
 
 
+CODE_KINDS: Mapping[Problem, type[SiftError]] = MappingProxyType(
+    {
+        Problem.INVALID_REQUEST: InvalidRequestError,
+        Problem.AMBIGUOUS: InvalidRequestError,
+        Problem.TAKEN: InvalidRequestError,
+        Problem.INACTIVE_COLLECTION: InvalidRequestError,
+        Problem.UNAUTHORIZED: InvalidRequestError,
+        Problem.NOT_FOUND: NotFoundError,
+        Problem.UNKNOWN_COLLECTION: NotFoundError,
+        Problem.UNKNOWN_DOCUMENT: NotFoundError,
+        Problem.UNKNOWN_NOTE: NotFoundError,
+        Problem.STORE_UNAVAILABLE: StoreUnavailableError,
+        Problem.STORE_MISSING: StoreUnavailableError,
+        Problem.STORE_DAMAGED: StoreUnavailableError,
+        Problem.STORE_NEWER: StoreUnavailableError,
+        Problem.SQLITE_TOO_OLD: StoreUnavailableError,
+        Problem.KEYWORDS_REMADE: StoreUnavailableError,
+        Problem.NOT_EMBEDDED: StoreUnavailableError,
+        Problem.OTHER_MODEL: StoreUnavailableError,
+        Problem.OUT_OF_TIME: StoreUnavailableError,
+        Problem.BUSY: StoreUnavailableError,
+        Problem.MODEL_UNAVAILABLE: ModelUnavailableError,
+        Problem.OS: SystemFailureError,
+        Problem.STOPPED: JobStoppedError,
+        Problem.INTERNAL: InternalError,
+    }
+)
 OS_REMEDIES: Mapping[int, str] = MappingProxyType(
     {
         errno.ENOENT: "check that the path exists",

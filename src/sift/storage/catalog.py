@@ -290,13 +290,15 @@ class Placed:
 def _clash(wanted: Placed, other: Collection) -> InvalidRequestError | None:
     mine, theirs = Path(_same(wanted.folder)), Path(_same(other.folder))
     if mine == theirs:
-        return InvalidRequestError(f"{wanted.folder} is the collection {other.name!r} already", "index it instead")
+        said = f"{wanted.folder} is the collection {other.name!r} already"
+        return InvalidRequestError(said, "index it instead", code=Problem.TAKEN)
     if other.name.casefold() == wanted.name.casefold():
-        return InvalidRequestError(f"a collection is named {other.name!r} already", "choose another name")
-    if _same(other.store) == _same(wanted.store):
         return InvalidRequestError(
-            f"{wanted.store} is the store of the collection {other.name!r}", "give the new collection another name"
+            f"a collection is named {other.name!r} already", "choose another name", code=Problem.TAKEN
         )
+    if _same(other.store) == _same(wanted.store):
+        said = f"{wanted.store} is the store of the collection {other.name!r}"
+        return InvalidRequestError(said, "give the new collection another name", code=Problem.TAKEN)
     if not wanted.nested and (mine.is_relative_to(theirs) or theirs.is_relative_to(mine)):
         where = "lies inside" if mine.is_relative_to(theirs) else "holds"
         return InvalidRequestError(
@@ -349,7 +351,7 @@ def _cleared(transaction: Writing, home: Path, store: Path, identity: Collection
         return
     made_here = store.parent == home / STORES and holds_nothing(store)
     if not made_here and not left_by_add(store, identity):
-        raise InvalidRequestError(f"{store} exists already", STORE_TAKEN_REMEDY)
+        raise InvalidRequestError(f"{store} exists already", STORE_TAKEN_REMEDY, code=Problem.TAKEN)
     delete_store(store)
 
 

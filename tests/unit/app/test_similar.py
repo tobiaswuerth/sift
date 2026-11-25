@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError, NotFoundError
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindSimilar
 from sift.api.search import SearchKeywords, SearchResult, SearchVectors
@@ -118,9 +118,9 @@ def test_similar_takes_what_searches_take(papers: Path) -> None:
 def test_similar_needs_the_document_embedded(papers: Path, tmp_path: Path) -> None:
     write(tmp_path / "arxiv" / "new.md", "Fresh robots.\n")
     index(papers, IndexCollections(), lambda _: None)
-    with pytest.raises(InvalidRequestError, match=r"'arxiv/new\.md' has no vectors yet") as refused:
+    with pytest.raises(StoreUnavailableError, match=r"'arxiv/new\.md' has no vectors yet") as refused:
         similar(papers, FindSimilar("arxiv/new.md"))
-    assert refused.value.remedy is not None
+    assert (refused.value.remedy is not None, refused.value.code) == (True, Problem.NOT_EMBEDDED)
     assert "sift embed" in refused.value.remedy
     with pytest.raises(NotFoundError, match="no note or document"):
         similar(papers, FindSimilar("arxiv/missing.md"))

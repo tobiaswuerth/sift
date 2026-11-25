@@ -10,7 +10,7 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError, Problem
+from sift.api.errors import InvalidRequestError, ModelUnavailableError, Problem
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections
 from sift.api.search import Left, SearchHybrid
@@ -269,8 +269,9 @@ class Overflowing(Hashed):
 
 
 def test_a_reranker_giving_no_score_is_refused_not_ranked_at_random(home: Path) -> None:
-    with pytest.raises(InvalidRequestError, match="the reranker gave no score"):
+    with pytest.raises(ModelUnavailableError, match="the reranker gave no score") as refused:
         query(home, SearchHybrid("dark matter halo models"), Overflowing())
+    assert refused.value.code == Problem.MODEL_UNAVAILABLE
 
 
 def test_a_question_written_decomposed_finds_what_its_words_name(tmp_path: Path) -> None:

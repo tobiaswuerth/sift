@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from sift.api.errors import InvalidRequestError
+from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.ids import DocumentId
 from sift.api.links import FindSimilar
 from sift.api.search import SearchResult
@@ -37,7 +37,9 @@ def _like(note: Note, whole: str, transaction: Reading) -> Like:
     _, vectors = vectors_of(transaction, chunks)
     model = model_of(transaction)
     if not len(vectors) or model is None:
-        raise InvalidRequestError(f"{whole!r} has no vectors yet", searching.UNEMBEDDED_REMEDY)
+        raise StoreUnavailableError(
+            f"{whole!r} has no vectors yet", searching.UNEMBEDDED_REMEDY, code=Problem.NOT_EMBEDDED
+        )
     mean = vectors.astype(np.float32).mean(axis=0)
     length = float(np.linalg.norm(mean))
     if not np.isfinite(length) or length == 0:

@@ -69,7 +69,7 @@ def resolved_at(transaction: Reading, id_: str, relative: str, *, absolute: bool
         matches = [path for path in candidates if path.endswith(SEPARATOR + relative)]
     if len(matches) > 1 and not absolute:
         listed = ", ".join(matches[:MOST_LISTED]) + (", ..." if len(matches) > MOST_LISTED else "")
-        raise InvalidRequestError(f"{id_!r} matches {listed}", "give the whole id")
+        raise InvalidRequestError(f"{id_!r} matches {listed}", "give the whole id", code=Problem.AMBIGUOUS)
     found = stored(transaction, matches[0]) if len(matches) == 1 else None
     if found is None:
         raise unknown(id_)

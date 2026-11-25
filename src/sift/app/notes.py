@@ -119,7 +119,7 @@ def matches(collections: Sequence[Collection], id_: str) -> Matches:
         listed = ", ".join(sorted(each.id for each in found)[:AMBIGUOUS_SHOWN])
         more = ", ..." if len(found) > AMBIGUOUS_SHOWN else ""
         said = passed(f"{id_!r} names several notes: {listed}{more}", unread)
-        raise InvalidRequestError(said, _remedy(AMBIGUOUS_REMEDY, unread))
+        raise InvalidRequestError(said, _remedy(AMBIGUOUS_REMEDY, unread), code=Problem.AMBIGUOUS)
     return Matches(tuple(found), tuple(unread))
 
 

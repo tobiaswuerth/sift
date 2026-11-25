@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from sift.api.errors import InvalidRequestError
+from sift.api.errors import ModelUnavailableError
 from sift.api.events import Reporter
 from sift.api.fields import FieldValue
 from sift.api.ids import owner
@@ -108,7 +108,7 @@ def _scored(models: Models, request: SearchHybrid, candidates: list[Retrieved], 
     ]
     rerank = models.rerank(request.query, shown).astype(np.float64)
     if not bool(np.isfinite(rerank).all()):
-        raise InvalidRequestError("the reranker gave no score for some passages", QUERY_REMEDY)
+        raise ModelUnavailableError("the reranker gave no score for some passages", QUERY_REMEDY)
     cosine = np.array([cosines.get(each.chunk, np.nan) for each in candidates], np.float64)
     return blend(rerank, cosine, np.array([bool(found_names) for found_names in names], np.bool_)).astype(np.float32)
 
