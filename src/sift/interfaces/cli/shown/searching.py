@@ -49,12 +49,12 @@ def _footer(result: SearchResult, seconds: float, style: Style) -> str:
     return separator.join((found, SCORED[result.scored_by], *partial, searched, duration(seconds)))
 
 
-def hits(result: SearchResult, seconds: float, platform: str, style: Style) -> Shown:
+def hits(result: SearchResult, seconds: float, platform: str, style: Style, first: int = 1) -> Shown:
     if not result.searched and not result.ruled_out and not result.unsearched:
         return empty(platform, style)
-    ranks = len(str(len(result.hits)))
+    ranks = len(str(first + len(result.hits) - 1))
     scores = max((len(_score(hit.score)) for hit in result.hits), default=0)
-    lines = [line for rank, hit in enumerate(result.hits, 1) for line in _hit(rank, hit, ranks, scores)]
+    lines = [line for rank, hit in enumerate(result.hits, first) for line in _hit(rank, hit, ranks, scores)]
     problems = notice_lines(result.unsearched, style)
     notes = notice_lines(result.left_out, style, "note")
     loosened = (labelled("note", LOOSENED, Tone.WARNING, style),) if result.loosened else ()

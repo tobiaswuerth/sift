@@ -286,3 +286,11 @@ def test_a_refused_value_is_said_with_the_flag_that_gave_it(settings: Settings, 
     code, out, _ = ran(settings, "search", "brush", "-k", "0", "--json")
     said = cast("dict[str, dict[str, str]]", json.loads(out))["error"]
     assert (said["message"], said["field"]) == ("0 is outside 1 to 10,000", "k")
+
+
+def test_a_page_further_on_numbers_its_results_from_the_offset(settings: Settings, notes: Path) -> None:
+    searched_notes(settings, notes)
+    heads = [line.split() for line in ran(settings, "search", "note", "-k", "10")[1].splitlines() if line[:1] != " "]
+    code, out, _ = ran(settings, "search", "note", "-k", "1", "--offset", "2")
+    (head,) = [line.split() for line in out.splitlines() if line[:1] != " "]
+    assert (code, head[0], head[1:]) == (0, "3", heads[2][1:])

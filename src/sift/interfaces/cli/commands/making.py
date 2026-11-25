@@ -71,8 +71,11 @@ def searched[R](act: Act[R, SearchResult]) -> Command:
         started = context.clock()
         answer = answered(act, namespace, context, None)
         seconds = context.clock() - started
+        first = cast("int", vars(namespace)["offset"]) + 1
         found = (
-            Shown((as_json(answer),), ()) if context.json else hits(answer, seconds, context.platform, context.style)
+            Shown((as_json(answer),), ())
+            if context.json
+            else hits(answer, seconds, context.platform, context.style, first)
         )
         return found._replace(code=FAILED if answer.unsearched else DONE)
 
