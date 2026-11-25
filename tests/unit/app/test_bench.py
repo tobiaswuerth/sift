@@ -99,6 +99,12 @@ REFUSED = (
     ('[{"query": "x", "relevant": {"notes/rl.md": "high"}}]', RULED_OUT),
     ('[{"query": "x", "relevant": {"notes/rl.md": true}}]', RULED_OUT),
     ('[{"query": "x", "relevant": {"notes/rl.md": -1}}]', RULED_OUT),
+    ('[{"query": "x", "relevant": {"notes/rl.md": Infinity}}]', RULED_OUT),
+    ('[{"query": "x", "relevant": {"notes/rl.md": NaN}}]', RULED_OUT),
+    (f'[{{"query": "x", "relevant": {{"notes/rl.md": {"9" * 400}}}}}]', RULED_OUT),
+    (f'[{{"query": "x", "relevant": {{"notes/rl.md": {"9" * 5_000}}}}}]', "is no JSON"),
+    ("[" * 100_000, "is nested deeper than a list of cases"),
+    ("[" * 9 + "]" * 9, "is nested deeper than a list of cases"),
     ('[{"relevant": ["notes/rl.md"]}]', RULED_OUT),
     ('[{"query": " ", "relevant": ["notes/rl.md"]}]', RULED_OUT),
     ('[{"query": "x", "relevant": ["notes/rl.md"]}, "a case"]', "case 2 needs"),
@@ -115,6 +121,16 @@ def test_a_file_of_cases_sift_cannot_measure_by_is_refused_saying_which_case(
     with pytest.raises(InvalidRequestError, match=said) as refused:
         cases_of(home, tmp_path / "cases.json")
     assert refused.value.field == "file"
+
+
+def test_a_file_of_cases_is_read_in_the_encodings_json_is_written_in(home: Path, tmp_path: Path) -> None:
+    cases = '[{"query": "reward", "relevant": ["notes/rl.md"]}]'
+    for encoding in ("utf-8", "utf-8-sig", "utf-16", "utf-32"):
+        (tmp_path / "cases.json").write_bytes(cases.encode(encoding))
+        assert cases_of(home, tmp_path / "cases.json") == (Case("reward", {"notes/rl.md": 1.0}),)
+    (tmp_path / "cases.json").write_bytes(bytes([255, 254, 255]))
+    with pytest.raises(InvalidRequestError, match="is no JSON"):
+        cases_of(home, tmp_path / "cases.json")
 
 
 def test_a_file_that_is_no_json_too_long_or_unreadable_is_refused(home: Path, tmp_path: Path) -> None:

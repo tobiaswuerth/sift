@@ -1,4 +1,5 @@
 import json
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from sift.app.loading import prepared
 from sift.app.resident import ResidentCodes
 from sift.app.searching import Watching
 from sift.domain.rank.measures import CUT, Grades, found, ndcg, recall, reciprocal_rank
+from sift.domain.text.json_values import deeper_than
 from sift.inference.models import Models
 
 MOST_FILE_BYTES = 64 << 20
@@ -29,6 +31,8 @@ CASE_REMEDY = (
 UNREAD_REMEDY = "give the path of a file this user may read"
 TOO_LONG = f"the file is longer than {MOST_FILE_BYTES:,} bytes"
 TOO_LONG_REMEDY = "split the cases into several files"
+MOST_NESTING = 8
+NESTED = "is nested deeper than a list of cases"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,13 +59,22 @@ def _read(path: Path) -> object:
     if len(raw) > MOST_FILE_BYTES:
         raise InvalidRequestError(f"{path}: {TOO_LONG}", TOO_LONG_REMEDY, FIELD)
     try:
-        return cast("object", json.loads(raw))
+        text = raw.decode(json.detect_encoding(raw))
+        if deeper_than(text, MOST_NESTING):
+            raise InvalidRequestError(f"{path} {NESTED}", f"write {SHAPE}", FIELD)
+        return cast("object", json.loads(text))
     except ValueError:
         raise InvalidRequestError(f"{path} is no JSON", f"write {SHAPE}", FIELD) from None
 
 
 def _grade(value: object) -> float | None:
-    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) and value >= 0 else None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    try:
+        grade = float(value)
+    except OverflowError:
+        return None
+    return grade if math.isfinite(grade) and grade >= 0 else None
 
 
 def _grades(relevant: object) -> dict[str, float] | None:

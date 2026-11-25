@@ -20,6 +20,7 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.api.serving` | `MOST_PORT` | `65535` |
 | `sift.api.serving` | `MOST_IDLE_SECONDS` | `604_800` |
 | `sift.app.bench` | `MOST_FILE_BYTES` | `64 << 20` |
+| `sift.app.bench` | `MOST_NESTING` | `8` |
 | `sift.app.documents` | `MOST_LISTED` | `5` |
 | `sift.app.importing` | `KEY_BYTES` | `8` |
 | `sift.app.kept_decoded` | `KEPT_BYTES` | `512 << 20` |
