@@ -44,6 +44,10 @@ def test_on_a_gpu_with_room_sift_caps_itself_at_its_budget_in_native_bfloat16() 
     cuda = FakeCuda(free=20 * GIB, total=24 * GIB, used=6 * GIB)
     assert chosen(cuda, NONE) == Device("cuda", torch.bfloat16, threads=1)
     assert (cuda.fractions, cuda.contexts) == ([pytest.approx((18 - 2.4) / 24)], [])
+    beside_mps = FakeCuda(free=20 * GIB, total=24 * GIB, used=6 * GIB)
+    assert chosen(beside_mps, Hardware(mps=True, nvidia=True, cuda_build="12.6")) == Device(
+        "cuda", torch.bfloat16, threads=1
+    )
     assert cuda.emulated == [False]
     assert chosen(FakeCuda(free=20 * GIB, total=24 * GIB, used=0, bf16=False), NONE).dtype == torch.float32
 

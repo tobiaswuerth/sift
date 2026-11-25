@@ -138,3 +138,25 @@ def test_a_document_linking_the_note_is_still_alike(tmp_path: Path) -> None:
     indexed(home)
     embed(home, EmbedCollections(), quiet, Hashed())
     assert ids(similar(home, FindSimilar("v/Robots.md", k=1))) == ["v/Mop.md"]
+
+
+def test_similar_is_sorted_and_narrowed_by_links_as_searches_are(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    notes = {
+        "Robots.md": ROBOTS,
+        "Mop.md": f"---\nrank: 2\n---\n{ROBOTS}See [[Soup]].\n",
+        "Soup.md": "---\nrank: 1\n---\nSoup.\n",
+    }
+    collection(tmp_path, home, "v", notes)
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
+    asked = (
+        FindSimilar("v/Robots.md"),
+        FindSimilar("v/Robots.md", sort="rank"),
+        FindSimilar("v/Robots.md", links_to=("Soup",)),
+    )
+    assert [ids(similar(home, each)) for each in asked] == [
+        ["v/Mop.md", "v/Soup.md"],
+        ["v/Soup.md", "v/Mop.md"],
+        ["v/Mop.md"],
+    ]

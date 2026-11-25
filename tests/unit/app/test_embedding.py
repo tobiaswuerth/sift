@@ -9,7 +9,7 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import CollectionEmbedded, EmbedCollections, Embedded
-from sift.api.errors import InvalidRequestError, Problem
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem
 from sift.api.events import Advanced, Event, Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections, Skipped
 from sift.app.collections import add
@@ -127,6 +127,22 @@ def test_a_collection_whose_store_is_gone_is_skipped_and_others_embedded(home: P
     found = {each.name: each.outcome for each in embed(home, EmbedCollections(), quiet, Hashed()).collections}
     assert isinstance(found["notes"], Skipped)
     assert found["more"] == Embedded(1, 0)
+
+
+def test_the_collections_named_alone_are_embedded_and_one_unknown_embeds_none(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "more" / "a.md", "# A\n\nAnother note.\n")
+    add(home, AddCollection(str(tmp_path / "more")))
+    indexed(home)
+    models = Hashed()
+    with pytest.raises(NotFoundError, match="no collection is named 'nope'"):
+        embed(home, EmbedCollections(("more", "nope")), quiet, models)
+    held = [counted(store(home, name), "SELECT count(*) FROM vectors") for name in ("notes", "more")]
+    assert (held, models.asked) == ([0, 0], [])
+    done = embed(home, EmbedCollections(("more",)), quiet, models).collections
+    assert (done, counted(store(home), "SELECT count(*) FROM vectors")) == (
+        (CollectionEmbedded("more", Embedded(1, 0)),),
+        0,
+    )
 
 
 def test_a_reset_says_which_store_it_could_not_clear(home: Path, tmp_path: Path) -> None:
