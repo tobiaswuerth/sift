@@ -25,3 +25,7 @@ Thumbs.db
 
 # Local sift index, if SIFT_HOME points into the repo
 .sift/
+
+# Local notes and reports, never committed
+reports/
+research_notes/

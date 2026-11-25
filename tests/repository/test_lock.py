@@ -35,3 +35,10 @@ def test_every_dependency_says_why_its_lowest_version() -> None:
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     listed = project.split("\ndependencies = [\n", 1)[1].split("\n]", 1)[0].split("\n")
     assert [line for line in listed if "# " not in line] == []
+
+
+def test_the_coverage_badge_says_what_the_gate_enforces() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    report = cast("dict[str, dict[str, dict[str, int]]]", project["tool"])["coverage"]["report"]
+    badge = f"https://img.shields.io/badge/coverage-{report['fail_under']}%25-brightgreen"
+    assert badge in (ROOT / "README.md").read_text(encoding="utf-8")
