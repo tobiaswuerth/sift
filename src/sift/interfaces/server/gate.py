@@ -38,13 +38,13 @@ class Gate:
         with self.condition:
             self.condition.wait_for(lambda: not self.held_alone)
             self.held_alone = True
-            if self.readers:
-                report(Noted(WAITING_FOR_READS))
-            if not self.condition.wait_for(lambda: self.readers == 0, timeout=patience):
-                self.held_alone = False
-                self.condition.notify_all()
-                raise StoreUnavailableError(STILL_READ.format(seconds=patience), STILL_READ_REMEDY, code=Problem.BUSY)
         try:
+            with self.condition:
+                if self.readers:
+                    report(Noted(WAITING_FOR_READS))
+                if not self.condition.wait_for(lambda: self.readers == 0, timeout=patience):
+                    said = STILL_READ.format(seconds=patience)
+                    raise StoreUnavailableError(said, STILL_READ_REMEDY, code=Problem.BUSY)
             yield
         finally:
             with self.condition:

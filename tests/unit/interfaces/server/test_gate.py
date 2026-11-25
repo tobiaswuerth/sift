@@ -2,10 +2,10 @@ import threading
 
 import pytest
 
-from sift.api.errors import Problem, StoreUnavailableError
+from sift.api.errors import JobStoppedError, Problem, StoreUnavailableError
 from sift.api.events import Event, Noted
 from sift.interfaces.server.gate import WAITING_FOR_ALONE, WAITING_FOR_READS, Gate
-from tests.waits import crossed, joined
+from tests.waits import crossed, joined, until
 
 ROUNDS = 300
 
@@ -70,3 +70,36 @@ def test_a_command_that_waits_too_long_for_reads_is_refused_and_lets_them_go_on(
     with gate.alone(said.append):
         assert gate.held_alone is True
     assert said == [Noted(WAITING_FOR_READS)]
+
+
+def test_a_command_stopped_as_it_waits_for_reads_leaves_the_home_to_reads_and_commands() -> None:
+    gate, said = Gate(), list[Event]()
+
+    def stopped(_event: Event) -> None:
+        raise JobStoppedError("the job was stopped", "run it again")
+
+    with gate.shared(said.append):
+        with pytest.raises(JobStoppedError), gate.alone(stopped):
+            pass
+        assert (gate.readers, gate.held_alone) == (1, False)
+        with gate.shared(said.append):
+            pass
+    with gate.alone(said.append):
+        assert gate.held_alone is True
+    assert (gate.readers, gate.held_alone, said) == (0, False, [])
+
+
+def test_a_read_that_comes_while_a_command_holds_the_home_alone_is_told_so_and_runs_after_it() -> None:
+    gate, said, read = Gate(), list[Event](), threading.Event()
+
+    def reading() -> None:
+        with gate.shared(said.append):
+            read.set()
+
+    thread = threading.Thread(target=reading)
+    with gate.alone(said.append):
+        thread.start()
+        assert until(lambda: said == [Noted(WAITING_FOR_ALONE)])
+        assert not read.is_set()
+    joined(thread, 30)
+    assert (read.is_set(), gate.readers, gate.held_alone) == (True, 0, False)
