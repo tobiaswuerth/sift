@@ -1,4 +1,5 @@
 import json
+import unicodedata
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import NamedTuple, NewType, cast
@@ -224,11 +225,12 @@ class PathRow(NamedTuple):
 
 
 PATHS_NAMED = """SELECT s.path FROM sources s JOIN documents d ON d.source = s.id AND d.key = ''
-                 WHERE s.folded = ? ORDER BY s.path"""
+                 WHERE s.folded IN (?, ?) ORDER BY s.path"""
 
 
 def paths_named(transaction: Reading, name: str) -> list[str]:
-    return [found.path for found in rows(transaction, PathRow, PATHS_NAMED, (name.casefold(),))]
+    forms = (unicodedata.normalize("NFC", name).casefold(), unicodedata.normalize("NFD", name).casefold())
+    return [found.path for found in rows(transaction, PathRow, PATHS_NAMED, forms)]
 
 
 class Passage(NamedTuple):

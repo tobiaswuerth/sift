@@ -1,4 +1,5 @@
 import os
+import unicodedata
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -76,15 +77,22 @@ def place(known: Sequence[Collection], id_: str) -> tuple[Collection, str]:
     return refuse_inactive(found[0]), found[1]
 
 
+def _composed(path: str) -> str:
+    return unicodedata.normalize("NFC", path)
+
+
 def resolved_at(transaction: Reading, name: str, id_: str, relative: str, *, absolute: bool) -> Stored:
     exact = stored(transaction, relative) or stored(transaction, *split_keyed_path(relative))
     if exact is not None:
         return exact
     candidates = paths_named(transaction, relative.rsplit(SEPARATOR, 1)[-1])
+    composed = _composed(relative)
     if absolute:
-        matches = [path for path in candidates if path.casefold() == relative.casefold()]
+        matches = [path for path in candidates if _composed(path).casefold() == composed.casefold()]
     else:
-        matches = [path for path in candidates if path.endswith(SEPARATOR + relative)]
+        matches = [
+            path for path in candidates if _composed(path) == composed or _composed(path).endswith(SEPARATOR + composed)
+        ]
     if len(matches) > 1 and not absolute:
         shown = [public_id(name, path, "") for path in matches[:MOST_LISTED]]
         listed = ", ".join(shown) + (", ..." if len(matches) > MOST_LISTED else "")
