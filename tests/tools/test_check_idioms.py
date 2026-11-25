@@ -4,13 +4,9 @@ from collections.abc import Mapping
 import pytest
 
 from sift.interfaces.cli.entries import ENTRIES
-from tools import check_idioms
+from tests.tools.idiom_problems import problems
+from tools import check_idioms, idioms_storage
 from tools.canonical import canonical
-from tools.check_idioms import idioms
-
-
-def problems(path: str, source: str) -> list[str]:
-    return [finding.problem for finding in idioms(path, source)]
 
 
 def test_plain_code_passes_everywhere() -> None:
@@ -172,7 +168,7 @@ def test_catching_recursion_error_as_one_of_its_bases_without_letting_it_through
     "handlers",
     [
         "except RecursionError:\n    raise\nexcept RuntimeError:\n    pass\n",
-        "except RuntimeError as error:\n    if not mine(error):\n        raise\n    print(error)\n",
+        "except RecursionError:\n    raise\nexcept RuntimeError as error:\n    if not mine(error):\n        raise\n",
         "except BaseException:\n    close()\n    raise\n",
         "except (ValueError, OSError):\n    pass\n",
     ],
@@ -265,7 +261,7 @@ def test_the_environment_read_through_an_alias_is_found(source: str) -> None:
 
 
 def test_an_alias_hides_no_database_left_open_and_no_exit_or_print() -> None:
-    assert problems("tests/a.py", "import sqlite3 as s\ns.connect(':memory:')\n") == [check_idioms.LEFT_OPEN]
+    assert problems("tests/a.py", "import sqlite3 as s\ns.connect(':memory:')\n") == [idioms_storage.LEFT_OPEN]
     assert problems("src/sift/app/a.py", "from sys import exit as leave\nleave(1)\n") == [
         "sys.exit outside sift.interfaces: raise a SiftError"
     ]
@@ -276,18 +272,20 @@ def test_an_alias_hides_no_database_left_open_and_no_exit_or_print() -> None:
 
 def test_a_write_handle_is_made_in_the_storage_modules_alone() -> None:
     source = "from sift.storage.database import Writing\n\nWriting(connection)\n"
-    assert problems("src/sift/app/a.py", source) == [check_idioms.HANDLE_MADE]
+    assert problems("src/sift/app/a.py", source) == [idioms_storage.HANDLE_MADE]
     assert problems("src/sift/storage/database.py", source) == []
 
 
 def test_sql_on_a_transaction_s_connection_runs_in_sift_storage_alone() -> None:
     source = "transaction.connection.execute('SELECT 1')\n"
-    assert problems("src/sift/app/a.py", source) == [check_idioms.RAW_SQL]
+    assert problems("src/sift/app/a.py", source) == [idioms_storage.RAW_SQL]
     assert problems("src/sift/storage/a.py", source) == []
 
 
 def test_a_name_bound_once_is_followed_to_what_it_names() -> None:
-    assert problems("src/sift/app/a.py", "held = transaction.connection\nheld.execute('x')\n") == [check_idioms.RAW_SQL]
+    assert problems("src/sift/app/a.py", "held = transaction.connection\nheld.execute('x')\n") == [
+        idioms_storage.RAW_SQL
+    ]
     assert problems("src/sift/domain/a.py", "say = print\nsay(1)\n") == [
         "print() in the core: return the value and let the caller act"
     ]
@@ -305,21 +303,21 @@ def test_a_sift_module_changed_through_its_namespace_or_in_a_tuple_is_found(chan
 
 def test_a_document_s_text_cut_in_sql_is_found_in_sift_alone() -> None:
     cut = 'X = "SELECT substr(d.text, c.start + 1, c.length) FROM chunks c"\n'
-    assert problems("src/sift/storage/a.py", cut) == [check_idioms.TEXT_CUT_IN_SQL]
+    assert problems("src/sift/storage/a.py", cut) == [idioms_storage.TEXT_CUT_IN_SQL]
     assert problems("src/sift/storage/a.py", 'X = "SELECT substr(path, 2), text FROM sources"\n') == []
     assert problems("tests/a.py", cut) == []
 
 
 def test_a_store_is_opened_by_hand_in_sift_storage_alone() -> None:
     source = "from sift.storage.store import open_store\n\nopen_store(path, 1)\n"
-    assert problems("src/sift/app/a.py", source) == [check_idioms.STORE_OPENED_BY_HAND]
+    assert problems("src/sift/app/a.py", source) == [idioms_storage.STORE_OPENED_BY_HAND]
     assert problems("src/sift/storage/a.py", source) == []
     assert problems("tests/a.py", source) == []
 
 
 @pytest.mark.parametrize("cut", ["LAYOUT[:-1]", "store.LAYOUT[-1]", "CATALOG_LAYOUT[: -2]", "LAYOUT[-3:]"])
 def test_a_layout_cut_from_its_end_is_found(cut: str) -> None:
-    assert problems("tests/a.py", f"before = {cut}\n") == [check_idioms.LAYOUT_FROM_ITS_END]
+    assert problems("tests/a.py", f"before = {cut}\n") == [idioms_storage.LAYOUT_FROM_ITS_END]
 
 
 def test_a_layout_cut_at_a_place_passes() -> None:

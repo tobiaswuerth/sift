@@ -92,6 +92,8 @@ def unloaded(name: str, error: BaseException, device: str) -> ModelUnavailableEr
 def within_memory[T](name: str, device: str, run: Callable[[], T]) -> T:
     try:
         return run()
+    except RecursionError:
+        raise
     except (RuntimeError, MemoryError, OSError) as error:
         if not too_large(error):
             raise

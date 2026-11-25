@@ -1,10 +1,12 @@
 import ast
 import copy
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast, final, override
 
+SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 ATTRIBUTE_GETTERS = frozenset({"getattr", "builtins.getattr"})
 CASTS = frozenset({"cast", "typing.cast"})
 ANNOTATED = "Annotated"
@@ -27,31 +29,63 @@ def _dotted(node: ast.expr) -> bool:
     return isinstance(node, ast.Name)
 
 
-def bindings(tree: ast.Module) -> Mapping[str, str]:
-    assigned = [node for node in ast.walk(tree) if isinstance(node, ast.Assign | ast.AnnAssign | ast.AugAssign)]
-    stored = Counter(
-        each.id
-        for node in assigned
-        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
-        for each in ast.walk(target)
-        if isinstance(each, ast.Name)
-    )
-    return MappingProxyType(
-        {
-            target.id: ast.unparse(node.value)
-            for node in assigned
-            if isinstance(node, ast.Assign) and len(node.targets) == 1
-            for target in node.targets
-            if isinstance(target, ast.Name) and stored[target.id] == 1 and _dotted(node.value)
-        }
-    )
+def _own(scope: ast.AST) -> Iterator[ast.AST]:
+    for child in ast.iter_child_nodes(scope):
+        if not isinstance(child, SCOPES):
+            yield child
+            yield from _own(child)
+
+
+def _parameters(scope: ast.AST) -> Iterator[str]:
+    if isinstance(scope, SCOPES):
+        yield from (each.arg for each in ast.walk(scope.args) if isinstance(each, ast.arg))
+
+
+@dataclass(frozen=True, slots=True)
+class _Scope:
+    stored: frozenset[str]
+    bound: Mapping[str, str]
+
+
+def _scope(node: ast.AST, *, follow: bool) -> _Scope:
+    nodes = list(_own(node))
+    names = (each.id for each in nodes if isinstance(each, ast.Name) and not isinstance(each.ctx, ast.Load))
+    stored = Counter([*names, *_parameters(node)])
+    bound = {
+        target.id: ast.unparse(each.value)
+        for each in nodes
+        if follow and isinstance(each, ast.Assign) and len(each.targets) == 1
+        for target in each.targets
+        if isinstance(target, ast.Name) and stored[target.id] == 1 and _dotted(each.value)
+    }
+    return _Scope(frozenset(stored), MappingProxyType(bound))
 
 
 @final
 class _Resolved(ast.NodeTransformer):
-    def __init__(self, names: Mapping[str, str]) -> None:
+    def __init__(self, names: Mapping[str, str], *, follow: bool) -> None:
         self.names = names
+        self.follow = follow
         self.resolving: set[str] = set()
+
+    def _scoped[S: (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)](self, node: S) -> S:
+        outer, scope = self.names, _scope(node, follow=self.follow)
+        self.names = {**{name: whole for name, whole in outer.items() if name not in scope.stored}, **scope.bound}
+        self.generic_visit(node)
+        self.names = outer
+        return node
+
+    @override
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        return self._scoped(node)
+
+    @override
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
+        return self._scoped(node)
+
+    @override
+    def visit_Lambda(self, node: ast.Lambda) -> ast.Lambda:
+        return self._scoped(node)
 
     @override
     def visit_Name(self, node: ast.Name) -> ast.expr:
@@ -136,13 +170,14 @@ def unquoted(tree: ast.Module) -> ast.Module:
     return ast.fix_missing_locations(cast("ast.Module", _Unquoted().visit(copy.deepcopy(tree))))
 
 
-def _resolved(tree: ast.Module, names: Mapping[str, str]) -> ast.Module:
-    return ast.fix_missing_locations(cast("ast.Module", _Resolved(names).visit(copy.deepcopy(tree))))
+def _resolved(tree: ast.Module, *, follow: bool) -> ast.Module:
+    names = {**_scope(tree, follow=follow).bound, **aliases(tree)}
+    return ast.fix_missing_locations(cast("ast.Module", _Resolved(names, follow=follow).visit(copy.deepcopy(tree))))
 
 
 def imports_resolved(tree: ast.Module) -> ast.Module:
-    return _resolved(tree, aliases(tree))
+    return _resolved(tree, follow=False)
 
 
 def canonical(tree: ast.Module) -> ast.Module:
-    return _resolved(tree, {**bindings(tree), **aliases(tree)})
+    return _resolved(tree, follow=True)

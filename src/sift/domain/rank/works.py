@@ -5,7 +5,7 @@ from urllib.parse import unquote
 from sift.api.fields import FieldValue
 
 DOI_FIELD = "doi"
-DOI = re.compile(r"(?<!\d)10\.\d+(?:\.\d+)*/\S+")
+DOI = re.compile(r"(?<![0-9])10\.[0-9]+(?:\.[0-9]+)*/\S+")
 DOI_END = ".,;:)]}>\"'"
 
 

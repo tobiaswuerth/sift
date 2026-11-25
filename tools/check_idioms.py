@@ -5,9 +5,11 @@ from collections.abc import Callable, Iterator, Mapping
 from functools import cache
 from pathlib import Path
 from types import MappingProxyType
+from typing import TypeGuard
 
 from tools.canonical import canonical
 from tools.findings import PYTHON_ROOTS, Finding, found, report
+from tools.idioms_storage import storage_idioms
 
 CORE = ("src/sift/api/", "src/sift/domain/")
 INTERFACES = "src/sift/interfaces/"
@@ -25,38 +27,27 @@ BANNED_METHODS = MappingProxyType(
 UNSEEN_CATEGORIES = frozenset({"Cc", "Cf", "Cn", "Co", "Cs", "Me", "Mn", "Zl", "Zp", "Zs"})
 SEEN = frozenset({" "})
 LOOKS_LIKE_DAMAGE = frozenset({"\N{REPLACEMENT CHARACTER}"})
-NUMBERED_PLACEHOLDER = re.compile(r"\?[0-9]")
 IO_BUILTINS = frozenset({"open", "input", "print"})
 IO_CALLS = IO_BUILTINS | frozenset(f"builtins.{name}" for name in IO_BUILTINS)
 EXITS = frozenset({"SystemExit", "exit", "quit", "sys.exit", "builtins.exit", "builtins.quit", "builtins.SystemExit"})
+HARD_EXITS = frozenset({"os._exit", "os.abort"})
+ENDS_ITS_OWN_PROCESS = frozenset({"src/sift/ingest/sandbox.py"})
 NOW = frozenset({"datetime.datetime.now", "datetime.datetime.today", "datetime.datetime.utcnow", "datetime.date.today"})
+TIMERS = frozenset(
+    f"time.{name}{unit}"
+    for name in ("time", "perf_counter", "monotonic", "process_time", "thread_time")
+    for unit in ("", "_ns")
+)
 CLOCK_READ = "the clock read outside sift.interfaces: take the time as a value, and let the interface read the clock"
 PATCHED = "a sift module or class changed by a test: pass a fake, a value or an environment in instead"
 SETTERS = frozenset({"setattr", "delattr", "builtins.setattr", "builtins.delattr"})
-HANDLE_MAKERS = frozenset({"src/sift/storage/database.py", "src/sift/storage/keywords.py"})
-HANDLES = frozenset({"Writing", "WritingDocuments"})
-HANDLE_MADE = "a write handle made by hand: open one with writing() or writing_documents()"
-STORAGE = "src/sift/storage/"
-STORE_OPENED_BY_HAND = (
-    "a store opened by hand outside sift.storage: open it with connected() or read_store(), "
-    "which close it and say why a store cannot be used"
-)
-SQL_CALLS = frozenset({"execute", "executemany", "executescript"})
-RAW_SQL = "SQL run on a transaction's connection outside sift.storage: add a storage function and call it"
-LAYOUT_FROM_ITS_END = (
-    "a layout cut from its end, which the next migration moves: "
-    "cut it before the migration it means, found by what that migration holds"
-)
-NUMBERED = (
-    "a numbered SQL placeholder, which Python 3.12.0 to 3.12.3 take for a named one: "
-    "bind by name from a dict, or give each plain ? its own value"
-)
-LEFT_OPEN = (
-    "sqlite3.connect left to the garbage collector, a ResourceWarning in whichever test runs then: "
-    "open it in `with closing(sqlite3.connect(...)) as db:`"
-)
+MODULE_TABLE = "sys.modules"
+MODULE_LOADERS = frozenset({"import_module", "importlib.import_module"})
+SIFT = "sift"
 SETTINGS = "src/sift/settings.py"
 ENVIRONMENT = frozenset({"environ", "environb", "getenv", "getenvb", "putenv", "unsetenv"})
+ENVIRONMENT_MODULES = frozenset({"os", "nt", "posix"})
+NAMESPACES = frozenset({"vars", "builtins.vars"})
 ENVIRONMENT_READ = "the environment read outside sift.settings: parse it there and pass the Settings in"
 CLOCKS = frozenset({"time", "timeit"})
 CLOCK_IN_A_TEST = (
@@ -70,11 +61,11 @@ RECURSION_CAUGHT = (
     "through: re-raise what is caught, or put `except RecursionError: raise` first"
 )
 RECURSION_AND_BASES = frozenset({"RecursionError", "RuntimeError", "Exception", "BaseException"})
-TEXT_CUT = re.compile(r"substr\(\s*(?:\w+\.)?text\b", re.IGNORECASE)
-TEXT_CUT_IN_SQL = (
-    "a document's text cut in SQL, which walks it from its start for every chunk: "
-    "read the text once and cut its spans in Python"
+PATTERN_CALLS = frozenset(
+    f"re.{name}" for name in ("compile", "match", "search", "fullmatch", "sub", "subn", "split", "findall", "finditer")
 )
+DIGIT_CLASS = re.compile(r"(?<!\\)(?:\\\\)*\\[dD]")
+UNICODE_DIGITS = "\\d in a pattern, which also matches the digits of other scripts that int() refuses: write [0-9]"
 FLAG = re.compile(r"(?<![\w-])(?:--[a-z][a-z-]*|-[kcf])(?![\w-])")
 INSTALLER = re.compile(r"\buv [a-z]")
 COMMANDS = (
@@ -124,12 +115,6 @@ def banned_methods(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, node.lineno, f".{node.attr}: {BANNED_METHODS[node.attr]}")
 
 
-def numbered_placeholders(path: str, tree: ast.Module) -> Iterator[Finding]:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and NUMBERED_PLACEHOLDER.search(node.value):
-            yield Finding(path, node.lineno, NUMBERED)
-
-
 def io_in_the_core(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and (called := ast.unparse(node.func)) in IO_CALLS:
@@ -137,19 +122,38 @@ def io_in_the_core(path: str, tree: ast.Module) -> Iterator[Finding]:
 
 
 def exits_outside_interfaces(path: str, tree: ast.Module) -> Iterator[Finding]:
+    ended = EXITS if path in ENDS_ITS_OWN_PROCESS else EXITS | HARD_EXITS
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name | ast.Attribute) and (named := ast.unparse(node)) in EXITS:
+        if isinstance(node, ast.Name | ast.Attribute) and (named := ast.unparse(node)) in ended:
             yield Finding(path, node.lineno, f"{named} outside sift.interfaces: raise a SiftError")
+
+
+def _reads_the_clock(node: ast.AST) -> TypeGuard[ast.Attribute | ast.Call]:
+    return (isinstance(node, ast.Attribute) and ast.unparse(node) in NOW) or (
+        isinstance(node, ast.Call) and ast.unparse(node.func) in TIMERS
+    )
 
 
 def clock_read(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and ast.unparse(node) in NOW:
+        if _reads_the_clock(node):
             yield Finding(path, node.lineno, CLOCK_READ)
 
 
+def _sift_module(node: ast.expr) -> bool:
+    match node:
+        case ast.Subscript(value=table, slice=ast.Constant(value=str(name))) if ast.unparse(table) == MODULE_TABLE:
+            return name.split(".")[0] == SIFT
+        case ast.Call(func=loader, args=[ast.Constant(value=str(name)), *_]) if ast.unparse(loader) in MODULE_LOADERS:
+            return name.split(".")[0] == SIFT
+        case _:
+            return False
+
+
 def _of_sift(node: ast.expr) -> bool:
-    return isinstance(node, ast.Attribute) and ast.unparse(node.value).split(".")[0] == "sift"
+    return _sift_module(node) or (
+        isinstance(node, ast.Attribute) and (ast.unparse(node.value).split(".")[0] == SIFT or _sift_module(node.value))
+    )
 
 
 def _owned(target: ast.expr) -> list[ast.expr]:
@@ -193,11 +197,24 @@ def patching(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, node.lineno, "monkeypatch: pass a fake, a value or an environment in instead")
 
 
+def _reads_the_environment(node: ast.AST) -> TypeGuard[ast.Attribute | ast.Subscript | ast.ImportFrom]:
+    match node:
+        case ast.Attribute(value=owner, attr=name):
+            return name in ENVIRONMENT and ast.unparse(owner) in ENVIRONMENT_MODULES
+        case ast.Subscript(
+            value=ast.Call(args=[owner]) | ast.Attribute(attr="__dict__", value=owner) as namespace,
+            slice=ast.Constant(value=str(name)),
+        ) if not isinstance(namespace, ast.Call) or ast.unparse(namespace.func) in NAMESPACES:
+            return name in ENVIRONMENT and ast.unparse(owner) in ENVIRONMENT_MODULES
+        case ast.ImportFrom(module=str(module), names=names):
+            return module in ENVIRONMENT_MODULES and bool(ENVIRONMENT & {each.name for each in names})
+        case _:
+            return False
+
+
 def environment_outside_settings(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
-        if (isinstance(node, ast.Attribute) and ast.unparse(node.value) == "os" and node.attr in ENVIRONMENT) or (
-            isinstance(node, ast.ImportFrom) and node.module == "os" and ENVIRONMENT & {a.name for a in node.names}
-        ):
+        if _reads_the_environment(node):
             yield Finding(path, node.lineno, ENVIRONMENT_READ)
 
 
@@ -209,19 +226,6 @@ def clocks(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import | ast.ImportFrom) and CLOCKS & {n.split(".")[0] for n in _imported(node)}:
             yield Finding(path, node.lineno, CLOCK_IN_A_TEST)
-
-
-def databases_left_open(path: str, tree: ast.Module) -> Iterator[Finding]:
-    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
-    closed = {
-        id(argument)
-        for call in calls
-        if ast.unparse(call.func) in ("closing", "contextlib.closing")
-        for argument in call.args
-    }
-    for call in calls:
-        if ast.unparse(call.func) == "sqlite3.connect" and id(call) not in closed:
-            yield Finding(path, call.lineno, LEFT_OPEN)
 
 
 type Tuples = Mapping[str, list[ast.expr]]
@@ -267,7 +271,7 @@ def _caught(node: ast.expr, named: Tuples, tuples_of: TuplesOf, seen: frozenset[
 
 
 def _raises_again(handler: ast.ExceptHandler) -> bool:
-    return any(isinstance(node, ast.Raise) and node.exc is None for node in ast.walk(handler))
+    return any(isinstance(node, ast.Raise) and node.exc is None for node in handler.body)
 
 
 def _caught_by(handler: ast.ExceptHandler, named: Tuples, tuples_of: TuplesOf) -> frozenset[str]:
@@ -289,6 +293,21 @@ def recursion_caught(path: str, tree: ast.Module, tuples_of: TuplesOf = first_pa
             let_through = let_through or ("RecursionError" in caught and again)
 
 
+def _pattern(call: ast.Call) -> ast.expr | None:
+    given = [*call.args[:1], *(keyword.value for keyword in call.keywords if keyword.arg == "pattern")]
+    return given[0] if given else None
+
+
+def unicode_digits(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in PATTERN_CALLS:
+            match _pattern(node):
+                case ast.Constant(value=str(pattern)) if DIGIT_CLASS.search(pattern):
+                    yield Finding(path, node.lineno, UNICODE_DIGITS)
+                case _:
+                    pass
+
+
 def _flagged(text: str) -> bool:
     return (bool(FLAG.search(text)) and not INSTALLER.search(text)) or bool(COMMAND.search(text))
 
@@ -299,69 +318,24 @@ def flags_outside_interfaces(path: str, tree: ast.Module) -> Iterator[Finding]:
             yield Finding(path, node.lineno, FLAG_OUTSIDE)
 
 
-def text_cut_in_sql(path: str, tree: ast.Module) -> Iterator[Finding]:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and TEXT_CUT.search(node.value):
-            yield Finding(path, node.lineno, TEXT_CUT_IN_SQL)
-
-
-def handles_made(path: str, tree: ast.Module) -> Iterator[Finding]:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and ast.unparse(node.func).rsplit(".", 1)[-1] in HANDLES:
-            yield Finding(path, node.lineno, HANDLE_MADE)
-
-
-def stores_opened_by_hand(path: str, tree: ast.Module) -> Iterator[Finding]:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and ast.unparse(node.func).rsplit(".", 1)[-1] == "open_store":
-            yield Finding(path, node.lineno, STORE_OPENED_BY_HAND)
-
-
-def raw_sql(path: str, tree: ast.Module) -> Iterator[Finding]:
-    for node in ast.walk(tree):
-        match node:
-            case ast.Attribute(attr=called, value=ast.Attribute(attr="connection")) if called in SQL_CALLS:
-                yield Finding(path, node.lineno, RAW_SQL)
-            case _:
-                pass
-
-
-def _from_the_end(bound: ast.expr | None) -> bool:
-    return isinstance(bound, ast.UnaryOp) and isinstance(bound.op, ast.USub)
-
-
-def layouts_cut_from_their_end(path: str, tree: ast.Module) -> Iterator[Finding]:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Subscript) and ast.unparse(node.value).endswith("LAYOUT"):
-            cut = node.slice
-            bounds = (cut.lower, cut.upper) if isinstance(cut, ast.Slice) else (cut,)
-            if any(map(_from_the_end, bounds)):
-                yield Finding(path, node.lineno, LAYOUT_FROM_ITS_END)
-
-
 def idioms(path: str, source: str) -> tuple[Finding, ...]:
     tree = canonical(ast.parse(source))
     in_tests, in_sift = path.startswith("tests/"), path.startswith("src/sift/")
     outside_interfaces = in_sift and not path.startswith(INTERFACES)
     return (
         *invisible_characters(path, source),
-        *numbered_placeholders(path, tree),
         *(() if in_tests else banned_methods(path, tree)),
+        *(() if in_tests else unicode_digits(path, tree)),
         *(() if in_tests else recursion_caught(path, tree)),
         *(io_in_the_core(path, tree) if path.startswith(CORE) else ()),
         *(exits_outside_interfaces(path, tree) if outside_interfaces else ()),
         *(flags_outside_interfaces(path, tree) if outside_interfaces else ()),
         *(clock_read(path, tree) if outside_interfaces or in_tests else ()),
         *(environment_outside_settings(path, tree) if in_sift and path != SETTINGS else ()),
-        *(handles_made(path, tree) if in_sift and path not in HANDLE_MAKERS else ()),
-        *(raw_sql(path, tree) if in_sift and not path.startswith(STORAGE) else ()),
-        *(stores_opened_by_hand(path, tree) if in_sift and not path.startswith(STORAGE) else ()),
-        *(text_cut_in_sql(path, tree) if in_sift else ()),
         *(patching(path, tree) if in_tests else ()),
         *(sift_patched(path, tree) if in_tests else ()),
         *(clocks(path, tree) if in_tests else ()),
-        *(databases_left_open(path, tree) if in_tests else ()),
-        *layouts_cut_from_their_end(path, tree),
+        *storage_idioms(path, tree),
     )
 
 

@@ -67,6 +67,16 @@ def test_other_failures_and_a_single_text_too_large_are_raised() -> None:
         in_batches(["a", "b"], [1, 1], BatchShape(2, 2), Attempt(always, too_large, lambda: None))
 
 
+def test_recursion_too_deep_is_raised_at_once_whatever_it_says() -> None:
+    def too_deep(_: list[str]) -> Floats:
+        raise RecursionError("out of memory")
+
+    freed: list[None] = []
+    with pytest.raises(RecursionError):
+        in_batches(["a", "b"], [1, 1], BatchShape(2, 2), Attempt(too_deep, lambda _: True, lambda: freed.append(None)))
+    assert freed == []
+
+
 def test_no_texts_are_no_rows() -> None:
     assert in_batches([], [], BatchShape(3, 4), Attempt(lengths, too_large, lambda: None)).rows.shape == (0, 3)
 

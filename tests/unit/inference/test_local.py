@@ -176,6 +176,14 @@ def test_a_model_out_of_memory_while_it_runs_says_so_with_what_frees_it() -> Non
     assert within_memory("owner/model", "cpu", lambda: 7) == 7
 
 
+def test_recursion_too_deep_while_a_model_runs_is_raised_whatever_it_says() -> None:
+    def too_deep() -> int:
+        raise RecursionError("out of memory")
+
+    with pytest.raises(RecursionError):
+        within_memory("owner/model", "cuda", too_deep)
+
+
 def test_a_model_routing_queries_to_static_embeddings_caps_only_what_reads_tokens(tmp_path: Path) -> None:
     models = Local(str(tiny_routed(tmp_path)))
     assert models.encode(["dark matter"], query=True).shape == (1, WIDTH)

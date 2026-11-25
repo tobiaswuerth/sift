@@ -36,6 +36,8 @@ def in_batches(texts: Sequence[str], lengths: Sequence[int], shape: BatchShape, 
         part = order[start : start + batch]
         try:
             rows[part] = attempt.run([texts[at] for at in ints(part)])
+        except RecursionError:
+            raise
         except Exception as error:
             if len(part) == 1 or not attempt.too_large(error):
                 raise

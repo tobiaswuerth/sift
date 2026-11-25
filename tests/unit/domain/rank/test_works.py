@@ -27,6 +27,7 @@ def test_the_best_ranked_copy_of_a_work_stays_and_names_the_others() -> None:
         ("http://dx.doi.org/10.1000/abc", "10.1000/abc"),
         ("doi: 10.1000/abc ", "10.1000/abc"),
         ("arXiv:2101.00001", None),
+        ("10.\N{ARABIC-INDIC DIGIT ONE}\N{ARABIC-INDIC DIGIT ZERO}/abc", None),
         (12, None),
         (None, None),
     ],
