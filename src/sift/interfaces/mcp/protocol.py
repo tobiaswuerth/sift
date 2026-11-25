@@ -10,6 +10,7 @@ from sift.interfaces.mcp.tools import Tool
 SPOKEN = ("2025-03-26", "2025-06-18", "2025-11-25")
 LATEST = SPOKEN[-1]
 NAME = "sift"
+MCP_PATH = "/mcp"
 NOT_A_MESSAGE = -32600
 NO_METHOD = -32601
 WRONG_PARAMS = -32602

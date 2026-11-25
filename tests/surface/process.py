@@ -1,3 +1,4 @@
+import os
 import signal
 import subprocess
 import sys
@@ -6,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
-from sift.interfaces.server.endpoint import own_endpoint
+from sift.interfaces.server.endpoint import found, own_endpoint
 from sift.settings import OWN_FOLDER, Settings
 from tests.environments import clean_environment
 from tests.waits import until
@@ -68,3 +69,23 @@ def served(home: Path) -> Generator[subprocess.Popen[str]]:
         if running.poll() is None:
             running.send_signal(INTERRUPT)
         running.communicate(timeout=60)
+
+
+def through_stdio(home: Path, args: tuple[str, ...], sent: str) -> subprocess.CompletedProcess[str]:
+    settings = settings_of(home)
+    try:
+        return subprocess.run(
+            [sys.executable, "-m", "sift", *args],
+            input=sent,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=180,
+            env=environment(home),
+        )
+    finally:
+        left = found(settings)
+        if left is not None:
+            os.kill(left.pid, signal.SIGTERM)
+            assert until(lambda: found(settings) is None, 60), "the started home process did not stop within 60 s"

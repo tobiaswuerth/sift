@@ -6,6 +6,7 @@ from sift.interfaces.server.endpoint import found
 from tests.mails import WORD, mail_bytes, message, sample
 from tests.surface import process
 from tests.surface.smoke import Answer, Done, Smoke, answer, finding, ids, indexed, listed, ok
+from tests.surface.stdio import STDIO, answers_of, found_ids, stdio_search
 
 
 def similar_run(smoke: Smoke) -> None:
@@ -150,3 +151,6 @@ def served_run(smoke: Smoke, notes: Path, more: Path) -> None:
     logged = log.read_text(encoding="utf-8")
     answered = ("search", "status", "get", "index", "add", "rm")
     assert [name for name in answered if f" INFO sift.server: {name} answered " not in logged] == []
+    through = process.through_stdio(home, STDIO, stdio_search("stroke"))
+    assert (through.returncode, found_ids(answers_of(through.stdout)[2])) == (0, ["notes/huge.txt"]), through
+    smoke.exercised.append(STDIO)

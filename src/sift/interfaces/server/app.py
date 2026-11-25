@@ -27,6 +27,7 @@ from sift.app.resident import ResidentCodes
 from sift.domain.text.json_values import deeper_than
 from sift.domain.text.wording import counted
 from sift.interfaces.acts.acting import Acting
+from sift.interfaces.server.activity import Activity
 from sift.interfaces.server.gate import Gate
 from sift.interfaces.server.handled import Handled
 from sift.interfaces.server.jobs import HeldJob, Jobs
@@ -71,6 +72,7 @@ class Serving:
     watch: HomeWatch
     writer: ThreadPoolExecutor
     pool: ThreadPoolExecutor
+    activity: Activity
     alive_every: float = ALIVE_SECONDS
     gate: Gate = field(default_factory=Gate)
     jobs: Jobs = field(default_factory=Jobs)

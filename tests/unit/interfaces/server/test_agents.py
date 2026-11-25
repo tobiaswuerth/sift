@@ -160,6 +160,8 @@ def test_a_tool_that_fails_tells_the_agent_what_failed(home: Settings, caplog: p
         served = AgentsServed(AgentsRunning(server.serving, HANDLED))
         with pytest.raises(SystemFailureError):
             served.called(_failing(PermissionError(13, "Access is denied")), {})
+        with pytest.raises(RecursionError):
+            served.called(_failing(RecursionError("deep")), {})
         with pytest.raises(InternalError, match="the home process failed: RuntimeError: a bug"):
             served.called(_failing(RuntimeError("a bug")), {"query": "private words"})
     assert [record.getMessage() for record in caplog.records if record.levelname == "ERROR"] == [

@@ -6,6 +6,12 @@ from sift.api.requests import Request
 
 PORT = 8765
 MOST_PORT = 65535
+MOST_IDLE_SECONDS = 604_800
+STDIO = (
+    "answer MCP on standard input and output, for an agent that launches this command: through the home process, "
+    "started if none runs, which then leaves after 15 minutes idle"
+)
+IDLE_EXIT = "stop after this many seconds with no request and no job (default: never)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,3 +24,5 @@ class ServeHome(Request):
     port: Annotated[
         int, Help("the port on 127.0.0.1 to answer on, 0 for any free one"), Bounds(0, MOST_PORT, grouped=False)
     ] = PORT
+    stdio: Annotated[bool, Help(STDIO)] = False
+    idle_exit: Annotated[int | None, Help(IDLE_EXIT), Bounds(1, MOST_IDLE_SECONDS)] = None

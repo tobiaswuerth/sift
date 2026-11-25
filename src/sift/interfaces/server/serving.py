@@ -24,6 +24,7 @@ from sift.app.kept_decoded import KeptDecoded
 from sift.app.questions import RememberedQuestions
 from sift.app.resident import ResidentCodes
 from sift.interfaces.acts.acting import fresh_models
+from sift.interfaces.server.activity import Activity
 from sift.interfaces.server.app import ALIVE_SECONDS, LOGGER, Serving
 from sift.interfaces.server.endpoint import SERVER, SERVING, Endpoint, found, own_endpoint, written
 from sift.interfaces.server.handled import HANDLED, Handled
@@ -46,6 +47,7 @@ KEEP_ALIVE_SECONDS = 5
 MOST_CONNECTIONS = 256
 STOPPING = "stopping: {jobs} stops at its next step; what it wrote so far is kept"
 RESTED = "the models were idle: they wait in RAM, off the GPU, until used again"
+LEFT_IDLE = "stopped: no request and no job for {seconds:,} s, as --idle-exit asks"
 NOT_RESTED = "the idle models could not be let go; they are tried again"
 STOPPING_SIGNALS: tuple[int, ...] = tuple(
     cast("int", getattr(signal, name)) for name in ("SIGTERM", "SIGBREAK") if hasattr(signal, name)
@@ -134,6 +136,7 @@ class Serve:
     alive_every: float = ALIVE_SECONDS
     grace_seconds: int = GRACE_SECONDS
     clock: Callable[[], float] = time.perf_counter
+    idle_every: float = IDLE_CHECK_SECONDS
     keep_alive_seconds: int = KEEP_ALIVE_SECONDS
     most_connections: int = MOST_CONNECTIONS
 
@@ -160,7 +163,10 @@ def held(
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version, acting_on(settings), CONTRACT)
         kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
-        serving = Serving(settings, endpoint.token, version, *kept, writer, pool, how.alive_every, clock=how.clock)
+        activity = Activity(how.clock)
+        serving = Serving(
+            settings, endpoint.token, version, *kept, writer, pool, activity, how.alive_every, clock=how.clock
+        )
         app = served_app(serving, how.handled)
         config = uvicorn.Config(
             app,
@@ -195,8 +201,37 @@ def _stopped_as_by_ctrl_c() -> Generator[None]:
             signal.signal(each, handler)
 
 
+def watched_leaving(running: HomeServer, seconds: int, stop: threading.Event, every: float) -> None:
+    serving = running.serving
+    while not stop.wait(every):
+        if serving.activity.idle_for() >= seconds and not serving.jobs.listed():
+            logging.getLogger(LOGGER).info(LEFT_IDLE.format(seconds=seconds))
+            running.server.should_exit = True
+            return
+
+
+@contextmanager
+def _leaving_when_idle(running: HomeServer, seconds: int | None, every: float) -> Generator[None]:
+    if seconds is None:
+        yield
+        return
+    stop = threading.Event()
+    args = (running, seconds, stop, every)
+    watch = threading.Thread(target=watched_leaving, args=args, name="sift-leaving", daemon=True)
+    watch.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        watch.join(STOP_SECONDS)
+
+
 def serve(settings: Settings, request: ServeHome, version: str, report: Reporter, how: Serve = SERVE) -> Served:
-    with _stopped_as_by_ctrl_c(), held(settings, request, version, report, how) as running:
+    with (
+        _stopped_as_by_ctrl_c(),
+        held(settings, request, version, report, how) as running,
+        _leaving_when_idle(running, request.idle_exit, how.idle_every),
+    ):
         try:
             report(Listening(running.url, str(settings.home)))
             how.run(running)
