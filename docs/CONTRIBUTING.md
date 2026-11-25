@@ -27,7 +27,10 @@ tracked sources and nothing else, and the installed commands run). One session:
 3.15 on Linux (x86 and ARM), macOS and Windows, which no local run covers. `lowest` and `package` install
 packages, so they need the network. Before a release, `nox -s explore` runs the property tests with fresh
 random examples, 2,000 each, and 200 at least for those that build stores (`few` in `tests/examples.py`); the gate
-runs them derandomized.
+runs them derandomized. And `nox -s real` runs the default models, as the Hugging Face cache holds them or
+downloaded: it indexes a few notes and a scan with OCR, embeds them and searches them three ways, and on a CUDA GPU
+checks that the models rest and come back. Its session has CPU PyTorch; for the GPU, run
+`python -m tests.real_models` where PyTorch has CUDA. Its output goes into the release notes.
 Tests run on at most 8 workers: each worker imports every test module, the model libraries among them, and on 32
 threads more workers made the suite slower (35 s on 8, 101 s on 32).
 

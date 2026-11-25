@@ -73,6 +73,12 @@ def explore(session: nox.Session) -> None:
 
 
 @nox.session(python=OLDEST)
+def real(session: nox.Session) -> None:
+    synced(session)
+    session.run("python", "-m", "tests.real_models")
+
+
+@nox.session(python=OLDEST)
 def lowest(session: nox.Session) -> None:
     session.install("--resolution=lowest-direct", "--group=dev", "-e", ".")
     session.run("pytest", "-q", "-n", WORKERS)
