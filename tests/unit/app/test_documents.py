@@ -62,7 +62,9 @@ def test_documents_asked_each_with_lines_of_their_own_come_back_each_with_its_ow
 
 
 def test_only_some_lines_are_read_if_asked(home: Path) -> None:
-    assert text(home, "notes/rl.md", 1, 1) == "# Reward shaping\n"
+    assert documents(home, asked("notes/rl.md", lines=(1, 1))) == Documents(
+        (DocumentText("notes/rl.md", "Reward shaping", "# Reward shaping\n"),), ()
+    )
     assert text(home, "notes/rl.md", 2, 9) == "\nReward shaping speeds up learning.\n"
     assert text(home, "notes/rl.md", None, 1) == "# Reward shaping\n"
     with pytest.raises(InvalidRequestError, match="0 is outside 1 to"):

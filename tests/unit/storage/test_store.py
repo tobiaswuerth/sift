@@ -1,6 +1,7 @@
 import contextlib
 import sqlite3
 import stat
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple, cast
@@ -9,7 +10,7 @@ import pytest
 
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
-from sift.storage.database import CACHE_KIBIBYTES, READ_CACHE_KIBIBYTES, connect, first, reading, run, writing
+from sift.storage.database import CACHE_KIBIBYTES, READ_CACHE_KIBIBYTES, Writing, connect, first, reading, run, writing
 from sift.storage.documents import folded_names, paths_named
 from sift.storage.layout import LAYOUT
 from sift.storage.migrations import Migration
@@ -18,6 +19,7 @@ from sift.storage.store_files import stored_bytes
 from sift.storage.unusable import DAMAGED_REMEDY, unavailable_if_unusable
 from sift.storage.writer import sole_writer
 from tests.damage import damage_table
+from tests.waits import joined, still_running
 
 COLLECTION = CollectionId(7)
 
@@ -208,6 +210,30 @@ def test_a_store_of_an_older_layout_is_brought_up_to_this_one_when_opened(tmp_pa
             assert first(transaction, Value, "SELECT sum(x) FROM added") == Value(7)
     with pytest.raises(StoreUnavailableError, match="newer sift"):
         open_store(tmp_path / "s.sqlite", COLLECTION)
+
+
+def test_a_store_two_open_at_once_is_brought_up_to_this_layout_once(tmp_path: Path) -> None:
+    store, ran, found = tmp_path / "s.sqlite", list[str](), list[Value | None]()
+    create_store(store, COLLECTION)
+
+    def backfilled(_: Writing) -> None:
+        ran.append("backfill")
+
+    later: tuple[Migration, ...] = (*LAYOUT, ("CREATE TABLE added(x INTEGER) STRICT", backfilled))
+
+    def open_it() -> None:
+        with opened(store, layout=later) as connection, reading(connection) as transaction:
+            found.append(first(transaction, Value, "PRAGMA user_version"))
+
+    both = [threading.Thread(target=open_it) for _ in range(2)]
+    with contextlib.closing(connect(store, create=False)) as holder, writing(holder):
+        for each in both:
+            each.start()
+        for each in both:
+            still_running(each, 0.3)
+    for each in both:
+        joined(each)
+    assert (found, ran) == ([Value(len(later))] * 2, ["backfill"])
 
 
 def test_a_store_of_the_layout_before_names_were_folded_has_them_folded_when_opened(tmp_path: Path) -> None:

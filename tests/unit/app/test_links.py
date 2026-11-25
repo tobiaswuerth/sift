@@ -9,7 +9,7 @@ import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.errors import InvalidRequestError, NotFoundError
-from sift.api.indexing import IndexCollections
+from sift.api.indexing import IndexCollections, Indexed
 from sift.api.links import Direction, LinkIn, LinkingLine, LinkOut, Links, ListUnresolved, ShowLinks, Target
 from sift.app.collections import add
 from sift.app.indexing import index
@@ -195,6 +195,28 @@ def test_a_name_many_notes_answer_to_names_a_few_of_them(tmp_path: Path) -> None
     home = vault(tmp_path, {f"{n}/Same.md": "" for n in range(7)})
     with pytest.raises(InvalidRequestError, match=r"names several notes: v/0/Same.md, .*v/4/Same.md, \.\.\."):
         links(home, ShowLinks("Same"))
+
+
+def test_a_link_many_notes_answer_to_names_a_few_of_them(tmp_path: Path) -> None:
+    home = vault(tmp_path, {**{f"{n}/Same.md": "" for n in range(7)}, "n.md": "[[Same]]"})
+    assert leads(links(home, ShowLinks("v/n.md")).out) == [
+        ("Same", ("ambiguous", [f"v/{n}/Same.md" for n in range(5)]))
+    ]
+
+
+def test_links_follow_notes_as_they_come_and_go_the_linking_note_unread(tmp_path: Path) -> None:
+    home = vault(tmp_path, {"Offer.md": "[[Contract 2027]] [[Acme AG]]", "Acme AG.md": ""})
+    assert leads(links(home, ShowLinks("v/Offer.md")).out) == [
+        ("Contract 2027", "unresolved"),
+        ("Acme AG", ("v/Acme AG.md", "name")),
+    ]
+    write(tmp_path / "v" / "Topics" / "Contract 2027.md", "# Contract\n")
+    (tmp_path / "v" / "Acme AG.md").rename(tmp_path / "v" / "Acme Group.md")
+    (done,) = index(home, IndexCollections(), quiet).collections
+    assert (done.outcome, leads(links(home, ShowLinks("v/Offer.md")).out)) == (
+        Indexed(files=3, added=2, changed=0, removed=1, unreadable=0),
+        [("Contract 2027", ("v/Topics/Contract 2027.md", "name")), ("Acme AG", "unresolved")],
+    )
 
 
 def test_a_damaged_store_is_passed_over_by_names_and_unresolved_saying_so(people: Path, tmp_path: Path) -> None:

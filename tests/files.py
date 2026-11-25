@@ -15,6 +15,7 @@ from sift.ingest.files import Identity
 from sift.ingest.records import lines_of
 
 TORN = "the drive went away"
+PRIVILEGE_NOT_HELD = 1314
 
 
 def write(path: Path, text: str = "x") -> Path:
@@ -32,11 +33,15 @@ def torn_lines(path: Path, most: int, scanned: Identity | None) -> Iterator[tupl
     raise OSError(5, TORN)
 
 
+def _unprivileged(refused: OSError) -> bool:
+    return sys.platform == "win32" and refused.winerror == PRIVILEGE_NOT_HELD
+
+
 def linked(link: Path, target: str, *, folder: bool = False) -> None:
     try:
         link.symlink_to(target, target_is_directory=folder)
     except OSError as refused:
-        if os.environ.get("CI"):
+        if os.environ.get("CI") or not _unprivileged(refused):
             raise
         pytest.skip(f"this system makes no symbolic links: {refused}")
 

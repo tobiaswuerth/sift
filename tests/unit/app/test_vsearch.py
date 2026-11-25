@@ -149,6 +149,14 @@ def test_a_store_whose_vectors_are_damaged_is_passed_over_and_the_rest_searched(
     assert [each.collection for each in result.unsearched] == ["notes"]
 
 
+def test_a_search_of_one_collection_never_reads_the_store_of_another(home: Path, tmp_path: Path) -> None:
+    more(home, tmp_path)
+    embed(home, EmbedCollections(("more",)), quiet, Hashed())
+    changed(home / "collections" / "notes.sqlite", "UPDATE vectors SET vector = x'00'")
+    result = vsearch(home, SearchVectors("dark matter halo models", collections=("more",)), Hashed())
+    assert ([hit.id for hit in result.hits], result.unsearched) == (["more/halo.md"], ())
+
+
 @pytest.mark.parametrize("table", ["chunks", "sources"])
 def test_a_store_lost_while_its_hits_are_read_is_passed_over(home: Path, tmp_path: Path, table: str) -> None:
     more(home, tmp_path)

@@ -65,6 +65,24 @@ def test_a_search_given_what_was_decoded_before_reads_no_lengths_or_blocks_again
     assert held_bytes(next(iter(blocks.values()))) == sum(each.nbytes for each in next(iter(blocks.values())))
 
 
+def test_a_store_without_documents_searched_beside_another_changes_neither_its_reads_nor_its_hits() -> None:
+    said = list[str]()
+    with (
+        store_of(3, 30) as connection,
+        tempfile.TemporaryDirectory() as folder,
+        opened_store(Path(folder), 3, SMALL) as empty,
+    ):
+        connection.set_trace_callback(said.append)
+        with reading(connection) as transaction:
+            alone_found = search([opened(transaction)], QUERY, 5)
+        alone_read, said[:] = reads(said), []
+        with reading(connection) as transaction, reading(empty) as nothing:
+            beside = search([opened(transaction), opened(nothing)], QUERY, 5)
+        connection.set_trace_callback(None)
+    assert (beside, reads(said)) == (alone_found, alone_read)
+    assert all(alone_read[table] for table in READS), alone_read
+
+
 def test_lengths_given_to_a_search_stay_as_they_were_while_others_read_more_from_them() -> None:
     with store_of(1, 60) as connection, reading(connection) as transaction:
         base = DecodedLists({}, {}, {})

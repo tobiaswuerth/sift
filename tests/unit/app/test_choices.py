@@ -8,14 +8,17 @@ import pytest
 from sift.api.collections import AddCollection, CollectionChanged, ShowStatus, TitleFrom
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError
+from sift.api.events import Event, Noted
+from sift.api.indexing import IndexCollections
 from sift.app.collections import add, status
 from sift.app.embedding import embed
 from sift.app.filing import Limits
+from sift.app.indexing import index
 from sift.app.retitling import retitle
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading, rows
 from sift.storage.store import connected
-from tests.files import write
+from tests.files import linked, write
 from tests.homes import found_ids, indexed, indexed_home, quiet, stopped_when_advanced
 from tests.models import Hashed
 
@@ -135,6 +138,23 @@ def test_adding_a_collection_again_follows_its_links_or_leaves_them_out_again(ho
     add(home, AddCollection(str(notes), follow_links=False))
     (one,) = known_collections(home)
     assert (one.choices.follow_links, one.choices.title_from) == (False, TitleFrom.NAME)
+
+
+def test_a_folder_of_links_alone_no_longer_followed_drops_what_was_read_through_them_saying_so(tmp_path: Path) -> None:
+    write(tmp_path / "outside" / "secret.txt", "a private key\n")
+    (tmp_path / "links").mkdir()
+    linked(tmp_path / "links" / "notes.txt", str(tmp_path / "outside" / "secret.txt"))
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "links"), follow_links=True))
+    indexed(home)
+    assert found_ids(home, "private") == ["links/notes.txt"]
+    add(home, AddCollection(str(tmp_path / "links"), follow_links=False))
+    said = list[Event]()
+    index(home, IndexCollections(), said.append)
+    assert (found_ids(home, "private"), [each for each in said if isinstance(each, Noted)]) == (
+        [],
+        [Noted("1 file linked to outside the folder left out: notes.txt")],
+    )
 
 
 def test_a_collection_hidden_from_agents_says_so_and_is_still_searched(home: Path, notes: Path) -> None:
