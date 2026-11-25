@@ -4,10 +4,9 @@ import sys
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
 from importlib import metadata
-from pathlib import Path
 from typing import cast
 
-from tools.findings import Finding, report, sources
+from tools.findings import Finding, read, report, sources
 
 SOURCE = "src/sift"
 OWN = frozenset({"sift", "__future__"})
@@ -58,5 +57,5 @@ def undeclared(
 
 
 def main(_argv: list[str]) -> int:
-    depended = declared(Path("pyproject.toml").read_text(encoding="utf-8"))
+    depended = declared(read("pyproject.toml"))
     return report(undeclared(sources((SOURCE,)), metadata.packages_distributions(), depended), REMEDY)

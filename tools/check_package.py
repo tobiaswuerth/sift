@@ -1,9 +1,10 @@
-import subprocess
 import tarfile
 import tomllib
 import zipfile
 from collections.abc import Iterable
 from pathlib import Path
+
+from tools.findings import read, tracked
 
 SOURCES = "src/sift"
 PROJECT_FILES = frozenset({"pyproject.toml", "pyproject.toml.orig", "README.md", "LICENSE", "PKG-INFO"})
@@ -46,17 +47,14 @@ def files_of_sdist(path: Path) -> list[str]:
 
 
 def tracked_sources() -> list[str]:
-    listed = subprocess.run(
-        ["git", "ls-files", "-z", SOURCES], check=True, capture_output=True, text=True, encoding="utf-8", timeout=60
-    )
-    return [name for name in listed.stdout.split("\0") if name]
+    return tracked((SOURCES,))
 
 
 def main(argv: list[str]) -> int:
     dist, said = Path(argv[0]), argv[1]
     (wheel,) = dist.glob("*.whl")
     (sdist,) = dist.glob("*.tar.gz")
-    version = project_version(Path("pyproject.toml").read_text(encoding="utf-8"))
+    version = project_version(read("pyproject.toml"))
     found = problems(files_of_wheel(wheel), files_of_sdist(sdist), tracked_sources(), version, said)
     for problem in found:
         print(problem)

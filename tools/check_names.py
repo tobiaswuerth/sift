@@ -1,7 +1,7 @@
 import ast
 from collections.abc import Iterable, Iterator
 
-from tools.findings import Finding, files, report
+from tools.findings import Finding, files, read, report
 
 ROOT = "src/sift"
 REMEDY = "Give each class and type in src/sift a name of its own, so that a name means one thing."
@@ -28,5 +28,5 @@ def repeated(sources: Iterable[tuple[str, str]]) -> tuple[Finding, ...]:
 
 
 def main(_argv: list[str]) -> int:
-    sources = ((path.as_posix(), path.read_text(encoding="utf-8")) for path in files((ROOT,), (".py",)))
+    sources = ((name, read(name)) for name in files((ROOT,), (".py",)))
     return report(repeated(sources), REMEDY)

@@ -1,9 +1,8 @@
 import re
 import tomllib
 from collections.abc import Iterator
-from pathlib import Path
 
-from tools.findings import PYTHON_ROOTS, Finding, found, report
+from tools.findings import PYTHON_ROOTS, Finding, files, found, read, report
 
 PUBLISHED_ROOTS = ("docs", ".github", "pyproject.toml", *PYTHON_ROOTS)
 PUBLISHED_SUFFIXES = (".md", ".py", ".toml", ".txt", ".yml")
@@ -41,8 +40,8 @@ def line_length(pyproject: str) -> int:
 
 
 def main(_argv: list[str]) -> int:
-    width = line_length(Path("pyproject.toml").read_text(encoding="utf-8"))
-    pages = sorted(path.as_posix() for path in Path().glob("*.md"))
+    width = line_length(read("pyproject.toml"))
+    pages = [name for name in files((".",), (".md",)) if "/" not in name]
 
     def text(path: str, content: str) -> Iterator[Finding]:
         yield from machines(path, content)

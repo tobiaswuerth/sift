@@ -1,11 +1,11 @@
 import ast
 import tomllib
 from collections.abc import Iterator, Mapping
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import cast
 
 from tools.canonical import imports_resolved
-from tools.findings import Finding, report, sources
+from tools.findings import Finding, read, report, sources
 
 SOURCE = "src/sift"
 SURFACE = "src/sift/api/"
@@ -71,5 +71,5 @@ def dead(sources: Mapping[str, str], kept: frozenset[str]) -> tuple[Finding, ...
 
 
 def main(_argv: list[str]) -> int:
-    kept = entry_points(Path("pyproject.toml").read_text(encoding="utf-8"))
+    kept = entry_points(read("pyproject.toml"))
     return report(dead(sources((SOURCE,)), kept), REMEDY)

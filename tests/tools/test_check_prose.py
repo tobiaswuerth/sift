@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.tools.repositories import tracked_in
 from tools import check_prose
 from tools.check_prose import ALLOWED, Prose, allowed_entries, checked, findings, prose
 from tools.findings import Finding
@@ -72,16 +73,15 @@ def test_allowed_entries_must_be_tables() -> None:
 
 def test_findings_are_printed_with_the_remedy_and_fail(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "a.py").write_text("x = 1  # say\n", encoding="utf-8")
-    assert checked([str(tmp_path)], frozenset()) == 1
+    assert checked(["."], frozenset(), tracked_in(tmp_path, "a.py")) == 1
     output = capsys.readouterr().out
     assert "a.py:1: comment: # say" in output
     assert "1 found. Say it with a name" in output
 
 
 def test_a_file_without_prose_passes_in_silence(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    clean = tmp_path / "a.py"
-    clean.write_text("x = 1\n", encoding="utf-8")
-    assert checked([str(clean)], frozenset()) == 0
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    assert checked(["a.py"], frozenset(), tracked_in(tmp_path, "a.py")) == 0
     assert capsys.readouterr().out == ""
 
 

@@ -6,7 +6,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.findings import PYTHON_ROOTS, Finding, files, report
+from tools.findings import PYTHON_ROOTS, ROOT, Finding, files, read, report
 
 ALLOWED = "tools/prose_allowed.toml"
 REMEDY = (
@@ -95,10 +95,8 @@ def findings(written: Iterable[Prose], allowed: Allowed) -> tuple[Finding, ...]:
     return (*unallowed, *stale)
 
 
-def checked(roots: Iterable[str], allowed: Allowed) -> int:
-    written = (
-        piece for path in files(roots, (".py",)) for piece in prose(path.as_posix(), path.read_text(encoding="utf-8"))
-    )
+def checked(roots: Iterable[str], allowed: Allowed, top: Path = ROOT) -> int:
+    written = (piece for name in files(roots, (".py",), top) for piece in prose(name, read(name, top)))
     return report(findings(written, allowed), REMEDY)
 
 

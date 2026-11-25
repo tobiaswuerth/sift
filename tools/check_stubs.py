@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterator, Mapping
 from pathlib import PurePosixPath
 from typing import cast
 
-from tools.findings import Finding, files, report
+from tools.findings import Finding, files, read, report
 
 STUBS = "typings"
 REMEDY = "Make the stub say what the installed package has: a name the package lacks hides an error until it runs."
@@ -59,5 +59,5 @@ def missing(stubs: Mapping[str, str], imported: Callable[[str], object]) -> list
 
 
 def main(_argv: list[str]) -> int:
-    stubs = {path.as_posix(): path.read_text(encoding="utf-8") for path in files((STUBS,), (".pyi",))}
+    stubs = {name: read(name) for name in files((STUBS,), (".pyi",))}
     return report(missing(stubs, importlib.import_module), REMEDY)
