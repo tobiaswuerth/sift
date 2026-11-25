@@ -53,3 +53,7 @@ HANDLED: Mapping[str, Handled] = MappingProxyType(
 
 def for_agents(served: Mapping[str, Handled]) -> Mapping[str, Handled]:
     return MappingProxyType({**served, **dict((handled(indexing.REINDEX),))})
+
+
+def for_pages(served: Mapping[str, Handled]) -> Mapping[str, Handled]:
+    return MappingProxyType({**served, **dict((handled(collections.BROWSE),))})

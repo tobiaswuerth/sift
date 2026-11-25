@@ -7,7 +7,8 @@ from sift.api.errors import InvalidRequestError
 from sift.api.links import FindMentions, FindSimilar, Links, ShowLinks
 from sift.api.search import SearchHybrid
 from sift.api.wire import Json, encoded
-from sift.interfaces.mcp.answers import ToolAnswer, answered, compacted, hits_of, with_notes
+from sift.interfaces.acts.acting import answered
+from sift.interfaces.mcp.answers import ToolAnswer, compacted, hits_of, with_notes
 from sift.interfaces.mcp.schemas import Schema, schema_of
 from sift.interfaces.mcp.tools import Tool, ToolRunning
 

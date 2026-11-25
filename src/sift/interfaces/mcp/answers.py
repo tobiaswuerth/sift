@@ -1,9 +1,9 @@
 from typing import cast
 
-from sift.api.errors import InternalError
 from sift.api.notices import Notice
 from sift.api.search import Hit, SearchResult
 from sift.api.wire import Json, encoded
+from sift.interfaces.acts.acting import answered
 
 type ToolAnswer = dict[str, Json]
 
@@ -14,12 +14,6 @@ def said(notice: Notice) -> str:
     told = f"{notice.message}; fix: {notice.remedy}" if notice.remedy else notice.message
     where = notice.id or notice.collection
     return f"{where}: {told}" if where else told
-
-
-def answered[T](answer: object, kind: type[T]) -> T:
-    if not isinstance(answer, kind):
-        raise InternalError(f"a {type(answer).__name__} came back for a {kind.__name__}", "report it")
-    return answer
 
 
 def _hit(hit: Hit) -> ToolAnswer:

@@ -20,6 +20,17 @@ class Served:
 
 
 @dataclass(frozen=True, slots=True)
+class OpenUi(Request):
+    no_browser: Annotated[bool, Help("say the page's address alone, without opening it in the browser")] = False
+
+
+@dataclass(frozen=True, slots=True)
+class UiOpened:
+    url: str
+    served: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ServeHome(Request):
     port: Annotated[
         int, Help("the port on 127.0.0.1 to answer on, 0 for any free one"), Bounds(0, MOST_PORT, grouped=False)

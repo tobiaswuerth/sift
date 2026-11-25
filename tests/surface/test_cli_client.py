@@ -44,6 +44,7 @@ WRITES = (
 NOT_COMPARED = MappingProxyType(
     {
         "serve": "it starts the home process",
+        "ui": "it opens the home process's pages in the browser",
         "jobs": "it asks the home process alone",
         "embed": "it needs models",
         "vsearch": "it needs models",

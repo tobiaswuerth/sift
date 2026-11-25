@@ -7,7 +7,8 @@ from sift.api.indexing import IndexResult, Skipped
 from sift.api.jobs import ServedJob
 from sift.api.reindexing import Reindexed, ReindexFiles
 from sift.api.wire import Json
-from sift.interfaces.mcp.answers import ToolAnswer, answered, said, with_notes
+from sift.interfaces.acts.acting import answered
+from sift.interfaces.mcp.answers import ToolAnswer, said, with_notes
 from sift.interfaces.mcp.schemas import schema_of
 from sift.interfaces.mcp.tools import Tool, ToolRunning
 

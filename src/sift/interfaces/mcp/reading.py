@@ -3,7 +3,8 @@ from typing import cast
 
 from sift.api.documents import Documents, DocumentText, GetDocuments
 from sift.api.wire import Json, encoded
-from sift.interfaces.mcp.answers import ToolAnswer, answered, said
+from sift.interfaces.acts.acting import answered
+from sift.interfaces.mcp.answers import ToolAnswer, said
 from sift.interfaces.mcp.schemas import schema_of
 from sift.interfaces.mcp.tools import Tool, ToolRunning
 

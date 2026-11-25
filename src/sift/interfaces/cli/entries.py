@@ -15,7 +15,7 @@ from sift.api.indexing import IndexCollections
 from sift.api.jobs import ListJobs
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
-from sift.api.serving import ServeHome
+from sift.api.serving import OpenUi, ServeHome
 from sift.interfaces.cli.context import Command, Commands
 from sift.interfaces.cli.reading import ReadDocuments
 from sift.late import late
@@ -32,6 +32,7 @@ class CommandEntry:
     request: type[object]
     module: str
     example: str
+    here: bool = False
 
 
 ENTRIES = MappingProxyType(
@@ -108,7 +109,18 @@ ENTRIES = MappingProxyType(
             "sift rm archive",
         ),
         "serve": CommandEntry(
-            "serve this home: its models and codes held, commands answered at once", ServeHome, "serving", "sift serve"
+            "serve this home: its models and codes held, commands answered at once",
+            ServeHome,
+            "serving",
+            "sift serve",
+            here=True,
+        ),
+        "ui": CommandEntry(
+            "open this home's pages in the browser: search, browse and read; served here if no sift serve runs",
+            OpenUi,
+            "serving",
+            "sift ui",
+            here=True,
         ),
         "jobs": CommandEntry(
             "list what sift serve does in the background, or stop one of its jobs",

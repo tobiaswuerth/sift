@@ -21,6 +21,7 @@ class Context:
     json: bool
     style: Style
     report: Reporter
+    browse: Callable[[str], None]
     clock: Callable[[], float] = time.perf_counter
     server: "Endpoint | None" = None
 

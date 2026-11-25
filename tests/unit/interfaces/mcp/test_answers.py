@@ -2,7 +2,8 @@ import pytest
 
 from sift.api.errors import InternalError
 from sift.api.search import Hit, SearchResult
-from sift.interfaces.mcp.answers import answered, hits_of
+from sift.interfaces.acts.acting import answered
+from sift.interfaces.mcp.answers import hits_of
 
 
 def test_a_hit_held_by_several_collections_names_its_copies() -> None:

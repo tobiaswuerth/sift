@@ -12,7 +12,7 @@ from sift.api.collections import Audience, Status
 from sift.api.errors import InternalError, InvalidRequestError, SiftError, system_failure
 from sift.api.jobs import ServedJob
 from sift.api.wire import Json
-from sift.interfaces.mcp.answers import answered
+from sift.interfaces.acts.acting import answered
 from sift.interfaces.mcp.instructions import instructions
 from sift.interfaces.mcp.offered import TOOLS
 from sift.interfaces.mcp.protocol import SPOKEN, reply

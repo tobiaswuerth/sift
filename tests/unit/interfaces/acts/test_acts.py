@@ -18,7 +18,7 @@ from sift.interfaces.acts.collections import GET, STATUS
 from sift.interfaces.acts.indexing import REINDEX
 from sift.interfaces.acts.links import LINKS
 from sift.interfaces.acts.searching import MENTIONS, QUERY, SEARCH, SIMILAR, VSEARCH
-from sift.interfaces.server.handled import HANDLED, for_agents
+from sift.interfaces.server.handled import HANDLED, for_agents, for_pages
 from sift.settings import Settings
 from tests.files import write
 from tests.homes import collection, indexed, quiet
@@ -33,7 +33,7 @@ ACTS: list[Act[object, object]] = [
 
 
 def test_every_act_served_names_the_answer_its_run_gives() -> None:
-    assert sorted(act.name for act in ACTS) == sorted(for_agents(HANDLED))
+    assert sorted(act.name for act in ACTS) == sorted({*for_agents(HANDLED), *for_pages(HANDLED)})
     assert [act.name for act in ACTS if act.answer != get_type_hints(act.run)["return"]] == []
 
 

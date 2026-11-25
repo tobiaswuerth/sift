@@ -1,3 +1,4 @@
+from sift.api.browsing import Browsed, BrowseFolder
 from sift.api.collections import (
     ActivateCollections,
     AddCollection,
@@ -13,7 +14,7 @@ from sift.api.collections import (
     StoresMoved,
 )
 from sift.api.documents import Documents, GetDocuments
-from sift.app import collections, documents, moving
+from sift.app import browsing, collections, documents, moving
 from sift.interfaces.acts.acting import Act, Acting
 
 
@@ -41,6 +42,10 @@ def _deactivate(acting: Acting, request: DeactivateCollections) -> CollectionsSw
     return collections.deactivate(acting.settings.home, request)
 
 
+def _browse(acting: Acting, request: BrowseFolder) -> Browsed:
+    return browsing.browse(acting.settings.home, request, audience=acting.audience)
+
+
 def _get(acting: Acting, request: GetDocuments) -> Documents:
     return documents.documents(acting.settings.home, request, audience=acting.audience)
 
@@ -52,3 +57,4 @@ ACTIVATE = Act("activate", ActivateCollections, CollectionsSwitched, _activate, 
 DEACTIVATE = Act("deactivate", DeactivateCollections, CollectionsSwitched, _deactivate, writes=True)
 STATUS = Act("status", ShowStatus, Status, _status)
 GET = Act("get", GetDocuments, Documents, _get)
+BROWSE = Act("browse", BrowseFolder, Browsed, _browse)

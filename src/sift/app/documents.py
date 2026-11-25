@@ -180,3 +180,10 @@ def documents(
     ordered = [answers[at] for at in range(len(request.documents))]
     found = tuple(each for each in ordered if isinstance(each, DocumentText))
     return Documents(found, tuple(each for each in ordered if isinstance(each, Notice)))
+
+
+def source_of(home: Path, id_: str, *, audience: Audience = Audience.PEOPLE) -> Path:
+    chosen, relative = place(known_to(home, audience), id_)
+    with read_store(chosen.store, chosen.id) as transaction:
+        found = resolved_at(transaction, chosen.name, id_, relative, absolute=Path(id_).is_absolute())
+    return chosen.folder / found.path

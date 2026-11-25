@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from sift.api.collections import Audience
-from sift.api.errors import NotFoundError
+from sift.api.errors import InternalError, NotFoundError
 from sift.api.events import Reporter
 from sift.api.jobs import ServedJob
 from sift.app.resident import CodeSource, DecodedSource, decoded_each_search, read_each_time
@@ -58,6 +58,12 @@ class Act[R, A]:
     answer: object
     run: Callable[[Acting, R], A]
     writes: bool = False
+
+
+def answered[T](answer: object, kind: type[T]) -> T:
+    if not isinstance(answer, kind):
+        raise InternalError(f"a {type(answer).__name__} came back for a {kind.__name__}", "report it")
+    return answer
 
 
 class Loading(Protocol):

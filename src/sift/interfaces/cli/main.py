@@ -50,7 +50,7 @@ EXIT_CODES = f"  {DONE} done, {FAILED} failed, {USAGE} refused as asked, {INTERR
 NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
 STOPPED_WATCHING = "stopped watching: the home process goes on with it; sift jobs lists it and stops it"
 OTHER_SIFT_REMEDY = "stop sift serve where it runs, and start it again with this sift"
-SERVE = "serve"
+BROWSER = "webbrowser"
 JSON_HELP = "answer in JSON"
 COLOR_HELP = "colour what sift says (default: auto)"
 VERSION_HELP = "say which sift this is"
@@ -159,9 +159,18 @@ def _local_now() -> datetime:
     return datetime.now().astimezone()
 
 
+class Browser(Protocol):
+    def open_new_tab(self, url: str) -> bool: ...
+
+
+def in_browser(url: str, module: str = BROWSER) -> None:
+    _ = late(module, Browser).open_new_tab(url)
+
+
 @dataclass(frozen=True, slots=True)
 class Host:
     platform: str = sys.platform
+    browse: Callable[[str], None] = in_browser
     clock: Callable[[], float] = time.perf_counter
     now: Callable[[], datetime] = _local_now
     checking: "Checking | None" = None
@@ -184,7 +193,7 @@ def _escapes_work(descriptor: int) -> bool:
 
 
 def _server(settings: Settings, command: str) -> "Endpoint | None":
-    if command == SERVE:
+    if ENTRIES[command].here:
         return None
     running = endpoints().found(settings)
     if running is None or understood(running.contract):
@@ -203,7 +212,7 @@ def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log:
         server = _server(settings, chosen.command)
         for noted in () if server is None else endpoints().unshared(server, settings):
             told(noted)
-        context = Context(settings, host.platform, chosen.json, chosen.style, told, host.clock, server)
+        context = Context(settings, host.platform, chosen.json, chosen.style, told, host.browse, host.clock, server)
         with ticking(told.tick):
             return command.run(chosen.namespace, context)
     except (SiftError, OSError) as error:

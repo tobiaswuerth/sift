@@ -35,7 +35,7 @@ from tests.waits import joined, waited
 
 
 def test_the_home_process_answers_every_command_the_command_line_has_but_serve() -> None:
-    assert set(HANDLED) == set(ENTRIES) - {"serve"}
+    assert set(HANDLED) == {name for name, entry in ENTRIES.items() if not entry.here}
 
 
 def test_the_home_process_runs_commands_streaming_their_events_then_their_answer(

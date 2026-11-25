@@ -146,6 +146,14 @@ def served_run(smoke: Smoke, notes: Path, more: Path) -> None:
             ),
         )
         smoke.checked("rm", "more", "--json", holds=lambda done: (done.returncode, answer(done)["documents"]) == (0, 0))
+        smoke.checked(
+            "ui",
+            "--no-browser",
+            "--json",
+            holds=lambda done: (
+                (done.returncode, answer(done)["served"], str(answer(done)["url"]).endswith("/ui")) == (0, False, True)
+            ),
+        )
     assert (running.poll() is not None, found(process.settings_of(home))) == (True, None)
     (log,) = (home / "logs").glob("serve-*.log")
     logged = log.read_text(encoding="utf-8")
