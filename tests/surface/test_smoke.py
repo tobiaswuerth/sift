@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import cast
 
 from sift.interfaces.cli.arguments import Argument, How, arguments
-from sift.interfaces.cli.main import ENTRIES
+from sift.interfaces.cli.entries import ENTRIES
 from sift.interfaces.server.endpoint import found
 from tests.mails import WORD, mail_bytes, message, sample
 from tests.surface import process

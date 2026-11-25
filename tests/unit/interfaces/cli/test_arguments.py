@@ -13,8 +13,8 @@ from sift.api.indexing import IndexCollections
 from sift.api.jobs import ListJobs
 from sift.api.search import SearchHybrid, SearchKeywords
 from sift.interfaces.cli.arguments import arguments, flags, options, request_of
-from sift.interfaces.cli.main import Parser, UsageError
 from sift.interfaces.cli.reading import ReadDocuments
+from sift.interfaces.cli.usage import Parser, UsageError
 from sift.interfaces.cli.written import written
 
 WHOLE = Path("/whole").absolute()

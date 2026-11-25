@@ -14,7 +14,7 @@ from sift.api.serving import Served, ServeHome
 from sift.api.wire import CONTRACT_HEADER
 from sift.app.embedding import embed
 from sift.interfaces.acts.acting import Acting
-from sift.interfaces.cli.main import ENTRIES
+from sift.interfaces.cli.entries import ENTRIES
 from sift.interfaces.server.app import LOGGER, MOST_BODY, WAITING
 from sift.interfaces.server.endpoint import (
     Endpoint,

@@ -1,6 +1,4 @@
 import argparse
-import contextlib
-import re
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -8,32 +6,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 from importlib import import_module
-from types import MappingProxyType
-from typing import TYPE_CHECKING, NoReturn, Protocol, TextIO, cast, override
+from typing import TYPE_CHECKING, Protocol, TextIO, cast, override
 
-from sift.api.collections import (
-    ActivateCollections,
-    AddCollection,
-    DeactivateCollections,
-    MoveCollections,
-    RemoveCollection,
-    ShowStatus,
-)
-from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, SiftError, StoreUnavailableError
-from sift.api.indexing import IndexCollections
-from sift.api.jobs import ListJobs
-from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
-from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
-from sift.api.serving import ServeHome
 from sift.api.wire import CONTRACT, contract_text, understood
 from sift.domain.text.decoding import encodable
-from sift.interfaces.cli.arguments import arguments, flags, options
-from sift.interfaces.cli.context import Command, Commands, Context
+from sift.interfaces.cli.arguments import flags, options
+from sift.interfaces.cli.context import Context
+from sift.interfaces.cli.entries import ENTRIES, command_of
 from sift.interfaces.cli.logs import FOLDER, LOGGED, Log, heard_too, kept
 from sift.interfaces.cli.notice import noticed
-from sift.interfaces.cli.reading import ReadDocuments
 from sift.interfaces.cli.shown.outcome import FAILED, INTERRUPTED, Shown, failure, stopped_writing
+from sift.interfaces.cli.usage import Parser, asked_json, parsed
 from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
 from sift.interfaces.console.streams import ReaderLeftError, columns, is_terminal, let_go, say, utf8, write_results
@@ -48,61 +32,12 @@ if TYPE_CHECKING:
 
 DESCRIPTION = "Fast local search over your documents and notes."
 NO_TEXT_REMEDY = "name files and folders in UTF-8, or rename this one"
-ONE_VALUE = re.compile(r"argument (\S+?)(?:/\S+)?: expected one argument")
-REQUIRED = "the following arguments are required: "
-OWN_FLAGS = frozenset({"--json", "--color", "-h", "--help"})
 STOPPED_WATCHING = "stopped watching: the home process goes on with it; sift jobs lists it and stops it"
 OTHER_SIFT_REMEDY = "stop sift serve where it runs, and start it again with this sift"
 SERVE = "serve"
 JSON_HELP = "answer in JSON"
 COLOR_HELP = "colour what sift says"
 VERSION_HELP = "say which sift this is"
-COMMANDS_PACKAGE = "sift.interfaces.cli.commands"
-
-
-@dataclass(frozen=True, slots=True)
-class CommandEntry:
-    help: str
-    request: type[object]
-    module: str
-
-
-ENTRIES = MappingProxyType(
-    {
-        "add": CommandEntry("add a folder as a collection", AddCollection, "collections"),
-        "rm": CommandEntry(
-            "remove a collection and its store; its files stay where they are", RemoveCollection, "collections"
-        ),
-        "move": CommandEntry(
-            "move the stores of collections, or of all, to another folder or drive", MoveCollections, "collections"
-        ),
-        "activate": CommandEntry("search collections deactivated before again", ActivateCollections, "collections"),
-        "deactivate": CommandEntry(
-            "leave collections out of searches, and of index and embed unless named",
-            DeactivateCollections,
-            "collections",
-        ),
-        "index": CommandEntry("read what is new or changed in collections", IndexCollections, "indexing"),
-        "query": CommandEntry(
-            "find passages for a question: keyword and semantic, reranked", SearchHybrid, "searching"
-        ),
-        "search": CommandEntry("find passages by their words, ranked by BM25", SearchKeywords, "searching"),
-        "embed": CommandEntry(
-            "embed passages for semantic search, with the model SIFT_EMBED_MODEL names", EmbedCollections, "indexing"
-        ),
-        "vsearch": CommandEntry("find passages near a query in meaning", SearchVectors, "searching"),
-        "get": CommandEntry("print documents by their ids", ReadDocuments, "collections"),
-        "similar": CommandEntry("find documents near one in meaning, by its own vectors", FindSimilar, "searching"),
-        "mentions": CommandEntry("find documents naming a note without linking to it", FindMentions, "searching"),
-        "links": CommandEntry("the links of a note: those it holds, and those into it", ShowLinks, "links"),
-        "unresolved": CommandEntry("link targets no note answers to yet, most linked first", ListUnresolved, "links"),
-        "jobs": CommandEntry("what sift serve does in the background, or stop one of its jobs", ListJobs, "jobs"),
-        "status": CommandEntry("show each collection: its folder and what its store holds", ShowStatus, "collections"),
-        "serve": CommandEntry(
-            "serve this home: its models and codes held, commands answered at once", ServeHome, "serving"
-        ),
-    }
-)
 
 
 class Metadata(Protocol):
@@ -111,24 +46,6 @@ class Metadata(Protocol):
 
 def _as_metadata(module: object) -> Metadata:
     return cast("Metadata", module)
-
-
-class UsageError(Exception):
-    message: str
-    prog: str
-
-    def __init__(self, message: str, prog: str) -> None:
-        super().__init__(message)
-        self.message = message
-        self.prog = prog
-
-
-class Parser(argparse.ArgumentParser):
-    color: bool = False
-
-    @override
-    def error(self, message: str) -> NoReturn:
-        raise UsageError(message, self.prog)
 
 
 class VersionAction(argparse.Action):
@@ -159,14 +76,6 @@ class StoppedError(Exception):
         self.said = said
 
 
-def _as_commands(module: object) -> Commands:
-    return cast("Commands", module)
-
-
-def command_of(name: str) -> Command:
-    return _as_commands(import_module(f"{COMMANDS_PACKAGE}.{ENTRIES[name].module}")).COMMANDS[name]
-
-
 def _placed(settings: Settings, written: str) -> str:
     if not written:
         raise argparse.ArgumentTypeError("an empty path names nothing")
@@ -190,53 +99,6 @@ def parser(settings: Settings) -> argparse.ArgumentParser:
         chosen.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=JSON_HELP)
         chosen.add_argument("--color", choices=list(Colour), default=argparse.SUPPRESS, help=COLOR_HELP)
     return built
-
-
-def asked_json(argv: Sequence[str]) -> bool:
-    given = list(argv)
-    return "--json" in (given[: given.index("--")] if "--" in given else given)
-
-
-def _known(command: str) -> frozenset[str]:
-    request = ENTRIES[command].request
-    found = {name for argument in arguments(request) for name in (argument.flag.short, argument.flag.long)}
-    return OWN_FLAGS | {name for name in found if name is not None}
-
-
-def _unknown_dashed(prog: str, argv: Sequence[str]) -> bool:
-    known = _known(prog.removeprefix("sift").strip())
-    words = list(argv)[: list(argv).index("--")] if "--" in argv else list(argv)
-    return any(word.startswith("-") and word.split("=", 1)[0] not in known for word in words)
-
-
-def _usage(wrong: UsageError, argv: Sequence[str]) -> str:
-    asked = ONE_VALUE.fullmatch(wrong.message)
-    if asked:
-        return f"a value that starts with a dash is written {asked.group(1)}=-value; see {wrong.prog} --help"
-    if wrong.message.startswith(REQUIRED) and _unknown_dashed(wrong.prog, argv):
-        return f"a value that starts with a dash goes after --, e.g. {wrong.prog} -- -value"
-    return f"see {wrong.prog} --help"
-
-
-def _refused_usage(wrong: UsageError, argv: Sequence[str]) -> Shown:
-    return failure(InvalidRequestError(wrong.message, _usage(wrong, argv)), PLAIN, as_json=asked_json(argv))
-
-
-def _parsed(
-    built: argparse.ArgumentParser, argv: Sequence[str], out: TextIO | None, err: TextIO | None
-) -> argparse.Namespace | Shown | int:
-    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        try:
-            namespace, extras = built.parse_known_args(argv)
-        except SystemExit as stop:
-            return stop.code if isinstance(stop.code, int) else FAILED
-        except UsageError as wrong:
-            return _refused_usage(wrong, argv)
-    if extras:
-        chosen = cast("dict[str, object]", vars(namespace)).get("command")
-        prog = f"sift {chosen}" if isinstance(chosen, str) else "sift"
-        return _refused_usage(UsageError(f"unrecognized arguments: {' '.join(extras)}", prog), argv)
-    return namespace
 
 
 def _encoding(stream: TextIO | None) -> str | None:
@@ -342,7 +204,7 @@ def _ran(
         refused = InvalidRequestError(f"an argument is no text: {odd!r}", NO_TEXT_REMEDY)
         return failure(refused, PLAIN, as_json=asked_json([each for each in argv if encodable(each)]))
     built = parser(settings)
-    namespace = _parsed(built, argv, out, err)
+    namespace = parsed(built, argv, out, err)
     if isinstance(namespace, (int, Shown)):
         return namespace
     given = cast("dict[str, object]", vars(namespace))

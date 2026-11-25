@@ -3,7 +3,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from sift.interfaces.cli.main import ENTRIES
+from sift.interfaces.cli.entries import ENTRIES
 from tools import check_idioms
 from tools.canonical import canonical
 from tools.check_idioms import idioms

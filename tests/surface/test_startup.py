@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from sift.api.errors import InvalidRequestError
-from sift.interfaces.cli.main import ENTRIES, command_of, main
+from sift.interfaces.cli.entries import ENTRIES, command_of
+from sift.interfaces.cli.main import main
 from sift.settings import Settings
 from tests.surface.commands import indexed_notes, ran
 
