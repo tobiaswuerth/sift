@@ -18,7 +18,7 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
 from sift.app.searching import UNEMBEDDED_REMEDY, Watching
-from sift.app.vector_candidates import MOST_WIDER, Rescoring
+from sift.app.vector_candidates import MOST_WIDER, WIDENED_REMEDY, Rescoring
 from sift.app.vsearch import vsearch
 from sift.domain.errors import DamagedError
 from sift.storage.database import Reading
@@ -26,6 +26,7 @@ from sift.storage.vectors import EMBED_REMEDY, documents_embedded, vectors_of
 from tests.counting import DocumentCounts, VectorReads
 from tests.damage import changed, damage_table
 from tests.files import write
+from tests.homes import long_parts
 from tests.models import BROKEN, DIRECTIONLESS, Hashed
 
 LONG = "\n\n".join(["Pruning skips ranges that cannot win. " * 20] * 8)
@@ -209,16 +210,8 @@ def test_a_store_lost_while_rescoring_leaves_the_nearest_of_the_rest(home: Path,
     assert [hit.id for hit in found.hits] == ["more/halo.md"]
 
 
-def parts(tmp_path: Path) -> Path:
-    root = tmp_path / "parts"
-    for name, word in (("alpha", "comets"), ("beta", "glaciers")):
-        sections = "".join(f"## Part {n}\n\n{f'About {word} and more {word}. ' * 120}\n\n" for n in range(20))
-        write(root / f"{name}.md", f"# {name}\n\n{sections}")
-    return root
-
-
 def test_once_every_document_is_found_no_more_vectors_are_read(tmp_path: Path) -> None:
-    root = parts(tmp_path)
+    root = long_parts(tmp_path)
     home = tmp_path / "home"
     add(home, AddCollection(str(root)))
     index(home, IndexCollections(), lambda _: None)
@@ -237,7 +230,7 @@ def chunks_in(store: Path) -> int:
 
 @pytest.mark.parametrize("third", ["", f"# C\n\nAn {BROKEN} note.\n", "# C\n\nIndexed, not embedded yet.\n"])
 def test_documents_without_vectors_do_not_keep_the_search_widening(tmp_path: Path, third: str) -> None:
-    root = parts(tmp_path)
+    root = long_parts(tmp_path)
     home = tmp_path / "home"
     add(home, AddCollection(str(root)))
     if third != "# C\n\nIndexed, not embedded yet.\n":
@@ -261,7 +254,7 @@ def test_documents_are_counted_only_when_the_first_round_finds_too_few(home: Pat
 
 
 def test_a_first_round_holding_every_embedded_document_is_not_widened(tmp_path: Path) -> None:
-    root, home = parts(tmp_path), tmp_path / "home"
+    root, home = long_parts(tmp_path), tmp_path / "home"
     add(home, AddCollection(str(root)))
     index(home, IndexCollections(), lambda _: None)
     embed(home, EmbedCollections(), lambda _: None, Hashed())
@@ -318,15 +311,24 @@ def test_the_model_s_loading_is_said_only_when_a_vector_is_needed(home: Path, tm
     assert quiet == []
 
 
-def test_a_search_for_one_passage_a_document_widens_at_most_so_far_and_keeps_what_it_found(tmp_path: Path) -> None:
-    root = parts(tmp_path)
+@pytest.fixture
+def few_long(tmp_path: Path) -> Path:
+    root = long_parts(tmp_path)
     write(root / "gamma.md", "# gamma\n\nWombats dig burrows.\n")
     home = tmp_path / "home"
     add(home, AddCollection(str(root)))
     index(home, IndexCollections(), lambda _: None)
     embed(home, EmbedCollections(), lambda _: None, Hashed())
+    return home
+
+
+def test_a_search_for_one_passage_a_document_widens_at_most_so_far_and_says_it_kept_what_it_found(
+    few_long: Path,
+) -> None:
     reads = VectorReads()
-    found = vsearch(home, SearchVectors("comets glaciers", k=3), Hashed(), Rescoring(1, reads))
-    assert chunks_in(home / "collections" / "parts.sqlite") > MOST_WIDER * 3
+    found = vsearch(few_long, SearchVectors("comets glaciers", k=3), Hashed(), Rescoring(1, reads))
+    assert chunks_in(few_long / "collections" / "parts.sqlite") > MOST_WIDER * 3
     assert max(reads.read) <= MOST_WIDER * (3 + 1)
     assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]
+    said = f"the {MOST_WIDER * (3 + 1)} nearest passages belong to 2 documents: a search reads no farther"
+    assert (found.partial, found.left_out) == (True, (Notice(Problem.WIDENED_ENOUGH, said, WIDENED_REMEDY),))

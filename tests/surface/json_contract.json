@@ -641,6 +641,15 @@
         "field": null
       }
     },
+    "widened_enough": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "widened_enough",
+        "message": "a refusal coded widened_enough",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
     "not_found": {
       "error": {
         "kind": "not_found",

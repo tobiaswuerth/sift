@@ -41,3 +41,11 @@ def asked(*ids: str, lines: tuple[int | None, int | None] = (None, None), fields
 def text_of(home: Path, id_: str) -> str:
     (one,) = documents(home, asked(id_)).found
     return one.text
+
+
+def long_parts(tmp_path: Path) -> Path:
+    root = tmp_path / "parts"
+    for name, word in (("alpha", "comets"), ("beta", "glaciers")):
+        sections = "".join(f"## Part {n}\n\n{f'About {word} and more {word}. ' * 120}\n\n" for n in range(20))
+        write(root / f"{name}.md", f"# {name}\n\n{sections}")
+    return root

@@ -17,7 +17,15 @@ from sift.app.hits import Retrieved, read
 from sift.app.keyword_candidates import Wanted, found
 from sift.app.loading import prepared
 from sift.app.searching import WATCHING, Open, Searching, Wants, Watching, despite_losses
-from sift.app.vector_candidates import QUERY_REMEDY, RESCORING, Rescoring, alike_or_by_keywords, near, query_vector
+from sift.app.vector_candidates import (
+    QUERY_REMEDY,
+    RESCORING,
+    Nearest,
+    Rescoring,
+    alike_or_by_keywords,
+    near,
+    query_vector,
+)
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.codes import Floats
 from sift.domain.query.expressions import NOTHING, Expression
@@ -78,9 +86,10 @@ class CandidateChunks:
 def _candidates(stores: Open, asked: HybridAsked, query: Floats | None, wanted: int) -> CandidateChunks:
     by_document = not asked.request.all_passages
     keyword = found(stores, Wanted(wanted, by_document, TUNING, asked.expired), asked.keywords.expression)
-    semantic = near(stores, Best(wanted, by_document), query, asked.rescoring) if query is not None else ()
-    chunks = list(dict.fromkeys([each.chunk for each in keyword.found] + [each.chunk for each in semantic]))
-    return CandidateChunks(chunks, len(keyword.found) >= wanted or len(semantic) >= wanted, keyword.cut)
+    semantic = near(stores, Best(wanted, by_document), query, asked.rescoring) if query is not None else Nearest(())
+    chunks = list(dict.fromkeys([each.chunk for each in keyword.found] + [each.chunk for each in semantic.found]))
+    full = len(keyword.found) >= wanted or len(semantic.found) >= wanted
+    return CandidateChunks(chunks, full, keyword.cut or semantic.capped)
 
 
 def _cosines(one: Searching, chunks: Sequence[int], query: Floats, asked: Rescoring) -> dict[int, float]:

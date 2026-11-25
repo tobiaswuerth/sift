@@ -6,12 +6,14 @@ import numpy as np
 
 from sift.api.errors import ModelUnavailableError, Problem, StoreUnavailableError
 from sift.api.ids import ChunkId, owner
+from sift.api.notices import Notice
 from sift.api.search import Options
 from sift.app import hits
 from sift.app.searching import Open, Ranked, Searching, despite_losses
 from sift.domain.arrays import Ids, Mask
 from sift.domain.codec.codes import Floats, Halves
 from sift.domain.rank.best import Best, offered, ranked
+from sift.domain.text.wording import counted
 from sift.inference.models import Models
 from sift.retrieval.allowed import AllowedChunks
 from sift.retrieval.vector.nearest import RESCORE, Near, Reads, nearest
@@ -21,6 +23,7 @@ from sift.storage.passing import Passing
 from sift.storage.vectors import EMBED_REMEDY, documents_embedded, vectors_of
 
 QUERY_REMEDY = "word the query otherwise; if the model keeps failing, report it with its name"
+WIDENED_REMEDY = "narrow the search with a path or filters, or ask for every passage"
 WIDER = 4
 MOST_WIDER = WIDER**2
 
@@ -119,23 +122,38 @@ def _documents(stores: Open, count: Callable[[Reading], int]) -> int:
     return sum(stores.guarded(one, partial(count, one.transaction)) for one, _ in stores.embedded())
 
 
-def near(stores: Open, wanted: Best, query: Floats, asked: Rescoring) -> tuple[Near, ...]:
+@dataclass(frozen=True, slots=True)
+class Nearest:
+    found: tuple[Near, ...]
+    capped: bool = False
+
+
+def _capped(stores: Open, read: int, best: tuple[Near, ...]) -> Nearest:
+    said = f"the {read:,} nearest passages belong to {counted(len(best), 'document')}: a search reads no farther"
+    stores.left_out.append(Notice(Problem.WIDENED_ENOUGH, said, WIDENED_REMEDY))
+    return Nearest(best, capped=True)
+
+
+def near(stores: Open, wanted: Best, query: Floats, asked: Rescoring) -> Nearest:
     chunks = sum(len(vectors.coded.ids) for _, vectors in stores.embedded())
     want, documents = max(asked.rescore, wanted.k), None
     farthest = want * MOST_WIDER
     while True:
         found = _nearest(stores, query, want, asked.read)
         best = _best(wanted, found, _owned(stores, found))
-        if len(best) >= wanted.k or want >= min(chunks, farthest) or len(found) < want:
-            return best
+        if len(best) >= wanted.k or want >= chunks or len(found) < want:
+            return Nearest(best)
         documents = _documents(stores, asked.count) if documents is None else documents
         if len(best) >= documents:
-            return best
+            return Nearest(best)
+        if want >= farthest:
+            return _capped(stores, want, best)
         want = min(want * WIDER, farthest)
 
 
 def _round(stores: Open, request: Options, query: Floats, asked: Rescoring, wanted: int) -> Ranked:
-    return Ranked(near(stores, Best(wanted, not request.all_passages), query, asked))
+    found = near(stores, Best(wanted, not request.all_passages), query, asked)
+    return Ranked(found.found, found.capped)
 
 
 def nearest_hits(

@@ -29,6 +29,7 @@ from sift.storage.database import Reading
 from sift.storage.vectors import EMBED_REMEDY, vectors_of
 from tests.damage import changed, damage_pages, damage_table
 from tests.files import write
+from tests.homes import long_parts
 from tests.models import Hashed
 
 LONG = "\n\n".join(["Pruning skips ranges that cannot win. " * 20] * 8)
@@ -323,3 +324,12 @@ def test_a_question_of_more_words_than_a_query_reads_is_answered_by_its_first_on
             WORDS_REMEDY,
         ),
     )
+
+
+def test_a_query_whose_nearest_passages_belong_to_few_documents_says_it_read_no_farther(tmp_path: Path) -> None:
+    home, root = tmp_path / "home", long_parts(tmp_path)
+    write(root / "gamma.md", "# gamma\n\nWombats dig burrows.\n")
+    collection(home, root)
+    found = query(home, SearchHybrid("comets glaciers", k=3, candidates=1), Hashed(), Rescoring(1, vectors_of))
+    widened = [each for each in found.left_out if each.code is Problem.WIDENED_ENOUGH]
+    assert (found.partial, [each.message.endswith("a search reads no farther") for each in widened]) == (True, [True])
