@@ -8,7 +8,7 @@ import pytest
 from sift.api.errors import InvalidRequestError
 from sift.interfaces.cli.entries import ENTRIES, command_of
 from sift.interfaces.cli.main import main
-from sift.settings import Settings
+from sift.settings import OCR_REMEDY, Settings
 from tests.surface.commands import indexed_notes, ran
 
 MAIN_AGAIN = "__mp_main__"
@@ -79,3 +79,22 @@ def test_a_path_from_the_user_s_folder_needs_one(tmp_path: Path) -> None:
     settings = Settings(home=tmp_path / "home", user=None, cwd=tmp_path)
     code, _, err = ran(settings, "add", "~/notes")
     assert (code, "no home folder is set: set SIFT_HOME to an absolute folder" in err) == (2, True)
+
+
+def _no_ocr_known() -> Settings:
+    raise InvalidRequestError("SIFT_OCR is 'maybe'", OCR_REMEDY, "SIFT_OCR")
+
+
+@pytest.mark.parametrize("argv", [["--help"], ["--version"], ["search", "--help"], []])
+def test_help_and_the_version_are_shown_whatever_the_settings_say(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as ended:
+        main(argv, _no_ocr_known)
+    assert (ended.value.code, capsys.readouterr().out.startswith(("usage: sift", "sift "))) == (0, True)
+
+
+def test_settings_refused_are_said_once_a_command_is_known(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as ended:
+        main(["status"], _no_ocr_known)
+    assert (ended.value.code, capsys.readouterr().err.startswith("error  SIFT_OCR is 'maybe'")) == (2, True)

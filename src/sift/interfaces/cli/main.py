@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 from importlib import import_module
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TextIO, cast, override
 
 from sift.api.errors import InvalidRequestError, SiftError, StoreUnavailableError
@@ -35,7 +36,7 @@ from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal,
 from sift.interfaces.console.text import printable_text
 from sift.interfaces.console.windows import console, escapes_work
 from sift.interfaces.server.endpoint import Endpoint, found, unshared
-from sift.settings import Settings, from_environment, whole_path
+from sift.settings import Settings, from_environment, user_folder, whole_path
 
 if TYPE_CHECKING:
     from sift.interfaces.cli.updates import Checking
@@ -86,16 +87,23 @@ class StoppedError(Exception):
         self.said = said
 
 
-def _placed(settings: Settings, written: str) -> str:
+@dataclass(frozen=True, slots=True)
+class SettingsSource:
+    read: Callable[[], Settings]
+    user: Path | None
+    cwd: Path
+
+
+def _placed(user: Path | None, cwd: Path, written: str) -> str:
     if not written:
         raise argparse.ArgumentTypeError("an empty path names nothing")
     try:
-        return str(whole_path(written, settings.user, settings.cwd))
+        return str(whole_path(written, user, cwd))
     except InvalidRequestError as error:
         raise argparse.ArgumentTypeError(f"{error.message}: {error.remedy}") from None
 
 
-def parser(settings: Settings) -> argparse.ArgumentParser:
+def parser(user: Path | None, cwd: Path) -> argparse.ArgumentParser:
     built = Parser(prog="sift", description=DESCRIPTION, allow_abbrev=False)
     built.color = False
     built.add_argument("--version", action=VersionAction)
@@ -105,7 +113,7 @@ def parser(settings: Settings) -> argparse.ArgumentParser:
     for name, each in ENTRIES.items():
         chosen = commands.add_parser(name, help=each.help, description=each.help, allow_abbrev=False)
         chosen.color = False
-        options(chosen, each.request, partial(_placed, settings))
+        options(chosen, each.request, partial(_placed, user, cwd))
         chosen.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=JSON_HELP)
         chosen.add_argument("--color", choices=list(Colour), default=argparse.SUPPRESS, help=COLOR_HELP)
     return built
@@ -213,7 +221,7 @@ def _logged(asked: _Chosen, settings: Settings, host: Host, live: Live) -> Shown
 
 def _ran(
     argv: Sequence[str],
-    settings: Settings,
+    source: SettingsSource,
     streams: tuple[TextIO | None, TextIO | None],
     host: Host,
     encoding: str | None,
@@ -223,7 +231,7 @@ def _ran(
     if (odd := next((argument for argument in argv if not encodable(argument)), None)) is not None:
         refused = InvalidRequestError(f"an argument is no text: {odd!r}", NO_TEXT_REMEDY)
         return failure(refused, PLAIN, as_json=asked_json([each for each in argv if encodable(each)]))
-    built = parser(settings)
+    built = parser(source.user, source.cwd)
     namespace = parsed(built, argv, out, err)
     if isinstance(namespace, (int, Shown)):
         return namespace
@@ -231,6 +239,10 @@ def _ran(
     chosen = given["command"]
     if not isinstance(chosen, str):
         return Shown((built.format_help().rstrip("\n"),), ())
+    try:
+        settings = source.read()
+    except InvalidRequestError as error:
+        return failure(error, PLAIN, as_json=given["json"] is True)
     style = _style(err, settings, Colour(str(given["color"])), encoding)
     asked = _Chosen(chosen, namespace, given["json"] is True, style)
     found = _logged(asked, settings, host, _live(err, settings, style, platform, host.clock))
@@ -239,12 +251,27 @@ def _ran(
     return noticed(found, settings.home, _version(), style, host.checking)
 
 
+def _given(settings: Settings) -> Settings:
+    return settings
+
+
+def _refused(error: InvalidRequestError) -> Settings:
+    raise error
+
+
 def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO | None, host: Host = HOST) -> int:
+    return _answered(argv, SettingsSource(partial(_given, settings), settings.user, settings.cwd), (out, err), host)
+
+
+def _answered(
+    argv: Sequence[str], source: SettingsSource, streams: tuple[TextIO | None, TextIO | None], host: Host
+) -> int:
+    out, err = streams
     encoding = _encoding(err)
     for stream in (out, err):
         utf8(stream)
     try:
-        found = _ran(argv, settings, (out, err), host, encoding)
+        found = _ran(argv, source, (out, err), host, encoding)
         if isinstance(found, int):
             return found
         write_results(out, map(printable_text, found.results) if is_terminal(out) else found.results)
@@ -268,8 +295,6 @@ def main(argv: Sequence[str] | None = None, read_settings: Callable[[], Settings
     try:
         settings = read_settings()
     except InvalidRequestError as error:
-        refused = failure(error, PLAIN, as_json=asked_json(given))
-        write_results(sys.stdout, refused.results)
-        say(sys.stderr, refused.messages)
-        raise SystemExit(refused.code) from None
+        source = SettingsSource(partial(_refused, error), user_folder(), Path.cwd())
+        raise SystemExit(_answered(given, source, (sys.stdout, sys.stderr), HOST)) from None
     raise SystemExit(run(given, settings, sys.stdout, sys.stderr))
