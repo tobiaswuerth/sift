@@ -51,3 +51,9 @@ class FakeCuda:
     def set_per_process_memory_fraction(self, fraction: float, device: int) -> None:
         assert device == 0
         self.fractions.append(fraction)
+
+    def allocate(self, size: int) -> None:
+        self.free, self.reserved = self.free - size, self.reserved + size
+
+    def empty_cache(self) -> None:
+        self.free, self.reserved = self.free + self.reserved, 0

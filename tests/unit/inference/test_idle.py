@@ -24,13 +24,20 @@ class Movable:
     max_seq_length: int | None = 512
     tokenizer: object = None
     refusals: dict[str, BaseException] = field(default_factory=dict[str, BaseException])
+    cuda: FakeCuda | None = None
+    size: int = 0
 
     def to(self, device: str) -> "Movable":
         if device in self.refusals:
             raise self.refusals.pop(device)
         self.moves.append(device)
         self.on = device
+        self.held()
         return self
+
+    def held(self) -> None:
+        if self.cuda is not None and self.on == "cuda":
+            self.cuda.allocate(self.size)
 
     def modules(self) -> Iterator[object]:
         return iter(())
@@ -68,19 +75,28 @@ class Room:
     threads: list[int] = field(default_factory=list[int])
     loaded: list[Movable] = field(default_factory=list[Movable])
     emptied: list[str] = field(default_factory=list[str])
+    model_size: int = 0
+
+    def _made(self, device: Device) -> Movable:
+        made = Movable(device.name, device.dtype, cuda=self.cuda, size=self.model_size)
+        made.held()
+        self.loaded.append(made)
+        return made
 
     def embedder(self, _name: str, device: Device) -> Loaded:
-        self.loaded.append(Movable(device.name, device.dtype))
-        return Loaded(cast("Embedder", self.loaded[-1]), 4)
+        return Loaded(cast("Embedder", self._made(device)), 4)
 
     def ranker(self, _name: str, device: Device) -> Ranker:
-        self.loaded.append(Movable(device.name, device.dtype))
-        return cast("Ranker", self.loaded[-1])
+        return cast("Ranker", self._made(device))
+
+    def _emptied(self) -> None:
+        self.emptied.append("cuda")
+        self.cuda.empty_cache()
 
     def local(self, *, gpu: bool = True) -> Local:
         self.cuda.available = gpu
         machine = Machine(self.cuda, lambda: False, lambda: gpu, "13.0", self.threads.append)
-        caches = {"cuda": lambda: self.emptied.append("cuda")}
+        caches = {"cuda": self._emptied}
         host = LocalHost(machine, lambda: self.now, self.embedder, self.ranker, caches)
         return Local("an-embedder", "a-reranker", host=host)
 
@@ -108,6 +124,19 @@ def test_idle_models_leave_the_gpu_for_ram_and_go_back_when_used() -> None:
     assert [(model.on, model.moves) for model in room.loaded] == [("cuda", ["cpu", "cuda"])] * 2
     assert [[asked[0] for asked in model.asked] for model in room.loaded] == [["cuda", "cuda"]] * 2
     assert room.cuda.fractions == pytest.approx([(20 - 2.4) / 24, (16 - 2.4) / 24])
+
+
+def test_the_models_own_memory_is_freed_on_rest_and_counted_again_on_return() -> None:
+    room = Room(model_size=2 * GIB)
+    local = room.local()
+    used(local)
+    assert (room.cuda.free, room.cuda.reserved) == (16 * GIB, 4 * GIB)
+    room.now = IDLE_SECONDS
+    assert local.release_idle() is True
+    assert (room.cuda.free, room.cuda.reserved) == (20 * GIB, 0)
+    used(local)
+    assert (room.cuda.free, room.cuda.reserved) == (16 * GIB, 4 * GIB)
+    assert room.cuda.fractions == pytest.approx([(20 - 2.4) / 24] * 2)
 
 
 def test_every_use_starts_the_idle_time_again() -> None:

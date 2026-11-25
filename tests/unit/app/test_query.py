@@ -67,6 +67,16 @@ def test_keyword_and_semantic_candidates_are_reranked_each_document_once(home: P
     assert [hit.score for hit in result.hits] == sorted((hit.score for hit in result.hits), reverse=True)
 
 
+def test_a_hit_s_score_blends_what_the_reranker_says_with_how_near_its_meaning_is(home: Path) -> None:
+    result = query(home, SearchHybrid("dark matter halo models", k=4), Hashed(scored=True))
+    assert [(hit.id, hit.score) for hit in result.hits] == [
+        ("notes/halo.md", pytest.approx(4.130132, rel=1e-6)),
+        ("notes/matter.md", pytest.approx(2.973595, rel=1e-6)),
+        ("notes/filler2.md", pytest.approx(-0.1521017, rel=1e-6)),
+        ("notes/filler5.md", pytest.approx(-0.1561312, rel=1e-6)),
+    ]
+
+
 def test_copies_of_one_work_widen_the_candidates_until_k_works_are_found(tmp_path: Path) -> None:
     home = tmp_path / "home"
     for name in ("a", "b", "c"):

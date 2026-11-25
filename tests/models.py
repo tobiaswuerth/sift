@@ -9,6 +9,7 @@ from sift.inference.prepared import ModelsPrepared
 
 BROKEN = "unembeddable"
 DIRECTIONLESS = "directionless"
+LENGTH_WEIGHT = 0.5
 
 
 def _word(word: str, width: int) -> Floats:
@@ -34,6 +35,7 @@ class Hashed:
     prepared: list[bool] = field(default_factory=list[bool])
     ranker_prepared: list[bool] = field(default_factory=list[bool])
     reranked: list[tuple[str, tuple[str, ...]]] = field(default_factory=list[tuple[str, tuple[str, ...]]])
+    scored: bool = False
 
     def prepare(self) -> ModelsPrepared:
         built = not self.prepared
@@ -56,4 +58,8 @@ class Hashed:
     def rerank(self, query: str, texts: Sequence[str]) -> Floats:
         self.reranked.append((query, tuple(texts)))
         asked = set(query.lower().split())
-        return np.array([len(asked & set(text.lower().split())) for text in texts], np.float32)
+        return np.array([self._score(asked, text.lower().split()) for text in texts], np.float32)
+
+    def _score(self, asked: set[str], words: list[str]) -> float:
+        shared = len(asked & set(words))
+        return shared + LENGTH_WEIGHT / (1 + len(words)) if self.scored else shared
