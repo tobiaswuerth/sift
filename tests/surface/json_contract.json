@@ -650,6 +650,15 @@
         "field": null
       }
     },
+    "field_not_held": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "field_not_held",
+        "message": "a refusal coded field_not_held",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
     "not_found": {
       "error": {
         "kind": "not_found",

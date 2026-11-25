@@ -2,6 +2,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 
+from sift.api.errors import Problem
 from sift.api.fields import Fields
 from sift.api.ids import ChunkId, owner
 from sift.api.notices import Notice
@@ -15,6 +16,7 @@ from sift.storage.documents import fields_by_document, passages
 from sift.storage.texts import TextSpan, spans_text
 
 WIDER = 2
+UNHELD_REMEDY = "name a front matter field the results hold, e.g. title"
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +25,7 @@ class Answered:
     cut: bool = False
     more: bool = False
     loosened: bool = False
+    unheld: tuple[Notice, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,9 +98,22 @@ def always() -> bool:
     return True
 
 
+def _unheld(kept: Sequence[Retrieved], request: Options) -> tuple[Notice, ...]:
+    if not kept:
+        return ()
+    each = [read.fields for read in kept]
+    sort = shown.unsorted(each, request.sort)
+    by = f"no result holds {sort!r}, the field to sort by: the results stand as ranked"
+    sorting = [Notice(Problem.FIELD_NOT_HELD, by, shown.SORT_REMEDY)] if sort is not None else []
+    named = [f"no result holds the field {name!r}" for name in shown.unheld(each, request.fields)]
+    return (*sorting, *(Notice(Problem.FIELD_NOT_HELD, said, UNHELD_REMEDY) for said in named))
+
+
 def shown_of(ranked: Sequence[Retrieved], request: Options, *, cut: bool, loosened: bool = False) -> Answered:
-    shown = presented(ranked[: request.wanted], request)
-    return Answered(shown, cut, len(ranked) > request.offset + len(shown), loosened)
+    kept = ranked[: request.wanted]
+    found = presented(kept, request)
+    more = len(ranked) > request.offset + len(found)
+    return Answered(found, cut, more, loosened, _unheld(kept, request))
 
 
 def answered(
@@ -122,7 +138,8 @@ def result(stores: Open, answered: Answered, scored_by: ScoredBy) -> SearchResul
     despite_losses(stores.closed)
     live = {one.collection.id for one in stores.searching}
     found = tuple(hit for chunk, hit in answered.found if owner(chunk) in live)
-    searched, unsearched, left_out = len(stores.searching), tuple(stores.unsearched), tuple(stores.left_out)
+    searched, unsearched = len(stores.searching), tuple(stores.unsearched)
+    left_out = (*stores.left_out, *answered.unheld)
     return SearchResult(
         found,
         searched,

@@ -12,6 +12,7 @@ class Problem(StrEnum):
     TAKEN = "taken"
     TOO_MANY_WORDS = "too_many_words"
     WIDENED_ENOUGH = "widened_enough"
+    FIELD_NOT_HELD = "field_not_held"
     NOT_FOUND = "not_found"
     FOLDER_MISSING = "folder_missing"
     UNKNOWN_COLLECTION = "unknown_collection"
@@ -93,6 +94,7 @@ CODE_KINDS: Mapping[Problem, type[SiftError]] = MappingProxyType(
         Problem.TAKEN: InvalidRequestError,
         Problem.TOO_MANY_WORDS: InvalidRequestError,
         Problem.WIDENED_ENOUGH: InvalidRequestError,
+        Problem.FIELD_NOT_HELD: InvalidRequestError,
         Problem.INACTIVE_COLLECTION: InvalidRequestError,
         Problem.UNAUTHORIZED: InvalidRequestError,
         Problem.NOT_FOUND: NotFoundError,

@@ -6,6 +6,7 @@ from sift.api.errors import InvalidRequestError
 from sift.api.filters import Filter, FilterValue, Operator
 
 MOST_BRACKETS = 64
+OPERATOR_CHARACTERS = frozenset("=<>!")
 WRITTEN = re.compile(r"(\w[^=<>!]*)(>=|<=|!=|=|<|>)(.*)", re.DOTALL)
 WRITTEN_SYNTAX = "written KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06"
 WRITTEN_REMEDY = "write KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06"
@@ -43,4 +44,7 @@ def written(text: str) -> Filter:
     field, operator, value = found[1].strip(), Operator(found[2]), found[3].strip()
     if not value:
         raise _refused(text, "it gives no value")
+    if value[0] in OPERATOR_CHARACTERS:
+        said = f'its value starts with {value[0]!r}: write the operator once, or quote such a value, e.g. title=">3"'
+        raise _refused(text, said)
     return Filter(field, operator, _values(text, value))

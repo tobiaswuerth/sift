@@ -27,6 +27,7 @@ from sift.interfaces.cli.written import written
         ("note=a=b", Filter("note", Operator.ANY, ("a=b",))),
         ('tags=[1, "a", 2.50]', Filter("tags", Operator.ANY, ("1", "a", "2.50"))),
         ("org=[[Acme AG]]", Filter("org", Operator.ANY, ("[[Acme AG]]",))),
+        ('title=">3"', Filter("title", Operator.ANY, (">3",))),
         ("n=" + "[" * 5000, Filter("n", Operator.ANY, ("[" * 5000,))),
     ],
 )
@@ -36,7 +37,9 @@ def test_a_filter_is_written_as_a_field_an_operator_and_a_value_whose_numbers_st
     assert written(text) == expected
 
 
-@pytest.mark.parametrize("text", ["year", "=2024", "year=", ">=5", "year=null", "year=[]", 'a={"b": 1}'])
+@pytest.mark.parametrize(
+    "text", ["year", "=2024", "year=", ">=5", "year=null", "year=[]", 'a={"b": 1}', "year>>3", "year==2024", "a!=<b"]
+)
 def test_a_filter_written_otherwise_is_refused_saying_how_to_write_one(text: str) -> None:
     with pytest.raises(InvalidRequestError, match="KEY=VALUE") as refused:
         written(text)

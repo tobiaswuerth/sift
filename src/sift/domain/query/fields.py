@@ -55,8 +55,22 @@ def _key(value: FieldValue) -> Key:
     return (2, 0, _text(first))
 
 
+def sorted_by(sort: str) -> str:
+    return sort.removeprefix("-")
+
+
+def unheld(each: Sequence[Fields], asked: Sequence[str]) -> list[str]:
+    return [name for name in asked if name != EVERY and not any(name in held for held in each)]
+
+
+def unsorted(each: Sequence[Fields], sort: str | None) -> str | None:
+    if sort is None or any(held.get(sorted_by(sort)) is not None for held in each):
+        return None
+    return sorted_by(sort)
+
+
 def order(each: Sequence[Fields], sort: str) -> list[int]:
-    field, descending = sort.removeprefix("-"), sort.startswith("-")
+    field, descending = sorted_by(sort), sort.startswith("-")
     valued = [at for at, held in enumerate(each) if held.get(field) is not None]
     valued.sort(key=lambda at: _key(each[at][field]), reverse=descending)
     return valued + [at for at, held in enumerate(each) if held.get(field) is None]
