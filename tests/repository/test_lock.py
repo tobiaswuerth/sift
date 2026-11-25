@@ -29,3 +29,9 @@ def test_the_lock_requires_every_platform_ci_runs_on() -> None:
     ci = runners((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     assert ci - PLATFORMS.keys() == set(), "name the platform of each new runner in PLATFORMS"
     assert {PLATFORMS[runner] for runner in ci} - set(uv["required-environments"]) == set()
+
+
+def test_every_dependency_says_why_its_lowest_version() -> None:
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    listed = project.split("\ndependencies = [\n", 1)[1].split("\n]", 1)[0].split("\n")
+    assert [line for line in listed if "# " not in line] == []
