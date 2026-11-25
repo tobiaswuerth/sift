@@ -11,6 +11,16 @@ from sift.interfaces.console.text import fitted, labelled, printable, printable_
 UNSEEN = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 JOINER = "\N{ZERO WIDTH JOINER}"
 
+WRITING = frozenset(
+    {
+        "\N{ZERO WIDTH NON-JOINER}",
+        "\N{LEFT-TO-RIGHT MARK}",
+        "\N{RIGHT-TO-LEFT MARK}",
+        "\N{ARABIC LETTER MARK}",
+        "\N{SOFT HYPHEN}",
+    }
+)
+
 
 @pytest.mark.parametrize(
     "text, columns",
@@ -50,10 +60,16 @@ def test_printable_ascii_takes_a_column_a_character(text: str) -> None:
         ("a\N{ZERO WIDTH SPACE}b\N{LINE SEPARATOR}c\N{PARAGRAPH SEPARATOR}", "a\\u200bb\\u2028c\\u2029"),
         ("\N{MAN}\N{ZERO WIDTH JOINER}\N{WOMAN}", "\N{MAN}\N{ZERO WIDTH JOINER}\N{WOMAN}"),
         ("\U000e0041", "\\U000e0041"),
+        ("\N{RIGHT-TO-LEFT EMBEDDING}a", "\\u202ba"),
     ],
 )
 def test_control_characters_are_shown_as_escapes_so_no_text_can_steer_the_terminal(text: str, shown: str) -> None:
     assert printable(text) == shown
+
+
+@pytest.mark.parametrize("kept", sorted(WRITING))
+def test_marks_writing_needs_are_shown_as_they_are(kept: str) -> None:
+    assert (printable(f"a{kept}b"), printable_text(f"a{kept}b")) == (f"a{kept}b", f"a{kept}b")
 
 
 def test_half_a_surrogate_pair_which_no_stream_can_encode_is_shown_as_an_escape() -> None:
@@ -63,7 +79,7 @@ def test_half_a_surrogate_pair_which_no_stream_can_encode_is_shown_as_an_escape(
 @given(st.text(st.characters(codec=None)))
 def test_a_printable_text_holds_no_control_character_and_can_be_encoded(text: str) -> None:
     shown = printable(text)
-    assert not any(unicodedata.category(character) in UNSEEN for character in shown.replace(JOINER, ""))
+    assert not any(unicodedata.category(each) in UNSEEN for each in shown if each != JOINER and each not in WRITING)
     assert shown.encode().decode() == shown
 
 
@@ -77,7 +93,7 @@ def test_json_holds_what_could_steer_a_terminal_as_json_escapes_that_read_back_t
 
 def test_every_character_that_can_steer_a_terminal_or_hide_text_is_escaped_and_no_other() -> None:
     every = [chr(code) for code in range(0x110000)]
-    steering = {character for character in every if unicodedata.category(character) in UNSEEN} - {JOINER}
+    steering = {character for character in every if unicodedata.category(character) in UNSEEN} - {JOINER, *WRITING}
     assert {character for character in every if printable(character) != character} == steering
 
 

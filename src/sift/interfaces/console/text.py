@@ -11,7 +11,7 @@ WIDE = frozenset({"W", "F"})
 NO_WIDTH = frozenset({"Mn", "Me", "Cf"})
 ESCAPES = MappingProxyType({"\n": "\\n", "\r": "\\r", "\t": "\\t"})
 FORMATS = (
-    "\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200c\u200e-\u200f\u202a-"
+    "\u0600-\u0605\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b\u202a-"
     "\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f"
     "\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f\u2028\u2029\ud800-"
     "\udfff"
