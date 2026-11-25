@@ -248,7 +248,7 @@ def test_a_home_and_stores_others_could_read_are_made_the_user_s_when_written(tm
 
 @pytest.mark.parametrize(
     "folder, store, field",
-    [("notes", None, "folder"), ("", None, "folder"), (None, "stores", "store"), (None, "", "store")],
+    [("notes", None, "folder"), (None, "stores", "store")],
 )
 def test_a_folder_or_store_to_add_that_is_not_absolute_is_refused_by_its_field(
     tmp_path: Path, home: Path, folder: str | None, store: str | None, field: str

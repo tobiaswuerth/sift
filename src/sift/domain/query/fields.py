@@ -6,15 +6,12 @@ from sift.domain.query.filters import DECIMAL, WHOLE
 
 EVERY = "*"
 TITLE = "title"
-FIELDS_REMEDY = 'name front matter fields, e.g. url and created, or "*" for all'
 SORT_REMEDY = "name a front matter field, e.g. created, or -created for the newest first"
 
 type Key = tuple[int, int | float, str]
 
 
-def checked(fields: Sequence[str], sort: str | None) -> None:
-    if any(not name for name in fields):
-        raise InvalidRequestError(f"{','.join(fields)!r} names no field between two commas", FIELDS_REMEDY, "fields")
+def checked(sort: str | None) -> None:
     if sort is not None and not sort.removeprefix("-"):
         raise InvalidRequestError(f"{sort!r} names no field to sort by", SORT_REMEDY, "sort")
 

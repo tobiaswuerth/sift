@@ -1,9 +1,10 @@
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from sift.api.described import Help
+from sift.api.described import LISTED, NAME_LENGTH, PATH_LENGTH, Bounds, Help
 from sift.api.requests import Request
 
+MOST_FILES = 10_000
 FILES = (
     "read only this file now, or drop it if gone, whatever its date: its id (collection/path), or its absolute "
     "path; several: each of them"
@@ -12,10 +13,14 @@ FILES = (
 
 @dataclass(frozen=True, slots=True)
 class IndexCollections(Request):
-    names: Annotated[tuple[str, ...], Help("the collections to index (default: every active one)")] = ()
+    names: Annotated[
+        tuple[str, ...], Help("the collections to index (default: every active one)"), LISTED, NAME_LENGTH
+    ] = ()
     files: Annotated[
         tuple[str, ...],
         Help(FILES),
+        Bounds(0, MOST_FILES),
+        PATH_LENGTH,
     ] = ()
 
 

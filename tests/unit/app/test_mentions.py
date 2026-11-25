@@ -82,9 +82,10 @@ def test_a_note_is_mentioned_by_every_name_it_has(tmp_path: Path) -> None:
 def test_mentions_of_what_is_no_note_or_by_no_field_are_refused(named: Path) -> None:
     with pytest.raises(NotFoundError, match="no note or document 'Nobody'"):
         mentions(named, FindMentions("Nobody"))
-    for blank in ("", " "):
-        with pytest.raises(InvalidRequestError, match=r"names front matter fields, e\.g\. emails, not "):
-            mentions(named, FindMentions(HANS, also=(blank,)))
+    with pytest.raises(InvalidRequestError, match=r"names front matter fields, e\.g\. emails, not ' '"):
+        mentions(named, FindMentions(HANS, also=(" ",)))
+    with pytest.raises(InvalidRequestError, match="also holds an empty text"):
+        FindMentions(HANS, also=("",))
 
 
 def test_a_name_that_starts_like_an_id_is_looked_up_as_a_name(named: Path, tmp_path: Path) -> None:

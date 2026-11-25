@@ -16,6 +16,7 @@ from sift.app.collections import add, status
 from sift.app.documents import documents
 from sift.app.indexing import index
 from sift.app.search import search
+from sift.app.searching import EMPTY_QUERY
 from sift.storage.keywords import REMAKE_REMEDY, TAKEN_OVER_REMEDY
 from sift.storage.layout import LAYOUT
 from sift.storage.store import MISSING_REMEDY, create_store
@@ -346,7 +347,7 @@ def test_an_empty_collection_of_another_version_is_current_once_indexed(home: Pa
     assert search(home, SearchKeywords("halo", collections=("empty",))) == SearchResult((), 1, ())
 
 
-@pytest.mark.parametrize("query", ["", " ", "\t\n"])
-def test_an_empty_query_is_refused(home: Path, query: str) -> None:
-    with pytest.raises(InvalidRequestError, match="an empty query finds nothing"):
+@pytest.mark.parametrize("query, said", [("", "query is empty"), (" ", EMPTY_QUERY), ("\t\n", EMPTY_QUERY)])
+def test_an_empty_query_is_refused(home: Path, query: str, said: str) -> None:
+    with pytest.raises(InvalidRequestError, match=said):
         search(home, SearchKeywords(query))

@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import cast
 
+from sift.api.described import FIELD_LENGTH, TEXT_LENGTH
 from sift.api.errors import InvalidRequestError
 from sift.api.requests import HALF_PAIR_REMEDY, holds_half_a_pair
 
@@ -13,6 +14,7 @@ type FilterValue = str | int | float | bool
 
 MOST_BRACKETS = 64
 MOST_INTEGER = 2**63
+MOST_VALUES = 100_000
 WRITTEN = re.compile(r"(\w[^=<>!]*)(>=|<=|!=|=|<|>)(.*)", re.DOTALL)
 FILTER_REMEDY = "write KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06"
 
@@ -47,6 +49,7 @@ class Filter:
             raise _wrong(f"the filter on {self.field!r} has no value")
         if self.operator not in SETS and len(self.values) > 1:
             raise _wrong(f"the range on {self.field!r} takes one value, not {len(self.values)}")
+        _refuse_too_long(field, cast("tuple[object, ...]", self.values))
         object.__setattr__(self, "field", unicodedata.normalize("NFC", field))
         values = tuple(
             _meant(value, ranged=self.operator not in SETS) for value in cast("tuple[object, ...]", self.values)
@@ -59,6 +62,18 @@ class Filter:
                 raise _wrong(f"the filter on {self.field!r}: {value} is too large")
             if isinstance(value, float) and not math.isfinite(value):
                 raise _wrong(f"the filter on {self.field!r}: {value} is no finite number")
+
+
+def _refuse_too_long(field: str, values: tuple[object, ...]) -> None:
+    if len(field) > FIELD_LENGTH.high:
+        raise _wrong(f"a filter's field is {len(field):,} characters long, more than {FIELD_LENGTH.high:,}")
+    if len(values) > MOST_VALUES:
+        raise _wrong(f"the filter on {field[:40]!r} has {len(values):,} values, more than {MOST_VALUES:,}")
+    longest = max((len(each) for each in values if isinstance(each, str)), default=0)
+    if longest > TEXT_LENGTH.high:
+        raise _wrong(
+            f"the filter on {field[:40]!r} has a value {longest:,} characters long, more than {TEXT_LENGTH.high:,}"
+        )
 
 
 def _number_in(text: str) -> object:

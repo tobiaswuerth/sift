@@ -263,12 +263,11 @@ def test_a_place_a_stopped_move_left_open_elsewhere_is_not_moved_onto(home: Path
     assert moved(home, "notes", to=place.parent).moved[0].new == str(place)
 
 
-@pytest.mark.parametrize("to", ["elsewhere", ""])
-def test_a_place_to_move_to_that_is_not_absolute_is_refused(tmp_path: Path, to: str) -> None:
+def test_a_place_to_move_to_that_is_not_absolute_is_refused(tmp_path: Path) -> None:
     home = tmp_path / "home"
     folder = tmp_path / "notes"
     folder.mkdir()
     add(home, AddCollection(str(folder)))
     with pytest.raises(InvalidRequestError, match="is no absolute path") as refused:
-        move(home, MoveCollections(to=to), lambda _: None)
+        move(home, MoveCollections(to="elsewhere"), lambda _: None)
     assert (refused.value.field, refused.value.remedy) == ("to", ABSOLUTE_REMEDY)

@@ -119,3 +119,17 @@ def test_a_value_front_matter_reads_as_a_list_is_refused_saying_how_to_give_seve
         forms("[a, c]")
     assert refused.value.remedy == LIST_REMEDY
     assert forms("[[Acme AG]]") == ["[[Acme AG]]"]
+
+
+@pytest.mark.parametrize(
+    "field, values, said",
+    [
+        ("f" * 1_001, ("x",), "field is 1,001 characters long, more than 1,000"),
+        ("f", ("x",) * 100_001, "has 100,001 values, more than 100,000"),
+        ("f", ("x" * 10_001,), "has a value 10,001 characters long, more than 10,000"),
+    ],
+)
+def test_a_filter_too_long_is_refused_saying_how_long_it_may_be(field: str, values: tuple[str, ...], said: str) -> None:
+    with pytest.raises(InvalidRequestError, match=said):
+        Filter(field, Operator.ANY, values)
+    assert Filter("f" * 1_000, Operator.ANY, ("x" * 10_000,) * 2).values[0] == "x" * 10_000

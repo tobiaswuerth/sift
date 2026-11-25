@@ -1,13 +1,24 @@
 from dataclasses import dataclass
 from typing import Annotated
 
-from sift.api.described import Bounds, Composed, Help
+from sift.api.described import (
+    FIELD_LENGTH,
+    LISTED,
+    NAME_LENGTH,
+    PATH_LENGTH,
+    SECONDS,
+    TEXT_LENGTH,
+    Bounds,
+    Composed,
+    Help,
+)
 from sift.api.errors import Problem, SiftError
 from sift.api.fields import FIELDS, Fields
 from sift.api.filters import Filter
 from sift.api.requests import Request
 
 MOST_HITS = 10_000
+MOST_LINKS = 100
 QUERY = (
     'what to find: words, "phrases", prefix*, AND, OR, NOT and (parentheses); words side by side must all be in a '
     "passage, and if no passage holds them all, any of them will do"
@@ -41,20 +52,22 @@ class Options(Request):
     collections: Annotated[
         tuple[str, ...],
         Help("search this collection; several: each of them (default: every active one)"),
+        LISTED,
+        NAME_LENGTH,
     ] = ()
-    path: Annotated[str | None, Help(PATH)] = None
-    filters: Annotated[tuple[Filter, ...], Help(FILTERS)] = ()
-    fields: Annotated[tuple[str, ...], Help(FIELDS), Composed()] = ()
-    sort: Annotated[str | None, Help(SORT), Composed()] = None
-    links_to: Annotated[tuple[str, ...], Help(LINKS_TO)] = ()
-    linked_from: Annotated[tuple[str, ...], Help(LINKED_FROM)] = ()
+    path: Annotated[str | None, Help(PATH), PATH_LENGTH] = None
+    filters: Annotated[tuple[Filter, ...], Help(FILTERS), LISTED] = ()
+    fields: Annotated[tuple[str, ...], Help(FIELDS), Composed(), LISTED, FIELD_LENGTH] = ()
+    sort: Annotated[str | None, Help(SORT), Composed(), FIELD_LENGTH] = None
+    links_to: Annotated[tuple[str, ...], Help(LINKS_TO), Bounds(0, MOST_LINKS), PATH_LENGTH] = ()
+    linked_from: Annotated[tuple[str, ...], Help(LINKED_FROM), Bounds(0, MOST_LINKS), PATH_LENGTH] = ()
     all_passages: Annotated[
         bool, Help("every passage found, not only each document's best, and copies of one work apart")
     ] = False
     compact: Annotated[bool, Help("leave out the text of each passage")] = False
     adaptive: Annotated[bool, Help(ADAPTIVE)] = False
     offset: Annotated[int, Help(OFFSET), Bounds(0, MOST_HITS - 1)] = 0
-    budget: Annotated[float | None, Help(BUDGET)] = None
+    budget: Annotated[float | None, Help(BUDGET), SECONDS] = None
 
     @property
     def wanted(self) -> int:
@@ -63,17 +76,17 @@ class Options(Request):
 
 @dataclass(frozen=True, slots=True)
 class SearchKeywords(Options):
-    query: Annotated[str, Help(QUERY)]
+    query: Annotated[str, Help(QUERY), TEXT_LENGTH]
 
 
 @dataclass(frozen=True, slots=True)
 class SearchVectors(Options):
-    query: Annotated[str, Help("what to find, in words: passages near it in meaning are found")]
+    query: Annotated[str, Help("what to find, in words: passages near it in meaning are found"), TEXT_LENGTH]
 
 
 @dataclass(frozen=True, slots=True)
 class SearchHybrid(Options):
-    query: Annotated[str, Help("a question, or a description of what to find")]
+    query: Annotated[str, Help("a question, or a description of what to find"), TEXT_LENGTH]
     candidates: Annotated[int, Help(CANDIDATES), Bounds(1, MOST_HITS)] = 40
 
 

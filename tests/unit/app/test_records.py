@@ -149,9 +149,11 @@ def test_a_field_chosen_must_be_named(
     tmp_path: Path, id_field: str | None, title_field: str | None, text_fields: tuple[str, ...]
 ) -> None:
     (tmp_path / "c").mkdir()
-    asked = AddCollection(str(tmp_path / "c"), id_field=id_field, title_field=title_field, text_fields=text_fields)
     with pytest.raises(InvalidRequestError, match="field"):
-        add(tmp_path / "home", asked)
+        add(
+            tmp_path / "home",
+            AddCollection(str(tmp_path / "c"), id_field=id_field, title_field=title_field, text_fields=text_fields),
+        )
 
 
 def counting(home: Path, held: list[int]) -> Lines:

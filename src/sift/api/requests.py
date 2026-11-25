@@ -10,11 +10,13 @@ from functools import cache
 from types import MappingProxyType
 from typing import Annotated, Literal, TypeAliasType, cast, get_args, get_origin, get_type_hints
 
-from sift.api.described import Bounds, Composed
+from sift.api.described import Bounds, Composed, Length, Within
 from sift.api.errors import InvalidRequestError
 
 SURROGATE = re.compile(f"[{chr(0xD800)}-{chr(0xDFFF)}]")
 HALF_PAIR_REMEDY = "send it as text in UTF-8"
+HOLDS: Mapping[bool, str] = MappingProxyType({True: "holds a text", False: "is"})
+EMPTY: Mapping[bool, str] = MappingProxyType({True: "holds an empty text", False: "is empty"})
 KIND_NAMES: Mapping[object, str] = MappingProxyType(
     {str: "text", int: "a whole number", float: "a finite number", bool: "true or false"}
 )
@@ -130,6 +132,31 @@ def _bounded(name: str, value: object, bounds: Bounds) -> None:
         raise InvalidRequestError(said, f"give {bounds.low:,} to {bounds.high:,}", name)
 
 
+def _sized(name: str, value: object, length: Length) -> None:
+    texts = cast("tuple[object, ...]", value) if isinstance(value, tuple) else (value,)
+    for text in (each for each in texts if isinstance(each, str)):
+        if not length.low <= len(text) <= length.high:
+            listed = isinstance(value, tuple)
+            long = f"{name} {HOLDS[listed]} {len(text):,} characters long, not {length.low:,} to {length.high:,}"
+            said = long if text else f"{name} {EMPTY[listed]}"
+            raise InvalidRequestError(said, f"give {name} as {length.low:,} to {length.high:,} characters", name)
+
+
+def _spanned(name: str, value: object, span: Within) -> None:
+    if isinstance(value, int | float) and not span.low <= value <= span.high:
+        said = f"{value} is outside {span.low:,g} to {span.high:,g}"
+        raise InvalidRequestError(said, f"give {span.low:,g} to {span.high:,g}", name)
+
+
+def _held_to(name: str, value: object, mark: object) -> None:
+    if isinstance(mark, Bounds):
+        _bounded(name, value, mark)
+    elif isinstance(mark, Length):
+        _sized(name, value, mark)
+    elif isinstance(mark, Within):
+        _spanned(name, value, mark)
+
+
 def holds_half_a_pair(value: object) -> bool:
     if isinstance(value, str):
         return SURROGATE.search(value) is not None
@@ -158,8 +185,7 @@ def checked(request: object) -> None:
         if holds_half_a_pair(value):
             raise InvalidRequestError(f"{name} holds half a surrogate pair", HALF_PAIR_REMEDY, name)
         for each in metadata:
-            if isinstance(each, Bounds):
-                _bounded(name, value, each)
+            _held_to(name, value, each)
 
 
 @dataclass(frozen=True, slots=True)

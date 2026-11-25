@@ -111,7 +111,7 @@ def test_a_budget_of_no_time_is_refused(settings: Settings, notes: Path) -> None
     searched_notes(settings, notes)
     code, out, err = ran(settings, "search", "brush", "--budget", "0")
     assert (code, out) == (2, "")
-    assert "error  --budget: 0.0 seconds leave no time to search" in err
+    assert "error  --budget: 0.0 is outside 0.001 to 86,400" in err
 
 
 def test_search_keeps_to_front_matter_and_paths_shows_it_and_orders_by_it(settings: Settings, notes: Path) -> None:

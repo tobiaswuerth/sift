@@ -93,7 +93,7 @@ def test_a_search_keeps_to_the_documents_a_note_links(linked: Path) -> None:
         (("vault/Nobody.md",), (), "no note or document 'vault/Nobody.md'"),
         ((" ",), (), "takes a note's id or name, not ' '"),
         ((), ("Wartungsvertrag 2027",), "no note or document 'Wartungsvertrag 2027'"),
-        ((), ("",), "takes a note's id or name, not ''"),
+        ((), ("",), "linked_from holds an empty text"),
     ],
 )
 def test_notes_no_document_answers_to_are_refused(

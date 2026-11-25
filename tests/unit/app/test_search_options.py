@@ -220,7 +220,6 @@ def test_the_sort_orders_the_k_best_not_every_match(home: Path) -> None:
     "request_, refusal",
     [
         (SearchKeywords("pigment", sort="-"), "names no field to sort by"),
-        (SearchKeywords("pigment", fields=("",)), "names no field"),
     ],
 )
 def test_options_that_cannot_be_followed_are_refused_saying_how(

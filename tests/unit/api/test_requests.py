@@ -1,5 +1,6 @@
 import dataclasses
 import inspect
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,8 +8,8 @@ from typing import Annotated, cast, get_args, get_origin, get_type_hints
 
 import pytest
 
-from sift.api import collections, documents, embedding, indexing, links, search
-from sift.api.described import Bounds, Help
+from sift.api import collections, documents, embedding, indexing, jobs, links, search, serving
+from sift.api.described import Bounds, Help, Length, Within
 from sift.api.errors import InvalidRequestError
 from sift.api.filters import Filter, Operator
 from sift.api.requests import Request
@@ -145,6 +146,59 @@ def test_every_dataclass_of_sift_api_whose_fields_are_described_is_a_request_tha
     ]
     assert len(described) >= 12
     assert [kind.__name__ for kind in described if not issubclass(kind, Request)] == []
+
+
+MARKS: dict[object, type] = {str: Length, int: Bounds, float: Within}
+
+
+def _requests() -> list[type]:
+    modules = (collections, documents, embedding, indexing, jobs, links, search, serving)
+    return [
+        kind
+        for module in modules
+        for _, kind in inspect.getmembers(module, inspect.isclass)
+        if kind.__module__ == module.__name__ and issubclass(kind, Request) and kind is not Request
+    ]
+
+
+def _unmarked(kind: type) -> list[str]:
+    found = list[str]()
+    for name, hint in cast("dict[str, object]", get_type_hints(kind, include_extras=True)).items():
+        base, *marks = cast("tuple[object, ...]", get_args(hint)) if get_origin(hint) is Annotated else (hint,)
+        members = [each for each in cast("tuple[object, ...]", get_args(base)) or (base,) if each is not type(None)]
+        wanted = {MARKS[each] for each in members if each in MARKS}
+        if get_origin(base) is tuple:
+            wanted |= {Bounds} | {Length for each in cast("tuple[object, ...]", get_args(base)) if each is str}
+        missing = [mark for mark in wanted if not any(isinstance(each, mark) for each in marks)]
+        found += [f"{kind.__name__}.{name}: no {mark.__name__}" for mark in missing]
+    return found
+
+
+def test_every_list_text_and_number_a_request_takes_carries_its_bounds() -> None:
+    kinds = _requests()
+    assert len(kinds) >= 20
+    assert [found for kind in kinds for found in _unmarked(kind)] == []
+
+
+@pytest.mark.parametrize(
+    "build, field, said",
+    [
+        (lambda: SearchKeywords(""), "query", "query is empty"),
+        (lambda: SearchKeywords("x" * 10_001), "query", "query is 10,001 characters long, not 1 to 10,000"),
+        (lambda: SearchKeywords("x", collections=("",)), "collections", "collections holds an empty text"),
+        (lambda: SearchKeywords("x", path=""), "path", "path is empty"),
+        (lambda: SearchKeywords("x", budget=0.0), "budget", "0.0 is outside 0.001 to 86,400"),
+        (lambda: SearchKeywords("x", budget=-1.0), "budget", "-1.0 is outside 0.001 to 86,400"),
+        (lambda: documents.GetDocuments(()), "documents", "documents holds 0, not 1 to 1,000"),
+        (lambda: collections.RemoveCollection(""), "name", "name is empty"),
+    ],
+)
+def test_a_text_list_or_number_outside_its_bounds_is_refused_by_field(
+    build: Callable[[], object], field: str, said: str
+) -> None:
+    with pytest.raises(InvalidRequestError, match=re.escape(said)) as refused:
+        build()
+    assert refused.value.field == field
 
 
 HALF = "a" + chr(0xD800)

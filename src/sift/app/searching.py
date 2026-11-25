@@ -1,4 +1,3 @@
-import math
 import time
 from collections.abc import Callable, Sequence
 from contextlib import ExitStack
@@ -33,7 +32,6 @@ from sift.storage.vectors import EMBED_REMEDY, codes_of, refuse_recipe, vector_g
 
 UNEMBEDDED_REMEDY = "run sift embed"
 EMPTY_QUERY = "an empty query finds nothing"
-BUDGET_REMEDY = "give the seconds the search may take, e.g. 0.5"
 OUT_OF_TIME = "not searched: the budget was spent before its vectors were read"
 OUT_OF_TIME_REMEDY = "give the search more seconds, or none"
 
@@ -167,15 +165,13 @@ def _paged(request: Options) -> None:
 
 
 def checked(request: Options) -> None:
-    shown.checked(request.fields, request.sort)
+    shown.checked(request.sort)
     _paged(request)
 
 
 def expired_after(budget: float | None, clock: Clock) -> Expired:
     if budget is None:
         return never
-    if not math.isfinite(budget) or budget <= 0:
-        raise InvalidRequestError(f"{budget} seconds leave no time to search", BUDGET_REMEDY, "budget")
     until = clock() + budget
     return lambda: clock() > until
 

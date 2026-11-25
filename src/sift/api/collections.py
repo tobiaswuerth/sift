@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from sift.api.described import AbsolutePath, Bounds, Help
+from sift.api.described import FIELD_LENGTH, LISTED, NAME_LENGTH, PATH_LENGTH, AbsolutePath, Bounds, Help
 from sift.api.requests import Request
 
 MOST_NAMED = 1_000
@@ -36,14 +36,15 @@ TITLE_FROM = (
 
 @dataclass(frozen=True, slots=True)
 class AddCollection(Request):
-    folder: Annotated[str, Help("the folder whose files the collection holds"), AbsolutePath()]
-    name: Annotated[str | None, Help("its name (default: the folder's)")] = None
+    folder: Annotated[str, Help("the folder whose files the collection holds"), AbsolutePath(), PATH_LENGTH]
+    name: Annotated[str | None, Help("its name (default: the folder's)"), NAME_LENGTH] = None
     store: Annotated[
         str | None,
         Help(
             "where its index goes: a folder, or a file ending in .sqlite (default: the folder collections in SIFT_HOME)"
         ),
         AbsolutePath(),
+        PATH_LENGTH,
     ] = None
     title_from: Annotated[TitleFrom | None, Help(TITLE_FROM)] = None
     nested: Annotated[
@@ -52,9 +53,9 @@ class AddCollection(Request):
     ] = False
     follow_links: Annotated[bool | None, Help(FOLLOW_LINKS)] = None
     agents: Annotated[bool | None, Help(AGENTS)] = None
-    id_field: Annotated[str | None, Help(ID_FIELD)] = None
-    title_field: Annotated[str | None, Help(TITLE_FIELD)] = None
-    text_fields: Annotated[tuple[str, ...], Help(TEXT_FIELDS)] = ()
+    id_field: Annotated[str | None, Help(ID_FIELD), FIELD_LENGTH] = None
+    title_field: Annotated[str | None, Help(TITLE_FIELD), FIELD_LENGTH] = None
+    text_fields: Annotated[tuple[str, ...], Help(TEXT_FIELDS), LISTED, FIELD_LENGTH] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +84,7 @@ class CollectionChanged:
 
 @dataclass(frozen=True, slots=True)
 class RemoveCollection(Request):
-    name: Annotated[str, Help("the collection to remove, with its store; its files stay where they are")]
+    name: Annotated[str, Help("the collection to remove, with its store; its files stay where they are"), NAME_LENGTH]
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,10 +98,12 @@ class CollectionRemoved:
 
 @dataclass(frozen=True, slots=True)
 class MoveCollections(Request):
-    names: Annotated[tuple[str, ...], Help("the collections whose stores to move (default: every one)")] = ()
-    to: Annotated[str, Help("a folder, or for one collection, a file ending in .sqlite"), AbsolutePath()] = field(
-        kw_only=True
-    )
+    names: Annotated[
+        tuple[str, ...], Help("the collections whose stores to move (default: every one)"), LISTED, NAME_LENGTH
+    ] = ()
+    to: Annotated[
+        str, Help("a folder, or for one collection, a file ending in .sqlite"), AbsolutePath(), PATH_LENGTH
+    ] = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +123,7 @@ class StoresMoved:
 
 @dataclass(frozen=True, slots=True)
 class ActivateCollections(Request):
-    names: Annotated[tuple[str, ...], Help("the collections to search again"), Bounds(1, MOST_NAMED)]
+    names: Annotated[tuple[str, ...], Help("the collections to search again"), Bounds(1, MOST_NAMED), NAME_LENGTH]
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +132,7 @@ class DeactivateCollections(Request):
         tuple[str, ...],
         Help("the collections to leave out of searches, and of index and embed unless named"),
         Bounds(1, MOST_NAMED),
+        NAME_LENGTH,
     ]
 
 
@@ -141,7 +145,7 @@ class CollectionsSwitched:
 
 @dataclass(frozen=True, slots=True)
 class ShowStatus(Request):
-    names: Annotated[tuple[str, ...], Help("the collections to show (default: all)")] = ()
+    names: Annotated[tuple[str, ...], Help("the collections to show (default: all)"), LISTED, NAME_LENGTH] = ()
     unreadable: Annotated[bool, Help("list the files that could not be read, and why")] = False
 
 

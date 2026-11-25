@@ -20,3 +20,24 @@ class Composed:
 class Bounds:
     low: int
     high: int
+
+
+@dataclass(frozen=True, slots=True)
+class Length:
+    low: int
+    high: int
+
+
+@dataclass(frozen=True, slots=True)
+class Within:
+    low: float
+    high: float
+
+
+MOST_LISTED = 1_000
+PATH_LENGTH = Length(1, 32_767)
+NAME_LENGTH = Length(1, 200)
+FIELD_LENGTH = Length(1, 1_000)
+TEXT_LENGTH = Length(1, 10_000)
+LISTED = Bounds(0, MOST_LISTED)
+SECONDS = Within(0.001, 86_400.0)

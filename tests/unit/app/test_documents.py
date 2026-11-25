@@ -1,3 +1,5 @@
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -5,10 +7,13 @@ import pytest
 from sift.api.collections import AddCollection
 from sift.api.documents import Documents, DocumentText, GetDocuments, Unfound, WantedDocument
 from sift.api.errors import InvalidRequestError, Problem
+from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections
 from sift.app.collections import add
 from sift.app.documents import documents
 from sift.app.indexing import index
+from sift.storage.database import Reading
+from sift.storage.store import read_store
 from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
@@ -168,5 +173,19 @@ def test_the_front_matter_asked_for_comes_with_each_document(home: Path, tmp_pat
     (every,) = documents(home, asked("notes/dated.md", fields=("*",))).found
     assert every.fields == {"created": "2024-06-15", "rank": 2}
     assert documents(home, asked("notes/dated.md")).found[0].fields is None
-    with pytest.raises(InvalidRequestError, match="names no field"):
-        documents(home, asked("notes/dated.md", fields=("",)))
+    with pytest.raises(InvalidRequestError, match="fields holds an empty text"):
+        asked("notes/dated.md", fields=("",))
+
+
+def test_documents_of_one_collection_are_read_with_its_store_opened_once(home: Path) -> None:
+    opened = list[Path]()
+
+    @contextmanager
+    def counted(path: Path, collection: CollectionId) -> Generator[Reading]:
+        opened.append(path)
+        with read_store(path, collection) as transaction:
+            yield transaction
+
+    result = documents(home, asked(*["notes/rl.md", "notes/gone.md", "notes/robots/brush.md"] * 20), counted)
+    assert (len(result.found), len(result.unfound), len(opened)) == (40, 20, 1)
+    assert [each.id for each in result.found[:2]] == ["notes/rl.md", "notes/robots/brush.md"]

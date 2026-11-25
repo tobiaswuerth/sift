@@ -19,19 +19,11 @@ def test_an_order_by_a_field_puts_numbers_before_text_and_those_without_it_last_
     assert order(each, "-r") == [0, 4, 2, 5, 6, 1, 3]
 
 
-@pytest.mark.parametrize(
-    "fields, sort, refusal",
-    [
-        (("url", ""), None, "names no field between two commas"),
-        ((), "-", "names no field to sort by"),
-        ((), "", "names no field to sort by"),
-    ],
-)
-def test_fields_or_a_sort_naming_no_field_are_refused(fields: tuple[str, ...], sort: str | None, refusal: str) -> None:
-    with pytest.raises(InvalidRequestError, match=refusal) as refused:
-        checked(fields, sort)
+def test_a_sort_naming_no_field_is_refused() -> None:
+    with pytest.raises(InvalidRequestError, match="names no field to sort by") as refused:
+        checked("-")
     assert refused.value.remedy is not None
-    checked(("url",), "-created")
+    checked("-created")
 
 
 def test_a_number_written_as_text_is_ordered_among_the_numbers_as_a_filter_reads_it() -> None:
