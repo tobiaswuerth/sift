@@ -265,3 +265,18 @@ def test_every_json_string_reads_back_as_written(written: str) -> None:
 
 def test_every_kind_of_entry_knows_which_lines_it_takes_and_how_it_reads_them() -> None:
     assert set(TAKES) == set(PARSE) == set(Kind)
+
+
+@pytest.mark.parametrize(
+    "text, fields",
+    [
+        ("---\n# owner: Bob\nx: 1\n---\n", {"x": 1}),
+        ("---\nrelated:\n  - see: [[Alice]]\n---\n", {"related": ["see: [[Alice]]"]}),
+        ("---\na: \"x\nb: 'y\n---\n", {"a": "x", "b": "y"}),
+    ],
+    ids=["a comment line", "a list item holding a key", "values quoted on one side"],
+)
+def test_comments_items_holding_keys_and_half_quoted_values_read_as_they_did(text: str, fields: Fields) -> None:
+    found = front_matter(text)
+    assert found is not None
+    assert found.fields == fields

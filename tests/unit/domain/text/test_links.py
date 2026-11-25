@@ -1,6 +1,6 @@
 import pytest
 
-from sift.domain.text.links import Link, LinkKind, Name, NameKind, aliases, name_key, names
+from sift.domain.text.links import Link, LinkKind, Name, NameKind, aliases, front_matter_links, name_key, names
 from sift.domain.text.notes import note
 
 type Found = tuple[str | None, int, LinkKind, str, str | None, str | None]
@@ -171,3 +171,8 @@ def test_a_name_s_key_leaves_out_a_markdown_extension_alone() -> None:
         "data.csv",
         "müller",
     ]
+
+
+def test_a_link_in_a_list_item_holding_a_key_belongs_to_the_list_s_field() -> None:
+    found = front_matter_links("---\nrelated:\n  - see: [[Alice]]\n# owner: [[Bob]]\n---\n")
+    assert [(link.field, link.target) for link in found] == [("related", "Alice")]

@@ -5,7 +5,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.domain.text.chunks import MOST_CHARACTERS, chunked, chunks, cuts
+from sift.domain.text.chunks import MOST_CHARACTERS, MOST_OVERLAP, Piece, chunked, chunks, cuts, groups
 from sift.domain.text.markdown import text_lines, with_prose
 
 
@@ -156,3 +156,24 @@ def test_lines_read_in_fragments_are_cut_into_the_chunks_whole_lines_are(text: s
     assert all(line.start == sum(len(each.text) for each in lines[:index]) for index, line in enumerate(lines))
     assert all(len(line.text) <= most or line.whole for line in lines)
     assert tuple(chunked(with_prose(lines))) == chunks(text)
+
+
+def piece(number: int, size: int, *, heading: bool = False) -> Piece:
+    return Piece(number, 0, "x" * size, heading)
+
+
+def test_the_pieces_carried_over_fill_the_overlap_exactly() -> None:
+    first, carried, following = piece(1, MOST_CHARACTERS - MOST_OVERLAP), piece(2, MOST_OVERLAP), piece(3, 100)
+    assert list(groups(iter([first, carried, following]))) == [[first, carried], [carried, following]]
+
+
+def test_a_heading_starts_a_chunk_only_past_half_the_most_characters() -> None:
+    half, heading = piece(1, MOST_CHARACTERS // 2), piece(2, 10, heading=True)
+    assert list(groups(iter([half, heading]))) == [[half, heading]]
+    longer = piece(1, MOST_CHARACTERS // 2 + 1)
+    assert list(groups(iter([longer, heading]))) == [[longer], [heading]]
+
+
+def test_a_line_whose_only_space_starts_it_is_cut_after_that_space() -> None:
+    line = " " + "x" * MOST_CHARACTERS
+    assert list(cuts(line)) == [(0, 1), (1, MOST_CHARACTERS + 1)]
