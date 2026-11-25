@@ -12,10 +12,10 @@ from transformers.utils import logging as transformers_logging
 
 from sift.api.errors import ModelUnavailableError
 from sift.inference.accelerator import CPU
+from sift.inference.held import Embedder, Loaded, OnDevice, Ranker
 from sift.inference.local import (
     BROKEN_REMEDY,
     UNLOADED_REMEDY,
-    Embedder,
     Local,
     loading,
     local,
@@ -46,11 +46,28 @@ def test_a_model_from_a_folder_embeds_texts_as_normalised_halves_in_their_order(
 
 def test_the_model_loads_once_when_first_needed(tiny: Path) -> None:
     models = Local(str(tiny))
-    assert models.held.embedder is None
+    assert not isinstance(models.state, OnDevice)
     models.prepare()
-    loaded = models.held.embedder
+    loaded = placed(models).embedder
     models.encode(["halo"], query=True)
-    assert models.held.embedder is loaded
+    assert (loaded is not None, placed(models).embedder is loaded) == (True, True)
+
+
+def placed(models: Local) -> OnDevice:
+    assert isinstance(models.state, OnDevice)
+    return models.state
+
+
+def embedder_of(models: Local) -> Loaded:
+    loaded = placed(models).embedder
+    assert loaded is not None
+    return loaded
+
+
+def ranker_of(models: Local) -> Ranker:
+    ranker = placed(models).ranker
+    assert ranker is not None
+    return ranker
 
 
 def hashed(_: Path) -> Models:
@@ -101,8 +118,7 @@ def test_queries_and_documents_are_embedded_with_their_prompts_and_at_most_1024_
     assert np.allclose(queries, np.asarray(query, np.float32), atol=1e-2)
     assert np.allclose(documents, np.asarray(document, np.float32), atol=1e-2)
     assert not np.allclose(queries, documents, atol=1e-2)
-    assert models.held.embedder is not None
-    assert models.held.embedder.model.max_seq_length == 1024
+    assert embedder_of(models).model.max_seq_length == 1024
 
 
 def test_a_model_that_cannot_be_loaded_says_what_to_check(tmp_path: Path) -> None:
@@ -117,8 +133,7 @@ def test_a_reranker_reading_fewer_than_1024_tokens_reads_passages_cut_to_its_len
     models = local(str(tiny), str(tiny.parent / "reranker"))
     scores = models.rerank("dark matter", [" ".join(["halo"] * 200), "pruning"])
     assert bool(np.isfinite(scores).all())
-    assert models.held.ranker is not None
-    assert models.held.ranker.max_seq_length == POSITIONS
+    assert ranker_of(models).max_seq_length == POSITIONS
 
 
 def test_a_model_too_large_for_the_memory_left_says_so_not_to_check_the_network() -> None:
@@ -169,8 +184,7 @@ def test_a_model_routing_queries_to_static_embeddings_caps_only_what_reads_token
     models = Local(str(tiny_routed(tmp_path)))
     assert models.encode(["dark matter"], query=True).shape == (1, WIDTH)
     assert models.encode(["dark matter"], query=False).shape == (1, WIDTH)
-    assert models.held.embedder is not None
-    assert [each.max_seq_length for each in models.held.embedder.model.modules() if isinstance(each, Transformer)] == [
+    assert [each.max_seq_length for each in embedder_of(models).model.modules() if isinstance(each, Transformer)] == [
         1024
     ]
 
@@ -209,13 +223,12 @@ def test_the_models_run_in_inference_mode_as_models_loaded_for_it(tiny: Path) ->
     models = local(str(tiny), str(tiny.parent / "reranker"))
     models.prepare()
     models.prepare_ranker()
-    assert models.held.embedder is not None
     seen: set[tuple[bool, bool]] = set()
 
     def heard(module: torch.nn.Module, _args: tuple[object, ...], _output: object) -> None:
         seen.add((torch.is_inference_mode_enabled(), module.training))
 
-    for module in [*modules_of(models.held.embedder.model), *modules_of(models.held.ranker)]:
+    for module in [*modules_of(embedder_of(models).model), *modules_of(placed(models).ranker)]:
         module.register_forward_hook(heard)
     models.encode(["halo"], query=False)
     models.rerank("dark matter", ["halo"])
@@ -223,10 +236,9 @@ def test_the_models_run_in_inference_mode_as_models_loaded_for_it(tiny: Path) ->
 
 
 def test_texts_are_embedded_longest_first_by_the_tokens_the_model_reads_not_their_characters(tiny: Path) -> None:
-    models = Local(str(tiny), batch=1)
+    models = Local(str(tiny), state=OnDevice(CPU, 0.0, batch=1))
     models.prepare()
-    assert models.held.embedder is not None
-    (reader,) = [each for each in models.held.embedder.model.modules() if isinstance(each, Transformer)]
+    (reader,) = [each for each in embedder_of(models).model.modules() if isinstance(each, Transformer)]
     read: list[int] = []
 
     def heard(_module: torch.nn.Module, args: tuple[dict[str, torch.Tensor], ...]) -> None:

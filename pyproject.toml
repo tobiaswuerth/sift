@@ -248,7 +248,7 @@ allow_indirect_imports = true
 name = "Model libraries only where models run and devices are chosen"
 type = "protected"
 protected_modules = ["torch", "transformers", "sentence_transformers", "pynvml"]
-allowed_importers = ["sift.inference.accelerator", "sift.inference.local", "sift.inference.ocr"]
+allowed_importers = ["sift.inference.accelerator", "sift.inference.held", "sift.inference.local", "sift.inference.ocr"]
 
 [[tool.importlinter.contracts]]
 name = "The document converter only where documents are converted"

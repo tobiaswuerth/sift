@@ -6,8 +6,10 @@ import numpy as np
 import pytest
 import torch
 
+from sift.api.errors import ModelUnavailableError
 from sift.inference.accelerator import CPU_THREADS, GIB, GPU_THREADS, Device, Machine
-from sift.inference.local import IDLE_SECONDS, Embedder, Loaded, Local, LocalHost, Ranker
+from sift.inference.held import Embedder, Loaded, Ranker
+from sift.inference.local import FULL_REMEDIES, IDLE_SECONDS, Local, LocalHost
 from tests.devices import FakeCuda
 
 
@@ -19,8 +21,11 @@ class Movable:
     asked: list[tuple[object, ...]] = field(default_factory=list[tuple[object, ...]])
     max_seq_length: int | None = 512
     tokenizer: object = None
+    refusals: dict[str, BaseException] = field(default_factory=dict[str, BaseException])
 
     def to(self, device: str) -> "Movable":
+        if device in self.refusals:
+            raise self.refusals.pop(device)
         self.moves.append(device)
         self.on = device
         return self
@@ -135,9 +140,50 @@ def test_back_from_rest_the_budget_is_measured_again_and_a_busy_gpu_means_the_mo
     assert (on_cpu, room.threads) == ([("cpu", torch.float32)] * 2, [GPU_THREADS, CPU_THREADS])
     assert local.prepare() == ("only 1.0 GiB of the GPU's memory is free, too little: the models run on the CPU",)
     assert len(room.cuda.fractions) == 1
-    room.cuda.free = 20 * GIB
-    room.now = IDLE_SECONDS * 3
+
+
+def test_models_on_the_cpu_because_the_gpu_was_busy_go_to_the_gpu_once_it_has_room() -> None:
+    room = Room()
+    room.cuda.free = GIB
+    local = room.local()
+    used(local)
+    assert [(model.on, model.dtype) for model in room.loaded] == [("cpu", torch.float32)] * 2
+    room.now = IDLE_SECONDS - 0.5
     assert not local.release_idle()
+    room.now = IDLE_SECONDS
+    assert (local.release_idle(), room.emptied) == (True, [])
+    room.cuda.free = 20 * GIB
+    used(local)
+    assert [(model.on, model.dtype) for model in room.loaded[2:]] == [("cuda", torch.bfloat16)] * 2
+    assert local.prepare() == ()
+
+
+def test_a_move_back_to_the_gpu_that_runs_out_of_memory_leaves_the_models_resting() -> None:
+    room = Room()
+    local = room.local()
+    used(local)
+    room.now = IDLE_SECONDS
+    assert local.release_idle()
+    room.loaded[1].refusals["cuda"] = torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
+    with pytest.raises(ModelUnavailableError) as refused:
+        used(local)
+    assert refused.value.remedy == FULL_REMEDIES["cuda"]
+    assert ([model.on for model in room.loaded], room.emptied) == (["cpu", "cpu"], ["cuda", "cuda"])
+    used(local)
+    assert [model.on for model in room.loaded] == ["cuda", "cuda"]
+
+
+def test_models_that_cannot_move_to_ram_stay_on_the_gpu_and_rest_the_next_time() -> None:
+    room = Room()
+    local = room.local()
+    used(local)
+    room.loaded[1].refusals["cpu"] = RuntimeError("DefaultCPUAllocator: can't allocate memory")
+    room.now = IDLE_SECONDS
+    with pytest.raises(RuntimeError, match="can't allocate memory"):
+        local.release_idle()
+    assert ([model.on for model in room.loaded], room.emptied) == (["cuda", "cuda"], [])
+    assert local.release_idle()
+    assert ([model.on for model in room.loaded], room.emptied) == (["cpu", "cpu"], ["cuda"])
 
 
 def test_a_model_never_loaded_is_not_moved_when_the_others_rest() -> None:

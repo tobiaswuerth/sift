@@ -45,6 +45,7 @@ KEEP_ALIVE_SECONDS = 5
 MOST_CONNECTIONS = 256
 STOPPING = "stopping: {jobs} stops at its next step; what it wrote so far is kept"
 RESTED = "the models were idle: they wait in RAM, off the GPU, until used again"
+NOT_RESTED = "the idle models could not be let go; they are tried again"
 STOPPING_SIGNALS: tuple[int, ...] = tuple(
     cast("int", getattr(signal, name)) for name in ("SIGTERM", "SIGBREAK") if hasattr(signal, name)
 )
@@ -100,8 +101,13 @@ def _bound(port: int) -> socket.socket:
 
 def watched_idle(release: Callable[[], bool], stop: threading.Event, every: float = IDLE_CHECK_SECONDS) -> None:
     while not stop.wait(every):
-        if release():
-            logging.getLogger(LOGGER).info(RESTED)
+        try:
+            if release():
+                logging.getLogger(LOGGER).info(RESTED)
+        except RecursionError:
+            raise
+        except Exception:
+            logging.getLogger(LOGGER).exception(NOT_RESTED)
 
 
 @contextmanager

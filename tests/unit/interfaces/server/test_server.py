@@ -23,7 +23,7 @@ from sift.interfaces.server.endpoint import (
 )
 from sift.interfaces.server.gate import WAITING_FOR_ALONE, WAITING_FOR_READS
 from sift.interfaces.server.handled import HANDLED, Handled
-from sift.interfaces.server.serving import RESTED, HomeServer, Serve, serve, watched_idle
+from sift.interfaces.server.serving import NOT_RESTED, RESTED, HomeServer, Serve, serve, watched_idle
 from sift.settings import Settings
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
@@ -298,6 +298,30 @@ def test_the_home_process_lets_idle_models_go_and_says_so(caplog: pytest.LogCapt
     with caplog.at_level(logging.INFO, LOGGER):
         watched_idle(release, stop, 0.001)
     assert (asked, [record.getMessage() for record in caplog.records]) == ([True, False], [RESTED])
+
+
+def test_the_home_process_goes_on_watching_when_letting_models_go_fails(caplog: pytest.LogCaptureFixture) -> None:
+    stop, asked = threading.Event(), list[int]()
+
+    def release() -> bool:
+        asked.append(len(asked))
+        if len(asked) == 1:
+            raise RuntimeError("DefaultCPUAllocator: can't allocate memory")
+        stop.set()
+        return True
+
+    with caplog.at_level(logging.INFO, LOGGER):
+        watched_idle(release, stop, 0.001)
+    said = [(record.levelno, record.getMessage()) for record in caplog.records]
+    assert (asked, said) == ([0, 1], [(logging.ERROR, NOT_RESTED), (logging.INFO, RESTED)])
+
+
+def test_a_release_that_recursed_too_deep_ends_the_watch() -> None:
+    def release() -> bool:
+        raise RecursionError("maximum recursion depth exceeded")
+
+    with pytest.raises(RecursionError):
+        watched_idle(release, threading.Event(), 0.001)
 
 
 def test_every_answer_and_refusal_says_the_contract_it_speaks(settings: Settings) -> None:
