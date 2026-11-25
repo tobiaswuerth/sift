@@ -18,12 +18,13 @@ from sift.api.search import SearchHybrid
 from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import index
-from sift.app.query import query
+from sift.app.query import WORDS_REMEDY, query
 from sift.app.searching import Watching
 from sift.app.vector_candidates import Rescoring
 from sift.domain.arrays import Ids, floats
 from sift.domain.codec.codes import Floats, Halves
 from sift.domain.errors import DamagedError
+from sift.domain.query.grammar import MOST_WORDS
 from sift.storage.database import Reading
 from sift.storage.vectors import EMBED_REMEDY, vectors_of
 from tests.damage import changed, damage_pages, damage_table
@@ -309,3 +310,16 @@ def test_nothing_loads_when_no_store_is_left_to_search(home: Path) -> None:
     said: list[Event] = []
     result = query(home, SearchHybrid("halo"), Hashed(), watching=Watching(report=said.append))
     assert (result.hits, said) == ((), [])
+
+
+def test_a_question_of_more_words_than_a_query_reads_is_answered_by_its_first_ones_saying_so(home: Path) -> None:
+    question = " ".join(["halo", *(f"w{n}" for n in range(MOST_WORDS + 499))])
+    result = query(home, SearchHybrid(question), Hashed())
+    assert "notes/halo.md" in [hit.id for hit in result.hits]
+    assert result.left_out == (
+        Notice(
+            Problem.TOO_MANY_WORDS,
+            f"the question holds {MOST_WORDS + 500:,} words: its keywords are the first {MOST_WORDS:,}",
+            WORDS_REMEDY,
+        ),
+    )

@@ -160,3 +160,12 @@ def test_links_and_unresolved_targets_cut_at_k_say_more_follow() -> None:
     assert shown_links(cut, "linux", PLAIN).messages == (" more  more links follow: ask for more with -k",)
     targets = Unresolved((Target("Missing", 2, ("notes/a.md", "notes/c.md")),), more=True)
     assert shown_unresolved(targets, "linux", PLAIN).messages == (" more  more targets follow: ask for more with -k",)
+
+
+def test_a_note_of_the_whole_search_is_said_without_a_collection() -> None:
+    cut = Notice(Problem.TOO_MANY_WORDS, "the question holds 1,500 words: its keywords are the first 1,000", "ask less")
+    shown = hits(SearchResult((), 1, (), left_out=(cut,), scored_by="reranker"), 0.25, "linux", PLAIN)
+    assert shown.messages[:2] == (
+        " note  the question holds 1,500 words: its keywords are the first 1,000",
+        "  fix  ask less",
+    )

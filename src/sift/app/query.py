@@ -6,10 +6,11 @@ from pathlib import Path
 
 import numpy as np
 
-from sift.api.errors import ModelUnavailableError
+from sift.api.errors import ModelUnavailableError, Problem
 from sift.api.events import Reporter
 from sift.api.fields import FieldValue
 from sift.api.ids import owner
+from sift.api.notices import Notice
 from sift.api.search import MOST_HITS, SearchHybrid, SearchResult
 from sift.app import hits, searching
 from sift.app.hits import Retrieved, read
@@ -20,13 +21,14 @@ from sift.app.vector_candidates import QUERY_REMEDY, RESCORING, Rescoring, alike
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.codes import Floats
 from sift.domain.query.expressions import NOTHING, Expression
-from sift.domain.query.grammar import parsed
+from sift.domain.query.grammar import MOST_WORDS, any_phrase
 from sift.domain.rank.best import Best
 from sift.domain.rank.hybrid import blend, named, passage, words
 from sift.inference.models import Models
 from sift.retrieval.keyword.search import TUNING, Expired
 
 EMPTY_REMEDY = "ask a question, e.g. how dark matter halos form"
+WORDS_REMEDY = "ask in fewer words to search by every one of them"
 WIDER = 2
 
 
@@ -38,9 +40,23 @@ class Gathered:
     cut: bool
 
 
-def _any_word(text: str) -> Expression:
+@dataclass(frozen=True, slots=True)
+class QuestionWords:
+    expression: Expression
+    words: int
+
+
+def _any_word(text: str) -> QuestionWords:
     found_words = list(dict.fromkeys(words(text)))
-    return parsed(" OR ".join(f'"{word}"' for word in found_words)) if found_words else NOTHING
+    kept = found_words[:MOST_WORDS]
+    return QuestionWords(any_phrase(kept) if kept else NOTHING, len(found_words))
+
+
+def _cut_words(keywords: QuestionWords) -> list[Notice]:
+    if keywords.words <= MOST_WORDS:
+        return []
+    said = f"the question holds {keywords.words:,} words: its keywords are the first {MOST_WORDS:,}"
+    return [Notice(Problem.TOO_MANY_WORDS, said, WORDS_REMEDY)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +65,7 @@ class HybridAsked:
     models: Models
     rescoring: Rescoring
     expired: Expired
+    keywords: QuestionWords
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +77,7 @@ class CandidateChunks:
 
 def _candidates(stores: Open, asked: HybridAsked, query: Floats | None, wanted: int) -> CandidateChunks:
     by_document = not asked.request.all_passages
-    keyword = found(stores, Wanted(wanted, by_document, TUNING, asked.expired), _any_word(asked.request.query))
+    keyword = found(stores, Wanted(wanted, by_document, TUNING, asked.expired), asked.keywords.expression)
     semantic = near(stores, Best(wanted, by_document), query, asked.rescoring) if query is not None else ()
     chunks = list(dict.fromkeys([each.chunk for each in keyword.found] + [each.chunk for each in semantic]))
     return CandidateChunks(chunks, len(keyword.found) >= wanted or len(semantic) >= wanted, keyword.cut)
@@ -180,5 +197,7 @@ def query(
             Wants(keywords=True, model=models.name, codes=watching.codes, decoded=watching.decoded),
             expired,
         )
-        answered = _answered(stores, HybridAsked(request, models, asked, expired), watching.report)
+        keywords = _any_word(request.query)
+        stores.left_out.extend(_cut_words(keywords))
+        answered = _answered(stores, HybridAsked(request, models, asked, expired, keywords), watching.report)
         return hits.result(stores, answered, "reranker")

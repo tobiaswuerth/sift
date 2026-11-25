@@ -70,12 +70,17 @@ def value_text(value: FieldValue) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, allow_nan=False)
 
 
+def _placed(notice: Notice) -> str:
+    where = notice.collection or notice.id
+    return notice.message if where is None else f"{where}: {notice.message}"
+
+
 def notice_lines(notices: tuple[Notice, ...], style: Style, label: str = "error") -> tuple[str, ...]:
     return tuple(
         line
         for each in notices
         for line in (
-            labelled(label, f"{each.collection}: {each.message}", NOTICE_TONES[label], style),
+            labelled(label, _placed(each), NOTICE_TONES[label], style),
             *fix(each.remedy, style),
             *command_next(each.code, style, each.collection or "NAME"),
         )

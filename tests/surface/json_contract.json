@@ -632,6 +632,15 @@
         "field": null
       }
     },
+    "too_many_words": {
+      "error": {
+        "kind": "invalid_request",
+        "code": "too_many_words",
+        "message": "a refusal coded too_many_words",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
     "not_found": {
       "error": {
         "kind": "not_found",
