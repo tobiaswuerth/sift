@@ -69,9 +69,11 @@ class StoppingServer(uvicorn.Server):
 
     @override
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
-        if not self.should_exit:
-            self.on_first_exit()
-        super().handle_exit(sig, frame)
+        try:
+            if not self.should_exit:
+                self.on_first_exit()
+        finally:
+            super().handle_exit(sig, frame)
 
 
 @dataclass(frozen=True, slots=True, eq=False)

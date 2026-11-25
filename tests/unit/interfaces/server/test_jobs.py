@@ -8,6 +8,7 @@ import threading
 from collections.abc import Callable
 from typing import cast
 
+import pytest
 from starlette.types import ASGIApp, Message
 
 from sift.api.errors import JobStoppedError
@@ -161,6 +162,19 @@ def test_the_jobs_of_the_home_process_are_listed_and_one_is_stopped_from_the_com
         refused = asked(server, "jobs", {"stop": 99})[1]
         assert cast("Line", refused[-1]["error"])["message"] == "there is no job 99"
     assert ended == ["stopped"]
+
+
+def test_ctrl_c_stops_the_home_process_even_when_what_it_does_first_on_stopping_fails(settings: Settings) -> None:
+    with running(settings) as server:
+        listed = own_endpoint(settings)
+        listed.unlink()
+        listed.mkdir()
+        try:
+            with pytest.raises((PermissionError, IsADirectoryError)):
+                server.server.handle_exit(signal.SIGINT, None)
+            assert server.server.should_exit is True
+        finally:
+            listed.rmdir()
 
 
 def test_a_second_ctrl_c_exits_at_once(settings: Settings) -> None:
