@@ -356,6 +356,36 @@
           "ms_per_query": 250.0
         }
       ]
+    },
+    "import": {
+      "home": "/home/.sift",
+      "collections": [
+        {
+          "name": "notes",
+          "outcome": {
+            "store": "/home/.sift/collections/notes-v2.sqlite",
+            "documents_before": 2,
+            "documents": 2,
+            "passages_before": 5,
+            "passages": 5,
+            "vectors_before": 5,
+            "vectors": 4,
+            "model": "a/model@0",
+            "state": "imported"
+          }
+        },
+        {
+          "name": "gone",
+          "outcome": {
+            "code": "folder_missing",
+            "message": "its folder is missing: /gone",
+            "remedy": "add it again",
+            "collection": null,
+            "id": null,
+            "state": "skipped"
+          }
+        }
+      ]
     }
   },
   "requests": {

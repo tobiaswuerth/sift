@@ -18,7 +18,7 @@ from sift.interfaces.cli.context import Context
 from sift.interfaces.cli.entries import ENTRIES, EXAMPLES, LOGGED, command_of
 from sift.interfaces.cli.flags import file_or_id
 from sift.interfaces.cli.heavy import endpoints, logs, windows
-from sift.interfaces.cli.notice import notice
+from sift.interfaces.cli.notice import former_home, notice
 from sift.interfaces.cli.shown.outcome import DONE, FAILED, INTERRUPTED, USAGE, Shown, failure, stopped_writing
 from sift.interfaces.cli.usage import Parser, asked_json, parsed
 from sift.interfaces.console.live import Live, ticking
@@ -276,6 +276,7 @@ def _ran(
         return failure(error, PLAIN, as_json=given["json"] is True)
     style = _style(err, settings, Colour(str(given["color"])))
     asked = _Chosen(chosen, namespace, given["json"] is True, style)
+    say(err, former_home(settings.home, chosen, platform, style))
     found = _logged(asked, settings, host, _live(err, settings, style, platform, host.clock))
     if not settings.update_check or asked.json or not is_terminal(err):
         return found

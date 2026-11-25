@@ -29,7 +29,8 @@ from sift.api.events import (
     PhaseStarted,
 )
 from sift.api.filters import Filter, Operator
-from sift.api.indexing import IndexCollections
+from sift.api.importing import Brought, CollectionImported, HomeImported
+from sift.api.indexing import IndexCollections, Skipped
 from sift.api.jobs import ListJobs
 from sift.api.links import Direction, FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import Options, SearchHybrid, SearchKeywords, SearchVectors
@@ -111,6 +112,13 @@ EVENT_SAMPLES: Mapping[str, Event] = MappingProxyType(
     }
 )
 SERVED = Served("http://127.0.0.1:8765")
+IMPORTED = HomeImported(
+    "/home/.sift",
+    (
+        CollectionImported("notes", Brought("/home/.sift/collections/notes-v2.sqlite", 2, 2, 5, 5, 5, 4, "a/model@0")),
+        CollectionImported("gone", Skipped(Problem.FOLDER_MISSING, "its folder is missing: /gone", "add it again")),
+    ),
+)
 MEASURED = SearchesMeasured(
     2, (ModeMeasured(Mode.KEYWORD, 0.5, 0.75, 1.0, 12.5), ModeMeasured(Mode.HYBRID, 1.0, 1.0, 1.0, 250.0))
 )

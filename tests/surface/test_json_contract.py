@@ -8,7 +8,7 @@ from sift.api.wire import Json, encoded, encoded_error
 from sift.interfaces.cli.commands.making import as_json
 from sift.interfaces.server.handled import HANDLED
 from tests.answers import SAMPLES
-from tests.contract_samples import ERROR_SAMPLES, EVENT_SAMPLES, MEASURED, REQUEST_SAMPLES, SERVED
+from tests.contract_samples import ERROR_SAMPLES, EVENT_SAMPLES, IMPORTED, MEASURED, REQUEST_SAMPLES, SERVED
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -20,7 +20,7 @@ def contract() -> dict[str, Json]:
     return {
         "answers": {
             name: json.loads(as_json(answer))
-            for name, answer in {**SAMPLES, "serve": SERVED, "bench": MEASURED}.items()
+            for name, answer in {**SAMPLES, "serve": SERVED, "bench": MEASURED, "import": IMPORTED}.items()
         },
         "requests": {name: encoded(request) for name, request in REQUEST_SAMPLES.items()},
         "errors": {name: {"error": encoded_error(error)} for name, error in ERROR_SAMPLES.items()},

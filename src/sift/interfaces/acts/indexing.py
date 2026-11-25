@@ -7,19 +7,19 @@ from sift.app.scans import Scanning
 from sift.interfaces.acts.acting import Act, Acting
 
 
-def _readers(acting: Acting) -> Readers:
+def readers_of(acting: Acting) -> Readers:
     return Readers(scanning=Scanning(acting.settings.ocr, gpus=acting.settings.gpus))
 
 
 def _index(acting: Acting, request: IndexCollections) -> IndexResult:
-    return indexing.index(acting.settings.home, request, acting.report, readers=_readers(acting))
+    return indexing.index(acting.settings.home, request, acting.report, readers=readers_of(acting))
 
 
 def _reindex(acting: Acting, request: ReindexFiles) -> Reindexed:
     home = acting.settings.home
     grouped = indexing.files_of(home, request.files, acting.audience)
     held = embedding.models_held(home, tuple(one.name for one in grouped))
-    indexed = indexing.index_files(home, grouped, acting.report, readers=_readers(acting))
+    indexed = indexing.index_files(home, grouped, acting.report, readers=readers_of(acting))
     if not held:
         return Reindexed(indexed)
     models = acting.models()

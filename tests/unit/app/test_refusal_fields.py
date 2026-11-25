@@ -16,7 +16,7 @@ from sift.app.links import links
 from sift.app.mentions import mentions
 from sift.app.search import search
 from sift.app.similar import similar
-from sift.storage.catalog import CATALOG
+from sift.storage.store_files import CATALOG
 from tests.homes import asked, home_of, quiet
 
 type Asking = Callable[[Path], object]

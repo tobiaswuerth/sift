@@ -17,7 +17,8 @@ from sift.app.embedding import BROKEN_REMEDY, Embedding, embed, models_held
 from sift.app.indexing import index
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference.prepared import ModelsPrepared
-from sift.storage.catalog import CATALOG, known_collections
+from sift.storage.catalog import known_collections
+from sift.storage.store_files import CATALOG
 from sift.storage.vectors import EMBED_REMEDY
 from tests.damage import damage_table
 from tests.files import write

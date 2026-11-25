@@ -4,7 +4,8 @@ from sift.api.collections import AddCollection
 from sift.api.indexing import IndexCollections
 from sift.app.collections import add
 from sift.app.indexing import index
-from sift.storage.catalog import CATALOG, set_active
+from sift.storage.catalog import set_active
+from sift.storage.store_files import CATALOG
 from sift.storage.watching import HomeWatch
 from tests.files import write
 from tests.homes import indexed, quiet

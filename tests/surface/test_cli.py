@@ -13,7 +13,8 @@ import pytest
 from sift.interfaces.cli.main import main, run
 from sift.interfaces.console.units import size
 from sift.settings import Settings
-from sift.storage.catalog import CATALOG, CATALOG_DAMAGED_REMEDY
+from sift.storage.catalog import CATALOG_DAMAGED_REMEDY
+from sift.storage.store_files import CATALOG
 from tests.damage import damage_pages
 from tests.environments import clean_environment
 from tests.surface.commands import Terminal, indexed_notes, ran

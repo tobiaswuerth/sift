@@ -6,8 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
-from sift.storage.catalog import CATALOG, known_collections
+from sift.storage.catalog import known_collections
 from sift.storage.database import read_only
+from sift.storage.store_files import CATALOG
 
 type Seen = tuple[int | None, ...]
 

@@ -17,6 +17,7 @@ class Phase(StrEnum):
     COPY = "copy"
     TITLE = "title"
     MEASURE = "measure"
+    CARRY = "carry"
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,6 +1,8 @@
 from collections.abc import Callable
 from pathlib import Path
 
+CATALOG = "catalog.sqlite"
+FORMER_CATALOG = "sift.db"
 WRITER_SUFFIX = ".writer"
 PART_SUFFIX = ".part"
 FILE_SUFFIXES = ("", "-wal", "-shm", WRITER_SUFFIX, f"{WRITER_SUFFIX}-journal", PART_SUFFIX, f"{PART_SUFFIX}-journal")

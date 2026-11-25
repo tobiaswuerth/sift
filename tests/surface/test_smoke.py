@@ -22,7 +22,7 @@ from tests.surface.smoke import (
     unexercised,
 )
 from tests.surface.smoke_options import SEARCHED, options_run
-from tests.surface.smoke_runs import documents_run, lent_run, models_run, records_run, served_run
+from tests.surface.smoke_runs import documents_run, imported_run, lent_run, models_run, records_run, served_run
 from tests.tiny_model import tiny_model, tiny_reranker
 
 
@@ -248,6 +248,7 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
         "documents": Smoke(tmp_path / "documents"),
         "served": Smoke(tmp_path / "served"),
         "lent": Smoke(tmp_path / "lent"),
+        "imported": Smoke(tmp_path / "imported"),
         "worker": Smoke(tmp_path / "worker", model, reranker),
     }
     runs = (
@@ -257,6 +258,7 @@ def test_every_command_runs_as_a_process_from_a_folder_to_its_documents(tmp_path
         partial(documents_run, smokes["documents"], tmp_path / "Dokumente"),
         partial(served_run, smokes["served"], notes, tmp_path / "more"),
         partial(lent_run, smokes["lent"], smokes["worker"], notes),
+        partial(imported_run, smokes["imported"], notes_in(tmp_path / "Importiert")),
     )
     with ThreadPoolExecutor(len(runs)) as pool:
         for running in [pool.submit(run) for run in runs]:

@@ -10,7 +10,6 @@ from sift.api.collections import TitleFrom
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.ids import CollectionId
 from sift.storage.catalog import (
-    CATALOG,
     CATALOG_DAMAGED_REMEDY,
     Choices,
     Collection,
@@ -26,6 +25,7 @@ from sift.storage.catalog import (
 from sift.storage.catalog import LAYOUT as CATALOG_LAYOUT
 from sift.storage.database import connect, read_only, reading, rows, run, writing
 from sift.storage.store import create_store, open_store
+from sift.storage.store_files import CATALOG
 from tests.damage import damage_pages
 from tests.unit.storage.catalogs import folder, known
 

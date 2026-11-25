@@ -12,6 +12,7 @@ from sift.api.collections import (
     ShowStatus,
 )
 from sift.api.embedding import EmbedCollections
+from sift.api.importing import ImportHome
 from sift.api.indexing import IndexCollections
 from sift.api.jobs import ListJobs
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
@@ -22,7 +23,7 @@ from sift.interfaces.cli.reading import ReadDocuments
 from sift.late import late
 
 COMMANDS_PACKAGE = "sift.interfaces.cli.commands"
-LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed", "serve", "worker"})
+LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed", "serve", "worker", "import"})
 SEARCH_EXAMPLE = 'sift search "dark matter" -k 5'
 GET_EXAMPLE = "sift get notes/physics.md --lines 17-26"
 
@@ -136,6 +137,13 @@ ENTRIES = MappingProxyType(
             "sift worker",
             here=True,
         ),
+        "import": CommandEntry(
+            "bring the collections of a sift 1.x home into this one, their vectors kept",
+            ImportHome,
+            "importing",
+            "sift import",
+            here=True,
+        ),
         "bench": CommandEntry(
             "measure how well each search mode finds what your questions should find, on your own documents",
             MeasureSearches,
@@ -154,6 +162,7 @@ def command_of(name: str) -> Command:
 
 if TYPE_CHECKING:
     from sift.interfaces.cli.commands import collections as _collections
+    from sift.interfaces.cli.commands import importing as _importing
     from sift.interfaces.cli.commands import indexing as _indexing
     from sift.interfaces.cli.commands import jobs as _jobs
     from sift.interfaces.cli.commands import links as _links
@@ -162,6 +171,7 @@ if TYPE_CHECKING:
     from sift.interfaces.cli.commands import serving as _serving
 
     _COLLECTIONS: Commands = _collections
+    _IMPORTING: Commands = _importing
     _INDEXING: Commands = _indexing
     _JOBS: Commands = _jobs
     _LINKS: Commands = _links

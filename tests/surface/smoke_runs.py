@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import cast
 
 from sift.interfaces.server.endpoint import found
+from tests.former_homes import former_home, hashed
 from tests.mails import WORD, mail_bytes, message, sample
 from tests.surface import process
 from tests.surface.smoke import Answer, Done, Smoke, answer, finding, ids, indexed, listed, ok
@@ -83,6 +84,20 @@ def lent_run(smoke: Smoke, worker: Smoke, notes: Path) -> None:
     worker.exercised.append(process.WORKER)
     (log,) = (worker.home / "logs").glob("worker-*.log")
     assert lent.remote.split("@")[0] not in log.read_text(encoding="utf-8")
+
+
+def imported_run(smoke: Smoke, notes: Path) -> None:
+    former = former_home(smoke.home.parent / "former-made", {"notes": notes}, hashed())
+    smoke.checked(
+        "import",
+        "--home",
+        str(former),
+        "--collection",
+        "notes",
+        "--json",
+        holds=lambda done: (done.returncode, [each["name"] for each in listed(done, "collections")]) == (0, ["notes"]),
+    )
+    smoke.checked("status", "--json", holds=lambda done: '"name": "notes"' in done.stdout)
 
 
 def records_run(smoke: Smoke, notes: Path) -> None:
