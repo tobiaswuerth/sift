@@ -25,6 +25,7 @@ KINDS: Mapping[str, FileKind] = MappingProxyType(
     }
 )
 STREAMED = frozenset({FileKind.RECORDS})
+READ_HERE = frozenset({FileKind.NOTE, FileKind.RECORDS})
 KEYED = frozenset({FileKind.RECORDS, FileKind.MAIL})
 CONVERTED = frozenset({FileKind.DOCUMENT, FileKind.MAIL})
 KEY_MARK = "#"

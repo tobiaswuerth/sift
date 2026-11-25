@@ -2,6 +2,7 @@ import json
 from collections.abc import Generator, Iterator, Sequence
 from contextlib import closing, contextmanager
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -25,7 +26,7 @@ from sift.ingest.records import lines_of
 from sift.ingest.sandbox import FileReading, OpenReading
 from sift.interfaces.cli.written import written
 from sift.storage.catalog import known_collections
-from sift.storage.database import reading
+from sift.storage.database import reading, rows
 from sift.storage.documents import counts
 from sift.storage.store import open_store
 from sift.storage.vector_meta import left
@@ -172,7 +173,7 @@ def test_a_large_file_is_stored_a_batch_at_a_time_as_it_is_read(tmp_path: Path) 
     write(tmp_path / "c" / "big.jsonl", jsonl(records))
     home = tmp_path / "home"
     add(home, AddCollection(str(tmp_path / "c")))
-    small = Limits(most_records_a_write=4)
+    small = Limits(most_records_a_write=4, most_bytes_a_write=1)
     said: list[Event] = []
     held: list[int] = []
     first = indexed(home, small, said, counting(home, held))
@@ -211,7 +212,8 @@ def test_a_write_of_long_records_ends_by_the_text_it_holds_as_well(tmp_path: Pat
     home = tmp_path / "home"
     add(home, AddCollection(str(tmp_path / "c")))
     held: list[int] = []
-    assert indexed(home, Limits(most_characters_a_write=100), lines=counting(home, held)).added == 6
+    large = Limits(most_characters_a_write=100, most_bytes_a_write=1)
+    assert indexed(home, large, lines=counting(home, held)).added == 6
     assert held == [0, 1, 2, 3, 4, 5]
 
 
@@ -244,11 +246,17 @@ def test_a_record_whose_title_and_fields_take_more_than_a_document_holds_is_skip
     assert "bytes of name, title and fields, more than the 200 a document holds" in noted
 
 
-def test_a_file_that_cannot_be_read_to_its_end_keeps_what_was_read_and_is_read_again(tmp_path: Path) -> None:
+@pytest.mark.parametrize("most_bytes_a_write", [64 << 20, 1], ids=["with other files", "streamed alone"])
+def test_a_file_that_cannot_be_read_to_its_end_keeps_what_was_read_and_is_read_again(
+    tmp_path: Path, most_bytes_a_write: int
+) -> None:
     write(tmp_path / "c" / "r.jsonl", jsonl([{"id": n, "text": f"part {n}"} for n in range(3)]))
     home = tmp_path / "home"
     add(home, AddCollection(str(tmp_path / "c")))
-    assert indexed(home, Limits(most_records_a_write=1), lines=torn_lines).added == 2
+    limits = Limits(most_records_a_write=1, most_bytes_a_write=most_bytes_a_write)
+    said: list[Event] = []
+    assert indexed(home, limits, said, lines=torn_lines).added == 2
+    assert [each for each in said if isinstance(each, Noted)] == []
     assert found(home, "part") == ["c/r.jsonl#0", "c/r.jsonl#1"]
     (contents,) = [each.contents for each in status(home, ShowStatus(unreadable=True)).collections]
     assert isinstance(contents, Counted)
@@ -275,3 +283,28 @@ def test_a_record_with_an_id_is_not_taken_by_a_line_without_one(tmp_path: Path) 
         ),
         (["c/r.jsonl#1"], ["r.jsonl: 2 lines skipped (line 1: no id: it holds no id; line 3: no id: it holds no id)"]),
     ]
+
+
+class Segments(NamedTuple):
+    held: int
+    written: int | None
+
+
+def keyword_segments(home: Path) -> tuple[int, int | None]:
+    (one,) = known_collections(home)
+    with closing(open_store(one.store, one.id)) as connection, reading(connection) as transaction:
+        (found,) = rows(transaction, Segments, "SELECT count(*) AS held, max(id) AS written FROM keyword_segments")
+    return found.held, found.written
+
+
+def test_small_files_of_records_are_stored_together_in_one_keyword_segment(tmp_path: Path) -> None:
+    for n in range(30):
+        write(
+            tmp_path / "c" / f"r{n:02}.jsonl",
+            jsonl([{"id": f"{n}-{m}", "text": f"note {n} part {m}"} for m in range(3)]),
+        )
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "c")))
+    done = indexed(home)
+    assert (done.added, keyword_segments(home)) == (90, (1, 1))
+    assert found(home, "part") == sorted(f"c/r{n:02}.jsonl#{n}-{m}" for n in range(30) for m in range(3))[:20]

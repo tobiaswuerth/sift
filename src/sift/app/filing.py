@@ -47,6 +47,13 @@ class Tally:
         return Tally(self.added + other.added, self.changed + other.changed, self.removed + other.removed)
 
 
+@dataclass(frozen=True, slots=True)
+class StoredHere:
+    tally: Tally
+    problem: str | None = None
+    read_again: bool = False
+
+
 def too_large_to_describe(document: Document, most: int) -> str | None:
     size = description_bytes(document)
     return f"{size:,} bytes of name, title and fields, more than the {most:,} a document holds" if size > most else None

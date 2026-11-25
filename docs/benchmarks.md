@@ -62,6 +62,9 @@ judged in pools of both versions' results (nDCG@10 / MRR@10 / Recall@10):
 sift 1.15.2 read the next 20,000 passages and wrote the vectors on threads of their own while the GPU embedded; sift 2
 reads 1,024 passages, embeds them and writes them in turn.
 
+**Indexing** the ACL Anthology anew (1,134 files of JSON Lines, 90,504 records), `sift index` with the keyword index:
+sift 2.0 in 24 s, sift 1.15.2 in 29 s (12 s reading, then its postings).
+
 ## Reference values of sift 1.11
 
 sift 1.11's figures, kept for the scale sift 2 has not been measured at yet. The large index holds 45.7 million

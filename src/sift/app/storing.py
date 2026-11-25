@@ -3,13 +3,13 @@ from dataclasses import dataclass, replace
 from typing import TypeGuard
 
 from sift.api.events import Advanced, FilesKept, Noted
-from sift.app.filing import Job, Limits, Tally, too_large_to_describe
-from sift.app.records import stored_records
+from sift.app.filing import Job, Limits, StoredHere, Tally, too_large_to_describe
+from sift.app.records import records_stored, stored_records
 from sift.app.scans import ScanRun, ScansRead, scans_read
 from sift.app.streamed import stored_note
 from sift.domain.plan.indexing import IndexPlan, Stat, batches
 from sift.domain.text.documents import Again, FileRead, Outcome, Refused, text_held, too_large
-from sift.domain.text.kinds import FileKind, kind_of, streamed
+from sift.domain.text.kinds import READ_HERE, FileKind, kind_of, streamed
 from sift.ingest.files import Identity
 from sift.ingest.readers import ToRead
 from sift.ingest.sandbox import FileReading
@@ -145,17 +145,24 @@ def _read_and_written(
     return tally, [(paths[at], scanned[at]) for at in sorted(scanned)]
 
 
-def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str]) -> Tally:
+def _stored_here(
+    job: Job, transaction: WritingDocuments, path: str, stat: Stat, scanned: Identity | None
+) -> StoredHere | Refused:
+    store = records_stored if kind_of(path) is FileKind.RECORDS else stored_note
+    return store(job, transaction, path, stat, scanned)
+
+
+def _written(run: _Run, read: Sequence[tuple[str, Outcome]], here: Sequence[str]) -> Tally:
     job, files, tally = run.job, run.files, Tally()
-    if not read and not notes:
+    if not read and not here:
         return tally
     release = job.readers.release
     with writing_documents(job.connection, job.limits.batches) as transaction:
         whole = [path for path, outcome in read if _whole(outcome)]
         for path, outcome in read:
             tally += _stored(transaction, path, files[path], outcome, release)
-        for path in notes:
-            stored = stored_note(job, transaction, path, files[path], run.identities.get(path))
+        for path in here:
+            stored = _stored_here(job, transaction, path, files[path], run.identities.get(path))
             if isinstance(stored, Refused):
                 tally += _refused(transaction, path, files[path], stored, release)
             elif stored.problem is None:
@@ -163,11 +170,12 @@ def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str
                 whole.append(path)
             else:
                 tally += stored.tally
-                mark_unreadable(transaction, path, Mark(stored.problem, read_again=False))
-                job.report(Noted(f"{path}: {stored.problem}"))
+                mark_unreadable(transaction, path, Mark(stored.problem, read_again=stored.read_again))
+                if not stored.read_again:
+                    job.report(Noted(f"{path}: {stored.problem}"))
             run.advanced()
         clear_unreadable(transaction, whole)
-    run.kept(len(read) + len(notes))
+    run.kept(len(read) + len(here))
     for path, outcome in read:
         if isinstance(outcome, FileRead) and outcome.problems:
             job.report(Noted(f"{path}: {PROBLEMS_APART.join(outcome.problems)}"))
@@ -175,9 +183,9 @@ def _written(run: _Run, read: Sequence[tuple[str, Outcome]], notes: Sequence[str
 
 
 def _batch_stored(run: _Run, read_files: FileReading, scans: ScanRun, batch: Sequence[str]) -> Tally:
-    paths = [path for path in batch if kind_of(path) is not FileKind.NOTE]
+    paths = [path for path in batch if kind_of(path) not in READ_HERE]
     tally, scanned = _read_and_written(run, read_files, paths)
-    tally += _written(run, (), [path for path in batch if kind_of(path) is FileKind.NOTE])
+    tally += _written(run, (), [path for path in batch if kind_of(path) in READ_HERE])
     held: list[tuple[str, Outcome]] = []
     for path, outcome in scanned:
         found = _scans_finished(run, scans, path, outcome)
@@ -194,11 +202,12 @@ def _batch_stored(run: _Run, read_files: FileReading, scans: ScanRun, batch: Seq
 
 def read_and_stored(job: Job, plan: IndexPlan, files: Mapping[str, Stat], identities: Mapping[str, Identity]) -> Tally:
     tally, limits, run = Tally(), job.limits, _Run(job, files, identities)
-    for path in (path for path in plan.read if streamed(path)):
+    large = frozenset(path for path in plan.read if streamed(path) and files[path].size > limits.most_bytes_a_write)
+    for path in sorted(large):
         tally += stored_records(job, path, files[path], job.collection.choices.records, identities.get(path))
         run.advanced()
         run.kept(1)
-    whole = tuple(path for path in plan.read if not streamed(path))
+    whole = tuple(path for path in plan.read if path not in large)
     with job.readers.files() as read_files, job.readers.scanning.pictures() as picturing:
         scans = ScanRun(job.ocr, picturing, job.report)
         written = (limits.first_files_a_write, limits.most_files_a_write, limits.most_bytes_a_write)

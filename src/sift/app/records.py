@@ -2,7 +2,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 
 from sift.api.events import Noted
-from sift.app.filing import Job, Tally, too_large_to_describe
+from sift.app.filing import Job, StoredHere, Tally, too_large_to_describe
 from sift.domain.plan.indexing import RACY, Stat
 from sift.domain.text.notes import Document
 from sift.domain.text.records import Chosen, SkippedLine, record_of, used_twice
@@ -132,3 +132,22 @@ def stored_records(job: Job, path: str, stat: Stat, chosen: Chosen, scanned: Ide
             mark_unreadable(transaction, path, Mark(error.strerror or str(error), read_again=True))
         return tally
     return tally + Tally(removed=_finished(job, path, stat, source, skips))
+
+
+def records_stored(
+    job: Job, transaction: WritingDocuments, path: str, stat: Stat, scanned: Identity | None
+) -> StoredHere:
+    limits, chosen, tally, skips = job.limits, job.collection.choices.records, Tally(), Skips()
+    source = put_source(transaction, path, stat.modified_ns, stat.size)
+    nothing_taken(transaction)
+    try:
+        lines = job.readers.lines(job.collection.folder / path, limits.most_record_characters, scanned)
+        records = _records(lines, chosen, limits.most_description_bytes)
+        for read in _writes(records, limits.most_records_a_write, limits.most_characters_a_write):
+            done, skipped = _batch(transaction, source, path, read, chosen)
+            tally, skips = tally + done, skips + skipped
+    except OSError as error:
+        return StoredHere(tally, error.strerror or str(error), read_again=True)
+    gone = untaken(transaction, source)
+    delete_documents(transaction, gone)
+    return StoredHere(tally + Tally(removed=len(gone)), skips.said())
