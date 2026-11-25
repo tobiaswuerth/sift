@@ -327,7 +327,7 @@ def test_index_fails_if_a_collection_was_skipped_however_it_answers(settings: Se
     (settings.home / "collections" / "notes.sqlite").unlink()
     code, out, err = ran(settings, "index")
     assert (code, out) == (1, "")
-    assert "  note  the store is missing: " in err
+    assert " note  the store is missing: " in err
     code, out, _ = ran(settings, "index", "--json")
     assert (code, json.loads(out)["collections"][0]["outcome"]["state"]) == (1, "skipped")
 

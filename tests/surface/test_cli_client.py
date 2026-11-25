@@ -103,10 +103,10 @@ def test_a_setting_the_home_process_does_not_share_is_noted(settings: Settings, 
     alone = ran(settings, "status")
     with running(off):
         noted = [ran(each, "status") for each in (settings, dataclasses.replace(off, gpus="0"), off)]
-    fix = "  fix   stop sift serve to use yours, or start it again with them" + NEWLINE
+    fix = "  fix  stop sift serve to use yours, or start it again with them" + NEWLINE
     assert noted == [
-        (alone[0], alone[1], "  note  the home process uses SIFT_OCR=off" + NEWLINE + fix + alone[2]),
-        (alone[0], alone[1], "  note  the home process uses CUDA_VISIBLE_DEVICES unset" + NEWLINE + fix + alone[2]),
+        (alone[0], alone[1], " note  the home process uses SIFT_OCR=off" + NEWLINE + fix + alone[2]),
+        (alone[0], alone[1], " note  the home process uses CUDA_VISIBLE_DEVICES unset" + NEWLINE + fix + alone[2]),
         alone,
     ]
 

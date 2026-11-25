@@ -109,8 +109,8 @@ def _said(said: Noted | Listening, style: Style) -> tuple[str, ...]:
             labelled("serve", f"{printable(said.url)}  {printable(said.home)}", Tone.STRONG, style),
             labelled("stop", STOP_HINT),
         )
-    fix = (_label("fix", Tone.SECONDARY, style) + printable(said.remedy),) if said.remedy else ()
-    return (_label("note", Tone.WARNING, style) + printable(said.text), *fix)
+    fix = (labelled("fix", said.remedy, Tone.SECONDARY, style),) if said.remedy else ()
+    return (labelled("note", said.text, Tone.WARNING, style), *fix)
 
 
 def _header(started: CollectionStarted, style: Style) -> str:

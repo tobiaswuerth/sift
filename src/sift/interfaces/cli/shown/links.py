@@ -51,7 +51,7 @@ def links(result: Links, _platform: str, style: Style) -> Shown:
 def unresolved(result: Unresolved, _platform: str, style: Style) -> Shown:
     problems = notice_lines(result.unsearched, style)
     if not result.targets:
-        nothing = () if result.unsearched else (labelled("nothing", "every link leads to a note"),)
+        nothing = () if result.unsearched else (labelled("none", "every link leads to a note"),)
         return Shown((), (*problems, *nothing))
     rows = [
         (f"{each.documents:,}", each.target, ", ".join(each.ids) + (", ..." if each.documents > len(each.ids) else ""))

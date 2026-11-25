@@ -96,6 +96,8 @@ def table(rows: Sequence[Sequence[str]], right: frozenset[int]) -> tuple[str, ..
 
 
 def labelled(label: str, text: str, tone: Tone | None = None, style: Style = PLAIN) -> str:
+    if len(label) > LABEL_COLUMNS:
+        raise ValueError(f"the label {label!r} is wider than the {LABEL_COLUMNS} columns labels take")
     padding = " " * (LABEL_COLUMNS - len(label))
     return f"{padding}{paint(label, tone, style) if tone else label}{GAP}{printable(text)}"
 

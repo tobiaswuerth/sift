@@ -151,3 +151,9 @@ def test_a_fitted_line_never_takes_more_columns_than_there_are(text: str, column
 def test_a_label_takes_its_tone_where_colour_is_on() -> None:
     assert labelled("fix", "x", Tone.SECONDARY, Style(colour=True)) == "  \x1b[2mfix\x1b[0m  x"
     assert labelled("fix", "x", Tone.SECONDARY) == "  fix  x"
+
+
+def test_a_label_wider_than_the_label_columns_is_refused() -> None:
+    assert labelled("error", "x") == "error  x"
+    with pytest.raises(ValueError, match="'nothing' is wider than the 5 columns labels take"):
+        labelled("nothing", "x")

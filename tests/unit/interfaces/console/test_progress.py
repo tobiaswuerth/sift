@@ -64,7 +64,7 @@ def test_a_note_while_a_phase_runs_is_said_and_the_phase_still_ends_in_its_row()
     noted = (2.0, Noted("the store is damaged", "remove the collection"))
     view, lines = replayed((*RUN[:5], noted, (4.3, PhaseDone(1_208))))
     assert view.running is None
-    assert lines[-3:-1] == ["  note  the store is damaged", "  fix   remove the collection"]
+    assert lines[-3:-1] == [" note  the store is damaged", "  fix  remove the collection"]
     assert lines[-1].startswith("  read       1,208 files")
 
 
@@ -92,8 +92,8 @@ def test_with_colour_labels_and_secondary_parts_are_painted() -> None:
 
 def test_a_note_says_what_happened_and_how_to_fix_it() -> None:
     noted = replayed(((0.0, Noted("robots/ can't be read\n", "connect the drive")),))[1]
-    assert noted == ["  note  robots/ can't be read\\n", "  fix   connect the drive"]
-    assert replayed(((0.0, Noted("plain")),))[1] == ["  note  plain"]
+    assert noted == [" note  robots/ can't be read\\n", "  fix  connect the drive"]
+    assert replayed(((0.0, Noted("plain")),))[1] == [" note  plain"]
 
 
 def test_collections_after_the_first_are_set_apart_by_a_blank_line() -> None:

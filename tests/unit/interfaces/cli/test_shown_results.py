@@ -116,7 +116,7 @@ def test_links_show_where_each_leads_and_the_lines_linking_in() -> None:
 def test_unresolved_targets_show_how_many_link_them_and_a_few_of_those() -> None:
     found = Unresolved((Target("Missing", 7, ("v/a.md", "v/b.md")), Target("Gone", 1, ("v/c.md",))))
     assert shown_unresolved(found, "linux", PLAIN).results == ("7  Missing  v/a.md, v/b.md, ...", "1  Gone     v/c.md")
-    assert shown_unresolved(Unresolved(()), "linux", PLAIN).messages == ("nothing  every link leads to a note",)
+    assert shown_unresolved(Unresolved(()), "linux", PLAIN).messages == (" none  every link leads to a note",)
 
 
 def test_unresolved_targets_of_a_store_that_could_not_be_read_are_said_to_be_missing() -> None:
