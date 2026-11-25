@@ -3,7 +3,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.domain.rank.best import Best, offered, ranked
+from sift.domain.rank.best import Best, may_reach, offered, ranked
 
 scored = st.lists(
     st.tuples(st.integers(0, 60), st.sampled_from([0.5, 1.0, 1.5, 2.0, 2.5])), max_size=60, unique_by=lambda p: p[0]
@@ -34,6 +34,13 @@ def test_the_best_k_are_kept_as_offers_come_ties_by_chunk(
         chunks = np.array([chunk for chunk, _ in offer], np.int64)
         best = offered(best, chunks, chunks // 4, np.array([score for _, score in offer]))
     assert list(ranked(best)) == brute(each, k, by_document=by_document)
+
+
+def test_a_bound_at_the_threshold_or_below_it_by_the_order_of_a_sum_alone_may_reach_it() -> None:
+    threshold = (0.1 + 0.2) + 0.3
+    bounds = np.array([threshold, 0.1 + (0.2 + 0.3), threshold * (1 - 1e-6)])
+    assert bounds[1] < threshold
+    assert may_reach(bounds, threshold).tolist() == [True, True, False]
 
 
 def test_k_is_one_at_least() -> None:

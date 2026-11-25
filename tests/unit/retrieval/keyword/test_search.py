@@ -8,7 +8,7 @@ from hypothesis import strategies as st
 from sift.domain.arrays import ints, last
 from sift.domain.codec.shape import Shape
 from sift.domain.plan.segments import Policy
-from sift.domain.query.expressions import NOTHING, And, Or, Term
+from sift.domain.query.expressions import NOTHING, And, Expression, Or, Term
 from sift.domain.query.grammar import parsed
 from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Ranged, stored
@@ -31,6 +31,8 @@ from tests.keyword_searches import (
     search,
 )
 from tests.keyword_stores import SMALL, Content, Round
+
+WHOLE_LISTS = Shape(range_shift=2, block=2, lengths_shift=3)
 
 
 def test_passages_of_equal_score_keep_the_order_of_their_chunks_however_the_search_is_batched() -> None:
@@ -84,6 +86,26 @@ def test_nested_queries_score_as_fts5_scores_them(seed: int) -> None:
             expression = random_expression(rng, phrases)
             want = fts5_ranked(held[0], fts5_query(expression), 30)
             same(search(stores, expression, 10), want, min(10, len(want)), fts5_query(expression))
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [Term("w1"), And((Term("w1"), Term("w2"))), Or((Term("w1"), Term("w2")))],
+    ids=["a term", "and", "or"],
+)
+@pytest.mark.parametrize("shape", [SMALL, WHOLE_LISTS], ids=["ranged lists", "whole lists"])
+def test_ties_at_the_kth_score_keep_the_smallest_chunks_however_the_search_prunes(
+    expression: Expression, shape: Shape
+) -> None:
+    notes: Round = {f"t{n:03}.md": ("", "T", "w1 w2") for n in range(40)}
+    notes |= {"t040.md": ("", "T", "w1 w2 w1 w2")} | {f"u{n:03}.md": ("", "U", "w3 w4") for n in range(40)}
+    with collections([[notes]], shape) as (stores, held):
+        (boosted,) = (chunk for chunk, (_, columns) in held[0].items() if columns[1].count("w1") == 2)
+        tied = sorted(chunk for chunk, (_, columns) in held[0].items() if columns[1].count("w1") == 1)
+        for k in (2, 5, 39):
+            found = search(stores, expression, k, tuning=Tuning(first_batch=2))
+            assert [each.chunk for each in found] == [boosted, *tied[: k - 1]]
+            same(found, brute(held, expression, k + 20, by_document=True), k, expression)
 
 
 def test_the_fts5_oracle_scores_each_row_as_fts5_scores_it_alone() -> None:

@@ -62,6 +62,16 @@ def test_with_every_candidate_scored_exactly_the_nearest_are_found(seed: int, si
     assert found == tuple(brute(exact, query, k)) if sum(sizes) else found == ()
 
 
+@pytest.mark.parametrize("rescore", [1, 3, 1000])
+def test_vectors_at_one_distance_are_found_smallest_id_first_however_few_are_rescored(rescore: int) -> None:
+    row = unit(np.arange(1, 25, dtype=np.float64))
+    rows = np.tile(row, (100, 1)).astype(np.float16)
+    exact = [(first + np.arange(0, 300, 3, dtype=np.int64), rows) for first in (10_000, 0)]
+    held = [coded(ids, codes(halves.astype(np.float32)), 24) for ids, halves in exact]
+    found = nearest(held, row, 7, Reads(reader(exact)), rescore=rescore)
+    assert [near.chunk for near in found] == list(range(0, 21, 3))
+
+
 def test_the_shortlist_by_codes_finds_more_of_the_nearest_the_more_it_rescores() -> None:
     held, exact = stores(7, [3000, 2000], 64)
     rng = np.random.default_rng(8)
