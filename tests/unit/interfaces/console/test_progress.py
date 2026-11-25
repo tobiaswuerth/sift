@@ -39,8 +39,8 @@ def replayed(events: tuple[tuple[float, Event], ...], looks: Looks = LOOKS) -> t
 def test_a_run_leaves_a_line_a_phase_and_one_that_sums_it_up() -> None:
     assert replayed(RUN)[1] == [
         "notes  /data/notes",
-        "  scan      12,431 files                 0.4 s",
-        "  read       1,208 files       310/s     3.9 s",
+        "  scan      12,431 files                       400 ms",
+        "  read       1,208 files        310 files/s     3.9 s",
         "  done  +1,102  ~106  -14  \N{MIDDLE DOT}  3 with problems  \N{MIDDLE DOT}  4.3 s",
         "        sift status notes --unreadable",
     ]
@@ -49,15 +49,15 @@ def test_a_run_leaves_a_line_a_phase_and_one_that_sums_it_up() -> None:
 def test_the_running_phase_is_one_line_with_a_bar_its_speed_and_the_time_left() -> None:
     view, _ = replayed(RUN[:5])
     bar = "\N{BOX DRAWINGS HEAVY HORIZONTAL}" * 8 + "\N{BOX DRAWINGS LIGHT HORIZONTAL}" * 8
-    assert running_line(view, 1.0, 100, PLAIN) == f"  read         600 files   {bar}  50%  1,000/s  0.6 s left"
-    assert running_line(replayed(RUN[:2])[0], 0.25, 100, PLAIN) == "  scan" + " " * 35 + "0.2 s"
+    assert running_line(view, 1.0, 100, PLAIN) == f"  read         600 files   {bar}  50%   1,000 files/s  608 ms left"
+    assert running_line(replayed(RUN[:2])[0], 0.25, 100, PLAIN) == "  scan" + " " * 41 + "250 ms"
     assert running_line(replayed(RUN[:3])[0], 0.5, 100, PLAIN) is None
 
 
 def test_more_done_than_counted_at_the_start_fills_the_bar_and_leaves_no_time() -> None:
     view, _ = replayed((*RUN[:4], (1.0, Advanced(1_500))))
     bar = "\N{BOX DRAWINGS HEAVY HORIZONTAL}" * 16
-    assert running_line(view, 1.0, 100, PLAIN) == f"  read       1,500 files   {bar} 100%  2,500/s"
+    assert running_line(view, 1.0, 100, PLAIN) == f"  read       1,500 files   {bar} 100%   2,500 files/s"
 
 
 def test_a_note_while_a_phase_runs_is_said_and_the_phase_still_ends_in_its_row() -> None:
@@ -123,23 +123,37 @@ def test_a_running_line_never_takes_the_last_column(done: int, total: int, secon
     assert width(line) <= max(columns - 1, 0)
 
 
-def test_one_file_is_a_file() -> None:
+def test_one_file_is_a_file_and_has_no_speed() -> None:
     lines = replayed(((0.0, PhaseStarted(Phase.READ, 1)), (0.5, PhaseDone(1))))[1]
-    assert lines == ["  read           1 file        2.0/s     0.5 s"]
+    assert lines == ["  read           1 file" + " " * 24 + "500 ms"]
     view, _ = replayed(((0.0, PhaseStarted(Phase.READ, 2)), (0.5, Advanced(1))))
     assert (running_line(view, 0.5, 100, PLAIN) or "").startswith("  read           1 file    ")
 
 
 def test_a_remake_counts_chunks_and_their_speed() -> None:
     lines = replayed(((0.0, PhaseStarted(Phase.REMAKE, 5_000)), (2.0, PhaseDone(5_000))))[1]
-    assert lines == ["  remake     5,000 chunks    2,500/s     2.0 s"]
+    assert lines == ["  remake     5,000 chunks    2,500 chunks/s     2.0 s"]
 
 
-def test_a_phase_done_quicker_than_the_clock_ticks_shows_no_speed() -> None:
-    lines = replayed(((0.0, PhaseStarted(Phase.READ, 2)), (0.0, PhaseDone(2))))[1]
-    assert lines == ["  read           2 files                 0.0 s"]
+def test_a_phase_done_in_less_than_a_twentieth_of_a_second_shows_no_speed() -> None:
+    lines = replayed(((0.0, PhaseStarted(Phase.READ, 2)), (0.049, PhaseDone(2))))[1]
+    assert lines == ["  read           2 files" + " " * 24 + "49 ms"]
+    assert replayed(((0.0, PhaseStarted(Phase.READ, 2)), (0.05, PhaseDone(2))))[1] == [
+        "  read           2 files         40 files/s     50 ms"
+    ]
+
+
+def test_the_speed_of_copying_is_in_megabytes() -> None:
+    lines = replayed(((0.0, PhaseStarted(Phase.COPY, 900)), (2.0, PhaseDone(800))))[1]
+    assert lines == ["  copy         800 MB              400 MB/s     2.0 s"]
+
+
+def test_models_loaded_are_counted_and_none_loaded_leaves_no_line() -> None:
+    assert replayed(((0.0, PhaseStarted(Phase.LOAD, None)), (0.01, PhaseDone(0))))[1] == []
+    loaded = replayed(((0.0, PhaseStarted(Phase.LOAD, None)), (3.0, PhaseDone(2))))[1]
+    assert loaded == ["  load           2 models" + " " * 23 + "3.0 s"]
 
 
 def test_a_running_scan_says_how_many_files_it_has_found_so_far() -> None:
     view, _ = replayed(((0.0, PhaseStarted(Phase.SCAN, None)), (2.0, Advanced(12_431))))
-    assert running_line(view, 2.5, 100, PLAIN) == "  scan      12,431 files                 2.5 s"
+    assert running_line(view, 2.5, 100, PLAIN) == "  scan      12,431 files" + " " * 24 + "2.5 s"

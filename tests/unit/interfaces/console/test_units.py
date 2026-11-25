@@ -32,15 +32,20 @@ def test_a_size_has_at_most_three_digits_before_its_unit(stored: int) -> None:
 @pytest.mark.parametrize(
     "seconds, shown",
     [
-        (0, "0.0 s"),
-        (0.44, "0.4 s"),
+        (0, "0 ms"),
+        (0.0004, "0 ms"),
+        (0.044, "44 ms"),
+        (0.44, "440 ms"),
+        (0.9996, "1.0 s"),
         (9.94, "9.9 s"),
         (9.96, "10 s"),
         (41.4, "41 s"),
         (59.6, "1 m 0 s"),
         (250, "4 m 10 s"),
         (3725, "1 h 2 m"),
-        (40 * 3600, "40 h 0 m"),
+        (23 * 3600 + 59 * 60, "23 h 59 m"),
+        (40 * 3600, "1 d 16 h"),
+        (198 * 3600, "8 d 6 h"),
     ],
 )
 def test_a_duration_reads_in_the_units_that_keep_it_short(seconds: float, shown: str) -> None:
@@ -48,7 +53,16 @@ def test_a_duration_reads_in_the_units_that_keep_it_short(seconds: float, shown:
 
 
 @pytest.mark.parametrize(
-    "done, seconds, shown", [(5, 2.0, "2.5/s"), (310, 1.0, "310/s"), (12_345, 1.0, "12,345/s"), (3, 0.0, "0.0/s")]
+    "done, seconds, unit, shown",
+    [
+        (5, 2.0, "files", "2.5 files/s"),
+        (310, 1.0, "files", "310 files/s"),
+        (12_345, 1.0, "chunks", "12,345 chunks/s"),
+        (400, 1.0, "MB", "400 MB/s"),
+        (3, 0.0, "files", "0.0 files/s"),
+    ],
 )
-def test_a_rate_is_whole_from_ten_a_second_on(done: int, seconds: float, shown: str) -> None:
-    assert rate(done, seconds) == shown
+def test_a_rate_is_whole_from_ten_a_second_on_and_says_its_unit(
+    done: int, seconds: float, unit: str, shown: str
+) -> None:
+    assert rate(done, seconds, unit) == shown

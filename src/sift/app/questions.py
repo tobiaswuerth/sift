@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from sift.domain.arrays import read_only
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference.models import Models
+from sift.inference.prepared import ModelsPrepared
 
 QUESTIONS = 256
 
@@ -21,10 +22,10 @@ class RememberedQuestions:
     def name(self) -> str:
         return self.models.name
 
-    def prepare(self) -> tuple[str, ...]:
+    def prepare(self) -> ModelsPrepared:
         return self.models.prepare()
 
-    def prepare_ranker(self) -> tuple[str, ...]:
+    def prepare_ranker(self) -> ModelsPrepared:
         return self.models.prepare_ranker()
 
     def rerank(self, query: str, texts: Sequence[str]) -> Floats:

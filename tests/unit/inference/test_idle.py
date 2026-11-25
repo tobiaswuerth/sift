@@ -10,6 +10,7 @@ from sift.api.errors import ModelUnavailableError
 from sift.inference.accelerator import BATCH, CPU_THREADS, GIB, GPU_THREADS, Device, Machine
 from sift.inference.held import RERANK_BATCH, Embedder, Loaded, OnDevice, Ranker
 from sift.inference.local import FULL_REMEDIES, IDLE_SECONDS, Local, LocalHost
+from sift.inference.prepared import ModelsPrepared
 from tests.devices import FakeCuda
 
 
@@ -145,7 +146,9 @@ def test_back_from_rest_the_budget_is_measured_again_and_a_busy_gpu_means_the_mo
     assert (placed(local).batch, placed(local).rerank_batch) == (BATCH, RERANK_BATCH)
     on_cpu = [(model.on, model.dtype) for model in room.loaded[2:]]
     assert (on_cpu, room.threads) == ([("cpu", torch.float32)] * 2, [GPU_THREADS] * 2 + [CPU_THREADS] * 2)
-    assert local.prepare() == ("only 1.0 GiB of the GPU's memory is free, too little: the models run on the CPU",)
+    assert local.prepare().notices == (
+        "only 1.0 GiB of the GPU's memory is free, too little: the models run on the CPU",
+    )
     assert len(room.cuda.fractions) == 1
 
 
@@ -162,7 +165,7 @@ def test_models_on_the_cpu_because_the_gpu_was_busy_go_to_the_gpu_once_it_has_ro
     room.cuda.free = 20 * GIB
     used(local)
     assert [(model.on, model.dtype) for model in room.loaded[2:]] == [("cuda", torch.bfloat16)] * 2
-    assert local.prepare() == ()
+    assert local.prepare() == ModelsPrepared((), built=False)
 
 
 def test_a_move_back_to_the_gpu_that_runs_out_of_memory_leaves_the_models_resting() -> None:

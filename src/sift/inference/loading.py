@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference.hub import pinned
 from sift.inference.models import Models
+from sift.inference.prepared import ModelsPrepared
 
 if TYPE_CHECKING:
     from sift.inference.accelerator import Device
@@ -61,11 +62,11 @@ class Deferred:
             self.built = self.loader().local(self.model, self.reranker, self.gpus)
         return self.built
 
-    def prepare(self) -> tuple[str, ...]:
+    def prepare(self) -> ModelsPrepared:
         with self.lock:
             return self._built().prepare()
 
-    def prepare_ranker(self) -> tuple[str, ...]:
+    def prepare_ranker(self) -> ModelsPrepared:
         with self.lock:
             return self._built().prepare_ranker()
 

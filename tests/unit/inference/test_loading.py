@@ -11,6 +11,7 @@ from sift.domain.codec.codes import Floats, Halves
 from sift.inference import local, ocr
 from sift.inference.hub import pinned
 from sift.inference.loading import REDIRECTS, Deferred, LocalLoader, OcrModule, Resting, ocr_module
+from sift.inference.prepared import ModelsPrepared
 from tests.models import Hashed
 
 
@@ -47,10 +48,10 @@ class Watched:
     def name(self) -> str:
         return self.inner.name
 
-    def prepare(self) -> tuple[str, ...]:
+    def prepare(self) -> ModelsPrepared:
         return self.inner.prepare()
 
-    def prepare_ranker(self) -> tuple[str, ...]:
+    def prepare_ranker(self) -> ModelsPrepared:
         return self.inner.prepare_ranker()
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:

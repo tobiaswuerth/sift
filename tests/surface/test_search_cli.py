@@ -41,7 +41,7 @@ def test_search_ranks_passages_with_where_they_are_and_says_what_it_searched(set
     assert lines[5].startswith("         # Reward shaping Reward shaping speeds up learning. x x")
     assert lines[5].endswith(" ...")
     assert len(lines[5]) <= 9 + 200
-    assert err == "2 results  \N{MIDDLE DOT}  keyword  \N{MIDDLE DOT}  1 collection  \N{MIDDLE DOT}  0.2 s\n"
+    assert err == "2 results  \N{MIDDLE DOT}  keyword  \N{MIDDLE DOT}  1 collection  \N{MIDDLE DOT}  250 ms\n"
 
 
 def test_search_answers_in_json_when_asked(settings: Settings, notes: Path) -> None:

@@ -32,11 +32,13 @@ UNITS = MappingProxyType(
     }
 )
 RATED = frozenset({Phase.REMAKE, Phase.READ, Phase.MERGE, Phase.EMBED, Phase.COPY, Phase.TITLE})
+QUIET_WHEN_NONE = frozenset({Phase.LOAD})
+SHORTEST_RATED = 0.05
 INDENT = "  "
 LABEL = 6
 COUNT = 10
 UNIT = 8
-SPEED = 9
+SPEED = 16
 TIME = 10
 BAR = 16
 STOP_HINT = "Ctrl+C stops it and its jobs; sift jobs lists them"
@@ -83,9 +85,14 @@ def _counted(phase: Phase, count: int) -> str:
     return f"{count:>{COUNT},} {unit:<{UNIT}}"
 
 
+def _speed(phase: Phase, count: int, seconds: float) -> str:
+    rated = phase in RATED and count > 1 and seconds >= SHORTEST_RATED
+    return rate(count, seconds, UNITS[phase][1]) if rated else ""
+
+
 def _row(running: Running, count: int, now: float, style: Style) -> str:
     seconds = now - running.started
-    speed = rate(count, seconds) if running.phase in RATED and count and seconds > 0 else ""
+    speed = _speed(running.phase, count, seconds)
     took = paint(f"{duration(seconds):>{TIME}}", Tone.SECONDARY, style)
     return f"{_label(running.phase, None, style)}{_counted(running.phase, count)}{speed:>{SPEED}}{took}"
 
@@ -136,7 +143,8 @@ def shown(view: View, event: Event, now: float, looks: Looks) -> tuple[View, tup
             return _progressed(view, event), ()
         case PhaseDone():
             running = view.running
-            lines = () if running is None else (_row(running, event.count, now, looks.style),)
+            quiet = running is None or (running.phase in QUIET_WHEN_NONE and not event.count)
+            lines = () if quiet or running is None else (_row(running, event.count, now, looks.style),)
             return replace(view, running=None, kept=None), lines
         case Noted() | Listening():
             return view, _said(event, looks.style)
@@ -162,5 +170,5 @@ def running_line(view: View, now: float, columns: int, style: Style) -> str | No
     share = within / total if total else 1.0
     per_second = done / seconds if seconds > 0 else 0.0
     left = f"{duration((total - within) / per_second)} left" if per_second and within < total else ""
-    progress = f"{_bar(within, total, style)} {share:>4.0%}{rate(done, seconds):>{SPEED}}  {left}"
+    progress = f"{_bar(within, total, style)} {share:>4.0%}{_speed(running.phase, done, seconds):>{SPEED}}  {left}"
     return fitted(f"{head}{_counted(running.phase, done)}{progress}".rstrip(), columns - 1)

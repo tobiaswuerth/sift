@@ -47,7 +47,7 @@ def test_a_model_from_a_folder_embeds_texts_as_normalised_halves_in_their_order(
 def test_the_model_loads_once_when_first_needed(tiny: Path) -> None:
     models = Local(str(tiny))
     assert not isinstance(models.state, OnDevice)
-    models.prepare()
+    assert (models.prepare().built, models.prepare().built) == (True, False)
     loaded = placed(models).embedder
     models.encode(["halo"], query=True)
     assert (loaded is not None, placed(models).embedder is loaded) == (True, True)
@@ -91,7 +91,7 @@ def test_the_fake_keeps_the_contract_the_local_models_keep(tiny: Path, make: Cal
     assert (scores.shape, scores.dtype) == ((3,), np.float32)
     assert bool(np.isfinite(scores).all())
     assert models.rerank("dark matter", []).shape == (0,)
-    assert models.prepare() == models.prepare_ranker()
+    assert models.prepare().notices == models.prepare_ranker().notices
     assert models.name
 
 

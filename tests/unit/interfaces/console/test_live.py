@@ -15,7 +15,7 @@ EVENTS: tuple[Event, ...] = (
     PhaseDone(2),
 )
 TIMES = (0.0, 0.0, 0.05, 0.2, 0.3)
-ROW = "  read           2 files       6.7/s     0.3 s"
+ROW = "  read           2 files        6.7 files/s    300 ms"
 
 
 def written(*, redraw: bool) -> str:

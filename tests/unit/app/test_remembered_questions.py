@@ -40,7 +40,7 @@ def test_a_question_asked_again_with_other_options_is_not_embedded_again(home: P
     hybrid = query(home, SearchHybrid("robot strokes"), models)
     assert (again.hits, questions_asked(hashed)) == (first.hits[:1], [("robot strokes",)])
     assert hybrid == query(home, SearchHybrid("robot strokes"), Hashed())
-    assert (models.name, models.prepare(), models.prepare_ranker()) == (hashed.name, (), ())
+    assert (models.name, models.prepare().notices, models.prepare_ranker().notices) == (hashed.name, (), ())
 
 
 def test_texts_of_documents_and_several_questions_at_once_are_embedded_each_time() -> None:

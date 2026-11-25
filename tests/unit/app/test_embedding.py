@@ -16,6 +16,7 @@ from sift.app.collections import add
 from sift.app.embedding import BROKEN_REMEDY, Embedding, embed
 from sift.app.indexing import index
 from sift.domain.codec.codes import Floats, Halves
+from sift.inference.prepared import ModelsPrepared
 from sift.storage.catalog import CATALOG
 from sift.storage.vectors import EMBED_REMEDY
 from tests.damage import damage_table
@@ -151,12 +152,12 @@ class Stopping:
     def name(self) -> str:
         return self.models.name
 
-    def prepare(self) -> tuple[str, ...]:
+    def prepare(self) -> ModelsPrepared:
         if self.calls_left < 0:
             raise RuntimeError("the model would not load")
         return self.models.prepare()
 
-    def prepare_ranker(self) -> tuple[str, ...]:
+    def prepare_ranker(self) -> ModelsPrepared:
         return self.models.prepare_ranker()
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:

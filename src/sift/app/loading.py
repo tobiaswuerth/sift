@@ -1,8 +1,9 @@
 from collections.abc import Callable, Sequence
 
 from sift.api.events import Event, Noted, Phase, PhaseDone, PhaseStarted, Reporter
+from sift.inference.prepared import ModelsPrepared
 
-type Load = Callable[[], tuple[str, ...]]
+type Load = Callable[[], ModelsPrepared]
 
 
 def unreported(_: Event) -> None:
@@ -11,7 +12,8 @@ def unreported(_: Event) -> None:
 
 def prepared(report: Reporter, loads: Sequence[Load]) -> None:
     report(PhaseStarted(Phase.LOAD, None))
-    notices = [notice for load in loads for notice in load()]
-    report(PhaseDone(len(loads)))
+    found = [load() for load in loads]
+    notices = [notice for each in found for notice in each.notices]
+    report(PhaseDone(sum(each.built for each in found)))
     for notice in dict.fromkeys(notices):
         report(Noted(notice))

@@ -33,6 +33,7 @@ from sift.inference.held import (
     woken,
 )
 from sift.inference.hub import RERANK_MODEL, hub, pinned
+from sift.inference.prepared import ModelsPrepared
 
 MOST_TOKENS = 1024
 IDLE_SECONDS = 300.0
@@ -240,13 +241,15 @@ class Local:
         self.state = placed
         return placed, ranker
 
-    def prepare(self) -> tuple[str, ...]:
+    def prepare(self) -> ModelsPrepared:
+        held = isinstance(self.state, OnDevice) and self.state.embedder is not None
         state, _ = self._embedding(self._on())
-        return _notices(state.device)
+        return ModelsPrepared(_notices(state.device), built=not held)
 
-    def prepare_ranker(self) -> tuple[str, ...]:
+    def prepare_ranker(self) -> ModelsPrepared:
+        held = isinstance(self.state, OnDevice) and self.state.ranker is not None
         state, _ = self._ranking(self._on())
-        return _notices(state.device)
+        return ModelsPrepared(_notices(state.device), built=not held)
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         state, loaded = self._embedding(self._on())

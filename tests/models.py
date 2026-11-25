@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from sift.domain.codec.codes import Floats, Halves
+from sift.inference.prepared import ModelsPrepared
 
 BROKEN = "unembeddable"
 DIRECTIONLESS = "directionless"
@@ -34,13 +35,15 @@ class Hashed:
     ranker_prepared: list[bool] = field(default_factory=list[bool])
     reranked: list[tuple[str, tuple[str, ...]]] = field(default_factory=list[tuple[str, tuple[str, ...]]])
 
-    def prepare(self) -> tuple[str, ...]:
+    def prepare(self) -> ModelsPrepared:
+        built = not self.prepared
         self.prepared.append(True)
-        return ()
+        return ModelsPrepared((), built=built)
 
-    def prepare_ranker(self) -> tuple[str, ...]:
+    def prepare_ranker(self) -> ModelsPrepared:
+        built = not self.ranker_prepared
         self.ranker_prepared.append(True)
-        return ()
+        return ModelsPrepared((), built=built)
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         self.asked.append((tuple(texts), query))

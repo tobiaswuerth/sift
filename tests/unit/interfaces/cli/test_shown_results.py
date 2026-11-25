@@ -15,7 +15,7 @@ def test_a_partial_search_says_better_matches_may_be_missing() -> None:
         (Hit("notes/a.md", "notes", "a.md", "A", 1, 2, 1.5, None),), 1, (), partial=True, scored_by="keywords"
     )
     dot = "  \N{MIDDLE DOT}  "
-    said = dot.join(("1 result", "keyword", "partial: better matches may be missing", "1 collection", "0.2 s"))
+    said = dot.join(("1 result", "keyword", "partial: better matches may be missing", "1 collection", "250 ms"))
     assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
     assert "partial" not in hits(dataclasses.replace(found, partial=False), 0.25, "linux", PLAIN).messages[0]
 
@@ -35,7 +35,7 @@ def test_what_a_search_left_out_of_a_collection_is_noted_with_its_remedy_before_
 def test_stores_ruled_out_by_the_links_are_said_apart_from_those_searched() -> None:
     dot = "  \N{MIDDLE DOT}  "
     found = SearchResult((), 1, (), ruled_out=2, scored_by="keywords")
-    said = dot.join(("no matches", "keyword", "1 collection, 2 ruled out by the links", "0.2 s"))
+    said = dot.join(("no matches", "keyword", "1 collection, 2 ruled out by the links", "250 ms"))
     assert hits(found, 0.25, "linux", PLAIN).messages == (said,)
     assert hits(dataclasses.replace(found, searched=0), 0.25, "linux", PLAIN).messages[0].startswith("no matches")
 

@@ -3,6 +3,8 @@ LARGER_UNITS = ("kB", "MB", "GB", "TB", "PB")
 SHORT = 10
 MINUTE = 60
 HOUR = 3600
+DAY = 24 * HOUR
+MILLISECONDS = 1000
 
 
 def size(stored: int) -> str:
@@ -16,6 +18,8 @@ def size(stored: int) -> str:
 
 
 def duration(seconds: float) -> str:
+    if round(seconds * MILLISECONDS) < MILLISECONDS:
+        return f"{round(seconds * MILLISECONDS)} ms"
     if round(seconds, 1) < SHORT:
         return f"{seconds:.1f} s"
     whole = round(seconds)
@@ -23,9 +27,12 @@ def duration(seconds: float) -> str:
         return f"{whole} s"
     if whole < HOUR:
         return f"{whole // MINUTE} m {whole % MINUTE} s"
-    return f"{whole // HOUR} h {whole % HOUR // MINUTE} m"
+    if whole < DAY:
+        return f"{whole // HOUR} h {whole % HOUR // MINUTE} m"
+    return f"{whole // DAY} d {whole % DAY // HOUR} h"
 
 
-def rate(done: int, seconds: float) -> str:
+def rate(done: int, seconds: float, unit: str) -> str:
     per_second = done / seconds if seconds > 0 else 0.0
-    return f"{per_second:.1f}/s" if round(per_second, 1) < SHORT else f"{per_second:,.0f}/s"
+    number = f"{per_second:.1f}" if round(per_second, 1) < SHORT else f"{per_second:,.0f}"
+    return f"{number} {unit}/s"
