@@ -6,12 +6,13 @@ import pytest
 
 from sift.api.collections import AddCollection, Audience, ShowStatus
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import NotFoundError, Problem
+from sift.api.errors import InvalidRequestError, NotFoundError, Problem
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import Options, SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app.collections import add, status
 from sift.app.documents import documents
 from sift.app.embedding import embed
+from sift.app.indexing import files_of, index_files
 from sift.app.links import links, unresolved
 from sift.app.mentions import mentions
 from sift.app.query import query
@@ -119,3 +120,15 @@ def test_an_agent_sees_the_status_of_the_collections_it_may_see(home: Path) -> N
 
 def test_unresolved_links_are_listed_for_people(home: Path) -> None:
     assert sorted(each.target for each in unresolved(home, ListUnresolved()).targets) == ["Plan", "Secret"]
+
+
+def test_an_agent_may_index_files_of_the_collections_it_may_see_alone(home: Path, tmp_path: Path) -> None:
+    secret, plan = str(tmp_path / "hidden" / "Secret.md"), str(tmp_path / "open" / "Plan.md")
+    with pytest.raises(InvalidRequestError) as caught:
+        files_of(home, (plan, secret), AGENTS)
+    assert (caught.value.message, caught.value.field) == (f"{secret} is in no collection", "files")
+    grouped = files_of(home, (plan, "open/Plan.md"), AGENTS)
+    assert {one.name: paths for one, paths in grouped.items()} == {"open": ("Plan.md",)}
+    write(tmp_path / "open" / "Plan.md", "Note: a new plan.\n")
+    (indexed,) = index_files(home, grouped, quiet).collections
+    assert [(each.id, each.state) for each in indexed.named] == [("open/Plan.md", "changed")]

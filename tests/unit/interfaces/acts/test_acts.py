@@ -5,18 +5,20 @@ import pytest
 
 from sift.api.collections import AddCollection, Audience, ShowStatus
 from sift.api.documents import GetDocuments, WantedDocument
-from sift.api.embedding import EmbedCollections
-from sift.api.errors import NotFoundError
+from sift.api.embedding import CollectionEmbedded, EmbedCollections, Embedded, EmbedResult
+from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.links import FindMentions, FindSimilar, ShowLinks
+from sift.api.reindexing import ReindexFiles
 from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
 from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.interfaces.acts import collections, indexing, jobs, links, searching
 from sift.interfaces.acts.acting import Act, Acting
 from sift.interfaces.acts.collections import GET, STATUS
+from sift.interfaces.acts.indexing import REINDEX
 from sift.interfaces.acts.links import LINKS
 from sift.interfaces.acts.searching import MENTIONS, QUERY, SEARCH, SIMILAR, VSEARCH
-from sift.interfaces.server.handled import HANDLED
+from sift.interfaces.server.handled import HANDLED, for_agents
 from sift.settings import Settings
 from tests.files import write
 from tests.homes import collection, indexed, quiet
@@ -31,7 +33,7 @@ ACTS: list[Act[object, object]] = [
 
 
 def test_every_act_served_names_the_answer_its_run_gives() -> None:
-    assert sorted(act.name for act in ACTS) == sorted(HANDLED)
+    assert sorted(act.name for act in ACTS) == sorted(for_agents(HANDLED))
     assert [act.name for act in ACTS if act.answer != get_type_hints(act.run)["return"]] == []
 
 
@@ -70,3 +72,24 @@ def test_every_act_an_agent_reaches_keeps_to_the_collections_it_may_see(agents: 
     for each in asked_of:
         with pytest.raises(NotFoundError):
             each()
+
+
+def test_an_agent_reindexes_files_it_may_see_and_their_passages_are_embedded(agents: Acting, tmp_path: Path) -> None:
+    write(tmp_path / "open" / "Plan.md", "Note: the plan of Osprey.\n")
+    done = REINDEX.run(agents, ReindexFiles(("open/Plan.md",)))
+    assert [(one.name, [(each.id, each.state) for each in one.named]) for one in done.indexed.collections] == [
+        ("open", [("open/Plan.md", "changed")])
+    ]
+    assert done.embedded == EmbedResult((CollectionEmbedded("open", Embedded(1, 0)),))
+    assert _hits(VSEARCH.run(agents, SearchVectors("Osprey", k=1))) == ["open/Plan.md"]
+    with pytest.raises(InvalidRequestError):
+        REINDEX.run(agents, ReindexFiles((str(tmp_path / "hidden" / "Secret.md"),)))
+
+
+def test_files_of_a_collection_never_embedded_are_indexed_alone(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    collection(tmp_path, home, "plain", {"a.md": "Note: alpha.\n"})
+    indexed(home)
+    acting = Acting(Settings(home=home, user=None, cwd=tmp_path), quiet, float, Hashed, Audience.AGENTS)
+    done = REINDEX.run(acting, ReindexFiles(("plain/a.md",)))
+    assert (len(done.indexed.collections), done.embedded) == (1, None)

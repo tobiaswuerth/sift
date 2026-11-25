@@ -25,7 +25,7 @@ WORD_START = re.compile(r"(?<=[a-z])(?=[A-Z])")
 VOWELS = frozenset("aeiou")
 
 
-def _parts(hint: object) -> tuple[object, tuple[object, ...]]:
+def annotated_parts(hint: object) -> tuple[object, tuple[object, ...]]:
     if get_origin(hint) is not Annotated:
         return hint, ()
     kind, *metadata = cast("tuple[object, ...]", get_args(hint))
@@ -145,7 +145,7 @@ def named(kind: object) -> str:
 @cache
 def _hints(kind: type) -> tuple[tuple[str, object, tuple[object, ...]], ...]:
     hints = cast("dict[str, object]", get_type_hints(kind, include_extras=True))
-    return tuple((field.name, *_parts(hints[field.name])) for field in dataclasses.fields(kind))
+    return tuple((field.name, *annotated_parts(hints[field.name])) for field in dataclasses.fields(kind))
 
 
 def _bounded(name: str, value: object, bounds: Bounds) -> None:

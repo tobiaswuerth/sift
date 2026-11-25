@@ -24,11 +24,12 @@ from sift.app.kept_decoded import KeptDecoded
 from sift.app.questions import RememberedQuestions
 from sift.app.resident import ResidentCodes
 from sift.interfaces.acts.acting import fresh_models
-from sift.interfaces.server.app import ALIVE_SECONDS, LOGGER, Serving, served_app
+from sift.interfaces.server.app import ALIVE_SECONDS, LOGGER, Serving
 from sift.interfaces.server.endpoint import SERVER, SERVING, Endpoint, found, own_endpoint, written
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.heads import HeadsInTime
 from sift.interfaces.server.results import KeptResults
+from sift.interfaces.server.routes import served_app
 from sift.settings import Settings, acting_on
 from sift.storage.database import private_folder
 from sift.storage.watching import HomeWatch
@@ -159,7 +160,7 @@ def held(
         port = cast("tuple[str, int]", bound.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version, acting_on(settings), CONTRACT)
         kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
-        serving = Serving(settings, endpoint.token, *kept, writer, pool, how.alive_every, clock=how.clock)
+        serving = Serving(settings, endpoint.token, version, *kept, writer, pool, how.alive_every, clock=how.clock)
         app = served_app(serving, how.handled)
         config = uvicorn.Config(
             app,

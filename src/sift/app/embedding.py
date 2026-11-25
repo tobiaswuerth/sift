@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cache, partial
 from pathlib import Path
@@ -18,8 +18,8 @@ from sift.domain.text.wording import counted
 from sift.inference.models import Models
 from sift.storage.catalog import Collection
 from sift.storage.database import Connection, reading, writing
-from sift.storage.store import connected
-from sift.storage.vector_meta import left
+from sift.storage.store import connected, read_store
+from sift.storage.vector_meta import left, model_of
 from sift.storage.vectors import Pending, VectorsPut, forget_vectors, pending, put_vectors, refuse_model
 from sift.storage.writer import sole_writer
 
@@ -116,6 +116,18 @@ def _reset(home: Path, report: Reporter, ready: Callable[[], None], embedding_no
             report(CollectionStarted(one.name, str(one.folder)))
             report(Noted(failed[one.id].message, failed[one.id].remedy, failed[one.id].code))
     return failed
+
+
+def _model_held(one: Collection) -> str | None:
+    try:
+        with read_store(one.store, one.id) as transaction:
+            return model_of(transaction)
+    except StoreUnavailableError:
+        return None
+
+
+def embedded_by(home: Path, names: Sequence[str], model: str) -> tuple[str, ...]:
+    return tuple(one.name for one in chosen(home, names, Audience.PEOPLE) if _model_held(one) == model)
 
 
 def embed(

@@ -13,15 +13,15 @@ from sift.api.errors import InvalidRequestError, NotFoundError, Problem
 from sift.api.events import Advanced, Event, Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections, Skipped
 from sift.app.collections import add
-from sift.app.embedding import BROKEN_REMEDY, Embedding, embed
+from sift.app.embedding import BROKEN_REMEDY, Embedding, embed, embedded_by
 from sift.app.indexing import index
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference.prepared import ModelsPrepared
-from sift.storage.catalog import CATALOG
+from sift.storage.catalog import CATALOG, known_collections
 from sift.storage.vectors import EMBED_REMEDY
 from tests.damage import damage_table
 from tests.files import write
-from tests.homes import indexed, indexed_home, quiet
+from tests.homes import home_of, indexed, indexed_home, quiet
 from tests.later import LATER
 from tests.models import BROKEN, Hashed
 
@@ -263,3 +263,11 @@ def test_a_note_changed_in_one_chunk_needs_that_chunk_embedded_alone(home: Path,
     index(home, IndexCollections(), quiet, readers=LATER)
     assert chunks(home) > 2
     assert counted(store(home), "SELECT chunks - vectors FROM counts") == 1
+
+
+def test_a_collection_whose_store_is_out_of_reach_counts_as_embedded_by_no_model(tmp_path: Path) -> None:
+    home = home_of(tmp_path, {"notes/a.md": "Note: alpha.\n"}, embedded=Hashed())
+    assert embedded_by(home, ("notes",), Hashed().name) == ("notes",)
+    (one,) = known_collections(home)
+    one.store.unlink()
+    assert embedded_by(home, ("notes",), Hashed().name) == ()

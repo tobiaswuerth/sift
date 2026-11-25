@@ -1,0 +1,261 @@
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from sift.api.collections import AddCollection, Audience, CollectionStatus, Counted, Status, Unavailable
+from sift.api.embedding import EmbedCollections
+from sift.api.errors import InvalidRequestError, Problem, SiftError
+from sift.api.jobs import ServedJob
+from sift.api.wire import Json
+from sift.app.collections import add
+from sift.app.embedding import embed
+from sift.interfaces.acts.acting import Acting
+from sift.interfaces.mcp.offered import TOOLS
+from sift.interfaces.mcp.reading import MOST_TEXT
+from sift.interfaces.mcp.searches import MOST_QUERIES
+from sift.interfaces.mcp.tools import Started, Tool
+from sift.interfaces.server.handled import HANDLED, for_agents
+from sift.settings import Settings
+from tests.files import write
+from tests.homes import collection, indexed, quiet
+from tests.models import Hashed
+
+type Object = dict[str, Json]
+
+
+@dataclass(slots=True)
+class Direct:
+    acting: Acting
+    asked: list[str] = field(default_factory=list[str])
+    finished: bool = True
+
+    def read(self, name: str, data: Json) -> object:
+        self.asked.append(name)
+        return for_agents(HANDLED)[name].run(self.acting, data)
+
+    def job(self, name: str, data: Json) -> Started:
+        self.asked.append(name)
+        return Started(4, for_agents(HANDLED)[name].run(self.acting, data) if self.finished else None)
+
+    def jobs(self) -> tuple[ServedJob, ...]:
+        return (ServedJob(4, "reindex", running=True, seconds=2.5, watched=False, collection="open", done=1),)
+
+
+@pytest.fixture
+def direct(tmp_path: Path) -> Direct:
+    home = tmp_path / "home"
+    plan = "---\ncreated: 2026-01-02\n---\n# Plan\n\nNote: the plan of Kestrel names [[Secret]].\n"
+    collection(tmp_path, home, "open", {"Plan.md": plan, "Other.md": "Note: an osprey over the lake.\n"})
+    write(tmp_path / "hidden" / "Secret.md", "Note: Kestrel is the secret project, see [[Plan]].\n")
+    add(home, AddCollection(str(tmp_path / "hidden"), agents=False))
+    indexed(home)
+    embed(home, EmbedCollections(), quiet, Hashed())
+    return Direct(Acting(Settings(home=home, user=None, cwd=tmp_path), quiet, float, Hashed, Audience.AGENTS))
+
+
+def tool(name: str) -> Tool:
+    return next(each for each in TOOLS if each.name == name)
+
+
+def called(direct: Direct, name: str, arguments: Mapping[str, object]) -> Object:
+    return cast("Object", tool(name).call(direct, arguments))
+
+
+def ids(answer: Object) -> list[str]:
+    hits = cast("list[Object]", answer["hits"])
+    return [cast("str", hit["id"]) for hit in hits]
+
+
+def test_five_tools_are_offered_and_only_reindex_changes_anything() -> None:
+    assert [(each.name, each.read_only) for each in TOOLS] == [
+        ("search", True),
+        ("get", True),
+        ("related", True),
+        ("collections", True),
+        ("reindex", False),
+    ]
+
+
+def test_every_parameter_of_every_tool_is_described() -> None:
+    for each in TOOLS:
+        properties = cast("dict[str, Object]", each.schema["properties"])
+        assert [name for name, schema in properties.items() if not schema.get("description")] == [], each.name
+
+
+def test_a_search_is_hybrid_unless_another_mode_is_asked_for(direct: Direct) -> None:
+    for mode, act in (({}, "query"), ({"mode": "keyword"}, "search"), ({"mode": "semantic"}, "vsearch")):
+        assert ids(called(direct, "search", {"query": "Kestrel", "k": 1, **mode})) == ["open/Plan.md"]
+        assert direct.asked[-1] == act
+
+
+def test_a_hit_says_where_it_is_and_what_it_holds(direct: Direct) -> None:
+    (hit,) = cast("list[Object]", called(direct, "search", {"query": "Kestrel", "mode": "keyword"})["hits"])
+    assert set(hit) == {"id", "title", "first_line", "last_line", "score", "text"}
+    assert (hit["id"], hit["title"], hit["first_line"], hit["last_line"]) == ("open/Plan.md", "Plan", 4, 6)
+    compact = called(direct, "search", {"query": "Kestrel", "mode": "keyword", "compact": True, "fields": ["*"]})
+    (shown,) = cast("list[Object]", compact["hits"])
+    assert ("text" in shown, shown["fields"]) == (False, {"created": "2026-01-02"})
+
+
+def test_several_phrasings_are_searched_in_one_call(direct: Direct) -> None:
+    answer = called(direct, "search", {"query": ["Kestrel", "osprey"], "mode": "keyword"})
+    results = cast("list[Object]", answer["results"])
+    assert [(each["query"], ids(each)) for each in results] == [
+        ("Kestrel", ["open/Plan.md"]),
+        ("osprey", ["open/Other.md"]),
+    ]
+
+
+@pytest.mark.parametrize(
+    "arguments,wrong",
+    [
+        ({"query": "x", "mode": "fuzzy"}, "mode"),
+        ({"query": []}, "query"),
+        ({"query": ["x"] * (MOST_QUERIES + 1)}, "query"),
+        ({"query": 3}, "query"),
+        ({}, "query"),
+        ({"query": "x", "mode": "keyword", "candidates": 5}, "candidates"),
+        ({"query": "x", "k": 0}, "k"),
+    ],
+)
+def test_a_wrong_search_is_refused_naming_its_field(direct: Direct, arguments: Object, wrong: str) -> None:
+    with pytest.raises(InvalidRequestError) as caught:
+        called(direct, "search", arguments)
+    assert caught.value.field == wrong
+
+
+def test_a_search_says_when_more_results_wait(direct: Direct) -> None:
+    answer = called(direct, "search", {"query": "Note", "mode": "keyword", "k": 1})
+    assert (len(ids(answer)), answer["more"]) == (1, True)
+    assert "more" not in called(direct, "search", {"query": "Note", "mode": "keyword", "k": 5})
+
+
+def test_get_reads_documents_and_lines_and_says_what_it_could_not(direct: Direct) -> None:
+    answer = called(
+        direct,
+        "get",
+        {"documents": [{"id": "open/Plan.md", "first_line": 6, "last_line": 6}, {"id": "hidden/Secret.md"}]},
+    )
+    assert answer["documents"] == [
+        {"id": "open/Plan.md", "title": "Plan", "text": "Note: the plan of Kestrel names [[Secret]].\n"}
+    ]
+    (refusal,) = cast("list[str]", answer["not_read"])
+    assert refusal.startswith("hidden/Secret.md: no note or document 'hidden/Secret.md'; fix: ")
+
+
+def test_get_leaves_out_texts_past_what_one_call_returns(direct: Direct, tmp_path: Path) -> None:
+    for name in ("a", "b"):
+        write(tmp_path / "open" / f"{name}.md", f"# {name}\n\n" + "word " * (MOST_TEXT // 8) + "\n")
+    indexed(direct.acting.settings.home)
+    answer = called(direct, "get", {"documents": [{"id": "open/a.md"}, {"id": "open/b.md"}]})
+    documents = cast("list[Object]", answer["documents"])
+    assert ["text" in each for each in documents] == [True, False]
+    assert documents[1]["left_out"] == (
+        f"with it, this answer's text would pass {MOST_TEXT:,} characters: get it alone, or some of its lines"
+    )
+
+
+def test_related_finds_documents_like_one_its_links_and_its_mentions(direct: Direct) -> None:
+    assert ids(called(direct, "related", {"id": "open/Plan.md", "k": 1})) == ["open/Other.md"]
+    assert direct.asked[-1] == "similar"
+    links = called(direct, "related", {"id": "open/Plan.md", "kind": "links"})
+    assert [(each["target"], each["via"]) for each in cast("list[Object]", links["out"])] == [("Secret", "unresolved")]
+    assert "into" not in links
+    backlinks = called(direct, "related", {"id": "open/Plan.md", "kind": "backlinks"})
+    assert (backlinks["into"], "out" in backlinks) == ([], False)
+    called(direct, "related", {"id": "open/Plan.md", "kind": "mentions"})
+    assert direct.asked[-1] == "mentions"
+
+
+def test_related_refuses_what_its_kind_does_not_take(direct: Direct) -> None:
+    for arguments, wrong in (
+        ({"id": "open/Plan.md", "kind": "links", "compact": True}, "compact"),
+        ({"id": "open/Plan.md", "kind": "similar", "depth": 2}, "depth"),
+        ({"id": "open/Plan.md", "kind": "friends"}, "kind"),
+        ({"id": "open/Plan.md", "kind": "links", "direction": "in"}, "direction"),
+    ):
+        with pytest.raises(SiftError) as caught:
+            called(direct, "related", arguments)
+        assert caught.value.field == wrong
+
+
+def test_collections_lists_what_an_agent_may_search_and_the_jobs_running(direct: Direct) -> None:
+    answer = called(direct, "collections", {})
+    (shown,) = cast("list[Object]", answer["collections"])
+    assert {key: shown[key] for key in ("name", "documents", "passages", "embedded", "fields", "links")} == {
+        "name": "open",
+        "documents": 2,
+        "passages": 2,
+        "embedded": 2,
+        "fields": ["created"],
+        "links": 1,
+    }
+    assert answer["jobs"] == [
+        {"job": 4, "command": "reindex", "running": True, "seconds": 2.5, "collection": "open", "done": 1}
+    ]
+
+
+def test_reindex_says_how_each_file_went_or_that_its_job_still_runs(direct: Direct, tmp_path: Path) -> None:
+    write(tmp_path / "open" / "Plan.md", "Note: the plan of Osprey.\n")
+    answer = called(direct, "reindex", {"files": ["open/Plan.md"]})
+    assert answer == {"job": 4, "files": [{"id": "open/Plan.md", "state": "changed"}], "embedded": 1}
+    direct.finished = False
+    assert called(direct, "reindex", {"files": ["open/Other.md"]}) == {
+        "job": 4,
+        "running": "it runs on: collections lists it until it ends",
+    }
+
+
+def test_get_shows_the_front_matter_asked_for(direct: Direct) -> None:
+    answer = called(direct, "get", {"documents": [{"id": "open/Plan.md"}], "fields": ["created"]})
+    (document,) = cast("list[Object]", answer["documents"])
+    assert document["fields"] == {"created": "2026-01-02"}
+
+
+@dataclass(frozen=True, slots=True)
+class Faked:
+    status: Status
+
+    def read(self, name: str, data: Json) -> object:
+        assert (name, data) == ("status", {})
+        return self.status
+
+    def job(self, name: str, data: Json) -> Started:
+        raise AssertionError((name, data))
+
+    def jobs(self) -> tuple[ServedJob, ...]:
+        return (ServedJob(2, "index", running=False, seconds=0.04, watched=True, collection="hidden"),)
+
+
+def test_collections_says_which_are_inactive_unreadable_or_out_of_reach() -> None:
+    counted = Counted(5, 9, 0, 2, ())
+    gone = Unavailable(Problem.STORE_DAMAGED, "its index is damaged", "rebuild it")
+    status = Status(
+        "/home",
+        (
+            CollectionStatus("paused", "/p", "/s/p", counted, active=False),
+            CollectionStatus("broken", "/b", "/s/b", gone),
+        ),
+    )
+    answer = cast("Object", tool("collections").call(Faked(status), {}))
+    assert answer == {
+        "collections": [
+            {
+                "name": "paused",
+                "folder": "/p",
+                "active": False,
+                "documents": 5,
+                "passages": 9,
+                "embedded": 0,
+                "fields": [],
+                "links": 0,
+                "unresolved": 0,
+                "unreadable": 2,
+            },
+            {"name": "broken", "folder": "/b", "problem": "its index is damaged; fix: rebuild it"},
+        ],
+        "jobs": [{"job": 2, "command": "index", "running": False, "seconds": 0.0}],
+    }

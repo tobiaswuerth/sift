@@ -4,7 +4,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -13,13 +13,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
-from starlette.applications import Starlette
-from starlette.middleware import Middleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 from sift.api.collections import Audience
 from sift.api.errors import InternalError, InvalidRequestError, NotFoundError, Problem, SiftError, system_failure
@@ -32,7 +28,7 @@ from sift.domain.text.json_values import deeper_than
 from sift.domain.text.wording import counted
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.gate import Gate
-from sift.interfaces.server.handled import HANDLED, Handled
+from sift.interfaces.server.handled import Handled
 from sift.interfaces.server.jobs import HeldJob, Jobs
 from sift.interfaces.server.progress import Coalesced
 from sift.interfaces.server.results import KeptResults, Moment
@@ -60,7 +56,6 @@ UNKNOWN = NotFoundError("no such command", "send one of sift's commands to /api/
 NO_JSON = InvalidRequestError("the request is no JSON", NO_JSON_REMEDY)
 TOO_LARGE = InvalidRequestError(f"the request is longer than {MOST_BODY:,} bytes", "send a shorter request")
 FAILED_REMEDY = "see the home process's log in SIFT_HOME/logs, and report it"
-LISTENED_FOR_LEAVING = MappingProxyType({"version": "3.0", "spec_version": "2.3"})
 SPOKEN = MappingProxyType({CONTRACT_HEADER: contract_text(CONTRACT)})
 
 
@@ -68,6 +63,7 @@ SPOKEN = MappingProxyType({CONTRACT_HEADER: contract_text(CONTRACT)})
 class Serving:
     settings: Settings
     token: str
+    version: str
     models: "Models"
     codes: ResidentCodes
     decoded: KeptDecoded
@@ -109,13 +105,21 @@ def _refused(error: SiftError, status: int) -> JSONResponse:
     return JSONResponse({"error": encoded_error(error)}, status_code=status, headers=dict(SPOKEN))
 
 
-def _acting(serving: Serving, report: Reporter) -> Acting:
+@dataclass(frozen=True, slots=True)
+class Sent:
+    name: str
+    handled: Handled
+    data: object
+    audience: Audience
+
+
+def _acting(serving: Serving, report: Reporter, audience: Audience) -> Acting:
     return Acting(
         serving.settings,
         report,
         time.perf_counter,
         lambda: serving.models,
-        Audience.PEOPLE,
+        audience,
         serving.codes,
         serving.decoded,
         serving.jobs,
@@ -126,12 +130,12 @@ def _searched(home: Path) -> set[tuple[Path, CollectionId]]:
     return {(one.store, one.id) for one in known_collections(home) if one.active}
 
 
-def _written(serving: Serving, handled: Handled, data: object, report: Reporter) -> object:
-    with serving.gate.alone(report) if handled.alone else nullcontext():
+def _written(serving: Serving, sent: Sent, report: Reporter) -> object:
+    with serving.gate.alone(report) if sent.handled.alone else nullcontext():
         serving.results.written()
         serving.watch.let_go()
         try:
-            return handled.run(_acting(serving, report), data)
+            return sent.handled.run(_acting(serving, report, sent.audience), sent.data)
         finally:
             searched = _searched(serving.settings.home)
             serving.codes.kept_only(searched)
@@ -143,37 +147,51 @@ def _moment(serving: Serving) -> Moment:
     return Moment(serving.results.seen(), serving.watch.seen())
 
 
-def _read(serving: Serving, handled: Handled, data: object, report: Reporter, noted: threading.Event) -> object:
+def _read(serving: Serving, sent: Sent, report: Reporter, noted: threading.Event) -> object:
     with serving.gate.shared(report):
-        return _answered(serving, handled, data, report, noted)
+        return _answered(serving, sent, report, noted)
 
 
-def _answered(serving: Serving, handled: Handled, data: object, report: Reporter, noted: threading.Event) -> object:
-    if handled.kept is None:
-        return handled.run(_acting(serving, report), data)
-    key = handled.kept(data)
+def _answered(serving: Serving, sent: Sent, report: Reporter, noted: threading.Event) -> object:
+    acting = _acting(serving, report, sent.audience)
+    if sent.handled.kept is None:
+        return sent.handled.run(acting, sent.data)
+    key = f"{sent.audience.value} {sent.handled.kept(sent.data)}"
     before = _moment(serving)
     found = serving.results.found(key, before)
     if found is not None:
         return found
-    answer = handled.run(_acting(serving, report), data)
+    answer = sent.handled.run(acting, sent.data)
     if not noted.is_set():
         serving.results.keep(key, answer, before, _moment(serving))
     return answer
 
 
-@dataclass(frozen=True, slots=True)
-class _Sent:
-    name: str
-    handled: Handled
-    data: object
-
-
-def _answer(serving: Serving, asked: _Sent, report: Reporter, noted: threading.Event, job: HeldJob | None) -> object:
+def _answer(serving: Serving, sent: Sent, report: Reporter, noted: threading.Event, job: HeldJob | None) -> object:
     if job is None:
-        return _read(serving, asked.handled, asked.data, report, noted)
+        return _read(serving, sent, report, noted)
     serving.jobs.began(job)
-    return _written(serving, asked.handled, asked.data, serving.jobs.reporting(job, report))
+    return _written(serving, sent, serving.jobs.reporting(job, report))
+
+
+def _unheard(_event: Event) -> None:
+    return None
+
+
+def read_for(serving: Serving, sent: Sent) -> object:
+    return _read(serving, sent, _unheard, threading.Event())
+
+
+def run_job(serving: Serving, sent: Sent, job: HeldJob) -> object:
+    try:
+        return _answer(serving, sent, _unheard, threading.Event(), job)
+    except (SiftError, OSError):
+        raise
+    except Exception:
+        logging.getLogger(LOGGER).exception("%s failed", sent.name)
+        raise
+    finally:
+        serving.jobs.ended(job)
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +205,7 @@ class _Lines:
             self.loop.call_soon_threadsafe(self.queue.put_nowait, lines)
 
 
-def _final(serving: Serving, sent: _Sent, report: Reporter, noted: threading.Event, job: HeldJob | None) -> bytes:
+def _final(serving: Serving, sent: Sent, report: Reporter, noted: threading.Event, job: HeldJob | None) -> bytes:
     started = time.perf_counter()
     try:
         answer = _answer(serving, sent, report, noted, job)
@@ -205,7 +223,7 @@ def _final(serving: Serving, sent: _Sent, report: Reporter, noted: threading.Eve
     return _line({"answer": encoded(answer)})
 
 
-def _ran(serving: Serving, sent: _Sent, lines: _Lines, job: HeldJob | None) -> None:
+def _ran(serving: Serving, sent: Sent, lines: _Lines, job: HeldJob | None) -> None:
     noted = threading.Event()
 
     def said(event: Event) -> None:
@@ -236,7 +254,7 @@ async def _streamed(serving: Serving, name: str, handled: Handled, data: object)
         for line in _waiting(serving, job):
             yield line
     ran = (serving.pool if job is None else serving.writer).submit(
-        _ran, serving, _Sent(name, handled, data), lines, job
+        _ran, serving, Sent(name, handled, data, Audience.PEOPLE), lines, job
     )
     getting = asyncio.ensure_future(lines.queue.get())
     try:
@@ -259,7 +277,7 @@ async def _streamed(serving: Serving, name: str, handled: Handled, data: object)
     await asyncio.wrap_future(ran)
 
 
-async def _body(request: Request) -> bytes | None:
+async def body_of(request: Request) -> bytes | None:
     read = bytearray()
     async for chunk in request.stream():
         read += chunk
@@ -272,7 +290,7 @@ async def _command(serving: Serving, name: str, handled: Handled, request: Reque
     given = (request.headers.get("authorization") or "").encode()
     if not hmac.compare_digest(given, f"Bearer {serving.token}".encode()):
         return _refused(UNAUTHORIZED, 401)
-    body = await _body(request)
+    body = await body_of(request)
     if body is None:
         return _refused(TOO_LARGE, 413)
     try:
@@ -284,26 +302,10 @@ async def _command(serving: Serving, name: str, handled: Handled, request: Reque
     return StreamingResponse(_streamed(serving, name, handled, data), media_type=LINES, headers=dict(SPOKEN))
 
 
-async def _unknown(_request: Request, _error: Exception) -> Response:
+async def unknown_command(_request: Request, _error: Exception) -> Response:
     return _refused(UNKNOWN, 404)
 
 
-def _route(serving: Serving, name: str, handled: Handled) -> Route:
+def command_route(serving: Serving, name: str, handled: Handled) -> Route:
     answer: Callable[[Request], Awaitable[Response]] = partial(_command, serving, name, handled)
     return Route(f"/api/{name}", answer, methods=["POST"])
-
-
-@dataclass(frozen=True, slots=True)
-class ListeningForLeaving:
-    app: ASGIApp
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        await self.app({**scope, "asgi": dict(LISTENED_FOR_LEAVING)}, receive, send)
-
-
-def served_app(serving: Serving, handled: Mapping[str, Handled] = HANDLED) -> Starlette:
-    return Starlette(
-        routes=[_route(serving, name, each) for name, each in handled.items()],
-        middleware=[Middleware(ListeningForLeaving), Middleware(TrustedHostMiddleware, allowed_hosts=list(HOSTS))],
-        exception_handlers={404: _unknown, 405: _unknown},
-    )

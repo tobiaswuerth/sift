@@ -1,8 +1,9 @@
 import os
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from sift.api.collections import Audience
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
@@ -22,7 +23,7 @@ from sift.domain.text.kinds import split_keyed_path
 from sift.domain.text.scans import reads_skipped
 from sift.ingest.ignore import IGNORE_FILE, ignore_at
 from sift.ingest.scan import Reach, scan
-from sift.storage.catalog import Collection, known_collections
+from sift.storage.catalog import Collection, known_to
 from sift.storage.database import Batches, Connection, reading, writing
 from sift.storage.documents import (
     Unreadable,
@@ -207,14 +208,28 @@ def _file_named(one: Collection, relative: str) -> str:
     return relative if os.path.lexists(one.folder / relative) else split_keyed_path(relative)[0]
 
 
-def _grouped(home: Path, files: Sequence[str]) -> dict[Collection, tuple[str, ...]]:
-    known, grouped = known_collections(home), dict[Collection, list[str]]()
+def files_of(home: Path, files: Sequence[str], audience: Audience) -> Mapping[Collection, tuple[str, ...]]:
+    known, grouped = known_to(home, audience), dict[Collection, list[str]]()
     for given in files:
         found = located(known, given)
         if found is None:
             raise InvalidRequestError(f"{given} is in no collection", NO_COLLECTION_REMEDY, "files")
         grouped.setdefault(found[0], []).append(_file_named(*found))
-    return {one: tuple(dict.fromkeys(paths)) for one, paths in grouped.items()}
+    return MappingProxyType({one: tuple(dict.fromkeys(paths)) for one, paths in grouped.items()})
+
+
+def index_files(
+    home: Path,
+    grouped: Mapping[Collection, tuple[str, ...]],
+    report: Reporter,
+    limits: Limits = LIMITS,
+    readers: Readers = READERS,
+) -> IndexResult:
+    asked = _Indexing(home, report, limits, readers, ScanModel(readers.scanning))
+    try:
+        return IndexResult(tuple(_indexed(one, asked, paths) for one, paths in grouped.items()))
+    finally:
+        asked.ocr.let_go()
 
 
 def index(
@@ -222,12 +237,12 @@ def index(
 ) -> IndexResult:
     if request.files and request.names:
         raise InvalidRequestError("give collections or files, not both", BOTH_REMEDY, "files")
+    if request.files:
+        return index_files(home, files_of(home, request.files, Audience.PEOPLE), report, limits, readers)
     asked = _Indexing(home, report, limits, readers, ScanModel(readers.scanning))
     try:
-        if not request.files:
-            return IndexResult(
-                tuple(_indexed(one, asked) for one in chosen_or_active(home, request.names, Audience.PEOPLE))
-            )
-        return IndexResult(tuple(_indexed(one, asked, paths) for one, paths in _grouped(home, request.files).items()))
+        return IndexResult(
+            tuple(_indexed(one, asked) for one in chosen_or_active(home, request.names, Audience.PEOPLE))
+        )
     finally:
         asked.ocr.let_go()
