@@ -25,9 +25,11 @@ UNKEPT = MappingProxyType(
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",
+        "Cross-Origin-Resource-Policy": "same-origin",
     }
 )
 PAGE_HEADERS = MappingProxyType({**UNKEPT, "Content-Security-Policy": PAGE_POLICY})
+UNFRAMED = "frame-ancestors 'none'"
 NO_FILE = "no such file"
 PDF = "application/pdf"
 
@@ -69,6 +71,5 @@ async def file_answered(serving: Serving, request: Request) -> Response:
     if path is None:
         return PlainTextResponse(NO_FILE, status_code=404, headers=dict(UNKEPT))
     response = FileResponse(path, filename=path.name, content_disposition_type="inline", headers=dict(UNKEPT))
-    if response.media_type != PDF:
-        response.headers["Content-Security-Policy"] = "sandbox"
+    response.headers["Content-Security-Policy"] = UNFRAMED if response.media_type == PDF else f"sandbox; {UNFRAMED}"
     return response

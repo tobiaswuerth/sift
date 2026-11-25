@@ -138,7 +138,8 @@ def test_the_original_file_opens_without_running_its_scripts(home: Settings, not
         status, headers, text = got(server, "/ui/file?id=notes%2Fhalo.md")
         missing = got(server, "/ui/file?id=notes%2F..%2F..%2Fsecret")
     assert (status, text) == (200, (notes / "halo.md").read_bytes().decode())
-    assert (headers["content-security-policy"], headers["x-content-type-options"]) == ("sandbox", "nosniff")
+    assert headers["content-security-policy"] == "sandbox; frame-ancestors 'none'"
+    assert headers["x-content-type-options"] == "nosniff"
     assert missing[0] == 404
 
 
@@ -195,7 +196,8 @@ def test_a_pdf_opens_in_the_browser_s_own_viewer(home: Settings, notes: Path) ->
     with running(home) as server:
         status, headers, _ = got(server, "/ui/file?id=notes%2Fsample.pdf")
         style = got(server, "/ui/style.css")
-    assert (status, headers["content-type"], "content-security-policy" in headers) == (200, "application/pdf", False)
+    assert (status, headers["content-type"]) == (200, "application/pdf")
+    assert headers["content-security-policy"] == "frame-ancestors 'none'"
     assert (style[0], style[1]["content-type"].startswith("text/css")) == (200, True)
 
 
@@ -273,3 +275,15 @@ def test_a_damaged_store_stops_no_page_of_the_ui(home: Settings) -> None:
     assert (overview[0], "hidden.sqlite is damaged: " in overview[2]) == (200, True)
     assert 'href="/ui?c=notes">notes</a><span class="count">4</span>' in overview[2]
     assert "doc=notes%2Ftagged.md" in found
+
+
+def test_no_page_of_another_site_loads_or_frames_what_the_ui_answers(home: Settings, notes: Path) -> None:
+    (notes / "sample.pdf").write_bytes((Path(__file__).parents[3] / "samples" / "sample.pdf").read_bytes())
+    indexed(home.home)
+    asked = ("/ui", "/ui/style.css", "/ui/file?id=notes%2Fhalo.md", "/ui/file?id=notes%2Fsample.pdf", "/ui/file?id=no")
+    with running(home) as server:
+        answered = [got(server, path) for path in asked]
+    assert [status for status, _, _ in answered] == [200, 200, 200, 200, 404]
+    assert [headers["cross-origin-resource-policy"] for _, headers, _ in answered] == ["same-origin"] * 5
+    framed = [headers.get("content-security-policy", "") for _, headers, _ in answered]
+    assert ["frame-ancestors 'none'" in policy for policy in framed] == [True, False, True, True, False]
