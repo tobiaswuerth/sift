@@ -21,7 +21,16 @@ from sift.interfaces.cli.shown.outcome import FAILED, INTERRUPTED, Shown, failur
 from sift.interfaces.cli.usage import Parser, asked_json, parsed
 from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
-from sift.interfaces.console.streams import ReaderLeftError, columns, is_terminal, let_go, say, utf8, write_results
+from sift.interfaces.console.streams import (
+    ReaderLeftError,
+    columns,
+    descriptor,
+    is_terminal,
+    let_go,
+    say,
+    utf8,
+    write_results,
+)
 from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal, style_of
 from sift.interfaces.console.text import printable_text
 from sift.interfaces.console.windows import console, escapes_work
@@ -109,7 +118,8 @@ def _encoding(stream: TextIO | None) -> str | None:
 
 def _style(err: TextIO | None, settings: Settings, choice: Colour, encoding: str | None) -> Style:
     terminal = is_terminal(err)
-    escapes = terminal and err is not None and escapes_work(console(), err.fileno())
+    target = None if err is None else descriptor(err)
+    escapes = terminal and target is not None and escapes_work(console(), target)
     return style_of(Terminal(terminal, escapes, encoding), Asked(choice, settings.no_color, settings.dumb))
 
 

@@ -54,10 +54,16 @@ def say(stream: Sink | None, lines: Iterable[str]) -> None:
         stream.flush()
 
 
-def let_go(stream: TextIO) -> None:
+def descriptor(stream: TextIO) -> int | None:
     try:
-        target = stream.fileno()
+        return stream.fileno()
     except (OSError, ValueError):
+        return None
+
+
+def let_go(stream: TextIO) -> None:
+    target = descriptor(stream)
+    if target is None:
         return
     nowhere = os.open(os.devnull, os.O_WRONLY)
     try:
@@ -82,7 +88,8 @@ def is_terminal(stream: TextIO | None) -> bool:
 
 
 def columns(stream: TextIO) -> int:
+    target = descriptor(stream)
     try:
-        return os.get_terminal_size(stream.fileno()).columns
-    except (OSError, ValueError):
+        return DEFAULT_COLUMNS if target is None else os.get_terminal_size(target).columns
+    except OSError:
         return DEFAULT_COLUMNS
