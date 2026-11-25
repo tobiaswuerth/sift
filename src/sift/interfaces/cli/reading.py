@@ -10,7 +10,7 @@ from sift.api.fields import FIELDS
 from sift.api.requests import Request
 from sift.interfaces.cli.arguments import request_of
 
-RANGE = re.compile(r"([1-9][0-9]*)(?:-([1-9][0-9]*))?")
+RANGE = re.compile(r"([1-9][0-9]{0,17})(?:-([1-9][0-9]{0,17}))?")
 RANGE_REMEDY = "lines are a line number or a range such as 17-26"
 IDS = (
     "documents by id: collection/path, the path shortened to its last parts if no other document's ends so, or a "
