@@ -242,6 +242,13 @@ def test_documents_linking_a_note_cost_about_what_a_plain_value_costs() -> None:
     assert steps(many, [one("org", NONE, "[[Acme]]")], Linked({LinkFilter("org", NONE, "Acme"): half})) < 3 * plain
 
 
+@pytest.mark.parametrize("operator", [ANY, NONE])
+def test_a_filter_of_many_values_costs_about_what_one_value_costs(operator: Operator) -> None:
+    many: dict[str, Fields] = {f"{n}.md": {"org": f"o{n % 7}"} for n in range(3000)}
+    plain = steps(many, [one("org", operator, "o1")])
+    assert steps(many, [one("org", operator, *[f"o{n}" for n in range(1000)])]) < 3 * plain
+
+
 @pytest.mark.parametrize("value", ["1e3", "12345678901234567890", "True", "TRUE", "-0.5", "false"])
 def test_a_value_written_as_front_matter_writes_it_matches_what_front_matter_stored(value: str) -> None:
     found = front_matter(f"---\nk: {value}\n---\n")

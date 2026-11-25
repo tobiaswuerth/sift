@@ -24,6 +24,10 @@ groups AS MATERIALIZED (
   SELECT g.key AS grp, json_extract(g.value, '$.path') AS field, json_extract(g.value, '$.any') AS any_of,
          json_extract(g.value, '$.none') AS none_of, json_array_length(g.value, '$.ranges') AS ranged
   FROM json_each(:fields) g),
+wanted AS MATERIALIZED (
+  SELECT g.key AS grp, 'any' AS kind, w.value AS value FROM json_each(:fields) g, json_each(g.value, '$.any') w
+  UNION ALL
+  SELECT g.key, 'none', w.value FROM json_each(:fields) g, json_each(g.value, '$.none') w),
 linked AS MATERIALIZED (
   SELECT g.key AS grp, 'any' AS kind, CAST(l.value AS INTEGER) AS id
   FROM json_each(:fields) g, json_each(g.value, '$.linked_any') l
@@ -42,8 +46,9 @@ WHERE (:path IS NULL OR s.path GLOB :path)
       (g.any_of IS NULL AND g.ranged = 0
        OR EXISTS (
          SELECT 1 FROM json_each(d.fields, g.field) v
-         WHERE (g.any_of IS NULL OR (CASE v.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE v.value END)
-                                     IN (SELECT value FROM json_each(g.any_of)))
+         WHERE (g.any_of IS NULL OR EXISTS (
+                  SELECT 1 FROM wanted w WHERE w.grp = g.grp AND w.kind = 'any'
+                    AND w.value = (CASE v.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE v.value END)))
            AND NOT EXISTS (
              SELECT 1 FROM bounds b
              WHERE b.grp = g.grp AND NOT (
@@ -76,8 +81,10 @@ WHERE (:path IS NULL OR s.path GLOB :path)
       AND NOT EXISTS (SELECT 1 FROM linked l WHERE l.grp = g.grp AND l.kind = 'none' AND l.id = d.id)
       AND (g.none_of IS NULL
            OR NOT EXISTS (SELECT 1 FROM json_each(d.fields, g.field) v
-                          WHERE (CASE v.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE v.value END)
-                                IN (SELECT value FROM json_each(g.none_of))))
+                          WHERE EXISTS (
+                            SELECT 1 FROM wanted w WHERE w.grp = g.grp AND w.kind = 'none'
+                              AND w.value = (CASE v.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false'
+                                             ELSE v.value END))))
     )
   )
 """
