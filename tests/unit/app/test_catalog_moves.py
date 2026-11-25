@@ -25,6 +25,7 @@ from sift.storage.moving import Transfer
 from sift.storage.store import create_store
 from sift.storage.store_files import delete_store
 from tests.files import write
+from tests.homes import stopped_when_advanced
 from tests.models import Hashed
 
 
@@ -91,15 +92,11 @@ def test_a_store_moves_to_another_drive_as_a_copy_saying_how_far_it_got(home: Pa
 def test_a_copy_stopped_leaves_the_store_where_it_was(home: Path, tmp_path: Path) -> None:
     old = notes(home).store
 
-    def stopped(event: Event) -> None:
-        if isinstance(event, Advanced):
-            raise KeyboardInterrupt
-
     with pytest.raises(KeyboardInterrupt):
         move(
             home,
             MoveCollections(("notes",), to=str(tmp_path / "other drive")),
-            stopped,
+            stopped_when_advanced,
             Moving(Transfer(no_link, pages=1)),
         )
     assert notes(home).store == old

@@ -26,6 +26,7 @@ from sift.inference.local import (
 from sift.inference.models import Models
 from tests.models import Hashed
 from tests.tiny_model import POSITIONS, WIDTH, tiny_models, tiny_prompted, tiny_routed, tiny_static
+from tests.unit.inference.states import placed
 
 
 @pytest.fixture(scope="module")
@@ -51,11 +52,6 @@ def test_the_model_loads_once_when_first_needed(tiny: Path) -> None:
     loaded = placed(models).embedder
     models.encode(["halo"], query=True)
     assert (loaded is not None, placed(models).embedder is loaded) == (True, True)
-
-
-def placed(models: Local) -> OnDevice:
-    assert isinstance(models.state, OnDevice)
-    return models.state
 
 
 def embedder_of(models: Local) -> Loaded:

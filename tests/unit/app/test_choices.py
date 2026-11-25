@@ -8,7 +8,6 @@ import pytest
 from sift.api.collections import AddCollection, CollectionChanged, ShowStatus, TitleFrom
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError
-from sift.api.events import Advanced, Event
 from sift.api.indexing import IndexCollections
 from sift.app.collections import add, status
 from sift.app.embedding import embed
@@ -19,7 +18,7 @@ from sift.storage.catalog import known_collections
 from sift.storage.database import reading, rows
 from sift.storage.store import connected
 from tests.files import write
-from tests.homes import found_ids, indexed_home
+from tests.homes import found_ids, indexed_home, stopped_when_advanced
 from tests.models import Hashed
 
 
@@ -103,12 +102,14 @@ def test_retitled_notes_stay_retitled_when_indexed_again(home: Path, notes: Path
 def test_a_retitle_stopped_midway_is_finished_by_the_next_index(home: Path) -> None:
     (one,) = known_collections(home)
 
-    def stopped(event: Event) -> None:
-        if isinstance(event, Advanced):
-            raise KeyboardInterrupt
-
     with pytest.raises(KeyboardInterrupt):
-        retitle(home, one, replace(one.choices, title_from=TitleFrom.NAME), stopped, Limits(most_files_a_write=1))
+        retitle(
+            home,
+            one,
+            replace(one.choices, title_from=TitleFrom.NAME),
+            stopped_when_advanced,
+            Limits(most_files_a_write=1),
+        )
     assert known_collections(home)[0].choices.title_from is TitleFrom.HEADING
     index(home, IndexCollections(), lambda _: None)
     assert known_collections(home)[0].choices.title_from is TitleFrom.NAME

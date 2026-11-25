@@ -7,6 +7,7 @@ from hypothesis import strategies as st
 
 from sift.domain.text.chunks import MOST_CHARACTERS, MOST_OVERLAP, Piece, chunked, chunks, cuts, groups
 from sift.domain.text.markdown import text_lines, with_prose
+from tests.texts import runs_joined
 
 
 def pieces(text: str, first_line: int = 1) -> list[tuple[int, int, str]]:
@@ -142,9 +143,7 @@ def test_chunks_are_stripped_spans_of_their_lines_in_order_within_the_limit(text
 
 
 PLAIN = st.sampled_from(["a", "b", " ", "\n", "\N{GRINNING FACE}"])
-long_runs = st.lists(st.tuples(PLAIN, st.integers(1, 7000)), max_size=6).map(
-    lambda found: "".join(character * count for character, count in found)
-)
+long_runs = st.lists(st.tuples(PLAIN, st.integers(1, 7000)), max_size=6).map(runs_joined)
 
 
 @given(long_runs, st.integers(5, 9000), st.lists(st.integers(0, 40_000), max_size=4))

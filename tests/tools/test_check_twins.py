@@ -1,3 +1,5 @@
+import pytest
+
 from tools import check_twins
 from tools.check_twins import twins
 
@@ -41,6 +43,28 @@ def test_methods_and_functions_inside_functions_are_twins_of_any_other() -> None
         "kept does what kept (a.py:1) does",
         "kept does what kept (a.py:1) does",
     ]
+
+
+LISTED = "def kept(items):\n    return sorted([each.name for each in items if each], key=len)\n"
+
+
+@pytest.mark.parametrize(
+    "first, second",
+    [
+        (KEPT.replace("key=len", "key=len, reverse=True"), KEPT.replace("key=len", "reverse=True, key=len")),
+        (KEPT, KEPT.replace("def kept", "async def kept")),
+        (KEPT, "import builtins as b\n\n\n" + KEPT.replace("sorted(", "b.sorted(")),
+        (
+            "from os import path\n\n\n" + KEPT.replace("[each for", "[path.join(each) for"),
+            "import os.path as p\n\n\n" + KEPT.replace("[each for", "[p.join(each) for"),
+        ),
+        (KEPT, KEPT.replace("(items)", "(items=())")),
+        (LISTED, "kept = lambda items: sorted([each.name for each in items if each], key=len)\n"),
+    ],
+    ids=["keywords reordered", "async", "a builtin through an alias", "an import alias", "a default", "a lambda"],
+)
+def test_twins_written_another_way_are_found(first: str, second: str) -> None:
+    assert len(problems({"a.py": first, "b.py": second})) == 1
 
 
 def test_the_repository_holds_no_twins() -> None:

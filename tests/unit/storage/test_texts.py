@@ -28,6 +28,7 @@ from sift.storage.texts import (
     spans_text,
     text_of,
 )
+from tests.texts import runs_joined
 
 DOCUMENT = DocumentId(7)
 LINE = re.compile(r"[^\n]*\n|[^\n]+")
@@ -45,7 +46,7 @@ runs = st.lists(
     st.tuples(st.sampled_from(["a", "é", "\N{GRINNING FACE}", "\n", " ", "\r"]), st.integers(1, BLOCK + 2)),
     max_size=8,
 )
-long_texts = runs.map(lambda found: "".join(character * count for character, count in found))
+long_texts = runs.map(runs_joined)
 cuts = st.lists(st.integers(1, 3 * BLOCK), max_size=4)
 
 

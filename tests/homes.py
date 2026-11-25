@@ -2,6 +2,7 @@ from pathlib import Path
 
 from sift.api.collections import AddCollection, Counted, ShowStatus, UnreadableFile
 from sift.api.documents import GetDocuments, WantedDocument
+from sift.api.events import Advanced, Event
 from sift.api.indexing import IndexCollections
 from sift.api.search import SearchKeywords
 from sift.app.collections import add, status
@@ -11,10 +12,19 @@ from sift.app.search import search
 from tests.files import write
 
 
+def indexed(home: Path) -> None:
+    index(home, IndexCollections(), lambda _: None)
+
+
+def stopped_when_advanced(event: Event) -> None:
+    if isinstance(event, Advanced):
+        raise KeyboardInterrupt
+
+
 def indexed_home(tmp_path: Path, folder: Path) -> Path:
     home = tmp_path / "home"
     add(home, AddCollection(str(folder)))
-    index(home, IndexCollections(), lambda _: None)
+    indexed(home)
     return home
 
 

@@ -25,13 +25,9 @@ from sift.storage.store_files import delete_store
 from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import changed, damage_table
 from tests.files import write
-from tests.homes import asked
+from tests.homes import asked, indexed
 
 LONG = "\n\n".join(["Pruning skips what cannot win. " * 20] * 8)
-
-
-def indexed(home: Path) -> None:
-    index(home, IndexCollections(), lambda _: None)
 
 
 @pytest.fixture

@@ -3,18 +3,13 @@ import itertools
 from pathlib import Path
 
 from sift.api.collections import AddCollection
-from sift.api.indexing import IndexCollections
 from sift.api.search import SearchKeywords
 from sift.app.collections import add
-from sift.app.indexing import index
 from sift.app.search import search
 from sift.app.searching import Watching
 from sift.retrieval.keyword.search import Tuning
 from tests.files import write
-
-
-def indexed(home: Path) -> None:
-    index(home, IndexCollections(), lambda _: None)
+from tests.homes import indexed
 
 
 def test_a_search_out_of_time_looks_no_further_for_more_works(tmp_path: Path) -> None:

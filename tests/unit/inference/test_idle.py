@@ -8,10 +8,11 @@ import torch
 
 from sift.api.errors import ModelUnavailableError
 from sift.inference.accelerator import BATCH, CPU_THREADS, GIB, GPU_THREADS, Device, Machine
-from sift.inference.held import RERANK_BATCH, Embedder, Loaded, OnDevice, Ranker
+from sift.inference.held import RERANK_BATCH, Embedder, Loaded, Ranker
 from sift.inference.local import FULL_REMEDIES, IDLE_SECONDS, Local, LocalHost
 from sift.inference.prepared import ModelsPrepared
 from tests.devices import FakeCuda
+from tests.unit.inference.states import placed
 
 
 @dataclass(eq=False)
@@ -82,11 +83,6 @@ class Room:
         caches = {"cuda": lambda: self.emptied.append("cuda")}
         host = LocalHost(machine, lambda: self.now, self.embedder, self.ranker, caches)
         return Local("an-embedder", "a-reranker", host=host)
-
-
-def placed(local: Local) -> OnDevice:
-    assert isinstance(local.state, OnDevice)
-    return local.state
 
 
 def used(local: Local) -> None:
