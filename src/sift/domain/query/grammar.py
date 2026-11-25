@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sift.api.errors import InvalidRequestError
+from sift.api.requests import shown_value
 from sift.domain.query.expressions import NOTHING, And, Expression, Not, Nothing, Or, Phrase, Prefix, Term, leaves
 from sift.domain.text.tokens import tokens
 
@@ -15,6 +16,7 @@ NEAR = "NEAR"
 MOST_DEPTH = 100
 MOST_WORDS = 1000
 MOST_QUERY_CHARS = 100_000
+MOST_ECHOED = 60
 JOINS = "+"
 FEWEST_RELAXED = 2
 WORDLIKE = re.compile(r"\w")
@@ -45,7 +47,9 @@ def _quoted(query: str, at: int) -> tuple[Word, int]:
             return Word("".join(parts), quoted=True), end + 1
         parts.append(QUOTE)
         start = end + 2
-    raise _refused(f"a quote is not closed: {query[at:]}", 'close it, or write "" for a quote inside quotes')
+    raise _refused(
+        f"a quote is not closed: the one at character {at + 1:,}", 'close it, or write "" for a quote inside quotes'
+    )
 
 
 def _bare(query: str, at: int) -> tuple[Lexeme, int]:
@@ -89,10 +93,10 @@ def lexemes(query: str) -> tuple[Lexeme, ...]:
 def _prefix(text: str) -> Prefix | Nothing:
     body = text.removesuffix(STAR)
     if not body or STAR in body:
-        raise _refused(f"{text!r}: * ends a prefix", PREFIX_REMEDY)
+        raise _refused(f"{shown_value(text, MOST_ECHOED)}: * ends a prefix", PREFIX_REMEDY)
     found = tokens(body)
     if len(found) > 1:
-        raise _refused(f"{text!r}: a prefix is one word", PREFIX_REMEDY)
+        raise _refused(f"{shown_value(text, MOST_ECHOED)}: a prefix is one word", PREFIX_REMEDY)
     return Prefix(found[0]) if found else NOTHING
 
 

@@ -115,6 +115,23 @@ def test_a_query_outside_the_grammar_is_refused_with_what_to_write(query: str, p
     assert refused.value.remedy
 
 
+@pytest.mark.parametrize(
+    "query",
+    ['halo "' + "dark matter " * 5_000, "su*" + "per" * 20_000 + "*", "first-" + "sta" * 20_000 + "*"],
+    ids=["an open quote", "a star inside", "a prefix of two words"],
+)
+def test_a_refusal_of_a_long_query_says_where_and_stays_short(query: str) -> None:
+    with pytest.raises(InvalidRequestError) as refused:
+        parsed(query)
+    assert len(refused.value.message) < 200
+
+
+def test_a_quote_left_open_is_said_by_where_it_starts() -> None:
+    with pytest.raises(InvalidRequestError) as refused:
+        parsed('halo "dark matter')
+    assert refused.value.message == "the query is not understood: a quote is not closed: the one at character 6"
+
+
 def test_parentheses_nested_as_deep_as_allowed_are_read() -> None:
     assert parsed("(" * MOST_DEPTH + "a" + ")" * MOST_DEPTH) == a
 
