@@ -11,6 +11,7 @@ from sift.domain.arrays import Ids
 from sift.retrieval.keyword.lists import BlockKey, DecodedLists, Dense, PostingArrays, held_bytes
 
 KEPT_BYTES = 512 << 20
+ENTRY_BYTES = 512
 LENGTHS = "lengths"
 BLOCKS = "blocks"
 POSITIONS = "positions"
@@ -49,7 +50,7 @@ class KeptDecoded:
             return found[0]
 
     def put(self, at: KeywordsAt, key: EntryKey, value: Decoded) -> None:
-        size = held_bytes(value)
+        size = held_bytes(value) + ENTRY_BYTES
         with self.lock:
             if size > self.budget or self.generations.get((at.store, at.collection)) != at.generation:
                 return

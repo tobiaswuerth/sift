@@ -6,7 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sift.api.ids import ChunkId
-from sift.domain.arrays import Ids, Mask, ascending, distinct, floats, ints
+from sift.domain.arrays import Ids, Mask, ascending, distinct, floats, ints, read_only
 from sift.domain.codec.codes import (
     MOST_BITS,
     Bits,
@@ -62,7 +62,7 @@ def coded(ids: Ids, bits: Bits, width: int) -> Coded:
         raise ValueError("codes are a uint8 matrix of a row a chunk: code them so")
     if len(ids) and not (0 < width <= MOST_BITS and width_of(bits) == code_bytes(width)):
         raise ValueError(f"codes of {width:,} dimensions are {code_bytes(width)} bytes each: code them so")
-    return Coded(ids, bits, words(bits), width)
+    return Coded(read_only(ids), read_only(bits), read_only(words(bits)), width)
 
 
 @dataclass(frozen=True, slots=True, eq=False)

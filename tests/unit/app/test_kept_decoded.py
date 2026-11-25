@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from sift.api.collections import AddCollection
 from sift.api.ids import CollectionId
@@ -12,13 +13,13 @@ from sift.api.links import FindMentions
 from sift.api.search import SearchHybrid, SearchKeywords
 from sift.app.collections import add
 from sift.app.indexing import index
-from sift.app.kept_decoded import KeptDecoded
+from sift.app.kept_decoded import ENTRY_BYTES, Decoded, KeptDecoded
 from sift.app.mentions import mentions
 from sift.app.query import query
 from sift.app.resident import KeywordsAt
 from sift.app.search import search
 from sift.app.searching import Watching
-from sift.retrieval.keyword.lists import PostingArrays
+from sift.retrieval.keyword.lists import Dense, PostingArrays
 from tests.files import write
 from tests.models import Hashed
 
@@ -31,22 +32,22 @@ def arrays(n: int) -> PostingArrays:
 
 
 def test_decoded_blocks_are_kept_to_a_budget_of_bytes_the_longest_unused_let_go_first() -> None:
-    kept = KeptDecoded(budget=1000)
+    kept = KeptDecoded(budget=3 * (320 + ENTRY_BYTES) + 10)
     blocks = kept(A).blocks
     for term in ("a", "b", "c"):
         blocks[1, term, 0] = arrays(20)
     assert blocks.get((1, "a", 0)) is not None
     blocks[1, "d", 0] = arrays(20)
     held = [term for term in "abcd" if blocks.get((1, term, 0)) is not None]
-    assert (held, kept.size) == (["a", "c", "d"], 960)
+    assert (held, kept.size) == (["a", "c", "d"], 3 * (320 + ENTRY_BYTES))
 
 
 def test_a_block_larger_than_the_budget_is_not_kept() -> None:
-    kept = KeptDecoded(budget=100)
+    kept = KeptDecoded(budget=100 + ENTRY_BYTES)
     blocks = kept(A).blocks
     blocks[1, "small", 0] = arrays(2)
     blocks[1, "large", 0] = arrays(20)
-    assert (blocks.get((1, "large", 0)), kept.size) == (None, 32)
+    assert (blocks.get((1, "large", 0)), kept.size) == (None, 32 + ENTRY_BYTES)
 
 
 def test_what_a_store_held_at_another_generation_is_let_go_and_other_stores_keep_theirs() -> None:
@@ -54,7 +55,8 @@ def test_what_a_store_held_at_another_generation_is_let_go_and_other_stores_keep
     kept(A).blocks[1, "x", 0] = arrays(4)
     kept(B).blocks[1, "x", 0] = arrays(4)
     later = kept(dataclasses.replace(A, generation=2)).blocks
-    assert (later.get((1, "x", 0)), kept(B).blocks.get((1, "x", 0)) is not None, kept.size) == (None, True, 64)
+    held = (later.get((1, "x", 0)), kept(B).blocks.get((1, "x", 0)) is not None, kept.size)
+    assert held == (None, True, 64 + ENTRY_BYTES)
     kept.kept_only({(B.store, B.collection)})
     kept.kept_only(set())
     assert (kept(B).blocks.get((1, "x", 0)), kept.size) == (None, 0)
@@ -117,3 +119,27 @@ def test_searches_through_what_was_decoded_find_what_they_find_alone_and_follow_
     index(home, IndexCollections(), lambda _: None)
     assert search(home, SearchKeywords("robot"), watching) == search(home, SearchKeywords("robot"))
     assert len(search(home, SearchKeywords("robot"), watching).hits) == 2
+
+
+def arrays_of(value: Decoded) -> tuple[NDArray[np.generic], ...]:
+    if isinstance(value, Dense):
+        return value.numbers, value.table, value.order, value.blocks.values
+    return value if isinstance(value, tuple) else (value,)
+
+
+def test_many_small_decoded_lists_are_held_to_the_budget_with_what_each_entry_costs() -> None:
+    kept = KeptDecoded(budget=100_000)
+    positions = kept(A).positions
+    for n in range(10_000):
+        positions[1, f"w{n}", 0] = np.zeros(1, np.int64)
+    assert (len(kept.entries) <= 100_000 // ENTRY_BYTES, 0 < kept.size <= kept.budget) == (True, True)
+
+
+def test_what_is_kept_cannot_be_written(home: Path) -> None:
+    kept = KeptDecoded()
+    search(home, SearchKeywords('"robot plans" OR halo'), Watching(decoded=kept))
+    arrays_kept = [array for value, _ in kept.entries.values() for array in arrays_of(value)]
+    assert arrays_kept
+    for array in arrays_kept:
+        with pytest.raises(ValueError, match="WRITEABLE"):
+            array.flags.writeable = True

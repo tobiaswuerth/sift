@@ -58,5 +58,7 @@ def test_only_the_latest_questions_are_remembered_and_none_can_be_changed() -> N
     for text in ("one", "two", "one", "three", "one", "two"):
         vector = models.encode([text], query=True)
         assert not vector.flags.writeable
+        with pytest.raises(ValueError, match="WRITEABLE"):
+            vector.flags.writeable = True
     assert questions_asked(hashed) == [("one",), ("two",), ("three",), ("two",)]
     assert np.array_equal(models.encode(["one"], query=True), hashed.encode(["one"], query=True))

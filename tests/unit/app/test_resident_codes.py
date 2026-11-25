@@ -69,6 +69,15 @@ def test_searches_in_one_process_read_a_store_s_codes_once_and_find_what_reading
     assert len(counting.reads) == 2
 
 
+def test_codes_held_for_every_search_cannot_be_written(home: Path) -> None:
+    counting = Counting()
+    found(home, counting)
+    for _, coded in counting.held.held.values():
+        for array in (coded.ids, coded.bits, coded.words):
+            with pytest.raises(ValueError, match="WRITEABLE"):
+                array.flags.writeable = True
+
+
 def test_codes_are_read_again_once_the_store_s_vectors_change(home: Path, tmp_path: Path) -> None:
     counting = Counting()
     found(home, counting)

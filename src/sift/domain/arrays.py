@@ -14,7 +14,7 @@ type Scores = NDArray[np.float64]
 
 def read_only[T: np.generic](values: NDArray[T]) -> NDArray[T]:
     values.flags.writeable = False
-    return values
+    return values.view()
 
 
 def ints(values: NDArray[np.integer]) -> list[int]:

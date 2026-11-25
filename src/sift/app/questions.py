@@ -3,6 +3,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from sift.domain.arrays import read_only
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference.models import Models
 
@@ -38,8 +39,7 @@ class RememberedQuestions:
             if found is not None:
                 self.vectors.move_to_end(text)
                 return found
-        made = self.models.encode(texts, query=True)
-        made.flags.writeable = False
+        made = read_only(self.models.encode(texts, query=True))
         with self.lock:
             self.vectors[text] = made
             while len(self.vectors) > self.kept:

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 
 from sift.domain.arrays import Ids, ints
 from sift.domain.query.expressions import Or, Phrase, Term
@@ -38,6 +39,11 @@ def reads(said: list[str]) -> dict[str, int]:
     return {table: sum(table in statement for statement in said) for table in READS}
 
 
+def alone(array: NDArray[np.generic]) -> bool:
+    base = array.base
+    return base is None or (base.base is None and base.nbytes == array.nbytes)
+
+
 def test_a_search_given_what_was_decoded_before_reads_no_lengths_or_blocks_again() -> None:
     lengths, blocks, positions = dict[int, Dense](), dict[BlockKey, PostingArrays](), dict[BlockKey, Ids]()
     kept = DecodedLists(lengths, blocks, positions)
@@ -52,9 +58,9 @@ def test_a_search_given_what_was_decoded_before_reads_no_lengths_or_blocks_again
         connection.set_trace_callback(None)
     assert (again, reads(said)) == (first, dict.fromkeys(READS, 0))
     assert all(before[table] for table in READS), before
-    assert all(each.base is None for dense in lengths.values() for each in (dense.numbers, dense.table, dense.order))
-    assert all(each.base is None for arrays in blocks.values() for each in arrays)
-    assert all(each.base is None for each in positions.values())
+    assert all(alone(each) for dense in lengths.values() for each in (dense.numbers, dense.table, dense.order))
+    assert all(alone(each) for arrays in blocks.values() for each in arrays)
+    assert all(alone(each) for each in positions.values())
     assert held_bytes(next(iter(positions.values()))) == next(iter(positions.values())).nbytes
     assert held_bytes(next(iter(blocks.values()))) == sum(each.nbytes for each in next(iter(blocks.values())))
 

@@ -5,7 +5,7 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-from sift.domain.arrays import Ascending, Ids, after, among, distinct, first, ints, last, run_starts, total
+from sift.domain.arrays import Ascending, Ids, after, among, distinct, first, ints, last, read_only, run_starts, total
 from sift.domain.codec.postings import (
     Ranges,
     blocked,
@@ -168,7 +168,7 @@ def _block(store: Opened, held: Ranged, number: int) -> PostingArrays:
         owners = np.searchsorted(held.ranges.ends, np.arange(start, start + size), side="right")
         if not bool(np.array_equal(places >> store.shape.range_shift, held.ranges.ids[owners])):
             raise DamagedError("a block holds postings outside its ranges")
-        found = places, counts
+        found = read_only(places), read_only(counts)
         store.decoded.blocks[key] = found
     return found
 
@@ -228,7 +228,7 @@ def _loaded(store: Opened, segment: SegmentRow, blocks: Ids) -> Dense:
     table = np.concatenate([held.table, read])
     numbers = np.concatenate([held.numbers, missing])
     order = np.argsort(numbers, kind="stable")
-    made = Dense(numbers, table, order, Ascending(numbers[order]))
+    made = Dense(read_only(numbers), read_only(table), read_only(order), Ascending(read_only(numbers[order])))
     store.decoded.lengths[segment.id] = made
     return made
 
@@ -254,7 +254,7 @@ def _positions_whole(store: Opened, held: Whole, wanted: Ascending) -> tuple[Ids
     flat = store.decoded.positions.get(key)
     if flat is None:
         row = _one(keyword_lists.positions(store.transaction, held.segment, held.term, None), "a list of positions")
-        flat = positions_of(row.positions, held.counts)
+        flat = read_only(positions_of(row.positions, held.counts))
         store.decoded.positions[key] = flat
     return _chosen(held.places, held.counts, flat, wanted)
 
@@ -277,7 +277,7 @@ def _positions_ranged(store: Opened, held: Ranged, wanted: Ascending) -> tuple[I
             found[number] = _chosen(*_block(store, held, number), flat, wanted)
     for row in keyword_lists.positions(store.transaction, held.segment, held.term, missing) if missing else ():
         places, counts = _block(store, held, row.number)
-        flat = positions_of(row.positions, counts)
+        flat = read_only(positions_of(row.positions, counts))
         store.decoded.positions[held.segment, held.term, row.number] = flat
         found[row.number] = _chosen(places, counts, flat, wanted)
     return joined([_none(), *(found[number] for number in sorted(found))])
