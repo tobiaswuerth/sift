@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import sys
@@ -6,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from sift.ingest.files import CHANGED, READ_AT_ONCE, ChangedError, at_most, identity_at
+from sift.ingest.files import CHANGED, READ_AT_ONCE, ChangedError, Listings, at_most, identity_at
 from tests.files import write
 
 
@@ -52,3 +53,11 @@ def test_a_folder_where_a_file_was_scanned_is_named_changed(tmp_path: Path) -> N
     (tmp_path / "note.md").mkdir()
     with pytest.raises(OSError, match=CHANGED if sys.platform != "win32" else "denied"):
         at_most(tmp_path / "note.md", 100, None)
+
+
+def test_a_name_the_folder_lists_otherwise_is_given_as_listed_and_one_gone_is_passed_over(tmp_path: Path) -> None:
+    write(tmp_path / "notes" / "named.md")
+    os.link(tmp_path / "notes" / "named.md", tmp_path / "notes" / "Listed.md")
+    listings = Listings({tmp_path / "notes": (frozenset({"gone.md", "Listed.md"}), ("gone.md", "Listed.md"))})
+    assert listings.listed_as(tmp_path, "notes/named.md") == "notes/Listed.md"
+    assert listings.listed_as(tmp_path, "notes/never.md") == "notes/never.md"
