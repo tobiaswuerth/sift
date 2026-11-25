@@ -7,7 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.api.fields import Fields, FieldValue
-from sift.domain.text.front_matter import PARSE, TAKES, Brackets, Kind, entries, front_matter, read_on, value
+from sift.domain.text.front_matter import PARSE, TAKES, Brackets, Kind, entries, front_matter, read_on, value_read
 from sift.domain.text.json_values import MOST_DEPTH, depth
 
 
@@ -159,9 +159,9 @@ def test_each_line_of_a_list_in_brackets_is_looked_at_once_for_the_bracket_that_
 def test_a_list_nested_deeper_than_lists_in_brackets_go_is_kept_as_written_after_few_looks() -> None:
     looked: list[int] = []
     nested = "[a, " * 2000 + "b" + "]" * 2000
-    assert value(looked_at(looked)(nested)) == nested
+    assert value_read(looked_at(looked)(nested)) == nested
     assert sum(looked) <= 3 * len(nested)
-    assert value("[a, [b, [c]], 'd']") == ["a", ["b", ["c"]], "d"]
+    assert value_read("[a, [b, [c]], 'd']") == ["a", ["b", ["c"]], "d"]
 
 
 @given(st.text(st.sampled_from("ab[]{},'\" \t"), max_size=30), st.text(st.sampled_from("ab[]{},'\" \t"), max_size=30))

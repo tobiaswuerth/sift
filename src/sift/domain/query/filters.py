@@ -5,7 +5,7 @@ from types import MappingProxyType
 
 from sift.api.errors import InvalidRequestError
 from sift.api.filters import FILTER_REMEDY, SETS, Filter, FilterValue, Operator, gathered
-from sift.domain.text.front_matter import flow_list
+from sift.domain.text.front_matter import value_read
 from sift.domain.text.json_values import json_value
 from sift.domain.text.links import link_target
 
@@ -81,7 +81,7 @@ def forms(value: FilterValue) -> list[SpecValue]:
         return [value, json.dumps(value)]
     if value in TRUTH_OF:
         return list(TRUTH_WORDS[TRUTH_OF[value]])
-    if flow_list(value) is not None:
+    if isinstance(value_read(value), list):
         raise _refused(f"the filter value {value!r} reads as a list", LIST_REMEDY)
     return [value, *_number_forms(value)]
 

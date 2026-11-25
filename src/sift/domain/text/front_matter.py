@@ -86,21 +86,21 @@ def flow_items(text: str) -> list[str] | None:
     return [*items, text[start:-1]]
 
 
-def value(text: str) -> FieldValue:
+def value_read(text: str) -> FieldValue:
     if WIKILINK.fullmatch(text):
         return text
     try:
         return json_value(text)
     except ValueError:
-        listed = None if deeper_than(text, MOST_FLOW_NESTING) else flow_list(text)
+        listed = None if deeper_than(text, MOST_FLOW_NESTING) else _flow_list(text)
         return text.strip("'\"") if listed is None else listed
 
 
-def flow_list(text: str) -> list[FieldValue] | None:
+def _flow_list(text: str) -> list[FieldValue] | None:
     if not (text.startswith("[") and text.endswith("]")):
         return None
     items = flow_items(text)
-    return None if items is None else [value(item.strip()) for item in items if item.strip()]
+    return None if items is None else [value_read(item.strip()) for item in items if item.strip()]
 
 
 def _kind(written: str) -> Kind:
@@ -201,12 +201,12 @@ type ParsedPair = tuple[FieldValue, FieldValue]
 
 
 def _plain(entry: Entry, _below: Sequence[str]) -> ParsedPair:
-    return value(entry.value), entry.value
+    return value_read(entry.value), entry.value
 
 
 def _items(_entry: Entry, below: Sequence[str]) -> ParsedPair:
     written = [found.group(1).strip() for line in below if (found := LIST_ITEM.match(line))]
-    return ([value(text) for text in written] if written else None), written
+    return ([value_read(text) for text in written] if written else None), written
 
 
 def _scalar(_entry: Entry, below: Sequence[str]) -> ParsedPair:
@@ -222,7 +222,7 @@ def _folded(_entry: Entry, below: Sequence[str]) -> ParsedPair:
 def _flow(entry: Entry, below: Sequence[str]) -> ParsedPair:
     joined = " ".join(filter(None, [entry.value, *(line.strip() for line in below)]))
     text = joined if read_on(joined, Brackets()).depth <= 0 else entry.value
-    return value(text), text
+    return value_read(text), text
 
 
 PARSE: Mapping[Kind, Callable[[Entry, Sequence[str]], ParsedPair]] = MappingProxyType(
