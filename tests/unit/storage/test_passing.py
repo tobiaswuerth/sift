@@ -1,5 +1,6 @@
 import contextlib
 import sqlite3
+import tracemalloc
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -61,3 +62,21 @@ def test_the_chunks_a_condition_lets_through_are_checked_once_and_listed_in_orde
 
 def test_whether_sqlite_reads_a_quote_in_a_field_s_name_is_asked_of_it() -> None:
     assert reads_quotes() == (sqlite3.sqlite_version_info >= (3, 47))
+
+
+def test_checking_many_chunks_holds_a_few_bytes_an_id(store: tuple[sqlite3.Connection, dict[str, DocumentId]]) -> None:
+    connection, ids = store
+    asked = condition("papers/*", [Filter("year", Operator.ANY, (2024,))], reads_quotes=True)
+    assert asked is not None
+    with reading(connection) as transaction:
+        long = [each.id for each in chunks_of(transaction, ids["papers/long.md"])]
+        many = np.concatenate([np.arange(10**9, 10**9 + 1_000_000, dtype=np.int64), np.array(long, np.int64)])
+        allowed = Passing(transaction, asked)
+        allowed.checked(many[-len(long) :])
+        tracemalloc.start()
+        try:
+            let = allowed.checked(many)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+    assert (int(let.sum()), peak < 24 * len(many)) == (len(long), True)

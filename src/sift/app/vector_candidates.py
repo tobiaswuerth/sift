@@ -10,7 +10,7 @@ from sift.api.notices import Notice
 from sift.api.search import Options
 from sift.app import hits
 from sift.app.searching import Open, Ranked, Searching, despite_losses
-from sift.domain.arrays import Ids, Mask
+from sift.domain.arrays import Ids, Mask, ints
 from sift.domain.codec.codes import Floats, Halves
 from sift.domain.rank.best import Best, offered, ranked
 from sift.domain.text.wording import counted
@@ -106,8 +106,9 @@ def _nearest(stores: Open, query: Floats, want: int, read: ExactReader) -> tuple
 def _owned(stores: Open, near: tuple[Near, ...]) -> dict[int, int]:
     owners: dict[int, int] = {}
     for one in list(stores.searching):
-        mine = [each.chunk for each in near if owner(each.chunk) == one.collection.id]
-        owners |= stores.guarded(one, partial(documents_of, one.transaction, mine)) if mine else {}
+        mine = np.array([each.chunk for each in near if owner(each.chunk) == one.collection.id], np.int64)
+        found = stores.guarded(one, partial(documents_of, one.transaction, mine)) if len(mine) else mine
+        owners |= {chunk: document for chunk, document in zip(ints(mine), ints(found), strict=True) if document >= 0}
     return owners
 
 

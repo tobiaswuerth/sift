@@ -10,7 +10,7 @@ import numpy as np
 from sift.domain.arrays import Ascending, Ids, Mask, among, ints
 from sift.domain.query.filters import Condition
 from sift.storage.database import IdRow, Reading, rows, streamed
-from sift.storage.documents import documents_of
+from sift.storage.documents import NO_DOCUMENT, documents_of
 
 QUOTED_NAME = ('{"a\\"b": 1}', '$."a\\"b"')
 CHUNKS_OF = "SELECT id FROM chunks WHERE document IN (SELECT value FROM json_each(?)) ORDER BY id"
@@ -136,9 +136,8 @@ class Passing:
         return self.passed[np.searchsorted(self.seen, documents)] if len(documents) else _no_mask()
 
     def checked(self, ids: Ids) -> Mask:
-        owners = documents_of(self.transaction, ints(ids))
-        documents = np.fromiter((owners.get(chunk, -1) for chunk in ints(ids)), np.int64, len(ids))
-        known = documents >= 0
+        documents = documents_of(self.transaction, ids)
+        known = np.not_equal(documents, NO_DOCUMENT)
         let = np.zeros(len(ids), np.bool_)
         let[known] = self.documents(documents[known])
         return let

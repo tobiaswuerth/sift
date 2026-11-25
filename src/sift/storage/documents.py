@@ -3,17 +3,25 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import NamedTuple, NewType, cast
 
+import numpy as np
+
 from sift.api.fields import Fields
 from sift.api.ids import ChunkId, DocumentId
+from sift.domain.arrays import Ids, ints
 from sift.domain.errors import DamagedError
 from sift.domain.text.chunks import Chunk
 from sift.domain.text.links import Link, names
 from sift.domain.text.notes import Document, NotePart, NoteRead
-from sift.storage.database import Reading, Writing, WritingDocuments, first, inserted, rows, run, run_each
+from sift.storage.database import Reading, Writing, WritingDocuments, columns, first, inserted, rows, run, run_each
 from sift.storage.texts import put_text
 
 SourceId = NewType("SourceId", int)
 MOST_DESCRIPTION_BYTES = 512 << 20
+
+
+OWNERS_A_READ = 65_536
+NO_DOCUMENT = -1
+CHUNK_OWNERS = "SELECT id, document FROM chunks WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id"
 
 
 class Source(NamedTuple):
@@ -264,14 +272,15 @@ def fields_by_document(transaction: Reading, documents: Sequence[int]) -> dict[i
     }
 
 
-class ChunkOwner(NamedTuple):
-    chunk: ChunkId
-    document: DocumentId
-
-
-def documents_of(transaction: Reading, chunks: Sequence[int]) -> dict[int, int]:
-    sql = "SELECT id, document FROM chunks WHERE id IN (SELECT value FROM json_each(?))"
-    return {found.chunk: found.document for found in rows(transaction, ChunkOwner, sql, (json.dumps(list(chunks)),))}
+def documents_of(transaction: Reading, chunks: Ids, part: int = OWNERS_A_READ) -> Ids:
+    found = np.full(len(chunks), NO_DOCUMENT, np.int64)
+    for start in range(0, len(chunks), part):
+        asked = chunks[start : start + part]
+        held, documents = columns(transaction, CHUNK_OWNERS, (json.dumps(ints(asked)),), 2)
+        at = np.minimum(np.searchsorted(held, asked), max(len(held) - 1, 0))
+        known = np.equal(held[at], asked) if len(held) else np.zeros(len(asked), np.bool_)
+        found[start : start + part][known] = documents[at[known]]
+    return found
 
 
 class Unreadable(NamedTuple):
