@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from functools import partial
@@ -9,7 +9,7 @@ import numpy as np
 from sift.api.errors import ModelUnavailableError, Problem
 from sift.api.events import Reporter
 from sift.api.fields import FieldValue
-from sift.api.ids import owner
+from sift.api.ids import ChunkId, owner
 from sift.api.notices import Notice
 from sift.api.search import MOST_HITS, SearchHybrid, SearchResult
 from sift.app import hits, searching
@@ -37,6 +37,7 @@ from sift.retrieval.keyword.leaves import Expired
 from sift.retrieval.keyword.search import TUNING
 
 EMPTY_REMEDY = "ask a question, e.g. how dark matter halos form"
+RERANK_PART = 32
 WORDS_REMEDY = "ask in fewer words to search by every one of them"
 WIDER = 2
 
@@ -90,7 +91,7 @@ def _candidates(stores: Open, asked: HybridAsked, query: Floats | None, wanted: 
     semantic = near(stores, Best(wanted, by_document), query, asked.rescoring) if query is not None else Nearest(())
     chunks = list(dict.fromkeys([each.chunk for each in keyword.found] + [each.chunk for each in semantic.found]))
     full = len(keyword.found) >= wanted or len(semantic.found) >= wanted
-    return CandidateChunks(chunks, full, keyword.cut or semantic.capped)
+    return CandidateChunks(chunks, full, keyword.cut or semantic.cut)
 
 
 def _cosines(one: Searching, chunks: Sequence[int], query: Floats, asked: Rescoring) -> dict[int, float]:
@@ -123,21 +124,43 @@ def _values(value: FieldValue) -> list[str]:
     return [] if value is None or isinstance(value, dict) else [str(value)]
 
 
-def _scored(models: Models, request: SearchHybrid, candidates: list[Retrieved], cosines: dict[int, float]) -> Floats:
-    asked = frozenset(words(request.query))
-    names = [
-        named([text for key, value in each.fields.items() if key != "title" for text in _values(value)], asked)
-        for each in candidates
-    ]
-    shown = [
-        passage(each.hit.title, found_names, each.hit.text or "")
-        for each, found_names in zip(candidates, names, strict=True)
-    ]
-    rerank = models.rerank(request.query, shown).astype(np.float64)
-    if not bool(np.isfinite(rerank).all()):
-        raise ModelUnavailableError("the reranker gave no score for some passages", QUERY_REMEDY)
-    cosine = np.array([cosines.get(each.chunk, np.nan) for each in candidates], np.float64)
-    return blend(rerank, cosine, np.array([bool(found_names) for found_names in names], np.bool_)).astype(np.float32)
+@dataclass(eq=False, frozen=True, slots=True)
+class Reranked:
+    candidates: list[Retrieved]
+    scores: Floats
+    cut: bool
+
+
+def _reranked(asked: HybridAsked, shown: Mapping[ChunkId, str], kept: dict[ChunkId, float]) -> bool:
+    new = [chunk for chunk in shown if chunk not in kept]
+    for start in range(0, len(new), RERANK_PART):
+        if start and asked.expired():
+            return True
+        part = new[start : start + RERANK_PART]
+        found = asked.models.rerank(asked.request.query, [shown[chunk] for chunk in part]).astype(np.float64)
+        if not bool(np.isfinite(found).all()):
+            raise ModelUnavailableError("the reranker gave no score for some passages", QUERY_REMEDY)
+        kept.update(zip(part, floats(found), strict=True))
+    return False
+
+
+def _scored(asked: HybridAsked, gathered: Gathered, kept: dict[ChunkId, float]) -> Reranked:
+    question = frozenset(words(asked.request.query))
+    names = {
+        each.chunk: named(
+            [text for key, value in each.fields.items() if key != "title" for text in _values(value)], question
+        )
+        for each in gathered.candidates
+    }
+    shown = {
+        each.chunk: passage(each.hit.title, names[each.chunk], each.hit.text or "") for each in gathered.candidates
+    }
+    cut = _reranked(asked, shown, kept)
+    candidates = [each for each in gathered.candidates if each.chunk in kept]
+    rerank = np.array([kept[each.chunk] for each in candidates], np.float64)
+    cosine = np.array([gathered.cosines.get(each.chunk, np.nan) for each in candidates], np.float64)
+    named_ones = np.array([bool(names[each.chunk]) for each in candidates], np.bool_)
+    return Reranked(candidates, blend(rerank, cosine, named_ones).astype(np.float32), cut)
 
 
 def _first_of_each(ranked: list[Retrieved]) -> list[Retrieved]:
@@ -159,15 +182,18 @@ def _ordered(request: SearchHybrid, candidates: list[Retrieved], scores: Floats)
 
 def _ranked(stores: Open, asked: HybridAsked, query: Floats | None) -> tuple[list[Retrieved], bool]:
     request = asked.request
-    wanted = max(request.candidates, request.wanted + 1)
+    wanted, kept = max(request.candidates, request.wanted + 1), dict[ChunkId, float]()
     while True:
         gathered = despite_losses(partial(_gathered, stores, query, asked, wanted))
         if not gathered.candidates:
             return [], gathered.cut
-        scores = _scored(asked.models, request, gathered.candidates, gathered.cosines)
-        ranked = _ordered(request, gathered.candidates, scores)
-        if len(ranked) > request.wanted or not gathered.full or gathered.cut or wanted > MOST_HITS:
-            return ranked, gathered.cut
+        scored = _scored(asked, gathered, kept)
+        ranked = _ordered(request, scored.candidates, scored.scores)
+        cut = gathered.cut or scored.cut
+        if cut or len(ranked) > request.wanted or not gathered.full or wanted > MOST_HITS:
+            return ranked, cut
+        if asked.expired():
+            return ranked, True
         wanted = min(wanted * WIDER, MOST_HITS + 1)
 
 

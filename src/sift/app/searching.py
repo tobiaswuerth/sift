@@ -111,6 +111,7 @@ class Open:
     ruled_out: int = 0
     left_out: list[Notice] = field(default_factory=list[Notice])
     cut: bool = False
+    expired: Expired = never
 
     def said(self, collection: Collection, error: StoreUnavailableError) -> None:
         self.unsearched.append(notice_of(error, collection.name))
@@ -280,7 +281,7 @@ def _searching(one: Collection, asked: Narrowing, wants: Wants) -> Searching | N
 
 
 def opened(cleanup: ExitStack, asked: Narrowing, wants: Wants, expired: Expired = never) -> Open:
-    held = Open(ruled_out=asked.ruled_out)
+    held = Open(ruled_out=asked.ruled_out, expired=expired)
     for one in asked.collections:
         if _out_of_time(held, one, wants, expired):
             continue

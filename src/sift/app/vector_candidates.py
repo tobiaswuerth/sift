@@ -125,13 +125,13 @@ def _documents(stores: Open, count: Callable[[Reading], int]) -> int:
 @dataclass(frozen=True, slots=True)
 class Nearest:
     found: tuple[Near, ...]
-    capped: bool = False
+    cut: bool = False
 
 
 def _capped(stores: Open, read: int, best: tuple[Near, ...]) -> Nearest:
     said = f"the {read:,} nearest passages belong to {counted(len(best), 'document')}: a search reads no farther"
     stores.left_out.append(Notice(Problem.WIDENED_ENOUGH, said, WIDENED_REMEDY))
-    return Nearest(best, capped=True)
+    return Nearest(best, cut=True)
 
 
 def near(stores: Open, wanted: Best, query: Floats, asked: Rescoring) -> Nearest:
@@ -148,12 +148,14 @@ def near(stores: Open, wanted: Best, query: Floats, asked: Rescoring) -> Nearest
             return Nearest(best)
         if want >= farthest:
             return _capped(stores, want, best)
+        if stores.expired():
+            return Nearest(best, cut=True)
         want = min(want * WIDER, farthest)
 
 
 def _round(stores: Open, request: Options, query: Floats, asked: Rescoring, wanted: int) -> Ranked:
     found = near(stores, Best(wanted, not request.all_passages), query, asked)
-    return Ranked(found.found, found.capped)
+    return Ranked(found.found, found.cut)
 
 
 def nearest_hits(

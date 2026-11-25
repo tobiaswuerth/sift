@@ -332,3 +332,11 @@ def test_a_search_for_one_passage_a_document_widens_at_most_so_far_and_says_it_k
     assert sorted(hit.id for hit in found.hits) == ["parts/alpha.md", "parts/beta.md"]
     said = f"the {MOST_WIDER * (3 + 1)} nearest passages belong to 2 documents: a search reads no farther"
     assert (found.partial, found.left_out) == (True, (Notice(Problem.WIDENED_ENOUGH, said, WIDENED_REMEDY),))
+
+
+def test_a_search_out_of_time_widens_no_further_and_is_partial_without_a_note_of_the_cap(few_long: Path) -> None:
+    reads = VectorReads()
+    watching = Watching(clock=lambda: 10.0 * len(reads.read))
+    request = SearchVectors("comets glaciers", k=3, budget=1.0)
+    found = vsearch(few_long, request, Hashed(), Rescoring(1, reads), watching)
+    assert (found.partial, found.left_out, len(reads.read)) == (True, (), 1)
