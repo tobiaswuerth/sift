@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 import numpy as np
 import pytest
@@ -11,8 +11,8 @@ from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.query.expressions import And, Or, Phrase, Prefix, Term
 from sift.domain.rank.best import Best
-from sift.retrieval.keyword.lists import Ranged, opened, stored
-from sift.retrieval.keyword.search import Tuning, planned, prepared, query_of, searched
+from sift.retrieval.keyword.lists import Opened, PostingArrays, Ranged, opened, stored
+from sift.retrieval.keyword.search import Prepared, Tuning, planned, prepared, query_of, searched
 from sift.storage.database import rows
 from tests.keyword_searches import (
     SEEDS,
@@ -219,3 +219,39 @@ def test_a_short_list_of_other_than_its_count_is_damage() -> None:
         stores[0].transaction.connection.execute("UPDATE keyword_postings SET chunks = 3 WHERE term = 'w1'")
         with pytest.raises(DamagedError, match="the list of 'w1' holds 2 passages, not its 3"):
             search(stores, Term("w1"), 10)
+
+
+def places(made: Prepared, leaf: Prefix | Phrase) -> int:
+    return len(cast("PostingArrays", made.lists[leaf])[0])
+
+
+def decoded(store: Opened) -> int:
+    blocks, positions = cast("dict[object, object]", store.decoded.blocks), store.decoded.positions
+    return len(blocks) + len(cast("dict[object, object]", positions))
+
+
+@pytest.mark.parametrize("leaf", [Prefix("w"), Phrase(("w0", "w1"))], ids=["prefix", "phrase"])
+def test_a_search_out_of_time_while_its_prefixes_and_phrases_are_read_reads_no_more_lists_and_is_cut(
+    leaf: Prefix | Phrase,
+) -> None:
+    with collections([[prose(Draws(np.random.default_rng(7)), 60)]]) as (stores, _):
+        (store,) = stores
+        made = prepared(planned(store, leaf), expired=lambda: True)
+        assert (made.cut, places(made, leaf), decoded(store)) == (True, 0, 0)
+        whole = prepared(planned(store, leaf))
+        assert (whole.cut, places(whole, leaf) > 0) == (False, True)
+
+
+@pytest.mark.parametrize(
+    "leaf, asked, read",
+    [(Prefix("w"), [False, False, False, True], 2), (Phrase(("x0", "x1")), [False, True], 0)],
+    ids=["prefix", "phrase"],
+)
+def test_a_leaf_out_of_time_midway_keeps_what_it_read_where_that_is_whole(
+    leaf: Prefix | Phrase, asked: list[bool], read: int
+) -> None:
+    notes: Round = {f"n{n}.md": ("", "N", f"w{n} x0 x1") for n in range(5)}
+    with collections([[notes]]) as (stores, _):
+        answers = iter(asked)
+        made = prepared(planned(stores[0], leaf), expired=lambda: next(answers))
+        assert (made.cut, places(made, leaf)) == (True, read)

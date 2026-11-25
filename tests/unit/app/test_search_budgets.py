@@ -63,3 +63,17 @@ def test_with_time_to_spare_a_budget_changes_nothing(tmp_path: Path) -> None:
     )
     assert spared == search(home, request, tuning=Tuning(first_batch=1))
     assert not spared.partial
+
+
+def test_a_search_out_of_time_while_its_prefix_is_read_is_partial(tmp_path: Path) -> None:
+    for n in range(50):
+        write(tmp_path / "w" / f"n{n}.md", f"# Note\n\nw{n}\n")
+    home = tmp_path / "home"
+    add(home, AddCollection(str(tmp_path / "w")))
+    indexed(home)
+    request = SearchKeywords("w*", k=50, compact=True)
+    assert len(search(home, request).hits) == 50
+    times = itertools.chain([0.0], itertools.repeat(10.0))
+    cut = search(home, dataclasses.replace(request, budget=1.0), watching=Watching(clock=lambda: next(times)))
+    assert (cut.partial, cut.hits) == (True, ())
+    assert len(search(home, request).hits) == 50

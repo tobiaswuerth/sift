@@ -9,8 +9,9 @@ from sift.app.resident import DecodedSource, decoded_each_search
 from sift.app.searching import Open, Ranked, Wants, despite_losses, opened
 from sift.domain.query.expressions import NOTHING, Expression
 from sift.domain.rank.best import Best
+from sift.retrieval.keyword.leaves import Expired
 from sift.retrieval.keyword.search import (
-    Expired,
+    Prepared,
     Tuning,
     found_in,
     planned,
@@ -38,13 +39,20 @@ def found(stores: Open, wanted: Wanted, expression: Expression) -> Ranked:
         if expression not in keywords.prepared
     ]
     refuse_reading_too_much([plan for _, _, plan in plans], wanted.tuning)
+    fresh: dict[int, Prepared] = {}
     for one, keywords, plan in plans:
-        keywords.prepared[expression] = stores.guarded(one, partial(prepared, plan, allowed=keywords.allowed))
-    ready = [(one, keywords.prepared[expression]) for one, keywords in stores.keyworded()]
+        made = stores.guarded(one, partial(prepared, plan, allowed=keywords.allowed, expired=wanted.expired))
+        fresh[one.collection.id] = made
+        if not made.cut:
+            keywords.prepared[expression] = made
+    ready = [
+        (one, keywords.prepared.get(expression) or fresh[one.collection.id]) for one, keywords in stores.keyworded()
+    ]
     query = query_of(expression, [held for _, held in ready])
+    cut = any(held.cut for _, held in ready)
     if query is None:
-        return Ranked(())
-    best, cut = Best(wanted.k, wanted.by_document), False
+        return Ranked((), cut)
+    best = Best(wanted.k, wanted.by_document)
     for one, held in ready:
         after = stores.guarded(one, partial(searched, held, query, best, wanted.tuning, wanted.expired))
         best, cut = after.best, cut or after.cut

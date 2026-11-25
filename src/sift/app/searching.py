@@ -19,7 +19,8 @@ from sift.app.resident import CodesAt, CodeSource, DecodedSource, KeywordsAt, de
 from sift.domain.query import fields as shown
 from sift.domain.query.expressions import Expression
 from sift.retrieval.keyword import lists
-from sift.retrieval.keyword.search import Expired, Prepared, never
+from sift.retrieval.keyword.leaves import Expired, never
+from sift.retrieval.keyword.search import Prepared
 from sift.retrieval.vector.nearest import Coded, coded
 from sift.storage.catalog import Collection
 from sift.storage.database import Reading, abandon, reading

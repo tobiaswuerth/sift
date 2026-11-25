@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import NoReturn
 
@@ -22,15 +22,33 @@ from sift.retrieval.keyword.lists import (
 )
 from sift.storage.keyword_lists import expansions, volume
 
+type Expired = Callable[[], bool]
+
 PREFIX_REMEDY = "write more of the word before the *"
 PHRASE_REMEDY = "add a rarer word to the phrase, or search its words without quotes"
 
 
-def _all_of(store: Opened, lists: list[StoredList]) -> PostingArrays:
-    parts = [everything(store, held) for held in lists]
+def never() -> bool:
+    return False
+
+
+@dataclass(frozen=True, slots=True)
+class Materialized:
+    postings: PostingArrays
+    cut: bool = False
+
+
+def _all_of(store: Opened, lists: list[StoredList], expired: Expired = never) -> Materialized:
+    parts: list[PostingArrays] = []
+    cut = False
+    for held in lists:
+        if expired():
+            cut = True
+            break
+        parts.append(everything(store, held))
     places = np.concatenate([np.zeros(0, np.int64), *(p for p, _ in parts)])
     counts = np.concatenate([np.zeros(0, np.int64), *(c for _, c in parts)])
-    return merged(places, counts)
+    return Materialized(merged(places, counts), cut)
 
 
 def _size(lists: list[StoredList]) -> int:
@@ -48,16 +66,26 @@ def _rarest_first(phrase: Phrase, lists: dict[str, list[StoredList]]) -> list[st
     return sorted(set(phrase.tokens), key=lambda token: (_size(lists[token]), token))
 
 
-def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]]) -> PostingArrays:
+def _out_of_time() -> Materialized:
+    nothing = np.zeros(0, np.int64)
+    return Materialized((nothing, nothing), cut=True)
+
+
+def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]], expired: Expired) -> Materialized:
     order = _rarest_first(phrase, lists)
-    candidates = _all_of(store, lists[order[0]])[0]
+    first = _all_of(store, lists[order[0]], expired)
+    candidates = first.postings[0]
     for token in order[1:]:
         if not len(candidates):
             break
+        if expired():
+            return _out_of_time()
         held = np.concatenate([np.zeros(0, np.int64), *(_within(store, part, candidates) for part in lists[token])])
         candidates = candidates[among(candidates, ascending(held))]
+    if first.cut or (len(candidates) and expired()):
+        return _out_of_time()
     if not len(candidates):
-        return candidates, candidates
+        return Materialized((candidates, candidates))
     none = (candidates[:0], candidates[:0], candidates[:0])
     wanted = Ascending(candidates)
     occurrences = {
@@ -65,17 +93,21 @@ def _phrase(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]]) -
     }
     counts = phrase_counts(wanted, [occurrences[token] for token in phrase.tokens])
     found = counts > 0
-    return candidates[found], counts[found]
+    return Materialized((candidates[found], counts[found]))
 
 
-def _prefix(store: Opened, prefix: Prefix) -> PostingArrays:
+def _prefix(store: Opened, prefix: Prefix, expired: Expired) -> Materialized:
+    if expired():
+        return _out_of_time()
     terms = expansions(store.transaction, prefix.text)
     lists = stored(store, terms)
-    return _all_of(store, [held for term in terms for held in lists[term]])
+    return _all_of(store, [held for term in terms for held in lists[term]], expired)
 
 
-def materialized(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[StoredList]]) -> PostingArrays:
-    return _phrase(store, leaf, lists) if isinstance(leaf, Phrase) else _prefix(store, leaf)
+def materialized(
+    store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[StoredList]], expired: Expired = never
+) -> Materialized:
+    return _phrase(store, leaf, lists, expired) if isinstance(leaf, Phrase) else _prefix(store, leaf, expired)
 
 
 def reads_of(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[StoredList]]) -> int:

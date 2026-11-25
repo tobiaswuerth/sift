@@ -1,5 +1,5 @@
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -11,7 +11,7 @@ from sift.domain.rank.best import Best, may_reach, offered, ranked
 from sift.domain.rank.bm25 import idf
 from sift.domain.rank.boolean import counted, may_hold
 from sift.retrieval.allowed import AllowedDocuments
-from sift.retrieval.keyword.leaves import Limit, expansions_of, materialized, reads_of, refused
+from sift.retrieval.keyword.leaves import Expired, Limit, expansions_of, materialized, never, reads_of, refused
 from sift.retrieval.keyword.lists import Opened, PostingArrays, StoredList, owners, stored
 from sift.retrieval.keyword.scoring import Query, Scored, bounds, scored, within
 from sift.storage.keyword_lists import frequencies
@@ -26,12 +26,6 @@ class Tuning:
 
 
 TUNING = Tuning()
-
-type Expired = Callable[[], bool]
-
-
-def never() -> bool:
-    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +187,7 @@ class Prepared:
     lists: ReadLists
     df: Mapping[Leaf, int]
     allowed: AllowedDocuments | None = None
+    cut: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,18 +219,20 @@ def refuse_reading_too_much(plans: Sequence[Planned], tuning: Tuning = TUNING) -
         refused(reads, Limit(total, tuning.most_read, "passage", "reads", "reads"))
 
 
-def prepared(plan: Planned, *, allowed: AllowedDocuments | None = None) -> Prepared:
+def prepared(plan: Planned, *, allowed: AllowedDocuments | None = None, expired: Expired = never) -> Prepared:
     store, lists = plan.store, plan.lists
     terms = frequencies(store.transaction, [leaf.text for leaf in plan.leaves if isinstance(leaf, Term)])
     found: ReadLists = {}
     df: dict[Leaf, int] = {}
+    cut = False
     for leaf in plan.leaves:
         if isinstance(leaf, Term):
             found[leaf], df[leaf] = lists[leaf.text], terms.get(leaf.text, 0)
         else:
-            postings = materialized(store, leaf, lists)
-            found[leaf], df[leaf] = postings, len(postings[0])
-    return Prepared(store, found, df, allowed)
+            read = materialized(store, leaf, lists, expired)
+            found[leaf], df[leaf] = read.postings, len(read.postings[0])
+            cut = cut or read.cut
+    return Prepared(store, found, df, allowed, cut)
 
 
 def query_of(expression: Expression, each: Sequence[Prepared]) -> Query | None:

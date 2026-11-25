@@ -33,7 +33,8 @@ from sift.domain.query.grammar import MOST_WORDS, any_phrase
 from sift.domain.rank.best import Best
 from sift.domain.rank.hybrid import blend, named, passage, words
 from sift.inference.models import Models
-from sift.retrieval.keyword.search import TUNING, Expired
+from sift.retrieval.keyword.leaves import Expired
+from sift.retrieval.keyword.search import TUNING
 
 EMPTY_REMEDY = "ask a question, e.g. how dark matter halos form"
 WORDS_REMEDY = "ask in fewer words to search by every one of them"
