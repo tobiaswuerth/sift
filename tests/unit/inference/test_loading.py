@@ -3,11 +3,13 @@ import threading
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference import local, ocr
+from sift.inference.hub import pinned
 from sift.inference.loading import REDIRECTS, Deferred, LocalLoader, OcrModule, Resting, ocr_module
 from tests.models import Hashed
 
@@ -119,3 +121,13 @@ def test_the_modules_loaded_late_are_what_loading_takes_them_for() -> None:
     loader: LocalLoader = local
     reader: OcrModule = ocr
     assert (loader.local, ocr_module()) == (local.local, reader)
+
+
+def test_models_keep_the_name_they_were_first_named_by_while_their_folder_changes(tmp_path: Path) -> None:
+    folder = tmp_path / "model"
+    folder.mkdir()
+    (folder / "config.json").write_bytes(b"{}")
+    shared = Deferred(str(folder), "reranker", None, loader=lambda: Crowded(threading.Barrier(1)))
+    named = shared.name
+    (folder / "config.json").write_bytes(b'{"changed": true}')
+    assert (shared.name, pinned(str(folder)) != named) == (named, True)

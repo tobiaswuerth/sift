@@ -47,6 +47,57 @@ def test_a_folder_is_named_by_where_it_lies_whole_and_how_its_files_stand(tmp_pa
     assert pinned(str(folder)) != named
 
 
+MODEL_FILES = (
+    ".git/index",
+    ".cache/huggingface/download/model.lock",
+    "README.md",
+    "model.safetensors",
+    "config.json",
+    "tokenizer.json",
+    "1_Pooling/config.json",
+    "sentencepiece.model",
+)
+
+
+@pytest.mark.parametrize(
+    "changed, kept",
+    [
+        (".git/index", True),
+        (".cache/huggingface/download/model.lock", True),
+        ("README.md", True),
+        ("model.safetensors", False),
+        ("config.json", False),
+        ("tokenizer.json", False),
+        ("1_Pooling/config.json", False),
+        ("sentencepiece.model", False),
+    ],
+)
+def test_a_folder_s_stamp_follows_the_files_its_model_reads_alone(tmp_path: Path, changed: str, *, kept: bool) -> None:
+    folder = tmp_path / "model"
+    for each in MODEL_FILES:
+        (folder / each).parent.mkdir(parents=True, exist_ok=True)
+        (folder / each).write_bytes(b"a")
+    before = pinned(str(folder))
+    (folder / changed).write_bytes(b"changed")
+    assert (pinned(str(folder)) == before) is kept
+
+
+def test_a_folder_named_with_an_at_is_loaded_from_the_folder(tmp_path: Path) -> None:
+    (tmp_path / f"model@{COMMIT[:8]}").mkdir()
+    asked = f"from sift.inference.hub import hub; print(hub('model@{COMMIT[:8]}'))"
+    environment = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
+    found = subprocess.run(
+        [sys.executable, "-c", asked],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    assert found.stdout.strip() == repr((f"model@{COMMIT[:8]}", None))
+
+
 @pytest.mark.parametrize("name", ["owner/model", "owner/model@", "C:/models/absent@home"])
 def test_a_model_of_the_hub_named_without_a_revision_is_refused(name: str) -> None:
     with pytest.raises(ModelUnavailableError, match="names no commit") as refused:

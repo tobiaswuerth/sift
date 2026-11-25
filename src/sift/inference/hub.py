@@ -19,6 +19,7 @@ REPOSITORY = re.compile(r"\w[\w.-]*(/\w[\w.-]*)?")
 REVISION = re.compile(r"[\w.-]+")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 STAMP_BYTES = 8
+READ_SUFFIXES = frozenset({".safetensors", ".bin", ".pt", ".pth", ".json", ".model", ".txt", ".tiktoken", ".py"})
 MOVING = (
     "a branch or tag moves, and a short commit may mean several, so its vectors could not be told from those of "
     "other weights"
@@ -26,9 +27,14 @@ MOVING = (
 COMMIT_REMEDY = "name a commit of it, e.g. {name}@<commit> from its page under Files and versions"
 
 
+def _read_by_the_model(folder: Path, path: Path) -> bool:
+    parts = path.relative_to(folder).parts
+    return path.suffix in READ_SUFFIXES and not any(part.startswith(".") for part in parts) and path.is_file()
+
+
 def _stamp(folder: Path) -> str:
     stamped = hashlib.blake2b(digest_size=STAMP_BYTES)
-    for path in sorted(each for each in folder.rglob("*") if each.is_file()):
+    for path in sorted(each for each in folder.rglob("*") if _read_by_the_model(folder, each)):
         held = path.stat()
         stamped.update(f"{path.relative_to(folder).as_posix()}\0{held.st_size}\0{held.st_mtime_ns}\0".encode())
     return stamped.hexdigest()
@@ -58,6 +64,8 @@ def pinned(name: str) -> str:
 
 
 def hub(name: str) -> tuple[str, str | None]:
+    if Path(name).is_dir():
+        return name, None
     repository, at, revision = name.rpartition("@")
     if at and REPOSITORY.fullmatch(repository) and REVISION.fullmatch(revision):
         return repository, revision

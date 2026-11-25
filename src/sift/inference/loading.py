@@ -48,10 +48,13 @@ class Deferred:
     built: Resting | None = None
     loader: Callable[[], LocalLoader] = _local_module
     lock: threading.Lock = field(default_factory=threading.Lock)
+    named: str | None = None
 
     @property
     def name(self) -> str:
-        return pinned(self.model)
+        if self.named is None:
+            self.named = pinned(self.model)
+        return self.named
 
     def _built(self) -> Resting:
         if self.built is None:
