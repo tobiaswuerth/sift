@@ -1,4 +1,5 @@
 import io
+import json
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
@@ -75,3 +76,11 @@ def test_a_command_refused_logs_its_error_and_how_it_ended(settings: Settings) -
     said = logged(settings, "rm")
     assert all(f" INFO sift: {line}\n" in said for line in err.split("\n")[:-1])
     assert said.endswith(f" ERROR sift: ended with exit code {code}\n")
+
+
+def test_a_log_that_cannot_be_made_is_a_json_error_when_json_is_asked(settings: Settings, notes: Path) -> None:
+    settings.home.mkdir(parents=True, exist_ok=True)
+    (settings.home / "logs").write_bytes(b"")
+    code, out, err = ran(settings, "add", str(notes), "--json")
+    assert (code, json.loads(out)["error"]["kind"]) == (1, "os")
+    assert err.startswith("error  ")

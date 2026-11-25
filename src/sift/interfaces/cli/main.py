@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -181,10 +182,19 @@ def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log:
         live.close()
 
 
+def _heading(command: str) -> str:
+    return f"sift {_version()}, {command}"
+
+
 def _logged(asked: _Chosen, settings: Settings, host: Host, live: Live) -> Shown:
     if asked.command not in LOGGED:
         return _commanded(asked, settings, host, live, None)
-    with kept(settings.home / FOLDER, asked.command, host.now(), f"sift {_version()}, {asked.command}") as log:
+    with contextlib.ExitStack() as held:
+        try:
+            log = held.enter_context(kept(settings.home / FOLDER, asked.command, host.now(), _heading(asked.command)))
+        except OSError as error:
+            live.close()
+            return failure(error, asked.style, as_json=asked.json)
         found = _commanded(asked, settings, host, live, log)
         say(log, found.messages)
         log.ended(found.code)
