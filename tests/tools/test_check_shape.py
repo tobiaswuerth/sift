@@ -9,6 +9,11 @@ ARRAYS_MODULE = (
 )
 ARRAYS = array_names({"src/sift/arrays.py": "type Ids = NDArray[np.int64]\n"})
 COMPARED = "class Held holds arrays and compares them: make it a dataclass with eq=False"
+IMPORTS = (
+    "import collections\nimport hashlib\nimport queue\nimport re\nfrom pathlib import Path\n"
+    "from types import MappingProxyType, SimpleNamespace\n\nimport numpy as np\n\n"
+    "from sift.domain.arrays import read_only\n\n"
+)
 
 
 def problems(path: str, source: str, arrays: frozenset[str] = ARRAYS) -> list[str]:
@@ -26,6 +31,19 @@ def test_a_class_may_have_up_to_the_most_methods() -> None:
 
     assert problems("src/sift/a.py", source(MOST_METHODS)) == []
     assert problems("src/sift/a.py", source(MOST_METHODS + 1)) == ["class C has 11 methods, more than 10"]
+
+
+def test_methods_written_otherwise_are_counted() -> None:
+    plain = "".join(f"    def m{i}(self) -> None: ...\n" for i in range(MOST_METHODS - 4))
+    others = (
+        "    x = lambda self: 1\n    y = staticmethod(f)\n    w: object = functools.cached_property(g)\n"
+        "    if A:\n        def z(self) -> None: ...\n    else:\n        v = classmethod(h)\n"
+    )
+    assert problems("src/sift/a.py", f"class C:\n{plain}{others}") == ["class C has 11 methods, more than 10"]
+    nested = (
+        "    def m(self) -> None:\n        def inner() -> None: ...\n\n    class Inner:\n        def n(self): ...\n"
+    )
+    assert problems("src/sift/a.py", f"class C:\n{plain}{nested}") == []
 
 
 @pytest.mark.parametrize(
@@ -46,11 +64,15 @@ def test_a_class_may_have_up_to_the_most_methods() -> None:
         "f()",
         "A | {1}",
         "(1, [])",
+        "builder.compile()",
+        "f()[1:]",
+        "[1, 2][:1]",
+        "other.read_only(A)",
     ],
 )
 def test_a_mutable_module_value_is_found(value: str) -> None:
-    assert problems("src/sift/a.py", f"X = {value}\n") == ["mutable value at module level"]
-    assert problems("tools/a.py", f"X: object = {value}\n") == ["mutable value at module level"]
+    assert problems("src/sift/a.py", f"{IMPORTS}X = {value}\n") == ["mutable value at module level"]
+    assert problems("tools/a.py", f"{IMPORTS}X: object = {value}\n") == ["mutable value at module level"]
 
 
 @pytest.mark.parametrize(
@@ -68,10 +90,25 @@ def test_a_mutable_module_value_is_found(value: str) -> None:
         "read_only(np.zeros(3))",
         "A if B else 'c'",
         "f'{A}'",
+        "A[1:]",
+        "dict[str, int]",
+        "(1, 2)[:1]",
+        "hashlib.sha256(b'').hexdigest()",
+        "Path('a')",
     ],
 )
 def test_an_immutable_module_value_passes(value: str) -> None:
-    assert problems("src/sift/a.py", f"X = {value}\nY: int\n") == []
+    assert problems("src/sift/a.py", f"{IMPORTS}X = {value}\nY: int\n") == []
+
+
+def test_module_values_under_a_condition_or_a_try_are_read() -> None:
+    source = "if A:\n    X = []\ntry:\n    Y = {}\nexcept E:\n    Y = {}\nwith c:\n    Z = ()\n"
+    assert problems("src/sift/a.py", source) == ["mutable value at module level"] * 3
+
+
+def test_a_dataclass_imported_under_another_name_is_one() -> None:
+    source = "from dataclasses import dataclass as dc\n\n\n@dc(frozen=True, slots=True)\nclass A:\n    x: int\n"
+    assert problems("src/sift/domain/a.py", source) == []
 
 
 def test_a_value_from_a_function_of_the_module_returning_an_immutable_type_passes() -> None:

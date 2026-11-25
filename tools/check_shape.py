@@ -2,7 +2,7 @@ import ast
 from collections.abc import Iterator, Mapping
 from functools import partial
 
-from tools.canonical import aliases, unquoted
+from tools.canonical import aliases, imports_resolved, unquoted
 from tools.findings import PYTHON_ROOTS, Finding, found, report, sources
 
 MOST_LINES = 400
@@ -15,15 +15,18 @@ SOURCE = "src"
 ARRAYS = frozenset({"NDArray", "ndarray"})
 COMPARING_BASES = frozenset({"NamedTuple"})
 CALLABLE = "Callable"
-MUTABLE_FACTORIES = frozenset(
-    {"list", "dict", "set", "bytearray", "defaultdict", "OrderedDict", "deque", "Counter", "ChainMap"}
-)
 IMMUTABLE_TYPES = frozenset(
     {"frozenset", "tuple", "MappingProxyType", "str", "int", "float", "bytes", "bool", "range", "Path", "PurePosixPath"}
 )
-IMMUTABLE_FACTORIES = IMMUTABLE_TYPES | frozenset(
-    {"compile", "Struct", "NewType", "TypeVar", "dtype", "hexdigest", "read_only"}
+IMMUTABLE_CALLS = frozenset(
+    {
+        *("frozenset", "tuple", "str", "int", "float", "bytes", "bool", "range"),
+        *("types.MappingProxyType", "pathlib.Path", "pathlib.PurePosixPath", "re.compile", "struct.Struct"),
+        *("typing.NewType", "typing.TypeVar", "numpy.dtype", "sift.domain.arrays.read_only"),
+    }
 )
+IMMUTABLE_METHODS = frozenset({"hexdigest"})
+METHOD_MAKERS = frozenset({"staticmethod", "classmethod", "property", "cached_property", "partialmethod"})
 REMEDY = (
     "Split what grew too large by responsibility. Hold module values in immutable types (tuple, frozenset, "
     "MappingProxyType, an array made read_only), or make them in a function whose return type is one. "
@@ -37,10 +40,30 @@ def too_long(path: str, source: str) -> Iterator[Finding]:
         yield Finding(path, 1, f"module of {lines} lines, more than {MOST_LINES}")
 
 
+def _statements(node: ast.AST) -> Iterator[ast.stmt]:
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.stmt):
+            yield child
+            if not isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                yield from _statements(child)
+        elif isinstance(child, ast.excepthandler | ast.match_case):
+            yield from _statements(child)
+
+
+def _is_method(node: ast.stmt) -> bool:
+    match node:
+        case ast.FunctionDef() | ast.AsyncFunctionDef():
+            return True
+        case ast.Assign(value=value) | ast.AnnAssign(value=ast.expr() as value):
+            return isinstance(value, ast.Lambda) or (isinstance(value, ast.Call) and _name(value.func) in METHOD_MAKERS)
+        case _:
+            return False
+
+
 def too_many_methods(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
-            methods = sum(isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef) for item in node.body)
+            methods = sum(map(_is_method, _statements(node)))
             if methods > MOST_METHODS:
                 yield Finding(path, node.lineno, f"class {node.name} has {methods} methods, more than {MOST_METHODS}")
 
@@ -56,33 +79,39 @@ def _name(node: ast.expr) -> str:
 
 
 def _returning_immutables(tree: ast.Module) -> frozenset[str]:
+    statements = list(_statements(tree))
     functions = (
         node.name
-        for node in tree.body
+        for node in statements
         if isinstance(node, ast.FunctionDef) and node.returns is not None and _name(node.returns) in IMMUTABLE_TYPES
     )
     values = (
         node.name
-        for node in tree.body
+        for node in statements
         if isinstance(node, ast.ClassDef)
         and (_is_frozen_slotted_dataclass(node) or any(map(_is_value_base, node.bases)))
     )
-    imported = (name for name, whole in aliases(tree).items() if whole.startswith(SIFT) and name[:1].isupper())
+    imported = (whole for whole in aliases(tree).values() if whole.startswith(SIFT) and _name_of(whole)[:1].isupper())
     return frozenset((*functions, *values, *imported))
 
 
+def _name_of(whole: str) -> str:
+    return whole.rpartition(".")[2]
+
+
 def _made_immutable(call: ast.Call, trusted: frozenset[str]) -> bool:
-    name = _name(call.func)
-    return name in IMMUTABLE_FACTORIES or (isinstance(call.func, ast.Name) and name in trusted)
+    called = ast.unparse(call.func)
+    method = isinstance(call.func, ast.Attribute) and call.func.attr in IMMUTABLE_METHODS
+    return called in IMMUTABLE_CALLS or called in trusted or method
 
 
 def _immutable(value: ast.expr, trusted: frozenset[str]) -> bool:
     match value:
-        case ast.Constant() | ast.Name() | ast.Attribute() | ast.Lambda() | ast.JoinedStr() | ast.Subscript():
+        case ast.Constant() | ast.Name() | ast.Attribute() | ast.Lambda() | ast.JoinedStr():
             return True
         case ast.Tuple(elts=items):
             return all(_immutable(item, trusted) for item in items)
-        case ast.Starred(value=inner) | ast.UnaryOp(operand=inner):
+        case ast.Starred(value=inner) | ast.UnaryOp(operand=inner) | ast.Subscript(value=inner):
             return _immutable(inner, trusted)
         case ast.BinOp(left=left, right=right) | ast.IfExp(body=left, orelse=right):
             return _immutable(left, trusted) and _immutable(right, trusted)
@@ -94,7 +123,7 @@ def _immutable(value: ast.expr, trusted: frozenset[str]) -> bool:
 
 def mutable_module_values(path: str, tree: ast.Module) -> Iterator[Finding]:
     trusted = _returning_immutables(tree)
-    for node in tree.body:
+    for node in _statements(tree):
         value = node.value if isinstance(node, ast.Assign | ast.AnnAssign) else None
         if value is not None and not _immutable(value, trusted):
             yield Finding(path, node.lineno, "mutable value at module level")
@@ -158,14 +187,14 @@ def _compares(node: ast.ClassDef) -> bool:
 
 
 def arrays_compared(path: str, tree: ast.Module, arrays: frozenset[str]) -> Iterator[Finding]:
-    for node in ast.walk(unquoted(tree)):
+    for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and _compares(node) and _held(node) & arrays:
             problem = f"class {node.name} holds arrays and compares them: make it a dataclass with eq=False"
             yield Finding(path, node.lineno, problem)
 
 
 def shape(path: str, source: str, arrays: frozenset[str]) -> tuple[Finding, ...]:
-    tree = ast.parse(source)
+    tree = imports_resolved(unquoted(ast.parse(source)))
     return (
         *too_long(path, source),
         *too_many_methods(path, tree),
