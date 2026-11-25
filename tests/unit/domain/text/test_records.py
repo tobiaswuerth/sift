@@ -10,6 +10,7 @@ from sift.domain.text.records import (
     Chosen,
     SkippedLine,
     record_of,
+    used_twice,
 )
 
 
@@ -69,6 +70,31 @@ def test_a_record_without_an_id_is_named_by_its_line_and_fields_may_be_chosen() 
     found = read({"key": "q1", "q": "Why?", "a": "Because.", "text": "not this"}, chosen)
     assert (found.key, found.title, found.text) == ("q1", "Why?", "# Why?\n\nWhy?\n\nBecause.")
     assert found.fields == {"key": "q1", "text": "not this"}
+
+
+@pytest.mark.parametrize("value", [{"text": "x"}, {"doi": "", "text": "x"}, {"doi": None, "text": "x"}])
+def test_a_record_lacking_the_id_field_chosen_is_skipped_as_having_no_id(value: dict[str, FieldValue]) -> None:
+    assert record_of(json.dumps(value), 5, Chosen(id="doi")) == SkippedLine(5, "no id: it holds no doi")
+
+
+def test_a_key_used_twice_says_whether_a_record_without_an_id_holds_it() -> None:
+    first, explicit, third = (
+        read({"text": "a"}, line=1),
+        read({"id": 1, "text": "b"}, line=2),
+        read({"text": "c"}, line=3),
+    )
+    advice = "give every record an id or none"
+    assert [
+        used_twice(explicit, first, NO_CHOICE),
+        used_twice(third, None, NO_CHOICE),
+        used_twice(explicit, explicit, NO_CHOICE),
+        used_twice(explicit, None, NO_CHOICE),
+    ] == [
+        f"id 1 is also line 1's, which has no id: {advice}",
+        f"it has no id, and id 3 is another record's: {advice}",
+        "id 1 used twice",
+        "id 1 used twice",
+    ]
 
 
 @pytest.mark.parametrize("key", [True, 1.5, [1], {"a": 1}, "a\nb", "a\x1bb", "\x85"])

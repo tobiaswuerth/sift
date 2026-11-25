@@ -18,7 +18,7 @@ from sift.app.filing import Limits, Lines, Readers
 from sift.app.indexing import index
 from sift.app.search import search
 from sift.domain.text.documents import Outcome
-from sift.domain.text.records import SkippedLine
+from sift.domain.text.records import GIVE_IDS, SkippedLine
 from sift.ingest.files import Identity
 from sift.ingest.readers import ToRead
 from sift.ingest.records import lines_of
@@ -256,3 +256,22 @@ def test_a_file_that_cannot_be_read_to_its_end_keeps_what_was_read_and_is_read_a
     again = indexed(home)
     assert (again.added, again.changed, again.removed, again.unreadable) == (1, 0, 0, 0)
     assert found(home, "part") == ["c/r.jsonl#0", "c/r.jsonl#1", "c/r.jsonl#2"]
+
+
+def test_a_record_with_an_id_is_not_taken_by_a_line_without_one(tmp_path: Path) -> None:
+    lines = [json.dumps({"text": "first"}), json.dumps({"id": 1, "text": "second"}), json.dumps({"text": "third"})]
+    write(tmp_path / "c" / "r.jsonl", "\n".join(lines) + "\n")
+    told = list[tuple[list[str], list[str]]]()
+    for name, field in (("lines", None), ("ids", "id")):
+        home = tmp_path / name
+        add(home, AddCollection(str(tmp_path / "c"), id_field=field))
+        said: list[Event] = []
+        indexed(home, said=said)
+        told.append((found(home, "first OR second OR third"), [each.text for each in said if isinstance(each, Noted)]))
+    assert told == [
+        (
+            ["c/r.jsonl#1", "c/r.jsonl#3"],
+            [f"r.jsonl: 1 line skipped (line 2: id 1 is also line 1's, which has no id: {GIVE_IDS})"],
+        ),
+        (["c/r.jsonl#1"], ["r.jsonl: 2 lines skipped (line 1: no id: it holds no id; line 3: no id: it holds no id)"]),
+    ]

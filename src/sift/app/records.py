@@ -5,7 +5,7 @@ from sift.api.events import Noted
 from sift.app.filing import Job, Tally, too_large_to_describe
 from sift.domain.plan.indexing import RACY, Stat
 from sift.domain.text.notes import Document
-from sift.domain.text.records import Chosen, SkippedLine, record_of
+from sift.domain.text.records import Chosen, SkippedLine, record_of, used_twice
 from sift.domain.text.wording import counted
 from sift.ingest.files import Identity
 from sift.storage.database import WritingDocuments
@@ -75,27 +75,27 @@ def _writes(read: Iterable[Line], most: int, most_characters: int) -> Iterator[l
         yield batch
 
 
-def _firsts(read: Sequence[Line], new: frozenset[str]) -> tuple[list[Document], list[SkippedLine]]:
+def _firsts(read: Sequence[Line], new: frozenset[str], chosen: Chosen) -> tuple[list[Document], list[SkippedLine]]:
     kept: list[Document] = []
     skipped: list[SkippedLine] = []
-    used: set[str] = set()
+    used: dict[str, Document] = {}
     for number, each in read:
         match each:
             case SkippedLine():
                 skipped.append(each)
             case Document() if each.key in new and each.key not in used:
-                used.add(each.key)
+                used[each.key] = each
                 kept.append(each)
             case _:
-                skipped.append(SkippedLine(number, f"id {each.key} used twice"))
+                skipped.append(SkippedLine(number, used_twice(each, used.get(each.key), chosen)))
     return kept, skipped
 
 
 def _batch(
-    transaction: WritingDocuments, source: SourceId, path: str, read: Sequence[Line]
+    transaction: WritingDocuments, source: SourceId, path: str, read: Sequence[Line], chosen: Chosen
 ) -> tuple[Tally, list[SkippedLine]]:
     keys = [each.key for _, each in read if isinstance(each, Document)]
-    documents, skipped = _firsts(read, take(transaction, keys))
+    documents, skipped = _firsts(read, take(transaction, keys), chosen)
     held = keyed(transaction, source, [each.key for each in documents])
     changed = [each for each in documents if each.key in held and held[each.key].digest != each.digest]
     new = [each for each in documents if each.key not in held]
@@ -132,7 +132,7 @@ def stored_records(job: Job, path: str, stat: Stat, chosen: Chosen, scanned: Ide
         records = _records(lines, chosen, limits.most_description_bytes)
         for read in _writes(records, limits.most_records_a_write, limits.most_characters_a_write):
             with writing_documents(job.connection, limits.batches) as transaction:
-                done, skipped = _batch(transaction, source, path, read)
+                done, skipped = _batch(transaction, source, path, read, chosen)
             tally, skips = tally + done, skips + skipped
     except OSError as error:
         with writing_documents(job.connection, limits.batches) as transaction:

@@ -20,8 +20,9 @@ FOLLOW_LINKS = (
     f"file of this machine{AGAIN}"
 )
 ID_FIELD = (
-    "JSON Lines: the field holding each record's id, a text or a whole number (default: id or _id, else the "
-    "line number, which changes when lines are added above)"
+    "JSON Lines: the field holding each record's id, a text or a whole number; once named, a record without it is "
+    "skipped (default: id or _id, else the line number, which changes when lines are added above: give every "
+    "record an id or none)"
 )
 TITLE_FIELD = "JSON Lines: the field holding the title (default: title, name, headline or subject)"
 TEXT_FIELDS = (

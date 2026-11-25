@@ -13,6 +13,7 @@ ID_FIELDS = ("id", "_id")
 TITLE_FIELDS = ("title", "name", "headline", "subject")
 TEXT_FIELDS = ("text", "content", "body", "abstract", "description", "summary")
 NOT_A_KEY = "its id is no text or whole number"
+GIVE_IDS = "give every record an id or none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +68,22 @@ def _key(written: FieldValue, line: int) -> str | None:
             return None
 
 
+def _keyed_by_line(document: Document, chosen: Chosen) -> bool:
+    named = next((name for name in ID_FIELDS if name in document.fields), None)
+    return chosen.id is None and (named is None or document.fields[named] in (None, ""))
+
+
+def used_twice(document: Document, holder: Document | None, chosen: Chosen) -> str:
+    if _keyed_by_line(document, chosen):
+        return f"it has no id, and id {document.key} is another record's: {GIVE_IDS}"
+    if holder is not None and _keyed_by_line(holder, chosen):
+        return f"id {document.key} is also line {holder.key}'s, which has no id: {GIVE_IDS}"
+    return f"id {document.key} used twice"
+
+
 def record(found: Mapping[str, FieldValue], line: int, chosen: Chosen) -> Document | SkippedLine:
+    if chosen.id is not None and found.get(chosen.id) in (None, ""):
+        return SkippedLine(line, f"no id: it holds no {chosen.id}")
     id_field = chosen.id or next((name for name in ID_FIELDS if name in found), None)
     named = _key(found.get(id_field) if id_field else None, line)
     if named is None:
