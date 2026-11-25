@@ -3,10 +3,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from sift.api.collections import AddCollection
 from sift.api.embedding import EmbedCollections
+from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections
 from sift.api.links import FindSimilar
 from sift.api.search import SearchHybrid, SearchVectors
@@ -18,7 +20,7 @@ from sift.app.resident import CodesAt, ResidentCodes
 from sift.app.searching import Watching
 from sift.app.similar import similar
 from sift.app.vsearch import vsearch
-from sift.retrieval.vector.nearest import Coded
+from sift.retrieval.vector.nearest import Coded, coded
 from tests.files import write
 from tests.models import Hashed
 
@@ -72,8 +74,8 @@ def test_searches_in_one_process_read_a_store_s_codes_once_and_find_what_reading
 def test_codes_held_for_every_search_cannot_be_written(home: Path) -> None:
     counting = Counting()
     found(home, counting)
-    for _, coded in counting.held.held.values():
-        for array in (coded.ids, coded.bits, coded.words):
+    for _, held in counting.held.held.values():
+        for array in (held.ids, held.bits, held.words):
             with pytest.raises(ValueError, match="WRITEABLE"):
                 array.flags.writeable = True
 
@@ -107,3 +109,52 @@ def test_searches_at_once_read_each_store_s_codes_once(home: Path) -> None:
         thread.join(60)
     assert (failures, len(results), len(counting.reads)) == ([], 8, 2)
     assert all(each == results[0] for each in results)
+
+
+def test_codes_held_for_one_store_are_handed_out_while_another_store_s_are_read() -> None:
+    held, reading, read = ResidentCodes(), threading.Event(), threading.Event()
+    one = CodesAt(Path("one.sqlite"), CollectionId(1), 1)
+    other = CodesAt(Path("other.sqlite"), CollectionId(2), 1)
+    codes = coded(np.arange(2, dtype=np.int64), np.zeros((2, 8), np.uint8), 64)
+    assert held(one, lambda: codes) is codes
+
+    def slow() -> Coded:
+        reading.set()
+        read.wait(30)
+        return codes
+
+    thread = threading.Thread(target=held, args=(other, slow))
+    thread.start()
+    assert reading.wait(30)
+    handed: list[Coded] = []
+    beside = threading.Thread(target=lambda: handed.append(held(one, lambda: codes)))
+    beside.start()
+    beside.join(5)
+    read.set()
+    thread.join(30)
+    assert handed == [codes]
+
+
+def test_a_search_waiting_on_a_store_s_codes_takes_those_just_read() -> None:
+    held, reading, read = ResidentCodes(), threading.Event(), threading.Event()
+    at = CodesAt(Path("one.sqlite"), CollectionId(1), 1)
+    codes = coded(np.arange(2, dtype=np.int64), np.zeros((2, 8), np.uint8), 64)
+    reads: list[int] = []
+
+    def slow() -> Coded:
+        reads.append(1)
+        reading.set()
+        read.wait(30)
+        return codes
+
+    first = threading.Thread(target=held, args=(at, slow))
+    first.start()
+    assert reading.wait(30)
+    handed: list[Coded] = []
+    second = threading.Thread(target=lambda: handed.append(held(at, slow)))
+    second.start()
+    second.join(0.2)
+    read.set()
+    first.join(30)
+    second.join(30)
+    assert (handed, reads) == ([codes], [1])

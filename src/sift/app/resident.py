@@ -41,24 +41,40 @@ def decoded_each_search(_at: KeywordsAt, /) -> "DecodedLists | None":
     return None
 
 
+type StoreKey = tuple[Path, CollectionId]
+
+
 @dataclass(slots=True, eq=False)
 class ResidentCodes:
-    held: dict[tuple[Path, CollectionId], tuple[int, "Coded"]] = field(
-        default_factory=dict[tuple[Path, CollectionId], tuple[int, "Coded"]]
-    )
+    held: dict[StoreKey, tuple[int, "Coded"]] = field(default_factory=dict[StoreKey, tuple[int, "Coded"]])
+    reading: dict[StoreKey, threading.Lock] = field(default_factory=dict[StoreKey, threading.Lock])
     lock: threading.Lock = field(default_factory=threading.Lock)
 
+    def _current(self, key: StoreKey, generation: int) -> "Coded | None":
+        found = self.held.get(key)
+        return found[1] if found is not None and found[0] == generation else None
+
     def __call__(self, at: CodesAt, read: Callable[[], "Coded"], /) -> "Coded":
+        key = (at.store, at.collection)
         with self.lock:
-            found = self.held.get((at.store, at.collection))
-            if found is not None and found[0] == at.generation:
-                return found[1]
-            self.held.pop((at.store, at.collection), None)
+            found = self._current(key, at.generation)
+            if found is not None:
+                return found
+            alone = self.reading.setdefault(key, threading.Lock())
+        with alone:
+            with self.lock:
+                found = self._current(key, at.generation)
+                if found is not None:
+                    return found
+                self.held.pop(key, None)
             fresh = read()
-            self.held[at.store, at.collection] = (at.generation, fresh)
+            with self.lock:
+                self.held[key] = (at.generation, fresh)
             return fresh
 
-    def kept_only(self, searched: Collection[tuple[Path, CollectionId]]) -> None:
+    def kept_only(self, searched: Collection[StoreKey]) -> None:
         with self.lock:
             for gone in self.held.keys() - searched:
                 del self.held[gone]
+            for gone in self.reading.keys() - searched:
+                del self.reading[gone]
