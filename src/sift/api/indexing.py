@@ -11,6 +11,7 @@ FILES = (
     "read only this file now, or drop it if gone, whatever its date: its id (collection/path), or its absolute "
     "path; several: each of them"
 )
+type FileState = Literal["added", "changed", "unchanged", "removed", "missing", "unreadable", "left out"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +31,7 @@ class IndexCollections(Request):
 @dataclass(frozen=True, slots=True)
 class FileIndexed:
     id: str
-    state: Literal["added", "changed", "unchanged", "removed", "missing", "unreadable", "left out"]
+    state: FileState
     note: str | None = None
     code: Problem | None = None
 

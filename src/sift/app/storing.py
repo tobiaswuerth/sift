@@ -16,7 +16,6 @@ from sift.ingest.sandbox import FileReading
 from sift.storage.database import WritingDocuments, reading
 from sift.storage.documents import (
     Mark,
-    add_documents,
     clear_unreadable,
     digests_of,
     kept,
@@ -24,8 +23,9 @@ from sift.storage.documents import (
     put_source,
 )
 from sift.storage.forgetting import delete_documents, delete_sources, documents_at
-from sift.storage.kept_vectors import vectors_held, vectors_kept, vectors_let_go
+from sift.storage.kept_vectors import vectors_held, vectors_let_go
 from sift.storage.keywords import writing_documents
+from sift.storage.replacing import documents_replaced
 
 PROBLEMS_APART = "; "
 
@@ -65,18 +65,12 @@ def _stored(
 def _file_stored(transaction: WritingDocuments, path: str, stat: Stat, read: FileRead) -> Tally:
     source = put_source(transaction, path, stat.modified_ns, stat.size)
     held = {document.key: document for document in kept(transaction, source)}
-    changed = [each for each in read.documents if each.key in held and held[each.key].digest != each.digest]
-    new = [each for each in read.documents if each.key not in held]
-    gone = [held[key].id for key in held.keys() - {each.key for each in read.documents}]
-    replaced = [held[each.key].id for each in changed]
-    vectors_held(transaction, replaced)
-    delete_documents(transaction, [*gone, *replaced])
-    vectors_kept(transaction, add_documents(transaction, source, path, [*changed, *new]))
+    found = documents_replaced(transaction, source, path, held, read.documents)
     if read.problems:
         under = None if read.skipped_under is None else read.skipped_under.value
         problem = PROBLEMS_APART.join(read.problems)
         mark_unreadable(transaction, path, Mark(problem, read.read_again, skipped_under=under))
-    return Tally(added=len(new), changed=len(changed), removed=len(gone))
+    return Tally(added=len(found.new), changed=len(found.changed), removed=len(found.gone))
 
 
 def dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:

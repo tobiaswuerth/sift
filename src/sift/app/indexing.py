@@ -14,6 +14,7 @@ from sift.app.problems import problems
 from sift.app.retitling import resumed
 from sift.app.scans import ScanModel
 from sift.app.storing import dropped, read_and_stored
+from sift.domain.plan.changes import FileOutcome, FileSeen, state_read, state_unread
 from sift.domain.plan.ignore import Ignore
 from sift.domain.plan.indexing import Found, Stat, dropping, index_plan, recorded
 from sift.domain.text.kinds import split_keyed_path
@@ -92,26 +93,26 @@ def _held_as_it_is(job: Job, path: str) -> tuple[bool, str | None]:
     return stored and not entry.read_again and entry.stopped_under is None, entry.problem
 
 
+def _file_said(shown: str, outcome: FileOutcome) -> FileIndexed:
+    return FileIndexed(shown, outcome.state, outcome.note, Problem.OS if outcome.system else None)
+
+
 def _file_indexed(job: Job, ignore: Ignore, path: str) -> FileIndexed:
     shown, folder = f"{job.collection.name}/{path}", job.collection.folder
     started = job.readers.clock()
     scanned = job.readers.scan_one(folder, path, Reach(job.collection.choices.follow_links, ignore))
     files = recorded(scanned.found.files, started, job.readers.clock())
-    if path in scanned.refusals:
-        return FileIndexed(shown, "unreadable", scanned.refusals[path], Problem.OS)
     with reading(job.connection) as transaction:
-        held = source_at(transaction, path)
-    gone = not os.path.lexists(folder / path)
-    if held is None and path not in files:
-        return FileIndexed(shown, "missing") if gone else FileIndexed(shown, "left out", _why_left_out(scanned, path))
-    plan = index_plan(Found(files), {}, job.limits.most_file_bytes) if path in files else dropping((path,))
+        held = source_at(transaction, path) is not None
+    gone, listed = not os.path.lexists(folder / path), path in files
+    seen = FileSeen(scanned.refusals.get(path), held, listed, gone, _why_left_out(scanned, path))
+    unread = state_unread(seen)
+    if unread is not None:
+        return _file_said(shown, unread)
+    plan = index_plan(Found(files), {}, job.limits.most_file_bytes) if listed else dropping((path,))
     tally = dropped(job, plan, files) + read_and_stored(job, plan, files, scanned.identities)
-    if path not in files:
-        return FileIndexed(shown, "removed", None if gone else _why_left_out(scanned, path))
-    as_it_is, problem = _held_as_it_is(job, path)
-    if not as_it_is:
-        return FileIndexed(shown, "unreadable", problem)
-    return FileIndexed(shown, "added" if held is None else "changed" if tally != Tally() else "unchanged", problem)
+    as_it_is, problem = _held_as_it_is(job, path) if listed else (True, None)
+    return _file_said(shown, state_read(seen, held_as_it_is=as_it_is, problem=problem, changed=tally != Tally()))
 
 
 def _files_synced(job: Job, ignore: Ignore, paths: tuple[str, ...]) -> CollectionIndexed:
