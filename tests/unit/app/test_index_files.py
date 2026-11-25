@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -10,6 +11,7 @@ from sift.app.collections import add, deactivate
 from sift.app.filing import LIMITS, Limits, Readers
 from sift.app.indexing import index
 from sift.domain.plan.indexing import Found
+from sift.domain.plan.left_out import WhyLeftOut
 from sift.ingest.scan import Reach, Scanned
 from sift.storage.catalog import known_collections
 from sift.storage.database import reading, rows
@@ -72,6 +74,53 @@ def test_a_file_the_collection_leaves_out_is_not_read(home: Path) -> None:
     assert found_ids(home, "left") == []
 
 
+def _hidden(diary: Path) -> None:
+    write(diary / ".private" / "a.md", "# A\n")
+
+
+def _in_a_linked_folder(diary: Path) -> None:
+    write(diary / "real" / "a.md", "# A\n")
+    linked(diary / "elsewhere", str(diary / "real"), folder=True)
+
+
+def _named_as_a_record(diary: Path) -> None:
+    write(diary / "a.jsonl#x.md", "# A\n")
+
+
+def _looped(diary: Path) -> None:
+    linked(diary / "loop.md", str(diary / "round.md"))
+    linked(diary / "round.md", str(diary / "loop.md"))
+
+
+def _a_folder(diary: Path) -> None:
+    write(diary / "sub" / "a.md", "# A\n")
+
+
+def _a_link_the_rules_leave_out(diary: Path) -> None:
+    write(diary / ".siftignore", "ignored/\nlink.md\n")
+    write(diary / "real.md", "# Real\n")
+    linked(diary / "link.md", str(diary / "real.md"))
+
+
+@pytest.mark.parametrize(
+    "made, asked, why",
+    [
+        (_hidden, "diary/.private/a.md", "a folder on its path is hidden, or one sift passes over"),
+        (_in_a_linked_folder, "diary/elsewhere/a.md", "a folder on its path is a link, which sift does not follow"),
+        (_named_as_a_record, "diary/a.jsonl#x.md", "its name reads as a record's id"),
+        (_looped, "diary/loop.md", "its links go round in a loop"),
+        (_a_folder, "diary/sub", "it is a folder: name the files in it, or index its collection"),
+        (_a_link_the_rules_leave_out, "diary/link.md", "its collection's rules leave it out"),
+    ],
+)
+def test_a_file_left_out_says_why_the_scan_left_it_out(
+    home: Path, tmp_path: Path, made: Callable[[Path], None], asked: str, why: str
+) -> None:
+    made(tmp_path / "diary")
+    ((left),) = reindexed(home, str(tmp_path / asked))
+    assert (left.state, left.note) == ("left out", why)
+
+
 def test_a_file_of_an_inactive_collection_is_read_for_when_it_is_active_again(home: Path, tmp_path: Path) -> None:
     deactivate(home, DeactivateCollections(("diary",)))
     write(tmp_path / "diary" / "tuesday.md", "# Tuesday\n\nNothing broke.\n")
@@ -89,7 +138,7 @@ def test_a_file_that_cannot_be_looked_at_is_kept_and_said_unreadable(home: Path)
 
 def test_a_file_that_leads_outside_its_folder_is_left_out_and_dropped_if_it_was_in(home: Path) -> None:
     def outside(_root: Path, relative: str, _reach: Reach) -> Scanned:
-        return Scanned(Found({}, outside=(relative,)))
+        return Scanned(Found({}, outside=(relative,)), why={relative: WhyLeftOut.OUTSIDE})
 
     readers = Readers(clock=later, scan_one=outside)
     assert [(each.state, each.note) for each in reindexed(home, "diary/monday.md", "diary/x.md", readers=readers)] == [

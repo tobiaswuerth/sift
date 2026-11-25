@@ -20,7 +20,7 @@ from sift.domain.plan.indexing import Found, Stat, dropping, index_plan, recorde
 from sift.domain.text.kinds import split_keyed_path
 from sift.domain.text.scans import reads_skipped
 from sift.ingest.ignore import IGNORE_FILE, ignore_at
-from sift.ingest.scan import Reach, Scanned, scan
+from sift.ingest.scan import Reach, scan
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Batches, Connection, reading, writing
 from sift.storage.documents import (
@@ -78,12 +78,6 @@ def _synced(job: Job, ignore: Ignore) -> Indexed:
     return Indexed(len(files), tally.added, tally.changed, tally.removed, outstanding)
 
 
-def _why_left_out(scanned: Scanned, path: str) -> str:
-    if path in scanned.found.outside:
-        return "it leads outside its collection's folder"
-    return "its collection's rules leave it out" if scanned.found.left_out else "sift takes no such file there"
-
-
 def _held_as_it_is(job: Job, path: str) -> tuple[bool, str | None]:
     with reading(job.connection) as transaction:
         entry, source = unreadable_at(transaction, path), source_at(transaction, path)
@@ -105,7 +99,7 @@ def _file_indexed(job: Job, ignore: Ignore, path: str) -> FileIndexed:
     with reading(job.connection) as transaction:
         held = source_at(transaction, path) is not None
     gone, listed = not os.path.lexists(folder / path), path in files
-    seen = FileSeen(scanned.refusals.get(path), held, listed, gone, _why_left_out(scanned, path))
+    seen = FileSeen(scanned.refusals.get(path), held, listed, gone, scanned.why.get(path))
     unread = state_unread(seen)
     if unread is not None:
         return _file_said(shown, unread)
@@ -208,13 +202,17 @@ def _indexed(one: Collection, asked: _Indexing, paths: tuple[str, ...] = ()) -> 
         return _skipped(one, report, Skipped(Problem.OS, reason, OUT_OF_REACH_REMEDY))
 
 
+def _file_named(one: Collection, relative: str) -> str:
+    return relative if os.path.lexists(one.folder / relative) else split_keyed_path(relative)[0]
+
+
 def _grouped(home: Path, files: Sequence[str]) -> dict[Collection, tuple[str, ...]]:
     known, grouped = known_collections(home), dict[Collection, list[str]]()
     for given in files:
         found = located(known, given)
         if found is None:
             raise InvalidRequestError(f"{given} is in no collection", NO_COLLECTION_REMEDY, "files")
-        grouped.setdefault(found[0], []).append(split_keyed_path(found[1])[0])
+        grouped.setdefault(found[0], []).append(_file_named(*found))
     return {one: tuple(dict.fromkeys(paths)) for one, paths in grouped.items()}
 
 

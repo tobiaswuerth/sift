@@ -26,7 +26,7 @@ class FileSeen:
     held: bool
     listed: bool
     gone: bool
-    left_out_because: str
+    left_out_because: str | None
 
 
 @dataclass(frozen=True, slots=True)

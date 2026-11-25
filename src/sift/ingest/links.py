@@ -1,4 +1,5 @@
 from collections.abc import Callable, Sequence
+from enum import Enum
 from pathlib import Path, PurePath
 
 MOST_HOPS = 40
@@ -40,13 +41,19 @@ def _spelled(written: PurePath, base: tuple[str, ...]) -> tuple[str, ...]:
     return (*Path(written.parent).resolve().parts, written.name)
 
 
-def _lands_within(relative: str, base: tuple[str, ...], target: LinkTarget, *, textual: bool) -> bool:
+class Landing(Enum):
+    WITHIN = "within"
+    OUTSIDE = "outside"
+    LOOP = "loop"
+
+
+def _landing(relative: str, base: tuple[str, ...], target: LinkTarget, *, textual: bool) -> Landing:
     at, rest, hops = list(base), list(reversed(PurePath(relative).parts)), 0
     while rest:
         part = rest.pop()
         if part == "..":
             if len(at) == len(base):
-                return False
+                return Landing.OUTSIDE
             at.pop()
             continue
         at.append(part)
@@ -54,15 +61,21 @@ def _lands_within(relative: str, base: tuple[str, ...], target: LinkTarget, *, t
         if pointed is None:
             continue
         written, hops = PurePath(pointed), hops + 1
+        if hops > MOST_HOPS:
+            return Landing.LOOP
         whole = _spelled(written, base) if written.anchor else (*at[:-1], *written.parts)
         landed = collapsed(whole) if textual else whole
-        if hops > MOST_HOPS or landed is None or not _within(landed, base):
-            return False
+        if landed is None or not _within(landed, base):
+            return Landing.OUTSIDE
         at = list(base)
         rest.extend(reversed(landed[len(base) :]))
-    return True
+    return Landing.WITHIN
+
+
+def landing(relative: str, root: Path, target: LinkTarget = link_target) -> Landing:
+    found = {_landing(relative, root.parts, target, textual=textual) for textual in (False, True)}
+    return next(each for each in (Landing.OUTSIDE, Landing.LOOP, Landing.WITHIN) if each in found)
 
 
 def lands_within(relative: str, root: Path, target: LinkTarget = link_target) -> bool:
-    base = root.parts
-    return all(_lands_within(relative, base, target, textual=textual) for textual in (False, True))
+    return landing(relative, root, target) is Landing.WITHIN

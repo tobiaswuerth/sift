@@ -39,6 +39,14 @@ def test_links_left_out_and_names_that_are_no_text_are_counted_with_a_few_named(
     )
 
 
+def test_links_that_go_round_in_a_loop_are_said_apart_from_those_leading_outside() -> None:
+    found = Found({"a.md": A}, outside=("out.md", "loop.md", "round.md"))
+    assert said(Scanned(found, looped=("loop.md", "round.md")), {}) == (
+        Noted("1 file linked to outside the folder left out: out.md"),
+        Noted("2 files whose links go round in a loop left out: loop.md, round.md"),
+    )
+
+
 def test_files_named_as_records_are_left_out_with_how_to_rename_them() -> None:
     assert said(Scanned(Found({}), named_as_records=("a.jsonl#k.md",)), {}) == (
         Noted(

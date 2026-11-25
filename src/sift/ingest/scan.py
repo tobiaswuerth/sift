@@ -10,10 +10,11 @@ from typing import Protocol
 
 from sift.domain.plan.ignore import NOTHING_LEFT_OUT, Ignore, left_out
 from sift.domain.plan.indexing import Found, Stat, stored_time
+from sift.domain.plan.left_out import WhyLeftOut
 from sift.domain.text.decoding import encodable
 from sift.domain.text.kinds import kind_of, split_keyed_path, windows_cannot_open
 from sift.ingest.files import CHANGED, ChangedError, Identity, identity_at, own_identity_at
-from sift.ingest.links import LinkTarget, lands_within, link_target
+from sift.ingest.links import Landing, LinkTarget, landing, lands_within, link_target
 
 SKIPPED_FOLDERS = frozenset({"node_modules", "__pycache__"})
 GONE = (FileNotFoundError, NotADirectoryError)
@@ -71,6 +72,8 @@ class Scanned:
     identities: Mapping[str, Identity] = field(default_factory=dict[str, Identity])
     linked_folders: tuple[str, ...] = ()
     named_as_records: tuple[str, ...] = ()
+    looped: tuple[str, ...] = ()
+    why: Mapping[str, WhyLeftOut] = field(default_factory=dict[str, WhyLeftOut])
 
 
 @dataclass(slots=True)
@@ -86,6 +89,13 @@ class _Seen:
     named_as_records: list[str] = field(default_factory=list[str])
     identities: dict[str, Identity] = field(default_factory=dict[str, Identity])
     left_out: int = 0
+    looped: list[str] = field(default_factory=list[str])
+    why: dict[str, WhyLeftOut] | None = None
+
+
+def _because(seen: _Seen, path: str, reason: WhyLeftOut) -> None:
+    if seen.why is not None:
+        seen.why.setdefault(path, reason)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,12 +145,15 @@ def _file(entry: DirEntry, relative: str, seen: _Seen, guard: _Guard | None) -> 
         _unreached(seen, relative, error)
         return
     if not stat.S_ISREG(found.st_mode):
+        _because(seen, relative, WhyLeftOut.NO_FILE)
         return
     if not encodable(relative):
         seen.unnamed.append(relative.encode(errors="backslashreplace").decode())
+        _because(seen, relative, WhyLeftOut.UNNAMED)
         return
     if split_keyed_path(relative)[1]:
         seen.named_as_records.append(relative)
+        _because(seen, relative, WhyLeftOut.RECORD_NAME)
         return
     seen.files[relative] = Stat(stored_time(found.st_mtime_ns), found.st_size)
     if identity is not None:
@@ -171,6 +184,8 @@ def _listed(folder: str, relative: str, listing: Listing, seen: _Seen) -> Iterat
 def _left_out(walk: _Walk, path: str, *, folder: bool = False) -> bool:
     found = left_out(walk.reach.ignore, path, folder=folder)
     walk.seen.left_out += found
+    if found:
+        _because(walk.seen, path, WhyLeftOut.RULES)
     return found
 
 
@@ -184,6 +199,7 @@ def _links_to_a_folder(entry: DirEntry) -> bool:
 def _linked_folder(path: str, walk: _Walk) -> None:
     if not _left_out(walk, path, folder=True):
         walk.seen.linked_folders.append(f"{path}/")
+        _because(walk.seen, path, WhyLeftOut.LINKED_FOLDER)
 
 
 def _unopenable(path: str, walk: _Walk) -> None:
@@ -197,8 +213,12 @@ def _folder(entry: DirEntry, path: str, walk: _Walk) -> None:
         _linked_folder(path, walk)
     elif windows_cannot_open(entry.name, walk.reach.platform):
         _unopenable(path, walk)
-    elif not _left_out(walk, path, folder=True) and _folder_taken(entry):
+    elif _left_out(walk, path, folder=True):
+        pass
+    elif _folder_taken(entry):
         walk.folders.append((entry.path, f"{path}/"))
+    else:
+        _because(walk.seen, path, WhyLeftOut.PASSED_OVER)
 
 
 def _untyped(path: str, walk: _Walk, error: OSError) -> None:
@@ -209,14 +229,24 @@ def _untyped(path: str, walk: _Walk, error: OSError) -> None:
         walk.seen.refusals[f"{path}/"] = _reason(error)
 
 
+def _led_away(path: str, walk: _Walk, landed: Landing) -> None:
+    walk.seen.outside.append(path)
+    if landed is Landing.LOOP:
+        walk.seen.looped.append(path)
+    _because(walk.seen, path, WhyLeftOut.LOOP if landed is Landing.LOOP else WhyLeftOut.OUTSIDE)
+
+
 def _link(entry: DirEntry, path: str, walk: _Walk) -> None:
     guard, readable = walk.guard, kind_of(entry.name) is not None
-    if guard is not None and not lands_within(path, guard.root, guard.checks.target):
+    landed = Landing.WITHIN if guard is None else landing(path, guard.root, guard.checks.target)
+    if landed is not Landing.WITHIN:
         if readable and not _left_out(walk, path):
-            walk.seen.outside.append(path)
+            _led_away(path, walk, landed)
     elif _links_to_a_folder(entry):
         _linked_folder(path, walk)
-    elif readable and not _left_out(walk, path):
+    elif not readable:
+        _because(walk.seen, path, WhyLeftOut.NO_SUCH_KIND)
+    elif not _left_out(walk, path):
         _file(entry, path, walk.seen, guard)
 
 
@@ -227,7 +257,9 @@ def _taken(entry: DirEntry, relative: str, walk: _Walk) -> None:
             _folder(entry, path, walk)
         elif entry.is_symlink():
             _link(entry, path, walk)
-        elif kind_of(entry.name) is not None and not _left_out(walk, path):
+        elif kind_of(entry.name) is None:
+            _because(walk.seen, path, WhyLeftOut.NO_SUCH_KIND)
+        elif not _left_out(walk, path):
             _file(entry, path, walk.seen, walk.guard)
     except OSError as error:
         _untyped(path, walk, error)
@@ -258,21 +290,30 @@ class _PathEntry:
         return self.location.stat()
 
 
-def _passed_over(root: Path, folder: str, walk: _Walk) -> bool:
+def _passed_over(root: Path, folder: str, walk: _Walk) -> WhyLeftOut | None:
     if windows_cannot_open(PurePosixPath(folder).name, walk.reach.platform):
-        return True
+        return WhyLeftOut.UNOPENABLE
     entry = _PathEntry(root / folder)
-    linked = entry.is_junction() or _links_to_a_folder(entry)
-    return linked or _left_out(walk, folder, folder=True) or not _folder_taken(entry)
+    if entry.is_junction() or _links_to_a_folder(entry):
+        return WhyLeftOut.LINKED_FOLDER
+    if _left_out(walk, folder, folder=True):
+        return WhyLeftOut.RULES
+    return None if _folder_taken(entry) else WhyLeftOut.PASSED_OVER
 
 
 def scan_one(root: Path, relative: str, reach: Reach = WITHIN, *, links: LinkChecks = LINK_CHECKS) -> Scanned:
-    seen, guard = _Seen(), None if reach.follow_links else _Guard(root.resolve(), links)
+    seen, guard = _Seen(why={}), None if reach.follow_links else _Guard(root.resolve(), links)
     walk = _Walk(seen, [], guard, reach)
     *folders, _ = relative.split("/")
     within = ["/".join(folders[: at + 1]) for at in range(len(folders))]
-    if not any(_passed_over(root, folder, walk) for folder in within):
-        _taken(_PathEntry(root / relative), "".join(f"{folder}/" for folder in folders), walk)
+    passed_over = next((why for folder in within if (why := _passed_over(root, folder, walk)) is not None), None)
+    if passed_over is not None:
+        _because(seen, relative, passed_over)
+        return _scanned(seen)
+    entry = _PathEntry(root / relative)
+    _taken(entry, "".join(f"{folder}/" for folder in folders), walk)
+    if entry.is_dir():
+        _because(seen, relative, WhyLeftOut.FOLDER)
     return _scanned(seen)
 
 
@@ -313,4 +354,6 @@ def _scanned(seen: _Seen) -> Scanned:
         MappingProxyType(seen.identities),
         tuple(seen.linked_folders),
         tuple(seen.named_as_records),
+        tuple(seen.looped),
+        MappingProxyType(seen.why or {}),
     )

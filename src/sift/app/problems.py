@@ -50,9 +50,13 @@ def problems(folder: Path, scanned: Scanned, plan: IndexPlan, known: AbstractSet
     kept, left = _held(plan.kept), _held(plan.left_as_indexed)
     said.extend(_unlisted_folder(scanned, kept, unlisted) for unlisted in found.unlisted_folders)
     said.extend(_unlisted_file(scanned, known, unlisted) for unlisted in found.unlisted_files)
-    if found.outside:
-        outside = counted(len(found.outside), "file")
-        said.append(Noted(f"{outside} linked to outside the folder left out: {_named(found.outside)}"))
+    looping = frozenset(scanned.looped)
+    led_out = tuple(path for path in found.outside if path not in looping)
+    if led_out:
+        said.append(Noted(f"{counted(len(led_out), 'file')} linked to outside the folder left out: {_named(led_out)}"))
+    if scanned.looped:
+        looped = counted(len(scanned.looped), "file")
+        said.append(Noted(f"{looped} whose links go round in a loop left out: {_named(scanned.looped)}"))
     if scanned.named_as_records:
         named, listed = counted(len(scanned.named_as_records), "file"), _named(scanned.named_as_records)
         said.append(Noted(f"{named} left out, whose names read as a record's id: {listed}", NAMED_AS_RECORD_REMEDY))
