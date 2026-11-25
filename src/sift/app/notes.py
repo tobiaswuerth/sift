@@ -19,8 +19,8 @@ from sift.storage.store import read_store
 
 AMBIGUOUS_SHOWN = 5
 NAME_END = re.compile(r"[#|]")
-AMBIGUOUS_REMEDY = "give the note's whole id, as sift get takes it"
-NOTE_REMEDY = 'name a note by its id, as sift get takes it, or as links name it, e.g. "Acme AG"'
+AMBIGUOUS_REMEDY = "give the note's whole id"
+NOTE_REMEDY = 'name a note by its id, or as links name it, e.g. "Acme AG"'
 
 type NameCandidates = tuple[list[Candidate], list[Candidate]]
 

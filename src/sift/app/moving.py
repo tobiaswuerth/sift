@@ -75,7 +75,7 @@ def _refused(home: Path, one: Collection, new: Path) -> None:
 
 def _moved(home: Path, one: Collection, new: Path, report: Reporter, how: Moving) -> StoreMoved:
     report(CollectionStarted(one.name, str(new)))
-    with sole_writer(one.store, "sift move"), held_alone(one.store) as held:
+    with sole_writer(one.store, "a move"), held_alone(one.store) as held:
         tidied(home, one.id, how.unlink)
         if new.exists():
             raise _taken(new)

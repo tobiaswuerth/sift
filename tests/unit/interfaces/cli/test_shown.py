@@ -273,10 +273,14 @@ def test_switching_collections_says_which_changed_and_which_were_so_already() ->
 
 def test_what_a_search_left_out_of_a_collection_is_noted_with_its_remedy_before_the_count() -> None:
     hit = Hit("notes/a.md", "notes", "a.md", "A", 1, 2, 1.5, None)
-    left = Left("notes", "3 of its passages hold no vector yet", "run sift embed", Problem.NOT_EMBEDDED)
+    left = Left("notes", "3 of its passages hold no vector yet", "embed the collection", Problem.NOT_EMBEDDED)
     messages = hits(SearchResult((hit,), 1, (), left_out=(left,)), 0.25, "linux", PLAIN).messages
-    assert messages[:2] == (" note  notes: 3 of its passages hold no vector yet", "  fix  run sift embed")
-    assert messages[2].startswith("1 result")
+    assert messages[:3] == (
+        " note  notes: 3 of its passages hold no vector yet",
+        "  fix  embed the collection",
+        " next  sift embed notes",
+    )
+    assert messages[3].startswith("1 result")
 
 
 def test_stores_ruled_out_by_the_links_are_said_apart_from_those_searched() -> None:
@@ -364,16 +368,20 @@ def test_unresolved_targets_show_how_many_link_them_and_a_few_of_those() -> None
 def test_unresolved_targets_of_a_store_that_could_not_be_read_are_said_to_be_missing() -> None:
     found = Unresolved(
         (Target("Gone", 1, ("v/c.md",)),),
-        (Unsearched("w", "the store is damaged", "run sift index", Problem.STORE_DAMAGED),),
+        (Unsearched("w", "the store is damaged", "remove the collection", Problem.STORE_DAMAGED),),
     )
     assert shown_unresolved(found, "linux", PLAIN).messages[0] == "error  w: the store is damaged"
     alone = shown_unresolved(Unresolved((), found.unsearched), "linux", PLAIN)
-    assert (alone.results, len(alone.messages)) == ((), 2)
+    assert (alone.results, alone.messages[1:]) == ((), ("  fix  remove the collection", " next  sift rm w"))
 
 
 def test_links_of_a_note_found_while_a_store_could_not_be_read_say_so() -> None:
     found = Links(
-        "v/A.md", "A", (), None, (Unsearched("w", "the store is damaged", "run sift index", Problem.STORE_DAMAGED),)
+        "v/A.md",
+        "A",
+        (),
+        None,
+        (Unsearched("w", "the store is damaged", "remove the collection", Problem.STORE_DAMAGED),),
     )
     shown_found = shown_links(found, "linux", PLAIN)
     assert shown_found.results == ("A (v/A.md) links to: nothing",)

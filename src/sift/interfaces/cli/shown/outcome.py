@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import NamedTuple
 
-from sift.api.errors import InvalidRequestError, JobStoppedError, SiftError, system_failure
+from sift.api.errors import InvalidRequestError, JobStoppedError, Problem, SiftError, system_failure
 from sift.api.fields import FieldValue
 from sift.api.search import Left, Unsearched
 from sift.api.wire import Json, encoded_error
@@ -18,6 +18,16 @@ EXIT_CODES: MappingProxyType[type[SiftError], int] = MappingProxyType(
     {InvalidRequestError: USAGE, JobStoppedError: INTERRUPTED}
 )
 NO_FLAGS: Mapping[str, str] = MappingProxyType({})
+NEXT_STEPS: Mapping[Problem, tuple[str, ...]] = MappingProxyType(
+    {
+        Problem.NOT_EMBEDDED: ("sift", "embed", "NAME"),
+        Problem.OTHER_MODEL: ("sift", "embed", "--reset"),
+        Problem.KEYWORDS_REMADE: ("sift", "index", "NAME"),
+        Problem.INACTIVE_COLLECTION: ("sift", "activate", "NAME"),
+        Problem.STORE_MISSING: ("sift", "rm", "NAME"),
+        Problem.STORE_DAMAGED: ("sift", "rm", "NAME"),
+    }
+)
 STOPPED_WRITING = "stopped: what was written so far is kept"
 STOPPED_KEEPING = "stopped: {files} of {name} are kept; the others are read again"
 
@@ -26,6 +36,12 @@ class Shown(NamedTuple):
     results: tuple[str, ...]
     messages: tuple[str, ...]
     code: int = DONE
+
+
+def command_next(code: Problem, style: Style, name: str = "NAME") -> tuple[str, ...]:
+    words = NEXT_STEPS.get(code)
+    said = None if words is None else " ".join(name if each == "NAME" else each for each in words)
+    return () if said is None else (labelled("next", said, Tone.SECONDARY, style),)
 
 
 def fix(remedy: str | None, style: Style) -> tuple[str, ...]:
@@ -58,6 +74,7 @@ def unsearched_lines(unsearched: tuple[Unsearched, ...], style: Style) -> tuple[
         for line in (
             labelled("error", f"{each.collection}: {each.message}", Tone.ERROR, style),
             *fix(each.remedy, style),
+            *command_next(each.code, style, each.collection),
         )
     )
 
@@ -69,6 +86,7 @@ def left_out_lines(left_out: tuple[Left, ...], style: Style) -> tuple[str, ...]:
         for line in (
             labelled("note", f"{each.collection}: {each.message}", Tone.WARNING, style),
             *fix(each.remedy, style),
+            *command_next(each.code, style, each.collection),
         )
     )
 
@@ -84,6 +102,6 @@ def failure(
     field = known.field if isinstance(known, InvalidRequestError) else None
     flag = flags.get(field) if field is not None else None
     said = known.message if flag is None else f"{flag}: {known.message}"
-    lines = (labelled("error", said, Tone.ERROR, style), *fix(known.remedy, style))
+    lines = (labelled("error", said, Tone.ERROR, style), *fix(known.remedy, style), *command_next(known.code, style))
     code = EXIT_CODES.get(type(known), FAILED)
     return Shown((_error_json(encoded_error(known)),) if as_json else (), lines, code)

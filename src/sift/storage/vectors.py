@@ -23,9 +23,9 @@ TITLES = "SELECT id, title FROM documents WHERE id IN (SELECT value FROM json_ea
 CODES = "SELECT chunk, bits FROM codes ORDER BY chunk"
 READ = 65_536
 MATRIX = 2
-EMBED_REMEDY = "run sift embed with reset to embed every collection with {model}"
+EMBED_REMEDY = "embed again with reset, to embed every collection with {model}"
 DAMAGED_CODES = "the store's codes do not match its vectors"
-CODES_REMEDY = "run sift embed with reset, which embeds every collection again"
+CODES_REMEDY = "embed again with reset, which embeds every collection again"
 
 
 class Pending(NamedTuple):

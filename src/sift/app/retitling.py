@@ -83,7 +83,7 @@ def _finished(
 
 def retitle(home: Path, one: Collection, wanted: Choices, report: Reporter, limits: Limits = LIMITS) -> Retitled:
     report(CollectionStarted(one.name, str(one.folder)))
-    with sole_writer(one.store, "sift add"), connected(one.store, one.id) as connection:
+    with sole_writer(one.store, "a retitling"), connected(one.store, one.id) as connection:
         with writing(connection) as transaction:
             run(transaction, PROMISED, (RETITLING, choices_json(wanted)))
         return _finished(connection, wanted.title_from, partial(set_choices, home, one.id, wanted), report, limits)

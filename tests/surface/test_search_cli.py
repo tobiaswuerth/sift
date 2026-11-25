@@ -91,7 +91,7 @@ def test_search_fails_if_a_collection_could_not_be_searched_however_it_answers(s
     code, out, err = ran(settings, "search", "brush")
     assert (code, out) == (1, "")
     assert err.startswith("error  notes: the store is missing: ")
-    assert "  fix  connect the drive it lies on, or run sift rm with its name\n" in err
+    assert "  fix  connect the drive it lies on, or remove the collection\n next  sift rm notes\n" in err
     assert ran(settings, "search", "brush", "--json")[0] == 1
 
 

@@ -54,7 +54,7 @@ def test_vsearch_before_embedding_says_to_embed(embedding: Settings, notes: Path
     assert ran(embedding, "index")[0] == 0
     code, out, err = ran(embedding, "vsearch", "brush")
     assert (code, out) == (1, "")
-    assert err.split("\n")[:2] == ["error  notes: it holds no vectors yet", "  fix  run sift embed"]
+    assert err.split("\n")[:2] == ["error  notes: it holds no vectors yet", "  fix  embed the collection"]
 
 
 def test_the_model_library_is_imported_only_once_a_text_is_embedded() -> None:

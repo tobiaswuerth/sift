@@ -3,6 +3,7 @@ from collections.abc import Mapping
 
 import pytest
 
+from sift.interfaces.cli.main import ENTRIES
 from tools import check_idioms
 from tools.canonical import canonical
 from tools.check_idioms import idioms
@@ -207,13 +208,17 @@ def test_the_repository_keeps_the_idioms() -> None:
 
 
 def test_a_flag_of_the_command_line_outside_the_interfaces_is_found() -> None:
-    flagged = ["CLI syntax outside sift.interfaces: say what to do, and let the interface name its flag"]
+    flagged = ["CLI syntax outside sift.interfaces: say what to do, and let the interface name its command or flag"]
     assert problems("src/sift/app/a.py", 'X = "ask for fewer, e.g. -k 10"\n') == flagged
     assert problems("src/sift/app/a.py", 'X = f"--budget {b} leaves no time"\n') == flagged
     assert problems("src/sift/app/a.py", 'X = "run sift embed --reset"\n') == flagged
-    allowed = 'X = "run sift embed with reset"\nY = "a -created sort, a k-means"\nZ = "uv tool install --reinstall a"\n'
+    assert problems("src/sift/app/a.py", 'X = "run sift embed with reset"\n') == flagged
+    assert problems("src/sift/app/a.py", 'X = "a note: its id, as sift get takes it"\n') == flagged
+    allowed = 'X = "embed again with reset"\nY = "a -created sort, a k-means"\nZ = "uv tool install --reinstall a"\n'
     assert problems("src/sift/app/a.py", allowed) == []
-    assert problems("src/sift/interfaces/cli/a.py", 'X = "-k 10"\n') == []
+    assert problems("src/sift/app/a.py", 'W = "from one sift only, or a newer sift"\n') == []
+    assert problems("src/sift/interfaces/cli/a.py", 'X = "-k 10 or sift embed"\n') == []
+    assert set(check_idioms.COMMANDS) >= set(ENTRIES)
 
 
 @pytest.mark.parametrize(

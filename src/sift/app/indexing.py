@@ -189,7 +189,7 @@ def _indexed(one: Collection, asked: _Indexing, paths: tuple[str, ...] = ()) -> 
     report, limits = asked.report, asked.limits
     report(CollectionStarted(one.name, str(one.folder)))
     try:
-        with sole_writer(one.store, "sift index"), connected(one.store, one.id) as connection:
+        with sole_writer(one.store, "an index"), connected(one.store, one.id) as connection:
             tidied(asked.home, one.id)
             current = resumed(asked.home, one, connection, report, limits)
             _ordered(connection, report, limits.batches)

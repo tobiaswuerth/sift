@@ -52,7 +52,7 @@ from sift.storage.writer import sole_writer
 
 OBSIDIAN = ".obsidian"
 FIELD_REMEDY = "name the field, e.g. abstract"
-NONE_ACTIVE_REMEDY = "run sift activate with a collection's name"
+NONE_ACTIVE_REMEDY = "activate a collection by its name"
 
 
 def _field(name: str | None, field: str) -> str | None:
@@ -114,7 +114,7 @@ def _held(one: Collection) -> tuple[int | None, str | None]:
 
 def remove(home: Path, request: RemoveCollection, unlink: Callable[[Path], None] = unlinked) -> CollectionRemoved:
     one = named(known_collections(home), request.name)
-    with sole_writer(one.store, "sift rm") if one.store.parent.is_dir() else nullcontext():
+    with sole_writer(one.store, "a removal") if one.store.parent.is_dir() else nullcontext():
         documents, problem = _held(one)
         forget_collection(home, one.id)
     left = tuple(str(file) for file in store_files_left(one.store, unlink))

@@ -211,7 +211,7 @@ def test_a_store_taken_by_another_model_midway_is_skipped_saying_so(home: Path) 
     assert said[-1] == Noted(outcome.outcome.message, outcome.outcome.remedy)
     (refused,) = busy
     assert isinstance(refused, Skipped)
-    assert "another sift writes it now (sift embed, process " in refused.message
+    assert "another sift writes it now (an embedding, process " in refused.message
 
 
 def test_a_store_a_reset_could_not_clear_is_skipped_saying_why(home: Path) -> None:

@@ -38,11 +38,11 @@ from sift.storage.texts import TextSpan, spans_text
 
 DOCUMENTS = """SELECT id, substr(title, 1, ?) AS title, substr(meta, 1, ?) AS meta FROM keyword_documents
                WHERE id IN (SELECT value FROM json_each(?))"""
-REMAKE_REMEDY = "run sift index to remake it"
+REMAKE_REMEDY = "index the collection to remake it"
 STALE = "the store's keyword index is of another version of sift"
 UNFINISHED = "the store's keyword index is not yet wholly remade"
 TAKEN_OVER = "another sift began remaking this keyword index for itself and has not finished"
-TAKEN_OVER_REMEDY = "run sift index from one sift only: sifts whose SQLite renders numbers apart remake it in turn"
+TAKEN_OVER_REMEDY = "index it from one sift only: sifts whose SQLite renders numbers apart remake it in turn"
 DIGITS = re.compile("[0-9]{1,19}")
 MOST_ROW = (1 << 63) - 1
 TEXTS_AT_ONCE = 1000

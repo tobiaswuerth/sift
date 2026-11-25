@@ -21,7 +21,7 @@ from sift.storage.documents import chunks_of, fields_by_document
 from sift.storage.vector_meta import model_of
 from sift.storage.vectors import vectors_of
 
-NO_DIRECTION_REMEDY = "start from another document, or search its words with sift vsearch"
+NO_DIRECTION_REMEDY = "start from another document, or search its words by meaning"
 
 
 @dataclass(eq=False, frozen=True, slots=True)

@@ -54,7 +54,7 @@ LAYOUT: tuple[Migration, ...] = (
 )
 STORE_TAKEN_REMEDY = "move it away, or choose another place for it"
 IN_USE_REMEDY = "wait until it is closed, then add the folder again"
-INACTIVE_REMEDY = "run sift activate with its name"
+INACTIVE_REMEDY = "activate it"
 
 
 @dataclass(frozen=True, slots=True)

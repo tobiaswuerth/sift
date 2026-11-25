@@ -166,7 +166,7 @@ def test_vectors_of_another_model_are_refused_until_forgotten() -> None:
         refusal = "holds vectors of model-a, not of model-b"
         with pytest.raises(StoreUnavailableError, match=refusal) as refused, writing(connection) as transaction:
             put_vectors(transaction, ids, vectors(len(ids)), "model-b")
-        assert refused.value.remedy == "run sift embed with reset to embed every collection with model-b"
+        assert refused.value.remedy == "embed again with reset, to embed every collection with model-b"
         with writing(connection) as transaction:
             forget_vectors(transaction)
         with reading(connection) as transaction:
@@ -226,7 +226,7 @@ def test_vectors_of_another_width_under_the_same_model_are_refused() -> None:
             writing(connection) as transaction,
         ):
             put_vectors(transaction, ids, vectors(len(ids), 32), "m")
-        assert refused.value.remedy == "run sift embed with reset to embed every collection with m"
+        assert refused.value.remedy == "embed again with reset, to embed every collection with m"
 
 
 @pytest.mark.parametrize(

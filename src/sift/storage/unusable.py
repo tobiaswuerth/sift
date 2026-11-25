@@ -10,7 +10,7 @@ from sift.api.errors import Problem, StoreUnavailableError
 from sift.domain.errors import DamagedError
 from sift.storage.database import DAMAGED, primary_code
 
-DAMAGED_REMEDY = "run sift rm with its name, then add its folder and index it again"
+DAMAGED_REMEDY = "remove the collection, then add its folder and index it again"
 BUSY = ("another sift is writing to {what} {path}", "wait for it to finish, then run sift again")
 NOT_WRITABLE = (
     "{what} {path} cannot be written: {error}",

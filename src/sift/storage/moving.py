@@ -16,7 +16,7 @@ from sift.storage.unusable import Unusable, unavailable_if_unusable
 COPY_PAGES = 16_384
 LINKLESS = frozenset({errno.EXDEV, errno.EPERM, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EMLINK})
 BUSY_CODES = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
-OPEN_ELSEWHERE = "another sift has the store {path} open: a search, sift index or sift embed"
+OPEN_ELSEWHERE = "another sift has the store {path} open: a search, an index or an embedding"
 OPEN_ELSEWHERE_REMEDY = "wait until it is done, or stop that process"
 COPY = Unusable("the copy", "check the drive it goes to, then move the collection again")
 

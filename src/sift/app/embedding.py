@@ -22,8 +22,8 @@ from sift.storage.vector_meta import left
 from sift.storage.vectors import Pending, VectorsPut, forget_vectors, pending, put_vectors, refuse_model
 from sift.storage.writer import sole_writer
 
-RESET_ALL_REMEDY = "run sift embed with reset, naming no collection"
-BROKEN_REMEDY = "run sift embed again; if they stay, the model fails on their text"
+RESET_ALL_REMEDY = "embed again with reset, naming no collection"
+BROKEN_REMEDY = "embed again; if they stay, the model fails on their text"
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +86,7 @@ def _embedded(one: Collection, work: Work, failed: Failed) -> CollectionEmbedded
     if one.id in failed:
         return _skipped(one, work.report, failed[one.id])
     try:
-        with sole_writer(one.store, "sift embed"), connected(one.store, one.id) as connection:
+        with sole_writer(one.store, "an embedding"), connected(one.store, one.id) as connection:
             return CollectionEmbedded(one.name, _filled(connection, work))
     except StoreUnavailableError as error:
         return _skipped(one, work.report, error)
@@ -95,7 +95,7 @@ def _embedded(one: Collection, work: Work, failed: Failed) -> CollectionEmbedded
 def _forgotten(one: Collection) -> StoreUnavailableError | None:
     try:
         with (
-            sole_writer(one.store, "sift embed"),
+            sole_writer(one.store, "an embedding"),
             connected(one.store, one.id) as connection,
             writing(connection) as transaction,
         ):

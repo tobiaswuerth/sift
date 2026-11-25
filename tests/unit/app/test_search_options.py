@@ -388,5 +388,5 @@ def test_passages_without_vectors_are_said_to_be_passed_over_by_meaning(home: Pa
             Problem.NOT_EMBEDDED,
             "1 of its passages holds no vector yet: a search by meaning passes it over",
         )
-        assert note.remedy == "run sift embed"
+        assert note.remedy == "embed the collection"
     assert search(home, SearchKeywords("pigment")).left_out == ()

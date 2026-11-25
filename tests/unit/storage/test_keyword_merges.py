@@ -262,7 +262,7 @@ def test_settling_or_writing_a_half_remade_index_says_to_finish_the_remake() -> 
         remake_started(connection)
         with pytest.raises(StoreUnavailableError, match="not yet wholly remade") as refused:
             list(settle(connection))
-        assert refused.value.remedy == "run sift index to remake it"
+        assert refused.value.remedy == "index the collection to remake it"
         with pytest.raises(StoreUnavailableError, match="not yet wholly remade"):
             applied(connection, [{"b.md": ("", "b", "three")}])
 

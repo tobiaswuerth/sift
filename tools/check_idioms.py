@@ -77,7 +77,32 @@ TEXT_CUT_IN_SQL = (
 )
 FLAG = re.compile(r"(?<![\w-])(?:--[a-z][a-z-]*|-[kcf])(?![\w-])")
 INSTALLER = re.compile(r"\buv [a-z]")
-FLAG_OUTSIDE = "CLI syntax outside sift.interfaces: say what to do, and let the interface name its flag"
+COMMANDS = (
+    "activate",
+    "add",
+    "bench",
+    "deactivate",
+    "embed",
+    "get",
+    "index",
+    "jobs",
+    "links",
+    "mentions",
+    "move",
+    "query",
+    "rm",
+    "search",
+    "serve",
+    "similar",
+    "status",
+    "ui",
+    "unresolved",
+    "update",
+    "vsearch",
+    "worker",
+)
+COMMAND = re.compile(rf"\bsift (?:{'|'.join(COMMANDS)})\b")
+FLAG_OUTSIDE = "CLI syntax outside sift.interfaces: say what to do, and let the interface name its command or flag"
 REMEDY = "Each finding names its fix."
 
 
@@ -265,7 +290,7 @@ def recursion_caught(path: str, tree: ast.Module, tuples_of: TuplesOf = first_pa
 
 
 def _flagged(text: str) -> bool:
-    return bool(FLAG.search(text)) and not INSTALLER.search(text)
+    return (bool(FLAG.search(text)) and not INSTALLER.search(text)) or bool(COMMAND.search(text))
 
 
 def flags_outside_interfaces(path: str, tree: ast.Module) -> Iterator[Finding]:

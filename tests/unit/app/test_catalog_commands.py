@@ -169,7 +169,7 @@ def test_an_inactive_collection_named_is_refused_saying_how_to_search_it(home: P
             call()
         assert (refused.value.code, refused.value.remedy) == (
             Problem.INACTIVE_COLLECTION,
-            "run sift activate with its name",
+            "activate it",
         )
     (unfound,) = documents(home, asked("diary/monday.md")).unfound
     assert (unfound.id, unfound.code) == ("diary/monday.md", Problem.INACTIVE_COLLECTION)
@@ -185,7 +185,7 @@ def test_with_every_collection_inactive_a_search_says_how_to_activate_one(home: 
     ):
         with pytest.raises(InvalidRequestError, match="no collection is active") as refused:
             call()
-        assert refused.value.remedy == "run sift activate with a collection's name"
+        assert refused.value.remedy == "activate a collection by its name"
 
 
 def test_an_inactive_collection_is_left_out_of_index_and_embed_unless_named(home: Path, tmp_path: Path) -> None:

@@ -30,7 +30,7 @@ from sift.storage.unusable import unavailable_if_unusable
 from sift.storage.vector_meta import left, model_of, width_held
 from sift.storage.vectors import EMBED_REMEDY, codes_of, refuse_recipe, vector_generation
 
-UNEMBEDDED_REMEDY = "run sift embed"
+UNEMBEDDED_REMEDY = "embed the collection"
 EMPTY_QUERY = "an empty query finds nothing"
 OUT_OF_TIME = "not searched: the budget was spent before its vectors were read"
 OUT_OF_TIME_REMEDY = "give the search more seconds, or none"

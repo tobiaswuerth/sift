@@ -177,7 +177,7 @@ def catalog_run(home: Path, notes: Path) -> None:
     refused = sift(home, "search", "learning")
     assert (refused.returncode, refused.stderr.split("\n")[:2]) == (
         2,
-        ["error  no collection is active", "  fix  run sift activate with a collection's name"],
+        ["error  no collection is active", "  fix  activate a collection by its name"],
     )
     assert answer(sift(home, "activate", "notes", "--json"))["changed"] == ["notes"]
     moved = sift(home, "move", "notes", str(home / "kept"), "--json")

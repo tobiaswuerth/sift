@@ -28,7 +28,7 @@ from sift.storage.unusable import DAMAGED_REMEDY, unavailable_if_unusable
 from sift.storage.writer import sole_writer
 
 NUMBERED_TABLES = ("documents", "chunks")
-MISSING_REMEDY = "connect the drive it lies on, or run sift rm with its name"
+MISSING_REMEDY = "connect the drive it lies on, or remove the collection"
 BRINGING_UP_TO_DATE = "bringing the store up to date"
 LEFT_BY_ADD = """SELECT (SELECT value FROM meta WHERE key = 'collection') = ?
                         AND NOT EXISTS (SELECT 1 FROM documents)"""
