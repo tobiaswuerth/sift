@@ -78,6 +78,20 @@ def test_serve_without_a_folder_of_the_user_s_own_is_refused_saying_what_to_set(
     assert refused.value.remedy == NO_OWN_FOLDER_REMEDY
 
 
+@pytest.mark.parametrize("kept", [b"{nope", b"[]", b'{"port": "x"}', b"\xff", b""])
+def test_a_home_process_whose_endpoint_cannot_be_read_is_refused_saying_what_to_do(
+    settings: Settings, kept: bytes
+) -> None:
+    listed = own_endpoint(settings)
+    listed.parent.mkdir(parents=True)
+    listed.write_bytes(kept)
+    assert found(settings) is None
+    with sole_writer(settings.home / SERVER, SERVING), pytest.raises(StoreUnavailableError) as refused:
+        found(settings, patience=LOOK_EVERY_SECONDS)
+    said = f"the file in which the home process (process {os.getpid()}) says where it listens cannot be read: {listed}"
+    assert (refused.value.message, refused.value.remedy) == (said, "stop that process and start sift serve again")
+
+
 def test_the_endpoint_of_another_process_is_not_the_home_process_that_holds_the_home(settings: Settings) -> None:
     settings.home.mkdir(parents=True)
     written(own_endpoint(settings), Endpoint(9, os.getpid() + 1, "t", "2.0.0"))

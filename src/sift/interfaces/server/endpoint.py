@@ -21,6 +21,8 @@ STARTING_SECONDS = 2.0
 LOOK_EVERY_SECONDS = 0.05
 STARTING = "a home process is starting, or serves another user (process {pid})"
 STARTING_REMEDY = "ask again in a moment; a home process serves only the user who started it"
+UNREAD = "the file in which the home process (process {pid}) says where it listens cannot be read: {path}"
+UNREAD_REMEDY = "stop that process and start sift serve again"
 NO_OWN_FOLDER = "no folder of the user's own is known, to keep the home process's token in"
 NO_OWN_FOLDER_REMEDY = "set LOCALAPPDATA on Windows, XDG_STATE_HOME elsewhere, to an absolute folder"
 KEY_CHARACTERS = 32
@@ -68,10 +70,11 @@ def _written_by(path: Path | None, holder: Holder) -> Endpoint | None:
     if path is None:
         return None
     try:
-        read = cast("object", json.loads(path.read_bytes()))
+        endpoint = read_answer(Endpoint, cast("object", json.loads(path.read_bytes())))
     except FileNotFoundError:
         return None
-    endpoint = read_answer(Endpoint, read)
+    except (InvalidRequestError, KeyError, ValueError, TypeError):
+        raise StoreUnavailableError(UNREAD.format(pid=holder.pid, path=path), UNREAD_REMEDY) from None
     return endpoint if endpoint.pid == holder.pid else None
 
 
