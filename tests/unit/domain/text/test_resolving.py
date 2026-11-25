@@ -4,7 +4,7 @@ import pytest
 
 from sift.api.ids import DocumentId
 from sift.domain.text.links import LinkKind, name_key
-from sift.domain.text.resolving import UNRESOLVED, Candidate, Resolution, Via, link_path, resolved
+from sift.domain.text.resolving import UNRESOLVED, Candidate, Resolution, Via, around, link_path, resolved
 
 
 def candidate(at: int, path: str) -> Candidate:
@@ -88,3 +88,12 @@ def test_paths_compare_folded_and_a_note_s_without_its_extension() -> None:
     assert link_path("Notes/Plan.md", MARKDOWN, "/People/Hans.md") == "People/Hans.md"
     hans = [candidate(0, "People/Hans.md"), candidate(1, "Notes/People/Hans.md")]
     assert resolved("Notes/Plan.md", MARKDOWN, "/People/Hans.md", hans, []) == via(Via.PATH, 0)
+
+
+@pytest.mark.parametrize(
+    "written, target",
+    [("[t](Alice%20Example.md)", "Alice Example.md"), ("[[ALICE]]", "alice"), ("[[Alice]]", "Alice")],
+)
+def test_a_backlink_s_excerpt_holds_its_link_however_the_link_is_written(written: str, target: str) -> None:
+    line = "word " * 200 + written + " word" * 200
+    assert written in around(line, target)

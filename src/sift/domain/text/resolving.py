@@ -2,6 +2,7 @@ import posixpath
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from urllib.parse import quote
 
 from sift.api.ids import DocumentId
 from sift.domain.text.links import LinkKind, folded, name_key, spelled_key
@@ -95,11 +96,18 @@ class Linking:
     target: str
 
 
+def _found_at(content: str, target: str) -> int:
+    for written in (target, quote(target)):
+        if (at := content.find(written)) >= 0:
+            return at
+    return content.lower().find(target.lower())
+
+
 def around(text: str, target: str) -> str:
     content = text.strip()
     if len(content) <= LINE_CHARS:
         return content
-    start = max(0, content.find(target) - LINE_CHARS // 3)
+    start = max(0, _found_at(content, target) - LINE_CHARS // 3)
     end = start + LINE_CHARS
     return (ELLIPSIS if start else "") + content[start:end] + (ELLIPSIS if end < len(content) else "")
 
