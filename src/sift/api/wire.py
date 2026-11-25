@@ -1,6 +1,6 @@
 import dataclasses
 import types
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from enum import Enum
 from functools import cache
 from types import MappingProxyType
@@ -18,7 +18,7 @@ from sift.api.errors import (
     SystemFailureError,
 )
 from sift.api.fields import Fields, FieldValue
-from sift.api.requests import fits, named, type_name
+from sift.api.requests import fits, named, shown_value
 
 type Json = str | int | float | bool | list[Json] | dict[str, Json] | None
 
@@ -59,8 +59,24 @@ class WireError(ValueError):
     pass
 
 
-def _refused(field: str, problem: str) -> InvalidRequestError:
-    return InvalidRequestError(problem, WIRE_REMEDY, field)
+def _refused(field: str, problem: str, remedy: str) -> InvalidRequestError:
+    return InvalidRequestError(problem, remedy, field)
+
+
+def _not_of(field: str, data: object, kind: object) -> InvalidRequestError:
+    wanted = named(kind)
+    return _refused(field, f"{field} is {shown_value(data)}, not {wanted}", f"give {field} as {wanted}")
+
+
+def _path(outer: str | None, name: str) -> str:
+    return name if outer is None else f"{outer}.{name}"
+
+
+def _within(outer: str, field: str | None, own: Collection[str]) -> str | None:
+    base = outer.rsplit(".", 1)[-1].split("[", 1)[0]
+    if field is None or field == base or field.startswith(f"{base}."):
+        return outer + ("" if field is None else field[len(base) :])
+    return f"{outer}.{field}" if field in own else field
 
 
 def _plain(kind: object) -> object:
@@ -86,23 +102,37 @@ def _fields(kind: type) -> tuple[tuple[str, object, bool], ...]:
     )
 
 
+def _refuse_unknown(known: Mapping[str, object], given: Mapping[object, object], outer: str | None) -> None:
+    whole = "the request" if outer is None else outer
+    for key in given:
+        if key not in known:
+            said = shown_value(str(key))
+            raise _refused(
+                _path(outer, str(key)), f"{whole} takes no {said}", f"leave out {said}: it takes {', '.join(known)}"
+            )
+
+
 def _object(kind: type, data: object, outer: str | None, *, strict: bool) -> object:
     if not isinstance(data, dict):
-        raise WireError(f"a {type_name(kind).lower()} is an object")
+        raise WireError
     given = cast("dict[object, object]", data)
     known = {name: (hint, needed) for name, hint, needed in _fields(kind)}
-    for key in given:
-        if strict and key not in known:
-            raise _refused(outer or str(key), f"{kind.__name__} takes no {key}")
+    if strict:
+        _refuse_unknown(known, given, outer)
     for name, (_, needed) in known.items():
         if needed and name not in given:
-            raise _refused(outer or name, f"{kind.__name__} needs {name}")
+            raise _refused(_path(outer, name), f"{outer or 'the request'} needs {name}", f"give {_path(outer, name)}")
     built = {
-        name: _value(hint, given[name], outer or name, strict=strict)
+        name: _value(hint, given[name], _path(outer, name), strict=strict)
         for name, (hint, _) in known.items()
         if name in given
     }
-    return cast("object", kind(**built))
+    try:
+        return cast("object", kind(**built))
+    except InvalidRequestError as error:
+        if outer is not None:
+            error.field = _within(outer, error.field, known)
+        raise
 
 
 def _discriminated(members: tuple[object, ...], data: object) -> object | None:
@@ -122,17 +152,20 @@ def _one(kind: object, data: object, field: str, *, strict: bool) -> object:
         return data
     if get_origin(kind) is Literal:
         if data not in cast("tuple[object, ...]", get_args(kind)):
-            raise _refused(field, f"{field} is {data!r}, not {named(kind)}")
+            raise _not_of(field, data, kind)
         return data
     if get_origin(kind) is tuple and isinstance(data, list):
         (each, _) = cast("tuple[object, object]", get_args(kind))
-        return tuple(_value(each, item, field, strict=strict) for item in cast("list[object]", data))
+        items = enumerate(cast("list[object]", data))
+        return tuple(_value(each, item, f"{field}[{at}]", strict=strict) for at, item in items)
     if isinstance(kind, type) and issubclass(kind, Enum):
         try:
             return kind(data)
         except ValueError:
             choices = ", ".join(str(member) for member in kind)
-            raise _refused(field, f"{data!r} is none of {choices}") from None
+            raise _refused(
+                field, f"{shown_value(data)} is none of {choices}", f"give {field} as one of {choices}"
+            ) from None
     if isinstance(kind, type) and dataclasses.is_dataclass(kind):
         return _object(kind, data, field, strict=strict)
     return data
@@ -146,11 +179,11 @@ def _first_taking(members: tuple[object, ...], data: object, field: str, whole: 
             continue
         if fits(found, member):
             return found
-    raise _refused(field, f"{field} is {data!r}, not {named(whole)}")
+    raise _not_of(field, data, whole)
 
 
 def _value(kind: object, data: object, field: str, *, strict: bool) -> object:
-    plain = _plain(kind)
+    plain = whole = _plain(kind)
     if get_origin(plain) is types.UnionType:
         members = tuple(_plain(member) for member in cast("tuple[object, ...]", get_args(plain)))
         if data is None and types.NoneType in members:
@@ -164,10 +197,10 @@ def _value(kind: object, data: object, field: str, *, strict: bool) -> object:
         plain = rest[0]
     try:
         found = _one(plain, data, field, strict=strict)
-    except WireError as error:
-        raise _refused(field, str(error)) from None
+    except WireError:
+        raise _not_of(field, data, whole) from None
     if not fits(found, plain):
-        raise _refused(field, f"{field} is {data!r}, not {named(plain)}")
+        raise _not_of(field, data, whole)
     return found
 
 

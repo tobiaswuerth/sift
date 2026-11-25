@@ -198,6 +198,15 @@ def test_a_failure_says_what_failed_and_how_to_fix_it() -> None:
     assert failure(InvalidRequestError("-k 0 asks for no result", "ask for one"), PLAIN).code == USAGE
 
 
+def test_a_failure_of_a_field_or_a_part_of_one_names_its_flag() -> None:
+    flags = {"filters": "--filter", "k": "-k"}
+    for field in ("filters", "filters.values", "filters[2].values[0]"):
+        refused = InvalidRequestError("a range takes one value", "give one", field)
+        assert failure(refused, PLAIN, flags=flags).messages[0] == "error  --filter: a range takes one value"
+    unknown = NotFoundError("no collection is named 'x'", "add it", "collections")
+    assert failure(unknown, PLAIN, flags=flags).messages[0] == "error  no collection is named 'x'"
+
+
 def test_a_failure_asked_for_in_json_is_json_too() -> None:
     found = failure(StoreUnavailableError("busy", "wait"), PLAIN, as_json=True)
     assert json.loads(found.results[0]) == {

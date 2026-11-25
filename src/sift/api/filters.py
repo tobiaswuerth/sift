@@ -7,7 +7,7 @@ from typing import cast
 
 from sift.api.described import FIELD_LENGTH, TEXT_LENGTH
 from sift.api.errors import InvalidRequestError
-from sift.api.requests import HALF_PAIR_REMEDY, holds_half_a_pair
+from sift.api.requests import HALF_PAIR_REMEDY, holds_half_a_pair, shown_value
 
 type FilterValue = str | int | float | bool
 
@@ -40,15 +40,15 @@ class Filter:
     def __post_init__(self) -> None:
         field, operator = cast("object", self.field), cast("object", self.operator)
         if not isinstance(operator, Operator):
-            raise _wrong(f"the operator {operator!r} is no Operator: give one of {', '.join(Operator)}")
+            raise _wrong(f"the operator {operator!r} is no Operator: give one of {', '.join(Operator)}", "operator")
         if not isinstance(field, str) or not field:
-            raise _wrong("a filter names no field")
+            raise _wrong("a filter names no field", "field")
         if holds_half_a_pair(field) or holds_half_a_pair(self.values):
             raise InvalidRequestError("a filter holds half a surrogate pair", HALF_PAIR_REMEDY, "filters")
         if not self.values:
-            raise _wrong(f"the filter on {self.field!r} has no value")
+            raise _wrong(f"the filter on {self.field!r} has no value", "values")
         if self.operator not in SETS and len(self.values) > 1:
-            raise _wrong(f"the range on {self.field!r} takes one value, not {len(self.values)}")
+            raise _wrong(f"the range on {self.field!r} takes one value, not {len(self.values)}", "values")
         _refuse_too_long(field, cast("tuple[object, ...]", self.values))
         object.__setattr__(self, "field", unicodedata.normalize("NFC", field))
         values = tuple(
@@ -57,22 +57,23 @@ class Filter:
         object.__setattr__(self, "values", values)
         for value in values:
             if not isinstance(value, str | int | float):
-                raise _wrong(f"the filter on {self.field!r}: {value!r} is no text, number, true or false")
+                raise _wrong(f"the filter on {self.field!r}: {value!r} is no text, number, true or false", "values")
             if isinstance(value, int) and not isinstance(value, bool) and not -MOST_INTEGER <= value < MOST_INTEGER:
-                raise _wrong(f"the filter on {self.field!r}: {value} is too large")
+                raise _wrong(f"the filter on {self.field!r}: {shown_value(value)} is too large", "values")
             if isinstance(value, float) and not math.isfinite(value):
-                raise _wrong(f"the filter on {self.field!r}: {value} is no finite number")
+                raise _wrong(f"the filter on {self.field!r}: {value} is no finite number", "values")
 
 
 def _refuse_too_long(field: str, values: tuple[object, ...]) -> None:
     if len(field) > FIELD_LENGTH.high:
-        raise _wrong(f"a filter's field is {len(field):,} characters long, more than {FIELD_LENGTH.high:,}")
+        raise _wrong(f"a filter's field is {len(field):,} characters long, more than {FIELD_LENGTH.high:,}", "field")
     if len(values) > MOST_VALUES:
-        raise _wrong(f"the filter on {field[:40]!r} has {len(values):,} values, more than {MOST_VALUES:,}")
+        raise _wrong(f"the filter on {field[:40]!r} has {len(values):,} values, more than {MOST_VALUES:,}", "values")
     longest = max((len(each) for each in values if isinstance(each, str)), default=0)
     if longest > TEXT_LENGTH.high:
         raise _wrong(
-            f"the filter on {field[:40]!r} has a value {longest:,} characters long, more than {TEXT_LENGTH.high:,}"
+            f"the filter on {field[:40]!r} has a value {longest:,} characters long, more than {TEXT_LENGTH.high:,}",
+            "values",
         )
 
 
@@ -92,8 +93,8 @@ def _meant(value: object, *, ranged: bool) -> object:
     return _number_in(text) if ranged else text
 
 
-def _wrong(problem: str) -> InvalidRequestError:
-    return InvalidRequestError(problem, FILTER_REMEDY, "filters")
+def _wrong(problem: str, part: str) -> InvalidRequestError:
+    return InvalidRequestError(problem, FILTER_REMEDY, f"filters.{part}")
 
 
 def gathered(filters: tuple[Filter, ...]) -> tuple[Filter, ...]:

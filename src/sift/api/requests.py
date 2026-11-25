@@ -20,6 +20,9 @@ EMPTY: Mapping[bool, str] = MappingProxyType({True: "holds an empty text", False
 KIND_NAMES: Mapping[object, str] = MappingProxyType(
     {str: "text", int: "a whole number", float: "a finite number", bool: "true or false"}
 )
+MOST_SHOWN = 100
+WORD_START = re.compile(r"(?<=[a-z])(?=[A-Z])")
+VOWELS = frozenset("aeiou")
 
 
 def _parts(hint: object) -> tuple[object, tuple[object, ...]]:
@@ -88,17 +91,37 @@ def choices_of(kind: object) -> type[StrEnum] | None:
     return kind if isinstance(kind, type) and issubclass(kind, StrEnum) else None
 
 
+def plain_name(kind: type) -> str:
+    return WORD_START.sub(" ", kind.__name__).lower()
+
+
+def shown_value(value: object, most: int = MOST_SHOWN) -> str:
+    text = f"{value:,}" if _whole(value) else repr(value)
+    return text if len(text) <= most else f"{text[: most - 3]}..."
+
+
 def _one_named(kind: object) -> str:
+    if isinstance(kind, TypeAliasType):
+        return named(cast("object", kind.__value__))
     if get_origin(kind) is Literal:
         return " or ".join(str(each) for each in cast("tuple[object, ...]", get_args(kind)))
+    if get_origin(kind) is Mapping:
+        return "an object"
     each = _each(kind)
     if each is not None:
         return f"a list of {_plural(each)}"
     choices = choices_of(kind)
     if choices is not None:
         return ", ".join(member.value for member in choices)
+    return _simply_named(kind)
+
+
+def _simply_named(kind: object) -> str:
     if kind is types.NoneType:
         return "nothing"
+    if isinstance(kind, type) and kind not in KIND_NAMES:
+        words = plain_name(kind)
+        return f"{'an' if words[0] in VOWELS else 'a'} {words}"
     return KIND_NAMES.get(kind, type_name(kind))
 
 
@@ -107,7 +130,11 @@ def type_name(kind: object) -> str:
 
 
 def _plural(kind: object) -> str:
-    return "text" if kind is str else f"{type_name(kind).lower()}s"
+    if kind is str:
+        return "text"
+    if isinstance(kind, type) and kind not in KIND_NAMES:
+        return f"{plain_name(kind)}s"
+    return f"values, each {named(kind)}"
 
 
 def named(kind: object) -> str:
@@ -128,7 +155,7 @@ def _bounded(name: str, value: object, bounds: Bounds) -> None:
             said = f"{name} holds {held:,}, not {bounds.low:,} to {bounds.high:,}"
             raise InvalidRequestError(said, f"give {bounds.low:,} to {bounds.high:,} of them", name)
     elif isinstance(value, int) and not bounds.low <= value <= bounds.high:
-        said = f"{value:,} is outside {bounds.low:,} to {bounds.high:,}"
+        said = f"{shown_value(value)} is outside {bounds.low:,} to {bounds.high:,}"
         raise InvalidRequestError(said, f"give {bounds.low:,} to {bounds.high:,}", name)
 
 
@@ -144,7 +171,7 @@ def _sized(name: str, value: object, length: Length) -> None:
 
 def _spanned(name: str, value: object, span: Within) -> None:
     if isinstance(value, int | float) and not span.low <= value <= span.high:
-        said = f"{value} is outside {span.low:,g} to {span.high:,g}"
+        said = f"{shown_value(value)} is outside {span.low:,g} to {span.high:,g}"
         raise InvalidRequestError(said, f"give {span.low:,g} to {span.high:,g}", name)
 
 
@@ -181,7 +208,7 @@ def checked(request: object) -> None:
         value = cast("object", getattr(request, name))
         if not fits(value, kind):
             wanted = named(kind)
-            raise InvalidRequestError(f"{name} is {value!r}, not {wanted}", f"give {name} as {wanted}", name)
+            raise InvalidRequestError(f"{name} is {shown_value(value)}, not {wanted}", f"give {name} as {wanted}", name)
         if holds_half_a_pair(value):
             raise InvalidRequestError(f"{name} holds half a surrogate pair", HALF_PAIR_REMEDY, name)
         for each in metadata:

@@ -105,19 +105,19 @@ def test_a_choice_is_one_of_its_members() -> None:
 
 
 @pytest.mark.parametrize(
-    "operator, values, said",
+    "operator, values, said, part",
     [
-        ("=", ("Alpha",), "the operator '=' is no Operator"),
-        (Operator.ANY, (None,), "None is no text, number, true or false"),
-        (Operator.ANY, ([1],), r"\[1\] is no text, number, true or false"),
+        ("=", ("Alpha",), "the operator '=' is no Operator", "operator"),
+        (Operator.ANY, (None,), "None is no text, number, true or false", "values"),
+        (Operator.ANY, ([1],), r"\[1\] is no text, number, true or false", "values"),
     ],
 )
 def test_a_filter_of_an_operator_or_value_of_another_kind_is_refused(
-    operator: object, values: tuple[object, ...], said: str
+    operator: object, values: tuple[object, ...], said: str, part: str
 ) -> None:
     with pytest.raises(InvalidRequestError, match=said) as refused:
         built(Filter, "title", operator, values)
-    assert refused.value.field == "filters"
+    assert refused.value.field == f"filters.{part}"
 
 
 def test_a_page_of_results_lies_within_what_a_search_may_find() -> None:

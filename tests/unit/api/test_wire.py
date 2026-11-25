@@ -68,24 +68,89 @@ def test_what_a_search_left_out_comes_back_too() -> None:
     assert decoded(SearchResult, encoded(found)) == found
 
 
-@pytest.mark.parametrize(
-    "given, field, said",
-    [
-        ({"query": "x", "k": "10"}, "k", "k is '10', not a whole number"),
-        ({"query": "x", "collections": "notes"}, "collections", "collections is 'notes', not a list of text"),
-        ({"query": "x", "kk": 3}, "kk", "SearchKeywords takes no kk"),
-        ({}, "query", "SearchKeywords needs query"),
-        ({"query": "x", "filters": [{"field": "y", "operator": "~", "values": [1]}]}, "filters", "'~' is none of"),
-        ({"query": "x", "filters": [{"field": "y"}]}, "filters", "Filter needs operator"),
-        ({"query": "x", "filters": ["y=1"]}, "filters", "a filter is an object"),
-    ],
-)
-def test_json_that_makes_no_request_is_refused_naming_the_field(
-    given: dict[str, object], field: str, said: str
+ANY_VALUE = "text, a whole number, a finite number or true or false"
+REFUSED_JSON = {
+    "a value of another kind": (
+        {"k": "10"},
+        ("k", "k is '10', not a whole number", "give k as a whole number"),
+    ),
+    "text for a list": (
+        {"collections": "notes"},
+        ("collections", "collections is 'notes', not a list of text", "give collections as a list of text"),
+    ),
+    "a field the request lacks": ({"kk": 3}, ("kk", "the request takes no 'kk'", "leave out 'kk'")),
+    "a field left out": ({"query": None}, ("query", "query is None, not text", "give query as text")),
+    "an operator of none": (
+        {"filters": [{"field": "y", "operator": "~", "values": [1]}]},
+        ("filters[0].operator", "'~' is none of =, !=, <, <=, >, >=", "give filters[0].operator as one of"),
+    ),
+    "a filter without its operator": (
+        {"filters": [{"field": "y", "values": [1]}]},
+        ("filters[0].operator", "filters[0] needs operator", "give filters[0].operator"),
+    ),
+    "a filter written as text": (
+        {"filters": ["y=1"]},
+        ("filters[0]", "filters[0] is 'y=1', not a filter", "give filters[0] as a filter"),
+    ),
+    "a filter value of no kind": (
+        {"filters": [{"field": "y", "operator": "=", "values": [1, [2]]}]},
+        ("filters[0].values[1]", f"filters[0].values[1] is [2], not {ANY_VALUE}", "give filters[0].values[1] as"),
+    ),
+    "values not in a list": (
+        {"filters": [{"field": "y", "operator": "=", "values": "x"}]},
+        (
+            "filters[0].values",
+            f"filters[0].values is 'x', not a list of values, each {ANY_VALUE}",
+            "give filters[0].values as a list of values",
+        ),
+    ),
+    "a range of two values": (
+        {
+            "filters": [
+                {"field": "y", "operator": "=", "values": [1]},
+                {"field": "y", "operator": "<", "values": [1, 2]},
+            ]
+        },
+        ("filters[1].values", "the range on 'y' takes one value, not 2", "give a field, an operator"),
+    ),
+    "a document's line of another kind": (
+        {"documents": [{"id": "a"}, {"id": "b", "first_line": "1"}]},
+        ("documents[1].first_line", "documents[1].first_line is '1', not a whole number or nothing", "give"),
+    ),
+    "a document's line out of bounds": (
+        {"documents": [{"id": "a", "last_line": 0}]},
+        ("documents[0].last_line", "0 is outside 1 to 2,147,483,647", "give 1 to 2,147,483,647"),
+    ),
+}
+
+
+@pytest.mark.parametrize("given, refusal", REFUSED_JSON.values(), ids=REFUSED_JSON.keys())
+def test_json_that_makes_no_request_is_refused_naming_the_path_at_fault_and_what_to_give(
+    given: dict[str, object], refusal: tuple[str, str, str]
 ) -> None:
-    with pytest.raises(InvalidRequestError, match=said) as refused:
-        decoded(SearchKeywords, given)
-    assert refused.value.field == field
+    kind = GetDocuments if "documents" in given else SearchKeywords
+    with pytest.raises(InvalidRequestError) as refused:
+        decoded(kind, {"query": "x", **given} if kind is SearchKeywords else given)
+    field, said, remedy = refusal
+    assert (refused.value.field, refused.value.message, refused.value.remedy.startswith(remedy)) == (field, said, True)
+
+
+def test_a_request_without_a_field_it_needs_is_refused_naming_it() -> None:
+    with pytest.raises(InvalidRequestError) as refused:
+        decoded(SearchKeywords, {})
+    assert (refused.value.field, refused.value.message, refused.value.remedy) == (
+        "query",
+        "the request needs query",
+        "give query",
+    )
+
+
+@pytest.mark.parametrize("value", ["x" * 500_000, 10**400, ["x" * 500_000]], ids=["text", "number", "list"])
+def test_a_value_refused_is_echoed_cut_short(value: object) -> None:
+    with pytest.raises(InvalidRequestError) as refused:
+        decoded(SearchKeywords, {"query": "x", "k": value})
+    assert len(refused.value.message) < 200
+    assert "..." in refused.value.message
 
 
 def test_what_has_no_json_is_a_bug_said_at_once() -> None:
@@ -106,7 +171,7 @@ def test_an_answer_of_another_state_is_refused() -> None:
     [3, "indexed", {"state": "gone", "message": "m", "remedy": None}],
 )
 def test_a_value_none_of_its_union_s_kinds_takes_is_refused(outcome: object) -> None:
-    with pytest.raises(InvalidRequestError, match=r"outcome is .*, not Indexed or Skipped") as refused:
+    with pytest.raises(InvalidRequestError, match=r"outcome is .*, not an indexed or a skipped") as refused:
         decoded(CollectionIndexed, {"name": "n", "outcome": outcome})
     assert refused.value.field == "outcome"
 
@@ -141,13 +206,25 @@ def test_a_hit_s_score_carries_the_digits_a_float32_holds_and_no_more(score: flo
     assert (hit.score, json.dumps(cast("dict[str, Json]", encoded(hit))["score"])) == (shown, json.dumps(shown))
 
 
+def test_an_answer_of_another_shape_is_refused_naming_the_kind_it_wanted() -> None:
+    hit = Hit("n/a.md", "n", "a.md", "A", 1, 2, 0.5, None)
+    sent = cast("dict[str, Json]", encoded(SearchResult((hit,), 1, (), scored_by="keywords")))
+    cast("list[dict[str, Json]]", sent["hits"])[0]["fields"] = 3
+    with pytest.raises(InvalidRequestError) as refused:
+        read_answer(SearchResult, sent)
+    assert (refused.value.field, refused.value.message) == (
+        "hits[0].fields",
+        "hits[0].fields is 3, not an object or nothing",
+    )
+
+
 def test_an_answer_of_a_newer_sift_is_read_with_what_it_adds_left_out_but_a_request_is_not() -> None:
     hit = Hit("n/a.md", "n", "a.md", "A", 1, 2, 0.5, None)
     sent = cast("dict[str, Json]", encoded(SearchResult((hit,), 1, (), scored_by="keywords")))
     sent["total"] = 9
     cast("list[dict[str, Json]]", sent["hits"])[0]["kind"] = "passage"
     assert read_answer(SearchResult, sent) == SearchResult((hit,), 1, (), scored_by="keywords")
-    with pytest.raises(InvalidRequestError, match="SearchKeywords takes no total"):
+    with pytest.raises(InvalidRequestError, match="the request takes no 'total'"):
         decoded(SearchKeywords, {"query": "x", "total": 9})
 
 

@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import NamedTuple
@@ -18,6 +19,7 @@ EXIT_CODES: MappingProxyType[type[SiftError], int] = MappingProxyType(
     {InvalidRequestError: USAGE, JobStoppedError: INTERRUPTED}
 )
 NO_FLAGS: Mapping[str, str] = MappingProxyType({})
+FIELD_HEAD = re.compile(r"[.\[]")
 NOTICE_TONES: Mapping[str, Tone] = MappingProxyType({"error": Tone.ERROR, "note": Tone.WARNING})
 NEXT_STEPS: Mapping[Problem, tuple[str, ...]] = MappingProxyType(
     {
@@ -88,7 +90,7 @@ def failure(
     error: SiftError | OSError, style: Style, *, as_json: bool = False, flags: Mapping[str, str] = NO_FLAGS
 ) -> Shown:
     known = system_failure(error) if isinstance(error, OSError) else error
-    flag = flags.get(known.field) if known.field is not None else None
+    flag = flags.get(FIELD_HEAD.split(known.field, 1)[0]) if known.field is not None else None
     said = known.message if flag is None else f"{flag}: {known.message}"
     lines = (labelled("error", said, Tone.ERROR, style), *fix(known.remedy, style), *command_next(known.code, style))
     code = EXIT_CODES.get(type(known), FAILED)
