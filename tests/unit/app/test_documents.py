@@ -10,7 +10,7 @@ from sift.api.errors import InvalidRequestError, Problem
 from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections
 from sift.app.collections import add
-from sift.app.documents import documents
+from sift.app.documents import SEPARATED_REMEDY, documents
 from sift.app.indexing import index
 from sift.storage.database import Reading
 from sift.storage.store import read_store
@@ -94,15 +94,37 @@ def test_a_shortened_id_several_paths_end_in_asks_for_the_whole(home: Path) -> N
     for several in ("notes/c.md", "notes/b/c.md"):
         missing = unfound(home, several)
         assert (missing.message, missing.remedy, missing.code) == (
-            f"{several!r} matches a/b/c.md, x/b/c.md",
+            f"{several!r} matches notes/a/b/c.md, notes/x/b/c.md",
             "give the whole id",
             Problem.AMBIGUOUS,
         )
 
 
 @pytest.mark.parametrize(
-    "unknown", ["notes/C.md", "notes/rush.md", "notes/z/b/c.md", "notes/robots", "missing/rl.md", "notes/", "notes"]
+    "asked, remedy",
+    [
+        ("notes/twice.md", "ids keep their case: give notes/Twice.md"),
+        ("notes/C.md", "ids keep their case: give notes/a/b/c.md, notes/x/b/c.md"),
+        ("notes/", SEPARATED_REMEDY),
+        ("notes/ROBOTS/Brush.md", "ids keep their case: give notes/robots/brush.md"),
+        ("notes\\robots\\brush.md", SEPARATED_REMEDY),
+        ("notes/robots/", SEPARATED_REMEDY),
+        ("notes/robots/../rl.md", SEPARATED_REMEDY),
+        ("notes/nowhere.md", UNKNOWN),
+    ],
 )
+def test_an_unknown_id_is_told_the_case_ids_keep_or_how_folders_are_written(
+    home: Path, asked: str, remedy: str
+) -> None:
+    missing = unfound(home, asked)
+    assert (missing.message, missing.remedy, missing.code) == (
+        f"unknown document {asked!r}",
+        remedy,
+        Problem.UNKNOWN_DOCUMENT,
+    )
+
+
+@pytest.mark.parametrize("unknown", ["notes/rush.md", "notes/z/b/c.md", "notes/robots", "missing/rl.md", "notes"])
 def test_an_id_that_names_no_document_whole_is_unknown(home: Path, unknown: str) -> None:
     assert unfound(home, unknown) == Unfound(
         unknown, f"unknown document {unknown!r}", UNKNOWN, Problem.UNKNOWN_DOCUMENT
@@ -150,7 +172,7 @@ def test_a_shortened_id_many_paths_end_in_names_the_first_five(tmp_path: Path, h
     for folder in "abcdef":
         write(tmp_path / "notes" / folder / "same.md", f"# {folder}\n")
     index(home, IndexCollections(), lambda _: None)
-    listed = ", ".join(f"{folder}/same.md" for folder in "abcde")
+    listed = ", ".join(f"notes/{folder}/same.md" for folder in "abcde")
     assert unfound(home, "notes/same.md").message == f"'notes/same.md' matches {listed}, ..."
 
 

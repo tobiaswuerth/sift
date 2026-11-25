@@ -132,7 +132,7 @@ def _by_id(home: Path, spec: str) -> Note:
     chosen, relative = place(known_collections(home), spec)
 
     def read(transaction: Reading) -> Note:
-        found = resolved_at(transaction, spec, relative, absolute=Path(spec).is_absolute())
+        found = resolved_at(transaction, chosen.name, spec, relative, absolute=Path(spec).is_absolute())
         return Note(chosen, found.path, found.key)
 
     return read_in(chosen, read)

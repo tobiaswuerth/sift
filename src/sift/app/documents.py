@@ -18,10 +18,27 @@ from sift.storage.texts import LinesRead, lines_between, text_of
 
 MOST_LISTED = 5
 SEPARATOR = "/"
+BACKSLASH = "\\"
+PARENT = ".."
+UNKNOWN_REMEDY = "take the id from a search result"
+SEPARATED_REMEDY = "write an id's folders with / between them, as search results give it"
 
 
-def unknown(id_: str) -> NotFoundError:
-    return NotFoundError(f"unknown document {id_!r}", "take the id from a search result", code=Problem.UNKNOWN_DOCUMENT)
+def _written_oddly(id_: str) -> bool:
+    folders = id_.split(SEPARATOR)
+    return not Path(id_).is_absolute() and (BACKSLASH in id_ or not folders[-1] or PARENT in folders)
+
+
+def unknown(id_: str, remedy: str = UNKNOWN_REMEDY) -> NotFoundError:
+    told = SEPARATED_REMEDY if _written_oddly(id_) else remedy
+    return NotFoundError(f"unknown document {id_!r}", told, code=Problem.UNKNOWN_DOCUMENT)
+
+
+def _unknown_in(name: str, id_: str, relative: str, candidates: Sequence[str]) -> NotFoundError:
+    folded = relative.casefold()
+    alike = [path for path in candidates if path.casefold() == folded or path.casefold().endswith(SEPARATOR + folded)]
+    listed = ", ".join(public_id(name, path, "") for path in alike[:MOST_LISTED])
+    return unknown(id_, f"ids keep their case: give {listed}" if alike else UNKNOWN_REMEDY)
 
 
 def holding(known: Sequence[Collection], full: Path) -> tuple[Collection, str] | None:
@@ -58,7 +75,7 @@ def place(known: Sequence[Collection], id_: str) -> tuple[Collection, str]:
     return refuse_inactive(found[0]), found[1]
 
 
-def resolved_at(transaction: Reading, id_: str, relative: str, *, absolute: bool) -> Stored:
+def resolved_at(transaction: Reading, name: str, id_: str, relative: str, *, absolute: bool) -> Stored:
     exact = stored(transaction, relative) or stored(transaction, *split_keyed_path(relative))
     if exact is not None:
         return exact
@@ -68,11 +85,12 @@ def resolved_at(transaction: Reading, id_: str, relative: str, *, absolute: bool
     else:
         matches = [path for path in candidates if path.endswith(SEPARATOR + relative)]
     if len(matches) > 1 and not absolute:
-        listed = ", ".join(matches[:MOST_LISTED]) + (", ..." if len(matches) > MOST_LISTED else "")
+        shown = [public_id(name, path, "") for path in matches[:MOST_LISTED]]
+        listed = ", ".join(shown) + (", ..." if len(matches) > MOST_LISTED else "")
         raise InvalidRequestError(f"{id_!r} matches {listed}", "give the whole id", code=Problem.AMBIGUOUS)
     found = stored(transaction, matches[0]) if len(matches) == 1 else None
     if found is None:
-        raise unknown(id_)
+        raise _unknown_in(name, id_, relative, candidates)
     return found
 
 
@@ -103,7 +121,7 @@ def _unfound(wanted: WantedDocument, error: SiftError) -> Unfound:
 
 def _document(transaction: Reading, chosen: Collection, placed: _Placed, fields: tuple[str, ...]) -> DocumentText:
     wanted, span = placed.wanted, _lines(placed.wanted)
-    found = resolved_at(transaction, wanted.id, placed.relative, absolute=Path(wanted.id).is_absolute())
+    found = resolved_at(transaction, chosen.name, wanted.id, placed.relative, absolute=Path(wanted.id).is_absolute())
     read = lines_between(transaction, found.id, *span) if span else LinesRead(text_of(transaction, found.id), 0)
     whole = public_id(chosen.name, found.path, found.key)
     if span:
