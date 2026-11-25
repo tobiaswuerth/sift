@@ -2,6 +2,7 @@ import itertools
 import struct
 import zlib
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import NamedTuple, cast
 
 import numpy as np
@@ -34,7 +35,8 @@ def _sound(*, holds: bool, problem: str) -> None:
         raise DamagedError(problem)
 
 
-class Ranges(NamedTuple):
+@dataclass(eq=False, frozen=True, slots=True)
+class Ranges:
     ids: Ids
     starts: Ids
     ends: Ids

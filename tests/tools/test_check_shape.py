@@ -1,11 +1,18 @@
 import pytest
 
 from tools import check_shape
-from tools.check_shape import MOST_LINES, MOST_METHODS, shape
+from tools.check_shape import MOST_LINES, MOST_METHODS, array_names, shape
+
+ARRAYS_MODULE = (
+    "type Ids = NDArray[np.int64]\ntype Raw = np.ndarray\ntype Again = Raw\n\n\n"
+    "@dataclass(eq=False, frozen=True, slots=True)\nclass Sorted:\n    values: Ids\n"
+)
+ARRAYS = array_names({"src/sift/arrays.py": "type Ids = NDArray[np.int64]\n"})
+COMPARED = "class Held holds arrays and compares them: make it a dataclass with eq=False"
 
 
-def problems(path: str, source: str) -> list[str]:
-    return [finding.problem for finding in shape(path, source)]
+def problems(path: str, source: str, arrays: frozenset[str] = ARRAYS) -> list[str]:
+    return [finding.problem for finding in shape(path, source, arrays)]
 
 
 def test_a_module_may_have_up_to_the_most_lines() -> None:
@@ -119,9 +126,41 @@ def test_the_repository_has_its_shape() -> None:
 
 def test_a_dataclass_holding_arrays_compares_none() -> None:
     held = "@dataclass(frozen=True, slots=True)\nclass Held:\n    ids: Ids\n"
-    assert problems("src/sift/a.py", held) == ["class Held holds arrays and compares them: eq=False"]
+    assert problems("src/sift/a.py", held) == [COMPARED]
     assert problems("src/sift/a.py", held.replace("frozen=True", "eq=False, frozen=True")) == []
     assert problems("src/sift/a.py", "@dataclass(frozen=True, slots=True)\nclass Held:\n    n: int\n") == []
+
+
+def test_a_class_holding_a_function_returning_arrays_compares_it_by_identity() -> None:
+    held = "@dataclass(frozen=True, slots=True)\nclass Held:\n    read: Callable[[int], Ids]\n    run: Read\n"
+    arrays = array_names({"src/sift/a.py": "type Ids = NDArray[np.int64]\ntype Read = Callable[[int], Ids]\n"})
+    assert problems("src/sift/a.py", held, arrays) == []
+
+
+def test_the_array_names_are_the_aliases_of_arrays() -> None:
+    others = "type Count = int\n\n\nclass Plain(NamedTuple):\n    count: Count\n"
+    assert array_names({"src/sift/a.py": ARRAYS_MODULE, "src/sift/b.py": others}) == {
+        "NDArray",
+        "ndarray",
+        "Ids",
+        "Raw",
+        "Again",
+    }
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "@dataclass(frozen=True, slots=True)\nclass Held:\n    words: Raw\n",
+        "@dataclass(frozen=True, slots=True)\nclass Held:\n    words: Again\n",
+        "class Held(NamedTuple):\n    ids: Ids\n",
+        "class Held(typing.NamedTuple):\n    ids: 'Ids'\n",
+        "@dataclass(frozen=True, slots=True)\nclass Held:\n    held: np.ndarray\n",
+        "@dataclass(frozen=True, slots=True)\nclass Held:\n    held: tuple[Ids, ...]\n",
+    ],
+)
+def test_a_class_holding_any_array_alias_and_comparing_is_found(source: str) -> None:
+    assert problems("src/sift/a.py", source, array_names({"src/sift/arrays.py": ARRAYS_MODULE})) == [COMPARED]
 
 
 def test_a_class_of_sift_or_a_value_class_of_the_module_makes_a_module_value() -> None:

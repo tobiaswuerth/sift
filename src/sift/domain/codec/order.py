@@ -17,7 +17,7 @@ STEP = 65_536
 SEED = 0
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class _Clustering:
     held: Words
     rng: "Generator"

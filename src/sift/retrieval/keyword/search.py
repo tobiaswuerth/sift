@@ -181,7 +181,7 @@ def _tokens(unique: Sequence[Leaf]) -> list[str]:
 type ReadLists = dict[Leaf, list[StoredList] | PostingArrays]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Prepared:
     store: Opened
     lists: ReadLists

@@ -32,7 +32,7 @@ def never() -> bool:
     return False
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(eq=False, frozen=True, slots=True)
 class Materialized:
     postings: PostingArrays
     cut: bool = False

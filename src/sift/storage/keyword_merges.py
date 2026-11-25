@@ -175,7 +175,8 @@ class _Merging:
     shape: Shape
 
 
-class _Decoded(NamedTuple):
+@dataclass(eq=False, frozen=True, slots=True)
+class _Decoded:
     rows: Sequence[MergedTerm]
     places: Ids
     counts: Ids

@@ -1,8 +1,9 @@
 import ast
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
+from functools import partial
 
-from tools.canonical import aliases
-from tools.findings import PYTHON_ROOTS, Finding, found, report
+from tools.canonical import aliases, unquoted
+from tools.findings import PYTHON_ROOTS, Finding, found, report, sources
 
 MOST_LINES = 400
 MOST_METHODS = 10
@@ -10,7 +11,10 @@ CORE = ("src/sift/api/", "src/sift/domain/")
 SIFT = "sift."
 VALUE_BASES = frozenset({"NamedTuple", "Enum", "StrEnum", "IntEnum", "Flag", "IntFlag", "Protocol"})
 ERROR_SUFFIXES = ("Error", "Exception")
-ARRAY_TYPES = frozenset({"NDArray", "Ids", "Mask", "Scores", "Floats", "Halves", "Bits", "Ascending", "Coded"})
+SOURCE = "src"
+ARRAYS = frozenset({"NDArray", "ndarray"})
+COMPARING_BASES = frozenset({"NamedTuple"})
+CALLABLE = "Callable"
 MUTABLE_FACTORIES = frozenset(
     {"list", "dict", "set", "bytearray", "defaultdict", "OrderedDict", "deque", "Counter", "ChainMap"}
 )
@@ -123,10 +127,28 @@ def classes_that_are_no_values(path: str, tree: ast.Module) -> Iterator[Finding]
 
 
 def _names_in(node: ast.expr) -> set[str]:
-    return {each.id for each in ast.walk(node) if isinstance(each, ast.Name)}
+    if isinstance(node, ast.Subscript) and _name(node.value) == CALLABLE:
+        return set()
+    own: set[str] = {_name(node)} if isinstance(node, ast.Name | ast.Attribute) else set()
+    return own.union(*(_names_in(child) for child in ast.iter_child_nodes(node) if isinstance(child, ast.expr)))
+
+
+def _held(node: ast.ClassDef) -> set[str]:
+    return {name for item in node.body if isinstance(item, ast.AnnAssign) for name in _names_in(item.annotation)}
+
+
+def array_names(texts: Mapping[str, str]) -> frozenset[str]:
+    nodes = [node for text in texts.values() for node in ast.walk(unquoted(ast.parse(text)))]
+    holders = [(node.name.id, _names_in(node.value)) for node in nodes if isinstance(node, ast.TypeAlias)]
+    names = set(ARRAYS)
+    while grown := {name for name, held in holders if held & names} - names:
+        names |= grown
+    return frozenset(names)
 
 
 def _compares(node: ast.ClassDef) -> bool:
+    if any(_name(base) in COMPARING_BASES for base in node.bases):
+        return True
     for decorator in node.decorator_list:
         if isinstance(decorator, ast.Call) and _name(decorator.func) == "dataclass":
             options = {keyword.arg: keyword.value for keyword in decorator.keywords}
@@ -135,26 +157,23 @@ def _compares(node: ast.ClassDef) -> bool:
     return False
 
 
-def arrays_compared(path: str, tree: ast.Module) -> Iterator[Finding]:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and _compares(node):
-            held = {
-                name for item in node.body if isinstance(item, ast.AnnAssign) for name in _names_in(item.annotation)
-            }
-            if held & ARRAY_TYPES:
-                yield Finding(path, node.lineno, f"class {node.name} holds arrays and compares them: eq=False")
+def arrays_compared(path: str, tree: ast.Module, arrays: frozenset[str]) -> Iterator[Finding]:
+    for node in ast.walk(unquoted(tree)):
+        if isinstance(node, ast.ClassDef) and _compares(node) and _held(node) & arrays:
+            problem = f"class {node.name} holds arrays and compares them: make it a dataclass with eq=False"
+            yield Finding(path, node.lineno, problem)
 
 
-def shape(path: str, source: str) -> tuple[Finding, ...]:
+def shape(path: str, source: str, arrays: frozenset[str]) -> tuple[Finding, ...]:
     tree = ast.parse(source)
     return (
         *too_long(path, source),
         *too_many_methods(path, tree),
-        *(arrays_compared(path, tree) if path.startswith("src/") else ()),
+        *(arrays_compared(path, tree, arrays) if path.startswith("src/") else ()),
         *(() if path.startswith("tests/") else mutable_module_values(path, tree)),
         *(classes_that_are_no_values(path, tree) if path.startswith(CORE) else ()),
     )
 
 
 def main(_argv: list[str]) -> int:
-    return report(found(shape, PYTHON_ROOTS), REMEDY)
+    return report(found(partial(shape, arrays=array_names(sources((SOURCE,)))), PYTHON_ROOTS), REMEDY)
