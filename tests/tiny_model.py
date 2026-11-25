@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -9,9 +11,12 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import BertConfig, BertForSequenceClassification, BertModel, BertTokenizer
 
+from sift.late import late
+
 WORDS = ("[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "dark", "matter", "halo", "models", "pruning", "skips", "ranges")
 WIDTH = 16
 POSITIONS = 64
+SEED = 20261125
 VOCABULARY = {word: at for at, word in enumerate(WORDS)}
 
 
@@ -40,17 +45,32 @@ def _vocabulary(folder: Path, longest: int = POSITIONS) -> Path:
     return folder
 
 
+class _Random(Protocol):
+    def fork_rng(self, devices: list[int]) -> AbstractContextManager[None]: ...
+
+    def manual_seed(self, seed: int) -> object: ...
+
+
+RANDOM = late("torch.random", _Random)
+
+
+def _seeded[T](make: Callable[[], T]) -> T:
+    with RANDOM.fork_rng(devices=[]):
+        RANDOM.manual_seed(SEED)
+        return make()
+
+
 def tiny_reranker(folder: Path) -> Path:
     made = _vocabulary(folder / "reranker")
     config = _config()
     config.num_labels = 1
-    saved(BertForSequenceClassification(config)).save_pretrained(made)
+    saved(_seeded(lambda: BertForSequenceClassification(config))).save_pretrained(made)
     return made
 
 
 def tiny_model(folder: Path) -> Path:
     raw, made = _vocabulary(folder / "raw"), folder / "tiny"
-    saved(BertModel(_config())).save_pretrained(raw)
+    saved(_seeded(lambda: BertModel(_config()))).save_pretrained(raw)
     SentenceTransformer(modules=[Transformer(str(raw), max_seq_length=32), Pooling(WIDTH)]).save(str(made))
     return made
 
@@ -64,7 +84,7 @@ def tiny_static(folder: Path) -> Path:
     tokenizer = Tokenizer(WordLevel(VOCABULARY, "[UNK]"))
     tokenizer.pre_tokenizer = Whitespace()
     made = folder / "static"
-    SentenceTransformer(modules=[StaticEmbedding(tokenizer, embedding_dim=WIDTH)]).save(str(made))
+    _seeded(lambda: SentenceTransformer(modules=[StaticEmbedding(tokenizer, embedding_dim=WIDTH)])).save(str(made))
     return made
 
 
@@ -72,7 +92,7 @@ def tiny_prompted(folder: Path, positions: int) -> Path:
     raw, made = _vocabulary(folder / f"prompted-raw-{positions}", positions), folder / f"prompted-{positions}"
     config = _config()
     config.max_position_embeddings = positions
-    saved(BertModel(config)).save_pretrained(raw)
+    saved(_seeded(lambda: BertModel(config))).save_pretrained(raw)
     model = SentenceTransformer(
         modules=[Transformer(str(raw), max_seq_length=positions), Pooling(WIDTH)],
         prompts={"query": "halo ", "document": "pruning "},
@@ -85,12 +105,14 @@ def tiny_routed(folder: Path) -> Path:
     raw, made = _vocabulary(folder / "routed-raw", 2048), folder / "routed"
     config = _config()
     config.max_position_embeddings = 2048
-    saved(BertModel(config)).save_pretrained(raw)
+    saved(_seeded(lambda: BertModel(config))).save_pretrained(raw)
     tokenizer = Tokenizer(WordLevel(VOCABULARY, "[UNK]"))
     tokenizer.pre_tokenizer = Whitespace()
-    router = Router.for_query_document(
-        query_modules=[StaticEmbedding(tokenizer, embedding_dim=WIDTH)],
-        document_modules=[Transformer(str(raw), max_seq_length=2048), Pooling(WIDTH)],
+    router = _seeded(
+        lambda: Router.for_query_document(
+            query_modules=[StaticEmbedding(tokenizer, embedding_dim=WIDTH)],
+            document_modules=[Transformer(str(raw), max_seq_length=2048), Pooling(WIDTH)],
+        )
     )
     SentenceTransformer(modules=[router]).save(str(made))
     return made
