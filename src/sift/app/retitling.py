@@ -10,6 +10,7 @@ from sift.api.collections import Retitled, TitleFrom
 from sift.api.events import Advanced, CollectionStarted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.ids import DocumentId
 from sift.app.filing import LIMITS, Limits
+from sift.domain.errors import DamagedError
 from sift.domain.text.kinds import FileKind, kind_of
 from sift.domain.text.notes import NoteRead, NoteTitle, read_note
 from sift.storage.catalog import Choices, Collection, choices_json, choices_of, set_choices
@@ -93,6 +94,9 @@ def resumed(home: Path, one: Collection, connection: Connection, report: Reporte
         promised = first(transaction, Value, "SELECT value FROM meta WHERE key = ?", (RETITLING,))
     if promised is None:
         return one
-    wanted = choices_of(promised.value)
+    try:
+        wanted = choices_of(promised.value)
+    except (ValueError, TypeError) as error:
+        raise DamagedError(f"the retitling it was to finish cannot be read: {error}") from None
     _finished(connection, wanted.title_from, partial(set_choices, home, one.id, wanted), report, limits)
     return replace(one, choices=wanted)

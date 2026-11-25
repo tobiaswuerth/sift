@@ -7,16 +7,16 @@ import pytest
 
 from sift.api.collections import AddCollection, CollectionChanged, ShowStatus, TitleFrom
 from sift.api.embedding import EmbedCollections
-from sift.api.errors import InvalidRequestError
+from sift.api.errors import InvalidRequestError, Problem
 from sift.api.events import Event, Noted
-from sift.api.indexing import IndexCollections
+from sift.api.indexing import IndexCollections, Skipped
 from sift.app.collections import add, status
 from sift.app.embedding import embed
 from sift.app.filing import Limits
 from sift.app.indexing import index
 from sift.app.retitling import retitle
 from sift.storage.catalog import known_collections
-from sift.storage.database import reading, rows
+from sift.storage.database import reading, rows, run, writing
 from sift.storage.store import connected
 from tests.files import linked, write
 from tests.homes import found_ids, indexed, indexed_home, quiet, stopped_when_advanced
@@ -117,6 +117,16 @@ def test_a_retitle_stopped_midway_is_finished_by_the_next_index(home: Path) -> N
     assert (titles(home)["Hans Müller.md"], titles(home)["rl.md"]) == ("Hans Müller", "rl")
     indexed(home)
     assert (titles(home)["Hans Müller.md"], titles(home)["rl.md"]) == ("Hans Müller", "rl")
+
+
+@pytest.mark.parametrize("promised", ["{nope", "[]", '{"agents": 3}'])
+def test_a_retitle_left_unfinished_in_words_sift_cannot_read_is_damage_of_the_store(home: Path, promised: str) -> None:
+    (one,) = known_collections(home)
+    with connected(one.store, one.id) as connection, writing(connection) as transaction:
+        run(transaction, "INSERT INTO meta(key, value) VALUES ('retitling', ?)", (promised,))
+    (found,) = index(home, IndexCollections(), quiet).collections
+    assert isinstance(found.outcome, Skipped)
+    assert (found.outcome.code, "is damaged: the retitling" in found.outcome.message) == (Problem.STORE_DAMAGED, True)
 
 
 def test_retitling_drops_the_vectors_embedded_with_the_old_title_alone(home: Path, notes: Path) -> None:
