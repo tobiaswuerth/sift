@@ -6,6 +6,7 @@ from sift.api.events import (
     CollectionStarted,
     Event,
     Finished,
+    Lending,
     Listening,
     Noted,
     Phase,
@@ -72,6 +73,17 @@ def test_a_home_process_listening_says_where_and_for_which_home() -> None:
     view, lines = shown(View(), Listening("http://127.0.0.1:8765", "/home/sift"), 0.0, LOOKS)
     stop = " stop  Ctrl+C stops it and its jobs; sift jobs lists them"
     assert (view, lines) == (View(), ("serve  http://127.0.0.1:8765  /home/sift", stop))
+
+
+def test_a_worker_says_where_it_is_reached_and_shows_its_key_where_secrets_may_be_shown_alone() -> None:
+    lent = Lending("workstation", 8766, "t0ken.p1n")
+    logged = shown(View(), lent, 0.0, LOOKS)[1]
+    screen = shown(View(), lent, 0.0, Looks(PLAIN, "linux", shows_secrets=True))[1]
+    remote = "  set  SIFT_EMBED_REMOTE=https://{key}@workstation:8766  on the machines that send it work"
+    keep = " keep  the key private: it lets a machine use this worker; it is shown here alone, not in the log"
+    lines = (" lend  https://workstation:8766", remote, keep, " stop  Ctrl+C stops it")
+    assert logged == tuple(line.format(key="<key>") for line in lines)
+    assert screen == tuple(line.format(key="t0ken.p1n") for line in lines)
 
 
 def test_with_colour_labels_and_secondary_parts_are_painted() -> None:

@@ -13,7 +13,7 @@ from sift.api.errors import InvalidRequestError, NotFoundError, Problem
 from sift.api.events import Advanced, Event, Noted, Phase, PhaseDone, PhaseStarted
 from sift.api.indexing import IndexCollections, Skipped
 from sift.app.collections import add
-from sift.app.embedding import BROKEN_REMEDY, Embedding, embed, embedded_by
+from sift.app.embedding import BROKEN_REMEDY, Embedding, embed, models_held
 from sift.app.indexing import index
 from sift.domain.codec.codes import Floats, Halves
 from sift.inference.prepared import ModelsPrepared
@@ -267,7 +267,7 @@ def test_a_note_changed_in_one_chunk_needs_that_chunk_embedded_alone(home: Path,
 
 def test_a_collection_whose_store_is_out_of_reach_counts_as_embedded_by_no_model(tmp_path: Path) -> None:
     home = home_of(tmp_path, {"notes/a.md": "Note: alpha.\n"}, embedded=Hashed())
-    assert embedded_by(home, ("notes",), Hashed().name) == ("notes",)
+    assert models_held(home, ("notes",)) == {"notes": Hashed().name}
     (one,) = known_collections(home)
     one.store.unlink()
-    assert embedded_by(home, ("notes",), Hashed().name) == ()
+    assert models_held(home, ("notes",)) == {}

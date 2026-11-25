@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from sift.api.events import Event, Listening, Reporter
 from sift.api.package import PACKAGE
-from sift.api.serving import OpenUi, Served, ServeHome, UiOpened
+from sift.api.serving import OpenUi, Served, ServeHome, ServeWorker, UiOpened
 from sift.interfaces.acts.acting import Act, Acting
 from sift.interfaces.cli.arguments import request_of
 from sift.interfaces.cli.commands.making import acting, as_json, command
@@ -22,10 +22,15 @@ from sift.late import late
 from sift.settings import Settings
 
 SERVING = "sift.interfaces.server.serving"
+WORKER = "sift.interfaces.worker.serving"
 
 
 class HomeServes(Protocol):
     def serve(self, settings: Settings, request: ServeHome, version: str, report: Reporter) -> Served: ...
+
+
+class ModelsLent(Protocol):
+    def lend(self, settings: Settings, request: ServeWorker, version: str, report: Reporter) -> Served: ...
 
 
 def _serve(acting: Acting, request: ServeHome) -> Served:
@@ -34,6 +39,10 @@ def _serve(acting: Acting, request: ServeHome) -> Served:
         proxied(acting.settings, acting.report, Pipes(sys.stdin.buffer, sys.stdout.buffer), starting)
         return Served("")
     return late(SERVING, HomeServes).serve(acting.settings, request, version(PACKAGE), acting.report)
+
+
+def _lend(acting: Acting, request: ServeWorker) -> Served:
+    return late(WORKER, ModelsLent).lend(acting.settings, request, version(PACKAGE), acting.report)
 
 
 def opened_once_listening(report: Reporter, opening: Callable[[str], None]) -> Reporter:
@@ -82,11 +91,14 @@ def _stopped(served: Served, _platform: str, style: Style) -> Shown:
 COMMANDS: Mapping[str, Command] = MappingProxyType(
     {
         "serve": command(Act("serve", ServeHome, Served, _serve), _stopped),
+        "worker": command(Act("worker", ServeWorker, Served, _lend), _stopped),
         "ui": Command(_ui_run),
     }
 )
 
 if TYPE_CHECKING:
     from sift.interfaces.server import serving as _serving
+    from sift.interfaces.worker import serving as _worker
 
     _SERVES: HomeServes = _serving
+    _LENDS: ModelsLent = _worker

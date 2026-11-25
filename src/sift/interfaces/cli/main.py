@@ -152,7 +152,7 @@ def _style(err: TextIO | None, settings: Settings, choice: Colour) -> Style:
 def _live(err: TextIO | None, settings: Settings, style: Style, platform: str, clock: Callable[[], float]) -> Live:
     redraw = is_terminal(err) and not settings.dumb
     width = partial(columns, err) if err is not None else lambda: 0
-    return Live(err, Looks(style, platform), redraw=redraw, columns=width, clock=clock)
+    return Live(err, Looks(style, platform, shows_secrets=True), redraw=redraw, columns=width, clock=clock)
 
 
 def _local_now() -> datetime:

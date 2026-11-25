@@ -1,3 +1,4 @@
+import json
 import shutil
 from pathlib import Path
 from typing import cast
@@ -53,6 +54,23 @@ def models_run(smoke: Smoke, notes: Path) -> None:
             )
         ),
     )
+
+
+def lent_run(smoke: Smoke, worker: Smoke, notes: Path) -> None:
+    with process.lending(worker.home, worker.model, worker.reranker) as lent:
+        smoke.remote = lent.remote
+        indexed(smoke, notes)
+        smoke.checked(
+            "embed",
+            holds=lambda done: (done.returncode, "  embed          3 passages" in done.stderr) == (0, True),
+        )
+        smoke.checked("query", "reward shaping", "-k", "1", "--json", holds=finding("notes/rl.md"))
+    stopped = cast("object", json.loads(lent.answered[0]))
+    port = lent.remote.rsplit(":", 1)[1]
+    assert (lent.running.returncode, stopped) == (0, {"url": f"https://{process.LOOPBACK}:{port}"}), lent.said
+    worker.exercised.append(process.WORKER)
+    (log,) = (worker.home / "logs").glob("worker-*.log")
+    assert lent.remote.split("@")[0] not in log.read_text(encoding="utf-8")
 
 
 def records_run(smoke: Smoke, notes: Path) -> None:

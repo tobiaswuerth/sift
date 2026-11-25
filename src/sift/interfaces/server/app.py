@@ -279,11 +279,11 @@ async def _streamed(serving: Serving, name: str, handled: Handled, data: object)
     await asyncio.wrap_future(ran)
 
 
-async def body_of(request: Request) -> bytes | None:
+async def body_of(request: Request, most: int = MOST_BODY) -> bytes | None:
     read = bytearray()
     async for chunk in request.stream():
         read += chunk
-        if len(read) > MOST_BODY:
+        if len(read) > most:
             return None
     return bytes(read)
 

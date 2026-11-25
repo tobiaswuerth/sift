@@ -16,13 +16,15 @@ def _index(acting: Acting, request: IndexCollections) -> IndexResult:
 
 
 def _reindex(acting: Acting, request: ReindexFiles) -> Reindexed:
-    home, models = acting.settings.home, acting.models()
+    home = acting.settings.home
     grouped = indexing.files_of(home, request.files, acting.audience)
-    names = embedding.embedded_by(home, tuple(one.name for one in grouped), models.name)
+    held = embedding.models_held(home, tuple(one.name for one in grouped))
     indexed = indexing.index_files(home, grouped, acting.report, readers=_readers(acting))
-    if not names:
+    if not held:
         return Reindexed(indexed)
-    return Reindexed(indexed, embedding.embed(home, EmbedCollections(names), acting.report, models))
+    models = acting.models()
+    names = tuple(name for name, model in held.items() if model == models.name)
+    return Reindexed(indexed, embedding.embed(home, EmbedCollections(names), acting.report, models) if names else None)
 
 
 def _embed(acting: Acting, request: EmbedCollections) -> EmbedResult:

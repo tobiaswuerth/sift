@@ -25,6 +25,10 @@ class Resting(Models, Protocol):
     def release_idle(self) -> bool: ...
 
 
+class HeldModels(Resting, Protocol):
+    def close(self) -> None: ...
+
+
 class LocalLoader(Protocol):
     def local(self, model: str, reranker: str, gpus: str | None) -> Resting: ...
 
@@ -79,6 +83,10 @@ class Deferred:
     def release_idle(self) -> bool:
         with self.lock:
             return self.built is not None and self.built.release_idle()
+
+    def close(self) -> None:
+        with self.lock:
+            self.built = None
 
 
 def deferred(model: str, reranker: str, gpus: str | None) -> Deferred:

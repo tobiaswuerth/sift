@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import Callable, Coroutine, Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -94,9 +94,9 @@ def _refuse_another(settings: Settings) -> None:
         raise StoreUnavailableError(said, ANOTHER_REMEDY, code=Problem.BUSY)
 
 
-def _bound(port: int) -> socket.socket:
+def bound(port: int, host: str = LOCALHOST) -> socket.socket:
     try:
-        return socket.create_server((LOCALHOST, port))
+        return socket.create_server((host, port))
     except OSError as error:
         raise InvalidRequestError(
             f"port {port} cannot be had: {error.strerror or error}", PORT_REMEDY, "port"
@@ -115,9 +115,9 @@ def watched_idle(release: Callable[[], bool], stop: threading.Event, every: floa
 
 
 @contextmanager
-def _resting(release: Callable[[], bool]) -> Generator[None]:
+def resting(release: Callable[[], bool], every: float = IDLE_CHECK_SECONDS) -> Generator[None]:
     stop = threading.Event()
-    watch = threading.Thread(target=watched_idle, args=(release, stop), name="sift-idle", daemon=True)
+    watch = threading.Thread(target=watched_idle, args=(release, stop, every), name="sift-idle", daemon=True)
     watch.start()
     try:
         yield
@@ -156,16 +156,16 @@ def held(
     private_folder(settings.home)
     listed = own_endpoint(settings)
     _refuse_another(settings)
-    models = fresh_models(settings)
     with (
+        closing(fresh_models(settings)) as models,
         sole_writer(settings.home / SERVER, SERVING),
-        _bound(request.port) as bound,
+        bound(request.port) as listening,
         ThreadPoolExecutor(WORKERS, thread_name_prefix="sift-serve") as pool,
         ThreadPoolExecutor(1, thread_name_prefix="sift-write") as writer,
-        _resting(models.release_idle),
+        resting(models.release_idle),
     ):
         listed.unlink(missing_ok=True)
-        port = cast("tuple[str, int]", bound.getsockname())[1]
+        port = cast("tuple[str, int]", listening.getsockname())[1]
         endpoint = Endpoint(port, os.getpid(), secrets.token_urlsafe(32), version, acting_on(settings), CONTRACT)
         kept = (RememberedQuestions(models), ResidentCodes(), KeptDecoded(), KeptResults(), HomeWatch(settings.home))
         activity = Activity(how.clock)
@@ -186,7 +186,7 @@ def held(
         written(listed, endpoint)
         server = StoppingServer(config, partial(_stopping, serving, listed, report))
         try:
-            yield HomeServer(endpoint, serving, server, bound, listed)
+            yield HomeServer(endpoint, serving, server, listening, listed)
         finally:
             listed.unlink(missing_ok=True)
             serving.watch.let_go()
@@ -197,7 +197,7 @@ def _interrupted(_signal: int, _frame: FrameType | None) -> None:
 
 
 @contextmanager
-def _stopped_as_by_ctrl_c() -> Generator[None]:
+def stopped_as_by_ctrl_c() -> Generator[None]:
     kept = {each: signal.signal(each, _interrupted) for each in STOPPING_SIGNALS}
     try:
         yield
@@ -233,7 +233,7 @@ def _leaving_when_idle(running: HomeServer, seconds: int | None, every: float) -
 
 def serve(settings: Settings, request: ServeHome, version: str, report: Reporter, how: Serve = SERVE) -> Served:
     with (
-        _stopped_as_by_ctrl_c(),
+        stopped_as_by_ctrl_c(),
         held(settings, request, version, report, how) as running,
         _leaving_when_idle(running, request.idle_exit, how.idle_every),
     ):

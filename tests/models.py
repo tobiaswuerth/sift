@@ -47,6 +47,9 @@ class Hashed:
         self.ranker_prepared.append(True)
         return ModelsPrepared((), built=built)
 
+    def release_idle(self) -> bool:
+        return False
+
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
         self.asked.append((tuple(texts), query))
         return (

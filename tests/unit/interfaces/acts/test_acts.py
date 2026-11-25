@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 from typing import cast, get_type_hints
 
@@ -6,14 +7,17 @@ import pytest
 from sift.api.collections import AddCollection, Audience, ShowStatus
 from sift.api.documents import GetDocuments, WantedDocument
 from sift.api.embedding import CollectionEmbedded, EmbedCollections, Embedded, EmbedResult
-from sift.api.errors import InvalidRequestError, NotFoundError
+from sift.api.errors import InvalidRequestError, ModelUnavailableError, NotFoundError
 from sift.api.links import FindMentions, FindSimilar, ShowLinks
 from sift.api.reindexing import ReindexFiles
 from sift.api.search import SearchHybrid, SearchKeywords, SearchResult, SearchVectors
+from sift.api.serving import WorkerAddress
 from sift.app.collections import add
 from sift.app.embedding import embed
+from sift.inference.loading import Deferred
+from sift.inference.remote import Remote
 from sift.interfaces.acts import collections, indexing, jobs, links, searching
-from sift.interfaces.acts.acting import Act, Acting
+from sift.interfaces.acts.acting import Act, Acting, fresh_models
 from sift.interfaces.acts.collections import GET, STATUS
 from sift.interfaces.acts.indexing import REINDEX
 from sift.interfaces.acts.links import LINKS
@@ -23,6 +27,8 @@ from sift.settings import Settings
 from tests.files import write
 from tests.homes import collection, indexed, quiet
 from tests.models import Hashed
+from tests.serving import VERSION
+from tests.workers import LOOPBACK, nobody_listens
 
 ACTS: list[Act[object, object]] = [
     value
@@ -93,3 +99,32 @@ def test_files_of_a_collection_never_embedded_are_indexed_alone(tmp_path: Path) 
     acting = Acting(Settings(home=home, user=None, cwd=tmp_path), quiet, float, Hashed, Audience.AGENTS)
     done = REINDEX.run(acting, ReindexFiles(("plain/a.md",)))
     assert (len(done.indexed.collections), done.embedded) == (1, None)
+
+
+def test_files_reindexed_while_the_worker_cannot_be_reached_are_indexed_and_the_embedding_said_to_fail(
+    agents: Acting, tmp_path: Path
+) -> None:
+    unreachable = Remote(WorkerAddress(LOOPBACK, nobody_listens(), "t", "p"), VERSION)
+    write(tmp_path / "open" / "Plan.md", "Note: the plan of Osprey.\n")
+    with pytest.raises(ModelUnavailableError, match="is unreachable or failed"):
+        REINDEX.run(dataclasses.replace(agents, models=lambda: unreachable), ReindexFiles(("open/Plan.md",)))
+    assert _hits(SEARCH.run(agents, SearchKeywords("Osprey"))) == ["open/Plan.md"]
+
+
+def test_files_reindexed_in_a_collection_never_embedded_never_ask_the_models(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    collection(tmp_path, home, "plain", {"a.md": "Note: alpha.\n"})
+    indexed(home)
+    unreachable = Remote(WorkerAddress(LOOPBACK, nobody_listens(), "t", "p"), VERSION)
+    settings = Settings(home=home, user=None, cwd=tmp_path)
+    acting = Acting(settings, quiet, float, lambda: unreachable, Audience.AGENTS)
+    assert REINDEX.run(acting, ReindexFiles(("plain/a.md",))).embedded is None
+
+
+def test_the_models_are_this_machine_s_unless_a_worker_is_named(tmp_path: Path) -> None:
+    here = Settings(home=tmp_path, user=None, cwd=tmp_path)
+    there = dataclasses.replace(here, embed_remote=WorkerAddress("workstation", 8766, "t", "p"))
+    local, remote = fresh_models(here), fresh_models(there)
+    assert isinstance(local, Deferred)
+    assert isinstance(remote, Remote)
+    assert ((local.model, local.reranker), remote.worker) == ((here.embed_model, here.rerank_model), there.embed_remote)

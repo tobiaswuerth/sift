@@ -27,6 +27,7 @@ dependencies = [
     "pypdfium2>=4.30",  # see above
     "uvicorn>=0.31",  # see above
     "starlette>=1.3.1",  # the home process's HTTP API; older releases have advisories known against them
+    "cryptography>=50.0.2",  # the certificate sift worker makes for HTTPS; the version sift was first built on
 ]
 keywords = [
     "rag",
@@ -152,6 +153,9 @@ ignore = [
 # The one process sift starts outside its reader sandbox: `sift serve` in a minimized window of its own, with sift's
 # own arguments alone, when an agent's `sift serve --stdio` finds no home process (decided with the owner).
 "src/sift/interfaces/server/proxy.py" = ["S603"]
+# `sift worker` answers other machines, so its default address is every interface of this one; --host narrows it, and
+# its TLS certificate and token guard it (decided with the owner).
+"src/sift/api/serving.py" = ["S104"]
 "tools/check_package.py" = ["T201"]
 
 [tool.ruff.lint.flake8-tidy-imports]
@@ -262,6 +266,12 @@ name = "The document converter only where documents are converted"
 type = "protected"
 protected_modules = ["xberg"]
 allowed_importers = ["sift.ingest.converter"]
+
+[[tool.importlinter.contracts]]
+name = "The certificate library only where the worker makes its key"
+type = "protected"
+protected_modules = ["cryptography"]
+allowed_importers = ["sift.interfaces.worker.keys"]
 
 [[tool.importlinter.contracts]]
 name = "Worker processes only in the sandbox that reads files"

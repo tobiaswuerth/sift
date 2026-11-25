@@ -1,7 +1,7 @@
 import contextlib
 import sqlite3
 from pathlib import Path, PureWindowsPath
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import pytest
 
@@ -13,6 +13,7 @@ from sift.storage.database import (
     first,
     inserted,
     primary_code,
+    private_bytes,
     reading,
     require_sqlite,
     rows,
@@ -239,3 +240,13 @@ def test_an_sqlite_older_than_sift_needs_is_refused_with_what_to_do() -> None:
         refused.value.remedy
         == "run sift on a Python with SQLite 3.38.0 or newer, as uv, python.org and Homebrew install"
     )
+
+
+def test_a_private_file_is_written_whole_or_not_at_all(tmp_path: Path) -> None:
+    path = tmp_path / "kept" / "token"
+    private_bytes(path, b"the old key")
+    with pytest.raises(TypeError):
+        private_bytes(path, cast("bytes", cast("object", "no bytes")))
+    assert (path.read_bytes(), sorted(each.name for each in path.parent.iterdir())) == (b"the old key", ["token"])
+    private_bytes(path, b"the new key")
+    assert path.read_bytes() == b"the new key"

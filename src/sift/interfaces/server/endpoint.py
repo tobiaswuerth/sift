@@ -10,7 +10,7 @@ from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.events import Noted
 from sift.api.wire import read_answer
 from sift.settings import ActSetting, Settings, acting_on
-from sift.storage.database import private_file, private_folder
+from sift.storage.database import private_bytes
 from sift.storage.store_files import WRITER_SUFFIX
 from sift.storage.writer import Holder, held_by
 
@@ -61,12 +61,7 @@ def own_endpoint(settings: Settings) -> Path:
 
 
 def written(path: Path, endpoint: Endpoint) -> None:
-    private_folder(path.parent)
-    part = path.with_name(f"{path.name}.{os.getpid()}.part")
-    part.unlink(missing_ok=True)
-    private_file(part)
-    part.write_bytes(json.dumps(asdict(endpoint)).encode())
-    part.replace(path)
+    private_bytes(path, json.dumps(asdict(endpoint)).encode())
 
 
 def _written_by(path: Path | None, holder: Holder) -> Endpoint | None:

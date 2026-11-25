@@ -20,6 +20,7 @@ from sift.api.events import (
     Event,
     FilesKept,
     Finished,
+    Lending,
     Listening,
     Noted,
     Phase,
@@ -105,6 +106,7 @@ EVENT_SAMPLES: Mapping[str, Event] = MappingProxyType(
         "noted with a code": Noted("a folder can't be read", None, Problem.OS),
         "finished": Finished(1, 2, 3, 4),
         "listening": Listening("http://127.0.0.1:8765", "/home/.sift"),
+        "lending": Lending("workstation", 8766, "t0ken.p1n"),
     }
 )
 SERVED = Served("http://127.0.0.1:8765")

@@ -24,6 +24,7 @@ def test_a_child_keeps_what_runs_it_and_the_session_s_folders_and_nothing_of_the
         "LOCALAPPDATA": "s",
         "SIFT_EMBED_MODEL": "",
         "SIFT_RERANK_MODEL": "",
+        "SIFT_EMBED_REMOTE": "",
         "SIFT_OCR": "",
         "SIFT_UPDATE_CHECK": "",
         "PYTHONIOENCODING": "utf-8",

@@ -1,3 +1,4 @@
+import dataclasses
 import http.client
 import json
 import threading
@@ -8,9 +9,12 @@ from typing import cast
 import pytest
 
 from sift.api.collections import AddCollection
+from sift.api.embedding import EmbedCollections
 from sift.api.errors import InternalError, SystemFailureError
+from sift.api.serving import WorkerAddress
 from sift.api.wire import Json
 from sift.app.collections import add
+from sift.app.embedding import embed
 from sift.app.indexing import NO_COLLECTION_REMEDY
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.mcp.tools import Tool, ToolRunning
@@ -19,8 +23,10 @@ from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import HomeServer
 from sift.settings import Settings
 from tests.files import write
-from tests.homes import indexed
+from tests.homes import indexed, quiet
+from tests.models import Hashed
 from tests.serving import asked, last, running
+from tests.workers import LOOPBACK, nobody_listens, working
 
 type Message = dict[str, object]
 
@@ -191,3 +197,29 @@ def test_an_agent_may_not_reindex_a_file_of_a_hidden_collection(home: Settings, 
     assert called["content"] == [
         {"type": "text", "text": f"files: {secret} is in no collection; fix: {NO_COLLECTION_REMEDY}"}
     ]
+
+
+def test_an_agent_searches_by_meaning_through_the_worker_the_home_process_sends_work_to(
+    home: Settings, tmp_path: Path
+) -> None:
+    lent_settings = Settings(tmp_path / "worker", None, tmp_path, state=tmp_path / "worker-state")
+    asking = {"name": "search", "arguments": {"query": "dark matter halo", "mode": "semantic", "k": 1}}
+    with working(lent_settings, Hashed()) as worker:
+        embed(home.home, EmbedCollections(), quiet, worker.remote())
+        before = worker.requests()
+        with running(dataclasses.replace(home, embed_remote=worker.address)) as server:
+            called = result(server, "tools/call", asking)
+        asked_there = worker.requests() - before
+    hits = cast("list[Message]", cast("Message", called["structuredContent"])["hits"])
+    assert ([hit["id"] for hit in hits], asked_there) == (["notes/halo.md"], 2)
+
+
+def test_a_worker_the_home_process_cannot_reach_is_said_to_the_agent(home: Settings) -> None:
+    port = nobody_listens()
+    unreachable = dataclasses.replace(home, embed_remote=WorkerAddress(LOOPBACK, port, "s3cret", "p1n"))
+    with running(unreachable) as server:
+        called = result(server, "tools/call", {"name": "search", "arguments": {"query": "halo", "mode": "semantic"}})
+    (said,) = cast("list[Message]", called["content"])
+    text = cast("str", said["text"])
+    assert (called["isError"], "s3cret" in text) == (True, False)
+    assert text.startswith(f"embedding remote https://{LOOPBACK}:{port} is unreachable or failed: ")

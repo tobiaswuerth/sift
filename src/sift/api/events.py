@@ -66,10 +66,19 @@ class Listening:
     home: str
 
 
-type Event = CollectionStarted | PhaseStarted | Advanced | FilesKept | PhaseDone | Noted | Finished | Listening
+@dataclass(frozen=True, slots=True)
+class Lending:
+    machine: str
+    port: int
+    key: str
+
+
+type Event = (
+    CollectionStarted | PhaseStarted | Advanced | FilesKept | PhaseDone | Noted | Finished | Listening | Lending
+)
 type Reporter = Callable[[Event], None]
 type EventKind = type[
-    CollectionStarted | PhaseStarted | Advanced | FilesKept | PhaseDone | Noted | Finished | Listening
+    CollectionStarted | PhaseStarted | Advanced | FilesKept | PhaseDone | Noted | Finished | Listening | Lending
 ]
 
 EVENT_KINDS: Mapping[str, EventKind] = MappingProxyType(
@@ -82,6 +91,7 @@ EVENT_KINDS: Mapping[str, EventKind] = MappingProxyType(
         "Noted": Noted,
         "Finished": Finished,
         "Listening": Listening,
+        "Lending": Lending,
     }
 )
 EVENT_TAGS: Mapping[EventKind, str] = MappingProxyType({kind: tag for tag, kind in EVENT_KINDS.items()})

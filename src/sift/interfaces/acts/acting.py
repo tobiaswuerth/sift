@@ -11,10 +11,13 @@ from sift.late import late
 from sift.settings import Settings
 
 if TYPE_CHECKING:
-    from sift.inference.loading import Deferred
+    from sift.api.serving import WorkerAddress
+    from sift.inference.loading import Deferred, HeldModels
     from sift.inference.models import Models
+    from sift.inference.remote import Remote
 
 LOADING = "sift.inference.loading"
+REMOTE = "sift.inference.remote"
 
 
 NO_HOME_PROCESS = "no home process runs, so no job runs in the background"
@@ -70,11 +73,23 @@ class Loading(Protocol):
     def deferred(self, model: str, reranker: str, gpus: str | None) -> "Deferred": ...
 
 
-def fresh_models(settings: Settings) -> "Deferred":
+class Reaching(Protocol):
+    def remote(self, worker: "WorkerAddress") -> "Remote": ...
+
+
+def own_models(settings: Settings) -> "Deferred":
     return late(LOADING, Loading).deferred(settings.embed_model, settings.rerank_model, settings.gpus)
+
+
+def fresh_models(settings: Settings) -> "HeldModels":
+    if settings.embed_remote is not None:
+        return late(REMOTE, Reaching).remote(settings.embed_remote)
+    return own_models(settings)
 
 
 if TYPE_CHECKING:
     from sift.inference import loading as _loading
+    from sift.inference import remote as _remote
 
     _LOADING: Loading = _loading
+    _REMOTE: Reaching = _remote

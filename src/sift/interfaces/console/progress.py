@@ -7,12 +7,14 @@ from sift.api.events import (
     Event,
     FilesKept,
     Finished,
+    Lending,
     Listening,
     Noted,
     Phase,
     PhaseDone,
     PhaseStarted,
 )
+from sift.api.serving import EMBED_REMOTE_VARIABLE
 from sift.interfaces.console.shell import command
 from sift.interfaces.console.style import Style, Tone, paint
 from sift.interfaces.console.text import fitted, labelled, printable
@@ -43,6 +45,10 @@ SPEED = 16
 TIME = 10
 BAR = 16
 STOP_HINT = "Ctrl+C stops it and its jobs; sift jobs lists them"
+LENDING_STOP_HINT = "Ctrl+C stops it"
+KEY_SHOWN_NOT = "<key>"
+KEEP_THE_KEY = "the key private: it lets a machine use this worker; it is shown here alone, not in the log"
+SET_ELSEWHERE = "on the machines that send it work"
 FILLED = "\N{BOX DRAWINGS HEAVY HORIZONTAL}"
 EMPTY = "\N{BOX DRAWINGS LIGHT HORIZONTAL}"
 DOT = "\N{MIDDLE DOT}"
@@ -69,6 +75,7 @@ class View:
 class Looks:
     style: Style
     platform: str
+    shows_secrets: bool = False
 
 
 def _label(label: str, tone: Tone | None, style: Style) -> str:
@@ -107,7 +114,22 @@ def _done(finished: Finished, view: View, now: float, looks: Looks) -> tuple[str
     return line, " " * (len(INDENT) + LABEL) + paint(listing, Tone.SECONDARY, style)
 
 
-def _said(said: Noted | Listening, style: Style) -> tuple[str, ...]:
+def _lent(lending: Lending, looks: Looks) -> tuple[str, ...]:
+    machine, style = printable(lending.machine), looks.style
+    key = printable(lending.key) if looks.shows_secrets else KEY_SHOWN_NOT
+    remote = f"{EMBED_REMOTE_VARIABLE}=https://{key}@{machine}:{lending.port}"
+    return (
+        labelled("lend", f"https://{machine}:{lending.port}", Tone.STRONG, style),
+        labelled("set", f"{remote}  {paint(SET_ELSEWHERE, Tone.SECONDARY, style)}"),
+        labelled("keep", KEEP_THE_KEY, Tone.WARNING, style),
+        labelled("stop", LENDING_STOP_HINT),
+    )
+
+
+def _said(said: Noted | Listening | Lending, looks: Looks) -> tuple[str, ...]:
+    style = looks.style
+    if isinstance(said, Lending):
+        return _lent(said, looks)
     if isinstance(said, Listening):
         return (
             labelled("serve", f"{printable(said.url)}  {printable(said.home)}", Tone.STRONG, style),
@@ -143,8 +165,8 @@ def shown(view: View, event: Event, now: float, looks: Looks) -> tuple[View, tup
             quiet = running is None or (running.phase in QUIET_WHEN_NONE and not event.count)
             lines = () if quiet or running is None else (_row(running, event.count, now, looks.style),)
             return replace(view, running=None, kept=None), lines
-        case Noted() | Listening():
-            return view, _said(event, looks.style)
+        case Noted() | Listening() | Lending():
+            return view, _said(event, looks)
         case _:
             return replace(view, running=None), _done(event, view, now, looks)
 

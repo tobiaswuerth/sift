@@ -96,6 +96,19 @@ def private_file(path: Path) -> None:
     os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, PRIVATE_FILE))
 
 
+def private_bytes(path: Path, data: bytes) -> None:
+    private_folder(path.parent)
+    part = path.with_name(f"{path.name}.{os.getpid()}.part")
+    part.unlink(missing_ok=True)
+    private_file(part)
+    try:
+        part.write_bytes(data)
+        part.replace(path)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+
+
 def private_file_once(path: Path) -> None:
     with contextlib.suppress(FileExistsError):
         private_file(path)

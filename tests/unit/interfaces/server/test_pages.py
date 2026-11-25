@@ -106,6 +106,15 @@ def test_a_document_opens_in_the_reader_with_its_hit_marked_and_its_fields_as_fi
     assert 'href="/ui/file?id=notes%2Ftagged.md"' in text
 
 
+def test_a_document_whose_last_line_has_no_line_break_shows_it_as_its_last_line(home: Settings, notes: Path) -> None:
+    write(notes / "plain.txt", "First line.\nLast line, unbroken.")
+    indexed(home.home)
+    with running(home) as server:
+        text = page(server, doc="notes/plain.txt")
+    assert '<span class="n">2</span>Last line, unbroken.</div>' in text
+    assert '<span class="n">3</span>' not in text
+
+
 def test_errors_show_in_place(home: Settings) -> None:
     with running(home) as server:
         unknown = page(server, q="x", c="nope")

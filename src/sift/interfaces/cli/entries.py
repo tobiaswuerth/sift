@@ -15,13 +15,13 @@ from sift.api.indexing import IndexCollections
 from sift.api.jobs import ListJobs
 from sift.api.links import FindMentions, FindSimilar, ListUnresolved, ShowLinks
 from sift.api.search import SearchHybrid, SearchKeywords, SearchVectors
-from sift.api.serving import OpenUi, ServeHome
+from sift.api.serving import OpenUi, ServeHome, ServeWorker
 from sift.interfaces.cli.context import Command, Commands
 from sift.interfaces.cli.reading import ReadDocuments
 from sift.late import late
 
 COMMANDS_PACKAGE = "sift.interfaces.cli.commands"
-LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed", "serve"})
+LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed", "serve", "worker"})
 SEARCH_EXAMPLE = 'sift search "dark matter" -k 5'
 GET_EXAMPLE = "sift get notes/physics.md --lines 17-26"
 
@@ -127,6 +127,13 @@ ENTRIES = MappingProxyType(
             ListJobs,
             "jobs",
             "sift jobs --stop 3",
+        ),
+        "worker": CommandEntry(
+            "lend this machine's models to sift on other machines: they embed and rerank here",
+            ServeWorker,
+            "serving",
+            "sift worker",
+            here=True,
         ),
     }
 )

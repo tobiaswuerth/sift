@@ -6,6 +6,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from sift.api.errors import InvalidRequestError
+from sift.api.serving import EMBED_REMOTE_VARIABLE, WorkerAddress, worker_address
 from sift.domain.text.scans import OcrSetting
 from sift.inference.hub import EMBED_MODEL, RERANK_MODEL
 
@@ -41,6 +42,7 @@ VARIABLES = MappingProxyType(
         HOME: f"the folder of sift's collections, stores and logs (default ~/{DEFAULT_HOME})",
         EMBED_MODEL_VARIABLE: f"the model that embeds passages (default {EMBED_MODEL})",
         RERANK_MODEL_VARIABLE: f"the model that reranks the passages of a query (default {RERANK_MODEL})",
+        EMBED_REMOTE_VARIABLE: "the address a worker prints, to embed and rerank there (default: on this machine)",
         OCR_VARIABLE: "auto, on or off: read the text of scans and images (default auto: on a GPU)",
         UPDATE_CHECK_VARIABLE: "on or off: be told of a newer sift once a day (default off)",
     }
@@ -60,6 +62,7 @@ class Settings:
     gpus: str | None = None
     update_check: bool = False
     state: Path | None = None
+    embed_remote: WorkerAddress | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +77,7 @@ def acting_on(settings: Settings) -> tuple[ActSetting, ...]:
         ActSetting(RERANK_MODEL_VARIABLE, settings.rerank_model),
         ActSetting(OCR_VARIABLE, settings.ocr.value),
         ActSetting(GPUS_VARIABLE, settings.gpus),
+        ActSetting(EMBED_REMOTE_VARIABLE, None if settings.embed_remote is None else settings.embed_remote.address),
     )
 
 
@@ -151,6 +155,11 @@ def _model(environment: Mapping[str, str], variable: str, default: str) -> str:
     return (environment.get(variable) or "").strip() or default
 
 
+def _remote(written: str | None) -> WorkerAddress | None:
+    address = (written or "").strip()
+    return worker_address(address) if address else None
+
+
 def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path, platform: str = sys.platform) -> Settings:
     _known_variables(environment)
     return Settings(
@@ -165,6 +174,7 @@ def parsed(environment: Mapping[str, str], user: Path | None, cwd: Path, platfor
         gpus=environment.get(GPUS_VARIABLE),
         update_check=_update_check(environment),
         state=_state(environment, user, platform),
+        embed_remote=_remote(environment.get(EMBED_REMOTE_VARIABLE)),
     )
 
 

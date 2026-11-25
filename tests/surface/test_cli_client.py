@@ -6,6 +6,7 @@ from types import MappingProxyType
 
 import pytest
 
+from sift.api.serving import WorkerAddress
 from sift.domain.text.scans import OcrSetting
 from sift.interfaces.cli.entries import ENTRIES
 from sift.interfaces.cli.main import STOPPED_WATCHING, Host, run
@@ -46,6 +47,7 @@ NOT_COMPARED = MappingProxyType(
         "serve": "it starts the home process",
         "ui": "it opens the home process's pages in the browser",
         "jobs": "it asks the home process alone",
+        "worker": "it lends this machine's models to others, beside any home process",
         "embed": "it needs models",
         "vsearch": "it needs models",
         "query": "it needs models",
@@ -167,6 +169,17 @@ def test_a_setting_the_home_process_does_not_share_is_noted(settings: Settings, 
         (alone[0], alone[1], " note  the home process uses CUDA_VISIBLE_DEVICES unset" + NEWLINE + fix + alone[2]),
         alone,
     ]
+
+
+def test_a_worker_the_home_process_sends_work_to_is_noted_without_its_key(settings: Settings, notes: Path) -> None:
+    indexed_notes(settings, notes)
+    elsewhere = dataclasses.replace(settings, embed_remote=WorkerAddress("workstation", 8766, "s3cret", "p1n"))
+    alone = ran(settings, "status")
+    with running(elsewhere):
+        noted = ran(settings, "status")
+    fix = "  fix  stop sift serve to use yours, or start it again with them" + NEWLINE
+    said = " note  the home process uses SIFT_EMBED_REMOTE=https://workstation:8766" + NEWLINE
+    assert noted == (alone[0], alone[1], said + fix + alone[2])
 
 
 def test_an_interrupt_while_watching_a_served_move_says_it_goes_on(settings: Settings, notes: Path) -> None:

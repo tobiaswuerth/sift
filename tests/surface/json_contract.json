@@ -913,6 +913,14 @@
         "url": "http://127.0.0.1:8765",
         "home": "/home/.sift"
       }
+    },
+    "lending": {
+      "event": "Lending",
+      "data": {
+        "machine": "workstation",
+        "port": 8766,
+        "key": "t0ken.p1n"
+      }
     }
   }
 }

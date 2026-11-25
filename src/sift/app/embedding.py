@@ -1,7 +1,8 @@
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache, partial
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 
@@ -126,8 +127,9 @@ def _model_held(one: Collection) -> str | None:
         return None
 
 
-def embedded_by(home: Path, names: Sequence[str], model: str) -> tuple[str, ...]:
-    return tuple(one.name for one in chosen(home, names, Audience.PEOPLE) if _model_held(one) == model)
+def models_held(home: Path, names: Sequence[str]) -> Mapping[str, str]:
+    held = ((one.name, _model_held(one)) for one in chosen(home, names, Audience.PEOPLE))
+    return MappingProxyType({name: model for name, model in held if model is not None})
 
 
 def embed(

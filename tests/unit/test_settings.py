@@ -3,12 +3,14 @@ from pathlib import Path
 import pytest
 
 from sift.api.errors import InvalidRequestError
+from sift.api.serving import ADDRESS_REMEDY, NOT_AN_ADDRESS, WorkerAddress
 from sift.domain.text.scans import OcrSetting
 from sift.settings import (
     OCR_REMEDY,
     UPDATE_CHECK_REMEDY,
     VARIABLES,
     Settings,
+    acting_on,
     from_environment,
     parsed,
     user_folder,
@@ -137,7 +139,14 @@ def test_a_variable_sift_has_no_setting_of_is_refused_with_those_it_has(user: Pa
 def test_every_setting_of_sift_is_in_the_table_of_its_variables(user: Path, cwd: Path) -> None:
     every = dict.fromkeys(VARIABLES, "")
     assert parsed(every, user, cwd) == parsed({}, user, cwd)
-    assert sorted(VARIABLES) == ["SIFT_EMBED_MODEL", "SIFT_HOME", "SIFT_OCR", "SIFT_RERANK_MODEL", "SIFT_UPDATE_CHECK"]
+    assert sorted(VARIABLES) == [
+        "SIFT_EMBED_MODEL",
+        "SIFT_EMBED_REMOTE",
+        "SIFT_HOME",
+        "SIFT_OCR",
+        "SIFT_RERANK_MODEL",
+        "SIFT_UPDATE_CHECK",
+    ]
 
 
 def test_names_of_models_are_read_without_the_spaces_around_them(user: Path, cwd: Path) -> None:
@@ -151,6 +160,7 @@ def test_names_of_models_are_read_without_the_spaces_around_them(user: Path, cwd
         ({"SIFT_HOME": "data"}, "SIFT_HOME"),
         ({"SIFT_OCR": "maybe"}, "SIFT_OCR"),
         ({"SIFT_UPDATE_CHECK": "x"}, "SIFT_UPDATE_CHECK"),
+        ({"SIFT_EMBED_REMOTE": "pc:8766"}, "SIFT_EMBED_REMOTE"),
     ],
 )
 def test_a_setting_refused_names_its_variable_as_the_field_at_fault(
@@ -223,3 +233,43 @@ def test_a_user_folder_that_cannot_be_found_is_none() -> None:
     with pytest.raises(RecursionError):
         user_folder(_too_deep)
     assert user_folder() == Path.home()
+
+
+def test_a_worker_s_address_is_read_with_its_key_and_shown_without_it(user: Path, cwd: Path) -> None:
+    found = parsed({"SIFT_EMBED_REMOTE": " https://t0ken.p1n@Workstation:9000/ "}, user, cwd).embed_remote
+    assert (found, WorkerAddress("workstation", 9000, "t", "p").address) == (
+        WorkerAddress("workstation", 9000, "t0ken", "p1n"),
+        "https://workstation:9000",
+    )
+    loopback = parsed({"SIFT_EMBED_REMOTE": "https://t.p@[::1]"}, user, cwd)
+    assert (loopback.embed_remote, parsed({}, user, cwd).embed_remote) == (WorkerAddress("::1", 8766, "t", "p"), None)
+    assert acting_on(loopback)[-1].value == "https://[::1]:8766"
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "http://t.p@workstation:8766",
+        "https://workstation:8766",
+        "https://token@workstation:8766",
+        "https://.p@workstation:8766",
+        "https://t.@workstation:8766",
+        "https://t.p@:8766",
+        "workstation:8766",
+        "https://t.p@workstation:port",
+        "https://t.p@workstation:0",
+        "https://t.p@workstation:70000",
+        "https://t.p@[::1",
+        "https://t.p:password@workstation",
+        "https://t.p@workstation/embed",
+        "https://t.p@workstation?k=v",
+        "https://t.p@workstation#part",
+    ],
+)
+def test_a_worker_s_address_must_be_the_one_sift_worker_prints_and_is_never_said_back(
+    user: Path, cwd: Path, written: str
+) -> None:
+    with pytest.raises(InvalidRequestError) as refused:
+        parsed({"SIFT_EMBED_REMOTE": written}, user, cwd)
+    said = refused.value
+    assert (said.message, said.remedy, said.field) == (NOT_AN_ADDRESS, ADDRESS_REMEDY, "SIFT_EMBED_REMOTE")

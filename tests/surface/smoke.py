@@ -23,10 +23,11 @@ class Smoke:
     home: Path
     model: str = ""
     reranker: str = ""
+    remote: str = ""
     exercised: list[Argv] = field(default_factory=list[Argv])
 
     def ran(self, *args: str, cwd: Path | None = None) -> Done:
-        return process.sift(self.home, *args, model=self.model, reranker=self.reranker, cwd=cwd)
+        return process.sift(self.home, *args, model=self.model, reranker=self.reranker, remote=self.remote, cwd=cwd)
 
     def checked(self, *args: str, holds: Callable[[Done], bool], cwd: Path | None = None) -> Done:
         done = self.ran(*args, cwd=cwd)

@@ -107,6 +107,17 @@ def test_idle_models_are_let_go_one_call_at_a_time_and_none_are_built_to_let_go_
     assert (crowded.calls, crowded.most_at_once) == (161, 1)
 
 
+def test_models_closed_let_go_of_what_was_built_and_are_built_again_when_used() -> None:
+    crowded = Crowded(threading.Barrier(1))
+    shared = Deferred("model", "reranker", None, loader=lambda: crowded)
+    shared.close()
+    shared.encode(["dark matter"], query=True)
+    shared.close()
+    assert (shared.built, shared.release_idle()) == (None, False)
+    shared.encode(["halo"], query=True)
+    assert crowded.builds == [("model", "reranker", None)] * 2
+
+
 def test_the_note_pytorch_logs_on_a_mac_as_the_models_load_is_silenced() -> None:
     ocr_module()
     assert logging.getLogger(REDIRECTS).getEffectiveLevel() == logging.ERROR
