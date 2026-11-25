@@ -1,4 +1,5 @@
 import socket
+import ssl
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -99,6 +100,8 @@ def lent(
                 timeout_keep_alive=how.keep_alive_seconds,
                 limit_concurrency=MOST_CONNECTIONS,
             )
+            config.load()
+            cast("ssl.SSLContext", config.ssl).minimum_version = ssl.TLSVersion.TLSv1_2
             port = cast("tuple[str, int]", listening.getsockname())[1]
             yield WorkerServer(key, uvicorn.Server(config), listening, port)
 

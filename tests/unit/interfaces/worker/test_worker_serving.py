@@ -113,4 +113,4 @@ def test_the_worker_takes_no_tls_older_than_1_2(settings: Settings) -> None:
     with working(settings, Hashed()) as worker:
         tls = worker.running.server.config.ssl
         assert tls is not None
-        assert tls.minimum_version >= ssl.TLSVersion.TLSv1_2
+        assert tls.minimum_version == ssl.TLSVersion.TLSv1_2
