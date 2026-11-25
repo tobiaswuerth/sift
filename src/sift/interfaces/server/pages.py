@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -31,6 +31,11 @@ UNKEPT = MappingProxyType(
 PAGE_HEADERS = MappingProxyType({**UNKEPT, "Content-Security-Policy": PAGE_POLICY})
 UNFRAMED = "frame-ancestors 'none'"
 NO_FILE = "no such file"
+OWN = frozenset({"same-origin", "none"})
+BY_A_LINK = ("navigate", "document")
+ANOTHER_SITE = "sift's pages answer this browser's own requests and links alone, not what another site's page loads"
+
+type PageAnswered = Callable[[Request], Awaitable[Response]]
 PDF = "application/pdf"
 
 
@@ -41,6 +46,20 @@ class PeopleReads:
 
     def read(self, name: str, data: Json) -> object:
         return read_for(self.serving, Sent(name, self.handled[name], data, Audience.PEOPLE))
+
+
+def _loaded_by_another_site(request: Request) -> bool:
+    site, sent = request.headers.get("sec-fetch-site"), request.headers.get
+    return site is not None and site not in OWN and (sent("sec-fetch-mode"), sent("sec-fetch-dest")) != BY_A_LINK
+
+
+def own_alone(answer: PageAnswered) -> PageAnswered:
+    async def answered(request: Request) -> Response:
+        if _loaded_by_another_site(request):
+            return PlainTextResponse(ANOTHER_SITE, status_code=403, headers=dict(UNKEPT))
+        return await answer(request)
+
+    return answered
 
 
 async def page_answered(serving: Serving, handled: Mapping[str, Handled], request: Request) -> Response:

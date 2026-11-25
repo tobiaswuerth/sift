@@ -15,7 +15,7 @@ from sift.interfaces.server.activity import Activity
 from sift.interfaces.server.agents import agents_answered
 from sift.interfaces.server.app import HOSTS, Serving, command_route, unknown_command
 from sift.interfaces.server.handled import HANDLED, Handled, for_agents, for_pages
-from sift.interfaces.server.pages import file_answered, home_answered, page_answered, style_answered
+from sift.interfaces.server.pages import file_answered, home_answered, own_alone, page_answered, style_answered
 from sift.interfaces.web.view import PREFIX
 
 if TYPE_CHECKING:
@@ -54,10 +54,10 @@ def served_app(serving: Serving, handled: Mapping[str, Handled] = HANDLED) -> St
         routes=[
             *(command_route(serving, name, each) for name, each in handled.items()),
             Route(MCP_PATH, agents, methods=["GET", "POST", "DELETE"]),
-            Route("/", home_answered),
-            Route(PREFIX, pages),
-            Route(f"{PREFIX}/style.css", style_answered),
-            Route(f"{PREFIX}/file", files),
+            Route("/", own_alone(home_answered)),
+            Route(PREFIX, own_alone(pages)),
+            Route(f"{PREFIX}/style.css", own_alone(style_answered)),
+            Route(f"{PREFIX}/file", own_alone(files)),
         ],
         middleware=[
             Middleware(CountingRequests, activity=serving.activity),

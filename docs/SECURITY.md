@@ -19,7 +19,9 @@ Expect a first reply within a week. Security fixes go into the latest release.
     this machine, of any user, can search and read the documents of the collections agents may see through MCP, and
     of all collections through the UI. MCP refuses requests a web page of another site sends (by their `Origin`); the
     UI's pages run no scripts, and no other site may show them or a file opened from them in a frame, or load them
-    into a page of its own. On a machine others use, run `sift serve` only while you need it.
+    into a page of its own: the UI answers a page of another site only when you follow a link there, so no site can
+    make it search in the background (by `Sec-Fetch-Site`, which browsers since 2023 send). On a machine others use,
+    run `sift serve` only while you need it.
 - **The home.** It holds the text of every indexed file. On Windows a home outside your profile folder takes the
   rights of the folder it lies in, often readable by every local user: keep it in a folder only you may read. On
   other systems sift makes the home and its stores' folders yours alone when it makes them.

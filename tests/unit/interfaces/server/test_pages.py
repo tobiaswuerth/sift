@@ -20,7 +20,7 @@ from tests.damage import damage_table
 from tests.files import write
 from tests.homes import indexed, quiet
 from tests.models import Hashed
-from tests.serving import running
+from tests.serving import counted, running
 
 type Got = tuple[int, Mapping[str, str], str]
 
@@ -287,3 +287,31 @@ def test_no_page_of_another_site_loads_or_frames_what_the_ui_answers(home: Setti
     assert [headers["cross-origin-resource-policy"] for _, headers, _ in answered] == ["same-origin"] * 5
     framed = [headers.get("content-security-policy", "") for _, headers, _ in answered]
     assert ["frame-ancestors 'none'" in policy for policy in framed] == [True, False, True, True, False]
+
+
+NAVIGATED = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+ASKED_BY_BROWSERS: tuple[tuple[Mapping[str, str], bool], ...] = (
+    ({}, True),
+    ({"Sec-Fetch-Site": "none", **NAVIGATED}, True),
+    ({"Sec-Fetch-Site": "same-origin", **NAVIGATED}, True),
+    ({"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "style"}, True),
+    ({"Sec-Fetch-Site": "cross-site", **NAVIGATED}, True),
+    ({"Sec-Fetch-Site": "same-site", **NAVIGATED}, True),
+    ({"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "iframe"}, False),
+    ({"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "image"}, False),
+    ({"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}, False),
+    ({"Sec-Fetch-Site": "same-site", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "script"}, False),
+    ({"Sec-Fetch-Site": "cross-site"}, False),
+)
+
+
+@pytest.mark.parametrize("headers, let", ASKED_BY_BROWSERS)
+def test_a_page_of_another_site_reaches_the_ui_by_a_link_alone_and_makes_it_search_nothing(
+    home: Settings, headers: Mapping[str, str], *, let: bool
+) -> None:
+    asked = list[str]()
+    with running(home, counted(asked)) as server:
+        answered = [got(server, path, headers)[0] for path in ("/ui?q=dark", "/ui/file?id=notes%2Fhalo.md", "/")]
+        style = got(server, "/ui/style.css", headers)[0]
+    assert (answered, style) == (([200, 200, 307], 200) if let else ([403, 403, 403], 403))
+    assert ("search" in asked) is let
