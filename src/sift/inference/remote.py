@@ -59,7 +59,7 @@ def series(release: str) -> tuple[str, ...]:
     return parts[:1] if parts[0] != "0" else parts[:2]
 
 
-def _client_tls() -> ssl.SSLContext:
+def unverified_tls() -> ssl.SSLContext:
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.check_hostname = False
@@ -70,7 +70,7 @@ def _client_tls() -> ssl.SSLContext:
 @final
 class PinnedConnection(http.client.HTTPSConnection):
     def __init__(self, worker: WorkerAddress, resolve: Resolve) -> None:
-        self.tls: ssl.SSLContext = _client_tls()
+        self.tls: ssl.SSLContext = unverified_tls()
         super().__init__(worker.host, worker.port, timeout=ANSWER_SECONDS, context=self.tls)
         self.worker: WorkerAddress = worker
         self.resolve: Resolve = resolve

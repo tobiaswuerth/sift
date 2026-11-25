@@ -12,7 +12,7 @@ from typing import cast, final
 from sift.api.events import Event
 from sift.api.serving import ServeWorker, WorkerAddress
 from sift.inference.loading import Resting
-from sift.inference.remote import Remote, Resolve, addresses
+from sift.inference.remote import Remote, Resolve, addresses, unverified_tls
 from sift.interfaces.worker.keys import WorkerKey
 from sift.interfaces.worker.serving import LEND, Lend, WorkerServer, lent, worker_served_until_stopped
 from sift.settings import Settings
@@ -75,17 +75,10 @@ def working(settings: Settings, models: Resting, version: str = VERSION, how: Le
             joined(thread, 30)
 
 
-def _unchecked() -> ssl.SSLContext:
-    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    tls.check_hostname = False
-    tls.verify_mode = ssl.CERT_NONE
-    return tls
-
-
 def asked(
     worker: LiveWorker, method: str, path: str, body: object = None, *, authorization: str | None = None
 ) -> tuple[int, bytes]:
-    connection = http.client.HTTPSConnection(LOOPBACK, worker.running.port, timeout=60, context=_unchecked())
+    connection = http.client.HTTPSConnection(LOOPBACK, worker.running.port, timeout=60, context=unverified_tls())
     given = f"Bearer {worker.running.key.token}" if authorization is None else authorization
     sent = body if isinstance(body, bytes) or body is None else json.dumps(body).encode()
     try:
@@ -123,6 +116,7 @@ def canned(key: WorkerKey, answers: Mapping[str, tuple[int, bytes]]) -> Generato
     server = CannedServer((LOOPBACK, 0), CannedAnswers)
     server.answers = answers
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(key.certificate, key.private_key)
     server.socket = tls.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

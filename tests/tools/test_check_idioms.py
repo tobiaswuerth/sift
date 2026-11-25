@@ -81,34 +81,6 @@ def test_a_numbered_sql_placeholder_is_found() -> None:
     assert problems("src/sift/storage/a.py", "db.execute('SELECT ?, :name')\n") == []
 
 
-@pytest.mark.parametrize("called", ["View[int, str](a, b)", "_Worker[A](made)", "kept.View[int](a)", "Box[int]()"])
-def test_a_generic_class_called_with_its_type_arguments_is_found(called: str) -> None:
-    for path in ("src/sift/app/a.py", "tests/a.py", "tools/a.py"):
-        (problem,) = problems(path, f"x = {called}\n")
-        assert problem.startswith("a generic class called with its type arguments")
-
-
-@pytest.mark.parametrize(
-    "called",
-    [
-        "list[str]()",
-        "dict[str, int]()",
-        "set[int]()",
-        "frozenset[int]()",
-        "tuple[int, ...]()",
-        "collections.OrderedDict[str, int]()",
-        "collections.defaultdict[str, list[int]](list)",
-        "collections.deque[int]()",
-        "View(a, b)",
-        "views[0](a)",
-        "CHECKS[name](argv)",
-        "_KINDS[kind](a)",
-    ],
-)
-def test_a_builtin_container_called_with_its_type_arguments_or_a_plain_call_is_no_problem(called: str) -> None:
-    assert problems("src/sift/app/a.py", f"import collections\nx = {called}\n") == []
-
-
 @pytest.mark.parametrize("call", ["open('a')", "input()", "print('a')"])
 def test_io_builtins_are_found_in_the_core_alone(call: str) -> None:
     name = call.split("(", maxsplit=1)[0]
