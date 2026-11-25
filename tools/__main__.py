@@ -14,6 +14,7 @@ from tools import (
     check_twins,
     floors,
     fts5_table,
+    limits,
     release,
 )
 
@@ -24,6 +25,7 @@ CHECKS = MappingProxyType(
         "fts5": fts5_table.main,
         "idioms": check_idioms.main,
         "imports": check_imports.main,
+        "limits": limits.main,
         "names": check_names.main,
         "package": check_package.main,
         "prose": check_prose.main,

@@ -64,6 +64,9 @@ threads more workers made the suite slower (35 s on 8, 101 s on 32).
   to do. A store's layout changes by a numbered migration appended to `LAYOUT`, never by editing one a release has
   shipped.
 - Published text names no machine's model, and prose is wrapped as the code is (`python -m tools text`).
+- A bound is a module constant named `MOST_*`, `FEWEST_*`, `LEAST_*`, `*_SECONDS` or `*_BYTES`, beside what it bounds;
+  [limits.md](limits.md) lists them all, written anew by `python -m tools limits --write`, and a test holds it equal
+  to the code.
 - No check is silenced. A suppression needs the owner's yes, scoped to one rule in one place.
 
 ## How changes are made

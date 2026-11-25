@@ -5,9 +5,71 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+sift 2 is rebuilt from the ground: stores of a new layout with a keyword index of its own, and a home process that
+answers agents, the browser and your own commands. It opens no store of sift 1.x. After updating, run `sift import`
+once in each home (any command there says so): it brings the collections of sift 1.x in, with their vectors, and
+leaves sift 1.x's files as they were. Agents need a new session, as the MCP tools changed; scripts that read `--json`
+need its new keys; ids of JSON Lines records and mail attachments are written anew (below).
+
 ### Changed
 
-- sift needs Python 3.12 or newer.
+- sift needs Python 3.12 or newer, and SQLite 3.38 or newer (every Python build brings one).
+- Each collection's store has a new layout; the catalog is `catalog.sqlite` in place of `sift.db`. A store's layout
+  changes from now on by numbered migrations, which the first command of a newer sift runs once; an older sift
+  refuses a store a newer one migrated, and says to upgrade.
+- A JSON Lines record and a mail attachment are named after their file and a `#`: `papers/2024.jsonl#2401.00001` and
+  `mail/offer.eml#contract.pdf`, where sift 1.x wrote `papers/2024/2401.00001` and `mail/offer/contract.pdf`.
+- Keyword search reads an index of sift's own, written in the documents' transaction, in place of SQLite's FTS5 and
+  the postings read out of it: nothing is behind after `sift index`, and no search falls back to FTS5. Its terms are
+  FTS5's, and it ranks as sift 1.15 ranked, by the same BM25. A query sift can't read is refused, saying where (a
+  quote or parenthesis not closed, a `)` closing nothing), where sift 1.x searched it as phrases.
+- `sift serve` is the home process: one per home, on 127.0.0.1, for agents (MCP), the browser (the UI) and your own
+  `sift` commands, which it answers with its models and codes loaded. `sift serve --stdio` talks to it, starting one
+  if none runs (on Windows in a minimized window), which leaves after 15 idle minutes; `sift ui` opens its pages, or
+  serves the home itself on a free port.
+- The MCP tools are five: `search` (hybrid, keyword or semantic, up to 20 queries a call, paged by `offset`), `get`,
+  `related` (documents alike, a note's links, its backlinks, its mentions), `collections` (with the jobs that run),
+  and `reindex`, which runs as a job of the home process.
+- `--json` answers are objects: a search gives `hits` with what was searched, left out, loosened or cut short beside
+  them, and each hit its `collection`, `path`, `first_line` and `last_line` (in place of `lines`). `sift status`
+  gives `home` (in place of `index`), and for each collection `folder` (in place of `path`), `agents`, and its counts
+  under `contents`: `documents` (in place of `docs`), `chunks`, `embedded`, `model`, `stored_bytes` (in place of
+  `size`), `unreadable`.
+- `sift status` prints a table; `--json` gives JSON.
+- `sift index --files A B` is `sift index --file A --file B`; `sift add --id`, `--title` and `--text` are `--id-field`,
+  `--title-field` and `--text-fields`.
+- A model other than the defaults is named at a whole commit (`owner/model@<40 hex digits>`) or as a folder: a
+  branch, a tag or a short commit is refused, as each may name other weights tomorrow.
+- `SIFT_UPDATE_CHECK` is off by default. Turned on, a command run in a terminal says when a newer sift is out and which
+  command updates it; sift never updates itself.
+- `sift worker` takes at most 256 texts a request; both machines need sift 2.
+- `sift embed` reads 1,024 passages, embeds them and writes them in turn, where sift 1.15 read and wrote on threads
+  of their own: on a GPU shared with another job it embedded 15% fewer passages a second.
+
+### Removed
+
+- `sift serve --host` and `--allow-host`, and `sift ui --host`, `--port` and `--allow-host`: the home process
+  answers this machine alone. To lend a GPU to other machines, `sift worker` remains.
+- The keyword syntax `NEAR(...)`, column filters (`meta:`, `title:`) and `^`.
+- Updating itself, with `update.lock` and the update logs.
+- Numba: the codes are scanned with NumPy.
+
+### Added
+
+- `sift import`: the collections of a sift 1.x home, with their choices and vectors, into this one.
+- `sift jobs`: what the home process does in the background, and `--stop` to stop a job.
+- `--offset` and `--budget` on every search, `--candidates` on `query`, and every search option on `mentions`.
+- `sift add --agents` and `--no-agents`: whether agents see a collection.
+- `sift status --unreadable`, `sift serve --idle-exit`, `sift ui --no-browser`.
+- `--json` and `--color` on every command, before or after its name; `NO_COLOR` and `TERM=dumb` turn colours off.
+- [docs/limits.md](docs/limits.md): every bound sift sets.
+
+### Security
+
+- Your commands send the home process a token, kept with its port in your own folder (`%LOCALAPPDATA%\sift` on
+  Windows, `~/.local/state/sift` elsewhere), readable by you alone, never in the home: it grants the whole command
+  line. MCP and the UI take none, answer only requests addressed to `127.0.0.1` or `localhost`, and MCP refuses what
+  web pages of other sites send ([security](docs/SECURITY.md)).
 
 ## [1.15.2] - 2026-11-22
 

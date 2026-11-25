@@ -2,49 +2,54 @@
 
 The details behind the [README](https://github.com/tobiaswuerth/sift#readme).
 
-- [Collections](#collections): adding, indexing, leaving files out, where indexes and logs lie
+- [Collections](#collections): adding, indexing, leaving files out, where sift keeps its files
 - [Searching](#searching): modes and scores, options, keyword syntax, reading documents
 - [Front matter and filters](#front-matter-and-filters)
 - [What sift reads](#what-sift-reads): formats, JSON Lines, documents and scans, emails
 - [Linked notes](#linked-notes)
-- [The server](#the-server)
+- [The home process](#the-home-process): `sift serve`, agents, jobs
 - [The browser UI](#the-browser-ui)
 - [Measuring search on your own documents](#measuring-search-on-your-own-documents)
+- [Coming from sift 1.x](#coming-from-sift-1x)
 
 ## Collections
 
-A collection is a folder sift indexes: `sift add FOLDER [--name NAME]` registers it, `sift index` reads its files and
-`sift embed` embeds their passages. Both are incremental: they process only new and changed files, remove deleted
-ones, and an interrupted `sift embed` continues where it stopped. Files of a folder that can't be read for the moment
-(access denied, a share that doesn't answer), or of a collection whose folder is missing, stay indexed as they were.
+A collection is a folder sift indexes: `sift add FOLDER [--name NAME]` adds it, `sift index` reads its files into the
+collection's store and `sift embed` embeds their passages. Both are incremental: they process only new and changed
+files, remove deleted ones, and an interrupted `sift embed` continues where it stopped. Files of a folder that can't be
+read for the moment (access denied, a share that doesn't answer), or of a collection whose folder is missing, stay as
+they were stored.
 
 A folder inside a collection, or holding one, isn't added, as its files would be indexed twice; `--nested` adds it
-anyway.
+anyway. `sift add` given a folder that is a collection already changes that collection's choices: `--title-from`,
+`--follow-links` and `--agents`.
 
-**Active and inactive.** `sift deactivate NAME ...` leaves collections out of searches, of a newly started server's
-list for agents, and of `sift index` and `sift embed` unless named; a running server drops their vectors' codes with
-its next request. Their indexes stay, `reindex` still updates them, and `sift activate NAME ...` takes them back.
+**Active and inactive.** `sift deactivate NAME ...` leaves collections out of searches, and of `sift index` and
+`sift embed` unless named. Their stores stay, `reindex` still updates them, and `sift activate NAME ...` takes them
+back. `sift add FOLDER --no-agents` keeps a collection from agents alone: the MCP tools neither list nor search it,
+while your own commands and the UI do.
 
-**Status.** `sift status` lists every collection as JSON: `"active"`, its index file (`"store"`) and size, and for
-active ones the counts of documents, chunks and vectors, and the keyword postings (`"keywords"`): `"ready"`, `"not
-built"`, or how many chunks behind. Until they are ready, keyword searches read SQLite's FTS5 index, slower on large
-collections, and so do searches of several collections while one of them isn't; `sift index` builds them, and
-`reindex` those of a collection under 2,000 passages. A collection whose index is missing (a drive not connected) is
-passed over by searches and marked `"missing": true`; sift never makes such an index anew. One that can't be opened
-(damaged, or updated by a newer sift) is passed over too, with the reason as `"error"`.
+**Status.** `sift status` shows a table of the collections: folder, documents, passages, how many are embedded and by
+which model, the size of each store, and the links of collections holding any. A store that can't be read (a drive not
+connected, damaged, or written by a newer sift) is said beside it, `sift status` then ends with exit code 1, and
+searches pass it over; sift never makes such a store anew. `--unreadable` lists the files that could not be read, and
+why. With `--json` each collection gives `name`, `folder`, `store`, `active`, `agents` and its `contents`:
+`documents`, `chunks`, `embedded`, `model`, `stored_bytes`, `links`, `unresolved`, `fields`, `unreadable` and
+`unreadable_files`, or the reason it is `unavailable`.
 
 **Files gone.** `sift index` drops the documents of files that are gone. But a folder that is missing, or holds none
-of its files any more, keeps what is indexed, and `sift index` says so: a drive not mounted, or a folder being filled
+of its files any more, keeps what is stored, and `sift index` says so: a drive not mounted, or a folder being filled
 anew, is no folder emptied. If its files are gone for good, `sift rm NAME` forgets the collection.
 
 ### Leaving files out
 
 sift reads the files it has a reader for, except in folders whose name starts with a dot (`.obsidian/`, `.git/`), in
-`node_modules` and `__pycache__`, and in linked folders (symbolic links, junctions). A linked file is read as the file
-it points to if that lies in the collection's folder too; one that links to outside it is left out, and said, as a
-link may lead to any file of the machine: `sift add FOLDER --follow-links` reads those too, for a collection added
-before as well, and `--no-follow-links` leaves them out again; the next `sift index` follows either. A `.siftignore`
-in the collection's folder leaves out more, in gitignore's syntax:
+`node_modules` and `__pycache__`, in folders Windows marks both hidden and system, and in linked folders (symbolic
+links, junctions). A linked file is read as the file it points to if that lies in the collection's folder too; one that
+links to outside it is left out, and said, as a link may lead to any file of the machine: `sift add FOLDER
+--follow-links` reads those too, for a collection added before as well, and `--no-follow-links` leaves them out again;
+the next `sift index` follows either. A `.siftignore` in the collection's folder leaves out more, in gitignore's
+syntax:
 
 ```gitignore
 drafts/
@@ -63,43 +68,46 @@ drafts/
 Only the `.siftignore` in the collection's folder counts. If it can't be read, `sift index` skips the collection and
 says so. The next `sift index` follows a changed `.siftignore` both ways; `reindex` refuses files it leaves out.
 
-### Where indexes and logs lie
+### Where sift keeps its files
 
-Everything sift keeps lies under `SIFT_HOME` (`~/.sift`):
+Everything sift keeps lies under `SIFT_HOME` (`~/.sift`), but stores placed elsewhere:
 
 | Path | What | Lifecycle |
 |---|---|---|
-| `sift.db` | The catalog: collections, folders, where their indexes lie | Made on first use |
-| `collections/NAME.sqlite` | A collection's index, a SQLite file | Made by `sift add`, deleted by `sift rm`, moved by `sift move` |
-| `collections/NAME.sqlite.postings-lock` | Empty; locked while a sift updates the keyword postings | Moved and deleted with its index |
-| `logs/COMMAND-DATE.log` | What `add`, `rm`, `index`, `embed`, `serve` and `worker` said, timed, with errors; the server's requests without their queries | The latest 20 of each command kept; past 16 MB a log goes on in a new part, its last 3 kept as `.log.1` (the latest) to `.log.3`; delete freely |
-| `logs/update-DATE.log` | What an update you agreed to did | Kept; delete freely |
-| `update.json` | The latest version on PyPI, when it was asked, and an update waiting or done | Rewritten daily, through `update.json.PID.part` for a moment; delete freely |
-| `update.lock` | Empty; locked by the process of an update while it waits and installs | Made by the first update; delete freely while none runs |
-| `worker/` | `sift worker`'s certificate and token, readable by you only | Made on its first start, each file through `FILE.part` for a moment; delete it to make a new key |
-| `numba/` | The compiled search code `sift serve` and `sift bench` keep | Made again when deleted |
+| `catalog.sqlite`, `catalog.sqlite-wal`, `catalog.sqlite-shm` | The catalog: the collections, their folders, choices and stores | Made by the first `sift add`; the `-wal` and `-shm` files are SQLite's, beside it while a sift has it open |
+| `collections/NAME.sqlite`, `NAME.sqlite-wal`, `NAME.sqlite-shm` | A collection's store: documents, passages, the keyword index, links, vectors | Made by `sift add`, moved by `sift move`, deleted by `sift rm` (one open elsewhere then, by the next `sift index`) |
+| `collections/NAME.sqlite.writer`, `NAME.sqlite.writer-journal` | Locked while a command writes the store, so one writes at a time | Made by the first write; moved and deleted with the store |
+| `NAME.sqlite.part`, `NAME.sqlite.part-journal` | A store being copied to another drive by `sift move`, at its new place | Renamed to the store once copied; deleted if the copy stops |
+| `server.writer` | Locked while `sift serve` serves this home, so one home process serves it | Made by the first `sift serve`; delete freely while none runs |
+| `worker/token`, `worker/cert.pem`, `worker/key.pem` | `sift worker`'s access token, certificate and private key, readable by you only | Made on its first start, each through `FILE.PID.part` for a moment; delete the folder to make a new key |
+| `worker.writer` | Locked while `sift worker` runs | Made by the first `sift worker`; delete freely while none runs |
+| `logs/COMMAND-DATE.log` | What `add`, `rm`, `move`, `activate`, `deactivate`, `index`, `embed`, `serve`, `worker` and `import` said, timed, with errors; the home process's requests by name and time, without their queries | The latest 20 of each command kept; past 16 MB a log goes on in a new part, its last 3 kept as `.log.1` (the latest) to `.log.3`; delete freely |
+| `update.json` | With `SIFT_UPDATE_CHECK=on`: when PyPI was asked, the latest version it named, or why asking failed | Rewritten at most daily, through `update.json.RANDOM` for a moment; delete freely |
 
-`sift serve` keeps one file outside the home, in your own folder (`%LOCALAPPDATA%\sift` on Windows,
+The home process keeps one file outside the home, in your own folder (`%LOCALAPPDATA%\sift` on Windows,
 `$XDG_STATE_HOME/sift` or `~/.local/state/sift` elsewhere), so that only you may read it wherever the home lies:
 
 | Path | What | Lifecycle |
 |---|---|---|
 | `servers/KEY.json` | The port, process, token and version of the home process that serves a home (KEY from the home's path), and the models, OCR and GPUs it uses, readable by you only | Written by `sift serve` through `KEY.json.PID.part` for a moment, deleted when it stops; one a killed `sift serve` left is replaced by the next |
 
-An index can lie anywhere else:
+`sift import` writes beside each store of sift 1.x it brings in, and writes nothing else of sift 1.x:
+
+| Path | What | Lifecycle |
+|---|---|---|
+| `NAME-v2.sqlite` and its files as above | The collection's sift 2 store, beside sift 1.x's `NAME.sqlite` | Made by `sift import`; then a store like any other |
+
+A store can lie anywhere else:
 
 ```bash
-sift add ~/archive --store /mnt/big/sift            # a new collection's index in another folder
+sift add ~/archive --store /mnt/big/sift            # a new collection's store in another folder
 sift add ~/archive --store /mnt/big/archive.sqlite  # or under a name of your choice
-sift move /mnt/big/sift                             # every collection's index into another folder
+sift move /mnt/big/sift                             # every collection's store into another folder
 sift move archive /mnt/big/archive.sqlite           # one collection's
 ```
 
-A move on the same drive is instant; to another drive the index is copied, then deleted. Stop `sift serve`, and any
-`sift index` or `sift embed` of that collection, first.
-
-Every command but `sift move` may run while `sift serve` does: each index takes one write at a time (the next waits up
-to 30 seconds), and the server finds what a command wrote with its next search.
+A move on the same drive is instant; to another drive the store is copied, then deleted. A move waits for the searches
+that read the store, and the next searches wait for it.
 
 ## Searching
 
@@ -107,45 +115,46 @@ to 30 seconds), and the server finds what a command wrote with its next search.
 |---|---|---|
 | `search` | Exact keyword matches, ranked by BM25 | 0 and up |
 | `vsearch` | Passages close in meaning | cosine, -1 to 1 |
-| `query` | Keyword and semantic candidates reranked by a cross-encoder: the best for RAG | the reranker's, nudged by the cosine |
+| `query` | Keyword and semantic candidates reranked by a cross-encoder: the best for RAG | the reranker's, moved by the cosine |
 | `similar` | Documents like a given one, by its id | cosine, -1 to 1 |
 
-Scores rank the results of one search. `query`'s also compare across queries: with the default reranker, close matches
-score about 2.5 to 4, unrelated results below 2. Each result is a document with its best passage; a paper that several
+Scores rank the results of one search alone. Each result is a document with its best passage; a paper that several
 collections hold under one DOI (front-matter `doi`) is one result, the best ranked copy, listing the others under
 `also`.
 
 ### Options
 
-The commands' options; the MCP tools take the same as parameters (`k`, `collection`, `path`, `filters`, ...).
+The commands' options; the MCP tool `search` takes the same as parameters (`k`, `collections`, `path`, `filters`, ...).
 
 | Option | Effect |
 |---|---|
 | `-k N` | Number of results, at most 10,000 |
-| `-c NAME` | Only this collection |
+| `-c NAME`, `--collection NAME` | Only this collection; repeated, each of them |
 | `--path GLOB` | Only paths within the collection that match, e.g. `"2024/*"` |
-| `-f FIELD=VALUE` | Front-matter filter, repeatable ([below](#front-matter-and-filters)) |
-| `--fields a,b` | Front-matter fields to show with each hit, or `*` for all |
+| `-f KEY=VALUE`, `--filter KEY=VALUE` | Front-matter filter, repeatable ([below](#front-matter-and-filters)) |
+| `--fields url,created` | Front-matter fields to show with each hit, or `*` for all |
 | `--compact` | Results without their text |
-| `--all-passages` | Every matching passage, several per document |
+| `--all-passages` | Every passage found, several per document, and copies of one work apart |
 | `--sort=-created` | Order the `k` results by a front-matter field instead of score; `-` for descending. It orders the best `k`, not every match: for the newest of all, filter on a range too (`-f created>=2026`) |
 | `--links-to`, `--linked-from` | Only documents linking to a note, or linked from it ([Linked notes](#linked-notes)) |
 | `--adaptive` | Only the results before the largest drop in score, and five more, up to `k` |
-| `--budget SECONDS` | `search` only: stop after about this long, once anything is found, with the hits marked `partial` |
-| `--json` | JSON output |
+| `--offset N` | Leave out the first N results, to page through them: `--offset 10 -k 10` gives results 11 to 20 |
+| `--budget SECONDS` | Stop after about this long, once anything is found, with the results marked `partial` |
+| `--candidates N` | `query` only: how many passages each of keyword and semantic search hands the reranker (default 40) |
 
-Over MCP, `search`, `vsearch` and `query` take up to 20 queries in one call, returning a list of results for each; the
-queries share `search`'s budget.
+Over MCP, `search` takes up to 20 queries in one call, returning the results of each; the queries share the budget.
 
 ### Keyword syntax
 
-`search` requires every term; when no passage has them all and the query has no operators, it returns passages with any
-of them, ranked by BM25. Operators are capitals, parentheses group, and `"phrases"` and `prefix*` work as in SQLite
-FTS5: `'"notice period" AND (contract OR agreement)'`. A query with operators is taken as written; when it finds
-nothing, drop terms. Input that isn't valid FTS5 syntax is searched as exact phrases.
+`search` requires every word; when no passage holds them all and the query has no operators, it returns passages with
+any of them, ranked by BM25, and says it loosened the query. Write words, `"phrases"`, `prefix*` (one word of letters
+and digits), `AND`, `OR`, `NOT` and parentheses: `'"notice period" AND (contract OR agreement)'`. Operators are
+capitals; `NOT` binds closer than `AND`, and `AND` closer than `OR`. A quote inside a phrase is written `""`.
 
-The front matter is searched too, so an author's name or an id finds its documents. `meta:` limits a term to the front
-matter and `title:` to the title: `sift search "meta: Smith"`.
+A query sift can't read is refused, saying where: a quote or a parenthesis not closed, a `)` that closes nothing, or
+`NEAR(...)`, which sift doesn't support.
+
+The front matter is searched too, so an author's name or an id finds its documents.
 
 ### Reading a document
 
@@ -156,9 +165,9 @@ sift get handbook/hr/leave.md --fields owner,modified   # front-matter fields, t
 sift get handbook/hr/leave.md handbook/hr/travel.md     # several, each headed by its id
 ```
 
-An id is `collection/path`; folders may be left out if the file name is unique, or it can be the file's absolute path.
-Over MCP, `get` takes up to 100 documents, each an id or `{"id": ..., "lines": "14-23"}`; past 100,000 characters in
-all, the rest are left out, each saying so.
+An id is `collection/path`, or the file's absolute path. The end of a path is enough when only one document's path ends
+with it (`hr/leave.md`); where several do, sift names them. Over MCP, `get` takes documents as ids or
+`{"id": ..., "lines": "14-23"}`; past 100,000 characters in all, the rest are left out, each saying so.
 
 ## Front matter and filters
 
@@ -191,19 +200,19 @@ sift search invoice -f "created>=2024-06" -f "created<2025"      # a range
 - Ranges take `>`, `>=`, `<`, `<=`. Dates compare at the precision given: `created<=2024` includes all of 2024; a number
   compares with the number a date starts with, and passes over text that doesn't start with one (`year: unknown`).
 - Field names are as written in the front matter: `-f journal-ref=Nature`, `-f "date created>=2024"`.
-- Over MCP, `filters` maps each field to a value, a list (any of them), `{"not": ...}`, or ranges:
-  `{"created": {">=": "2024-06", "<": "2025"}}`.
+- Over MCP, `filters` takes the same, as a list of `{"field": ..., "operator": ..., "values": [...]}`.
 
 A document's title is its `title` field, else its first heading outside code, else its file name (with
-`--title-from name`, the file name first). A note of front matter alone has its front matter as its passage. Lines
-between two `---` lines are front matter only if each could be part of it (`key: value`, `- item`, indented, a
-closing bracket, a comment or blank); a paragraph between two thematic breaks stays text, and is searched.
+`--title-from name`, the file name first; the default in an Obsidian vault, a folder holding `.obsidian/`). A note of
+front matter alone has its front matter as its passage. Lines between two `---` lines are front matter only if each
+could be part of it (`key: value`, `- item`, indented, a closing bracket, a comment or blank); a paragraph between two
+thematic breaks stays text, and is searched.
 
 ## What sift reads
 
 | Format | Read as |
 |---|---|
-| Markdown, text | Chunks of about 3,000 characters on line boundaries, preferring headings; YAML front matter as metadata |
+| Markdown, text (`.md`, `.markdown`, `.txt`) | Passages of at most 3,000 characters on line boundaries, preferring headings, each overlapping the one before by up to 300; YAML front matter as metadata |
 | JSON Lines (`.jsonl`, `.ndjson`) | One document per line ([below](#json-lines)) |
 | PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, HTML | Markdown, by [Xberg](https://github.com/xberg-io/xberg) |
 | Scanned PDFs | Markdown, by OCR ([below](#documents-and-scans)) |
@@ -215,9 +224,9 @@ they change. A file whose reader crashes or comes to no end in its time (ten min
 skipped, said once, and read again only once it changes, or by the next version of sift. Old binary Office files
 (`.doc`, `.ppt`, `.xls`) aren't read.
 
-A JSON Lines record or an email attachment is a document below its file's name: record `a.md` of `data.jsonl` is
-`data/a.md`. Where a real file has that path too, the first indexed keeps it; the other is left out, said, and read
-once the path is free.
+A JSON Lines record or an email attachment is a document named after its file and a `#`: record `T-1042` of
+`2025/tickets.jsonl` is `2025/tickets.jsonl#T-1042`, attachment `contract.pdf` of `offer.eml` is
+`offer.eml#contract.pdf`.
 
 ### JSON Lines
 
@@ -225,15 +234,16 @@ Each line is a JSON object; sift finds its parts by field name:
 
 | Part | Field |
 |---|---|
-| id | `id` or `_id`, else the line number |
+| id | `id` or `_id`, a text or a whole number, else the line number |
 | title | `title`, `name`, `headline` or `subject` |
 | text | the first of `text`, `content`, `body`, `abstract`, `description`, `summary`, else the longest string; a list of strings becomes paragraphs |
 | metadata | every other field, as front matter |
 
-Line `{"id": "T-1042", ...}` of `2025/tickets.jsonl` in collection `support` is `support/2025/tickets/T-1042`, which
-`get` also finds as `support/T-1042`. Records without an id are keyed by line number, so a line inserted above them
-re-embeds every record after it. Other field names: `sift add ~/qa --id key --title question --text question,answer`.
-Lines that aren't objects, have no text or repeat an id are skipped and reported.
+Line `{"id": "T-1042", ...}` of `2025/tickets.jsonl` in collection `support` is `support/2025/tickets.jsonl#T-1042`.
+Records without an id are keyed by line number, so a line inserted above them embeds every record after it again; give
+every record an id or none. Other field names, when the collection is added:
+`sift add ~/qa --id-field key --title-field question --text-fields question,answer`. Once an id field is named, a
+record without it is skipped. Lines that aren't objects, have no text or repeat an id are skipped and reported.
 
 ### Documents and scans
 
@@ -245,12 +255,11 @@ tables, and `get` returns that Markdown. Their properties become metadata where 
 [LightOnOCR-2](https://huggingface.co/lightonai/LightOnOCR-2-1B) (1B parameters, Apache-2.0), page by page as Markdown,
 tables and columns in reading order; their metadata says `ocr`.
 
-- On a desktop GPU, in about 3 GB: 15 to 30 seconds a page, up to a minute for a dense one; at most 50 pages a scan. The
-  first scan downloads the model (2 GB).
+- On a GPU, at most the first 50 pages of a scan. The first scan downloads the model.
 - Without a GPU, scans are skipped and reported; `SIFT_OCR=on` reads them on the CPU (minutes a page), `off` never.
   A scan skipped because the GPU's memory was taken, or OCR ran out of it, is read again by the next `sift index`;
   so are those skipped before `SIFT_OCR` was turned on, or from `off` to `auto`.
-- `reindex` leaves scans to the next `sift index`, so searches don't wait; `sift index --files` reads them at once.
+- `reindex` leaves scans to the next `sift index`, so searches don't wait; `sift index --file` reads them at once.
 
 ### Emails
 
@@ -258,9 +267,9 @@ A `.eml` is a document titled by its subject, with `From`, `To`, `Cc` and `Date`
 Markdown). Its metadata: `from`, `to`, `cc` (bare addresses), `date` (ISO 8601, in UTC where the mail gives its time
 zone), `message_id`, `in_reply_to`, `attachments`.
 
-Each attachment sift can read is a document below the mail: `mail/2026/offer.eml` holds `mail/2026/offer/contract.pdf`.
-A forwarded mail is one too, named by its subject if it has no file name, with its attachments below it, three levels
-deep.
+Each attachment sift can read is a document of the mail: `mail/2026/offer.eml` holds
+`mail/2026/offer.eml#contract.pdf`. A forwarded mail is one too, named by its subject if it has no file name, with its
+attachments below it.
 
 ```bash
 sift search "price list" -f from=anna@acme.example -f "date>=2026-06"
@@ -269,8 +278,9 @@ sift search "price list" -f from=anna@acme.example -f "date>=2026-06"
 ## Linked notes
 
 In an Obsidian vault, or any folder of Markdown notes that link to each other, sift keeps each note's links as written
-and resolves them when asked, as Obsidian does. Obsidian names notes by file name, so add a vault with
-`--title-from name` (suggested for a folder holding `.obsidian/`; for a vault added before, the same command retitles).
+and resolves them when asked, as Obsidian does. Obsidian names notes by file name, so a vault is titled by file name
+(`--title-from name`, the default for a folder holding `.obsidian/`; for a vault added before, the same command
+retitles).
 
 **Links** are `[[Note]]`, `[[Folder/Note]]`, `[[Note|text]]`, `[[Note#Heading]]`, `[[Note#^block]]`, embeds
 (`![[contract.pdf]]`) and Markdown links (`[text](../People/Hans.md)`), in the text and, as wikilinks, in front-matter
@@ -293,46 +303,53 @@ sift search contract -f "org=[[Acme AG]]"        # org links to Acme AG, however
 ```
 
 A note is named by its id, or as links name it if one note answers to that. `mentions` looks for a note's file name,
-title and aliases as phrases (ä, ö, ü, ß also as ae, oe, ue, ss; names under three characters left out). `links` and
-`unresolved` return at most 50 (`-k`).
+title and aliases, and the values of the fields `--also` names, as phrases (ä, ö, ü, ß also as ae, oe, ue, ss; names
+under three characters left out). `links` and `unresolved` return at most 50 (`-k`).
 
-**A note just written** is found by the next search once the agent calls `reindex` (or you run `sift index --files`):
-it reads those files at once, or drops the documents of files gone, and over MCP embeds their new passages too.
+**A note just written** is found by the next search once the agent calls `reindex`: it reads those files at once, or
+drops the documents of files gone, and embeds their new passages where the collection is embedded. From the command
+line, `sift index --file` does the same, and `sift embed` embeds.
 
-## The server
+## The home process
 
-`sift serve` is one process for any number of agents and browsers: MCP (streamable HTTP) at
-`http://127.0.0.1:8765/mcp`, the UI under `/ui`. It loads the models and the vectors' codes once, runs one call at a
-time, and frees the GPU after 5 minutes without use.
+`sift serve` is the home process: one process per home for you, your agents and your browser. It answers MCP
+(streamable HTTP) at `http://127.0.0.1:8765/mcp`, the UI under `/ui`, and your own `sift` commands, which find it by
+`servers/KEY.json` ([above](#where-sift-keeps-its-files)) and send it what they are asked. It keeps the models and the
+vectors' codes loaded, runs searches side by side, and frees the GPU after 5 minutes without use. Without it, each
+command loads what it needs itself.
 
 | Option | Effect |
 |---|---|
-| `--port N` | Another port than 8765 |
-| `--host ADDRESS` | Another address than `127.0.0.1` to listen on, such as `0.0.0.0` for every machine that reaches this one. sift has no authentication: whoever reaches the port reads every indexed document, which it says when it starts |
-| `--allow-host NAME` | With such a `--host`: a name browsers reach this machine by, beside its addresses and its own name. It answers to those alone, so that no other site's page reaches it under a name of its own (DNS rebinding); repeat for more |
-| `--stdio` | MCP over stdio, for a client that starts its servers itself: a server per session, each loading the models |
+| `--port N` | Another port than 8765 on 127.0.0.1; `0` for any free one |
+| `--stdio` | MCP over standard input and output, for an agent that starts its servers itself: it talks to the home process, starting one if none runs (on Windows in a minimized window), which leaves after 15 minutes without a request |
+| `--idle-exit SECONDS` | Stop after this long with no request and no job |
 
-- Every command but `sift move` may run beside it; it finds what `sift index` and `sift embed` wrote with its next
-  search.
-- What it says is kept in `SIFT_HOME/logs`, its requests without their queries
-  ([above](#where-indexes-and-logs-lie)).
-- What it protects, and what not: [security](SECURITY.md). To lend a GPU to other machines, without the index:
-  [worker](worker.md).
+- It listens on 127.0.0.1 alone and answers only requests addressed to `127.0.0.1` or `localhost`. Your commands send
+  it the token it keeps in your own folder; MCP and the UI refuse pages of other sites. What it protects, and what
+  not: [security](SECURITY.md).
+- It serves the user who started it. It says so when its settings (the models, OCR, GPUs, a worker) differ from the
+  command's; stop it to use yours.
+- Writes wait for the searches reading a store, and searches wait for a removal or a move; each store takes one write
+  at a time.
+- An agent's `reindex` runs as a job: `sift jobs` lists the jobs that run or wait, and `sift jobs --stop 3` stops one at
+  its next step, keeping what it wrote.
+- What it says is kept in `SIFT_HOME/logs`, its requests by name and time, without their queries.
+- To lend a GPU to other machines, without the stores: [worker](worker.md).
 
 ## The browser UI
 
-`sift ui` opens the index at `http://127.0.0.1:8765/ui/`, using the `sift serve` on that port or starting one, with
-the same `--host`, `--port` and `--allow-host`.
+`sift ui` opens the UI of the home process in your browser, at `http://127.0.0.1:8765/ui` for the default port; if no
+`sift serve` runs, it serves the home itself on a free port until you stop it. `--no-browser` prints the address alone.
 
-![sift ui in dark mode: the 2025 folder of an arXiv collection, filtered by category, with its subfolders and the categories and dates of its papers to drill into](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-browse-dark.png)
+![sift ui in dark mode: a keyword search over the ACL Anthology, filtered by venue, with the publishers, months and places of the papers found to drill into](https://raw.githubusercontent.com/tobiaswuerth/sift/main/docs/images/ui-browse-dark.png)
 
-- **Search** by *Keyword* as you type, *Meaning* or *Hybrid* on Enter; found words are marked, and a bar shows each
-  score.
+- **Search** by keywords, meaning or both; found words are marked.
 - **Drill down** through collections, folders and the results' front-matter values with their counts; each a click to
-  filter by, shown as a chip to remove. Sort by any front-matter field.
-- **Read** a result beside the list, its passage marked, with its front matter, *Similar*, *Backlinks*, *Links* and
-  *Open file* (PDFs in the browser's viewer; other files open without running their scripts).
-- **Keys:** `/` to search, `↑` `↓` to move, `Enter` to open. Every view has its own address.
+  filter by. Sort by any front-matter field.
+- **Read** a result beside the list, its passage marked, with its front matter as filters, its similar documents,
+  backlinks and links, and the original file (PDFs in the browser's viewer; other files open without running their
+  scripts).
+- Every view has its own address, and the pages run no scripts.
 
 ## Measuring search on your own documents
 
@@ -353,3 +370,24 @@ sift bench questions.json            # -c NAME: one collection only
 A few dozen questions are enough to compare modes, or to see whether a change helps your documents. Grades are
 optional: 2 for the answer, 1 for a useful one, 0 for one read and found irrelevant. A copy of the same paper listed
 under `also` counts as found.
+
+## Coming from sift 1.x
+
+sift 2 keeps its collections in stores of a new layout and opens none of sift 1.x. A command in a home that holds sift
+1.x's catalog and none of sift 2 says so and names the fix:
+
+```bash
+sift import                          # every collection of this home's sift 1.x
+sift import --home ~/old-sift -c notes   # one collection of another home
+```
+
+`sift import` adds each collection with its choices (where titles come from, following links, the fields of JSON
+Lines, whether it is active), indexes its folder afresh, and gives each passage whose text is unchanged the vector sift
+1.x made, so nothing is embedded twice; passages changed since are left for `sift embed`. Vectors of a model sift 1.x
+named without a whole commit stay behind, said so. The table it prints sets the counts of documents, passages and
+vectors before and after side by side.
+
+Nothing of sift 1.x is written: each new store goes beside the one it comes from, as `NAME-v2.sqlite`; a file already
+there skips that collection. Run again, an import goes on with what it added. Once the collections are as you want
+them, remove sift 1.x's stores and its `sift.db`. A store older than sift 1.8 is refused: open it once with sift 1.15,
+then import it.

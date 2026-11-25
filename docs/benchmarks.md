@@ -5,20 +5,70 @@ seven datasets with several rerankers and embedding models; the default is the s
 one dataset. To measure sift on your own documents, use
 [`sift bench`](usage.md#measuring-search-on-your-own-documents).
 
-Timings come from one desktop workstation with a 24 GB NVIDIA GPU and NVMe disks; the models run in bfloat16 on the
-GPU, as sift runs them.
+Timings come from one desktop workstation with a 24 GB NVIDIA GPU, 32 CPU threads and NVMe disks; the models run in
+bfloat16 on the GPU, as sift runs them.
 
-- [Reference values](#reference-values)
+- [sift 2](#sift-2): reference values, and sift 2 against sift 1.15
 - [Search quality](#search-quality): datasets, method, the blend, rerankers, embedding models
-- [Speed](#speed): models, reranking, embedding, keyword search, vectors in memory, links
+- [Reference values of sift 1.11](#reference-values-of-sift-111), and [speed](#speed) as sift 1.x measured it
 - [Tried and not adopted](#tried-and-not-adopted), [not measured](#not-measured)
 
-## Reference values
+## sift 2
 
-The large index holds 45.7 million passages of paper abstracts (arXiv 3.2 million, PubMed 29.9 million, OpenAlex 12.0
-million, bioRxiv 0.47 million, the ACL Anthology 0.09 million), every passage embedded, searched through `sift serve`
-(sift 1.11.1), 10 hits each. Times are a query's first call and the median of two more ("warm": what it reads is in
-memory by then), including the MCP round trip.
+sift 2 replaced sift 1.x's keyword index (SQLite's FTS5, with postings of sift's own read out of it) by an index of its
+own, and its stores' layout; how it ranks (BM25 over the same terms, the scan of the vectors' codes, the blend of
+`query`) stayed, so the [search quality](#search-quality) measured on sift 1.x holds for it, as the comparison below
+shows. Measured on sift 2.0, with another job sharing the GPU at about 45%.
+
+**Search**, over 3.4 million passages (arXiv abstracts 3,252,534, the ACL Anthology 90,546, Swiss federal law 75,851),
+through `sift serve` with its models loaded, 10 hits each; each row is 8 questions, each asked once, none answered from
+the results the home process keeps:
+
+| Use case | Mode | Median | Range |
+|---|---|---|---|
+| A name, an id, a term | `search`, one word | 27 ms | 17–48 ms |
+| A question of 6 to 10 words, by its keywords | `search` | 128 ms | 44–209 ms |
+| By meaning | `vsearch` | 215 ms | 211–227 ms |
+| A question for RAG, reranked on the GPU | `query` | 454 ms | 387–524 ms |
+| More papers like this one | `similar` | 610 ms | 435–740 ms |
+
+- The first semantic search loaded the embedding model, in 11.6 s; the first `query` the reranker, in 0.9 s more.
+- On the CPU alone, over Swiss federal law and a collection of notes (76,738 passages), `query` took 14 to 23 s a
+  question (median 19 s); `search`, `vsearch` and `similar` stayed under 0.2 s.
+
+**Against sift 1.15.2**, by `sift bench`, 12 questions on each of two collections, the documents each should find
+judged in pools of both versions' results (nDCG@10 / MRR@10 / Recall@10):
+
+| Collection | Mode | sift 1.15.2 | sift 2.0 | sift 2.0, imported from 1.15.2 |
+|---|---|---|---|---|
+| Swiss federal law (75,851 passages) | `search` | 0.612 / 1.000 / 0.463 | 0.612 / 1.000 / 0.463 | 0.612 / 1.000 / 0.463 |
+| | `vsearch` | 0.752 / 1.000 / 0.681 | 0.753 / 1.000 / 0.681 | 0.752 / 1.000 / 0.681 |
+| | `query` | 0.872 / 0.958 / 0.928 | 0.870 / 0.958 / 0.907 | 0.868 / 0.958 / 0.928 |
+| Technical notes (887 passages) | `search` | 0.410 / 0.667 / 0.306 | 0.410 / 0.667 / 0.306 | 0.410 / 0.667 / 0.306 |
+| | `vsearch` | 0.794 / 1.000 / 0.731 | 0.802 / 1.000 / 0.734 | 0.794 / 1.000 / 0.731 |
+| | `query` | 0.877 / 1.000 / 0.924 | 0.877 / 1.000 / 0.924 | 0.886 / 1.000 / 0.935 |
+
+- Keyword search ranks alike to the last digit. Collections `sift import` brought in keep sift 1.x's vectors, and
+  `vsearch` finds exactly what sift 1.15.2 found; embedded anew by sift 2, in batches of other lengths, the vectors
+  differ in their last digits, and the scores move by less than 0.01. `query` moves within 0.01 both ways.
+
+**Embedding**, `sift embed` of all passages, the GPU shared alike:
+
+| Collection | sift 1.15.2 | sift 2.0 |
+|---|---|---|
+| Swiss federal law (long passages) | 129 a second (76,738 with the notes, in 9 min 55 s) | 110 a second (75,851 in 11 min 29 s) |
+| The ACL Anthology (abstracts) | | 391 a second (90,546 in 3 min 52 s) |
+
+sift 1.15.2 read the next 20,000 passages and wrote the vectors on threads of their own while the GPU embedded; sift 2
+reads 1,024 passages, embeds them and writes them in turn.
+
+## Reference values of sift 1.11
+
+sift 1.11's figures, kept for the scale sift 2 has not been measured at yet. The large index holds 45.7 million
+passages of paper abstracts (arXiv 3.2 million, PubMed 29.9 million, OpenAlex 12.0 million, bioRxiv 0.47 million, the
+ACL Anthology 0.09 million), every passage embedded, searched through `sift serve` (sift 1.11.1), 10 hits each. Times
+are a query's first call and the median of two more ("warm": what it reads is in memory by then), including the MCP
+round trip.
 
 | Use case | Mode | Large index, first / warm | arXiv alone, warm |
 |---|---|---|---|
@@ -165,6 +215,10 @@ With `query` (gte-reranker-modernbert-base, w = 0.5) over each model's candidate
 - **Qwen3-Embedding's LitSearch score** is out of line with its others and unexplained; it isn't held against it.
 
 ## Speed
+
+Measured on sift 1.8 to 1.11.2, as sift 1.x ran: keyword search read SQLite's FTS5 and postings of its own read out of
+it, and `sift serve` scanned the vectors' codes with code compiled by Numba. The models, the reranking batches and the
+scheme of the vectors in memory are sift 2's too; its own timings are [above](#sift-2).
 
 ### Models
 

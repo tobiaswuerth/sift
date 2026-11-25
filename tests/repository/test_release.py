@@ -1,5 +1,9 @@
 import re
+import tomllib
 from pathlib import Path
+from typing import cast
+
+import pytest
 
 from tests.repository.texts import job, jobs, matches
 
@@ -103,3 +107,33 @@ def test_a_pre_release_is_published_as_one() -> None:
     made = job(release, "github-release")
     assert "PRERELEASE: ${{ needs.check.outputs.prerelease }}" in made
     assert '--notes-file notes.md "${pre[@]}"' in made
+
+
+def development_status(version: str) -> str:
+    phase = re.fullmatch(r"[0-9]+(?:\.[0-9]+)*(?:(a|b|rc)[0-9]+)?(\.dev[0-9]+)?", version)
+    assert phase is not None, f"{version} is no version this test knows"
+    letters, development = phase.groups()
+    named = {"a": "3 - Alpha", "b": "4 - Beta", "rc": "4 - Beta"}
+    return named[letters] if letters else "2 - Pre-Alpha" if development else "5 - Production/Stable"
+
+
+@pytest.mark.parametrize(
+    "version, status",
+    [
+        ("2.0.0a0", "3 - Alpha"),
+        ("2.0.0b2", "4 - Beta"),
+        ("2.0.0rc1", "4 - Beta"),
+        ("2.0.0", "5 - Production/Stable"),
+        ("2.1.0.dev3", "2 - Pre-Alpha"),
+        ("2.1.0a1.dev3", "3 - Alpha"),
+    ],
+)
+def test_each_phase_of_a_version_has_its_development_status(version: str, status: str) -> None:
+    assert development_status(version) == status
+
+
+def test_the_package_says_the_development_status_of_its_version() -> None:
+    project = cast("dict[str, object]", tomllib.loads(read(ROOT / "pyproject.toml"))["project"])
+    classifiers = cast("list[str]", project["classifiers"])
+    said = [each for each in classifiers if each.startswith("Development Status :: ")]
+    assert said == [f"Development Status :: {development_status(cast('str', project['version']))}"]
