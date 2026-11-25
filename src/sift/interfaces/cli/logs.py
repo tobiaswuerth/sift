@@ -3,27 +3,37 @@ import glob
 import logging
 import re
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from logging.handlers import RotatingFileHandler
+from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
+from typing import Protocol, cast
 
 from sift.api.events import Event
 from sift.interfaces.console.live import Live
 from sift.interfaces.console.progress import Looks
 from sift.interfaces.console.style import PLAIN, unpainted
 
-LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed", "serve"})
 FOLDER = "logs"
 FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 SAID = "sift"
 PARTS = 3
 COLUMNS = 120
+HANDLERS = "logging.handlers"
 LEVELS = MappingProxyType({"error": logging.ERROR, "note": logging.WARNING})
 LABEL_END = "  "
 DIGITS = re.compile("[0-9]+")
+APPENDED = "a"
+
+
+class Handlers(Protocol):
+    RotatingFileHandler: Callable[[Path, str, int, int, str], logging.Handler]
+
+
+def _as_handlers(module: object) -> Handlers:
+    return cast("Handlers", module)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +125,8 @@ def _pruned(folder: Path, command: str, kept: int) -> None:
 def kept(folder: Path, command: str, now: datetime, heading: str, limits: LogLimits = LOG_LIMITS) -> Generator[Log]:
     path = _claimed(folder, f"{command}-{now:%Y-%m-%d_%H%M%S}")
     _pruned(folder, command, limits.kept)
-    handler = RotatingFileHandler(path, maxBytes=limits.most_bytes, backupCount=PARTS, encoding="utf-8")
+    handlers = _as_handlers(import_module(HANDLERS))
+    handler = handlers.RotatingFileHandler(path, APPENDED, limits.most_bytes, PARTS, "utf-8")
     handler.setFormatter(logging.Formatter(FORMAT))
     root, said = logging.getLogger(), logging.getLogger(SAID)
     levels, propagates = (root.level, said.level), said.propagate
@@ -134,3 +145,7 @@ def kept(folder: Path, command: str, now: datetime, heading: str, limits: LogLim
         said.setLevel(levels[1])
         said.propagate = propagates
         handler.close()
+
+
+def logged(home: Path, command: str, now: datetime, heading: str) -> AbstractContextManager[Log]:
+    return kept(home / FOLDER, command, now, heading)

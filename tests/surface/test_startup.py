@@ -1,7 +1,9 @@
+import ast
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -43,6 +45,36 @@ def test_help_is_plain_where_python_would_colour_it(settings: Settings) -> None:
             env=environment,
         )
         assert found.stdout.startswith("usage: sift"), argv
+
+
+HEAVY = ("sqlite3", "logging.handlers", "ctypes", "socket", "subprocess")
+HEAVY_LOADED = (
+    "import sys\nbefore = set(sys.modules)\nfrom sift.interfaces.cli.main import main\n"
+    "try:\n    main(sys.argv[1:])\nexcept SystemExit:\n    pass\n"
+    f"print(sorted(name for name in {HEAVY!r} if name in set(sys.modules) - before))"
+)
+
+
+@pytest.mark.parametrize(
+    "argv, needed",
+    [(["--help"], []), (["search", "--help"], []), (["--version"], ["socket"])],
+    ids=["help", "a command's help", "the version, read by importlib.metadata, whose mail parser needs socket"],
+)
+def test_help_and_the_version_load_no_database_log_console_or_process_module(
+    tmp_path: Path, argv: list[str], needed: list[str]
+) -> None:
+    environment = {**os.environ, "SIFT_HOME": str(tmp_path / "home"), "PYTHONIOENCODING": "utf-8"}
+    found = subprocess.run(
+        [sys.executable, "-c", HEAVY_LOADED, *argv],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        timeout=60,
+        env=environment,
+    )
+    loaded_now = cast("list[str]", ast.literal_eval(found.stdout.splitlines()[-1]))
+    assert set(loaded_now) <= set(needed)
 
 
 def test_a_command_loads_what_it_needs_alone(settings: Settings, notes: Path) -> None:

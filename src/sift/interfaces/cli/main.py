@@ -15,9 +15,9 @@ from sift.api.wire import CONTRACT, contract_text, understood
 from sift.domain.text.decoding import encodable
 from sift.interfaces.cli.arguments import flags, options
 from sift.interfaces.cli.context import Context
-from sift.interfaces.cli.entries import ENTRIES, command_of
+from sift.interfaces.cli.entries import ENTRIES, LOGGED, command_of
 from sift.interfaces.cli.flags import file_or_id
-from sift.interfaces.cli.logs import FOLDER, LOGGED, Log, heard_too, kept
+from sift.interfaces.cli.heavy import endpoints, logs, windows
 from sift.interfaces.cli.notice import notice
 from sift.interfaces.cli.shown.outcome import FAILED, INTERRUPTED, Shown, failure, stopped_writing
 from sift.interfaces.cli.usage import Parser, asked_json, parsed
@@ -35,12 +35,12 @@ from sift.interfaces.console.streams import (
 )
 from sift.interfaces.console.style import PLAIN, Asked, Colour, Style, Terminal, style_of
 from sift.interfaces.console.text import printable_text
-from sift.interfaces.console.windows import console, escapes_work
-from sift.interfaces.server.endpoint import Endpoint, found, unshared
 from sift.settings import VARIABLES, Settings, from_environment, user_folder, whole_path
 
 if TYPE_CHECKING:
+    from sift.interfaces.cli.logs import Log
     from sift.interfaces.cli.updates import Checking
+    from sift.interfaces.server.endpoint import Endpoint
 
 DESCRIPTION = "Fast local search over your documents and notes."
 SETTINGS_HEADING = "settings, read from the environment:"
@@ -147,7 +147,7 @@ def _encoding(stream: TextIO | None) -> str | None:
 def _style(err: TextIO | None, settings: Settings, choice: Colour, encoding: str | None) -> Style:
     terminal = is_terminal(err)
     target = None if err is None else descriptor(err)
-    escapes = terminal and target is not None and escapes_work(console(), target)
+    escapes = terminal and target is not None and _escapes_work(target)
     return style_of(Terminal(terminal, escapes, encoding), Asked(choice, settings.no_color, settings.dumb))
 
 
@@ -180,10 +180,15 @@ class _Chosen:
     style: Style
 
 
-def _server(settings: Settings, command: str) -> Endpoint | None:
+def _escapes_work(descriptor: int) -> bool:
+    console = windows()
+    return console.escapes_work(console.console(), descriptor)
+
+
+def _server(settings: Settings, command: str) -> "Endpoint | None":
     if command == SERVE:
         return None
-    running = found(settings)
+    running = endpoints().found(settings)
     if running is None or understood(running.contract):
         return running
     spoken, ours = contract_text(running.contract), contract_text(CONTRACT)
@@ -192,13 +197,13 @@ def _server(settings: Settings, command: str) -> Endpoint | None:
     raise StoreUnavailableError(said, OTHER_SIFT_REMEDY)
 
 
-def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log: Log | None) -> Shown:
-    told = live if log is None else heard_too(live, log, host.clock)
+def _commanded(chosen: _Chosen, settings: Settings, host: Host, live: Live, log: "Log | None") -> Shown:
+    told = live if log is None else logs().heard_too(live, log, host.clock)
     server: Endpoint | None = None
     command = command_of(chosen.command)
     try:
         server = _server(settings, chosen.command)
-        for noted in () if server is None else unshared(server, settings):
+        for noted in () if server is None else endpoints().unshared(server, settings):
             told(noted)
         context = Context(settings, host.platform, chosen.json, chosen.style, told, host.clock, server)
         with ticking(told.tick):
@@ -229,7 +234,7 @@ def _logged(asked: _Chosen, settings: Settings, host: Host, live: Live) -> Shown
         return _commanded(asked, settings, host, live, None)
     with contextlib.ExitStack() as held:
         try:
-            log = held.enter_context(kept(settings.home / FOLDER, asked.command, host.now(), _heading(asked.command)))
+            log = held.enter_context(logs().logged(settings.home, asked.command, host.now(), _heading(asked.command)))
         except OSError as error:
             live.close()
             return failure(error, asked.style, as_json=asked.json)

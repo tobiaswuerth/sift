@@ -21,6 +21,7 @@ from sift.interfaces.cli.context import Command, Commands
 from sift.interfaces.cli.reading import ReadDocuments
 
 COMMANDS_PACKAGE = "sift.interfaces.cli.commands"
+LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed", "serve"})
 
 
 @dataclass(frozen=True, slots=True)
