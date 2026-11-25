@@ -16,6 +16,7 @@ from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import HomeServer
 from sift.settings import Settings
+from tests.damage import damage_table
 from tests.files import write
 from tests.homes import indexed, quiet
 from tests.models import Hashed
@@ -262,3 +263,13 @@ def test_no_more_is_offered_past_the_most_a_page_holds(home: Settings) -> None:
     with running(home, {**HANDLED, "search": Handled(many, writes=False)}) as server:
         texts = [page(server, q="x", k=k) for k in ("30", "500")]
     assert ['class="more"' in text for text in texts] == [True, False]
+
+
+def test_a_damaged_store_stops_no_page_of_the_ui(home: Settings) -> None:
+    damage_table(home.home / "collections" / "hidden.sqlite", "counts")
+    with running(home) as server:
+        overview = got(server, "/ui")
+        found = page(server, q="dark", c="notes")
+    assert (overview[0], "hidden.sqlite is damaged: " in overview[2]) == (200, True)
+    assert 'href="/ui?c=notes">notes</a><span class="count">4</span>' in overview[2]
+    assert "doc=notes%2Ftagged.md" in found
