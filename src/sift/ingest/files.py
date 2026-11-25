@@ -3,7 +3,7 @@ import stat
 import sys
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import BinaryIO
@@ -30,6 +30,45 @@ def identity_at(path: Path) -> Identity:
 def own_identity_at(path: Path) -> Identity:
     found = path.stat(follow_symlinks=False)
     return Identity(found.st_dev, found.st_ino)
+
+
+def _same(path: Path, wanted: Identity) -> bool:
+    try:
+        return own_identity_at(path) == wanted
+    except OSError:
+        return False
+
+
+@dataclass(slots=True)
+class Listings:
+    held: dict[Path, tuple[frozenset[str], tuple[str, ...]]] = field(default_factory=dict)
+
+    def _listed(self, folder: Path) -> tuple[frozenset[str], tuple[str, ...]]:
+        if folder not in self.held:
+            try:
+                names = tuple(entry.name for entry in folder.iterdir())
+            except OSError:
+                names = ()
+            self.held[folder] = (frozenset(names), names)
+        return self.held[folder]
+
+    def _entry(self, folder: Path, part: str) -> str:
+        known, names = self._listed(folder)
+        if part in known:
+            return part
+        try:
+            wanted = own_identity_at(folder / part)
+        except OSError:
+            return part
+        return next((name for name in names if _same(folder / name, wanted)), part)
+
+    def listed_as(self, root: Path, relative: str) -> str:
+        named, folder = list[str](), root
+        for part in relative.split("/"):
+            listed = self._entry(folder, part)
+            named.append(listed)
+            folder /= listed
+        return "/".join(named)
 
 
 def _reading() -> int:

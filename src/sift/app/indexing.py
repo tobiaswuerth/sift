@@ -21,6 +21,7 @@ from sift.domain.plan.ignore import Ignore
 from sift.domain.plan.indexing import Found, Stat, dropping, index_plan, recorded
 from sift.domain.text.kinds import split_keyed_path
 from sift.domain.text.scans import reads_skipped
+from sift.ingest.files import Listings
 from sift.ingest.ignore import IGNORE_FILE, ignore_at
 from sift.ingest.scan import Reach, scan
 from sift.storage.catalog import Collection, known_to
@@ -204,17 +205,18 @@ def _indexed(one: Collection, asked: _Indexing, paths: tuple[str, ...] = ()) -> 
         return _skipped(one, report, Skipped(Problem.OS, reason, OUT_OF_REACH_REMEDY))
 
 
-def _file_named(one: Collection, relative: str) -> str:
-    return relative if os.path.lexists(one.folder / relative) else split_keyed_path(relative)[0]
+def _file_named(one: Collection, relative: str, listings: Listings) -> str:
+    path = relative if os.path.lexists(one.folder / relative) else split_keyed_path(relative)[0]
+    return listings.listed_as(one.folder, path)
 
 
 def files_of(home: Path, files: Sequence[str], audience: Audience) -> Mapping[Collection, tuple[str, ...]]:
-    known, grouped = known_to(home, audience), dict[Collection, list[str]]()
+    known, grouped, listings = known_to(home, audience), dict[Collection, list[str]](), Listings()
     for given in files:
         found = located(known, given)
         if found is None:
             raise InvalidRequestError(f"{given} is in no collection", NO_COLLECTION_REMEDY, "files")
-        grouped.setdefault(found[0], []).append(_file_named(*found))
+        grouped.setdefault(found[0], []).append(_file_named(*found, listings))
     return MappingProxyType({one: tuple(dict.fromkeys(paths)) for one, paths in grouped.items()})
 
 

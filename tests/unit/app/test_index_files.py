@@ -1,6 +1,8 @@
+import ctypes
+import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import pytest
 
@@ -61,9 +63,11 @@ def test_files_of_several_collections_are_read_at_once_whatever_their_dates(home
 
 def test_a_file_gone_is_dropped_and_one_never_there_is_said_missing(home: Path, tmp_path: Path) -> None:
     (tmp_path / "diary" / "monday.md").unlink()
-    assert [(each.id, each.state) for each in reindexed(home, "diary/monday.md", "diary/tuesday.md")] == [
+    named = ("diary/monday.md", "diary/tuesday.md", "diary/never/there.md")
+    assert [(each.id, each.state) for each in reindexed(home, *named)] == [
         ("diary/monday.md", "removed"),
         ("diary/tuesday.md", "missing"),
+        ("diary/never/there.md", "missing"),
     ]
     assert found_ids(home, "robot") == []
 
@@ -209,3 +213,55 @@ def test_collections_and_files_are_not_named_together_and_a_file_must_lie_in_a_c
     for outside in (str(tmp_path / "elsewhere.md"), "nowhere/x.md"):
         with pytest.raises(InvalidRequestError, match="is in no collection"):
             index(home, IndexCollections(files=(outside,)), quiet)
+
+
+def _case_counts(folder: Path) -> bool:
+    return not (folder / "RL.MD").exists()
+
+
+def test_a_file_named_in_another_case_is_read_under_the_name_its_folder_lists(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "papers" / "rl.md", "# Reward shaping\n\nShaped rewards, changed.\n")
+    expected = "missing" if _case_counts(tmp_path / "papers") else "changed"
+    named = "papers/RL.MD" if _case_counts(tmp_path / "papers") else "papers/rl.md"
+    assert [(each.id, each.state) for each in reindexed(home, "papers/RL.MD")] == [(named, expected)]
+    assert found_ids(home, "rewards") == ["papers/rl.md"]
+
+
+@pytest.mark.parametrize("name", ["rl.md.", "rl.md "])
+def test_a_file_named_with_a_trailing_dot_or_space_is_read_under_the_name_its_folder_lists(
+    home: Path, tmp_path: Path, name: str
+) -> None:
+    write(tmp_path / "papers" / "rl.md", "# Reward shaping\n\nShaped rewards, changed.\n")
+    aliased = (tmp_path / "papers" / name).exists()
+    expected = ("papers/rl.md", "changed") if aliased else (f"papers/{name}", "missing")
+    assert [(each.id, each.state) for each in reindexed(home, f"papers/{name}")] == [expected]
+    assert found_ids(home, "rewards") == ["papers/rl.md"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 strips a trailing dot from a name")
+def test_a_name_windows_cannot_open_beside_a_file_named_in_another_case_is_passed_over(
+    home: Path, tmp_path: Path
+) -> None:
+    Path(f"\\\\?\\{tmp_path / 'papers' / '0.'}").write_text("# Dot\n", encoding="utf-8")
+    write(tmp_path / "papers" / "rl.md", "# Reward shaping\n\nShaped rewards, changed.\n")
+    assert [(each.id, each.state) for each in reindexed(home, "papers/RL.MD")] == [("papers/rl.md", "changed")]
+
+
+def short_name(path: Path) -> str:
+    load = cast("Callable[[str], ctypes.CDLL]", getattr(ctypes, "WinDLL", None))
+    held = ctypes.create_unicode_buffer(1024)
+    assert cast("int", load("kernel32").GetShortPathNameW(str(path), held, 1024)) > 0
+    return Path(cast("str", held.value)).name
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="short names are Windows' own")
+def test_a_file_named_by_its_windows_short_name_is_read_under_its_long_one(home: Path, tmp_path: Path) -> None:
+    write(tmp_path / "papers" / "A Long Folder Name" / "deep.md", "# Deep\n\nDeep reward.\n")
+    index(home, IndexCollections(), quiet, readers=LATER)
+    long = tmp_path / "papers" / "A Long Folder Name"
+    short = short_name(long)
+    assert short != long.name, "this volume makes no short names"
+    write(long / "deep.md", "# Deep\n\nDeep reward, changed.\n")
+    found = [(each.id, each.state) for each in reindexed(home, f"papers/{short}/deep.md")]
+    assert found == [("papers/A Long Folder Name/deep.md", "changed")]
+    assert found_ids(home, "deep") == ["papers/A Long Folder Name/deep.md"]

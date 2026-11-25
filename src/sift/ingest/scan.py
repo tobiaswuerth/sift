@@ -298,7 +298,7 @@ def _passed_over(root: Path, folder: str, walk: _Walk) -> WhyLeftOut | None:
         return WhyLeftOut.LINKED_FOLDER
     if _left_out(walk, folder, folder=True):
         return WhyLeftOut.RULES
-    return None if _folder_taken(entry) else WhyLeftOut.PASSED_OVER
+    return None if not entry.is_dir() or _folder_taken(entry) else WhyLeftOut.PASSED_OVER
 
 
 def scan_one(root: Path, relative: str, reach: Reach = WITHIN, *, links: LinkChecks = LINK_CHECKS) -> Scanned:
