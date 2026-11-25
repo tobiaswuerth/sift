@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from sift.api.ids import DocumentId
-from sift.domain.text.links import LinkKind, folded, name_key
+from sift.domain.text.links import LinkKind, folded, name_key, spelled_key
 
 RELATIVE = ("./", "../")
 LINE_CHARS = 300
@@ -55,6 +55,12 @@ def _by_path(path: str, named: Sequence[Candidate]) -> Resolution:
     return _one(Via.PATH, found) if found else UNRESOLVED
 
 
+def _spelled_alike(name: str, named: Sequence[Candidate]) -> Sequence[Candidate]:
+    wanted = spelled_key(name)
+    alike = [each for each in named if spelled_key(posixpath.basename(each.path)) == wanted]
+    return alike or named
+
+
 def resolved(
     source: str | None, kind: LinkKind, target: str, named: Sequence[Candidate], aliased: Sequence[Candidate]
 ) -> Resolution:
@@ -69,6 +75,8 @@ def resolved(
     path = target.lstrip("/")
     if "/" in path:
         return _by_path(path, named)
+    if len(named) > 1:
+        named = _spelled_alike(path, named)
     if len(named) > 1:
         here = None if source is None else folded(posixpath.dirname(source))
         found = [each for each in named if folded(posixpath.dirname(each.path)) == here]

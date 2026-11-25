@@ -1,7 +1,7 @@
 import posixpath
 import re
 import unicodedata
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from urllib.parse import unquote
@@ -97,9 +97,21 @@ def folded(name: str) -> str:
     return unicodedata.normalize("NFC", unicodedata.normalize("NFC", name).casefold())
 
 
-def name_key(name: str) -> str:
+def spelled(name: str) -> str:
+    return unicodedata.normalize("NFC", name).lower()
+
+
+def _keyed(name: str, key: Callable[[str], str]) -> str:
     stem, extension = posixpath.splitext(name)
-    return folded(stem if extension.lower() in MARKDOWN else name)
+    return key(stem if extension.lower() in MARKDOWN else name)
+
+
+def name_key(name: str) -> str:
+    return _keyed(name, folded)
+
+
+def spelled_key(name: str) -> str:
+    return _keyed(name, spelled)
 
 
 def without_code_spans(line: str) -> str:

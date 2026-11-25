@@ -63,6 +63,23 @@ def test_a_link_resolves_as_obsidian_resolves_it(
     assert resolved(source, *link, *candidates) == expected
 
 
+@pytest.mark.parametrize(
+    "target, expected",
+    [("Maße", 1), ("MASSE", 0), ("masse", 0), ("Straße", 3), ("strasse", 2), ("ﬁle", 5), ("FILE", 4)],
+)
+def test_names_casefolding_merges_are_told_apart_by_their_case_insensitive_spelling(target: str, expected: int) -> None:
+    named = [
+        candidate(0, "T/Masse.md"),
+        candidate(1, "T/Maße.md"),
+        candidate(2, "U/Strasse.md"),
+        candidate(3, "U/Straße.md"),
+        candidate(4, "V/file.md"),
+        candidate(5, "V/ﬁle.md"),
+    ]
+    alike = [each for each in named if name_key(each.path.rsplit("/", 1)[-1]) == name_key(target)]
+    assert resolved("n.md", WIKI, target, alike, []) == via(Via.NAME, expected)
+
+
 def test_paths_compare_folded_and_a_note_s_without_its_extension() -> None:
     assert name_key("Hans Mu\N{COMBINING DIAERESIS}ller.MD") == name_key("hans müller") == "hans müller"
     assert name_key("notes.txt") == "notes.txt"
