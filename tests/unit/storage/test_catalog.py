@@ -1,7 +1,6 @@
 import contextlib
 import sqlite3
 import stat
-from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 
@@ -28,32 +27,11 @@ from sift.storage.catalog import LAYOUT as CATALOG_LAYOUT
 from sift.storage.database import connect, read_only, reading, rows, run, writing
 from sift.storage.store import create_store, open_store
 from tests.damage import damage_pages
+from tests.unit.storage.catalogs import folder, known
 
 
 class Version(NamedTuple):
     number: int
-
-
-@pytest.fixture
-def home(tmp_path: Path) -> Path:
-    return tmp_path / "home"
-
-
-@pytest.fixture
-def catalog(home: Path) -> Iterator[sqlite3.Connection]:
-    with contextlib.closing(open_catalog(home)) as connection:
-        yield connection
-
-
-def folder(tmp_path: Path, name: str) -> Path:
-    path = tmp_path / name
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def known(catalog: sqlite3.Connection) -> tuple[Collection, ...]:
-    with reading(catalog) as transaction:
-        return collections(transaction)
 
 
 def test_the_catalog_lies_in_the_home_folder_and_records_its_layout(home: Path, catalog: sqlite3.Connection) -> None:
@@ -149,22 +127,6 @@ def test_the_collections_of_a_home_are_read_without_making_a_catalog(tmp_path: P
     assert named(known_collections(home), "PAPERS") == added
     with pytest.raises(NotFoundError, match="no collection is named 'x'"):
         named((), "x")
-
-
-@pytest.mark.parametrize("name", ["", "has space", "a/b", "semi;colon", "dots..ok?", "-x", ".", "..", ".hidden"])
-def test_a_name_holds_letters_digits_underscores_dashes_and_dots(
-    tmp_path: Path, home: Path, catalog: sqlite3.Connection, name: str
-) -> None:
-    with pytest.raises(InvalidRequestError, match="no collection name"):
-        add_collection(catalog, home, NewCollection(folder(tmp_path, "x"), name=name or " "))
-    assert add_collection(catalog, home, NewCollection(folder(tmp_path, "y"), name="Ok_name-1.0")).name == "Ok_name-1.0"
-
-
-def test_names_that_differ_in_case_alone_are_one_name(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
-    add_collection(catalog, home, NewCollection(folder(tmp_path, "Notes")))
-    with pytest.raises(InvalidRequestError, match="named 'Notes' already") as refused:
-        add_collection(catalog, home, NewCollection(folder(tmp_path, "other"), name="notes"))
-    assert refused.value.code == Problem.TAKEN
 
 
 def test_what_is_no_folder_is_refused(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
@@ -296,21 +258,6 @@ def test_an_id_is_never_given_twice(tmp_path: Path, home: Path, catalog: sqlite3
     with writing(catalog) as transaction:
         run(transaction, "DELETE FROM collections")
     assert add_collection(catalog, home, NewCollection(folder(tmp_path, "b"))).id == first.id + 1
-
-
-def test_a_collection_is_found_by_its_name_in_any_case(tmp_path: Path, home: Path, catalog: sqlite3.Connection) -> None:
-    add_collection(catalog, home, NewCollection(folder(tmp_path, "x"), name="Bücher"))
-    with reading(catalog) as transaction:
-        assert named(collections(transaction), "BÜCHER").name == "Bücher"
-        assert named(collections(transaction), "bücher").name == "Bücher"
-
-
-def test_collections_are_listed_by_name_whatever_its_case(
-    tmp_path: Path, home: Path, catalog: sqlite3.Connection
-) -> None:
-    for name in ("b", "A", "c", "Ä"):
-        add_collection(catalog, home, NewCollection(folder(tmp_path, f"folder-{name}"), name=name))
-    assert [one.name for one in known(catalog)] == ["A", "b", "c", "Ä"]
 
 
 def test_a_catalog_is_opened_while_another_program_writes_to_it(home: Path, catalog: sqlite3.Connection) -> None:

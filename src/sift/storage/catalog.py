@@ -39,6 +39,9 @@ WRITTEN_THROUGH = "PRAGMA synchronous = FULL"
 STORES = "collections"
 STORE_SUFFIX = ".sqlite"
 NAME = re.compile(r"\w[\w.-]*")
+MOST_NAME = 100
+PORTS = (*"0123456789", "\N{SUPERSCRIPT ONE}", "\N{SUPERSCRIPT TWO}", "\N{SUPERSCRIPT THREE}")
+DEVICES = frozenset({"con", "prn", "aux", "nul", *(f"{kind}{port}" for kind in ("com", "lpt") for port in PORTS)})
 LAYOUT: tuple[Migration, ...] = (
     (
         """CREATE TABLE collections(
@@ -308,10 +311,22 @@ def _clash(wanted: Placed, other: Collection) -> InvalidRequestError | None:
     return None
 
 
-def refusal(wanted: Placed, known: tuple[Collection, ...]) -> InvalidRequestError | None:
-    if not NAME.fullmatch(wanted.name):
+def _name_refusal(name: str) -> InvalidRequestError | None:
+    if not NAME.fullmatch(name):
         remedy = "name it with letters, digits, '_', '-' and '.', starting with a letter, a digit or '_'"
-        return InvalidRequestError(f"{wanted.name!r} is no collection name", remedy)
+        return InvalidRequestError(f"{name!r} is no collection name", remedy)
+    if len(name) > MOST_NAME:
+        said = f"a collection name of {len(name):,} characters is too long"
+        return InvalidRequestError(said, f"name it with at most {MOST_NAME} characters")
+    if name.split(".", 1)[0].casefold() in DEVICES:
+        said = f"{name!r} is no collection name: Windows keeps it for a device"
+        return InvalidRequestError(said, "choose another name, e.g. one ending in _notes")
+    return None
+
+
+def refusal(wanted: Placed, known: tuple[Collection, ...]) -> InvalidRequestError | None:
+    if named_wrong := _name_refusal(wanted.name):
+        return named_wrong
     if clash := next(filter(None, (_clash(wanted, other) for other in known)), None):
         return clash
     return None
