@@ -25,6 +25,8 @@ def opened(server: HomeServer) -> socket.socket:
 def closed(left: socket.socket) -> bool:
     try:
         return left.recv(1) == b""
+    except (ConnectionResetError, ConnectionAbortedError):
+        return True
     except TimeoutError:
         return False
 
