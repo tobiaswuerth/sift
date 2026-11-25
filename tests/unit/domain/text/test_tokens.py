@@ -1,10 +1,11 @@
 import sys
 
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.text.fts5_table import FOLDS, SEPARATORS
 from sift.domain.text.tokens import TRANSLATION, field_tokens, tokens
+from tests.examples import more
 from tools.fts5_table import fts5_tokens
 
 separators = [point for point, replaced in TRANSLATION.items() if replaced == " "]
@@ -18,7 +19,7 @@ characters = st.one_of(
 )
 
 
-@settings(max_examples=500)
+@more(500)
 @given(st.lists(st.text(characters, max_size=60), min_size=1, max_size=20))
 def test_tokens_are_fts5_s(texts: list[str]) -> None:
     assert [tokens(text) for text in texts] == fts5_tokens(texts)

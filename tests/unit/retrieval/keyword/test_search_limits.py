@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 
 from sift.api.errors import InvalidRequestError
 from sift.domain.arrays import floats, ints
@@ -14,6 +14,7 @@ from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Opened, PostingArrays, Ranged, opened, stored
 from sift.retrieval.keyword.search import Prepared, Tuning, planned, prepared, query_of, searched
 from sift.storage.database import rows
+from tests.examples import few
 from tests.keyword_searches import (
     SEEDS,
     Draws,
@@ -61,7 +62,7 @@ def test_ranges_outside_their_segment_are_damage(place: int) -> None:
             search(stores, Term("w0"), 10)
 
 
-@settings(max_examples=1)
+@few(1)
 @given(seed=SEEDS)
 def test_a_search_out_of_time_returns_the_best_it_found_scored_exactly(seed: int) -> None:
     rng = Draws(np.random.default_rng(seed))

@@ -3,12 +3,13 @@ import sqlite3
 from contextlib import closing
 
 import numpy as np
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.arrays import floats
 from sift.domain.rank.bm25 import TOP, idf, quantized, slack, term_scores, unquantized
 from sift.domain.text.tokens import tokens
+from tests.examples import more
 
 WORDS = ("alpha", "beta", "gamma", "delta", "Müller", "x-ray")
 column = st.lists(st.sampled_from(WORDS), max_size=8).map(" ".join)
@@ -25,7 +26,7 @@ def fts5_scores(written: list[tuple[str, str, str]], term: str) -> dict[int, flo
         return dict(found)
 
 
-@settings(max_examples=200)
+@more(200)
 @given(rows, st.sampled_from(["alpha", "beta", "muller", "ray"]))
 def test_a_term_scores_as_fts5_s_bm25_scores_it(written: list[tuple[str, str, str]], term: str) -> None:
     held = [[token for text in row for token in tokens(text)] for row in written]

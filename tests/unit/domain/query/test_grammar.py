@@ -6,7 +6,7 @@ from typing import cast
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.api.errors import InvalidRequestError
@@ -14,6 +14,7 @@ from sift.domain.arrays import Mask, ints
 from sift.domain.query.expressions import NOTHING, And, Expression, Leaf, Not, Or, Phrase, Prefix, Term, leaves
 from sift.domain.query.grammar import MOST_DEPTH, MOST_QUERY_CHARS, MOST_WORDS, parsed, relaxed, words_in
 from sift.domain.rank.boolean import counted, may_hold
+from tests.examples import few
 
 DASH = "\N{EN DASH}"
 a, b, c = Term("a"), Term("b"), Term("c")
@@ -162,6 +163,7 @@ def test_a_query_of_words_alone_is_relaxed_to_any_of_them(query: str, expression
 
 
 ROWS = tuple(" ".join(chosen) for n in range(1, 4) for chosen in combinations("abcde", n))
+COMPARED, MOST_TRIED = 300, 3000
 
 
 def pick[T](rng: np.random.Generator, items: Sequence[T]) -> T:
@@ -179,7 +181,7 @@ def random_query(rng: np.random.Generator, depth: int = 0) -> str:
     return f"{left} {pick(rng, ['AND', 'OR', 'NOT'])} {right}"
 
 
-@settings(max_examples=3)
+@few(3)
 @given(st.integers(0, 2**32 - 1))
 def test_random_queries_match_what_fts5_matches(seed: int) -> None:
     rng = np.random.default_rng(seed)
@@ -190,7 +192,9 @@ def test_random_queries_match_what_fts5_matches(seed: int) -> None:
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("CREATE VIRTUAL TABLE t USING fts5(x, tokenize='unicode61 remove_diacritics 2')")
         db.executemany("INSERT INTO t(rowid, x) VALUES (?, ?)", list(enumerate(ROWS, 1)))
-        for _ in range(500):
+        for _ in range(MOST_TRIED):
+            if compared == COMPARED:
+                break
             query = random_query(rng)
             try:
                 matched = cast(
@@ -210,7 +214,7 @@ def test_random_queries_match_what_fts5_matches(seed: int) -> None:
             )
             assert found == want, query
             compared += 1
-    assert compared > 300
+    assert compared == COMPARED
 
 
 def mask(*values: int) -> Mask:

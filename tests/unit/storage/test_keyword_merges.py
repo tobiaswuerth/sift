@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.api.errors import StoreUnavailableError
@@ -14,6 +14,7 @@ from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows, run, writing
 from sift.storage.keyword_merges import MergedTerm, batched
 from sift.storage.keywords import TAKEN_OVER_REMEDY, remade, remake_started, settle
+from tests.examples import few
 from tests.keyword_indexes import (
     LONG,
     MERGING,
@@ -30,7 +31,7 @@ from tests.keyword_indexes import (
 from tests.keyword_stores import SMALL, Content, Round, applied, opened_store
 
 
-@settings(max_examples=30, deadline=None)
+@few(30)
 @given(rounds, st.sampled_from([SMALL, Shape()]))
 def test_segments_merged_as_they_come_index_what_fts5_makes_of_the_live_chunks(each: list[Round], shape: Shape) -> None:
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, shape) as connection:
@@ -43,7 +44,7 @@ PIECES = Batches(chunks_a_segment=3, postings_a_merge=1, bytes_a_merge=1, mergin
 DENSE = Batches(chunks_a_segment=3, tokens_a_segment=1, merging=Policy(factor=2, floor=1))
 
 
-@settings(max_examples=30, deadline=None)
+@few(30)
 @given(rounds, st.sampled_from([SMALL, Shape()]), st.sampled_from([PIECES, DENSE]))
 def test_terms_merged_a_row_at_a_time_index_what_fts5_makes_of_the_live_chunks(
     each: list[Round], shape: Shape, batches: Batches
@@ -86,7 +87,7 @@ def merged_with(folder: Path, each: list[Round], shape: Shape, batches: Batches)
             return rows(transaction, Stored, STORED)
 
 
-@settings(max_examples=30, deadline=None)
+@few(30)
 @given(many_rounds, st.sampled_from([SMALL, Shape()]), st.sampled_from([PIECES, DENSE]))
 def test_terms_merged_in_pieces_are_stored_byte_for_byte_as_merged_whole(
     each: list[Round], shape: Shape, batches: Batches

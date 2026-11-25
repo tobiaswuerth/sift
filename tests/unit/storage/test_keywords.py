@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.codec.shape import Shape
@@ -15,6 +15,7 @@ from sift.storage.database import BATCHES, Batches, Connection, reading, rows, r
 from sift.storage.documents import add_documents, put_source
 from sift.storage.keyword_lists import dead_within, expansions, frequencies, keyword_generation, segments
 from sift.storage.keywords import totals, writing_documents
+from tests.examples import few
 from tests.keyword_indexes import (
     Average,
     Sized,
@@ -24,7 +25,7 @@ from tests.keyword_indexes import (
 from tests.keyword_stores import SMALL, Round, applied, opened_store, written
 
 
-@settings(max_examples=40, deadline=None)
+@few(40)
 @given(rounds, st.sampled_from([SMALL, Shape()]))
 def test_the_keyword_index_holds_what_fts5_makes_of_the_live_chunks_however_they_changed(
     each: list[Round], shape: Shape
@@ -34,7 +35,7 @@ def test_the_keyword_index_holds_what_fts5_makes_of_the_live_chunks_however_they
         checked(connection)
 
 
-@settings(max_examples=20, deadline=None)
+@few(20)
 @given(rounds)
 def test_segments_of_few_chunks_and_documents_forgotten_a_few_at_a_time_index_the_same(each: list[Round]) -> None:
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:

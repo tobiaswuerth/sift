@@ -3,7 +3,7 @@ from typing import cast
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 from numpy.typing import NDArray
 
@@ -12,6 +12,7 @@ from sift.domain.arrays import Ids, floats, ints
 from sift.domain.codec.codes import Bits, Floats, Halves, codes
 from sift.retrieval.vector.nearest import SCAN_SHARE, SHORTLIST, Coded, ExactRead, Near, Reads, coded, nearest
 from tests.allowed import Chosen
+from tests.examples import few
 
 RECALL_AT_10 = 0.75
 BYTES_A_CODE = 16
@@ -53,7 +54,7 @@ def reader(exact: list[tuple[Ids, Halves]]) -> ExactRead:
     return read
 
 
-@settings(max_examples=20, deadline=None)
+@few(20)
 @given(st.integers(0, 2**32 - 1), st.lists(st.integers(0, 60), min_size=1, max_size=3), st.sampled_from([1, 5, 40]))
 def test_with_every_candidate_scored_exactly_the_nearest_are_found(seed: int, sizes: list[int], k: int) -> None:
     held, exact = exact_stores(seed, sizes, 24)
@@ -163,7 +164,7 @@ def staged(exact: list[tuple[Ids, Halves]], query: Floats, k: int, rescore: int)
     ]
 
 
-@settings(max_examples=40, deadline=None)
+@few(40)
 @given(
     st.integers(0, 2**32 - 1),
     st.lists(st.integers(0, 300), min_size=1, max_size=3),

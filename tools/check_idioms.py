@@ -50,6 +50,11 @@ ENVIRONMENT_MODULES = frozenset({"os", "nt", "posix"})
 NAMESPACES = frozenset({"vars", "builtins.vars"})
 ENVIRONMENT_READ = "the environment read outside sift.settings: parse it there and pass the Settings in"
 CLOCKS = frozenset({"time", "timeit"})
+EXAMPLE_COUNTS = frozenset({"tests/examples.py", "tests/conftest.py"})
+PINNED_EXAMPLES = (
+    "an example count pinned in a test, which the explore session cannot widen: "
+    "use few(n) or more(n) from tests/examples.py"
+)
 CLOCK_IN_A_TEST = (
     "a clock in a test, which passes or fails by the machine and its load: count what costs the time "
     "(calls, characters looked at, rows read), or pass a clock in"
@@ -222,6 +227,12 @@ def _imported(node: ast.Import | ast.ImportFrom) -> list[str]:
     return [alias.name for alias in node.names] if isinstance(node, ast.Import) else [node.module or ""]
 
 
+def pinned_examples(path: str, tree: ast.Module) -> Iterator[Finding]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and any(keyword.arg == "max_examples" for keyword in node.keywords):
+            yield Finding(path, node.lineno, PINNED_EXAMPLES)
+
+
 def clocks(path: str, tree: ast.Module) -> Iterator[Finding]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import | ast.ImportFrom) and CLOCKS & {n.split(".")[0] for n in _imported(node)}:
@@ -335,6 +346,7 @@ def idioms(path: str, source: str) -> tuple[Finding, ...]:
         *(patching(path, tree) if in_tests else ()),
         *(sift_patched(path, tree) if in_tests else ()),
         *(clocks(path, tree) if in_tests else ()),
+        *(pinned_examples(path, tree) if in_tests and path not in EXAMPLE_COUNTS else ()),
         *storage_idioms(path, tree),
     )
 

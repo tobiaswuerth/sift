@@ -4,9 +4,11 @@ from pathlib import Path
 import pytest
 from hypothesis import settings
 
-settings.register_profile("sift", derandomize=True, database=None, deadline=None, print_blob=True)
-settings.register_profile("explore", max_examples=2000, database=None, deadline=None, print_blob=True)
-settings.load_profile("sift")
+from tests.examples import EXPLORE, EXPLORED, PLAIN
+
+settings.register_profile(PLAIN, derandomize=True, database=None, deadline=None, print_blob=True)
+settings.register_profile(EXPLORE, max_examples=EXPLORED, database=None, deadline=None, print_blob=True)
+settings.load_profile(PLAIN)
 
 
 @pytest.fixture(autouse=True, scope="session")

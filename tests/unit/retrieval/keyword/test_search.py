@@ -2,7 +2,7 @@ import itertools
 
 import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.arrays import ints, last
@@ -15,6 +15,7 @@ from sift.retrieval.keyword.lists import Ranged, stored
 from sift.retrieval.keyword.search import Tuning, found_in, planned, prepared, query_of, searched
 from sift.storage.database import BATCHES, Batches
 from tests.allowed import Chosen
+from tests.examples import few
 from tests.keyword_searches import (
     MERGING,
     SEEDS,
@@ -49,7 +50,7 @@ def test_passages_of_equal_score_keep_the_order_of_their_chunks_however_the_sear
                 assert [each.chunk & 0xFF_FFFF_FFFF for each in found] == list(range(1, 11))
 
 
-@settings(max_examples=6)
+@few(6)
 @given(seed=SEEDS, shape=st.sampled_from([SMALL, Shape()]), batches=st.sampled_from([BATCHES, MERGING]))
 def test_finds_what_scoring_every_chunk_finds(seed: int, shape: Shape, batches: Batches) -> None:
     rng = Draws(np.random.default_rng(seed))
@@ -65,7 +66,7 @@ def test_finds_what_scoring_every_chunk_finds(seed: int, shape: Shape, batches: 
             same(got, brute(held, expression, k + 20, by_document=by_document), k, expression)
 
 
-@settings(max_examples=1)
+@few(1)
 @given(seed=SEEDS)
 def test_across_collections_with_their_statistics_as_one(seed: int) -> None:
     rng = Draws(np.random.default_rng(seed))
@@ -76,7 +77,7 @@ def test_across_collections_with_their_statistics_as_one(seed: int) -> None:
             same(search(stores, expression, k), brute(held, expression, k + 20, by_document=True), k, expression)
 
 
-@settings(max_examples=3)
+@few(3)
 @given(seed=SEEDS)
 def test_nested_queries_score_as_fts5_scores_them(seed: int) -> None:
     rng = Draws(np.random.default_rng(seed))
@@ -130,7 +131,7 @@ def test_a_list_long_enough_for_ranges_in_the_default_shape_finds_what_scoring_e
     "query",
     ["w1", "w0", "w3 OR w5 OR muller", "w1 w2", '"w0 w1"', "w1*", "w2* w0", "w0 NOT w1", '"w0 w0" OR w7', "mul*"],
 )
-@settings(max_examples=1)
+@few(1)
 @given(seed=SEEDS)
 def test_finds_what_fts5_finds(query: str, seed: int) -> None:
     rng = Draws(np.random.default_rng(seed))
@@ -146,7 +147,7 @@ def test_nothing_is_found_in_collections_without_chunks() -> None:
         assert search(stores, Term("w1"), 10) == ()
 
 
-@settings(max_examples=1)
+@few(1)
 @given(seed=SEEDS)
 def test_a_term_in_no_chunk_finds_nothing_and_leaves_an_or_as_it_was(seed: int) -> None:
     rng = Draws(np.random.default_rng(seed))
@@ -156,7 +157,7 @@ def test_a_term_in_no_chunk_finds_nothing_and_leaves_an_or_as_it_was(seed: int) 
         assert search(stores, Or((Term("w1"), Term("absent"))), 3) == search(stores, Term("w1"), 3)
 
 
-@settings(max_examples=1)
+@few(1)
 @given(seed=SEEDS)
 def test_most_blocks_of_a_common_term_are_never_read(seed: int) -> None:
     rng = Draws(np.random.default_rng(seed))
@@ -195,7 +196,7 @@ def test_a_segment_rewritten_after_a_later_one_is_still_found_in_chunk_order() -
             same(search(stores, expression, 10), brute(held, expression, 30, by_document=True), 10, expression)
 
 
-@settings(max_examples=3)
+@few(3)
 @given(seed=SEEDS)
 def test_only_the_chunks_allowed_are_found_as_many_as_asked_for(seed: int) -> None:
     rng = Draws(np.random.default_rng(seed))

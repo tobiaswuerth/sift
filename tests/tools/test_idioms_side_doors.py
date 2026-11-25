@@ -89,6 +89,16 @@ def test_a_text_cut_by_substring_in_sql_is_found() -> None:
     assert problems("src/sift/storage/a.py", cut) == [idioms_storage.TEXT_CUT_IN_SQL]
 
 
+def test_no_property_test_pins_its_example_count() -> None:
+    pinned = (
+        "from hypothesis import settings\n\n\n@settings(max_examples=3, deadline=None)\ndef test_a() -> None: ...\n"
+    )
+    assert problems("tests/unit/test_a.py", pinned) == [check_idioms.PINNED_EXAMPLES]
+    assert problems("tests/examples.py", pinned) == []
+    widened = "from tests.examples import few\n\n\n@few(3)\ndef test_a() -> None: ...\n"
+    assert problems("tests/unit/test_a.py", widened) == []
+
+
 def test_names_are_followed_in_each_function_alone() -> None:
     twice = "    moment = datetime.datetime\n    return moment.now()\n"
     source = f"import datetime\n\n\ndef a():\n{twice}\n\ndef b():\n{twice}"

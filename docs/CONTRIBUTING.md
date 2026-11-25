@@ -24,7 +24,8 @@ Linux, macOS and Windows, each as Python 3.12 and 3.15), `tests-3.12` and `tests
 coverage of `sift` and `tools`), `lowest` (the lowest versions sift allows), `package` (the wheel and sdist hold the
 tracked sources and nothing else, and the installed commands run). One session:
 `uv run --only-group gate nox -s types`. Before a release, `nox -s explore` runs the property tests with fresh
-random examples, 2,000 each; the gate runs them derandomized.
+random examples, 2,000 each, and 200 at least for those that build stores (`few` in `tests/examples.py`); the gate
+runs them derandomized.
 Tests run on at most 8 workers: each worker imports every test module, the model libraries among them, and on 32
 threads more workers made the suite slower (35 s on 8, 101 s on 32).
 
