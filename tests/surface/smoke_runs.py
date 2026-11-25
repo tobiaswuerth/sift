@@ -40,6 +40,18 @@ def models_run(smoke: Smoke, notes: Path) -> None:
         holds=lambda done: len(ids(done)) == 1 and "  load           1 model " in done.stderr,
     )
     similar_run(smoke)
+    (notes.parent / "cases.json").write_text(
+        json.dumps([{"query": "reward shaping", "relevant": ["notes/rl.md"]}]), encoding="utf-8"
+    )
+    smoke.checked(
+        "bench",
+        "cases.json",
+        "--collection",
+        "notes",
+        "--json",
+        cwd=notes.parent,
+        holds=lambda done: (done.returncode, answer(done)["cases"]) == (0, 1),
+    )
     smoke.checked("vsearch", "learning", "--path", "sub/*", "--json", holds=finding("notes/sub/brush.md"))
     smoke.checked(
         "query",

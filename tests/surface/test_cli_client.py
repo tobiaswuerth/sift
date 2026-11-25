@@ -48,6 +48,7 @@ NOT_COMPARED = MappingProxyType(
         "ui": "it opens the home process's pages in the browser",
         "jobs": "it asks the home process alone",
         "worker": "it lends this machine's models to others, beside any home process",
+        "bench": "it measures searches in its own process",
         "embed": "it needs models",
         "vsearch": "it needs models",
         "query": "it needs models",

@@ -64,3 +64,27 @@ def test_the_model_library_is_imported_only_once_a_text_is_embedded() -> None:
     )
     found = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True, timeout=60)
     assert found.stdout.split() == ["google/embeddinggemma-2@f9972ac22e696a105c482202646979e33e4b5a1e", "False"]
+
+
+def test_bench_shows_how_well_each_mode_finds_what_the_questions_should_find(embedding: Settings, notes: Path) -> None:
+    indexed_notes(embedding, notes)
+    assert ran(embedding, "index")[0] == 0
+    assert ran(embedding, "embed")[0] == 0
+    cases = [{"query": "reward shaping", "relevant": ["notes/rl.md"]}]
+    (embedding.cwd / "cases.json").write_text(json.dumps(cases), encoding="utf-8")
+    code, out, err = ran(embedding, "bench", "cases.json", "-c", "notes")
+    heading, *rows = out.split("\n")[:4]
+    assert (code, heading.split(), [row.split()[0] for row in rows]) == (
+        0,
+        ["mode", "nDCG@10", "MRR@10", "Recall@10", "ms/query"],
+        ["search", "vsearch", "query"],
+    )
+    assert (rows[0].split()[1:4], err.split("\n")[-2]) == (
+        ["1.000", "1.000", "1.000"],
+        " done  1 question, each asked in every mode",
+    )
+    code, out, _ = ran(embedding, "bench", "cases.json", "--json")
+    said = cast("dict[str, object]", json.loads(out))
+    modes = cast("list[dict[str, object]]", said["modes"])
+    assert (code, said["cases"], [each["mode"] for each in modes]) == (0, 1, ["search", "vsearch", "query"])
+    assert sorted(modes[0]) == ["mode", "mrr", "ms_per_query", "ndcg", "recall"]

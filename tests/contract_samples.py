@@ -2,6 +2,7 @@ import dataclasses
 from collections.abc import Mapping
 from types import MappingProxyType
 
+from sift.api.bench import Mode, ModeMeasured, SearchesMeasured
 from sift.api.collections import (
     ActivateCollections,
     AddCollection,
@@ -110,3 +111,6 @@ EVENT_SAMPLES: Mapping[str, Event] = MappingProxyType(
     }
 )
 SERVED = Served("http://127.0.0.1:8765")
+MEASURED = SearchesMeasured(
+    2, (ModeMeasured(Mode.KEYWORD, 0.5, 0.75, 1.0, 12.5), ModeMeasured(Mode.HYBRID, 1.0, 1.0, 1.0, 250.0))
+)

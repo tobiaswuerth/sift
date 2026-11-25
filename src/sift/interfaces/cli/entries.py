@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from sift.api.bench import MeasureSearches
 from sift.api.collections import (
     ActivateCollections,
     AddCollection,
@@ -135,6 +136,13 @@ ENTRIES = MappingProxyType(
             "sift worker",
             here=True,
         ),
+        "bench": CommandEntry(
+            "measure how well each search mode finds what your questions should find, on your own documents",
+            MeasureSearches,
+            "measuring",
+            "sift bench questions.json",
+            here=True,
+        ),
     }
 )
 EXAMPLES = ("sift add ~/notes", "sift index", SEARCH_EXAMPLE, GET_EXAMPLE)
@@ -149,6 +157,7 @@ if TYPE_CHECKING:
     from sift.interfaces.cli.commands import indexing as _indexing
     from sift.interfaces.cli.commands import jobs as _jobs
     from sift.interfaces.cli.commands import links as _links
+    from sift.interfaces.cli.commands import measuring as _measuring
     from sift.interfaces.cli.commands import searching as _searching
     from sift.interfaces.cli.commands import serving as _serving
 
@@ -156,5 +165,6 @@ if TYPE_CHECKING:
     _INDEXING: Commands = _indexing
     _JOBS: Commands = _jobs
     _LINKS: Commands = _links
+    _MEASURING: Commands = _measuring
     _SEARCHING: Commands = _searching
     _SERVING: Commands = _serving

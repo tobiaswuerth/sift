@@ -28,6 +28,7 @@ ORDER = [
     "ui",
     "jobs",
     "worker",
+    "bench",
 ]
 FIELD_NAMED = re.compile(r"\b(COLLECTIONS|FILTERS|FILES|IDS|NAMES|LINKS_TO|LINKED_FROM|TEXT_FIELDS|FIELDS|ALSO)\b")
 

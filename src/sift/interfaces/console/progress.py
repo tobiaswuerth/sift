@@ -32,9 +32,10 @@ UNITS = MappingProxyType(
         Phase.ORDER: PASSAGES,
         Phase.COPY: ("MB", "MB"),
         Phase.TITLE: ("note", "notes"),
+        Phase.MEASURE: ("question", "questions"),
     }
 )
-RATED = frozenset({Phase.REMAKE, Phase.READ, Phase.MERGE, Phase.EMBED, Phase.COPY, Phase.TITLE})
+RATED = frozenset({Phase.REMAKE, Phase.READ, Phase.MERGE, Phase.EMBED, Phase.COPY, Phase.TITLE, Phase.MEASURE})
 QUIET_WHEN_NONE = frozenset({Phase.LOAD})
 SHORTEST_RATED = 0.05
 INDENT = "  "

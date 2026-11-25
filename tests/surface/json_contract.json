@@ -337,6 +337,25 @@
     },
     "serve": {
       "url": "http://127.0.0.1:8765"
+    },
+    "bench": {
+      "cases": 2,
+      "modes": [
+        {
+          "mode": "search",
+          "ndcg": 0.5,
+          "mrr": 0.75,
+          "recall": 1.0,
+          "ms_per_query": 12.5
+        },
+        {
+          "mode": "query",
+          "ndcg": 1.0,
+          "mrr": 1.0,
+          "recall": 1.0,
+          "ms_per_query": 250.0
+        }
+      ]
     }
   },
   "requests": {
