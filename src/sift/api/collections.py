@@ -14,6 +14,11 @@ class TitleFrom(StrEnum):
     NAME = "name"
 
 
+class Audience(StrEnum):
+    PEOPLE = "people"
+    AGENTS = "agents"
+
+
 AGAIN = "; given for a folder that is a collection already, it changes that collection"
 FOLLOW_LINKS = (
     "read the files that are links to outside the folder too, which are left out otherwise: a link may lead to any "

@@ -225,7 +225,7 @@ def query(
 ) -> SearchResult:
     _checked(request)
     expired = searching.expired_after(request.budget, watching.clock)
-    narrowing = searching.narrowed(home, request)
+    narrowing = searching.narrowed(home, request, watching.audience)
     with ExitStack() as cleanup:
         stores = searching.opened(
             cleanup,

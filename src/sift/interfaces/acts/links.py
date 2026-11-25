@@ -4,7 +4,7 @@ from sift.interfaces.acts.acting import Act, Acting
 
 
 def _links(acting: Acting, request: ShowLinks) -> Links:
-    return links.links(acting.settings.home, request)
+    return links.links(acting.settings.home, request, audience=acting.audience)
 
 
 def _unresolved(acting: Acting, request: ListUnresolved) -> Unresolved:

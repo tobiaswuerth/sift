@@ -6,7 +6,7 @@ from sift.interfaces.acts.acting import Act, Acting
 
 
 def _watching(acting: Acting) -> Watching:
-    return Watching(report=acting.report, clock=acting.clock, codes=acting.codes, decoded=acting.decoded)
+    return Watching(acting.report, acting.clock, acting.codes, acting.decoded, acting.audience)
 
 
 def _search(acting: Acting, request: SearchKeywords) -> SearchResult:

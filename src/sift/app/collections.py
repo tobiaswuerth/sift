@@ -6,6 +6,7 @@ from pathlib import Path
 from sift.api.collections import (
     ActivateCollections,
     AddCollection,
+    Audience,
     CollectionAdded,
     CollectionChanged,
     CollectionRemoved,
@@ -38,6 +39,7 @@ from sift.storage.catalog import (
     forget_collection,
     holding_folder,
     known_collections,
+    known_to,
     named,
     paid,
     refuse_inactive,
@@ -87,21 +89,21 @@ def add(home: Path, request: AddCollection, report: Reporter = unreported) -> Co
     )
 
 
-def chosen(home: Path, names: Sequence[str], field: str = "names") -> tuple[Collection, ...]:
-    known = known_collections(home)
+def chosen(home: Path, names: Sequence[str], audience: Audience, field: str = "names") -> tuple[Collection, ...]:
+    known = known_to(home, audience)
     with field_at_fault(field):
         return all_named(known, names) if names else known
 
 
-def chosen_or_active(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
-    return chosen(home, names) if names else tuple(known for known in chosen(home, ()) if known.active)
+def chosen_or_active(home: Path, names: Sequence[str], audience: Audience) -> tuple[Collection, ...]:
+    return chosen(home, names, audience) if names else tuple(one for one in chosen(home, (), audience) if one.active)
 
 
-def searchable(home: Path, names: Sequence[str]) -> tuple[Collection, ...]:
+def searchable(home: Path, names: Sequence[str], audience: Audience) -> tuple[Collection, ...]:
     if names:
         with field_at_fault(SEARCHED):
-            return tuple(map(refuse_inactive, chosen(home, names, SEARCHED)))
-    known = chosen(home, ())
+            return tuple(map(refuse_inactive, chosen(home, names, audience, SEARCHED)))
+    known = chosen(home, (), audience)
     active = tuple(one for one in known if one.active)
     if known and not active:
         raise InvalidRequestError("no collection is active", NONE_ACTIVE_REMEDY, code=Problem.INACTIVE_COLLECTION)
@@ -161,6 +163,6 @@ def _status(one: Collection, *, listed: bool) -> CollectionStatus:
     return CollectionStatus(one.name, str(one.folder), str(one.store), contents, one.active, one.choices.agents)
 
 
-def status(home: Path, request: ShowStatus) -> Status:
-    found = chosen(home, request.names)
+def status(home: Path, request: ShowStatus, *, audience: Audience = Audience.PEOPLE) -> Status:
+    found = chosen(home, request.names, audience)
     return Status(str(home), tuple(_status(one, listed=request.unreadable) for one in found))

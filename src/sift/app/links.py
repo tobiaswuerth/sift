@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
+from sift.api.collections import Audience
 from sift.api.errors import StoreUnavailableError
 from sift.api.ids import DocumentId
 from sift.api.links import (
@@ -134,8 +135,8 @@ def _links(transaction: Reading, found: Note, request: ShowLinks) -> Links:
     )
 
 
-def links(home: Path, request: ShowLinks) -> Links:
-    named = note_of(home, request.id, "id")
+def links(home: Path, request: ShowLinks, *, audience: Audience = Audience.PEOPLE) -> Links:
+    named = note_of(home, request.id, "id", audience)
     shown = read_in(named.note.collection, lambda transaction: _links(transaction, named.note, request))
     return replace(shown, unsearched=named.unsearched)
 
@@ -165,7 +166,7 @@ def _unresolved(collection: str, transaction: Reading) -> list[tuple[str, list[s
 def unresolved(home: Path, request: ListUnresolved) -> Unresolved:
     found: list[tuple[str, list[str]]] = []
     passed: list[Notice] = []
-    for one in searchable(home, request.collections):
+    for one in searchable(home, request.collections, Audience.PEOPLE):
         try:
             found += read_in(one, partial(_unresolved, one.name))
         except StoreUnavailableError as error:

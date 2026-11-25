@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from sift.api.collections import MoveCollections, StoreMoved, StoresMoved
+from sift.api.collections import Audience, MoveCollections, StoreMoved, StoresMoved
 from sift.api.errors import InvalidRequestError
 from sift.api.events import Advanced, CollectionStarted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.ids import CollectionId
@@ -52,7 +52,7 @@ def _reported(report: Reporter) -> Copied:
 
 def _planned(home: Path, request: MoveCollections) -> list[tuple[Collection, Path]]:
     to = absolute(request.to, "to").resolve()
-    found = chosen(home, request.names)
+    found = chosen(home, request.names, Audience.PEOPLE)
     if to.name.lower().endswith(STORE_SUFFIX):
         if len(found) != 1:
             raise InvalidRequestError(f"{to} is the file of one collection's store", ONE_FILE_REMEDY, "to")

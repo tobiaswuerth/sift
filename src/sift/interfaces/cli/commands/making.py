@@ -4,6 +4,7 @@ from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Protocol, cast
 
+from sift.api.collections import Audience
 from sift.api.events import Reporter
 from sift.api.search import SearchResult
 from sift.api.wire import encoded
@@ -32,7 +33,8 @@ def never(_: object) -> bool:
 
 
 def acting(context: Context) -> Acting:
-    return Acting(context.settings, context.report, context.clock, partial(fresh_models, context.settings))
+    models = partial(fresh_models, context.settings)
+    return Acting(context.settings, context.report, context.clock, models, Audience.PEOPLE)
 
 
 class Client(Protocol):
@@ -80,7 +82,7 @@ def searched[R](act: Act[R, SearchResult]) -> Command:
 
 def needing_collections(made: Command) -> Command:
     def run(namespace: argparse.Namespace, context: Context) -> Shown:
-        if not context.json and not chosen(context.settings.home, ()):
+        if not context.json and not chosen(context.settings.home, (), Audience.PEOPLE):
             return empty(context.platform, context.style)
         return made.run(namespace, context)
 

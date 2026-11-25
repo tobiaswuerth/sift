@@ -2,6 +2,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from sift.api.collections import Audience
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError, field_at_fault
 from sift.api.ids import DocumentId
 from sift.api.notices import Notice, notice_of
@@ -10,7 +11,7 @@ from sift.app.documents import unknown as documents_unknown
 from sift.domain.text.kinds import public_id
 from sift.domain.text.links import LinkKind, NamedTarget, name_key, named_target, target_key
 from sift.domain.text.resolving import LEADING, Candidate, Resolution, Via, link_path, resolved
-from sift.storage.catalog import Collection, known_collections
+from sift.storage.catalog import Collection, known_to
 from sift.storage.database import Reading
 from sift.storage.documents import stored
 from sift.storage.links import LinkRow, doubtful, keys_of, links_into, links_keyed, links_out, named, titled
@@ -122,8 +123,8 @@ def unknown_note(spec: str, unsearched: Sequence[Notice]) -> NotFoundError:
     return NotFoundError(said, _remedy(NOTE_REMEDY, unsearched), code=Problem.UNKNOWN_NOTE)
 
 
-def _by_id(home: Path, spec: str) -> Note:
-    chosen, relative = place(known_collections(home), spec)
+def _by_id(home: Path, spec: str, audience: Audience) -> Note:
+    chosen, relative = place(known_to(home, audience), spec)
 
     def read(transaction: Reading) -> Note:
         found = resolved_at(transaction, chosen.name, spec, relative, absolute=Path(spec).is_absolute())
@@ -160,16 +161,16 @@ def unresolved_links(transaction: Reading) -> list[LinkRow]:
     return [row for row in doubtful(transaction) if resolver.of(row).via is Via.UNRESOLVED]
 
 
-def note_of(home: Path, spec: str, field: str) -> NamedNote:
+def note_of(home: Path, spec: str, field: str, audience: Audience) -> NamedNote:
     with field_at_fault(field):
-        return _note_of(home, spec)
+        return _note_of(home, spec, audience)
 
 
-def _note_of(home: Path, spec: str) -> NamedNote:
+def _note_of(home: Path, spec: str, audience: Audience) -> NamedNote:
     try:
-        return NamedNote(_by_id(home, spec), ())
+        return NamedNote(_by_id(home, spec, audience), ())
     except NotFoundError:
-        found = matches(tuple(one for one in known_collections(home) if one.active), spec)
+        found = matches(tuple(one for one in known_to(home, audience) if one.active), spec)
     if not found.found:
         raise unknown_note(spec, found.unsearched)
     (note,) = found.found

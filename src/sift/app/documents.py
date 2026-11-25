@@ -5,6 +5,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
+from sift.api.collections import Audience
 from sift.api.documents import MOST_LINE, Documents, DocumentText, GetDocuments, WantedDocument
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, SiftError
 from sift.api.ids import CollectionId
@@ -12,7 +13,7 @@ from sift.api.notices import Notice, notice_of
 from sift.domain.query import fields as shown
 from sift.domain.text.kinds import public_id, split_keyed_path
 from sift.domain.text.lines import refuse_past_end
-from sift.storage.catalog import Collection, known_collections, refuse_inactive
+from sift.storage.catalog import Collection, known_to, refuse_inactive
 from sift.storage.database import Reading
 from sift.storage.documents import Stored, fields_of, paths_named, stored
 from sift.storage.store import read_store
@@ -159,10 +160,12 @@ def _read_from(
     return answers
 
 
-def documents(home: Path, request: GetDocuments, reading: StoreReading = read_store) -> Documents:
+def documents(
+    home: Path, request: GetDocuments, reading: StoreReading = read_store, *, audience: Audience = Audience.PEOPLE
+) -> Documents:
     for at, wanted in enumerate(request.documents):
         _lines(wanted, at)
-    known = known_collections(home)
+    known = known_to(home, audience)
     answers: dict[int, Read] = {}
     held: dict[CollectionId, tuple[Collection, list[_Placed]]] = {}
     for at, wanted in enumerate(request.documents):

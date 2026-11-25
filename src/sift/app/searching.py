@@ -8,6 +8,7 @@ from typing import Protocol
 
 import numpy as np
 
+from sift.api.collections import Audience
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.events import Reporter
 from sift.api.notices import Notice, notice_of
@@ -46,6 +47,7 @@ class Watching:
     clock: Clock = time.perf_counter
     codes: CodeSource = read_each_time
     decoded: DecodedSource = decoded_each_search
+    audience: Audience = Audience.PEOPLE
 
 
 WATCHING = Watching()
@@ -185,8 +187,8 @@ def checked_query(query: str, remedy: str) -> None:
         raise InvalidRequestError(EMPTY_QUERY, remedy, "query")
 
 
-def narrowed(home: Path, request: Options, left_out: LeftOut | None = None) -> Narrowing:
-    return narrowing(home, request, searchable(home, request.collections), left_out)
+def narrowed(home: Path, request: Options, audience: Audience, left_out: LeftOut | None = None) -> Narrowing:
+    return narrowing(home, request, searchable(home, request.collections, audience), audience, left_out)
 
 
 def no_vectors() -> Vectors:

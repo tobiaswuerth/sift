@@ -17,5 +17,5 @@ def search(home: Path, request: SearchKeywords, watching: Watching = WATCHING, t
         request.wanted, not request.all_passages, tuning, searching.expired_after(request.budget, watching.clock)
     )
     expression, looser = parsed(request.query), relaxed(request.query)
-    narrowing = searching.narrowed(home, request)
+    narrowing = searching.narrowed(home, request, watching.audience)
     return keyword_result(narrowing, request, wanted, (expression, looser), watching.decoded)

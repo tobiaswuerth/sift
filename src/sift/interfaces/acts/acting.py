@@ -2,6 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from sift.api.collections import Audience
 from sift.api.errors import NotFoundError
 from sift.api.events import Reporter
 from sift.api.jobs import ServedJob
@@ -44,6 +45,7 @@ class Acting:
     report: Reporter
     clock: Callable[[], float]
     models: "Callable[[], Models]"
+    audience: Audience
     codes: CodeSource = read_each_time
     decoded: DecodedSource = decoded_each_search
     jobs: JobBoard = NO_JOBS

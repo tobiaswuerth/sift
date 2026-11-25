@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, cast
 
-from sift.api.collections import TitleFrom
+from sift.api.collections import Audience, TitleFrom
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.ids import CollectionId
 from sift.domain.text.records import NO_CHOICE, Chosen
@@ -203,6 +203,11 @@ def known_collections(home: Path) -> tuple[Collection, ...]:
             return collections(transaction)
     with catalog_of(home) as connection, reading(connection) as transaction:
         return collections(transaction)
+
+
+def known_to(home: Path, audience: Audience) -> tuple[Collection, ...]:
+    known = known_collections(home)
+    return known if audience is Audience.PEOPLE else tuple(one for one in known if one.choices.agents)
 
 
 def forget_collection(home: Path, identity: CollectionId) -> None:

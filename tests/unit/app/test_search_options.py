@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sift.api.collections import AddCollection
+from sift.api.collections import AddCollection, Audience
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.filters import Filter, Operator
@@ -280,8 +280,9 @@ def _gone() -> None:
 
 
 def test_work_that_loses_its_store_drops_it_says_why_and_ends_the_round(home: Path) -> None:
+    narrowing = searching.narrowed(home, SearchKeywords("x"), Audience.PEOPLE)
     with ExitStack() as cleanup:
-        kept = searching.opened(cleanup, searching.narrowed(home, SearchKeywords("x")), searching.Wants())
+        kept = searching.opened(cleanup, narrowing, searching.Wants())
         (each,) = kept.searching
         with pytest.raises(searching.StoreLostError):
             kept.guarded(each, _gone)

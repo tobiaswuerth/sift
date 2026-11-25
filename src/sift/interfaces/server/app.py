@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from sift.api.collections import Audience
 from sift.api.errors import InternalError, InvalidRequestError, NotFoundError, Problem, SiftError, system_failure
 from sift.api.events import EVENT_TAGS, Event, Noted, Reporter
 from sift.api.ids import CollectionId
@@ -114,6 +115,7 @@ def _acting(serving: Serving, report: Reporter) -> Acting:
         report,
         time.perf_counter,
         lambda: serving.models,
+        Audience.PEOPLE,
         serving.codes,
         serving.decoded,
         serving.jobs,

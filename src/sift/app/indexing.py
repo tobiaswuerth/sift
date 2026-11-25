@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from sift.api.collections import Audience
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase, PhaseDone, PhaseStarted, Reporter
 from sift.api.indexing import CollectionIndexed, FileIndexed, IndexCollections, Indexed, IndexResult, Skipped
@@ -224,7 +225,9 @@ def index(
     asked = _Indexing(home, report, limits, readers, ScanModel(readers.scanning))
     try:
         if not request.files:
-            return IndexResult(tuple(_indexed(one, asked) for one in chosen_or_active(home, request.names)))
+            return IndexResult(
+                tuple(_indexed(one, asked) for one in chosen_or_active(home, request.names, Audience.PEOPLE))
+            )
         return IndexResult(tuple(_indexed(one, asked, paths) for one, paths in _grouped(home, request.files).items()))
     finally:
         asked.ocr.let_go()

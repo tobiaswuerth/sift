@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from sift.api.collections import Audience
 from sift.api.embedding import CollectionEmbedded, EmbedCollections, Embedded, EmbedResult
 from sift.api.errors import InvalidRequestError, StoreUnavailableError
 from sift.api.events import Advanced, CollectionStarted, Noted, Phase, PhaseDone, PhaseStarted, Reporter
@@ -107,7 +108,7 @@ def _forgotten(one: Collection) -> StoreUnavailableError | None:
 
 def _reset(home: Path, report: Reporter, ready: Callable[[], None], embedding_now: tuple[Collection, ...]) -> Failed:
     ready()
-    known = chosen(home, ())
+    known = chosen(home, (), Audience.PEOPLE)
     failed = {one.id: error for one in known if (error := _forgotten(one)) is not None}
     now = {one.id for one in embedding_now}
     for one in known:
@@ -123,7 +124,7 @@ def embed(
     if request.reset and request.names:
         said = "embeds every collection again, as all share one model"
         raise InvalidRequestError(said, RESET_ALL_REMEDY, "reset")
-    chosen_now = chosen_or_active(home, request.names)
+    chosen_now = chosen_or_active(home, request.names, Audience.PEOPLE)
     work = Work(report, models, embedding, cache(partial(prepared, report, (models.prepare,))))
     failed = _reset(home, report, work.ready, chosen_now) if request.reset else {}
     return EmbedResult(tuple(_embedded(one, work, failed) for one in chosen_now))

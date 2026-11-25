@@ -55,9 +55,9 @@ def similar(
 ) -> SearchResult:
     searching.checked(request)
     expired = searching.expired_after(request.budget, watching.clock)
-    named = note_of(home, request.id, "id")
+    named = note_of(home, request.id, "id", watching.audience)
     like = read_in(named.note.collection, partial(_like, named.note, request.id))
-    narrowing = searching.narrowed(home, request, LeftOut(named.note, linking=False))
+    narrowing = searching.narrowed(home, request, watching.audience, LeftOut(named.note, linking=False))
     with ExitStack() as cleanup:
         stores = searching.opened(
             cleanup, narrowing, Wants(model=like.model, vectors_required=True, codes=watching.codes), expired

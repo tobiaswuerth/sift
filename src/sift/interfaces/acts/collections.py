@@ -22,7 +22,7 @@ def _add(acting: Acting, request: AddCollection) -> CollectionAdded | Collection
 
 
 def _status(acting: Acting, request: ShowStatus) -> Status:
-    return collections.status(acting.settings.home, request)
+    return collections.status(acting.settings.home, request, audience=acting.audience)
 
 
 def _remove(acting: Acting, request: RemoveCollection) -> CollectionRemoved:
@@ -42,7 +42,7 @@ def _deactivate(acting: Acting, request: DeactivateCollections) -> CollectionsSw
 
 
 def _get(acting: Acting, request: GetDocuments) -> Documents:
-    return documents.documents(acting.settings.home, request)
+    return documents.documents(acting.settings.home, request, audience=acting.audience)
 
 
 ADD = Act("add", AddCollection, CollectionAdded | CollectionChanged, _add, writes=True)

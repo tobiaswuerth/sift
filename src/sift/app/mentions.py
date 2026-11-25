@@ -34,7 +34,7 @@ def mentions(home: Path, request: FindMentions, watching: Watching = WATCHING, t
         if not field.strip():
             said = f"names front matter fields, e.g. emails, not {field!r}"
             raise InvalidRequestError(said, ALSO_REMEDY, "also")
-    named = note_of(home, request.id, "id")
+    named = note_of(home, request.id, "id", watching.audience)
     found = _names(named.note, request.also)
     looked_for = phrases(found)
     if not looked_for:
@@ -46,6 +46,6 @@ def mentions(home: Path, request: FindMentions, watching: Watching = WATCHING, t
         raise InvalidRequestError(f"the note's names hold more than {MOST_WORDS:,} words", remedy, "id")
     expired = searching.expired_after(request.budget, watching.clock)
     wanted = Wanted(request.wanted, not request.all_passages, tuning, expired)
-    narrowing = searching.narrowed(home, request, LeftOut(named.note, linking=True))
+    narrowing = searching.narrowed(home, request, watching.audience, LeftOut(named.note, linking=True))
     result = keyword_result(narrowing, request, wanted, (expression, None), watching.decoded)
     return hits.also_unsearched(result, named.unsearched)

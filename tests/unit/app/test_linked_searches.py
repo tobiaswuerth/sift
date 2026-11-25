@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from sift.api.collections import Audience
 from sift.api.embedding import EmbedCollections
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem, StoreUnavailableError
 from sift.api.filters import Filter
@@ -202,7 +203,7 @@ def test_a_store_no_document_of_can_pass_the_links_is_not_searched(linked: Path)
 
 
 def test_a_note_gone_before_its_store_is_read_lets_no_document_through(linked: Path) -> None:
-    narrowing = searching.narrowed(linked, SearchKeywords("note", links_to=("Acme AG",)))
+    narrowing = searching.narrowed(linked, SearchKeywords("note", links_to=("Acme AG",)), Audience.PEOPLE)
     assert narrowing.links_to is not None
     (pointed,) = narrowing.links_to
     assert pointed.note is not None

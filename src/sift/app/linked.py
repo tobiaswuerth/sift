@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
+from sift.api.collections import Audience
 from sift.api.errors import InvalidRequestError, NotFoundError, StoreUnavailableError
 from sift.api.filters import Filter
 from sift.api.ids import DocumentId
@@ -55,15 +56,15 @@ def _held(one: Collection, target: str) -> bool:
         return True
 
 
-def _found(home: Path, spec: str, field: str) -> Pointed:
-    named = note_of(home, spec, field)
+def _found(home: Path, audience: Audience, spec: str, field: str) -> Pointed:
+    named = note_of(home, spec, field, audience)
     where = frozenset({named.note.collection.name, *(each.collection for each in named.unsearched if each.collection)})
     return Pointed(spec, named.note, named_target(spec).target, where)
 
 
-def _linked_to(home: Path, scope: Sequence[Collection], spec: str) -> Pointed:
+def _linked_to(home: Path, audience: Audience, scope: Sequence[Collection], spec: str) -> Pointed:
     try:
-        return _found(home, _checked(spec, "links_to"), "links_to")
+        return _found(home, audience, _checked(spec, "links_to"), "links_to")
     except NotFoundError:
         target = named_target(spec).target
         held = frozenset(one.name for one in scope if _held(one, target))
@@ -72,13 +73,13 @@ def _linked_to(home: Path, scope: Sequence[Collection], spec: str) -> Pointed:
         return Pointed(spec, None, target, held)
 
 
-def _linking_from(home: Path, spec: str) -> Pointed:
-    return _found(home, _checked(spec, "linked_from"), "linked_from")
+def _linking_from(home: Path, audience: Audience, spec: str) -> Pointed:
+    return _found(home, audience, _checked(spec, "linked_from"), "linked_from")
 
 
-def _filtered(home: Path, each: LinkFilter) -> Pointed:
+def _filtered(home: Path, audience: Audience, each: LinkFilter) -> Pointed:
     try:
-        return _found(home, each.target, "filters")
+        return _found(home, audience, each.target, "filters")
     except NotFoundError:
         return Pointed(each.target, None, each.target, frozenset())
 
@@ -105,14 +106,14 @@ def _kept(
 
 
 def narrowing(
-    home: Path, request: Options, scope: tuple[Collection, ...], left_out: LeftOut | None = None
+    home: Path, request: Options, scope: tuple[Collection, ...], audience: Audience, left_out: LeftOut | None = None
 ) -> Narrowing:
     quotes = reads_quotes()
     readable(request.filters, reads_quotes=quotes)
-    links_to = tuple(_linked_to(home, scope, each) for each in request.links_to) if request.links_to else None
-    linked_from = tuple(_linking_from(home, each) for each in request.linked_from) if request.linked_from else None
+    links_to = tuple(_linked_to(home, audience, scope, each) for each in request.links_to) or None
+    linked_from = tuple(_linking_from(home, audience, each) for each in request.linked_from) or None
     kept = _kept(scope, links_to, linked_from)
-    filtered = MappingProxyType({each: _filtered(home, each) for each in linkings(request.filters)})
+    filtered = MappingProxyType({each: _filtered(home, audience, each) for each in linkings(request.filters)})
     return Narrowing(
         kept, len(scope) - len(kept), request.path, request.filters, quotes, filtered, links_to, linked_from, left_out
     )
