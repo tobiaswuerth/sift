@@ -9,8 +9,8 @@ import numpy as np
 
 from sift.domain.arrays import Ascending, Ids, Mask, among, ints
 from sift.domain.query.filters import Condition
+from sift.storage.columns import NO_DOCUMENT, documents_of
 from sift.storage.database import IdRow, Reading, rows, streamed
-from sift.storage.documents import NO_DOCUMENT, documents_of
 
 QUOTED_NAME = ('{"a\\"b": 1}', '$."a\\"b"')
 CHUNKS_OF = "SELECT id FROM chunks WHERE document IN (SELECT value FROM json_each(?)) ORDER BY id"

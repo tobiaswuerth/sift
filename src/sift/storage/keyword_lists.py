@@ -5,7 +5,8 @@ from typing import NamedTuple
 import numpy as np
 
 from sift.domain.arrays import Ids
-from sift.storage.database import Count, Reading, columns, rows
+from sift.storage.columns import columns
+from sift.storage.database import Count, Reading, rows
 
 MOST_POINT = 0x10FFFF
 SURROGATES_START, SURROGATES_END = 0xD800, 0xE000

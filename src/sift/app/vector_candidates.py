@@ -17,8 +17,8 @@ from sift.domain.text.wording import counted
 from sift.inference.models import Models
 from sift.retrieval.allowed import AllowedChunks
 from sift.retrieval.vector.nearest import RESCORE, Near, Reads, nearest
+from sift.storage.columns import documents_of
 from sift.storage.database import Reading
-from sift.storage.documents import documents_of
 from sift.storage.passing import Passing
 from sift.storage.vectors import EMBED_REMEDY, documents_embedded, vectors_of
 
