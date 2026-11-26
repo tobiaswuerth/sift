@@ -26,6 +26,7 @@ class Movable:
     refusals: dict[str, BaseException] = field(default_factory=dict[str, BaseException])
     cuda: FakeCuda | None = None
     size: int = 0
+    most_batch: int | None = None
 
     def to(self, device: str) -> "Movable":
         if device in self.refusals:
@@ -65,6 +66,8 @@ class Movable:
         self, inputs: list[tuple[str, str]], *, batch_size: int, show_progress_bar: bool, activation_fn: torch.nn.Module
     ) -> object:
         self.asked.append((self.on, inputs, batch_size, show_progress_bar, activation_fn))
+        if self.most_batch is not None and batch_size > self.most_batch:
+            raise torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 1.00 GiB")
         return np.zeros(len(inputs), np.float32)
 
 
@@ -227,3 +230,34 @@ def test_a_model_never_loaded_is_not_moved_when_the_others_rest() -> None:
     local.encode(["a question"], query=True)
     room.now = IDLE_SECONDS
     assert (local.release_idle(), [model.moves for model in room.loaded]) == (True, [["cpu"]])
+
+
+def predicted(room: Room) -> list[tuple[int, int]]:
+    asked = cast("list[tuple[str, list[tuple[str, str]], int, bool, object]]", room.loaded[0].asked)
+    return [(len(inputs), batch) for _, inputs, batch, _, _ in asked]
+
+
+def test_the_reranker_scores_all_its_passages_in_one_call_longest_first_a_batch_of_sixteen_at_a_time() -> None:
+    room = Room()
+    local = room.local()
+    texts = ["passage " * (1 + n % 7) for n in range(40)]
+    assert local.rerank("a question", texts).shape == (40,)
+    assert predicted(room) == [(40, RERANK_BATCH)]
+    ((_, inputs, *_),) = cast("list[tuple[str, list[tuple[str, str]], int, bool, object]]", room.loaded[0].asked)
+    assert [len(text) for _, text in inputs] == sorted(map(len, texts), reverse=True)
+    assert local.rerank("a question", texts[:3]).shape == (3,)
+    assert predicted(room)[1:] == [(3, 3)]
+    assert placed(local).rerank_batch == RERANK_BATCH
+
+
+def test_a_reranker_short_of_memory_scores_fewer_at_a_time_from_then_on() -> None:
+    room = Room()
+    local = room.local()
+    local.prepare_ranker()
+    room.loaded[0].most_batch = 4
+    assert local.rerank("a question", ["passage"] * 40).shape == (40,)
+    refused = [(40, 16), (20, 16), (10, 10), (5, 5)]
+    assert predicted(room) == [*refused, *[(2, 2)] * 20]
+    assert placed(local).rerank_batch == 2
+    assert local.rerank("a question", ["passage"] * 9).shape == (9,)
+    assert predicted(room)[-1] == (9, 2)

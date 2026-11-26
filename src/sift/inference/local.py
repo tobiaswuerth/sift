@@ -171,9 +171,9 @@ def _run(model: Embedder, texts: list[str], *, query: bool) -> Floats:
     return np.asarray(found, np.float32)
 
 
-def _scored(ranker: Ranker, query: str, texts: list[str]) -> Floats:
+def _scored(ranker: Ranker, query: str, texts: list[str], batch: int) -> Floats:
     pairs = [(query, text) for text in texts]
-    found = ranker.predict(pairs, batch_size=len(pairs), show_progress_bar=False, activation_fn=torch.nn.Identity())
+    found = ranker.predict(pairs, batch_size=batch, show_progress_bar=False, activation_fn=torch.nn.Identity())
     return np.asarray(found, np.float32).reshape(-1, 1)
 
 
@@ -292,14 +292,15 @@ class Local:
         state, ranker = self._ranking(self._on())
 
         def run(part: list[str]) -> Floats:
-            return _scored(ranker, query, part)
+            return _scored(ranker, query, part, min(len(part), state.rerank_batch))
 
-        shape = BatchShape(1, state.rerank_batch)
-        lengths = _lengths(ranker.tokenizer, list(texts))
+        shape = BatchShape(1, max(1, len(texts)))
+        lengths = [len(text) for text in texts]
         attempts = partial(in_batches, texts, lengths, shape, _attempt(state.device, self.host.caches, run))
         self.host.machine.threads(state.device.threads)
         found = within_memory(self.reranker, state.device.name, attempts)
-        self.state = replace(state, rerank_batch=found.batch)
+        halved = found.batch < shape.batch
+        self.state = replace(state, rerank_batch=min(state.rerank_batch, found.batch) if halved else state.rerank_batch)
         return found.rows.reshape(-1)
 
 

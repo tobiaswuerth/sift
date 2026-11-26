@@ -33,7 +33,7 @@ from sift.domain.query.grammar import MOST_WORDS, any_phrase
 from sift.domain.rank.best import Best
 from sift.domain.rank.hybrid import blend, named, passage, words
 from sift.inference.models import Models
-from sift.retrieval.keyword.leaves import Expired
+from sift.retrieval.keyword.leaves import Expired, never
 from sift.retrieval.keyword.search import TUNING
 
 EMPTY_REMEDY = "ask a question, e.g. how dark matter halos form"
@@ -133,10 +133,11 @@ class Reranked:
 
 def _reranked(asked: HybridAsked, shown: Mapping[ChunkId, str], kept: dict[ChunkId, float]) -> bool:
     new = [chunk for chunk in shown if chunk not in kept]
-    for start in range(0, len(new), RERANK_PART):
+    step = max(1, len(new)) if asked.expired is never else RERANK_PART
+    for start in range(0, len(new), step):
         if start and asked.expired():
             return True
-        part = new[start : start + RERANK_PART]
+        part = new[start : start + step]
         found = asked.models.rerank(asked.request.query, [shown[chunk] for chunk in part]).astype(np.float64)
         if not bool(np.isfinite(found).all()):
             raise ModelUnavailableError("the reranker gave no score for some passages", QUERY_REMEDY)

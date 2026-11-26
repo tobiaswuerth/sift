@@ -49,7 +49,7 @@ def test_a_query_out_of_time_midway_through_its_rerank_keeps_the_part_reranked(t
     collection(home, tmp_path / "notes")
     unhurried = Hashed()
     assert len(query(home, SearchHybrid("halo", k=many, candidates=many), unhurried).hits) == many
-    assert [len(texts) for _, texts in unhurried.reranked] == [RERANK_PART, 8]
+    assert [len(texts) for _, texts in unhurried.reranked] == [many]
     models = Hashed()
     request = SearchHybrid("halo", k=many, candidates=many, budget=1.0)
     found = query(home, request, models, watching=reranking_takes_ten_seconds(models))
