@@ -14,6 +14,7 @@ from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Held, Policy, merges
 from sift.storage.database import Batches, IdRow, Reading, WritingDocuments, rows, run, streamed
+from sift.storage.keyword_meta import Side
 from sift.storage.keyword_writes import (
     Head,
     blocks_added,
@@ -30,7 +31,15 @@ BLOCKS = """SELECT :rank, term, number, :block, length(postings) + length(positi
             FROM keyword_blocks WHERE segment = :segment ORDER BY term, number"""
 LENGTHS = """SELECT segment, block, lengths FROM keyword_lengths WHERE segment IN (SELECT value FROM json_each(?))
              ORDER BY segment, block"""
-HELD = "SELECT coalesce(sum(chunks - dead), 0), (SELECT tokens FROM counts) FROM keyword_segments"
+HELD = "SELECT coalesce(sum(chunks - dead), 0), (SELECT tokens FROM counts) FROM keyword_served"
+LIVE = (
+    "SELECT place AS id FROM chunks WHERE place BETWEEN ? AND ? ORDER BY place",
+    "SELECT place AS id FROM keyword_places WHERE place BETWEEN ? AND ? ORDER BY place",
+)
+PLANNED = (
+    "SELECT id, first, last, chunks, dead FROM keyword_served ORDER BY first",
+    "SELECT id, first, last, chunks, dead FROM keyword_built ORDER BY first",
+)
 ROWS_AT_ONCE = 64
 DROPPED = (
     "DELETE FROM keyword_blocks WHERE segment IN (SELECT value FROM json_each(?))",
@@ -293,10 +302,10 @@ def _batch_written(transaction: WritingDocuments, merging: _Merging, rows: Seque
             _lists_written(transaction, merging, _lists(merging, span))
 
 
-def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shape: Shape) -> None:
+def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shape: Shape, side: Side) -> None:
     low, high = merged[0].first, merged[-1].last
     named = json.dumps([each.id for each in merged])
-    live = _ids(transaction, "SELECT place AS id FROM chunks WHERE place BETWEEN ? AND ? ORDER BY place", low, high)
+    live = _ids(transaction, LIVE[side], low, high)
     if not len(live):
         raise DamagedError("segments of the keyword index hold no chunk the store holds")
     lengths = _lengths(transaction, merged, live, shape.lengths_shift)
@@ -319,35 +328,35 @@ def _merged(transaction: WritingDocuments, merged: Sequence[PlacedSegment], shap
         run(transaction, sql, (named,))
 
 
-def _plan(transaction: Reading, policy: Policy) -> list[list[PlacedSegment]]:
-    held = rows(transaction, PlacedSegment, "SELECT id, first, last, chunks, dead FROM keyword_segments ORDER BY first")
+def _plan(transaction: Reading, policy: Policy, side: Side) -> list[list[PlacedSegment]]:
+    held = rows(transaction, PlacedSegment, PLANNED[side])
     return [[held[at] for at in each] for each in merges([Held(each.chunks, each.dead) for each in held], policy)]
 
 
-def _planned(transaction: WritingDocuments) -> list[list[PlacedSegment]]:
-    return _plan(transaction, transaction.batches.merging)
+def _planned(transaction: WritingDocuments, side: Side) -> list[list[PlacedSegment]]:
+    return _plan(transaction, transaction.batches.merging, side)
 
 
 def planned(transaction: Reading, policy: Policy) -> bool:
-    return bool(_plan(transaction, policy))
+    return bool(_plan(transaction, policy, Side.SERVED))
 
 
 def _live(merged: Sequence[PlacedSegment]) -> int:
     return sum(each.chunks - each.dead for each in merged)
 
 
-def settled(transaction: WritingDocuments, shape: Shape) -> None:
+def settled(transaction: WritingDocuments, shape: Shape, side: Side = Side.SERVED) -> None:
     written, most = 0, transaction.batches.chunks_a_settle
-    while fitting := [merged for merged in _planned(transaction) if written + _live(merged) <= most]:
+    while fitting := [merged for merged in _planned(transaction, side) if written + _live(merged) <= most]:
         for merged in fitting:
             if written + _live(merged) <= most:
-                _merged(transaction, merged, shape)
+                _merged(transaction, merged, shape, side)
                 written += _live(merged)
 
 
 def merged_once(transaction: WritingDocuments, shape: Shape) -> int:
-    chosen = _planned(transaction)
+    chosen = _planned(transaction, Side.SERVED)
     if not chosen:
         return 0
-    _merged(transaction, chosen[0], shape)
+    _merged(transaction, chosen[0], shape, Side.SERVED)
     return _live(chosen[0])

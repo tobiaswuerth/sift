@@ -9,60 +9,26 @@ from sift.api.ids import CollectionId
 from sift.domain.arrays import Ids, ints
 from sift.domain.codec.codes import Bits
 from sift.domain.codec.order import topical
-from sift.storage.database import Connection, Count, IdRow, reading, rows, run, run_each, writing
-from sift.storage.keyword_order import order_due, ordered, placed_anew
-from sift.storage.keywords import current, remade, remake_started, settle
+from sift.storage.database import Connection, IdRow, reading, rows, run, run_each, writing
+from sift.storage.keyword_beside import built, left
+from sift.storage.keyword_order import ordered, placed_anew
+from sift.storage.keywords import settle
 from sift.storage.layout import LAYOUT
 from sift.storage.store import create_store, open_store
-from sift.storage.vectors import codes_of, forget_vectors, put_vectors
+from sift.storage.vectors import codes_of, forget_vectors
 from tests.keyword_indexes import MERGING, NOTES, TWO, checked
+from tests.keyword_orders import (
+    Placed,
+    current_of,
+    due,
+    embedded,
+    embedded_pending,
+    finished,
+    placed,
+    placed_in,
+    written,
+)
 from tests.keyword_stores import SMALL, Round, applied, opened_store
-
-WIDTH = 64
-
-
-class Placed(NamedTuple):
-    id: int
-    place: int
-
-
-def placed(connection: Connection) -> list[Placed]:
-    with reading(connection) as transaction:
-        return rows(transaction, Placed, "SELECT id, place FROM chunks ORDER BY place")
-
-
-def embedded(connection: Connection, chunks: list[int]) -> None:
-    matrix = np.random.default_rng(len(chunks)).standard_normal((len(chunks), WIDTH)).astype(np.float16)
-    with writing(connection) as transaction:
-        put_vectors(transaction, np.array(chunks, np.int64), matrix, "fake")
-
-
-def embedded_pending(connection: Connection) -> None:
-    with reading(connection) as transaction:
-        pending = rows(transaction, IdRow, "SELECT chunk AS id FROM unembedded ORDER BY chunk")
-    embedded(connection, [each.id for each in pending])
-
-
-def written(connection: Connection) -> int:
-    with reading(connection) as transaction:
-        (found,) = rows(transaction, Count, "SELECT vectors_written AS n FROM counts")
-    return found.n
-
-
-def placed_in(connection: Connection, order: list[int]) -> int:
-    embedded(connection, [each.id for each in placed(connection)])
-    return placed_anew(connection, np.array(order, np.int64), written(connection))
-
-
-def current_of(connection: Connection) -> bool:
-    with reading(connection) as transaction:
-        return current(transaction)
-
-
-def due(connection: Connection) -> bool:
-    with reading(connection) as transaction:
-        return order_due(transaction)
-
 
 TEN: Round = {f"m{n}.md": ("", f"M {n}", f"word{n} text") for n in range(10)}
 
@@ -72,7 +38,7 @@ def ordered_ten(connection: Connection) -> list[int]:
     ids = [each.id for each in placed(connection)]
     embedded(connection, ids)
     assert ordered(connection) == len(ids)
-    list(remade(connection))
+    finished(connection)
     assert not due(connection)
     return ids
 
@@ -91,9 +57,8 @@ def test_an_index_placed_anew_holds_what_it_held_in_the_order_given_new_chunks_a
         ids = [each.id for each in placed(connection)]
         before = max(each.place for each in placed(connection))
         assert placed_in(connection, [*ids[::-1][:-2], 10**15]) == len(ids)
-        assert not current_of(connection)
-        assert remake_started(connection) == len(ids)
-        assert list(remade(connection, TWO))[-1] == len(ids)
+        assert (current_of(connection), left(connection)) == (True, len(ids))
+        assert list(built(connection, TWO))[-1] == len(ids)
         assert current_of(connection)
         held = placed(connection)
         assert [each.id for each in held] == [*ids[::-1][:-2], *ids[:2]]
@@ -108,7 +73,7 @@ def test_a_chunk_added_once_the_highest_placed_are_gone_takes_a_place_never_held
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
         applied(connection, [NOTES])
         placed_in(connection, [each.id for each in placed(connection)][::-1])
-        list(remade(connection))
+        finished(connection)
         highest = max(each.place for each in placed(connection))
         applied(connection, [dict.fromkeys(NOTES), {"x.md": ("", "X", "four")}])
         (added,) = placed(connection)
@@ -136,7 +101,7 @@ def test_merges_and_changes_after_an_order_keep_every_chunk_at_its_one_place() -
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
         applied(connection, [NOTES])
         placed_in(connection, [each.id for each in placed(connection)][::-1])
-        list(remade(connection, TWO))
+        finished(connection, TWO)
         before = {each.id: each.place for each in placed(connection)}
         rounds: list[Round] = [{f"n{n}.md": ("", f"Changed {n}", "four " * n)} for n in range(0, 7, 2)]
         applied(connection, rounds, MERGING)
@@ -211,7 +176,7 @@ def test_a_store_is_due_an_order_once_more_than_a_fifth_of_its_chunks_got_codes_
         embedded(connection, ids[1:2])
         assert due(connection)
         placed_anew(connection, np.array(ids[:2], np.int64), written(connection))
-        list(remade(connection))
+        finished(connection)
         assert not due(connection)
         embedded(connection, ids[2:3])
         assert not due(connection)
@@ -241,7 +206,7 @@ def test_an_order_whose_codes_changed_a_little_while_it_was_made_is_placed_and_t
             return topical(coded, bits)
 
         assert ordered(connection, racing) == len(ids)
-        list(remade(connection))
+        finished(connection)
         assert not due(connection)
         embedded(connection, ids[1:3])
         assert due(connection)
@@ -280,7 +245,7 @@ def test_an_order_read_before_another_was_placed_is_not_placed_once_the_store_is
         later_at = written(connection)
         assert placed_anew(connection, first, first_at) == len(ids)
         assert placed_anew(connection, later[::-1], later_at) == 0
-        list(remade(connection))
+        finished(connection)
         assert placed_anew(connection, later[::-1], later_at) == 0
         assert [each.id for each in placed(connection)] == ints(first)
         checked(connection)
@@ -294,7 +259,7 @@ def test_an_order_made_from_codes_another_order_was_placed_by_is_not_placed_agai
             ids, bits = codes_of(transaction)
         made_at = written(connection)
         assert placed_anew(connection, topical(ids, bits), made_at) == len(ids)
-        list(remade(connection))
+        finished(connection)
         after = placed(connection)
         assert placed_anew(connection, topical(ids, bits)[::-1], made_at) == 0
         assert (current_of(connection), placed(connection)) == (True, after)
@@ -313,7 +278,7 @@ def test_a_store_is_ordered_by_its_codes() -> None:
         ids = [each.id for each in placed(connection)]
         embedded(connection, ids)
         assert ordered(connection, reversed_order) == len(ids)
-        list(remade(connection))
+        finished(connection)
         with reading(connection) as transaction:
             codes = rows(transaction, Code, "SELECT chunk, bits FROM codes ORDER BY chunk")
         bits = np.stack([np.frombuffer(each.bits, np.uint8) for each in codes])

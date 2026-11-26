@@ -1,6 +1,6 @@
 import os
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -47,6 +47,7 @@ from sift.storage.documents import (
 )
 from sift.storage.forgetting import documents_at
 from sift.storage.kept_vectors import vectors_held, vectors_let_go
+from sift.storage.keyword_beside import built, left
 from sift.storage.keyword_order import order_due, ordered
 from sift.storage.keywords import remade, remake_started, settle
 from sift.storage.leftovers import tidied
@@ -175,26 +176,29 @@ def _ignoring(job: Job, paths: tuple[str, ...]) -> CollectionIndexed:
     return CollectionIndexed(job.collection.name, _synced(job, ignore))
 
 
-def _remade(connection: Connection, report: Reporter, batches: Batches) -> None:
-    left = remake_started(connection)
-    if not left:
+def _made(connection: Connection, report: Reporter, batches: Batches, waiting: int, steps: Iterator[int]) -> None:
+    if not waiting:
         return
-    report(PhaseStarted(Phase.REMAKE, left))
+    report(PhaseStarted(Phase.REMAKE, waiting))
     done = 0
-    for done in remade(connection, batches):
+    for done in steps:
         report(Advanced(done))
     report(PhaseDone(done))
     _settled(connection, report, batches)
 
 
+def _remade(connection: Connection, report: Reporter, batches: Batches) -> None:
+    _made(connection, report, batches, remake_started(connection), remade(connection, batches))
+
+
 def _ordered(connection: Connection, report: Reporter, batches: Batches) -> None:
     with reading(connection) as transaction:
         due = order_due(transaction)
-    if not due:
-        return
-    report(PhaseStarted(Phase.ORDER, None))
-    report(PhaseDone(ordered(connection)))
-    _remade(connection, report, batches)
+    if due:
+        report(PhaseStarted(Phase.ORDER, None))
+        report(PhaseDone(ordered(connection)))
+        _remade(connection, report, batches)
+    _made(connection, report, batches, left(connection), built(connection, batches))
 
 
 def _settled(connection: Connection, report: Reporter, batches: Batches) -> None:

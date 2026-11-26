@@ -62,7 +62,7 @@ class LengthsRow(NamedTuple):
 
 
 def segments(transaction: Reading) -> list[SegmentRow]:
-    sql = "SELECT id, first, last, chunks, average FROM keyword_segments ORDER BY first"
+    sql = "SELECT id, first, last, chunks, average FROM keyword_served ORDER BY first"
     return rows(transaction, SegmentRow, sql)
 
 
@@ -114,7 +114,7 @@ def volume(transaction: Reading, prefix: str) -> Volume:
 
 def parts(transaction: Reading, terms: Sequence[str]) -> list[Part]:
     sql = """SELECT segment, term, chunks, ranges IS NOT NULL, coalesce(ranges, postings) FROM keyword_postings
-             WHERE segment IN (SELECT id FROM keyword_segments) AND term IN (SELECT value FROM json_each(?))
+             WHERE segment IN (SELECT id FROM keyword_served) AND term IN (SELECT value FROM json_each(?))
              ORDER BY segment, term"""
     return rows(transaction, Part, sql, (json.dumps(list(terms)),))
 

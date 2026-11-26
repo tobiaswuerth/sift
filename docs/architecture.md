@@ -28,7 +28,9 @@ reproduced exactly (a table of every code point's separators and folds), so term
   128 consecutive passages they also keep the term's best score there. A changed collection gets a new segment, and
   segments are merged as they accumulate.
 - Passages are numbered in a topical order once they have vectors (clusters of clusters of their codes), so a range's
-  passages share their words and its best scores are tight bounds.
+  passages share their words and its best scores are tight bounds. `sift index` builds the index of the new order
+  beside the one searches read, a batch at a time, and puts it in its place in one transaction: keyword search
+  answers throughout, and an order stopped midway is taken up by the next `sift index`.
 - BM25 (k1 1.2, b 0.75) over each passage with its document's title and front-matter values. A query is answered by
   Block-Max Pruning ([Mallia et al. 2024](https://arxiv.org/abs/2405.01117)): the summed best scores of a range bound
   every passage in it, so ranges are scored best bound first until none left can beat the k-th best. Words that
@@ -73,7 +75,8 @@ and go without the notes linking to them being read again.
 ## The home process
 
 - `sift serve` holds the models (loaded at the first search that needs them, moved off the GPU after 5 idle minutes)
-  and the vectors' codes, and answers MCP, the UI and the CLI's commands. Searches run side by side; a write waits for
-  the searches reading its store.
+  and the vectors' codes, and answers MCP, the UI and the CLI's commands. Searches run side by side, and beside an
+  index or an embed, whose transactions they read past; only removing or moving a collection waits for the searches
+  reading its store.
 - It keeps the embeddings of the last 256 questions and the results of the last 32 searches until anything is written.
 - The UI is rendered on the server, page by page, and runs no scripts.

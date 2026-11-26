@@ -32,7 +32,7 @@ from sift.storage.database import (
     writing,
 )
 from sift.storage.keyword_merges import Totals, merged_once, planned, settled
-from sift.storage.keyword_meta import FINGERPRINT_KEY, SHAPE_KEY, THROUGH_KEY, fingerprint
+from sift.storage.keyword_meta import FINGERPRINT_KEY, SHAPE_KEY, THROUGH_KEY, drop_beside, fingerprint
 from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
 from sift.storage.texts import TextSpan, spans_text
 
@@ -137,11 +137,18 @@ def _up_to(streams: Iterator[list[str]], most: int) -> Iterator[list[str]]:
             return
 
 
-def _added(transaction: Writing, written: Segment) -> None:
-    head = Head(written.first, written.last, written.chunks, written.average)
-    made = segment_added(transaction, head)
+def streams_of(transaction: WritingDocuments, spans: Sequence[Span]) -> list[list[str]]:
+    return list(_up_to(_streams(transaction, spans), transaction.batches.tokens_a_segment))
+
+
+def segment_written(
+    transaction: Writing, spans: Sequence[Span], streams: Sequence[Sequence[str]], average: float, shape: Shape
+) -> Segment:
+    written = segment(np.array([span.id for span in spans], np.int64), streams, average, shape)
+    made = segment_added(transaction, Head(written.first, written.last, written.chunks, written.average))
     postings_added(transaction, made, written.postings)
     lengths_added(transaction, made, written.lengths)
+    return written
 
 
 def _terms_added(transaction: Writing, added: Iterable[tuple[str, int]], tokens_added: int) -> None:
@@ -173,12 +180,11 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
     )
     if not spans:
         return 0
-    streams = list(_up_to(_streams(transaction, spans), transaction.batches.tokens_a_segment))
+    streams = streams_of(transaction, spans)
     spans = spans[: len(streams)]
     (indexed,) = rows(transaction, Count, "SELECT coalesce(sum(chunks - dead), 0) FROM keyword_segments")
     average = (totals(transaction).tokens + _tokens(streams)) / (indexed.n + len(spans))
-    written = segment(np.array([span.id for span in spans], np.int64), streams, average, shape)
-    _added(transaction, written)
+    written = segment_written(transaction, spans, streams, average, shape)
     _terms_added(transaction, ((p.term, p.chunks) for p in written.postings), written.tokens)
     run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (str(written.last), THROUGH_KEY))
     return len(spans)
@@ -229,6 +235,7 @@ def forget(transaction: WritingDocuments, documents: Sequence[DocumentId]) -> No
 
 
 def _anew(transaction: Writing, made: str, start: int) -> None:
+    drop_beside(transaction)
     run(transaction, "DELETE FROM keyword_segments")
     run(transaction, "DELETE FROM keyword_terms")
     run(transaction, "DELETE FROM keyword_dead")
@@ -276,20 +283,26 @@ def remake_started(connection: Connection) -> int:
         return 0 if state is KeywordState.CURRENT or _done_if_whole(transaction, made) else _left(transaction)
 
 
+@contextmanager
+def writing_keywords(connection: Connection, batches: Batches = BATCHES) -> Generator[WritingDocuments]:
+    with writing(connection):
+        yield WritingDocuments(connection, batches)
+
+
 def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
     done = 0
     whole = False
     while not whole:
-        with writing(connection) as transaction:
+        with writing_keywords(connection, batches) as transaction:
             made = fingerprint(transaction)
             state = keyword_state(_meta(transaction, FINGERPRINT_KEY), made)
             if state is KeywordState.CURRENT:
                 return
             if state is not KeywordState.REMAKING:
                 raise StoreUnavailableError(TAKEN_OVER, TAKEN_OVER_REMEDY, code=Problem.KEYWORDS_REMADE)
-            held, shape = WritingDocuments(connection, batches), shape_of(transaction)
-            done += _index_new(held, shape)
-            settled(held, shape)
+            shape = shape_of(transaction)
+            done += _index_new(transaction, shape)
+            settled(transaction, shape)
             whole = _done_if_whole(transaction, made)
         yield done
 
@@ -314,9 +327,9 @@ def settle(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
     done = 0
     yield done
     while True:
-        with writing(connection) as transaction:
+        with writing_keywords(connection, batches) as transaction:
             refuse_stale(transaction)
-            written = merged_once(WritingDocuments(connection, batches), shape_of(transaction))
+            written = merged_once(transaction, shape_of(transaction))
         if not written:
             return
         done += written
@@ -325,8 +338,8 @@ def settle(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
 
 @contextmanager
 def writing_documents(connection: Connection, batches: Batches = BATCHES) -> Generator[WritingDocuments]:
-    with writing(connection) as transaction:
+    with writing_keywords(connection, batches) as transaction:
         refuse_stale(transaction)
-        held = WritingDocuments(connection, batches)
-        yield held
-        index_new(held)
+        drop_beside(transaction)
+        yield transaction
+        index_new(transaction)

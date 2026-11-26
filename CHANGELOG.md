@@ -22,7 +22,9 @@ need its new keys; ids of JSON Lines records and mail attachments are written an
 - Keyword search reads an index of sift's own, written in the documents' transaction, in place of SQLite's FTS5 and
   the postings read out of it: nothing is behind after `sift index`, and no search falls back to FTS5. Its terms are
   FTS5's, and it ranks as sift 1.15 ranked, by the same BM25. A query sift can't read is refused, saying where (a
-  quote or parenthesis not closed, a `)` closing nothing), where sift 1.x searched it as phrases.
+  quote or parenthesis not closed, a `)` closing nothing), where sift 1.x searched it as phrases. When `sift index`
+  puts the passages in their topical order, it builds the index of that order beside the one searches read and
+  switches to it at once: keyword search answers throughout, and an order stopped midway is taken up by the next run.
 - `sift serve` is the home process: one per home, on 127.0.0.1, for agents (MCP), the browser (the UI) and your own
   `sift` commands, which it answers with its models and codes loaded. `sift serve --stdio` talks to it, starting one
   if none runs (on Windows in a minimized window), which leaves after 15 idle minutes; `sift ui` opens its pages, or
