@@ -164,17 +164,63 @@ def test_the_jobs_of_the_home_process_are_listed_and_one_is_stopped_from_the_com
     assert ended == ["stopped"]
 
 
-def test_ctrl_c_stops_the_home_process_even_when_what_it_does_first_on_stopping_fails(settings: Settings) -> None:
-    with running(settings) as server:
-        listed = own_endpoint(settings)
-        listed.unlink()
-        listed.mkdir()
+def test_ctrl_c_stops_the_jobs_and_the_home_process_though_its_endpoint_file_cannot_be_removed(
+    settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    started, ended = threading.Event(), list[str]()
+    with running(settings, {**HANDLED, "index": Handled(endless(started, ended), writes=True)}) as server:
+        threading.Thread(target=asked, args=(server, "index", {}), daemon=True).start()
+        assert started.wait(30)
+        endpoint = own_endpoint(settings)
+        endpoint.unlink()
+        endpoint.mkdir()
         try:
-            with pytest.raises((PermissionError, IsADirectoryError)):
-                server.server.handle_exit(signal.SIGINT, None)
+            server.server.handle_exit(signal.SIGINT, None)
             assert server.server.should_exit is True
+            assert until(lambda: ended == ["stopped"])
         finally:
-            listed.rmdir()
+            endpoint.rmdir()
+    assert f"the endpoint file {endpoint} could not be removed" in caplog.text
+
+
+def test_ctrl_c_stops_the_home_process_even_when_what_it_does_first_on_stopping_fails(
+    settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    def failing() -> None:
+        raise RuntimeError("a bug in stopping")
+
+    with running(settings) as server:
+        server.server.on_first_exit = failing
+        server.server.handle_exit(signal.SIGINT, None)
+        assert server.server.should_exit is True
+    assert "what the home process does first on stopping failed" in caplog.text
+
+
+def test_ctrl_c_stops_the_home_process_though_what_it_does_first_recursed_too_deep(settings: Settings) -> None:
+    def recursing() -> None:
+        raise RecursionError
+
+    with running(settings) as server:
+        server.server.on_first_exit = recursing
+        with pytest.raises(RecursionError):
+            server.server.handle_exit(signal.SIGINT, None)
+        assert server.server.should_exit is True
+
+
+def test_jobs_are_listed_and_stopped_while_a_command_holds_the_home_alone(settings: Settings) -> None:
+    started, ended, stopped = threading.Event(), list[str](), list[Line]()
+    handled = {**HANDLED, "rm": Handled(endless(started, ended), writes=True, alone=True)}
+    with running(settings, handled) as server:
+        threading.Thread(target=asked, args=(server, "rm", {}), daemon=True).start()
+        assert started.wait(30)
+        asking = threading.Thread(target=lambda: stopped.append(jobs_of(server, {"stop": 1})), daemon=True)
+        asking.start()
+        try:
+            joined(asking, 10)
+        finally:
+            server.serving.jobs.stop_all()
+        assert until(lambda: listed(server) == [])
+    assert (stopped[0]["stopped"], ended) == (1, ["stopped"])
 
 
 def test_a_second_ctrl_c_exits_at_once(settings: Settings) -> None:

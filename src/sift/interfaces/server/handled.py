@@ -14,16 +14,19 @@ class Handled:
     writes: bool
     kept: Callable[[object], str] | None = None
     alone: bool = False
+    reads_stores: bool = True
 
 
-def handled[R, A](act: Act[R, A], *, kept: bool = False, alone: bool = False) -> tuple[str, Handled]:
+def handled[R, A](
+    act: Act[R, A], *, kept: bool = False, alone: bool = False, reads_stores: bool = True
+) -> tuple[str, Handled]:
     def run(acting: Acting, data: object) -> A:
         return act.run(acting, decoded(act.request, data))
 
     def key(data: object) -> str:
         return json.dumps([act.name, encoded(decoded(act.request, data))], sort_keys=True)
 
-    return act.name, Handled(run, act.writes, key if kept else None, alone=alone)
+    return act.name, Handled(run, act.writes, key if kept else None, alone=alone, reads_stores=reads_stores)
 
 
 HANDLED: Mapping[str, Handled] = MappingProxyType(
@@ -45,7 +48,7 @@ HANDLED: Mapping[str, Handled] = MappingProxyType(
             handled(searching.SIMILAR, kept=True),
             handled(links.LINKS),
             handled(links.UNRESOLVED),
-            handled(jobs.JOBS),
+            handled(jobs.JOBS, reads_stores=False),
         )
     )
 )

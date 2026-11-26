@@ -1,5 +1,6 @@
 import http.client
 import json
+import logging
 import subprocess
 import sys
 import threading
@@ -9,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, cast
 
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.events import Noted, Reporter
 from sift.api.serving import Served
 from sift.api.wire import Json
@@ -28,6 +29,9 @@ INTERNAL = -32603
 NOT_STARTED = "the home process did not start within {seconds:,} s"
 LOG_REMEDY = "see its log in SIFT_HOME/logs"
 SILENT = "the home process does not answer: {error}"
+NO_JSON = "the home process answered {status} and no JSON"
+NOT_PASSED_ON = "the message could not be passed to the home process"
+JSON = "application/json"
 STARTED = "started a home process for agents on port {port} (process {pid}); it leaves after {idle:,} s idle"
 NEW_CONSOLE = 0x00000010 | 0x00000200
 USE_SHOW_WINDOW = 0x00000001
@@ -91,12 +95,20 @@ class _Home:
                 self.held = found(self.settings) or self._started()
             return self.held
 
+    def _listening(self) -> Endpoint | None:
+        try:
+            return found(self.settings, LOOK_EVERY_SECONDS)
+        except StoreUnavailableError as error:
+            if error.code is not Problem.BUSY:
+                raise
+            return None
+
     def _started(self) -> Endpoint:
         starting = self.starting
         starting.start(self.settings, starting.idle)
         looked = threading.Event()
         for _ in range(max(1, round(starting.patience / LOOK_EVERY_SECONDS))):
-            endpoint = found(self.settings)
+            endpoint = self._listening()
             if endpoint is not None:
                 self.report(Noted(STARTED.format(port=endpoint.port, pid=endpoint.pid, idle=starting.idle)))
                 return endpoint
@@ -104,12 +116,20 @@ class _Home:
         raise StoreUnavailableError(NOT_STARTED.format(seconds=starting.patience), LOG_REMEDY)
 
 
-def _posted(endpoint: Endpoint, body: bytes, quiet: float) -> tuple[int, bytes]:
+@dataclass(frozen=True, slots=True)
+class _Posted:
+    status: int
+    json: bool
+    body: bytes
+
+
+def _posted(endpoint: Endpoint, body: bytes, quiet: float) -> _Posted:
     connection = WholeRequests(endpoint.port, quiet)
     try:
-        connection.request("POST", MCP_PATH, body, {"Content-Type": "application/json"})
+        connection.request("POST", MCP_PATH, body, {"Content-Type": JSON})
         response = connection.getresponse()
-        return response.status, response.read()
+        kind = response.getheader("Content-Type") or ""
+        return _Posted(response.status, kind.partition(";")[0].strip() == JSON, response.read())
     finally:
         connection.close()
 
@@ -123,7 +143,8 @@ def _asked_id(body: bytes) -> Json:
 
 
 def _failed(body: bytes, message: str) -> bytes | None:
-    if b'"id"' not in body or (at := _asked_id(body)) is None:
+    at = _asked_id(body)
+    if at is None:
         return None
     return json.dumps({"jsonrpc": "2.0", "id": at, "error": {"code": INTERNAL, "message": message}}).encode()
 
@@ -131,16 +152,28 @@ def _failed(body: bytes, message: str) -> bytes | None:
 def _relayed(home: _Home, body: bytes) -> bytes | None:
     try:
         try:
-            status, answer = _posted(home.endpoint(), body, home.starting.quiet)
+            posted = _posted(home.endpoint(), body, home.starting.quiet)
         except (ConnectionError, http.client.HTTPException):
-            status, answer = _posted(home.endpoint(again=True), body, home.starting.quiet)
+            posted = _posted(home.endpoint(again=True), body, home.starting.quiet)
     except StoreUnavailableError as error:
         return _failed(body, f"{error.message}; fix: {error.remedy}")
     except (ConnectionError, TimeoutError, http.client.HTTPException) as error:
         return _failed(body, SILENT.format(error=error))
-    if status == http.client.SERVICE_UNAVAILABLE:
+    if posted.status == http.client.SERVICE_UNAVAILABLE:
         return _failed(body, f"{BUSY}; fix: {BUSY_REMEDY}")
-    return None if status == http.client.ACCEPTED or not answer else answer
+    if posted.status == http.client.ACCEPTED or not posted.body:
+        return None
+    return posted.body if posted.json else _failed(body, f"{NO_JSON.format(status=posted.status)}; fix: {LOG_REMEDY}")
+
+
+def _answered(home: _Home, body: bytes) -> bytes | None:
+    try:
+        return _relayed(home, body)
+    except RecursionError:
+        raise
+    except Exception as error:
+        logging.getLogger(__name__).exception(NOT_PASSED_ON)
+        return _failed(body, f"{NOT_PASSED_ON}: {type(error).__name__}: {error}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +183,7 @@ class _Answering:
     lock: threading.Lock
 
     def __call__(self, body: bytes) -> None:
-        answer = _relayed(self.home, body)
+        answer = _answered(self.home, body)
         if answer is not None:
             with self.lock:
                 self.pipes.write.write(answer.rstrip(b"\r\n") + b"\n")

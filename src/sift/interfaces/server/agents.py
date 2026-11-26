@@ -3,6 +3,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import cast
 from urllib.parse import urlsplit
 
 from starlette.requests import Request
@@ -13,7 +14,7 @@ from sift.api.errors import InternalError, InvalidRequestError, SiftError, syste
 from sift.api.jobs import ServedJob
 from sift.api.wire import Json
 from sift.interfaces.acts.acting import answered
-from sift.interfaces.mcp.instructions import instructions
+from sift.interfaces.mcp.instructions import instructions, unlisted
 from sift.interfaces.mcp.offered import TOOLS
 from sift.interfaces.mcp.protocol import SPOKEN, reply
 from sift.interfaces.mcp.tools import Started, Tool
@@ -23,6 +24,7 @@ from sift.interfaces.server.handled import Handled
 JOB_WAIT_SECONDS = 20.0
 PARSE_ERROR = -32700
 NOT_A_MESSAGE = -32600
+INTERNAL = -32603
 POSTED = MappingProxyType({"Allow": "POST"})
 
 
@@ -56,7 +58,12 @@ class AgentsServed:
     running: AgentsRunning
 
     def instructions(self) -> str:
-        return instructions(answered(self.running.read("status", {}), Status))
+        try:
+            return instructions(answered(self.running.read("status", {}), Status))
+        except SiftError as error:
+            return unlisted(error)
+        except OSError as error:
+            return unlisted(system_failure(error))
 
     def tools(self) -> tuple[Tool, ...]:
         return TOOLS
@@ -80,6 +87,21 @@ def _refused(status: int, code: int, message: str) -> JSONResponse:
     return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": code, "message": message}}, status)
 
 
+def _asked(message: object, key: str) -> Json:
+    return cast("Json", cast("dict[str, object]", message).get(key)) if isinstance(message, dict) else None
+
+
+async def _replied(serving: Serving, served: AgentsServed, message: object) -> Json | None:
+    try:
+        return await asyncio.wrap_future(serving.pool.submit(reply, message, served, serving.version))
+    except RecursionError:
+        raise
+    except Exception as error:
+        logging.getLogger(LOGGER).exception("the message %s failed", _asked(message, "method"))
+        said = f"the home process failed: {type(error).__name__}: {error}; fix: {FAILED_REMEDY}"
+        return {"jsonrpc": "2.0", "id": _asked(message, "id"), "error": {"code": INTERNAL, "message": said}}
+
+
 def _foreign(origin: str | None) -> bool:
     return origin is not None and urlsplit(origin).hostname not in HOSTS
 
@@ -99,6 +121,5 @@ async def agents_answered(serving: Serving, handled: Mapping[str, Handled], requ
         message = json_of(body)
     except (InvalidRequestError, ValueError) as error:
         return _refused(400, PARSE_ERROR, f"the message is no JSON: {error}")
-    served = AgentsServed(AgentsRunning(serving, handled))
-    answer = await asyncio.wrap_future(serving.pool.submit(reply, message, served, serving.version))
+    answer = await _replied(serving, AgentsServed(AgentsRunning(serving, handled)), message)
     return Response(status_code=202) if answer is None else JSONResponse(answer)

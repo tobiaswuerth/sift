@@ -57,6 +57,7 @@ UNKNOWN = NotFoundError("no such command", "send one of sift's commands to /api/
 NO_JSON = InvalidRequestError("the request is no JSON", NO_JSON_REMEDY)
 TOO_LARGE = InvalidRequestError(f"the request is longer than {MOST_BODY:,} bytes", "send a shorter request")
 FAILED_REMEDY = "see the home process's log in SIFT_HOME/logs, and report it"
+UNLISTED_AFTER = "the collections could not be listed after %s: nothing of a store stays in memory"
 SPOKEN = MappingProxyType({CONTRACT_HEADER: contract_text(CONTRACT)})
 
 
@@ -132,6 +133,16 @@ def _searched(home: Path) -> set[tuple[Path, CollectionId]]:
     return {(one.store, one.id) for one in known_collections(home) if one.active}
 
 
+def _resident_of_the_searched_alone(serving: Serving, written: str) -> None:
+    try:
+        searched = _searched(serving.settings.home)
+    except (SiftError, OSError):
+        logging.getLogger(LOGGER).exception(UNLISTED_AFTER, written)
+        searched = set[tuple[Path, CollectionId]]()
+    serving.codes.kept_only(searched)
+    serving.decoded.kept_only(searched)
+
+
 def _written(serving: Serving, sent: Sent, report: Reporter) -> object:
     with serving.gate.alone(report) if sent.handled.alone else nullcontext():
         serving.results.written()
@@ -140,9 +151,7 @@ def _written(serving: Serving, sent: Sent, report: Reporter) -> object:
             return sent.handled.run(_acting(serving, report, sent.audience), sent.data)
         finally:
             try:
-                searched = _searched(serving.settings.home)
-                serving.codes.kept_only(searched)
-                serving.decoded.kept_only(searched)
+                _resident_of_the_searched_alone(serving, sent.name)
             finally:
                 serving.results.written()
 
@@ -152,7 +161,7 @@ def _moment(serving: Serving) -> Moment:
 
 
 def _read(serving: Serving, sent: Sent, report: Reporter, noted: threading.Event) -> object:
-    with serving.gate.shared(report):
+    with serving.gate.shared(report) if sent.handled.reads_stores else nullcontext():
         return _answered(serving, sent, report, noted)
 
 

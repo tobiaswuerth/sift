@@ -2,6 +2,7 @@ import re
 from collections.abc import Sequence
 
 from sift.api.collections import CollectionStatus, Counted, Status
+from sift.api.errors import SiftError
 from sift.domain.text.wording import counted
 
 HOW = """Search the user's local documents and notes, indexed by sift. When a task touches what the collections
@@ -25,6 +26,7 @@ Research in rounds; one search is rarely enough:
 Narrow any search with `collections`, a `path` glob, `filters` on front matter and `sort`. Scores rank one call's
 hits alone. After writing or deleting a file of a collection, `reindex` it."""
 NONE_YET = "No collections are indexed yet."
+UNLISTED = "sift cannot list the collections now: {message}; fix: {remedy}"
 LISTED = "Indexed collections (the tool `collections` lists them, with their fields and the jobs running):"
 PLAIN_FIELD = re.compile(r"[\w.-]{1,40}")
 MOST_FIELDS = 30
@@ -48,6 +50,10 @@ def _line(one: CollectionStatus) -> str:
     if contents.links:
         said += f"; {counted(contents.links, 'link')}, {contents.unresolved:,} unresolved"
     return said if one.active else f"{said}; inactive"
+
+
+def unlisted(error: SiftError) -> str:
+    return f"{HOW}\n\n{UNLISTED.format(message=error.message, remedy=error.remedy)}"
 
 
 def instructions(status: Status) -> str:

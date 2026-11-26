@@ -17,11 +17,15 @@ from sift.app.collections import add
 from sift.app.embedding import embed
 from sift.app.indexing import NO_COLLECTION_REMEDY
 from sift.interfaces.acts.acting import Acting
+from sift.interfaces.mcp.instructions import HOW
 from sift.interfaces.mcp.tools import Tool, ToolRunning
 from sift.interfaces.server.agents import AgentsRunning, AgentsServed
+from sift.interfaces.server.app import FAILED_REMEDY
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import HomeServer
 from sift.settings import Settings
+from sift.storage.store_files import CATALOG
+from tests.damage import damage_pages
 from tests.files import write
 from tests.homes import indexed, quiet
 from tests.models import Hashed
@@ -72,6 +76,53 @@ def test_an_agent_connects_without_a_token_and_is_told_what_it_may_search(home: 
     told = cast("str", hello["instructions"])
     assert "- notes (" in told
     assert "hidden" not in told
+
+
+def test_an_agent_connecting_while_the_collections_cannot_be_listed_is_told_so_and_how_to_search(
+    home: Settings,
+) -> None:
+    damage_pages(home.home / CATALOG)
+    with running(home) as server:
+        hello = result(server, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {}})
+    told = cast("str", hello["instructions"])
+    assert told.startswith(HOW)
+    assert "\n\nsift cannot list the collections now: the catalog " in told
+    assert "; fix: " in told.rpartition("\n\n")[2]
+
+
+def test_an_agent_connecting_while_the_system_refuses_the_listing_is_told_so(home: Settings) -> None:
+    def refused(_acting: Acting, _data: object) -> object:
+        raise PermissionError(13, "Access is denied")
+
+    with running(home, {**HANDLED, "status": Handled(refused, writes=False)}) as server:
+        hello = result(server, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {}})
+    assert "\n\nsift cannot list the collections now: Access is denied; fix: " in cast("str", hello["instructions"])
+
+
+def test_a_method_that_recurses_too_deep_is_not_answered_as_if_it_had_failed(home: Settings) -> None:
+    def recursing(_acting: Acting, _data: object) -> object:
+        raise RecursionError
+
+    with running(home, {**HANDLED, "status": Handled(recursing, writes=False)}) as server:
+        status, _, read = posted(server, {"jsonrpc": "2.0", "id": 7, "method": "initialize", "params": {}})
+    assert (status, read) == (500, b"Internal Server Error")
+
+
+def test_a_method_that_fails_answers_the_agent_s_message_and_is_logged(
+    home: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(_acting: Acting, _data: object) -> object:
+        raise RuntimeError("a bug")
+
+    with running(home, {**HANDLED, "status": Handled(broken, writes=False)}) as server:
+        status, headers, read = posted(server, {"jsonrpc": "2.0", "id": 7, "method": "initialize", "params": {}})
+    assert (status, headers["content-type"]) == (200, "application/json")
+    assert json.loads(read) == {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "error": {"code": -32603, "message": f"the home process failed: RuntimeError: a bug; fix: {FAILED_REMEDY}"},
+    }
+    assert "the message initialize failed" in caplog.text
 
 
 def test_an_agent_searching_never_gets_an_answer_kept_for_people(home: Settings) -> None:

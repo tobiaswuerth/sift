@@ -50,16 +50,25 @@ STOPPING = "stopping: {jobs} stops at its next step; what it wrote so far is kep
 RESTED = "the models were idle: they wait in RAM, off the GPU, until used again"
 LEFT_IDLE = "stopped: no request and no job for {seconds:,} s, as --idle-exit asks"
 NOT_RESTED = "the idle models could not be let go; they are tried again"
+UNLISTING_FAILED = "the endpoint file %s could not be removed: %s"
+STOPPING_FAILED = "what the home process does first on stopping failed"
 STOPPING_SIGNALS: tuple[int, ...] = tuple(
     cast("int", getattr(signal, name)) for name in ("SIGTERM", "SIGBREAK") if hasattr(signal, name)
 )
 
 
+def _unlisted(listed: Path) -> None:
+    try:
+        listed.unlink(missing_ok=True)
+    except OSError as error:
+        logging.getLogger(LOGGER).warning(UNLISTING_FAILED, listed, error.strerror or error)
+
+
 def _stopping(serving: Serving, listed: Path, report: Reporter) -> None:
-    listed.unlink(missing_ok=True)
     if stopped := serving.jobs.stop_all():
         jobs = ", ".join(f"sift {job.command} (job {job.number})" for job in stopped)
         report(Noted(STOPPING.format(jobs=jobs)))
+    _unlisted(listed)
 
 
 class StoppingServer(uvicorn.Server):
@@ -72,6 +81,10 @@ class StoppingServer(uvicorn.Server):
         try:
             if not self.should_exit:
                 self.on_first_exit()
+        except RecursionError:
+            raise
+        except Exception:
+            logging.getLogger(LOGGER).exception(STOPPING_FAILED)
         finally:
             super().handle_exit(sig, frame)
 
@@ -190,7 +203,7 @@ def held(
         try:
             yield HomeServer(endpoint, serving, server, listening, listed)
         finally:
-            listed.unlink(missing_ok=True)
+            _unlisted(listed)
             serving.watch.let_go()
 
 
@@ -213,6 +226,7 @@ def watched_leaving(running: HomeServer, seconds: int, stop: threading.Event, ev
     while not stop.wait(every):
         if serving.activity.idle_for() >= seconds and not serving.jobs.listed():
             logging.getLogger(LOGGER).info(LEFT_IDLE.format(seconds=seconds))
+            _unlisted(running.listed)
             running.server.should_exit = True
             return
 

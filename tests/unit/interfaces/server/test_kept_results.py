@@ -172,8 +172,8 @@ def test_an_answer_found_while_the_home_is_written_is_not_kept(settings: Setting
     assert ran == ["x", "x"]
 
 
-def test_answers_are_kept_again_after_a_write_at_whose_end_the_home_could_not_be_listed(
-    settings: Settings, notes: Path
+def test_a_write_at_whose_end_the_home_could_not_be_listed_keeps_its_own_outcome_and_answers_are_kept_again(
+    settings: Settings, notes: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     ran, whole = list[str](), list[bytes]()
     catalog = settings.home / CATALOG
@@ -191,4 +191,5 @@ def test_answers_are_kept_again_after_a_write_at_whose_end_the_home_could_not_be
         catalog.write_bytes(whole[0])
         for _ in range(3):
             asked(server, "search", {"query": "halo"})
-    assert ("is damaged" in str(last(said, "error")["message"]), ran.count("search")) == (True, 1)
+    assert (last(said, "answer")["collections"], ran.count("search")) == ([], 1)
+    assert "the collections could not be listed after embed: nothing of a store stays in memory" in caplog.text
