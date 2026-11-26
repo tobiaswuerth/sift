@@ -276,6 +276,8 @@ def test_vectors_of_passages_whose_documents_are_gone_are_passed_over(tmp_path: 
             spanned = (chunk, document, start, length)
             connection.execute("INSERT INTO chunks(id, doc, seq, pos, len) VALUES(?, ?, 0, ?, ?)", spanned)
             connection.execute("INSERT INTO vectors(chunk, vec) VALUES(?, ?)", (chunk, bytes(size)))
+            connection.execute("INSERT INTO codes(chunk, bits) VALUES(?, zeroblob(8))", (chunk,))
+            connection.execute("UPDATE counts SET n = n + 1 WHERE name = 'vectors'")
     (done,) = brought(home, former)
     assert isinstance(done, Brought)
     assert (done.vectors_before, done.vectors) == (4, 2)

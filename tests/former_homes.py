@@ -38,6 +38,18 @@ FORMER_STORE_LAYOUT = (
         "line_start INTEGER, line_end INTEGER, pos INTEGER NOT NULL, len INTEGER NOT NULL)"
     ),
     "CREATE TABLE vectors(chunk INTEGER PRIMARY KEY, vec BLOB NOT NULL)",
+    "CREATE TABLE codes(chunk INTEGER PRIMARY KEY, bits BLOB NOT NULL)",
+    (
+        "CREATE TRIGGER codes_go_with_vectors AFTER DELETE ON vectors "
+        "BEGIN DELETE FROM codes WHERE chunk = OLD.chunk; END"
+    ),
+    "CREATE TABLE counts(name TEXT PRIMARY KEY, n INTEGER NOT NULL)",
+)
+COUNTED = (
+    "INSERT INTO codes(chunk, bits) SELECT chunk, zeroblob(8) FROM vectors",
+    "INSERT INTO counts(name, n) VALUES ('docs', (SELECT count(*) FROM docs))",
+    "INSERT INTO counts(name, n) VALUES ('chunks', (SELECT count(*) FROM chunks))",
+    "INSERT INTO counts(name, n) VALUES ('vectors', (SELECT count(*) FROM vectors))",
 )
 DOCUMENTS = "SELECT d.id, s.path || '#' || d.key, d.title FROM documents d JOIN sources s ON s.id = d.source"
 CHUNKS = "SELECT id, document, start, length FROM chunks ORDER BY document, id"
@@ -73,6 +85,8 @@ def _made(one: Collection, store: Path, model: str | None) -> None:
                 (chunk, document, seen[document], start, length),
             )
         target.executemany("INSERT INTO vectors(chunk, vec) VALUES(?, ?)", source.execute(VECTORS).fetchall())
+        for statement in COUNTED:
+            target.execute(statement)
         if model is not None:
             target.executemany(
                 "INSERT INTO meta(key, value) VALUES(?, ?)", [("model", model.split("@")[0]), ("model_at", model)]

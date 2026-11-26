@@ -419,5 +419,7 @@ vectors before and after side by side.
 
 Nothing of sift 1.x is written: each new store goes beside the one it comes from, as `NAME-v2.sqlite`; a file already
 there skips that collection. Run again, an import goes on with what it added. Once the collections are as you want
-them, remove sift 1.x's stores and its `sift.db`. A store older than sift 1.8 is refused: open it once with sift 1.15,
-then import it.
+them, remove sift 1.x's stores and its `sift.db`. A store older than sift 1.8 is refused, and so is one that lacks what
+sift 1.15 writes (its counts, a code for each vector): open it once with sift 1.15, then import it. Stop sift 1.x
+before importing: a store is read as it was when its import began, and where sift 1.x keeps writing it meanwhile, it
+may have to wait. A collection whose folder is not there is not imported, as its documents are read from the folder.

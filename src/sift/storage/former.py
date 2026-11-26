@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from collections.abc import Generator, Iterator, Mapping, Sequence
-from contextlib import closing, contextmanager
+from contextlib import AbstractContextManager, closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -40,9 +40,12 @@ COLUMNS = "SELECT name FROM pragma_table_info('collections')"
 TABLES = "SELECT name FROM sqlite_master WHERE type = 'table'"
 COLLECTIONS = "SELECT name, path, fields, store, active FROM collections ORDER BY id"
 META = "SELECT value FROM meta WHERE key = ?"
-COUNTS = "SELECT (SELECT count(*) FROM docs), (SELECT count(*) FROM chunks), (SELECT count(*) FROM vectors)"
+AS_IT_IS_NOW = "BEGIN"
+COUNTS = "SELECT name, n FROM counts"
+COUNTED = ("docs", "chunks", "vectors")
+UNCOUNTED = "it counts no {table}"
 DOCUMENTS = "SELECT id, title, text FROM docs ORDER BY id"
-EMBEDDED = "SELECT c.id, c.doc, c.seq, c.pos, c.len FROM chunks c JOIN vectors v ON v.chunk = c.id ORDER BY c.doc"
+EMBEDDED = "SELECT c.id, c.doc, c.seq, c.pos, c.len FROM chunks c JOIN codes k ON k.chunk = c.id ORDER BY c.doc"
 VECTORS = "SELECT chunk, vec FROM vectors WHERE chunk IN (SELECT value FROM json_each(?))"
 
 
@@ -132,33 +135,46 @@ class FormerStore:
     def _asked(self, sql: str, parameters: tuple[str, ...] = ()) -> sqlite3.Cursor:
         return _asked(self.connection, self.path, sql, parameters)
 
+    def _its_own_damage(self) -> AbstractContextManager[None]:
+        return unavailable_if_unusable(self.path, STORE_OF_1)
+
     def _meta(self, key: str) -> str | None:
         found = cast("tuple[str | None] | None", self._asked(META, (key,)).fetchone())
         return None if found is None else found[0]
 
     def model(self) -> str | None:
-        name, at = self._meta(MODEL_KEY), self._meta(MODEL_AT_KEY)
+        with self._its_own_damage():
+            name, at = self._meta(MODEL_KEY), self._meta(MODEL_AT_KEY)
         if name is None:
             return None
         return at if at is not None and at.split("@", 1)[0] == name else UNPINNED.get(name, name)
 
     def counts(self) -> FormerCounts:
-        return FormerCounts(*cast("tuple[int, int, int]", self._asked(COUNTS).fetchone()))
+        with self._its_own_damage():
+            held = dict(cast("list[tuple[str, int]]", self._asked(COUNTS).fetchall()))
+        for table in COUNTED:
+            if not isinstance(held.get(table), int):
+                said = OTHER_LAYOUT.format(path=self.path, error=UNCOUNTED.format(table=table))
+                raise StoreUnavailableError(said, OTHER_LAYOUT_REMEDY)
+        return FormerCounts(*(held[table] for table in COUNTED))
 
     def passages(self) -> Iterator[FormerPassage]:
-        documents, held = self._asked(DOCUMENTS), None
-        for span in map(_FormerSpan._make, cast("Iterator[tuple[int, int, int, int, int]]", self._asked(EMBEDDED))):
-            while held is None or held[0] < span.document:
-                read = cast("tuple[int, str | None, str] | None", documents.fetchone())
-                if read is None:
-                    return
-                held = (read[0], read[1] or "", _cut(read[2]))
-            if held[0] == span.document:
-                text = held[2][span.start : span.start + span.length]
-                yield FormerPassage(span.chunk, span.seq == 0, held[1], text)
+        with self._its_own_damage():
+            documents, held = self._asked(DOCUMENTS), None
+            spans = cast("Iterator[tuple[int, int, int, int, int]]", self._asked(EMBEDDED))
+            for span in map(_FormerSpan._make, spans):
+                while held is None or held[0] < span.document:
+                    read = cast("tuple[int, str | None, str] | None", documents.fetchone())
+                    if read is None:
+                        return
+                    held = (read[0], read[1] or "", _cut(read[2]))
+                if held[0] == span.document:
+                    text = held[2][span.start : span.start + span.length]
+                    yield FormerPassage(span.chunk, span.seq == 0, held[1], text)
 
     def vectors(self, chunks: Sequence[int]) -> Mapping[int, bytes]:
-        found = cast("list[tuple[int, bytes]]", self._asked(VECTORS, (json.dumps(list(chunks)),)).fetchall())
+        with self._its_own_damage():
+            found = cast("list[tuple[int, bytes]]", self._asked(VECTORS, (json.dumps(list(chunks)),)).fetchall())
         return MappingProxyType(dict(found))
 
 
@@ -167,4 +183,5 @@ def former_store(path: Path) -> Generator[FormerStore]:
     with unavailable_if_unusable(path, STORE_OF_1), closing(_opened(path)) as connection:
         if not _names(connection, TABLES) >= STORE_TABLES:
             raise StoreUnavailableError(f"{path}: {OLDER}", OLDER_REMEDY)
+        connection.execute(AS_IT_IS_NOW)
         yield FormerStore(connection, path)

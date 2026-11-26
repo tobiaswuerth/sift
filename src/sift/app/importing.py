@@ -16,15 +16,16 @@ from sift.api.indexing import IndexCollections, Skipped
 from sift.app.collections import add, chosen, deactivate
 from sift.app.filing import READERS, Readers
 from sift.app.indexing import index
-from sift.domain.arrays import ints
+from sift.domain.arrays import Ids, ints
 from sift.domain.text.embedding import embedded
 from sift.inference.hub import COMMIT
 from sift.storage.catalog import Collection, known_collections
 from sift.storage.database import Connection, reading, writing
 from sift.storage.documents import counts
-from sift.storage.former import FormerCollection, FormerStore, former_collections, former_store
+from sift.storage.former import STORE_OF_1, FormerCollection, FormerStore, former_collections, former_store
 from sift.storage.store import connected
 from sift.storage.store_files import FORMER_CATALOG
+from sift.storage.unusable import damaged
 from sift.storage.vector_meta import left
 from sift.storage.vectors import Pending, pending, put_vectors, refuse_model
 from sift.storage.writer import sole_writer
@@ -68,10 +69,14 @@ def keyed(passages: Iterable[tuple[int, bool, str, str]]) -> Keyed:
     return Keyed(held_keys[order], held_chunks[order])
 
 
-def _vectors(old: FormerStore, chunks: NDArray[np.int64]) -> NDArray[np.float16]:
+def _held(old: FormerStore, ids: NDArray[np.int64], chunks: NDArray[np.int64]) -> tuple[Ids, NDArray[np.float16]]:
     wanted = ints(chunks)
     held = old.vectors(wanted)
-    return np.stack([np.frombuffer(held[each], np.float16) for each in wanted])
+    there = np.array([each in held for each in wanted], np.bool_)
+    found = [np.frombuffer(held[each], np.float16) for each in wanted if each in held]
+    if len({len(each) for each in found}) > 1:
+        raise damaged(old.path, ValueError("its vectors are of several lengths"), STORE_OF_1)
+    return ids[there], np.stack(found) if found else np.empty((0, 0), np.float16)
 
 
 def _batch(connection: Connection, after: int) -> list[Pending]:
@@ -80,18 +85,18 @@ def _batch(connection: Connection, after: int) -> list[Pending]:
 
 
 def _carried(connection: Connection, old: FormerStore, model: str, report: Reporter) -> int:
-    keys = keyed(old.passages())
     with reading(connection) as transaction:
         refuse_model(transaction, model)
         total = left(transaction)
     report(PhaseStarted(Phase.CARRY, total))
+    keys = keyed(old.passages()) if total else keyed(())
     carried, after, looked = 0, 0, 0
     while waiting := _batch(connection, after):
         hit, chunks = keys.found([embedded(each.title, each.text, first=each.first) for each in waiting])
-        if chunks.size:
-            ids = np.array([each.chunk for each in waiting], np.int64)[hit]
+        ids, vectors = _held(old, np.array([each.chunk for each in waiting], np.int64)[hit], chunks)
+        if ids.size:
             with writing(connection) as transaction:
-                carried += put_vectors(transaction, ids, _vectors(old, chunks), model).stored
+                carried += put_vectors(transaction, ids, vectors, model).stored
         looked, after = looked + len(waiting), waiting[-1].chunk
         report(Advanced(looked))
     report(PhaseDone(carried))
@@ -175,11 +180,11 @@ def _imported(
     home: Path, former: FormerCollection, source: Path, report: Reporter, readers: Readers
 ) -> Brought | Skipped:
     one = _placed(home, former, source)
+    if not former.active:
+        deactivate(home, DeactivateCollections((one.name,)))
     (indexed,) = index(home, IndexCollections((one.name,)), report, readers=readers).collections
     if isinstance(indexed.outcome, Skipped):
         return indexed.outcome
-    if not former.active:
-        deactivate(home, DeactivateCollections((one.name,)))
     model, _ = _carry_into(one, former, report)
     return _brought(one, former, model)
 
