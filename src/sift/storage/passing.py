@@ -14,6 +14,7 @@ from sift.storage.database import IdRow, Reading, rows, streamed
 
 QUOTED_NAME = ('{"a\\"b": 1}', '$."a\\"b"')
 CHUNKS_OF = "SELECT id FROM chunks WHERE document IN (SELECT value FROM json_each(?)) ORDER BY id"
+NONE = "[]"
 PASSING = """
 WITH asked(id) AS (
   SELECT value FROM json_each(:documents)
@@ -124,8 +125,17 @@ class Passing:
     seen: Ids = field(default_factory=_none)
     passed: Mask = field(default_factory=_no_mask)
     every: Ids | None = None
+    left_out: Ids | None = None
+
+    def _chunks_left_out(self) -> Ids:
+        if self.left_out is None:
+            found = rows(self.transaction, IdRow, CHUNKS_OF, (self.condition.without,))
+            self.left_out = np.array([row.id for row in found], np.int64)
+        return self.left_out
 
     def documents(self, documents: Ids) -> Mask:
+        if self.condition.leaves_out_alone:
+            return ~np.isin(documents, np.array(json.loads(self.condition.without or NONE), np.int64))
         asked = np.unique(documents)
         new = asked[~among(asked, Ascending(self.seen))]
         if len(new):
@@ -136,6 +146,8 @@ class Passing:
         return self.passed[np.searchsorted(self.seen, documents)] if len(documents) else _no_mask()
 
     def checked(self, ids: Ids) -> Mask:
+        if self.condition.leaves_out_alone:
+            return ~np.isin(ids, self._chunks_left_out())
         documents = documents_of(self.transaction, ids)
         known = np.not_equal(documents, NO_DOCUMENT)
         let = np.zeros(len(ids), np.bool_)

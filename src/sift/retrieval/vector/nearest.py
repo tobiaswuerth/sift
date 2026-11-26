@@ -1,4 +1,6 @@
+import itertools
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -27,14 +29,36 @@ SHORTLIST = 10
 CODES_AXES = 2
 SCAN_SHARE = 0.2
 MARGIN = 1.25
+SCANNING = 8
+PART_ROWS = 32_768
 
 type ExactRead = Callable[[int, Ids], tuple[Ids, Halves]]
+
+
+class ScanPart(NamedTuple):
+    store: int
+    rows: range
+    at: int
+
+
+type Spread = Callable[[Callable[[ScanPart], None], Sequence[ScanPart]], None]
+
+
+def over_threads(scan: Callable[[ScanPart], None], parts: Sequence[ScanPart]) -> None:
+    if len(parts) <= 1:
+        for part in parts:
+            scan(part)
+        return
+    with ThreadPoolExecutor(min(SCANNING, len(parts))) as pool:
+        for _ in pool.map(scan, parts):
+            pass
 
 
 @dataclass(frozen=True, slots=True)
 class Reads:
     exact: ExactRead
     allowed: Sequence[AllowedChunks | None] = ()
+    spread: Spread = over_threads
 
 
 @dataclass(eq=False, frozen=True, slots=True)
@@ -93,17 +117,27 @@ class Measured:
         return found
 
 
-def _joined[T: np.generic](parts: list[NDArray[T]], empty: NDArray[T]) -> NDArray[T]:
-    return parts[0] if len(parts) == 1 else np.concatenate([empty, *parts])
+def _parts(sizes: Sequence[int]) -> list[ScanPart]:
+    rows = max(PART_ROWS, -(-sum(sizes) // SCANNING))
+    firsts = itertools.accumulate(sizes, initial=0)
+    return [
+        ScanPart(store, range(start, min(start + rows, size)), first + start)
+        for store, (size, first) in enumerate(zip(sizes, firsts, strict=False))
+        for start in range(0, size, rows)
+    ]
 
 
-def _measured(held: Sequence[Coded], query: Floats) -> Measured:
+def _measured(held: Sequence[Coded], query: Floats, spread: Spread) -> Measured:
     asked = code_of(query)
-    return Measured(
-        _joined([distances(each.words, asked) for each in held], np.zeros(0, np.uint16)),
-        tuple(each.ids for each in held),
-        tuple(len(each.ids) for each in held),
-    )
+    sizes = tuple(len(each.ids) for each in held)
+    distance = np.empty(sum(sizes), np.uint16)
+
+    def scan(part: ScanPart) -> None:
+        scanned = held[part.store].words[part.rows.start : part.rows.stop]
+        distance[part.at : part.at + len(part.rows)] = distances(scanned, asked)
+
+    spread(scan, _parts(sizes))
+    return Measured(distance, tuple(each.ids for each in held), sizes)
 
 
 def _candidates(found: Measured, at: Ids) -> Candidates:
@@ -160,8 +194,9 @@ def _passing(held: Sequence[Coded], found: Measured, want: int, allowed: Sequenc
     return _listed(held, found, allowed)
 
 
-def _shortlist(held: Sequence[Coded], query: Floats, want: int, allowed: Sequence[AllowedChunks | None]) -> Candidates:
-    found = _measured(held, query)
+def _shortlist(held: Sequence[Coded], query: Floats, want: int, reads: Reads) -> Candidates:
+    found = _measured(held, query, reads.spread)
+    allowed = reads.allowed
     among = _passing(held, found, want, allowed) if any(each is not None for each in allowed) else None
     return _nearest_of(found, among, want)
 
@@ -192,7 +227,7 @@ def nearest(held: Sequence[Coded], query: Floats, k: int, reads: Reads, rescore:
     if not k:
         return ()
     want = max(rescore, k)
-    chosen = _by_bits(held, query, _shortlist(held, query, SHORTLIST * want, reads.allowed), want)
+    chosen = _by_bits(held, query, _shortlist(held, query, SHORTLIST * want, reads), want)
     found: list[Ids] = [np.zeros(0, np.int64)]
     scored: list[Floats] = [np.zeros(0, np.float32)]
     for store in ints(distinct(ascending(chosen.owners)).values):

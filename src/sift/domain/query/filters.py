@@ -15,6 +15,7 @@ SQLITE_INT = 2**63
 TRUTH_WORDS = MappingProxyType({True: ("true", "True", "TRUE"), False: ("false", "False", "FALSE")})
 TRUTH_OF = MappingProxyType({word: truth for truth, words in TRUTH_WORDS.items() for word in words})
 NONE_WITHIN = "[]"
+NO_GROUPS = "[]"
 PATH_REMEDY = "write the folders of a path in a collection with / between them"
 LIST_REMEDY = 'give several values as a JSON list, e.g. t=["a","c"], or repeat the filter'
 QUOTE_REMEDY = "name the field without a double quote, or use a Python whose SQLite is 3.47 or newer"
@@ -30,6 +31,10 @@ class Condition:
     @property
     def lets_none(self) -> bool:
         return self.within == NONE_WITHIN
+
+    @property
+    def leaves_out_alone(self) -> bool:
+        return self.path is None and self.fields == NO_GROUPS and self.within is None and self.without is not None
 
 
 @dataclass(frozen=True, slots=True)

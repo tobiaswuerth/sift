@@ -2,6 +2,7 @@ import contextlib
 import sqlite3
 import tracemalloc
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +10,7 @@ import pytest
 
 from sift.api.filters import Filter, Operator
 from sift.api.ids import CollectionId, DocumentId
-from sift.domain.query.filters import condition
+from sift.domain.query.filters import Linked, condition
 from sift.domain.text.notes import note
 from sift.storage.database import reading
 from sift.storage.documents import add_documents, chunks_of, put_source
@@ -58,6 +59,34 @@ def test_the_chunks_a_condition_lets_through_are_checked_once_and_listed_in_orde
         assert allowed.documents(documents).tolist() == [False, True, True]
         assert allowed.listed() is allowed.listed()
     assert len(long) > 1
+
+
+def test_a_condition_that_only_leaves_documents_out_asks_the_store_once_however_many_chunks_it_checks(
+    store: tuple[sqlite3.Connection, dict[str, DocumentId]],
+) -> None:
+    connection, ids = store
+    left_out = Linked(without=[ids["papers/long.md"], ids["notes/plain.md"]])
+    asked = condition(None, [], reads_quotes=True, linked=left_out)
+    assert asked is not None
+    statements: list[str] = []
+    with reading(connection) as transaction:
+        long = [each.id for each in chunks_of(transaction, ids["papers/long.md"])]
+        short = [each.id for each in chunks_of(transaction, ids["papers/short.md"])]
+        plain = [each.id for each in chunks_of(transaction, ids["notes/plain.md"])]
+        allowed = Passing(transaction, asked)
+        expected = [True] * len(short) + [False] * (len(long) + len(plain)) + [True] * len(short)
+        connection.set_trace_callback(statements.append)
+        try:
+            for _ in range(3):
+                assert allowed.checked(np.array([*short, *long, *plain, *short], np.int64)).tolist() == expected
+            documents = np.array([ids["notes/plain.md"], ids["papers/short.md"], ids["papers/long.md"]], np.int64)
+            assert allowed.documents(documents).tolist() == [False, True, False]
+        finally:
+            connection.set_trace_callback(None)
+        assert len(statements) == 1
+        general = Passing(transaction, replace(asked, path="*"))
+        assert general.checked(np.array([*short, *long, *plain], np.int64)).tolist() == expected[: -len(short)]
+        assert allowed.listed().tolist() == sorted(short)
 
 
 def test_whether_sqlite_reads_a_quote_in_a_field_s_name_is_asked_of_it() -> None:

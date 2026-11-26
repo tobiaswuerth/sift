@@ -1,4 +1,6 @@
+import threading
 import tracemalloc
+from collections.abc import Callable, Sequence
 from typing import cast
 
 import numpy as np
@@ -10,7 +12,18 @@ from numpy.typing import NDArray
 from sift.api.ids import ChunkId
 from sift.domain.arrays import Ids, floats, ints
 from sift.domain.codec.codes import Bits, Floats, Halves, codes
-from sift.retrieval.vector.nearest import SCAN_SHARE, SHORTLIST, Coded, ExactRead, Near, Reads, coded, nearest
+from sift.retrieval.vector.nearest import (
+    SCAN_SHARE,
+    SCANNING,
+    SHORTLIST,
+    Coded,
+    ExactRead,
+    Near,
+    Reads,
+    ScanPart,
+    coded,
+    nearest,
+)
 from tests.allowed import Chosen
 from tests.examples import few
 
@@ -128,6 +141,39 @@ def test_a_scan_without_a_filter_holds_a_few_bytes_a_code_beside_the_codes_howev
     finally:
         tracemalloc.stop()
     assert peak < BYTES_A_CODE * 200_000
+
+
+def test_a_scan_of_many_codes_is_spread_over_threads_part_by_part_and_finds_what_one_thread_finds() -> None:
+    sizes = [150_000, 40_000, 10, 0]
+    held, exact = stores(21, sizes, 64)
+    query = unit(np.random.default_rng(22).normal(size=64))
+    asked: list[ScanPart] = []
+
+    def one_after_another(scan: Callable[[ScanPart], None], parts: Sequence[ScanPart]) -> None:
+        asked.extend(parts)
+        for part in parts:
+            scan(part)
+
+    alone = nearest(held, query, 10, Reads(reader(exact), spread=one_after_another), rescore=50)
+    assert nearest(held, query, 10, Reads(reader(exact)), rescore=50) == alone
+    assert len(alone) == 10
+    assert [sum(len(part.rows) for part in asked if part.store == store) for store in range(4)] == sizes
+    assert sorted(part.at for part in asked) == sorted(sum(sizes[: part.store]) + part.rows.start for part in asked)
+    assert (len([part for part in asked if part.store == 0]) > 1, len(asked) <= SCANNING + len(sizes)) == (True, True)
+
+
+def test_a_scan_of_few_codes_starts_no_thread() -> None:
+    held, exact = stores(23, [500, 300], 64)
+    query = unit(np.random.default_rng(24).normal(size=64))
+    before = threading.active_count()
+    seen: list[int] = []
+
+    def counting(store: int, chunks: Ids) -> tuple[Ids, Halves]:
+        seen.append(threading.active_count())
+        return reader(exact)(store, chunks)
+
+    assert nearest(held, query, 5, Reads(counting), rescore=800) == tuple(brute(exact, query, 5))
+    assert seen == [before, before]
 
 
 def exact_stores(seed: int, sizes: list[int], width: int) -> tuple[list[Coded], list[tuple[Ids, Halves]]]:
