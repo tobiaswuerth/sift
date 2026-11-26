@@ -18,6 +18,7 @@ from sift.app.embedding import embed
 from sift.app.importing import imported
 from sift.app.vsearch import vsearch
 from sift.storage.catalog import known_collections
+from sift.storage.former import former_store
 from sift.storage.store_files import FORMER_CATALOG
 from tests.files import write
 from tests.former_homes import PINNED_FAKE, former_home, hashed
@@ -205,6 +206,47 @@ def test_a_store_of_sift_1_that_is_damaged_is_said_and_the_other_collections_are
     assert isinstance(whole, Brought)
     assert (whole.documents, whole.vectors) == (1, 1)
     assert [one.name for one in known_collections(home)] == ["notes", "papers"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "ALTER TABLE chunks DROP COLUMN pos",
+        "ALTER TABLE docs DROP COLUMN title",
+        "ALTER TABLE vectors RENAME COLUMN vec TO v",
+        "ALTER TABLE meta RENAME COLUMN value TO held",
+    ],
+)
+def test_a_store_of_sift_1_lacking_what_1_15_writes_is_said_and_the_other_collections_are_imported(
+    tmp_path: Path, notes: Path, change: str
+) -> None:
+    write(tmp_path / "papers" / "halo.md", "# Halo\n\nDark matter halo models.\n")
+    former = former_home(tmp_path, {"notes": notes, "papers": tmp_path / "papers"}, hashed())
+    with contextlib.closing(sqlite3.connect(former / "collections" / "notes.sqlite")) as connection, connection:
+        connection.execute(change)
+    older, whole = brought(tmp_path / "home", former)
+    assert isinstance(older, Skipped)
+    assert (
+        f"{former / 'collections' / 'notes.sqlite'} is not as sift 1.15 writes its stores: no such column"
+        in older.message
+    )
+    assert older.remedy == "open that home once with sift 1.15, which brings its stores up to date, then import it"
+    assert isinstance(whole, Brought)
+    assert (whole.documents, whole.vectors) == (1, 1)
+
+
+def counted_while_written(store: Path) -> None:
+    with former_store(store) as old, contextlib.closing(sqlite3.connect(store, isolation_level=None)) as writing:
+        old.connection.execute("PRAGMA busy_timeout = 0")
+        writing.execute("BEGIN EXCLUSIVE")
+        old.counts()
+
+
+def test_a_store_of_sift_1_that_is_written_just_then_is_said_to_be_busy(tmp_path: Path, notes: Path) -> None:
+    former = former_home(tmp_path, {"notes": notes})
+    with pytest.raises(StoreUnavailableError, match=r"another sift is writing to the store of sift 1\.x") as refused:
+        counted_while_written(former / "collections" / "notes.sqlite")
+    assert refused.value.remedy == "wait for it to finish, then run sift again"
 
 
 def test_a_home_of_sift_1_without_collections_imports_nothing(tmp_path: Path) -> None:
