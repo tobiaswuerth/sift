@@ -21,7 +21,7 @@ from sift.app.vsearch import vsearch
 from sift.domain.codec.codes import Floats, Halves
 from sift.domain.text.embedding import RECIPE
 from sift.inference.prepared import ModelsPrepared
-from sift.inference.remote import MOST_TEXTS, Remote, fingerprint, shows
+from sift.inference.remote import MODEL_HEADER, MOST_TEXTS, Remote, fingerprint, shows
 from sift.interfaces.worker.keys import worker_key
 from sift.settings import Settings
 from sift.storage.vectors import EMBED_REMEDY
@@ -171,6 +171,7 @@ def test_a_worker_of_another_series_of_sift_is_refused(lent_settings: Settings, 
 
 
 ABOUT = {"version": VERSION, "model": "an/embedder", "width": 4, "recipe": RECIPE}
+EMBEDDER = {MODEL_HEADER: "an%2Fembedder"}
 
 
 @pytest.mark.parametrize(
@@ -196,13 +197,52 @@ ABOUT = {"version": VERSION, "model": "an/embedder", "width": 4, "recipe": RECIP
 )
 def test_an_answer_that_fits_no_request_is_said_so(tmp_path: Path, path: str, answer: bytes, said: str) -> None:
     answers = {"/": (200, json.dumps(ABOUT).encode()), path: (200, answer)}
-    with canned(worker_key(tmp_path), answers) as address:
+    with canned(worker_key(tmp_path), answers, EMBEDDER) as address:
         remote = Remote(address, VERSION)
         ranking = partial(remote.rerank, "q", ["a", "b"])
         asking = ranking if path == "/rerank" else partial(remote.encode, ["a", "b"], query=False)
         told = f"embedding remote {address.address} answered {said}: not what this sift asked it for"
         with pytest.raises(ModelUnavailableError, match=re.escape(told)):
             asking()
+
+
+def test_a_worker_started_again_with_another_model_is_noticed_at_its_next_vectors(tmp_path: Path) -> None:
+    answers = {"/": (200, json.dumps(ABOUT).encode()), "/embed": (200, np.zeros((2, 4), np.float16).tobytes())}
+    said = dict(EMBEDDER)
+    with canned(worker_key(tmp_path), answers, said) as address:
+        remote = Remote(address, VERSION)
+        assert remote.encode(["a", "b"], query=False).shape == (2, 4)
+        answers["/"] = (200, json.dumps({**ABOUT, "model": "another/embedder"}).encode())
+        said[MODEL_HEADER] = "another%2Fembedder"
+        with pytest.raises(ModelUnavailableError) as changed:
+            remote.encode(["a", "b"], query=False)
+        told = f"embedding remote {address.address} embeds with another/embedder now, not with an/embedder as before"
+        assert (changed.value.message, changed.value.remedy) == (
+            told,
+            "ask again: this sift then takes the worker's model as it is now",
+        )
+        assert remote.name == "another/embedder"
+        assert remote.encode(["a", "b"], query=False).shape == (2, 4)
+        remote.close()
+
+
+def test_vectors_a_worker_sends_without_naming_their_model_are_refused(tmp_path: Path) -> None:
+    answers = {"/": (200, json.dumps(ABOUT).encode()), "/embed": (200, np.zeros((2, 4), np.float16).tobytes())}
+    with canned(worker_key(tmp_path), answers) as address:
+        remote = Remote(address, VERSION)
+        told = f"embedding remote {address.address} answered vectors without the name of their model"
+        with pytest.raises(ModelUnavailableError, match=re.escape(told)):
+            remote.encode(["a", "b"], query=False)
+        remote.close()
+
+
+def test_a_model_named_in_letters_no_header_holds_is_known_as_the_worker_s_all_the_same(
+    lent_settings: Settings,
+) -> None:
+    name = "D:/models/\N{LATIN SMALL LETTER E WITH ACUTE}mbedder \N{CJK UNIFIED IDEOGRAPH-6A21}"
+    with working(lent_settings, Hashed(name=name)) as worker:
+        remote = worker.remote()
+        assert (remote.name, remote.encode(TEXTS, query=False).shape) == (name, (2, 48))
 
 
 def test_a_worker_that_makes_vectors_another_way_is_refused(tmp_path: Path) -> None:

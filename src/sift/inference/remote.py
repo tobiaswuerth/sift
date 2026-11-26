@@ -10,6 +10,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import version
 from typing import cast, final, override
+from urllib.parse import quote, unquote
 
 import numpy as np
 
@@ -36,6 +37,8 @@ SAME_SIFT = "install the same sift on both, and reach the worker directly"
 REACH_REMEDY = f"start the worker on that machine and let it through its firewall, or unset {EMBED_REMOTE_VARIABLE}"
 KEY_REMEDY = f"copy the address the worker prints into {EMBED_REMOTE_VARIABLE} again"
 FAILED_REMEDY = "see the worker's log for what failed"
+AGAIN_REMEDY = "ask again: this sift then takes the worker's model as it is now"
+MODEL_HEADER = "Sift-Model"
 NOTHING_SAID = "nothing a worker says of itself"
 CLOSED_BY_THE_WORKER = (ConnectionError, ssl.SSLEOFError)
 
@@ -171,12 +174,26 @@ def _scores_in(worker: WorkerAddress, raw: bytes, texts: int) -> Floats:
     return np.array(scores, np.float32)
 
 
+@dataclass(frozen=True, slots=True)
+class WorkerAnswer:
+    status: int
+    data: bytes
+    model: str | None
+
+
 def _sent(
     connection: PinnedConnection, method: str, path: str, body: bytes | None, headers: dict[str, str]
-) -> tuple[int, bytes]:
+) -> WorkerAnswer:
     connection.request(method, path, body, headers)
     response = connection.getresponse()
-    return response.status, response.read()
+    return WorkerAnswer(response.status, response.read(), response.getheader(MODEL_HEADER))
+
+
+def _other_model(worker: WorkerAddress, before: str, now: str | None) -> ModelUnavailableError:
+    if now is None:
+        return _unfit(worker, "vectors without the name of their model")
+    told = f"embedding remote {worker.address} embeds with {unquote(now)} now, not with {before} as before"
+    return ModelUnavailableError(told, AGAIN_REMEDY)
 
 
 def _unreachable(worker: WorkerAddress, error: BaseException) -> ModelUnavailableError:
@@ -191,25 +208,25 @@ class WorkerLine:
     lock: threading.Lock = field(default_factory=threading.Lock)
     connection: PinnedConnection | None = None
 
-    def asked(self, path: str, payload: object) -> bytes:
+    def asked(self, path: str, payload: object) -> WorkerAnswer:
         body = None if payload is None else json.dumps(payload).encode()
         headers = {"Authorization": f"Bearer {self.worker.token}", "Content-Type": JSON}
         with self.lock:
-            status, data = self._exchanged("GET" if body is None else "POST", path, body, headers)
-        if status == UNAUTHORIZED:
+            answer = self._exchanged("GET" if body is None else "POST", path, body, headers)
+        if answer.status == UNAUTHORIZED:
             raise ModelUnavailableError(f"embedding remote {self.worker.address} refused the key", KEY_REMEDY)
-        if status != ANSWERED:
-            shown = data[:SHOWN_BYTES].decode(errors="replace")
-            told = f"embedding remote {self.worker.address} answered {status}: {shown}"
+        if answer.status != ANSWERED:
+            shown = answer.data[:SHOWN_BYTES].decode(errors="replace")
+            told = f"embedding remote {self.worker.address} answered {answer.status}: {shown}"
             raise ModelUnavailableError(told, FAILED_REMEDY)
-        return data
+        return answer
 
     def close(self) -> None:
         with self.lock:
             if self.connection is not None:
                 self.connection.close()
 
-    def _exchanged(self, method: str, path: str, body: bytes | None, headers: dict[str, str]) -> tuple[int, bytes]:
+    def _exchanged(self, method: str, path: str, body: bytes | None, headers: dict[str, str]) -> WorkerAnswer:
         connection = self.connection or self._connected()
         again = connection.sock is not None
         while True:
@@ -260,23 +277,30 @@ class Remote:
         self.line.close()
 
     def encode(self, texts: Sequence[str], *, query: bool) -> Halves:
-        width = self._said().width
+        said = self._said()
         parts = [
-            _vectors_in(self.worker, self.line.asked(EMBED, {"texts": list(part), "query": query}), len(part), width)
+            self._embedded(said, part, query=query)
             for part in (texts[at : at + MOST_TEXTS] for at in range(0, len(texts), MOST_TEXTS))
         ]
-        return np.concatenate(parts) if parts else np.empty((0, width), np.float16)
+        return np.concatenate(parts) if parts else np.empty((0, said.width), np.float16)
 
     def rerank(self, query: str, texts: Sequence[str]) -> Floats:
         parts = [
-            _scores_in(self.worker, self.line.asked(RERANK, {"query": query, "texts": list(part)}), len(part))
+            _scores_in(self.worker, self.line.asked(RERANK, {"query": query, "texts": list(part)}).data, len(part))
             for part in (texts[at : at + MOST_TEXTS] for at in range(0, len(texts), MOST_TEXTS))
         ]
         return np.concatenate(parts) if parts else np.empty(0, np.float32)
 
+    def _embedded(self, said: WorkerSays, part: Sequence[str], *, query: bool) -> Halves:
+        answer = self.line.asked(EMBED, {"texts": list(part), "query": query})
+        if answer.model != quote(said.model, safe=""):
+            self.said = None
+            raise _other_model(self.worker, said.model, answer.model)
+        return _vectors_in(self.worker, answer.data, len(part), said.width)
+
     def _said(self) -> WorkerSays:
         if self.said is None:
-            self.said = _checked(self.worker, self.release, self.line.asked(INFO, None))
+            self.said = _checked(self.worker, self.release, self.line.asked(INFO, None).data)
         return self.said
 
 

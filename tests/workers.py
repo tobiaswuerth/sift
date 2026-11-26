@@ -92,6 +92,7 @@ def asked(
 @final
 class CannedServer(http.server.ThreadingHTTPServer):
     answers: Mapping[str, tuple[int, bytes]] = {}
+    said: Mapping[str, str] = {}
 
 
 @final
@@ -104,17 +105,22 @@ class CannedAnswers(http.server.BaseHTTPRequestHandler):
         self._answered()
 
     def _answered(self) -> None:
-        status, body = cast("CannedServer", self.server).answers[self.path]
+        server = cast("CannedServer", self.server)
+        status, body = server.answers[self.path]
         self.send_response(status)
         self.send_header("Content-Length", str(len(body)))
+        for name, value in server.said.items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
 
 @contextmanager
-def canned(key: WorkerKey, answers: Mapping[str, tuple[int, bytes]]) -> Generator[WorkerAddress]:
+def canned(
+    key: WorkerKey, answers: Mapping[str, tuple[int, bytes]], said: Mapping[str, str] | None = None
+) -> Generator[WorkerAddress]:
     server = CannedServer((LOOPBACK, 0), CannedAnswers)
-    server.answers = answers
+    server.answers, server.said = answers, said or {}
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(key.certificate, key.private_key)

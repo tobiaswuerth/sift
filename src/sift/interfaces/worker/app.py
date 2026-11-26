@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 from typing import cast
+from urllib.parse import quote
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -16,7 +17,7 @@ from sift.domain.arrays import floats
 from sift.domain.text.decoding import encodable
 from sift.domain.text.json_values import deeper_than
 from sift.inference.loading import Resting
-from sift.inference.remote import EMBED, INFO, MOST_TEXTS, RERANK
+from sift.inference.remote import EMBED, INFO, MODEL_HEADER, MOST_TEXTS, RERANK
 from sift.interfaces.server.app import body_of
 
 MOST_BODY = 32 << 20
@@ -34,6 +35,10 @@ class Lent:
     models: Resting
     said: Mapping[str, object]
     work: ThreadPoolExecutor
+
+    @property
+    def model(self) -> str:
+        return str(self.said["model"])
 
 
 def _authorized(lent: Lent, request: Request) -> bool:
@@ -90,7 +95,7 @@ async def embed_answered(lent: Lent, request: Request) -> Response:
     if refused is not None:
         return refused
     vectors = await _worked(lent, partial(lent.models.encode, texts, query=query))
-    return Response(vectors.tobytes(), media_type=OCTETS)
+    return Response(vectors.tobytes(), media_type=OCTETS, headers={MODEL_HEADER: quote(lent.model, safe="")})
 
 
 async def rerank_answered(lent: Lent, request: Request) -> Response:
