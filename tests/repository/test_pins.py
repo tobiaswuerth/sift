@@ -31,6 +31,13 @@ def test_every_uv_a_workflow_sets_up_is_pinned() -> None:
     assert unpinned == set()
 
 
+def test_every_hook_repository_is_pinned_at_a_commit_that_names_its_tag() -> None:
+    config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    revisions = matches(r"\n    rev: (.*)", config)
+    assert len(revisions) == config.count("- repo: https://")
+    assert [each for each in revisions if re.fullmatch(r"[0-9a-f]{40}  # frozen: \S+", each) is None] == []
+
+
 def test_no_hook_installs_a_dependency_of_no_fixed_version() -> None:
     config = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
     added = [

@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -15,7 +15,7 @@ repos:
       - id: fix-byte-order-marker  # Windows PowerShell 5.1 writes UTF-8 with one
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.6
+    rev: 9026c9127e153371d7a78dfcb0c45ae2046a3d10  # frozen: v0.17.6
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -67,28 +67,28 @@ repos:
         always_run: true
 
   - repo: https://github.com/abravalheri/validate-pyproject
-    rev: '0.26'
+    rev: 17e12779811926f000bdfa1795f9e3735dd71ac3  # frozen: 0.26
     hooks:
       - id: validate-pyproject
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
-    rev: 0.39.0
+    rev: a76b92851fc9eede9f9bc4073eb55202f34eb0df  # frozen: 0.39.0
     hooks:
       - id: check-github-workflows
       - id: check-dependabot
 
   - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
-    rev: v1.7.12.25
+    rev: 805f85e558841bf4d852335e036b33d2b26be1cc  # frozen: v1.7.12.25
     hooks:
       - id: actionlint
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.3
+    rev: 57b21406f092110c18776e39b0bda50d37c945c8  # frozen: v2.4.3
     hooks:
       - id: codespell
 
   # The workflows' security: credentials left behind, input run as code, triggers that hand a fork's code secrets.
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: v1.32.0
+    rev: 06a39750ec31860bb44f2acf67182c40016cd1e7  # frozen: v1.32.0
     hooks:
       - id: zizmor
