@@ -52,6 +52,16 @@ def test_a_block_missing_or_of_another_size_than_its_ranges_say_is_damage(sql: s
             search(stores, Term("w0"), 10)
 
 
+def test_the_positions_of_a_short_list_gone_since_the_list_was_read_are_damage() -> None:
+    notes: Round = {f"n{n}.md": ("", "N", "alpha beta" if n < 2 else "filler") for n in range(6)}
+    with collections([[notes]]) as (stores, _):
+        (store,) = stores
+        plan = planned(store, Phrase(("alpha", "beta")))
+        store.transaction.connection.execute("DELETE FROM keyword_postings WHERE term = 'beta'")
+        with pytest.raises(DamagedError, match="a list of positions is missing from the keyword index"):
+            prepared(plan)
+
+
 @pytest.mark.parametrize("place", [0, 1 << 40])
 def test_ranges_outside_their_segment_are_damage(place: int) -> None:
     far = ranged(np.array([place], np.int64), np.ones(1, np.int64), np.zeros(1, np.uint8))
