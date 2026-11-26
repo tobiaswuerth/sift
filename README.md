@@ -88,7 +88,9 @@ can't reach your computer.
 | `collections` | The collections: folders, counts, front-matter fields, links, and the jobs that run |
 | `reindex` | Read files again right after they were written or deleted; changes only sift's stores, never a file |
 
-Every hit carries `id` (`collection/path`), `title`, `first_line` and `last_line`, `score` and the passage's `text`.
+Every hit carries `id` (`collection/path`), `title`, `first_line` and `last_line`, `score` and the passage's `text`;
+the answer says what its scores are by (`scored_by`). One answer holds 100,000 characters of text: `get` cuts a longer
+text at a line and says how to get the rest, and a search leaves the text of its last hits out and says so.
 `search` takes up to 20 queries per call, filters on front matter, paths and links, `compact` (no text), `adaptive`
 (only the results before the largest drop in score), `offset` to page on, and more; the tools' schemas describe every
 parameter. When an agent connects, the server tells it which mode fits which kind of question, how to research in

@@ -7,12 +7,10 @@ from sift.api.requests import shown_value
 from sift.api.wire import Json, encoded
 from sift.domain.text.lines import NEWLINE, line_count
 from sift.interfaces.acts.acting import answered
-from sift.interfaces.mcp.answers import ToolAnswer, said
+from sift.interfaces.mcp.answers import FULL, MOST_TEXT, ToolAnswer, said
 from sift.interfaces.mcp.schemas import Schema, schema_of
 from sift.interfaces.mcp.tools import Tool, ToolRunning
 
-MOST_TEXT = 100_000
-FULL = f"this answer's text is at its {MOST_TEXT:,} characters"
 REST = f"lines {{first:,}} to {{last:,}} are left out, as {FULL}: get them with first_line {{first}}"
 LATER = f"left out, as {FULL}: get it in a call of its own"
 LONG_LINE = (

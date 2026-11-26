@@ -93,9 +93,9 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.interfaces.console.live` | `HEARTBEAT_SECONDS` | `60.0` |
 | `sift.interfaces.console.live` | `TICK_SECONDS` | `0.5` |
 | `sift.interfaces.console.live` | `STOP_SECONDS` | `5.0` |
+| `sift.interfaces.mcp.answers` | `MOST_TEXT` | `100_000` |
 | `sift.interfaces.mcp.holdings` | `MOST_FIELDS_LISTED` | `200` |
 | `sift.interfaces.mcp.instructions` | `MOST_FIELDS` | `30` |
-| `sift.interfaces.mcp.reading` | `MOST_TEXT` | `100_000` |
 | `sift.interfaces.mcp.searches` | `MOST_QUERIES` | `20` |
 | `sift.interfaces.server.agents` | `JOB_WAIT_SECONDS` | `20.0` |
 | `sift.interfaces.server.app` | `ALIVE_SECONDS` | `30.0` |
