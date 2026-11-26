@@ -24,7 +24,7 @@ from sift.interfaces.server.serving import (
     stopped_as_by_ctrl_c,
 )
 from sift.interfaces.worker.app import Lent, worker_app
-from sift.interfaces.worker.keys import FOLDER, WorkerKey, worker_key
+from sift.interfaces.worker.keys import FOLDER, WorkerKey, unread_key, worker_key
 from sift.settings import Settings
 from sift.storage.database import private_folder
 from sift.storage.writer import sole_writer
@@ -100,7 +100,10 @@ def lent(
                 timeout_keep_alive=how.keep_alive_seconds,
                 limit_concurrency=MOST_CONNECTIONS,
             )
-            config.load()
+            try:
+                config.load()
+            except ssl.SSLError as error:
+                raise unread_key(key.certificate.parent, error) from None
             cast("ssl.SSLContext", config.ssl).minimum_version = ssl.TLSVersion.TLSv1_2
             port = cast("tuple[str, int]", listening.getsockname())[1]
             yield WorkerServer(key, uvicorn.Server(config), listening, port)

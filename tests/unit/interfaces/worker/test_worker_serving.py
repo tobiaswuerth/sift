@@ -109,6 +109,13 @@ def test_a_port_another_program_holds_is_refused(settings: Settings) -> None:
             lend(settings, ServeWorker(port=port, host=LOOPBACK), VERSION, unheard, quick())
 
 
+def test_a_worker_whose_private_key_cannot_be_read_is_refused_saying_to_make_a_new_one(settings: Settings) -> None:
+    worker_key(settings.home).private_key.write_bytes(b"no key")
+    with pytest.raises(StoreUnavailableError, match=r"the worker's key in .*worker cannot be read: ") as refused:
+        lend(settings, HERE, VERSION, unheard, quick())
+    assert refused.value.remedy == "delete that folder: the worker makes a new key, to copy to the machines that use it"
+
+
 def test_the_worker_takes_no_tls_older_than_1_2(settings: Settings) -> None:
     with working(settings, Hashed()) as worker:
         tls = worker.running.server.config.ssl

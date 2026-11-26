@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
+from sift.api.errors import StoreUnavailableError
 from sift.inference.remote import fingerprint
 from sift.storage.database import private_bytes
 
@@ -19,6 +20,7 @@ PRIVATE_KEY = "key.pem"
 TOKEN_BYTES = 32
 COMMON_NAME = "sift worker"
 VALID_DAYS = 100 * 365
+UNREAD_REMEDY = "delete that folder: the worker makes a new key, to copy to the machines that use it"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,10 +55,20 @@ def _made(certificate: Path, private_key: Path, token: Path) -> None:
     private_bytes(token, secrets.token_urlsafe(TOKEN_BYTES).encode())
 
 
+def unread_key(folder: Path, why: object) -> StoreUnavailableError:
+    return StoreUnavailableError(f"the worker's key in {folder} cannot be read: {why}", UNREAD_REMEDY)
+
+
 def worker_key(home: Path) -> WorkerKey:
     folder = home / FOLDER
     token, certificate, private_key = folder / ADMISSION_FILE, folder / CERTIFICATE, folder / PRIVATE_KEY
     if not (token.is_file() and certificate.is_file() and private_key.is_file()):
         _made(certificate, private_key, token)
-    pin = fingerprint(ssl.PEM_cert_to_DER_cert(certificate.read_text(encoding="ascii")))
-    return WorkerKey(token.read_text(encoding="ascii").strip(), pin, certificate, private_key)
+    try:
+        shown = ssl.PEM_cert_to_DER_cert(certificate.read_text(encoding="ascii"))
+        admission = token.read_text(encoding="ascii").strip()
+    except ValueError as error:
+        raise unread_key(folder, error) from None
+    if not (shown and admission):
+        raise unread_key(folder, "its certificate or its token is empty")
+    return WorkerKey(admission, fingerprint(shown), certificate, private_key)
