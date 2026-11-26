@@ -29,27 +29,32 @@ NONE_YET = "No collections are indexed yet."
 UNLISTED = "sift cannot list the collections now: {message}; fix: {remedy}"
 LISTED = "Indexed collections (the tool `collections` lists them, with their fields and the jobs running):"
 PLAIN_FIELD = re.compile(r"[\w.-]{1,40}")
-MOST_FIELDS = 30
+CLIENTS_KEEP = 2_048
+FIELDS_NAMED = (30, 8, 0)
 
 
-def _fields(names: Sequence[str]) -> str:
-    plain = [name for name in names if PLAIN_FIELD.fullmatch(name)][:MOST_FIELDS]
+def _fields(names: Sequence[str], most: int) -> str:
+    plain = [name for name in names if PLAIN_FIELD.fullmatch(name)][:most]
     more = len(names) - len(plain)
     if not plain:
         return counted(more, "field")
     return ", ".join(plain) + (f" and {more:,} more" if more else "")
 
 
-def _line(one: CollectionStatus) -> str:
+def _line(one: CollectionStatus, most_fields: int) -> str:
     contents = one.contents
     if not isinstance(contents, Counted):
         return f"- {one.name} ({one.folder}): {contents.message}"
     said = f"- {one.name} ({one.folder}): {counted(contents.documents, 'document')}"
-    if contents.fields:
-        said += f"; front matter: {_fields(contents.fields)}"
+    if contents.fields and most_fields:
+        said += f"; front matter: {_fields(contents.fields, most_fields)}"
     if contents.links:
         said += f"; {counted(contents.links, 'link')}, {contents.unresolved:,} unresolved"
-    return said if one.active else f"{said}; inactive"
+    return said if one.active else f"{said}; inactive: not searched"
+
+
+def _listed(status: Status, most_fields: int) -> str:
+    return f"{HOW}\n\n{LISTED}\n" + "\n".join(_line(one, most_fields) for one in status.collections)
 
 
 def unlisted(error: SiftError) -> str:
@@ -59,4 +64,5 @@ def unlisted(error: SiftError) -> str:
 def instructions(status: Status) -> str:
     if not status.collections:
         return f"{HOW}\n\n{NONE_YET}"
-    return f"{HOW}\n\n{LISTED}\n" + "\n".join(_line(one) for one in status.collections)
+    fitting = (told for most in FIELDS_NAMED if len(told := _listed(status, most)) <= CLIENTS_KEEP)
+    return next(fitting, _listed(status, 0))

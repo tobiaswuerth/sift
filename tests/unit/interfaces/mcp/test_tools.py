@@ -1,12 +1,15 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import cast
 
 import pytest
 
-from sift.api.collections import CollectionStatus, Counted, Status, Unavailable
+from sift.api.collections import CollectionStatus, Counted, Status, Unavailable, UnreadableFile
 from sift.api.errors import InvalidRequestError, Problem, SiftError
 from sift.api.jobs import ServedJob
+from sift.api.links import Target, Unresolved
 from sift.api.wire import Json
 from sift.interfaces.mcp.offered import TOOLS
 from sift.interfaces.mcp.tools import Started
@@ -62,16 +65,62 @@ def test_reindex_says_how_each_file_went_or_that_its_job_still_runs(direct: Dire
     direct.finished = False
     assert called(direct, "reindex", {"files": ["open/Other.md"]}) == {
         "job": 4,
-        "running": "it runs on: collections lists it until it ends",
+        "running": True,
+        "note": "it runs on: collections lists it until it ends",
     }
+
+
+def test_collections_lists_the_link_targets_no_note_answers_to_when_asked(direct: Direct) -> None:
+    answer = called(direct, "collections", {"unresolved": True, "names": ["open"]})
+    assert answer["unresolved_targets"] == [{"target": "Secret", "documents": 1, "ids": ["open/Plan.md"]}]
+    assert direct.sent == [{"names": ["open"]}, {"collections": ["open"]}]
+    assert "unresolved_targets" not in called(direct, "collections", {})
+    with pytest.raises(InvalidRequestError) as refused:
+        called(direct, "collections", {"unresolved": "yes"})
+    assert refused.value.field == "unresolved"
+
+
+@dataclass(frozen=True, slots=True)
+class Linking:
+    def read(self, name: str, data: Json) -> object:
+        assert isinstance(data, dict)
+        return Status("/home", ()) if name == "status" else Unresolved((Target("Gone", 2, ("v/a.md",)),), more=True)
+
+    def job(self, name: str, data: Json) -> Started:
+        raise AssertionError((name, data))
+
+    def jobs(self) -> tuple[ServedJob, ...]:
+        return ()
+
+
+def test_collections_says_when_more_link_targets_wait_than_it_lists() -> None:
+    answer = cast("Object", tool("collections").call(Linking(), {"unresolved": True}))
+    assert (answer["unresolved_targets"], answer["more_unresolved"]) == (
+        [{"target": "Gone", "documents": 2, "ids": ["v/a.md"]}],
+        True,
+    )
+
+
+def test_collections_lists_the_files_that_could_not_be_read_when_asked() -> None:
+    unread = tuple(UnreadableFile(f"scan{n}.pdf", "no text in it") for n in range(101))
+    status = Status("/home", (CollectionStatus("notes", "/n", "/s/n", Counted(5, 9, 0, 101, unread)),))
+    answer = cast("Object", tool("collections").call(Faked(status, {"unreadable": True}), {"unreadable": True}))
+    (shown,) = cast("list[Object]", answer["collections"])
+    listed = cast("list[Object]", shown["unreadable_files"])
+    assert (shown["unreadable"], len(listed), listed[0]) == (
+        101,
+        100,
+        {"path": "scan0.pdf", "problem": "no text in it"},
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class Faked:
     status: Status
+    asked: Mapping[str, Json] = MappingProxyType({})
 
     def read(self, name: str, data: Json) -> object:
-        assert (name, data) == ("status", {})
+        assert (name, data) == ("status", dict(self.asked))
         return self.status
 
     def job(self, name: str, data: Json) -> Started:

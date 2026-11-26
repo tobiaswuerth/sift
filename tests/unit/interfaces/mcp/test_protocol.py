@@ -2,6 +2,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import cast
 
+import pytest
+
 from sift.api.errors import InvalidRequestError, NotFoundError
 from sift.api.wire import Json
 from sift.interfaces.mcp.protocol import LATEST, Serves, reply
@@ -30,6 +32,8 @@ class Served:
         self.calls.append((tool.name, arguments))
         if arguments.get("k") == 0:
             raise REFUSED
+        if arguments.get("k") == -1:
+            raise InvalidRequestError("-1 is outside 1 to 10,000", "give 1 to 10,000", "k")
         if arguments.get("note") == "gone":
             raise NotFoundError("no note or document 'gone'", "take the id from a search result")
         return {"said": cast("Json", dict(arguments))}
@@ -125,7 +129,7 @@ def test_a_refused_call_says_what_went_wrong_and_how_to_fix_it_to_the_agent() ->
         "jsonrpc": "2.0",
         "id": 7,
         "result": {
-            "content": [{"type": "text", "text": "k: k is 0, not 1 to 10,000; fix: give 1 to 10,000"}],
+            "content": [{"type": "text", "text": "k is 0, not 1 to 10,000; fix: give 1 to 10,000"}],
             "structuredContent": {
                 "error": {
                     "kind": "invalid_request",
@@ -150,12 +154,45 @@ def test_an_error_without_a_field_is_said_plainly() -> None:
     ]
 
 
+def test_an_error_that_does_not_name_its_field_is_said_with_it() -> None:
+    answer = asked("tools/call", {"name": "echo", "arguments": {"k": -1}})
+    assert isinstance(answer, dict)
+    result = answer["result"]
+    assert isinstance(result, dict)
+    assert result["content"] == [{"type": "text", "text": "k: -1 is outside 1 to 10,000; fix: give 1 to 10,000"}]
+
+
+def test_a_tool_called_with_null_for_its_arguments_gets_none() -> None:
+    served = Served()
+    asked("tools/call", {"name": "echo", "arguments": None}, served=served)
+    assert served.calls == [("echo", {})]
+
+
 def test_an_unknown_tool_is_a_protocol_error_naming_the_tools() -> None:
-    assert asked("tools/call", {"name": "vsearch", "arguments": {}}) == {
+    assert asked("tools/call", {"name": "fetch", "arguments": {}}) == {
         "jsonrpc": "2.0",
         "id": 7,
-        "error": {"code": -32602, "message": "there is no tool 'vsearch': sift's tools are echo"},
+        "error": {"code": -32602, "message": "there is no tool 'fetch': sift's tools are echo"},
     }
+
+
+@pytest.mark.parametrize(
+    "former, now",
+    [
+        ("query", "search"),
+        ("vsearch", 'search with mode "semantic"'),
+        ("similar", "related"),
+        ("links", 'related with kind "links" or "backlinks"'),
+        ("mentions", 'related with kind "mentions"'),
+        ("status", "collections"),
+        ("unresolved", "collections with unresolved: true"),
+    ],
+)
+def test_a_tool_of_sift_1_is_answered_with_the_tool_that_does_it_now(former: str, now: str) -> None:
+    answer = cast("dict[str, dict[str, object]]", asked("tools/call", {"name": former, "arguments": {}}))
+    assert answer["error"]["message"] == (
+        f"there is no tool {former!r}: sift's tools are echo; what sift 1.x's {former} did, {now} does"
+    )
 
 
 def test_arguments_that_are_no_object_are_refused() -> None:

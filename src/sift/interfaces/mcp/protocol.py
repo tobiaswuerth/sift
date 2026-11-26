@@ -15,6 +15,17 @@ NOT_A_MESSAGE = -32600
 NO_METHOD = -32601
 WRONG_PARAMS = -32602
 ONE_MESSAGE = "send one JSON-RPC 2.0 message as a JSON object"
+FORMER_TOOLS: Mapping[str, str] = MappingProxyType(
+    {
+        "query": "search",
+        "vsearch": 'search with mode "semantic"',
+        "similar": "related",
+        "links": 'related with kind "links" or "backlinks"',
+        "mentions": 'related with kind "mentions"',
+        "status": "collections",
+        "unresolved": "collections with unresolved: true",
+    }
+)
 
 
 class Serves(Protocol):
@@ -70,7 +81,7 @@ def _text(value: Json) -> str:
 
 def _said(error: SiftError) -> str:
     told = f"{error.message}; fix: {error.remedy}" if error.remedy else error.message
-    return f"{error.field}: {told}" if error.field else told
+    return told if error.field is None or error.message.startswith(error.field) else f"{error.field}: {told}"
 
 
 def _tool(served: Serves, name: object) -> Tool:
@@ -78,13 +89,16 @@ def _tool(served: Serves, name: object) -> Tool:
     found = next((tool for tool in tools if tool.name == name), None)
     if found is None:
         named = ", ".join(tool.name for tool in tools)
-        raise RefusedError(WRONG_PARAMS, f"there is no tool {name!r}: sift's tools are {named}")
+        now = FORMER_TOOLS.get(name) if isinstance(name, str) else None
+        does = "" if now is None else f"; what sift 1.x's {name} did, {now} does"
+        raise RefusedError(WRONG_PARAMS, f"there is no tool {name!r}: sift's tools are {named}{does}")
     return found
 
 
 def _called(served: Serves, params: Mapping[str, object], _version: str) -> Json:
     tool = _tool(served, params.get("name"))
-    arguments = _object(params.get("arguments", {}), "a tool's arguments")
+    given = params.get("arguments")
+    arguments: Mapping[str, object] = {} if given is None else _object(given, "a tool's arguments")
     try:
         answer = served.called(tool, arguments)
     except SiftError as error:
