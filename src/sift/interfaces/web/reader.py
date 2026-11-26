@@ -1,4 +1,6 @@
 import re
+from collections.abc import Sequence
+from itertools import accumulate
 from urllib.parse import urlencode
 
 from sift.api.documents import Documents, DocumentText
@@ -11,6 +13,8 @@ from sift.interfaces.web.marking import marked, pattern_of
 from sift.interfaces.web.view import PAGE, PREFIX, PageView, filtered, href
 
 READER_LINES = 2_000
+READER_CHARACTERS = 1 << 20
+CUT = "{left:,} more characters in this line: Open the file shows them all"
 SHORT = 60
 HEADING = re.compile(r"(#{1,6}) ")
 SPAN = re.compile(r"([0-9]{1,9})-([0-9]{1,9})")
@@ -47,12 +51,19 @@ def _line(number: int, text: str, span: tuple[int, int] | None, view: PageView) 
     shown = text[heading.end() :] if heading else text
     hit = span is not None and span[0] <= number <= span[1]
     classes = " ".join(each for each in (kind, "hit" if hit else None) if each) or None
+    left = len(shown) - READER_CHARACTERS
     return tag(
         "div",
         {"class": classes, "id": f"l{number}"},
         tag("span", {"class": "n"}, number),
-        marked(shown, pattern_of(view.q)),
+        marked(shown[:READER_CHARACTERS], pattern_of(view.q)),
+        tag("span", {"class": "cut"}, CUT.format(left=left)) if left > 0 else "",
     )
+
+
+def _fitting(lines: Sequence[str]) -> int:
+    held = accumulate(len(line) for line in lines)
+    return max(sum(1 for each in held if each <= READER_CHARACTERS), min(1, len(lines)))
 
 
 def _lines(view: PageView, text: str, span: tuple[int, int] | None) -> tuple[Html, int, int, int]:
@@ -62,7 +73,7 @@ def _lines(view: PageView, text: str, span: tuple[int, int] | None) -> tuple[Htm
     total = len(lines)
     first = view.at or (max(1, span[0] - READER_LINES // 10) if span else 1)
     first = min(first, max(1, total))
-    last = min(total, first + READER_LINES - 1)
+    last = first - 1 + _fitting(lines[first - 1 : first - 1 + READER_LINES])
     rows = [_line(number, lines[number - 1], span, view) for number in range(first, last + 1)]
     return tag("div", {"class": "text"}, rows), first, last, total
 

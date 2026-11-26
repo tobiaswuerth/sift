@@ -39,6 +39,7 @@ dl.fields dd a + a::before { content: ", "; color: var(--muted); }
 .text { font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .text .n { display: inline-block; width: 3.5rem; color: var(--muted); user-select: none; }
 .text .hit { background: #fd42; }
+.text .cut { display: block; color: var(--muted); }
 .text .h1, .text .h2, .text .h3 { font-weight: 700; }
 .part { color: var(--muted); font-size: .85rem; }
 @media (max-width: 60rem) { main { grid-template-columns: 1fr; } }

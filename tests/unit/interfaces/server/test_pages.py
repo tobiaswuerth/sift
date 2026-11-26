@@ -15,6 +15,7 @@ from sift.app.embedding import embed
 from sift.interfaces.acts.acting import Acting
 from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import HomeServer
+from sift.interfaces.web.reader import READER_CHARACTERS
 from sift.settings import Settings
 from tests.damage import damage_table
 from tests.files import write
@@ -188,6 +189,37 @@ def test_a_long_document_shows_in_parts(home: Settings, notes: Path) -> None:
     assert 'class="hit" id="l3000"' in at_hit
     assert "lines 2,800 to 4,100 of 4,100" in at_hit
     assert ("lines 4,001 to 4,100 of 4,100" in last, ">Later</a>" in last) == (True, False)
+
+
+def test_a_document_of_very_long_lines_shows_in_parts_no_longer_than_the_reader_holds(
+    home: Settings, notes: Path
+) -> None:
+    wide = "wide " * (READER_CHARACTERS // 10)
+    write(notes / "wide.md", "# Wide\n\n" + "".join(f"{wide}\n" for _ in range(5)))
+    indexed(home.home)
+    with running(home) as server:
+        first = page(server, doc="notes/wide.md")
+        later = page(server, doc="notes/wide.md", at="5")
+    assert ("lines 1 to 4 of 7" in first, 'id="l5"' in first, 'href="/ui?doc=notes%2Fwide.md&amp;at=5"' in first) == (
+        True,
+        False,
+        True,
+    )
+    assert "lines 5 to 6 of 7" in later
+
+
+def test_a_line_longer_than_the_reader_holds_shows_its_start_and_how_much_the_file_has_more(
+    home: Settings, notes: Path
+) -> None:
+    write(notes / "one.txt", ("word " * READER_CHARACTERS)[: READER_CHARACTERS + 500] + "\nthe second line\n")
+    indexed(home.home)
+    with running(home) as server:
+        first = page(server, doc="notes/one.txt")
+        later = page(server, doc="notes/one.txt", at="2")
+    assert "lines 1 to 1 of 2" in first
+    assert '<span class="cut">500 more characters in this line: Open the file shows them all</span></div>' in first
+    assert len(first) < 2 * READER_CHARACTERS
+    assert ('<span class="n">2</span>the second line</div>' in later, 'class="cut"' in later) == (True, False)
 
 
 def test_a_pdf_opens_in_the_browser_s_own_viewer(home: Settings, notes: Path) -> None:
