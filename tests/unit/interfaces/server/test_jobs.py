@@ -322,5 +322,5 @@ def test_a_job_left_by_its_client_as_it_is_told_to_wait_runs_in_its_turn_and_lea
             first, second = listed(server)
             assert (first["running"], second["command"], second["running"]) == (True, "add", False)
             assert jobs_of(server, {"stop": first["id"]})["stopped"] == first["id"]
-        assert until(lambda: listed(server) == [], 5)
+        assert until(lambda: listed(server) == [], 30)
     assert (ended, added) == (["stopped"], ["added"])

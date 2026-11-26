@@ -4,6 +4,7 @@ from collections.abc import Mapping
 import pytest
 
 from sift.interfaces.cli.entries import ENTRIES
+from sift.interfaces.cli.flags import FLAGS
 from tests.tools.idiom_problems import problems
 from tools import check_idioms, idioms_storage
 from tools.canonical import canonical
@@ -223,6 +224,10 @@ def test_a_flag_of_the_command_line_outside_the_interfaces_is_found() -> None:
     assert problems("src/sift/app/a.py", 'W = "from one sift only, or a newer sift"\n') == []
     assert problems("src/sift/interfaces/cli/a.py", 'X = "-k 10 or sift embed"\n') == []
     assert set(check_idioms.COMMANDS) >= set(ENTRIES)
+    shorts = {flag.short for flag in FLAGS.values() if flag.short is not None}
+    assert shorts == {"-k", "-c", "-f"}
+    assert all(check_idioms.FLAG.fullmatch(each) for each in shorts)
+    assert all(check_idioms.FLAG.fullmatch(flag.long) for flag in FLAGS.values() if flag.long is not None)
 
 
 @pytest.mark.parametrize(

@@ -40,6 +40,24 @@ checks that the models rest and come back. Its session has CPU PyTorch; for the 
 Tests run on at most 8 workers: each worker imports every test module, the model libraries among them, and on 32
 threads more workers made the suite slower (35 s on 8, 101 s on 32).
 
+## Where things are
+
+`src/sift` in layers, each importing only those after it; [architecture.md](architecture.md) says what they do.
+
+- `interfaces`: what talks to the outside. `cli` (the commands and what they print), `mcp` (the agents' tools),
+  `server` (the home process: its gate, jobs and routes), `web` (the UI's pages), `worker` (a GPU lent to other
+  machines), `console` (colour, progress), and `acts`: the one table of what sift can do, which all of them call.
+- `app`: the use cases, one module each: index, embed, search, query, links, import, move.
+- `retrieval`: keyword search over the stored postings and vector search over the codes. `ingest`: listing a
+  folder and reading its files, the readers' processes among them.
+- `storage`: all SQL: the catalog, a collection's store and its layout, the keyword index, the vectors, the lock
+  of the one writer. `inference`: the models, where they run, and the worker's client.
+- `domain`: what needs no I/O: passages, tokens, the query grammar, the postings' and codes' formats, ranking.
+- `api`: the requests and answers every interface speaks, the errors with their codes, and their JSON.
+
+`sift.settings` reads the environment; `sift.late` loads a module when it is first needed, so that a command
+starts without the model libraries.
+
 ## Rules the checks hold
 
 - No comments and no docstrings: names, types, tests and structure carry the meaning (`python -m tools prose`).
