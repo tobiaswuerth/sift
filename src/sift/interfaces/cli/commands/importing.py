@@ -9,10 +9,10 @@ from sift.interfaces.cli.commands.making import command
 from sift.interfaces.cli.context import Command
 from sift.interfaces.cli.shown.outcome import Shown
 from sift.interfaces.console.style import Style, Tone
-from sift.interfaces.console.text import labelled, printable
+from sift.interfaces.console.text import labelled, table
 
-NAME = 24
-HEADING = f"{'collection':<{NAME}}{'documents':>20}{'passages':>22}{'vectors':>22}"
+HEADING = ("collection", "documents", "passages", "vectors")
+COUNTS = frozenset({1, 2, 3})
 KEPT = "sift 1.x's files are as they were: remove its stores and sift.db once these are as you want them"
 
 
@@ -24,19 +24,23 @@ def _pair(before: int, now: int) -> str:
     return f"{before:,} -> {now:,}"
 
 
-def _row(name: str, brought: Brought) -> str:
-    counted = (
+def _row(name: str, brought: Brought) -> tuple[str, ...]:
+    return (
+        name,
         _pair(brought.documents_before, brought.documents),
         _pair(brought.passages_before, brought.passages),
         _pair(brought.vectors_before, brought.vectors),
     )
-    return f"{printable(name):<{NAME}}{counted[0]:>20}{counted[1]:>22}{counted[2]:>22}"
+
+
+def imported_table(done: HomeImported) -> tuple[str, ...]:
+    rows = [_row(each.name, each.outcome) for each in done.collections if isinstance(each.outcome, Brought)]
+    return table([HEADING, *rows], COUNTS) if rows else ()
 
 
 def _shown(done: HomeImported, _platform: str, style: Style) -> Shown:
-    rows = tuple(_row(each.name, each.outcome) for each in done.collections if isinstance(each.outcome, Brought))
-    table = (HEADING, *rows) if rows else ()
-    return Shown(table, (labelled("kept", KEPT, Tone.SECONDARY, style),) if rows else ())
+    shown = imported_table(done)
+    return Shown(shown, (labelled("kept", KEPT, Tone.SECONDARY, style),) if shown else ())
 
 
 def _failed(done: HomeImported) -> bool:
