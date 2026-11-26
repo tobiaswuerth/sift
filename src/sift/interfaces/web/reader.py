@@ -9,7 +9,7 @@ from sift.api.links import Links
 from sift.interfaces.acts.acting import answered
 from sift.interfaces.web.explore import PageReads, refusal
 from sift.interfaces.web.html import Html, joined, tag
-from sift.interfaces.web.marking import marked, pattern_of
+from sift.interfaces.web.marking import marked, sought
 from sift.interfaces.web.view import PAGE, PREFIX, PageView, filtered, href
 
 READER_LINES = 2_000
@@ -56,7 +56,7 @@ def _line(number: int, text: str, span: tuple[int, int] | None, view: PageView) 
         "div",
         {"class": classes, "id": f"l{number}"},
         tag("span", {"class": "n"}, number),
-        marked(shown[:READER_CHARACTERS], pattern_of(view.q)),
+        marked(shown[:READER_CHARACTERS], sought(view.q)),
         tag("span", {"class": "cut"}, CUT.format(left=left)) if left > 0 else "",
     )
 

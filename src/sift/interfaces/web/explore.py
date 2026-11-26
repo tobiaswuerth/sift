@@ -1,7 +1,6 @@
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from re import Pattern
 from typing import Protocol, cast
 
 from sift.api.browsing import Browsed
@@ -11,7 +10,7 @@ from sift.api.search import Hit, SearchResult
 from sift.api.wire import Json
 from sift.interfaces.acts.acting import answered
 from sift.interfaces.web.html import Html, joined, tag
-from sift.interfaces.web.marking import pattern_of, snippet
+from sift.interfaces.web.marking import Sought, snippet, sought
 from sift.interfaces.web.view import MODES, MOST, PAGE, PageView, filtered, filters_of, folder_glob, href
 
 FACET_VALUES = 8
@@ -107,10 +106,10 @@ def chips(view: PageView) -> Html:
     return tag("div", {"class": "chips"}, found) if found else Html("")
 
 
-def _hit(view: PageView, hit: Hit, pattern: Pattern[str] | None) -> Html:
+def _hit(view: PageView, hit: Hit, terms: Sought) -> Html:
     lines = f"{hit.first_line}-{hit.last_line}"
     link = tag("a", {"href": f"{href(view, doc=hit.id, lines=lines, at=0)}#l{hit.first_line}"}, hit.title)
-    shown = snippet(hit.text or "", pattern, hit.title)
+    shown = snippet(hit.text or "", terms, hit.title)
     return tag("li", {"class": "hit"}, tag("h2", None, link), tag("p", {"class": "id"}, hit.id), tag("p", None, shown))
 
 
@@ -121,13 +120,13 @@ def _more(view: PageView, *, more: bool) -> Html:
 
 
 def _hits(view: PageView, result: SearchResult, heading: str) -> Explored:
-    pattern = pattern_of(view.q)
+    terms = sought(view.q)
     notes = [
         tag("p", {"class": "note"}, f"{each.collection}: {each.message}" if each.collection else each.message)
         for each in (*result.unsearched, *result.left_out)
     ]
     listed = (
-        tag("ol", {"class": "hits"}, [_hit(view, hit, pattern) for hit in result.hits])
+        tag("ol", {"class": "hits"}, [_hit(view, hit, terms) for hit in result.hits])
         if result.hits
         else tag("p", None, "Nothing found.")
     )

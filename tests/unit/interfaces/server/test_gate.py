@@ -103,3 +103,26 @@ def test_a_read_that_comes_while_a_command_holds_the_home_alone_is_told_so_and_r
         assert not read.is_set()
     joined(thread, 30)
     assert (read.is_set(), gate.readers, gate.held_alone) == (True, 0, False)
+
+
+def test_a_command_stopped_while_it_waits_for_reads_stops_waiting_and_leaves_the_home_free() -> None:
+    gate, said = Gate(), list[Event]()
+
+    def stopped() -> None:
+        raise JobStoppedError("the job was stopped", "run it again")
+
+    waiting = gate.alone(said.append, patience=30, alive=stopped)
+    with gate.shared(said.append), pytest.raises(JobStoppedError), waiting:
+        raise AssertionError
+    with gate.alone(said.append):
+        assert gate.held_alone is True
+    assert said == [Noted(WAITING_FOR_READS)]
+
+
+def test_a_command_looks_more_than_once_for_the_reads_to_end_before_it_is_refused() -> None:
+    gate, looked, said = Gate(), list[int](), list[Event]()
+    with gate.shared(said.append):
+        waiting = gate.alone(said.append, patience=0.5, alive=lambda: looked.append(1))
+        with pytest.raises(StoreUnavailableError) as refused, waiting:
+            raise AssertionError
+    assert (refused.value.code, looked, said) == (Problem.BUSY, [1, 1], [Noted(WAITING_FOR_READS)])

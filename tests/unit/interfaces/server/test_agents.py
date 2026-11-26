@@ -162,6 +162,8 @@ def test_a_tool_refused_tells_the_agent_how_to_fix_the_call(home: Settings) -> N
         ({"Origin": "http://localhost:3000"}, 200),
         ({"MCP-Protocol-Version": "2099-01-01"}, 400),
         ({"MCP-Protocol-Version": "2025-06-18"}, 200),
+        ({"Content-Type": "text/plain"}, 415),
+        ({"Content-Type": "application/json; charset=utf-8"}, 200),
         ({"Host": "attacker.example"}, 400),
     ],
 )
@@ -203,6 +205,17 @@ def test_a_job_an_agent_left_runs_on_unwatched_and_is_listed(home: Settings) -> 
         None,
         [(started.number, "reindex", False)],
     )
+
+
+def test_a_job_that_itself_ran_out_of_time_has_failed_and_is_not_said_to_run_on(home: Settings) -> None:
+    def timed_out(_acting: Acting, _data: object) -> object:
+        raise TimeoutError("the share did not answer")
+
+    with running(home) as server:
+        agents = AgentsRunning(server.serving, {**HANDLED, "reindex": Handled(timed_out, writes=True)})
+        with pytest.raises(TimeoutError, match="the share did not answer"):
+            agents.job("reindex", {"files": ["notes/halo.md"]})
+        assert agents.jobs() == ()
 
 
 def _failing(error: Exception) -> Tool:

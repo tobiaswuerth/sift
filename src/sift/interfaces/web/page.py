@@ -1,7 +1,7 @@
 from sift.api.collections import Counted, Status
 from sift.api.errors import SiftError
 from sift.interfaces.acts.acting import answered
-from sift.interfaces.web.explore import PageReads, chips, explored
+from sift.interfaces.web.explore import PageReads, chips, explored, refusal
 from sift.interfaces.web.html import Html, joined, tag
 from sift.interfaces.web.reader import reader
 from sift.interfaces.web.view import MODES, PAGE, PREFIX, PageView, href
@@ -13,8 +13,8 @@ NAME = "sift"
 def _collections(view: PageView, reads: PageReads) -> Html:
     try:
         status = answered(reads.read("status", {}), Status)
-    except SiftError:
-        return Html("")
+    except SiftError as error:
+        return tag("section", {"class": "collections"}, refusal(error.message, error.remedy))
     rows = list[Html]()
     for one in status.collections:
         held = f"{one.contents.documents:,}" if isinstance(one.contents, Counted) else one.contents.message

@@ -1,4 +1,6 @@
 import http.client
+import json
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlencode
@@ -17,11 +19,13 @@ from sift.interfaces.server.handled import HANDLED, Handled
 from sift.interfaces.server.serving import HomeServer
 from sift.interfaces.web.reader import READER_CHARACTERS
 from sift.settings import Settings
-from tests.damage import damage_table
+from sift.storage.store_files import CATALOG
+from tests.damage import damage_pages, damage_table
 from tests.files import write
 from tests.homes import indexed, quiet
 from tests.models import Hashed
 from tests.serving import counted, running
+from tests.waits import joined, still_running
 
 type Got = tuple[int, Mapping[str, str], str]
 
@@ -176,6 +180,51 @@ def test_a_search_within_a_collection_folder_and_order_keeps_them(home: Settings
         text = page(server, q="dark", c="notes", path="2024", sort="-tag", to="", by="")
     assert ("notes/2024/odd.md" in text, "notes/tagged.md" in text) == (True, False)
     assert '<input type="hidden" name="c" value="notes"><input type="hidden" name="path" value="2024/">' in text
+
+
+def test_a_catalog_that_cannot_be_read_is_said_where_the_collections_would_be_listed(home: Settings) -> None:
+    damage_pages(home.home / CATALOG)
+    with running(home) as server:
+        text = page(server)
+    assert '<section class="collections"><div class="error" role="alert"><p>the catalog ' in text
+
+
+def test_the_original_file_is_not_opened_while_a_command_holds_the_home_alone(home: Settings) -> None:
+    answers = list[int]()
+    with running(home) as server:
+        with server.serving.gate.alone(quiet):
+            asking = threading.Thread(target=lambda: answers.append(got(server, "/ui/file?id=notes%2Ftagged.md")[0]))
+            asking.start()
+            still_running(asking, 0.3)
+        joined(asking, 30)
+    assert answers == [200]
+
+
+def sent(server: HomeServer, method: str, path: str) -> Got:
+    connection = http.client.HTTPConnection("127.0.0.1", server.endpoint.port, timeout=60)
+    try:
+        connection.request(method, path, b"{}" if method == "POST" else None)
+        response = connection.getresponse()
+        headers = {key.lower(): value for key, value in response.getheaders()}
+        return response.status, headers, response.read().decode()
+    finally:
+        connection.close()
+
+
+def test_what_is_no_page_or_asked_another_way_than_served_is_said_as_a_page_or_a_command_says_it(
+    home: Settings,
+) -> None:
+    with running(home) as server:
+        missing, posted, fetched = (
+            sent(server, "GET", "/favicon.ico"),
+            sent(server, "POST", "/ui"),
+            sent(server, "GET", "/api/search"),
+        )
+    assert (missing[0], missing[1]["content-type"], missing[2]) == (404, "text/plain; charset=utf-8", "no such page")
+    assert (posted[0], posted[1]["allow"], posted[2]) == (405, "GET, HEAD", "this page is not asked for that way")
+    assert (fetched[0], fetched[1]["allow"], fetched[1]["content-type"]) == (405, "POST", "application/json")
+    assert json.loads(fetched[2])["error"]["message"] == "a command is sent by POST"
+    assert missing[1]["x-content-type-options"] == "nosniff"
 
 
 def test_a_long_document_shows_in_parts(home: Settings, notes: Path) -> None:

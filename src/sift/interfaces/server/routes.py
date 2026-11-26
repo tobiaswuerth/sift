@@ -15,7 +15,14 @@ from sift.interfaces.server.activity import Activity
 from sift.interfaces.server.agents import agents_answered
 from sift.interfaces.server.app import HOSTS, Serving, command_route, unknown_command
 from sift.interfaces.server.handled import HANDLED, Handled, for_agents, for_pages
-from sift.interfaces.server.pages import file_answered, home_answered, own_alone, page_answered, style_answered
+from sift.interfaces.server.pages import (
+    file_answered,
+    home_answered,
+    no_page,
+    own_alone,
+    page_answered,
+    style_answered,
+)
 from sift.interfaces.web.view import PREFIX
 
 if TYPE_CHECKING:
@@ -23,6 +30,7 @@ if TYPE_CHECKING:
     from starlette.responses import Response
 
 LISTENED_FOR_LEAVING = MappingProxyType({"version": "3.0", "spec_version": "2.3"})
+COMMANDS = "/api/"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +54,11 @@ class ListeningForLeaving:
         await self.app({**scope, "asgi": dict(LISTENED_FOR_LEAVING)}, receive, send)
 
 
+async def unserved(request: "Request", error: Exception) -> "Response":
+    answer = unknown_command if request.url.path.startswith(COMMANDS) else no_page
+    return await answer(request, error)
+
+
 def served_app(serving: Serving, handled: Mapping[str, Handled] = HANDLED) -> Starlette:
     agents: Callable[[Request], Awaitable[Response]] = partial(agents_answered, serving, for_agents(handled))
     pages: Callable[[Request], Awaitable[Response]] = partial(page_answered, serving, for_pages(handled))
@@ -64,5 +77,5 @@ def served_app(serving: Serving, handled: Mapping[str, Handled] = HANDLED) -> St
             Middleware(ListeningForLeaving),
             Middleware(TrustedHostMiddleware, allowed_hosts=list(HOSTS)),
         ],
-        exception_handlers={404: unknown_command, 405: unknown_command},
+        exception_handlers={404: unserved, 405: unserved},
     )

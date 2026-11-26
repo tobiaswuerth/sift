@@ -13,6 +13,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
@@ -54,6 +55,8 @@ UNAUTHORIZED = InvalidRequestError(
     "no token, or a wrong one", "send the token sift serve keeps in its user's own folder", code=Problem.UNAUTHORIZED
 )
 UNKNOWN = NotFoundError("no such command", "send one of sift's commands to /api/COMMAND")
+NOT_BY_POST = 405
+POSTED_ALONE = InvalidRequestError("a command is sent by POST", "POST its request as JSON to /api/COMMAND")
 NO_JSON = InvalidRequestError("the request is no JSON", NO_JSON_REMEDY)
 TOO_LARGE = InvalidRequestError(f"the request is longer than {MOST_BODY:,} bytes", "send a shorter request")
 FAILED_REMEDY = "see the home process's log in SIFT_HOME/logs, and report it"
@@ -143,8 +146,8 @@ def _resident_of_the_searched_alone(serving: Serving, written: str) -> None:
     serving.decoded.kept_only(searched)
 
 
-def _written(serving: Serving, sent: Sent, report: Reporter) -> object:
-    with serving.gate.alone(report) if sent.handled.alone else nullcontext():
+def _written(serving: Serving, sent: Sent, report: Reporter, alive: Callable[[], None]) -> object:
+    with serving.gate.alone(report, alive=alive) if sent.handled.alone else nullcontext():
         serving.results.written()
         try:
             serving.watch.let_go()
@@ -184,7 +187,7 @@ def _answer(serving: Serving, sent: Sent, report: Reporter, noted: threading.Eve
     if job is None:
         return _read(serving, sent, report, noted)
     serving.jobs.began(job)
-    return _written(serving, sent, serving.jobs.reporting(job, report))
+    return _written(serving, sent, serving.jobs.reporting(job, report), partial(serving.jobs.alive, job))
 
 
 def _unheard(_event: Event) -> None:
@@ -315,7 +318,11 @@ async def _command(serving: Serving, name: str, handled: Handled, request: Reque
     return StreamingResponse(_streamed(serving, name, handled, data), media_type=LINES, headers=dict(SPOKEN))
 
 
-async def unknown_command(_request: Request, _error: Exception) -> Response:
+async def unknown_command(_request: Request, error: Exception) -> Response:
+    if isinstance(error, HTTPException) and error.status_code == NOT_BY_POST:
+        answer = _refused(POSTED_ALONE, NOT_BY_POST)
+        answer.headers["Allow"] = "POST"
+        return answer
     return _refused(UNKNOWN, 404)
 
 

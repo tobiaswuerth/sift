@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ JOB_WAIT_SECONDS = 20.0
 PARSE_ERROR = -32700
 NOT_A_MESSAGE = -32600
 INTERNAL = -32603
+JSON = "application/json"
 POSTED = MappingProxyType({"Allow": "POST"})
 
 
@@ -44,10 +46,8 @@ class AgentsRunning:
         job = self.serving.jobs.queued(name)
         job.watched = False
         ran = self.serving.writer.submit(run_job, self.serving, self._sent(name, data), job)
-        try:
-            return Started(job.number, ran.result(timeout=self.wait))
-        except TimeoutError:
-            return Started(job.number, None)
+        done, _ = concurrent.futures.wait([ran], timeout=self.wait)
+        return Started(job.number, ran.result() if done else None)
 
     def jobs(self) -> tuple[ServedJob, ...]:
         return self.serving.jobs.listed()
@@ -106,7 +106,7 @@ def _foreign(origin: str | None) -> bool:
     return origin is not None and urlsplit(origin).hostname not in HOSTS
 
 
-async def agents_answered(serving: Serving, handled: Mapping[str, Handled], request: Request) -> Response:
+def _unwelcome(request: Request) -> Response | None:
     if request.method != "POST":
         return Response(status_code=405, headers=dict(POSTED))
     if _foreign(request.headers.get("origin")):
@@ -114,6 +114,15 @@ async def agents_answered(serving: Serving, handled: Mapping[str, Handled], requ
     version = request.headers.get("mcp-protocol-version")
     if version is not None and version not in SPOKEN:
         return _refused(400, NOT_A_MESSAGE, f"sift speaks MCP {', '.join(SPOKEN)}, not {version}")
+    if (request.headers.get("content-type") or "").partition(";")[0].strip().lower() != JSON:
+        return _refused(415, NOT_A_MESSAGE, f"sift takes a message as {JSON}")
+    return None
+
+
+async def agents_answered(serving: Serving, handled: Mapping[str, Handled], request: Request) -> Response:
+    unwelcome = _unwelcome(request)
+    if unwelcome is not None:
+        return unwelcome
     body = await body_of(request)
     if body is None:
         return _refused(413, NOT_A_MESSAGE, "the message is too long")

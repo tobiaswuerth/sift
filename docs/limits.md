@@ -106,6 +106,7 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.interfaces.server.endpoint` | `STARTING_SECONDS` | `2.0` |
 | `sift.interfaces.server.endpoint` | `LOOK_EVERY_SECONDS` | `0.05` |
 | `sift.interfaces.server.gate` | `ALONE_PATIENCE_SECONDS` | `300.0` |
+| `sift.interfaces.server.gate` | `LOOK_SECONDS` | `0.2` |
 | `sift.interfaces.server.progress` | `PROGRESS_EVERY_SECONDS` | `0.1` |
 | `sift.interfaces.server.proxy` | `IDLE_SECONDS` | `900` |
 | `sift.interfaces.server.proxy` | `STARTING_SECONDS` | `60.0` |

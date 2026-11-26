@@ -46,9 +46,12 @@ class Jobs:
         with self.lock:
             return tuple(other for number, other in sorted(self.held.items()) if number < job.number)
 
-    def began(self, job: HeldJob) -> None:
+    def alive(self, job: HeldJob) -> None:
         if job.stop.is_set():
             raise JobStoppedError(STOPPED, STOPPED_REMEDY)
+
+    def began(self, job: HeldJob) -> None:
+        self.alive(job)
         job.running = True
 
     def ended(self, job: HeldJob) -> None:

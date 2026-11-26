@@ -23,7 +23,15 @@ from sift.interfaces.server.endpoint import (
 )
 from sift.interfaces.server.gate import WAITING_FOR_ALONE, WAITING_FOR_READS
 from sift.interfaces.server.handled import HANDLED, Handled
-from sift.interfaces.server.serving import NOT_RESTED, RESTED, HomeServer, Serve, serve, watched_idle
+from sift.interfaces.server.serving import (
+    NOT_RESTED,
+    RESTED,
+    HomeServer,
+    Serve,
+    reading_pool,
+    serve,
+    watched_idle,
+)
 from sift.settings import Settings
 from sift.storage.catalog import known_collections
 from sift.storage.store import read_store
@@ -339,3 +347,12 @@ def test_every_answer_and_refusal_says_the_contract_it_speaks(settings: Settings
             finally:
                 connection.close()
     assert spoken == ["2.0", "2.0"]
+
+
+def test_reads_still_waiting_when_the_home_process_stops_are_dropped_and_the_one_running_ends() -> None:
+    release, ran = threading.Event(), list[str]()
+    with reading_pool(1) as pool:
+        running_one = pool.submit(release.wait, 30)
+        waiting_one = pool.submit(ran.append, "ran after the stop")
+        threading.Timer(0.2, release.set).start()
+    assert (running_one.result(), waiting_one.cancelled(), ran) == (True, True, [])

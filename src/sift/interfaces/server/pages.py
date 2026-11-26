@@ -4,11 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
 
 from sift.api.collections import Audience
 from sift.api.errors import SiftError
+from sift.api.events import Event
 from sift.api.wire import Json
 from sift.app.documents import source_of
 from sift.interfaces.server.app import Sent, Serving, read_for
@@ -31,6 +33,9 @@ UNKEPT = MappingProxyType(
 PAGE_HEADERS = MappingProxyType({**UNKEPT, "Content-Security-Policy": PAGE_POLICY})
 UNFRAMED = "frame-ancestors 'none'"
 NO_FILE = "no such file"
+NO_SUCH = 404
+NO_PAGE = "no such page"
+NOT_THAT_WAY = "this page is not asked for that way"
 OWN = frozenset({"same-origin", "none"})
 BY_A_LINK = ("navigate", "document")
 ANOTHER_SITE = "sift's pages answer this browser's own requests and links alone, not what another site's page loads"
@@ -72,13 +77,25 @@ async def style_answered(_request: Request) -> Response:
     return Response(STYLE, media_type="text/css", headers=dict(UNKEPT))
 
 
+async def no_page(_request: Request, error: Exception) -> Response:
+    status = error.status_code if isinstance(error, HTTPException) else NO_SUCH
+    allowed = dict(error.headers or {}) if isinstance(error, HTTPException) else {}
+    said = NO_PAGE if status == NO_SUCH else NOT_THAT_WAY
+    return PlainTextResponse(said, status_code=status, headers={**UNKEPT, **allowed})
+
+
 async def home_answered(_request: Request) -> Response:
     return RedirectResponse(PREFIX)
 
 
+def _unheard(_event: Event) -> None:
+    return None
+
+
 def _file(serving: Serving, id_: str) -> Path | None:
     try:
-        path = source_of(serving.settings.home, id_)
+        with serving.gate.shared(_unheard):
+            path = source_of(serving.settings.home, id_)
     except SiftError:
         return None
     return path if path.is_file() else None

@@ -165,6 +165,15 @@ SERVE = Serve()
 
 
 @contextmanager
+def reading_pool(workers: int) -> Generator[ThreadPoolExecutor]:
+    pool = ThreadPoolExecutor(workers, thread_name_prefix="sift-serve")
+    try:
+        yield pool
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+@contextmanager
 def held(
     settings: Settings, request: ServeHome, version: str, report: Reporter, how: Serve = SERVE
 ) -> Generator[HomeServer]:
@@ -175,7 +184,7 @@ def held(
         closing(fresh_models(settings)) as models,
         sole_writer(settings.home / SERVER, SERVING),
         bound(request.port) as listening,
-        ThreadPoolExecutor(WORKERS, thread_name_prefix="sift-serve") as pool,
+        reading_pool(WORKERS) as pool,
         ThreadPoolExecutor(1, thread_name_prefix="sift-write") as writer,
         resting(models.release_idle),
     ):
