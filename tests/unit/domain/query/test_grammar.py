@@ -54,7 +54,6 @@ a, b, c = Term("a"), Term("b"), Term("c")
         ("title: a", And((Term("title"), a))),
         ("^a", a),
         ("NEAR a", And((Term("near"), a))),
-        ("a\N{NO-BREAK SPACE}b", Phrase(("a", "b"))),
         ("a\fb", And((a, b))),
         ("a\N{NULL}b", And((a, b))),
         (f"Deep learning {DASH} a review", And((Term("deep"), Term("learning"), a, Term("review")))),
@@ -83,8 +82,33 @@ def test_a_query_is_read_as_fts5_reads_it_where_both_read_it(query: str, express
 
 
 @pytest.mark.parametrize(
+    "space",
+    [
+        "\N{NO-BREAK SPACE}",
+        "\N{IDEOGRAPHIC SPACE}",
+        "\N{EM SPACE}",
+        "\N{NARROW NO-BREAK SPACE}",
+        "\N{LINE SEPARATOR}",
+        "\N{NEXT LINE}",
+    ],
+)
+def test_every_space_parts_words_though_fts5_reads_some_as_joining_a_phrase(space: str) -> None:
+    assert parsed(f"a{space}b") == And((a, b))
+    assert parsed(f'a{space}"b c"{space}') == And((a, Phrase(("b", "c"))))
+
+
+def test_a_dash_between_words_is_no_word_and_one_inside_a_word_makes_a_phrase() -> None:
+    assert parsed("a - b") == And((a, b))
+    assert parsed('a "-b"') == And((a, b))
+    assert parsed("first-stage") == Phrase(("first", "stage"))
+
+
+@pytest.mark.parametrize(
     "query, problem",
     [
+        ("python -java", "'-java': no word starts with -"),
+        ("-5", "'-5': no word starts with -"),
+        ("a OR -b*", "'-b*': no word starts with -"),
         ('a "b', "a quote is not closed"),
         ("(a", 'a "(" is not closed'),
         ("a)", 'a ")" closes nothing'),
@@ -169,6 +193,9 @@ PREFIX = "end one word of letters and digits with *, e.g. superconduct*"
 REMEDIES = {
     "a quote is not closed": 'close it, or write "" for a quote inside quotes',
     "NEAR is not supported": 'write the words side by side, or as a "phrase"',
+    "'-java': no word starts with -": 'write NOT java to leave out what holds it, or "-java" to search for it',
+    "'-5': no word starts with -": 'write NOT 5 to leave out what holds it, or "-5" to search for it',
+    "'-b*': no word starts with -": 'write NOT b* to leave out what holds it, or "-b*" to search for it',
     "* ends a prefix": PREFIX,
     "a prefix is one word": PREFIX,
     "+ joins nothing here": 'put the words of a phrase in quotes, e.g. "dark matter"',

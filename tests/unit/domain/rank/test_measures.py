@@ -4,7 +4,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.domain.rank.measures import Judged, found, ndcg, recall, reciprocal_rank
+from sift.domain.rank.measures import MOST_GRADE, Judged, found, ndcg, recall, reciprocal_rank
 
 IDS = st.sampled_from([f"notes/{n}.md" for n in range(15)])
 GRADES = st.dictionaries(IDS, st.integers(1, 3), min_size=1)
@@ -15,6 +15,11 @@ def test_ndcg_rewards_the_better_documents_first() -> None:
     assert ndcg(["a", "b"], {"b": 1}) == pytest.approx(1 / math.log2(3))
     assert (ndcg(["b", "a"], {"a": 2, "b": 1}) < 1, ndcg(["a", "b"], {"a": 2, "b": 1})) == (True, 1.0)
     assert ndcg([], {"b": 1}) == 0
+
+
+def test_ndcg_takes_the_highest_grade_there_is_and_grades_between_the_whole_ones() -> None:
+    assert ndcg(["a", "b"], {"a": MOST_GRADE, "b": MOST_GRADE}) == 1.0
+    assert 0 < ndcg(["b", "a"], {"a": MOST_GRADE, "b": 0.5}) < 1
 
 
 def test_the_reciprocal_rank_is_that_of_the_first_relevant_document_among_the_first_ten() -> None:

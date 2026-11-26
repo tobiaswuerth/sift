@@ -7,10 +7,11 @@ from sift.api.fields import FieldValue
 DOI_FIELD = "doi"
 DOI = re.compile(r"(?<![0-9])10\.[0-9]+(?:\.[0-9]+)*/\S+")
 DOI_END = ".,;:)]}>\"'"
+MOST_DOI = 1_000
 
 
 def work_of(doi: object) -> str | None:
-    found = DOI.search(unquote(doi)) if isinstance(doi, str) else None
+    found = DOI.search(unquote(doi[:MOST_DOI])) if isinstance(doi, str) else None
     return found.group().lower().rstrip(DOI_END) if found else None
 
 

@@ -154,8 +154,10 @@ capitals; `NOT` binds closer than `AND`, and `AND` closer than `OR`. A quote ins
 under `NOT` only leaves passages out and adds nothing to a score (sift 1.x, through FTS5, added it where a passage held
 it under an `OR`).
 
-A query sift can't read is refused, saying where: a quote or a parenthesis not closed, a `)` that closes nothing, or
-`NEAR(...)`, which sift doesn't support.
+A query sift can't read is refused, saying where: a quote or a parenthesis not closed, a `)` that closes nothing,
+`NEAR(...)`, which sift doesn't support, or a word that starts with `-`: write `NOT java` to leave out what holds it,
+or `"-5"` in quotes to search for it. Any space parts words, also a no-break space or the wide space of East Asian
+text.
 
 The front matter is searched too, so an author's name or an id finds its documents.
 
@@ -394,8 +396,8 @@ sift bench questions.json            # -c NAME: one collection only
 ```
 
 A few dozen questions are enough to compare modes, or to see whether a change helps your documents. Grades are
-optional: 2 for the answer, 1 for a useful one, 0 for one read and found irrelevant. A copy of the same paper listed
-under `also` counts as found.
+optional, from 0 to 10: 2 for the answer, 1 for a useful one, 0 for one read and found irrelevant. A copy of the same
+paper listed under `also` counts as found.
 
 ## Coming from sift 1.x
 

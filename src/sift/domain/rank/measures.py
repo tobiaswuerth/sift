@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 CUT = 10
+MOST_GRADE = 10
 
 type Grades = Mapping[str, float]
 

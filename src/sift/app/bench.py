@@ -1,5 +1,4 @@
 import json
-import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +16,7 @@ from sift.app.kept_decoded import KeptDecoded
 from sift.app.loading import prepared
 from sift.app.resident import ResidentCodes
 from sift.app.searching import Watching
-from sift.domain.rank.measures import CUT, Grades, found, ndcg, recall, reciprocal_rank
+from sift.domain.rank.measures import CUT, MOST_GRADE, Grades, found, ndcg, recall, reciprocal_rank
 from sift.domain.text.json_values import deeper_than
 from sift.inference.models import Models
 
@@ -26,7 +25,8 @@ FIELD = "file"
 SHAPE = '[{"query": "...", "relevant": ["collection/path", ...]}, ...]'
 NO_CASES = f"the file holds no list of cases; write {SHAPE}"
 CASE_REMEDY = (
-    "give each case a query and the ids of the documents it should find: a list of them, or each with a grade above 0"
+    "give each case a query and the ids of the documents it should find: a list of them, "
+    f"or each with a grade above 0, up to {MOST_GRADE}"
 )
 UNREAD_REMEDY = "give the path of a file this user may read"
 TOO_LONG = f"the file is longer than {MOST_FILE_BYTES:,} bytes"
@@ -74,7 +74,7 @@ def _grade(value: object) -> float | None:
         grade = float(value)
     except OverflowError:
         return None
-    return grade if math.isfinite(grade) and grade >= 0 else None
+    return grade if 0 <= grade <= MOST_GRADE else None
 
 
 def _grades(relevant: object) -> dict[str, float] | None:

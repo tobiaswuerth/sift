@@ -7,9 +7,9 @@ from sift.api.requests import shown_value
 from sift.domain.query.expressions import NOTHING, And, Expression, Not, Nothing, Or, Phrase, Prefix, Term, leaves
 from sift.domain.text.tokens import tokens
 
-SPACES = frozenset(" \t\n\r\f\v\x1c\x1d\x1e\x1f\N{NULL}")
-QUOTE, OPEN, CLOSE, STAR = '"', "(", ")", "*"
-OUTSIDE_WORDS = SPACES | frozenset({QUOTE, OPEN, CLOSE})
+NUL = "\N{NULL}"
+QUOTE, OPEN, CLOSE, STAR, MINUS = '"', "(", ")", "*", "-"
+MARKS = frozenset({QUOTE, OPEN, CLOSE})
 AND, OR, NOT = "AND", "OR", "NOT"
 OPERATORS = frozenset({AND, OR, NOT})
 NEAR = "NEAR"
@@ -22,6 +22,7 @@ FEWEST_RELAXED = 2
 WORDLIKE = re.compile(r"\w")
 REMEDY = 'write words, "phrases", prefix*, AND, OR, NOT and (parentheses), e.g. (bert OR roberta) AND "fine tuning"'
 PREFIX_REMEDY = "end one word of letters and digits with *, e.g. superconduct*"
+MINUS_REMEDY = 'write NOT {word} to leave out what holds it, or "{written}" to search for it'
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,16 +53,24 @@ def _quoted(query: str, at: int) -> tuple[Word, int]:
     )
 
 
+def _space(character: str) -> bool:
+    return character.isspace() or character == NUL
+
+
 def _bare(query: str, at: int) -> tuple[Lexeme, int]:
     end = at
-    while end < len(query) and query[end] not in OUTSIDE_WORDS:
+    while end < len(query) and not _space(query[end]) and query[end] not in MARKS:
         end += 1
     text = query[at:end]
     after = end
-    while after < len(query) and query[after] in SPACES:
+    while after < len(query) and _space(query[after]):
         after += 1
     if text == NEAR and query.startswith(OPEN, after):
         raise _refused("NEAR is not supported", 'write the words side by side, or as a "phrase"')
+    if text.startswith(MINUS) and WORDLIKE.search(text):
+        written = text if len(text) <= MOST_ECHOED else f"{text[:MOST_ECHOED]}..."
+        remedy = MINUS_REMEDY.format(word=written.removeprefix(MINUS), written=written)
+        raise _refused(f"{shown_value(text, MOST_ECHOED)}: no word starts with -", remedy)
     return (text if text in OPERATORS else Word(text, quoted=False)), end
 
 
@@ -74,7 +83,7 @@ def lexemes(query: str) -> tuple[Lexeme, ...]:
     at = 0
     while at < len(query):
         character = query[at]
-        if character in SPACES:
+        if _space(character):
             at += 1
             continue
         if character in (OPEN, CLOSE):

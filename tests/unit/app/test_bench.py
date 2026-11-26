@@ -8,6 +8,7 @@ from sift.api.bench import MeasureSearches, Mode, ModeMeasured
 from sift.api.errors import InvalidRequestError
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
 from sift.app.bench import MOST_FILE_BYTES, Case, cases_of, measured
+from sift.domain.rank.measures import MOST_GRADE, ndcg
 from tests.homes import home_of
 from tests.models import Hashed
 
@@ -87,6 +88,13 @@ def test_documents_graded_0_are_not_relevant(home: Path, tmp_path: Path) -> None
     assert cases_of(home, written(tmp_path, graded)) == (Case("reward", {"notes/rl.md": 1.0}),)
 
 
+def test_a_document_is_graded_up_to_the_highest_grade_the_measures_take(home: Path, tmp_path: Path) -> None:
+    graded = [{"query": "reward", "relevant": {"notes/rl.md": MOST_GRADE, "notes/plain.txt": 0.5}}]
+    (case,) = cases_of(home, written(tmp_path, graded))
+    assert case.relevant == {"notes/rl.md": float(MOST_GRADE), "notes/plain.txt": 0.5}
+    assert ndcg(["notes/rl.md", "notes/plain.txt"], case.relevant) == 1.0
+
+
 RULED_OUT = "case 1 needs"
 REFUSED = (
     ('[{"query": "x", "relevant": ["notes/missing.md"]}]', "case 1 names no note or document 'notes/missing.md'"),
@@ -100,6 +108,8 @@ REFUSED = (
     ('[{"query": "x", "relevant": {"notes/rl.md": true}}]', RULED_OUT),
     ('[{"query": "x", "relevant": {"notes/rl.md": -1}}]', RULED_OUT),
     ('[{"query": "x", "relevant": {"notes/rl.md": Infinity}}]', RULED_OUT),
+    ('[{"query": "x", "relevant": {"notes/rl.md": 10.5}}]', RULED_OUT),
+    ('[{"query": "x", "relevant": {"notes/rl.md": 1100}}]', RULED_OUT),
     ('[{"query": "x", "relevant": {"notes/rl.md": NaN}}]', RULED_OUT),
     (f'[{{"query": "x", "relevant": {{"notes/rl.md": {"9" * 400}}}}}]', RULED_OUT),
     (f'[{{"query": "x", "relevant": {{"notes/rl.md": {"9" * 5_000}}}}}]', "is no JSON"),

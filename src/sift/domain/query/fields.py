@@ -12,6 +12,7 @@ SORT_REMEDY = "name a front matter field, e.g. created, or -created for the newe
 SIGNED_WHOLE = re.compile(r"[+-]?[0-9]+")
 SIGNED_DECIMAL = re.compile(r"[+-]?(?:[0-9]+\.[0-9]*|\.[0-9]+)")
 DATED = re.compile(r"([0-9]+)[-/]")
+UNPADDED = re.compile(r"(?<=-)([0-9])(?![0-9])")
 
 MOST_EXACT_DIGITS = 300
 
@@ -51,11 +52,15 @@ def _text(value: FieldValue) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
+def _dated(text: str) -> str:
+    return UNPADDED.sub(r"0\1", text.replace("/", "-")) if DATED.match(text.strip(" ")) else text
+
+
 def _key(value: FieldValue) -> Key:
     first = (value[0] if value else "") if isinstance(value, list) else value
     number = number_read(first)
     if number is not None:
-        return (0, number, _text(first))
+        return (0, number, _dated(first) if isinstance(first, str) else _text(first))
     if isinstance(first, bool):
         return (1, int(first), "")
     return (2, 0, _text(first))

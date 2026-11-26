@@ -24,6 +24,18 @@ def test_sort_orders_values_as_range_filters_read_them() -> None:
     assert order(each, "c") == [2, 4, 3, 1, 0, 5]
 
 
+def test_dates_written_without_leading_zeros_or_with_slashes_are_ordered_as_dates() -> None:
+    each: list[Fields] = [
+        {"d": "2024-1-15"},
+        {"d": "2024-02-01"},
+        {"d": "2024-12-01"},
+        {"d": "2024/1/5"},
+        {"d": "2024"},
+        {"d": "2023-11-9"},
+    ]
+    assert order(each, "d") == [5, 4, 3, 0, 1, 2]
+
+
 def test_a_list_is_ordered_by_its_first_value() -> None:
     each: list[Fields] = [{"t": ["b", "a"]}, {"t": [3, 9]}, {"t": []}, {"t": ["a"]}, {"t": {"k": 1}}]
     assert order(each, "t") == [1, 2, 3, 0, 4]
