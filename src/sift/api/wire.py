@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Annotated, Literal, TypeAliasType, cast, get_args, get_origin, get_type_hints
 
 from sift.api.errors import (
+    CODE_KINDS,
     InternalError,
     InvalidRequestError,
     JobStoppedError,
@@ -242,9 +243,9 @@ def encoded_error(error: SiftError) -> Json:
 def decoded_error(data: Json) -> SiftError:
     if not isinstance(data, dict):
         raise TypeError(f"{data!r} is no error")
-    named = ERROR_KINDS.get(str(data.get("kind")))
-    kind = InternalError if named is None else named
+    kind = ERROR_KINDS.get(str(data.get("kind")), InternalError)
     message, remedy = str(data.get("message", "")), str(data.get("remedy") or "")
-    code = kind.usual if named is None else PROBLEMS.get(str(data.get("code")), kind.usual)
+    said = PROBLEMS.get(str(data.get("code")), kind.usual)
+    code = said if issubclass(kind, CODE_KINDS[said]) else kind.usual
     field = data.get("field")
     return kind(message, remedy, None if field is None else str(field), code=code)

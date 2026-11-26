@@ -29,7 +29,8 @@ than the pages of PDFs, or answer other machines: its server listens on 127.0.0.
 
 ## Install
 
-Python 3.12 or newer. With [uv](https://docs.astral.sh/uv/):
+Python 3.12 or newer, built with SQLite 3.38 or newer, as uv's, python.org's and Homebrew's are. With
+[uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv tool install --torch-backend auto sift-rag   # installs the `sift` command

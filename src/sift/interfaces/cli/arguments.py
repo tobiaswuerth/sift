@@ -226,7 +226,7 @@ def flags(request: type[object]) -> dict[str, str]:
     return {
         argument.name: argument.flag.long or argument.flag.short or argument.name
         if argument.how in (How.OPTION, How.SWITCH, How.TOGGLE, How.READ)
-        else argument.name
+        else metavar_of(argument.name)
         for argument in arguments(request)
     }
 

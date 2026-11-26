@@ -18,10 +18,11 @@ from sift.app.moving import Moving, move
 from sift.app.paths import ABSOLUTE_REMEDY
 from sift.app.search import search
 from sift.app.vsearch import vsearch
-from sift.storage.catalog import Collection, known_collections
+from sift.storage.catalog import Collection, known_collections, set_store
 from sift.storage.moving import Transfer
 from sift.storage.store import create_store
 from sift.storage.store_files import delete_store
+from sift.storage.writer import sole_writer
 from tests.files import write
 from tests.homes import home_of, indexed, quiet, stopped_when_advanced
 from tests.models import Hashed
@@ -108,6 +109,41 @@ def test_a_store_the_catalog_could_not_follow_stays_where_it_was(home: Path, tmp
     assert notes(home).store == old
     assert list((tmp_path / "elsewhere").iterdir()) == []
     assert searched(home) == (["notes/rl.md"], ["notes/rl.md"])
+
+
+def test_a_move_stopped_once_the_catalog_followed_keeps_the_store_at_its_new_place(home: Path, tmp_path: Path) -> None:
+    old, before = notes(home).store, searched(home)
+    new = tmp_path / "elsewhere" / "notes.sqlite"
+
+    def followed_then_stopped(home: Path, identity: CollectionId, store: Path) -> None:
+        set_store(home, identity, store)
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        moved(home, "notes", to=tmp_path / "elsewhere", how=Moving(repoint=followed_then_stopped))
+    assert (notes(home).store, new.is_file()) == (new, True)
+    assert searched(home) == before
+    indexed(home)
+    assert (old.exists(), new.is_file()) == (False, True)
+    assert searched(home) == before
+
+
+def test_the_old_names_of_a_moved_store_go_while_the_move_is_still_its_one_writer(home: Path, tmp_path: Path) -> None:
+    old = notes(home).store
+    writers_refused: list[bool] = []
+
+    def unlinked_as_the_one_writer(file: Path) -> None:
+        if file == old:
+            try:
+                with sole_writer(old, "a test"):
+                    writers_refused.append(False)
+            except StoreUnavailableError:
+                writers_refused.append(True)
+        file.unlink(missing_ok=True)
+
+    (result,) = moved(home, "notes", to=tmp_path / "elsewhere", how=Moving(unlink=unlinked_as_the_one_writer)).moved
+    assert (result.left, writers_refused[0]) == ((), True)
+    assert not any(old.parent.glob("notes.sqlite*"))
 
 
 def test_a_store_another_sift_has_open_stays(home: Path, tmp_path: Path) -> None:

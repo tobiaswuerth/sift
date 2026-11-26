@@ -5,6 +5,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Protocol, cast
 
 from sift.api.collections import Audience
+from sift.api.errors import NotFoundError
 from sift.api.events import Reporter
 from sift.api.search import SearchResult
 from sift.api.wire import encoded
@@ -82,9 +83,13 @@ def searched[R](act: Act[R, SearchResult]) -> Command:
 
 def needing_collections(made: Command) -> Command:
     def run(namespace: argparse.Namespace, context: Context) -> Shown:
-        if not context.json and not chosen(context.settings.home, (), Audience.PEOPLE):
-            return empty(context.platform, context.style)
-        return made.run(namespace, context)
+        if context.json or chosen(context.settings.home, (), Audience.PEOPLE):
+            return made.run(namespace, context)
+        try:
+            code = made.run(namespace, context).code
+        except NotFoundError:
+            code = FAILED
+        return empty(context.platform, context.style)._replace(code=code)
 
     return Command(run, writes=made.writes)
 

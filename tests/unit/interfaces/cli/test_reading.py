@@ -9,10 +9,25 @@ def test_a_line_range_is_a_line_or_two_joined_by_a_dash(written: str, span: tupl
     assert line_range(written) == span
 
 
-@pytest.mark.parametrize("written", ["0", "3-2", "a", "1-", "-3", " 1", "1 - 2", "1.5", "\N{SUPERSCRIPT TWO}"])
+@pytest.mark.parametrize("written", ["a", "1-", "-3", " 1", "1 - 2", "1.5", "\N{SUPERSCRIPT TWO}"])
 def test_anything_else_is_refused_with_what_a_range_looks_like(written: str) -> None:
-    with pytest.raises(InvalidRequestError, match="lines are a line number or a range such as 17-26"):
+    with pytest.raises(InvalidRequestError, match="lines are a line number or a range such as 17-26") as refused:
         line_range(written)
+    assert refused.value.field == "lines"
+
+
+@pytest.mark.parametrize(
+    "written, said, remedy",
+    [
+        ("0", "'0' begins before line 1", "lines are numbered from 1"),
+        ("0-4", "'0-4' begins before line 1", "lines are numbered from 1"),
+        ("3-2", "'3-2' ends before it begins", "give the first line, then the last, such as 17-26"),
+    ],
+)
+def test_a_range_that_names_no_lines_is_refused_for_what_is_wrong_with_it(written: str, said: str, remedy: str) -> None:
+    with pytest.raises(InvalidRequestError) as refused:
+        line_range(written)
+    assert (refused.value.message, refused.value.remedy, refused.value.field) == (said, remedy, "lines")
 
 
 @pytest.mark.parametrize("digits", [19, 5_000])

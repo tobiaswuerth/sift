@@ -239,6 +239,8 @@ def test_an_answer_of_a_newer_sift_is_read_with_what_it_adds_left_out_but_a_requ
         ),
         ({"kind": "new_kind", "code": "new_code", "message": "m", "remedy": "r"}, InternalError, Problem.INTERNAL, "r"),
         ({"kind": "not_found", "code": "unknown_note", "message": "m"}, NotFoundError, Problem.UNKNOWN_NOTE, ""),
+        ({"kind": "not_found", "code": "busy", "message": "m"}, NotFoundError, Problem.NOT_FOUND, ""),
+        ({"kind": "new_kind", "code": "busy", "message": "m"}, InternalError, Problem.INTERNAL, ""),
     ],
 )
 def test_an_error_of_a_newer_sift_is_read_as_its_kind_or_as_internal(

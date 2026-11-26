@@ -8,6 +8,7 @@ PART_SUFFIX = ".part"
 FILE_SUFFIXES = ("", "-wal", "-shm", WRITER_SUFFIX, f"{WRITER_SUFFIX}-journal", PART_SUFFIX, f"{PART_SUFFIX}-journal")
 DATA_SUFFIXES = ("", "-wal")
 LOG_SUFFIXES = ("-wal", "-shm")
+OPENED_SUFFIXES = ("", *LOG_SUFFIXES)
 
 
 def _files(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
@@ -28,9 +29,11 @@ def unlinked(file: Path) -> None:
     file.unlink(missing_ok=True)
 
 
-def store_files_left(path: Path, unlink: Callable[[Path], None] = unlinked) -> tuple[Path, ...]:
+def store_files_left(
+    path: Path, unlink: Callable[[Path], None] = unlinked, suffixes: tuple[str, ...] = FILE_SUFFIXES
+) -> tuple[Path, ...]:
     left: list[Path] = []
-    for file in _files(path, FILE_SUFFIXES):
+    for file in _files(path, suffixes):
         try:
             unlink(file)
         except PermissionError:

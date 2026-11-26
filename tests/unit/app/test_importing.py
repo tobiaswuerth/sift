@@ -303,6 +303,10 @@ def test_an_import_run_again_over_a_folder_now_gone_says_so(tmp_path: Path, note
     (done,) = brought(home, former)
     assert isinstance(done, Skipped)
     assert done.code == Problem.FOLDER_MISSING
+    assert done.remedy == (
+        "bring its folder back, then import it again: sift reads a collection's files anew, "
+        "and the vectors of sift 1.x follow the text it finds"
+    )
 
 
 def test_vectors_sift_1_14_named_by_their_model_alone_are_of_the_commit_it_pinned(tmp_path: Path, notes: Path) -> None:

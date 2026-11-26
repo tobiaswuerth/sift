@@ -86,7 +86,7 @@ def test_a_query_outside_the_grammar_is_refused_with_how_to_write_one(settings: 
     code, out, err = ran(settings, "search", "a AND")
     assert (code, out) == (2, "")
     assert err.startswith(
-        "error  query: the query is not understood: it ends where words are missing\n  fix  write words"
+        "error  QUERY: the query is not understood: it ends where words are missing\n  fix  write words"
     )
 
 
@@ -239,10 +239,16 @@ def test_an_option_given_twice_is_refused_and_collections_may_be_given_again(set
     assert (code, sorted(hit["id"] for hit in found)) == (0, ["notes/robots/brush.md", "other/brush.md"])
 
 
-def test_with_no_collection_every_command_that_reads_one_says_how_to_add_one(settings: Settings) -> None:
+def test_with_no_collection_a_command_that_reads_one_says_how_to_add_one_and_ends_as_it_does_with_json(
+    settings: Settings,
+) -> None:
     empty = "empty  no collections yet\n next  sift add FOLDER\n"
-    for argv in (("get", "a/b.md"), ("links", "A"), ("unresolved",), ("mentions", "A"), ("similar", "a/b.md")):
-        assert ran(settings, *argv) == (0, "", empty)
+    named = (("get", "a/b.md"), ("links", "A"), ("mentions", "A"), ("similar", "a/b.md"))
+    for code, argv in ((0, ("unresolved",)), *((1, each) for each in named)):
+        assert ran(settings, *argv) == (code, "", empty)
+        assert ran(settings, *argv, "--json")[0] == code
+    code, _, err = ran(settings, "get", "a/b.md", "--lines", "0")
+    assert (code, err.startswith("error  ")) == (2, True)
 
 
 def test_with_no_collection_a_command_asked_for_json_answers_in_json_as_it_would_with_one(settings: Settings) -> None:

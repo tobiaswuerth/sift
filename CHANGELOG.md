@@ -13,7 +13,8 @@ need its new keys; ids of JSON Lines records and mail attachments are written an
 
 ### Changed
 
-- sift needs Python 3.12 or newer, and SQLite 3.38 or newer (every Python build brings one).
+- sift needs Python 3.12 or newer, and SQLite 3.38 or newer: uv's, python.org's and Homebrew's Pythons bring one. A
+  Python built against an older system SQLite (Ubuntu 22.04 has 3.37) is refused, saying so.
 - Each collection's store has a new layout; the catalog is `catalog.sqlite` in place of `sift.db`. A store's layout
   changes from now on by numbered migrations, which the first command of a newer sift runs once; an older sift
   refuses a store a newer one migrated, and says to upgrade.
@@ -36,7 +37,13 @@ need its new keys; ids of JSON Lines records and mail attachments are written an
   them, and each hit its `collection`, `path`, `first_line` and `last_line` (in place of `lines`). `sift status`
   gives `home` (in place of `index`), and for each collection `folder` (in place of `path`), `agents`, and its counts
   under `contents`: `documents` (in place of `docs`), `chunks`, `embedded`, `model`, `stored_bytes` (in place of
-  `size`), `unreadable`.
+  `size`), `unreadable`. `sift links --json` gives `out` and `into` (in place of `in`), each `null` where it was not
+  asked for and sift 1.x left the key out; a linking document has its `lines` (in place of `links`) and `through`.
+  `sift unresolved --json` gives `targets` (sift 1.x gave the list itself).
+- A request sift refuses as written (an unknown flag, a value out of range, a query it can't read) ends with exit
+  code 2, any other failure with 1; sift 1.x ended both with 1.
+- A `SIFT_` variable sift doesn't know (a misspelt one, or one of a newer sift) is refused by every command, naming
+  it, where sift 1.x passed over it.
 - `sift status` prints a table; `--json` gives JSON.
 - `sift index --files A B` is `sift index --file A --file B`; `sift add --id`, `--title` and `--text` are `--id-field`,
   `--title-field` and `--text-fields`.

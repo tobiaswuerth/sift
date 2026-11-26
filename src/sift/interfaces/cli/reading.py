@@ -10,8 +10,10 @@ from sift.api.fields import FIELDS
 from sift.api.requests import Request
 from sift.interfaces.cli.arguments import request_of
 
-RANGE = re.compile(r"([1-9][0-9]{0,17})(?:-([1-9][0-9]{0,17}))?")
+RANGE = re.compile(r"([0-9]{1,18})(?:-([0-9]{1,18}))?")
 RANGE_REMEDY = "lines are a line number or a range such as 17-26"
+SYNTAX_REMEDY = "give a line number, or two joined by a dash"
+ORDER_REMEDY = "give the first line, then the last, such as 17-26"
 IDS = (
     "documents by id: collection/path, the path shortened to its last parts if no other document's ends so, or a "
     "file's absolute path"
@@ -27,9 +29,13 @@ class ReadDocuments(Request):
 
 def line_range(written: str) -> tuple[int, int]:
     matched = RANGE.fullmatch(written)
-    first, last = (int(matched[1]), int(matched[2] or matched[1])) if matched else (0, 0)
-    if not matched or last < first:
-        raise InvalidRequestError(f"{written!r}: {RANGE_REMEDY}", "give a line number, or two joined by a dash")
+    if matched is None:
+        raise InvalidRequestError(f"{written!r}: {RANGE_REMEDY}", SYNTAX_REMEDY, "lines")
+    first, last = int(matched[1]), int(matched[2] or matched[1])
+    if first < 1:
+        raise InvalidRequestError(f"{written!r} begins before line 1", "lines are numbered from 1", "lines")
+    if last < first:
+        raise InvalidRequestError(f"{written!r} ends before it begins", ORDER_REMEDY, "lines")
     return first, last
 
 

@@ -21,7 +21,7 @@ from sift.storage.catalog import (
 from sift.storage.leftovers import tidied
 from sift.storage.moving import TRANSFER, Copied, Transfer, held_alone, transferred
 from sift.storage.store import read_store
-from sift.storage.store_files import store_files_left, unlinked
+from sift.storage.store_files import OPENED_SUFFIXES, store_files_left, unlinked
 from sift.storage.writer import sole_writer
 
 MB = 1 << 20
@@ -73,9 +73,8 @@ def _refused(home: Path, one: Collection, new: Path) -> None:
         raise _taken(new)
 
 
-def _moved(home: Path, one: Collection, new: Path, report: Reporter, how: Moving) -> StoreMoved:
-    report(CollectionStarted(one.name, str(one.store)))
-    with sole_writer(one.store, "a move"), held_alone(one.store) as held:
+def _carried(home: Path, one: Collection, new: Path, report: Reporter, how: Moving) -> bool:
+    with held_alone(one.store) as held:
         tidied(home, one.id, how.unlink)
         if new.exists():
             raise _taken(new)
@@ -84,8 +83,16 @@ def _moved(home: Path, one: Collection, new: Path, report: Reporter, how: Moving
         try:
             how.repoint(home, one.id, new)
         except BaseException:
-            store_files_left(new)
+            tidied(home, one.id, how.unlink)
             raise
+        return copied
+
+
+def _moved(home: Path, one: Collection, new: Path, report: Reporter, how: Moving) -> StoreMoved:
+    report(CollectionStarted(one.name, str(one.store)))
+    with sole_writer(one.store, "a move"):
+        copied = _carried(home, one, new, report, how)
+        store_files_left(one.store, how.unlink, OPENED_SUFFIXES)
     if copied:
         report(PhaseDone(_megabytes(new.stat().st_size)))
     left = tuple(str(file) for file in store_files_left(one.store, how.unlink))

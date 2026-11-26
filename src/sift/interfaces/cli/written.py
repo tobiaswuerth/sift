@@ -10,6 +10,8 @@ OPERATOR_CHARACTERS = frozenset("=<>!")
 WRITTEN = re.compile(r"(\w[^=<>!]*)(>=|<=|!=|=|<|>)(.*)", re.DOTALL)
 WRITTEN_SYNTAX = "written KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06"
 WRITTEN_REMEDY = "write KEY=VALUE, KEY!=VALUE, or a range such as created>=2024-06"
+NULL = "null is no value a field is matched by"
+NULL_REMEDY = "for the word null, quote it: KEY='\"null\"'"
 
 
 def listed(text: str) -> tuple[str, ...]:
@@ -32,6 +34,8 @@ def _values(text: str, value: str) -> tuple[FilterValue, ...]:
     except ValueError:
         return (value,)
     held = cast("list[object]", read) if isinstance(read, list) else [read]
+    if None in held:
+        raise InvalidRequestError(f"the filter {text!r} asks for null: {NULL}", NULL_REMEDY, "filters")
     if not held or not all(_scalar(each) for each in held):
         raise _refused(text, "a value is text, a number, true or false, or a list of them")
     return tuple(each for each in held if isinstance(each, str | int | float))

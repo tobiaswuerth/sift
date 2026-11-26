@@ -27,7 +27,7 @@ def test_an_unknown_id_is_said_once_and_alike_by_every_command(settings: Setting
     assert ran(settings, "index")[0] == 0
     got = ran(settings, "get", "alice.md")[2].splitlines()[0]
     linked = ran(settings, "links", "alice.md")[2].splitlines()[0]
-    assert (got, linked) == ("error  no note or document 'alice.md'", "error  id: no note or document 'alice.md'")
+    assert (got, linked) == ("error  no note or document 'alice.md'", "error  ID: no note or document 'alice.md'")
 
 
 def test_what_links_into_a_note_is_headed_in_lower_case(settings: Settings, notes: Path) -> None:

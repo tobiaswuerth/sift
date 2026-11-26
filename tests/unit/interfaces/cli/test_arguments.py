@@ -71,7 +71,7 @@ def test_a_yes_or_no_that_may_be_left_out_is_given_by_its_name_or_its_name_with_
     assert parsed(Toggled, ["x"]) == Toggled("x")
     assert parsed(Toggled, ["x", "--follow"]) == Toggled("x", follow=True)
     assert parsed(Toggled, ["x", "--no-follow"]) == Toggled("x", follow=False)
-    assert flags(Toggled) == {"folder": "folder", "follow": "--follow"}
+    assert flags(Toggled) == {"folder": "FOLDER", "follow": "--follow"}
 
 
 def test_a_choice_not_offered_is_refused_with_the_choices_there_are() -> None:
@@ -262,7 +262,7 @@ def test_a_request_the_command_line_would_misread_is_refused_when_its_parser_is_
 
 def test_the_flags_of_a_search_are_named_for_one_value_given_again() -> None:
     assert flags(SearchKeywords) == {
-        "query": "query",
+        "query": "QUERY",
         "k": "-k",
         "collections": "--collection",
         "path": "--path",

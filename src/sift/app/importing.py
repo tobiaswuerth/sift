@@ -1,3 +1,4 @@
+import dataclasses
 import hashlib
 from array import array
 from collections.abc import Iterable, Mapping, Sequence
@@ -41,6 +42,10 @@ UNPINNED_MODEL = "its vectors are of {model}, which names no whole commit, so th
 UNPINNED_REMEDY = "embed the collection again"
 UNKNOWN = "the sift 1.x home holds no collection {name}"
 UNKNOWN_REMEDY = "name one of its collections, or none to import every one"
+FOLDER_GONE_REMEDY = (
+    "bring its folder back, then import it again: sift reads a collection's files anew, "
+    "and the vectors of sift 1.x follow the text it finds"
+)
 
 
 def _key(text: str) -> int:
@@ -184,7 +189,8 @@ def _imported(
         deactivate(home, DeactivateCollections((one.name,)))
     (indexed,) = index(home, IndexCollections((one.name,)), report, readers=readers).collections
     if isinstance(indexed.outcome, Skipped):
-        return indexed.outcome
+        gone = indexed.outcome.code is Problem.FOLDER_MISSING
+        return dataclasses.replace(indexed.outcome, remedy=FOLDER_GONE_REMEDY) if gone else indexed.outcome
     model, _ = _carry_into(one, former, report)
     return _brought(one, former, model)
 
