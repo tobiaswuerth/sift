@@ -1,6 +1,12 @@
 from sift.api.errors import InvalidRequestError
 from sift.domain.text.wording import counted
 
+NEWLINE = "\n"
+
+
+def line_count(text: str) -> int:
+    return text.count(NEWLINE) + (bool(text) and not text.endswith(NEWLINE))
+
 
 def refuse_past_end(name: str, total: int, *, first: int) -> None:
     if first > total:

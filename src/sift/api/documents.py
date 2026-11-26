@@ -7,8 +7,8 @@ from sift.api.notices import Notice
 from sift.api.requests import Request
 
 ID = (
-    "a document's id: collection/path, the path shortened to its last parts if no other document's ends so, or a "
-    "file's absolute path"
+    'a document\'s id: collection/path, e.g. "papers/2024/attention.md"; its first folders may be left out where no '
+    "other document's path ends alike: \"papers/attention.md\"; or the file's absolute path"
 )
 MOST_LINE = 2**31 - 1
 MOST_DOCUMENTS = 1_000
@@ -35,6 +35,8 @@ class DocumentText:
     title: str
     text: str
     fields: Fields | None = None
+    first_line: int = 1
+    lines: int = 0
 
 
 @dataclass(frozen=True, slots=True)

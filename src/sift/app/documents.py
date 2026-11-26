@@ -12,13 +12,13 @@ from sift.api.ids import CollectionId
 from sift.api.notices import Notice, notice_of
 from sift.domain.query import fields as shown
 from sift.domain.text.kinds import public_id, split_keyed_path
-from sift.domain.text.lines import refuse_past_end
+from sift.domain.text.lines import line_count, refuse_past_end
 from sift.ingest.scan import Reach, scan_one
 from sift.storage.catalog import Collection, known_to, refuse_inactive
 from sift.storage.database import Reading
 from sift.storage.documents import Stored, fields_of, paths_named, stored
 from sift.storage.store import read_store
-from sift.storage.texts import LinesRead, lines_between, text_of
+from sift.storage.texts import lines_between, text_of
 
 MOST_LISTED = 5
 SEPARATOR = "/"
@@ -134,12 +134,14 @@ def _unread(wanted: WantedDocument, error: SiftError) -> Notice:
 def _document(transaction: Reading, chosen: Collection, placed: _Placed, fields: tuple[str, ...]) -> DocumentText:
     wanted, span = placed.wanted, _lines(placed.wanted, placed.at)
     found = resolved_at(transaction, chosen.name, wanted.id, placed.relative, absolute=Path(wanted.id).is_absolute())
-    read = lines_between(transaction, found.id, *span) if span else LinesRead(text_of(transaction, found.id), 0)
     whole = public_id(chosen.name, found.path, found.key)
-    if span:
-        refuse_past_end(whole, read.total, first=span[0])
     picked = shown.picked(fields_of(found.fields), fields) if fields else None
-    return DocumentText(whole, found.title, read.text, picked)
+    if span is None:
+        text = text_of(transaction, found.id)
+        return DocumentText(whole, found.title, text, picked, lines=line_count(text))
+    read = lines_between(transaction, found.id, *span)
+    refuse_past_end(whole, read.total, first=span[0])
+    return DocumentText(whole, found.title, read.text, picked, span[0], read.total)
 
 
 def _answered(transaction: Reading, chosen: Collection, placed: _Placed, fields: tuple[str, ...]) -> Read:

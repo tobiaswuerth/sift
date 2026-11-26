@@ -215,7 +215,9 @@
           "text": "# A\n",
           "fields": {
             "year": 2024
-          }
+          },
+          "first_line": 1,
+          "lines": 0
         }
       ],
       "not_read": [

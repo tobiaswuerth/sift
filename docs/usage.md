@@ -170,9 +170,10 @@ sift get handbook/hr/leave.md --fields owner,modified   # front-matter fields, t
 sift get handbook/hr/leave.md handbook/hr/travel.md     # several, each headed by its id
 ```
 
-An id is `collection/path`, or the file's absolute path. The end of a path is enough when only one document's path ends
-with it (`hr/leave.md`); where several do, sift names them. Over MCP, `get` takes documents as ids or
-`{"id": ..., "lines": "14-23"}`; past 100,000 characters in all, the rest are left out, each saying so.
+An id is `collection/path`, or the file's absolute path. After the collection, the end of a path is enough when only
+one document's path ends with it (`handbook/leave.md`); where several do, sift names them. Over MCP, `get` takes
+documents as ids or as `{"id": ..., "first_line": 14, "last_line": 23}`. One answer holds 100,000 characters of text:
+a text that passes them is cut at a line and says which lines are left out and how to get them.
 
 ## Front matter and filters
 

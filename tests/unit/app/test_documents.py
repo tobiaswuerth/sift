@@ -41,9 +41,9 @@ def unfound(home: Path, id_: str) -> Notice:
 
 
 def test_a_document_is_read_by_its_id_as_it_was_indexed(home: Path) -> None:
+    text = "# Reward shaping\n\nReward shaping speeds up learning.\n"
     assert documents(home, asked("notes/rl.md")) == Documents(
-        (DocumentText("notes/rl.md", "Reward shaping", "# Reward shaping\n\nReward shaping speeds up learning.\n"),),
-        (),
+        (DocumentText("notes/rl.md", "Reward shaping", text, first_line=1, lines=3),), ()
     )
 
 
@@ -63,8 +63,10 @@ def test_documents_asked_each_with_lines_of_their_own_come_back_each_with_its_ow
 
 def test_only_some_lines_are_read_if_asked(home: Path) -> None:
     assert documents(home, asked("notes/rl.md", lines=(1, 1))) == Documents(
-        (DocumentText("notes/rl.md", "Reward shaping", "# Reward shaping\n"),), ()
+        (DocumentText("notes/rl.md", "Reward shaping", "# Reward shaping\n", first_line=1, lines=3),), ()
     )
+    (later,) = documents(home, asked("notes/rl.md", lines=(3, 9))).found
+    assert (later.first_line, later.lines) == (3, 3)
     assert text(home, "notes/rl.md", 2, 9) == "\nReward shaping speeds up learning.\n"
     assert text(home, "notes/rl.md", None, 1) == "# Reward shaping\n"
     with pytest.raises(InvalidRequestError, match="0 is outside 1 to"):
