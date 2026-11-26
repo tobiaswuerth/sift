@@ -1,13 +1,24 @@
 import os
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 
 from sift.api.collections import Audience
 from sift.api.errors import InvalidRequestError, Problem, StoreUnavailableError
-from sift.api.events import Advanced, CollectionStarted, Finished, Noted, Phase, PhaseDone, PhaseStarted, Reporter
+from sift.api.events import (
+    Advanced,
+    CollectionStarted,
+    Event,
+    FilesKept,
+    Finished,
+    Noted,
+    Phase,
+    PhaseDone,
+    PhaseStarted,
+    Reporter,
+)
 from sift.api.indexing import CollectionIndexed, FileIndexed, IndexCollections, Indexed, IndexResult, Skipped
 from sift.app.collections import chosen_or_active
 from sift.app.documents import located
@@ -15,7 +26,7 @@ from sift.app.filing import LIMITS, READERS, Job, Limits, Readers, Tally
 from sift.app.problems import problems
 from sift.app.retitling import resumed
 from sift.app.scans import ScanModel
-from sift.app.storing import dropped, read_and_stored
+from sift.app.storing import dropped, read_and_stored, readied
 from sift.domain.plan.changes import FileOutcome, FileSeen, state_read, state_unread
 from sift.domain.plan.ignore import Ignore
 from sift.domain.plan.indexing import Found, Stat, dropping, index_plan, recorded
@@ -34,7 +45,8 @@ from sift.storage.documents import (
     unreadable,
     unreadable_at,
 )
-from sift.storage.kept_vectors import vectors_let_go
+from sift.storage.forgetting import documents_at
+from sift.storage.kept_vectors import vectors_held, vectors_let_go
 from sift.storage.keyword_order import order_due, ordered
 from sift.storage.keywords import remade, remake_started, settle
 from sift.storage.leftovers import tidied
@@ -70,7 +82,7 @@ def _synced(job: Job, ignore: Ignore) -> Indexed:
     for said in problems(job.collection.folder, scanned, plan, frozenset(known)):
         job.report(said)
     job.report(PhaseStarted(Phase.READ, len(plan.read)))
-    tally = dropped(job, plan, files) + read_and_stored(job, plan, files, scanned.identities)
+    tally = readied(job, plan, files) + read_and_stored(job, plan, files, scanned.identities) + dropped(job, plan)
     with writing(job.connection) as transaction:
         vectors_let_go(transaction)
     job.report(PhaseDone(len(plan.read)))
@@ -107,14 +119,34 @@ def _file_indexed(job: Job, ignore: Ignore, path: str) -> FileIndexed:
     if unread is not None:
         return _file_said(shown, unread)
     plan = index_plan(Found(files), {}, job.limits.most_file_bytes) if listed else dropping((path,))
-    tally = dropped(job, plan, files) + read_and_stored(job, plan, files, scanned.identities)
+    tally = readied(job, plan, files) + read_and_stored(job, plan, files, scanned.identities) + dropped(job, plan)
     as_it_is, problem = _held_as_it_is(job, path) if listed else (True, None)
     return _file_said(shown, state_read(seen, held_as_it_is=as_it_is, problem=problem, changed=tally != Tally()))
 
 
+def _uncounted(report: Reporter) -> Reporter:
+    def told(event: Event) -> None:
+        if not isinstance(event, Advanced | FilesKept):
+            report(event)
+
+    return told
+
+
+def _files_indexed(job: Job, ignore: Ignore, paths: tuple[str, ...]) -> tuple[FileIndexed, ...]:
+    gone = frozenset(path for path in paths if not os.path.lexists(job.collection.folder / path))
+    with writing(job.connection) as transaction:
+        vectors_held(transaction, documents_at(transaction, sorted(gone)))
+    each, found = replace(job, report=_uncounted(job.report)), dict[str, FileIndexed]()
+    for path in sorted(paths, key=gone.__contains__):
+        found[path] = _file_indexed(each, ignore, path)
+        job.report(Advanced(len(found)))
+        job.report(FilesKept(len(found)))
+    return tuple(found[path] for path in paths)
+
+
 def _files_synced(job: Job, ignore: Ignore, paths: tuple[str, ...]) -> CollectionIndexed:
     job.report(PhaseStarted(Phase.READ, len(paths)))
-    found = tuple(_file_indexed(job, ignore, path) for path in paths)
+    found = _files_indexed(job, ignore, paths)
     with writing(job.connection) as transaction:
         vectors_let_go(transaction)
     job.report(PhaseDone(len(paths)))

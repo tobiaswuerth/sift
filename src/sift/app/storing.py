@@ -23,7 +23,7 @@ from sift.storage.documents import (
     put_source,
 )
 from sift.storage.forgetting import delete_documents, delete_sources, documents_at
-from sift.storage.kept_vectors import vectors_held, vectors_let_go
+from sift.storage.kept_vectors import vectors_held
 from sift.storage.keywords import writing_documents
 from sift.storage.replacing import documents_replaced
 
@@ -73,19 +73,24 @@ def _file_stored(transaction: WritingDocuments, path: str, stat: Stat, read: Fil
     return Tally(added=len(found.new), changed=len(found.changed), removed=len(found.gone))
 
 
-def dropped(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
+def readied(job: Job, plan: IndexPlan, files: Mapping[str, Stat]) -> Tally:
     most = job.limits.most_file_bytes
     with writing_documents(job.connection, job.limits.batches) as transaction:
-        vectors_let_go(transaction)
         vectors_held(transaction, documents_at(transaction, plan.drop))
-        removed = delete_sources(transaction, plan.drop)
         clear_unreadable(transaction, plan.forget)
         release = job.readers.release
         large = [
             _refused(transaction, path, files[path], too_large(files[path].size, most), release)
             for path in plan.too_large
         ]
-    return sum(large, Tally(removed=removed))
+    return sum(large, Tally())
+
+
+def dropped(job: Job, plan: IndexPlan) -> Tally:
+    if not plan.drop:
+        return Tally()
+    with writing_documents(job.connection, job.limits.batches) as transaction:
+        return Tally(removed=delete_sources(transaction, plan.drop))
 
 
 @dataclass(slots=True)
