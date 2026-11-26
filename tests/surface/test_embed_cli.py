@@ -83,6 +83,8 @@ def test_bench_shows_how_well_each_mode_finds_what_the_questions_should_find(emb
         ["1.000", "1.000", "1.000"],
         " done  1 question, each asked in every mode",
     )
+    code, out, err = ran(embedding, "bench", "cases.json", "-c", "notes", "--color", "always")
+    assert (code, out.split("\n")[0], "\x1b[" in out, "\x1b[" in err) == (0, heading, False, True)
     code, out, _ = ran(embedding, "bench", "cases.json", "--json")
     said = cast("dict[str, object]", json.loads(out))
     modes = cast("list[dict[str, object]]", said["modes"])

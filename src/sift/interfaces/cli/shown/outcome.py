@@ -1,10 +1,18 @@
 import json
 import re
+import traceback
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import NamedTuple
 
-from sift.api.errors import InvalidRequestError, JobStoppedError, Problem, SiftError, system_failure
+from sift.api.errors import (
+    InternalError,
+    InvalidRequestError,
+    JobStoppedError,
+    Problem,
+    SiftError,
+    system_failure,
+)
 from sift.api.fields import FieldValue
 from sift.api.notices import Notice
 from sift.api.wire import Json, encoded_error
@@ -21,19 +29,26 @@ EXIT_CODES: MappingProxyType[type[SiftError], int] = MappingProxyType(
 NO_FLAGS: Mapping[str, str] = MappingProxyType({})
 FIELD_HEAD = re.compile(r"[.\[]")
 NOTICE_TONES: Mapping[str, Tone] = MappingProxyType({"error": Tone.ERROR, "note": Tone.WARNING})
-NEXT_STEPS: Mapping[Problem, tuple[str, ...]] = MappingProxyType(
+
+
+class NextStep(NamedTuple):
+    words: tuple[str, ...]
+    of_one_alone: bool
+
+
+NEXT_STEPS: Mapping[Problem, NextStep] = MappingProxyType(
     {
-        Problem.NOT_EMBEDDED: ("sift", "embed", "NAME"),
-        Problem.OTHER_MODEL: ("sift", "embed", "--reset"),
-        Problem.KEYWORDS_REMADE: ("sift", "index", "NAME"),
-        Problem.INACTIVE_COLLECTION: ("sift", "activate", "NAME"),
-        Problem.STORE_MISSING: ("sift", "rm", "NAME"),
-        Problem.STORE_DAMAGED: ("sift", "rm", "NAME"),
+        Problem.NOT_EMBEDDED: NextStep(("sift", "embed"), of_one_alone=False),
+        Problem.OTHER_MODEL: NextStep(("sift", "embed", "--reset"), of_one_alone=True),
+        Problem.KEYWORDS_REMADE: NextStep(("sift", "index"), of_one_alone=False),
+        Problem.INACTIVE_COLLECTION: NextStep(("sift", "activate"), of_one_alone=True),
+        Problem.STORE_MISSING: NextStep(("sift", "rm"), of_one_alone=True),
+        Problem.STORE_DAMAGED: NextStep(("sift", "rm"), of_one_alone=True),
     }
 )
-NEXT_BY_NAME_ALONE = frozenset({Problem.STORE_DAMAGED})
 STOPPED_WRITING = "stopped: what was written so far is kept"
 STOPPED_KEEPING = "stopped: {files} of {name} are kept; the others are read again"
+UNFORESEEN_REMEDY = "report it, with the lines above it"
 
 
 class Shown(NamedTuple):
@@ -42,10 +57,12 @@ class Shown(NamedTuple):
     code: int = DONE
 
 
-def command_next(code: Problem, style: Style, name: str = "NAME") -> tuple[str, ...]:
-    words = NEXT_STEPS.get(code)
-    said = None if words is None else " ".join(name if each == "NAME" else each for each in words)
-    return () if said is None else (labelled("next", said, Tone.SECONDARY, style),)
+def command_next(code: Problem, style: Style, name: str | None = None) -> tuple[str, ...]:
+    step = NEXT_STEPS.get(code)
+    if step is None or (name is None and step.of_one_alone):
+        return ()
+    said = " ".join(step.words if name is None else (*step.words, name))
+    return (labelled("next", said, Tone.SECONDARY, style),)
 
 
 def fix(remedy: str | None, style: Style) -> tuple[str, ...]:
@@ -83,7 +100,7 @@ def notice_lines(notices: tuple[Notice, ...], style: Style, label: str = "error"
         for line in (
             labelled(label, _placed(each), NOTICE_TONES[label], style),
             *fix(each.remedy, style),
-            *command_next(each.code, style, each.collection or "NAME"),
+            *command_next(each.code, style, each.collection),
         )
     )
 
@@ -98,7 +115,12 @@ def failure(
     known = system_failure(error) if isinstance(error, OSError) else error
     flag = flags.get(FIELD_HEAD.split(known.field, 1)[0]) if known.field is not None else None
     said = known.message if flag is None else f"{flag}: {known.message}"
-    step = () if known.code in NEXT_BY_NAME_ALONE else command_next(known.code, style)
-    lines = (labelled("error", said, Tone.ERROR, style), *fix(known.remedy, style), *step)
+    lines = (labelled("error", said, Tone.ERROR, style), *fix(known.remedy, style), *command_next(known.code, style))
     code = EXIT_CODES.get(type(known), FAILED)
     return Shown((_error_json(encoded_error(known)),) if as_json else (), lines, code)
+
+
+def unforeseen(failed: InternalError, style: Style, *, as_json: bool) -> Shown:
+    traced = "".join(traceback.format_exception(failed.__cause__ or failed)).rstrip("\n")
+    shown = failure(failed, style, as_json=as_json)
+    return shown._replace(messages=(traced, *shown.messages))

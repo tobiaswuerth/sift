@@ -22,6 +22,7 @@ class Problem(StrEnum):
     STORE_UNAVAILABLE = "store_unavailable"
     STORE_MISSING = "store_missing"
     STORE_DAMAGED = "store_damaged"
+    CATALOG_DAMAGED = "catalog_damaged"
     STORE_NEWER = "store_newer"
     SQLITE_TOO_OLD = "sqlite_too_old"
     KEYWORDS_REMADE = "keywords_remade"
@@ -105,6 +106,7 @@ CODE_KINDS: Mapping[Problem, type[SiftError]] = MappingProxyType(
         Problem.STORE_UNAVAILABLE: StoreUnavailableError,
         Problem.STORE_MISSING: StoreUnavailableError,
         Problem.STORE_DAMAGED: StoreUnavailableError,
+        Problem.CATALOG_DAMAGED: StoreUnavailableError,
         Problem.STORE_NEWER: StoreUnavailableError,
         Problem.SQLITE_TOO_OLD: StoreUnavailableError,
         Problem.KEYWORDS_REMADE: StoreUnavailableError,

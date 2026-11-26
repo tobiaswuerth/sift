@@ -7,7 +7,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import NamedTuple, cast
 
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import Problem, StoreUnavailableError
 from sift.domain.errors import DamagedError
 from sift.storage.database import primary_code, read_only
 from sift.storage.store_files import FORMER_CATALOG
@@ -25,11 +25,14 @@ UNREAD_REMEDY = "check that this user may read the sift 1.x home and its stores"
 OTHER_LAYOUT = "{path} is not as sift 1.15 writes its stores: {error}"
 OTHER_LAYOUT_REMEDY = "open that home once with sift 1.15, which brings its stores up to date, then import it"
 CATALOG_OF_1 = Unusable(
-    "the catalog of sift 1.x", "add the folders of its collections to this sift, then index and embed them"
+    "the catalog of sift 1.x",
+    "add the folders of its collections to this sift, then index and embed them",
+    Problem.STORE_UNAVAILABLE,
 )
 STORE_OF_1 = Unusable(
     "the store of sift 1.x",
     "embed the collection: its files are indexed here, and its vectors were in that store alone",
+    Problem.STORE_UNAVAILABLE,
 )
 CATALOG_COLUMNS = frozenset({"name", "path", "fields", "store", "active"})
 STORE_TABLES = frozenset({"docs", "chunks", "vectors", "meta"})

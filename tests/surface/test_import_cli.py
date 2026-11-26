@@ -27,6 +27,8 @@ def test_sift_import_brings_a_home_of_sift_1_in_and_shows_its_counts(settings: S
     code, out, _ = ran(settings, "import", "--home", str(former), "-c", "notes", "--json")
     (one,) = cast("list[dict[str, object]]", cast("dict[str, object]", json.loads(out))["collections"])
     assert (code, one["name"], cast("dict[str, object]", one["outcome"])["vectors"]) == (0, "notes", 1)
+    code, out, err = ran(settings, "import", "--home", str(former), "--color", "always")
+    assert (code, out.split("\n")[0], "\x1b[" in out, "\x1b[" in err) == (0, heading, False, True)
 
 
 def test_a_home_holding_the_index_of_sift_1_alone_is_said_to_need_importing(settings: Settings, tmp_path: Path) -> None:

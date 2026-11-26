@@ -382,5 +382,5 @@ def test_a_damaged_catalog_is_an_error_saying_what_to_do_also_in_json(settings: 
     assert err.endswith(f"  fix  {CATALOG_DAMAGED_REMEDY}\n")
     code, out, _ = ran(settings, "--json", "status")
     said = cast("dict[str, object]", cast("dict[str, object]", json.loads(out))["error"])
-    expected = (1, "store_unavailable", "store_damaged", CATALOG_DAMAGED_REMEDY)
+    expected = (1, "store_unavailable", "catalog_damaged", CATALOG_DAMAGED_REMEDY)
     assert (code, said["kind"], said["code"], said["remedy"]) == expected

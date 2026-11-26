@@ -1,11 +1,12 @@
 import dataclasses
 
-from sift.api.errors import Problem
+from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.links import LinkIn, LinkingLine, LinkOut, Links, Target, Unresolved
 from sift.api.notices import Notice
 from sift.api.search import Hit, SearchResult
 from sift.interfaces.cli.shown.links import links as shown_links
 from sift.interfaces.cli.shown.links import unresolved as shown_unresolved
+from sift.interfaces.cli.shown.outcome import failure, notice_lines
 from sift.interfaces.cli.shown.searching import hits
 from sift.interfaces.console.style import PLAIN
 
@@ -127,6 +128,22 @@ def test_unresolved_targets_of_a_store_that_could_not_be_read_are_said_to_be_mis
     assert shown_unresolved(found, "linux", PLAIN).messages[0] == "error  w: the store is damaged"
     alone = shown_unresolved(Unresolved((), found.unsearched), "linux", PLAIN)
     assert (alone.results, alone.messages[1:]) == ((), ("  fix  remove the collection", " next  sift rm w"))
+
+
+def test_a_next_step_names_the_collection_or_is_left_out_where_it_needs_one_and_none_is_known() -> None:
+    def steps(code: Problem, collection: str | None) -> tuple[str, ...]:
+        return notice_lines((Notice(code, "said", None, collection),), PLAIN)[1:]
+
+    assert steps(Problem.INACTIVE_COLLECTION, "notes") == (" next  sift activate notes",)
+    assert steps(Problem.OTHER_MODEL, "notes") == (" next  sift embed --reset notes",)
+    assert steps(Problem.KEYWORDS_REMADE, None) == (" next  sift index",)
+    for code in (Problem.INACTIVE_COLLECTION, Problem.STORE_MISSING, Problem.STORE_DAMAGED, Problem.OTHER_MODEL):
+        assert steps(code, None) == ()
+    refused = failure(StoreUnavailableError("no vectors yet", "embed it", code=Problem.NOT_EMBEDDED), PLAIN)
+    assert refused.messages == ("error  no vectors yet", "  fix  embed it", " next  sift embed")
+    missing = failure(StoreUnavailableError("its store is gone", "remove it", code=Problem.STORE_MISSING), PLAIN)
+    assert missing.messages == ("error  its store is gone", "  fix  remove it")
+    assert failure(StoreUnavailableError("x", "y", code=Problem.CATALOG_DAMAGED), PLAIN).messages[2:] == ()
 
 
 def test_links_of_a_note_found_while_a_store_could_not_be_read_say_so() -> None:

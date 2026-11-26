@@ -789,6 +789,15 @@
         "field": null
       }
     },
+    "catalog_damaged": {
+      "error": {
+        "kind": "store_unavailable",
+        "code": "catalog_damaged",
+        "message": "a refusal coded catalog_damaged",
+        "remedy": "what to do",
+        "field": null
+      }
+    },
     "store_newer": {
       "error": {
         "kind": "store_unavailable",

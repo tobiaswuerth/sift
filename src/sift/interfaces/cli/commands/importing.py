@@ -8,7 +8,7 @@ from sift.interfaces.acts.indexing import readers_of
 from sift.interfaces.cli.commands.making import command
 from sift.interfaces.cli.context import Command
 from sift.interfaces.cli.shown.outcome import Shown
-from sift.interfaces.console.style import Style, Tone, paint
+from sift.interfaces.console.style import Style, Tone
 from sift.interfaces.console.text import labelled, printable
 
 NAME = 24
@@ -35,7 +35,7 @@ def _row(name: str, brought: Brought) -> str:
 
 def _shown(done: HomeImported, _platform: str, style: Style) -> Shown:
     rows = tuple(_row(each.name, each.outcome) for each in done.collections if isinstance(each.outcome, Brought))
-    table = (paint(HEADING, Tone.SECONDARY, style), *rows) if rows else ()
+    table = (HEADING, *rows) if rows else ()
     return Shown(table, (labelled("kept", KEPT, Tone.SECONDARY, style),) if rows else ())
 
 

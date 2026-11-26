@@ -18,7 +18,7 @@ LINKLESS = frozenset({errno.EXDEV, errno.EPERM, errno.EINVAL, errno.ENOTSUP, err
 BUSY_CODES = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
 OPEN_ELSEWHERE = "another sift has the store {path} open: a search, an index or an embedding"
 OPEN_ELSEWHERE_REMEDY = "wait until it is done, or stop that process"
-COPY = Unusable("the copy", "check the drive it goes to, then move the collection again")
+COPY = Unusable("the copy", "check the drive it goes to, then move the collection again", Problem.STORE_UNAVAILABLE)
 
 type Copied = Callable[[int, int], None]
 

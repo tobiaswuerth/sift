@@ -291,7 +291,7 @@ def test_a_damaged_catalog_is_unavailable_saying_what_to_do(home: Path) -> None:
     damage_pages(home / CATALOG)
     with pytest.raises(StoreUnavailableError, match=r"the catalog .* is damaged") as refused:
         known_collections(home)
-    assert (refused.value.code, refused.value.remedy) == (Problem.STORE_DAMAGED, CATALOG_DAMAGED_REMEDY)
+    assert (refused.value.code, refused.value.remedy) == (Problem.CATALOG_DAMAGED, CATALOG_DAMAGED_REMEDY)
 
 
 def test_a_catalog_another_program_writes_is_unavailable_saying_what_to_do(home: Path) -> None:

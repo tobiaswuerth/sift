@@ -4,8 +4,6 @@ from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
-import pytest
-
 from sift.interfaces.cli.main import Host, run
 from sift.settings import Settings
 from tests.surface.commands import ran
@@ -61,9 +59,16 @@ def test_a_command_stopped_or_broken_logs_how_it_ended(settings: Settings, notes
     stopped = Host(clock=_interrupted, now=lambda: datetime(2026, 11, 24, 12, 0, 1, tzinfo=UTC))
     assert run(("index",), settings, io.StringIO(), io.StringIO(), stopped) == 130
     broken = Host(clock=_broken, now=lambda: datetime(2026, 11, 24, 12, 0, 2, tzinfo=UTC))
-    for argv in (("index",), ("search", "anything")):
-        with pytest.raises(ValueError, match="a clock that broke"):
-            run(argv, settings, io.StringIO(), io.StringIO(), broken)
+    for argv in (("index",), ("search", "anything"), ("search", "anything", "--json")):
+        out, err = io.StringIO(), io.StringIO()
+        assert run(argv, settings, out, err, broken) == 1
+        traced, _, said = err.getvalue().rpartition("error  ")
+        assert traced.startswith("Traceback (most recent call last):")
+        assert said == "sift failed: ValueError: a clock that broke\n  fix  report it, with the lines above it\n"
+        assert ('"code": "internal"' in out.getvalue(), out.getvalue() == "") == (
+            "--json" in argv,
+            "--json" not in argv,
+        )
     logs = settings.home / "logs"
     assert not list(logs.glob("search-*"))
     assert (logs / "index-2026-11-24_120001.log").read_text(encoding="utf-8").endswith(" ERROR sift: stopped\n")

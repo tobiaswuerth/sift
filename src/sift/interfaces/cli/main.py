@@ -9,7 +9,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TextIO, cast, override
 
-from sift.api.errors import InvalidRequestError, SiftError, StoreUnavailableError
+from sift.api.errors import InternalError, InvalidRequestError, SiftError, StoreUnavailableError
 from sift.api.package import PACKAGE
 from sift.api.wire import CONTRACT, contract_text, understood
 from sift.domain.text.decoding import encodable
@@ -19,7 +19,17 @@ from sift.interfaces.cli.entries import ENTRIES, EXAMPLES, LOGGED, command_of
 from sift.interfaces.cli.flags import file_or_id
 from sift.interfaces.cli.heavy import endpoints, logs, windows
 from sift.interfaces.cli.notice import former_home, notice
-from sift.interfaces.cli.shown.outcome import DONE, FAILED, INTERRUPTED, USAGE, Shown, failure, stopped_writing
+from sift.interfaces.cli.shown.outcome import (
+    DONE,
+    FAILED,
+    INTERRUPTED,
+    UNFORESEEN_REMEDY,
+    USAGE,
+    Shown,
+    failure,
+    stopped_writing,
+    unforeseen,
+)
 from sift.interfaces.cli.usage import Parser, asked_json, parsed
 from sift.interfaces.console.live import Live, ticking
 from sift.interfaces.console.progress import Looks
@@ -302,12 +312,11 @@ def run(argv: Sequence[str], settings: Settings, out: TextIO | None, err: TextIO
     return _answered(argv, SettingsSource(partial(_given, settings), settings.user, settings.cwd), (out, err), host)
 
 
-def _answered(
-    argv: Sequence[str], source: SettingsSource, streams: tuple[TextIO | None, TextIO | None], host: Host
-) -> int:
+type Streams = tuple[TextIO | None, TextIO | None]
+
+
+def _foreseen(argv: Sequence[str], source: SettingsSource, streams: Streams, host: Host) -> int:
     out, err = streams
-    for stream in (out, err):
-        utf8(stream)
     try:
         found = _ran(argv, source, (out, err), host)
         if isinstance(found, int):
@@ -325,6 +334,28 @@ def _answered(
     except KeyboardInterrupt:
         return INTERRUPTED
     return found.code
+
+
+def _unbroken(argv: Sequence[str], source: SettingsSource, streams: Streams, host: Host) -> int:
+    try:
+        return _foreseen(argv, source, streams, host)
+    except RecursionError:
+        raise
+    except Exception as error:
+        raise InternalError(f"sift failed: {type(error).__name__}: {error}", UNFORESEEN_REMEDY) from error
+
+
+def _answered(argv: Sequence[str], source: SettingsSource, streams: Streams, host: Host) -> int:
+    out, err = streams
+    for stream in (out, err):
+        utf8(stream)
+    try:
+        return _unbroken(argv, source, streams, host)
+    except InternalError as failed:
+        shown = unforeseen(failed, PLAIN, as_json=asked_json([each for each in argv if encodable(each)]))
+        write_results(out, shown.results)
+        say(err, shown.messages)
+        return shown.code
 
 
 def main(argv: Sequence[str] | None = None, read_settings: Callable[[], Settings] = from_environment) -> None:

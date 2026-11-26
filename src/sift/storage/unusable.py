@@ -33,11 +33,11 @@ UNUSABLE: Mapping[int, tuple[str, str]] = MappingProxyType(
 class Unusable:
     what: str
     damaged_remedy: str
-    damaged: Problem = Problem.STORE_UNAVAILABLE
+    damaged: Problem
 
 
 STORE = Unusable("the store", DAMAGED_REMEDY, Problem.STORE_DAMAGED)
-LOCK = Unusable("the lock file", "delete it: sift makes it again")
+LOCK = Unusable("the lock file", "delete it: sift makes it again", Problem.STORE_UNAVAILABLE)
 
 
 def damaged(path: Path, error: Exception, unusable: Unusable = STORE) -> StoreUnavailableError:

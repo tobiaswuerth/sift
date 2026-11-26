@@ -33,7 +33,7 @@ from sift.storage.store_files import CATALOG, delete_store
 from sift.storage.unusable import Unusable, unavailable_if_unusable
 
 CATALOG_DAMAGED_REMEDY = "move the catalog away, then add the folders again"
-THE_CATALOG = Unusable("the catalog", CATALOG_DAMAGED_REMEDY, Problem.STORE_DAMAGED)
+THE_CATALOG = Unusable("the catalog", CATALOG_DAMAGED_REMEDY, Problem.CATALOG_DAMAGED)
 WRITTEN_THROUGH = "PRAGMA synchronous = FULL"
 STORES = "collections"
 STORE_SUFFIX = ".sqlite"

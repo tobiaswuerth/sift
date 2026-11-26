@@ -327,9 +327,10 @@ With `--json` the answer is one JSON object on standard output. A refusal or a f
 without `--json`. Documents or collections a command could not read are listed in its answer with the same `code`,
 `message` and `remedy`. A `code` is one of `invalid_request`, `ambiguous`, `taken`, `too_many_words`,
 `widened_enough`, `field_not_held`, `not_found`, `folder_missing`, `unknown_collection`, `unknown_document`,
-`unknown_note`, `inactive_collection`, `store_unavailable`, `store_missing`, `store_damaged`, `store_newer`,
-`sqlite_too_old`, `keywords_remade`, `not_embedded`, `other_model`, `out_of_time`, `busy`, `model_unavailable`,
-`unauthorized`, `os`, `stopped` and `internal`.
+`unknown_note`, `inactive_collection`, `store_unavailable`, `store_missing`, `store_damaged`, `catalog_damaged`,
+`store_newer`, `sqlite_too_old`, `keywords_remade`, `not_embedded`, `other_model`, `out_of_time`, `busy`,
+`model_unavailable`, `unauthorized`, `os`, `stopped` and `internal`. A failure sift did not foresee is `internal`:
+its traceback goes to standard error, and with `--json` the error is on standard output all the same.
 
 | Exit code | Means |
 |---|---|

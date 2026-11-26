@@ -8,7 +8,7 @@ from sift.interfaces.acts.acting import Act, Acting
 from sift.interfaces.cli.commands.making import command
 from sift.interfaces.cli.context import Command
 from sift.interfaces.cli.shown.outcome import Shown
-from sift.interfaces.console.style import Style, Tone, paint
+from sift.interfaces.console.style import Style, Tone
 from sift.interfaces.console.text import labelled
 
 HEADING = f"{'mode':<10}{'nDCG@10':>10}{'MRR@10':>10}{'Recall@10':>11}{'ms/query':>10}"
@@ -24,7 +24,7 @@ def _shown(measured: SearchesMeasured, _platform: str, style: Style) -> Shown:
         for each in measured.modes
     )
     said = labelled("done", f"{counted(measured.cases, 'question')}, each asked in every mode", Tone.DONE, style)
-    return Shown((paint(HEADING, Tone.SECONDARY, style), *rows), (said,))
+    return Shown((HEADING, *rows), (said,))
 
 
 COMMANDS: Mapping[str, Command] = MappingProxyType(
