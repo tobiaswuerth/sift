@@ -1,6 +1,9 @@
+import re
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from tests.surface import process
 from tests.surface.smoke import Done, Smoke, answer, hits_of, ids
 
 LONG = "\n\n".join(["Brush strokes again and again, " * 40] * 6)
@@ -34,6 +37,7 @@ LINKED = {
 }
 ALSO = {"mentions": ("--also", "tool")}
 NO_DROP = frozenset({"similar"})
+SERVED = re.compile(r" INFO sift\.server: ([a-z]+) answered ")
 
 
 def _texts(done: Done) -> list[object]:
@@ -86,6 +90,15 @@ def options_run(smoke: Smoke, folder: Path) -> None:
     smoke.checked("add", str(folder), "--name", "opts", holds=lambda done: done.returncode == 0)
     smoke.checked("index", holds=lambda done: "  done  +12  ~0  -0  " in done.stderr)
     smoke.checked("embed", holds=lambda done: done.returncode == 0)
+    with process.served(smoke.home, smoke.model, smoke.reranker):
+        _searched_through_the_home_process(smoke)
+    (log,) = (smoke.home / "logs").glob("serve-*.log")
+    answered = Counter(SERVED.findall(log.read_text(encoding="utf-8")))
+    asked = Counter(argv[0] for argv in smoke.exercised if argv[0] in SEARCHED)
+    assert {command: answered[command] >= count for command, count in asked.items()} == dict.fromkeys(asked, True)
+
+
+def _searched_through_the_home_process(smoke: Smoke) -> None:
     each = {command: Smoke(smoke.home, smoke.model, smoke.reranker) for command in SEARCHED}
     with ThreadPoolExecutor(len(SEARCHED)) as pool:
         for running in [pool.submit(searched, each[command], command, target) for command, target in SEARCHED.items()]:

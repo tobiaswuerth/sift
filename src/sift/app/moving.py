@@ -80,18 +80,18 @@ def _carried(home: Path, one: Collection, new: Path, report: Reporter, how: Movi
             raise _taken(new)
         owe_files(home, new, one.id)
         copied = transferred(held, one.store, new, _reported(report), how.transfer)
-        try:
-            how.repoint(home, one.id, new)
-        except BaseException:
-            tidied(home, one.id, how.unlink)
-            raise
+        how.repoint(home, one.id, new)
         return copied
 
 
 def _moved(home: Path, one: Collection, new: Path, report: Reporter, how: Moving) -> StoreMoved:
     report(CollectionStarted(one.name, str(one.store)))
     with sole_writer(one.store, "a move"):
-        copied = _carried(home, one, new, report, how)
+        try:
+            copied = _carried(home, one, new, report, how)
+        except BaseException:
+            tidied(home, one.id, how.unlink)
+            raise
         store_files_left(one.store, how.unlink, OPENED_SUFFIXES)
     if copied:
         report(PhaseDone(_megabytes(new.stat().st_size)))

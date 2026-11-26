@@ -101,14 +101,14 @@ def lending(home: Path, model: str, reranker: str) -> Generator[Lent]:
 
 
 @contextmanager
-def served(home: Path) -> Generator[subprocess.Popen[str]]:
+def served(home: Path, model: str = "", reranker: str = "") -> Generator[subprocess.Popen[str]]:
     running = subprocess.Popen(
         [sys.executable, "-m", "sift", *SERVE],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
-        env=environment(home),
+        env=environment(home, model, reranker),
         creationflags=OWN_GROUP,
     )
     try:

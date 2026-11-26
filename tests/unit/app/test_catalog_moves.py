@@ -1,6 +1,7 @@
 import errno
 import os
 import sqlite3
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
@@ -115,13 +116,27 @@ def test_a_move_stopped_once_the_catalog_followed_keeps_the_store_at_its_new_pla
     old, before = notes(home).store, searched(home)
     new = tmp_path / "elsewhere" / "notes.sqlite"
 
+    held_alone_when_tidied: list[bool] = []
+
     def followed_then_stopped(home: Path, identity: CollectionId, store: Path) -> None:
         set_store(home, identity, store)
         raise KeyboardInterrupt
 
+    def unlinked_once_let_go(file: Path) -> None:
+        if file == old:
+            with closing(sqlite3.connect(old, timeout=0)) as probe:
+                try:
+                    probe.execute("SELECT count(*) FROM documents").fetchone()
+                    held_alone_when_tidied.append(False)
+                except sqlite3.OperationalError:
+                    held_alone_when_tidied.append(True)
+        file.unlink(missing_ok=True)
+
+    stopped_after_following = Moving(repoint=followed_then_stopped, unlink=unlinked_once_let_go)
     with pytest.raises(KeyboardInterrupt):
-        moved(home, "notes", to=tmp_path / "elsewhere", how=Moving(repoint=followed_then_stopped))
-    assert (notes(home).store, new.is_file()) == (new, True)
+        moved(home, "notes", to=tmp_path / "elsewhere", how=stopped_after_following)
+    assert held_alone_when_tidied == [False]
+    assert (notes(home).store, old.exists(), new.is_file()) == (new, False, True)
     assert searched(home) == before
     indexed(home)
     assert (old.exists(), new.is_file()) == (False, True)
@@ -259,12 +274,32 @@ def test_what_a_stopped_move_left_is_tidied_by_its_own_collection_alone(home: Pa
     assert not old.exists()
 
 
+def stopped_leaving_what_it_linked(home: Path, place: Path) -> Callable[[Path], None]:
+    def held_open(file: Path) -> None:
+        if file == place:
+            raise PermissionError(13, "The process cannot access the file", str(file))
+        file.unlink()
+
+    stopped = Moving(Transfer(link=linked_then_stopped), unlink=held_open)
+    with pytest.raises(KeyboardInterrupt):
+        moved(home, "notes", to=place.parent, how=stopped)
+    assert place.is_file()
+    return held_open
+
+
+def test_a_move_stopped_while_its_store_was_carried_leaves_nothing_at_the_new_place(home: Path, tmp_path: Path) -> None:
+    old, place = notes(home).store, tmp_path / "elsewhere" / "notes.sqlite"
+    with pytest.raises(KeyboardInterrupt):
+        moved(home, "notes", to=place.parent, how=Moving(transfer=Transfer(link=linked_then_stopped)))
+    assert (notes(home).store, list(place.parent.iterdir())) == (old, [])
+    assert searched(home) == (["notes/rl.md"], ["notes/rl.md"])
+
+
 def test_a_place_a_stopped_move_left_is_kept_once_another_collection_is_stored_there(
     home: Path, tmp_path: Path
 ) -> None:
     place = tmp_path / "elsewhere" / "notes.sqlite"
-    with pytest.raises(KeyboardInterrupt):
-        moved(home, "notes", to=place.parent, how=Moving(transfer=Transfer(link=linked_then_stopped)))
+    stopped_leaving_what_it_linked(home, place)
     delete_store(place)
     write(tmp_path / "diary" / "d.md", "# Diary")
     add(home, AddCollection(str(tmp_path / "diary"), store=str(place)))
@@ -276,14 +311,7 @@ def test_a_place_a_stopped_move_left_is_kept_once_another_collection_is_stored_t
 
 def test_a_place_a_stopped_move_left_open_elsewhere_is_not_moved_onto(home: Path, tmp_path: Path) -> None:
     place = tmp_path / "elsewhere" / "notes.sqlite"
-    with pytest.raises(KeyboardInterrupt):
-        moved(home, "notes", to=place.parent, how=Moving(transfer=Transfer(link=linked_then_stopped)))
-
-    def held_open(file: Path) -> None:
-        if file == place:
-            raise PermissionError(13, "The process cannot access the file", str(file))
-        file.unlink()
-
+    held_open = stopped_leaving_what_it_linked(home, place)
     with pytest.raises(InvalidRequestError, match="exists already"):
         moved(home, "notes", to=place.parent, how=Moving(unlink=held_open))
     assert moved(home, "notes", to=place.parent).moved[0].new == str(place)
