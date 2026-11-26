@@ -10,7 +10,6 @@ from tools.canonical import aliases, imports_resolved, unquoted
 from tools.findings import Finding, read, report, sources
 
 SOURCE = "src/sift"
-SURFACE = "sift.api"
 SCRIPT = "__main__"
 PROTOCOLS = frozenset({"typing.Protocol", "typing_extensions.Protocol"})
 REMEDY = "Delete what nothing uses, or use it: a test alone keeps no code alive."
@@ -129,10 +128,6 @@ def _reached(edges: Mapping[str, list[str]], roots: Iterable[str]) -> set[str]:
     return reached
 
 
-def _surface(name: str) -> bool:
-    return name == SURFACE or name.startswith(f"{SURFACE}.")
-
-
 def _kept(name: str) -> bool:
     return name.startswith("__") and name.endswith("__")
 
@@ -152,11 +147,10 @@ def dead(texts: Mapping[str, str], kept: frozenset[str]) -> tuple[Finding, ...]:
         for node, references in _edges(module, known):
             edges.setdefault(node, []).extend(references)
     scripts = (module.name for module in modules if module.name.rpartition(".")[2] == SCRIPT)
-    reached = _reached(edges, [*kept, *scripts, *(node for node in edges if _surface(node))])
+    reached = _reached(edges, [*kept, *scripts])
     return tuple(
-        Finding(module.path, node.lineno, f"{name} is reached from no entry point, script or the API")
+        Finding(module.path, node.lineno, f"{name} is reached from no entry point or script")
         for module in modules
-        if not _surface(module.name)
         for name, node in _defined(module.tree.body)
         if not _kept(name) and f"{module.name}.{name}" not in reached
     )

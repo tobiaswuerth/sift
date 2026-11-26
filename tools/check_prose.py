@@ -156,4 +156,4 @@ def checked(roots: Iterable[str], allowed: Allowed, top: Path = ROOT) -> int:
 
 
 def main(_argv: list[str]) -> int:
-    return checked(PYTHON_ROOTS, allowed_entries(Path(ALLOWED).read_text(encoding="utf-8")))
+    return checked(PYTHON_ROOTS, allowed_entries(read(ALLOWED)))

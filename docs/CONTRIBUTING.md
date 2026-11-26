@@ -26,8 +26,10 @@ coverage of `sift` and `tools`), `lowest` (the lowest versions sift allows, inst
 tracked sources and nothing else, and the installed commands run). One session:
 `uv run --only-group gate nox -s types`. CI runs these sessions too, the tests on every Python from 3.12 to 3.15
 on Linux (x86 and ARM), macOS and Windows, which no local run covers, and on Python 3.12.0 itself, uv's own build
-of it (`nox -s oldest`). `lowest` and `package` install packages, so they need the network. No session runs the
-lowest SQLite sift allows, 3.38: every Python build brings a newer one.
+of it (`nox -s oldest`). Every session installs its packages on its first run, `lowest` and `package` on each
+run, so those two always need the network. No session runs the lowest SQLite sift allows, 3.38: every Python build
+brings a newer one. On Windows, turn on Developer Mode first: without the right to make symbolic links the tests
+of linked files are skipped, and the lines only they run fail the coverage check.
 
 Before a release, `nox -s explore` runs the property tests with fresh random examples, 2,000 each, and 200 at least
 for those that build stores (`few` in `tests/examples.py`); the gate runs them derandomized. And `nox -s real` runs

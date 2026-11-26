@@ -48,7 +48,7 @@ def test_a_name_of_another_module_with_the_same_name_keeps_nothing_alive() -> No
     assert places(sources) == ["src/sift/a.py"]
 
 
-def test_entry_points_the_script_and_the_surface_are_roots() -> None:
+def test_entry_points_and_the_script_are_the_only_roots_and_no_package_is_alive_by_its_name() -> None:
     sources = {
         "src/sift/c.py": (
             "def main() -> None:\n    _own()\n\n\ndef _own() -> None: ...\n\n\n"
@@ -57,7 +57,7 @@ def test_entry_points_the_script_and_the_surface_are_roots() -> None:
         "src/sift/api/s.py": "import sift.c\n\n\ndef offered() -> None:\n    sift.c.helper()\n",
         "src/sift/__main__.py": "from sift.c import scripted\n\nscripted()\n",
     }
-    assert unused(sources, frozenset({"sift.c.main"})) == []
+    assert unused(sources, frozenset({"sift.c.main"})) == ["helper", "offered"]
 
 
 def test_a_protocol_member_keeps_alive_only_the_module_loaded_through_it() -> None:

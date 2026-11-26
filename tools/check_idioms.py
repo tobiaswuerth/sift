@@ -3,12 +3,11 @@ import re
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping
 from functools import cache
-from pathlib import Path
 from types import MappingProxyType
 from typing import TypeGuard
 
 from tools.canonical import canonical
-from tools.findings import PYTHON_ROOTS, Finding, found, report
+from tools.findings import PYTHON_ROOTS, ROOT, Finding, found, report
 from tools.idioms_python import generics_called, tls_without_a_floor
 from tools.idioms_storage import storage_idioms
 
@@ -288,7 +287,7 @@ def module_tuples(tree: ast.Module) -> Tuples:
 
 @cache
 def first_party_tuples(module: str) -> Tuples:
-    path = Path(FIRST_PARTY, *module.split(".")).with_suffix(".py")
+    path = ROOT.joinpath(FIRST_PARTY, *module.split(".")).with_suffix(".py")
     return module_tuples(ast.parse(path.read_text(encoding="utf-8"))) if path.is_file() else MappingProxyType({})
 
 

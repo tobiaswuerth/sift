@@ -73,6 +73,12 @@ jobs:
           python-version: "3.12"
       - run: uv build --build-constraints .github/requirements-build.txt --require-hashes
       - run: uvx twine@7.0.0 check --strict dist/*
+      - name: Does what PyPI gets hold the tracked sources and nothing else, and do its commands run?
+        run: |
+          for name in sift sift-rag; do
+            said=$(uv tool run --quiet --isolated --torch-backend=cpu --from dist/*.whl "$name" --version)
+            uv run --no-project python -m tools package dist "$said"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: dist

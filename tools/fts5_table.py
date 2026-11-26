@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from tools.findings import Finding, report
+from tools.findings import ROOT, Finding, report
 
-MODULE = Path("src/sift/domain/text/fts5_table.py")
+MODULE = ROOT / "src" / "sift" / "domain" / "text" / "fts5_table.py"
 TOKENIZER = "unicode61 remove_diacritics 2"
 SURROGATES = range(0xD800, 0xE000)
 EVERY_POINT = tuple(point for point in range(1, 0x110000) if point not in SURROGATES)
@@ -81,7 +81,8 @@ def compared(module: Path, source: str, *, write: bool) -> int:
         module.write_bytes(source.encode("utf-8"))
         return 0
     differs = module.read_text(encoding="utf-8") != source
-    found = [Finding(module.as_posix(), 1, "differs from what this SQLite's FTS5 tokenizes")] if differs else []
+    named = module.relative_to(ROOT).as_posix() if module.is_relative_to(ROOT) else module.as_posix()
+    found = [Finding(named, 1, "differs from what this SQLite's FTS5 tokenizes")] if differs else []
     return report(found, "Write it anew: python -m tools fts5 --write")
 
 

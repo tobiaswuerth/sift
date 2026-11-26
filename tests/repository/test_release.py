@@ -88,6 +88,20 @@ def test_the_package_is_built_by_tools_pinned() -> None:
     assert "--hash=sha256:" in pinned
 
 
+def test_what_pypi_gets_is_checked_as_the_gate_checks_a_package_before_it_is_handed_on() -> None:
+    build = job(read(WORKFLOWS / "release.yml"), "build")
+    checked = build.index('uv run --no-project python -m tools package dist "$said"')
+    assert build.index("- run: uv build") < checked < build.index("upload-artifact")
+    assert "for name in sift sift-rag; do" in build
+    assert '--from dist/*.whl "$name" --version' in build
+    assert 'session.run("python", "-m", "tools", "package"' in read(ROOT / "noxfile.py")
+
+
+def test_a_large_file_is_refused_wherever_the_hooks_run_not_only_as_it_is_added() -> None:
+    hooks = read(ROOT / ".pre-commit-config.yaml")
+    assert "      - id: check-added-large-files\n        args: [--enforce-all]  #" in hooks
+
+
 def test_the_release_refuses_a_version_without_its_changelog_section_before_it_builds() -> None:
     release = read(WORKFLOWS / "release.yml")
     check = job(release, "check")

@@ -8,6 +8,8 @@ repos:
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
+        args: [--enforce-all]  # every tracked file: CI's run over all files adds none, so the hook checked none
+        exclude: ^uv\.lock$  # written by uv, as large as the dependencies make it
       - id: mixed-line-ending
         args: [--fix=lf]
       - id: fix-byte-order-marker  # Windows PowerShell 5.1 writes UTF-8 with one

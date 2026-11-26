@@ -42,6 +42,21 @@ def test_a_tls_context_is_given_its_oldest_version_by_the_function_that_makes_it
     assert lines_found(nested) == [6]
 
 
+def test_a_tls_context_is_given_its_oldest_version_under_its_own_name_not_by_one_set_on_another() -> None:
+    assert lines_found(TLS_MADE.format(floor="    other.minimum_version = ssl.TLSVersion.TLSv1_2\n")) == [5]
+    unbound = (
+        "import ssl\n\n\ndef made(tls: ssl.SSLContext) -> None:\n    use(ssl.SSLContext())\n"
+        "    tls.minimum_version = ssl.TLSVersion.TLSv1_2\n"
+    )
+    assert lines_found(unbound) == [5]
+    held = (
+        "import ssl\n\n\nclass Held:\n    def __init__(self) -> None:\n"
+        "        self.tls: ssl.SSLContext = ssl.SSLContext()\n"
+        "        self.tls.minimum_version = ssl.TLSVersion.TLSv1_2\n"
+    )
+    assert lines_found(held) == []
+
+
 def test_a_tls_context_made_by_a_module_is_given_its_oldest_version_by_the_module() -> None:
     made = "from ssl import PROTOCOL_TLS_CLIENT, SSLContext\nimport ssl\n\nTLS = SSLContext(PROTOCOL_TLS_CLIENT)\n"
     assert lines_found(made + TLS_FLOORED_ELSEWHERE) == [4]

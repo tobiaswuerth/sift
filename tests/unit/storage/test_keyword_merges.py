@@ -106,9 +106,6 @@ def test_the_ranges_pieces_of_a_term_share_are_joined_as_a_whole_merge_joins_the
         assert any(row.ranges for row in cut)
 
 
-PASSES = ("a first, in which what watches the code as it first runs allocates beside the merge", "the one measured")
-
-
 @pytest.mark.parametrize(
     "halves",
     [
@@ -117,8 +114,8 @@ PASSES = ("a first, in which what watches the code as it first runs allocates be
     ],
 )
 def test_a_term_too_large_for_a_merge_s_batch_is_merged_in_pieces_never_whole(halves: Batches) -> None:
-    peaks = [peak_merging_two_segments_of_one_word(halves) for _ in PASSES]
-    assert peaks[-1] < 2 * 60_000 * 8
+    first_run, once_the_code_has_run = (peak_merging_two_segments_of_one_word(halves) for _ in range(2))
+    assert (first_run > 0, once_the_code_has_run < 2 * 60_000 * 8) == (True, True)
 
 
 def peak_merging_two_segments_of_one_word(halves: Batches) -> int:

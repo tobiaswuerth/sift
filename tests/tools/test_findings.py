@@ -27,11 +27,13 @@ def test_roots_with_no_file_tracked_are_an_error(tmp_path: Path) -> None:
 def test_the_checks_read_the_repository_from_any_folder(tmp_path: Path) -> None:
     counted = "from tools.findings import PYTHON_ROOTS, files; print(len(files(PYTHON_ROOTS, ('.py',))))"
     environment = clean_environment(PYTHONPATH=str(ROOT))
-    for argv in ([sys.executable, "-c", counted], [sys.executable, "-m", "tools", "twins"]):
+    checks = ("twins", "prose", "fts5", "limits")
+    tried = [[sys.executable, "-c", counted], *([sys.executable, "-m", "tools", check] for check in checks)]
+    for argv in tried:
         ran = subprocess.run(
             argv, cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=120, check=False
         )
-        assert ran.returncode == 0, ran.stderr
+        assert ran.returncode == 0, (argv, ran.stdout, ran.stderr)
     listed = subprocess.run(
         [sys.executable, "-c", counted],
         cwd=tmp_path,
