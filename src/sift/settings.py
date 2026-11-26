@@ -19,10 +19,14 @@ OCR_REMEDY = (
     f"set {OCR_VARIABLE} to auto (on a GPU, the default), on (also on the CPU, which takes minutes a page) or off"
 )
 UPDATE_CHECK_VARIABLE = "SIFT_UPDATE_CHECK"
-UPDATE_CHECK_REMEDY = f"set {UPDATE_CHECK_VARIABLE} to on, to be told of a newer sift once a day, or to off"
-SWITCHES = MappingProxyType({"on": True, "off": False})
+UPDATE_CHECK_REMEDY = (
+    f"set {UPDATE_CHECK_VARIABLE} to on (or 1, yes, true), to be told of a newer sift once a day, "
+    "or to off (or 0, no, false)"
+)
+ON, OFF = frozenset({"1", "on", "yes", "true"}), frozenset({"0", "off", "no", "false"})
+SWITCHES = MappingProxyType({**dict.fromkeys(ON, True), **dict.fromkeys(OFF, False)})
 OFFLINE_VARIABLE = "HF_HUB_OFFLINE"
-OFFLINE = frozenset({"1", "on", "yes", "true"})
+OFFLINE = ON
 NO_COLOR = "NO_COLOR"
 TERM = "TERM"
 DUMB = "dumb"
@@ -43,7 +47,7 @@ VARIABLES = MappingProxyType(
         EMBED_MODEL_VARIABLE: f"the model that embeds passages (default {EMBED_MODEL})",
         RERANK_MODEL_VARIABLE: f"the model that reranks the passages of a query (default {RERANK_MODEL})",
         EMBED_REMOTE_VARIABLE: "the address a worker prints, to embed and rerank there (default: on this machine)",
-        OCR_VARIABLE: "auto, on or off: read the text of scans and images (default auto: on a GPU)",
+        OCR_VARIABLE: "auto, on or off: read the text of scanned pages (default auto: on a GPU)",
         UPDATE_CHECK_VARIABLE: "on or off: be told of a newer sift once a day (default off)",
     }
 )
@@ -145,10 +149,9 @@ def _state(environment: Mapping[str, str], user: Path | None, platform: str) -> 
 def _known_variables(environment: Mapping[str, str]) -> None:
     unknown = sorted(name for name in environment if name.startswith(OWN_PREFIX) and name not in VARIABLES)
     if unknown:
-        name = unknown[0]
-        raise InvalidRequestError(
-            f"sift has no setting {name}", f"unset {name}, or set one of {', '.join(VARIABLES)}", name
-        )
+        named, them = ", ".join(unknown), unknown[0] if len(unknown) == 1 else "them"
+        said = f"sift has no setting{'s' * (len(unknown) > 1)} {named}"
+        raise InvalidRequestError(said, f"unset {them}, or set one of {', '.join(VARIABLES)}", unknown[0])
 
 
 def _model(environment: Mapping[str, str], variable: str, default: str) -> str:

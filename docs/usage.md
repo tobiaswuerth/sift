@@ -82,7 +82,7 @@ Everything sift keeps lies under `SIFT_HOME` (`~/.sift`), but stores placed else
 | `server.writer` | Locked while `sift serve` serves this home, so one home process serves it | Made by the first `sift serve`; delete freely while none runs |
 | `worker/token`, `worker/cert.pem`, `worker/key.pem` | `sift worker`'s access token, certificate and private key, readable by you only | Made on its first start, each through `FILE.PID.part` for a moment; delete the folder to make a new key |
 | `worker.writer` | Locked while `sift worker` runs | Made by the first `sift worker`; delete freely while none runs |
-| `logs/COMMAND-DATE.log` | What `add`, `rm`, `move`, `activate`, `deactivate`, `index`, `embed`, `serve`, `worker` and `import` said, timed, with errors; the home process's requests by name and time, without their queries | The latest 20 of each command kept; past 16 MB a log goes on in a new part, its last 3 kept as `.log.1` (the latest) to `.log.3`; delete freely |
+| `logs/COMMAND-DATE.log` | What `add`, `rm`, `move`, `activate`, `deactivate`, `index`, `embed`, `serve`, `worker` and `import` said, timed, with errors; the home process's requests by name and time, without their queries; `sift serve --stdio` writes its own, `stdio-DATE.log` | The latest 20 of each command kept; past 16 MB a log goes on in a new part, its last 3 kept as `.log.1` (the latest) to `.log.3`; delete freely |
 | `update.json` | With `SIFT_UPDATE_CHECK=on`: when PyPI was asked, the latest version it named, or why asking failed | Rewritten at most daily, through `update.json.RANDOM` for a moment; delete freely |
 
 The home process keeps one file outside the home, in your own folder (`%LOCALAPPDATA%\sift` on Windows,

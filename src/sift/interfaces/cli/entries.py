@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -24,6 +25,7 @@ from sift.late import late
 
 COMMANDS_PACKAGE = "sift.interfaces.cli.commands"
 LOGGED = frozenset({"add", "rm", "move", "activate", "deactivate", "index", "embed", "serve", "worker", "import"})
+STDIO_LOG = "stdio"
 SEARCH_EXAMPLE = 'sift search "dark matter" -k 5'
 GET_EXAMPLE = "sift get notes/physics.md --lines 17-26"
 
@@ -154,6 +156,12 @@ ENTRIES = MappingProxyType(
     }
 )
 EXAMPLES = ("sift add ~/notes", "sift index", SEARCH_EXAMPLE, GET_EXAMPLE)
+
+
+def log_of(command: str, given: Mapping[str, object]) -> str | None:
+    if command not in LOGGED:
+        return None
+    return STDIO_LOG if command == "serve" and given.get("stdio") is True else command
 
 
 def command_of(name: str) -> Command:

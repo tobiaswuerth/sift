@@ -18,7 +18,7 @@ from sift.app.embedding import embed
 from sift.app.importing import imported
 from sift.app.vsearch import vsearch
 from sift.storage.catalog import known_collections
-from sift.storage.former import former_store
+from sift.storage.former import former_collections, former_store
 from sift.storage.store_files import FORMER_CATALOG
 from tests.files import write
 from tests.former_homes import PINNED_FAKE, former_home, hashed
@@ -256,8 +256,15 @@ def test_a_home_of_sift_1_without_collections_imports_nothing(tmp_path: Path) ->
 
 def test_a_folder_holding_no_home_of_sift_1_is_refused(tmp_path: Path) -> None:
     (tmp_path / "nothing").mkdir()
-    with pytest.raises(StoreUnavailableError, match="cannot be read"):
+    with pytest.raises(NotFoundError, match=r"holds no index of sift 1\.x: there is no sift\.db in it") as refused:
         brought(tmp_path / "home", tmp_path / "nothing")
+    assert refused.value.field == "home"
+
+
+def test_a_catalog_of_sift_1_that_cannot_be_opened_is_said_to_be_unreadable(tmp_path: Path) -> None:
+    with pytest.raises(StoreUnavailableError, match=r"sift\.db cannot be read") as refused:
+        former_collections(tmp_path)
+    assert refused.value.remedy == "check that this user may read the sift 1.x home and its stores"
 
 
 def test_vectors_of_passages_whose_documents_are_gone_are_passed_over(tmp_path: Path, notes: Path) -> None:

@@ -24,6 +24,7 @@ from sift.storage.database import Connection, reading, writing
 from sift.storage.documents import counts
 from sift.storage.former import FormerCollection, FormerStore, former_collections, former_store
 from sift.storage.store import connected
+from sift.storage.store_files import FORMER_CATALOG
 from sift.storage.vector_meta import left
 from sift.storage.vectors import Pending, pending, put_vectors, refuse_model
 from sift.storage.writer import sole_writer
@@ -31,6 +32,8 @@ from sift.storage.writer import sole_writer
 CARRIED_A_WRITE = 1_000
 KEY_BYTES = 8
 NEW_STORE = "{stem}-v2.sqlite"
+NO_INDEX = "{home} holds no index of sift 1.x: there is no {catalog} in it"
+NO_INDEX_REMEDY = "name the folder sift 1.x kept its index in"
 TAKEN = "a collection of that name is in this home already, not imported from {home}"
 TAKEN_REMEDY = "remove it, or import the other collections by name"
 UNPINNED_MODEL = "its vectors are of {model}, which names no whole commit, so they are not carried over"
@@ -199,5 +202,7 @@ def _chosen(found: tuple[FormerCollection, ...], names: tuple[str, ...]) -> tupl
 
 def imported(home: Path, request: ImportHome, report: Reporter, readers: Readers = READERS) -> HomeImported:
     source = home if request.home is None else Path(request.home)
+    if not (source / FORMER_CATALOG).is_file():
+        raise NotFoundError(NO_INDEX.format(home=source, catalog=FORMER_CATALOG), NO_INDEX_REMEDY, "home")
     chosen = _chosen(former_collections(source), request.collections)
     return HomeImported(str(source), tuple(_one(home, each, source, report, readers) for each in chosen))

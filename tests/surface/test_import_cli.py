@@ -31,6 +31,12 @@ def test_sift_import_brings_a_home_of_sift_1_in_and_shows_its_counts(settings: S
     assert (code, out.split("\n")[0], "\x1b[" in out, "\x1b[" in err) == (0, heading, False, True)
 
 
+def test_a_folder_that_holds_no_index_of_sift_1_is_said_to_hold_none(settings: Settings, tmp_path: Path) -> None:
+    code, out, err = ran(settings, "import", "--home", str(tmp_path))
+    said = f"error  --home: {tmp_path} holds no index of sift 1.x: there is no sift.db in it\n"
+    assert (code, out, err) == (1, "", f"{said}  fix  name the folder sift 1.x kept its index in\n")
+
+
 def test_a_home_holding_the_index_of_sift_1_alone_is_said_to_need_importing(settings: Settings, tmp_path: Path) -> None:
     write(tmp_path / "notes" / "rl.md", "# Reward shaping\n")
     former = former_home(tmp_path, {"notes": tmp_path / "notes"})

@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 
+import pytest
+
 from sift.interfaces.cli.main import Host, run
 from sift.settings import Settings
 from tests.surface.commands import ran
@@ -52,6 +54,17 @@ def _interrupted() -> float:
 
 def _broken() -> float:
     raise ValueError("a clock that broke")
+
+
+def _recursing() -> float:
+    raise RecursionError
+
+
+def test_a_command_that_recursed_too_deep_is_not_said_to_have_failed_as_a_bug_is(settings: Settings) -> None:
+    out, err = io.StringIO(), io.StringIO()
+    with pytest.raises(RecursionError):
+        run(("search", "anything"), settings, out, err, Host(clock=_recursing))
+    assert (out.getvalue(), "sift failed" in err.getvalue()) == ("", False)
 
 
 def test_a_command_stopped_or_broken_logs_how_it_ended(settings: Settings, notes: Path) -> None:

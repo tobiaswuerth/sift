@@ -29,7 +29,8 @@ Expect a first reply within a week. Security fixes go into the latest release.
   run scripts as the UI; PDFs go to the browser's viewer.
 - **Agents.** What a document says reaches an agent as a tool's answer, to be read as data. The instructions sift
   gives an agent when it connects name your collections, their folders and their front matter fields, a field only if
-  its name is one plain word of at most 40 characters: no file of a collection can write a sentence into them.
+  its name is one plain word of at most 40 characters: a file of a collection can put such a word into them, not a
+  sentence.
 - **Your files.** sift never writes to them. One MCP tool changes anything, `reindex`, and only sift's stores: it reads
   only files `sift index` would read, inside a collection agents may see, outside hidden and linked folders. A linked
   file is read only if it points into its collection's folder, unless the collection was added with `--follow-links`:

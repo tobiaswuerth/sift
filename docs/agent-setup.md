@@ -111,9 +111,9 @@ on stdout).
    that only starts servers itself (stdio) runs `sift serve --stdio`, which talks to the running `sift serve`, or starts
    one that leaves after 15 idle minutes.
 
-8. **Check and hand over.** A new agent session lists sift's tools (`claude mcp list`); on connecting, the server
-   tells the agent which tool fits which question and which collections exist. Tell the user what you indexed, where
-   the UI is, and that `sift serve` must run for agents to search over HTTP.
+8. **Check and hand over.** `claude mcp list` shows sift connected, and a new agent session has its tools; on
+   connecting, the server tells the agent which tool fits which question and which collections exist. Tell the user
+   what you indexed, where the UI is, and that `sift serve` must run for agents to search over HTTP.
 
 ## Keeping the index current
 

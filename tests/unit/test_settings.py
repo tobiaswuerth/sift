@@ -90,6 +90,23 @@ def test_sift_asks_pypi_for_a_newer_sift_only_when_switched_on_and_never_offline
     assert refused.value.remedy == UPDATE_CHECK_REMEDY
 
 
+@pytest.mark.parametrize(
+    "written, switched",
+    [("1", True), ("true", True), ("YES", True), ("on", True), ("0", False), ("False", False), ("no", False)],
+)
+def test_a_switch_is_set_by_the_words_other_switches_of_the_environment_take(
+    user: Path, cwd: Path, written: str, *, switched: bool
+) -> None:
+    assert parsed({"SIFT_UPDATE_CHECK": written}, user, cwd).update_check is switched
+
+
+def test_every_variable_sift_has_no_setting_of_is_named_at_once(user: Path, cwd: Path) -> None:
+    with pytest.raises(InvalidRequestError) as refused:
+        parsed({"SIFT_HOEM": "x", "SIFT_OCRR": "y", "SIFT_OCR": "off"}, user, cwd)
+    assert (refused.value.message, refused.value.field) == ("sift has no settings SIFT_HOEM, SIFT_OCRR", "SIFT_HOEM")
+    assert refused.value.remedy == f"unset them, or set one of {', '.join(VARIABLES)}"
+
+
 def test_the_gpus_cuda_may_use_are_kept_as_set_even_empty_which_hides_them_all(user: Path, cwd: Path) -> None:
     asked: tuple[dict[str, str], ...] = ({}, {"CUDA_VISIBLE_DEVICES": "-1"}, {"CUDA_VISIBLE_DEVICES": ""})
     assert [parsed(each, user, cwd).gpus for each in asked] == [None, "-1", ""]

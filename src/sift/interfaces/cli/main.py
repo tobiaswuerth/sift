@@ -15,7 +15,7 @@ from sift.api.wire import CONTRACT, contract_text, understood
 from sift.domain.text.decoding import encodable
 from sift.interfaces.cli.arguments import flags, options
 from sift.interfaces.cli.context import Context
-from sift.interfaces.cli.entries import ENTRIES, EXAMPLES, LOGGED, command_of
+from sift.interfaces.cli.entries import ENTRIES, EXAMPLES, command_of, log_of
 from sift.interfaces.cli.flags import file_or_id
 from sift.interfaces.cli.heavy import endpoints, logs, windows
 from sift.interfaces.cli.notice import former_home, notice
@@ -247,11 +247,12 @@ def _heading(command: str) -> str:
 
 
 def _logged(asked: _Chosen, settings: Settings, host: Host, live: Live) -> Shown:
-    if asked.command not in LOGGED:
+    named = log_of(asked.command, cast("dict[str, object]", vars(asked.namespace)))
+    if named is None:
         return _commanded(asked, settings, host, live, None)
     with contextlib.ExitStack() as held:
         try:
-            log = held.enter_context(logs().logged(settings.home, asked.command, host.now(), _heading(asked.command)))
+            log = held.enter_context(logs().logged(settings.home, named, host.now(), _heading(asked.command)))
         except OSError as error:
             live.close()
             return failure(error, asked.style, as_json=asked.json)

@@ -100,6 +100,13 @@ def test_each_installation_is_upgraded_as_it_was_made(tmp_path: Path) -> None:
         "uvx sift-rag@latest",
         None,
     ]
+    spaced = "C:\\Program Files\\Python\\python.exe"
+    assert upgrade_command(tmp_path / "venv", pip=True, python=spaced, platform="win32") == (
+        f'"{spaced}" -m pip install --upgrade sift-rag'
+    )
+    assert upgrade_command(tmp_path / "venv", pip=True, python="/opt/my python/bin/python", platform="linux") == (
+        "'/opt/my python/bin/python' -m pip install --upgrade sift-rag"
+    )
 
 
 @pytest.mark.parametrize(

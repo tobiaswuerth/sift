@@ -14,6 +14,7 @@ from types import MappingProxyType
 from typing import cast
 
 from sift.api.package import PACKAGE
+from sift.interfaces.console.shell import command
 
 PYPI = f"https://pypi.org/pypi/{PACKAGE}/json"
 STATE = "update.json"
@@ -62,13 +63,13 @@ def _made_by_uv(prefix: Path) -> bool:
     return any(line.partition("=")[0].strip() == "uv" for line in lines)
 
 
-def upgrade_command(prefix: Path, *, pip: bool, python: str) -> str | None:
+def upgrade_command(prefix: Path, *, pip: bool, python: str, platform: str = sys.platform) -> str | None:
     if (prefix / "uv-receipt.toml").is_file():
         return f"uv tool upgrade {PACKAGE}"
     if "pipx" in prefix.parts and prefix.parent.name == "venvs":
         return f"pipx upgrade {PACKAGE}"
     if pip:
-        return f"{python} -m pip install --upgrade {PACKAGE}"
+        return command((python, "-m", "pip", "install", "--upgrade", PACKAGE), platform)
     if not _made_by_uv(prefix):
         return None
     if prefix.parent.name.startswith("archive-v"):
@@ -144,6 +145,7 @@ class Checking:
     package: Path = Path(__file__)
     pip: Callable[[], bool] = _has_pip
     python: str = sys.executable
+    platform: str = sys.platform
     deadline: float = DEADLINE
 
 
@@ -189,5 +191,5 @@ def told(home: Path, installed: str, asked: Checking | None = None) -> str | Non
         return f"what PyPI said could not be kept in {path} ({error}); the next command asks again"
     if state.latest is None or not newer(state.latest, installed):
         return None
-    command = upgrade_command(checking.prefix, pip=checking.pip(), python=checking.python)
-    return f"sift {state.latest} is out, this is {installed}" + (f": {command}" if command else "")
+    upgrade = upgrade_command(checking.prefix, pip=checking.pip(), python=checking.python, platform=checking.platform)
+    return f"sift {state.latest} is out, this is {installed}" + (f": {upgrade}" if upgrade else "")

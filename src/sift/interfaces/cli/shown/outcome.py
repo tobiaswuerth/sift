@@ -90,7 +90,8 @@ def value_text(value: FieldValue) -> str:
 
 def _placed(notice: Notice) -> str:
     where = notice.collection or notice.id
-    return notice.message if where is None or repr(where) in notice.message else f"{where}: {notice.message}"
+    said = notice.message
+    return said if where is None or said.startswith(where) or repr(where) in said else f"{where}: {said}"
 
 
 def notice_lines(notices: tuple[Notice, ...], style: Style, label: str = "error") -> tuple[str, ...]:
