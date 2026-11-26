@@ -41,7 +41,7 @@ def converted(raw: bytes, name: str, extract: Extract = extracted) -> Conversion
     except BaseException as panic:
         if isinstance(panic, Exception) or type(panic).__module__ == BUILT_IN:
             raise
-        return Unread(f"the converter failed: {panic}")
+        return Unread(f"the converter failed: {panic}", next_release=True)
     (found,) = result.results
     about = found.metadata
     named: dict[str, FieldValue] = {

@@ -129,4 +129,6 @@ def read_file(asked: ToRead, whole: ReadWhole = at_most, converting: Convert = c
     if len(raw) > asked.most:
         return too_large(len(raw), asked.most)
     read = read_whole(raw, asked.path.name, asked.title_from, converting)
-    return Refused(read.problem, Again.NEVER) if isinstance(read, Unread) else read
+    if isinstance(read, Unread):
+        return Refused(read.problem, Again.NEXT_RELEASE if read.next_release else Again.NEVER)
+    return read

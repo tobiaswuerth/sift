@@ -15,6 +15,7 @@ from sift.api.fields import Fields, FieldValue
 from sift.domain.text.chunks import chunks
 from sift.domain.text.decoding import decoded
 from sift.domain.text.documents import Convert, Unread
+from sift.domain.text.heads import UnreadableHeadError
 from sift.domain.text.json_values import LONE_SURROGATE, REPLACEMENT, composed_fields
 from sift.domain.text.kinds import CONTROL, FileKind, kind_of
 from sift.domain.text.markdown import title_of
@@ -305,5 +306,7 @@ def mail(raw: bytes, name: str, convert: Convert) -> Mail | Unread:
         if nesting(raw, MOST_NESTED) > MOST_NESTED:
             return Unread(NESTED_TOO_DEEPLY)
         return _read(raw, name, convert)
-    except UNREADABLE as error:
+    except UnreadableHeadError as error:
         return Unread(str(error))
+    except UNREADABLE as error:
+        return Unread(str(error), next_release=True)

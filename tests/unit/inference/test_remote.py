@@ -303,3 +303,21 @@ def test_vectors_and_scores_from_a_worker_are_this_machine_s_numbers(worker: Liv
     vectors = worker.remote().encode(TEXTS, query=False)
     assert (vectors.dtype, vectors.flags.writeable) == (np.dtype(np.float16), True)
     assert worker.remote().rerank("brush", TEXTS).dtype == np.dtype(np.float32)
+
+
+def refusing_first(_host: str, _port: int) -> Sequence[tuple[int, object]]:
+    return [(socket.AF_INET, "127.0.0.2"), (socket.AF_INET, LOOPBACK)]
+
+
+def test_a_worker_is_reached_at_the_next_address_of_its_name_where_the_first_refuses(worker: LiveWorker) -> None:
+    remote = worker.remote(address=replace(worker.address, host="workstation.test"), resolve=refusing_first)
+    assert remote.encode(TEXTS, query=False).shape == (2, 48)
+    held = remote.line.connection
+    assert held is not None
+    assert held.sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY) != 0
+
+
+def test_a_worker_no_address_of_whose_name_answers_is_said_unreachable() -> None:
+    nobody = WorkerAddress("workstation.test", nobody_listens(), "token", "pin")
+    with pytest.raises(ModelUnavailableError, match="is unreachable or failed"):
+        Remote(nobody, VERSION, refusing_first).prepare()

@@ -70,6 +70,16 @@ def unverified_tls() -> ssl.SSLContext:
     return tls
 
 
+def _connected(ips: Sequence[str], port: int) -> socket.socket:
+    *others, last = ips
+    for ip in others:
+        try:
+            return socket.create_connection((ip, port), CONNECT_SECONDS)
+        except OSError:
+            continue
+    return socket.create_connection((last, port), CONNECT_SECONDS)
+
+
 @final
 class PinnedConnection(http.client.HTTPSConnection):
     def __init__(self, worker: WorkerAddress, resolve: Resolve) -> None:
@@ -84,8 +94,9 @@ class PinnedConnection(http.client.HTTPSConnection):
         if not reachable:
             said = f"embedding remote {self.worker.host} resolves to no address this Python can connect to"
             raise ModelUnavailableError(said, REACH_REMEDY)
-        ip = min(reachable, key=lambda each: each[0] != socket.AF_INET)[1]
-        raw = socket.create_connection((ip, self.port), CONNECT_SECONDS)
+        ordered = sorted(reachable, key=lambda each: each[0] != socket.AF_INET)
+        raw = _connected([ip for _, ip in ordered], self.port)
+        raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         raw.settimeout(ANSWER_SECONDS)
         held = self.tls.wrap_socket(raw, server_hostname=self.host)
         if not shows(held.getpeercert(binary_form=True), self.worker.pin):

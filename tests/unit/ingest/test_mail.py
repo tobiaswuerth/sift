@@ -342,7 +342,7 @@ def test_html_the_converter_fails_on_is_read_as_its_words() -> None:
 
 
 def test_a_mail_whose_charset_names_no_charset_is_unread_with_what_python_said() -> None:
-    assert mail(NO_CHARSET, "a.eml", failing) == Unread("embedded null character")
+    assert mail(NO_CHARSET, "a.eml", failing) == Unread("embedded null character", next_release=True)
 
 
 @pytest.mark.parametrize(

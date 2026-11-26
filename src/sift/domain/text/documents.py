@@ -25,6 +25,7 @@ class Converted:
 @dataclass(frozen=True, slots=True)
 class Unread:
     problem: str
+    next_release: bool = False
 
 
 @dataclass(frozen=True, slots=True)

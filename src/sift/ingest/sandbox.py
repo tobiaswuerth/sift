@@ -15,7 +15,7 @@ from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass, field
 from multiprocessing.process import BaseProcess
 from pathlib import Path
-from typing import NoReturn, Protocol, cast
+from typing import Protocol, cast
 
 from sift.domain.text.documents import Again, Outcome, Refused, stopped
 from sift.ingest.pictured import Pictured, ToPicture
@@ -126,8 +126,9 @@ def _message(channel: _Channel) -> object:
         return None
 
 
-def _ends_with(parent: BaseProcess) -> NoReturn:
-    os._exit(ORPHANED * len(multiprocessing.connection.wait([parent.sentinel])))
+def ends_with(parent: int, end: Callable[[int], object] = os._exit) -> None:
+    multiprocessing.connection.wait([parent])
+    end(ORPHANED)
 
 
 def _pickled(outcome: object, most: int) -> bytes:
@@ -138,7 +139,7 @@ def _pickled(outcome: object, most: int) -> bytes:
 def _serve[A, B](asked: _Channel, answers: _Channel, read: Callable[[A], B], most: int) -> None:
     _ = signal.signal(signal.SIGINT, signal.SIG_IGN)
     parent = cast("BaseProcess", multiprocessing.parent_process())
-    threading.Thread(target=_ends_with, args=(parent,), daemon=True).start()
+    threading.Thread(target=ends_with, args=(parent.sentinel,), daemon=True).start()
     answers.send(READY)
     while (each := _message(asked)) is not None:
         answers.send(BEGAN)
