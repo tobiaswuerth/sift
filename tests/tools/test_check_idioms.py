@@ -290,6 +290,14 @@ def test_sql_on_a_transaction_s_connection_runs_in_sift_storage_alone() -> None:
     assert problems("src/sift/storage/a.py", source) == []
 
 
+def test_the_functions_that_run_sql_are_imported_in_sift_storage_alone() -> None:
+    source = "from sift.storage.database import Reading, first, rows\n\nrows(transaction, Row, 'SELECT 1')\n"
+    assert problems("src/sift/app/a.py", source) == [idioms_storage.SQL_HELPERS_TAKEN]
+    assert problems("src/sift/storage/a.py", source) == []
+    assert problems("src/sift/app/a.py", "from sift.storage.database import Reading, reading, writing\n") == []
+    assert problems("tests/unit/app/test_a.py", source) == []
+
+
 def test_a_name_bound_once_is_followed_to_what_it_names() -> None:
     assert problems("src/sift/app/a.py", "held = transaction.connection\nheld.execute('x')\n") == [
         idioms_storage.RAW_SQL

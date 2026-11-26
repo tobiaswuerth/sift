@@ -31,7 +31,7 @@ from sift.storage.keywords import writing_documents
 from sift.storage.store import MISSING_REMEDY, open_store
 from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import damage_table
-from tests.files import undeletable, write
+from tests.files import linked, undeletable, write
 from tests.homes import indexed, quiet
 from tests.models import Hashed
 
@@ -96,6 +96,17 @@ def test_a_folder_inside_a_collection_is_added_only_as_nested(tmp_path: Path, ho
     with pytest.raises(InvalidRequestError, match="lies inside the folder of the collection 'notes'"):
         add(home, AddCollection(str(inner)))
     assert add(home, AddCollection(str(inner), nested=True)).name == "inner"
+
+
+def test_an_empty_store_file_an_add_left_in_a_home_reached_through_a_link_is_taken_by_the_next_add(
+    tmp_path: Path,
+) -> None:
+    real, notes = tmp_path / "real", tmp_path / "notes"
+    write(notes / "a.md", "# A\n")
+    (real / "collections").mkdir(parents=True)
+    (real / "collections" / "notes.sqlite").touch()
+    linked(tmp_path / "home", str(real), folder=True)
+    assert add(tmp_path / "home", AddCollection(str(notes))).name == "notes"
 
 
 def test_a_store_its_removal_left_behind_is_made_anew_when_its_folder_is_added_again(

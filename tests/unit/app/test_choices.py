@@ -20,6 +20,7 @@ from sift.storage.database import reading, rows, run, writing
 from sift.storage.store import connected
 from tests.files import linked, write
 from tests.homes import found_ids, indexed, indexed_home, quiet, stopped_when_advanced
+from tests.mails import SAMPLES
 from tests.models import Hashed
 
 
@@ -91,6 +92,15 @@ def test_adding_a_collection_again_changes_where_its_titles_come_from(home: Path
     assert isinstance(back, CollectionChanged)
     assert (back.retitled, titles(home)["Hans Müller.md"]) == (2, "Summary")
     assert found_ids(home, "Müller") == []
+
+
+def test_a_file_that_is_no_note_keeps_its_title_when_the_notes_are_retitled(tmp_path: Path, notes: Path) -> None:
+    (notes / "page.html").write_bytes((SAMPLES / "sample.html").read_bytes())
+    home = indexed_home(tmp_path, notes)
+    before = titles(home)["page.html"]
+    changed = add(home, AddCollection(str(notes), title_from=TitleFrom.NAME))
+    assert isinstance(changed, CollectionChanged)
+    assert (changed.retitled, titles(home)["page.html"], before != "page") == (2, before, True)
 
 
 def test_retitled_notes_stay_retitled_when_indexed_again(home: Path, notes: Path) -> None:

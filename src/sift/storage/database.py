@@ -21,6 +21,10 @@ MINIMUM_SQLITE = (3, 38, 0)
 STREAMED = 10_000
 CACHE = f"PRAGMA cache_size = -{CACHE_KIBIBYTES}"
 READ_CACHE = f"PRAGMA cache_size = -{READ_CACHE_KIBIBYTES}"
+WAL = "wal"
+JOURNAL_MODE = "PRAGMA journal_mode"
+NO_LOG = "{path} lies where SQLite keeps no write-ahead log (it keeps its journal by {mode})"
+NO_LOG_REMEDY = "keep sift's stores on a drive of this machine, not on a network share"
 SETTINGS = (
     "PRAGMA journal_mode = WAL",
     f"PRAGMA journal_size_limit = {WAL_LIMIT_BYTES}",
@@ -120,7 +124,15 @@ def read_only(path: Path, timeout: float = BUSY_TIMEOUT_SECONDS, *, immutable: b
     return sqlite3.connect(whole, uri=True, timeout=timeout, isolation_level=None, check_same_thread=False)
 
 
-def connect(path: Path, *, create: bool, timeout: float = BUSY_TIMEOUT_SECONDS) -> sqlite3.Connection:
+def _refuse_without_a_log(connection: sqlite3.Connection, path: Path) -> None:
+    (mode,) = cast("tuple[str]", connection.execute(JOURNAL_MODE).fetchone())
+    if mode != WAL:
+        raise StoreUnavailableError(NO_LOG.format(path=path, mode=mode), NO_LOG_REMEDY)
+
+
+def connect(
+    path: Path, *, create: bool, timeout: float = BUSY_TIMEOUT_SECONDS, settings: Sequence[str] = SETTINGS
+) -> sqlite3.Connection:
     require_sqlite(sqlite3.sqlite_version_info)
     if create:
         private_folder(path.parent)
@@ -136,8 +148,9 @@ def connect(path: Path, *, create: bool, timeout: float = BUSY_TIMEOUT_SECONDS) 
         check_same_thread=False,
     )
     try:
-        for setting in SETTINGS:
+        for setting in settings:
             connection.execute(setting)
+        _refuse_without_a_log(connection, path)
     except BaseException:
         connection.close()
         raise

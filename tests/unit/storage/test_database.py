@@ -231,6 +231,16 @@ def test_a_database_opens_at_a_path_of_spaces_marks_and_letters_of_any_script(tm
     assert path.is_file()
 
 
+def test_a_store_where_sqlite_keeps_no_write_ahead_log_is_refused_saying_where_to_keep_it(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    with pytest.raises(StoreUnavailableError) as refused:
+        connect(path, create=True, settings=("PRAGMA journal_mode = DELETE",))
+    assert (refused.value.message, refused.value.remedy) == (
+        f"{path} lies where SQLite keeps no write-ahead log (it keeps its journal by delete)",
+        "keep sift's stores on a drive of this machine, not on a network share",
+    )
+
+
 def test_an_sqlite_older_than_sift_needs_is_refused_with_what_to_do() -> None:
     require_sqlite(MINIMUM_SQLITE)
     require_sqlite((MINIMUM_SQLITE[0], MINIMUM_SQLITE[1] + 1, 0))

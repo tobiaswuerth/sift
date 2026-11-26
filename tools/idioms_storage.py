@@ -17,6 +17,12 @@ STORE_OPENED_BY_HAND = (
 )
 SQL_CALLS = frozenset({"execute", "executemany", "executescript"})
 RAW_SQL = "SQL run on a transaction's connection outside sift.storage: add a storage function and call it"
+SQL_MODULE = "sift.storage.database"
+SQL_HELPERS = frozenset({"first", "rows", "run", "run_each", "inserted", "streamed", "batches"})
+SQL_HELPERS_TAKEN = (
+    "a function that runs SQL (first, rows, run, run_each, inserted, streamed, batches) imported outside "
+    "sift.storage: SQL is written there; add a storage function and call it"
+)
 LAYOUT_FROM_ITS_END = (
     "a layout cut from its end, which the next migration moves: "
     "cut it before the migration it means, found by what that migration holds"
@@ -90,6 +96,13 @@ def raw_sql(path: str, tree: ast.Module) -> Iterator[Finding]:
                 pass
 
 
+def sql_helpers_taken(path: str, tree: ast.Module) -> Iterator[Finding]:
+    imports = (node for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module == SQL_MODULE)
+    for node in imports:
+        if any(alias.name in SQL_HELPERS for alias in node.names):
+            yield Finding(path, node.lineno, SQL_HELPERS_TAKEN)
+
+
 def _from_the_end(bound: ast.expr | None) -> bool:
     return isinstance(bound, ast.UnaryOp) and isinstance(bound.op, ast.USub)
 
@@ -109,6 +122,7 @@ def storage_idioms(path: str, tree: ast.Module) -> tuple[Finding, ...]:
         *numbered_placeholders(path, tree),
         *(handles_made(path, tree) if in_sift and path not in HANDLE_MAKERS else ()),
         *(raw_sql(path, tree) if in_sift and outside_storage else ()),
+        *(sql_helpers_taken(path, tree) if in_sift and outside_storage else ()),
         *(stores_opened_by_hand(path, tree) if in_sift and outside_storage else ()),
         *(text_cut_in_sql(path, tree) if in_sift else ()),
         *(databases_left_open(path, tree) if path.startswith(TESTS) else ()),

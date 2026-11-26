@@ -1,10 +1,8 @@
-import itertools
 import posixpath
 from collections.abc import Callable
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
-from typing import NamedTuple
 
 from sift.api.collections import Retitled, TitleFrom
 from sift.api.events import Advanced, CollectionStarted, Phase, PhaseDone, PhaseStarted, Reporter
@@ -14,31 +12,21 @@ from sift.domain.errors import DamagedError
 from sift.domain.text.kinds import FileKind, kind_of
 from sift.domain.text.notes import NoteRead, NoteTitle, read_note
 from sift.storage.catalog import Choices, Collection, choices_json, choices_of, set_choices
-from sift.storage.database import Connection, Value, WritingDocuments, first, reading, rows, run, writing
-from sift.storage.documents import SourceId, add_streamed, set_digest
+from sift.storage.database import Connection, WritingDocuments, reading, writing
+from sift.storage.documents import add_streamed, set_digest
 from sift.storage.forgetting import delete_documents
 from sift.storage.kept_vectors import vectors_held, vectors_kept, vectors_let_go
 from sift.storage.keywords import writing_documents
+from sift.storage.retitling import TitledNote, fulfilled, promise, promised, titled_after, whole_files
 from sift.storage.store import connected
 from sift.storage.texts import text_of
 from sift.storage.vector_meta import left
 from sift.storage.writer import sole_writer
 
-NOTES = """SELECT d.id, d.source, s.path, d.title, d.digest FROM documents d JOIN sources s ON s.id = d.source
-           WHERE d.key = '' ORDER BY d.id"""
-RETITLING = "retitling"
-PROMISED = "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)"
 
-
-class _Note(NamedTuple):
-    id: DocumentId
-    source: SourceId
-    path: str
-    title: str
-    digest: str
-
-
-def _retitled_one(transaction: WritingDocuments, note: _Note, title_from: TitleFrom) -> bool:
+def _retitled_one(transaction: WritingDocuments, note: TitledNote, title_from: TitleFrom) -> bool:
+    if kind_of(note.path) is not FileKind.NOTE:
+        return False
     read = read_note((text_of(transaction, note.id),), posixpath.basename(note.path), title_from)
     parts = list(read.parts)
     title = next(part.title for part in reversed(parts) if isinstance(part, NoteTitle))
@@ -54,13 +42,16 @@ def _retitled_one(transaction: WritingDocuments, note: _Note, title_from: TitleF
 
 def _titles_changed(connection: Connection, title_from: TitleFrom, report: Reporter, limits: Limits) -> int:
     with reading(connection) as transaction:
-        notes = [each for each in rows(transaction, _Note, NOTES) if kind_of(each.path) is FileKind.NOTE]
-    report(PhaseStarted(Phase.TITLE, len(notes)))
-    changed = done = 0
-    for batch in itertools.batched(notes, limits.most_files_a_write):
+        whole = whole_files(transaction)
+    report(PhaseStarted(Phase.TITLE, whole.files))
+    changed, done, after = 0, 0, DocumentId(0)
+    while True:
         with writing_documents(connection, limits.batches) as transaction:
+            batch = titled_after(transaction, after, whole.last, limits.most_files_a_write)
             changed += sum(_retitled_one(transaction, note, title_from) for note in batch)
-        done += len(batch)
+        if not batch:
+            break
+        done, after = done + len(batch), batch[-1].id
         report(Advanced(done))
     report(PhaseDone(done))
     return changed
@@ -77,7 +68,7 @@ def _finished(
         after = left(transaction)
     chosen()
     with writing(connection) as transaction:
-        run(transaction, "DELETE FROM meta WHERE key = ?", (RETITLING,))
+        fulfilled(transaction)
     return Retitled(changed, after - before)
 
 
@@ -85,17 +76,17 @@ def retitle(home: Path, one: Collection, wanted: Choices, report: Reporter, limi
     report(CollectionStarted(one.name, str(one.folder)))
     with sole_writer(one.store, "a retitling"), connected(one.store, one.id) as connection:
         with writing(connection) as transaction:
-            run(transaction, PROMISED, (RETITLING, choices_json(wanted)))
+            promise(transaction, choices_json(wanted))
         return _finished(connection, wanted.title_from, partial(set_choices, home, one.id, wanted), report, limits)
 
 
 def resumed(home: Path, one: Collection, connection: Connection, report: Reporter, limits: Limits) -> Collection:
     with reading(connection) as transaction:
-        promised = first(transaction, Value, "SELECT value FROM meta WHERE key = ?", (RETITLING,))
-    if promised is None:
+        owed = promised(transaction)
+    if owed is None:
         return one
     try:
-        wanted = choices_of(promised.value)
+        wanted = choices_of(owed)
     except (ValueError, TypeError) as error:
         raise DamagedError(f"the retitling it was to finish cannot be read: {error}") from None
     _finished(connection, wanted.title_from, partial(set_choices, home, one.id, wanted), report, limits)

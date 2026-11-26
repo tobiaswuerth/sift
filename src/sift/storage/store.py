@@ -23,7 +23,7 @@ from sift.storage.database import (
 from sift.storage.keyword_meta import keyword_meta
 from sift.storage.layout import LAYOUT
 from sift.storage.migrations import Migration, migrated, newer, version
-from sift.storage.store_files import delete_store
+from sift.storage.store_files import delete_logs, delete_store
 from sift.storage.unusable import DAMAGED_REMEDY, unavailable_if_unusable
 from sift.storage.writer import sole_writer
 
@@ -85,6 +85,7 @@ def create_store(
     private_folder(path.parent)
     private_file(path)
     try:
+        delete_logs(path)
         _made(path, collection, layout, shape)
     except BaseException:
         delete_store(path)

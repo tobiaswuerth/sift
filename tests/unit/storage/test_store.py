@@ -126,6 +126,21 @@ def test_a_store_is_never_made_over_a_file_that_is_there(tmp_path: Path) -> None
     assert (tmp_path / "s.sqlite").read_bytes() == b"someone's"
 
 
+def test_the_log_of_a_store_that_is_gone_is_not_read_into_the_store_made_where_it_was(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION)
+    with connected(path, COLLECTION) as connection:
+        with writing(connection) as transaction:
+            run(transaction, "INSERT INTO meta(key, value) VALUES ('left', 'by the store before')")
+        left = Path(f"{path}-wal").read_bytes()
+    for file in tmp_path.iterdir():
+        file.unlink()
+    Path(f"{path}-wal").write_bytes(left)
+    create_store(path, CollectionId(8))
+    with read_store(path, CollectionId(8)) as transaction:
+        assert first(transaction, Value, "SELECT value FROM meta WHERE key = 'left'") is None
+
+
 def test_a_store_that_could_not_be_made_leaves_no_file(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="collection id"):
         create_store(tmp_path / "s.sqlite", CollectionId(0))

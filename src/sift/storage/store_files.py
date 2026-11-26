@@ -7,6 +7,7 @@ WRITER_SUFFIX = ".writer"
 PART_SUFFIX = ".part"
 FILE_SUFFIXES = ("", "-wal", "-shm", WRITER_SUFFIX, f"{WRITER_SUFFIX}-journal", PART_SUFFIX, f"{PART_SUFFIX}-journal")
 DATA_SUFFIXES = ("", "-wal")
+LOG_SUFFIXES = ("-wal", "-shm")
 
 
 def _files(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
@@ -15,6 +16,11 @@ def _files(path: Path, suffixes: tuple[str, ...]) -> list[Path]:
 
 def delete_store(path: Path) -> None:
     for file in _files(path, FILE_SUFFIXES):
+        file.unlink()
+
+
+def delete_logs(path: Path) -> None:
+    for file in _files(path, LOG_SUFFIXES):
         file.unlink()
 
 

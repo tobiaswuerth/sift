@@ -368,7 +368,7 @@ def _cleared(transaction: Writing, home: Path, store: Path, identity: Collection
         raise InvalidRequestError(f"{store} is open in another program", IN_USE_REMEDY)
     if not store.exists():
         return
-    made_here = store.parent == home / STORES and holds_nothing(store)
+    made_here = same_place(store.parent, home / STORES) and holds_nothing(store)
     if not made_here and not left_by_add(store, identity):
         raise InvalidRequestError(f"{store} exists already", STORE_TAKEN_REMEDY, code=Problem.TAKEN)
     delete_store(store)

@@ -251,8 +251,14 @@ def _left(transaction: Reading) -> int:
     return found.n
 
 
+def _any_left(transaction: Reading) -> bool:
+    sql = "SELECT EXISTS(SELECT 1 FROM chunks WHERE place > ?)"
+    (found,) = rows(transaction, Count, sql, (_through(transaction),))
+    return bool(found.n)
+
+
 def _done_if_whole(transaction: Writing, made: str) -> bool:
-    if _left(transaction):
+    if _any_left(transaction):
         return False
     run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (made, FINGERPRINT_KEY))
     return True
