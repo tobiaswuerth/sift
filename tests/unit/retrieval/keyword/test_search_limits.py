@@ -148,13 +148,29 @@ def test_every_store_scores_its_best_ranges_though_time_is_out() -> None:
         assert ints(second.best.chunks) != ints(first.best.chunks)
 
 
-def test_a_phrase_is_held_to_what_all_its_words_read() -> None:
+def test_a_phrase_of_words_in_more_passages_than_a_search_reads_is_refused() -> None:
     notes: Round = {f"n{n}.md": ("", "N", "of the w1" if n < 2 else "of w2") for n in range(4)}
     with collections([[notes]]) as (stores, _):
-        assert len(search(stores, Phrase(("of", "the")), 10, tuning=Tuning(most_read=6))) == 2
-        with pytest.raises(InvalidRequestError, match='"of the" reads 6 passages, more than the 5') as refused:
-            search(stores, Phrase(("of", "the")), 10, tuning=Tuning(most_read=5))
+        assert len(search(stores, Phrase(("of", "the")), 10, tuning=Tuning(most_read=5))) == 2
+        with pytest.raises(InvalidRequestError, match='"of the" reads 5 passages, more than the 4') as refused:
+            search(stores, Phrase(("of", "the")), 10, tuning=Tuning(most_read=4))
         assert refused.value.remedy == "add a rarer word to the phrase, or search its words without quotes"
+
+
+def test_a_phrase_is_held_to_its_rarest_word_and_to_the_others_where_that_one_occurs() -> None:
+    notes: Round = {f"n{n:02}.md": ("", "N", "of the w1" if n == 20 else "of the") for n in range(40)}
+    with collections([[notes]]) as (stores, _):
+        with pytest.raises(InvalidRequestError, match='"of the" reads 80 passages, more than the 20'):
+            search(stores, Phrase(("of", "the")), 10, tuning=Tuning(most_read=20))
+        assert len(search(stores, Phrase(("of", "the", "w1")), 10, tuning=Tuning(most_read=9))) == 1
+        with pytest.raises(InvalidRequestError, match='"of the w1" reads 9 passages, more than the 8'):
+            search(stores, Phrase(("of", "the", "w1")), 10, tuning=Tuning(most_read=8))
+
+
+def test_a_phrase_with_a_word_no_passage_holds_reads_nothing() -> None:
+    notes: Round = {f"n{n:02}.md": ("", "N", "of the") for n in range(40)}
+    with collections([[notes]]) as (stores, _):
+        assert search(stores, Phrase(("of", "the", "w1")), 10, tuning=Tuning(most_read=0)) == ()
 
 
 def test_a_prefix_of_more_words_than_a_search_expands_is_refused() -> None:
@@ -185,7 +201,7 @@ def test_the_prefixes_and_phrases_of_a_query_are_held_to_what_a_search_reads_tog
         refusal = r"w1\* reads 6 passages; with the rest of the query, 10 passages, more than the 9"
         with pytest.raises(InvalidRequestError, match=refusal) as refused:
             search(stores, either, 10, tuning=Tuning(most_read=9))
-        assert refused.value.remedy == "write more of the word before the *"
+        assert refused.value.remedy == "write more of the word before the *, or search fewer collections"
 
 
 def test_a_prefix_of_words_in_as_many_passages_as_a_search_reads_is_read() -> None:

@@ -17,6 +17,7 @@ from sift.storage.links import titled
 
 ALSO_REMEDY = "name each field, e.g. emails and phone"
 SHORT_REMEDY = "give the note a longer alias, or name more of its fields to look for"
+COMMON_REMEDY = "search for the rarer words of the note's names yourself"
 
 
 def _names(note: Note, also: tuple[str, ...]) -> list[str]:
@@ -45,7 +46,7 @@ def mentions(home: Path, request: FindMentions, watching: Watching = WATCHING, t
         remedy = "name fewer fields to look for too" if request.also else "give it fewer or shorter names"
         raise InvalidRequestError(f"the note's names hold more than {MOST_WORDS:,} words", remedy, "id")
     expired = searching.expired_after(request.budget, watching.clock)
-    wanted = Wanted(request.wanted, not request.all_passages, tuning, expired)
+    wanted = Wanted(request.wanted, not request.all_passages, tuning, expired, "id", COMMON_REMEDY)
     narrowing = searching.narrowed(home, request, watching.audience, LeftOut(named.note, linking=True))
     result = keyword_result(narrowing, request, wanted, (expression, None), watching.decoded)
     return hits.also_unsearched(result, named.unsearched)

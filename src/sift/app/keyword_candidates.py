@@ -2,6 +2,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from functools import partial
 
+from sift.api.errors import field_at_fault
 from sift.api.search import Options, SearchResult
 from sift.app import hits
 from sift.app.linked import Narrowing
@@ -9,7 +10,7 @@ from sift.app.resident import DecodedSource, decoded_each_search
 from sift.app.searching import Open, Ranked, Wants, despite_losses, opened
 from sift.domain.query.expressions import NOTHING, Expression
 from sift.domain.rank.best import Best
-from sift.retrieval.keyword.leaves import Expired
+from sift.retrieval.keyword.leaves import PHRASE_REMEDY, Expired
 from sift.retrieval.keyword.search import (
     Prepared,
     Tuning,
@@ -28,6 +29,8 @@ class Wanted:
     by_document: bool
     tuning: Tuning
     expired: Expired
+    field: str = "query"
+    phrase_remedy: str = PHRASE_REMEDY
 
 
 def found(stores: Open, wanted: Wanted, expression: Expression) -> Ranked:
@@ -38,7 +41,8 @@ def found(stores: Open, wanted: Wanted, expression: Expression) -> Ranked:
         for one, keywords in stores.keyworded()
         if expression not in keywords.prepared
     ]
-    refuse_reading_too_much([plan for _, _, plan in plans], wanted.tuning)
+    with field_at_fault(wanted.field):
+        refuse_reading_too_much([plan for _, _, plan in plans], wanted.tuning, wanted.phrase_remedy)
     fresh: dict[int, Prepared] = {}
     for one, keywords, plan in plans:
         made = stores.guarded(one, partial(prepared, plan, allowed=keywords.allowed, expired=wanted.expired))

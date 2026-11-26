@@ -5,13 +5,14 @@ from typing import NoReturn
 import numpy as np
 
 from sift.api.errors import InvalidRequestError
-from sift.domain.arrays import Ascending, Ids, among, ascending, distinct, last
+from sift.domain.arrays import Ascending, Ids, among, ascending, distinct, last, total
 from sift.domain.query.expressions import Phrase, Prefix
 from sift.domain.rank.phrases import merged, phrase_counts
 from sift.domain.text.wording import counted
 from sift.retrieval.keyword.lists import (
     Opened,
     PostingArrays,
+    Ranged,
     StoredList,
     Whole,
     everything,
@@ -26,6 +27,7 @@ type Expired = Callable[[], bool]
 
 PREFIX_REMEDY = "write more of the word before the *"
 PHRASE_REMEDY = "add a rarer word to the phrase, or search its words without quotes"
+FEWER_REMEDY = "search fewer collections"
 
 
 def never() -> bool:
@@ -110,10 +112,27 @@ def materialized(
     return _phrase(store, leaf, lists, expired) if isinstance(leaf, Phrase) else _prefix(store, leaf, expired)
 
 
+def _ranges(store: Opened, held: StoredList) -> Ids:
+    return held.ranges.ids if isinstance(held, Ranged) else held.places >> store.shape.range_shift
+
+
+def _inside(store: Opened, held: StoredList, ranges: Ascending) -> int:
+    if isinstance(held, Ranged):
+        return total((held.ranges.ends - held.ranges.starts)[among(held.ranges.ids, ranges)])
+    return int(np.count_nonzero(among(held.places >> store.shape.range_shift, ranges)))
+
+
+def _phrase_reads(store: Opened, phrase: Phrase, lists: dict[str, list[StoredList]]) -> int:
+    rarest, *others = _rarest_first(phrase, lists)
+    held = np.concatenate([np.zeros(0, np.int64), *(_ranges(store, part) for part in lists[rarest])])
+    ranges = distinct(ascending(held))
+    return _size(lists[rarest]) + sum(_inside(store, part, ranges) for token in others for part in lists[token])
+
+
 def reads_of(store: Opened, leaf: Phrase | Prefix, lists: dict[str, list[StoredList]]) -> int:
     if isinstance(leaf, Prefix):
         return volume(store.transaction, leaf.text).passages
-    return sum(_size(lists[token]) for token in set(leaf.tokens))
+    return _phrase_reads(store, leaf, lists)
 
 
 def expansions_of(store: Opened, prefix: Prefix) -> int:
@@ -131,11 +150,15 @@ class Limit:
     unit: str
     costs: str
     verb: str
+    phrase_remedy: str = PHRASE_REMEDY
+    stores: int = 1
 
 
 def refused(costs: Mapping[Phrase | Prefix, int], limit: Limit) -> NoReturn:
     widest, cost = max(costs.items(), key=lambda each: each[1])
-    remedy = PREFIX_REMEDY if isinstance(widest, Prefix) else PHRASE_REMEDY
+    remedy = PREFIX_REMEDY if isinstance(widest, Prefix) else limit.phrase_remedy
+    if limit.stores > 1:
+        remedy = f"{remedy}, or {FEWER_REMEDY}"
     whole = "" if limit.total == cost else f"; with the rest of the query, {counted(limit.total, limit.unit)}"
     said = f"{_written(widest)} {limit.costs} {counted(cost, limit.unit)}{whole}"
     raise InvalidRequestError(f"{said}, more than the {limit.most:,} a search {limit.verb}", remedy)

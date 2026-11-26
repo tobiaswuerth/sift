@@ -11,7 +11,16 @@ from sift.domain.rank.best import Best, may_reach, offered, ranked, unreached_al
 from sift.domain.rank.bm25 import idf
 from sift.domain.rank.boolean import counted, may_hold
 from sift.retrieval.allowed import AllowedDocuments
-from sift.retrieval.keyword.leaves import Expired, Limit, expansions_of, materialized, never, reads_of, refused
+from sift.retrieval.keyword.leaves import (
+    PHRASE_REMEDY,
+    Expired,
+    Limit,
+    expansions_of,
+    materialized,
+    never,
+    reads_of,
+    refused,
+)
 from sift.retrieval.keyword.lists import Opened, PostingArrays, StoredList, owners, stored
 from sift.retrieval.keyword.scoring import Query, Scored, bounds, scored, within
 from sift.storage.keyword_lists import frequencies
@@ -201,16 +210,18 @@ def planned(store: Opened, expression: Expression) -> Planned:
     return Planned(store, unique, lists, reads, expanded)
 
 
-def refuse_reading_too_much(plans: Sequence[Planned], tuning: Tuning = TUNING) -> None:
+def refuse_reading_too_much(
+    plans: Sequence[Planned], tuning: Tuning = TUNING, phrase_remedy: str = PHRASE_REMEDY
+) -> None:
     reads: Counter[Phrase | Prefix] = Counter()
     expanded: Counter[Phrase | Prefix] = Counter()
     for plan in plans:
         reads.update(plan.reads)
         expanded.update(plan.expansions)
     if (total := expanded.total()) > tuning.most_expansions:
-        refused(expanded, Limit(total, tuning.most_expansions, "word", "stands for", "expands"))
+        refused(expanded, Limit(total, tuning.most_expansions, "word", "stands for", "expands", stores=len(plans)))
     if (total := reads.total()) > tuning.most_read:
-        refused(reads, Limit(total, tuning.most_read, "passage", "reads", "reads"))
+        refused(reads, Limit(total, tuning.most_read, "passage", "reads", "reads", phrase_remedy, len(plans)))
 
 
 def prepared(plan: Planned, *, allowed: AllowedDocuments | None = None, expired: Expired = never) -> Prepared:

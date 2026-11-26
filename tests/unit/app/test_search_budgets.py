@@ -2,7 +2,10 @@ import dataclasses
 import itertools
 from pathlib import Path
 
+import pytest
+
 from sift.api.collections import AddCollection
+from sift.api.errors import InvalidRequestError
 from sift.api.search import SearchKeywords
 from sift.app.collections import add
 from sift.app.search import search
@@ -34,6 +37,13 @@ def many_notes(tmp_path: Path) -> Path:
     add(home, AddCollection(str(tmp_path / "many")))
     indexed(home)
     return home
+
+
+def test_a_phrase_a_search_would_read_too_much_for_is_refused_as_the_query_s_fault(tmp_path: Path) -> None:
+    home = many_notes(tmp_path)
+    with pytest.raises(InvalidRequestError, match='"a note" reads 600 passages, more than the 5') as refused:
+        search(home, SearchKeywords('"a note"'), tuning=Tuning(most_read=5))
+    assert refused.value.field == "query"
 
 
 def test_a_search_out_of_time_says_it_is_partial_and_keeps_what_it_found(tmp_path: Path) -> None:

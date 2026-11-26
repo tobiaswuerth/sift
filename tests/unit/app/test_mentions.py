@@ -10,6 +10,7 @@ from sift.app.collections import status
 from sift.app.documents import documents
 from sift.app.links import links
 from sift.app.mentions import mentions
+from sift.retrieval.keyword.search import Tuning
 from tests.damage import damage_pages
 from tests.files import write
 from tests.homes import asked, collection, indexed
@@ -84,6 +85,16 @@ def test_mentions_of_what_is_no_note_or_by_no_field_are_refused(named: Path) -> 
         mentions(named, FindMentions(HANS, also=(" ",)))
     with pytest.raises(InvalidRequestError, match="also holds an empty text"):
         FindMentions(HANS, also=("",))
+
+
+def test_a_note_named_by_words_in_more_passages_than_a_search_reads_is_refused_for_its_names(named: Path) -> None:
+    with pytest.raises(InvalidRequestError, match=r'"acme ag" reads [0-9] passages, more than the 1') as refused:
+        mentions(named, FindMentions(ACME), tuning=Tuning(most_read=1))
+    remedy = "search for the rarer words of the note's names yourself"
+    assert (refused.value.field, refused.value.remedy) == ("id", f"{remedy}, or search fewer collections")
+    with pytest.raises(InvalidRequestError, match='"acme ag" reads') as alone:
+        mentions(named, FindMentions(ACME, collections=("work",)), tuning=Tuning(most_read=1))
+    assert alone.value.remedy == remedy
 
 
 def test_a_name_that_starts_like_an_id_is_looked_up_as_a_name(named: Path, tmp_path: Path) -> None:
