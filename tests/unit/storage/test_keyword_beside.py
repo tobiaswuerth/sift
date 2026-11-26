@@ -8,13 +8,13 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.plan.segments import Policy
-from sift.storage.database import Batches, Connection, Count, reading, rows
+from sift.storage.database import Batches, Connection, Count, reading, rows, writing
 from sift.storage.keyword_beside import built, left
 from sift.storage.keyword_lists import segments
-from sift.storage.keyword_meta import beside
+from sift.storage.keyword_meta import beside, drop_beside
 from sift.storage.keywords import remade, remake_started, settle, totals
 from tests.examples import few
-from tests.keyword_indexes import MERGING, NOTES, TWO, checked, rounds, settled, staled
+from tests.keyword_indexes import MERGING, NOTES, TWO, checked, generation_of, rounds, settled, staled
 from tests.keyword_orders import current_of, due, embedded, placed, placed_in
 from tests.keyword_stores import SMALL, Round, applied, opened_store
 
@@ -48,7 +48,7 @@ def test_an_order_of_a_current_index_is_built_beside_it_which_serves_as_before_u
         top = max(each.place for each in before)
         assert placed_in(connection, [*ids[::-1][:-2], 10**15]) == len(ids)
         assert left(connection) == len(ids)
-        seen = [0]
+        seen, as_served = [0], generation_of(connection)
         for done in built(connection, TWO):
             assert done > seen[-1]
             seen.append(done)
@@ -56,6 +56,7 @@ def test_an_order_of_a_current_index_is_built_beside_it_which_serves_as_before_u
             assert served == (True, done < len(ids), done < len(ids))
             with reading(connection) as transaction:
                 assert all((each.last <= top) == (done < len(ids)) for each in segments(transaction))
+            assert (generation_of(connection) == as_served) == (done < len(ids))
             checked(connection)
         assert seen[-1] == len(ids)
         assert (current_of(connection), begun(connection), left(connection)) == (True, False, 0)
@@ -89,6 +90,10 @@ def test_a_change_written_while_an_order_is_built_beside_drops_what_was_built_an
         placed_in(connection, [each.id for each in before][::-1])
         next(built(connection, TWO))
         assert not due(connection)
+        as_served = generation_of(connection)
+        with writing(connection) as transaction:
+            drop_beside(transaction)
+        assert (generation_of(connection), begun(connection)) == (as_served, False)
         applied(connection, [{"n1.md": None, "x.md": ("", "X", "four")}])
         assert (begun(connection), places_waiting(connection), left(connection)) == (False, 0, 0)
         assert list(built(connection, TWO)) == []

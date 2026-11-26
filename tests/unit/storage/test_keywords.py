@@ -11,15 +11,16 @@ from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Policy
 from sift.domain.text.notes import note
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS
-from sift.storage.database import BATCHES, Batches, Connection, reading, rows, run, writing
+from sift.storage.database import BATCHES, Batches, reading, rows, run, writing
 from sift.storage.documents import add_documents, put_source
-from sift.storage.keyword_lists import dead_within, expansions, frequencies, keyword_generation, segments
+from sift.storage.keyword_lists import dead_within, expansions, frequencies, segments
 from sift.storage.keywords import totals, writing_documents
 from tests.examples import few
 from tests.keyword_indexes import (
     Average,
     Sized,
     checked,
+    generation_of,
     rounds,
 )
 from tests.keyword_stores import SMALL, Round, applied, opened_store, written
@@ -84,11 +85,6 @@ def test_a_segment_of_chunks_all_gone_goes_with_them() -> None:
             assert dead_within(transaction, 0, 2**63 - 1).tolist() == []
             assert frequencies(transaction, ["one", "three"]) == {"three": 1}
             assert left.chunks == 1
-
-
-def generation_of(connection: Connection) -> int:
-    with reading(connection) as transaction:
-        return keyword_generation(transaction)
 
 
 def test_the_keyword_generation_moves_with_each_segment_made_or_gone_and_only_then() -> None:

@@ -221,7 +221,8 @@ def test_what_is_no_page_or_asked_another_way_than_served_is_said_as_a_page_or_a
             sent(server, "GET", "/api/search"),
         )
     assert (missing[0], missing[1]["content-type"], missing[2]) == (404, "text/plain; charset=utf-8", "no such page")
-    assert (posted[0], posted[1]["allow"], posted[2]) == (405, "GET, HEAD", "this page is not asked for that way")
+    assert (posted[0], sorted(posted[1]["allow"].split(", "))) == (405, ["GET", "HEAD"])
+    assert posted[2] == "this page is not asked for that way"
     assert (fetched[0], fetched[1]["allow"], fetched[1]["content-type"]) == (405, "POST", "application/json")
     assert json.loads(fetched[2])["error"]["message"] == "a command is sent by POST"
     assert missing[1]["x-content-type-options"] == "nosniff"

@@ -219,5 +219,13 @@ LAYOUT: tuple[Migration, ...] = (
         """CREATE VIEW keyword_built AS
            SELECT id, first, last, chunks, dead, average FROM keyword_segments
            WHERE first > (SELECT above FROM keyword_beside)""",
+        "DROP TRIGGER keyword_segment_made",
+        "DROP TRIGGER keyword_segment_gone",
+        """CREATE TRIGGER keyword_segment_made AFTER INSERT ON keyword_segments
+           WHEN NEW.last <= coalesce((SELECT above FROM keyword_beside), 9223372036854775807)
+           BEGIN UPDATE counts SET keyword_changes = keyword_changes + 1; END""",
+        """CREATE TRIGGER keyword_segment_gone AFTER DELETE ON keyword_segments
+           WHEN OLD.last <= coalesce((SELECT above FROM keyword_beside), 9223372036854775807)
+           BEGIN UPDATE counts SET keyword_changes = keyword_changes + 1; END""",
     ),
 )

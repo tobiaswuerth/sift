@@ -9,7 +9,15 @@ from sift.domain.codec.postings import blocked, positions_of
 from sift.domain.plan.segments import Held, Policy, merges
 from sift.domain.text.tokens import tokens
 from sift.storage.database import Batches, Connection, Reading, reading, rows, run, writing
-from sift.storage.keyword_lists import blocks, dead_within, frequencies, parts, positions, segments
+from sift.storage.keyword_lists import (
+    blocks,
+    dead_within,
+    frequencies,
+    keyword_generation,
+    parts,
+    positions,
+    segments,
+)
 from sift.storage.keywords import totals
 from tests.keyword_stores import COLUMNS, Instance, Round, instances, texts
 
@@ -106,6 +114,11 @@ def checked(connection: Connection) -> None:
         gone = ints(dead_within(transaction, 0, 2**63 - 1))
         for each in rows(transaction, Kept, "SELECT first, last, chunks, dead FROM keyword_segments"):
             assert each.dead == sum(each.first <= chunk <= each.last for chunk in gone) < each.chunks
+
+
+def generation_of(connection: Connection) -> int:
+    with reading(connection) as transaction:
+        return keyword_generation(transaction)
 
 
 TWO = Batches(chunks_a_segment=2)
