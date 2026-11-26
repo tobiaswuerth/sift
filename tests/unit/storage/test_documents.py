@@ -245,10 +245,16 @@ def test_a_source_holds_one_document_of_each_key(store: sqlite3.Connection) -> N
         ),
         ("INSERT INTO names(key, document, kind) VALUES ('k', :document, 'nickname')", "CHECK constraint failed"),
         (
-            "INSERT INTO chunks(document, first_line, last_line, start, length) VALUES (:document + 99, 1, 1, 0, 1)",
+            (
+                "INSERT INTO chunks(document, first_line, last_line, start, length, place) "
+                "VALUES (:document + 99, 1, 1, 0, 1, 1)"
+            ),
             "FOREIGN KEY constraint failed",
         ),
-        ("INSERT INTO sources(path, modified_ns, size) VALUES ('a', 'yesterday', 1)", "cannot store TEXT value"),
+        (
+            "INSERT INTO sources(path, modified_ns, size, folded) VALUES ('a', 'yesterday', 1, 'a')",
+            "cannot store TEXT value",
+        ),
         (
             "INSERT INTO documents(source, key, digest, title, fields) VALUES (:source, 'k', 'd', 't', '{')",
             "CHECK constraint failed",

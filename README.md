@@ -181,7 +181,8 @@ them again, and new agent sessions, which read sift's tools as they start. sift 
 sift follows [semantic versioning](https://semver.org/): within a major version, the commands and their JSON output,
 the MCP tools, the settings, the stores and the worker protocol stay compatible (sift's Python modules may change in any
 release). When a release changes the stores' layout, its first command updates them once, without reading files or
-embedding again; older sifts then refuse them and say to upgrade, so upgrade every sift sharing a home. The
+embedding again. An older sift still opens such a store where the change allows it, and otherwise refuses it and
+says to upgrade, so upgrade every sift sharing a home. The
 [changelog](https://github.com/tobiaswuerth/sift/blob/main/CHANGELOG.md) says what each update takes.
 
 ## Documentation

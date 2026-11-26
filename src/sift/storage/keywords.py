@@ -12,7 +12,7 @@ from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId, DocumentId, first_row
 from sift.domain.arrays import ints
 from sift.domain.codec.segments import GAP, Segment, segment, stream
-from sift.domain.codec.shape import SHAPE, Shape
+from sift.domain.codec.shape import FORMAT, SHAPE, Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.keyword_state import KeywordState, keyword_state, remaking
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, field_tokens, tokens
@@ -32,7 +32,14 @@ from sift.storage.database import (
     writing,
 )
 from sift.storage.keyword_merges import Totals, merged_once, planned, settled
-from sift.storage.keyword_meta import FINGERPRINT_KEY, SHAPE_KEY, THROUGH_KEY, drop_beside, fingerprint
+from sift.storage.keyword_meta import (
+    FINGERPRINT_KEY,
+    FORMAT_KEY,
+    SHAPE_KEY,
+    THROUGH_KEY,
+    drop_beside,
+    fingerprint,
+)
 from sift.storage.keyword_writes import Head, lengths_added, postings_added, segment_added
 from sift.storage.texts import TextSpan, spans_text
 
@@ -43,6 +50,8 @@ STALE = "the store's keyword index is of another version of sift"
 UNFINISHED = "the store's keyword index is not yet wholly remade"
 TAKEN_OVER = "another sift began remaking this keyword index for itself and has not finished"
 TAKEN_OVER_REMEDY = "index it from one sift only: sifts whose SQLite renders numbers apart remake it in turn"
+NEWER = "the store's keyword index was made by a newer sift"
+NEWER_REMEDY = "upgrade sift"
 DIGITS = re.compile("[0-9]{1,19}")
 MOST_ROW = (1 << 63) - 1
 TEXTS_AT_ONCE = 1000
@@ -234,7 +243,13 @@ def forget(transaction: WritingDocuments, documents: Sequence[DocumentId]) -> No
         _forget(transaction, documents[at : at + size])
 
 
+def refuse_newer(transaction: Reading) -> None:
+    if _number(transaction, FORMAT_KEY) > FORMAT:
+        raise StoreUnavailableError(NEWER, NEWER_REMEDY, code=Problem.STORE_NEWER)
+
+
 def _anew(transaction: Writing, made: str, start: int) -> None:
+    refuse_newer(transaction)
     drop_beside(transaction)
     run(transaction, "DELETE FROM keyword_segments")
     run(transaction, "DELETE FROM keyword_terms")
@@ -245,7 +260,7 @@ def _anew(transaction: Writing, made: str, start: int) -> None:
     run_each(
         transaction,
         "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-        [(SHAPE_KEY, shape), (THROUGH_KEY, str(start)), (FINGERPRINT_KEY, made)],
+        [(SHAPE_KEY, shape), (THROUGH_KEY, str(start)), (FINGERPRINT_KEY, made), (FORMAT_KEY, str(FORMAT))],
     )
 
 
@@ -308,6 +323,7 @@ def remade(connection: Connection, batches: Batches = BATCHES) -> Iterator[int]:
 
 
 def refuse_stale(transaction: Reading) -> None:
+    refuse_newer(transaction)
     match keyword_state(_meta(transaction, FINGERPRINT_KEY), fingerprint(transaction)):
         case KeywordState.CURRENT:
             return

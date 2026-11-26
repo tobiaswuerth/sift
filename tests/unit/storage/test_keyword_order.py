@@ -1,24 +1,19 @@
-import contextlib
 import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 
-from sift.api.ids import CollectionId
 from sift.domain.arrays import Ids, ints
 from sift.domain.codec.codes import Bits
 from sift.domain.codec.order import topical
-from sift.storage.database import Connection, IdRow, reading, rows, run, run_each, writing
+from sift.storage.database import Connection, reading, rows, run, writing
 from sift.storage.keyword_beside import built, left
 from sift.storage.keyword_order import ordered, placed_anew
 from sift.storage.keywords import settle
-from sift.storage.layout import LAYOUT
-from sift.storage.store import create_store, open_store
 from sift.storage.vectors import codes_of, forget_vectors
 from tests.keyword_indexes import MERGING, NOTES, TWO, checked
 from tests.keyword_orders import (
-    Placed,
     current_of,
     due,
     embedded,
@@ -129,34 +124,6 @@ def test_a_store_embedded_anew_is_due_once_more_than_a_fifth_of_its_chunks_have_
 class Counted(NamedTuple):
     places: int
     vectors_written: int
-
-
-def test_a_store_of_the_layout_before_places_places_its_chunks_by_id_and_is_due_once_for_its_vectors() -> None:
-    with tempfile.TemporaryDirectory() as folder:
-        path, collection = Path(folder) / "3.sqlite", CollectionId(3)
-        create_store(path, collection, LAYOUT[:7])
-        with (
-            contextlib.closing(open_store(path, collection, LAYOUT[:7])) as connection,
-            writing(connection) as transaction,
-        ):
-            run(transaction, "INSERT INTO sources(id, path, modified_ns, size) VALUES (1, 'a.md', 0, 0)")
-            run(
-                transaction,
-                "INSERT INTO documents(id, source, key, digest, title, fields) VALUES (1, 1, '', 'd', 'A', '{}')",
-            )
-            for _ in range(4):
-                run(
-                    transaction,
-                    "INSERT INTO chunks(document, first_line, last_line, start, length) VALUES (1, 1, 1, 0, 1)",
-                )
-            ids = [each.id for each in rows(transaction, IdRow, "SELECT id FROM chunks ORDER BY id")]
-            run(transaction, "DELETE FROM chunks WHERE id = ?", (ids[3],))
-            run_each(transaction, "INSERT INTO vectors(chunk, vector) VALUES (?, x'00')", [(ids[0],), (ids[2],)])
-        with contextlib.closing(open_store(path, collection)) as connection:
-            assert placed(connection) == [Placed(each, each) for each in ids[:3]]
-            with reading(connection) as transaction:
-                assert rows(transaction, Counted, "SELECT places, vectors_written FROM counts") == [Counted(ids[3], 2)]
-            assert due(connection)
 
 
 def test_a_store_whose_documents_were_only_deleted_since_its_order_is_not_due() -> None:

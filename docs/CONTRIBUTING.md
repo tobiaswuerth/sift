@@ -82,7 +82,10 @@ starts without the model libraries.
 - The tokenizer's table is generated from SQLite's FTS5 (`python -m tools fts5 --write`), and a test holds it equal.
 - Stores need SQLite 3.38 or newer (STRICT tables, the JSON functions built in); an older one is refused with what
   to do. A store's layout changes by a numbered migration appended to `LAYOUT`, never by editing one a release has
-  shipped.
+  shipped. Each migration says what a sift that does not know it may still do with the store (`Older`): nothing,
+  which is the default; read it; or read and write it, as when an index is added. The store records the answer,
+  and an older sift goes by it. A change of the keyword index's bytes or of the tokenizer's table raises `FORMAT`:
+  an older sift then refuses that index and says to upgrade, where it would otherwise make it anew as its own.
 - Published text names no machine's model, and prose is wrapped as the code is (`python -m tools text`).
 - A bound is a module constant named `MOST_*`, `FEWEST_*`, `LEAST_*`, `*_SECONDS` or `*_BYTES`, beside what it bounds;
   [limits.md](limits.md) lists them all, written anew by `python -m tools limits --write`, and a test holds it equal

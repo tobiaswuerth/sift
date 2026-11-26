@@ -1,4 +1,3 @@
-import contextlib
 import tempfile
 import tracemalloc
 from pathlib import Path
@@ -8,14 +7,11 @@ import numpy as np
 import pytest
 
 from sift.api.errors import Problem, StoreUnavailableError
-from sift.api.ids import CollectionId
 from sift.domain.arrays import Ids, first, ints, last
 from sift.domain.codec.codes import Halves, codes
 from sift.domain.errors import DamagedError
 from sift.domain.text.embedding import RECIPE
-from sift.storage.database import Connection, Reading, reading, rows, run, run_each, writing
-from sift.storage.layout import LAYOUT
-from sift.storage.store import create_store, open_store
+from sift.storage.database import Connection, Reading, reading, rows, run, writing
 from sift.storage.vector_meta import left, model_of, recipe_of, width_held
 from sift.storage.vectors import (
     VectorsPut,
@@ -112,32 +108,6 @@ def test_chunks_wait_for_vectors_again_once_forgotten_and_not_once_gone() -> Non
             forget_vectors(transaction)
         with reading(connection) as transaction:
             assert [row.title for row in pending(transaction, 0, 1000)] == ["Beta"]
-
-
-def test_a_store_of_the_layout_before_lists_the_chunks_without_vectors_once_opened() -> None:
-    with tempfile.TemporaryDirectory() as folder:
-        path, collection = Path(folder) / "3.sqlite", CollectionId(3)
-        create_store(path, collection, LAYOUT[:3])
-        with (
-            contextlib.closing(open_store(path, collection, LAYOUT[:3])) as connection,
-            writing(connection) as transaction,
-        ):
-            run(transaction, "INSERT INTO sources(id, path, modified_ns, size) VALUES (1, 'a.md', 0, 0)")
-            run(
-                transaction,
-                (
-                    "INSERT INTO documents(id, source, key, digest, title, fields, text) "
-                    "VALUES (1, 1, '', 'd', 'A', '{}', 'one two six ten')"
-                ),
-            )
-            run_each(
-                transaction,
-                "INSERT INTO chunks(id, document, first_line, last_line, start, length) VALUES (?, 1, 1, 1, ?, 3)",
-                [(chunk, 4 * (chunk - 1)) for chunk in range(1, 5)],
-            )
-            run_each(transaction, "INSERT INTO vectors(chunk, vector) VALUES (?, x'00')", [(1,), (3,)])
-        with contextlib.closing(open_store(path, collection)) as connection, reading(connection) as transaction:
-            assert [(each.chunk, each.text) for each in pending(transaction, 0, 10)] == [(2, "two"), (4, "ten")]
 
 
 def test_vectors_go_with_their_chunks_and_a_broken_or_gone_chunk_gets_none() -> None:

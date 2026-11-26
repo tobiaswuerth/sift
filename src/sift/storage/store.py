@@ -17,12 +17,13 @@ from sift.storage.database import (
     private_folder,
     read_only,
     reading,
+    run,
     run_each,
     writing,
 )
 from sift.storage.keyword_meta import keyword_meta
 from sift.storage.layout import LAYOUT
-from sift.storage.migrations import Migration, migrated, newer, version
+from sift.storage.migrations import Migration, migrated, readable_version, writable_version
 from sift.storage.store_files import delete_logs, delete_store
 from sift.storage.unusable import DAMAGED_REMEDY, unavailable_if_unusable
 from sift.storage.writer import sole_writer
@@ -75,6 +76,7 @@ def _made(path: Path, collection: CollectionId, layout: Sequence[Migration], sha
                 "INSERT INTO sqlite_sequence(name, seq) VALUES (?, ?)",
                 [(table, start) for table in NUMBERED_TABLES],
             )
+            run(transaction, "UPDATE counts SET places = ?", (start,))
     finally:
         connection.close()
 
@@ -93,11 +95,9 @@ def create_store(
 
 
 def _verified(transaction: Reading, path: Path, collection: CollectionId, layout: Sequence[Migration]) -> int:
-    found = version(transaction)
+    found = readable_version(transaction, len(layout), path)
     if found == 0:
         raise StoreUnavailableError(f"{path} is no store of sift", DAMAGED_REMEDY, code=Problem.STORE_DAMAGED)
-    if found > len(layout):
-        raise newer(path, found, len(layout))
     held = first(transaction, Value, "SELECT value FROM meta WHERE key = 'collection'")
     if held is None or held.value != str(collection):
         owner = "no collection" if held is None else f"collection {held.value}"
@@ -131,6 +131,7 @@ def open_store(path: Path, collection: CollectionId, layout: Sequence[Migration]
     with unavailable_if_unusable(path), _closed_if_failed(connection):
         with reading(connection) as transaction:
             found = _verified(transaction, path, collection, layout)
+            writable_version(transaction, len(layout), path)
         if found < len(layout):
             with writing(connection) as transaction:
                 migrated(transaction, layout, path)
@@ -149,7 +150,7 @@ def _read_only_store(
 
 def _for_reading(path: Path, collection: CollectionId, layout: Sequence[Migration] = LAYOUT) -> sqlite3.Connection:
     connection, found = _read_only_store(path, collection, layout)
-    if found == len(layout):
+    if found >= len(layout):
         return connection
     connection.close()
     with sole_writer(path, BRINGING_UP_TO_DATE), closing(open_store(path, collection, layout)):

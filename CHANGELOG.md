@@ -16,8 +16,10 @@ need its new keys; ids of JSON Lines records and mail attachments are written an
 - sift needs Python 3.12 or newer, and SQLite 3.38 or newer: uv's, python.org's and Homebrew's Pythons bring one. A
   Python built against an older system SQLite (Ubuntu 22.04 has 3.37) is refused, saying so.
 - Each collection's store has a new layout; the catalog is `catalog.sqlite` in place of `sift.db`. A store's layout
-  changes from now on by numbered migrations, which the first command of a newer sift runs once; an older sift
-  refuses a store a newer one migrated, and says to upgrade.
+  changes from now on by numbered migrations, which the first command of a newer sift runs once. Each store
+  records which older sifts may still read it and which may write it: an older sift opens a store a newer one
+  changed in a way it can live with, reads one it could not keep right, and refuses the rest, saying to upgrade.
+  A keyword index of a newer format is refused likewise, never made anew by the older sift.
 - A JSON Lines record and a mail attachment are named after their file and a `#`: `papers/2024.jsonl#2401.00001` and
   `mail/offer.eml#contract.pdf`, where sift 1.x wrote `papers/2024/2401.00001` and `mail/offer/contract.pdf`.
 - Keyword search reads an index of sift's own, written in the documents' transaction, in place of SQLite's FTS5 and

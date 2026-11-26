@@ -1,6 +1,4 @@
-import contextlib
 import dataclasses
-import sqlite3
 import stat
 from pathlib import Path
 
@@ -9,7 +7,6 @@ import pytest
 from sift.api.collections import AddCollection, Counted, ShowStatus
 from sift.api.errors import InvalidRequestError, NotFoundError, Problem
 from sift.api.events import Event, Phase, PhaseDone, PhaseStarted
-from sift.api.ids import CollectionId
 from sift.api.indexing import IndexCollections, Skipped
 from sift.api.notices import Notice
 from sift.api.search import Hit, SearchKeywords, SearchResult
@@ -19,8 +16,7 @@ from sift.app.indexing import index
 from sift.app.search import search
 from sift.app.searching import EMPTY_QUERY
 from sift.storage.keywords import REMAKE_REMEDY, TAKEN_OVER_REMEDY
-from sift.storage.layout import LAYOUT
-from sift.storage.store import MISSING_REMEDY, create_store
+from sift.storage.store import MISSING_REMEDY
 from sift.storage.store_files import delete_store
 from sift.storage.unusable import DAMAGED_REMEDY
 from tests.damage import changed, damage_table
@@ -144,14 +140,12 @@ def test_k_counts_results_from_one_to_ten_thousand_and_is_held_to_the_most_there
     assert ids(home, SearchKeywords("note", k=10_000)) == [f"notes/filler{n}.md" for n in range(8)]
 
 
-def test_a_query_outside_the_grammar_is_refused_before_any_store_is_opened(home: Path) -> None:
+def test_a_query_outside_the_grammar_is_refused_whatever_state_its_stores_are_in(home: Path) -> None:
     store = home / "collections" / "notes.sqlite"
     delete_store(store)
-    create_store(store, CollectionId(1), LAYOUT[:1])
     with pytest.raises(InvalidRequestError, match="a quote is not closed"):
         search(home, SearchKeywords('halo "dark'))
-    with contextlib.closing(sqlite3.connect(store)) as database:
-        assert database.execute("PRAGMA user_version").fetchone() == (1,)
+    assert not store.exists()
 
 
 def test_one_collection_is_searched_when_named(home: Path, tmp_path: Path) -> None:

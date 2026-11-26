@@ -29,7 +29,7 @@ def store_of(folder: Path) -> Path:
         for n in range(300):
             run(
                 transaction,
-                "INSERT INTO sources(path, modified_ns, size) VALUES (?, 1, 1)",
+                "INSERT INTO sources(path, modified_ns, size, folded) VALUES (?, 1, 1, '')",
                 (f"{n:04}-{'x' * 200}.md",),
             )
     return path

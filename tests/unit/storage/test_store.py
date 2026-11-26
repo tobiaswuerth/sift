@@ -8,12 +8,11 @@ from typing import NamedTuple, cast
 
 import pytest
 
-from sift.api.errors import StoreUnavailableError
+from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId, first_row
 from sift.storage.database import CACHE_KIBIBYTES, READ_CACHE_KIBIBYTES, Writing, connect, first, reading, run, writing
-from sift.storage.documents import folded_names, paths_named
 from sift.storage.layout import LAYOUT
-from sift.storage.migrations import Migration
+from sift.storage.migrations import Migration, Older
 from sift.storage.store import MISSING_REMEDY, connected, create_store, open_store, read_store
 from sift.storage.store_files import stored_bytes
 from sift.storage.unusable import DAMAGED_REMEDY, unavailable_if_unusable
@@ -44,14 +43,15 @@ def test_a_new_store_records_its_layout_and_collection(tmp_path: Path) -> None:
 def test_a_collection_s_documents_and_chunks_are_numbered_from_its_first_row(tmp_path: Path) -> None:
     create_store(tmp_path / "s.sqlite", COLLECTION)
     with opened(tmp_path / "s.sqlite") as connection, writing(connection) as transaction:
-        run(transaction, "INSERT INTO sources(path, modified_ns, size) VALUES ('a.md', 1, 1)")
+        run(transaction, "INSERT INTO sources(path, modified_ns, size, folded) VALUES ('a.md', 1, 1, 'a.md')")
         run(
             transaction,
             "INSERT INTO documents(source, key, digest, title, fields) VALUES (1, '', 'd', 't', '{}')",
         )
         run(
             transaction,
-            "INSERT INTO chunks(document, first_line, last_line, start, length) VALUES (?, 1, 1, 0, 1)",
+            """INSERT INTO chunks(document, first_line, last_line, start, length, place)
+               VALUES (?, 1, 1, 0, 1, (SELECT places + 1 FROM counts))""",
             (first_row(COLLECTION) + 1,),
         )
         assert first(transaction, Value, "SELECT max(id) FROM documents") == Value(first_row(COLLECTION) + 1)
@@ -79,13 +79,39 @@ def test_a_database_that_is_no_store_is_refused(tmp_path: Path) -> None:
         open_store(tmp_path / "s.sqlite", COLLECTION)
 
 
-def test_a_store_of_a_newer_sift_asks_for_an_upgrade(tmp_path: Path) -> None:
-    create_store(tmp_path / "s.sqlite", COLLECTION)
-    with contextlib.closing(connect(tmp_path / "s.sqlite", create=False)) as connection, writing(connection) as tx:
-        run(tx, f"PRAGMA user_version = {len(LAYOUT) + 1}")
-    with pytest.raises(StoreUnavailableError, match="newer sift") as refused:
-        open_store(tmp_path / "s.sqlite", COLLECTION)
-    assert refused.value.remedy == "upgrade sift"
+def test_a_store_a_newer_sift_laid_out_anew_asks_for_an_upgrade(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION, (*LAYOUT, Migration(("CREATE TABLE added(x INTEGER) STRICT",))))
+    with pytest.raises(StoreUnavailableError, match="was written by a newer sift") as refused:
+        open_store(path, COLLECTION)
+    assert (refused.value.remedy, refused.value.code) == ("upgrade sift", Problem.STORE_NEWER)
+    with pytest.raises(StoreUnavailableError, match="was written by a newer sift"), read_store(path, COLLECTION):
+        pass
+
+
+def test_a_store_a_newer_sift_changed_in_a_way_this_one_can_live_with_is_read_and_written_as_before(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "s.sqlite"
+    later = (*LAYOUT, Migration(("CREATE INDEX added ON sources(size)",), Older.WRITES))
+    create_store(path, COLLECTION, later)
+    with opened(path) as connection, writing(connection) as transaction:
+        run(transaction, "INSERT INTO sources(path, modified_ns, size, folded) VALUES ('a.md', 1, 1, 'a.md')")
+    with read_store(path, COLLECTION) as transaction:
+        assert first(transaction, Value, "SELECT count(*) FROM sources") == Value(1)
+        assert first(transaction, Value, "PRAGMA user_version") == Value(len(later))
+
+
+def test_a_store_a_newer_sift_keeps_in_a_way_this_one_cannot_keep_is_read_and_not_changed(tmp_path: Path) -> None:
+    path = tmp_path / "s.sqlite"
+    create_store(path, COLLECTION, (*LAYOUT, Migration(("CREATE TABLE added(x INTEGER) STRICT",), Older.READS)))
+    with read_store(path, COLLECTION) as transaction:
+        assert first(transaction, Value, "SELECT value FROM meta WHERE key = 'collection'") == Value(str(COLLECTION))
+    with pytest.raises(StoreUnavailableError, match="this one can read it, not change it") as refused:
+        open_store(path, COLLECTION)
+    assert (refused.value.remedy, refused.value.code) == ("upgrade sift", Problem.STORE_NEWER)
+    with pytest.raises(StoreUnavailableError, match="this one can read it, not change it"), connected(path, COLLECTION):
+        pass
 
 
 def test_a_store_of_another_collection_is_refused(tmp_path: Path) -> None:
@@ -153,7 +179,7 @@ def test_the_bytes_a_store_holds_count_its_log_and_not_its_shared_memory(tmp_pat
     assert stored_bytes(path) == path.stat().st_size
     with opened(path) as connection:
         with writing(connection) as transaction:
-            run(transaction, "INSERT INTO sources(path, modified_ns, size) VALUES ('a.md', 1, 1)")
+            run(transaction, "INSERT INTO sources(path, modified_ns, size, folded) VALUES ('a.md', 1, 1, 'a.md')")
         log, shared = Path(f"{path}-wal"), Path(f"{path}-shm")
         assert log.stat().st_size > 0
         assert shared.is_file()
@@ -218,7 +244,7 @@ def test_a_store_on_a_full_disk_is_unavailable_with_a_way_out(tmp_path: Path) ->
 
 def test_a_store_of_an_older_layout_is_brought_up_to_this_one_when_opened(tmp_path: Path) -> None:
     create_store(tmp_path / "s.sqlite", COLLECTION)
-    later = (*LAYOUT, ("CREATE TABLE added(x INTEGER) STRICT", "INSERT INTO added(x) VALUES (7)"))
+    later = (*LAYOUT, Migration(("CREATE TABLE added(x INTEGER) STRICT", "INSERT INTO added(x) VALUES (7)")))
     for _ in range(2):
         with opened(tmp_path / "s.sqlite", layout=later) as connection, reading(connection) as transaction:
             assert first(transaction, Value, "PRAGMA user_version") == Value(len(LAYOUT) + 1)
@@ -234,7 +260,7 @@ def test_a_store_two_open_at_once_is_brought_up_to_this_layout_once(tmp_path: Pa
     def backfilled(_: Writing) -> None:
         ran.append("backfill")
 
-    later: tuple[Migration, ...] = (*LAYOUT, ("CREATE TABLE added(x INTEGER) STRICT", backfilled))
+    later = (*LAYOUT, Migration(("CREATE TABLE added(x INTEGER) STRICT", backfilled)))
 
     def open_it() -> None:
         with opened(store, layout=later) as connection, reading(connection) as transaction:
@@ -251,20 +277,9 @@ def test_a_store_two_open_at_once_is_brought_up_to_this_layout_once(tmp_path: Pa
     assert (found, ran) == ([Value(len(later))] * 2, ["backfill"])
 
 
-def test_a_store_of_the_layout_before_names_were_folded_has_them_folded_when_opened(tmp_path: Path) -> None:
-    store = tmp_path / "s.sqlite"
-    before = LAYOUT[: next(at for at, migration in enumerate(LAYOUT) if folded_names in migration)]
-    create_store(store, COLLECTION, before)
-    with opened(store, layout=before) as connection, writing(connection) as transaction:
-        run(transaction, "INSERT INTO sources(path, modified_ns, size) VALUES ('Notizen/Äpfel.md', 1, 1)")
-        run(transaction, "INSERT INTO documents(source, key, digest, title, fields) VALUES (1, '', 'd', 'Ä', '{}')")
-    with opened(store) as connection, reading(connection) as transaction:
-        assert paths_named(transaction, "ÄPFEL.MD") == ["Notizen/Äpfel.md"]
-
-
 def test_a_store_of_another_collection_is_not_brought_up_to_this_layout(tmp_path: Path) -> None:
     create_store(tmp_path / "s.sqlite", CollectionId(3))
-    later = (*LAYOUT, ("CREATE TABLE added(x INTEGER) STRICT",))
+    later = (*LAYOUT, Migration(("CREATE TABLE added(x INTEGER) STRICT",)))
     with pytest.raises(StoreUnavailableError, match="store of collection 3"):
         open_store(tmp_path / "s.sqlite", COLLECTION, later)
     with opened(tmp_path / "s.sqlite", CollectionId(3)) as connection, reading(connection) as transaction:
@@ -275,7 +290,7 @@ def test_a_store_connected_or_read_is_closed_after_and_says_why_it_cannot_be_use
     path = tmp_path / "s.sqlite"
     create_store(path, COLLECTION)
     with connected(path, COLLECTION) as connection, writing(connection) as transaction:
-        run(transaction, "INSERT INTO sources(path, modified_ns, size) VALUES ('a.md', 1, 1)")
+        run(transaction, "INSERT INTO sources(path, modified_ns, size, folded) VALUES ('a.md', 1, 1, 'a.md')")
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connection.execute("SELECT 1")
     with read_store(path, COLLECTION) as reading_it:
@@ -290,7 +305,7 @@ def test_a_store_connected_or_read_is_closed_after_and_says_why_it_cannot_be_use
 def test_a_store_of_this_layout_is_read_without_its_lock_and_one_of_an_older_layout_under_it(tmp_path: Path) -> None:
     path = tmp_path / "s.sqlite"
     create_store(path, COLLECTION)
-    later = (*LAYOUT, ("CREATE TABLE added(x INTEGER) STRICT", "INSERT INTO added(x) VALUES (7)"))
+    later = (*LAYOUT, Migration(("CREATE TABLE added(x INTEGER) STRICT", "INSERT INTO added(x) VALUES (7)")))
     with sole_writer(path, "sift index"):
         with read_store(path, COLLECTION) as transaction:
             assert first(transaction, Value, "PRAGMA user_version") == Value(len(LAYOUT))
@@ -331,7 +346,7 @@ def test_a_store_that_may_only_be_read_is_read_and_left_as_it_was_unless_it_is_o
         with read_store(path, COLLECTION) as transaction:
             assert first(transaction, Value, "PRAGMA user_version") == Value(len(LAYOUT))
         assert path.read_bytes() == before
-        later = (*LAYOUT, ("CREATE TABLE added(x INTEGER) STRICT",))
+        later = (*LAYOUT, Migration(("CREATE TABLE added(x INTEGER) STRICT",)))
         with pytest.raises(StoreUnavailableError, match="cannot be written"), read_store(path, COLLECTION, later):
             pass
     finally:

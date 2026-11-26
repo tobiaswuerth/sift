@@ -19,7 +19,7 @@ def stored(folder: Path, held: list[Fields]) -> Generator[sqlite3.Connection]:
     create_store(path, COLLECTION)
     with contextlib.closing(open_store(path, COLLECTION)) as connection:
         with writing(connection) as transaction:
-            run(transaction, "INSERT INTO sources(id, path, modified_ns, size) VALUES (1, 'a.jsonl', 0, 0)")
+            run(transaction, "INSERT INTO sources(id, path, modified_ns, size, folded) VALUES (1, 'a.jsonl', 0, 0, '')")
             run_each(
                 transaction,
                 "INSERT INTO documents(source, key, digest, title, fields) VALUES (1, ?, 'd', 't', ?)",

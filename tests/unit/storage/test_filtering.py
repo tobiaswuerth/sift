@@ -30,9 +30,10 @@ PAPERS: dict[str, Fields] = {
 }
 
 
-SOURCE = "INSERT INTO sources(id, path, modified_ns, size) VALUES (?, ?, 0, 0)"
+SOURCE = "INSERT INTO sources(id, path, modified_ns, size, folded) VALUES (?, ?, 0, 0, '')"
 DOCUMENT = "INSERT INTO documents(id, source, key, digest, title, fields) VALUES (?, ?, '', '', '', ?)"
-CHUNK = "INSERT INTO chunks(id, document, first_line, last_line, start, length) VALUES (?, ?, 1, 1, 0, 0)"
+CHUNK = """INSERT INTO chunks(id, document, first_line, last_line, start, length, place)
+           VALUES (?, ?, 1, 1, 0, 0, (SELECT places + 1 FROM counts))"""
 
 
 @contextlib.contextmanager

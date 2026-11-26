@@ -32,11 +32,6 @@ class _Block(NamedTuple):
     text: str
 
 
-class _Whole(NamedTuple):
-    id: DocumentId
-    text: str
-
-
 class _Lined(NamedTuple):
     first_line: int
     text: str
@@ -71,11 +66,6 @@ def put_text(transaction: Writing, document: DocumentId, pieces: Iterable[str]) 
         "INSERT INTO texts(document, block, first_line, text) VALUES (?, ?, ?, ?)",
         ((document, number, line, text) for number, line, text in blocks(pieces)),
     )
-
-
-def texts_cut(transaction: Writing) -> None:
-    for found in streamed(transaction, _Whole, "SELECT id, text FROM documents WHERE text <> '' ORDER BY id", size=1):
-        put_text(transaction, found.id, (found.text,))
 
 
 def text_of(transaction: Reading, document: DocumentId) -> str:

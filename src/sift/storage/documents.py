@@ -95,18 +95,6 @@ def folded(path: str) -> str:
     return path.rsplit("/", 1)[-1].casefold()
 
 
-class _Named(NamedTuple):
-    id: int
-    path: str
-
-
-def folded_names(transaction: Writing) -> None:
-    named = rows(transaction, _Named, "SELECT id, path FROM sources")
-    run_each(
-        transaction, "UPDATE sources SET folded = ? WHERE id = ?", [(folded(each.path), each.id) for each in named]
-    )
-
-
 def put_source(transaction: Writing, path: str, modified_ns: int, size: int) -> SourceId:
     sql = """INSERT INTO sources(path, modified_ns, size, folded) VALUES (?, ?, ?, ?)
              ON CONFLICT(path) DO UPDATE SET modified_ns = excluded.modified_ns, size = excluded.size RETURNING id"""
@@ -120,7 +108,8 @@ def kept(transaction: Reading, source: SourceId) -> list[KeptDocument]:
     )
 
 
-CHUNK_ROW = "INSERT INTO chunks(document, first_line, last_line, start, length) VALUES (?, ?, ?, ?, ?)"
+CHUNK_ROW = """INSERT INTO chunks(document, first_line, last_line, start, length, place)
+               VALUES (?, ?, ?, ?, ?, (SELECT places + 1 FROM counts))"""
 LINK_ROW = """INSERT INTO links(document, ordinal, field, line, kind, target, key, fragment, shown)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 NAME_ROW = "INSERT INTO names(key, document, kind) VALUES (?, ?, ?)"

@@ -27,7 +27,7 @@ from sift.storage.database import (
     writing,
 )
 from sift.storage.ledger import LEFTOVERS, Owed, forgive, owe, owe_the_store_of, owed, reclaimed
-from sift.storage.migrations import Migration, migrated, version
+from sift.storage.migrations import Migration, migrated, readable_version, writable_version
 from sift.storage.store import create_store, holds_nothing, left_by_add
 from sift.storage.store_files import CATALOG, delete_store
 from sift.storage.unusable import Unusable, unavailable_if_unusable
@@ -42,17 +42,19 @@ MOST_NAME = 100
 PORTS = (*"0123456789", "\N{SUPERSCRIPT ONE}", "\N{SUPERSCRIPT TWO}", "\N{SUPERSCRIPT THREE}")
 DEVICES = frozenset({"con", "prn", "aux", "nul", *(f"{kind}{port}" for kind in ("com", "lpt") for port in PORTS)})
 LAYOUT: tuple[Migration, ...] = (
-    (
-        """CREATE TABLE collections(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            folder TEXT NOT NULL,
-            store TEXT NOT NULL UNIQUE,
-            active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-            choices TEXT NOT NULL CHECK (json_valid(choices))
-        ) STRICT""",
+    Migration(
+        (
+            """CREATE TABLE collections(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                folder TEXT NOT NULL,
+                store TEXT NOT NULL UNIQUE,
+                active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+                choices TEXT NOT NULL CHECK (json_valid(choices))
+            ) STRICT""",
+            LEFTOVERS,
+        )
     ),
-    (LEFTOVERS,),
 )
 STORE_TAKEN_REMEDY = "move it away, or choose another place for it"
 IN_USE_REMEDY = "wait until it is closed, then add the folder again"
@@ -144,8 +146,8 @@ def _collection(row: CollectionRow) -> Collection:
 
 def _up_to_date(connection: sqlite3.Connection, path: Path) -> None:
     with reading(connection) as transaction:
-        found = version(transaction)
-    if found != len(LAYOUT):
+        found = writable_version(transaction, len(LAYOUT), path)
+    if found < len(LAYOUT):
         with writing(connection) as transaction:
             migrated(transaction, LAYOUT, path)
 
@@ -198,7 +200,7 @@ def known_collections(home: Path) -> tuple[Collection, ...]:
         closing(read_only(path)) as connection,
         reading(connection) as transaction,
     ):
-        if version(transaction) == len(LAYOUT):
+        if readable_version(transaction, len(LAYOUT), path) >= len(LAYOUT):
             return collections(transaction)
     with catalog_of(home) as connection, reading(connection) as transaction:
         return collections(transaction)

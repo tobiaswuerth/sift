@@ -4,18 +4,16 @@ import re
 import sqlite3
 import tracemalloc
 from collections.abc import Generator
-from pathlib import Path
 from typing import NamedTuple
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from sift.api.ids import CollectionId, DocumentId
+from sift.api.ids import DocumentId
 from sift.domain.errors import DamagedError
 from sift.storage.database import Reading, Writing, reading, rows, run, writing
 from sift.storage.layout import LAYOUT
-from sift.storage.store import create_store, open_store
 from sift.storage.texts import (
     BLOCK,
     BLOCKS,
@@ -35,9 +33,7 @@ LINE = re.compile(r"[^\n]*\n|[^\n]+")
 
 
 def _texts_table() -> str:
-    made = LAYOUT[5][0]
-    assert isinstance(made, str)
-    return made
+    return next(step for step in LAYOUT[0].steps if isinstance(step, str) and step.startswith("CREATE TABLE texts("))
 
 
 TEXTS_TABLE = _texts_table()
@@ -150,31 +146,6 @@ def test_a_passage_or_a_line_reads_only_the_blocks_it_lies_in() -> None:
             plan = rows(transaction, Step, f"EXPLAIN QUERY PLAN {BLOCKS}", ("[[7, 0]]",))
         assert any(step.detail.startswith("SEARCH t USING INDEX") for step in plan)
         assert not [step for step in plan if step.detail.startswith("SCAN t")]
-
-
-def test_a_store_of_texts_in_one_value_has_them_cut_into_blocks(tmp_path: Path) -> None:
-    path, collection = tmp_path / "1.sqlite", CollectionId(1)
-    create_store(path, collection, LAYOUT[:5])
-    text = "first\n" + "é" * (BLOCK + 5) + "\nlast"
-    with contextlib.closing(open_store(path, collection, LAYOUT[:5])) as connection, writing(connection) as transaction:
-        run(transaction, "INSERT INTO sources(id, path, modified_ns, size) VALUES (1, 'a.md', 0, 0)")
-        run(
-            transaction,
-            "INSERT INTO documents(id, source, key, digest, title, fields, text) VALUES (?, 1, '', 'd', 'A', '{}', ?)",
-            (DOCUMENT, text),
-        )
-        run(
-            transaction,
-            (
-                "INSERT INTO documents(id, source, key, digest, title, fields, text) "
-                "VALUES (8, 1, 'x', 'e', 'B', '{}', '')"
-            ),
-        )
-    with contextlib.closing(open_store(path, collection)) as connection, reading(connection) as transaction:
-        assert text_of(transaction, DOCUMENT) == text
-        assert line_count(transaction, DOCUMENT) == 3
-        assert line_at(transaction, DOCUMENT, 3) == "last"
-        assert text_of(transaction, DocumentId(8)) == ""
 
 
 RL = "# Reward shaping\n\nReward shaping speeds up learning.\n"
