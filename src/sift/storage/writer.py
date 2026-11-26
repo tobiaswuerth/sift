@@ -21,6 +21,7 @@ HOLDER = "CREATE TABLE IF NOT EXISTS holder(pid INTEGER NOT NULL, purpose TEXT N
 HELD = "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'holder'"
 WRITING = "BEGIN IMMEDIATE"
 NAMING = "BEGIN EXCLUSIVE"
+NAMINGS = 3
 
 
 class LockFile(Protocol):
@@ -57,21 +58,39 @@ def _began(connection: LockFile, begin: str) -> bool:
     return True
 
 
-def _hold(connection: LockFile, begin: str) -> None:
+def _refused(holder: Holder | None) -> StoreUnavailableError:
+    who = "" if holder is None else f" ({holder.purpose}, process {holder.pid})"
+    return StoreUnavailableError(f"another sift writes it now{who}", BUSY_REMEDY, code=Problem.BUSY)
+
+
+def _hold(connection: LockFile, begin: str, own: Holder | None = None) -> None:
     if not _began(connection, begin):
         holder = _holder(connection)
-        who = "" if holder is None else f" ({holder.purpose}, process {holder.pid})"
-        raise StoreUnavailableError(f"another sift writes it now{who}", BUSY_REMEDY, code=Problem.BUSY)
+        raise _refused(None if holder == own else holder)
 
 
-def _taken(connection: LockFile, purpose: str) -> None:
-    _hold(connection, NAMING)
+def _named(connection: LockFile, own: Holder) -> None:
     connection.execute(HOLDER)
     connection.execute("PRAGMA user_version = 1")
     connection.execute("DELETE FROM holder")
-    connection.execute("INSERT INTO holder(pid, purpose) VALUES (?, ?)", (os.getpid(), purpose))
+    connection.execute("INSERT INTO holder(pid, purpose) VALUES (?, ?)", (own.pid, own.purpose))
     connection.execute("COMMIT")
-    _hold(connection, WRITING)
+
+
+def _taken(connection: LockFile, purpose: str) -> None:
+    own = Holder(os.getpid(), purpose)
+    named: Holder | None = None
+    holder: Holder | None = None
+    for _ in range(NAMINGS):
+        _hold(connection, NAMING, named)
+        _named(connection, own)
+        named = own
+        _hold(connection, WRITING, named)
+        holder = _holder(connection)
+        if holder == own:
+            return
+        connection.execute("ROLLBACK")
+    raise _refused(holder)
 
 
 def lock_file(path: Path) -> LockFile:
