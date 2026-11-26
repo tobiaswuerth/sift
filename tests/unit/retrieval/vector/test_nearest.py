@@ -1,3 +1,5 @@
+import cProfile
+import pstats
 import threading
 import tracemalloc
 from collections.abc import Callable, Sequence
@@ -160,6 +162,24 @@ def test_a_scan_of_many_codes_is_spread_over_threads_part_by_part_and_finds_what
     assert [sum(len(part.rows) for part in asked if part.store == store) for store in range(4)] == sizes
     assert sorted(part.at for part in asked) == sorted(sum(sizes[: part.store]) + part.rows.start for part in asked)
     assert (len([part for part in asked if part.store == 0]) > 1, len(asked) <= SCANNING + len(sizes)) == (True, True)
+    assert [part.number for part in asked] == list(range(len(asked)))
+
+
+def test_the_distances_are_counted_where_they_are_scanned_and_not_once_more_to_choose_the_nearest() -> None:
+    held, exact = stores(25, [150_000, 40_000], 64)
+    query = unit(np.random.default_rng(26).normal(size=64))
+    parts: list[ScanPart] = []
+
+    def one_after_another(scan: Callable[[ScanPart], None], asked: Sequence[ScanPart]) -> None:
+        parts.extend(asked)
+        for part in asked:
+            scan(part)
+
+    profile = cProfile.Profile()
+    profile.runcall(nearest, held, query, 10, Reads(reader(exact), spread=one_after_another), rescore=50)
+    counted = pstats.Stats(profile).get_stats_profile().func_profiles
+    counts = [int(each.ncalls.split("/")[0]) for name, each in counted.items() if "bincount" in name]
+    assert (len(parts) > 2, counts) == (True, [len(parts)])
 
 
 def test_a_scan_of_few_codes_starts_no_thread() -> None:

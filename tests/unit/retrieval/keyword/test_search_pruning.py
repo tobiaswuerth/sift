@@ -9,6 +9,7 @@ import numpy as np
 
 import sift.retrieval.keyword.lists as lists_module
 import sift.retrieval.keyword.search as search_module
+import sift.storage.keyword_lists as keyword_lists_module
 from sift.domain.codec.shape import Shape
 from sift.domain.query.expressions import And, Or, Term
 from sift.retrieval.keyword.lists import Opened
@@ -88,6 +89,19 @@ def test_all_of_some_words_reads_each_only_where_chunks_with_all_rarer_ones_are_
         read = terms_read(store)
         assert read["gamma"] > 0
         assert read["alpha"] == read["beta"] == 0
+
+
+def test_the_blocks_of_a_list_that_a_batch_of_ranges_needs_are_read_by_one_statement_not_one_each() -> None:
+    notes: Round = {f"n{n:04}.md": ("", "N", f"w1 x{n}") for n in range(600)}
+    with collections([[notes]]) as (stores, held):
+        (store,) = stores
+        query = Term("w1")
+        found: list[tuple[FoundChunk, ...]] = []
+        asked = [(search_module, "_scored_group"), (keyword_lists_module, "blocks")]
+        batches, statements = calls(lambda: found.append(search(stores, query, 300, by_document=False)), asked)
+        same(found[0], brute(held, query, 600, by_document=False), 300, query)
+        assert len(blocks_read(store)) > 10 * batches
+        assert statements <= batches
 
 
 def rows_made(run: Callable[[], object]) -> int:

@@ -8,9 +8,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sift.api.ids import ChunkId
-from sift.domain.arrays import Ids, Mask, ascending, distinct, floats, ints, read_only
+from sift.domain.arrays import Ids, Mask, ascending, distinct, floats, ints, last, read_only
 from sift.domain.codec.codes import (
     MOST_BITS,
+    WORD_BYTES,
     Bits,
     Floats,
     Halves,
@@ -36,6 +37,7 @@ type ExactRead = Callable[[int, Ids], tuple[Ids, Halves]]
 
 
 class ScanPart(NamedTuple):
+    number: int
     store: int
     rows: range
     at: int
@@ -94,10 +96,16 @@ class Measured:
     distance: NDArray[np.uint16]
     held_ids: tuple[Ids, ...]
     sizes: tuple[int, ...]
+    counted: Ids
 
     @property
     def total(self) -> int:
         return len(self.distance)
+
+    @property
+    def within(self) -> Ids:
+        occupied = np.flatnonzero(self.counted)
+        return np.cumsum(self.counted[: last(occupied) + 1 if len(occupied) else 1])
 
     def owners(self, at: Ids) -> Ids:
         return np.searchsorted(np.cumsum(self.sizes), at, side="right").astype(np.int64)
@@ -120,24 +128,28 @@ class Measured:
 def _parts(sizes: Sequence[int]) -> list[ScanPart]:
     rows = max(PART_ROWS, -(-sum(sizes) // SCANNING))
     firsts = itertools.accumulate(sizes, initial=0)
-    return [
-        ScanPart(store, range(start, min(start + rows, size)), first + start)
+    placed = [
+        (store, range(start, min(start + rows, size)), first + start)
         for store, (size, first) in enumerate(zip(sizes, firsts, strict=False))
         for start in range(0, size, rows)
     ]
+    return [ScanPart(number, *each) for number, each in enumerate(placed)]
 
 
 def _measured(held: Sequence[Coded], query: Floats, spread: Spread) -> Measured:
     asked = code_of(query)
     sizes = tuple(len(each.ids) for each in held)
     distance = np.empty(sum(sizes), np.uint16)
+    parts = _parts(sizes)
+    counted = np.zeros((len(parts), 8 * WORD_BYTES * len(asked) + 1), np.int64)
 
     def scan(part: ScanPart) -> None:
-        scanned = held[part.store].words[part.rows.start : part.rows.stop]
-        distance[part.at : part.at + len(part.rows)] = distances(scanned, asked)
+        found = distances(held[part.store].words[part.rows.start : part.rows.stop], asked)
+        distance[part.at : part.at + len(part.rows)] = found
+        counted[part.number] = np.bincount(found, minlength=width_of(counted))
 
-    spread(scan, _parts(sizes))
-    return Measured(distance, tuple(each.ids for each in held), sizes)
+    spread(scan, parts)
+    return Measured(distance, tuple(each.ids for each in held), sizes, counted.sum(axis=0))
 
 
 def _candidates(found: Measured, at: Ids) -> Candidates:
@@ -148,7 +160,8 @@ def _nearest_of(found: Measured, among: Ids | None, want: int) -> Candidates:
     distance = found.distance if among is None else found.distance[among]
     if len(distance) <= want:
         return _candidates(found, np.arange(len(distance)) if among is None else among)
-    cutoff = int(np.searchsorted(np.cumsum(np.bincount(distance)), want))
+    within = found.within if among is None else np.cumsum(np.bincount(distance))
+    cutoff = int(np.searchsorted(within, want))
     close = np.flatnonzero(distance <= cutoff)
     at = close if among is None else among[close]
     return _candidates(found, at[np.lexsort((found.ids(at), distance[close]))[:want]])
@@ -176,7 +189,7 @@ def _listed(held: Sequence[Coded], found: Measured, allowed: Sequence[AllowedChu
 
 
 def _passing(held: Sequence[Coded], found: Measured, want: int, allowed: Sequence[AllowedChunks | None]) -> Ids:
-    within = np.cumsum(np.bincount(found.distance, minlength=1))
+    within = found.within
     counts = ints(within)
     kept: list[Ids] = [np.zeros(0, np.int64)]
     passed, low, n = 0, 0, want
