@@ -107,8 +107,8 @@ def spans_text(transaction: Reading, spans: Sequence[TextSpan]) -> list[str]:
 def spans_text_at_once(transaction: Reading, spans: Sequence[TextSpan]) -> list[str]:
     wanted = _wanted(spans)
     (found,) = rows(transaction, Value, BLOCKS_AT_ONCE, (json.dumps(wanted),))
-    blocks = cast("list[tuple[int, int, str]]", json.loads(found.value))
-    return _cut(spans, wanted, {(document, block): text for document, block, text in blocks})
+    read = cast("list[tuple[int, int, str]]", json.loads(found.value))
+    return _cut(spans, wanted, {(document, block): text for document, block, text in read})
 
 
 def line_count(transaction: Reading, document: DocumentId) -> int:
