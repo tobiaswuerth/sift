@@ -7,7 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.arrays import floats
-from sift.domain.rank.bm25 import TOP, idf, quantized, slack, term_scores, unquantized
+from sift.domain.rank.bm25 import idf, slack, term_scores
 from sift.domain.text.tokens import tokens
 from tests.examples import more
 
@@ -45,14 +45,6 @@ def test_a_term_scores_as_fts5_s_bm25_scores_it(written: list[tuple[str, str, st
 def test_a_term_in_more_than_half_the_chunks_still_counts_a_little() -> None:
     assert idf(10, 9) == 1e-6
     assert idf(10, 1) == math.log(9.5 / 1.5)
-
-
-@given(st.lists(st.floats(0, TOP), min_size=1, max_size=50))
-def test_scores_kept_as_bytes_are_rounded_up_so_they_still_bound(scores: list[float]) -> None:
-    held = np.array(scores)
-    back = unquantized(quantized(held))
-    assert np.all(back >= held)
-    assert np.all(back - held <= TOP / 255 + 1e-12)
 
 
 @given(st.integers(1, 50), st.integers(1, 2000), st.floats(1, 500), st.floats(1, 500))

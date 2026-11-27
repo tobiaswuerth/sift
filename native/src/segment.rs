@@ -93,25 +93,6 @@ fn quantized(best: f64) -> u8 {
     low
 }
 
-pub fn ranges(ids: &[i64], counts: &[i64], lengths: &[u32], average: f64, shift: u32) -> Result<Vec<Range>, String> {
-    let mut found: Vec<Range> = Vec::new();
-    for ((&id, &count), &length) in ids.iter().zip(counts).zip(lengths) {
-        let (within, best) = (id >> shift, score(count, length, average)?);
-        match found.last_mut() {
-            Some(last) if last.id == within => {
-                last.size += 1;
-                last.best = last.best.max(best);
-            }
-            _ => found.push(Range {
-                id: within,
-                size: 1,
-                best,
-            }),
-        }
-    }
-    Ok(found)
-}
-
 pub fn ranges_packed(ids: &[i64], fewer: &[u8], best: &[u8]) -> Result<Vec<u8>, String> {
     let first = ids.first().ok_or_else(|| "a long list holds no range".to_owned())?;
     let mut body = Vec::with_capacity(12 + ids.len() * 6);
@@ -160,13 +141,24 @@ pub fn lengths_written(ids: &[i64], lengths: &[u32], shift: u32) -> Result<Vec<(
     Ok(found)
 }
 
-#[derive(Default)]
 pub struct Postings {
     places: Vec<i64>,
     counts: Vec<i64>,
     positions: Vec<i64>,
     offsets: Vec<usize>,
     sizes: Vec<u32>,
+}
+
+impl Default for Postings {
+    fn default() -> Self {
+        Self {
+            places: Vec::new(),
+            counts: Vec::new(),
+            positions: Vec::new(),
+            offsets: vec![0],
+            sizes: Vec::new(),
+        }
+    }
 }
 
 impl Postings {
@@ -183,43 +175,99 @@ impl Postings {
     pub fn chunks(&self) -> usize {
         self.places.len()
     }
+
+    fn extend_from(&mut self, more: &Self, from: usize, to: usize) {
+        let (cut, before) = (more.offsets[from], self.positions.len());
+        self.places.extend_from_slice(&more.places[from..to]);
+        self.counts.extend_from_slice(&more.counts[from..to]);
+        self.sizes.extend_from_slice(&more.sizes[from..to]);
+        self.positions.extend_from_slice(&more.positions[cut..more.offsets[to]]);
+        self.offsets
+            .extend(more.offsets[from + 1..=to].iter().map(|offset| offset - cut + before));
+    }
+
+    pub fn ranged(&self, found: &mut Vec<Range>, average: f64, shift: u32) -> Result<(), String> {
+        for at in 0..self.chunks() {
+            let (within, best) = (
+                self.places[at] >> shift,
+                score(self.counts[at], self.sizes[at], average)?,
+            );
+            match found.last_mut() {
+                Some(last) if last.id == within => {
+                    last.size += 1;
+                    last.best = last.best.max(best);
+                }
+                _ => found.push(Range {
+                    id: within,
+                    size: 1,
+                    best,
+                }),
+            }
+        }
+        Ok(())
+    }
+
+    pub fn coded(&self) -> Result<Coded, String> {
+        list(
+            &Lists {
+                ids: &self.places,
+                counts: &self.counts,
+                positions: &self.positions,
+                offsets: &self.offsets,
+            },
+            0,
+            self.chunks(),
+        )
+    }
 }
 
-pub fn kept(term: &str, held: &Postings, average: f64, shape: Shape) -> Result<Row, String> {
-    let chunks = held.chunks();
-    let mut offsets = Vec::with_capacity(chunks + 1);
-    offsets.push(0);
-    offsets.extend_from_slice(&held.offsets);
-    let lists = Lists {
-        ids: &held.places,
-        counts: &held.counts,
-        positions: &held.positions,
-        offsets,
-    };
+pub fn gathered(parts: &[&Postings], start: usize, end: usize) -> Postings {
+    let (mut found, mut before) = (Postings::default(), 0);
+    for part in parts {
+        let held = part.chunks();
+        let (from, to) = (
+            start.saturating_sub(before).min(held),
+            end.saturating_sub(before).min(held),
+        );
+        if from < to {
+            found.extend_from(part, from, to);
+        }
+        before += held;
+    }
+    found
+}
+
+pub fn blocks_of(parts: &[&Postings], upto: usize, block: usize) -> Result<Vec<Coded>, String> {
+    let starts: Vec<usize> = (0..upto).step_by(block).collect();
+    starts
+        .par_iter()
+        .map(|&start| gathered(parts, start, (start + block).min(upto)).coded())
+        .collect()
+}
+
+pub fn joined(term: &str, parts: &[&Postings], average: f64, shape: Shape) -> Result<Row, String> {
+    let chunks = parts.iter().map(|part| part.chunks()).sum();
     if chunks < shape.long {
+        let coded = match parts {
+            [one] => one.coded(),
+            _ => gathered(parts, 0, chunks).coded(),
+        };
         return Ok(Row {
             term: term.into(),
             chunks,
-            held: Kept::Short(list(&lists, 0, chunks)?),
+            held: Kept::Short(coded?),
         });
     }
-    let blocks: Result<Vec<Coded>, String> = (0..chunks)
-        .step_by(shape.block)
-        .map(|start| list(&lists, start, (start + shape.block).min(chunks)))
-        .collect();
-    let ranges = ranged(&ranges(
-        &held.places,
-        &held.counts,
-        &held.sizes,
-        average,
-        shape.range_shift,
-    )?)?;
+    let mut found = Vec::new();
+    for part in parts {
+        part.ranged(&mut found, average, shape.range_shift)?;
+    }
     Ok(Row {
         term: term.into(),
         chunks,
         held: Kept::Long {
-            ranges,
-            blocks: blocks?,
+            ranges: ranged(&found)?,
+            blocks: blocks_of(parts, chunks, shape.block)?,
         },
     })
 }
@@ -241,7 +289,7 @@ fn row(
             run[..most].iter().map(|each| i64::from(each.1)),
         )?;
     }
-    kept(term, &gathered, average, shape)
+    joined(term, &[&gathered], average, shape)
 }
 
 impl Held {

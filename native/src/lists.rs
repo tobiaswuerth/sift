@@ -7,7 +7,7 @@ use rayon::prelude::*;
 
 use crate::numbers::{little_endian, read, written};
 use crate::packed::{unwrapped, wrapped};
-use crate::segment::{lengths_written, one_fewer, ranges_packed};
+use crate::segment::lengths_written;
 
 const HEAD: usize = 12;
 const FIRST: usize = 8;
@@ -145,23 +145,7 @@ pub struct Lists<'a> {
     pub ids: &'a [i64],
     pub counts: &'a [i64],
     pub positions: &'a [i64],
-    pub offsets: Vec<usize>,
-}
-
-fn offsets(counts: &[i64], positions: usize) -> Result<Vec<usize>, String> {
-    let mut found = Vec::with_capacity(counts.len() + 1);
-    let mut held = 0usize;
-    found.push(held);
-    for &count in counts {
-        let more = usize::try_from(count).ok().and_then(|size| held.checked_add(size));
-        held = more.ok_or_else(|| "a count is no number of positions".to_owned())?;
-        found.push(held);
-    }
-    if held == positions {
-        Ok(found)
-    } else {
-        Err("lists hold positions other than their counts".to_owned())
-    }
+    pub offsets: &'a [usize],
 }
 
 pub fn list(lists: &Lists, start: usize, end: usize) -> Result<Coded, String> {
@@ -193,18 +177,6 @@ pub fn list(lists: &Lists, start: usize, end: usize) -> Result<Coded, String> {
     Ok((wrapped(&body)?, wrapped(&placed)?))
 }
 
-fn coded(lists: &Lists, bounds: &[usize]) -> Result<Vec<Coded>, String> {
-    if bounds.len() <= TOGETHER {
-        bounds.windows(2).map(|pair| list(lists, pair[0], pair[1])).collect()
-    } else {
-        bounds
-            .par_windows(2)
-            .with_min_len(TOGETHER)
-            .map(|pair| list(lists, pair[0], pair[1]))
-            .collect()
-    }
-}
-
 pub fn bytes_of(each: &Bound<'_, PyAny>) -> PyResult<Vec<PyBackedBytes>> {
     each.extract()
 }
@@ -226,51 +198,6 @@ pub fn positions_all<'py>(each: &Bound<'py, PyAny>, counts: &Bound<'py, PyAny>) 
     let (py, rows, counts) = (each.py(), bytes_of(each)?, numbers_of(counts)?);
     let found = py.detach(|| places(&rows, &counts).map(|found| little_endian(&found)));
     Ok(PyBytes::new(py, &found.map_err(PyValueError::new_err)?))
-}
-
-#[pyfunction]
-pub fn encoded<'py>(
-    ids: &Bound<'py, PyAny>,
-    counts: &Bound<'py, PyAny>,
-    positions: &Bound<'py, PyAny>,
-    bounds: &Bound<'py, PyAny>,
-) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
-    let (py, bounds) = (ids.py(), bounds.extract::<Vec<usize>>()?);
-    let (ids, counts, positions) = (numbers_of(ids)?, numbers_of(counts)?, numbers_of(positions)?);
-    let made = py.detach(|| {
-        let offsets = offsets(&counts, positions.len())?;
-        coded(
-            &Lists {
-                ids: &ids,
-                counts: &counts,
-                positions: &positions,
-                offsets,
-            },
-            &bounds,
-        )
-    });
-    let made = made.map_err(PyValueError::new_err)?;
-    let postings = PyList::new(py, made.iter().map(|each| PyBytes::new(py, &each.0)))?;
-    let placed = PyList::new(py, made.iter().map(|each| PyBytes::new(py, &each.1)))?;
-    Ok((postings, placed))
-}
-
-#[pyfunction]
-pub fn ranged<'py>(
-    ids: &Bound<'py, PyAny>,
-    sizes: &Bound<'py, PyAny>,
-    best: &Bound<'py, PyAny>,
-) -> PyResult<Bound<'py, PyBytes>> {
-    let (py, ids, best) = (ids.py(), numbers_of(ids)?, best.extract::<PyBackedBytes>()?);
-    let fewer: Result<Vec<u8>, String> = numbers_of(sizes)?.into_iter().map(one_fewer).collect();
-    let fewer = fewer.map_err(PyValueError::new_err)?;
-    if ids.len() != fewer.len() || ids.len() != best.len() {
-        return Err(PyValueError::new_err("each range has an id, a size and a best score"));
-    }
-    let packed = py
-        .detach(|| ranges_packed(&ids, &fewer, &best))
-        .map_err(PyValueError::new_err)?;
-    Ok(PyBytes::new(py, &packed))
 }
 
 #[pyfunction]

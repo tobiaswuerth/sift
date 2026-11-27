@@ -62,10 +62,6 @@ def sums_at(values: Ids, starts: Ids) -> Ids:
     return cast("Ids", np.add.reduceat(values, starts))
 
 
-def maxima_at(values: Scores, starts: Ids) -> Scores:
-    return cast("Scores", np.maximum.reduceat(values, starts))
-
-
 @dataclass(eq=False, frozen=True, slots=True)
 class Ascending:
     values: Ids

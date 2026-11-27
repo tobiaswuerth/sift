@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
 use pyo3::types::{PyBytes, PyList, PyString};
 
-use crate::lists::numbers_of;
+use crate::lists::{Coded, numbers_of};
 use crate::segment::{Held, Kept, Row, Shape, Span, Written};
 use crate::words::Table;
 
@@ -84,7 +84,9 @@ fn taken(held: &mut Held, table: &Table, most_field: usize, batch: &Batch) -> Re
 
 pub type Listed<'py> = (Bound<'py, PyList>, Bound<'py, PyList>);
 
-pub fn listed<'py>(py: Python<'py>, segment: i64, rows: &[Row]) -> PyResult<Listed<'py>> {
+pub type Piece = (Arc<str>, usize, Coded);
+
+pub fn listed<'py>(py: Python<'py>, segment: i64, rows: &[Row], pieces: &[Piece]) -> PyResult<Listed<'py>> {
     let (lists, blocks) = (PyList::empty(py), PyList::empty(py));
     let none = py.None().into_bound(py);
     for row in rows {
@@ -102,6 +104,10 @@ pub fn listed<'py>(py: Python<'py>, segment: i64, rows: &[Row]) -> PyResult<List
                 }
             }
         }
+    }
+    for (term, number, coded) in pieces {
+        let (postings, positions) = (PyBytes::new(py, &coded.0), PyBytes::new(py, &coded.1));
+        blocks.append((segment, PyString::new(py, term), *number, postings, positions))?;
     }
     Ok((lists, blocks))
 }
@@ -197,6 +203,6 @@ impl Building {
             py,
             made.rows.iter().map(|row| (PyString::new(py, &row.term), row.chunks)),
         )?;
-        Ok((listed(py, segment, &made.rows)?, lengths, terms))
+        Ok((listed(py, segment, &made.rows, &[])?, lengths, terms))
     }
 }

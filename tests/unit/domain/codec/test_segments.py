@@ -1,70 +1,62 @@
 import json
-from collections.abc import Sequence
-from typing import cast
+from typing import NamedTuple, cast
 
 import numpy as np
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from numpy.typing import NDArray
 
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.postings import MOST_INFLATED_BYTES, blocked, lengths_of, positions_of, ranges_of
-from sift.domain.codec.segments import (
-    GAP,
-    LongPostings,
-    Postings,
-    ShortPostings,
-    WrittenSegment,
-    building,
-    stream,
-    written,
-)
-from sift.domain.codec.shape import MOST_BLOCK, SHAPE, Shape
-from sift.domain.rank.bm25 import term_scores, unquantized
+from sift.domain.codec.segments import GAP, WrittenSegment, building, stream, written
+from sift.domain.codec.shape import MOST_BLOCK, Shape
+from sift.domain.rank.bm25 import STEPS, TOP, term_scores, unquantized
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, field_tokens, tokens
+from tests.unit.domain.codec.built import EVERY_TOKEN, SEGMENT, SMALL, Columns, chunks, segment
 
-SMALL = Shape(range_shift=2, block=2, long=3, lengths_shift=3)
 MOST_BYTES = 9
 MOST_TIMES = 1024
-EVERY_TOKEN = 1 << 62
-SEGMENT = 7
 
-type Columns = tuple[list[str], ...]
-words = st.lists(st.sampled_from(["a", "b", "c", "d", "e"]), max_size=6)
-chunks = st.lists(st.tuples(words, words, words), min_size=1, max_size=25)
+
+class ShortPostings(NamedTuple):
+    postings: bytes
+    positions: bytes
+
+
+class LongPostings(NamedTuple):
+    ranges: bytes
+    blocks: tuple[ShortPostings, ...]
+
+
+class Postings(NamedTuple):
+    term: str
+    chunks: int
+    held: ShortPostings | LongPostings
 
 
 def postings(made: WrittenSegment) -> list[Postings]:
     blocks: dict[str, list[ShortPostings]] = {}
-    for segment, term, number, coded, placed in made.blocks:
-        assert (segment, number) == (SEGMENT, len(blocks.setdefault(term, [])))
+    for held, term, number, coded, placed in made.blocks:
+        assert (held, number) == (SEGMENT, len(blocks.setdefault(term, [])))
         blocks[term].append(ShortPostings(coded, placed))
     found: list[Postings] = []
-    for segment, term, chunks, coded, placed, ranges in made.lists:
-        assert segment == SEGMENT
+    for held, term, count, coded, placed, ranges in made.lists:
+        assert held == SEGMENT
         if ranges is None:
             assert coded is not None
             assert placed is not None
-            found.append(Postings(term, chunks, ShortPostings(coded, placed)))
+            found.append(Postings(term, count, ShortPostings(coded, placed)))
         else:
             assert (coded, placed) == (None, None)
-            found.append(Postings(term, chunks, LongPostings(ranges, tuple(blocks.pop(term)))))
+            found.append(Postings(term, count, LongPostings(ranges, tuple(blocks.pop(term)))))
     assert blocks == {}
-    assert [(term, chunks) for _, term, chunks, _, _, _ in made.lists] == list(made.terms)
+    assert [(term, count) for _, term, count, _, _, _ in made.lists] == list(made.terms)
     return found
 
 
 def lengths(made: WrittenSegment) -> dict[int, bytes]:
     assert {segment for segment, _, _ in made.lengths} <= {SEGMENT}
     return {block: data for _, block, data in made.lengths}
-
-
-def segment(ids: NDArray[np.int64], columns: Sequence[Columns], average: float, shape: Shape = SHAPE) -> WrittenSegment:
-    built = building(EVERY_TOKEN)
-    fields = [(" ".join(title), " ".join(meta)) for title, _, meta in columns]
-    assert built.add(ids, range(len(columns)), fields, [" ".join(body) for _, body, _ in columns]) == len(columns)
-    return written(built, SEGMENT, average, shape)
 
 
 def decoded(held: Postings) -> tuple[list[int], list[int], list[int]]:
@@ -126,7 +118,7 @@ def test_the_ranges_of_a_long_list_bound_every_score_in_them(columns: list[tuple
         bests = floats(unquantized(ranges.best))
         for rid, start, end, best in zip(ints(ranges.ids), ints(ranges.starts), ints(ranges.ends), bests, strict=True):
             assert all(chunk >> SMALL.range_shift == rid for chunk in found[start:end])
-            assert best >= scores[start:end].max()
+            assert 0 <= best - scores[start:end].max() <= TOP / STEPS + 1e-12
         assert ranges.ends[-1] == len(found)
 
 

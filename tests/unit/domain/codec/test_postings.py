@@ -1,6 +1,5 @@
 import contextlib
 import itertools
-import struct
 import tracemalloc
 import zlib
 
@@ -18,29 +17,19 @@ from sift.domain.codec.postings import (
     RAW,
     blocked,
     blocked_all,
-    encoded,
     lengths_of,
     positions_of,
-    ranged,
     ranges_of,
     with_lengths,
 )
+from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
-
-BLOCK_HEAD = struct.Struct("<qI")
+from tests.coded_lists import BLOCK_HEAD, block, placed, ranges, varint, varints
+from tests.unit.domain.codec.built import SMALL, of_bodies, segment
 
 
 def ascending(gaps: list[int], start: int) -> NDArray[np.int64]:
     return start + np.cumsum(np.array(gaps, np.int64))
-
-
-def varint(number: int) -> bytes:
-    low = [number >> shift & 0x7F for shift in range(0, max(number.bit_length(), 1), 7)]
-    return bytes([*(each | 0x80 for each in low[:-1]), low[-1]])
-
-
-def varints(numbers: list[int]) -> bytes:
-    return b"".join(map(varint, numbers))
 
 
 type Listed = list[tuple[int, list[int]]]
@@ -52,39 +41,32 @@ lists = st.lists(st.lists(posting, min_size=1, max_size=40), min_size=1, max_siz
 
 
 @given(lists, st.integers(0, 1 << 48))
-def test_lists_encoded_together_each_come_back_with_their_counts_and_positions(each: list[Listed], start: int) -> None:
-    ids: list[int] = []
-    counts: list[int] = []
-    positions: list[int] = []
-    bounds = [0]
+def test_lists_each_come_back_with_their_counts_and_positions_alone_or_together(each: list[Listed], start: int) -> None:
+    ids: list[list[int]] = []
+    positions: list[list[list[int]]] = []
     for held in each:
-        place = start
-        for gap, where in held:
-            place += gap
-            ids.append(place)
-            counts.append(len(where))
-            positions += sorted(where)
-        bounds.append(len(ids))
-    found = encoded(np.array(ids, np.int64), np.array(counts, np.int64), np.array(positions, np.int64), bounds)
-    together, together_counts, together_bounds = blocked_all(found.postings)
-    assert (ints(together), ints(together_counts), together_bounds) == (ids, counts, bounds)
-    at = 0
-    for number, (low, high) in enumerate(itertools.pairwise(bounds)):
-        back, tf = blocked(found.postings[number])
-        assert ints(back) == ids[low:high]
-        assert ints(tf) == counts[low:high]
-        size = sum(counts[low:high])
-        assert ints(positions_of(found.positions[number], tf)) == positions[at : at + size]
-        at += size
+        ids.append([*itertools.accumulate((gap for gap, _ in held), initial=start)][1:])
+        positions.append([sorted(where) for _, where in held])
+    counts = [[len(where) for where in one] for one in positions]
+    coded = [block(found, tf) for found, tf in zip(ids, counts, strict=True)]
+    together, together_counts, bounds = blocked_all(coded)
+    assert ints(together) == [place for one in ids for place in one]
+    assert ints(together_counts) == [count for one in counts for count in one]
+    assert bounds == [*itertools.accumulate(map(len, ids), initial=0)]
+    for number, found in enumerate(ids):
+        back, tf = blocked(coded[number])
+        assert (ints(back), ints(tf)) == (found, counts[number])
+        assert ints(positions_of(placed(positions[number]), tf)) == [p for where in positions[number] for p in where]
 
 
 def test_a_short_list_is_kept_as_it_is_and_a_long_one_packed() -> None:
-    short = encoded(np.array([5, 9], np.int64), np.array([1, 2], np.int64), np.array([0, 1, 7], np.int64), [0, 2])
-    assert short.postings[0][:1] == RAW
-    ids = np.arange(0, 3000, 3, dtype=np.int64)
-    long = encoded(ids, np.ones(len(ids), np.int64), np.zeros(len(ids), np.int64), [0, len(ids)])
-    assert long.postings[0][:1] == PACKED
-    assert len(long.postings[0]) < 100
+    a_long_one = 1000
+    columns = of_bodies(["often", "twice"] if n < 2 else ["often"] for n in range(a_long_one))
+    made = segment(np.arange(0, 3 * a_long_one, 3, dtype=np.int64), columns, 4.0, Shape())
+    held = {term: coded for _, term, _, coded, _, _ in made.lists if coded is not None}
+    assert held["twice"][:1] == RAW
+    assert held["often"][:1] == PACKED
+    assert len(held["often"]) < 100
 
 
 def test_no_lists_decode_to_nothing() -> None:
@@ -92,14 +74,10 @@ def test_no_lists_decode_to_nothing() -> None:
     assert (ints(places), ints(counts), bounds) == ([], [], [0])
 
 
-def test_ids_too_far_apart_for_a_block_are_refused() -> None:
-    with pytest.raises(ValueError, match=r"2\*\*32 apart"):
-        encoded(np.array([0, 1 << 32], np.int64), np.ones(2, np.int64), np.zeros(2, np.int64), [0, 2])
-
-
-def test_ids_of_separate_lists_may_go_down_between_them() -> None:
-    found = encoded(np.array([9, 3], np.int64), np.ones(2, np.int64), np.zeros(2, np.int64), [0, 1, 2])
-    assert [ints(blocked(each)[0]) for each in found.postings] == [[9], [3]]
+@pytest.mark.parametrize("ids", [[0, 1 << 32], [9, 3], [5, 5]])
+def test_chunks_too_far_apart_for_a_block_or_out_of_order_are_refused(ids: list[int]) -> None:
+    with pytest.raises(ValueError, match=r"2\*\*32 apart: more than a block holds"):
+        segment(np.array(ids, np.int64), of_bodies([["w"]] * 2), 4.0)
 
 
 @given(st.lists(st.integers(1, (1 << 63) - 1), min_size=1, max_size=50))
@@ -109,23 +87,12 @@ def test_numbers_come_back_from_their_varints(values: list[int]) -> None:
     assert (ints(places), ints(counts)) == ([*range(7, 7 + len(values))], values)
 
 
-def test_encoding_holds_no_object_for_each_position() -> None:
-    lists, each = 20_000, 50
-    counts, ids = np.full(lists, each, np.int64), np.arange(1, lists + 1, dtype=np.int64)
-    positions = np.tile(np.arange(each, dtype=np.int64) * 3, lists)
-    tracemalloc.start()
-    try:
-        encoded(ids, counts, positions, [*range(0, lists, 128), lists])
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-    assert peak < 80 * len(positions)
-
-
 @pytest.mark.parametrize("value, size", [(0, 1), (127, 1), (128, 2), ((1 << 14) - 1, 2), (1 << 14, 3)])
 def test_a_varint_takes_a_byte_per_seven_bits(value: int, size: int) -> None:
-    one = np.ones(1, np.int64)
-    (written,) = encoded(one, one, np.array([value], np.int64), [0, 1]).positions
+    title, body = (["w"], []) if value == 0 else ([], [*["filler"] * (value - 1), "w"])
+    made = segment(np.zeros(1, np.int64), [(title, body, [])], 4.0)
+    held = {term: places for _, term, _, _, places, _ in made.lists if places is not None}
+    written = held["w"]
     assert written == RAW + varint(value)
     assert len(written) == 1 + size
 
@@ -135,12 +102,12 @@ def test_ranges_hold_where_their_postings_start_and_end_and_their_best_scores(
     counts: list[int], first: int, data: st.DataObject
 ) -> None:
     found = ascending(data.draw(st.lists(st.integers(1, 1000), min_size=len(counts), max_size=len(counts))), first)
-    best = np.array(data.draw(st.lists(st.integers(0, 255), min_size=len(counts), max_size=len(counts))), np.uint8)
-    back = ranges_of(ranged(found, np.array(counts, np.int64), best))
+    best = data.draw(st.lists(st.integers(0, 255), min_size=len(counts), max_size=len(counts)))
+    back = ranges_of(ranges(ints(found), counts, best))
     assert ints(back.ids) == ints(found)
     assert ints(back.ends - back.starts) == counts
     assert ints(back.starts) == [0, *ints(back.ends[:-1])]
-    assert ints(back.best) == ints(best)
+    assert ints(back.best) == best
 
 
 @given(st.lists(st.integers(0, 5000), min_size=1, max_size=300, unique=True), st.data())
@@ -183,17 +150,17 @@ def test_bytes_that_hold_no_list_are_refused_as_damaged(data: bytes) -> None:
 def test_a_list_with_a_byte_changed_or_cut_off_decodes_to_its_own_shape_or_is_refused(
     each: list[Listed], data: st.DataObject
 ) -> None:
-    ids = np.cumsum(np.array([gap for held in each for gap, _ in held], np.int64))
-    counts = np.array([len(where) for held in each for _, where in held], np.int64)
-    found = encoded(ids, counts, np.zeros(int(counts.sum()), np.int64), [0, len(ids)])
-    raw = found.postings[0]
+    ids = ints(np.cumsum(np.array([gap for held in each for gap, _ in held], np.int64)))
+    counts = [len(where) for held in each for _, where in held]
+    raw = block(ids, counts)
+    positions = placed([[0] * count for count in counts])
     body = bytearray(zlib.decompress(raw[1:]) if raw[:1] == PACKED else raw[1:])
     body[data.draw(st.integers(0, len(body) - 1))] = data.draw(st.integers(0, 255))
     cut = data.draw(st.integers(0, len(body)))
     for changed in (RAW + bytes(body), RAW + bytes(body[:cut])):
         _decoded_or_refused(changed)
         with contextlib.suppress(DamagedError):
-            positions_of(found.positions[0], blocked(changed)[1])
+            positions_of(positions, blocked(changed)[1])
 
 
 @pytest.mark.parametrize(
@@ -261,7 +228,8 @@ def test_lengths_packed_far_larger_than_their_block_are_never_unpacked_whole() -
 def test_numbers_are_kept_little_endian_on_every_machine() -> None:
     (written,) = with_lengths(np.array([0], np.int64), np.array([258], np.int64), 1).values()
     assert zlib.decompress(written) == b"\x02\x01\x00\x00\x00\x00\x00\x00"
-    held = ranged(np.array([5, 7], np.int64), np.array([1, 1], np.int64), np.zeros(2, np.uint8))
+    made = segment(np.array([20, 21, 28], np.int64), of_bodies([["w"]] * 3), 4.0, SMALL)
+    (held,) = (kept for _, _, _, _, _, kept in made.lists if kept is not None)
     assert zlib.decompress(held)[RANGES_HEAD.size : RANGES_HEAD.size + 4] == b"\x02\x00\x00\x00"
 
 
@@ -275,7 +243,6 @@ def test_a_list_that_unpacks_to_more_than_any_list_holds_is_refused_once_it_has_
         blocked(PACKED + packed)
 
 
-def test_ranges_out_of_order_or_too_far_apart_are_refused() -> None:
-    for ids in ([3, 3], [3, 1], [0, 1 << 32]):
-        with pytest.raises(ValueError, match=r"2\*\*32 apart: more than ranges hold"):
-            ranged(np.array(ids, np.int64), np.ones(2, np.int64), np.zeros(2, np.uint8))
+def test_ranges_too_far_apart_are_refused() -> None:
+    with pytest.raises(ValueError, match=r"2\*\*32 apart: more than ranges hold"):
+        segment(np.array([0, 1, 1 << 34], np.int64), of_bodies([["w"]] * 3), 4.0, SMALL)

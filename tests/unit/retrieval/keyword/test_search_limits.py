@@ -6,7 +6,6 @@ from hypothesis import given
 
 from sift.api.errors import InvalidRequestError
 from sift.domain.arrays import floats, ints
-from sift.domain.codec.postings import encoded, ranged
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.query.expressions import And, Or, Phrase, Prefix, Term
@@ -14,6 +13,7 @@ from sift.domain.rank.best import Best
 from sift.retrieval.keyword.lists import Opened, PostingArrays, Ranged, opened, stored
 from sift.retrieval.keyword.search import Prepared, Tuning, planned, prepared, query_of, searched
 from sift.storage.database import rows
+from tests.coded_lists import block, ranges
 from tests.examples import few
 from tests.keyword_searches import (
     SEEDS,
@@ -43,11 +43,11 @@ if TYPE_CHECKING:
     ],
 )
 def test_a_block_missing_or_of_another_size_than_its_ranges_say_is_damage(sql: str, damage: str) -> None:
-    three = encoded(np.arange(1, 4, dtype=np.int64), np.ones(3, np.int64), np.zeros(3, np.int64), [0, 3])
+    three = block([1, 2, 3], [1, 1, 1])
     with collections([[prose(Draws(np.random.default_rng(7)), 60)]]) as (stores, _):
         (store,) = stores
         assert any(isinstance(held, Ranged) for held in stored(store, ["w0"])["w0"])
-        store.transaction.connection.execute(sql, (three.postings[0],))
+        store.transaction.connection.execute(sql, (three,))
         with pytest.raises(DamagedError, match=damage):
             search(stores, Term("w0"), 10)
 
@@ -64,7 +64,7 @@ def test_the_positions_of_a_short_list_gone_since_the_list_was_read_are_damage()
 
 @pytest.mark.parametrize("place", [0, 1 << 40])
 def test_ranges_outside_their_segment_are_damage(place: int) -> None:
-    far = ranged(np.array([place], np.int64), np.ones(1, np.int64), np.zeros(1, np.uint8))
+    far = ranges([place], [1], [0])
     with collections([[prose(Draws(np.random.default_rng(7)), 60)]]) as (stores, _):
         (store,) = stores
         store.transaction.connection.execute("UPDATE keyword_postings SET ranges = ? WHERE ranges IS NOT NULL", (far,))

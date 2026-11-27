@@ -5,11 +5,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from sift import _native
-from sift.domain.arrays import STORED_U32, Ids, Scores, maxima_at, run_starts, sums_at, whole
-from sift.domain.codec.postings import encoded, ranged
+from sift.domain.arrays import STORED_U32, Ids, whole
 from sift.domain.codec.shape import SHAPE, Shape
 from sift.domain.errors import DamagedError
-from sift.domain.rank.bm25 import quantized, term_scores
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, TRANSLATION
 
 GAP = ""
@@ -17,38 +15,9 @@ POINTS = 0x110000
 DROPPED = 0xFFFFFFFF
 
 type Building = _native.Building
-type Merging = _native.Merging
+type Merger = _native.Merger
 type ListsRow = tuple[int, str, int, bytes | None, bytes | None, bytes | None]
 type ListBlockRow = tuple[int, str, int, bytes, bytes]
-
-
-@dataclass(frozen=True, slots=True)
-class ShortPostings:
-    postings: bytes
-    positions: bytes
-
-
-@dataclass(frozen=True, slots=True)
-class LongPostings:
-    ranges: bytes
-    blocks: tuple[ShortPostings, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class Postings:
-    term: str
-    chunks: int
-    held: ShortPostings | LongPostings
-
-
-@dataclass(eq=False, frozen=True, slots=True)
-class Lists:
-    terms: tuple[str, ...]
-    starts: tuple[int, ...]
-    ids: Ids
-    counts: Ids
-    positions: Ids
-    lengths: Ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,34 +37,6 @@ def stream(title: Sequence[str], text: Sequence[str], meta: Sequence[str]) -> li
     return [*title, GAP, *text, GAP, *meta]
 
 
-@dataclass(eq=False, frozen=True, slots=True)
-class RangesPart:
-    ids: Ids
-    sizes: Ids
-    best: Scores
-
-
-def ranges_part(ids: Ids, counts: Ids, lengths: Ids, average: float, shape: Shape) -> RangesPart:
-    ranges = ids >> shape.range_shift
-    starts = run_starts(ranges)
-    best = maxima_at(term_scores(counts, lengths, average), starts)
-    return RangesPart(ranges[starts], np.diff(np.append(starts, len(ids))), best)
-
-
-def ranges_joined(parts: Sequence[RangesPart]) -> bytes:
-    ids = np.concatenate([each.ids for each in parts])
-    starts = run_starts(ids)
-    sizes = sums_at(np.concatenate([each.sizes for each in parts]), starts)
-    return ranged(ids[starts], sizes, quantized(maxima_at(np.concatenate([each.best for each in parts]), starts)))
-
-
-def blocks_of(ids: Ids, counts: Ids, positions: Ids, shape: Shape) -> tuple[ShortPostings, ...]:
-    if not len(ids):
-        return ()
-    made = encoded(ids, counts, positions, [*range(0, len(ids), shape.block), len(ids)])
-    return tuple(ShortPostings(*each) for each in zip(made.postings, made.positions, strict=True))
-
-
 @functools.cache
 def _words() -> _native.Words:
     held = np.arange(POINTS, dtype=STORED_U32)
@@ -112,30 +53,48 @@ def _shaped(shape: Shape) -> tuple[int, int, int, int]:
     return shape.range_shift, shape.block, shape.long, shape.lengths_shift
 
 
-def merger(live: Ids, lengths: Ids, dead: Ids, average: float, shape: Shape) -> Merging:
-    return _native.Merging(whole(live), whole(lengths), whole(dead), average, _shaped(shape))
+@dataclass(eq=False, frozen=True, slots=True)
+class MergedChunks:
+    live: Ids
+    lengths: Ids
+    dead: Ids
+    average: float
 
 
 @dataclass(frozen=True, slots=True)
-class MergedRows:
-    terms: Sequence[str]
-    postings: Sequence[bytes]
-    positions: Sequence[bytes]
+class MergeLimits:
+    postings: int
+    stored: int
+    tokens: int
 
 
 @dataclass(frozen=True, slots=True)
-class MergedLists:
+class MergeStep:
     lists: Sequence[ListsRow]
     blocks: Sequence[ListBlockRow]
-    large: Sequence[tuple[int, int]]
+    wanted: Sequence[int]
+    done: bool
 
 
-def lists_merged(held: Merging, segment: int, rows: MergedRows, most_tokens: int) -> MergedLists:
+def merger(chunks: MergedChunks, shape: Shape, limits: MergeLimits, sources: int) -> Merger:
+    live, lengths, dead = whole(chunks.live), whole(chunks.lengths), whole(chunks.dead)
+    most = (limits.postings, limits.stored, limits.tokens)
+    return _native.Merger(live, lengths, dead, chunks.average, _shaped(shape), most, sources)
+
+
+def fed(held: Merger, source: int, rows: Sequence[tuple[object, ...]]) -> bool:
     try:
-        (lists, blocks), large = held.lists(segment, rows.terms, rows.postings, rows.positions, most_tokens)
+        return held.feed(source, rows)
+    except (TypeError, OverflowError):
+        raise DamagedError("the keyword index holds a row that is no list of a term") from None
+
+
+def stepped(held: Merger, segment: int) -> MergeStep:
+    try:
+        (lists, blocks), wanted, done = held.step(segment)
     except ValueError as error:
         raise DamagedError(str(error)) from None
-    return MergedLists(lists, blocks, large)
+    return MergeStep(lists, blocks, wanted, done)
 
 
 def ends(built: Building) -> tuple[int, int]:

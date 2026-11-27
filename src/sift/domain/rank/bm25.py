@@ -23,10 +23,6 @@ def term_scores(tf: TermCounts, lengths: TermCounts, average: float) -> Scores:
     return counts * TOP / (counts + K1 * (1 - B + B * lengths / average))
 
 
-def quantized(scores: Scores) -> NDArray[np.uint8]:
-    return np.minimum(np.ceil(scores * (STEPS / TOP)), STEPS).astype(np.uint8)
-
-
 def unquantized(steps: NDArray[np.uint8]) -> Scores:
     return steps.astype(np.float64) * (TOP / STEPS)
 

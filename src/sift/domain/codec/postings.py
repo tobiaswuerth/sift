@@ -2,7 +2,7 @@ import struct
 import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import NamedTuple, cast
+from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -35,11 +35,6 @@ class Ranges:
     best: Bytes
 
 
-class Encoded(NamedTuple):
-    postings: tuple[bytes, ...]
-    positions: tuple[bytes, ...]
-
-
 def _inflated(data: bytes) -> bytes:
     unpacking = zlib.decompressobj()
     try:
@@ -64,11 +59,6 @@ def _inflated_to(data: bytes, size: int) -> bytes:
 
 def _numbers(stored: bytes) -> Ids:
     return np.frombuffer(stored, STORED_I64).astype(np.int64)
-
-
-def encoded(ids: Ids, counts: Ids, positions: Ids, bounds: Sequence[int]) -> Encoded:
-    postings, held = _native.encoded(whole(ids), whole(counts), whole(positions), bounds)
-    return Encoded(tuple(postings), tuple(held))
 
 
 def blocked(data: bytes) -> tuple[Ids, Ids]:
@@ -99,10 +89,6 @@ def positions_all(each: Sequence[bytes], counts: Ids) -> Ids:
 def _ascending(start: int, gaps: NDArray[np.uint32]) -> Ids:
     _sound(holds=bool((gaps >= 1).all()), problem="ranges hold ids out of order")
     return start + after(0, np.cumsum(gaps, dtype=np.int64))
-
-
-def ranged(ids: Ids, counts: Ids, best: Bytes) -> bytes:
-    return _native.ranged(whole(ids), whole(counts), best.astype(np.uint8).tobytes())
 
 
 def ranges_of(data: bytes) -> Ranges:

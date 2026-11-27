@@ -13,7 +13,6 @@ from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.segments import Policy
 from sift.storage.database import Batches, reading, rows, run, writing
-from sift.storage.keyword_merges import MergedTerm, batched
 from sift.storage.keywords import TAKEN_OVER_REMEDY, remade, remake_started, settle
 from tests.examples import few
 from tests.keyword_indexes import (
@@ -245,21 +244,6 @@ def test_merges_that_fit_a_write_run_though_a_larger_one_waits() -> None:
         assert held == [2, 2, 2, 2, 2, 2]
         assert list(settle(connection, batches))[-1] > 0
         checked(connection)
-
-
-def _shown(batches: Batches) -> list[tuple[str, list[str]]]:
-    listed = [MergedTerm(0, term, 0, 3, 10, b"", b"") for term in ("a", "a", "b", "c")]
-    return [(type(each).__name__, [row.term for row in each.rows]) for each in batched(iter(listed), batches)]
-
-
-def test_merges_batch_terms_by_bytes_as_well_as_by_postings_and_a_term_past_either_in_pieces() -> None:
-    assert _shown(Batches(bytes_a_merge=1)) == [("LargeTerm", ["a", "a"]), ("LargeTerm", ["b"]), ("LargeTerm", ["c"])]
-    assert _shown(Batches(postings_a_merge=4)) == [("LargeTerm", ["a", "a"]), ("TermsBatch", ["b", "c"])]
-    assert _shown(Batches(bytes_a_merge=30, postings_a_merge=10**9)) == [
-        ("TermsBatch", ["a", "a", "b"]),
-        ("TermsBatch", ["c"]),
-    ]
-    assert _shown(Batches()) == [("TermsBatch", ["a", "a", "b", "c"])]
 
 
 def test_settling_or_writing_a_half_remade_index_says_to_finish_the_remake() -> None:
