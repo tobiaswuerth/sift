@@ -10,8 +10,20 @@ from sift.domain.errors import DamagedError
 from sift.domain.text.chunks import Chunk
 from sift.domain.text.links import Link, names
 from sift.domain.text.notes import Document, NotePart, NoteRead
-from sift.storage.database import Reading, Writing, WritingDocuments, first, inserted, rows, run, run_each
-from sift.storage.texts import put_text
+from sift.storage.database import (
+    Count,
+    IdRow,
+    Reading,
+    Writing,
+    WritingDocuments,
+    first,
+    inserted,
+    rows,
+    run,
+    run_each,
+    run_rows,
+)
+from sift.storage.texts import put_text, put_texts
 
 SourceId = NewType("SourceId", int)
 MOST_DESCRIPTION_BYTES = 512 << 20
@@ -114,6 +126,9 @@ LINK_ROW = """INSERT INTO links(document, ordinal, field, line, kind, target, ke
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 NAME_ROW = "INSERT INTO names(key, document, kind) VALUES (?, ?, ?)"
 DOCUMENT_ROW = "INSERT INTO documents(source, key, digest, title, fields) VALUES (?, ?, ?, ?, ?)"
+DOCUMENT_ROWS = "INSERT INTO documents(id, source, key, digest, title, fields)"
+CHUNK_ROWS = "INSERT INTO chunks(document, first_line, last_line, start, length, place)"
+NEXT_DOCUMENT = "SELECT seq + 1 AS id FROM sqlite_sequence WHERE name = 'documents'"
 WRITTEN_AT_ONCE = 1000
 
 
@@ -134,17 +149,6 @@ def _links_put(transaction: Writing, identity: DocumentId, links: Sequence[Link]
 
 def _names_put(transaction: Writing, identity: DocumentId, path: str, fields: Fields) -> None:
     run_each(transaction, NAME_ROW, [(name.key, identity, name.kind) for name in names(path, fields)])
-
-
-def _add(transaction: Writing, source: SourceId, path: str, document: Document) -> DocumentId:
-    row = (source, document.key, document.digest, document.title, fields_json(document.fields))
-    identity = DocumentId(inserted(transaction, DOCUMENT_ROW, row))
-    put_text(transaction, identity, (document.text,))
-    _chunks_put(transaction, identity, document.chunks)
-    _links_put(transaction, identity, document.links, 0)
-    if not document.key:
-        _names_put(transaction, identity, path, document.fields)
-    return identity
 
 
 @dataclass(slots=True)
@@ -194,7 +198,25 @@ def set_digest(transaction: WritingDocuments, document: DocumentId, digested: st
 def add_documents(
     transaction: WritingDocuments, source: SourceId, path: str, documents: Sequence[Document]
 ) -> tuple[DocumentId, ...]:
-    return tuple(_add(transaction, source, path, document) for document in documents)
+    if not documents:
+        return ()
+    (first_free,) = rows(transaction, IdRow, NEXT_DOCUMENT)
+    (placed,) = rows(transaction, Count, "SELECT places FROM counts")
+    ids = tuple(DocumentId(first_free.id + number) for number in range(len(documents)))
+    held = list(zip(ids, documents, strict=True))
+    run_rows(
+        transaction,
+        DOCUMENT_ROWS,
+        [(identity, source, each.key, each.digest, each.title, fields_json(each.fields)) for identity, each in held],
+    )
+    put_texts(transaction, ((identity, (each.text,)) for identity, each in held))
+    cut = [(identity, c.first_line, c.last_line, c.start, c.length) for identity, each in held for c in each.chunks]
+    run_rows(transaction, CHUNK_ROWS, [(*row, placed.n + number) for number, row in enumerate(cut, 1)])
+    for identity, each in held:
+        _links_put(transaction, identity, each.links, 0)
+        if not each.key:
+            _names_put(transaction, identity, path, each.fields)
+    return ids
 
 
 def stored(transaction: Reading, path: str, key: str = "") -> Stored | None:

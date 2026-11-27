@@ -18,9 +18,9 @@ STORE_OPENED_BY_HAND = (
 SQL_CALLS = frozenset({"execute", "executemany", "executescript"})
 RAW_SQL = "SQL run on a transaction's connection outside sift.storage: add a storage function and call it"
 SQL_MODULE = "sift.storage.database"
-SQL_HELPERS = frozenset({"first", "rows", "run", "run_each", "inserted", "streamed", "batches"})
+SQL_HELPERS = frozenset({"first", "rows", "run", "run_each", "run_rows", "inserted", "streamed", "batches"})
 SQL_HELPERS_TAKEN = (
-    "a function that runs SQL (first, rows, run, run_each, inserted, streamed, batches) imported outside "
+    "a function that runs SQL (first, rows, run, run_each, run_rows, inserted, streamed, batches) imported outside "
     "sift.storage: SQL is written there; add a storage function and call it"
 )
 LAYOUT_FROM_ITS_END = (

@@ -19,6 +19,7 @@ READ_CACHE_KIBIBYTES = 16 << 10
 DAMAGED = frozenset({sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB})
 MINIMUM_SQLITE = (3, 38, 0)
 STREAMED = 10_000
+MOST_VARIABLES = 32_766
 CACHE = f"PRAGMA cache_size = -{CACHE_KIBIBYTES}"
 READ_CACHE = f"PRAGMA cache_size = -{READ_CACHE_KIBIBYTES}"
 WAL = "wal"
@@ -234,6 +235,20 @@ def run(transaction: Writing, sql: str, parameters: Parameters = ()) -> int:
 
 def run_each(transaction: Writing, sql: str, each: Iterable[Parameters]) -> None:
     transaction.connection.executemany(sql, each)
+
+
+def _values(width: int, count: int) -> str:
+    one = f"({', '.join('?' * width)})"
+    return ", ".join([one] * count)
+
+
+def run_rows(transaction: Writing, insert: str, each: Sequence[Sequence[object]]) -> None:
+    width = len(each[0]) if each else 1
+    most = MOST_VARIABLES // width
+    for start in range(0, len(each), most):
+        part = each[start : start + most]
+        statement = " ".join((insert, "VALUES", _values(width, len(part))))
+        transaction.connection.execute(statement, [value for row in part for value in row])
 
 
 def save_point(transaction: Writing) -> None:

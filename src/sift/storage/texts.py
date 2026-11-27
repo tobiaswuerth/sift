@@ -60,12 +60,16 @@ def blocks(pieces: Iterable[str]) -> Iterator[tuple[int, int, str]]:
         yield number, line, "".join(held)
 
 
-def put_text(transaction: Writing, document: DocumentId, pieces: Iterable[str]) -> None:
+def put_texts(transaction: Writing, texts: Iterable[tuple[DocumentId, Iterable[str]]]) -> None:
     run_each(
         transaction,
         "INSERT INTO texts(document, block, first_line, text) VALUES (?, ?, ?, ?)",
-        ((document, number, line, text) for number, line, text in blocks(pieces)),
+        ((document, number, line, text) for document, pieces in texts for number, line, text in blocks(pieces)),
     )
+
+
+def put_text(transaction: Writing, document: DocumentId, pieces: Iterable[str]) -> None:
+    put_texts(transaction, [(document, pieces)])
 
 
 def text_of(transaction: Reading, document: DocumentId) -> str:

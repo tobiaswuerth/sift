@@ -122,6 +122,7 @@ Generated from the code by `python -m tools limits --write`; a test holds it equ
 | `sift.storage.catalog` | `MOST_NAME` | `100` |
 | `sift.storage.database` | `BUSY_TIMEOUT_SECONDS` | `30` |
 | `sift.storage.database` | `WAL_LIMIT_BYTES` | `64 << 20` |
+| `sift.storage.database` | `MOST_VARIABLES` | `32_766` |
 | `sift.storage.documents` | `MOST_DESCRIPTION_BYTES` | `512 << 20` |
 | `sift.storage.kept_vectors` | `KEY_BYTES` | `16` |
 | `sift.storage.keyword_lists` | `MOST_POINT` | `0x10FFFF` |
