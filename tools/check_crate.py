@@ -13,10 +13,14 @@ NAMED = re.compile(r"^[ \t]*(?:pub(?:\([a-z]+\))? )?(?:struct|enum|trait|type) (
 USED = re.compile(r"\bcrate::(\w+)")
 TEXT = re.compile(r'b?"(?:[^"\\]|\\.)*"|b?r(#*)".*?"\1|b?\'(?:[^\'\\]|\\(?:[^u]|u\{[0-9a-fA-F]+\}))\'', re.DOTALL)
 COMMENT = re.compile(r"//|/\*")
+BINDING = f"{CRATE}/python.rs"
+ALLOCATOR = "#[global_allocator]"
+NO_ALLOCATOR = "the extension names no allocator of its own: its threads would wait for the system's"
 REMEDY = (
     "Split a module that grew too long by responsibility, give each type of the crate a name of its own, let a "
     f"module use only the layers below it ({' < '.join(LAYERS)}; name a new module's place in LAYERS of "
-    "tools/check_crate.py), and say what a comment says with a name, a type or a test."
+    f"tools/check_crate.py), say what a comment says with a name, a type or a test, and keep the {ALLOCATOR} that "
+    f"{BINDING} names."
 )
 
 
@@ -65,11 +69,16 @@ def commented(path: str, source: str) -> Iterator[Finding]:
             yield Finding(path, number, "holds a comment")
 
 
+def unallocated(path: str, source: str) -> Iterator[Finding]:
+    if path == BINDING and ALLOCATOR not in TEXT.sub("", source):
+        yield Finding(path, 1, NO_ALLOCATOR)
+
+
 def crate(sources: Mapping[str, str]) -> list[Finding]:
     each = [
         finding
         for path, source in sources.items()
-        for check in (too_long, climbing, commented)
+        for check in (too_long, climbing, commented, unallocated)
         for finding in check(path, source)
     ]
     return sorted([*each, *renamed(sources)], key=lambda finding: (finding.path, finding.line))

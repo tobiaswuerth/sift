@@ -2,6 +2,7 @@ mod building;
 mod lists;
 mod merging;
 
+use mimalloc::MiMalloc;
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -10,6 +11,9 @@ use pyo3::types::{PyBytes, PyList, PyString};
 use crate::postings::{Filed, Shape};
 
 type Listed<'py> = (Bound<'py, PyList>, Bound<'py, PyList>, Bound<'py, PyList>);
+
+#[global_allocator]
+static ALLOCATOR: MiMalloc = MiMalloc;
 
 fn numbers_of(held: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
     PyBuffer::<i64>::get(held)?.to_vec(held.py())

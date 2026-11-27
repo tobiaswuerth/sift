@@ -1,6 +1,6 @@
 import pytest
 
-from tools.check_crate import LAYERS, MOST_LINES, crate, main
+from tools.check_crate import LAYERS, MOST_LINES, NO_ALLOCATOR, crate, main
 
 
 def problems(sources: dict[str, str]) -> list[tuple[str, int, str]]:
@@ -59,6 +59,13 @@ fn held<'a>(text: &'a str, quote: char) -> bool { quote == '"' || quote == '\'' 
         ("native/src/words.rs", 4, "holds a comment"),
         ("native/src/words.rs", 6, "holds a comment"),
     ]
+
+
+def test_a_binding_that_names_no_allocator_of_its_own_is_found() -> None:
+    named = "#[global_allocator]\nstatic ALLOCATOR: MiMalloc = MiMalloc;\n"
+    assert problems({"native/src/python.rs": named, "native/src/python/lists.rs": "fn f() {}\n"}) == []
+    for source in ("use pyo3::prelude::*;\n", 'const A: &str = "#[global_allocator]";\n'):
+        assert problems({"native/src/python.rs": source}) == [("native/src/python.rs", 1, NO_ALLOCATOR)]
 
 
 def test_the_crate_keeps_its_shape(capsys: pytest.CaptureFixture[str]) -> None:
