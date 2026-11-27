@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
-from sift.api.collections import AddCollection
+from sift.api.collections import AddCollection, TitleFrom
 from sift.api.embedding import EmbedCollections
 from sift.api.ids import DocumentId
 from sift.app.collections import add
@@ -103,7 +103,8 @@ def former_home(
 ) -> Path:
     made, former = tmp_path / "made", tmp_path / "former"
     for name, folder in folders.items():
-        add(made, AddCollection(str(folder), name))
+        chosen = (choices or {}).get(name, {}).get("title_from")
+        add(made, AddCollection(str(folder), name, title_from=TitleFrom(str(chosen)) if chosen else TitleFrom.HEADING))
     indexed(made)
     if model is not None:
         embed(made, EmbedCollections(), quiet, model)

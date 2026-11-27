@@ -129,7 +129,7 @@ def _asked(former: FormerCollection) -> AddCollection:
         former.folder,
         former.name,
         str(_target(former)),
-        title_from=None if title_from is None else TitleFrom(title_from),
+        title_from=TitleFrom.HEADING if title_from is None else TitleFrom(title_from),
         nested=True,
         follow_links=True if choices.get("links") == "follow" else None,
         id_field=_text(choices, "id"),

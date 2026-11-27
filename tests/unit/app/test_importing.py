@@ -114,6 +114,20 @@ def test_a_collection_s_choices_and_its_being_inactive_are_kept(tmp_path: Path, 
     assert (papers.active, records.id, records.title, records.text) == (False, "key", "heading", ("body",))
 
 
+def test_a_vault_that_took_its_titles_from_headings_keeps_them_and_every_vector(tmp_path: Path, notes: Path) -> None:
+    (notes / ".obsidian").mkdir()
+    write(
+        notes / "long.md",
+        "# Long\n\n" + "".join(f"## Part {n}\n\n{'Brushes and pigments. ' * 40}\n\n" for n in range(9)),
+    )
+    former, home = former_home(tmp_path, {"notes": notes}, hashed()), tmp_path / "home"
+    (done,) = brought(home, former)
+    (one,) = known_collections(home)
+    assert isinstance(done, Brought)
+    assert (one.choices.title_from, done.vectors) == (TitleFrom.HEADING, done.vectors_before)
+    assert done.passages > len(NOTES) + 1
+
+
 def test_an_import_run_again_goes_on_and_adds_nothing_twice(tmp_path: Path, notes: Path) -> None:
     former, home = former_home(tmp_path, {"notes": notes}, hashed()), tmp_path / "home"
     first = brought(home, former)
