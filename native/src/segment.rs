@@ -52,8 +52,6 @@ pub struct Row {
 }
 
 pub struct Written {
-    pub first: i64,
-    pub last: i64,
     pub rows: Vec<Row>,
     pub lengths: Vec<(i64, Vec<u8>)>,
 }
@@ -266,6 +264,14 @@ impl Held {
         self.ids.len()
     }
 
+    pub fn first(&self) -> Option<i64> {
+        self.ids.first().copied()
+    }
+
+    pub fn last(&self) -> Option<i64> {
+        self.ids.last().copied()
+    }
+
     pub fn tokens(&self) -> u64 {
         self.lengths.iter().map(|&length| u64::from(length)).sum()
     }
@@ -304,9 +310,9 @@ impl Held {
     }
 
     pub fn written(&self, average: f64, shape: Shape) -> Result<Written, String> {
-        let (Some(&first), Some(&last)) = (self.ids.first(), self.ids.last()) else {
+        if self.ids.is_empty() {
             return Err("a segment holds a chunk at least".to_owned());
-        };
+        }
         let names = self.terms.names();
         let mut order: Vec<usize> = (0..names.len()).collect();
         order.sort_unstable_by_key(|&code| names[code].as_bytes());
@@ -341,8 +347,6 @@ impl Held {
             .collect();
         let lengths = lengths_written(&self.ids, &self.lengths, shape.lengths_shift)?;
         Ok(Written {
-            first,
-            last,
             rows: rows?.into_iter().flatten().collect(),
             lengths,
         })

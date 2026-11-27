@@ -1,10 +1,9 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
-use pyo3::types::PyList;
 use rayon::prelude::*;
 
-use crate::building::shown;
+use crate::building::{Listed, listed};
 use crate::lists::{block, bytes_of, gaps, numbers_of, placed};
 use crate::segment::{Postings, Row, Shape, kept};
 
@@ -124,11 +123,12 @@ impl Merging {
 
     fn lists<'py>(
         &self,
+        segment: i64,
         terms: &Bound<'py, PyAny>,
         postings: &Bound<'py, PyAny>,
         positions: &Bound<'py, PyAny>,
         most: usize,
-    ) -> PyResult<(Bound<'py, PyList>, Spans)> {
+    ) -> PyResult<(Listed<'py>, Spans)> {
         let py = terms.py();
         let rows = Rows {
             terms: terms.extract()?,
@@ -141,10 +141,6 @@ impl Merging {
             ));
         }
         let (made, large) = py.detach(|| self.merged(&rows, most)).map_err(PyValueError::new_err)?;
-        let shown_rows = PyList::empty(py);
-        for row in &made {
-            shown_rows.append(shown(py, row)?)?;
-        }
-        Ok((shown_rows, large))
+        Ok((listed(py, segment, &made)?, large))
     }
 }

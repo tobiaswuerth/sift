@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
 use pyo3::types::{PyBytes, PyList, PyString};
 
-use crate::lists::{Coded, numbers_of};
+use crate::lists::numbers_of;
 use crate::segment::{Held, Kept, Row, Shape, Span, Written};
 use crate::words::Table;
 
@@ -82,38 +82,28 @@ fn taken(held: &mut Held, table: &Table, most_field: usize, batch: &Batch) -> Re
     Ok(batch.places.len())
 }
 
-fn pair<'py>(py: Python<'py>, coded: &Coded) -> (Bound<'py, PyBytes>, Bound<'py, PyBytes>) {
-    (PyBytes::new(py, &coded.0), PyBytes::new(py, &coded.1))
-}
+pub type Listed<'py> = (Bound<'py, PyList>, Bound<'py, PyList>);
 
-pub fn shown<'py>(py: Python<'py>, row: &Row) -> PyResult<Bound<'py, PyAny>> {
-    let term = PyString::new(py, &row.term);
+pub fn listed<'py>(py: Python<'py>, segment: i64, rows: &[Row]) -> PyResult<Listed<'py>> {
+    let (lists, blocks) = (PyList::empty(py), PyList::empty(py));
     let none = py.None().into_bound(py);
-    let listed = match &row.held {
-        Kept::Short(coded) => {
-            let (postings, positions) = pair(py, coded);
-            (
-                term,
-                row.chunks,
-                postings.into_any(),
-                positions.into_any(),
-                none,
-                PyList::empty(py),
-            )
+    for row in rows {
+        let term = PyString::new(py, &row.term);
+        match &row.held {
+            Kept::Short(coded) => {
+                let (postings, positions) = (PyBytes::new(py, &coded.0), PyBytes::new(py, &coded.1));
+                lists.append((segment, term, row.chunks, postings, positions, &none))?;
+            }
+            Kept::Long { ranges, blocks: held } => {
+                lists.append((segment, &term, row.chunks, &none, &none, PyBytes::new(py, ranges)))?;
+                for (number, coded) in held.iter().enumerate() {
+                    let (postings, positions) = (PyBytes::new(py, &coded.0), PyBytes::new(py, &coded.1));
+                    blocks.append((segment, &term, number, postings, positions))?;
+                }
+            }
         }
-        Kept::Long { ranges, blocks } => {
-            let blocks = PyList::new(py, blocks.iter().map(|coded| pair(py, coded)))?;
-            (
-                term,
-                row.chunks,
-                none.clone(),
-                none,
-                PyBytes::new(py, ranges).into_any(),
-                blocks,
-            )
-        }
-    };
-    Ok(listed.into_pyobject(py)?.into_any())
+    }
+    Ok((lists, blocks))
 }
 
 #[pymethods]
@@ -170,35 +160,43 @@ impl Building {
         self.held.as_ref().map_or(0, Held::tokens)
     }
 
+    #[getter]
+    fn first(&self) -> Option<i64> {
+        self.held.as_ref().and_then(Held::first)
+    }
+
+    #[getter]
+    fn last(&self) -> Option<i64> {
+        self.held.as_ref().and_then(Held::last)
+    }
+
     fn written<'py>(
         &mut self,
         py: Python<'py>,
+        segment: i64,
         average: f64,
-        range_shift: u32,
-        block: usize,
-        long: usize,
-        lengths_shift: u32,
-    ) -> PyResult<(i64, i64, Bound<'py, PyList>, Bound<'py, PyList>)> {
+        shape: (u32, usize, usize, u32),
+    ) -> PyResult<(Listed<'py>, Bound<'py, PyList>, Bound<'py, PyList>)> {
         let held = self.held.take().ok_or_else(|| PyValueError::new_err(USED))?;
         let shape = Shape {
-            range_shift,
-            block,
-            long,
-            lengths_shift,
+            range_shift: shape.0,
+            block: shape.1,
+            long: shape.2,
+            lengths_shift: shape.3,
         };
         let made: Written = py
             .detach(|| held.written(average, shape))
             .map_err(PyValueError::new_err)?;
-        let rows = PyList::empty(py);
-        for row in &made.rows {
-            rows.append(shown(py, row)?)?;
-        }
         let lengths = PyList::new(
             py,
             made.lengths
                 .iter()
-                .map(|(block, packed)| (*block, PyBytes::new(py, packed))),
+                .map(|(block, packed)| (segment, *block, PyBytes::new(py, packed))),
         )?;
-        Ok((made.first, made.last, rows, lengths))
+        let terms = PyList::new(
+            py,
+            made.rows.iter().map(|row| (PyString::new(py, &row.term), row.chunks)),
+        )?;
+        Ok((listed(py, segment, &made.rows)?, lengths, terms))
     }
 }

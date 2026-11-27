@@ -1,7 +1,7 @@
 from collections.abc import Mapping, Sequence
 from typing import NamedTuple
 
-from sift.domain.codec.segments import LongPostings, Postings, ShortPostings
+from sift.domain.codec.segments import ListBlockRow, ListsRow, LongPostings, Postings, ShortPostings
 from sift.storage.database import IdRow, Writing, rows, run, run_each
 
 
@@ -28,6 +28,11 @@ POSTINGS_ROW = (
 )
 BLOCK_ROW = "INSERT INTO keyword_blocks(segment, term, number, postings, positions) VALUES (?, ?, ?, ?, ?)"
 UNFINISHED_RANGES = b""
+
+
+def rows_added(transaction: Writing, lists: Sequence[ListsRow], blocks: Sequence[ListBlockRow]) -> None:
+    run_each(transaction, POSTINGS_ROW, lists)
+    run_each(transaction, BLOCK_ROW, blocks)
 
 
 def postings_added(transaction: Writing, segment: int, postings: Sequence[Postings]) -> None:

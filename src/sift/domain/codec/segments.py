@@ -1,6 +1,6 @@
 import functools
 import itertools
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -19,7 +19,8 @@ DROPPED = 0xFFFFFFFF
 
 type Building = _native.Building
 type Merging = _native.Merging
-type _Row = tuple[str, int, bytes | None, bytes | None, bytes | None, list[tuple[bytes, bytes]]]
+type ListsRow = tuple[int, str, int, bytes | None, bytes | None, bytes | None]
+type ListBlockRow = tuple[int, str, int, bytes, bytes]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,14 +53,16 @@ class Lists:
 
 
 @dataclass(frozen=True, slots=True)
-class Segment:
+class WrittenSegment:
     first: int
     last: int
     chunks: int
     tokens: int
     average: float
-    postings: tuple[Postings, ...]
-    lengths: Mapping[int, bytes]
+    lists: Sequence[ListsRow]
+    blocks: Sequence[ListBlockRow]
+    lengths: Sequence[tuple[int, int, bytes]]
+    terms: Sequence[tuple[str, int]]
 
 
 def stream(title: Sequence[str], text: Sequence[str], meta: Sequence[str]) -> list[str]:
@@ -130,18 +133,12 @@ def building(most_tokens: int) -> Building:
     return _words().building(most_tokens, MOST_FIELD_CHARACTERS)
 
 
-def _kept(row: _Row) -> ShortPostings | LongPostings:
-    _, _, postings, positions, ranges, blocks = row
-    if ranges is not None:
-        return LongPostings(ranges, tuple(ShortPostings(*each) for each in blocks))
-    if postings is None or positions is None:
-        raise ValueError("a short list holds its postings and positions")
-    return ShortPostings(postings, positions)
+def _shaped(shape: Shape) -> tuple[int, int, int, int]:
+    return shape.range_shift, shape.block, shape.long, shape.lengths_shift
 
 
 def merger(live: Ids, lengths: Ids, dead: Ids, average: float, shape: Shape) -> Merging:
-    shaped = (shape.range_shift, shape.block, shape.long, shape.lengths_shift)
-    return _native.Merging(whole(live), whole(lengths), whole(dead), average, shaped)
+    return _native.Merging(whole(live), whole(lengths), whole(dead), average, _shaped(shape))
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,18 +148,24 @@ class MergedRows:
     positions: Sequence[bytes]
 
 
-def lists_merged(
-    held: Merging, rows: MergedRows, most_tokens: int
-) -> tuple[tuple[Postings, ...], list[tuple[int, int]]]:
+@dataclass(frozen=True, slots=True)
+class MergedLists:
+    lists: Sequence[ListsRow]
+    blocks: Sequence[ListBlockRow]
+    large: Sequence[tuple[int, int]]
+
+
+def lists_merged(held: Merging, segment: int, rows: MergedRows, most_tokens: int) -> MergedLists:
     try:
-        made, large = held.lists(rows.terms, rows.postings, rows.positions, most_tokens)
+        (lists, blocks), large = held.lists(segment, rows.terms, rows.postings, rows.positions, most_tokens)
     except ValueError as error:
         raise DamagedError(str(error)) from None
-    return tuple(Postings(row[0], row[1], _kept(row)) for row in made), large
+    return MergedLists(lists, blocks, large)
 
 
-def written(built: Building, average: float, shape: Shape = SHAPE) -> Segment:
-    chunks, tokens = built.chunks, built.tokens
-    first, last, rows, lengths = built.written(average, shape.range_shift, shape.block, shape.long, shape.lengths_shift)
-    postings = tuple(Postings(row[0], row[1], _kept(row)) for row in rows)
-    return Segment(first, last, chunks, tokens, average, postings, dict(lengths))
+def written(built: Building, segment: int, average: float, shape: Shape = SHAPE) -> WrittenSegment:
+    first, last, chunks, tokens = built.first, built.last, built.chunks, built.tokens
+    if first is None or last is None:
+        raise ValueError("a segment holds a chunk at least")
+    (lists, blocks), lengths, terms = built.written(segment, average, _shaped(shape))
+    return WrittenSegment(first, last, chunks, tokens, average, lists, blocks, lengths, terms)

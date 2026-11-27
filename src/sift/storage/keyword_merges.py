@@ -33,6 +33,7 @@ from sift.storage.keyword_writes import (
     long_begun,
     long_finished,
     postings_added,
+    rows_added,
     segment_added,
 )
 
@@ -304,9 +305,9 @@ def _term_written(transaction: WritingDocuments, merging: _Merging, spans: Itera
 
 def _batch_written(transaction: WritingDocuments, merging: _Merging, rows: Sequence[MergedTerm]) -> None:
     given = MergedRows([row.term for row in rows], [row.postings for row in rows], [row.positions for row in rows])
-    made, large = lists_merged(merging.kernel, given, transaction.batches.tokens_a_segment)
-    postings_added(transaction, merging.made, made)
-    for start, end in large:
+    made = lists_merged(merging.kernel, merging.made, given, transaction.batches.tokens_a_segment)
+    rows_added(transaction, made.lists, made.blocks)
+    for start, end in made.large:
         _term_written(transaction, merging, iter([_Span(_decoded(rows[start:end]), 0, end - start)]))
 
 

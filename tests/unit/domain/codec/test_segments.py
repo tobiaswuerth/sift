@@ -14,8 +14,8 @@ from sift.domain.codec.segments import (
     GAP,
     LongPostings,
     Postings,
-    Segment,
     ShortPostings,
+    WrittenSegment,
     building,
     stream,
     written,
@@ -28,17 +28,43 @@ SMALL = Shape(range_shift=2, block=2, long=3, lengths_shift=3)
 MOST_BYTES = 9
 MOST_TIMES = 1024
 EVERY_TOKEN = 1 << 62
+SEGMENT = 7
 
 type Columns = tuple[list[str], ...]
 words = st.lists(st.sampled_from(["a", "b", "c", "d", "e"]), max_size=6)
 chunks = st.lists(st.tuples(words, words, words), min_size=1, max_size=25)
 
 
-def segment(ids: NDArray[np.int64], columns: Sequence[Columns], average: float, shape: Shape = SHAPE) -> Segment:
+def postings(made: WrittenSegment) -> list[Postings]:
+    blocks: dict[str, list[ShortPostings]] = {}
+    for segment, term, number, coded, placed in made.blocks:
+        assert (segment, number) == (SEGMENT, len(blocks.setdefault(term, [])))
+        blocks[term].append(ShortPostings(coded, placed))
+    found: list[Postings] = []
+    for segment, term, chunks, coded, placed, ranges in made.lists:
+        assert segment == SEGMENT
+        if ranges is None:
+            assert coded is not None
+            assert placed is not None
+            found.append(Postings(term, chunks, ShortPostings(coded, placed)))
+        else:
+            assert (coded, placed) == (None, None)
+            found.append(Postings(term, chunks, LongPostings(ranges, tuple(blocks.pop(term)))))
+    assert blocks == {}
+    assert [(term, chunks) for _, term, chunks, _, _, _ in made.lists] == list(made.terms)
+    return found
+
+
+def lengths(made: WrittenSegment) -> dict[int, bytes]:
+    assert {segment for segment, _, _ in made.lengths} <= {SEGMENT}
+    return {block: data for _, block, data in made.lengths}
+
+
+def segment(ids: NDArray[np.int64], columns: Sequence[Columns], average: float, shape: Shape = SHAPE) -> WrittenSegment:
     built = building(EVERY_TOKEN)
     fields = [(" ".join(title), " ".join(meta)) for title, _, meta in columns]
     assert built.add(ids, range(len(columns)), fields, [" ".join(body) for _, body, _ in columns]) == len(columns)
-    return written(built, average, shape)
+    return written(built, SEGMENT, average, shape)
 
 
 def decoded(held: Postings) -> tuple[list[int], list[int], list[int]]:
@@ -66,19 +92,19 @@ def test_a_segment_holds_where_each_term_occurs(columns: list[tuple[list[str], .
         ]
         for term in {token for s in streams for token in s} - {GAP}
     }
-    got = {held.term: decoded(held) for held in made.postings}
+    got = {held.term: decoded(held) for held in postings(made)}
     assert got.keys() == want.keys()
     for term, (found, counts, positions) in got.items():
         assert found == [chunk for chunk, _ in want[term]]
         assert counts == [len(places) for _, places in want[term]]
         assert positions == [p for _, places in want[term] for p in places]
-    assert {held.term: held.chunks for held in made.postings} == {term: len(each) for term, each in want.items()}
-    lengths = {listed[n]: sum(token != GAP for token in s) for n, s in enumerate(streams)}
-    assert made.tokens == sum(lengths.values())
+    assert {held.term: held.chunks for held in postings(made)} == {term: len(each) for term, each in want.items()}
+    sizes = {listed[n]: sum(token != GAP for token in s) for n, s in enumerate(streams)}
+    assert made.tokens == sum(sizes.values())
     assert (made.first, made.last, made.chunks) == (listed[0], listed[-1], len(ids))
-    for block, data in made.lengths.items():
+    for block, data in lengths(made).items():
         dense = lengths_of(data, shape.lengths_shift)
-        for chunk, length in lengths.items():
+        for chunk, length in sizes.items():
             if chunk >> shape.lengths_shift == block:
                 assert dense[chunk & ((1 << shape.lengths_shift) - 1)] == length
 
@@ -87,15 +113,15 @@ def test_a_segment_holds_where_each_term_occurs(columns: list[tuple[list[str], .
 def test_the_ranges_of_a_long_list_bound_every_score_in_them(columns: list[tuple[list[str], ...]]) -> None:
     ids = np.arange(len(columns), dtype=np.int64) + 100
     streams = [stream(*each) for each in columns]
-    lengths = np.array([sum(token != GAP for token in s) for s in streams])
-    for held in segment(ids, columns, average=3.0, shape=SMALL).postings:
+    sizes = np.array([sum(token != GAP for token in s) for s in streams])
+    for held in postings(segment(ids, columns, average=3.0, shape=SMALL)):
         if not isinstance(held.held, LongPostings):
             assert isinstance(held.held, ShortPostings)
             assert held.chunks < SMALL.long
             continue
         assert held.chunks >= SMALL.long
         found, counts, _ = decoded(held)
-        scores = term_scores(np.array(counts), lengths[np.array(found) - 100], 3.0)
+        scores = term_scores(np.array(counts), sizes[np.array(found) - 100], 3.0)
         ranges = ranges_of(held.held.ranges)
         bests = floats(unquantized(ranges.best))
         for rid, start, end, best in zip(ints(ranges.ids), ints(ranges.starts), ints(ranges.ends), bests, strict=True):
@@ -125,7 +151,7 @@ def test_a_word_counts_in_a_passage_no_more_often_than_a_list_may_hold_and_the_p
     often = MOST_TIMES + 500
     columns: list[Columns] = [([], ["x"] * often, ["y"]), (["x"], [], [])]
     made = segment(np.array([7, 9], np.int64), columns, average=4.0)
-    held = {each.term: decoded(each) for each in made.postings}
+    held = {each.term: decoded(each) for each in postings(made)}
     assert held["x"] == ([7, 9], [MOST_TIMES, 1], [*range(1, MOST_TIMES + 1), 0])
     assert held["y"] == ([7], [1], [often + 2])
     assert made.tokens == often + 2
@@ -137,8 +163,8 @@ def test_no_list_a_shape_lets_be_written_unpacks_to_more_than_a_reader_takes() -
 
 def test_a_chunk_of_no_word_is_in_the_segment_with_no_tokens() -> None:
     made = segment(np.array([7, 8], np.int64), [([], [], []), (["a"], [], [])], average=0.5)
-    assert [(held.term, held.chunks) for held in made.postings] == [("a", 1)]
-    assert ints(lengths_of(made.lengths[0], 10)[7:9]) == [0, 1]
+    assert [(held.term, held.chunks) for held in postings(made)] == [("a", 1)]
+    assert ints(lengths_of(lengths(made)[0], 10)[7:9]) == [0, 1]
 
 
 @given(st.lists(st.text(st.characters(exclude_categories=["Cs"]), max_size=40), min_size=1, max_size=8))
@@ -148,9 +174,9 @@ def test_a_segment_takes_the_words_of_its_texts_as_a_query_s_words_are_taken(tex
     assert built.add(ids, range(len(texts)), [("", "")] * len(texts), texts) == len(texts)
     words = [tokens(each) for each in texts]
     if not any(words):
-        assert written(built, 1.0).postings == ()
+        assert postings(written(built, SEGMENT, 1.0)) == []
         return
-    got = {held.term: decoded(held) for held in written(built, 1.0).postings}
+    got = {held.term: decoded(held) for held in postings(written(built, SEGMENT, 1.0))}
     want = {
         term: [
             (5 + n, [1 + p for p, word in enumerate(held) if word == term])
@@ -173,14 +199,14 @@ def test_a_segment_takes_passages_until_it_holds_the_tokens_asked_the_one_that_r
     assert built.add(ids[1:], [0, 0, 0], [("", "")], ["e", "f", "g"]) == 1
     assert (built.chunks, built.tokens) == (2, 5)
     assert built.add(ids[2:], [0, 0], [("", "")], ["f", "g"]) == 0
-    assert [held.term for held in written(built, 1.0).postings] == ["a", "b", "c", "d", "e"]
+    assert [held.term for held in postings(written(built, SEGMENT, 1.0))] == ["a", "b", "c", "d", "e"]
 
 
 def test_a_title_or_fields_longer_than_sift_reads_lose_the_word_they_were_cut_in() -> None:
     whole, cut = "a " * (MOST_FIELD_CHARACTERS // 2), "a " * (MOST_FIELD_CHARACTERS // 2) + "bb"
     built = building(EVERY_TOKEN)
     assert built.add(np.arange(2, dtype=np.int64), [0, 1], [(whole, ""), (cut, cut)], ["", ""]) == 2
-    (held,) = written(built, 1.0).postings
+    (held,) = postings(written(built, SEGMENT, 1.0))
     ids, counts, _ = decoded(held)
     assert (held.term, ids) == ("a", [0, 1])
     assert counts == [MOST_TIMES, MOST_TIMES]
@@ -195,12 +221,13 @@ def test_a_segment_is_written_once_and_refuses_what_it_was_not_given_whole() -> 
     with pytest.raises(ValueError, match="a place and a text"):
         built.add(one, [0], [("", "")], ["a", "b"])
     with pytest.raises(ValueError, match="holds a chunk at least"):
-        written(building(EVERY_TOKEN), 1.0)
+        written(building(EVERY_TOKEN), SEGMENT, 1.0)
     assert built.add(one, [0], [("", "")], ["a"]) == 1
-    assert written(built, 1.0).chunks == 1
-    for used in (lambda: built.add(one, [0], [("", "")], ["a"]), lambda: written(built, 1.0)):
-        with pytest.raises(ValueError, match="written once"):
-            used()
+    assert (built.first, built.last, written(built, SEGMENT, 1.0).chunks) == (0, 0, 1)
+    with pytest.raises(ValueError, match="written once"):
+        built.add(one, [0], [("", "")], ["a"])
+    with pytest.raises(ValueError, match="holds a chunk at least"):
+        written(built, SEGMENT, 1.0)
 
 
 @pytest.mark.parametrize("written", ['{"range_shift": 7.5}', '{"block": true}', '{"long": "9"}'])

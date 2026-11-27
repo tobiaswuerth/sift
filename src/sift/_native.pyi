@@ -4,8 +4,9 @@ from typing import Self
 import numpy as np
 from numpy.typing import NDArray
 
-type Blocks = list[tuple[bytes, bytes]]
-type ListsRow = tuple[str, int, bytes | None, bytes | None, bytes | None, Blocks]
+type ListsRow = tuple[int, str, int, bytes | None, bytes | None, bytes | None]
+type ListBlockRow = tuple[int, str, int, bytes, bytes]
+type Listed = tuple[list[ListsRow], list[ListBlockRow]]
 
 class Words:
     def __new__(cls, stored: bytes, /) -> Self: ...
@@ -19,9 +20,13 @@ class Building:
     def add(
         self, places: NDArray[np.int64], of: Sequence[int], fields: Sequence[tuple[str, str]], texts: Sequence[str], /
     ) -> int: ...
+    @property
+    def first(self) -> int | None: ...
+    @property
+    def last(self) -> int | None: ...
     def written(
-        self, average: float, range_shift: int, block: int, long: int, lengths_shift: int, /
-    ) -> tuple[int, int, list[ListsRow], list[tuple[int, bytes]]]: ...
+        self, segment: int, average: float, shape: tuple[int, int, int, int], /
+    ) -> tuple[Listed, list[tuple[int, int, bytes]], list[tuple[str, int]]]: ...
 
 class Merging:
     def __new__(
@@ -34,8 +39,8 @@ class Merging:
         /,
     ) -> Self: ...
     def lists(
-        self, terms: Sequence[str], postings: Sequence[bytes], positions: Sequence[bytes], most: int, /
-    ) -> tuple[list[ListsRow], list[tuple[int, int]]]: ...
+        self, segment: int, terms: Sequence[str], postings: Sequence[bytes], positions: Sequence[bytes], most: int, /
+    ) -> tuple[Listed, list[tuple[int, int]]]: ...
 
 def blocked_all(each: Sequence[bytes], /) -> tuple[bytes, bytes, list[int]]: ...
 def ranged(ids: NDArray[np.int64], sizes: NDArray[np.int64], best: bytes, /) -> bytes: ...
