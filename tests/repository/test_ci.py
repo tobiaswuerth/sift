@@ -39,6 +39,7 @@ def test_ci_tests_every_python_the_gate_names_the_oldest_and_newest_first() -> N
         f"tests-{oldest}",
         f"tests-{newest}",
         "lowest",
+        "kernel",
         "package",
     )
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -51,4 +52,15 @@ def test_ci_tests_the_first_python_release_with_uv_s_own_build_of_it_and_needs_i
     oldest = job(ci, "oldest")
     for line in (f'PYTHON: "{first}"', "SESSION: oldest", "UV_PYTHON_PREFERENCE: only-managed"):
         assert line in oldest, line
-    assert (first, "needs: [first, test, lowest, oldest]" in job(ci, "tests")) == ("3.12.0", True)
+    assert (first, "needs: [first, test, lowest, oldest, kernel]" in job(ci, "tests")) == ("3.12.0", True)
+
+
+def test_ci_holds_the_crate_to_its_tests_with_the_coverage_tool_of_the_version_it_names() -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    kernel = job(ci, "kernel")
+    assert "SESSION: kernel" in kernel
+    noxfile = (ROOT / "noxfile.py").read_text(encoding="utf-8")
+    assert matches(r"^\d+\.\d+\.\d+$", str(named(noxfile, "LLVM_COV"))) != []
+    assert '"cargo-llvm-cov", "--locked", f"--version={LLVM_COV}"' in noxfile
+    assert "KERNEL: ${{ needs.kernel.result }}" in job(ci, "tests")
+    assert '"llvm-tools-preview"' in (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")

@@ -8,7 +8,7 @@ from hypothesis import strategies as st
 
 from sift.domain.arrays import floats, ints
 from sift.domain.codec.postings import MOST_INFLATED_BYTES, blocked, lengths_of, positions_of, ranges_of
-from sift.domain.codec.segments import GAP, WrittenSegment, building, stream, written
+from sift.domain.codec.segments import GAP, WrittenSegment, building, gathered, stream, written
 from sift.domain.codec.shape import MOST_BLOCK, Shape
 from sift.domain.rank.bm25 import STEPS, TOP, term_scores, unquantized
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, field_tokens, tokens
@@ -187,9 +187,9 @@ def test_a_segment_takes_passages_until_it_holds_the_tokens_asked_the_one_that_r
     built = building(9)
     ids = np.arange(4, dtype=np.int64)
     assert built.add(ids[:1], [0], [("a", "b")], ["c d"]) == 1
-    assert (built.chunks, built.tokens) == (1, 4)
+    assert gathered(built)[2:] == (1, 4)
     assert built.add(ids[1:], [0, 0, 0], [("", "")], ["e", "f", "g"]) == 1
-    assert (built.chunks, built.tokens) == (2, 5)
+    assert gathered(built)[2:] == (2, 5)
     assert built.add(ids[2:], [0, 0], [("", "")], ["f", "g"]) == 0
     assert [held.term for held in postings(written(built, SEGMENT, 1.0))] == ["a", "b", "c", "d", "e"]
 
@@ -205,6 +205,11 @@ def test_a_title_or_fields_longer_than_sift_reads_lose_the_word_they_were_cut_in
     assert field_tokens(cut) == ["a"] * (MOST_FIELD_CHARACTERS // 2 - 1)
 
 
+def test_a_segment_is_begun_by_the_table_of_words_alone() -> None:
+    with pytest.raises(TypeError, match="cannot create"):
+        type(building(EVERY_TOKEN))()
+
+
 def test_a_segment_is_written_once_and_refuses_what_it_was_not_given_whole() -> None:
     built = building(EVERY_TOKEN)
     one = np.zeros(1, np.int64)
@@ -215,11 +220,13 @@ def test_a_segment_is_written_once_and_refuses_what_it_was_not_given_whole() -> 
     with pytest.raises(ValueError, match="holds a chunk at least"):
         written(building(EVERY_TOKEN), SEGMENT, 1.0)
     assert built.add(one, [0], [("", "")], ["a"]) == 1
-    assert (built.first, built.last, written(built, SEGMENT, 1.0).chunks) == (0, 0, 1)
+    assert (*gathered(built)[:2], written(built, SEGMENT, 1.0).chunks) == (0, 0, 1)
     with pytest.raises(ValueError, match="written once"):
         built.add(one, [0], [("", "")], ["a"])
     with pytest.raises(ValueError, match="holds a chunk at least"):
         written(built, SEGMENT, 1.0)
+    with pytest.raises(ValueError, match="written once"):
+        built.written(SEGMENT, 1.0, (7, 4096, 4096, 10))
 
 
 @pytest.mark.parametrize("written", ['{"range_shift": 7.5}', '{"block": true}', '{"long": "9"}'])

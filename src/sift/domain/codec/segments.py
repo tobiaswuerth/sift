@@ -1,6 +1,7 @@
 import functools
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 
@@ -97,14 +98,21 @@ def stepped(held: Merger, segment: int) -> MergeStep:
     return MergeStep(lists, blocks, wanted, done)
 
 
-def ends(built: Building) -> tuple[int, int]:
-    first, last = built.first, built.last
+class Collected(NamedTuple):
+    first: int
+    last: int
+    chunks: int
+    tokens: int
+
+
+def gathered(built: Building) -> Collected:
+    first, last, chunks, tokens = _native.gathered(built)
     if first is None or last is None:
         raise ValueError("a segment holds a chunk at least")
-    return first, last
+    return Collected(first, last, chunks, tokens)
 
 
 def written(built: Building, segment: int, average: float, shape: Shape = SHAPE) -> WrittenSegment:
-    (first, last), chunks, tokens = ends(built), built.chunks, built.tokens
+    held = gathered(built)
     (lists, blocks), lengths, terms = built.written(segment, average, _shaped(shape))
-    return WrittenSegment(first, last, chunks, tokens, average, lists, blocks, lengths, terms)
+    return WrittenSegment(held.first, held.last, held.chunks, held.tokens, average, lists, blocks, lengths, terms)

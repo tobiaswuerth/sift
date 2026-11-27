@@ -97,21 +97,33 @@ jobs:
     timeout-minutes: 20
     steps: *prepare
 
+  kernel:
+    # The crate's own tests and the tests of Python that reach it, with every line of the crate run by one of them.
+    env:
+      PYTHON: "3.12"
+      SESSION: kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps: *prepare
+
   tests:
-    # One required check for the whole matrix, the lowest versions and the first Python, so that the matrix may
-    # change.
+    # One required check for the whole matrix, the lowest versions, the first Python and the crate, so that the
+    # matrix may change.
     if: always()
-    needs: [first, test, lowest, oldest]
+    needs: [first, test, lowest, oldest, kernel]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every job of the matrix passed, and those of the lowest versions and the first Python
+      - name: Every job of the matrix passed, and those of the lowest versions, the first Python and the crate
         env:
           FIRST: ${{ needs.first.result }}
           REST: ${{ needs.test.result }}
           LOWEST: ${{ needs.lowest.result }}
           OLDEST: ${{ needs.oldest.result }}
-        run: test "$FIRST" = success && test "$REST" = success && test "$LOWEST" = success && test "$OLDEST" = success
+          KERNEL: ${{ needs.kernel.result }}
+        run: >-
+          test "$FIRST" = success && test "$REST" = success && test "$LOWEST" = success &&
+          test "$OLDEST" = success && test "$KERNEL" = success
 
   package:
     env:

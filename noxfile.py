@@ -8,7 +8,7 @@ nox.options.default_venv_backend = "uv"
 nox.options.error_on_missing_interpreters = True
 nox.options.reuse_venv = "yes"
 nox.options.stop_on_first_error = True
-nox.options.sessions = ("lint", "types", "tests-3.12", "tests-3.15", "lowest", "package")
+nox.options.sessions = ("lint", "types", "tests-3.12", "tests-3.15", "lowest", "kernel", "package")
 
 OLDEST = "3.12"
 FIRST_RELEASE = "3.12.0"
@@ -16,6 +16,10 @@ PYTHONS = ("3.12", "3.13", "3.14", "3.15")
 PLATFORMS = ("Linux", "Darwin", "Windows")
 BUILD_CONSTRAINTS = ".github/requirements-build.txt"
 CRATE = "native/Cargo.toml"
+CRATE_COVERAGE = "native/target/coverage"
+LLVM_COV = "0.9.2"
+CRATE_REACHED_BY = ("tests/unit/domain/codec", "tests/unit/storage", "tests/unit/retrieval/keyword")
+CRATE_TESTS = r"src[/\\]tests"
 TWINE = "twine@7.0.0"
 MOST_WORKERS = 8
 WORKERS = str(min(MOST_WORKERS, os.cpu_count() or 1))
@@ -33,9 +37,16 @@ def synced(session: nox.Session, *also: str) -> None:
     )
 
 
-def said(session: nox.Session, *command: str) -> str:
-    output = session.run(*command, external=True, silent=True)
+def said(session: nox.Session, *command: str, env: dict[str, str] | None = None) -> str:
+    output = session.run(*command, external=True, silent=True, env=env)
     return output.strip() if isinstance(output, str) else ""
+
+
+def instrumented(session: nox.Session) -> dict[str, str]:
+    target = {"CARGO_TARGET_DIR": str(Path(CRATE_COVERAGE).resolve())}
+    shown = said(session, "cargo", "llvm-cov", "show-env", f"--manifest-path={CRATE}", env=target)
+    pairs = (line.split("=", 1) for line in shown.split("\n") if "=" in line)
+    return target | {name: value.strip().strip("'") for name, value in pairs}
 
 
 @nox.session(python=OLDEST)
@@ -45,7 +56,8 @@ def lint(session: nox.Session) -> None:
         session.error(f"git neither tracks nor ignores these, and the hooks check tracked files alone:\n{unknown}")
     session.run("pre-commit", "run", "--all-files", "--show-diff-on-failure")
     session.run("cargo", "fmt", f"--manifest-path={CRATE}", "--check", external=True)
-    session.run("cargo", "clippy", f"--manifest-path={CRATE}", "--locked", "--release", external=True)
+    for built in ("--features=python", "--tests"):
+        session.run("cargo", "clippy", f"--manifest-path={CRATE}", "--locked", "--release", built, external=True)
     session.run("lint-imports")
     session.run("python", "-m", "tools", "imports")
     session.run("python", "-m", "tools", "stubs")
@@ -93,6 +105,42 @@ def lowest(session: nox.Session) -> None:
 def oldest(session: nox.Session) -> None:
     synced(session)
     session.run("pytest", "-q", "-n", WORKERS)
+
+
+@nox.session(python=OLDEST)
+def kernel(session: nox.Session) -> None:
+    synced(session)
+    session.run("cargo", "install", "cargo-llvm-cov", "--locked", f"--version={LLVM_COV}", external=True)
+    env = instrumented(session)
+    session.run("cargo", "llvm-cov", "clean", f"--manifest-path={CRATE}", "--profraw-only", external=True, env=env)
+    session.run("cargo", "test", f"--manifest-path={CRATE}", "--locked", "--release", external=True, env=env)
+    dist = Path(CRATE_COVERAGE) / "wheel"
+    session.run(
+        "uv",
+        "build",
+        "--wheel",
+        "--clear",
+        f"--out-dir={dist}",
+        f"--build-constraints={BUILD_CONSTRAINTS}",
+        "--require-hashes",
+        external=True,
+        env=env,
+    )
+    (wheel,) = map(str, dist.glob("*.whl"))
+    session.run("uv", "pip", "install", "--reinstall", "--no-deps", wheel, external=True)
+    session.run("pytest", "-q", "-n", WORKERS, *CRATE_REACHED_BY, env=env)
+    session.run(
+        "cargo",
+        "llvm-cov",
+        "report",
+        f"--manifest-path={CRATE}",
+        "--release",
+        "--fail-under-lines=100",
+        f"--ignore-filename-regex={CRATE_TESTS}",
+        "--show-missing-lines",
+        external=True,
+        env=env,
+    )
 
 
 @nox.session(python=OLDEST)

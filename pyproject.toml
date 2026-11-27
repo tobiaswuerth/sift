@@ -129,6 +129,7 @@ cache-keys = [
 manifest-path = "native/Cargo.toml"
 python-source = "src"
 module-name = "sift._native"
+features = ["python"]
 include = [{ path = "rust-toolchain.toml", format = "sdist" }]
 
 # The lock, and so the gate and CI, take PyTorch's CPU builds: the tests need no GPU, and the CUDA builds weigh

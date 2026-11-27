@@ -11,7 +11,7 @@ import numpy as np
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId, DocumentId, first_row
 from sift.domain.arrays import ints
-from sift.domain.codec.segments import GAP, Building, WrittenSegment, building, ends, stream, written
+from sift.domain.codec.segments import GAP, Building, WrittenSegment, building, gathered, stream, written
 from sift.domain.codec.shape import FORMAT, SHAPE, Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.keyword_state import KeywordState, keyword_state, remaking
@@ -158,8 +158,8 @@ def built_of(transaction: WritingDocuments, spans: Sequence[Span]) -> Building:
 
 
 def segment_written(transaction: Writing, built: Building, average: float, shape: Shape) -> WrittenSegment:
-    first, last = ends(built)
-    made = written(built, segment_added(transaction, Head(first, last, built.chunks, average)), average, shape)
+    held = gathered(built)
+    made = written(built, segment_added(transaction, Head(held.first, held.last, held.chunks, average)), average, shape)
     rows_added(transaction, made.lists, made.blocks)
     run_each(transaction, "INSERT INTO keyword_lengths(segment, block, lengths) VALUES (?, ?, ?)", made.lengths)
     return made
@@ -196,7 +196,8 @@ def _index_new(transaction: WritingDocuments, shape: Shape) -> int:
         return 0
     built = built_of(transaction, spans)
     (indexed,) = rows(transaction, Count, "SELECT coalesce(sum(chunks - dead), 0) FROM keyword_segments")
-    average = (totals(transaction).tokens + built.tokens) / (indexed.n + built.chunks)
+    held = gathered(built)
+    average = (totals(transaction).tokens + held.tokens) / (indexed.n + held.chunks)
     made = segment_written(transaction, built, average, shape)
     _terms_added(transaction, made.terms, made.tokens)
     run(transaction, "UPDATE meta SET value = ? WHERE key = ?", (str(made.last), THROUGH_KEY))

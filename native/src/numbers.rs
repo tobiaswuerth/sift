@@ -25,11 +25,15 @@ pub fn read(data: &[u8], found: &mut Vec<i64>) -> Result<(), String> {
         number |= u64::from(byte & LOW) << (BITS * u32::try_from(size).unwrap_or(u32::MAX));
         size += 1;
         if byte < MORE {
-            found.push(i64::try_from(number).map_err(|_| "a number takes more than nine bytes".to_owned())?);
+            found.push(i64::try_from(number).unwrap_or(i64::MAX));
             (number, size) = (0, 0);
         }
     }
     Ok(())
+}
+
+pub fn narrow(number: usize) -> Result<u32, String> {
+    u32::try_from(number).map_err(|_| "a segment holds more than it numbers".to_owned())
 }
 
 pub fn little_endian(numbers: &[i64]) -> Vec<u8> {

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
+use crate::numbers::narrow;
+
 const POINTS: usize = 0x11_0000;
 const WIDTH: usize = 4;
 const APART: u32 = 0x20;
@@ -31,23 +33,20 @@ impl Table {
             .unwrap_or(APART)
     }
 
-    pub fn words<F: FnMut(&str)>(&self, text: &str, mut found: F) {
+    pub fn words<F: FnMut(&str) -> Result<(), String>>(&self, text: &str, mut found: F) -> Result<(), String> {
         let mut word = String::new();
         for point in text.chars() {
             match self.kept(point) {
+                APART if word.is_empty() => {}
                 APART => {
-                    if !word.is_empty() {
-                        found(&word);
-                        word.clear();
-                    }
+                    found(&word)?;
+                    word.clear();
                 }
                 DROPPED => {}
                 kept => word.extend(char::from_u32(kept)),
             }
         }
-        if !word.is_empty() {
-            found(&word);
-        }
+        if word.is_empty() { Ok(()) } else { found(&word) }
     }
 }
 
@@ -82,8 +81,7 @@ impl Terms {
         if let Some(&code) = self.codes.get(word) {
             return Ok(code);
         }
-        let code =
-            u32::try_from(self.names.len()).map_err(|_| "a segment holds more terms than it numbers".to_owned())?;
+        let code = narrow(self.names.len())?;
         self.codes.insert(word.into(), code);
         self.names.push(word.into());
         Ok(code)

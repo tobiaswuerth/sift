@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fmt::Display;
 
 use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress, Status};
 
@@ -8,10 +9,16 @@ const PACKED_FROM: usize = 64;
 const LEVEL: u32 = 6;
 const MOST_INFLATED: usize = 64 << 20;
 const ROOM: usize = 64;
+const NO_PACKING: &str = "a list does not pack";
+const NO_UNPACKING: &str = "a packed list does not unpack";
 const TOO_LARGE_OR_SHORT: &str = "a packed list unpacks to more than 67,108,864 bytes, or ends early";
 
 fn taken(total: u64) -> usize {
     usize::try_from(total).unwrap_or(usize::MAX)
+}
+
+fn told<T, E: Display>(found: Result<T, E>, refusal: &str) -> Result<T, String> {
+    found.map_err(|error| format!("{refusal}: {error}"))
 }
 
 pub fn deflated(body: &[u8], lead: Option<u8>) -> Result<Vec<u8>, String> {
@@ -20,9 +27,8 @@ pub fn deflated(body: &[u8], lead: Option<u8>) -> Result<Vec<u8>, String> {
     packed.extend(lead);
     loop {
         let rest = &body[taken(packing.total_in())..];
-        let status = packing
-            .compress_vec(rest, &mut packed, FlushCompress::Finish)
-            .map_err(|error| format!("a list does not pack: {error}"))?;
+        let step = packing.compress_vec(rest, &mut packed, FlushCompress::Finish);
+        let status = told(step, NO_PACKING)?;
         if status == Status::StreamEnd {
             return Ok(packed);
         }
@@ -45,9 +51,8 @@ fn inflated(data: &[u8]) -> Result<Vec<u8>, String> {
     let mut found = Vec::with_capacity((data.len() * 4).clamp(ROOM, MOST_INFLATED + 1));
     loop {
         let (read, held) = (taken(unpacking.total_in()), found.len());
-        let status = unpacking
-            .decompress_vec(&data[read..], &mut found, FlushDecompress::None)
-            .map_err(|error| format!("a packed list does not unpack: {error}"))?;
+        let step = unpacking.decompress_vec(&data[read..], &mut found, FlushDecompress::None);
+        let status = told(step, NO_UNPACKING)?;
         if found.len() > MOST_INFLATED {
             return Err(TOO_LARGE_OR_SHORT.to_owned());
         }

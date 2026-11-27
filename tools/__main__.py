@@ -2,6 +2,7 @@ import sys
 from types import MappingProxyType
 
 from tools import (
+    check_crate,
     check_dead,
     check_idioms,
     check_imports,
@@ -20,6 +21,7 @@ from tools import (
 
 CHECKS = MappingProxyType(
     {
+        "crate": check_crate.main,
         "dead": check_dead.main,
         "floors": floors.main,
         "fts5": fts5_table.main,

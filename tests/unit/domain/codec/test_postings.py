@@ -233,6 +233,11 @@ def test_numbers_are_kept_little_endian_on_every_machine() -> None:
     assert zlib.decompress(held)[RANGES_HEAD.size : RANGES_HEAD.size + 4] == b"\x02\x00\x00\x00"
 
 
+def test_a_passage_longer_than_a_length_keeps_is_refused() -> None:
+    with pytest.raises(ValueError, match="longer than its length keeps"):
+        with_lengths(np.array([0], np.int64), np.array([1 << 32], np.int64), 3)
+
+
 def test_a_list_that_unpacks_to_more_than_any_list_holds_is_refused_once_it_has_unpacked_that_far() -> None:
     packing = zlib.compressobj()
     piece = bytes(1 << 20)

@@ -8,9 +8,12 @@ publish = false
 name = "_native"
 crate-type = ["cdylib"]
 
+[features]
+python = ["dep:pyo3"]
+
 [dependencies]
 flate2 = { version = "1.1.11", default-features = false, features = ["zlib-rs"] }
-pyo3 = { version = "0.30.1", features = ["abi3-py312"] }
+pyo3 = { version = "0.30.1", features = ["abi3-py312"], optional = true }
 rayon = "1.12.0"
 
 [profile.release]
@@ -19,8 +22,21 @@ lto = "fat"
 strip = "symbols"
 
 [lints.rust]
-unsafe_code = "deny"
+unsafe_code = "forbid"
+warnings = { level = "deny", priority = -1 }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
+as_conversions = "deny"
+dbg_macro = "deny"
+exit = "deny"
+expect_used = "deny"
+mem_forget = "deny"
+panic = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unwrap_used = "deny"

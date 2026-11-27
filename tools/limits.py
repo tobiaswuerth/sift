@@ -10,6 +10,7 @@ PAGE = ROOT / "docs" / "limits.md"
 BOUND = re.compile(r"(MOST|FEWEST|LEAST)_\w+|\w+_(SECONDS|BYTES)")
 CONSTANT = re.compile(r"^(?:pub(?:\(\w+\))? )?const (\w+): [^=]+ = (.+);$", re.MULTILINE)
 CRATE = "native/src"
+CRATE_TESTS = "tests"
 BAR, ESCAPED_BAR = "|", r"\|"
 HEAD = """\
 # Limits
@@ -55,7 +56,10 @@ def limits_in(module: str, source: str) -> list[Limit]:
 
 
 def limits_in_crate(path: str, source: str) -> list[Limit]:
-    module = f"native::{Path(path).stem}"
+    parts = Path(path).relative_to(CRATE).with_suffix("").parts
+    if parts[0] == CRATE_TESTS:
+        return []
+    module = "::".join(("native", *parts))
     found = ((each.group(1), each.group(2)) for each in CONSTANT.finditer(source))
     return [Limit(module, name, value) for name, value in found if BOUND.fullmatch(name)]
 

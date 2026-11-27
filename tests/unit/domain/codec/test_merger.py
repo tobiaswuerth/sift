@@ -1,3 +1,4 @@
+import contextlib
 import itertools
 from collections.abc import Iterator, Sequence
 
@@ -22,6 +23,7 @@ from sift.domain.codec.segments import (
 )
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
+from tests.coded_lists import block, placed
 from tests.unit.domain.codec.built import SEGMENT, SMALL, Columns, chunks, of_bodies, segment
 
 EVERYTHING = 10**9
@@ -188,6 +190,37 @@ def test_a_merge_of_lists_that_are_damaged_or_hold_what_the_store_does_not_is_da
     for row in damaged:
         with pytest.raises(DamagedError, match="is no list of a term"):
             fed(held, 0, [row])
+
+
+plausible = st.lists(st.integers(0, 8), min_size=1, max_size=6, unique=True).flatmap(
+    lambda ids: st.tuples(
+        st.just(sorted(ids)),
+        st.lists(st.integers(1, 3), min_size=len(ids), max_size=len(ids)),
+        st.lists(
+            st.lists(st.integers(0, 9), max_size=4, unique=True).map(sorted), min_size=len(ids), max_size=len(ids)
+        ),
+    )
+)
+hostile = st.one_of(
+    st.tuples(st.binary(max_size=40), st.binary(max_size=40)),
+    plausible.map(lambda held: (block(held[0], held[1]), placed(held[2]))),
+    plausible.map(lambda held: (block(held[0], [len(each) or 1 for each in held[2]]), placed(held[2]))),
+)
+
+
+@given(
+    st.lists(st.tuples(st.sampled_from(["a", "b", "c"]), st.integers(0, 9), hostile), max_size=6),
+    st.sampled_from([WHOLE, PIECES, DENSE]),
+    st.sampled_from([SMALL, Shape()]),
+)
+def test_rows_that_hold_no_sound_lists_merge_or_are_damage_and_nothing_else(
+    rows: list[tuple[str, int, tuple[bytes, bytes]]], limits: MergeLimits, shape: Shape
+) -> None:
+    held = merger(chunks_of(range(3)), shape, limits, 1)
+    with contextlib.suppress(DamagedError):
+        fed(held, 0, [(term, chunks, *coded) for term, chunks, coded in sorted(rows)])
+        fed(held, 0, [])
+        assert any(stepped(held, SEGMENT).done for _ in range(len(rows) + 2))
 
 
 def test_a_merge_takes_rows_of_the_sources_it_was_made_for_alone() -> None:

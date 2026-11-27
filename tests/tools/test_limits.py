@@ -46,6 +46,8 @@ def test_the_bounds_of_the_crate_are_its_constants_named_as_bounds() -> None:
         Limit("native::packed", "MOST_INFLATED", "64 << 20"),
         Limit("native::packed", "MOST_TIMES", "1024"),
     ]
+    assert limits_in_crate("native/src/merge/joining.rs", source)[0].module == "native::merge::joining"
+    assert limits_in_crate("native/src/tests/packed.rs", source) == []
 
 
 def test_the_table_lists_each_bound_by_its_module_in_the_order_written() -> None:

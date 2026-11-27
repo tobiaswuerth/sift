@@ -1,13 +1,7 @@
-use pyo3::buffer::PyBuffer;
-use pyo3::exceptions::PyValueError;
-use pyo3::prelude::*;
-use pyo3::pybacked::PyBackedBytes;
-use pyo3::types::{PyBytes, PyList};
 use rayon::prelude::*;
 
-use crate::numbers::{little_endian, read, written};
+use crate::numbers::{narrow, read, written};
 use crate::packed::{unwrapped, wrapped};
-use crate::segment::lengths_written;
 
 const HEAD: usize = 12;
 const FIRST: usize = 8;
@@ -22,23 +16,34 @@ pub struct Block {
     pub counts: Vec<i64>,
 }
 
-struct Blocks {
-    ids: Vec<i64>,
-    counts: Vec<i64>,
-    bounds: Vec<usize>,
+pub struct Blocks {
+    pub ids: Vec<i64>,
+    pub counts: Vec<i64>,
+    pub bounds: Vec<usize>,
+}
+
+pub struct Lists<'a> {
+    pub ids: &'a [i64],
+    pub counts: &'a [i64],
+    pub positions: &'a [i64],
+    pub offsets: &'a [usize],
 }
 
 pub type Coded = (Vec<u8>, Vec<u8>);
 
-fn each_of<T, F>(rows: &[PyBackedBytes], one: F) -> Result<Vec<T>, String>
+fn each_of<T, R, F>(rows: &[R], one: F) -> Result<Vec<T>, String>
 where
     T: Send,
-    F: Fn(&[u8]) -> Result<T, String> + Sync,
+    R: AsRef<[u8]> + Sync,
+    F: Fn(&[u8]) -> Result<T, String> + Send + Sync,
 {
     if rows.len() < TOGETHER {
-        rows.iter().map(|row| one(row)).collect()
+        rows.iter().map(|row| one(row.as_ref())).collect()
     } else {
-        rows.par_iter().with_min_len(TOGETHER).map(|row| one(row)).collect()
+        rows.par_iter()
+            .with_min_len(TOGETHER)
+            .map(|row| one(row.as_ref()))
+            .collect()
     }
 }
 
@@ -80,7 +85,7 @@ pub fn block(data: &[u8]) -> Result<Block, String> {
     Ok(Block { ids, counts })
 }
 
-fn blocks(rows: &[PyBackedBytes]) -> Result<Blocks, String> {
+pub fn blocks<R: AsRef<[u8]> + Sync>(rows: &[R]) -> Result<Blocks, String> {
     let found = each_of(rows, block)?;
     let held = found.iter().map(|one| one.ids.len()).sum();
     let (mut ids, mut counts) = (Vec::with_capacity(held), Vec::with_capacity(held));
@@ -131,7 +136,7 @@ pub fn placed(found: &mut [i64], counts: &[i64]) -> Result<(), String> {
     }
 }
 
-fn places(rows: &[PyBackedBytes], counts: &[i64]) -> Result<Vec<i64>, String> {
+pub fn places<R: AsRef<[u8]> + Sync>(rows: &[R], counts: &[i64]) -> Result<Vec<i64>, String> {
     let parts = each_of(rows, gaps)?;
     let mut found = Vec::with_capacity(parts.iter().map(Vec::len).sum());
     for part in &parts {
@@ -141,18 +146,11 @@ fn places(rows: &[PyBackedBytes], counts: &[i64]) -> Result<Vec<i64>, String> {
     Ok(found)
 }
 
-pub struct Lists<'a> {
-    pub ids: &'a [i64],
-    pub counts: &'a [i64],
-    pub positions: &'a [i64],
-    pub offsets: &'a [usize],
-}
-
 pub fn list(lists: &Lists, start: usize, end: usize) -> Result<Coded, String> {
     if start >= end || end > lists.ids.len() {
         return Err("a list holds no id, or more than there are".to_owned());
     }
-    let held = u32::try_from(end - start).map_err(|_| FAR_APART.to_owned())?;
+    let held = narrow(end - start)?;
     let mut body = Vec::with_capacity(HEAD + (end - start) * (GAP + 1));
     body.extend_from_slice(&lists.ids[start].to_le_bytes());
     body.extend_from_slice(&held.to_le_bytes());
@@ -175,48 +173,4 @@ pub fn list(lists: &Lists, start: usize, end: usize) -> Result<Coded, String> {
         }
     }
     Ok((wrapped(&body)?, wrapped(&placed)?))
-}
-
-pub fn bytes_of(each: &Bound<'_, PyAny>) -> PyResult<Vec<PyBackedBytes>> {
-    each.extract()
-}
-
-pub fn numbers_of(held: &Bound<'_, PyAny>) -> PyResult<Vec<i64>> {
-    PyBuffer::<i64>::get(held)?.to_vec(held.py())
-}
-
-#[pyfunction]
-pub fn blocked_all<'py>(each: &Bound<'py, PyAny>) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyBytes>, Vec<usize>)> {
-    let (py, rows) = (each.py(), bytes_of(each)?);
-    let found = py.detach(|| blocks(&rows)).map_err(PyValueError::new_err)?;
-    let (ids, counts) = (little_endian(&found.ids), little_endian(&found.counts));
-    Ok((PyBytes::new(py, &ids), PyBytes::new(py, &counts), found.bounds))
-}
-
-#[pyfunction]
-pub fn positions_all<'py>(each: &Bound<'py, PyAny>, counts: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyBytes>> {
-    let (py, rows, counts) = (each.py(), bytes_of(each)?, numbers_of(counts)?);
-    let found = py.detach(|| places(&rows, &counts).map(|found| little_endian(&found)));
-    Ok(PyBytes::new(py, &found.map_err(PyValueError::new_err)?))
-}
-
-#[pyfunction]
-pub fn with_lengths<'py>(
-    ids: &Bound<'py, PyAny>,
-    lengths: &Bound<'py, PyAny>,
-    shift: u32,
-) -> PyResult<Bound<'py, PyList>> {
-    let (py, ids) = (ids.py(), numbers_of(ids)?);
-    let lengths: Result<Vec<u32>, _> = numbers_of(lengths)?.into_iter().map(u32::try_from).collect();
-    let lengths = lengths.map_err(|_| PyValueError::new_err("a passage is longer than its length keeps"))?;
-    if ids.len() != lengths.len() {
-        return Err(PyValueError::new_err("each chunk has a length"));
-    }
-    let found = py
-        .detach(|| lengths_written(&ids, &lengths, shift))
-        .map_err(PyValueError::new_err)?;
-    PyList::new(
-        py,
-        found.iter().map(|(block, packed)| (*block, PyBytes::new(py, packed))),
-    )
 }
