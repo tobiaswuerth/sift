@@ -82,6 +82,9 @@ pub fn block(data: &[u8]) -> Result<Block, String> {
         return Err("a block is shorter than its head".to_owned());
     };
     let held = usize::try_from(u32::from_le_bytes(*held)).unwrap_or(usize::MAX);
+    if held > MOST_BLOCK {
+        return Err("a block holds more than 4,096 ids".to_owned());
+    }
     let split = held
         .checked_sub(1)
         .and_then(|gaps| gaps.checked_mul(GAP))

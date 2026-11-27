@@ -253,6 +253,8 @@ fn the_largest_block_a_list_may_hold_is_read_and_one_counting_or_holding_more_is
     assert_eq!((found.ids.len(), found.counts[4095]), (4096, 1024));
     assert_eq!(positioned(&coded.1, &found.counts)?, positions);
     assert!(refused(block(&headed(1, 1, &[0x81, 0x08])), "a count above 1,024"));
+    let over: Vec<u8> = [1u8, 0, 0, 0].repeat(4096).into_iter().chain([1u8; 4097]).collect();
+    assert!(refused(block(&headed(0, 4097, &over)), "more than 4,096 ids"));
     let longer = [RAW, 1, 1, 1, 1, 1, 1];
     assert!(refused(positioned(&longer, &[1]), "holds more than 5 bytes"));
     let far = wrapped(&vec![1u8; 1 << 20])?;

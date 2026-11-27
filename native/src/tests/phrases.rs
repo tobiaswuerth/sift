@@ -56,3 +56,17 @@ fn words_told_with_other_positions_than_their_counts_or_no_word_at_all_are_refus
     }
     assert!(refused(phrased(&[10], &[]), "a phrase of no word"));
 }
+
+#[test]
+fn a_word_telling_one_passage_twice_is_refused() {
+    let twice = [
+        word(&[10, 10], &[1, 1], &[1, 2]),
+        word(&[10, 20, 10], &[1, 1, 1], &[1, 2, 3]),
+    ];
+    for told in twice {
+        assert!(refused(
+            phrased(&[10, 20], &[told]),
+            "a passage of a word is told twice"
+        ));
+    }
+}

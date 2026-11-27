@@ -209,6 +209,8 @@ def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -
         ranges_of(zlib.compress(bytes(1)), 9)
     with pytest.raises(DamagedError, match="ranges hold ids out of order"):
         ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(4) + bytes(4)), 9)
+    with pytest.raises(DamagedError, match="a packed list holds bytes after its end"):
+        ranges_of(ranges([0, 1, 2], [2, 1, 2], [9, 9, 9]) + bytes(1), 3)
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
         lengths_all([zlib.compress(bytes(7))], 6)
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):

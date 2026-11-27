@@ -3,6 +3,7 @@ use rayon::prelude::*;
 const TOGETHER: usize = 1 << 10;
 const UNEVEN: &str = "the passages of a word are told with other positions than their counts";
 const WORDLESS: &str = "a phrase of no word is counted nowhere";
+const TWICE: &str = "a passage of a word is told twice";
 
 pub struct Word<'a> {
     pub ids: &'a [i64],
@@ -27,6 +28,7 @@ fn placed<'a>(candidates: &[i64], word: &Word<'a>) -> Result<Vec<&'a [i64]>, Str
         return Err(UNEVEN.to_owned());
     }
     let mut found = vec![&word.positions[..0]; candidates.len()];
+    let mut told = vec![false; candidates.len()];
     let (mut at, mut near) = (0usize, 0usize);
     for (&id, &count) in word.ids.iter().zip(word.counts) {
         let held = usize::try_from(count).ok();
@@ -36,6 +38,9 @@ fn placed<'a>(candidates: &[i64], word: &Word<'a>) -> Result<Vec<&'a [i64]>, Str
         };
         near = at_or_after(candidates, near, id);
         if candidates.get(near) == Some(&id) {
+            if std::mem::replace(&mut told[near], true) {
+                return Err(TWICE.to_owned());
+            }
             found[near] = &word.positions[at..end];
         }
         at = end;

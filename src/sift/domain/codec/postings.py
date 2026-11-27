@@ -42,6 +42,7 @@ def _inflated(data: bytes, most: int) -> bytes:
         raise DamagedError(f"a packed list does not unpack: {error}") from None
     whole = unpacking.eof and len(found) <= most
     _sound(holds=whole, problem=f"a packed list unpacks to more than {most:,} bytes, or ends early")
+    _sound(holds=not unpacking.unused_data, problem="a packed list holds bytes after its end")
     return found
 
 
