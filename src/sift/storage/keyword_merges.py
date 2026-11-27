@@ -8,16 +8,17 @@ from typing import NamedTuple
 import numpy as np
 
 from sift.domain.arrays import Ascending, Ids, after, among, first, firsts, ints, last, run_starts, total
-from sift.domain.codec.postings import blocked_all, lengths_of, positions_all, with_lengths
+from sift.domain.codec.postings import blocked_all, encoded, lengths_of, positions_all, with_lengths
 from sift.domain.codec.segments import (
     Lists,
     MergedRows,
     Merging,
+    Postings,
     RangesPart,
+    ShortPostings,
     blocks_of,
     lists_merged,
     merger,
-    postings_of,
     ranges_joined,
     ranges_part,
 )
@@ -252,9 +253,10 @@ def _lists(merging: _Merging, span: _Span) -> Lists:
     return Lists(terms, tuple(starts), places, counts, positions, lengths[at])
 
 
-def _lists_written(transaction: WritingDocuments, merging: _Merging, lists: Lists) -> None:
-    if lists.terms:
-        postings_added(transaction, merging.made, postings_of(lists, merging.average, merging.shape))
+def _short_written(transaction: WritingDocuments, merging: _Merging, lists: Lists) -> None:
+    coded = encoded(lists.ids, lists.counts, lists.positions, [0, len(lists.ids)])
+    held = ShortPostings(coded.postings[0], coded.positions[0])
+    postings_added(transaction, merging.made, (Postings(lists.terms[0], len(lists.ids), held),))
 
 
 def _joined(held: Sequence[Lists]) -> Lists:
@@ -300,7 +302,7 @@ def _term_written(transaction: WritingDocuments, merging: _Merging, spans: Itera
         _written_blocks(transaction, merging, last, written)
         long_finished(transaction, merging.made, last.terms[0], chunks, ranges_joined(parts))
     elif held:
-        _lists_written(transaction, merging, _joined(held))
+        _short_written(transaction, merging, _joined(held))
 
 
 def _batch_written(transaction: WritingDocuments, merging: _Merging, rows: Sequence[MergedTerm]) -> None:

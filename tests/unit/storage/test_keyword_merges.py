@@ -1,3 +1,4 @@
+import dataclasses
 import tempfile
 import tracemalloc
 from pathlib import Path
@@ -180,13 +181,14 @@ def test_a_remake_merges_its_segments_as_it_goes() -> None:
         ("DELETE FROM chunks WHERE id = (SELECT min(id) FROM chunks)", "chunks the store does not"),
     ],
 )
-def test_segments_damaged_before_they_merge_are_damage(sql: str, problem: str) -> None:
+@pytest.mark.parametrize("batches", [PAIRS, dataclasses.replace(PAIRS, postings_a_merge=1, bytes_a_merge=1)])
+def test_segments_damaged_before_they_merge_are_damage(sql: str, problem: str, batches: Batches) -> None:
     with tempfile.TemporaryDirectory() as folder, opened_store(Path(folder), 3, SMALL) as connection:
-        applied(connection, [{"a.md": ("", "a", "one two")}], PAIRS)
+        applied(connection, [{"a.md": ("", "a", "one two")}], batches)
         with writing(connection) as transaction:
             run(transaction, sql)
         with pytest.raises(DamagedError, match=problem):
-            applied(connection, [{"b.md": ("", "b", "three")}], PAIRS)
+            applied(connection, [{"b.md": ("", "b", "three")}], batches)
 
 
 def test_a_segment_to_rewrite_whose_chunks_are_all_gone_is_damage() -> None:

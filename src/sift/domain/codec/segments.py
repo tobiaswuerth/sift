@@ -1,5 +1,4 @@
 import functools
-import itertools
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -97,30 +96,6 @@ def blocks_of(ids: Ids, counts: Ids, positions: Ids, shape: Shape) -> tuple[Shor
     return tuple(ShortPostings(*each) for each in zip(made.postings, made.positions, strict=True))
 
 
-def _cuts(term_starts: list[int], end: int, shape: Shape) -> list[int]:
-    found: list[int] = []
-    for start, stop in itertools.pairwise([*term_starts, end]):
-        found += range(start, stop, shape.block) if stop - start >= shape.long else [start]
-    return [*found, end]
-
-
-def postings_of(lists: Lists, average: float, shape: Shape = SHAPE) -> tuple[Postings, ...]:
-    end = len(lists.ids)
-    coded = encoded(lists.ids, lists.counts, lists.positions, _cuts(list(lists.starts), end, shape))
-    parts = iter(zip(coded.postings, coded.positions, strict=True))
-    written: list[Postings] = []
-    for term, (start, stop) in zip(lists.terms, itertools.pairwise([*lists.starts, end]), strict=True):
-        if stop - start < shape.long:
-            held: ShortPostings | LongPostings = ShortPostings(*next(parts))
-        else:
-            blocks = tuple(ShortPostings(*next(parts)) for _ in range(start, stop, shape.block))
-            here = slice(start, stop)
-            part = ranges_part(lists.ids[here], lists.counts[here], lists.lengths[here], average, shape)
-            held = LongPostings(ranges_joined([part]), blocks)
-        written.append(Postings(term, stop - start, held))
-    return tuple(written)
-
-
 @functools.cache
 def _words() -> _native.Words:
     held = np.arange(POINTS, dtype=STORED_U32)
@@ -163,9 +138,14 @@ def lists_merged(held: Merging, segment: int, rows: MergedRows, most_tokens: int
     return MergedLists(lists, blocks, large)
 
 
-def written(built: Building, segment: int, average: float, shape: Shape = SHAPE) -> WrittenSegment:
-    first, last, chunks, tokens = built.first, built.last, built.chunks, built.tokens
+def ends(built: Building) -> tuple[int, int]:
+    first, last = built.first, built.last
     if first is None or last is None:
         raise ValueError("a segment holds a chunk at least")
+    return first, last
+
+
+def written(built: Building, segment: int, average: float, shape: Shape = SHAPE) -> WrittenSegment:
+    (first, last), chunks, tokens = ends(built), built.chunks, built.tokens
     (lists, blocks), lengths, terms = built.written(segment, average, _shaped(shape))
     return WrittenSegment(first, last, chunks, tokens, average, lists, blocks, lengths, terms)

@@ -11,7 +11,7 @@ import numpy as np
 from sift.api.errors import Problem, StoreUnavailableError
 from sift.api.ids import CollectionId, DocumentId, first_row
 from sift.domain.arrays import ints
-from sift.domain.codec.segments import GAP, Building, WrittenSegment, building, stream, written
+from sift.domain.codec.segments import GAP, Building, WrittenSegment, building, ends, stream, written
 from sift.domain.codec.shape import FORMAT, SHAPE, Shape
 from sift.domain.errors import DamagedError
 from sift.domain.plan.keyword_state import KeywordState, keyword_state, remaking
@@ -158,9 +158,7 @@ def built_of(transaction: WritingDocuments, spans: Sequence[Span]) -> Building:
 
 
 def segment_written(transaction: Writing, built: Building, average: float, shape: Shape) -> WrittenSegment:
-    first, last = built.first, built.last
-    if first is None or last is None:
-        raise DamagedError("a segment of no chunk was to be written")
+    first, last = ends(built)
     made = written(built, segment_added(transaction, Head(first, last, built.chunks, average)), average, shape)
     rows_added(transaction, made.lists, made.blocks)
     run_each(transaction, "INSERT INTO keyword_lengths(segment, block, lengths) VALUES (?, ?, ?)", made.lengths)
