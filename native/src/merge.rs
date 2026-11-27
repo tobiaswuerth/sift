@@ -65,16 +65,22 @@ impl Merger {
         }
     }
 
-    pub fn fed(&mut self, source: usize, rows: Vec<Fed>) -> Option<bool> {
+    fn taken_in(&mut self, source: usize, rows: Vec<Fed>, once: bool) -> Result<Option<bool>, String> {
         let owned = self.long.as_ref().is_some_and(|long| long.sources.contains(&source));
-        let held = self.sources.get_mut(source)?;
+        let Some(held) = self.sources.get_mut(source) else {
+            return Ok(None);
+        };
         let first = held.first().is_none();
-        held.fed(rows);
+        held.fed(rows, once)?;
         let low = held.low(self.ahead);
         if first && !owned {
             self.headed(source);
         }
-        Some(low)
+        Ok(Some(low))
+    }
+
+    pub fn fed(&mut self, source: usize, rows: Vec<Fed>) -> Result<Option<bool>, String> {
+        self.taken_in(source, rows, false)
     }
 
     pub fn fed_packs<R: AsRef<[u8]>>(&mut self, source: usize, packs: &[(R, R)]) -> Result<Option<bool>, String> {
@@ -91,7 +97,7 @@ impl Merger {
                 positions: each.positions.to_vec(),
             }));
         }
-        Ok(self.fed(source, rows))
+        self.taken_in(source, rows, true)
     }
 
     pub fn ended(&mut self, source: usize) -> Option<bool> {

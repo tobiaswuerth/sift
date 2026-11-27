@@ -60,7 +60,7 @@ impl Merging {
         let more = if rows.is_empty() {
             self.held.ended(source)
         } else {
-            self.held.fed(source, rows)
+            self.held.fed(source, rows).map_err(PyValueError::new_err)?
         };
         more.ok_or_else(|| PyIndexError::new_err(UNKNOWN))
     }

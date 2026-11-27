@@ -27,6 +27,7 @@ pub struct Long {
     pub term: Arc<str>,
     pub sources: VecDeque<usize>,
     held: Postings,
+    last: Option<i64>,
     chunks: usize,
     blocks: usize,
     ranges: Vec<Range>,
@@ -72,6 +73,7 @@ impl Long {
             term,
             sources,
             held: Postings::default(),
+            last: None,
             chunks: 0,
             blocks: 0,
             ranges: Vec::new(),
@@ -141,6 +143,7 @@ impl Joining {
                 self.part(found, &row.positions)
             })?;
             for part in &parts {
+                long.last = part.after(long.last)?;
                 long.chunks += part.chunks();
                 part.ranged(&mut long.ranges, self.chunks.average, self.shape.range_shift());
             }

@@ -82,3 +82,21 @@ fn a_list_that_unpacks_to_more_than_any_list_holds_is_refused() -> Result<(), St
     assert!(refused(unwrapped(&more), "unpacks to more than"));
     Ok(())
 }
+
+#[test]
+fn a_number_written_longer_than_it_is_is_refused() {
+    assert!(refused(read(&[0x81, 0x00], &mut Vec::new()), "longer than it is"));
+    assert!(refused(read(&[0x80, 0x80, 0x00], &mut Vec::new()), "longer than it is"));
+    let mut found = Vec::new();
+    assert_eq!(read(&[0x00, 0x81, 0x01], &mut found), Ok(()));
+    assert_eq!(found, [0, 129]);
+}
+
+#[test]
+fn bytes_after_the_end_of_a_packed_list_are_refused() -> Result<(), String> {
+    let mut packed = wrapped(&[7; 1000])?;
+    assert_eq!(unwrapped(&packed)?.len(), 1000);
+    packed.extend_from_slice(b"more");
+    assert!(refused(unwrapped(&packed), "bytes after its end"));
+    Ok(())
+}

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::lists::{Lists, list};
 use crate::merge::{Chunks, Fed, Limits, Merger};
 use crate::packs::entries;
 use crate::postings::Shape;
@@ -181,10 +182,84 @@ fn a_term_of_more_rows_than_a_merge_takes_at_once_merges_as_whole_as_in_pieces()
 #[test]
 fn a_merge_takes_rows_of_the_sources_it_was_made_for_alone() -> Result<(), String> {
     let mut merger = Merger::new(chunks(&TEXTS, &[])?, wide()?, &WHOLE, 2)?;
-    assert_eq!(merger.fed(2, Vec::new()), None);
+    assert_eq!(merger.fed(2, Vec::new())?, None);
     assert_eq!(merger.ended(2), None);
     assert_eq!(merger.fed_packs::<Vec<u8>>(2, &[])?, None);
     assert_eq!(merger.ended(1), Some(false));
-    assert_eq!(merger.fed(0, Vec::new()), Some(true));
+    assert_eq!(merger.fed(0, Vec::new())?, Some(true));
+    Ok(())
+}
+
+fn one(term: &str, ids: &[i64]) -> Result<Fed, String> {
+    let (counts, positions) = (vec![1; ids.len()], vec![0; ids.len()]);
+    let offsets: Vec<usize> = (0..=ids.len()).collect();
+    let lists = Lists {
+        ids,
+        counts: &counts,
+        positions: &positions,
+        offsets: &offsets,
+    };
+    let (postings, positions) = list(&lists, 0, ids.len())?;
+    Ok(Fed {
+        term: Arc::from(term),
+        chunks: ids.len(),
+        postings,
+        positions,
+    })
+}
+
+fn holding(ids: &[i64]) -> Chunks {
+    Chunks {
+        live: ids.to_vec(),
+        lengths: vec![1; ids.len()],
+        dead: Vec::new(),
+        average: AVERAGE,
+    }
+}
+
+fn through(merger: &mut Merger) -> Result<(), String> {
+    while !merger.stepped()?.done {}
+    Ok(())
+}
+
+#[test]
+fn lists_fed_out_of_the_order_of_their_terms_are_refused_and_a_term_twice_among_packs() -> Result<(), String> {
+    let ids = [5, 6];
+    let mut merger = Merger::new(holding(&ids), wide()?, &WHOLE, 2)?;
+    let falling = vec![one("b", &[5])?, one("a", &[6])?];
+    assert!(refused(merger.fed(1, falling), "out of the order of their terms"));
+    let mut merger = Merger::new(holding(&ids), wide()?, &WHOLE, 2)?;
+    merger.fed(1, vec![one("b", &[5])?, one("b", &[6])?])?;
+    assert!(refused(
+        merger.fed(1, vec![one("a", &[6])?]),
+        "out of the order of their terms"
+    ));
+    let (first, again) = (built(&[(5, "a b")], wide()?)?, built(&[(6, "b")], wide()?)?);
+    let packs =
+        |made: &crate::segment::Written| (made.filed.packs[0].lists.clone(), made.filed.packs[0].places.clone());
+    let mut merger = Merger::new(holding(&ids), wide()?, &WHOLE, 2)?;
+    merger.fed_packs(0, &[packs(&first)])?;
+    assert!(refused(
+        merger.fed_packs(0, &[packs(&again)]),
+        "out of the order of their terms"
+    ));
+    Ok(())
+}
+
+#[test]
+fn the_passages_of_a_term_fed_out_of_their_order_are_refused_merged_whole_or_in_pieces() -> Result<(), String> {
+    let (ids, shape) = ([5, 6, 10, 11], Shape::new(7, 2, 3, 10)?);
+    for limits in [WHOLE, PIECES, DENSE] {
+        let mut merger = Merger::new(holding(&ids), shape, &limits, 2)?;
+        merger.fed(1, vec![one("w", &[10, 11])?, one("w", &[5, 6])?])?;
+        merger.ended(0);
+        merger.ended(1);
+        assert!(refused(through(&mut merger), "out of their order"));
+        let mut merger = Merger::new(holding(&ids), shape, &limits, 2)?;
+        merger.fed(1, vec![one("w", &[5, 6])?, one("w", &[10, 11])?])?;
+        merger.ended(0);
+        merger.ended(1);
+        assert_eq!(through(&mut merger), Ok(()));
+    }
     Ok(())
 }

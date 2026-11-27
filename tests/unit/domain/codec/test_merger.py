@@ -214,3 +214,10 @@ def test_a_merge_takes_rows_of_the_sources_it_was_made_for_alone() -> None:
     for feed, rows in ((fed, [("a", 3, b"", b"")]), (fed, []), (fed_packs, [(b"", b"")]), (fed_packs, [])):
         with pytest.raises(IndexError, match="a source it has not"):
             feed(held, 2, rows)
+
+
+def test_lists_fed_out_of_the_order_of_their_terms_are_damage() -> None:
+    held = merger(chunks_of(range(3)), Shape(), WHOLE, 2)
+    fed(held, 1, [("b", 1, b"\x00", b"\x00"), ("b", 1, b"\x00", b"\x00")])
+    with pytest.raises(DamagedError, match="out of the order of their terms"):
+        fed(held, 1, [("a", 1, b"\x00", b"\x00")])

@@ -207,3 +207,26 @@ fn lengths_are_kept_by_id_in_blocks_of_consecutive_ids() -> Result<(), String> {
     assert!(refused(lengths_written(&[1], &[1], 21), "each chunk has a length"));
     Ok(())
 }
+
+#[test]
+fn a_segment_takes_passages_at_rising_places_alone_and_none_of_a_batch_it_refuses() -> Result<(), String> {
+    let mut held = Held::new(usize::MAX, usize::MAX);
+    assert_eq!(taken(&mut held, &[(3, "one"), (5, "two")])?, 2);
+    for batch in [[(9, "x"), (9, "y")], [(9, "x"), (4, "y")], [(5, "x"), (9, "y")]] {
+        assert!(refused(taken(&mut held, &batch), "at rising places"));
+        assert_eq!((held.chunks(), held.last()), (2, Some(5)));
+    }
+    let passages = Passages {
+        places: &[7, 8],
+        of: &[0, 5],
+        fields: &[("", "")],
+        texts: &["a", "b"],
+    };
+    assert!(refused(
+        held.taken(table()?, &passages),
+        "a document that was not given"
+    ));
+    assert_eq!((held.chunks(), held.tokens()), (2, 2));
+    assert_eq!(taken(&mut held, &[(7, "three")])?, 1);
+    Ok(())
+}

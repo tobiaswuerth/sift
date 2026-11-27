@@ -16,6 +16,7 @@ const MOST_RANGE_SHIFT: u32 = 8;
 const MOST_BLOCK: usize = 1 << 12;
 pub const MOST_LENGTHS_SHIFT: u32 = 20;
 const FAR_APART: &str = "ranges not ascending, or more than 2**32 apart: more than ranges hold";
+const DISORDERED: &str = "the passages of a list are out of their order";
 
 #[derive(Clone, Copy)]
 pub struct Shape {
@@ -197,6 +198,18 @@ impl Postings {
         self.places.len()
     }
 
+    pub fn after(&self, before: Option<i64>) -> Result<Option<i64>, String> {
+        let falling = self
+            .places
+            .first()
+            .zip(before)
+            .is_some_and(|(first, before)| *first <= before);
+        if falling {
+            return Err(DISORDERED.to_owned());
+        }
+        Ok(self.places.last().copied().or(before))
+    }
+
     fn extend_from(&mut self, more: &Self, from: usize, to: usize) {
         let (cut, before) = (more.offsets[from], self.positions.len());
         self.places.extend_from_slice(&more.places[from..to]);
@@ -263,6 +276,7 @@ pub fn blocks_of(parts: &[&Postings], upto: usize, block: usize) -> Result<Vec<C
 }
 
 pub fn joined(term: &str, parts: &[&Postings], average: f64, shape: Shape) -> Result<Row, String> {
+    parts.iter().try_fold(None, |before, part| part.after(before))?;
     let chunks = parts.iter().map(|part| part.chunks()).sum();
     if chunks < shape.long {
         let coded = match parts {

@@ -100,3 +100,31 @@ fn many_lists_decode_together_as_each_alone() -> Result<(), String> {
     assert_eq!(blocks::<Vec<u8>>(&[])?.bounds, [0]);
     Ok(())
 }
+
+#[test]
+fn a_block_whose_ids_fall_below_zero_or_run_past_the_last_place_is_refused() {
+    assert!(refused(block(&headed(-5, 1, &[1])), "an id below zero"));
+    assert!(refused(
+        block(&headed(i64::MAX, 2, &[1, 0, 0, 0, 1, 1])),
+        "ids past the last place"
+    ));
+    assert_eq!(
+        block(&headed(i64::MAX, 1, &[1])).map(|found| found.ids),
+        Ok(vec![i64::MAX])
+    );
+    assert_eq!(block(&headed(0, 1, &[1])).map(|found| found.ids), Ok(vec![0]));
+}
+
+#[test]
+fn a_position_held_twice_by_a_passage_is_refused_read_or_written() {
+    assert!(refused(placed(&mut [3, 0], &[2]), "a position twice"));
+    assert!(refused(placed(&mut [0, 2, 0], &[3]), "a position twice"));
+    assert_eq!(placed(&mut [0, 1, 0, 0], &[2, 1, 1]), Ok(()));
+    let lists = Lists {
+        ids: &[5],
+        counts: &[2],
+        positions: &[4, 4],
+        offsets: &[0, 2],
+    };
+    assert!(refused(list(&lists, 0, 1), "a position twice"));
+}

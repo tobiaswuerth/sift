@@ -7,6 +7,7 @@ const LOW: u8 = 0x7F;
 const BITS: usize = 7;
 const MOST_NUMBER_BYTES: usize = 9;
 const DAMAGED: &str = "a pack of lists holds other than its head says";
+const DISORDERED: &str = "lists are packed in the order of their terms, each term once";
 
 pub struct Pack {
     pub first: Box<str>,
@@ -30,6 +31,7 @@ struct Heading<'a> {
 
 #[derive(Default)]
 pub struct Packer {
+    last: Option<Box<str>>,
     first: Option<Box<str>>,
     count: usize,
     heads: Vec<u8>,
@@ -56,9 +58,12 @@ fn number(data: &[u8], at: &mut usize) -> Result<usize, String> {
     let mut found = 0;
     for (place, &byte) in data[*at..].iter().take(MOST_NUMBER_BYTES).enumerate() {
         found |= usize::from(byte & LOW) << (BITS * place);
-        if byte < MORE {
+        if byte < MORE && (byte > 0 || place == 0) {
             *at += place + 1;
             return Ok(found);
+        }
+        if byte < MORE {
+            break;
         }
     }
     Err(DAMAGED.to_owned())
@@ -78,6 +83,10 @@ impl Packer {
     }
 
     pub fn push(&mut self, term: &str, chunks: usize, coded: Option<(&[u8], &[u8])>) -> Result<Option<Pack>, String> {
+        if self.last.as_deref().is_some_and(|last| term <= last) {
+            return Err(DISORDERED.to_owned());
+        }
+        self.last = Some(term.into());
         let (postings, positions) = coded.unwrap_or_default();
         let numbers = [term.len(), chunks, postings.len(), positions.len()];
         let more =
@@ -117,18 +126,26 @@ fn heads(lists: &[u8]) -> Result<(Vec<Heading<'_>>, usize), String> {
     let Some((count, _)) = lists.split_first_chunk::<COUNT>() else {
         return Err(DAMAGED.to_owned());
     };
-    let (mut found, mut at) = (Vec::new(), COUNT);
+    let (mut found, mut at, mut bodies) = (Vec::<Heading>::new(), COUNT, Some(0usize));
     for _ in 0..u32::from_le_bytes(*count) {
         let named = number(lists, &mut at)?;
         let term = str::from_utf8(taken(lists, &mut at, named)?).map_err(|_| DAMAGED)?;
         let (chunks, listed) = (number(lists, &mut at)?, number(lists, &mut at)?);
         let placed = number(lists, &mut at)?;
+        if found.last().is_some_and(|before| term <= before.term) {
+            return Err(DAMAGED.to_owned());
+        }
+        bodies = bodies.and_then(|sum| sum.checked_add(listed));
         found.push(Heading {
             term,
             chunks,
             listed,
             placed,
         });
+    }
+    let whole = bodies.and_then(|bodies| at.checked_add(bodies)) == Some(lists.len());
+    if found.is_empty() || !whole {
+        return Err(DAMAGED.to_owned());
     }
     Ok((found, at))
 }
@@ -154,7 +171,7 @@ pub fn entries<'a>(lists: &'a [u8], places: Option<&'a [u8]>) -> Result<Vec<Entr
             positions,
         });
     }
-    if found.is_empty() || at != lists.len() || places.is_some_and(|places| past != places.len()) {
+    if places.is_some_and(|places| past != places.len()) {
         return Err(DAMAGED.to_owned());
     }
     Ok(found)

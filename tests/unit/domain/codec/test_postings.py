@@ -74,9 +74,17 @@ def test_no_lists_decode_to_nothing() -> None:
     assert (ints(places), ints(counts), bounds) == ([], [], [0])
 
 
-@pytest.mark.parametrize("ids", [[0, 1 << 32], [9, 3], [5, 5]])
-def test_chunks_too_far_apart_for_a_block_or_out_of_order_are_refused(ids: list[int]) -> None:
-    with pytest.raises(ValueError, match=r"2\*\*32 apart: more than a block holds"):
+@pytest.mark.parametrize(
+    "ids, refusal",
+    [
+        ([0, 1 << 32], r"2\*\*32 apart: more than a block holds"),
+        ([9, 3], "at rising places, from zero on"),
+        ([5, 5], "at rising places, from zero on"),
+        ([-1, 5], "at rising places, from zero on"),
+    ],
+)
+def test_chunks_too_far_apart_for_a_block_or_out_of_order_are_refused(ids: list[int], refusal: str) -> None:
+    with pytest.raises(ValueError, match=refusal):
         segment(np.array(ids, np.int64), of_bodies([["w"]] * 2), 4.0)
 
 

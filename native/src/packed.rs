@@ -56,6 +56,9 @@ fn inflated(data: &[u8]) -> Result<Vec<u8>, String> {
         if found.len() > MOST_INFLATED {
             return Err(TOO_LARGE_OR_SHORT.to_owned());
         }
+        if status == Status::StreamEnd && taken(unpacking.total_in()) != data.len() {
+            return Err("a packed list holds bytes after its end".to_owned());
+        }
         if status == Status::StreamEnd {
             return Ok(found);
         }
@@ -64,7 +67,7 @@ fn inflated(data: &[u8]) -> Result<Vec<u8>, String> {
             return Err(TOO_LARGE_OR_SHORT.to_owned());
         }
         if found.len() == found.capacity() {
-            found.reserve(found.capacity().min(MOST_INFLATED + 1 - found.len()));
+            found.reserve_exact(found.capacity().min(MOST_INFLATED + 1 - found.len()));
         }
     }
 }

@@ -174,10 +174,29 @@ impl Held {
         Ok(())
     }
 
-    pub fn taken(&mut self, table: &Table, passages: &Passages) -> Result<usize, String> {
+    fn fitting(&self, passages: &Passages) -> Result<(), String> {
         if passages.places.len() != passages.texts.len() {
             return Err("each passage has a place and a text".to_owned());
         }
+        let named = passages.of.get(..passages.places.len());
+        if !named.is_some_and(|named| named.iter().all(|&which| which < passages.fields.len())) {
+            return Err("a passage names a document that was not given".to_owned());
+        }
+        let mut before = self.ids.last().copied().unwrap_or(-1);
+        for &place in passages.places {
+            if place <= before {
+                return Err("a segment takes passages at rising places, from zero on".to_owned());
+            }
+            before = place;
+        }
+        Ok(())
+    }
+
+    pub fn taken(&mut self, table: &Table, passages: &Passages) -> Result<usize, String> {
+        if self.streamed >= self.most {
+            return Ok(0);
+        }
+        self.fitting(passages)?;
         let (terms, most) = (&self.terms, self.most_field);
         let named: Result<Vec<Run>, String> = passages
             .fields
@@ -200,9 +219,7 @@ impl Held {
             if self.streamed >= self.most {
                 return Ok(number);
             }
-            let which = passages.of.get(number).copied();
-            let which = which.filter(|&which| which < passages.fields.len());
-            let which = which.ok_or_else(|| "a passage names a document that was not given".to_owned())?;
+            let which = passages.of[number];
             let fields = &named[which / PASSAGES];
             let (title, meta) = (fields.of(2 * (which % PASSAGES)), fields.of(2 * (which % PASSAGES) + 1));
             self.add(place, title, read[number / PASSAGES].of(number % PASSAGES), meta)?;

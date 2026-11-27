@@ -96,7 +96,10 @@ def merger(chunks: MergedChunks, shape: Shape, limits: MergeLimits, sources: int
 
 
 def fed(held: Merger, source: int, rows: Sequence[tuple[object, ...]]) -> bool:
-    return held.feed(source, rows)
+    try:
+        return held.feed(source, rows)
+    except ValueError as error:
+        raise DamagedError(str(error)) from None
 
 
 def fed_packs(held: Merger, source: int, rows: Sequence[tuple[object, ...]]) -> bool:

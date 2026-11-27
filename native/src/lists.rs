@@ -10,6 +10,7 @@ const MOST_POSITION: i64 = 1 << 32;
 const TOGETHER: usize = 256;
 const FAR_APART: &str = "ids not ascending, or more than 2**32 apart: more than a block holds";
 const PAST: &str = "a list holds a position past any passage";
+const TWICE: &str = "a list holds a position twice, or positions out of their order";
 
 pub struct Block {
     pub ids: Vec<i64>,
@@ -65,13 +66,17 @@ pub fn block(data: &[u8]) -> Result<Block, String> {
     };
     let mut ids = Vec::with_capacity(held);
     let mut at = i64::from_le_bytes(*first);
+    if at < 0 {
+        return Err("a block holds an id below zero".to_owned());
+    }
     ids.push(at);
     for gap in steps.as_chunks::<GAP>().0 {
         let step = i64::from(u32::from_le_bytes(*gap));
         if step < 1 {
             return Err("a block holds ids out of order".to_owned());
         }
-        at = at.wrapping_add(step);
+        let next = at.checked_add(step);
+        at = next.ok_or_else(|| "a block holds ids past the last place".to_owned())?;
         ids.push(at);
     }
     let mut counts = Vec::with_capacity(held);
@@ -117,9 +122,12 @@ pub fn placed(found: &mut [i64], counts: &[i64]) -> Result<(), String> {
             return Err("a list holds positions other than its counts".to_owned());
         };
         let mut place = 0i64;
-        for gap in &mut found[at..end] {
+        for (number, gap) in found[at..end].iter_mut().enumerate() {
             if *gap >= MOST_POSITION {
                 return Err(PAST.to_owned());
+            }
+            if number > 0 && *gap < 1 {
+                return Err(TWICE.to_owned());
             }
             place += *gap;
             *gap = place;
@@ -166,10 +174,13 @@ pub fn list(lists: &Lists, start: usize, end: usize) -> Result<Coded, String> {
     }
     let mut placed = Vec::with_capacity(lists.offsets[end] - lists.offsets[start]);
     for at in start..end {
-        let mut before = 0i64;
+        let mut before = None;
         for &place in &lists.positions[lists.offsets[at]..lists.offsets[at + 1]] {
-            written(&mut placed, place.wrapping_sub(before))?;
-            before = place;
+            let gap = before.map_or(Some(place), |before: i64| {
+                place.checked_sub(before).filter(|&gap| gap >= 1)
+            });
+            written(&mut placed, gap.ok_or_else(|| TWICE.to_owned())?)?;
+            before = Some(place);
         }
     }
     Ok((wrapped(&body)?, wrapped(&placed)?))

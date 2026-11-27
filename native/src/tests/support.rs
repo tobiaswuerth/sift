@@ -177,7 +177,7 @@ pub fn sources(made: &Written, shape: Shape) -> Feed {
 pub fn fed_whole(merger: &mut Merger, given: Vec<Feed>) -> Result<(), String> {
     for (number, each) in given.into_iter().enumerate() {
         merger.fed_packs(2 * number, &each.packs)?;
-        merger.fed(2 * number + 1, each.blocks);
+        merger.fed(2 * number + 1, each.blocks)?;
         merger.ended(2 * number);
         merger.ended(2 * number + 1);
     }
@@ -220,7 +220,7 @@ pub fn merged(merger: &mut Merger, given: Vec<Feed>, at_once: usize) -> Result<O
                     if rows.is_empty() {
                         merger.ended(source)
                     } else {
-                        merger.fed(source, rows)
+                        merger.fed(source, rows)?
                     }
                 };
             }

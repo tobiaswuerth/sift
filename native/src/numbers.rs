@@ -25,6 +25,9 @@ pub fn read(data: &[u8], found: &mut Vec<i64>) -> Result<(), String> {
         number |= u64::from(byte & LOW) << (BITS * u32::try_from(size).unwrap_or(u32::MAX));
         size += 1;
         if byte < MORE {
+            if byte == 0 && size > 1 {
+                return Err("a number is written longer than it is".to_owned());
+            }
             found.push(i64::try_from(number).unwrap_or(i64::MAX));
             (number, size) = (0, 0);
         }

@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+const DISORDERED: &str = "the lists of a segment are out of the order of their terms";
+
 pub struct Fed {
     pub term: Arc<str>,
     pub chunks: usize,
@@ -16,6 +18,7 @@ pub struct Size {
 
 #[derive(Default)]
 pub struct Source {
+    last: Option<Arc<str>>,
     rows: VecDeque<Fed>,
     held: Size,
     ended: bool,
@@ -74,9 +77,16 @@ impl Source {
         self.rows.front().map(|row| &row.term)
     }
 
-    pub fn fed(&mut self, rows: Vec<Fed>) {
+    pub fn fed(&mut self, rows: Vec<Fed>, once: bool) -> Result<(), String> {
+        for row in &rows {
+            let before = self.last.replace(Arc::clone(&row.term));
+            if before.is_some_and(|before| *before > *row.term || (once && before == row.term)) {
+                return Err(DISORDERED.to_owned());
+            }
+        }
         self.held = rows.iter().fold(self.held, |sum, row| sum.with(row.size()));
         self.rows.extend(rows);
+        Ok(())
     }
 
     pub fn end(&mut self) {
