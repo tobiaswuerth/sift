@@ -8,6 +8,8 @@ from tools.findings import ROOT, Finding, report, tracked
 
 PAGE = ROOT / "docs" / "limits.md"
 BOUND = re.compile(r"(MOST|FEWEST|LEAST)_\w+|\w+_(SECONDS|BYTES)")
+CONSTANT = re.compile(r"^(?:pub(?:\(\w+\))? )?const (\w+): [^=]+ = (.+);$", re.MULTILINE)
+CRATE = "native/src"
 BAR, ESCAPED_BAR = "|", r"\|"
 HEAD = """\
 # Limits
@@ -52,6 +54,12 @@ def limits_in(module: str, source: str) -> list[Limit]:
     ]
 
 
+def limits_in_crate(path: str, source: str) -> list[Limit]:
+    module = f"native::{Path(path).stem}"
+    found = ((each.group(1), each.group(2)) for each in CONSTANT.finditer(source))
+    return [Limit(module, name, value) for name, value in found if BOUND.fullmatch(name)]
+
+
 def _module(path: str) -> str:
     return ".".join(Path(path).with_suffix("").parts[1:])
 
@@ -73,4 +81,6 @@ def compared(page: Path, written: str, *, write: bool) -> int:
 def main(argv: list[str]) -> int:
     paths = [path for path in tracked(["src/sift"]) if path.endswith(".py")]
     found = [each for path in paths for each in limits_in(_module(path), (ROOT / path).read_text(encoding="utf-8"))]
-    return compared(PAGE, table(found), write=argv == ["--write"])
+    crate = [path for path in tracked([CRATE]) if path.endswith(".rs")]
+    native = [each for path in crate for each in limits_in_crate(path, (ROOT / path).read_text(encoding="utf-8"))]
+    return compared(PAGE, table([*found, *native]), write=argv == ["--write"])

@@ -84,7 +84,7 @@ def test_the_package_is_built_by_tools_pinned() -> None:
     (uv,) = matches(r'version: "(\d+\.\d+\.\d+)"', job(release, "build"))
     assert matches(r'version: "(\d+\.\d+\.\d+)"', ci) == [uv]
     pinned = read(ROOT / BUILD_CONSTRAINTS)
-    assert re.search(r"^uv-build==\S+ \\$", pinned, re.MULTILINE)
+    assert re.search(r"^maturin==\S+ \\$", pinned, re.MULTILINE)
     assert "--hash=sha256:" in pinned
 
 

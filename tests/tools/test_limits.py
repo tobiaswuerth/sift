@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from tools import limits
-from tools.limits import Limit, compared, limits_in, table
+from tools.limits import Limit, compared, limits_in, limits_in_crate, table
 
 SOURCE = """\
 MOST_ITEMS = 1_000
@@ -31,6 +31,20 @@ def test_bounds_are_the_module_constants_named_as_bounds_with_their_values_as_wr
         Limit("sift.a", "KEPT_BYTES", "64 << 20"),
         Limit("sift.a", "FEWEST_WORDS", "2"),
         Limit("sift.a", "LEAST_SHARE", "0.1"),
+    ]
+
+
+def test_the_bounds_of_the_crate_are_its_constants_named_as_bounds() -> None:
+    source = (
+        "const MOST_INFLATED: usize = 64 << 20;\n"
+        "pub const RAW: u8 = 0;\n"
+        "pub(crate) const MOST_TIMES: usize = 1024;\n"
+        "    const MOST_INDENTED: usize = 1;\n"
+        'const TOO_LARGE: &str = "more than MOST_INFLATED";\n'
+    )
+    assert limits_in_crate("native/src/packed.rs", source) == [
+        Limit("native::packed", "MOST_INFLATED", "64 << 20"),
+        Limit("native::packed", "MOST_TIMES", "1024"),
     ]
 
 

@@ -7,7 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.arrays import floats, ints
-from sift.domain.codec.postings import MOST_BYTES, MOST_INFLATED_BYTES, blocked, lengths_of, positions_of, ranges_of
+from sift.domain.codec.postings import MOST_INFLATED_BYTES, blocked, lengths_of, positions_of, ranges_of
 from sift.domain.codec.segments import (
     GAP,
     MOST_TIMES,
@@ -21,6 +21,7 @@ from sift.domain.codec.shape import MOST_BLOCK, Shape
 from sift.domain.rank.bm25 import term_scores, unquantized
 
 SMALL = Shape(range_shift=2, block=2, long=3, lengths_shift=3)
+MOST_BYTES = 9
 words = st.lists(st.sampled_from(["a", "b", "c", "d", "e"]), max_size=6)
 chunks = st.lists(st.tuples(words, words, words), min_size=1, max_size=25)
 

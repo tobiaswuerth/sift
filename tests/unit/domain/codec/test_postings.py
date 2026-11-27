@@ -1,5 +1,6 @@
 import contextlib
 import itertools
+import struct
 import tracemalloc
 import zlib
 
@@ -9,9 +10,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 from numpy.typing import NDArray
 
-from sift.domain.arrays import ints, last
+from sift.domain.arrays import ints
 from sift.domain.codec.postings import (
-    BLOCK_HEAD,
     MOST_INFLATED_BYTES,
     PACKED,
     RANGES_HEAD,
@@ -20,18 +20,27 @@ from sift.domain.codec.postings import (
     blocked_all,
     encoded,
     lengths_of,
-    numbers,
     positions_of,
     ranged,
     ranges_of,
-    varints,
     with_lengths,
 )
 from sift.domain.errors import DamagedError
 
+BLOCK_HEAD = struct.Struct("<qI")
+
 
 def ascending(gaps: list[int], start: int) -> NDArray[np.int64]:
     return start + np.cumsum(np.array(gaps, np.int64))
+
+
+def varint(number: int) -> bytes:
+    low = [number >> shift & 0x7F for shift in range(0, max(number.bit_length(), 1), 7)]
+    return bytes([*(each | 0x80 for each in low[:-1]), low[-1]])
+
+
+def varints(numbers: list[int]) -> bytes:
+    return b"".join(map(varint, numbers))
 
 
 type Listed = list[tuple[int, list[int]]]
@@ -93,11 +102,11 @@ def test_ids_of_separate_lists_may_go_down_between_them() -> None:
     assert [ints(blocked(each)[0]) for each in found.postings] == [[9], [3]]
 
 
-@given(st.lists(st.integers(0, (1 << 63) - 1)))
+@given(st.lists(st.integers(1, (1 << 63) - 1), min_size=1, max_size=50))
 def test_numbers_come_back_from_their_varints(values: list[int]) -> None:
-    written, offsets = varints(np.array(values, np.int64))
-    assert ints(numbers(written)) == values
-    assert last(offsets) == len(written)
+    block = RAW + BLOCK_HEAD.pack(7, len(values)) + (1).to_bytes(4, "little") * (len(values) - 1) + varints(values)
+    places, counts = blocked(block)
+    assert (ints(places), ints(counts)) == ([*range(7, 7 + len(values))], values)
 
 
 def test_encoding_holds_no_object_for_each_position() -> None:
@@ -115,7 +124,10 @@ def test_encoding_holds_no_object_for_each_position() -> None:
 
 @pytest.mark.parametrize("value, size", [(0, 1), (127, 1), (128, 2), ((1 << 14) - 1, 2), (1 << 14, 3)])
 def test_a_varint_takes_a_byte_per_seven_bits(value: int, size: int) -> None:
-    assert len(varints(np.array([value], np.int64))[0]) == size
+    one = np.ones(1, np.int64)
+    (written,) = encoded(one, one, np.array([value], np.int64), [0, 1]).positions
+    assert written == RAW + varint(value)
+    assert len(written) == 1 + size
 
 
 @given(st.lists(st.integers(1, 128), min_size=1, max_size=100), st.integers(0, 1 << 40), st.data())
@@ -226,14 +238,12 @@ def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -
 
 @pytest.mark.parametrize("gaps", [[2**62], [2**32], [2**31, 2**31], [1, 2**32 - 1]])
 def test_positions_beyond_any_passage_are_refused_as_damaged(gaps: list[int]) -> None:
-    data, _ = varints(np.array(gaps, np.int64))
     with pytest.raises(DamagedError, match="a list holds a position past any passage"):
-        positions_of(RAW + data, np.array([len(gaps)], np.int64))
+        positions_of(RAW + varints(gaps), np.array([len(gaps)], np.int64))
 
 
 def test_positions_up_to_the_last_a_passage_holds_are_read() -> None:
-    data, _ = varints(np.array([2**32 - 1], np.int64))
-    assert ints(positions_of(RAW + data, np.array([1], np.int64))) == [2**32 - 1]
+    assert ints(positions_of(RAW + varint(2**32 - 1), np.array([1], np.int64))) == [2**32 - 1]
 
 
 def test_lengths_packed_far_larger_than_their_block_are_never_unpacked_whole() -> None:

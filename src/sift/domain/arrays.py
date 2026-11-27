@@ -5,6 +5,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 STORED_U32 = np.dtype("<u4")
+STORED_I64 = np.dtype("<i8")
 STORED_HALF = np.dtype("<f2")
 
 type Ids = NDArray[np.int64]

@@ -6,7 +6,9 @@ from pathlib import Path
 
 from tools.findings import read, tracked
 
-SOURCES = "src/sift"
+PACKAGE = "src/"
+SOURCES = ("src/sift", "native", "rust-toolchain.toml")
+EXTENSIONS = frozenset({"sift/_native.abi3.so", "sift/_native.pyd"})
 PROJECT_FILES = frozenset({"pyproject.toml", "pyproject.toml.orig", "README.md", "LICENSE", "PKG-INFO"})
 
 
@@ -19,14 +21,31 @@ def project_version(pyproject: str) -> str:
             raise TypeError("project.version in pyproject.toml is a string")
 
 
+def _extension(built: list[str]) -> list[str]:
+    if len(built) == 1:
+        return []
+    return [
+        f"the wheel holds the extension twice: {', '.join(built)}"
+        if built
+        else "the wheel lacks the extension sift/_native"
+    ]
+
+
 def problems(wheel: Iterable[str], sdist: Iterable[str], tracked: Iterable[str], version: str, said: str) -> list[str]:
     sources = frozenset(tracked)
     metadata, root = f"sift_rag-{version}.dist-info/", f"sift_rag-{version}/"
-    packaged = sorted(name for name in wheel if not name.startswith(metadata))
+    held = sorted(name for name in wheel if not name.startswith(metadata))
+    packaged = [name for name in held if name not in EXTENSIONS]
+    package = {name for name in sources if name.startswith(PACKAGE)}
     shipped = {name.removeprefix(root) for name in sdist}
     return [
-        *(f"the wheel holds {name}, which git does not track" for name in packaged if f"src/{name}" not in sources),
-        *(f"the wheel lacks {name}" for name in sorted(sources - {f"src/{name}" for name in packaged})),
+        *(
+            f"the wheel holds {name}, no tracked source of the package"
+            for name in packaged
+            if PACKAGE + name not in package
+        ),
+        *(f"the wheel lacks {name}" for name in sorted(package - {PACKAGE + name for name in packaged})),
+        *_extension([name for name in held if name in EXTENSIONS]),
         *(
             f"the sdist holds {name}, no tracked source or project file"
             for name in sorted(shipped - sources - PROJECT_FILES)
@@ -47,7 +66,7 @@ def files_of_sdist(path: Path) -> list[str]:
 
 
 def tracked_sources() -> list[str]:
-    return tracked((SOURCES,))
+    return tracked(SOURCES)
 
 
 def main(argv: list[str]) -> int:

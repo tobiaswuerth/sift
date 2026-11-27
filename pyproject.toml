@@ -1,6 +1,6 @@
 [build-system]
-requires = ["uv_build>=0.13.9,<0.14"]
-build-backend = "uv_build"
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
 
 [project]
 name = "sift-rag"
@@ -115,9 +115,21 @@ required-environments = [
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 constraint-dependencies = ["xberg!=1.3.9"]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "rust-toolchain.toml" },
+    { file = "native/Cargo.toml" },
+    { file = "native/Cargo.lock" },
+    { file = "native/src/**/*.rs" },
+]
 
-[tool.uv.build-backend]
-module-name = "sift"
+# The extension sift._native is the crate in native/, built with the package: the lists of the keyword index are
+# encoded, decoded and merged there, on every core.
+[tool.maturin]
+manifest-path = "native/Cargo.toml"
+python-source = "src"
+module-name = "sift._native"
+include = [{ path = "rust-toolchain.toml", format = "sdist" }]
 
 # The lock, and so the gate and CI, take PyTorch's CPU builds: the tests need no GPU, and the CUDA builds weigh
 # gigabytes. An installed sift takes whatever build its installer picks (`--torch-backend auto` picks the GPU's).

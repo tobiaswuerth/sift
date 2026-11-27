@@ -15,6 +15,7 @@ FIRST_RELEASE = "3.12.0"
 PYTHONS = ("3.12", "3.13", "3.14", "3.15")
 PLATFORMS = ("Linux", "Darwin", "Windows")
 BUILD_CONSTRAINTS = ".github/requirements-build.txt"
+CRATE = "native/Cargo.toml"
 TWINE = "twine@7.0.0"
 MOST_WORKERS = 8
 WORKERS = str(min(MOST_WORKERS, os.cpu_count() or 1))
@@ -43,6 +44,8 @@ def lint(session: nox.Session) -> None:
     if unknown := said(session, "git", "ls-files", "--others", "--exclude-standard"):
         session.error(f"git neither tracks nor ignores these, and the hooks check tracked files alone:\n{unknown}")
     session.run("pre-commit", "run", "--all-files", "--show-diff-on-failure")
+    session.run("cargo", "fmt", f"--manifest-path={CRATE}", "--check", external=True)
+    session.run("cargo", "clippy", f"--manifest-path={CRATE}", "--locked", "--release", external=True)
     session.run("lint-imports")
     session.run("python", "-m", "tools", "imports")
     session.run("python", "-m", "tools", "stubs")
