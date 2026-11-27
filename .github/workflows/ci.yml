@@ -106,24 +106,32 @@ jobs:
     timeout-minutes: 20
     steps: *prepare
 
+  wheels:
+    # What a release would publish, built as it would build it: no release builds a wheel for the first time.
+    needs: [lint, types, first]
+    # zizmor asks for GitHub's newer form, `$/.github/workflows/wheels.yml`, which actionlint 1.7.12, the newest,
+    # refuses: `./` it is, as GitHub has taken it since 2022, until both read the newer one.
+    uses: ./.github/workflows/wheels.yml  # zizmor: ignore[self-repository]
+
   tests:
-    # One required check for the whole matrix, the lowest versions, the first Python and the crate, so that the
-    # matrix may change.
+    # One required check for the whole matrix, the lowest versions, the first Python, the crate and the wheels, so
+    # that the matrix may change.
     if: always()
-    needs: [first, test, lowest, oldest, kernel]
+    needs: [first, test, lowest, oldest, kernel, wheels]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every job of the matrix passed, and those of the lowest versions, the first Python and the crate
+      - name: Every job of the matrix passed, and those of the lowest versions, the first Python, the crate, the wheels
         env:
           FIRST: ${{ needs.first.result }}
           REST: ${{ needs.test.result }}
           LOWEST: ${{ needs.lowest.result }}
           OLDEST: ${{ needs.oldest.result }}
           KERNEL: ${{ needs.kernel.result }}
+          WHEELS: ${{ needs.wheels.result }}
         run: >-
           test "$FIRST" = success && test "$REST" = success && test "$LOWEST" = success &&
-          test "$OLDEST" = success && test "$KERNEL" = success
+          test "$OLDEST" = success && test "$KERNEL" = success && test "$WHEELS" = success
 
   package:
     env:

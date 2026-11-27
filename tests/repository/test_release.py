@@ -10,7 +10,14 @@ from tests.repository.texts import job, jobs, matches
 ROOT = Path(__file__).parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 BUILD_CONSTRAINTS = ".github/requirements-build.txt"
-SILENCED_WITH_THE_OWNER_S_YES = frozenset({("release.yml", "workflow_run:  # zizmor: ignore[dangerous-triggers]")})
+CALLED = "uses: ./.github/workflows/wheels.yml  # zizmor: ignore[self-repository]"
+SILENCED_WITH_THE_OWNER_S_YES = frozenset(
+    {
+        ("release.yml", "workflow_run:  # zizmor: ignore[dangerous-triggers]"),
+        ("release.yml", CALLED),
+        ("ci.yml", CALLED),
+    }
+)
 
 
 def read(path: Path) -> str:
@@ -75,26 +82,60 @@ def test_the_release_reads_the_one_version_pyproject_names() -> None:
 
 
 def test_the_package_is_built_by_tools_pinned() -> None:
-    release, ci, gate = read(WORKFLOWS / "release.yml"), read(WORKFLOWS / "ci.yml"), read(ROOT / "noxfile.py")
-    assert f"- run: uv build --build-constraints {BUILD_CONSTRAINTS} --require-hashes\n" in release
+    wheels, ci, gate = read(WORKFLOWS / "wheels.yml"), read(WORKFLOWS / "ci.yml"), read(ROOT / "noxfile.py")
+    assert f"- run: uv build --build-constraints {BUILD_CONSTRAINTS} --require-hashes\n" in wheels
     assert f'BUILD_CONSTRAINTS = "{BUILD_CONSTRAINTS}"' in gate
     assert '"--require-hashes"' in gate
-    (twine,) = matches(r"- run: uvx (twine@\d+\.\d+\.\d+) check --strict", release)
+    (twine,) = matches(r"- run: uvx (twine@\d+\.\d+\.\d+) check --strict", wheels)
     assert f'TWINE = "{twine}"' in gate
-    (uv,) = matches(r'version: "(\d+\.\d+\.\d+)"', job(release, "build"))
+    (uv,) = matches(r'version: "(\d+\.\d+\.\d+)"', job(wheels, "build"))
     assert matches(r'version: "(\d+\.\d+\.\d+)"', ci) == [uv]
+    assert "enable-cache: false" in job(wheels, "build")
     pinned = read(ROOT / BUILD_CONSTRAINTS)
     assert re.search(r"^maturin==\S+ \\$", pinned, re.MULTILINE)
     assert "--hash=sha256:" in pinned
 
 
 def test_what_pypi_gets_is_checked_as_the_gate_checks_a_package_before_it_is_handed_on() -> None:
-    build = job(read(WORKFLOWS / "release.yml"), "build")
+    wheels = read(WORKFLOWS / "wheels.yml")
+    build = job(wheels, "build")
     checked = build.index('uv run --no-project python -m tools package dist "$said"')
-    assert build.index("- run: uv build") < checked < build.index("upload-artifact")
+    left = build.rindex("actions/upload-artifact@")
+    assert build.index("- run: uv build") < build.index("actions/upload-artifact@") < left
+    assert left < min(build.index("- run: uvx "), build.index("uv tool run")) < checked
+    assert "needs: build" in job(wheels, "dist")
     assert "for name in sift sift-rag; do" in build
     assert '--from dist/*.whl "$name" --version' in build
     assert 'session.run("python", "-m", "tools", "package"' in read(ROOT / "noxfile.py")
+
+
+def test_the_release_publishes_the_wheels_built_from_the_commit_ci_tested_and_only_a_whole_set() -> None:
+    release, wheels = read(WORKFLOWS / "release.yml"), read(WORKFLOWS / "wheels.yml")
+    build = job(release, "build")
+    assert "    uses: ./.github/workflows/wheels.yml  # zizmor: ignore[self-repository]\n" in build
+    assert "      ref: ${{ github.event.workflow_run.head_sha }}\n" in build
+    assert wheels.count("          ref: ${{ inputs.ref }}\n") == wheels.count("actions/checkout@") == 2
+    handed = job(wheels, "dist")
+    whole = handed.index("- run: python3 -m tools release files dist\n")
+    assert handed.index("actions/download-artifact@") < whole < handed.index("          name: dist\n")
+    assert "needs: build" in handed
+    assert "          name: dist\n" in job(release, "publish")
+    assert "          skip-existing: true" in job(release, "publish")
+
+
+def test_the_wheels_of_linux_are_built_in_images_pinned_with_a_rustup_held_to_its_checksum() -> None:
+    build = job(read(WORKFLOWS / "wheels.yml"), "build")
+    images = matches(r"image: (\S+)", build)
+    assert [
+        re.fullmatch(r"quay\.io/pypa/manylinux_2_28_(x86_64|aarch64)@sha256:[0-9a-f]{64}", each) is None
+        for each in images
+    ] == [False, False]
+    assert len(matches(r"rustup-sha256: [0-9a-f]{64}\n", build)) == len(images)
+    assert 'echo "$SHA256  rustup-init" | sha256sum --check' in build
+    assert build.count("            maturin: --compatibility manylinux_2_28\n") == len(images)
+    assert "      MATURIN_PEP517_ARGS: ${{ matrix.maturin }}" in build
+    assert "container: ${{ matrix.image }}" in build
+    assert '          git config --global --add safe.directory "$GITHUB_WORKSPACE"\n' in build
 
 
 def test_a_large_file_is_refused_wherever_the_hooks_run_not_only_as_it_is_added() -> None:

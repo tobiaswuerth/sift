@@ -52,7 +52,7 @@ def test_ci_tests_the_first_python_release_with_uv_s_own_build_of_it_and_needs_i
     oldest = job(ci, "oldest")
     for line in (f'PYTHON: "{first}"', "SESSION: oldest", "UV_PYTHON_PREFERENCE: only-managed"):
         assert line in oldest, line
-    assert (first, "needs: [first, test, lowest, oldest, kernel]" in job(ci, "tests")) == ("3.12.0", True)
+    assert (first, "needs: [first, test, lowest, oldest, kernel, wheels]" in job(ci, "tests")) == ("3.12.0", True)
 
 
 def test_ci_holds_the_crate_to_its_tests_with_the_coverage_tool_of_the_version_it_names() -> None:
@@ -64,6 +64,13 @@ def test_ci_holds_the_crate_to_its_tests_with_the_coverage_tool_of_the_version_i
     assert '"cargo-llvm-cov", "--locked", f"--version={LLVM_COV}"' in noxfile
     assert "KERNEL: ${{ needs.kernel.result }}" in job(ci, "tests")
     assert '"llvm-tools-preview"' in (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
+
+
+def test_ci_builds_the_wheels_a_release_would_publish_and_needs_them() -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "    uses: ./.github/workflows/wheels.yml  # zizmor: ignore[self-repository]\n" in job(ci, "wheels")
+    assert "WHEELS: ${{ needs.wheels.result }}" in job(ci, "tests")
+    assert 'test "$WHEELS" = success' in job(ci, "tests")
 
 
 def test_the_crate_s_coverage_counts_no_build_of_it_left_from_before() -> None:

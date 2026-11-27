@@ -36,7 +36,9 @@ Python 3.12 or newer, built with SQLite 3.38 or newer, as uv's, python.org's and
 uv tool install --torch-backend auto sift-rag   # installs the `sift` command
 ```
 
-With pip, in a virtual environment: `pip install sift-rag`. The first use downloads two models from Hugging Face
+With pip, in a virtual environment: `pip install sift-rag`. sift comes built for Linux on x86-64 and ARM (glibc 2.28
+or newer), macOS on Apple silicon and Windows on x86-64; anywhere else the install builds its compiled part from the
+sources, which needs Rust 1.100 or newer and a C compiler. The first use downloads two models from Hugging Face
 (about 2 GB), each at the commit this version of sift pins: what their owners push later changes no vectors. The first
 scan read on a GPU downloads a third, for OCR.
 

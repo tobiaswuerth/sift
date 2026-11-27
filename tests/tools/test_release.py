@@ -1,7 +1,11 @@
+from pathlib import Path
+
 import pytest
 
+from tools.check_package import project_version
+from tools.findings import read
 from tools.release import CHANGELOG as CHANGELOG_FILE
-from tools.release import RefusedError, main, notes, pre_release
+from tools.release import REMEDY, RefusedError, main, notes, pre_release, unpublishable
 
 CHANGELOG = """# Changelog
 
@@ -72,3 +76,66 @@ def test_the_tool_prints_the_notes_or_refuses_without_printing_any(capsys: pytes
     assert main(["notes"]) == 2
     held = notes(CHANGELOG_FILE.read_text(encoding="utf-8"), "1.15.2")
     assert (main(["notes", "1.15.2"]), capsys.readouterr().out) == (0, held)
+
+
+WHEELS = (
+    "sift_rag-2.0.0rc1-cp312-abi3-manylinux_2_28_x86_64.whl",
+    "sift_rag-2.0.0rc1-cp312-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+    "sift_rag-2.0.0rc1-cp312-abi3-macosx_11_0_arm64.whl",
+    "sift_rag-2.0.0rc1-cp312-abi3-win_amd64.whl",
+)
+SDIST = "sift_rag-2.0.0rc1.tar.gz"
+
+
+def test_a_wheel_for_every_platform_and_the_sources_are_what_a_release_publishes() -> None:
+    assert unpublishable([*WHEELS, SDIST], "2.0.0rc1") == []
+
+
+@pytest.mark.parametrize(
+    "files, problem",
+    [
+        ([*WHEELS], "no sift_rag-2.0.0rc1.tar.gz: the sources are published with the wheels"),
+        ([*WHEELS[1:], SDIST], "no wheel for Linux on x86_64"),
+        ([*WHEELS[:2], WHEELS[3], SDIST], "no wheel for macOS on arm64"),
+        (
+            [*WHEELS, WHEELS[0].replace("2_28", "2_17"), SDIST],
+            (
+                "2 wheels for Linux on x86_64: sift_rag-2.0.0rc1-cp312-abi3-manylinux_2_17_x86_64.whl, "
+                "sift_rag-2.0.0rc1-cp312-abi3-manylinux_2_28_x86_64.whl"
+            ),
+        ),
+        (
+            [*WHEELS, "sift_rag-2.0.0rc1-cp312-abi3-linux_x86_64.whl", SDIST],
+            "sift_rag-2.0.0rc1-cp312-abi3-linux_x86_64.whl is of no platform a release publishes",
+        ),
+        (
+            [*WHEELS, "sift_rag-2.0.0rc1-cp312-abi3-manylinux_2_39_x86_64.whl", SDIST],
+            "sift_rag-2.0.0rc1-cp312-abi3-manylinux_2_39_x86_64.whl is of no platform a release publishes",
+        ),
+        (
+            [*WHEELS, "sift_rag-2.0.0rc1-cp312-abi3-macosx_15_0_arm64.whl", SDIST],
+            "sift_rag-2.0.0rc1-cp312-abi3-macosx_15_0_arm64.whl is of no platform a release publishes",
+        ),
+        (
+            [*WHEELS[:3], "sift_rag-2.0.0rc1-cp313-cp313-win_amd64.whl", SDIST],
+            "sift_rag-2.0.0rc1-cp313-cp313-win_amd64.whl is of no platform a release publishes",
+        ),
+        ([*WHEELS, SDIST, "sift_rag-2.0.0.tar.gz"], "sift_rag-2.0.0.tar.gz is of no platform a release publishes"),
+        ([*WHEELS, SDIST, "notes.md"], "notes.md is of no platform a release publishes"),
+    ],
+)
+def test_what_a_release_lacks_or_must_not_publish_is_said(files: list[str], problem: str) -> None:
+    assert problem in unpublishable(files, "2.0.0rc1")
+
+
+def test_the_tool_says_what_keeps_a_folder_from_being_published(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    version = project_version(read("pyproject.toml"))
+    for name in (*WHEELS[1:], SDIST):
+        (tmp_path / name.replace("2.0.0rc1", version)).write_bytes(b"")
+    assert main(["files", str(tmp_path)]) == 1
+    said = capsys.readouterr()
+    assert (said.out, said.err) == ("", f"error  no wheel for Linux on x86_64\n{REMEDY}\n")
+    (tmp_path / WHEELS[0].replace("2.0.0rc1", version)).write_bytes(b"")
+    assert (main(["files", str(tmp_path)]), capsys.readouterr().err) == (0, "")

@@ -12,6 +12,10 @@ uv sync
 uv run pre-commit install
 ```
 
+The lists of the keyword index are built and merged by a Rust extension, the crate in `native/`. Install
+[rustup](https://rustup.rs) and a C compiler first: `uv sync` builds the extension, and builds it again whenever the
+crate changed. `rust-toolchain.toml` names the toolchain, which rustup fetches on the first build.
+
 ## The gate
 
 ```bash
@@ -19,17 +23,21 @@ uv run --only-group gate nox
 ```
 
 It runs every check a change must pass and stops at the first that fails: `lint`
-(pre-commit hooks and import contracts; it refuses files git neither tracks nor ignores), `types` (basedpyright for
+(pre-commit hooks, `cargo fmt` and clippy on the crate, and import contracts; it refuses files git neither tracks
+nor ignores), `types` (basedpyright for
 Linux, macOS and Windows, each as Python 3.12 and 3.15), `tests-3.12` and `tests-3.15` (100% line and branch
 coverage of `sift` and `tools`), `lowest` (the lowest versions sift allows, installed afresh on each run, and
-`python -m tools floors` holds each to the version `pyproject.toml` names), `package` (the wheel and sdist hold the
-tracked sources and nothing else, and the installed commands run). One session:
+`python -m tools floors` holds each to the version `pyproject.toml` names), `kernel` (the crate's own tests and the
+tests of Python that reach it, with every line of the crate run by one of them), `package` (the wheel and sdist hold
+the tracked sources and nothing else, and the installed commands run). One session:
 `uv run --only-group gate nox -s types`. CI runs these sessions too, the tests on every Python from 3.12 to 3.15
 on Linux (x86 and ARM), macOS and Windows, which no local run covers, and on Python 3.12.0 itself, uv's own build
-of it (`nox -s oldest`). Every session installs its packages on its first run, `lowest` and `package` on each
-run, so those two always need the network. No session runs the lowest SQLite sift allows, 3.38: every Python build
-brings a newer one. On Windows, turn on Developer Mode first: without the right to make symbolic links the tests
-of linked files are skipped, and the lines only they run fail the coverage check.
+of it (`nox -s oldest`). CI also builds the wheels a release would publish, one for each of those platforms, as the
+release builds them (`.github/workflows/wheels.yml`). Every session installs its packages on its first run (`kernel`
+its coverage tool and the crates too), `lowest` and `package` on each run, so those two always need the network. No
+session runs the lowest SQLite sift allows, 3.38: every Python build brings a newer one. On Windows, turn on
+Developer Mode first: without the right to make symbolic links the tests of linked files are skipped, and the lines
+only they run fail the coverage check.
 
 Before a release, `nox -s explore` runs the property tests with fresh random examples, 2,000 each, and 200 at least
 for those that build stores (`few` in `tests/examples.py`); the gate runs them derandomized. And `nox -s real` runs
@@ -103,6 +111,8 @@ starts without the model libraries.
 Set the version in `pyproject.toml` and move the "Unreleased" changes under `## [VERSION] - YYYY-MM-DD`, dated the
 day of the release, in a pull request: the release workflow refuses a version without that section, or with an empty
 one, before it builds anything (`python -m tools release notes VERSION` prints what it would publish). Once CI passes
-on its merge commit, the release workflow builds the package, publishes it to PyPI by trusted publishing, tags the
-commit and creates the GitHub release, marked a pre-release for a, b, rc and dev versions. If a job fails after PyPI
-took the package, re-run only the failed jobs.
+on its merge commit, the release workflow builds the sources and a wheel for each platform from that commit (Linux's
+in a manylinux image, so that they run where glibc is 2.28 or newer), publishes them to PyPI by trusted publishing
+only when the set is whole (`python -m tools release files FOLDER`), tags the commit and creates the GitHub release,
+marked a pre-release for a, b, rc and dev versions. If a job fails after PyPI took the package, re-run only the
+failed jobs.

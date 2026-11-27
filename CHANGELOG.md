@@ -15,6 +15,10 @@ need its new keys; ids of JSON Lines records and mail attachments are written an
 
 - sift needs Python 3.12 or newer, and SQLite 3.38 or newer: uv's, python.org's and Homebrew's Pythons bring one. A
   Python built against an older system SQLite (Ubuntu 22.04 has 3.37) is refused, saying so.
+- The keyword index is built and merged by a compiled extension, written in Rust. PyPI holds it built for Linux on
+  x86-64 and ARM (glibc 2.28 or newer), macOS on Apple silicon and Windows on x86-64, one wheel each for every
+  CPython from 3.12 on. Anywhere else, and on the free-threaded builds, pip builds it from the sources, which needs
+  Rust 1.100 or newer and a C compiler.
 - Each collection's store has a new layout; the catalog is `catalog.sqlite` in place of `sift.db`. A store's layout
   changes from now on by numbered migrations, which the first command of a newer sift runs once. Each store
   records which older sifts may still read it and which may write it: an older sift opens a store a newer one

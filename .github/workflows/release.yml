@@ -58,32 +58,16 @@ jobs:
           echo "prerelease=$(python3 -m tools release prerelease "$VERSION")" >> "$GITHUB_OUTPUT"
 
   build:
+    # The sources and a wheel for each platform, built from the commit CI tested and handed on as one artifact only
+    # when they are whole. The workflow that builds them is main's as it is now, like this one: a workflow that
+    # follows a run of CI is never that commit's own.
     needs: check
     if: needs.check.outputs.new == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false  # no step after it pushes with git
-          ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
-        with:
-          version: "0.13.9"  # the uv that builds what PyPI gets, as reviewed: not whichever is newest that day
-          python-version: "3.12"
-      - run: uv build --build-constraints .github/requirements-build.txt --require-hashes
-      - run: uvx twine@7.0.0 check --strict dist/*
-      - name: Does what PyPI gets hold the tracked sources and nothing else, and do its commands run?
-        run: |
-          for name in sift sift-rag; do
-            said=$(uv tool run --quiet --isolated --torch-backend=cpu --from dist/*.whl "$name" --version)
-            uv run --no-project python -m tools package dist "$said"
-          done
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: error
+    # zizmor asks for GitHub's newer form, `$/.github/workflows/wheels.yml`, which actionlint 1.7.12, the newest,
+    # refuses: `./` it is, as GitHub has taken it since 2022, until both read the newer one.
+    uses: ./.github/workflows/wheels.yml  # zizmor: ignore[self-repository]
+    with:
+      ref: ${{ github.event.workflow_run.head_sha }}
 
   publish:
     needs: build
@@ -103,6 +87,8 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
+        with:
+          skip-existing: true  # run again after PyPI took some of the files, this job sends the rest
 
   github-release:
     needs: [check, publish]
