@@ -85,14 +85,14 @@ def test_passages_read_together_are_embedded_longest_first_a_call_at_a_time(tmp_
     assert counted(store(home), "SELECT count(*) FROM vectors") == 12
 
 
-def test_an_embedding_cut_short_keeps_the_reads_before_it_and_is_finished_by_embedding_again(
+def test_an_embedding_cut_short_keeps_every_call_before_it_and_is_finished_by_embedding_again(
     tmp_path: Path,
 ) -> None:
-    home, sizes = sized_notes(tmp_path), Embedding(chunks_a_call=2, chunks_a_read=4)
+    home, sizes = sized_notes(tmp_path), Embedding(chunks_a_call=2, chunks_a_read=8)
     with pytest.raises(KeyboardInterrupt):
         embed(home, EmbedCollections(), quiet, Stopping(Hashed(), 3), sizes)
-    assert counted(store(home), "SELECT count(*) FROM vectors") == 4
-    assert embed(home, EmbedCollections(), quiet, Hashed(), sizes).collections[0].outcome == Embedded(8, 0)
+    assert counted(store(home), "SELECT count(*) FROM vectors") == 6
+    assert embed(home, EmbedCollections(), quiet, Hashed(), sizes).collections[0].outcome == Embedded(6, 0)
     assert counted(store(home), "SELECT count(DISTINCT chunk) FROM vectors") == 12
 
 

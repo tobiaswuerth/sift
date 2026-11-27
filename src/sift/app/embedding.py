@@ -85,14 +85,11 @@ def _filled(connection: Connection, work: Work) -> Embedded:
     report(PhaseStarted(Phase.EMBED, total))
     stored, broken, after, done = 0, 0, 0, 0
     while waiting := _waiting(connection, after, work.embedding.chunks_a_read):
-        longest_first = sorted(waiting, key=_length, reverse=True)
-        matrices: list[Halves] = []
-        for alike in itertools.batched(longest_first, work.embedding.chunks_a_call):
-            matrices.append(_encoded(work.models, alike))
-            done += len(alike)
+        for alike in itertools.batched(sorted(waiting, key=_length, reverse=True), work.embedding.chunks_a_call):
+            kept = _written(connection, work.models, alike, _encoded(work.models, alike))
+            stored, broken, done = stored + kept.stored, broken + len(kept.broken), done + len(alike)
             report(Advanced(done))
-        kept = _written(connection, work.models, longest_first, np.concatenate(matrices))
-        stored, broken, after = stored + kept.stored, broken + len(kept.broken), waiting[-1].chunk
+        after = waiting[-1].chunk
     report(PhaseDone(stored))
     if broken:
         report(Noted(f"{counted(broken, 'chunk')} could not be embedded: the model gave no vector", BROKEN_REMEDY))

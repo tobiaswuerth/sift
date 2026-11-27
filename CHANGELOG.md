@@ -54,11 +54,12 @@ the [README](README.md#updating) says; any command in such a home says so too.
 - `SIFT_UPDATE_CHECK` is off by default. Turned on, a command run in a terminal says when a newer sift is out and which
   command updates it; sift never updates itself.
 - `sift worker` takes at most 256 texts a request, and serves sifts of its own major version.
-- `sift embed` reads 16,384 passages at a time, embeds them longest first and writes their vectors at once, the next
-  batch's words cut while the model runs on the one before. On an NVIDIA GPU, with 20,000 passages or more waiting,
-  it compiles the model first: 20 to 60 s once a process, shown as its own step, and then about twice as many
-  passages a second. Fewer passages, queries and other devices use the model as it is. On Windows sift depends on
-  `triton-windows` for it; PyTorch brings Triton on Linux.
+- `sift embed` reads 16,384 passages at a time and embeds them longest first, writing each batch's vectors as soon
+  as it is done, the next two batches' words cut while the model runs on the one before. On an NVIDIA GPU, with
+  20,000 passages or more waiting, it compiles the model first: 20 to 60 s, once a process and again after the home
+  process let the idle model go, shown as its own step, and then about twice as many passages a second. Fewer
+  passages, queries and other devices use the model as it is. On Windows sift depends on `triton-windows` for it;
+  PyTorch brings Triton on Linux.
 
 ### Removed
 

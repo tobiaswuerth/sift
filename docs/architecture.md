@@ -55,11 +55,12 @@ diacritics removed, reproduced exactly as a table of every code point's separato
   bfloat16 where the GPU has it and float32 elsewhere; vectors are stored as fp16. The default models load at a commit
   sift pins, so that what their owners push later changes no vector; a store records the model at its commit, and
   `sift embed` refuses to mix models.
-- `sift embed` reads 16,384 passages at a time, embeds them longest first, so that a batch's texts are of similar
-  length, and writes their vectors at once; a thread cuts the next batch's words while the model runs. On an NVIDIA
-  GPU, with 20,000 passages or more to embed, it first compiles the model with PyTorch (Triton's kernels, the whole
-  model as one graph): 20 to 60 seconds once a process, then about twice the passages a second. Queries, single texts
-  and other devices use the model as it is.
+- `sift embed` reads 16,384 passages at a time and embeds them longest first, so that a batch's texts are of similar
+  length, writing each batch's vectors as soon as it is embedded; a thread cuts the next two batches' words while
+  the model runs. On an NVIDIA GPU, with 20,000 passages or more to embed, it first compiles the model with PyTorch
+  (Triton's kernels, the whole model as one graph): 20 to 60 seconds, once a process and again after the home
+  process let the idle model go, then about twice the passages a second. Queries, single texts and other devices use
+  the model as it is.
 - Each vector's signs, one bit per dimension, are held in memory: 96 bytes for 768 dimensions. A query is compared with
   every code by Hamming distance, without an index to build or tune. The nearest 10,000 are ranked again by the
   query's own floats against their bits, and the best 1,000 are scored exactly with their vectors.
