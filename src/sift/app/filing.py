@@ -29,7 +29,7 @@ class Limits:
     first_files_a_write: int = 100
     most_files_a_write: int = 1000
     most_bytes_a_write: int = 64 << 20
-    most_records_a_write: int = 2000
+    most_records_a_write: int = 20_000
     most_characters_a_write: int = 64 << 20
     batches: Batches = BATCHES
 

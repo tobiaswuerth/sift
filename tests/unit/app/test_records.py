@@ -15,9 +15,10 @@ from sift.api.search import SearchKeywords
 from sift.app.collections import add, status
 from sift.app.documents import documents
 from sift.app.embedding import embed
-from sift.app.filing import Limits, Lines, Readers
+from sift.app.filing import LIMITS, Limits, Lines, Readers
 from sift.app.indexing import index
 from sift.app.search import search
+from sift.domain.plan.segments import POLICY, Held, merges
 from sift.domain.text.documents import Outcome
 from sift.domain.text.records import GIVE_IDS, SkippedLine
 from sift.ingest.files import Identity
@@ -308,3 +309,15 @@ def test_small_files_of_records_are_stored_together_in_one_keyword_segment(tmp_p
     done = indexed(home)
     assert (done.added, keyword_segments(home)) == (90, (1, 1))
     assert found(home, "part") == sorted(f"c/r{n:02}.jsonl#{n}-{m}" for n in range(30) for m in range(3))[:20]
+
+
+def test_the_passages_of_a_large_file_of_records_are_merged_twice_at_most_on_their_way_to_a_full_segment() -> None:
+    held: list[Held] = []
+    rewritten = 0
+    for _ in range(POLICY.most // LIMITS.most_records_a_write):
+        held.append(Held(LIMITS.most_records_a_write, 0))
+        while planned := merges(held, POLICY):
+            joined = sum(each.chunks for each in held[planned[0].start : planned[0].stop])
+            rewritten += joined
+            held[planned[0].start : planned[0].stop] = [Held(joined, 0)]
+    assert ([each.chunks for each in held], rewritten) == ([POLICY.most], 2 * POLICY.most)
