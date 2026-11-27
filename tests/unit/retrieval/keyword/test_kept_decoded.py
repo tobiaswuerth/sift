@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from sift.domain.arrays import Ids, ints
+from sift.domain.arrays import ints
 from sift.domain.query.expressions import Or, Phrase, Term
 from sift.retrieval.keyword.lists import (
     BlockKey,
@@ -24,7 +24,8 @@ from tests.keyword_stores import SMALL, applied, opened_store
 QUERY = Or(
     (Term("w0"), Term("w1"), Phrase(("w0", "w1")), Phrase(("w2", "w0")), Phrase(("w0", "w15")), Phrase(("w25", "w0")))
 )
-READS = ("keyword_lengths", "keyword_blocks", "lists, places FROM keyword_packs")
+KEPT = ("keyword_lengths", "postings FROM keyword_blocks")
+READS = (*KEPT, "positions FROM keyword_blocks", "lists, places FROM keyword_packs")
 
 
 @contextmanager
@@ -45,8 +46,8 @@ def alone(array: NDArray[np.generic]) -> bool:
 
 
 def test_a_search_given_what_was_decoded_before_reads_no_lengths_or_blocks_again() -> None:
-    lengths, blocks, positions = dict[int, Dense](), dict[BlockKey, PostingArrays](), dict[BlockKey, Ids]()
-    kept = DecodedLists(lengths, blocks, positions)
+    lengths, blocks = dict[int, Dense](), dict[BlockKey, PostingArrays]()
+    kept = DecodedLists(lengths, blocks)
     with store_of(3, 30) as connection:
         said = list[str]()
         connection.set_trace_callback(said.append)
@@ -56,12 +57,10 @@ def test_a_search_given_what_was_decoded_before_reads_no_lengths_or_blocks_again
         with reading(connection) as transaction:
             again = search([opened(transaction, kept)], QUERY, 5)
         connection.set_trace_callback(None)
-    assert (again, reads(said)) == (first, dict.fromkeys(READS, 0))
+    assert (again, [reads(said)[table] > 0 for table in READS]) == (first, [table not in KEPT for table in READS])
     assert all(before[table] for table in READS), before
     assert all(alone(each) for dense in lengths.values() for each in (dense.numbers, dense.table, dense.order))
     assert all(alone(each) for arrays in blocks.values() for each in arrays)
-    assert all(alone(each) for each in positions.values())
-    assert held_bytes(next(iter(positions.values()))) == next(iter(positions.values())).nbytes
     assert held_bytes(next(iter(blocks.values()))) == sum(each.nbytes for each in next(iter(blocks.values())))
 
 
@@ -85,7 +84,7 @@ def test_a_store_without_documents_searched_beside_another_changes_neither_its_r
 
 def test_lengths_given_to_a_search_stay_as_they_were_while_others_read_more_from_them() -> None:
     with store_of(1, 60) as connection, reading(connection) as transaction:
-        base = DecodedLists({}, {}, {})
+        base = DecodedLists({}, {})
         store = opened(transaction, base)
         (segment,) = store.segments
         places = np.arange(segment.first, segment.last + 1, dtype=np.int64)
@@ -95,7 +94,7 @@ def test_lengths_given_to_a_search_stay_as_they_were_while_others_read_more_from
         shared = base.lengths.get(segment.id)
         assert shared is not None
         before = shared.table.copy()
-        one, other = DecodedLists({segment.id: shared}, {}, {}), DecodedLists({segment.id: shared}, {}, {})
+        one, other = DecodedLists({segment.id: shared}, {}), DecodedLists({segment.id: shared}, {})
         read_by_one = lengths_at(opened(transaction, one), places[block == fourth])
         lengths_at(opened(transaction, other), places[block == fifth])
         assert np.array_equal(shared.table, before)

@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
 use pyo3::types::{PyBytes, PyList, PyString};
 
-use crate::lists::{blocks, places};
+use crate::lists::{Sought, blocks, occurring};
 use crate::numbers::little_endian;
 use crate::packs::{self, Entry, entries};
 use crate::python::{lengths_of, numbers_of};
@@ -11,6 +11,7 @@ use crate::segment::{lengths_read, lengths_written};
 
 type Blocked<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Vec<usize>);
 type Counted<'py> = Vec<(Bound<'py, PyString>, usize)>;
+type Occurrences<'py> = (Bound<'py, PyBytes>, Bound<'py, PyBytes>, Bound<'py, PyBytes>);
 type Unpacked<'py> = (
     Bound<'py, PyString>,
     usize,
@@ -27,10 +28,28 @@ pub fn blocked_all<'py>(each: &Bound<'py, PyAny>) -> PyResult<Blocked<'py>> {
 }
 
 #[pyfunction]
-pub fn positions_all<'py>(each: &Bound<'py, PyAny>, counts: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyBytes>> {
-    let (py, rows, counts) = (each.py(), each.extract::<Vec<PyBackedBytes>>()?, numbers_of(counts)?);
-    let found = py.detach(|| places(&rows, &counts).map(|found| little_endian(&found)));
-    Ok(PyBytes::new(py, &found.map_err(PyValueError::new_err)?))
+pub fn occurrences<'py>(
+    each: &Bound<'py, PyAny>,
+    bounds: &Bound<'py, PyAny>,
+    ids: &Bound<'py, PyAny>,
+    counts: &Bound<'py, PyAny>,
+    wanted: &Bound<'py, PyAny>,
+) -> PyResult<Occurrences<'py>> {
+    let (py, rows, bounds) = (
+        each.py(),
+        each.extract::<Vec<PyBackedBytes>>()?,
+        bounds.extract::<Vec<usize>>()?,
+    );
+    let (ids, counts, wanted) = (numbers_of(ids)?, numbers_of(counts)?, numbers_of(wanted)?);
+    let sought = Sought {
+        bounds: &bounds,
+        ids: &ids,
+        counts: &counts,
+        wanted: &wanted,
+    };
+    let found = py.detach(|| occurring(&rows, &sought)).map_err(PyValueError::new_err)?;
+    let stored = |numbers: &[i64]| PyBytes::new(py, &little_endian(numbers));
+    Ok((stored(&found.ids), stored(&found.counts), stored(&found.positions)))
 }
 
 fn told<'py>(py: Python<'py>, each: &Entry, placed: bool) -> Unpacked<'py> {

@@ -3,7 +3,10 @@ import struct
 import zlib
 from collections.abc import Sequence
 
-from sift.domain.codec.postings import PACKED, RANGES_HEAD, RAW
+import numpy as np
+
+from sift.domain.arrays import Ids
+from sift.domain.codec.postings import PACKED, RANGES_HEAD, RAW, occurrences
 
 BLOCK_HEAD = struct.Struct("<qI")
 PACKED_FROM = 64
@@ -34,6 +37,11 @@ def placed(positions: Sequence[Sequence[int]]) -> bytes:
     return _wrapped(
         b"".join(varints([after - before for before, after in itertools.pairwise([0, *each])]) for each in positions)
     )
+
+
+def positions_of(data: bytes, counts: Ids) -> Ids:
+    places = np.arange(len(counts), dtype=np.int64)
+    return occurrences([data], [0, len(counts)], (places, counts), places)[2]
 
 
 def ranges(ids: Sequence[int], sizes: Sequence[int], best: Sequence[int]) -> bytes:

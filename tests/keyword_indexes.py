@@ -5,7 +5,7 @@ import numpy as np
 from hypothesis import strategies as st
 
 from sift.domain.arrays import ints
-from sift.domain.codec.postings import blocked, positions_of
+from sift.domain.codec.postings import blocked
 from sift.domain.plan.segments import Held, Policy, merges
 from sift.domain.text.tokens import tokens
 from sift.storage.database import Batches, Connection, Reading, reading, rows, run, writing
@@ -20,7 +20,7 @@ from sift.storage.keyword_lists import (
     segments,
 )
 from sift.storage.keywords import totals
-from tests.coded_lists import packed
+from tests.coded_lists import packed, positions_of
 from tests.keyword_stores import COLUMNS, Instance, Round, instances, texts
 
 WORDS = ("alpha", "beta", "Gamma", "δέλτα", "x-ray", "naïve")

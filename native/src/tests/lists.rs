@@ -1,4 +1,4 @@
-use crate::lists::{Lists, block, blocks, gaps, list, placed, places};
+use crate::lists::{Lists, Occurring, Sought, block, blocks, gaps, list, occurring, placed};
 use crate::tests::support::refused;
 
 const RAW: u8 = 0;
@@ -78,7 +78,7 @@ fn positions_other_than_their_counts_or_past_any_passage_are_refused() {
 
 #[test]
 fn many_lists_decode_together_as_each_alone() -> Result<(), String> {
-    let (mut coded, mut placing) = (Vec::new(), Vec::new());
+    let mut coded = Vec::new();
     for id in 0..300i64 {
         let lists = Lists {
             ids: &[id, id + 1000],
@@ -86,17 +86,15 @@ fn many_lists_decode_together_as_each_alone() -> Result<(), String> {
             positions: &[id, 4, 9],
             offsets: &[0, 1, 3],
         };
-        let (postings, positions) = list(&lists, 0, 2)?;
-        coded.push(postings);
-        placing.push(positions);
+        coded.push(list(&lists, 0, 2)?.0);
     }
     let found = blocks(&coded)?;
     assert_eq!(found.bounds, (0..=600).step_by(2).collect::<Vec<usize>>());
-    assert_eq!(found.ids[598..], [299, 1299]);
-    let positions = places(&placing, &found.counts)?;
-    assert_eq!(positions[897..], [299, 4, 9]);
+    assert_eq!(
+        (&found.ids[598..], &found.counts[598..]),
+        (&[299, 1299][..], &[1, 2][..])
+    );
     assert_eq!(blocks(&coded[..2])?.ids, [0, 1000, 1, 1001]);
-    assert_eq!(places(&placing[..2], &[1, 2, 1, 2])?, [0, 4, 9, 1, 4, 9]);
     assert_eq!(blocks::<Vec<u8>>(&[])?.bounds, [0]);
     Ok(())
 }
@@ -127,4 +125,113 @@ fn a_position_held_twice_by_a_passage_is_refused_read_or_written() {
         offsets: &[0, 2],
     };
     assert!(refused(list(&lists, 0, 1), "a position twice"));
+}
+
+fn told(found: &Occurring) -> (&[i64], &[i64], &[i64]) {
+    (&found.ids, &found.counts, &found.positions)
+}
+
+#[test]
+fn the_positions_of_the_passages_sought_come_back_from_many_blocks_at_once_as_from_each_alone() -> Result<(), String> {
+    let (mut rows, mut ids, mut counts, mut bounds) = (Vec::new(), Vec::new(), Vec::new(), vec![0usize]);
+    for block in 0..300i64 {
+        let lists = Lists {
+            ids: &[block * 10, block * 10 + 3, block * 10 + 7],
+            counts: &[1, 2, 1],
+            positions: &[block, 4, 9, 2],
+            offsets: &[0, 1, 3, 4],
+        };
+        rows.push(list(&lists, 0, 3)?.1);
+        ids.extend_from_slice(lists.ids);
+        counts.extend_from_slice(lists.counts);
+        bounds.push(ids.len());
+    }
+    let sought = |wanted| Sought {
+        bounds: &bounds,
+        ids: &ids,
+        counts: &counts,
+        wanted,
+    };
+    let found = occurring(&rows, &sought(&[3, 7, 7, 8, 2990, 2993, 5000]))?;
+    assert_eq!(
+        told(&found),
+        (&[3, 7, 2990, 2993][..], &[2, 1, 1, 2][..], &[4, 9, 2, 299, 4, 9][..])
+    );
+    assert_eq!(told(&occurring(&rows, &sought(&[]))?), (&[][..], &[][..], &[][..]));
+    let alone = Sought {
+        bounds: &[0, 3],
+        ids: &ids[3..6],
+        counts: &counts[3..6],
+        wanted: &[0, 10, 17, 20],
+    };
+    let found = occurring(&rows[1..2], &alone)?;
+    assert_eq!(told(&found), (&[10, 17][..], &[1, 1][..], &[1, 2][..]));
+    let none = Sought {
+        bounds: &[0],
+        ids: &[],
+        counts: &[],
+        wanted: &[5],
+    };
+    assert_eq!(told(&occurring::<Vec<u8>>(&[], &none)?), (&[][..], &[][..], &[][..]));
+    Ok(())
+}
+
+#[test]
+fn passages_told_other_than_block_by_block_or_with_other_positions_than_a_block_holds_are_refused() -> Result<(), String>
+{
+    let lists = Lists {
+        ids: &[5, 9],
+        counts: &[1, 2],
+        positions: &[0, 1, 7],
+        offsets: &[0, 1, 3],
+    };
+    let rows = [list(&lists, 0, 2)?.1];
+    let uneven: [(&[usize], &[i64], &[i64]); 6] = [
+        (&[0], &[5, 9], &[1, 2]),
+        (&[1, 2], &[5, 9], &[1, 2]),
+        (&[0, 1], &[5, 9], &[1, 2]),
+        (&[0, 2], &[5, 9], &[1]),
+        (&[0, 3], &[5, 9], &[1, 2]),
+        (&[], &[], &[]),
+    ];
+    for (bounds, ids, counts) in uneven {
+        let sought = Sought {
+            bounds,
+            ids,
+            counts,
+            wanted: &[5],
+        };
+        assert!(refused(occurring(&rows, &sought), "other than block by block"));
+    }
+    let two = [rows[0].clone(), rows[0].clone()];
+    let falling = Sought {
+        bounds: &[0, 2, 1],
+        ids: &[5],
+        counts: &[1],
+        wanted: &[5],
+    };
+    assert!(refused(occurring(&two, &falling), "other than block by block"));
+    let miscounted = Sought {
+        bounds: &[0, 2],
+        ids: &[5, 9],
+        counts: &[1, 3],
+        wanted: &[5],
+    };
+    assert!(refused(
+        occurring(&rows, &miscounted),
+        "positions other than its counts"
+    ));
+    assert!(refused(
+        occurring(
+            &[vec![7u8]],
+            &Sought {
+                bounds: &[0, 0],
+                ids: &[],
+                counts: &[],
+                wanted: &[]
+            }
+        ),
+        "unknown flag byte"
+    ));
+    Ok(())
 }

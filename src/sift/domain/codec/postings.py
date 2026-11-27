@@ -63,16 +63,15 @@ def blocked_all(each: Sequence[bytes]) -> tuple[Ids, Ids, list[int]]:
     return _numbers(ids), _numbers(counts), bounds
 
 
-def positions_of(data: bytes, counts: Ids) -> Ids:
-    return positions_all([data], counts)
-
-
-def positions_all(each: Sequence[bytes], counts: Ids) -> Ids:
+def occurrences(
+    each: Sequence[bytes], bounds: Sequence[int], held: tuple[Ids, Ids], wanted: Ids
+) -> tuple[Ids, Ids, Ids]:
+    places, counts = held
     try:
-        found = _native.positions_all(each, whole(counts))
+        found, times, positions = _native.occurrences(each, bounds, whole(places), whole(counts), whole(wanted))
     except ValueError as error:
         raise DamagedError(str(error)) from None
-    return _numbers(found)
+    return _numbers(found), _numbers(times), _numbers(positions)
 
 
 def _ascending(start: int, gaps: NDArray[np.uint32]) -> Ids:

@@ -121,14 +121,14 @@ def test_searches_through_what_was_decoded_find_what_they_find_alone_and_follow_
 def arrays_of(value: Decoded) -> tuple[NDArray[np.generic], ...]:
     if isinstance(value, Dense):
         return value.numbers, value.table, value.order, value.blocks.values
-    return value if isinstance(value, tuple) else (value,)
+    return value
 
 
 def test_many_small_decoded_lists_are_held_to_the_budget_with_what_each_entry_costs() -> None:
     kept = KeptDecoded(budget=100_000)
-    positions = kept(A).positions
+    blocks = kept(A).blocks
     for n in range(10_000):
-        positions[1, f"w{n}", 0] = np.zeros(1, np.int64)
+        blocks[1, f"w{n}", 0] = (np.zeros(1, np.int64), np.zeros(0, np.int64))
     assert (len(kept.entries) <= 100_000 // ENTRY_BYTES, 0 < kept.size <= kept.budget) == (True, True)
 
 
@@ -136,7 +136,7 @@ def test_what_is_kept_cannot_be_written(home: Path) -> None:
     kept = KeptDecoded()
     search(home, SearchKeywords('"robot plans" OR halo'), Watching(decoded=kept))
     arrays_kept = [array for value, _ in kept.entries.values() for array in arrays_of(value)]
-    assert len(arrays_kept) == 6
+    assert len(arrays_kept) == 4
     for array in arrays_kept:
         with pytest.raises(ValueError, match="WRITEABLE"):
             array.flags.writeable = True

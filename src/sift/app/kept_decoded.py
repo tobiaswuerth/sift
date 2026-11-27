@@ -14,9 +14,8 @@ KEPT_BYTES = 512 << 20
 ENTRY_BYTES = 512
 LENGTHS = "lengths"
 BLOCKS = "blocks"
-POSITIONS = "positions"
 
-type Decoded = Dense | PostingArrays | Ids
+type Decoded = Dense | PostingArrays
 type EntryKey = tuple[Path, CollectionId, int, str, Hashable]
 
 
@@ -35,11 +34,7 @@ class KeptDecoded:
             if self.generations.get((at.store, at.collection)) != at.generation:
                 self._dropped(lambda key: key[:2] == (at.store, at.collection))
                 self.generations[at.store, at.collection] = at.generation
-        return DecodedLists(
-            _KeptView(self, at, LENGTHS),
-            _KeptView(self, at, BLOCKS),
-            _KeptView(self, at, POSITIONS),
-        )
+        return DecodedLists(_KeptView(self, at, LENGTHS), _KeptView(self, at, BLOCKS))
 
     def got(self, key: EntryKey) -> Decoded | None:
         with self.lock:
@@ -73,7 +68,7 @@ class KeptDecoded:
 
 
 @dataclass(frozen=True, slots=True)
-class _KeptView[K: Hashable, V: (Dense, tuple[Ids, Ids], Ids)]:
+class _KeptView[K: Hashable, V: (Dense, tuple[Ids, Ids])]:
     kept: KeptDecoded
     at: KeywordsAt
     kind: str

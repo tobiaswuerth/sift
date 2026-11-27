@@ -13,13 +13,14 @@ import sift.retrieval.keyword.lists as lists_module
 import sift.retrieval.keyword.search as search_module
 import sift.storage.keyword_lists as keyword_lists_module
 from sift.domain.codec.shape import Shape
-from sift.domain.query.expressions import And, Or, Term
+from sift.domain.query.expressions import And, Leaf, Or, Phrase, Term
 from sift.retrieval.keyword.lists import Dense, Opened
 from sift.retrieval.keyword.search import FoundChunk, Tuning
 from tests.keyword_searches import Chunks, Draws, blocks_read, brute, collections, prose, same, search
 from tests.keyword_stores import Round
 
 FILLER = "filler"
+W1 = Term("w1")
 RANGE = 4
 
 
@@ -93,8 +94,9 @@ def test_all_of_some_words_reads_each_only_where_chunks_with_all_rarer_ones_are_
         assert read["alpha"] == read["beta"] == 0
 
 
-def calls_finding_half(stores: list[Opened], held: list[Chunks], named: Sequence[tuple[ModuleType, str]]) -> list[int]:
-    query = Term("w1")
+def calls_finding_half(
+    stores: list[Opened], held: list[Chunks], named: Sequence[tuple[ModuleType, str]], query: Leaf = W1
+) -> list[int]:
     found: list[tuple[FoundChunk, ...]] = []
     counted = calls(lambda: found.append(search(stores, query, 300, by_document=False)), named)
     same(found[0], brute(held, query, 600, by_document=False), 300, query)
@@ -120,6 +122,16 @@ def test_the_lengths_a_search_reads_are_unpacked_by_one_call_a_read_not_one_for_
         blocks = sum(len(dense.numbers) for dense in cast("dict[int, Dense]", store.decoded.lengths).values())
         assert blocks > 5 * looked_up
         assert unpacked <= looked_up
+
+
+def test_the_positions_a_phrase_reads_are_unpacked_by_one_call_a_list_not_one_for_each_block() -> None:
+    notes: Round = {f"n{n:04}.md": ("", "N", f"w1 w2 x{n}") for n in range(600)}
+    with collections([[notes]]) as (stores, held):
+        (store,) = stores
+        asked = [(lists_module, "positions_at"), (postings_module, "occurrences")]
+        lists_read, unpacked = calls_finding_half(stores, held, asked, Phrase(("w1", "w2")))
+        assert len(blocks_read(store)) > 100 * lists_read
+        assert unpacked == lists_read
 
 
 def rows_made(run: Callable[[], object]) -> int:

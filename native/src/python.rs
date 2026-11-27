@@ -51,7 +51,7 @@ fn listed<'py>(py: Python<'py>, segment: i64, filed: &Filed) -> PyResult<Listed<
 #[pymodule(name = "_native")]
 fn native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lists::blocked_all, module)?)?;
-    module.add_function(wrap_pyfunction!(lists::positions_all, module)?)?;
+    module.add_function(wrap_pyfunction!(lists::occurrences, module)?)?;
     module.add_function(wrap_pyfunction!(lists::with_lengths, module)?)?;
     module.add_function(wrap_pyfunction!(lists::lengths_all, module)?)?;
     module.add_function(wrap_pyfunction!(lists::unpacked, module)?)?;

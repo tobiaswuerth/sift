@@ -12,7 +12,7 @@ from sift.domain.codec.postings import (
     blocked,
     blocked_all,
     lengths_all,
-    positions_of,
+    occurrences,
     ranges_of,
 )
 from sift.domain.codec.shape import Shape
@@ -42,7 +42,6 @@ class Ranged:
 type StoredList = Whole | Ranged
 type PostingArrays = tuple[Ids, Ids]
 type BlockKey = tuple[int, str, int]
-WHOLE = -1
 
 
 @dataclass(eq=False, frozen=True, slots=True)
@@ -66,19 +65,16 @@ class Keeping[K, V](Protocol):
 class DecodedLists:
     lengths: Keeping[int, Dense]
     blocks: Keeping[BlockKey, PostingArrays]
-    positions: Keeping[BlockKey, Ids]
 
 
 def decoded_anew() -> DecodedLists:
-    return DecodedLists(dict[int, Dense](), dict[BlockKey, PostingArrays](), dict[BlockKey, Ids]())
+    return DecodedLists(dict[int, Dense](), dict[BlockKey, PostingArrays]())
 
 
-def held_bytes(value: Dense | PostingArrays | Ids) -> int:
+def held_bytes(value: Dense | PostingArrays) -> int:
     if isinstance(value, Dense):
         return value.numbers.nbytes + value.table.nbytes + value.order.nbytes + value.blocks.values.nbytes
-    if isinstance(value, tuple):
-        return sum(each.nbytes for each in value)
-    return value.nbytes
+    return sum(each.nbytes for each in value)
 
 
 @dataclass(eq=False, slots=True)
@@ -273,43 +269,20 @@ def lengths_at(store: Opened, places: Ids) -> Ids:
 
 
 def _positions_whole(store: Opened, held: Whole, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
-    key = (held.segment, held.term, WHOLE)
-    flat = store.decoded.positions.get(key)
-    if flat is None:
-        row = _one(keyword_lists.positions(store.transaction, held.segment, held.term, None), "a list of positions")
-        flat = read_only(positions_of(row.positions, held.counts))
-        store.decoded.positions[key] = flat
-    return _chosen(held.places, held.counts, flat, wanted)
-
-
-def _chosen(places: Ids, counts: Ids, flat: Ids, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
-    kept = among(places, wanted)
-    return places[kept], counts[kept], flat[np.repeat(kept, counts)]
+    row = _one(keyword_lists.positions(store.transaction, held.segment, held.term, None), "a list of positions")
+    return occurrences([row.positions], [0, len(held.places)], (held.places, held.counts), wanted.values)
 
 
 def _positions_ranged(store: Opened, held: Ranged, wanted: Ascending) -> tuple[Ids, Ids, Ids]:
     chosen = np.flatnonzero(among(held.ranges.ids, distinct(Ascending(wanted.values >> store.shape.range_shift))))
     numbers = ints(distinct(Ascending(_indexes(held, chosen) // store.shape.block)).values)
     blocks = _blocks(store, held, numbers)
-    found: dict[int, tuple[Ids, Ids, Ids]] = {}
-    missing: list[int] = []
-    for number in numbers:
-        flat = store.decoded.positions.get((held.segment, held.term, number))
-        if flat is None:
-            missing.append(number)
-        else:
-            found[number] = _chosen(*blocks[number], flat, wanted)
-    for row in keyword_lists.positions(store.transaction, held.segment, held.term, missing) if missing else ():
-        places, counts = blocks[row.number]
-        flat = read_only(positions_of(row.positions, counts))
-        store.decoded.positions[held.segment, held.term, row.number] = flat
-        found[row.number] = _chosen(places, counts, flat, wanted)
-    return joined([_none(), *(found[number] for number in sorted(found))])
-
-
-def _none() -> tuple[Ids, Ids, Ids]:
-    empty = np.zeros(0, np.int64)
-    return empty, empty, empty
+    read = keyword_lists.positions(store.transaction, held.segment, held.term, numbers) if numbers else []
+    none = np.zeros(0, np.int64)
+    places = np.concatenate([none, *(blocks[number][0] for number in numbers)])
+    counts = np.concatenate([none, *(blocks[number][1] for number in numbers)])
+    bounds = [*itertools.accumulate((len(blocks[number][0]) for number in numbers), initial=0)]
+    return occurrences([row.positions for row in read], bounds, (places, counts), wanted.values)
 
 
 def joined(parts: list[tuple[Ids, Ids, Ids]]) -> tuple[Ids, Ids, Ids]:

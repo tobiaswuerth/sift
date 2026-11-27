@@ -291,8 +291,7 @@ def places(made: Prepared, leaf: Prefix | Phrase) -> int:
 
 
 def decoded(store: Opened) -> int:
-    blocks, positions = cast("dict[object, object]", store.decoded.blocks), store.decoded.positions
-    return len(blocks) + len(cast("dict[object, object]", positions))
+    return len(cast("dict[object, object]", store.decoded.blocks))
 
 
 @pytest.mark.parametrize("leaf", [Prefix("w"), Phrase(("w0", "w1"))], ids=["prefix", "phrase"])

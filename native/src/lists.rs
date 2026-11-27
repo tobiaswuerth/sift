@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use rayon::prelude::*;
 
 use crate::numbers::{narrow, read, written};
@@ -8,9 +10,12 @@ const FIRST: usize = 8;
 const GAP: usize = 4;
 const MOST_POSITION: i64 = 1 << 32;
 const TOGETHER: usize = 256;
+const TASK: usize = 1 << 14;
+const WORTH: usize = 4;
 const FAR_APART: &str = "ids not ascending, or more than 2**32 apart: more than a block holds";
 const PAST: &str = "a list holds a position past any passage";
 const TWICE: &str = "a list holds a position twice, or positions out of their order";
+const UNEVEN: &str = "the passages of some blocks are told other than block by block";
 
 pub struct Block {
     pub ids: Vec<i64>,
@@ -30,21 +35,36 @@ pub struct Lists<'a> {
     pub offsets: &'a [usize],
 }
 
+pub struct Sought<'a> {
+    pub bounds: &'a [usize],
+    pub ids: &'a [i64],
+    pub counts: &'a [i64],
+    pub wanted: &'a [i64],
+}
+
+#[derive(Default)]
+pub struct Occurring {
+    pub ids: Vec<i64>,
+    pub counts: Vec<i64>,
+    pub positions: Vec<i64>,
+}
+
 pub type Coded = (Vec<u8>, Vec<u8>);
 
 fn each_of<T, R, F>(rows: &[R], one: F) -> Result<Vec<T>, String>
 where
     T: Send,
     R: AsRef<[u8]> + Sync,
-    F: Fn(&[u8]) -> Result<T, String> + Send + Sync,
+    F: Fn(usize, &[u8]) -> Result<T, String> + Send + Sync,
 {
-    if rows.len() < TOGETHER {
-        rows.iter().map(|row| one(row.as_ref())).collect()
+    let bytes: usize = rows.iter().map(|row| row.as_ref().len()).sum();
+    if rows.len() < TOGETHER && bytes < WORTH * TASK {
+        let numbered = rows.iter().enumerate();
+        numbered.map(|(at, row)| one(at, row.as_ref())).collect()
     } else {
-        rows.par_iter()
-            .with_min_len(TOGETHER)
-            .map(|row| one(row.as_ref()))
-            .collect()
+        let least = (rows.len() * TASK / bytes.max(1)).clamp(1, TOGETHER);
+        let numbered = rows.par_iter().enumerate().with_min_len(least);
+        numbered.map(|(at, row)| one(at, row.as_ref())).collect()
     }
 }
 
@@ -91,7 +111,7 @@ pub fn block(data: &[u8]) -> Result<Block, String> {
 }
 
 pub fn blocks<R: AsRef<[u8]> + Sync>(rows: &[R]) -> Result<Blocks, String> {
-    let found = each_of(rows, block)?;
+    let found = each_of(rows, |_, row| block(row))?;
     let held = found.iter().map(|one| one.ids.len()).sum();
     let (mut ids, mut counts) = (Vec::with_capacity(held), Vec::with_capacity(held));
     let mut bounds = Vec::with_capacity(found.len() + 1);
@@ -144,13 +164,45 @@ pub fn placed(found: &mut [i64], counts: &[i64]) -> Result<(), String> {
     }
 }
 
-pub fn places<R: AsRef<[u8]> + Sync>(rows: &[R], counts: &[i64]) -> Result<Vec<i64>, String> {
-    let parts = each_of(rows, gaps)?;
-    let mut found = Vec::with_capacity(parts.iter().map(Vec::len).sum());
-    for part in &parts {
-        found.extend_from_slice(part);
+fn chosen(row: &[u8], sought: &Sought, held: Range<usize>) -> Result<Occurring, String> {
+    let (ids, counts) = (&sought.ids[held.clone()], &sought.counts[held]);
+    let mut positions = gaps(row)?;
+    placed(&mut positions, counts)?;
+    let from = ids
+        .first()
+        .map_or(0, |&first| sought.wanted.partition_point(|&each| each < first));
+    let mut wanted = sought.wanted[from..].iter().copied().peekable();
+    let (mut found, mut at) = (Occurring::default(), 0usize);
+    for (&id, &count) in ids.iter().zip(counts) {
+        let end = at + usize::try_from(count).unwrap_or(0);
+        while wanted.next_if(|&each| each < id).is_some() {}
+        if wanted.peek() == Some(&id) {
+            found.ids.push(id);
+            found.counts.push(count);
+            found.positions.extend_from_slice(&positions[at..end]);
+        }
+        at = end;
     }
-    placed(&mut found, counts)?;
+    Ok(found)
+}
+
+pub fn occurring<R: AsRef<[u8]> + Sync>(rows: &[R], sought: &Sought) -> Result<Occurring, String> {
+    let bounds = sought.bounds;
+    let even = bounds.len() == rows.len() + 1
+        && bounds.first() == Some(&0)
+        && bounds.is_sorted()
+        && bounds.last() == Some(&sought.ids.len())
+        && sought.counts.len() == sought.ids.len();
+    if !even {
+        return Err(UNEVEN.to_owned());
+    }
+    let parts = each_of(rows, |at, row| chosen(row, sought, bounds[at]..bounds[at + 1]))?;
+    let mut found = Occurring::default();
+    for part in &parts {
+        found.ids.extend_from_slice(&part.ids);
+        found.counts.extend_from_slice(&part.counts);
+        found.positions.extend_from_slice(&part.positions);
+    }
     Ok(found)
 }
 

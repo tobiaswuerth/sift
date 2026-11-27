@@ -17,13 +17,13 @@ from sift.domain.codec.postings import (
     blocked,
     blocked_all,
     lengths_all,
-    positions_of,
+    occurrences,
     ranges_of,
     with_lengths,
 )
 from sift.domain.codec.shape import Shape
 from sift.domain.errors import DamagedError
-from tests.coded_lists import BLOCK_HEAD, block, placed, ranges, varint, varints
+from tests.coded_lists import BLOCK_HEAD, block, placed, positions_of, ranges, varint, varints
 from tests.unit.domain.codec.built import SMALL, of_bodies, segment, short_lists
 
 
@@ -233,6 +233,31 @@ def test_the_lengths_of_many_blocks_come_back_as_a_row_for_each_and_of_none_as_n
     assert (table.shape, table.dtype) == ((100, 64), np.uint32)
     assert ints(table.reshape(-1)) == ints(blocks % 977 + 1)
     assert lengths_all([], 6).shape == (0, 64)
+
+
+def test_the_positions_of_the_passages_wanted_come_back_from_many_blocks_as_each_block_holds_them() -> None:
+    rng = np.random.default_rng(11)
+    rows: list[bytes] = []
+    held: dict[int, list[int]] = {}
+    bounds = [0]
+    for number in range(40):
+        ids = sorted(ints(rng.choice(1000, 30, replace=False) + number * 1000))
+        own = [sorted(ints(rng.choice(500, int(rng.integers(1, 6)), replace=False))) for _ in ids]
+        rows.append(placed(own))
+        held |= dict(zip(ids, own, strict=True))
+        bounds.append(len(held))
+    places = np.array(list(held), np.int64)
+    counts = np.array([len(own) for own in held.values()], np.int64)
+    wanted = np.array(sorted({*list(held)[::3], 7, 123_456}), np.int64)
+    found, times, positions = occurrences(rows, bounds, (places, counts), wanted)
+    both = [place for place in held if place in set(ints(wanted))]
+    assert (len(both) >= 400, ints(found)) == (True, both)
+    assert ints(times) == [len(held[place]) for place in both]
+    assert ints(positions) == [position for place in both for position in held[place]]
+    nothing = occurrences([], [0], (places[:0], counts[:0]), wanted)
+    assert [len(each) for each in nothing] == [0, 0, 0]
+    with pytest.raises(DamagedError, match="told other than block by block"):
+        occurrences(rows[:2], bounds[:2], (places[:30], counts[:30]), wanted)
 
 
 def test_numbers_are_kept_little_endian_on_every_machine() -> None:
