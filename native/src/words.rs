@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{PoisonError, RwLock};
 
 use crate::numbers::narrow;
 
@@ -7,6 +9,8 @@ const POINTS: usize = 0x11_0000;
 const WIDTH: usize = 4;
 const APART: u32 = 0x20;
 const DROPPED: u32 = u32::MAX;
+const SHARDS: usize = 64;
+const SHARDS_WIDE: u64 = 64;
 const BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const PRIME: u64 = 0x0100_0000_01b3;
 
@@ -70,24 +74,71 @@ impl Hasher for Fnv {
     }
 }
 
-#[derive(Default)]
+type Codes<C> = HashMap<Box<str>, C, BuildHasherDefault<Fnv>>;
+
 pub struct Terms {
-    codes: HashMap<Box<str>, u32, BuildHasherDefault<Fnv>>,
-    names: Vec<Box<str>>,
+    shards: Vec<RwLock<Codes<usize>>>,
+    held: AtomicUsize,
+}
+
+#[derive(Default)]
+pub struct Seen {
+    codes: Codes<u32>,
+}
+
+impl Default for Terms {
+    fn default() -> Self {
+        Self {
+            shards: (0..SHARDS).map(|_| RwLock::default()).collect(),
+            held: AtomicUsize::new(0),
+        }
+    }
 }
 
 impl Terms {
+    fn shard(&self, word: &str) -> &RwLock<Codes<usize>> {
+        let mut hashed = Fnv::default();
+        hashed.write(word.as_bytes());
+        &self.shards[usize::try_from(hashed.finish() % SHARDS_WIDE).unwrap_or(0)]
+    }
+
+    pub fn code(&self, word: &str) -> Result<u32, String> {
+        let shard = self.shard(word);
+        let known = shard.read().unwrap_or_else(PoisonError::into_inner).get(word).copied();
+        let Some(code) = known else {
+            let mut held = shard.write().unwrap_or_else(PoisonError::into_inner);
+            let next = || self.held.fetch_add(1, Ordering::Relaxed);
+            return narrow(*held.entry(word.into()).or_insert_with(next));
+        };
+        narrow(code)
+    }
+
+    pub fn names(&self) -> Vec<Box<str>> {
+        let mut names = vec![Box::<str>::default(); self.held.load(Ordering::Relaxed)];
+        for shard in &self.shards {
+            for (name, &code) in shard.read().unwrap_or_else(PoisonError::into_inner).iter() {
+                names[code] = name.clone();
+            }
+        }
+        names
+    }
+}
+
+impl Seen {
     pub fn code(&mut self, word: &str) -> Result<u32, String> {
         if let Some(&code) = self.codes.get(word) {
             return Ok(code);
         }
-        let code = narrow(self.names.len())?;
+        let code = narrow(self.codes.len())?;
         self.codes.insert(word.into(), code);
-        self.names.push(word.into());
         Ok(code)
     }
 
-    pub fn names(&self) -> &[Box<str>] {
-        &self.names
+    pub fn known(&self, terms: &Terms) -> Result<Vec<u32>, String> {
+        let mut found = vec![0; self.codes.len()];
+        for (word, &code) in &self.codes {
+            found[usize::try_from(code).unwrap_or(usize::MAX)] = terms.code(word)?;
+        }
+        Ok(found)
     }
 }

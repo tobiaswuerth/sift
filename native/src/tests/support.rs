@@ -68,8 +68,7 @@ pub fn words(text: &str) -> Result<Vec<String>, String> {
     Ok(found)
 }
 
-pub fn built(texts: &[(i64, &str)], shape: Shape) -> Result<Written, String> {
-    let mut held = Held::new(usize::MAX, usize::MAX);
+pub fn taken(held: &mut Held, texts: &[(i64, &str)]) -> Result<usize, String> {
     let places: Vec<i64> = texts.iter().map(|each| each.0).collect();
     let bodies: Vec<&str> = texts.iter().map(|each| each.1).collect();
     let passages = Passages {
@@ -78,7 +77,12 @@ pub fn built(texts: &[(i64, &str)], shape: Shape) -> Result<Written, String> {
         fields: &[("", "")],
         texts: &bodies,
     };
-    if held.taken(table()?, &passages)? != texts.len() {
+    held.taken(table()?, &passages)
+}
+
+pub fn built(texts: &[(i64, &str)], shape: Shape) -> Result<Written, String> {
+    let mut held = Held::new(usize::MAX, usize::MAX);
+    if taken(&mut held, texts)? != texts.len() {
         return Err("a segment of every token took fewer passages than it was given".to_owned());
     }
     held.written(AVERAGE, shape)

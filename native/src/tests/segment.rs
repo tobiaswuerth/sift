@@ -1,6 +1,6 @@
 use crate::packed::{PACKED, unwrapped};
 use crate::segment::{Held, Passages, lengths_written};
-use crate::tests::support::{AVERAGE, built, decoded, long, refused, small, table, terms, wide, words};
+use crate::tests::support::{AVERAGE, built, decoded, long, refused, shown, small, table, taken, terms, wide, words};
 use crate::words::Table;
 
 const MOST_TIMES: usize = 1024;
@@ -81,6 +81,50 @@ fn the_short_lists_of_a_segment_lie_many_to_a_pack_none_larger_than_a_page() -> 
     assert_eq!(terms(&made.filed)?.len(), 2000);
     assert!(held.iter().all(|&each| each <= PACK_BYTES));
     assert!(held.len() < 2000 / 50 && held.iter().sum::<usize>() > (held.len() - 1) * (PACK_BYTES - 100));
+    Ok(())
+}
+
+fn varied(count: i64) -> Vec<(i64, String)> {
+    let words = |place: i64| (0..place % 17 + 3).map(move |word| format!("w{}", (place * 31 + word * word) % 97));
+    (0..count)
+        .map(|place| (place, words(place).collect::<Vec<_>>().join(" ")))
+        .collect()
+}
+
+#[test]
+fn a_segment_fed_its_passages_in_any_portions_holds_the_same() -> Result<(), String> {
+    let texts = varied(500);
+    let borrowed: Vec<(i64, &str)> = texts.iter().map(|each| (each.0, &*each.1)).collect();
+    let whole = built(&borrowed, small()?)?;
+    for portion in [1, 7, 64, 200] {
+        let mut held = Held::new(usize::MAX, usize::MAX);
+        for part in borrowed.chunks(portion) {
+            assert_eq!(taken(&mut held, part)?, part.len());
+        }
+        let made = held.written(AVERAGE, small()?)?;
+        assert_eq!(shown(&made.filed)?, shown(&whole.filed)?);
+        assert_eq!(made.terms, whole.terms);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_segment_given_more_passages_than_its_tokens_allow_takes_those_before_it_was_full() -> Result<(), String> {
+    let (texts, most) = (varied(300), 1000);
+    let borrowed: Vec<(i64, &str)> = texts.iter().map(|each| (each.0, &*each.1)).collect();
+    let (mut streamed, mut fitting) = (0, 0);
+    for (place, _) in &borrowed {
+        if streamed < most {
+            streamed += usize::try_from(place % 17 + 3).unwrap_or(0) + 2;
+            fitting += 1;
+        }
+    }
+    let mut held = Held::new(most, usize::MAX);
+    assert_eq!(taken(&mut held, &borrowed)?, fitting);
+    assert!(0 < fitting && fitting < borrowed.len());
+    let (made, want) = (held.written(AVERAGE, small()?)?, built(&borrowed[..fitting], small()?)?);
+    assert_eq!(shown(&made.filed)?, shown(&want.filed)?);
+    assert_eq!(made.terms, want.terms);
     Ok(())
 }
 

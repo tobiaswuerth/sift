@@ -4,12 +4,13 @@ use crate::numbers::narrow;
 use crate::packed::deflated;
 use crate::packs::Packer;
 use crate::postings::{Filed, MOST_LENGTHS_SHIFT, Postings, Row, Shape, joined};
-use crate::words::{Table, Terms};
+use crate::words::{Seen, Table, Terms};
 
 const MOST_TIMES: usize = 1024;
 const TOGETHER: usize = 64;
 const LENGTH: usize = 4;
-const TOO_MANY_WORDS: &str = "a passage holds more words than are placed";
+const PASSAGES: usize = 64;
+const GAPS: usize = 2;
 
 pub struct Passages<'a> {
     pub places: &'a [i64],
@@ -34,11 +35,9 @@ pub struct Held {
     streamed: usize,
 }
 
-struct Span<'a> {
-    place: i64,
-    title: &'a [u32],
-    text: &'a str,
-    meta: &'a [u32],
+struct Run {
+    codes: Vec<u32>,
+    ends: Vec<usize>,
 }
 
 struct Token {
@@ -47,8 +46,41 @@ struct Token {
     place: u32,
 }
 
+impl Run {
+    fn of(&self, number: usize) -> &[u32] {
+        &self.codes[self.ends[number]..self.ends[number + 1]]
+    }
+}
+
 fn at(number: u32) -> usize {
     usize::try_from(number).unwrap_or(usize::MAX)
+}
+
+fn coded(table: &Table, seen: &mut Seen, text: &str, codes: &mut Vec<u32>) -> Result<(), String> {
+    table.words(text, |word| {
+        codes.push(seen.code(word)?);
+        Ok(())
+    })
+}
+
+fn run<'a, T>(table: &Table, terms: &Terms, texts: T) -> Result<Run, String>
+where
+    T: Iterator<Item = (&'a str, bool)>,
+{
+    let (mut seen, mut codes, mut ends) = (Seen::default(), Vec::new(), vec![0]);
+    for (text, shortened) in texts {
+        let before = codes.len();
+        coded(table, &mut seen, text, &mut codes)?;
+        if shortened && codes.len() > before {
+            codes.pop();
+        }
+        ends.push(codes.len());
+    }
+    let known = seen.known(terms)?;
+    for code in &mut codes {
+        *code = known[at(*code)];
+    }
+    Ok(Run { codes, ends })
 }
 
 fn cut(field: &str, most: usize) -> (&str, bool) {
@@ -122,42 +154,24 @@ impl Held {
         self.lengths.iter().map(|&length| u64::from(length)).sum()
     }
 
-    fn coded(&mut self, table: &Table, text: &str, found: &mut Vec<u32>) -> Result<(), String> {
-        table.words(text, |word| {
-            found.push(self.terms.code(word)?);
-            Ok(())
-        })
-    }
-
-    fn field(&mut self, table: &Table, text: &str) -> Result<Vec<u32>, String> {
-        let (whole, shortened) = cut(text, self.most_field);
-        let mut found = Vec::new();
-        self.coded(table, whole, &mut found)?;
-        if shortened {
-            found.pop();
-        }
-        Ok(found)
-    }
-
-    fn placed(&mut self, codes: &[u32], owner: u32, first: u32) -> Result<u32, String> {
+    fn placed(&mut self, codes: &[u32], owner: u32, first: u32) -> u32 {
         let mut place = first;
         for &term in codes {
             self.tokens.push(Token { term, owner, place });
-            place = place.checked_add(1).ok_or(TOO_MANY_WORDS)?;
+            place += 1;
         }
-        Ok(place)
+        place
     }
 
-    fn add(&mut self, table: &Table, span: &Span, scratch: &mut Vec<u32>) -> Result<(), String> {
-        let owner = narrow(self.ids.len())?;
-        scratch.clear();
-        self.coded(table, span.text, scratch)?;
-        let text = self.placed(span.title, owner, 0)? + 1;
-        let meta = self.placed(scratch, owner, text)? + 1;
-        let length = self.placed(span.meta, owner, meta)? - 2;
-        self.ids.push(span.place);
+    fn add(&mut self, place: i64, title: &[u32], text: &[u32], meta: &[u32]) -> Result<(), String> {
+        let (owner, length) = (narrow(self.ids.len())?, narrow(title.len() + text.len() + meta.len())?);
+        narrow(title.len() + text.len() + meta.len() + GAPS)?;
+        let after_title = self.placed(title, owner, 0) + 1;
+        let after_text = self.placed(text, owner, after_title) + 1;
+        self.placed(meta, owner, after_text);
+        self.ids.push(place);
         self.lengths.push(length);
-        self.streamed += at(length) + 2;
+        self.streamed += at(length) + GAPS;
         Ok(())
     }
 
@@ -165,28 +179,34 @@ impl Held {
         if passages.places.len() != passages.texts.len() {
             return Err("each passage has a place and a text".to_owned());
         }
-        let mut named: Vec<Option<(Vec<u32>, Vec<u32>)>> = passages.fields.iter().map(|_| None).collect();
-        let mut scratch = Vec::new();
-        for (number, (&place, text)) in passages.places.iter().zip(passages.texts).enumerate() {
+        let (terms, most) = (&self.terms, self.most_field);
+        let named: Result<Vec<Run>, String> = passages
+            .fields
+            .par_chunks(PASSAGES)
+            .map(|part| {
+                run(
+                    table,
+                    terms,
+                    part.iter().flat_map(|held| [cut(held.0, most), cut(held.1, most)]),
+                )
+            })
+            .collect();
+        let read: Result<Vec<Run>, String> = passages
+            .texts
+            .par_chunks(PASSAGES)
+            .map(|part| run(table, terms, part.iter().map(|text| (*text, false))))
+            .collect();
+        let (named, read) = (named?, read?);
+        for (number, &place) in passages.places.iter().enumerate() {
             if self.streamed >= self.most {
                 return Ok(number);
             }
-            let which = passages.of.get(number).copied().filter(|&which| which < named.len());
+            let which = passages.of.get(number).copied();
+            let which = which.filter(|&which| which < passages.fields.len());
             let which = which.ok_or_else(|| "a passage names a document that was not given".to_owned())?;
-            let (title, meta) = match &mut named[which] {
-                Some(read) => read,
-                unread => {
-                    let (title, meta) = passages.fields[which];
-                    unread.insert((self.field(table, title)?, self.field(table, meta)?))
-                }
-            };
-            let span = Span {
-                place,
-                title,
-                text,
-                meta,
-            };
-            self.add(table, &span, &mut scratch)?;
+            let fields = &named[which / PASSAGES];
+            let (title, meta) = (fields.of(2 * (which % PASSAGES)), fields.of(2 * (which % PASSAGES) + 1));
+            self.add(place, title, read[number / PASSAGES].of(number % PASSAGES), meta)?;
         }
         Ok(passages.places.len())
     }
