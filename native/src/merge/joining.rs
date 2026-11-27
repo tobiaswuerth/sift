@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 
-use crate::lists::{Block, block, gaps, placed};
+use crate::lists::{Block, block, positioned};
 use crate::merge::sources::Fed;
 use crate::postings::{Kept, Piece, Postings, Range, Row, Shape, blocks_of, gathered, joined, ranged};
 
@@ -94,8 +94,7 @@ impl Joining {
     }
 
     fn part(&self, found: &Block, coded: &[u8]) -> Result<Postings, String> {
-        let mut places = gaps(coded)?;
-        placed(&mut places, &found.counts)?;
+        let places = positioned(coded, &found.counts)?;
         let (mut held, mut from) = (Postings::default(), 0usize);
         for (&id, &count) in found.ids.iter().zip(&found.counts) {
             let to = from + usize::try_from(count).unwrap_or(0);

@@ -10,7 +10,7 @@ const PACK_BYTES: usize = 4000;
 
 fn lengths(packed: &[u8]) -> Result<Vec<u32>, String> {
     let wrapped: Vec<u8> = [PACKED].into_iter().chain(packed.iter().copied()).collect();
-    let raw = unwrapped(&wrapped)?;
+    let raw = unwrapped(&wrapped, 1 << 20)?;
     Ok(raw
         .as_chunks::<4>()
         .0

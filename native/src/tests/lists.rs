@@ -1,4 +1,5 @@
-use crate::lists::{Lists, Occurring, Sought, block, blocks, gaps, list, occurring, placed};
+use crate::lists::{Lists, Occurring, Sought, block, blocks, list, occurring, placed, positioned};
+use crate::packed::wrapped;
 use crate::tests::support::refused;
 
 const RAW: u8 = 0;
@@ -22,12 +23,10 @@ fn a_list_comes_back_with_its_ids_counts_and_positions_whole_or_in_part() -> Res
     let whole = list(&lists, 0, 3)?;
     let found = block(&whole.0)?;
     assert_eq!((found.ids, &found.counts), (vec![5, 9, 300], &vec![1, 2, 1]));
-    let mut positions = gaps(&whole.1)?;
-    placed(&mut positions, &found.counts)?;
-    assert_eq!(positions, [0, 1, 7, 3]);
+    assert_eq!(positioned(&whole.1, &found.counts)?, [0, 1, 7, 3]);
     let part = list(&lists, 1, 3)?;
     assert_eq!(block(&part.0)?.ids, [9, 300]);
-    assert_eq!(gaps(&part.1)?, [1, 6, 3]);
+    assert_eq!(positioned(&part.1, &[2, 1])?, [1, 7, 3]);
     Ok(())
 }
 
@@ -233,5 +232,32 @@ fn passages_told_other_than_block_by_block_or_with_other_positions_than_a_block_
         ),
         "unknown flag byte"
     ));
+    Ok(())
+}
+
+#[test]
+fn the_largest_block_a_list_may_hold_is_read_and_one_counting_or_holding_more_is_refused() -> Result<(), String> {
+    let ids: Vec<i64> = (0..4096).map(|each| each * 3).collect();
+    let counts = vec![1024i64; 4096];
+    let own: Vec<i64> = (0..1024).map(|each| (1 << 28) + each).collect();
+    let positions: Vec<i64> = (0..4096).flat_map(|_| own.iter().copied()).collect();
+    let offsets: Vec<usize> = (0..=4096).map(|each| each * 1024).collect();
+    let lists = Lists {
+        ids: &ids,
+        counts: &counts,
+        positions: &positions,
+        offsets: &offsets,
+    };
+    let coded = list(&lists, 0, 4096)?;
+    let found = block(&coded.0)?;
+    assert_eq!((found.ids.len(), found.counts[4095]), (4096, 1024));
+    assert_eq!(positioned(&coded.1, &found.counts)?, positions);
+    assert!(refused(block(&headed(1, 1, &[0x81, 0x08])), "a count above 1,024"));
+    let longer = [RAW, 1, 1, 1, 1, 1, 1];
+    assert!(refused(positioned(&longer, &[1]), "holds more than 5 bytes"));
+    let far = wrapped(&vec![1u8; 1 << 20])?;
+    assert!(refused(positioned(&far, &[2, 2]), "unpacks to more than 20 bytes"));
+    assert!(refused(positioned(&far, &[-1]), "unpacks to more than 0 bytes"));
+    assert_eq!(positioned(&far, &vec![1; 1 << 20])?.len(), 1 << 20);
     Ok(())
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 
-use crate::lists::{Block, Coded, Lists, block, each_of, list};
+use crate::lists::{Block, Coded, Lists, MOST_BLOCK, block, each_of, list};
 use crate::numbers::narrow;
 use crate::packed::deflated;
 use crate::packs::{Pack, Packer};
@@ -13,7 +13,6 @@ const TOP: f64 = K1 + 1.0;
 const STEPS: f64 = 255.0;
 const RANGE: usize = 6;
 const MOST_RANGE_SHIFT: u32 = 8;
-const MOST_BLOCK: usize = 1 << 12;
 pub const MOST_LENGTHS_SHIFT: u32 = 20;
 const MISPLACED: &str = "a block holds postings outside its ranges";
 const UNEVEN: &str = "a list is read with a block for each number, and an end for each range";

@@ -7,15 +7,14 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from sift.domain.arrays import floats, ints
-from sift.domain.codec.postings import MOST_INFLATED_BYTES, lengths_all, ranges_of
+from sift.domain.codec.postings import lengths_all, ranges_of
 from sift.domain.codec.segments import GAP, WrittenSegment, building, counted, gathered, stream, written
-from sift.domain.codec.shape import MOST_BLOCK, Shape
+from sift.domain.codec.shape import Shape
 from sift.domain.rank.bm25 import STEPS, TOP, term_scores, unquantized
 from sift.domain.text.tokens import MOST_FIELD_CHARACTERS, field_tokens, tokens
 from tests.coded_lists import blocked, packed, positions_of
 from tests.unit.domain.codec.built import EVERY_TOKEN, SEGMENT, SMALL, Columns, chunks, segment
 
-MOST_BYTES = 9
 MOST_TIMES = 1024
 
 
@@ -119,7 +118,7 @@ def test_the_ranges_of_a_long_list_bound_every_score_in_them(columns: list[tuple
         assert held.chunks >= SMALL.long
         found, counts, _ = decoded(held)
         scores = term_scores(np.array(counts), sizes[np.array(found) - 100], 3.0)
-        ranges = ranges_of(held.held.ranges)
+        ranges = ranges_of(held.held.ranges, held.chunks)
         bests = floats(unquantized(ranges.best))
         for rid, start, end, best in zip(ints(ranges.ids), ints(ranges.starts), ints(ranges.ends), bests, strict=True):
             assert all(chunk >> SMALL.range_shift == rid for chunk in found[start:end])
@@ -152,10 +151,6 @@ def test_a_word_counts_in_a_passage_no_more_often_than_a_list_may_hold_and_the_p
     assert held["x"] == ([7, 9], [MOST_TIMES, 1], [*range(1, MOST_TIMES + 1), 0])
     assert held["y"] == ([7], [1], [often + 2])
     assert made.tokens == often + 2
-
-
-def test_no_list_a_shape_lets_be_written_unpacks_to_more_than_a_reader_takes() -> None:
-    assert MOST_BLOCK * MOST_TIMES * MOST_BYTES <= MOST_INFLATED_BYTES
 
 
 def test_a_chunk_of_no_word_is_in_the_segment_with_no_tokens() -> None:

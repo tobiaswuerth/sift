@@ -138,9 +138,9 @@ def _listed(store: Opened, parts: list[Part], terms: list[str]) -> dict[str, lis
 
 
 def _placed(store: Opened, placed: dict[int, SegmentRow], segment: int, data: bytes) -> Ranges:
-    ranges, shift = ranges_of(data), store.shape.range_shift
-    held = placed.get(segment)
-    if held is None or first(ranges.ids) < held.first >> shift or last(ranges.ids) > held.last >> shift:
+    held, shift = placed[segment], store.shape.range_shift
+    ranges = ranges_of(data, (held.last >> shift) - (held.first >> shift) + 1)
+    if first(ranges.ids) < held.first >> shift or last(ranges.ids) > held.last >> shift:
         raise DamagedError("the ranges of a list lie outside its segment")
     return ranges
 

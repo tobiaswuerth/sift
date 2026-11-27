@@ -2,8 +2,6 @@ use crate::numbers::{little_endian, narrow, read, written};
 use crate::packed::{PACKED, RAW, deflated, unwrapped, wrapped};
 use crate::tests::support::refused;
 
-const MOST_INFLATED: usize = 64 << 20;
-
 #[test]
 fn numbers_come_back_from_their_bytes_a_byte_for_every_seven_bits() -> Result<(), String> {
     let numbers = [0, 127, 128, (1 << 14) - 1, 1 << 14, i64::MAX];
@@ -42,8 +40,8 @@ fn a_short_list_is_kept_as_it_is_and_a_long_one_packed() -> Result<(), String> {
     assert_eq!((short.first(), short.len()), (Some(&RAW), 64));
     assert_eq!(long.first(), Some(&PACKED));
     assert!(long.len() < 30);
-    assert_eq!(&*unwrapped(&short)?, [7; 63]);
-    assert_eq!(&*unwrapped(&long)?, [7; 64]);
+    assert_eq!(&*unwrapped(&short, 63)?, [7; 63]);
+    assert_eq!(&*unwrapped(&long, 64)?, [7; 64]);
     Ok(())
 }
 
@@ -60,26 +58,31 @@ fn bytes_that_hardly_pack_come_back_as_they_were() -> Result<(), String> {
         .collect();
     let packed = wrapped(&noise)?;
     assert!(packed.len() > noise.len() / 2 + 64);
-    assert_eq!(&*unwrapped(&packed)?, noise);
+    assert_eq!(&*unwrapped(&packed, 4096)?, noise);
     Ok(())
 }
 
 #[test]
 fn bytes_that_are_no_list_are_refused_with_what_is_wrong() -> Result<(), String> {
-    assert!(refused(unwrapped(&[]), "unknown flag byte"));
-    assert!(refused(unwrapped(&[2, 1]), "unknown flag byte"));
-    assert!(refused(unwrapped(&[PACKED, 9, 9, 9]), "does not unpack"));
+    assert!(refused(unwrapped(&[], 9), "unknown flag byte"));
+    assert!(refused(unwrapped(&[2, 1], 9), "unknown flag byte"));
+    assert!(refused(unwrapped(&[PACKED, 9, 9, 9], 9), "does not unpack"));
     let packed = wrapped(&[7; 1000])?;
-    assert!(refused(unwrapped(&packed[..packed.len() - 4]), "ends early"));
+    assert!(refused(unwrapped(&packed[..packed.len() - 4], 1000), "ends early"));
     Ok(())
 }
 
 #[test]
-fn a_list_that_unpacks_to_more_than_any_list_holds_is_refused() -> Result<(), String> {
-    let most = deflated(&vec![0; MOST_INFLATED], Some(PACKED))?;
-    assert_eq!(unwrapped(&most)?.len(), MOST_INFLATED);
-    let more = deflated(&vec![0; MOST_INFLATED + 1], Some(PACKED))?;
-    assert!(refused(unwrapped(&more), "unpacks to more than"));
+fn a_list_that_unpacks_to_more_than_it_may_is_refused_packed_or_not() -> Result<(), String> {
+    let packed = deflated(&vec![0; 1000], Some(PACKED))?;
+    assert_eq!(unwrapped(&packed, 1000)?.len(), 1000);
+    assert!(refused(unwrapped(&packed, 999), "unpacks to more than 999 bytes"));
+    assert!(refused(unwrapped(&packed, 0), "unpacks to more than 0 bytes"));
+    let far = deflated(&vec![0; 64 << 20], Some(PACKED))?;
+    assert!(refused(unwrapped(&far, 24_584), "unpacks to more than 24584 bytes"));
+    let raw = wrapped(&[7; 10])?;
+    assert_eq!(unwrapped(&raw, 10)?.len(), 10);
+    assert!(refused(unwrapped(&raw, 9), "holds more than 9 bytes"));
     Ok(())
 }
 
@@ -95,8 +98,8 @@ fn a_number_written_longer_than_it_is_is_refused() {
 #[test]
 fn bytes_after_the_end_of_a_packed_list_are_refused() -> Result<(), String> {
     let mut packed = wrapped(&[7; 1000])?;
-    assert_eq!(unwrapped(&packed)?.len(), 1000);
+    assert_eq!(unwrapped(&packed, 1000)?.len(), 1000);
     packed.extend_from_slice(b"more");
-    assert!(refused(unwrapped(&packed), "bytes after its end"));
+    assert!(refused(unwrapped(&packed, 1000), "bytes after its end"));
     Ok(())
 }

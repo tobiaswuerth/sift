@@ -10,10 +10,10 @@ from numpy.typing import NDArray
 
 from sift.domain.arrays import ints
 from sift.domain.codec.postings import (
-    MOST_INFLATED_BYTES,
     PACKED,
     RANGES_HEAD,
     RAW,
+    Ranges,
     blocked_all,
     blocked_within,
     lengths_all,
@@ -87,8 +87,13 @@ def test_chunks_too_far_apart_for_a_block_or_out_of_order_are_refused(ids: list[
         segment(np.array(ids, np.int64), of_bodies([["w"]] * 2), 4.0)
 
 
-@given(st.lists(st.integers(1, (1 << 63) - 1), min_size=1, max_size=50))
-def test_numbers_come_back_from_their_varints(values: list[int]) -> None:
+@given(
+    st.lists(st.integers(1, 1024), min_size=1, max_size=50),
+    st.lists(st.integers(0, (1 << 32) - 1), min_size=1, max_size=50, unique=True),
+)
+def test_numbers_come_back_from_their_varints(values: list[int], far: list[int]) -> None:
+    held = np.array([len(far)], np.int64)
+    assert ints(positions_of(RAW + varints(ints(np.diff(np.array(sorted(far)), prepend=0))), held)) == sorted(far)
     block = RAW + BLOCK_HEAD.pack(7, len(values)) + (1).to_bytes(4, "little") * (len(values) - 1) + varints(values)
     places, counts = blocked(block)
     assert (ints(places), ints(counts)) == ([*range(7, 7 + len(values))], values)
@@ -109,7 +114,7 @@ def test_ranges_hold_where_their_postings_start_and_end_and_their_best_scores(
 ) -> None:
     found = ascending(data.draw(st.lists(st.integers(1, 1000), min_size=len(counts), max_size=len(counts))), first)
     best = data.draw(st.lists(st.integers(0, 255), min_size=len(counts), max_size=len(counts)))
-    back = ranges_of(ranges(ints(found), counts, best))
+    back = ranges_of(ranges(ints(found), counts, best), len(counts))
     assert ints(back.ids) == ints(found)
     assert ints(back.ends - back.starts) == counts
     assert ints(back.starts) == [0, *ints(back.ends[:-1])]
@@ -135,12 +140,16 @@ def _lengths(data: bytes) -> NDArray[np.uint32]:
     return lengths_all([data], 6)
 
 
+def _ranges(data: bytes) -> Ranges:
+    return ranges_of(data, 64)
+
+
 def _decoded_or_refused(data: bytes) -> None:
     with contextlib.suppress(DamagedError):
         places, counts = blocked(data)
         assert len(places) == len(counts)
         assert min(ints(counts), default=1) >= 1
-    for decode in (ranges_of, _lengths):
+    for decode in (_ranges, _lengths):
         with contextlib.suppress(DamagedError):
             decode(data)
 
@@ -193,13 +202,13 @@ def test_a_damaged_block_is_refused_with_what_is_wrong(data: bytes, refusal: str
 
 def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -> None:
     with pytest.raises(DamagedError, match="does not unpack"):
-        ranges_of(b"junk")
+        ranges_of(b"junk", 9)
     with pytest.raises(DamagedError, match="other than their head says"):
-        ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(1)))
+        ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(1)), 9)
     with pytest.raises(DamagedError, match="other than their head says"):
-        ranges_of(zlib.compress(bytes(1)))
+        ranges_of(zlib.compress(bytes(1)), 9)
     with pytest.raises(DamagedError, match="ranges hold ids out of order"):
-        ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(4) + bytes(4)))
+        ranges_of(zlib.compress(RANGES_HEAD.pack(0, 2) + bytes(4) + bytes(4)), 9)
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
         lengths_all([zlib.compress(bytes(7))], 6)
     with pytest.raises(DamagedError, match="unpacks to other than 256 bytes"):
@@ -216,10 +225,15 @@ def test_damaged_ranges_lengths_and_positions_are_refused_with_what_is_wrong() -
         positions_of(RAW + b"\x01\x02", np.array([3], np.int64))
 
 
-@pytest.mark.parametrize("gaps", [[2**62], [2**32], [2**31, 2**31], [1, 2**32 - 1]])
+@pytest.mark.parametrize("gaps", [[2**32], [2**31, 2**31], [1, 2**32 - 1]])
 def test_positions_beyond_any_passage_are_refused_as_damaged(gaps: list[int]) -> None:
     with pytest.raises(DamagedError, match="a list holds a position past any passage"):
         positions_of(RAW + varints(gaps), np.array([len(gaps)], np.int64))
+
+
+def test_a_position_written_in_more_bytes_than_any_position_takes_is_refused_as_damaged() -> None:
+    with pytest.raises(DamagedError, match="a list holds more than 5 bytes"):
+        positions_of(RAW + varints([2**62]), np.array([1], np.int64))
 
 
 def test_positions_up_to_the_last_a_passage_holds_are_read() -> None:
@@ -262,7 +276,7 @@ def test_the_positions_of_the_passages_wanted_come_back_from_many_blocks_as_each
 
 def test_the_blocks_of_a_list_come_back_each_alone_and_one_its_ranges_do_not_place_is_refused() -> None:
     shape = Shape(range_shift=2, block=2, long=3, lengths_shift=3)
-    held = ranges_of(ranges([0, 1, 2], [2, 1, 2], [9, 9, 9]))
+    held = ranges_of(ranges([0, 1, 2], [2, 1, 2], [9, 9, 9]), 3)
     rows = [block([0, 1], [1, 3]), block([5, 9], [2, 1]), block([10], [4])]
     found = blocked_within(rows, [0, 1, 2], held, shape)
     assert [(ints(places), ints(counts)) for places, counts in found] == [
@@ -290,14 +304,19 @@ def test_a_passage_longer_than_a_length_keeps_is_refused() -> None:
         with_lengths(np.array([0], np.int64), np.array([1 << 32], np.int64), 3)
 
 
-def test_a_list_that_unpacks_to_more_than_any_list_holds_is_refused_once_it_has_unpacked_that_far() -> None:
-    packing = zlib.compressobj()
-    piece = bytes(1 << 20)
-    packed = b"".join(packing.compress(piece) for _ in range((MOST_INFLATED_BYTES >> 20) + 1)) + packing.flush()
-    with pytest.raises(DamagedError, match="unpacks to more than"):
-        ranges_of(packed)
-    with pytest.raises(DamagedError, match="unpacks to more than"):
-        blocked(PACKED + packed)
+def test_a_list_that_unpacks_to_more_than_its_kind_may_hold_is_refused_once_it_has_unpacked_that_far() -> None:
+    held = ranges([0, 1, 2], [2, 1, 2], [9, 9, 9])
+    assert ints(ranges_of(held, 3).ids) == [0, 1, 2]
+    far = zlib.compress(bytes(1 << 26))
+    for packed in (held, far):
+        with pytest.raises(DamagedError, match="unpacks to more than 20 bytes"):
+            ranges_of(packed, 2)
+    with pytest.raises(DamagedError, match="unpacks to more than 24584 bytes"):
+        blocked(PACKED + far)
+    with pytest.raises(DamagedError, match="unpacks to more than 15 bytes"):
+        positions_of(PACKED + far, np.array([1, 2], np.int64))
+    with pytest.raises(DamagedError, match="a block holds a count above 1,024"):
+        blocked(RAW + BLOCK_HEAD.pack(1, 1) + varint(1025))
 
 
 def test_ranges_too_far_apart_are_refused() -> None:

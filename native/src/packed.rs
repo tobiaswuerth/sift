@@ -7,11 +7,9 @@ pub const RAW: u8 = 0;
 pub const PACKED: u8 = 1;
 const PACKED_FROM: usize = 64;
 const LEVEL: u32 = 6;
-const MOST_INFLATED: usize = 64 << 20;
 const ROOM: usize = 64;
 const NO_PACKING: &str = "a list does not pack";
 const NO_UNPACKING: &str = "a packed list does not unpack";
-const TOO_LARGE_OR_SHORT: &str = "a packed list unpacks to more than 67,108,864 bytes, or ends early";
 const AFTER_END: &str = "a packed list holds bytes after its end";
 
 fn taken(total: u64) -> usize {
@@ -47,15 +45,19 @@ pub fn wrapped(body: &[u8]) -> Result<Vec<u8>, String> {
     Ok(raw)
 }
 
-fn inflated(data: &[u8]) -> Result<Vec<u8>, String> {
+fn too_large(most: usize) -> String {
+    format!("a packed list unpacks to more than {most} bytes, or ends early")
+}
+
+fn inflated(data: &[u8], most: usize) -> Result<Vec<u8>, String> {
     let mut unpacking = Decompress::new(true);
-    let mut found = Vec::with_capacity((data.len() * 4).clamp(ROOM, MOST_INFLATED + 1));
+    let mut found = Vec::with_capacity((data.len() * 4).max(ROOM).min(most + 1));
     loop {
         let (read, held) = (taken(unpacking.total_in()), found.len());
         let step = unpacking.decompress_vec(&data[read..], &mut found, FlushDecompress::None);
         let status = told(step, NO_UNPACKING)?;
-        if found.len() > MOST_INFLATED {
-            return Err(TOO_LARGE_OR_SHORT.to_owned());
+        if found.len() > most {
+            return Err(too_large(most));
         }
         if status == Status::StreamEnd && taken(unpacking.total_in()) != data.len() {
             return Err(AFTER_END.to_owned());
@@ -65,10 +67,10 @@ fn inflated(data: &[u8]) -> Result<Vec<u8>, String> {
         }
         let stalled = taken(unpacking.total_in()) == read && found.len() == held;
         if stalled && found.len() < found.capacity() {
-            return Err(TOO_LARGE_OR_SHORT.to_owned());
+            return Err(too_large(most));
         }
         if found.len() == found.capacity() {
-            found.reserve_exact(found.capacity().min(MOST_INFLATED + 1 - found.len()));
+            found.reserve_exact(found.capacity().min(most + 1 - found.len()));
         }
     }
 }
@@ -86,10 +88,13 @@ pub fn inflated_into(data: &[u8], found: &mut [u8]) -> Result<(), String> {
     Ok(())
 }
 
-pub fn unwrapped(data: &[u8]) -> Result<Cow<'_, [u8]>, String> {
+pub fn unwrapped(data: &[u8], most: usize) -> Result<Cow<'_, [u8]>, String> {
     match data.split_first() {
-        Some((&RAW, body)) => Ok(Cow::Borrowed(body)),
-        Some((&PACKED, body)) => inflated(body).map(Cow::Owned),
+        Some((&RAW, body)) if body.len() <= most => Ok(Cow::Borrowed(body)),
+        Some((&RAW, _)) => Err(format!(
+            "a list holds more than {most} bytes: more than its counts allow"
+        )),
+        Some((&PACKED, body)) => inflated(body, most).map(Cow::Owned),
         _ => Err("a list starts with an unknown flag byte".to_owned()),
     }
 }

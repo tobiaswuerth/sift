@@ -9,6 +9,11 @@ const HEAD: usize = 12;
 const FIRST: usize = 8;
 const GAP: usize = 4;
 const MOST_POSITION: i64 = 1 << 32;
+const COUNT: usize = 2;
+const POSITION: usize = 5;
+pub const MOST_BLOCK: usize = 1 << 12;
+pub const MOST_TIMES: usize = 1024;
+const BLOCK_BYTES: usize = HEAD + GAP * (MOST_BLOCK - 1) + COUNT * MOST_BLOCK;
 const TOGETHER: usize = 256;
 const TASK: usize = 1 << 14;
 const WORTH: usize = 4;
@@ -69,7 +74,7 @@ where
 }
 
 pub fn block(data: &[u8]) -> Result<Block, String> {
-    let raw = unwrapped(data)?;
+    let raw = unwrapped(data, BLOCK_BYTES)?;
     let opening = raw
         .split_first_chunk::<FIRST>()
         .and_then(|(first, rest)| Some((first, rest.split_first_chunk::<GAP>()?)));
@@ -107,6 +112,12 @@ pub fn block(data: &[u8]) -> Result<Block, String> {
     if counts.iter().any(|&count| count < 1) {
         return Err("a block holds a count below one".to_owned());
     }
+    if counts
+        .iter()
+        .any(|&count| usize::try_from(count).is_ok_and(|count| count > MOST_TIMES))
+    {
+        return Err("a block holds a count above 1,024".to_owned());
+    }
     Ok(Block { ids, counts })
 }
 
@@ -124,10 +135,13 @@ pub fn blocks<R: AsRef<[u8]> + Sync>(rows: &[R]) -> Result<Blocks, String> {
     Ok(Blocks { ids, counts, bounds })
 }
 
-pub fn gaps(data: &[u8]) -> Result<Vec<i64>, String> {
-    let raw = unwrapped(data)?;
+pub fn positioned(data: &[u8], counts: &[i64]) -> Result<Vec<i64>, String> {
+    let each = counts.iter().map(|&count| usize::try_from(count).unwrap_or(0));
+    let held = each.fold(0usize, usize::saturating_add);
+    let raw = unwrapped(data, held.min(MOST_BLOCK * MOST_TIMES) * POSITION)?;
     let mut found = Vec::with_capacity(raw.len());
     read(&raw, &mut found)?;
+    placed(&mut found, counts)?;
     Ok(found)
 }
 
@@ -166,8 +180,7 @@ pub fn placed(found: &mut [i64], counts: &[i64]) -> Result<(), String> {
 
 fn chosen(row: &[u8], sought: &Sought, held: Range<usize>) -> Result<Occurring, String> {
     let (ids, counts) = (&sought.ids[held.clone()], &sought.counts[held]);
-    let mut positions = gaps(row)?;
-    placed(&mut positions, counts)?;
+    let positions = positioned(row, counts)?;
     let from = ids
         .first()
         .map_or(0, |&first| sought.wanted.partition_point(|&each| each < first));

@@ -19,7 +19,6 @@ RANGES_HEAD = struct.Struct("<qI")
 GAP_BYTES = 4
 COUNT_BYTES = 1
 BEST_BYTES = 1
-MOST_INFLATED_BYTES = 64 << 20
 
 
 def _sound(*, holds: bool, problem: str) -> None:
@@ -35,15 +34,14 @@ class Ranges:
     best: Bytes
 
 
-def _inflated(data: bytes) -> bytes:
+def _inflated(data: bytes, most: int) -> bytes:
     unpacking = zlib.decompressobj()
     try:
-        found = unpacking.decompress(data, MOST_INFLATED_BYTES + 1)
+        found = unpacking.decompress(data, most + 1)
     except zlib.error as error:
         raise DamagedError(f"a packed list does not unpack: {error}") from None
-    _sound(
-        holds=unpacking.eof, problem=f"a packed list unpacks to more than {MOST_INFLATED_BYTES:,} bytes, or ends early"
-    )
+    whole = unpacking.eof and len(found) <= most
+    _sound(holds=whole, problem=f"a packed list unpacks to more than {most:,} bytes, or ends early")
     return found
 
 
@@ -81,8 +79,8 @@ def _ascending(start: int, gaps: NDArray[np.uint32]) -> Ids:
     return start + after(0, np.cumsum(gaps, dtype=np.int64))
 
 
-def ranges_of(data: bytes) -> Ranges:
-    raw = _inflated(data)
+def ranges_of(data: bytes, most: int) -> Ranges:
+    raw = _inflated(data, RANGES_HEAD.size + GAP_BYTES * (most - 1) + (COUNT_BYTES + BEST_BYTES) * most)
     head, n = cast("tuple[int, int]", RANGES_HEAD.unpack_from(raw)) if len(raw) >= RANGES_HEAD.size else (0, 0)
     size = RANGES_HEAD.size + GAP_BYTES * (n - 1) + (COUNT_BYTES + BEST_BYTES) * n
     _sound(holds=n >= 1 and len(raw) == size, problem="ranges hold other than their head says")

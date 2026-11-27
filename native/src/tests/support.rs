@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, LazyLock};
 
-use crate::lists::{Coded, block, gaps, placed};
+use crate::lists::{Coded, block, positioned};
 use crate::merge::{Fed, Merger};
 use crate::packs::{counted, entries};
 use crate::postings::{Filed, Shape};
@@ -128,8 +128,7 @@ pub fn counts(filed: &Filed) -> Result<Vec<(String, usize)>, String> {
 
 fn listed(coded: &Coded, found: &mut Decoded) -> Result<(), String> {
     let held = block(&coded.0)?;
-    let mut places = gaps(&coded.1)?;
-    placed(&mut places, &held.counts)?;
+    let places = positioned(&coded.1, &held.counts)?;
     found.0.extend(held.ids);
     found.1.extend(held.counts);
     found.2.extend(places);

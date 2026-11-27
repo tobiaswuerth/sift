@@ -1,12 +1,12 @@
 use rayon::prelude::*;
 
+use crate::lists::MOST_TIMES;
 use crate::numbers::narrow;
 use crate::packed::{deflated, inflated_into};
 use crate::packs::Packer;
 use crate::postings::{Filed, MOST_LENGTHS_SHIFT, Postings, Row, Shape, joined};
 use crate::words::{Seen, Table, Terms};
 
-const MOST_TIMES: usize = 1024;
 const TOGETHER: usize = 64;
 const LENGTH: usize = 4;
 const PASSAGES: usize = 64;
