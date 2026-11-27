@@ -18,7 +18,7 @@ TAGS = "https://quay.io/api/v1/repository/{repository}/tag/?limit=100&onlyActive
 STABLE = "https://static.rust-lang.org/rustup/release-stable.toml"
 CHECKSUM = "https://static.rust-lang.org/rustup/archive/{version}/{target}/rustup-init.sha256"
 IMAGE = re.compile(r"image: quay\.io/(?P<repository>[\w./-]+)@(?P<digest>sha256:[0-9a-f]{64})")
-RUSTUP = re.compile(r"rustup/archive/(?P<version>[0-9.]+)/")
+RUSTUP = re.compile(r"rustup/archive/(?P<version>[0-9]+(?:\.[0-9]+)+)/")
 TARGET = re.compile(r"rustup: (?P<target>[\w-]+)\s+rustup-sha256: (?P<checksum>[0-9a-f]{64})")
 RELEASE = re.compile(r"[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]+")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -47,6 +47,15 @@ class Answer(NamedTuple):
 type Fetch = Callable[[str], Answer]
 
 
+def _written(url: str, header: str | None) -> float | None:
+    if header is None:
+        return None
+    try:
+        return email.utils.parsedate_to_datetime(header).timestamp()
+    except ValueError:
+        raise PinError(f"{url} answered a Last-Modified that is no date: {header!r}") from None
+
+
 def fetched(url: str) -> Answer:
     parts = urllib.parse.urlsplit(url)
     connection = CONNECTIONS[parts.scheme](parts.netloc, timeout=TIMEOUT)
@@ -55,11 +64,13 @@ def fetched(url: str) -> Answer:
         response = connection.getresponse()
         body = response.read(MOST_BYTES + 1)
         written = response.getheader("Last-Modified")
+    except (OSError, http.client.HTTPException) as error:
+        raise PinError(f"{url} could not be fetched: {error}") from None
     finally:
         connection.close()
     if response.status != http.client.OK or len(body) > MOST_BYTES:
         raise PinError(f"{url} answered {response.status} {response.reason}, {len(body):,} bytes")
-    return Answer(body, None if written is None else email.utils.parsedate_to_datetime(written).timestamp())
+    return Answer(body, _written(url, written))
 
 
 def _line(text: str, at: int) -> int:
@@ -67,7 +78,10 @@ def _line(text: str, at: int) -> int:
 
 
 def _releases(answer: Answer, url: str) -> Iterator[tuple[int, str, str]]:
-    read = cast("object", json.loads(answer.body))
+    try:
+        read = cast("object", json.loads(answer.body))
+    except ValueError:
+        read = None
     tags = cast("dict[str, object]", read).get("tags") if isinstance(read, dict) else None
     if not isinstance(tags, list):
         raise PinError(f"{url} answered no list of tags")
@@ -83,11 +97,12 @@ def _images(text: str, fetch: Fetch, now: float) -> Iterator[Finding]:
     for pinned in IMAGE.finditer(text):
         repository, digest = pinned["repository"], pinned["digest"]
         url = TAGS.format(repository=repository)
-        settled = [each for each in _releases(fetch(url), url) if each[0] <= now - SETTLED]
+        releases = list(_releases(fetch(url), url))
+        settled = [each for each in releases if each[0] <= now - SETTLED]
         if not settled:
             raise PinError(f"{url} names no release a week old")
-        _, name, newest = max(settled)
-        if newest != digest:
+        since, name, newest = max(settled)
+        if not any(held == digest and released >= since for released, _, held in releases):
             said = f"{repository} is pinned at {digest}; its newest release a week old, {name}, is {newest}"
             yield Finding(WORKFLOW, _line(text, pinned.start()), said)
 
@@ -101,8 +116,16 @@ def _checksum(fetch: Fetch, version: str, target: str) -> tuple[str, float | Non
     return found[0].decode(), answer.written
 
 
+def _numbered(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
 def _stable(fetch: Fetch) -> str:
-    version = tomllib.loads(fetch(STABLE).body.decode()).get("version")
+    body = fetch(STABLE).body
+    try:
+        version = tomllib.loads(body.decode()).get("version")
+    except ValueError:
+        version = None
     if not isinstance(version, str) or VERSION.fullmatch(version) is None:
         raise PinError(f"{STABLE} names no version")
     return version
@@ -120,7 +143,7 @@ def _rustup(text: str, fetch: Fetch, now: float) -> Iterator[Finding]:
         if published != target["checksum"]:
             said = f"rustup {version} for {built} is published with the checksum {published}, not the one pinned"
             yield Finding(WORKFLOW, _line(text, target.start("checksum")), said)
-        if stable != version:
+        if _numbered(stable) > _numbered(version):
             checksum, written = _checksum(fetch, stable, built)
             newer.append((f"{checksum} for {built}", written))
     if newer and all(written is not None and written <= now - SETTLED for _, written in newer):
@@ -152,4 +175,8 @@ def main(argv: list[str], asking: Asking = ASKING) -> int:
     if argv:
         sys.stderr.write(f"{USAGE}\n")
         return 2
-    return report(behind(asking.pinned(), asking.fetch, asking.now()), REMEDY)
+    try:
+        return report(behind(asking.pinned(), asking.fetch, asking.now()), REMEDY)
+    except PinError as error:
+        sys.stderr.write(f"error  {error}\n")
+        return 1

@@ -121,4 +121,4 @@ failed jobs.
 
 Dependabot moves the packages, the crates, the actions and the hooks, each to a release a week old. It reads neither
 the manylinux images nor rustup's checksums in the wheels workflow: the weekly audit fails once a release of those a
-week old is another than the one pinned, and names what to set (`python -m tools pins`).
+week old is newer than the one pinned, and names what to set (`python -m tools pins`).

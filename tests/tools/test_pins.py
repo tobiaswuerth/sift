@@ -2,7 +2,7 @@ import http.server
 import json
 import threading
 from collections.abc import Callable, Iterator, Mapping
-from typing import override
+from typing import final, override
 
 import pytest
 
@@ -54,6 +54,12 @@ def test_pins_that_are_the_newest_releases_a_week_old_are_behind_nothing() -> No
     assert told(current(tags=younger)) == []
 
 
+def test_pins_newer_than_the_newest_releases_a_week_old_are_behind_nothing() -> None:
+    younger = tags(("2026.11.26-1", NEW, 2 * DAY), ("2026.11.14-1", OLD, 13 * DAY))
+    answers = current(tags=younger, stable=Answer(b"version = '1.29.2'\n", None))
+    assert list(behind(PINS.replace(OLD, NEW), answering(answers), NOW)) == []
+
+
 def test_an_image_whose_newest_release_a_week_old_is_another_is_told_with_the_digest_to_set() -> None:
     released = tags(
         ("latest", OTHER, 1 * DAY),
@@ -91,6 +97,8 @@ def test_a_checksum_other_than_the_one_published_for_the_pinned_rustup_is_told()
     "changed, refusal",
     [
         ({"tags": Answer(b"[]", None)}, "no list of tags"),
+        ({"tags": Answer(b"<html>", None)}, "no list of tags"),
+        ({"tags": Answer(b"\xff", None)}, "no list of tags"),
         ({"tags": Answer(b'{"tags": 7}', None)}, "no list of tags"),
         ({"tags": Answer(b'{"tags": [7]}', None)}, "no release a week old"),
         (
@@ -118,6 +126,8 @@ def test_a_checksum_other_than_the_one_published_for_the_pinned_rustup_is_told()
         ),
         ({"stable": Answer(b"version = 7\n", None)}, "names no version"),
         ({"stable": Answer(b"version = '1.30; rm'\n", None)}, "names no version"),
+        ({"stable": Answer(b"version = \n", None)}, "names no version"),
+        ({"stable": Answer(b"\xff", None)}, "names no version"),
         ({CHECKSUM.format(version="1.29.3", target=TARGET): Answer(b"not a checksum", None)}, "is no checksum"),
     ],
 )
@@ -139,7 +149,7 @@ def test_every_pin_of_the_wheels_workflow_is_asked_about() -> None:
     def answered(url: str) -> Answer:
         asked.append(url)
         if url == STABLE:
-            return Answer(b"version = '0.0.0'\n", None)
+            return Answer(b"version = '99.0.0'\n", None)
         if "rustup" in url:
             return Answer(b"0" * 64 + b" *./rustup-init\n", None)
         return tags(("2000.01.01-1", OLD, 30 * DAY))
@@ -151,14 +161,20 @@ def test_every_pin_of_the_wheels_workflow_is_asked_about() -> None:
     assert all(finding.line > 1 for finding in found)
 
 
+@final
 class Answering(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        found = self.path == "/held?as=asked"
+        if self.path == "/cut":
+            self.close_connection = True
+            return
+        found = self.path in {"/held?as=asked", "/undated"}
         body = b"held" * (1 if found else 1 << 19)
         self.send_response(200 if found or self.path == "/long" else 404)
         self.send_header("Content-Length", str(len(body)))
         if found:
-            self.send_header("Last-Modified", "Tue, 03 Nov 2026 14:16:33 GMT")
+            self.send_header(
+                "Last-Modified", "yesterday" if self.path == "/undated" else "Tue, 03 Nov 2026 14:16:33 GMT"
+            )
         self.end_headers()
         self.wfile.write(body)
 
@@ -188,6 +204,10 @@ def test_an_address_is_fetched_with_when_it_was_written_and_a_refusal_or_too_lon
         fetched(f"{served}/missing")
     with pytest.raises(PinError, match="1,048,577 bytes"):
         fetched(f"{served}/long")
+    with pytest.raises(PinError, match=r"/undated answered a Last-Modified that is no date: 'yesterday'"):
+        fetched(f"{served}/undated")
+    with pytest.raises(PinError, match="/cut could not be fetched"):
+        fetched(f"{served}/cut")
 
 
 def asking(answers: Mapping[str, Answer]) -> Asking:
@@ -203,4 +223,6 @@ def test_the_check_reports_what_is_behind_and_reads_the_wheels_workflow_unless_t
     assert "2026.11.20-1" in capsys.readouterr().out
     assert main(["more"], asking(current())) == 2
     assert "usage: python -m tools pins" in capsys.readouterr().err
+    assert main([], asking(current(tags=Answer(b"[]", None)))) == 1
+    assert capsys.readouterr().err == f"error  {TAGS.format(repository=REPOSITORY)} answered no list of tags\n"
     assert Asking().pinned() == read(WORKFLOW)

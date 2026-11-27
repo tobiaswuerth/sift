@@ -29,7 +29,7 @@ jobs:
           # runner's glibc. maturin is told the name the wheel is to bear, and refuses to build one that needs more:
           # asked through `uv build` it checks nothing and names the wheel `linux`, which PyPI refuses. The images
           # bring no Rust, so rustup is fetched for them, held to its checksum. Dependabot reads neither an image of
-          # a matrix nor a checksum: the weekly audit says when a release a week old is another than the one pinned
+          # a matrix nor a checksum: the weekly audit says when a release a week old is newer than the one pinned
           # here, and what to set (`python -m tools pins`).
           - platform: linux-x86_64
             os: ubuntu-latest

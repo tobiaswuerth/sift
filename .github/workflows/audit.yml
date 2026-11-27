@@ -54,7 +54,7 @@ jobs:
   pins:
     # The images Linux's wheels are built in and the rustup fetched into them are pinned in the wheels workflow,
     # where Dependabot reads neither. This asks the registry and rust-lang.org what has been released, and fails
-    # with the digest or the checksums to set once a release a week old is another than the one pinned.
+    # with the digest or the checksums to set once a release a week old is newer than the one pinned.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
